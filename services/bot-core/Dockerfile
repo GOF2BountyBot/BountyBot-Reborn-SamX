@@ -70,7 +70,7 @@ RUN ln -s /usr/bin/python3 /usr/bin/python
 # Create a virtual environment
 RUN python3 -m venv /opt/venv
 
-WORKDIR /app/bountybot
+WORKDIR /app
 
 # Activate the virtual environment and upgrade pip
 RUN chmod +x /opt/venv/bin/activate && \
@@ -104,9 +104,9 @@ RUN groupadd --gid 1002 botuser && \
     echo "botuser:botuser" | chpasswd && \
     echo "%sudo ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers && \
     chown -R botuser /home/botuser && \
-    chown -R botuser /app/bountybot && \
+    chown -R botuser /app && \
     chmod -R 1777 /home/botuser && \
-    chmod -R 1777 /app/bountybot
+    chmod -R 1777 /app
 
 USER botuser
 

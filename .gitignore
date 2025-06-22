@@ -192,3 +192,11 @@ cython_debug/
 #  refer to https://docs.cursor.com/context/ignore-files
 .cursorignore
 .cursorindexingignore
+
+# Project-specific additional ignores...
+.vscode
+.idea
+saveData
+.DS_STORE
+.env
+mappings

@@ -17,7 +17,7 @@ services:
     volumes:
       - /etc/localtime:/etc/localtime:ro
       - /etc/timezone:/etc/timezone:ro
-      - postgres_data:/var/lib/postgresql/data
+      - ./mappings/postgres-data:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -d bountydb -U bounty"]
       interval: 1s
@@ -42,7 +42,7 @@ services:
     volumes:
       - /etc/localtime:/etc/localtime:ro
       - /etc/timezone:/etc/timezone:ro
-      - ./services/bot_core:/app
+      - ./mappings/bot-core:/app/data
     restart: unless-stopped
 
   discord-gateway:
@@ -61,7 +61,7 @@ services:
     volumes:
       - /etc/localtime:/etc/localtime:ro
       - /etc/timezone:/etc/timezone:ro
-      - ./services/discord_gateway:/app
+      - ./mappings/discord-gateway:/app/data
     restart: unless-stopped
 
   blender-service:
@@ -78,13 +78,10 @@ services:
     volumes:
       - /etc/localtime:/etc/localtime:ro
       - /etc/timezone:/etc/timezone:ro
-      - ./services/blender_renderer:/app
+      - ./mappings/blender-renderer:/app/data
     restart: unless-stopped
     ports:
       - "8001:8000"
-
-volumes:
-  postgres_data:
 
 networks:
   botnet:

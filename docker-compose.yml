@@ -1,0 +1,94 @@
+services:
+  db:
+    image: postgres:latest
+    container_name: bounty_db
+    restart: unless-stopped
+    networks:
+      - botnet
+    env_file:
+      - path: ./.env
+        required: false 
+    environment:
+      - PUID=${PUID:-1000}
+      - PGID=${PGID:-1000}
+      - POSTGRES_USER=bounty
+      - POSTGRES_PASSWORD=bounty
+      - POSTGRES_DB=bountydb
+    volumes:
+      - /etc/localtime:/etc/localtime:ro
+      - /etc/timezone:/etc/timezone:ro
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -d bountydb -U bounty"]
+      interval: 1s
+      timeout: 5s
+      retries: 10
+    ports:
+      - "5432:5432"
+
+  bot-core:
+    build: ./services/bot-core
+    container_name: bot-core
+    networks:
+      - botnet
+    depends_on:
+      - db
+    env_file:
+      - path: ./.env
+        required: false 
+    environment:
+      - PUID=${PUID:-1000}
+      - PGID=${PGID:-1000}
+    volumes:
+      - /etc/localtime:/etc/localtime:ro
+      - /etc/timezone:/etc/timezone:ro
+      - ./services/bot_core:/app
+    restart: unless-stopped
+
+  discord-gateway:
+    build: ./services/discord-gateway
+    container_name: discord-gateway
+    networks:
+      - botnet
+    depends_on:
+      - bot-core
+    env_file:
+      - path: ./.env
+        required: false 
+    environment:
+      - PUID=${PUID:-1000}
+      - PGID=${PGID:-1000}
+    volumes:
+      - /etc/localtime:/etc/localtime:ro
+      - /etc/timezone:/etc/timezone:ro
+      - ./services/discord_gateway:/app
+    restart: unless-stopped
+
+  blender-service:
+    build: ./services/blender-service
+    container_name: blender-service
+    networks:
+      - botnet
+    env_file:
+      - path: ./.env
+        required: false 
+    environment:
+      - PUID=${PUID:-1000}
+      - PGID=${PGID:-1000}
+    volumes:
+      - /etc/localtime:/etc/localtime:ro
+      - /etc/timezone:/etc/timezone:ro
+      - ./services/blender_renderer:/app
+    restart: unless-stopped
+    ports:
+      - "8001:8000"
+
+volumes:
+  postgres_data:
+
+networks:
+  botnet:
+    name: botnet
+    driver: bridge
+    driver_opts:
+      com.docker.network.bridge.name: botnet_br

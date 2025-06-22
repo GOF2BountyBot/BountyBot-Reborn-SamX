@@ -50,9 +50,15 @@ RUN apt-get update && \
         python3-venv \
         libpython3-dev \
         openssl \
+        # Extras for bountybot
+        postgresql-client \
+        g++-14 \
+        gcc-14 \
         # Temp install vim and sudo for debugging...
         vim \
-        sudo && \
+        sudo \
+        # 7zip for extraction of assets on container startup...
+        7zip && \
     apt-get autoremove -y && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
@@ -65,10 +71,6 @@ RUN ln -s /usr/bin/python3 /usr/bin/python
 RUN python3 -m venv /opt/venv
 
 WORKDIR /app/bountybot
-
-## Copy requirements files
-#COPY requirements.txt .
-#COPY bot/lib/AEPi/requirements.txt ./aepi.requirements.txt
 
 # Activate the virtual environment and upgrade pip
 RUN chmod +x /opt/venv/bin/activate && \
@@ -85,14 +87,14 @@ RUN chmod +x /opt/venv/bin/activate && \
 #    -r aepi.requirements.txt
 
 # Install gdown for pulling assets from Google Drive
-#RUN /opt/venv/bin/pip install --upgrade --no-cache-dir --prefer-binary \
-#    gdown
+RUN /opt/venv/bin/pip install --upgrade --no-cache-dir --prefer-binary \
+    gdown
     
 # mainly for debugging - catalog all pip packages and versions
 RUN /opt/venv/bin/pip freeze
 
-## Copy remaining app code...
-#COPY . .
+# Copy remaining app code...
+# COPY . .
 
 # create a non-root user and update permissions...
 RUN groupadd --gid 1002 botuser && \
@@ -111,6 +113,5 @@ USER botuser
 # The ' & tail -f /dev/null' in the entrypoint below is a hack to keep the container running if the app crashes.
 # This can be handy for being able to connect to the container CLI and check files/logs since it will still be running.
 ENTRYPOINT ["/bin/bash", "-c", "source /opt/venv/bin/activate & tail -f /dev/null"]
-# ENTRYPOINT ["/bin/bash", "-c", "source /opt/venv/bin/activate && /opt/venv/bin/python main.py ${CONFIG_FILE} & tail -f /dev/null"]
 # ENTRYPOINT ["/bin/bash", "-c", "source /opt/venv/bin/activate && /opt/venv/bin/python main.py ${CONFIG_FILE} & tail -f /dev/null"]
 # ENTRYPOINT ["/bin/bash", "-c", "source /opt/venv/bin/activate && /app/bountybot/docker-entrypoint.sh & tail -f /dev/null"]

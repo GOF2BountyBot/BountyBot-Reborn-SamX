@@ -4,7 +4,7 @@ services:
     container_name: bounty_db
     restart: unless-stopped
     networks:
-      - botnet
+      - botnetv2
     env_file:
       - path: ./.env
         required: false 
@@ -30,7 +30,7 @@ services:
     build: ./services/bot-core
     container_name: bot-core
     networks:
-      - botnet
+      - botnetv2
     depends_on:
       - db
     env_file:
@@ -49,7 +49,7 @@ services:
     build: ./services/discord-gateway
     container_name: discord-gateway
     networks:
-      - botnet
+      - botnetv2
     depends_on:
       - bot-core
     env_file:
@@ -68,7 +68,7 @@ services:
     build: ./services/blender-service
     container_name: blender-service
     networks:
-      - botnet
+      - botnetv2
     env_file:
       - path: ./.env
         required: false 
@@ -84,8 +84,8 @@ services:
       - "8001:8000"
 
 networks:
-  botnet:
-    name: botnet
+  botnetv2:
+    name: botnetv2
     driver: bridge
     driver_opts:
-      com.docker.network.bridge.name: botnet_br
+      com.docker.network.bridge.name: botnetv2_br

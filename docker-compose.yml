@@ -27,7 +27,9 @@ services:
       - "5432:5432"
 
   bot-core:
-    build: ./services/bot-core
+    build: 
+      context: ./
+      dockerfile: ./services/bot-core/Dockerfile
     container_name: bot-core
     networks:
       - botnetv2
@@ -46,7 +48,9 @@ services:
     restart: unless-stopped
 
   discord-gateway:
-    build: ./services/discord-gateway
+    build: 
+      context: ./
+      dockerfile: ./services/discord-gateway/Dockerfile
     container_name: discord-gateway
     networks:
       - botnetv2
@@ -65,7 +69,9 @@ services:
     restart: unless-stopped
 
   blender-service:
-    build: ./services/blender-service
+    build: 
+      context: ./
+      dockerfile: ./services/blender-service/Dockerfile
     container_name: blender-service
     networks:
       - botnetv2

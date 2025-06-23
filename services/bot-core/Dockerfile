@@ -96,6 +96,9 @@ RUN /opt/venv/bin/pip freeze
 # Copy remaining app code...
 # COPY . .
 
+# Copy shared libs
+COPY ./services/shared /app/src/shared
+
 # create a non-root user and update permissions...
 RUN groupadd --gid 1002 botuser && \
     useradd --uid 1001 --gid botuser --shell /bin/bash --create-home botuser && \
@@ -112,6 +115,7 @@ USER botuser
 
 # The ' & tail -f /dev/null' in the entrypoint below is a hack to keep the container running if the app crashes.
 # This can be handy for being able to connect to the container CLI and check files/logs since it will still be running.
-ENTRYPOINT ["/bin/bash", "-c", "source /opt/venv/bin/activate & tail -f /dev/null"]
+# ENTRYPOINT ["/bin/bash", "-c", "source /opt/venv/bin/activate & tail -f /dev/null"]
+ENTRYPOINT ["/bin/bash", "-c", "source /opt/venv/bin/activate && /opt/venv/bin/python /app/src/shared/logging.py & tail -f /dev/null"]
 # ENTRYPOINT ["/bin/bash", "-c", "source /opt/venv/bin/activate && /opt/venv/bin/python main.py ${CONFIG_FILE} & tail -f /dev/null"]
 # ENTRYPOINT ["/bin/bash", "-c", "source /opt/venv/bin/activate && /app/bountybot/docker-entrypoint.sh & tail -f /dev/null"]

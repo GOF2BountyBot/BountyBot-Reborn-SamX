@@ -94,6 +94,9 @@ RUN /opt/venv/bin/pip freeze
 ## Copy remaining app code...
 #COPY . .
 
+# Copy shared libs
+COPY ./services/shared /app/src/shared
+
 # create a non-root user and update permissions...
 RUN groupadd --gid 1002 botuser && \
     useradd --uid 1001 --gid botuser --shell /bin/bash --create-home botuser && \

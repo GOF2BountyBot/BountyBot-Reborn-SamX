@@ -8,6 +8,9 @@ logger = logging.get_logger("discord-gateway-bot.py")
 class GatewayBot(commands.Bot):
     def __init__(self):
         intents = discord.Intents.default()
+        intents.message_content = True
+        intents.members = True
+        super().__init__(comma
         super().__init__(command_prefix="!", intents=intents,
                          application_id=int(os.getenv("BOTAPPID", "0")))
 

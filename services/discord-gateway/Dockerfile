@@ -66,10 +66,6 @@ RUN python3 -m venv /opt/venv
 
 WORKDIR /app
 
-## Copy requirements files
-#COPY requirements.txt .
-#COPY bot/lib/AEPi/requirements.txt ./aepi.requirements.txt
-
 # Activate the virtual environment and upgrade pip
 RUN chmod +x /opt/venv/bin/activate && \
     /opt/venv/bin/pip install --upgrade --no-cache-dir \
@@ -78,11 +74,16 @@ RUN chmod +x /opt/venv/bin/activate && \
         wheel  \
         ninja \
         meson
-    
+
+## Copy requirements files
+COPY services/discord-gateway/requirements.txt ./requirements.txt 
+
 ## Install dependencies
-#RUN /opt/venv/bin/pip install --upgrade --no-cache-dir --prefer-binary \
-#    -r requirements.txt \
-#    -r aepi.requirements.txt
+RUN /opt/venv/bin/pip install --upgrade --no-cache-dir --compile --prefer-binary \
+    -r requirements.txt 
+
+# Copy shared libs
+COPY ./services/shared /app/src/shared
 
 # Install gdown for pulling assets from Google Drive
 #RUN /opt/venv/bin/pip install --upgrade --no-cache-dir --prefer-binary \
@@ -92,10 +93,7 @@ RUN chmod +x /opt/venv/bin/activate && \
 RUN /opt/venv/bin/pip freeze
 
 ## Copy remaining app code...
-#COPY . .
-
-# Copy shared libs
-COPY ./services/shared /app/src/shared
+COPY services/discord-gateway/ .
 
 # create a non-root user and update permissions...
 RUN groupadd --gid 1002 botuser && \
@@ -113,7 +111,7 @@ USER botuser
 
 # The ' & tail -f /dev/null' in the entrypoint below is a hack to keep the container running if the app crashes.
 # This can be handy for being able to connect to the container CLI and check files/logs since it will still be running.
-ENTRYPOINT ["/bin/bash", "-c", "source /opt/venv/bin/activate & tail -f /dev/null"]
+ENTRYPOINT ["/bin/bash", "-c", "source /opt/venv/bin/activate && /opt/venv/bin/python /app/src/bot.py & tail -f /dev/null"]
 # ENTRYPOINT ["/bin/bash", "-c", "source /opt/venv/bin/activate && /opt/venv/bin/python main.py ${CONFIG_FILE} & tail -f /dev/null"]
 # ENTRYPOINT ["/bin/bash", "-c", "source /opt/venv/bin/activate && /opt/venv/bin/python main.py ${CONFIG_FILE} & tail -f /dev/null"]
 # ENTRYPOINT ["/bin/bash", "-c", "source /opt/venv/bin/activate && /app/bountybot/docker-entrypoint.sh & tail -f /dev/null"]

@@ -112,6 +112,7 @@ USER botuser
 # The ' & tail -f /dev/null' in the entrypoint below is a hack to keep the container running if the app crashes.
 # This can be handy for being able to connect to the container CLI and check files/logs since it will still be running.
 ENTRYPOINT ["/bin/bash", "-c", "source /opt/venv/bin/activate && /opt/venv/bin/python /app/src/bot.py & tail -f /dev/null"]
+ENTRYPOINT ["/bin/bash", "-c", "source /opt/venv/bin/activate && /opt/venv/bin/python /app/src/bot-debug.py & tail -f /dev/null"]
 # ENTRYPOINT ["/bin/bash", "-c", "source /opt/venv/bin/activate && /opt/venv/bin/python main.py ${CONFIG_FILE} & tail -f /dev/null"]
 # ENTRYPOINT ["/bin/bash", "-c", "source /opt/venv/bin/activate && /opt/venv/bin/python main.py ${CONFIG_FILE} & tail -f /dev/null"]
 # ENTRYPOINT ["/bin/bash", "-c", "source /opt/venv/bin/activate && /app/bountybot/docker-entrypoint.sh & tail -f /dev/null"]

@@ -10,7 +10,6 @@ class GatewayBot(commands.Bot):
         intents = discord.Intents.default()
         intents.message_content = True
         intents.members = True
-        super().__init__(comma
         super().__init__(command_prefix="!", intents=intents,
                          application_id=int(os.getenv("BOTAPPID", "0")))
 
@@ -19,8 +18,11 @@ class GatewayBot(commands.Bot):
             if filename.endswith(".py"):
                 await self.load_extension(f"cogs.{filename[:-3]}")
                 logger.info(f"Loaded cog: {filename}")
+        logger.info("Waiting for ready...")
         await self.wait_until_ready()
+        logger.info("Checking guilds...")
         guilds = [discord.Object(id=g.id) for g in self.guilds]
+        logger.info("Starting command sync...")
         await self.tree.sync(guild=guilds)
         logger.info(f"Synced slash commands to guilds: {[g.id for g in self.guilds]}")
 

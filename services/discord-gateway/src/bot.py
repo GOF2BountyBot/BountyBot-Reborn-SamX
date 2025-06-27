@@ -31,14 +31,15 @@ class GatewayBot(commands.Bot):
             if self.guilds:
                 logger.info("Starting command sync...")
                 # Sync to all guilds the bot is in
-                synced = await self.tree.sync()
-                logger.info(f"Synced {len(synced)} global slash commands")
-
-                # Optionally sync to specific guilds for faster testing
-                # guild_objects = [discord.Object(id=g.id) for g in self.guilds]
-                # for guild_obj in guild_objects:
-                #     synced_guild = await self.tree.sync(guild=guild_obj)
-                #     logger.info(f"Synced {len(synced_guild)} commands to guild {guild_obj.id}")
+                logger.info("=== STARTING GUILD-SPECIFIC SYNC ===")
+                for guild in self.guilds:
+                    try:
+                        synced = await self.tree.sync(guild=discord.Object(id=guild.id))
+                        logger.info(f"✓ Synced {len(synced)} commands to {guild.name}")
+                    except Exception as e:
+                        logger.error(f"✗ Failed to sync to {guild.name}: {e}")
+                        if "403" in str(e):
+                            logger.error("Bot missing application.commands scope!")
             else:
                 logger.warning("Bot is not in any guilds - no commands to sync")
         except Exception as e:

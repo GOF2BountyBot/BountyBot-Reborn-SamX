@@ -1,26 +1,23 @@
 import logging
 import os
 import discord
+from discord import app_commands
 from discord.ext import commands
 import shared.logging as logging
 
-# Enhanced logging configuration for debugging
-def setup_debug_logging():
-    """Set up comprehensive logging for Discord bot debugging"""
-
-    # Set up Discord.py's internal logging
-    discord_logger = logging.get_logger("discord-gateway-bot.py")
-
-    return discord_logger
-
-class DebugBot(commands.Bot):
+class GatewayBot(commands.Bot):
     def __init__(self):
         # Enable debug logging
-        self.debug_logger = setup_debug_logging()
+        # self.debug_logger = setup_debug_logging()
 
         intents = discord.Intents.default()
         intents.message_content = True
-        intents.members = True
+        #intents.members = True
+        #intents.presences = True
+        #intents.reactions = True
+        #intents.messages = True
+        #intents.guilds = True
+        
 
         super().__init__(
             command_prefix="!",
@@ -77,9 +74,20 @@ class DebugBot(commands.Bot):
             self.logger.info(f"Commands before sync: {len(commands_before)}")
             for cmd in commands_before:
                 self.logger.info(f"  - {cmd.name}: {cmd.description}")
+            
+            if self.guilds:
+                self.logger.info("Starting command sync...")
+                # Sync to all guilds the bot is in
+                self.logger.info("=== STARTING GUILD-SPECIFIC SYNC ===")
+                for guild in self.guilds:
+                    try:
+                        synced = await self.tree.sync(guild=discord.Object(id=guild.id))
+                        self.logger.info(f"✓ Synced {len(synced)} commands to {guild.name}")
+                    except Exception as e:
+                        self.logger.error(f"✗ Failed to sync to {guild.name}: {e}")
+                        if "403" in str(e):
+                            self.logger.error("Bot missing application.commands scope!")
 
-            # Sync commands
-            synced = await self.tree.sync()
             self.logger.info(f"✓ Successfully synced {len(synced)} commands")
 
             # Log synced commands
@@ -110,12 +118,13 @@ if __name__ == "__main__":
     if not app_id:
         print("WARNING: BOTAPPID environment variable not set!")
 
-    print("=== STARTING DEBUG BOT ===")
+    print("=== STARTING BOT ===")
     print(f"Token: {'*' * (len(token) - 4)}{token[-4:]}")
     print(f"App ID: {app_id}")
 
-    bot = DebugBot()
+    bot = GatewayBot()
 
     # Run with debug logging disabled for the library's default handler
     # We're using our custom handler instead
     bot.run(token, log_handler=None)
+    # bot.run(token, log_level=3)

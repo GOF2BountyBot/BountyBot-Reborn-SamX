@@ -7,8 +7,8 @@ import requests
 
 
 logger = logging.get_logger("discord-gateway-DevCog")
-
-API_BASE = os.environ.get("API_BASE_URL", "http://bot-core:8000/api/v1")
+api_base = os.environ.get("BOT_API_BASE_URL", "http://bot-core:8000/api/v1")
+logger.debug(f"devCog loading with api_base: {api_base}")
 
 def is_developer():
     # return app_commands.checks.has_role("developer")
@@ -41,12 +41,14 @@ class HealthCog(commands.Cog):
     #@is_developer()
     async def health(self, interaction: discord.Interaction):
         """Calls the /health endpoint and reports status."""
+        logger.trace("/health command invoked by user...")
         await interaction.response.defer(thinking=True)
         try:
-            resp = requests.get(f"{API_BASE}/health", timeout=2.0)
+            logger.trace("Executing API request to bot service...")
+            resp = requests.get(f"{api_base}/health", timeout=2.0)
             resp.raise_for_status()
             data = resp.json()
-
+            logger.trace("Parsing response...")
             # Extracting information from the response
             status = data.get("status", "unknown")
             timestamp = data.get("timestamp", "N/A")
@@ -55,6 +57,7 @@ class HealthCog(commands.Cog):
             environment = data.get("environment", {})
             checks = data.get("checks", {})
 
+            logger.trace("Building Discord response...")
             # Determine the emoji based on status
             if status == "healthy":
                 emoji = "✅"
@@ -89,11 +92,11 @@ class HealthCog(commands.Cog):
                 description=msg,
                 color=discord.Colour.red()
             )
-            embed.set_footer(text=f"Checked via {API_BASE}/health")
+            embed.set_footer(text=f"Checked via {api_base}/health")
             await interaction.followup.send(content=emoji, embed=embed)
+        logger.trace("/health command end")
 
 async def setup(bot: commands.Bot):
-    # await bot.add_cog(PingCog(bot))
+    logger.debug(f"Setting up devCog...")
     await bot.add_cog(HealthCog(bot))
     logger.info("devCog loaded")
-

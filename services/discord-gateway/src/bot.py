@@ -67,7 +67,7 @@ class GatewayBot(commands.Bot):
         # Load cogs with detailed logging
         cog_count = 0
         for filename in os.listdir("src/cogs"):
-            if filename.endswith(".py"):
+            if filename.endswith(".py") and not any(substring in filename for substring in ("template", "disabled")):
                 try:
                     self.logger.debug(f"Loading cog: {filename}")
                     await self.load_extension(f"cogs.{filename[:-3]}")

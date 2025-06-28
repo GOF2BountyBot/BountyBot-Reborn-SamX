@@ -63,6 +63,7 @@ async def health_check() -> HealthResponse:
 
     # Determine overall status
     all_checks_passed = all(checks.values())
+    logger.trace("All Checks Passed: " + str(all_checks_passed))
     service_status = "healthy" if all_checks_passed else "unhealthy"
 
     return HealthResponse(

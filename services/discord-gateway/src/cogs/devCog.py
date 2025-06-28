@@ -1,7 +1,9 @@
+import os
 import discord
 from discord import app_commands
 from discord.ext import commands
 import shared.logging as logging
+import requests
 
 
 logger = logging.get_logger("discord-gateway-DevCog")
@@ -12,9 +14,7 @@ def is_developer():
     # return app_commands.checks.has_role("developer")
     return True
 
-class PingCog(commands.Cog):
-    """Cog containing /ping restricted to 'developer' role."""
-
+class HealthCog(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
 
@@ -34,14 +34,11 @@ class PingCog(commands.Cog):
             logger.exception("Error in /ping", exc_info=error)
             await interaction.response.send_message("⚠️ An error occurred.", ephemeral=True)
 
-class HealthCog(commands.Cog):
-    def __init__(self, bot: commands.Bot):
-        self.bot = bot
-
     @app_commands.command(
         name="health",
         description="Check the health of the BountyBot API service."
     )
+    #@is_developer()
     async def health(self, interaction: discord.Interaction):
         """Calls the /health endpoint and reports status."""
         await interaction.response.defer(thinking=True)
@@ -69,5 +66,6 @@ class HealthCog(commands.Cog):
         await interaction.followup.send(content=emoji, embed=embed)
 
 async def setup(bot: commands.Bot):
-    await bot.add_cog(PingCog(bot))
+    # await bot.add_cog(PingCog(bot))
+    await bot.add_cog(HealthCog(bot))
     logger.info("devCog loaded")

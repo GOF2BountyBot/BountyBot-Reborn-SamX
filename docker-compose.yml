@@ -56,6 +56,8 @@ services:
     container_name: discord-gateway
     networks:
       - botnetv2
+    ports:
+      - 8080:8080
     depends_on:
       - bot-core
     env_file:
@@ -77,6 +79,8 @@ services:
     container_name: blender-service
     networks:
       - botnetv2
+    ports:
+      - 8001:8001
     env_file:
       - path: ./.env
         required: false 
@@ -88,8 +92,6 @@ services:
       - /etc/timezone:/etc/timezone:ro
       - ./mappings/blender-renderer:/app/data
     restart: unless-stopped
-    ports:
-      - "8001:8000"
 
 networks:
   botnetv2:

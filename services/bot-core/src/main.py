@@ -11,11 +11,24 @@ import pkgutil
 from pathlib import Path
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from contextlib import asynccontextmanager
 import shared.logging as logging
 # Import the routers package
 import routers
 
 logger = logging.get_logger("bot-main-script")
+
+# Handle app startup/shutdown as app lifespan events
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Startup / shutdown logic (replaces @app.on_event)."""
+    logger.info("🚀 BountyBot API starting up...")
+    logger.info("📚 API Documentation available at: /docs")
+    logger.info("📖 ReDoc Documentation available at: /redoc")
+    yield
+    logger.info("🛑 BountyBot API shutting down...")
+    logger.info("👋 Goodbye!")
+
 
 def create_app() -> FastAPI:
     """Create and configure the FastAPI application."""
@@ -54,7 +67,8 @@ def create_app() -> FastAPI:
         },
         docs_url="/docs",
         redoc_url="/redoc",
-        openapi_url="/openapi.json"
+        openapi_url="/openapi.json",
+        lifespan=lifespan
     )
 
     # Add CORS middleware
@@ -106,20 +120,6 @@ def include_routers(app: FastAPI) -> None:
 
 # Create the app instance
 app = create_app()
-
-# Startup event
-@app.on_event("startup")
-async def startup_event():
-    """Application startup event handler."""
-    logger.info("🚀 BountyBot API starting up...")
-    logger.info("📚 API Documentation available at: /docs")
-    logger.info("📖 ReDoc Documentation available at: /redoc")
-
-# Shutdown event  
-@app.on_event("shutdown")
-async def shutdown_event():
-    """Application shutdown event handler."""
-    logger.info("🛑 BountyBot API shutting down...")
 
 # Root endpoint
 @app.get("/", tags=["root"])

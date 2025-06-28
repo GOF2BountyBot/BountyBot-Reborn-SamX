@@ -8,7 +8,7 @@ import requests
 
 logger = logging.get_logger("discord-gateway-DevCog")
 
-API_BASE = os.environ.get("API_BASE_URL", "http://bot-core:8000")
+API_BASE = os.environ.get("API_BASE_URL", "http://bot-core:8000/api/v1")
 
 def is_developer():
     # return app_commands.checks.has_role("developer")
@@ -46,26 +46,54 @@ class HealthCog(commands.Cog):
             resp = requests.get(f"{API_BASE}/health", timeout=2.0)
             resp.raise_for_status()
             data = resp.json()
+
+            # Extracting information from the response
             status = data.get("status", "unknown")
-            if status == "ok":
+            timestamp = data.get("timestamp", "N/A")
+            version = data.get("version", "N/A")
+            service = data.get("service", "N/A")
+            environment = data.get("environment", {})
+            checks = data.get("checks", {})
+
+            # Determine the emoji based on status
+            if status == "healthy":
                 emoji = "✅"
-                msg = "Service is healthy."
+                color = discord.Colour.green()
             else:
-                emoji = "⚠️"
-                msg = f"Unexpected payload: `{data}`"
+                emoji = "❌"
+                color = discord.Colour.red()
+
+            # Create the embed
+            embed = discord.Embed(
+                title=f"BountyBot API Health - {status}",
+                description=f"**Service:** {service}\n**Version:** {version}\n**Timestamp:** {timestamp}",
+                color=color
+            )
+
+            # Add environment details to the embed
+            if environment:
+                env_details = "\n".join([f"{key}: {value}" for key, value in environment.items()])
+                embed.add_field(name="Environment", value=env_details, inline=False)
+
+            # Add checks to the embed
+            if checks:
+                check_details = "\n".join([f"{key}: {'✅' if value else '❌'}" for key, value in checks.items()])
+                embed.add_field(name="Checks", value=check_details, inline=False)
+            await interaction.followup.send(content=emoji, embed=embed)
         except requests.RequestException as e:
             emoji = "❌"
             msg = f"Health check failed: `{e}`"
 
-        embed = discord.Embed(
-            title="BountyBot API Health",
-            description=msg,
-            color=discord.Colour.green() if emoji == "✅" else discord.Colour.red()
-        )
-        embed.set_footer(text=f"Checked via {API_BASE}/health")
-        await interaction.followup.send(content=emoji, embed=embed)
+            embed = discord.Embed(
+                title="BountyBot API Health",
+                description=msg,
+                color=discord.Colour.red()
+            )
+            embed.set_footer(text=f"Checked via {API_BASE}/health")
+            await interaction.followup.send(content=emoji, embed=embed)
 
 async def setup(bot: commands.Bot):
     # await bot.add_cog(PingCog(bot))
     await bot.add_cog(HealthCog(bot))
     logger.info("devCog loaded")
+

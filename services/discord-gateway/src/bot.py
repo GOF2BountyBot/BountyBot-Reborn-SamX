@@ -110,6 +110,7 @@ class GatewayBot(commands.Bot):
                 self.logger.debug("=== STARTING GUILD-SPECIFIC SYNC ===")
                 for guild in self.guilds:
                     try:
+                        self.tree.copy_global_to(guild=guild)
                         synced = await self.tree.sync(guild=discord.Object(id=guild.id))
                         self.logger.trace(f"✓ Synced {len(synced)} commands to {guild.name}")
                     except Exception as e:

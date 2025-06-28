@@ -36,7 +36,9 @@ services:
     ports:
       - 8000:8000
     depends_on:
-      - db
+      db:
+        condition: service_healthy
+        restart: true
     env_file:
       - path: ./.env
         required: false 
@@ -59,7 +61,9 @@ services:
     ports:
       - 8080:8080
     depends_on:
-      - bot-core
+      bot-core:
+        condition: service_healthy
+        restart: true
     env_file:
       - path: ./.env
         required: false 

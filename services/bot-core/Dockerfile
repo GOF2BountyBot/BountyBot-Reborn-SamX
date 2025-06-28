@@ -80,10 +80,13 @@ RUN chmod +x /opt/venv/bin/activate && \
         wheel  \
         ninja \
         meson
-    
+
+## Copy requirements files
+COPY services/bot-core/requirements.txt ./requirements.txt 
+
 ## Install dependencies
-#RUN /opt/venv/bin/pip install --upgrade --no-cache-dir --prefer-binary \
-#    -r requirements.txt \
+RUN /opt/venv/bin/pip install --upgrade --no-cache-dir --prefer-binary \
+    -r requirements.txt \
 #    -r aepi.requirements.txt
 
 # Install gdown for pulling assets from Google Drive
@@ -93,8 +96,8 @@ RUN /opt/venv/bin/pip install --upgrade --no-cache-dir --prefer-binary \
 # mainly for debugging - catalog all pip packages and versions
 RUN /opt/venv/bin/pip freeze
 
-# Copy remaining app code...
-# COPY . .
+## Copy remaining app code...
+COPY services/bot-core/ .
 
 # Copy shared libs
 COPY ./services/shared /app/src/shared

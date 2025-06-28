@@ -1,0 +1,3 @@
+fastapi
+fastapi-health
+hypercorn[uvloop]

@@ -18,7 +18,7 @@ class GatewayBot(commands.Bot):
         #intents.presences = True
         #intents.reactions = True
         #intents.messages = True
-        #intents.guilds = True
+        intents.guilds = True
         
 
         super().__init__(
@@ -116,6 +116,11 @@ class GatewayBot(commands.Bot):
                         self.logger.error(f"✗ Failed to sync to {guild.name}: {e}")
                         if "403" in str(e):
                             self.logger.error("Bot missing application.commands scope!")
+            else:
+                # Sync globally (if needed)
+                synced = await self.tree.sync()
+                self.logger.trace(f"✓ Synced {len(synced)} commands globally")
+            
 
             self.logger.info(f"✓ Successfully synced {len(synced)} commands")
 

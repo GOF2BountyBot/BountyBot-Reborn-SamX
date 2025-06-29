@@ -13,6 +13,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 import shared.logging as logging
+import logging as pyLogging
 # Import the routers package
 import routers
 
@@ -132,7 +133,25 @@ async def root():
         "redoc": "/redoc"
     }
 
+class HealthFilter(pyLogging.Filter):
+    def filter(self, record: pyLogging.LogRecord) -> bool:
+        msg = record.getMessage()
+        # drop lines that mention the health path
+        if "/api/v1/health/" in msg:
+            return False
+        return True
+
 if __name__ == "__main__":
     import uvicorn
     logger.info("Starting uvicorn...")
-    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
+    # attach filter to uvicorn.access to filter health check API requests 
+    # from being logged as they are particularly noisy
+    pyLogging.getLogger("uvicorn.access").addFilter(HealthFilter())
+    uvicorn.run("main:app", 
+                host="0.0.0.0", 
+                port=8000, 
+                # access_log shows API requests in log output, can get a bit noisy tho
+                access_log=True,
+                # reload is useful for development but should be turned off for production
+                # It will monitor the filesystem and restart the server when changes are detected.
+                reload=True)

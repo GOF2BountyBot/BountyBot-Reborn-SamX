@@ -11,9 +11,6 @@ services:
     environment:
       - PUID=${PUID:-1000}
       - PGID=${PGID:-1000}
-      - POSTGRES_USER=bounty
-      - POSTGRES_PASSWORD=bounty
-      - POSTGRES_DB=bountydb
     volumes:
       - /etc/localtime:/etc/localtime:ro
       - /etc/timezone:/etc/timezone:ro

@@ -1,4 +1,16 @@
 fastapi[standard]
 fastapi-health
+fastapi-sqlalchemy
+#fastapi-healthcheck
+#fastapi-healthcheck-sqlalchemy  
 uvicorn[standard]
 hypercorn[uvloop]
+aiohttp[speedups]
+SQLAlchemy[asyncio]
+# Used for syncronous database operations in some parts of the codebase like migration of data
+psycopg2-binary
+# Used for asyncronous database operations in most of the app runtime environment
+asyncpg
+alembic
+pydantic
+python-dotenv

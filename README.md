@@ -3,7 +3,6 @@
 > A containerised, **GPU-ready** micro-service stack that powers the next iteration of **BountyBot**.
 > Technologies: FastAPI, PostgreSQL, CUDA, Blender, Docker-Compose, and **Discord** gateway integrations.
 
----
 
 ## Table of Contents
 1. Project Layout

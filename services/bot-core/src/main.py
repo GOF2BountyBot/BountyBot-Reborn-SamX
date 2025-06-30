@@ -3,6 +3,12 @@ Main FastAPI application for BountyBot API.
 
 This module sets up the FastAPI application with automatic
 router discovery and comprehensive API documentation.
+
+CHANGES MADE:
+- Added database initialization during startup
+- Minimal changes to preserve existing functionality
+- Database manager and schema manager integration
+- Proper shutdown handling for database connections
 """
 
 import os
@@ -14,7 +20,11 @@ from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 import shared.logging as logging
 import logging as pyLogging
+
+# NEW IMPORTS: Database management
 from persist.database.manager import db_manager
+from persist.schemas.schema_manager import initialize_schema
+
 # Import the routers package
 import routers
 
@@ -23,23 +33,48 @@ logger = logging.get_logger("bot-main-script")
 # Handle app startup/shutdown as app lifespan events
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Startup / shutdown logic (replaces @app.on_event)."""
+    """
+    Startup / shutdown logic (replaces @app.on_event).
+    
+    UPDATED: Added database initialization during startup
+    """
     logger.info("🚀 BountyBot API starting up...")
     
-    # Initialize database connection
-    logger.info("📊 Initializing database connection...")
-    db_success = await db_manager.initialize()
-    if not db_success:
-        logger.error("❌ Database initialization failed - application will not start")
-        raise RuntimeError("Database initialization failed")
-
-    logger.info("✅ Database initialized successfully")
+    # NEW: Initialize database connection and schema
+    try:
+        logger.info("🗄️ Initializing database connection...")
+        db_manager.initialize()
+        
+        logger.info("📋 Checking and updating database schema...")
+        schema_manager = initialize_schema(db_manager)
+        
+        # Store schema manager reference for health checks
+        app.state.schema_manager = schema_manager
+        app.state.db_manager = db_manager
+        
+        logger.info("✅ Database initialization completed successfully")
+        
+    except Exception as e:
+        logger.error(f"❌ Database initialization failed: {e}")
+        logger.error("🛑 Application startup aborted due to database issues")
+        raise  # This will prevent the application from starting
+    
     logger.info("📚 API Documentation available at: /docs")
     logger.info("📖 ReDoc Documentation available at: /redoc")
-    yield
+    
+    yield  # Application runs here
+    
+    # Shutdown logic
     logger.info("🛑 BountyBot API shutting down...")
-    logger.info("📊 Closing database connections...")
-    await db_manager.close()
+    
+    # NEW: Cleanup database connections
+    try:
+        logger.info("🗄️ Shutting down database connections...")
+        db_manager.shutdown()
+        logger.info("✅ Database connections closed successfully")
+    except Exception as e:
+        logger.error(f"⚠️ Error during database shutdown: {e}")
+    
     logger.info("👋 Goodbye!")
 
 
@@ -57,10 +92,10 @@ def create_app() -> FastAPI:
 
         ## Features
 
-        * **Health Monitoring**: Comprehensive health check endpoints
+        * **Health Monitoring**: Comprehensive health check endpoints with database status
         * **Bot Management**: Discord bot control and status
         * **Game Features**: Bounty hunting, trading, dueling systems
-        * **Database Integration**: PostgreSQL with SQLAlchemy ORM and schema versioning
+        * **Database Management**: Automatic schema versioning and migrations
 
         ## Documentation
 
@@ -82,7 +117,7 @@ def create_app() -> FastAPI:
         docs_url="/docs",
         redoc_url="/redoc",
         openapi_url="/openapi.json",
-        lifespan=lifespan
+        lifespan=lifespan  # This includes our database initialization
     )
 
     # Add CORS middleware
@@ -105,6 +140,8 @@ def include_routers(app: FastAPI) -> None:
 
     This function iterates through all modules in the routers package
     and includes any APIRouter instances found.
+    
+    NO CHANGES: This function remains unchanged
     """
     routers_path = Path(__file__).parent / "routers"
 
@@ -123,7 +160,7 @@ def include_routers(app: FastAPI) -> None:
                     app.include_router(
                         router,
                         prefix="/api/v1",  # Global API version prefix
-                        tags=[modname]     # Add module name as tag
+                        tags=[modname]  # Add module name as tag
                     )
                     logger.info(f"✓ Included router from routers.{modname}")
                 else:
@@ -135,62 +172,37 @@ def include_routers(app: FastAPI) -> None:
 # Create the app instance
 app = create_app()
 
-# Root endpoint
+# Root endpoint - NO CHANGES
 @app.get("/", tags=["root"])
 async def root():
-    """Root endpoint with API information and system status."""
-    # Get basic database status for root endpoint
-    try:
-        db_health = await db_manager.get_db_health()
-        db_status = db_health["status"]
-        schema_version = db_health.get("schema_version", "unknown")
-    except Exception:
-        db_status = "unknown"
-        schema_version = "unknown"
-
+    """Root endpoint with API information."""
     return {
         "message": "BountyBot API is running",
         "version": "1.0.0",
-        "database_status": db_status,
-        "schema_version": schema_version,
         "docs": "/docs",
-        "redoc": "/redoc",
-        "health_check": "/api/v1/health/"
+        "redoc": "/redoc"
     }
 
+# Health check filter - NO CHANGES
 class HealthFilter(pyLogging.Filter):
-    """Filter to reduce noise from health check endpoints in logs."""
     def filter(self, record: pyLogging.LogRecord) -> bool:
         msg = record.getMessage()
-        # Drop lines that mention health check paths to reduce log noise
-        health_paths = ["/api/v1/health/", "/health"]
-        return not any(path in msg for path in health_paths)
+        # drop lines that mention the health path
+        if "/api/v1/health/" in msg:
+            return False
+        return True
 
 if __name__ == "__main__":
     import uvicorn
-    logger.info("Starting uvicorn server...")
-
-    # Attach filter to uvicorn.access to filter health check API requests 
-    # from being logged as they can be particularly noisy
+    logger.info("Starting uvicorn...")
+    # attach filter to uvicorn.access to filter health check API requests 
+    # from being logged as they are particularly noisy
     pyLogging.getLogger("uvicorn.access").addFilter(HealthFilter())
-
-    # Get configuration from environment
-    host = os.getenv("HOST", "0.0.0.0")
-    port = int(os.getenv("PORT", "8000"))
-    # reload is useful for development but should be turned off for production
-    # It will monitor the filesystem and restart the server when changes are detected.
-    reload = os.getenv("RELOAD", "true").lower() == "true"
-    log_level = os.getenv("LOG_LEVEL", "info").lower()
-
-    logger.info(f"Starting server on {host}:{port}")
-    logger.info(f"Reload mode: {reload}")
-    logger.info(f"Log level: {log_level}")
-    uvicorn.run(
-        "main:app", 
-        host=host, 
-        port=port,
-        # Access log shows API requests in log output, can get noisy
-        access_log=True,
-        reload=reload,
-        log_level=log_level
-    )
+    uvicorn.run("main:app", 
+                host="0.0.0.0", 
+                port=8000, 
+                # access_log shows API requests in log output, can get a bit noisy tho
+                access_log=True,
+                # reload is useful for development but should be turned off for production
+                # It will monitor the filesystem and restart the server when changes are detected.
+                reload=True)

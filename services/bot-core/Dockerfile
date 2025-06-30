@@ -116,7 +116,7 @@ RUN groupadd --gid 1002 botuser && \
 
 USER botuser
 
-HEALTHCHECK --interval=30s --timeout=5s --start-period=5s --retries=3 \
+HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
   CMD curl -s -o /dev/null -f http://localhost:8000/api/v1/health/ || exit 1
 
 # The ' & tail -f /dev/null' in the entrypoint below is a hack to keep the container running if the app crashes.

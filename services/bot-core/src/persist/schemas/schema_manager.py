@@ -1,291 +1,386 @@
 """
-Database schema management and versioning for BountyBot.
+Database schema management for BountyBot.
 
-This module handles all schema-related operations including:
-- Schema version tracking
-- Migration management
-- Schema validation
+This module handles database schema versioning, migrations, and initialization.
+It implements a simple yet effective schema versioning system using a dedicated
+'schema' table to track the current database schema version.
+
+Key Features:
+- Simple schema versioning with 'schema' table
+- Automatic database initialization if not exists
+- Sequential schema migration support
+- Schema version validation and health reporting
+- Future-ready for Alembic integration
 """
 
 import os
-from typing import Optional, List, Dict, Any
-from sqlalchemy import MetaData, Table, Column, Integer, String, DateTime, text
-from sqlalchemy.ext.asyncio import AsyncConnection
-from sqlalchemy.exc import SQLAlchemyError
+from typing import Dict, Any, Optional, List
+from sqlalchemy import text, Table, Column, String, DateTime, MetaData
+from sqlalchemy.exc import SQLAlchemyError, ProgrammingError
 from datetime import datetime
 import shared.logging as logging
 
-logger = logging.get_logger("schema-manager")
+logger = logging.get_logger("bot-schema-manager")
 
 class SchemaManager:
     """
     Manages database schema versioning and migrations.
     
-    Provides centralized schema management with:
-    - Version tracking
-    - Migration execution
-    - Schema validation
-    - Rollback capabilities
+    This class provides a foundation for schema management that can be
+    easily extended or replaced with Alembic in the future.
     """
-
-    def __init__(self):
-        self.current_schema_version = "1.0.0"
-        self.metadata = MetaData()
-        self._define_schema_table()
-        self._migration_registry = {}
-        self._register_migrations()
-
-    def _define_schema_table(self) -> None:
-        """Define the schema version tracking table."""
-        self.schema_table = Table(
-            'schema_version',
-            self.metadata,
-            Column('id', Integer, primary_key=True),
-            Column('version', String(50), nullable=False, unique=True),
-            Column('applied_at', DateTime, nullable=False, server_default=text('NOW()')),
-            Column('description', String(255)),
-            Column('checksum', String(64)),  # For validation
-            Column('execution_time_ms', Integer),
-            Column('applied_by', String(100))
-        )
-
-    def _register_migrations(self) -> None:
-        """Register all available migrations."""
-        # This would be populated with actual migration functions
-        self._migration_registry = {
-            "1.0.0": {
-                "description": "Initial schema version",
-                "migration_func": self._migrate_to_1_0_0,
-                "rollback_func": None
-            }
-            # Add more migrations as needed
-        }
-
-    async def initialize(self, engine) -> None:
+    
+    # Current schema version - update this when adding new migrations
+    CURRENT_SCHEMA_VERSION = "1.0.0"
+    
+    def __init__(self, db_manager):
         """
-        Initialize schema management.
+        Initialize schema manager with database manager reference.
         
         Args:
-            engine: SQLAlchemy engine for database operations
+            db_manager: DatabaseManager instance
+        """
+        self.db_manager = db_manager
+        self._schema_migrations = self._load_migrations()
+        
+    def _load_migrations(self) -> Dict[str, callable]:
+        """
+        Load schema migration functions.
+        
+        Returns a dictionary mapping version strings to migration functions.
+        In the future, this could be replaced with Alembic migration discovery.
+        """
+        return {
+            "1.0.0": self._migrate_to_1_0_0,
+            # Add future migrations here:
+            # "1.1.0": self._migrate_to_1_1_0,
+            # "2.0.0": self._migrate_to_2_0_0,
+        }
+        
+    def initialize_database(self) -> None:
+        """
+        Initialize the database schema.
+        
+        This method should be called during application startup to ensure
+        the database is properly initialized and up-to-date.
+        """
+        logger.info("Starting database schema initialization...")
+        
+        try:
+            # Check if database exists and is accessible
+            if not self._database_accessible():
+                raise RuntimeError("Database is not accessible")
+                
+            # Get current schema version
+            current_version = self._get_current_schema_version()
+            
+            if current_version is None:
+                # Database exists but no schema version table - initialize
+                logger.info("No schema version found, initializing database...")
+                self._initialize_fresh_database()
+            elif current_version != self.CURRENT_SCHEMA_VERSION:
+                # Database exists but schema is outdated - migrate
+                logger.info(f"Schema version mismatch. Current: {current_version}, "
+                          f"Required: {self.CURRENT_SCHEMA_VERSION}")
+                self._migrate_schema(current_version, self.CURRENT_SCHEMA_VERSION)
+            else:
+                # Database is up-to-date
+                logger.info(f"Database schema is up-to-date (version: {current_version})")
+                
+        except Exception as e:
+            logger.error(f"Database schema initialization failed: {e}")
+            raise
+            
+    def _database_accessible(self) -> bool:
+        """
+        Check if the database is accessible.
+        
+        Returns:
+            True if database is accessible, False otherwise
         """
         try:
-            await self._ensure_schema_table(engine)
-            await self._check_and_update_schema(engine)
-            logger.info("Schema management initialized successfully")
+            with self.db_manager.get_connection() as conn:
+                conn.execute(text("SELECT 1"))
+                return True
         except Exception as e:
-            logger.error(f"Schema management initialization failed: {e}")
-            raise
-
-    async def _ensure_schema_table(self, engine) -> None:
-        """Ensure the schema versioning table exists."""
-        try:
-            # Define schema table structure
-            metadata = MetaData()
-            schema_table = Table(
-                'schema_version',
-                metadata,
-                Column('id', Integer, primary_key=True),
-                Column('version', String(50), nullable=False),
-                Column('applied_at', DateTime, nullable=False, server_default=text('NOW()')),
-                Column('description', String(255))
-            )
-
-            # Use async connection for consistency
-            async with engine.begin() as conn:
-                # Check if table exists
-                result = await conn.execute(text("""
-                    SELECT EXISTS (
-                        SELECT FROM information_schema.tables
-                        WHERE table_schema = 'public'
-                        AND table_name = 'schema_version'
-                    );
-                """))
-                table_exists_row = result.fetchone()
-                table_exists = table_exists_row[0]
-
-                if not table_exists:
-                    logger.info("Creating schema_version table...")
-                    # For DDL operations, use sync connection
-                    await conn.run_sync(lambda sync_conn: metadata.create_all(sync_conn, tables=[schema_table]))
-                    
-                    # Insert initial version
-                    await conn.execute(text("""
-                        INSERT INTO schema_version (version, description)
-                        VALUES (:version, :description)
-                    """), {
-                        "version": self.current_schema_version,
-                        "description": "Initial schema version"
-                    })
-                    
-                    logger.info(f"Schema version table created with version {self.current_schema_version}")
-                else:
-                    logger.info("Schema version table already exists")
-        except Exception as e:
-            logger.error(f"Failed to ensure schema table: {e}")
-            raise
-
-
-    async def _check_and_update_schema(self) -> None:
-        """Check current schema version and apply updates if necessary."""
-        try:
-            # Use async connection for consistency
-            async with self.async_engine.begin() as conn:
-                # Get current schema version
-                result = await conn.execute(text("""
-                    SELECT version FROM schema_version
-                    ORDER BY applied_at DESC LIMIT 1
-                """))
-                current_version = result.fetchone()
-                
-                if current_version:
-                    db_version = current_version[0]
-                    logger.info(f"Current database schema version: {db_version}")
-                    if db_version != self.current_schema_version:
-                        logger.info(f"Schema update needed: {db_version} -> {self.current_schema_version}")
-                        await self._apply_schema_updates(db_version)
-                    else:
-                        logger.info("Schema is up to date")
-                else:
-                    logger.warning("No schema version found, this should not happen")
-        except Exception as e:
-            logger.error(f"Schema version check failed: {e}")
-            raise
-
-
-    async def get_current_version(self, conn) -> str:
+            logger.error(f"Database accessibility check failed: {e}")
+            return False
+            
+    def _get_current_schema_version(self) -> Optional[str]:
         """
         Get the current schema version from the database.
         
-        Args:
-            conn: Database connection
-            
         Returns:
-            str: Current schema version
+            Current schema version string, or None if schema table doesn't exist
         """
         try:
-            result = await conn.execute(text("""
-                SELECT version FROM schema_version
-                ORDER BY applied_at DESC LIMIT 1
-            """))
-            row = result.fetchone()
-            return row.version if row else "0.0.0"
+            # Check if schema table exists
+            if not self.db_manager.table_exists("schema"):
+                return None
+                
+            # Query current version
+            with self.db_manager.get_connection() as conn:
+                result = conn.execute(text("SELECT version FROM schema LIMIT 1"))
+                row = result.fetchone()
+                return row[0] if row else None
+                
         except Exception as e:
-            logger.error(f"Failed to get current schema version: {e}")
-            return "0.0.0"
-
-    async def _apply_migrations(self, engine, from_version: str, to_version: str) -> None:
+            logger.warning(f"Could not retrieve schema version: {e}")
+            return None
+            
+    def _create_schema_table(self) -> None:
+        """Create the schema version tracking table."""
+        logger.info("Creating schema version table...")
+        
+        create_schema_table_sql = """
+        CREATE TABLE schema (
+            version VARCHAR(50) NOT NULL,
+            applied_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            description TEXT
+        )
         """
-        Apply schema migrations from current version to target version.
+        
+        try:
+            with self.db_manager.get_connection() as conn:
+                conn.execute(text(create_schema_table_sql))
+                conn.commit()
+                logger.info("Schema version table created successfully")
+        except Exception as e:
+            logger.error(f"Failed to create schema table: {e}")
+            raise
+            
+    def _update_schema_version(self, version: str, description: str = "") -> None:
+        """
+        Update the schema version in the database.
         
         Args:
-            engine: Database engine
+            version: New schema version
+            description: Optional description of the schema changes
+        """
+        try:
+            with self.db_manager.get_connection() as conn:
+                # Clear existing version records
+                conn.execute(text("DELETE FROM schema"))
+                
+                # Insert new version record
+                conn.execute(
+                    text("INSERT INTO schema (version, description) VALUES (:version, :description)"),
+                    {"version": version, "description": description}
+                )
+                conn.commit()
+                
+                logger.info(f"Schema version updated to: {version}")
+                
+        except Exception as e:
+            logger.error(f"Failed to update schema version: {e}")
+            raise
+            
+    def _initialize_fresh_database(self) -> None:
+        """Initialize a fresh database with the latest schema."""
+        logger.info("Initializing fresh database...")
+        
+        try:
+            # Create schema version table
+            self._create_schema_table()
+            
+            # Apply the latest schema migration
+            latest_version = self.CURRENT_SCHEMA_VERSION
+            if latest_version in self._schema_migrations:
+                self._schema_migrations[latest_version]()
+                
+            # Update schema version
+            self._update_schema_version(
+                latest_version, 
+                f"Initial database setup with schema version {latest_version}"
+            )
+            
+            logger.info("Fresh database initialization completed")
+            
+        except Exception as e:
+            logger.error(f"Fresh database initialization failed: {e}")
+            raise
+            
+    def _migrate_schema(self, from_version: str, to_version: str) -> None:
+        """
+        Migrate schema from one version to another.
+        
+        Args:
             from_version: Current schema version
             to_version: Target schema version
         """
-        migrations_to_apply = self._get_migration_path(from_version, to_version)
+        logger.info(f"Migrating schema from {from_version} to {to_version}")
         
-        for migration_version in migrations_to_apply:
-            start_time = datetime.utcnow()
-            try:
-                migration_info = self._migration_registry[migration_version]
-                logger.info(f"Applying migration to version {migration_version}: {migration_info['description']}")
-                
-                # Execute migration
-                await migration_info['migration_func'](engine)
-                
-                # Record migration
-                execution_time = int((datetime.utcnow() - start_time).total_seconds() * 1000)
-                await self._record_migration(engine, migration_version, migration_info, execution_time)
-                
-                logger.info(f"Migration to {migration_version} completed successfully")
-                
-            except Exception as e:
-                logger.error(f"Migration to {migration_version} failed: {e}")
-                # Attempt rollback if available
-                if migration_info.get('rollback_func'):
-                    try:
-                        await migration_info['rollback_func'](engine)
-                        logger.info(f"Rollback for {migration_version} completed")
-                    except Exception as rollback_error:
-                        logger.error(f"Rollback failed: {rollback_error}")
-                raise
-
+        try:
+            # Get ordered list of migrations to apply
+            migrations_to_apply = self._get_migration_path(from_version, to_version)
+            
+            # Apply each migration in order
+            for version in migrations_to_apply:
+                if version in self._schema_migrations:
+                    logger.info(f"Applying migration to version {version}")
+                    self._schema_migrations[version]()
+                    self._update_schema_version(
+                        version, 
+                        f"Migrated from {from_version} to {version}"
+                    )
+                else:
+                    raise RuntimeError(f"No migration found for version {version}")
+                    
+            logger.info(f"Schema migration completed: {from_version} -> {to_version}")
+            
+        except Exception as e:
+            logger.error(f"Schema migration failed: {e}")
+            raise
+            
     def _get_migration_path(self, from_version: str, to_version: str) -> List[str]:
         """
-        Determine the migration path from current to target version.
+        Get the ordered list of migrations to apply.
         
         Args:
-            from_version: Current version
+            from_version: Starting version
             to_version: Target version
             
         Returns:
-            List of migration versions to apply
+            List of version strings representing the migration path
         """
-        # Simple implementation - in production, this would handle complex version trees
-        available_versions = sorted(self._migration_registry.keys())
+        # For now, implement simple version comparison
+        # In a more complex system, this would use proper version parsing
+        available_versions = sorted(self._schema_migrations.keys())
         
         try:
-            from_index = available_versions.index(from_version)
+            from_index = available_versions.index(from_version) if from_version in available_versions else -1
             to_index = available_versions.index(to_version)
             
-            if to_index > from_index:
-                return available_versions[from_index + 1:to_index + 1]
-            else:
-                return []  # Downgrade not supported in this simple implementation
+            if from_index >= to_index:
+                return []  # No migration needed or downgrade (not supported)
                 
+            return available_versions[from_index + 1:to_index + 1]
+            
         except ValueError:
-            logger.error(f"Invalid version range: {from_version} -> {to_version}")
-            return []
-
-    async def _record_migration(self, engine, version: str, migration_info: Dict, execution_time: int) -> None:
-        """Record a successful migration in the database."""
-        try:
-            with engine.begin() as conn:
-                conn.execute(text("""
-                    INSERT INTO schema_version (version, description, execution_time_ms, applied_by)
-                    VALUES (:version, :description, :execution_time, :applied_by)
-                """), {
-                    "version": version,
-                    "description": migration_info['description'],
-                    "execution_time": execution_time,
-                    "applied_by": "system"
-                })
-        except Exception as e:
-            logger.error(f"Failed to record migration: {e}")
-            raise
-
-    async def _migrate_to_1_0_0(self, engine) -> None:
-        """Migration function for version 1.0.0."""
-        # This would contain the actual migration logic
-        logger.info("Executing migration to version 1.0.0")
-        # Example: Create initial tables, indexes, etc.
-        pass
-
-    async def get_migration_history(self, engine) -> List[Dict[str, Any]]:
+            raise RuntimeError(f"Invalid migration path: {from_version} -> {to_version}")
+            
+    def get_schema_health_info(self) -> Dict[str, Any]:
         """
-        Get the complete migration history.
+        Get schema health information for health checks.
         
         Returns:
-            List of migration records
+            Dictionary containing schema health metrics
         """
+        health_info = {
+            "status": "unknown",
+            "current_version": None,
+            "expected_version": self.CURRENT_SCHEMA_VERSION,
+            "schema_table_exists": False,
+            "version_match": False,
+            "error": None
+        }
+        
         try:
-            with engine.connect() as conn:
-                result = conn.execute(text("""
-                    SELECT version, description, applied_at, execution_time_ms, applied_by
-                    FROM schema_version
-                    ORDER BY applied_at DESC
-                """))
+            # Check if schema table exists
+            health_info["schema_table_exists"] = self.db_manager.table_exists("schema")
+            
+            if health_info["schema_table_exists"]:
+                # Get current version
+                current_version = self._get_current_schema_version()
+                health_info["current_version"] = current_version
                 
-                return [
-                    {
-                        "version": row.version,
-                        "description": row.description,
-                        "applied_at": row.applied_at.isoformat(),
-                        "execution_time_ms": row.execution_time_ms,
-                        "applied_by": row.applied_by
-                    }
-                    for row in result.fetchall()
-                ]
+                # Check version match
+                health_info["version_match"] = (current_version == self.CURRENT_SCHEMA_VERSION)
+                
+                if health_info["version_match"]:
+                    health_info["status"] = "healthy"
+                else:
+                    health_info["status"] = "version_mismatch"
+                    health_info["error"] = f"Schema version mismatch: {current_version} != {self.CURRENT_SCHEMA_VERSION}"
+            else:
+                health_info["status"] = "schema_table_missing"
+                health_info["error"] = "Schema version table does not exist"
+                
         except Exception as e:
-            logger.error(f"Failed to get migration history: {e}")
-            return []
+            health_info["status"] = "error"
+            health_info["error"] = str(e)
+            logger.error(f"Schema health check failed: {e}")
+            
+        return health_info
+        
+    # Schema Migration Functions
+    # ==========================
+    
+    def _migrate_to_1_0_0(self) -> None:
+        """
+        Initial schema migration - creates basic BountyBot tables.
+        
+        This migration creates the foundational tables for the BountyBot application.
+        Future migrations will build upon this base schema.
+        """
+        logger.info("Applying migration to schema version 1.0.0...")
+        
+        # Example initial tables - adjust according to your needs
+        migrations_sql = [
+            # Example: Users table for basic user management
+            """
+            CREATE TABLE IF NOT EXISTS users (
+                id SERIAL PRIMARY KEY,
+                discord_id BIGINT UNIQUE NOT NULL,
+                username VARCHAR(100) NOT NULL,
+                display_name VARCHAR(100),
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                is_active BOOLEAN DEFAULT TRUE
+            )
+            """,
+            
+            # Example: Guilds table for Discord server management
+            """
+            CREATE TABLE IF NOT EXISTS guilds (
+                id SERIAL PRIMARY KEY,
+                discord_id BIGINT UNIQUE NOT NULL,
+                name VARCHAR(255) NOT NULL,
+                prefix VARCHAR(10) DEFAULT '!',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                is_active BOOLEAN DEFAULT TRUE
+            )
+            """,
+            
+            # Create indexes for performance
+            "CREATE INDEX IF NOT EXISTS idx_users_discord_id ON users(discord_id)",
+            "CREATE INDEX IF NOT EXISTS idx_guilds_discord_id ON guilds(discord_id)",
+            
+            # Add any other foundational tables here
+        ]
+        
+        try:
+            with self.db_manager.get_connection() as conn:
+                for sql in migrations_sql:
+                    conn.execute(text(sql))
+                conn.commit()
+                
+            logger.info("Schema migration to 1.0.0 completed successfully")
+            
+        except Exception as e:
+            logger.error(f"Migration to 1.0.0 failed: {e}")
+            raise
+            
+    # Future migration methods would be added here:
+    # def _migrate_to_1_1_0(self) -> None:
+    #     """Migration to version 1.1.0 - add bounty tables."""
+    #     pass
+    #     
+    # def _migrate_to_2_0_0(self) -> None:
+    #     """Migration to version 2.0.0 - major schema refactor."""
+    #     pass
+
+def initialize_schema(db_manager) -> SchemaManager:
+    """
+    Convenience function to initialize schema management.
+    
+    Args:
+        db_manager: DatabaseManager instance
+        
+    Returns:
+        Initialized SchemaManager instance
+    """
+    schema_manager = SchemaManager(db_manager)
+    schema_manager.initialize_database()
+    return schema_manager

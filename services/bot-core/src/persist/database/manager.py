@@ -1,317 +1,314 @@
 """
-Database initialization and connection management for BountyBot.
+Database connection and management for BountyBot.
 
-This module provides robust database connectivity with retry logic,
-circuit breaker pattern, and comprehensive health monitoring.
+This module provides database connectivity, connection management, and basic
+database operations. It's designed to be a foundation for future repository
+pattern implementation while keeping things simple for the current iteration.
+
+Key Features:
+- PostgreSQL connection management with connection pooling
+- Environment-based configuration
+- Traditional (non-async) database operations
+- Health check support
+- Future-ready for repository pattern integration
 """
 
 import os
-import asyncio
+import time
 from typing import Optional, Dict, Any
-from contextlib import asynccontextmanager
-from sqlalchemy import create_engine, text
-from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
-from sqlalchemy.ext.declarative import declarative_base
+from contextlib import contextmanager
+from sqlalchemy import create_engine, text, MetaData, inspect
+from sqlalchemy.engine import Engine
 from sqlalchemy.exc import SQLAlchemyError, OperationalError
-from sqlalchemy.orm import sessionmaker
-from datetime import datetime, timedelta
+from sqlalchemy.orm import sessionmaker, Session
 import shared.logging as logging
-from persist.schemas.schema_manager import SchemaManager
-from persist.database.circuit_breaker import CircuitBreaker
 
-logger = logging.get_logger("bot-db-manager")
-
-# Base class for all models
-Base = declarative_base()
+logger = logging.get_logger("bot-database-manager")
 
 class DatabaseManager:
     """
-    Manages database connections with resilience features including:
-    - Connection retry logic with exponential backoff
-    - Circuit breaker pattern for fault tolerance
-    - Comprehensive health monitoring
-    - Graceful shutdown handling
+    Central database management class for BountyBot.
+    
+    Handles connection management, health checks, and provides a foundation
+    for future repository pattern implementation.
     """
-
-    _instance: Optional['DatabaseManager'] = None
-    _lock = asyncio.Lock()
-
-    def __new__(cls) -> 'DatabaseManager':
-        if cls._instance is None:
-            cls._instance = super().__new__(cls)
-            cls._instance._initialized = False
-        return cls._instance
-
+    
     def __init__(self):
-        if not self._initialized:
-            self.engine = None
-            self.async_engine = None
-            self.Session = None
-            self.AsyncSessionLocal = None
-            self.schema_manager = SchemaManager()
-            self.circuit_breaker = CircuitBreaker(
-                failure_threshold=5,
-                recovery_timeout=30,
-                expected_exception=SQLAlchemyError
-            )
-            self._health_status = {"status": "initializing"}
-            self._last_health_check = None
-            self._shutdown_event = asyncio.Event()
-            self._initialized = True
-
-    def _get_database_config(self) -> Dict[str, str]:
-        """Get database configuration from environment variables."""
-        return {
-            "user": os.getenv("POSTGRES_USER", "bounty"),
-            "password": os.getenv("POSTGRES_PASSWORD", "bounty"),
-            "host": os.getenv("POSTGRES_HOST", "db"),
-            "port": os.getenv("POSTGRES_PORT", "5432"),
-            "database": os.getenv("POSTGRES_DB", "bountydb")
-        }
-
-    def get_database_url(self) -> str:
-        """Constructs the database URL from environment variables."""
-        config = self._get_database_config()
-        return f"postgresql://{config['user']}:{config['password']}@{config['host']}:{config['port']}/{config['database']}"
-
-    def get_async_database_url(self) -> str:
-        """Constructs the async database URL using asyncpg driver."""
-        config = self._get_database_config()
-        return f"postgresql+asyncpg://{config['user']}:{config['password']}@{config['host']}:{config['port']}/{config['database']}"
-
-    async def initialize(self, max_retries: int = 5) -> bool:
-        """
-        Initialize database connections with retry logic.
+        """Initialize the database manager with environment configuration."""
+        self._engine: Optional[Engine] = None
+        self._session_factory: Optional[sessionmaker] = None
+        self._connection_string: Optional[str] = None
+        self._metadata = MetaData()
         
-        Args:
-            max_retries: Maximum number of connection attempts
-            
-        Returns:
-            bool: True if initialization successful, False otherwise
-        """
-        async with self._lock:
-            if self.engine is not None:
-                logger.info("Database already initialized")
-                return True
-
-            logger.info("Initializing database connections...")
-            
-            for attempt in range(max_retries):
-                try:
-                    await self._create_engines()
-                    await self._test_connection()
-                    await self.schema_manager.initialize(self.engine)
-                    
-                    # Start health monitoring
-                    asyncio.create_task(self._health_monitor())
-                    
-                    logger.info("Database initialization completed successfully")
-                    self._health_status = {"status": "healthy", "initialized_at": datetime.utcnow().isoformat()}
-                    return True
-                    
-                except Exception as e:
-                    wait_time = min(2 ** attempt, 30)  # Exponential backoff, max 30s
-                    logger.warning(f"Database initialization attempt {attempt + 1} failed: {e}")
-                    
-                    if attempt < max_retries - 1:
-                        logger.info(f"Retrying in {wait_time} seconds...")
-                        await asyncio.sleep(wait_time)
-                    else:
-                        logger.error("All database initialization attempts failed")
-                        self._health_status = {"status": "failed", "error": str(e)}
-                        return False
-
-    async def _create_engines(self) -> None:
-        """Create database engines with optimized settings."""
-        sync_url = self.get_database_url()
-        async_url = self.get_async_database_url()
+        # Load configuration from environment
+        self._load_config()
         
-        # Enhanced connection pool settings
-        pool_settings = {
-            "pool_size": int(os.getenv("DB_POOL_SIZE", "10")),
-            "max_overflow": int(os.getenv("DB_MAX_OVERFLOW", "20")),
-            "pool_pre_ping": True,
-            "pool_recycle": int(os.getenv("DB_POOL_RECYCLE", "3600")),
-            "pool_timeout": int(os.getenv("DB_POOL_TIMEOUT", "30")),
-            "echo": os.getenv("DB_ECHO", "false").lower() == "true"
-        }
+    def _load_config(self) -> None:
+        """Load database configuration from environment variables."""
+        # Database connection parameters
+        db_host = os.getenv("POSTGRES_HOST", "bounty_db")  # Docker service name
+        db_port = os.getenv("POSTGRES_PORT", "5432")
+        db_name = os.getenv("POSTGRES_DB", "bountydb")
+        db_user = os.getenv("POSTGRES_USER", "bounty")
+        db_password = os.getenv("POSTGRES_PASSWORD", "bounty")
         
-        self.engine = create_engine(sync_url, **pool_settings)
-        self.async_engine = create_async_engine(async_url, **pool_settings)
+        # Connection pool settings
+        pool_size = int(os.getenv("DB_POOL_SIZE", "5"))
+        max_overflow = int(os.getenv("DB_MAX_OVERFLOW", "10"))
+        pool_timeout = int(os.getenv("DB_POOL_TIMEOUT", "30"))
+        pool_recycle = int(os.getenv("DB_POOL_RECYCLE", "3600"))  # 1 hour
         
-        # Create session factories
-        self.Session = sessionmaker(bind=self.engine)
-        self.AsyncSessionLocal = async_sessionmaker(
-            bind=self.async_engine,
-            class_=AsyncSession,
-            expire_on_commit=False
+        # Build connection string
+        self._connection_string = (
+            f"postgresql+psycopg2://{db_user}:{db_password}@"
+            f"{db_host}:{db_port}/{db_name}"
         )
-
-    async def _test_connection(self) -> None:
-        """Test database connectivity."""
-        try:
-            # Test sync connection
-            with self.engine.connect() as conn:
-                result = conn.execute(text("SELECT 1"))
-                assert result.fetchone()[0] == 1
-
-            # Test async connection
-            async with self.async_engine.begin() as conn:
-                result = await conn.execute(text("SELECT 1"))
-                assert result.fetchone()[0] == 1
-
-            logger.info("Database connectivity test passed")
-        except Exception as e:
-            logger.error(f"Database connectivity test failed: {e}")
-            raise
-
-
-    async def _health_monitor(self) -> None:
-        """Background task to monitor database health."""
-        while not self._shutdown_event.is_set():
-            try:
-                await asyncio.sleep(30)  # Check every 30 seconds
-                health_info = await self.get_db_health()
-                self._health_status = health_info
-                self._last_health_check = datetime.utcnow()
-                
-                if health_info["status"] != "healthy":
-                    logger.warning(f"Database health check failed: {health_info}")
-                    
-            except asyncio.CancelledError:
-                break
-            except Exception as e:
-                logger.error(f"Health monitor error: {e}")
-                self._health_status = {"status": "unhealthy", "error": str(e)}
-
-    async def get_db_health(self) -> Dict[str, Any]:
-        """
-        Comprehensive database health check with circuit breaker.
         
-        Returns:
-            Dict containing detailed database health information
+        # Store pool configuration
+        self._pool_config = {
+            "pool_size": pool_size,
+            "max_overflow": max_overflow,
+            "pool_timeout": pool_timeout,
+            "pool_recycle": pool_recycle,
+            "pool_pre_ping": True,  # Validates connections before use
+            "echo": os.getenv("DB_ECHO", "false").lower() == "true"  # SQL logging
+        }
+        
+        logger.info(f"Database configuration loaded: {db_host}:{db_port}/{db_name}")
+        
+    def initialize(self) -> None:
         """
-        try:
-            return await self.circuit_breaker.call(self._perform_health_check)
-        except Exception as e:
-            logger.error(f"Database health check failed: {e}")
-            return {
-                "status": "unhealthy",
-                "error": str(e),
-                "circuit_breaker_state": self.circuit_breaker.state,
-                "timestamp": datetime.utcnow().isoformat()
-            }
-
-    async def _perform_health_check(self) -> Dict[str, Any]:
-        """Perform the actual health check operations."""
-        async with asyncio.timeout(5):
-            async with self.async_engine.begin() as conn:
-                # Basic connectivity
-                result = await conn.execute(text("SELECT 1"))
-                assert (result.fetchone())[0] == 1
-
-                # Database information
-                db_info = await conn.execute(text("""
-                    SELECT version() as pg_version, 
-                           current_database() as database_name,
-                           current_user as user_name
-                """))
-                info = db_info.fetchone()
-
-                # Schema version
-                schema_version = await self.schema_manager.get_current_version(conn)
-
-                # Connection pool stats
-                pool = self.async_engine.pool
-                
-                return {
-                    "status": "healthy",
-                    "database_name": info.database_name,
-                    "user": info.user_name,
-                    "postgresql_version": info.pg_version.split(" ")[1] if info.pg_version else "unknown",
-                    "schema_version": schema_version,
-                    "pool_stats": {
-                        "size": pool.size(),
-                        "checked_in": pool.checkedin(),
-                        "checked_out": pool.checkedout(),
-                        "overflow": pool.overflow()
-                    },
-                    "circuit_breaker_state": self.circuit_breaker.state,
-                    "timestamp": datetime.utcnow().isoformat()
-                }
-
-    @asynccontextmanager
-    async def get_session(self):
+        Initialize the database connection and session factory.
+        
+        This method should be called during application startup.
         """
-        Resilient async context manager for database sessions.
-        Includes automatic retry logic and circuit breaker protection.
-        """
-        if not self.AsyncSessionLocal:
-            raise RuntimeError("Database not initialized")
-
-        async def _get_session_with_retry():
-            max_retries = 3
-            for attempt in range(max_retries):
-                try:
-                    return await self.circuit_breaker.call(self._create_session)
-                except Exception as e:
-                    if attempt == max_retries - 1:
-                        raise
-                    await asyncio.sleep(0.1 * (2 ** attempt))  # Exponential backoff
+        if self._engine is not None:
+            logger.warning("Database manager already initialized")
+            return
             
-        session = await _get_session_with_retry()
+        try:
+            logger.info("Initializing database connection...")
+            
+            # Create the engine with connection pooling
+            self._engine = create_engine(
+                self._connection_string,
+                **self._pool_config
+            )
+            
+            # Create session factory
+            self._session_factory = sessionmaker(
+                bind=self._engine,
+                expire_on_commit=False  # Keep objects accessible after commit
+            )
+            
+            # Test the connection
+            self._test_connection()
+            
+            logger.info("Database manager initialized successfully")
+            
+        except Exception as e:
+            logger.error(f"Failed to initialize database manager: {e}")
+            raise
+            
+    def _test_connection(self) -> None:
+        """Test the database connection with retry logic."""
+        max_retries = 5
+        retry_delay = 2
+        
+        for attempt in range(max_retries):
+            try:
+                with self.get_connection() as conn:
+                    # Simple connectivity test
+                    result = conn.execute(text("SELECT 1 as test"))
+                    test_value = result.scalar()
+                    
+                    if test_value == 1:
+                        logger.info("Database connectivity test passed")
+                        return
+                    else:
+                        raise RuntimeError("Unexpected test result from database")
+                        
+            except OperationalError as e:
+                if attempt < max_retries - 1:
+                    logger.warning(
+                        f"Database connection attempt {attempt + 1} failed: {e}. "
+                        f"Retrying in {retry_delay} seconds..."
+                    )
+                    time.sleep(retry_delay)
+                    retry_delay *= 2  # Exponential backoff
+                else:
+                    logger.error(f"Database connection failed after {max_retries} attempts")
+                    raise
+                    
+    @contextmanager
+    def get_connection(self):
+        """
+        Get a database connection using context manager.
+        
+        Usage:
+            with db_manager.get_connection() as conn:
+                result = conn.execute(text("SELECT * FROM users"))
+        """
+        if self._engine is None:
+            raise RuntimeError("Database manager not initialized. Call initialize() first.")
+            
+        connection = self._engine.connect()
+        try:
+            yield connection
+        finally:
+            connection.close()
+            
+    @contextmanager
+    def get_session(self) -> Session:
+        """
+        Get a database session using context manager.
+        
+        Usage:
+            with db_manager.get_session() as session:
+                users = session.query(User).all()
+                session.commit()
+        """
+        if self._session_factory is None:
+            raise RuntimeError("Database manager not initialized. Call initialize() first.")
+            
+        session = self._session_factory()
         try:
             yield session
-            await session.commit()
         except Exception:
-            await session.rollback()
+            session.rollback()
             raise
         finally:
-            await session.close()
-
-    async def _create_session(self):
-        """Create a new database session."""
-        return self.AsyncSessionLocal()
-
-    async def close(self) -> None:
-        """Graceful shutdown with proper cleanup."""
-        logger.info("Initiating database manager shutdown...")
+            session.close()
+            
+    def execute_sql(self, sql_statement: str, parameters: Optional[Dict[str, Any]] = None) -> Any:
+        """
+        Execute a raw SQL statement.
         
-        # Signal health monitor to stop
-        self._shutdown_event.set()
+        Args:
+            sql_statement: SQL statement to execute
+            parameters: Optional parameters for the SQL statement
+            
+        Returns:
+            Result of the SQL execution
+        """
+        try:
+            with self.get_connection() as conn:
+                if parameters:
+                    result = conn.execute(text(sql_statement), parameters)
+                else:
+                    result = conn.execute(text(sql_statement))
+                conn.commit()
+                return result
+                
+        except SQLAlchemyError as e:
+            logger.error(f"SQL execution failed: {e}")
+            raise
+            
+    def table_exists(self, table_name: str, schema: Optional[str] = None) -> bool:
+        """
+        Check if a table exists in the database.
+        
+        Args:
+            table_name: Name of the table to check
+            schema: Optional schema name (defaults to public schema)
+            
+        Returns:
+            True if table exists, False otherwise
+        """
+        try:
+            with self.get_connection() as conn:
+                inspector = inspect(conn)
+                return inspector.has_table(table_name, schema=schema)
+                
+        except SQLAlchemyError as e:
+            logger.error(f"Error checking table existence: {e}")
+            return False
+            
+    def get_health_info(self) -> Dict[str, Any]:
+        """
+        Get database health information for health checks.
+        
+        Returns:
+            Dictionary containing database health metrics
+        """
+        health_info = {
+            "status": "unknown",
+            "connection_pool": {},
+            "connectivity": False,
+            "error": None
+        }
         
         try:
-            # Wait for ongoing operations to complete (with timeout)
-            await asyncio.wait_for(self._wait_for_active_sessions(), timeout=30)
-            
-            if self.async_engine:
-                await self.async_engine.dispose()
-                logger.info("Async database engine disposed")
+            if self._engine is None:
+                health_info["status"] = "not_initialized"
+                health_info["error"] = "Database manager not initialized"
+                return health_info
                 
-            if self.engine:
-                self.engine.dispose()
-                logger.info("Sync database engine disposed")
+            # Test basic connectivity
+            with self.get_connection() as conn:
+                conn.execute(text("SELECT 1"))
+                health_info["connectivity"] = True
                 
-            logger.info("Database manager shutdown completed")
+            # Get connection pool information
+            pool = self._engine.pool
+            health_info["connection_pool"] = {
+                "size": pool.size(),
+                "checked_in": pool.checkedin(),
+                "checked_out": pool.checkedout(),
+                "overflow": pool.overflow(),
+                "status": pool.status()
+            }
             
-        except asyncio.TimeoutError:
-            logger.warning("Database shutdown timeout - forcing close")
+            health_info["status"] = "healthy"
+            
         except Exception as e:
-            logger.error(f"Error during database cleanup: {e}")
-
-    async def _wait_for_active_sessions(self) -> None:
-        """Wait for active database sessions to complete."""
-        if self.async_engine:
-            pool = self.async_engine.pool
-            while pool.checkedout() > 0:
-                logger.info(f"Waiting for {pool.checkedout()} active sessions to complete...")
-                await asyncio.sleep(1)
+            health_info["status"] = "unhealthy"
+            health_info["error"] = str(e)
+            logger.error(f"Database health check failed: {e}")
+            
+        return health_info
+        
+    def shutdown(self) -> None:
+        """
+        Shutdown the database manager and cleanup resources.
+        
+        This method should be called during application shutdown.
+        """
+        logger.info("Shutting down database manager...")
+        
+        if self._engine:
+            self._engine.dispose()
+            self._engine = None
+            
+        self._session_factory = None
+        logger.info("Database manager shutdown complete")
+        
+    @property
+    def engine(self) -> Optional[Engine]:
+        """Get the SQLAlchemy engine (for advanced usage)."""
+        return self._engine
+        
+    @property
+    def metadata(self) -> MetaData:
+        """Get the SQLAlchemy metadata object."""
+        return self._metadata
 
 # Global database manager instance
 db_manager = DatabaseManager()
 
-# FastAPI dependency
-async def get_db_session():
-    """FastAPI dependency for getting database session."""
-    async with db_manager.get_session() as session:
-        yield session
+# Convenience functions for common operations
+def get_db_connection():
+    """Convenience function to get a database connection."""
+    return db_manager.get_connection()
+
+def get_db_session():
+    """Convenience function to get a database session."""
+    return db_manager.get_session()
+
+def execute_sql(sql: str, params: Optional[Dict[str, Any]] = None):
+    """Convenience function to execute SQL."""
+    return db_manager.execute_sql(sql, params)
+
+def table_exists(table_name: str, schema: Optional[str] = None) -> bool:
+    """Convenience function to check if table exists."""
+    return db_manager.table_exists(table_name, schema)

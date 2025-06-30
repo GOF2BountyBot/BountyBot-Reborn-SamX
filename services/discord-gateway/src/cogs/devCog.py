@@ -56,6 +56,8 @@ class HealthCog(commands.Cog):
             service = data.get("service", "N/A")
             environment = data.get("environment", {})
             checks = data.get("checks", {})
+            database_info = data.get("database", {})
+            schema_info = data.get("schema", {})
 
             logger.trace("Building Discord response...")
             # Determine the emoji based on status
@@ -82,6 +84,45 @@ class HealthCog(commands.Cog):
             if checks:
                 check_details = "\n".join([f"{key}: {'✅' if value else '❌'}" for key, value in checks.items()])
                 embed.add_field(name="Checks", value=check_details, inline=False)
+
+            # Add database information to the embed
+            if database_info:
+                db_status = database_info.get("status", "unknown")
+                db_connectivity = database_info.get("connectivity", False)
+                db_error = database_info.get("error", None)
+                db_connection_pool = database_info.get("connection_pool", {})
+
+                db_details = (
+                    f"**Status:** {db_status}\n"
+                    f"**Connectivity:** {'✅' if db_connectivity else '❌'}\n"
+                    f"**Error:** {db_error or 'None'}\n"
+                    f"**Connection Pool:**\n"
+                    f"- Size: {db_connection_pool.get('size', 'N/A')}\n"
+                    f"- Checked In: {db_connection_pool.get('checked_in', 'N/A')}\n"
+                    f"- Checked Out: {db_connection_pool.get('checked_out', 'N/A')}\n"
+                    f"- Overflow: {db_connection_pool.get('overflow', 'N/A')}"
+                )
+                embed.add_field(name="Database", value=db_details, inline=False)
+
+            # Add schema information to the embed
+            if schema_info:
+                schema_status = schema_info.get("status", "unknown")
+                schema_current_version = schema_info.get("current_version", "N/A")
+                schema_expected_version = schema_info.get("expected_version", "N/A")
+                schema_table_exists = schema_info.get("schema_table_exists", False)
+                schema_version_match = schema_info.get("version_match", False)
+                schema_error = schema_info.get("error", None)
+
+                schema_details = (
+                    f"**Status:** {schema_status}\n"
+                    f"**Current Version:** {schema_current_version}\n"
+                    f"**Expected Version:** {schema_expected_version}\n"
+                    f"**Schema Table Exists:** {'✅' if schema_table_exists else '❌'}\n"
+                    f"**Version Match:** {'✅' if schema_version_match else '❌'}\n"
+                    f"**Error:** {schema_error or 'None'}"
+                )
+                embed.add_field(name="Schema", value=schema_details, inline=False)
+
             await interaction.followup.send(content=emoji, embed=embed)
         except requests.RequestException as e:
             emoji = "❌"

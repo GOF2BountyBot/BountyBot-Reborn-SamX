@@ -48,6 +48,7 @@ class HealthCog(commands.Cog):
             resp = requests.get(f"{api_base}/health", timeout=2.0)
             resp.raise_for_status()
             data = resp.json()
+            logger.trace("Response received successfully: " + str(data))
             logger.trace("Parsing response...")
             # Extracting information from the response
             status = data.get("status", "unknown")
@@ -56,8 +57,8 @@ class HealthCog(commands.Cog):
             service = data.get("service", "N/A")
             environment = data.get("environment", {})
             checks = data.get("checks", {})
-            database_info = data.get("database", {})
-            schema_info = data.get("schema", {})
+            database_info = data.get("database_check", {})
+            schema_info = data.get("schema_check", {})
 
             logger.trace("Building Discord response...")
             # Determine the emoji based on status

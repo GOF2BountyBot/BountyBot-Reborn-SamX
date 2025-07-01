@@ -1,3 +1,5 @@
 discord.py
 requests
 aiohttp[speedups]
+fastapi
+uvicorn[standard]

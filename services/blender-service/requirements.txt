@@ -1,0 +1,6 @@
+fastapi[standard]
+fastapi-health
+uvicorn[standard]
+hypercorn[uvloop]
+aiohttp[speedups]
+python-dotenv

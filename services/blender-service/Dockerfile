@@ -72,9 +72,9 @@ RUN python3 -m venv /opt/venv
 
 WORKDIR /app
 
-## Copy requirements files
-#COPY requirements.txt .
-#COPY bot/lib/AEPi/requirements.txt ./aepi.requirements.txt
+# Copy requirements files
+COPY services/blender-service/requirements.txt .
+COPY services/blender-service/src/lib/AEPi/requirements.txt ./aepi.requirements.txt
 
 # Activate the virtual environment and upgrade pip
 RUN chmod +x /opt/venv/bin/activate && \
@@ -86,9 +86,9 @@ RUN chmod +x /opt/venv/bin/activate && \
         meson
     
 ## Install dependencies
-#RUN /opt/venv/bin/pip install --upgrade --no-cache-dir --prefer-binary \
-#    -r requirements.txt \
-#    -r aepi.requirements.txt
+RUN /opt/venv/bin/pip install --upgrade --no-cache-dir --prefer-binary \
+    -r requirements.txt \
+    -r aepi.requirements.txt
 
 # Install gdown for pulling assets from Google Drive
 RUN /opt/venv/bin/pip install --upgrade --no-cache-dir --prefer-binary \
@@ -98,7 +98,7 @@ RUN /opt/venv/bin/pip install --upgrade --no-cache-dir --prefer-binary \
 RUN /opt/venv/bin/pip freeze
 
 ## Copy remaining app code...
-#COPY . .
+COPY . .
 
 # Copy shared libs
 COPY ./services/shared /app/src/shared

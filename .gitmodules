@@ -1,0 +1,3 @@
+[submodule "services/blender-service/src/lib/AEPi"]
+	path = services/blender-service/src/lib/AEPi
+	url = https://github.com/Trimatix/AEPi.git

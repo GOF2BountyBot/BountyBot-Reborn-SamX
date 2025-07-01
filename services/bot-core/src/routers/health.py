@@ -40,8 +40,8 @@ class HealthResponse(BaseModel):
     environment: Dict[str, Any]
     checks: Dict[str, bool]
     # NEW: Database health information
-    database: Optional[Dict[str, Any]] = None
-    schema: Optional[Dict[str, Any]] = None
+    database_check: Optional[Dict[str, Any]] = None
+    schema_check: Optional[Dict[str, Any]] = None
 
 class SimpleHealthResponse(BaseModel):
     """Simple health check response - NO CHANGES."""
@@ -154,8 +154,8 @@ async def health_check(request: Request) -> HealthResponse:
             "architecture": platform.architecture()[0]
         },
         checks=checks,
-        database=database_health,  # NEW: Database health info
-        schema=schema_health       # NEW: Schema health info
+        database_check=database_health,  # NEW: Database health info
+        schema_check=schema_health       # NEW: Schema health info
     )
 
 @router.get(

@@ -57,7 +57,7 @@ services:
     networks:
       - botnetv2
     ports:
-      - 8080:8080
+      - 7999:7999
     depends_on:
       bot-core:
         condition: service_healthy

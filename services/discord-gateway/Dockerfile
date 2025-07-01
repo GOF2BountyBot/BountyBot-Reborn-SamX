@@ -107,10 +107,12 @@ RUN groupadd --gid 1002 botuser && \
     chmod -R 1777 /home/botuser && \
     chmod -R 1777 /app
 
+# EXPOSE 7999
+
 USER botuser
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
-  CMD curl -fs http://localhost:8080/health || exit 1
+  CMD curl -fs http://localhost:7999/api/v1/health || exit 1
 
 # The ' & tail -f /dev/null' in the entrypoint below is a hack to keep the container running if the app crashes.
 # This can be handy for being able to connect to the container CLI and check files/logs since it will still be running.

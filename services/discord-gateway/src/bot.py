@@ -1,11 +1,16 @@
+import asyncio
 import logging
 import os
 import discord
 from discord import app_commands
 from discord.ext import commands
-import aiohttp
-from aiohttp import web
+from api.server import start_fastapi_server
 import shared.logging as logging
+
+# Configuration constants with environment variable support
+GATEWAY_HOST = os.getenv("GATEWAY_HOST", "0.0.0.0")
+GATEWAY_PORT = int(os.getenv("GATEWAY_PORT", os.getenv("PORT", "8000")))
+ACCESS_LOG = os.getenv("ACCESS_LOG", "true").lower() == "true"
 
 class GatewayBot(commands.Bot):
     def __init__(self):
@@ -30,11 +35,12 @@ class GatewayBot(commands.Bot):
         self.logger = logging.get_logger("discord-gateway")
         self.startup_complete = False
 
+    """
     async def _start_health_server(self, host: str = "0.0.0.0", port: int = 8080):
-        """Tiny HTTP server that answers /health.
+        ""Tiny HTTP server that answers /health.
         Returns 200 only after discord.py says the bot is ready.
         Docker will poll this URL in its HEALTHCHECK.
-        """
+        ""
         app = web.Application()
 
         async def health(request):
@@ -52,7 +58,25 @@ class GatewayBot(commands.Bot):
         await site.start()
         self.logger.info(f"Health-check server listening on {host}:{port}")
         self._health_runner = runner        # keep a reference to avoid GC
-
+    """
+    async def _start_fastapi_server(self, host: str = GATEWAY_HOST, port: int = GATEWAY_PORT, access_log: bool = ACCESS_LOG):
+        """
+        Start the FastAPI server as a background task.
+        This replaces the simple health server with the full FastAPI application.
+        """
+        try:
+            self.logger.info(f"🚀 Starting FastAPI server on {host}:{port}")
+            
+            # Start FastAPI server as a background task
+            self.fastapi_thread = await start_fastapi_server(host=host, port=port, access_log=access_log)
+            
+            self.logger.info(f"✅ FastAPI server task created successfully")
+            self.logger.info(f"📚 API Documentation will be available at: http://{host}:{port}/docs")
+            self.logger.info(f"📖 ReDoc Documentation will be available at: http://{host}:{port}/redoc")
+            
+        except Exception as e:
+            self.logger.error(f"❌ Failed to start FastAPI server: {e}")
+            raise
 
     async def setup_hook(self):
         self.logger.info("=== SETUP HOOK STARTED ===")
@@ -61,8 +85,8 @@ class GatewayBot(commands.Bot):
         self.logger.info(f"Bot user: {self.user}")
         self.logger.debug(f"Bot ID: {self.user.id if self.user else 'Not logged in yet'}")
 
-        # Start health server early to provide feedback during startup
-        await self._start_health_server()
+        # Start FastAPI server
+        await self._start_fastapi_server()
 
         # Load cogs with detailed logging
         cog_count = 0
@@ -140,6 +164,23 @@ class GatewayBot(commands.Bot):
     async def on_command_error(self, ctx, error):
         self.logger.error(f"Command error in {ctx.command}: {error}")
         self.logger.exception("Command error details:")
+
+    async def close(self):
+        """Enhanced close method to properly shutdown FastAPI server."""
+        self.logger.info("🛑 Shutting down bot and FastAPI server...")
+        
+        # Cancel FastAPI task if it exists
+        if self.fastapi_task and not self.fastapi_task.done():
+            self.logger.info("🔄 Cancelling FastAPI server task...")
+            self.fastapi_task.cancel()
+            try:
+                await self.fastapi_task
+            except asyncio.CancelledError:
+                self.logger.info("✅ FastAPI server task cancelled")
+        
+        # Call parent close method
+        await super().close()
+        self.logger.info("👋 Bot shutdown complete!")
 
 if __name__ == "__main__":
     # Check environment variables

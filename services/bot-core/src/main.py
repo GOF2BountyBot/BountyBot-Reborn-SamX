@@ -199,10 +199,10 @@ if __name__ == "__main__":
     # from being logged as they are particularly noisy
     pyLogging.getLogger("uvicorn.access").addFilter(HealthFilter())
     uvicorn.run("main:app", 
-                host="0.0.0.0", 
-                port=8000, 
+                host=os.getenv("HOST", "0.0.0.0"), 
+                port=int(os.getenv("PORT", os.getenv("PORT", "8000"))), 
                 # access_log shows API requests in log output, can get a bit noisy tho
-                access_log=True,
+                access_log=os.getenv("ACCESS_LOG", "true").lower() == "true",
                 # reload is useful for development but should be turned off for production
                 # It will monitor the filesystem and restart the server when changes are detected.
                 reload=True)

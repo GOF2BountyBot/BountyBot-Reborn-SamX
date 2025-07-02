@@ -98,7 +98,7 @@ RUN /opt/venv/bin/pip install --upgrade --no-cache-dir --prefer-binary \
 RUN /opt/venv/bin/pip freeze
 
 ## Copy remaining app code...
-COPY . .
+COPY services/blender-service/ .
 
 # Copy shared libs
 COPY ./services/shared /app/src/shared
@@ -119,7 +119,7 @@ USER botuser
 
 # The ' & tail -f /dev/null' in the entrypoint below is a hack to keep the container running if the app crashes.
 # This can be handy for being able to connect to the container CLI and check files/logs since it will still be running.
-ENTRYPOINT ["/bin/bash", "-c", "source /opt/venv/bin/activate & tail -f /dev/null"]
+ENTRYPOINT ["/bin/bash", "-c", "source /opt/venv/bin/activate  && /app/docker-entrypoint.sh & tail -f /dev/null"]
 # ENTRYPOINT ["/bin/bash", "-c", "source /opt/venv/bin/activate && /opt/venv/bin/python main.py ${CONFIG_FILE} & tail -f /dev/null"]
 # ENTRYPOINT ["/bin/bash", "-c", "source /opt/venv/bin/activate && /opt/venv/bin/python main.py ${CONFIG_FILE} & tail -f /dev/null"]
 # ENTRYPOINT ["/bin/bash", "-c", "source /opt/venv/bin/activate && /app/bountybot/docker-entrypoint.sh & tail -f /dev/null"]

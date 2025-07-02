@@ -85,14 +85,22 @@ services:
       context: ./
       dockerfile: ./services/blender-service/Dockerfile
     container_name: blender-service
-    networks:
-      - botnetv2
-    ports:
-      - 8001:8001
     depends_on:
       bot-core:
         condition: service_healthy
         restart: true
+    # Comment out/remove below if you don't have a NVidia GPU for use
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    networks:
+      - botnetv2
+    ports:
+      - 8001:8001
     env_file:
       - path: ./.env
         required: false 
@@ -108,7 +116,7 @@ services:
       interval: 30s
       timeout: 5s
       retries: 3
-      start_period: 90s
+      start_period: 360s
     restart: unless-stopped
 
 networks:

@@ -10,5 +10,6 @@
     "name": "PE Fusion H2",
     "techLevel": 9,
     "value": 631720,
+    "automatic": false,
     "wiki": "https://galaxyonfire.fandom.com/wiki/PE_Fusion_H2"
 }

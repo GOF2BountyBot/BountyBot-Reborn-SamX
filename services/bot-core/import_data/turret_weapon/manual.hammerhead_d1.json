@@ -9,5 +9,6 @@
     "name": "Hammerhead D1",
     "techLevel": 5,
     "value": 24174,
+    "automatic": false,
     "wiki": "https://galaxyonfire.fandom.com/wiki/Hammerhead_D1"
 }

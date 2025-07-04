@@ -11,5 +11,6 @@
     "name": "PE Ambipolar-5",
     "techLevel": 9,
     "value": 115169,
+    "automatic": false,
     "wiki": "https://galaxyonfire.fandom.com/wiki/PE_Ambipolar-5"
 }

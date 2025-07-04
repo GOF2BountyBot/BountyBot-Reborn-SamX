@@ -11,5 +11,6 @@
     "name": "Hammerhead D2A2",
     "techLevel": 6,
     "value": 77097,
+    "automatic": false,
     "wiki": "https://galaxyonfire.fandom.com/wiki/Hammerhead_D2A2"
 }

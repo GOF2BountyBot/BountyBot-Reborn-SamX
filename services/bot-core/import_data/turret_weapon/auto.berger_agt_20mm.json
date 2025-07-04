@@ -13,5 +13,6 @@
     "name": "Berger AGT 20mm",
     "techLevel": 5,
     "value": 227040,
+    "automatic": true,
     "wiki": "https://galaxyonfire.fandom.com/wiki/Berger_AGT_20mm"
 }

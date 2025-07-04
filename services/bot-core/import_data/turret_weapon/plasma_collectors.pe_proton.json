@@ -9,5 +9,6 @@
     "name": "PE Proton",
     "techLevel": 9,
     "value": 43856,
+    "automatic": false,
     "wiki": "https://galaxyonfire.fandom.com/wiki/PE_Proton"
 }

@@ -12,5 +12,6 @@
     "name": "HH-AT \"Archimedes\"",
     "techLevel": 6,
     "value": 586176,
+    "automatic": true,
     "wiki": "https://galaxyonfire.fandom.com/wiki/HH-AT_\"Archimedes\""
 }

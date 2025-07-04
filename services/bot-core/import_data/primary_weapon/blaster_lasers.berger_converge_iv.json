@@ -1,19 +1,17 @@
-﻿{
-    "aliases":  [
-                    "converge IV",
-                    "berger converge 4",
-                    "converge 4",
-                    "berger converge",
-                    "converge"
-                ],
-    "builtIn":  false,
-    "dps":  32.94,
-    "emoji":  "<:bergerconvergeiv:723709563420803103>",
-    "icon":  "https://cdn.discordapp.com/attachments/700683544103747594/723476901250727963/berger_converge_iv.png",
-    "name":  "Berger Converge IV",
-    "techLevel":  8,
-    "value":  88969,
-    "wiki":  "https://galaxyonfire.fandom.com/wiki/Berger_Converge_IV",
-    "type":  "PrimaryWeapon",
-    "subtype":  "blaster_lasers"
+{
+    "aliases": [
+        "converge IV",
+        "berger converge 4",
+        "converge 4",
+        "berger converge",
+        "converge"
+    ],
+    "builtIn": false,
+    "dps": 32.94,
+    "emoji": "<:bergerconvergeiv:723709563420803103>",
+    "icon": "https://cdn.discordapp.com/attachments/700683544103747594/723476901250727963/berger_converge_iv.png",
+    "name": "Berger Converge IV",
+    "techLevel": 8,
+    "value": 88969,
+    "wiki": "https://galaxyonfire.fandom.com/wiki/Berger_Converge_IV"
 }

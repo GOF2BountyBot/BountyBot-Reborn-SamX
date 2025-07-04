@@ -1,14 +1,11 @@
-﻿{
-    "aliases":  [
-
-                ],
-    "builtIn":  false,
-    "damage":  0,
-    "icon":  "",
-    "loading speed":  0,
-    "name":  "Patala",
-    "value":  0,
-    "wiki":  "",
-    "type":  "SecondaryWeapon",
-    "subtype":  "cluster_missiles"
+{
+    "aliases": [],
+    "builtIn": false,
+    "damage": 0,
+    "icon": "",
+    "loading speed": 0,
+    "name": "Patala",
+    "type": "cluster missile",
+    "value": 0,
+    "wiki": ""
 }

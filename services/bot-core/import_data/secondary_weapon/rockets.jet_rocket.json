@@ -1,14 +1,11 @@
-﻿{
-    "aliases":  [
-
-                ],
-    "builtIn":  false,
-    "damage":  0,
-    "icon":  "",
-    "loading speed":  0,
-    "name":  "Jet Rocket",
-    "value":  0,
-    "wiki":  "",
-    "type":  "SecondaryWeapon",
-    "subtype":  "rockets"
+{
+    "aliases": [],
+    "builtIn": false,
+    "damage": 0,
+    "icon": "",
+    "loading speed": 0,
+    "name": "Jet Rocket",
+    "type": "rocket",
+    "value": 0,
+    "wiki": ""
 }

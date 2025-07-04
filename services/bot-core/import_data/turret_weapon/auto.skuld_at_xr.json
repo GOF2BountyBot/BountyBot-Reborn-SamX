@@ -1,20 +1,18 @@
-﻿{
-    "aliases":  [
-                    "Skuld XR",
-                    "Skuld",
-                    "AT XR",
-                    "Skuld AT",
-                    "XR"
-                ],
-    "builtIn":  false,
-    "dps":  47.36,
-    "emoji":  "<:skuldatxr:723707369573449809>",
-    "icon":  "https://cdn.discordapp.com/attachments/700683544103747594/723476499625279508/skuld_at_xr.png",
-    "name":  "Skuld AT XR",
-    "techLevel":  6,
-    "value":  407793,
-    "automatic":  true,
-    "wiki":  "https://galaxyonfire.fandom.com/wiki/Skuld_AT_XR",
-    "type":  "TurretWeapon",
-    "subtype":  "auto"
+{
+    "aliases": [
+        "Skuld XR",
+        "Skuld",
+        "AT XR",
+        "Skuld AT",
+        "XR"
+    ],
+    "builtIn": false,
+    "dps": 47.36,
+    "emoji": "<:skuldatxr:723707369573449809>",
+    "icon": "https://cdn.discordapp.com/attachments/700683544103747594/723476499625279508/skuld_at_xr.png",
+    "name": "Skuld AT XR",
+    "techLevel": 6,
+    "value": 407793,
+    "automatic": true,
+    "wiki": "https://galaxyonfire.fandom.com/wiki/Skuld_AT_XR"
 }

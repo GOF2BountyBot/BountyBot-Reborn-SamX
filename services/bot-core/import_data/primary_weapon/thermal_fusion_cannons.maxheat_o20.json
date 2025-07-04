@@ -1,16 +1,14 @@
-﻿{
-    "aliases":  [
-                    "o20",
-                    "MaxHeat"
-                ],
-    "builtIn":  false,
-    "dps":  33.33,
-    "emoji":  "<:maxheato20:723709644568002562>",
-    "icon":  "https://cdn.discordapp.com/attachments/700683544103747594/723477122110455868/maxheat_o20.png",
-    "name":  "MaxHeat o20",
-    "techLevel":  9,
-    "value":  86204,
-    "wiki":  "https://galaxyonfire.fandom.com/wiki/MaxHeat_o20",
-    "type":  "PrimaryWeapon",
-    "subtype":  "thermal_fusion_cannons"
+{
+    "aliases": [
+        "o20",
+        "MaxHeat"
+    ],
+    "builtIn": false,
+    "dps": 33.33,
+    "emoji": "<:maxheato20:723709644568002562>",
+    "icon": "https://cdn.discordapp.com/attachments/700683544103747594/723477122110455868/maxheat_o20.png",
+    "name": "MaxHeat o20",
+    "techLevel": 9,
+    "value": 86204,
+    "wiki": "https://galaxyonfire.fandom.com/wiki/MaxHeat_o20"
 }

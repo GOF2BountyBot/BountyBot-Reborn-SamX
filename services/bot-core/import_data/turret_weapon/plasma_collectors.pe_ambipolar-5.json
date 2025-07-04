@@ -1,18 +1,16 @@
-﻿{
-    "aliases":  [
-                    "Ambipolar",
-                    "PE Ambipolar 5",
-                    "PE Ambipolar"
-                ],
-    "builtIn":  false,
-    "dps":  0,
-    "emoji":  "<:peambipolar5:723707457146454123>",
-    "icon":  "https://cdn.discordapp.com/attachments/700683544103747594/723476601333088276/pe_ambipolar-5.png",
-    "name":  "PE Ambipolar-5",
-    "techLevel":  9,
-    "value":  115169,
-    "automatic":  false,
-    "wiki":  "https://galaxyonfire.fandom.com/wiki/PE_Ambipolar-5",
-    "type":  "TurretWeapon",
-    "subtype":  "plasma_collectors"
+{
+    "aliases": [
+        "Ambipolar",
+        "PE Ambipolar 5",
+        "PE Ambipolar"
+    ],
+    "builtIn": false,
+    "dps": 0,
+    "emoji": "<:peambipolar5:723707457146454123>",
+    "icon": "https://cdn.discordapp.com/attachments/700683544103747594/723476601333088276/pe_ambipolar-5.png",
+    "name": "PE Ambipolar-5",
+    "techLevel": 9,
+    "value": 115169,
+    "automatic": false,
+    "wiki": "https://galaxyonfire.fandom.com/wiki/PE_Ambipolar-5"
 }

@@ -1,15 +1,13 @@
-﻿{
-    "aliases":  [
-                    "shkoom"
-                ],
-    "builtIn":  false,
-    "dps":  16.66,
-    "emoji":  "<:shkoom:723709563840495622>",
-    "icon":  "https://cdn.discordapp.com/attachments/700683544103747594/723477000441823283/shkoom.png",
-    "name":  "Sh'koom",
-    "techLevel":  6,
-    "value":  14195,
-    "wiki":  "https://galaxyonfire.fandom.com/wiki/Sh%27koom",
-    "type":  "PrimaryWeapon",
-    "subtype":  "blaster_lasers"
+{
+    "aliases": [
+        "shkoom"
+    ],
+    "builtIn": false,
+    "dps": 16.66,
+    "emoji": "<:shkoom:723709563840495622>",
+    "icon": "https://cdn.discordapp.com/attachments/700683544103747594/723477000441823283/shkoom.png",
+    "name": "Sh'koom",
+    "techLevel": 6,
+    "value": 14195,
+    "wiki": "https://galaxyonfire.fandom.com/wiki/Sh%27koom"
 }

@@ -1,15 +1,13 @@
-﻿{
-    "aliases":  [
-                    "Ridil"
-                ],
-    "builtIn":  false,
-    "dps":  48,
-    "emoji":  "<:ridilblaster:723709620446822420>",
-    "icon":  "https://cdn.discordapp.com/attachments/700683544103747594/723476812814090300/ridil_blaster.png",
-    "name":  "Ridil Blaster",
-    "techLevel":  8,
-    "value":  67535,
-    "wiki":  "https://galaxyonfire.fandom.com/wiki/Ridil_Blaster",
-    "type":  "PrimaryWeapon",
-    "subtype":  "blasters"
+{
+    "aliases": [
+        "Ridil"
+    ],
+    "builtIn": false,
+    "dps": 48,
+    "emoji": "<:ridilblaster:723709620446822420>",
+    "icon": "https://cdn.discordapp.com/attachments/700683544103747594/723476812814090300/ridil_blaster.png",
+    "name": "Ridil Blaster",
+    "techLevel": 8,
+    "value": 67535,
+    "wiki": "https://galaxyonfire.fandom.com/wiki/Ridil_Blaster"
 }

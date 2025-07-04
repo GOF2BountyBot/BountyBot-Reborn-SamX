@@ -1,15 +1,13 @@
-﻿{
-    "aliases":  [
-                    "Mimung"
-                ],
-    "builtIn":  false,
-    "dps":  69.56,
-    "emoji":  "<:mimungblaster:723709620169736204>",
-    "icon":  "https://cdn.discordapp.com/attachments/700683544103747594/723476793658572800/mimung_blaster.png",
-    "name":  "Mimung Blaster",
-    "techLevel":  9,
-    "value":  369763,
-    "wiki":  "https://galaxyonfire.fandom.com/wiki/Mimung_Blaster",
-    "type":  "PrimaryWeapon",
-    "subtype":  "blasters"
+{
+    "aliases": [
+        "Mimung"
+    ],
+    "builtIn": false,
+    "dps": 69.56,
+    "emoji": "<:mimungblaster:723709620169736204>",
+    "icon": "https://cdn.discordapp.com/attachments/700683544103747594/723476793658572800/mimung_blaster.png",
+    "name": "Mimung Blaster",
+    "techLevel": 9,
+    "value": 369763,
+    "wiki": "https://galaxyonfire.fandom.com/wiki/Mimung_Blaster"
 }

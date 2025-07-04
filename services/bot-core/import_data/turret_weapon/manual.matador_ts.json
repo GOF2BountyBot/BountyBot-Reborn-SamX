@@ -1,17 +1,15 @@
-﻿{
-    "aliases":  [
-                    "Matador",
-                    "TS"
-                ],
-    "builtIn":  false,
-    "dps":  90,
-    "emoji":  "<:matadorts:723707422455103488>",
-    "icon":  "https://cdn.discordapp.com/attachments/700683544103747594/723476561931665418/matador_ts.png",
-    "name":  "Matador TS",
-    "techLevel":  9,
-    "value":  485350,
-    "automatic":  false,
-    "wiki":  "https://galaxyonfire.fandom.com/wiki/Matador_TS",
-    "type":  "TurretWeapon",
-    "subtype":  "manual"
+{
+    "aliases": [
+        "Matador",
+        "TS"
+    ],
+    "builtIn": false,
+    "dps": 90,
+    "emoji": "<:matadorts:723707422455103488>",
+    "icon": "https://cdn.discordapp.com/attachments/700683544103747594/723476561931665418/matador_ts.png",
+    "name": "Matador TS",
+    "techLevel": 9,
+    "value": 485350,
+    "automatic": false,
+    "wiki": "https://galaxyonfire.fandom.com/wiki/Matador_TS"
 }

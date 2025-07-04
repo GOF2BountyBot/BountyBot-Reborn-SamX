@@ -1,19 +1,17 @@
-﻿{
-    "aliases":  [
-                    "Berger FlaK 9-9",
-                    "Berger FlaK",
-                    "Berger 9-9",
-                    "Flak 9-9",
-                    "9-9"
-                ],
-    "builtIn":  false,
-    "dps":  25.33,
-    "emoji":  "<:bergerflak99:723709663610273843>",
-    "icon":  "https://cdn.discordapp.com/attachments/700683544103747594/723477061800427560/berger_flak_9-9.png",
-    "name":  "Berger FlaK 9-9",
-    "techLevel":  7,
-    "value":  135058,
-    "wiki":  "https://galaxyonfire.fandom.com/wiki/Berger_FlaK_9-9",
-    "type":  "PrimaryWeapon",
-    "subtype":  "scatter_guns"
+{
+    "aliases": [
+        "Berger FlaK 9-9",
+        "Berger FlaK",
+        "Berger 9-9",
+        "Flak 9-9",
+        "9-9"
+    ],
+    "builtIn": false,
+    "dps": 25.33,
+    "emoji": "<:bergerflak99:723709663610273843>",
+    "icon": "https://cdn.discordapp.com/attachments/700683544103747594/723477061800427560/berger_flak_9-9.png",
+    "name": "Berger FlaK 9-9",
+    "techLevel": 7,
+    "value": 135058,
+    "wiki": "https://galaxyonfire.fandom.com/wiki/Berger_FlaK_9-9"
 }

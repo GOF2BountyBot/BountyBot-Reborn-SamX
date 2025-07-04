@@ -1,19 +1,17 @@
-﻿{
-    "aliases":  [
-                    "Dia Mk III",
-                    "Dia EMP",
-                    "Dia",
-                    "EMP Mk III",
-                    "EMP III"
-                ],
-    "builtIn":  false,
-    "dps":  17.77,
-    "emoji":  "<:diaempmkiii:723709689044402228>",
-    "icon":  "https://cdn.discordapp.com/attachments/700683544103747594/723476855465705482/dia_emp_mk_iii.png",
-    "name":  "Dia EMP Mk III",
-    "techLevel":  6,
-    "value":  40736,
-    "wiki":  "https://galaxyonfire.fandom.com/wiki/Dia_EMP_Mk_III",
-    "type":  "PrimaryWeapon",
-    "subtype":  "emp_blasters"
+{
+    "aliases": [
+        "Dia Mk III",
+        "Dia EMP",
+        "Dia",
+        "EMP Mk III",
+        "EMP III"
+    ],
+    "builtIn": false,
+    "dps": 17.77,
+    "emoji": "<:diaempmkiii:723709689044402228>",
+    "icon": "https://cdn.discordapp.com/attachments/700683544103747594/723476855465705482/dia_emp_mk_iii.png",
+    "name": "Dia EMP Mk III",
+    "techLevel": 6,
+    "value": 40736,
+    "wiki": "https://galaxyonfire.fandom.com/wiki/Dia_EMP_Mk_III"
 }

@@ -1,20 +1,18 @@
-﻿{
-    "aliases":  [
-                    "berger focus 2 A1",
-                    "berger focus 2",
-                    "berger focus II",
-                    "berger focus A1",
-                    "focus 2",
-                    "focus 2 A1"
-                ],
-    "builtIn":  false,
-    "dps":  20,
-    "emoji":  "<:bergerfocusiia1:723709563915730985>",
-    "icon":  "https://cdn.discordapp.com/attachments/700683544103747594/723476920133484574/berger_focus_ii_a1.png",
-    "name":  "Berger Focus II A1",
-    "techLevel":  6,
-    "value":  31946,
-    "wiki":  "https://galaxyonfire.fandom.com/wiki/Berger_Focus_II_A1",
-    "type":  "PrimaryWeapon",
-    "subtype":  "blaster_lasers"
+{
+    "aliases": [
+        "berger focus 2 A1",
+        "berger focus 2",
+        "berger focus II",
+        "berger focus A1",
+        "focus 2",
+        "focus 2 A1"
+    ],
+    "builtIn": false,
+    "dps": 20,
+    "emoji": "<:bergerfocusiia1:723709563915730985>",
+    "icon": "https://cdn.discordapp.com/attachments/700683544103747594/723476920133484574/berger_focus_ii_a1.png",
+    "name": "Berger Focus II A1",
+    "techLevel": 6,
+    "value": 31946,
+    "wiki": "https://galaxyonfire.fandom.com/wiki/Berger_Focus_II_A1"
 }

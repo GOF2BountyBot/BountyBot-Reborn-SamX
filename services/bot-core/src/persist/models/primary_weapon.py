@@ -6,7 +6,7 @@ from persist.database.tablenames import TableNames
 class PrimaryWeapon(Weapon):
     __tablename__ = TableNames.PrimaryWeapon.value
 
-    id: Mapped[int] = mapped_column(Integer, ForeignKey('weapon.id'), primary_key=True)
+    id: Mapped[int] = mapped_column(Integer, ForeignKey(f"{TableNames.Weapon.value}.id"), primary_key=True)
     dps: Mapped[float] = mapped_column(Float, nullable=False)
 
     __mapper_args__ = {

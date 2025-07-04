@@ -6,7 +6,7 @@ from persist.database.tablenames import TableNames
 class SecondaryWeapon(Weapon):
     __tablename__ = TableNames.SecondaryWeapon.value
 
-    id: Mapped[int] = mapped_column(Integer, ForeignKey('weapon.id'), primary_key=True)
+    id: Mapped[int] = mapped_column(Integer, ForeignKey(f"{TableNames.Weapon.value}.id"), primary_key=True)
     damage: Mapped[int] = mapped_column(Integer, nullable=False)
     loading_speed: Mapped[int] = mapped_column(Integer, nullable=False)
 

@@ -2,8 +2,8 @@ from enum import Enum
 
 class TableNames(Enum):
     SchemaVersion       = "schema"
-    Item                = "items"
-    Module              = "modules"
+    Item                = "item"
+    Module              = "module"
     Weapon              = "weapon"
     PrimaryWeapon       = "primary_weapon"
     SecondaryWeapon     = "secondary_weapon"

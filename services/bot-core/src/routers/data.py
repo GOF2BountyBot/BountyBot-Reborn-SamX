@@ -6,6 +6,7 @@ from utils.data_loader import load_data
 
 class DataCategory(str, Enum):
     module     = "module"
+    primary   = "primary_weapon"
     secondary  = "secondary_weapon"
     # add more as needed:
     # ship      = "ship"

@@ -1,3 +1,6 @@
+from typing import Any
+from sqlalchemy.orm import Session
+
 from persist.models.weapon import Weapon
 from persist.repositories.generic_repository import GenericRepository
 

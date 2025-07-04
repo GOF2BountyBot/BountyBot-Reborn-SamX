@@ -151,7 +151,7 @@ class GatewayBot(commands.Bot):
 
             # Log synced commands
             for cmd in synced:
-                self.logger.info(f"  - Synced: {cmd.name}")
+                self.logger.trace(f"  - Synced: {cmd.name}")
 
         except Exception as e:
             self.logger.error(f"✗ Failed to sync commands: {e}")

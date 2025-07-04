@@ -16,3 +16,4 @@ class Item(Base):
     icon: Mapped[str] = mapped_column(String)
     value: Mapped[int] = mapped_column(Integer)
     wiki: Mapped[str] = mapped_column(String)
+    type: Mapped[str] = mapped_column(String)

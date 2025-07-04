@@ -9,7 +9,6 @@ class Module(Item):
     id: Mapped[int] = mapped_column(Integer, ForeignKey('items.id'), primary_key=True)
     tech_level: Mapped[int] = mapped_column(Integer)
     max_equipped: Mapped[int] = mapped_column(Integer)
-    type: Mapped[str] = mapped_column(String)
 
     __mapper_args__ = {
         'polymorphic_identity': 'module',

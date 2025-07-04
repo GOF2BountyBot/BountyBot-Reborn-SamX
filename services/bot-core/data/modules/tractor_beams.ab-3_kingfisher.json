@@ -1,0 +1,16 @@
+{
+    "aliases": [
+        "Kingfisher",
+        "\"Kingfisher\"",
+        "AB-3 Kingfisher"
+    ],
+    "builtIn": false,
+    "emoji": "<:ab3kingfisher:723707140942069832>",
+    "icon": "https://cdn.discordapp.com/attachments/700683544103747594/723475692074827856/ab-3_kingfisher.png",
+    "name": "AB-3 \"Kingfisher\"",
+    "techLevel": 7,
+    "timeToLock": 0,
+    "type": "TractorBeamModule",
+    "value": 61448,
+    "wiki": "https://galaxyonfire.fandom.com/wiki/AB-3_\"Kingfisher\""
+}

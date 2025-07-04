@@ -1,0 +1,16 @@
+{
+    "aliases": [
+        "Proscan"
+    ],
+    "builtIn": false,
+    "emoji": "<:hirotoproscan:723706725592596542>",
+    "icon": "https://cdn.discordapp.com/attachments/700683544103747594/723475350603956284/hiroto_proscan.png",
+    "name": "Hiroto Proscan",
+    "showCargo": true,
+    "showClassAAsteroids": false,
+    "techLevel": 6,
+    "timeToLock": 1.8,
+    "type": "ScannerModule",
+    "value": 38955,
+    "wiki": "https://galaxyonfire.fandom.com/wiki/Hiroto_Proscan"
+}

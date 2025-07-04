@@ -1,0 +1,12 @@
+{
+    "aliases": [],
+    "builtIn": false,
+    "emoji": "<:pulsedplasmathrust:723707097690144801>",
+    "handlingMultiplier": 2.3,
+    "icon": "https://cdn.discordapp.com/attachments/700683544103747594/723475621694668820/pulsed_plasma_thrust.png",
+    "name": "Pulsed Plasma Thrust",
+    "techLevel": 8,
+    "type": "ThrusterModule",
+    "value": 31015,
+    "wiki": "https://galaxyonfire.fandom.com/wiki/Pulsed_Plasma_Thrust"
+}

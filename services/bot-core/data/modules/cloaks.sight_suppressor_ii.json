@@ -1,0 +1,17 @@
+{
+    "aliases": [
+        "Sight Suppressor 2",
+        "Sight 2",
+        "Suppressor II",
+        "Suppressor II"
+    ],
+    "builtIn": false,
+    "duration": 20,
+    "emoji": "<:sightsuppressorii:723706519383703662>",
+    "icon": "https://cdn.discordapp.com/attachments/700683544103747594/723474695336493136/sight_suppressor_ii.png",
+    "name": "Sight Suppressor II",
+    "techLevel": 4,
+    "type": "CloakModule",
+    "value": 29599,
+    "wiki": "https://galaxyonfire.fandom.com/wiki/Sight_Suppressor_II"
+}

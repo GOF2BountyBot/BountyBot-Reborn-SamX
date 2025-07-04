@@ -1,0 +1,39 @@
+{
+    "aliases": [
+        "groza"
+    ],
+    "armour": 160,
+    "builtIn": false,
+    "cargo": 130,
+    "compatibleSkins": [
+        "camo",
+        "rainbow",
+        "abyss",
+        "candy",
+        "cargo",
+        "ferrari",
+        "lava",
+        "lilac",
+        "mint",
+        "onyx",
+        "slate",
+        "neapolitan"
+    ],
+    "emoji": "<:groza:723705237038432258>",
+    "handling": 117,
+    "icon": "https://cdn.discordapp.com/attachments/700683544103747594/720694034305253447/groza.png",
+    "manufacturer": "terran",
+    "maxModules": 8,
+    "maxPrimaries": 3,
+    "maxSecondaries": 3,
+    "maxTurrets": 0,
+    "model": "Groza_Full.obj",
+    "name": "Groza",
+    "normSpec": "ship_022_terran_normal_specular.bmp",
+    "saveDue": false,
+    "shopSpawnRate": 8.416,
+    "skinnable": true,
+    "textureRegions": 2,
+    "value": 251600,
+    "wiki": "https://galaxyonfire.fandom.com/wiki/Groza"
+}

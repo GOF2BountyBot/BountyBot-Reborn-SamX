@@ -1,0 +1,12 @@
+{
+    "aliases": [],
+    "builtIn": false,
+    "cabinSize": 3,
+    "emoji": "<:smallcabin:723706495426101268>",
+    "icon": "https://cdn.discordapp.com/attachments/700683544103747594/723474647152328774/small_cabin.png",
+    "name": "Small Cabin",
+    "techLevel": 3,
+    "type": "CabinModule",
+    "value": 3170,
+    "wiki": "https://galaxyonfire.fandom.com/wiki/Small_Cabin"
+}

@@ -1,0 +1,32 @@
+{
+    "aliases": [
+        "void",
+        "x",
+        "void x",
+        "voidx"
+    ],
+    "armour": 450,
+    "builtIn": false,
+    "cargo": 30,
+    "compatibleSkins": [
+        "abyss",
+        "candy"
+    ],
+    "emoji": "<:voidx:723706193096212510>",
+    "handling": 155,
+    "icon": "https://cdn.discordapp.com/attachments/700683544103747594/720694144158138418/voidx.png",
+    "manufacturer": "void",
+    "maxModules": 15,
+    "maxPrimaries": 4,
+    "maxSecondaries": 4,
+    "maxTurrets": 0,
+    "model": "VoidXFull.obj",
+    "name": "VoidX",
+    "normSpec": "ship_008_void_normal_specular.bmp",
+    "saveDue": false,
+    "shopSpawnRate": 9.585,
+    "skinnable": false,
+    "textureRegions": 2,
+    "value": 8115900,
+    "wiki": "https://galaxyonfire.fandom.com/wiki/VoidX"
+}

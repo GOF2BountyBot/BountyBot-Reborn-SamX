@@ -1,0 +1,14 @@
+{
+    "aliases": [
+        "Emergency"
+    ],
+    "builtIn": false,
+    "duration": 10,
+    "emoji": "<:emergencysystem:723706633888464926>",
+    "icon": "https://cdn.discordapp.com/attachments/700683544103747594/723481915528839178/emergency_system.png",
+    "name": "Emergency System",
+    "techLevel": 6,
+    "type": "EmergencySystemModule",
+    "value": 6860,
+    "wiki": "https://galaxyonfire.fandom.com/wiki/Emergency_System"
+}

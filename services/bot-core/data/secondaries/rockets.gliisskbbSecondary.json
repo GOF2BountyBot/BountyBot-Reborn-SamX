@@ -1,0 +1,19 @@
+{
+    "aliases": [
+        "Gliissk",
+        "Glissk",
+        "Gliisk",
+        "Glisk",
+        "G'lissk",
+        "G'liisk",
+        "G'lisk"
+    ],
+    "builtIn": false,
+    "damage": 60,
+    "icon": "",
+    "loading speed": 1.2,
+    "name": "G'liissk",
+    "type": "rocket",
+    "value": 23,
+    "wiki": ""
+}

@@ -1,0 +1,14 @@
+{
+    "aliases": [
+        "Optistore"
+    ],
+    "builtIn": false,
+    "cargoMultiplier": 1.15,
+    "emoji": "<:zmioptistore:723706540975980628>",
+    "icon": "https://cdn.discordapp.com/attachments/700683544103747594/723474790828212254/zmi_optistore.png",
+    "name": "ZMI Optistore",
+    "techLevel": 1,
+    "type": "CompressorModule",
+    "value": 2576,
+    "wiki": "https://galaxyonfire.fandom.com/wiki/ZMI_Optistore"
+}

@@ -1,0 +1,43 @@
+{
+    "aliases": [
+        "nuyang",
+        "nuyangii",
+        "nuyang2",
+        "nuyang 2",
+        "nuyang ii"
+    ],
+    "armour": 225,
+    "builtIn": false,
+    "cargo": 105,
+    "compatibleSkins": [
+        "rainbow",
+        "blackout",
+        "abyss",
+        "candy",
+        "cargo",
+        "ferrari",
+        "lava",
+        "lilac",
+        "mint",
+        "onyx",
+        "slate",
+        "neapolitan"
+    ],
+    "emoji": "<:nuyangii:723705373063774338>",
+    "handling": 90,
+    "icon": "https://cdn.discordapp.com/attachments/700683544103747594/720693758605393980/nuyang_ii.png",
+    "manufacturer": "midorian",
+    "maxModules": 9,
+    "maxPrimaries": 4,
+    "maxSecondaries": 2,
+    "maxTurrets": 0,
+    "model": "Nuyang_II_Full.obj",
+    "name": "Nuyang II",
+    "normSpec": "ship_019_midorian_normal_specular.bmp",
+    "saveDue": false,
+    "shopSpawnRate": 7.214,
+    "skinnable": true,
+    "textureRegions": 2,
+    "value": 930303,
+    "wiki": "https://galaxyonfire.fandom.com/wiki/Nuyang_II"
+}

@@ -1,0 +1,16 @@
+{
+    "HPps": 15,
+    "aliases": [
+        "Pandora",
+        "Leech"
+    ],
+    "builtIn": false,
+    "count": 3,
+    "emoji": "<:pandoraleech:723707161380913182>",
+    "icon": "https://cdn.discordapp.com/attachments/700683544103747594/723475759028633630/pandora_leech.png",
+    "name": "Pandora Leech",
+    "techLevel": 8,
+    "type": "TransfusionBeamModule",
+    "value": 80537,
+    "wiki": "https://galaxyonfire.fandom.com/wiki/Pandora_Leech"
+}

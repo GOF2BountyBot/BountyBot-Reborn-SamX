@@ -1,0 +1,15 @@
+{
+    "aliases": [
+        "Shrinker",
+        "BT"
+    ],
+    "builtIn": false,
+    "cargoMultiplier": 1.75,
+    "emoji": "<:shrinkerbt:723706541236158505>",
+    "icon": "https://cdn.discordapp.com/attachments/700683544103747594/723474766161379360/shrinker_bt.png",
+    "name": "Shrinker BT",
+    "techLevel": 7,
+    "type": "CompressorModule",
+    "value": 28571,
+    "wiki": "https://galaxyonfire.fandom.com/wiki/Shrinker_BT"
+}

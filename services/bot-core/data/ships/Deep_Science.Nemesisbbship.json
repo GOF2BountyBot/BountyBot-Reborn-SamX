@@ -1,0 +1,39 @@
+{
+    "aliases": [
+        "nemesis"
+    ],
+    "armour": 235,
+    "builtIn": false,
+    "cargo": 105,
+    "compatibleSkins": [
+        "racing stripes",
+        "space",
+        "abyss",
+        "candy",
+        "cargo",
+        "ferrari",
+        "lava",
+        "lilac",
+        "mint",
+        "onyx",
+        "slate",
+        "neapolitan"
+    ],
+    "emoji": "<:nemesis:723705945192005643>",
+    "handling": 95,
+    "icon": "https://cdn.discordapp.com/attachments/700683544103747594/720693589973270603/nemesis.png",
+    "manufacturer": "deep science",
+    "maxModules": 14,
+    "maxPrimaries": 4,
+    "maxSecondaries": 1,
+    "maxTurrets": 0,
+    "model": "Nemesis_Full.obj",
+    "name": "Nemesis",
+    "normSpec": "v_ship_040_deep_science_normal_specular.bmp",
+    "saveDue": false,
+    "shopSpawnRate": 8.416,
+    "skinnable": true,
+    "textureRegions": 1,
+    "value": 6800000,
+    "wiki": "https://galaxyonfire.fandom.com/wiki/Nemesis_(ship)"
+}

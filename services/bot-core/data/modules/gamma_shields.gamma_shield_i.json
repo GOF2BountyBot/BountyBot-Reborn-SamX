@@ -1,0 +1,16 @@
+{
+    "aliases": [
+        "Gamma Shield 1",
+        "Gamma I",
+        "Gamma 1"
+    ],
+    "builtIn": false,
+    "effect": 0.6,
+    "emoji": "<:gammashieldi:723706563096871004>",
+    "icon": "https://cdn.discordapp.com/attachments/700683544103747594/723475048848949249/gamma_shield_i.png",
+    "name": "Gamma Shield I",
+    "techLevel": 8,
+    "type": "GammaShieldModule",
+    "value": 27526,
+    "wiki": "https://galaxyonfire.fandom.com/wiki/Gamma_Shield_I"
+}

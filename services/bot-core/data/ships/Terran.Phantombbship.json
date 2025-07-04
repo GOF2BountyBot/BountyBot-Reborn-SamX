@@ -1,0 +1,40 @@
+{
+    "aliases": [
+        "phantom"
+    ],
+    "armour": 200,
+    "builtIn": false,
+    "cargo": 52,
+    "compatibleSkins": [
+        "rainbow",
+        "urban-camo",
+        "leopard print",
+        "abyss",
+        "candy",
+        "cargo",
+        "ferrari",
+        "lava",
+        "lilac",
+        "mint",
+        "onyx",
+        "slate",
+        "neapolitan"
+    ],
+    "emoji": "<:phantom:723705237281701968>",
+    "handling": 150,
+    "icon": "https://cdn.discordapp.com/attachments/700683544103747594/720694051963142215/phantom.png",
+    "manufacturer": "terran",
+    "maxModules": 9,
+    "maxPrimaries": 2,
+    "maxSecondaries": 1,
+    "maxTurrets": 0,
+    "model": "Phantom_Full.obj",
+    "name": "Phantom",
+    "normSpec": "ship_010_terran_normal_specular.bmp",
+    "saveDue": false,
+    "shopSpawnRate": 12.625,
+    "skinnable": true,
+    "textureRegions": 2,
+    "value": 1450000,
+    "wiki": "https://galaxyonfire.fandom.com/wiki/Phantom"
+}

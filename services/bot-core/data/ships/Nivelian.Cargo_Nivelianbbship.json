@@ -1,0 +1,40 @@
+{
+    "aliases": [
+        "nivel freighter",
+        "nivelian freighter"
+    ],
+    "armour": 1400,
+    "builtIn": false,
+    "cargo": 700,
+    "compatibleSkins": [
+        "aperture",
+        "leopard print",
+        "abyss",
+        "candy",
+        "cargo",
+        "ferrari",
+        "lava",
+        "lilac",
+        "mint",
+        "onyx",
+        "slate",
+        "neapolitan"
+    ],
+    "emoji": "<:Nivelian_Freighter:769692267799248946>",
+    "handling": 30,
+    "icon": "https://cdn.discordapp.com/attachments/700683544103747594/769690618162839562/Cargo_Nivelian_Full_cropped.png",
+    "manufacturer": "nivelian",
+    "maxModules": 8,
+    "maxPrimaries": 0,
+    "maxSecondaries": 2,
+    "maxTurrets": 0,
+    "model": "Cargo_Nivelian_Full.obj",
+    "name": "Nivelian Freighter",
+    "normSpec": "cargo_nivelian_normal_specular.bmp",
+    "saveDue": false,
+    "shopSpawnRate": 7.214,
+    "skinnable": true,
+    "textureRegions": 1,
+    "value": 700000,
+    "wiki": "https://galaxyonfire.fandom.com/wiki/Freighter"
+}

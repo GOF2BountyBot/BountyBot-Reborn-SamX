@@ -1,0 +1,16 @@
+{
+    "aliases": [
+        "Retractor",
+        "\"Retractor\"",
+        "AB-1 Retractor"
+    ],
+    "builtIn": false,
+    "emoji": "<:ab1retractor:723707140610719787>",
+    "icon": "https://cdn.discordapp.com/attachments/700683544103747594/723475674492436510/ab-1_retractor.png",
+    "name": "AB-1 \"Retractor\"",
+    "techLevel": 4,
+    "timeToLock": 4,
+    "type": "TractorBeamModule",
+    "value": 8962,
+    "wiki": "https://galaxyonfire.fandom.com/wiki/AB-1_\"Retractor\""
+}

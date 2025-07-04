@@ -1,0 +1,15 @@
+{
+    "aliases": [
+        "Meal"
+    ],
+    "builtIn": false,
+    "duration": 7,
+    "effect": 3,
+    "emoji": "<:meal:723706427260141629>",
+    "icon": "https://cdn.discordapp.com/attachments/700683544103747594/723474564637655040/meal.png",
+    "name": "Me'al",
+    "techLevel": 7,
+    "type": "BoosterModule",
+    "value": 46897,
+    "wiki": "https://galaxyonfire.fandom.com/wiki/Me%27al"
+}

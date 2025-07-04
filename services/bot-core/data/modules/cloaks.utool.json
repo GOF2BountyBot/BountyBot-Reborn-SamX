@@ -1,0 +1,14 @@
+{
+    "aliases": [
+        "Utool"
+    ],
+    "builtIn": false,
+    "duration": 10,
+    "emoji": "<:utool:723706519379509249>",
+    "icon": "https://cdn.discordapp.com/attachments/700683544103747594/723474706182832139/utool.png",
+    "name": "U'tool",
+    "techLevel": 6,
+    "type": "CloakModule",
+    "value": 47367,
+    "wiki": "https://galaxyonfire.fandom.com/wiki/U%27tool"
+}

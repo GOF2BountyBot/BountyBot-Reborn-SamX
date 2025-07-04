@@ -1,0 +1,40 @@
+{
+    "aliases": [
+        "veteran"
+    ],
+    "armour": 200,
+    "builtIn": false,
+    "cargo": 110,
+    "compatibleSkins": [
+        "blackout",
+        "racing stripes",
+        "rusted",
+        "abyss",
+        "candy",
+        "cargo",
+        "ferrari",
+        "lava",
+        "lilac",
+        "mint",
+        "onyx",
+        "slate",
+        "neapolitan"
+    ],
+    "emoji": "<:veteran:723705237231239219>",
+    "handling": 92,
+    "icon": "https://cdn.discordapp.com/attachments/700683544103747594/720694081897889793/veteran.png",
+    "manufacturer": "terran",
+    "maxModules": 12,
+    "maxPrimaries": 3,
+    "maxSecondaries": 4,
+    "maxTurrets": 1,
+    "model": "Veteran_Full.obj",
+    "name": "Veteran",
+    "normSpec": "ship_028_terran_normal_specular.bmp",
+    "saveDue": false,
+    "shopSpawnRate": 7.214,
+    "skinnable": true,
+    "textureRegions": 2,
+    "value": 2488400,
+    "wiki": "https://galaxyonfire.fandom.com/wiki/Veteran"
+}

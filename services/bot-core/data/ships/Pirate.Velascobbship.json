@@ -1,0 +1,39 @@
+{
+    "aliases": [
+        "velasco"
+    ],
+    "armour": 170,
+    "builtIn": false,
+    "cargo": 95,
+    "compatibleSkins": [
+        "bloodlust",
+        "tex",
+        "abyss",
+        "candy",
+        "cargo",
+        "ferrari",
+        "lava",
+        "lilac",
+        "mint",
+        "onyx",
+        "slate",
+        "neapolitan"
+    ],
+    "emoji": "<:velasco:723706166428958730>",
+    "handling": 125,
+    "icon": "https://cdn.discordapp.com/attachments/700683544103747594/720693956186210304/velasco.png",
+    "manufacturer": "pirate",
+    "maxModules": 8,
+    "maxPrimaries": 3,
+    "maxSecondaries": 2,
+    "maxTurrets": 1,
+    "model": "Velasco_Full.obj",
+    "name": "Velasco",
+    "normSpec": "ship_024_pirates_normal_specular.bmp",
+    "saveDue": false,
+    "shopSpawnRate": 7.214,
+    "skinnable": true,
+    "textureRegions": 2,
+    "value": 684300,
+    "wiki": "https://galaxyonfire.fandom.com/wiki/Velasco"
+}

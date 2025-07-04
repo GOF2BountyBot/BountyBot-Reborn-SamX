@@ -1,0 +1,41 @@
+{
+    "aliases": [
+        "vossk battleship",
+        "vossk warship",
+        "vossk battlecruiser"
+    ],
+    "armour": 2100,
+    "builtIn": false,
+    "cargo": 300,
+    "compatibleSkins": [
+        "soul marble",
+        "space",
+        "abyss",
+        "candy",
+        "cargo",
+        "ferrari",
+        "lava",
+        "lilac",
+        "mint",
+        "onyx",
+        "slate",
+        "neapolitan"
+    ],
+    "emoji": "<:Vossk_Battlecruiser:770030286678917122>",
+    "handling": 10,
+    "icon": "https://cdn.discordapp.com/attachments/700683544103747594/770030848715915314/VB_Full_cropped.png",
+    "manufacturer": "vossk",
+    "maxModules": 9,
+    "maxPrimaries": 0,
+    "maxSecondaries": 4,
+    "maxTurrets": 7,
+    "model": "VB_Full.obj",
+    "name": "Vossk Battlecruiser",
+    "normSpec": "sn_battleship_vossk_normal_specular.bmp",
+    "saveDue": false,
+    "shopSpawnRate": 9.585,
+    "skinnable": true,
+    "textureRegions": 0,
+    "value": 50000000,
+    "wiki": "https://galaxyonfire.fandom.com/wiki/Vossk_Battlecruiser"
+}

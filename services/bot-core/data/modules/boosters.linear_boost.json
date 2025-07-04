@@ -1,0 +1,15 @@
+{
+    "aliases": [
+        "Linear"
+    ],
+    "builtIn": false,
+    "duration": 3,
+    "effect": 1.6,
+    "emoji": "<:linearboost:723706427381907526>",
+    "icon": "https://cdn.discordapp.com/attachments/700683544103747594/723474553577406504/linear_boost.png",
+    "name": "Linear Boost",
+    "techLevel": 4,
+    "type": "BoosterModule",
+    "value": 5704,
+    "wiki": "https://galaxyonfire.fandom.com/wiki/Linear_Boost"
+}

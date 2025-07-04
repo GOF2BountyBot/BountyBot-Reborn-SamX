@@ -1,0 +1,40 @@
+{
+    "aliases": [
+        "betty"
+    ],
+    "armour": 95,
+    "builtIn": false,
+    "cargo": 25,
+    "compatibleSkins": [
+        "space",
+        "tex",
+        "leopard print",
+        "abyss",
+        "candy",
+        "cargo",
+        "ferrari",
+        "lava",
+        "lilac",
+        "mint",
+        "onyx",
+        "slate",
+        "neapolitan"
+    ],
+    "emoji": "<:betty:723705372606726155>",
+    "handling": 120,
+    "icon": "https://cdn.discordapp.com/attachments/700683544103747594/720693735158972476/betty.png",
+    "manufacturer": "midorian",
+    "maxModules": 3,
+    "maxPrimaries": 1,
+    "maxSecondaries": 1,
+    "maxTurrets": 0,
+    "model": "Betty_Full.obj",
+    "name": "Betty",
+    "normSpec": "ship_000_midorian_normal_specular.bmp",
+    "saveDue": false,
+    "shopSpawnRate": 9.585,
+    "skinnable": true,
+    "textureRegions": 1,
+    "value": 16038,
+    "wiki": "https://galaxyonfire.fandom.com/wiki/Betty"
+}

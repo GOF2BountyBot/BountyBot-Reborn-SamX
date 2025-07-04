@@ -1,0 +1,16 @@
+{
+    "aliases": [
+        "Ultrascan"
+    ],
+    "builtIn": false,
+    "emoji": "<:hirotoultrascan:723706725915689020>",
+    "icon": "https://cdn.discordapp.com/attachments/700683544103747594/723475359579766814/hiroto_ultrascan.png",
+    "name": "Hiroto Ultrascan",
+    "showCargo": true,
+    "showClassAAsteroids": true,
+    "techLevel": 7,
+    "timeToLock": 1.8,
+    "type": "ScannerModule",
+    "value": 95309,
+    "wiki": "https://galaxyonfire.fandom.com/wiki/Hiroto_Ultrascan"
+}

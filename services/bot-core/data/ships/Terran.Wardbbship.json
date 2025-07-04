@@ -1,0 +1,39 @@
+{
+    "aliases": [
+        "ward"
+    ],
+    "armour": 145,
+    "builtIn": false,
+    "cargo": 65,
+    "compatibleSkins": [
+        "rainbow",
+        "urban-camo",
+        "abyss",
+        "candy",
+        "cargo",
+        "ferrari",
+        "lava",
+        "lilac",
+        "mint",
+        "onyx",
+        "slate",
+        "neapolitan"
+    ],
+    "emoji": "<:ward:723705236845232141>",
+    "handling": 95,
+    "icon": "https://cdn.discordapp.com/attachments/700683544103747594/720694086897500220/ward.png",
+    "manufacturer": "terran",
+    "maxModules": 10,
+    "maxPrimaries": 4,
+    "maxSecondaries": 2,
+    "maxTurrets": 0,
+    "model": "Ward_Full.obj",
+    "name": "Ward",
+    "normSpec": "ship_017_terran_normal_specular.bmp",
+    "saveDue": false,
+    "shopSpawnRate": 12.625,
+    "skinnable": true,
+    "textureRegions": 2,
+    "value": 1654800,
+    "wiki": "https://galaxyonfire.fandom.com/wiki/Ward"
+}

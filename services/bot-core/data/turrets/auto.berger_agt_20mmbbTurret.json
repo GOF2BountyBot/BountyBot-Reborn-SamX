@@ -1,0 +1,17 @@
+{
+    "aliases": [
+        "Berger AGT",
+        "Berger 20mm",
+        "20mm",
+        "AGT",
+        "AGT 20mm"
+    ],
+    "builtIn": false,
+    "dps": 40,
+    "emoji": "<:bergeragt20mm:723707369552347216>",
+    "icon": "https://cdn.discordapp.com/attachments/700683544103747594/723476483074686976/berger_agt_20mm.png",
+    "name": "Berger AGT 20mm",
+    "techLevel": 5,
+    "value": 227040,
+    "wiki": "https://galaxyonfire.fandom.com/wiki/Berger_AGT_20mm"
+}

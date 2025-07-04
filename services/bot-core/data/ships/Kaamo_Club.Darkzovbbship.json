@@ -1,0 +1,39 @@
+{
+    "aliases": [
+        "darkzov"
+    ],
+    "armour": 420,
+    "builtIn": false,
+    "cargo": 70,
+    "compatibleSkins": [
+        "carbon fibre",
+        "leopard print",
+        "abyss",
+        "candy",
+        "cargo",
+        "ferrari",
+        "lava",
+        "lilac",
+        "mint",
+        "onyx",
+        "slate",
+        "neapolitan"
+    ],
+    "emoji": "<:darkzov:723705999030091816>",
+    "handling": 130,
+    "icon": "https://cdn.discordapp.com/attachments/700683544103747594/720786415679569950/darkzov.png",
+    "manufacturer": "kaamo club",
+    "maxModules": 14,
+    "maxPrimaries": 4,
+    "maxSecondaries": 1,
+    "maxTurrets": 1,
+    "model": "Darkzov_Full.obj",
+    "name": "Darkzov",
+    "normSpec": "sn_ship_060_modified_normal_specular.bmp",
+    "saveDue": false,
+    "shopSpawnRate": 8.416,
+    "skinnable": true,
+    "textureRegions": 1,
+    "value": 7236000,
+    "wiki": "https://galaxyonfire.fandom.com/wiki/Darkzov"
+}

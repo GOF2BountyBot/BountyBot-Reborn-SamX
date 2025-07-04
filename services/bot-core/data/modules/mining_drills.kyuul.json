@@ -1,0 +1,15 @@
+{
+    "aliases": [
+        "Kyuul"
+    ],
+    "builtIn": false,
+    "emoji": "<:kyuul:723706605660667967>",
+    "drillHandling": 1.8,
+    "icon": "https://cdn.discordapp.com/attachments/700683544103747594/723475197159538698/kyuul.png",
+    "name": "K'yuul",
+    "oreYield": 1.4,
+    "techLevel": 5,
+    "type": "MiningDrillModule",
+    "value": 37743,
+    "wiki": "https://galaxyonfire.fandom.com/wiki/K%27yuul"
+}

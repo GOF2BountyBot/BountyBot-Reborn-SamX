@@ -1,0 +1,19 @@
+{
+    "aliases": [
+        "Spectral SA-X",
+        "Spectral Filter SA-X",
+        "Filter SA-X",
+        "Spectral SAX",
+        "Filter SAX"
+    ],
+    "builtIn": false,
+    "emoji": "<:spectralfilterstx:723707076731469878>",
+    "icon": "https://cdn.discordapp.com/attachments/700683544103747594/723475538647449630/spectral_filter_st-x.png",
+    "name": "Spectral Filter ST-X",
+    "showInfo": true,
+    "showOnRadar": false,
+    "techLevel": 9,
+    "type": "SpectralFilterModule",
+    "value": 154662,
+    "wiki": "https://galaxyonfire.fandom.com/wiki/Spectral_Filter_ST-X"
+}

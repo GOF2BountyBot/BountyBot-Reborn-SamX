@@ -1,0 +1,23 @@
+{
+    "aliases": [
+        "Ion Lambda MK 2",
+        "Lambda MK2",
+        "Lambda MK 2",
+        "Ion MK2",
+        "Ion MK 2",
+        "Ion Lambda MK II",
+        "Lambda MKII",
+        "Lambda MK II",
+        "Ion MKII",
+        "Ion MK II",
+        "Ion Lambda MKII"
+    ],
+    "builtIn": false,
+    "damage": 0,
+    "icon": "",
+    "loading speed": 0,
+    "name": "Ion Lambda MK2",
+    "type": "ionizing missile",
+    "value": 0,
+    "wiki": ""
+}

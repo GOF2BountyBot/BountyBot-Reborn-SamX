@@ -1,0 +1,16 @@
+{
+    "aliases": [
+        "E2",
+        "Exoclad",
+        "Exoclad E2"
+    ],
+    "armour": 40,
+    "builtIn": false,
+    "emoji": "<:e2exoclad:723706394716536842>",
+    "icon": "https://cdn.discordapp.com/attachments/700683544103747594/723474328687214612/e2_exoclad.png",
+    "name": "E2 Exoclad",
+    "techLevel": 1,
+    "type": "ArmourModule",
+    "value": 1070,
+    "wiki": "https://galaxyonfire.fandom.com/wiki/E2_Exoclad"
+}

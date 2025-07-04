@@ -1,0 +1,15 @@
+{
+    "aliases": [
+        "Cyclotron"
+    ],
+    "builtIn": false,
+    "duration": 4.4,
+    "effect": 1.8,
+    "emoji": "<:cyclotronboost:723706427448754178>",
+    "icon": "https://cdn.discordapp.com/attachments/700683544103747594/723474544479698965/cyclotron_boost.png",
+    "name": "Cyclotron Boost",
+    "techLevel": 5,
+    "type": "BoosterModule",
+    "value": 11553,
+    "wiki": "https://galaxyonfire.fandom.com/wiki/Cyclotron_Boost"
+}

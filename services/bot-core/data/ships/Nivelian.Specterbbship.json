@@ -1,0 +1,46 @@
+{
+    "aliases": [
+        "specter"
+    ],
+    "armour": 800,
+    "builtIn": false,
+    "cargo": 65,
+    "compatibleSkins": [
+        "bloodlust",
+        "camo",
+        "carbon fibre",
+        "abyss",
+        "candy",
+        "cargo",
+        "ferrari",
+        "lava",
+        "lilac",
+        "mint",
+        "onyx",
+        "slate",
+        "neapolitan"
+    ],
+    "emoji": "<:specter:723705339563868160>",
+    "handling": 138,
+    "icon": "https://cdn.discordapp.com/attachments/700683544103747594/720785904540581989/specter.png",
+    "manufacturer": "nivelian",
+    "maxModules": 16,
+    "maxPrimaries": 4,
+    "maxSecondaries": 2,
+    "maxTurrets": 0,
+    "model": "Specter_Full.obj",
+    "modules": [
+        {
+            "builtIn": true,
+            "name": "U'tool"
+        }
+    ],
+    "name": "Specter",
+    "normSpec": "sn_ship_044_elite_nivelian_normal_specular.bmp",
+    "saveDue": false,
+    "shopSpawnRate": 9.585,
+    "skinnable": true,
+    "textureRegions": 1,
+    "value": 30000000,
+    "wiki": "https://galaxyonfire.fandom.com/wiki/Specter"
+}

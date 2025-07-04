@@ -1,0 +1,18 @@
+{
+    "aliases": [
+        "E4",
+        "Lamina",
+        "E4 Ultra",
+        "E4 Lamina",
+        "Ultra Lamina"
+    ],
+    "armour": 80,
+    "builtIn": false,
+    "emoji": "<:e4ultralamina:723706394485719121>",
+    "icon": "https://cdn.discordapp.com/attachments/700683544103747594/723474339860840468/e4_ultra_lamina.png",
+    "name": "E4 Ultra Lamina",
+    "techLevel": 3,
+    "type": "ArmourModule",
+    "value": 4705,
+    "wiki": "https://galaxyonfire.fandom.com/wiki/E4_Ultra_Lamina"
+}

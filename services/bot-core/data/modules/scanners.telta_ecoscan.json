@@ -1,0 +1,16 @@
+{
+    "aliases": [
+        "Ecoscan"
+    ],
+    "builtIn": false,
+    "emoji": "<:teltaecoscan:723706725953306704>",
+    "icon": "https://cdn.discordapp.com/attachments/700683544103747594/723475370585751593/telta_ecoscan.png",
+    "name": "Telta Ecoscan",
+    "showCargo": true,
+    "showClassAAsteroids": false,
+    "techLevel": 3,
+    "timeToLock": 3,
+    "type": "ScannerModule",
+    "value": 8647,
+    "wiki": "https://galaxyonfire.fandom.com/wiki/Telta_Ecoscan"
+}

@@ -1,0 +1,39 @@
+{
+    "aliases": [
+        "wraith"
+    ],
+    "armour": 180,
+    "builtIn": false,
+    "cargo": 65,
+    "compatibleSkins": [
+        "urban-camo",
+        "soul marble",
+        "abyss",
+        "candy",
+        "cargo",
+        "ferrari",
+        "lava",
+        "lilac",
+        "mint",
+        "onyx",
+        "slate",
+        "neapolitan"
+    ],
+    "emoji": "<:wraith:723705339706474576>",
+    "handling": 140,
+    "icon": "https://cdn.discordapp.com/attachments/700683544103747594/720693879891951636/wraith.png",
+    "manufacturer": "nivelian",
+    "maxModules": 9,
+    "maxPrimaries": 4,
+    "maxSecondaries": 2,
+    "maxTurrets": 0,
+    "model": "Wraith_Full.obj",
+    "name": "Wraith",
+    "normSpec": "ship_043_retro_normal_specular.bmp",
+    "saveDue": false,
+    "shopSpawnRate": 12.625,
+    "skinnable": true,
+    "textureRegions": 0,
+    "value": 1750000,
+    "wiki": "https://galaxyonfire.fandom.com/wiki/Wraith"
+}

@@ -1,0 +1,13 @@
+{
+    "aliases": [
+        "mamba"
+    ],
+    "builtIn": false,
+    "damage": 0,
+    "icon": "",
+    "loading speed": 0,
+    "name": "Mamba EMP",
+    "type": "missile",
+    "value": 0,
+    "wiki": ""
+}

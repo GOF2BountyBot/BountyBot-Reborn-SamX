@@ -1,0 +1,40 @@
+{
+    "aliases": [
+        "srrk",
+        "nasrrk",
+        "na'srrk"
+    ],
+    "armour": 280,
+    "builtIn": false,
+    "cargo": 70,
+    "compatibleSkins": [
+        "leopard print",
+        "space",
+        "abyss",
+        "candy",
+        "cargo",
+        "ferrari",
+        "lava",
+        "lilac",
+        "mint",
+        "onyx",
+        "slate",
+        "neapolitan"
+    ],
+    "emoji": "<:nasrrk:723705306894565407>",
+    "handling": 145,
+    "icon": "https://cdn.discordapp.com/attachments/700683544103747594/720785069672890408/nasrrk.png",
+    "manufacturer": "vossk",
+    "maxModules": 12,
+    "maxPrimaries": 4,
+    "maxSecondaries": 4,
+    "maxTurrets": 0,
+    "model": "Na'Srrk_Full.obj",
+    "name": "Na'Srrk",
+    "saveDue": false,
+    "shopSpawnRate": 8.416,
+    "skinnable": true,
+    "textureRegions": 1,
+    "value": 5400000,
+    "wiki": "https://galaxyonfire.fandom.com/wiki/Na%27srrk"
+}

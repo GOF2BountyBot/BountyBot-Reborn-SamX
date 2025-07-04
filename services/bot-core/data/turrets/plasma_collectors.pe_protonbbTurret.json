@@ -1,0 +1,13 @@
+{
+    "aliases": [
+        "Proton"
+    ],
+    "builtIn": false,
+    "dps": 0,
+    "emoji": "<:peproton:723707456768704533>",
+    "icon": "https://cdn.discordapp.com/attachments/700683544103747594/723476617846063134/pe_proton.png",
+    "name": "PE Proton",
+    "techLevel": 9,
+    "value": 43856,
+    "wiki": "https://galaxyonfire.fandom.com/wiki/PE_Proton"
+}

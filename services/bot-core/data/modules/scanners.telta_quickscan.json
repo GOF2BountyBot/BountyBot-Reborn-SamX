@@ -1,0 +1,16 @@
+{
+    "aliases": [
+        "Quickscan"
+    ],
+    "builtIn": false,
+    "emoji": "<:teltaquickscan:723706726079135764>",
+    "icon": "https://cdn.discordapp.com/attachments/700683544103747594/723475379397984267/telta_quickscan.png",
+    "name": "Telta Quickscan",
+    "showCargo": false,
+    "showClassAAsteroids": false,
+    "techLevel": 2,
+    "timeToLock": 4,
+    "type": "ScannerModule",
+    "value": 2438,
+    "wiki": "https://galaxyonfire.fandom.com/wiki/Telta_Quickscan"
+}

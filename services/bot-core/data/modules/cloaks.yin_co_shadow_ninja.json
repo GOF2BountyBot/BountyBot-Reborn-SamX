@@ -1,0 +1,16 @@
+{
+    "aliases": [
+        "Shadow Ninja",
+        "Yin",
+        "Yin Co Shadow Ninja"
+    ],
+    "builtIn": false,
+    "duration": 40,
+    "emoji": "<:yinco:723706519484497931>",
+    "icon": "https://cdn.discordapp.com/attachments/700683544103747594/723474714982613052/yin_co._shadow_ninja.png",
+    "name": "Yin Co. Shadow Ninja",
+    "techLevel": 10,
+    "type": "CloakModule",
+    "value": 69183,
+    "wiki": "https://galaxyonfire.fandom.com/wiki/Yin_Co._Shadow_Ninja"
+}

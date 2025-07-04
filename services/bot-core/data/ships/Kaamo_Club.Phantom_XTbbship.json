@@ -1,0 +1,23 @@
+{
+    "aliases": [
+        "PhantomXT"
+    ],
+    "armour": 425,
+    "builtIn": false,
+    "cargo": 60,
+    "emoji": "<:phantomxt:723705998660862064>",
+    "handling": 150,
+    "icon": "https://cdn.discordapp.com/attachments/700683544103747594/720787685035212830/phantom_xt.png",
+    "manufacturer": "kaamo club",
+    "maxModules": 14,
+    "maxPrimaries": 4,
+    "maxSecondaries": 1,
+    "maxTurrets": 0,
+    "model": "sn_ship_058_modified.obj",
+    "name": "Phantom XT",
+    "normSpec": "sn_ship_058_modified_normal_specular.bmp",
+    "skinnable": false,
+    "textureRegions": 2,
+    "value": 7430000,
+    "wiki": "https://galaxyonfire.fandom.com/wiki/Phantom_XT"
+}

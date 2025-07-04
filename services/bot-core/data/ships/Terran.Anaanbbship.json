@@ -1,0 +1,40 @@
+{
+    "aliases": [
+        "anaan"
+    ],
+    "armour": 220,
+    "builtIn": false,
+    "cargo": 240,
+    "compatibleSkins": [
+        "racing stripes",
+        "tex",
+        "urban-camo",
+        "abyss",
+        "candy",
+        "cargo",
+        "ferrari",
+        "lava",
+        "lilac",
+        "mint",
+        "onyx",
+        "slate",
+        "neapolitan"
+    ],
+    "emoji": "<:anaan:723705236304166922>",
+    "handling": 65,
+    "icon": "https://cdn.discordapp.com/attachments/700683544103747594/720694009571573820/anaan.png",
+    "manufacturer": "terran",
+    "maxModules": 7,
+    "maxPrimaries": 2,
+    "maxSecondaries": 1,
+    "maxTurrets": 1,
+    "model": "Anaan_Full.obj",
+    "name": "Anaan",
+    "normSpec": "ship_007_terran_normal_specular.bmp",
+    "saveDue": false,
+    "shopSpawnRate": 6.312,
+    "skinnable": true,
+    "textureRegions": 2,
+    "value": 176900,
+    "wiki": "https://galaxyonfire.fandom.com/wiki/Anaan"
+}

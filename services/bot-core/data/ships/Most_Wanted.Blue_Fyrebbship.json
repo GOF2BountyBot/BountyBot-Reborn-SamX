@@ -1,0 +1,34 @@
+{
+    "aliases": [
+        "blue",
+        "fyre",
+        "bluefyre",
+        "blue fire",
+        "bluefire",
+        "blue fyre"
+    ],
+    "armour": 270,
+    "builtIn": false,
+    "cargo": 125,
+    "compatibleSkins": [
+        "abyss",
+        "candy"
+    ],
+    "emoji": "<:bluefyre:723706134430744577>",
+    "handling": 116,
+    "icon": "https://cdn.discordapp.com/attachments/700683544103747594/720787143596834816/blue_fyre.png",
+    "manufacturer": "most wanted",
+    "maxModules": 13,
+    "maxPrimaries": 3,
+    "maxSecondaries": 3,
+    "maxTurrets": 0,
+    "model": "Blue_Fyre_Full.obj",
+    "name": "Blue Fyre",
+    "normSpec": "sn_ship_046_most_wanted_normal_specular.bmp",
+    "saveDue": false,
+    "shopSpawnRate": 7.214,
+    "skinnable": false,
+    "textureRegions": 2,
+    "value": 4455000,
+    "wiki": "https://galaxyonfire.fandom.com/wiki/Blue_Fyre"
+}

@@ -1,0 +1,13 @@
+{
+    "aliases": [
+        "Extinctor"
+    ],
+    "builtIn": false,
+    "damage": 0,
+    "icon": "",
+    "loading speed": 0,
+    "name": "AMR Extinctor",
+    "type": "nuke",
+    "value": 0,
+    "wiki": ""
+}

@@ -1,14 +1,16 @@
-{
-    "aliases": [
-        "scram",
-        "scam cannon"
-    ],
-    "builtIn": false,
-    "dps": 20.0,
-    "emoji": "<:scramcannon:723709599223382046>",
-    "icon": "https://cdn.discordapp.com/attachments/700683544103747594/723476735357616199/scram_cannon.png",
-    "name": "Scram Cannon",
-    "techLevel": 6,
-    "value": 47203,
-    "wiki": "https://galaxyonfire.fandom.com/wiki/Scram_Cannon"
+﻿{
+    "aliases":  [
+                    "scram",
+                    "scam cannon"
+                ],
+    "builtIn":  false,
+    "dps":  20.0,
+    "emoji":  "<:scramcannon:723709599223382046>",
+    "icon":  "https://cdn.discordapp.com/attachments/700683544103747594/723476735357616199/scram_cannon.png",
+    "name":  "Scram Cannon",
+    "techLevel":  6,
+    "value":  47203,
+    "wiki":  "https://galaxyonfire.fandom.com/wiki/Scram_Cannon",
+    "type":  "PrimaryWeapon",
+    "subtype":  "auto_cannons"
 }

@@ -1,14 +1,16 @@
-{
-    "aliases": [
-        "o10",
-        "ReHeat"
-    ],
-    "builtIn": false,
-    "dps": 23.52,
-    "emoji": "<:reheato10:723709644786237490>",
-    "icon": "https://cdn.discordapp.com/attachments/700683544103747594/723477129689432124/reheat_o10.png",
-    "name": "ReHeat o10",
-    "techLevel": 8,
-    "value": 35724,
-    "wiki": "https://galaxyonfire.fandom.com/wiki/ReHeat_o10"
+﻿{
+    "aliases":  [
+                    "o10",
+                    "ReHeat"
+                ],
+    "builtIn":  false,
+    "dps":  23.52,
+    "emoji":  "<:reheato10:723709644786237490>",
+    "icon":  "https://cdn.discordapp.com/attachments/700683544103747594/723477129689432124/reheat_o10.png",
+    "name":  "ReHeat o10",
+    "techLevel":  8,
+    "value":  35724,
+    "wiki":  "https://galaxyonfire.fandom.com/wiki/ReHeat_o10",
+    "type":  "PrimaryWeapon",
+    "subtype":  "thermal_fusion_cannons"
 }

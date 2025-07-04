@@ -1,16 +1,18 @@
-{
-    "aliases": [
-        "MD 12",
-        "MD12",
-        "Mass Driver 12",
-        "Mass Driver MD12"
-    ],
-    "builtIn": false,
-    "dps": 70.0,
-    "emoji": "<:massdrivermd12:723709599278170123>",
-    "icon": "https://cdn.discordapp.com/attachments/700683544103747594/723476708367269969/mass_driver_md_12.png",
-    "name": "Mass Driver MD 12",
-    "techLevel": 9,
-    "value": 423181,
-    "wiki": "https://galaxyonfire.fandom.com/wiki/Mass_Driver_MD_12"
+﻿{
+    "aliases":  [
+                    "MD 12",
+                    "MD12",
+                    "Mass Driver 12",
+                    "Mass Driver MD12"
+                ],
+    "builtIn":  false,
+    "dps":  70.0,
+    "emoji":  "<:massdrivermd12:723709599278170123>",
+    "icon":  "https://cdn.discordapp.com/attachments/700683544103747594/723476708367269969/mass_driver_md_12.png",
+    "name":  "Mass Driver MD 12",
+    "techLevel":  9,
+    "value":  423181,
+    "wiki":  "https://galaxyonfire.fandom.com/wiki/Mass_Driver_MD_12",
+    "type":  "PrimaryWeapon",
+    "subtype":  "auto_cannons"
 }

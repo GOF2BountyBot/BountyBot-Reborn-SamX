@@ -1,15 +1,17 @@
-{
-    "aliases": [
-        "Charged Pulse",
-        "Pulse",
-        "Nirai Pulse"
-    ],
-    "builtIn": false,
-    "dps": 15.78,
-    "emoji": "<:niraichargedpulse:723709563848622111>",
-    "icon": "https://cdn.discordapp.com/attachments/700683544103747594/723486991533998110/nirai_charged_pulse.png",
-    "name": "Nirai Charged Pulse",
-    "techLevel": 3,
-    "value": 11465,
-    "wiki": "https://galaxyonfire.fandom.com/wiki/Nirai_Charged_Pulse"
+﻿{
+    "aliases":  [
+                    "Charged Pulse",
+                    "Pulse",
+                    "Nirai Pulse"
+                ],
+    "builtIn":  false,
+    "dps":  15.78,
+    "emoji":  "<:niraichargedpulse:723709563848622111>",
+    "icon":  "https://cdn.discordapp.com/attachments/700683544103747594/723486991533998110/nirai_charged_pulse.png",
+    "name":  "Nirai Charged Pulse",
+    "techLevel":  3,
+    "value":  11465,
+    "wiki":  "https://galaxyonfire.fandom.com/wiki/Nirai_Charged_Pulse",
+    "type":  "PrimaryWeapon",
+    "subtype":  "blaster_lasers"
 }

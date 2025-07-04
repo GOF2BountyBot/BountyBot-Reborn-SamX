@@ -1,11 +1,14 @@
-{
-    "aliases": [],
-    "builtIn": false,
-    "damage": 0,
-    "icon": "",
-    "loading speed": 0,
-    "name": "Shock Blast",
-    "type": "shock blast",
-    "value": 0,
-    "wiki": ""
+﻿{
+    "aliases":  [
+
+                ],
+    "builtIn":  false,
+    "damage":  0,
+    "icon":  "",
+    "loading speed":  0,
+    "name":  "Shock Blast",
+    "value":  0,
+    "wiki":  "",
+    "type":  "SecondaryWeapon",
+    "subtype":  "misc"
 }

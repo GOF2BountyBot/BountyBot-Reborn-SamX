@@ -1,13 +1,15 @@
-{
-    "aliases": [
-        "Shgaal"
-    ],
-    "builtIn": false,
-    "dps": 20.93,
-    "emoji": "<:shgaal:723709620518125620>",
-    "icon": "https://cdn.discordapp.com/attachments/700683544103747594/723476826600505354/shgaal.png",
-    "name": "Sh'gaal",
-    "techLevel": 4,
-    "value": 24527,
-    "wiki": "https://galaxyonfire.fandom.com/wiki/Sh%27gaal"
+﻿{
+    "aliases":  [
+                    "Shgaal"
+                ],
+    "builtIn":  false,
+    "dps":  20.93,
+    "emoji":  "<:shgaal:723709620518125620>",
+    "icon":  "https://cdn.discordapp.com/attachments/700683544103747594/723476826600505354/shgaal.png",
+    "name":  "Sh'gaal",
+    "techLevel":  4,
+    "value":  24527,
+    "wiki":  "https://galaxyonfire.fandom.com/wiki/Sh%27gaal",
+    "type":  "PrimaryWeapon",
+    "subtype":  "blasters"
 }

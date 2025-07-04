@@ -1,20 +1,22 @@
-{
-    "aliases": [
-        "M6 A4",
-        "Raccoon",
-        "M6 Raccoon",
-        "A4 Raccoon",
-        "M6 A4 Raccoon",
-        "\"Raccoon\"",
-        "M6 \"Raccoon\"",
-        "A4 \"Raccoon\""
-    ],
-    "builtIn": false,
-    "dps": 92.3,
-    "emoji": "<:m6a4raccoon:723709564280897577>",
-    "icon": "https://cdn.discordapp.com/attachments/700683544103747594/723476953960808478/m6_a4_raccoon.png",
-    "name": "M6 A4 \"Raccoon\"",
-    "techLevel": 9,
-    "value": 552747,
-    "wiki": "https://galaxyonfire.fandom.com/wiki/M6_A4_\"Raccoon\""
+﻿{
+    "aliases":  [
+                    "M6 A4",
+                    "Raccoon",
+                    "M6 Raccoon",
+                    "A4 Raccoon",
+                    "M6 A4 Raccoon",
+                    "\"Raccoon\"",
+                    "M6 \"Raccoon\"",
+                    "A4 \"Raccoon\""
+                ],
+    "builtIn":  false,
+    "dps":  92.3,
+    "emoji":  "<:m6a4raccoon:723709564280897577>",
+    "icon":  "https://cdn.discordapp.com/attachments/700683544103747594/723476953960808478/m6_a4_raccoon.png",
+    "name":  "M6 A4 \"Raccoon\"",
+    "techLevel":  9,
+    "value":  552747,
+    "wiki":  "https://galaxyonfire.fandom.com/wiki/M6_A4_\"Raccoon\"",
+    "type":  "PrimaryWeapon",
+    "subtype":  "beam_lasers"
 }

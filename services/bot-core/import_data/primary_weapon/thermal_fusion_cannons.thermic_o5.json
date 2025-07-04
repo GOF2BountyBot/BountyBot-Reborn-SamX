@@ -1,14 +1,16 @@
-{
-    "aliases": [
-        "o5",
-        "Thermic"
-    ],
-    "builtIn": false,
-    "dps": 10.0,
-    "emoji": "<:thermico5:723709644899352576>",
-    "icon": "https://cdn.discordapp.com/attachments/700683544103747594/723477150879186944/thermic_o5.png",
-    "name": "Thermic o5",
-    "techLevel": 7,
-    "value": 9959,
-    "wiki": "https://galaxyonfire.fandom.com/wiki/Thermic_o5"
+﻿{
+    "aliases":  [
+                    "o5",
+                    "Thermic"
+                ],
+    "builtIn":  false,
+    "dps":  10.0,
+    "emoji":  "<:thermico5:723709644899352576>",
+    "icon":  "https://cdn.discordapp.com/attachments/700683544103747594/723477150879186944/thermic_o5.png",
+    "name":  "Thermic o5",
+    "techLevel":  7,
+    "value":  9959,
+    "wiki":  "https://galaxyonfire.fandom.com/wiki/Thermic_o5",
+    "type":  "PrimaryWeapon",
+    "subtype":  "thermal_fusion_cannons"
 }

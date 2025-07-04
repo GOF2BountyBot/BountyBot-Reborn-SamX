@@ -1,14 +1,16 @@
-{
-    "aliases": [
-        "o50",
-        "SunFire"
-    ],
-    "builtIn": false,
-    "dps": 41.66,
-    "emoji": "<:sunfireo50:723709644823986187>",
-    "icon": "https://cdn.discordapp.com/attachments/700683544103747594/723477138422104114/sunfire_o50.png",
-    "name": "SunFire o50",
-    "techLevel": 9,
-    "value": 183413,
-    "wiki": "https://galaxyonfire.fandom.com/wiki/SunFire_o50"
+﻿{
+    "aliases":  [
+                    "o50",
+                    "SunFire"
+                ],
+    "builtIn":  false,
+    "dps":  41.66,
+    "emoji":  "<:sunfireo50:723709644823986187>",
+    "icon":  "https://cdn.discordapp.com/attachments/700683544103747594/723477138422104114/sunfire_o50.png",
+    "name":  "SunFire o50",
+    "techLevel":  9,
+    "value":  183413,
+    "wiki":  "https://galaxyonfire.fandom.com/wiki/SunFire_o50",
+    "type":  "PrimaryWeapon",
+    "subtype":  "thermal_fusion_cannons"
 }

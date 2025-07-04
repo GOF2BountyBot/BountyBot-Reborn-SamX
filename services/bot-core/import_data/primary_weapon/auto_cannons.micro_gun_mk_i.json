@@ -1,17 +1,19 @@
-{
-    "aliases": [
-        "Micro MK I",
-        "Micro I",
-        "Micro Gun Mk 1",
-        "Micro MK 1",
-        "Micro 1"
-    ],
-    "builtIn": false,
-    "dps": 9.09,
-    "emoji": "<:microgunmki:723709599269519400>",
-    "icon": "https://cdn.discordapp.com/attachments/700683544103747594/723476716516802617/micro_gun_mki.png",
-    "name": "Micro Gun MK I",
-    "techLevel": 1,
-    "value": 2577,
-    "wiki": "https://galaxyonfire.fandom.com/wiki/Micro_Gun_MK_I"
+﻿{
+    "aliases":  [
+                    "Micro MK I",
+                    "Micro I",
+                    "Micro Gun Mk 1",
+                    "Micro MK 1",
+                    "Micro 1"
+                ],
+    "builtIn":  false,
+    "dps":  9.09,
+    "emoji":  "<:microgunmki:723709599269519400>",
+    "icon":  "https://cdn.discordapp.com/attachments/700683544103747594/723476716516802617/micro_gun_mki.png",
+    "name":  "Micro Gun MK I",
+    "techLevel":  1,
+    "value":  2577,
+    "wiki":  "https://galaxyonfire.fandom.com/wiki/Micro_Gun_MK_I",
+    "type":  "PrimaryWeapon",
+    "subtype":  "auto_cannons"
 }

@@ -1,13 +1,15 @@
-{
-    "aliases": [
-        "disruptor"
-    ],
-    "builtIn": false,
-    "dps": 60,
-    "emoji": "<:disruptorlaser:723709563936702526>",
-    "icon": "https://cdn.discordapp.com/attachments/700683544103747594/723476944926277642/disruptor_laser.png",
-    "name": "Disruptor Laser",
-    "techLevel": 9,
-    "value": 387090,
-    "wiki": "https://galaxyonfire.fandom.com/wiki/Disruptor_Laser"
+﻿{
+    "aliases":  [
+                    "disruptor"
+                ],
+    "builtIn":  false,
+    "dps":  60,
+    "emoji":  "<:disruptorlaser:723709563936702526>",
+    "icon":  "https://cdn.discordapp.com/attachments/700683544103747594/723476944926277642/disruptor_laser.png",
+    "name":  "Disruptor Laser",
+    "techLevel":  9,
+    "value":  387090,
+    "wiki":  "https://galaxyonfire.fandom.com/wiki/Disruptor_Laser",
+    "type":  "PrimaryWeapon",
+    "subtype":  "blaster_lasers"
 }

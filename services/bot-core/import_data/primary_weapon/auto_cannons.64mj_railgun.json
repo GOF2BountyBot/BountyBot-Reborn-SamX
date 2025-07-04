@@ -1,15 +1,17 @@
-{
-    "aliases": [
-        "64MJ",
-        "64MJ Railgun",
-        "64 Rail"
-    ],
-    "builtIn": false,
-    "dps": 14.28,
-    "emoji": "<:64mjrailgun:723709599051677756>",
-    "icon": "https://cdn.discordapp.com/attachments/700683544103747594/723476666151600138/64mj_railgun.png",
-    "name": "64MJ Railgun",
-    "techLevel": 3,
-    "value": 15343,
-    "wiki": "https://galaxyonfire.fandom.com/wiki/64MJ_Railgun"
+﻿{
+    "aliases":  [
+                    "64MJ",
+                    "64MJ Railgun",
+                    "64 Rail"
+                ],
+    "builtIn":  false,
+    "dps":  14.28,
+    "emoji":  "<:64mjrailgun:723709599051677756>",
+    "icon":  "https://cdn.discordapp.com/attachments/700683544103747594/723476666151600138/64mj_railgun.png",
+    "name":  "64MJ Railgun",
+    "techLevel":  3,
+    "value":  15343,
+    "wiki":  "https://galaxyonfire.fandom.com/wiki/64MJ_Railgun",
+    "type":  "PrimaryWeapon",
+    "subtype":  "auto_cannons"
 }

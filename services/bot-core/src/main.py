@@ -20,6 +20,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 import shared.logging as logging
 import logging as pyLogging
+# Disabling Alembic as not working as intended...
+#from alembic import command
+#from alembic.config import Config
 
 # NEW IMPORTS: Database management
 from persist.database.manager import db_manager
@@ -51,6 +54,14 @@ async def lifespan(app: FastAPI):
         # Store schema manager reference for health checks
         app.state.schema_manager = schema_manager
         app.state.db_manager = db_manager
+
+        # -------------------------------
+        #  Alembic migrations (disabled)
+        # -------------------------------
+        #alembic_cfg = Config(os.path.join(os.path.dirname(__file__), "persist", "database", "alembic.ini"))
+        #logger.info("🔄 Checking for pending database migrations...")
+        #command.upgrade(alembic_cfg, "head")
+        #logger.info("✅ Database up-to-date with latest migrations")
         
         logger.info("✅ Database initialization completed successfully")
         
@@ -76,7 +87,6 @@ async def lifespan(app: FastAPI):
         logger.error(f"⚠️ Error during database shutdown: {e}")
     
     logger.info("👋 Goodbye!")
-
 
 def create_app() -> FastAPI:
     """Create and configure the FastAPI application."""

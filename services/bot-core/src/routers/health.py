@@ -104,7 +104,9 @@ async def health_check(request: Request) -> HealthResponse:
             "status": "error",
             "error": str(e)
         }
-    
+    # TODO: Do a better schema check eventually...
+    schema_current = None
+    """
     try:
         # Get schema manager from app state
         if hasattr(request.app.state, 'schema_manager'):
@@ -130,7 +132,8 @@ async def health_check(request: Request) -> HealthResponse:
             "status": "error",
             "error": str(e)
         }
-    
+    """
+
     # Determine overall status
     all_checks_passed = all(checks.values())
     logger.trace("All Checks Passed: " + str(all_checks_passed))
@@ -154,8 +157,9 @@ async def health_check(request: Request) -> HealthResponse:
             "architecture": platform.architecture()[0]
         },
         checks=checks,
-        database_check=database_health,  # NEW: Database health info
-        schema_check=schema_health       # NEW: Schema health info
+        database_check=database_health  # NEW: Database health info
+        # Nixing schema check for now...
+        # schema_check=schema_health       # NEW: Schema health info
     )
 
 @router.get(

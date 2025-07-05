@@ -28,6 +28,8 @@ import logging as pyLogging
 from persist.database.manager import db_manager
 from persist.schemas.schema_manager import initialize_schema
 
+# from utils.emoji_service import EmojiService
+
 # Import the routers package
 import routers
 
@@ -69,6 +71,21 @@ async def lifespan(app: FastAPI):
         logger.error(f"❌ Database initialization failed: {e}")
         logger.error("🛑 Application startup aborted due to database issues")
         raise  # This will prevent the application from starting
+
+    ## Initialize Discord application emojis
+    #try:
+    #    logger.info("🔄 Initializing Discord application emojis...")
+    #    emoji_resolver.load_application_emojis()
+    #    emoji_stats = emoji_resolver.get_emoji_stats()
+    #    logger.info(f"✅ Successfully loaded {emoji_stats['total_emojis']} Discord application emojis")
+    #
+    #    # Store emoji resolver reference for health checks
+    #    app.state.emoji_resolver = emoji_resolver
+    #
+    #except Exception as e:
+    #    logger.error(f"⚠️ Emoji initialization failed: {e}")
+    #    logger.warning("🔄 Bot will continue without emoji resolution capability")
+    #    # Note: We don't raise here as the bot can function without emojis
     
     logger.info("📚 API Documentation available at: /docs")
     logger.info("📖 ReDoc Documentation available at: /redoc")

@@ -3,16 +3,27 @@ from pathlib import Path
 from importlib import import_module
 
 from persist.database.manager import get_db_session
+from utils.emoji_service import EmojiService  # NEW IMPORT
 
 import shared.logging as logging
 logger = logging.get_logger("bot-data-loader")
+
+# NEW: Global emoji service instance
+_emoji_service = None
+
+def get_emoji_service():
+    """Get or create the global emoji service instance."""
+    global _emoji_service
+    if _emoji_service is None:
+        _emoji_service = EmojiService()
+    return _emoji_service
 
 def get_repository(category: str):
     """
     Dynamically import e.g. persist.repositories.modules_repository.ModuleRepository
     Expects:
-      - file:   persist/repositories/{category}_repository.py
-      - class:  {SingularCategoryTitle}Repository
+    - file: persist/repositories/{category}_repository.py
+    - class: {SingularCategoryTitle}Repository
     """
     logger.debug(f"Attempting to load repository for category: {category}")
 
@@ -39,17 +50,29 @@ def load_folder(repo, data_dir: Path):
     for json_path in data_dir.rglob("*.json"):
         try:
             payload = json.loads(json_path.read_text())
-            logger.trace(f"  Loading {json_path}...")
-            logger.trace(f"  {payload}")
+            logger.trace(f" Loading {json_path}...")
+            logger.trace(f" {payload}")
 
         except json.JSONDecodeError as e:
-            logger.warn(f"  ⏭ Skipping invalid JSON {json_path}: {e}")
+            logger.warn(f" ⏭ Skipping invalid JSON {json_path}: {e}")
             continue
 
         with get_db_session() as db:
             obj = repo.create_or_update(db, payload)
             db.commit()
-            logger.debug(f"  ✓ Upserted {obj!r}")
+            logger.debug(f" ✓ Upserted {obj!r}")
+
+def _resolve_emojis(obj):
+    """
+    Only resolve the top-level 'emoji' field, using obj['name'] as the lookup key.
+    Leaves 'name' (and all other fields) untouched.
+    """
+    service = get_emoji_service()
+    if isinstance(obj, dict) and 'name' in obj:
+        new_emoji = service.resolve_emoji(obj['name'])
+        if new_emoji:
+            obj['emoji'] = new_emoji
+    return obj
 
 # public entry‐point for FastAPI
 def load_data(category: str, data_root: str | Path = None) -> list[str]:
@@ -58,7 +81,17 @@ def load_data(category: str, data_root: str | Path = None) -> list[str]:
     Returns a list of status messages (one per file).
     """
     logger.info(f"load_data called for category='{category}'")
-    # determine root/data dir (one level above “src”)
+    
+    # NEW: Pre-load emojis for module category
+    try:
+        logger.info("Pre-loading Discord application emojis...")
+        emoji_service = get_emoji_service()
+        emoji_service.load_emojis()
+        logger.info("✓ Emojis pre-loaded successfully")
+    except Exception as e:
+        logger.error(f"Failed to pre-load emojis: {e}")
+    
+    # determine root/data dir (one level above "src")
     project_root = Path(__file__).parents[2]
     root = Path(data_root) if data_root else project_root / "import_data"
     category_dir = root / category
@@ -79,6 +112,12 @@ def load_data(category: str, data_root: str | Path = None) -> list[str]:
             logger.warning(warn)
             results.append(warn)
             continue
+
+        # NEW: attempt emoji‐resolution on the loaded payload
+        try:
+            payload = _resolve_emojis(payload)
+        except Exception as e:
+            logger.warning(f"Failed to resolve emojis in {json_path.name}: {e}")
 
         # upsert into DB
         with get_db_session() as db:

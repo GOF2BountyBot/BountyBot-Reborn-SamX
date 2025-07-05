@@ -1,0 +1,49 @@
+{
+    "aliases":  [
+                    "soc",
+                    "hsoc",
+                    "h'soc"
+                ],
+    "armour":  210,
+    "builtIn":  false,
+    "cargo":  45,
+    "compatibleSkins":  [
+                            "tex",
+                            "racing stripes",
+                            "abyss",
+                            "candy",
+                            "cargo",
+                            "ferrari",
+                            "lava",
+                            "lilac",
+                            "mint",
+                            "onyx",
+                            "slate",
+                            "neapolitan"
+                        ],
+    "emoji":  "<:hsoc:723705306684588043>",
+    "handling":  140,
+    "icon":  "https://cdn.discordapp.com/attachments/700683544103747594/720694188659966022/hsoc.png",
+    "manufacturer":  "vossk",
+    "maxModules":  7,
+    "maxPrimaries":  2,
+    "maxSecondaries":  2,
+    "maxTurrets":  0,
+    "model":  "/app/game-objects/Vossk/H'Soc.bbship/H'Soc_Full.obj",
+    "name":  "H'Soc",
+    "saveDue":  false,
+    "shopSpawnRate":  6.312,
+    "skinnable":  true,
+    "textureRegions":  1,
+    "value":  150000,
+    "wiki":  "https://galaxyonfire.fandom.com/wiki/H%27Soc",
+    "assets":  [
+                   "/app/game-objects/Vossk/H'Soc.bbship/H'Soc_Full.mtl",
+                   "/app/game-objects/Vossk/H'Soc.bbship/H'Soc_Full.obj",
+                   "/app/game-objects/Vossk/H'Soc.bbship/mask1.jpg",
+                   "/app/game-objects/Vossk/H'Soc.bbship/ship_009_vossk_diffuse.bmp",
+                   "/app/game-objects/Vossk/H'Soc.bbship/ship_009_vossk_normal_specular.bmp",
+                   "/app/game-objects/Vossk/H'Soc.bbship/skinBase.png"
+               ],
+    "normSpec":  "/app/game-objects/Vossk/H'Soc.bbship/ship_009_vossk_normal_specular.bmp"
+}

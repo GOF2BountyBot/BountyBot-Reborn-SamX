@@ -1,32 +1,41 @@
 {
-    "aliases": [
-        "void",
-        "x",
-        "void x",
-        "voidx"
-    ],
-    "armour": 450,
-    "builtIn": false,
-    "cargo": 30,
-    "compatibleSkins": [
-        "abyss",
-        "candy"
-    ],
-    "emoji": "<:voidx:723706193096212510>",
-    "handling": 155,
-    "icon": "https://cdn.discordapp.com/attachments/700683544103747594/720694144158138418/voidx.png",
-    "manufacturer": "void",
-    "maxModules": 15,
-    "maxPrimaries": 4,
-    "maxSecondaries": 4,
-    "maxTurrets": 0,
-    "model": "VoidXFull.obj",
-    "name": "VoidX",
-    "normSpec": "ship_008_void_normal_specular.bmp",
-    "saveDue": false,
-    "shopSpawnRate": 9.585,
-    "skinnable": false,
-    "textureRegions": 2,
-    "value": 8115900,
-    "wiki": "https://galaxyonfire.fandom.com/wiki/VoidX"
+    "aliases":  [
+                    "void",
+                    "x",
+                    "void x",
+                    "voidx"
+                ],
+    "armour":  450,
+    "builtIn":  false,
+    "cargo":  30,
+    "compatibleSkins":  [
+                            "abyss",
+                            "candy"
+                        ],
+    "emoji":  "<:voidx:723706193096212510>",
+    "handling":  155,
+    "icon":  "https://cdn.discordapp.com/attachments/700683544103747594/720694144158138418/voidx.png",
+    "manufacturer":  "void",
+    "maxModules":  15,
+    "maxPrimaries":  4,
+    "maxSecondaries":  4,
+    "maxTurrets":  0,
+    "model":  "/app/game-objects/Void/VoidX.bbship/VoidXFull.obj",
+    "name":  "VoidX",
+    "saveDue":  false,
+    "shopSpawnRate":  9.585,
+    "skinnable":  false,
+    "textureRegions":  2,
+    "value":  8115900,
+    "wiki":  "https://galaxyonfire.fandom.com/wiki/VoidX",
+    "assets":  [
+                   "/app/game-objects/Void/VoidX.bbship/mask1.jpg",
+                   "/app/game-objects/Void/VoidX.bbship/mask2.jpg",
+                   "/app/game-objects/Void/VoidX.bbship/ship_008_void_diffuse.bmp",
+                   "/app/game-objects/Void/VoidX.bbship/ship_008_void_normal_specular.bmp",
+                   "/app/game-objects/Void/VoidX.bbship/skinBase.png",
+                   "/app/game-objects/Void/VoidX.bbship/VoidXFull.mtl",
+                   "/app/game-objects/Void/VoidX.bbship/VoidXFull.obj"
+               ],
+    "normSpec":  "/app/game-objects/Void/VoidX.bbship/ship_008_void_normal_specular.bmp"
 }

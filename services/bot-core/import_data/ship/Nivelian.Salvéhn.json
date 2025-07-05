@@ -1,0 +1,32 @@
+{
+    "aliases":  [
+                    "Salvehn"
+                ],
+    "armour":  156,
+    "builtIn":  false,
+    "cargo":  110,
+    "emoji":  "<:salvehn:723705339547090964>",
+    "handling":  102,
+    "icon":  "https://cdn.discordapp.com/attachments/700683544103747594/720693866533093526/salvehn.png",
+    "manufacturer":  "nivelian",
+    "maxModules":  6,
+    "maxPrimaries":  2,
+    "maxSecondaries":  1,
+    "maxTurrets":  1,
+    "model":  "/app/game-objects/Nivelian/Salvéhn.bbship/Salv_Full.obj",
+    "name":  "Salvéhn",
+    "skinnable":  false,
+    "textureRegions":  2,
+    "value":  94500,
+    "wiki":  "https://galaxyonfire.fandom.com/wiki/Salvéhn",
+    "assets":  [
+                   "/app/game-objects/Nivelian/Salvéhn.bbship/mask1.jpg",
+                   "/app/game-objects/Nivelian/Salvéhn.bbship/mask2.jpg",
+                   "/app/game-objects/Nivelian/Salvéhn.bbship/Salv_Full.mtl",
+                   "/app/game-objects/Nivelian/Salvéhn.bbship/Salv_Full.obj",
+                   "/app/game-objects/Nivelian/Salvéhn.bbship/ship_031_nivelian_diffuse.bmp",
+                   "/app/game-objects/Nivelian/Salvéhn.bbship/ship_031_nivelian_normal_specular.bmp",
+                   "/app/game-objects/Nivelian/Salvéhn.bbship/skinBase.png"
+               ],
+    "normSpec":  "/app/game-objects/Nivelian/Salvéhn.bbship/ship_031_nivelian_normal_specular.bmp"
+}

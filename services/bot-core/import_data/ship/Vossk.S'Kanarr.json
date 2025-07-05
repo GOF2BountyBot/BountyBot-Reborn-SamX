@@ -1,0 +1,47 @@
+{
+    "aliases":  [
+                    "kanarr",
+                    "skanarr",
+                    "s'kanarr"
+                ],
+    "armour":  315,
+    "builtIn":  false,
+    "cargo":  150,
+    "compatibleSkins":  [
+                            "camo",
+                            "space",
+                            "abyss",
+                            "candy",
+                            "cargo",
+                            "ferrari",
+                            "lava",
+                            "lilac",
+                            "mint",
+                            "onyx",
+                            "slate",
+                            "neapolitan"
+                        ],
+    "emoji":  "<:skanarr:723705306722467852>",
+    "handling":  70,
+    "icon":  "https://cdn.discordapp.com/attachments/700683544103747594/720694223308980314/skanarr.png",
+    "manufacturer":  "vossk",
+    "maxModules":  11,
+    "maxPrimaries":  4,
+    "maxSecondaries":  2,
+    "maxTurrets":  1,
+    "model":  "/app/game-objects/Vossk/S'Kanarr.bbship/S'Kanarr_Full.obj",
+    "name":  "S'Kanarr",
+    "saveDue":  false,
+    "shopSpawnRate":  8.416,
+    "skinnable":  true,
+    "textureRegions":  1,
+    "value":  7250000,
+    "wiki":  "https://galaxyonfire.fandom.com/wiki/S%27Kanarr",
+    "assets":  [
+                   "/app/game-objects/Vossk/S'Kanarr.bbship/mask1.jpg",
+                   "/app/game-objects/Vossk/S'Kanarr.bbship/S'Kanarr_Full.mtl",
+                   "/app/game-objects/Vossk/S'Kanarr.bbship/S'Kanarr_Full.obj",
+                   "/app/game-objects/Vossk/S'Kanarr.bbship/skinBase.png",
+                   "/app/game-objects/Vossk/S'Kanarr.bbship/v_ship_039_vossk_diffuse.bmp"
+               ]
+}

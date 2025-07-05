@@ -1,34 +1,44 @@
 {
-    "aliases": [
-        "blue",
-        "fyre",
-        "bluefyre",
-        "blue fire",
-        "bluefire",
-        "blue fyre"
-    ],
-    "armour": 270,
-    "builtIn": false,
-    "cargo": 125,
-    "compatibleSkins": [
-        "abyss",
-        "candy"
-    ],
-    "emoji": "<:bluefyre:723706134430744577>",
-    "handling": 116,
-    "icon": "https://cdn.discordapp.com/attachments/700683544103747594/720787143596834816/blue_fyre.png",
-    "manufacturer": "most wanted",
-    "maxModules": 13,
-    "maxPrimaries": 3,
-    "maxSecondaries": 3,
-    "maxTurrets": 0,
-    "model": "Blue_Fyre_Full.obj",
-    "name": "Blue Fyre",
-    "normSpec": "sn_ship_046_most_wanted_normal_specular.bmp",
-    "saveDue": false,
-    "shopSpawnRate": 7.214,
-    "skinnable": false,
-    "textureRegions": 2,
-    "value": 4455000,
-    "wiki": "https://galaxyonfire.fandom.com/wiki/Blue_Fyre"
+    "aliases":  [
+                    "blue",
+                    "fyre",
+                    "bluefyre",
+                    "blue fire",
+                    "bluefire",
+                    "blue fyre"
+                ],
+    "armour":  270,
+    "builtIn":  false,
+    "cargo":  125,
+    "compatibleSkins":  [
+                            "abyss",
+                            "candy"
+                        ],
+    "emoji":  "<:bluefyre:723706134430744577>",
+    "handling":  116,
+    "icon":  "https://cdn.discordapp.com/attachments/700683544103747594/720787143596834816/blue_fyre.png",
+    "manufacturer":  "most wanted",
+    "maxModules":  13,
+    "maxPrimaries":  3,
+    "maxSecondaries":  3,
+    "maxTurrets":  0,
+    "model":  "/app/game-objects/Most Wanted/Blue Fyre.bbship/Blue_Fyre_Full.obj",
+    "name":  "Blue Fyre",
+    "saveDue":  false,
+    "shopSpawnRate":  7.214,
+    "skinnable":  false,
+    "textureRegions":  2,
+    "value":  4455000,
+    "wiki":  "https://galaxyonfire.fandom.com/wiki/Blue_Fyre",
+    "assets":  [
+                   "/app/game-objects/Most Wanted/Blue Fyre.bbship/BF SKINS.xcf",
+                   "/app/game-objects/Most Wanted/Blue Fyre.bbship/Blue_Fyre_Full.mtl",
+                   "/app/game-objects/Most Wanted/Blue Fyre.bbship/Blue_Fyre_Full.obj",
+                   "/app/game-objects/Most Wanted/Blue Fyre.bbship/mask1.jpg",
+                   "/app/game-objects/Most Wanted/Blue Fyre.bbship/mask2.jpg",
+                   "/app/game-objects/Most Wanted/Blue Fyre.bbship/skinBase.png",
+                   "/app/game-objects/Most Wanted/Blue Fyre.bbship/sn_ship_046_most_wanted_diffuse.bmp",
+                   "/app/game-objects/Most Wanted/Blue Fyre.bbship/sn_ship_046_most_wanted_normal_specular.bmp"
+               ],
+    "normSpec":  "/app/game-objects/Most Wanted/Blue Fyre.bbship/sn_ship_046_most_wanted_normal_specular.bmp"
 }

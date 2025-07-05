@@ -1,0 +1,49 @@
+{
+    "aliases":  [
+                    "tirrk",
+                    "ntirrk",
+                    "n'tirrk"
+                ],
+    "armour":  280,
+    "builtIn":  false,
+    "cargo":  80,
+    "compatibleSkins":  [
+                            "blackout",
+                            "carbon fibre",
+                            "abyss",
+                            "candy",
+                            "cargo",
+                            "ferrari",
+                            "lava",
+                            "lilac",
+                            "mint",
+                            "onyx",
+                            "slate",
+                            "neapolitan"
+                        ],
+    "emoji":  "<:ntirrk:723705307078983700>",
+    "handling":  128,
+    "icon":  "https://cdn.discordapp.com/attachments/700683544103747594/720784330632200322/ntirrk.png",
+    "manufacturer":  "vossk",
+    "maxModules":  8,
+    "maxPrimaries":  2,
+    "maxSecondaries":  4,
+    "maxTurrets":  0,
+    "model":  "/app/game-objects/Vossk/N'Tirrk.bbship/N_Full.obj",
+    "name":  "N'Tirrk",
+    "saveDue":  false,
+    "shopSpawnRate":  8.416,
+    "skinnable":  true,
+    "textureRegions":  1,
+    "value":  250000,
+    "wiki":  "https://galaxyonfire.fandom.com/wiki/N%27Tirrk",
+    "assets":  [
+                   "/app/game-objects/Vossk/N'Tirrk.bbship/mask1.jpg",
+                   "/app/game-objects/Vossk/N'Tirrk.bbship/N_Full.mtl",
+                   "/app/game-objects/Vossk/N'Tirrk.bbship/N_Full.obj",
+                   "/app/game-objects/Vossk/N'Tirrk.bbship/ship_063_vossk_prototype_diffuse.bmp",
+                   "/app/game-objects/Vossk/N'Tirrk.bbship/ship_063_vossk_prototype_normal_specular.bmp",
+                   "/app/game-objects/Vossk/N'Tirrk.bbship/skinBase.png"
+               ],
+    "normSpec":  "/app/game-objects/Vossk/N'Tirrk.bbship/ship_063_vossk_prototype_normal_specular.bmp"
+}

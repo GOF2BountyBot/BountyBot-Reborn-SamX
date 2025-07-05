@@ -1,0 +1,49 @@
+{
+    "aliases":  [
+                    "suuk",
+                    "ksuuk",
+                    "k'suuk"
+                ],
+    "armour":  255,
+    "builtIn":  false,
+    "cargo":  55,
+    "compatibleSkins":  [
+                            "blackout",
+                            "rusted",
+                            "abyss",
+                            "candy",
+                            "cargo",
+                            "ferrari",
+                            "lava",
+                            "lilac",
+                            "mint",
+                            "onyx",
+                            "slate",
+                            "neapolitan"
+                        ],
+    "emoji":  "<:ksuukk:723705306827194449>",
+    "handling":  125,
+    "icon":  "https://cdn.discordapp.com/attachments/700683544103747594/720694205990568055/ksuukk.png",
+    "manufacturer":  "vossk",
+    "maxModules":  12,
+    "maxPrimaries":  3,
+    "maxSecondaries":  2,
+    "maxTurrets":  0,
+    "model":  "/app/game-objects/Vossk/K'Suuk.bbship/K'Suuk_Full.obj",
+    "name":  "K'Suukk",
+    "saveDue":  false,
+    "shopSpawnRate":  12.625,
+    "skinnable":  true,
+    "textureRegions":  1,
+    "value":  1950000,
+    "wiki":  "https://galaxyonfire.fandom.com/wiki/K%27Suukk",
+    "assets":  [
+                   "/app/game-objects/Vossk/K'Suuk.bbship/K'Suuk_Full.mtl",
+                   "/app/game-objects/Vossk/K'Suuk.bbship/K'Suuk_Full.obj",
+                   "/app/game-objects/Vossk/K'Suuk.bbship/mask1.jpg",
+                   "/app/game-objects/Vossk/K'Suuk.bbship/skinBase.png",
+                   "/app/game-objects/Vossk/K'Suuk.bbship/v_ship_041_vossk_diffuse.bmp",
+                   "/app/game-objects/Vossk/K'Suuk.bbship/v_ship_041_vossk_normal_specular.bmp"
+               ],
+    "normSpec":  "/app/game-objects/Vossk/K'Suuk.bbship/v_ship_041_vossk_normal_specular.bmp"
+}

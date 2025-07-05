@@ -1,5 +1,6 @@
 import os
 import re
+import unicodedata
 import requests
 from typing import Dict, Optional
 import shared.logging as logging
@@ -27,6 +28,9 @@ class EmojiService:
                  "Mass Driver MD 10" -> "mass_driver_md_10"
         """
         s = object_name.lower()
+        # → decompose accents (e.g. 'é' → 'e' + '´') and drop the accent parts
+        s = unicodedata.normalize('NFD', s)
+        s = ''.join(ch for ch in s if unicodedata.category(ch) != 'Mn')
         normalized = re.sub(r'[^a-z0-9]', '', s)
         logger.debug(f"Normalized '{object_name}' to '{normalized}'")
         return normalized

@@ -121,10 +121,17 @@ class AboutCog(commands.Cog):
     ):
         """Main about command that displays detailed object information"""
         await interaction.response.defer(thinking=True)
-
+        
+        # ── Resolve alias to canonical name if needed ──────────────────────────────
+        resolved_name = name
+        if category in self._objects_by_category:
+            for obj in self._objects_by_category[category]:
+                if name == obj.get("name") or name in obj.get("aliases", []):
+                    resolved_name = obj["name"]
+                    break
         try:
             # Get object by name from the API
-            resp = requests.get(f"{api_base}/about/object/name/{name}", timeout=10)
+            resp = requests.get(f"{api_base}/about/object/name/{resolved_name}", timeout=10)
             resp.raise_for_status()
             obj_data = resp.json()
 
@@ -162,6 +169,7 @@ class AboutCog(commands.Cog):
             'primary_weapon': discord.Color.red(),
             'secondary_weapon': discord.Color.orange(),
             'turret_weapon': discord.Color.purple(),
+            'ship': discord.Color.green(),
         }
         color = color_map.get(category, discord.Color.default())
 
@@ -194,6 +202,36 @@ class AboutCog(commands.Cog):
         elif category == 'primary_weapon':
             if obj_data.get('dps') is not None:
                 embed.add_field(name="DPS", value=f"{obj_data['dps']:.1f}", inline=True)
+
+        elif category == 'ship':
+            # Hull & capacity
+            if obj_data.get('armour') is not None:
+                embed.add_field(name="Armour", value=str(obj_data['armour']), inline=True)
+            if obj_data.get('cargo') is not None:
+                embed.add_field(name="Cargo", value=f"{obj_data['cargo']} t", inline=True)
+    
+            # Performance
+            if obj_data.get('handling') is not None:
+                embed.add_field(name="Handling", value=str(obj_data['handling']), inline=True)
+            if obj_data.get('shop_spawn_rate') is not None:
+                rate = obj_data['shop_spawn_rate']
+                embed.add_field(name="Shop Spawn Rate", value=f"{rate:.2f}", inline=True)
+    
+            # Loadout limits
+            embed.add_field(name="Max Modules",    value=str(obj_data.get('max_modules', '–')), inline=True)
+            embed.add_field(name="Max Primaries",  value=str(obj_data.get('max_primaries', '–')), inline=True)
+            embed.add_field(name="Max Secondaries",value=str(obj_data.get('max_secondaries','–')), inline=True)
+            embed.add_field(name="Max Turrets",    value=str(obj_data.get('max_turrets', '–')), inline=True)
+    
+            # Extras
+            if obj_data.get('manufacturer'):
+                embed.add_field(name="Manufacturer", value=obj_data['manufacturer'], inline=True)
+            if obj_data.get('skinnable'):
+                embed.add_field(name="Skinnable", value="Yes", inline=True)
+            if obj_data.get('compatible_skins'):
+                skins = ", ".join(obj_data['compatible_skins'])
+                embed.add_field(name="Compatible Skins", value=skins, inline=False)
+
 
         # Add aliases if available
         if obj_data.get('aliases'):

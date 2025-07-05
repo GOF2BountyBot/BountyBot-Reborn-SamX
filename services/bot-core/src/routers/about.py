@@ -9,6 +9,7 @@ from persist.repositories.module_repository import ModuleRepository
 from persist.repositories.primary_weapon_repository import PrimaryWeaponRepository
 from persist.repositories.secondary_weapon_repository import SecondaryWeaponRepository
 from persist.repositories.turret_weapon_repository import TurretWeaponRepository
+from persist.repositories.ship_repository import ShipRepository
 from routers.data import DataCategory
 import shared.logging as logging
 
@@ -45,11 +46,29 @@ class SecondaryWeaponResponse(WeaponResponse):
 class TurretWeaponResponse(WeaponResponse):
     pass
 
+class ShipResponse(ItemResponse):
+    armour: Optional[int] = None
+    cargo: Optional[int] = None
+    handling: Optional[int] = None
+    shop_spawn_rate: Optional[float] = None
+    max_modules: Optional[int] = None
+    max_primaries: Optional[int] = None
+    max_secondaries: Optional[int] = None
+    max_turrets: Optional[int] = None
+    manufacturer: Optional[str] = None
+    skinnable: Optional[bool] = None
+    compatible_skins: Optional[List[str]] = None
+    model: Optional[str] = None
+    norm_spec: Optional[str] = None
+    assets: Optional[List[str]] = None
+    save_due: Optional[bool] = None
+
 # Repository instances
 module_repo = ModuleRepository()
 primary_weapon_repo = PrimaryWeaponRepository()
 secondary_weapon_repo = SecondaryWeaponRepository()
 turret_weapon_repo = TurretWeaponRepository()
+ship_repo = ShipRepository()
 
 # Category to repository mapping
 CATEGORY_REPOS = {
@@ -57,6 +76,7 @@ CATEGORY_REPOS = {
     DataCategory.primary: primary_weapon_repo,
     DataCategory.secondary: secondary_weapon_repo,
     DataCategory.turret: turret_weapon_repo,
+    DataCategory.ship: ship_repo,
 }
 
 # Category to response model mapping
@@ -65,6 +85,7 @@ CATEGORY_RESPONSE_MODELS = {
     DataCategory.primary: PrimaryWeaponResponse,
     DataCategory.secondary: SecondaryWeaponResponse,
     DataCategory.turret: TurretWeaponResponse,
+    DataCategory.ship: ShipResponse,  
 }
 
 def get_db() -> Generator[Session, None, None]:
@@ -118,50 +139,6 @@ def list_objects_for_category(category: DataCategory, db: Session = Depends(get_
         logger.error(f"Error retrieving objects for category {category.value}: {e}")
         raise HTTPException(status_code=500, detail="Internal server error")
 
-@router.get("/object/{object_id}", response_model=Dict[str, Any])
-def get_object_by_id(object_id: int, db: Session = Depends(get_db)):
-    """
-    GET /about/object/{object_id}
-    Get detailed object information by ID.
-    """
-    try:
-        # Try each repository to find the object
-        for category, repo in CATEGORY_REPOS.items():
-            obj = repo.get_by_id(db, object_id)
-            if obj:
-                # Convert to dict format
-                result = {
-                    "id": obj.id,
-                    "name": obj.name,
-                    "aliases": obj.aliases if hasattr(obj, 'aliases') else [],
-                    "built_in": obj.built_in if hasattr(obj, 'built_in') else False,
-                    "emoji": obj.emoji if hasattr(obj, 'emoji') else None,
-                    "icon": obj.icon if hasattr(obj, 'icon') else None,
-                    "value": obj.value if hasattr(obj, 'value') else None,
-                    "wiki": obj.wiki if hasattr(obj, 'wiki') else None,
-                    "type": obj.type if hasattr(obj, 'type') else None,
-                    "tech_level": obj.tech_level if hasattr(obj, 'tech_level') else None,
-                    "extra_atts": obj.extra_atts if hasattr(obj, 'extra_atts') else None,
-                    "category": category.value
-                }
-
-                # Add specific fields based on category
-                if category == DataCategory.module and hasattr(obj, 'max_equipped'):
-                    result["max_equipped"] = obj.max_equipped
-                elif category == DataCategory.primary and hasattr(obj, 'dps'):
-                    result["dps"] = obj.dps
-
-                logger.debug(f"Found object {object_id} in category {category.value}")
-                return result
-
-        # Object not found in any category
-        raise HTTPException(status_code=404, detail=f"Object with ID {object_id} not found")
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error retrieving object {object_id}: {e}")
-        raise HTTPException(status_code=500, detail="Internal server error")
-
 @router.get("/object/name/{object_name}", response_model=Dict[str, Any])
 def get_object_by_name(object_name: str, db: Session = Depends(get_db)):
     """
@@ -174,26 +151,43 @@ def get_object_by_name(object_name: str, db: Session = Depends(get_db)):
             obj = repo.get_by_name(db, object_name)
             if obj:
                 # Convert to dict format
-                result = {
+                result: Dict[str, Any] = {
                     "id": obj.id,
                     "name": obj.name,
-                    "aliases": obj.aliases if hasattr(obj, 'aliases') else [],
-                    "built_in": obj.built_in if hasattr(obj, 'built_in') else False,
-                    "emoji": obj.emoji if hasattr(obj, 'emoji') else None,
-                    "icon": obj.icon if hasattr(obj, 'icon') else None,
-                    "value": obj.value if hasattr(obj, 'value') else None,
-                    "wiki": obj.wiki if hasattr(obj, 'wiki') else None,
-                    "type": obj.type if hasattr(obj, 'type') else None,
-                    "tech_level": obj.tech_level if hasattr(obj, 'tech_level') else None,
-                    "extra_atts": obj.extra_atts if hasattr(obj, 'extra_atts') else None,
+                    "aliases": obj.aliases or [],
+                    "built_in": obj.built_in,
+                    "emoji": obj.emoji,
+                    "icon": obj.icon,
+                    "value": obj.value,
+                    "wiki": obj.wiki,
+                    "type": getattr(obj, "type", None),
+                    "tech_level": getattr(obj, "tech_level", None),
+                    "extra_atts": getattr(obj, "extra_atts", None),
                     "category": category.value
                 }
 
-                # Add specific fields based on category
-                if category == DataCategory.module and hasattr(obj, 'max_equipped'):
+                if category == DataCategory.module:
                     result["max_equipped"] = obj.max_equipped
-                elif category == DataCategory.primary and hasattr(obj, 'dps'):
+                elif category == DataCategory.primary:
                     result["dps"] = obj.dps
+                elif category == DataCategory.ship:
+                    result.update({
+                        "armour": obj.armour,
+                        "cargo": obj.cargo,
+                        "handling": obj.handling,
+                        "shop_spawn_rate": obj.shop_spawn_rate,
+                        "max_modules": obj.max_modules,
+                        "max_primaries": obj.max_primaries,
+                        "max_secondaries": obj.max_secondaries,
+                        "max_turrets": obj.max_turrets,
+                        "manufacturer": obj.manufacturer,
+                        "skinnable": obj.skinnable,
+                        "compatible_skins": obj.compatible_skins or [],
+                        "model": obj.model,
+                        "norm_spec": obj.norm_spec,
+                        "assets": obj.assets or [],
+                        "save_due": obj.save_due,
+                    })
 
                 logger.debug(f"Found object '{object_name}' in category {category.value}")
                 return result
@@ -216,24 +210,43 @@ def get_object_by_alias(alias: str, db: Session = Depends(get_db)):
         for category, repo in CATEGORY_REPOS.items():
             obj = repo.get_by_alias(db, alias)
             if obj:
-                result = {
+                result: Dict[str, Any] = {
                     "id": obj.id,
                     "name": obj.name,
-                    "aliases": obj.aliases if hasattr(obj, "aliases") else [],
-                    "built_in": getattr(obj, "built_in", False),
-                    "emoji": getattr(obj, "emoji", None),
-                    "icon": getattr(obj, "icon", None),
-                    "value": getattr(obj, "value", None),
-                    "wiki": getattr(obj, "wiki", None),
+                    "aliases": obj.aliases or [],
+                    "built_in": obj.built_in,
+                    "emoji": obj.emoji,
+                    "icon": obj.icon,
+                    "value": obj.value,
+                    "wiki": obj.wiki,
                     "type": getattr(obj, "type", None),
                     "tech_level": getattr(obj, "tech_level", None),
                     "extra_atts": getattr(obj, "extra_atts", None),
                     "category": category.value
                 }
-                if category == DataCategory.module and hasattr(obj, "max_equipped"):
+
+                if category == DataCategory.module:
                     result["max_equipped"] = obj.max_equipped
-                elif category == DataCategory.primary and hasattr(obj, "dps"):
+                elif category == DataCategory.primary:
                     result["dps"] = obj.dps
+                elif category == DataCategory.ship:
+                    result.update({
+                        "armour": obj.armour,
+                        "cargo": obj.cargo,
+                        "handling": obj.handling,
+                        "shop_spawn_rate": obj.shop_spawn_rate,
+                        "max_modules": obj.max_modules,
+                        "max_primaries": obj.max_primaries,
+                        "max_secondaries": obj.max_secondaries,
+                        "max_turrets": obj.max_turrets,
+                        "manufacturer": obj.manufacturer,
+                        "skinnable": obj.skinnable,
+                        "compatible_skins": obj.compatible_skins or [],
+                        "model": obj.model,
+                        "norm_spec": obj.norm_spec,
+                        "assets": obj.assets or [],
+                        "save_due": obj.save_due,
+                    })
 
                 logger.debug(f"Found object by alias '{alias}' in {category.value}")
                 return result
@@ -244,3 +257,66 @@ def get_object_by_alias(alias: str, db: Session = Depends(get_db)):
     except Exception as e:
         logger.error(f"Error retrieving object by alias '{alias}': {e}")
         raise HTTPException(500, detail="Internal server error")
+
+
+@router.get("/object/{category}/{object_id}", response_model=Dict[str, Any])
+def get_object_by_id(category: DataCategory, object_id: int, db: Session = Depends(get_db)):
+    """
+    GET /about/object/{object_id}
+    Get detailed object information by ID.
+    """
+    repo = CATEGORY_REPOS.get(category)
+    if not repo:
+        raise HTTPException(404, f"Category {category.value} not found")
+
+    obj = repo.get_by_id(db, object_id)
+    if not obj:
+        raise HTTPException(404, f"{category.value.title()} with ID {object_id} not found")
+    try:
+        result: Dict[str, Any] = {
+            "id": obj.id,
+            "name": obj.name,
+            "aliases": obj.aliases or [],
+            "built_in": obj.built_in,
+            "emoji": obj.emoji,
+            "icon": obj.icon,
+            "value": obj.value,
+            "wiki": obj.wiki,
+            "type": getattr(obj, "type", None),
+            "tech_level": getattr(obj, "tech_level", None),
+            "extra_atts": getattr(obj, "extra_atts", None),
+            "category": category.value
+        }
+
+        if category == DataCategory.module:
+            result["max_equipped"] = obj.max_equipped
+        elif category == DataCategory.primary:
+            result["dps"] = obj.dps
+        elif category == DataCategory.ship:
+            result.update({
+                "armour": obj.armour,
+                "cargo": obj.cargo,
+                "handling": obj.handling,
+                "shop_spawn_rate": obj.shop_spawn_rate,
+                "max_modules": obj.max_modules,
+                "max_primaries": obj.max_primaries,
+                "max_secondaries": obj.max_secondaries,
+                "max_turrets": obj.max_turrets,
+                "manufacturer": obj.manufacturer,
+                "skinnable": obj.skinnable,
+                "compatible_skins": obj.compatible_skins or [],
+                "model": obj.model,
+                "norm_spec": obj.norm_spec,
+                "assets": obj.assets or [],
+                "save_due": obj.save_due,
+            })
+
+        logger.debug(f"Found {category.value} {object_id}")
+        return result
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error retrieving object {object_id}: {e}")
+        raise HTTPException(status_code=500, detail="Internal server error")
+

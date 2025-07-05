@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Configuration variables
-TARGET_DIR="/app/game objects"
+TARGET_DIR="/app/game-objects"
 TEMP_FILE="/tmp/downloaded_file.7z"
 GAME_OBJECTS_READY=false
 

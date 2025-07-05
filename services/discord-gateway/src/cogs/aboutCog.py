@@ -94,20 +94,13 @@ class AboutCog(commands.Cog):
         for obj in objects:
             name = obj.get('name', '')
             if current.lower() in name.lower():
-                # Add emoji if available
-                display_name = name
-                if obj.get('emoji'):
-                    display_name = f"{obj['emoji']} {name}"
-
-                choices.append(app_commands.Choice(name=display_name, value=name))
+                choices.append(app_commands.Choice(name=name, value=name))
 
                 # Also check aliases
                 for alias in obj.get('aliases', []):
                     if current.lower() in alias.lower() and len(choices) < 25:
-                        alias_display = f"{alias} (alias)"
-                        if obj.get('emoji'):
-                            alias_display = f"{obj['emoji']} {alias} (alias)"
-                        choices.append(app_commands.Choice(name=alias_display, value=alias))
+                        # Display alias without emoji
+                        choices.append(app_commands.Choice(name=f"{alias} (alias)", value=alias))
 
         return choices[:25]
 
@@ -288,8 +281,8 @@ class AboutCog(commands.Cog):
             if objects_text:
                 embed.add_field(name="Objects", value=objects_text, inline=False)
 
-            if len(objects) > 50:
-                embed.set_footer(text=f"Showing first 50 of {len(objects)} objects")
+            if len(objects) > 100:
+                embed.set_footer(text=f"Showing first 100 of {len(objects)} objects")
 
             await interaction.followup.send(embed=embed)
 

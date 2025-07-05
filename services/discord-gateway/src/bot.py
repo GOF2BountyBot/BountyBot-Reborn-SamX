@@ -99,6 +99,7 @@ class GatewayBot(commands.Bot):
                     self.logger.info(f"✓ Successfully loaded: {filename}")
                 except Exception as e:
                     self.logger.error(f"✗ Failed to load {filename}: {e}")
+                    raise
 
         self.logger.info(f"=== SETUP HOOK COMPLETED - Loaded {cog_count} cogs ===")
         # DO NOT call wait_until_ready() here!
@@ -141,6 +142,7 @@ class GatewayBot(commands.Bot):
                         self.logger.error(f"✗ Failed to sync to {guild.name}: {e}")
                         if "403" in str(e):
                             self.logger.error("Bot missing application.commands scope!")
+                        raise
             else:
                 # Sync globally (if needed)
                 synced = await self.tree.sync()
@@ -156,6 +158,7 @@ class GatewayBot(commands.Bot):
         except Exception as e:
             self.logger.error(f"✗ Failed to sync commands: {e}")
             self.logger.exception("Command sync error details:")
+            raise
 
     async def on_error(self, event, *args, **kwargs):
         self.logger.error(f"Error in event {event}")

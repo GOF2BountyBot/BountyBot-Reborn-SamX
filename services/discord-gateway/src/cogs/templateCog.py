@@ -3,6 +3,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 import shared.logging as logging
+import requests
 
 # Set up logger
 logger = logging.get_logger("discord-gateway-TemplateCog")

@@ -1,11 +1,14 @@
 {
-    "aliases": [],
-    "builtIn": false,
-    "damage": 0,
-    "icon": "",
-    "loading speed": 0,
-    "name": "Armour Rocket",
-    "type": "rocket",
-    "value": 0,
-    "wiki": ""
+    "aliases":  [
+
+                ],
+    "builtIn":  false,
+    "damage":  0,
+    "icon":  "",
+    "loading speed":  0,
+    "name":  "Armour Rocket",
+    "value":  0,
+    "wiki":  "",
+    "type":  "SecondaryWeapon",
+    "subtype":  "rockets"
 }

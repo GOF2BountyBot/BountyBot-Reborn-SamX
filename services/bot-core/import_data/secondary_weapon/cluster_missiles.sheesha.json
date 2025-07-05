@@ -1,11 +1,14 @@
 {
-    "aliases": [],
-    "builtIn": false,
-    "damage": 0,
-    "icon": "",
-    "loading speed": 0,
-    "name": "Sheesha",
-    "type": "cluster missile",
-    "value": 0,
-    "wiki": ""
+    "aliases":  [
+
+                ],
+    "builtIn":  false,
+    "damage":  0,
+    "icon":  "",
+    "loading speed":  0,
+    "name":  "Sheesha",
+    "value":  0,
+    "wiki":  "",
+    "type":  "SecondaryWeapon",
+    "subtype":  "cluster_missiles"
 }

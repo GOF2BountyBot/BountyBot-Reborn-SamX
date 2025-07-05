@@ -1,20 +1,22 @@
 {
-    "aliases": [
-        "M6 A2",
-        "Cougar",
-        "M6 Cougar",
-        "A2 Cougar",
-        "M6 A2 Cougar",
-        "\"Cougar\"",
-        "M6 \"Cougar\"",
-        "A2 \"Cougar\""
-    ],
-    "builtIn": false,
-    "dps": 24.28,
-    "emoji": "<:m6a2cougar:723709564289286185>",
-    "icon": "https://cdn.discordapp.com/attachments/700683544103747594/723486960663920680/m6_a2_cougar.png",
-    "name": "M6 A2 \"Cougar\"",
-    "techLevel": 8,
-    "value": 46160,
-    "wiki": "https://galaxyonfire.fandom.com/wiki/M6_A2_\"Cougar\""
+    "aliases":  [
+                    "M6 A2",
+                    "Cougar",
+                    "M6 Cougar",
+                    "A2 Cougar",
+                    "M6 A2 Cougar",
+                    "\"Cougar\"",
+                    "M6 \"Cougar\"",
+                    "A2 \"Cougar\""
+                ],
+    "builtIn":  false,
+    "dps":  24.28,
+    "emoji":  "<:m6a2cougar:723709564289286185>",
+    "icon":  "https://cdn.discordapp.com/attachments/700683544103747594/723486960663920680/m6_a2_cougar.png",
+    "name":  "M6 A2 \"Cougar\"",
+    "techLevel":  8,
+    "value":  46160,
+    "wiki":  "https://galaxyonfire.fandom.com/wiki/M6_A2_\"Cougar\"",
+    "type":  "PrimaryWeapon",
+    "subtype":  "beam_lasers"
 }

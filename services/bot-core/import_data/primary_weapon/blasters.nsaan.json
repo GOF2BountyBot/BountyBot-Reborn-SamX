@@ -1,13 +1,15 @@
 {
-    "aliases": [
-        "Nsaan"
-    ],
-    "builtIn": false,
-    "dps": 13.33,
-    "emoji": "<:nsaan:723709620476182579>",
-    "icon": "https://cdn.discordapp.com/attachments/700683544103747594/723476802340782100/nsaan.png",
-    "name": "N'saan",
-    "techLevel": 1,
-    "value": 12894,
-    "wiki": "https://galaxyonfire.fandom.com/wiki/N%27saan"
+    "aliases":  [
+                    "Nsaan"
+                ],
+    "builtIn":  false,
+    "dps":  13.33,
+    "emoji":  "<:nsaan:723709620476182579>",
+    "icon":  "https://cdn.discordapp.com/attachments/700683544103747594/723476802340782100/nsaan.png",
+    "name":  "N'saan",
+    "techLevel":  1,
+    "value":  12894,
+    "wiki":  "https://galaxyonfire.fandom.com/wiki/N%27saan",
+    "type":  "PrimaryWeapon",
+    "subtype":  "blasters"
 }

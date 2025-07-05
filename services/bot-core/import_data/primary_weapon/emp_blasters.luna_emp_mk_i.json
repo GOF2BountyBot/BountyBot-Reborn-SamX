@@ -1,17 +1,19 @@
 {
-    "aliases": [
-        "Luna Mk I",
-        "Luna EMP",
-        "Luna",
-        "EMP Mk I",
-        "EMP I"
-    ],
-    "builtIn": false,
-    "dps": 8.57,
-    "emoji": "<:lunaempmki:723709689149390888>",
-    "icon": "https://cdn.discordapp.com/attachments/700683544103747594/723476864126943232/luna_emp_mk_i.png",
-    "name": "Luna EMP Mk I",
-    "techLevel": 4,
-    "value": 5942,
-    "wiki": "https://galaxyonfire.fandom.com/wiki/Luna_EMP_Mk_I"
+    "aliases":  [
+                    "Luna Mk I",
+                    "Luna EMP",
+                    "Luna",
+                    "EMP Mk I",
+                    "EMP I"
+                ],
+    "builtIn":  false,
+    "dps":  8.57,
+    "emoji":  "<:lunaempmki:723709689149390888>",
+    "icon":  "https://cdn.discordapp.com/attachments/700683544103747594/723476864126943232/luna_emp_mk_i.png",
+    "name":  "Luna EMP Mk I",
+    "techLevel":  4,
+    "value":  5942,
+    "wiki":  "https://galaxyonfire.fandom.com/wiki/Luna_EMP_Mk_I",
+    "type":  "PrimaryWeapon",
+    "subtype":  "emp_blasters"
 }

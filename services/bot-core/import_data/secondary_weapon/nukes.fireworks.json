@@ -1,11 +1,14 @@
 {
-    "aliases": [],
-    "builtIn": false,
-    "damage": 0,
-    "icon": "",
-    "loading speed": 0,
-    "name": "Fireworks",
-    "type": "nuke",
-    "value": 0,
-    "wiki": ""
+    "aliases":  [
+
+                ],
+    "builtIn":  false,
+    "damage":  0,
+    "icon":  "",
+    "loading speed":  0,
+    "name":  "Fireworks",
+    "value":  0,
+    "wiki":  "",
+    "type":  "SecondaryWeapon",
+    "subtype":  "nukes"
 }

@@ -1,13 +1,15 @@
 {
-    "aliases": [
-        "Tyrfing"
-    ],
-    "builtIn": false,
-    "dps": 59.09,
-    "emoji": "<:tyrfingblaster:723709620220198974>",
-    "icon": "https://cdn.discordapp.com/attachments/700683544103747594/723484968055079002/tyrfing_blaster.png",
-    "name": "Tyrfing Blaster",
-    "techLevel": 9,
-    "value": 97683,
-    "wiki": "https://galaxyonfire.fandom.com/wiki/Tyrfing_Blaster"
+    "aliases":  [
+                    "Tyrfing"
+                ],
+    "builtIn":  false,
+    "dps":  59.09,
+    "emoji":  "<:tyrfingblaster:723709620220198974>",
+    "icon":  "https://cdn.discordapp.com/attachments/700683544103747594/723484968055079002/tyrfing_blaster.png",
+    "name":  "Tyrfing Blaster",
+    "techLevel":  9,
+    "value":  97683,
+    "wiki":  "https://galaxyonfire.fandom.com/wiki/Tyrfing_Blaster",
+    "type":  "PrimaryWeapon",
+    "subtype":  "blasters"
 }

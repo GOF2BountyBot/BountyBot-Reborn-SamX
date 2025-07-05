@@ -1,13 +1,14 @@
 {
-    "aliases": [
-        "Oppressor"
-    ],
-    "builtIn": false,
-    "damage": 0,
-    "icon": "",
-    "loading speed": 0,
-    "name": "AMR Oppressor",
-    "type": "nuke",
-    "value": 0,
-    "wiki": ""
+    "aliases":  [
+                    "Oppressor"
+                ],
+    "builtIn":  false,
+    "damage":  0,
+    "icon":  "",
+    "loading speed":  0,
+    "name":  "AMR Oppressor",
+    "value":  0,
+    "wiki":  "",
+    "type":  "SecondaryWeapon",
+    "subtype":  "nukes"
 }

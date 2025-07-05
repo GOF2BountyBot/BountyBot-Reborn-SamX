@@ -1,15 +1,17 @@
 {
-    "aliases": [
-        "Fusion",
-        "PE Fusion"
-    ],
-    "builtIn": false,
-    "dps": 0,
-    "emoji": "<:pefusionh2:723707456991133757>",
-    "icon": "https://cdn.discordapp.com/attachments/700683544103747594/723476609860108318/pe_fusion_h2.png",
-    "name": "PE Fusion H2",
-    "techLevel": 9,
-    "value": 631720,
-    "automatic": false,
-    "wiki": "https://galaxyonfire.fandom.com/wiki/PE_Fusion_H2"
+    "aliases":  [
+                    "Fusion",
+                    "PE Fusion"
+                ],
+    "builtIn":  false,
+    "dps":  0,
+    "emoji":  "<:pefusionh2:723707456991133757>",
+    "icon":  "https://cdn.discordapp.com/attachments/700683544103747594/723476609860108318/pe_fusion_h2.png",
+    "name":  "PE Fusion H2",
+    "techLevel":  9,
+    "value":  631720,
+    "automatic":  false,
+    "wiki":  "https://galaxyonfire.fandom.com/wiki/PE_Fusion_H2",
+    "type":  "TurretWeapon",
+    "subtype":  "plasma_collectors"
 }

@@ -1,15 +1,16 @@
 {
-    "aliases": [
-        "SG-400",
-        "Berger SG 400",
-        "SG 400"
-    ],
-    "builtIn": false,
-    "damage": 0,
-    "icon": "",
-    "loading speed": 0,
-    "name": "Berger SG-400",
-    "type": "sentry gun",
-    "value": 0,
-    "wiki": ""
+    "aliases":  [
+                    "SG-400",
+                    "Berger SG 400",
+                    "SG 400"
+                ],
+    "builtIn":  false,
+    "damage":  0,
+    "icon":  "",
+    "loading speed":  0,
+    "name":  "Berger SG-400",
+    "value":  0,
+    "wiki":  "",
+    "type":  "SecondaryWeapon",
+    "subtype":  "sentry_guns"
 }

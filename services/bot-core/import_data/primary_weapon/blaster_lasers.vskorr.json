@@ -1,13 +1,15 @@
 {
-    "aliases": [
-        "vskorr"
-    ],
-    "builtIn": false,
-    "dps": 14,
-    "emoji": "<:vskorr:723709563823718402>",
-    "icon": "https://cdn.discordapp.com/attachments/700683544103747594/723477007060566037/vskorr.png",
-    "name": "V'skorr",
-    "techLevel": 6,
-    "value": 9528,
-    "wiki": "https://galaxyonfire.fandom.com/wiki/V%27skorr"
+    "aliases":  [
+                    "vskorr"
+                ],
+    "builtIn":  false,
+    "dps":  14,
+    "emoji":  "<:vskorr:723709563823718402>",
+    "icon":  "https://cdn.discordapp.com/attachments/700683544103747594/723477007060566037/vskorr.png",
+    "name":  "V'skorr",
+    "techLevel":  6,
+    "value":  9528,
+    "wiki":  "https://galaxyonfire.fandom.com/wiki/V%27skorr",
+    "type":  "PrimaryWeapon",
+    "subtype":  "blaster_lasers"
 }

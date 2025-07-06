@@ -10,7 +10,7 @@ import sys
 import platform
 import shared.logging as logging
 
-logger = logging.get_logger("Bbender-healthcheck-api-router")
+logger = logging.get_logger("blender-healthcheck-api-router")
 
 router = APIRouter(
     prefix="/health",

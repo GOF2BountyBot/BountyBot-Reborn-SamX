@@ -10,6 +10,8 @@ class DataCategory(str, Enum):
     secondary  = "secondary_weapon"
     turret     = "turret_weapon"
     ship       = "ship"
+    criminal   = "criminal"
+    system     = "system"
 
 router = APIRouter(prefix="/data", tags=["data"])
 

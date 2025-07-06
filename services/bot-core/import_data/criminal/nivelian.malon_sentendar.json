@@ -1,0 +1,12 @@
+{
+    "aliases": [
+        "malon",
+        "sendendar"
+    ],
+    "builtIn": false,
+    "faction": "nivelian",
+    "icon": "https://cdn.discordapp.com/attachments/700683544103747594/711226767939207178/malon_sentendar.png",
+    "isPlayer": false,
+    "name": "Malon Sentendar",
+    "wiki": "https://galaxyonfire.fandom.com/wiki/Malon_Sentendar"
+}

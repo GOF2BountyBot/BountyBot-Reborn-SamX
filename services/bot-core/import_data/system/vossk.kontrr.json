@@ -1,0 +1,19 @@
+{
+    "aliases": [
+        "kontrr"
+    ],
+    "coordinates": [
+        644,
+        674
+    ],
+    "faction": "vossk",
+    "name": "K'Ontrr",
+    "neighbours": [
+        "S'Kolptorr",
+        "Ni'Mrrod",
+        "Me'Enkk",
+        "Wah'Norr"
+    ],
+    "security": 3,
+    "wiki": "https://galaxyonfire.fandom.com/wiki/Category:K'Ontrr"
+}

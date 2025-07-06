@@ -1,0 +1,19 @@
+{
+    "aliases": [
+        "oombak"
+    ],
+    "coordinates": [
+        558,
+        471
+    ],
+    "faction": "vossk",
+    "name": "Oom'Bak",
+    "neighbours": [
+        "Magnetar",
+        "Vulpes",
+        "S'Kolptorr",
+        "V'Ikka"
+    ],
+    "security": 1,
+    "wiki": "https://galaxyonfire.fandom.com/wiki/Category:Oom'Bak"
+}

@@ -1,0 +1,15 @@
+{
+    "aliases": [],
+    "coordinates": [
+        652,
+        402
+    ],
+    "faction": "terran",
+    "name": "Vulpes",
+    "neighbours": [
+        "Prospero",
+        "Oom'Bak"
+    ],
+    "security": 2,
+    "wiki": "https://galaxyonfire.fandom.com/wiki/Category:Vulpes"
+}

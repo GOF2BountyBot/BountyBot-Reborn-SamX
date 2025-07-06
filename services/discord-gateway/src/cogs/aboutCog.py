@@ -170,6 +170,8 @@ class AboutCog(commands.Cog):
             'secondary_weapon': discord.Color.orange(),
             'turret_weapon': discord.Color.purple(),
             'ship': discord.Color.green(),
+            'criminal': discord.Color.dark_red(),
+            'system':   discord.Color.gold(),
         }
         color = color_map.get(category, discord.Color.default())
 
@@ -231,6 +233,24 @@ class AboutCog(commands.Cog):
             if obj_data.get('compatible_skins'):
                 skins = ", ".join(obj_data['compatible_skins'])
                 embed.add_field(name="Compatible Skins", value=skins, inline=False)
+
+        elif category == 'system':
+            # Add coordinates field
+            coords = obj_data.get('coordinates')
+            if coords:
+                embed.add_field(name="Coordinates", value=str(", ".join(str(c) for c in coords)), inline=True)
+            # Add faction field
+            if obj_data.get('faction'):
+                embed.add_field(name="Faction", value=str(obj_data['faction']), inline=True)
+
+        elif category == 'criminal':
+            # Add faction field
+            if obj_data.get('faction'):
+                embed.add_field(name="Faction", value=str(obj_data['faction']), inline=True)
+            # Set embed image if icon url present
+            if obj_data.get('icon'):
+                embed.set_thumbnail(url=obj_data['icon'])
+
 
 
         # Add aliases if available

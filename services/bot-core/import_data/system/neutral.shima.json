@@ -1,0 +1,16 @@
+{
+    "aliases": [],
+    "coordinates": [
+        276,
+        137
+    ],
+    "faction": "neutral",
+    "name": "Shima",
+    "neighbours": [
+        "Loma",
+        "Weymire",
+        "Nesla"
+    ],
+    "security": 0,
+    "wiki": "https://galaxyonfire.fandom.com/wiki/Category:Shima"
+}

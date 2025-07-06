@@ -1,0 +1,12 @@
+{
+    "aliases": [
+        "urr",
+        "sekant"
+    ],
+    "builtIn": false,
+    "faction": "vossk",
+    "icon": "https://cdn.discordapp.com/attachments/700683544103747594/711226825488990258/urr_sakant.png",
+    "isPlayer": false,
+    "name": "Urr Sekant",
+    "wiki": "https://galaxyonfire.fandom.com/wiki/Urr_Sakant"
+}

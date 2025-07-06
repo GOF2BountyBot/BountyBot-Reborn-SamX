@@ -1,0 +1,18 @@
+{
+    "aliases": [
+        "pescal",
+        "inartu"
+    ],
+    "coordinates": [
+        354,
+        725
+    ],
+    "faction": "terran",
+    "name": "Pescal Inartu",
+    "neighbours": [
+        "Pan",
+        "Buntta"
+    ],
+    "security": 2,
+    "wiki": "https://galaxyonfire.fandom.com/wiki/Category:Pescal_Inartu"
+}

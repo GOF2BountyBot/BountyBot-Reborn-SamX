@@ -1,0 +1,17 @@
+{
+    "aliases": [],
+    "coordinates": [
+        471,
+        360
+    ],
+    "faction": "terran",
+    "name": "Magnetar",
+    "neighbours": [
+        "Union",
+        "Oom'Bak",
+        "V'Ikka",
+        "Augmenta"
+    ],
+    "security": 0,
+    "wiki": "https://galaxyonfire.fandom.com/wiki/Magnetar_system"
+}

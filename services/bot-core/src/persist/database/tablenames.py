@@ -9,3 +9,5 @@ class TableNames(Enum):
     SecondaryWeapon     = "secondary_weapon"
     TurretWeapon        = "turret_weapon"
     Ship                = "ship"
+    System              = "system"
+    Criminal            = "criminal"

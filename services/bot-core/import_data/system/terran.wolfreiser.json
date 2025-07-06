@@ -1,0 +1,18 @@
+{
+    "aliases": [
+        "wolfreiser",
+        "wolf",
+        "reiser"
+    ],
+    "coordinates": [
+        631,
+        174
+    ],
+    "faction": "terran",
+    "name": "Wolf-Reiser",
+    "neighbours": [
+        "Aquila"
+    ],
+    "security": 0,
+    "wiki": "https://galaxyonfire.fandom.com/wiki/Category:Wolf-Reiser"
+}

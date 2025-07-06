@@ -1,0 +1,18 @@
+{
+    "aliases": [],
+    "coordinates": [
+        208,
+        184
+    ],
+    "faction": "nivelian",
+    "name": "Nesla",
+    "neighbours": [
+        "Beh\u00e9n",
+        "Par\u00e9ah",
+        "Weymire",
+        "Shima",
+        "Eanya"
+    ],
+    "security": 2,
+    "wiki": "https://galaxyonfire.fandom.com/wiki/Category:Nesla"
+}

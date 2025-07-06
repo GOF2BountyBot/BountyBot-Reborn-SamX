@@ -1,0 +1,20 @@
+{
+    "aliases": [
+        "vikka"
+    ],
+    "coordinates": [
+        430,
+        522
+    ],
+    "faction": "vossk",
+    "name": "V'Ikka",
+    "neighbours": [
+        "Augmenta",
+        "Buntta",
+        "Magnetar",
+        "Oom'Bak",
+        "S'Kolptorr"
+    ],
+    "security": 1,
+    "wiki": "https://galaxyonfire.fandom.com/wiki/Category:V'Ikka"
+}

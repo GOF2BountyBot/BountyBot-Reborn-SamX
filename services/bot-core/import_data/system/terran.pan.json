@@ -1,0 +1,15 @@
+{
+    "aliases": [],
+    "coordinates": [
+        174,
+        693
+    ],
+    "faction": "terran",
+    "name": "Pan",
+    "neighbours": [
+        "Buntta",
+        "Pescal Inartu"
+    ],
+    "security": 2,
+    "wiki": "https://galaxyonfire.fandom.com/wiki/Category:Pan"
+}

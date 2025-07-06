@@ -10,6 +10,8 @@ from persist.repositories.primary_weapon_repository import PrimaryWeaponReposito
 from persist.repositories.secondary_weapon_repository import SecondaryWeaponRepository
 from persist.repositories.turret_weapon_repository import TurretWeaponRepository
 from persist.repositories.ship_repository import ShipRepository
+from persist.repositories.system_repository import SystemRepository
+from persist.repositories.criminal_repository import CriminalRepository
 from routers.data import DataCategory
 import shared.logging as logging
 
@@ -63,12 +65,22 @@ class ShipResponse(ItemResponse):
     assets: Optional[List[str]] = None
     save_due: Optional[bool] = None
 
+class CriminalResponse(ItemResponse):
+    is_player: bool
+    faction: str                   # ← add faction
+
+class SystemResponse(ItemResponse):
+    coordinates: List[float]       # ← e.g. [x, y, z]
+    faction: str                   # ← add faction
+
 # Repository instances
 module_repo = ModuleRepository()
 primary_weapon_repo = PrimaryWeaponRepository()
 secondary_weapon_repo = SecondaryWeaponRepository()
 turret_weapon_repo = TurretWeaponRepository()
 ship_repo = ShipRepository()
+system_repo    = SystemRepository()
+criminal_repo  = CriminalRepository()
 
 # Category to repository mapping
 CATEGORY_REPOS = {
@@ -77,6 +89,8 @@ CATEGORY_REPOS = {
     DataCategory.secondary: secondary_weapon_repo,
     DataCategory.turret: turret_weapon_repo,
     DataCategory.ship: ship_repo,
+    DataCategory.system:   system_repo,
+    DataCategory.criminal: criminal_repo,
 }
 
 # Category to response model mapping
@@ -86,6 +100,8 @@ CATEGORY_RESPONSE_MODELS = {
     DataCategory.secondary: SecondaryWeaponResponse,
     DataCategory.turret: TurretWeaponResponse,
     DataCategory.ship: ShipResponse,  
+    DataCategory.system:   SystemResponse,
+    DataCategory.criminal: CriminalResponse,
 }
 
 def get_db() -> Generator[Session, None, None]:
@@ -155,11 +171,11 @@ def get_object_by_name(object_name: str, db: Session = Depends(get_db)):
                     "id": obj.id,
                     "name": obj.name,
                     "aliases": obj.aliases or [],
-                    "built_in": obj.built_in,
-                    "emoji": obj.emoji,
-                    "icon": obj.icon,
-                    "value": obj.value,
-                    "wiki": obj.wiki,
+                    "built_in": getattr(obj, "built_in", None),
+                    "emoji": getattr(obj, "emoji", None),
+                    "icon": getattr(obj, "icon", None),
+                    "value": getattr(obj, "value", None),
+                    "wiki": getattr(obj, "wiki", None),
                     "type": getattr(obj, "type", None),
                     "tech_level": getattr(obj, "tech_level", None),
                     "extra_atts": getattr(obj, "extra_atts", None),
@@ -188,6 +204,12 @@ def get_object_by_name(object_name: str, db: Session = Depends(get_db)):
                         "assets": obj.assets or [],
                         "save_due": obj.save_due,
                     })
+                elif category == DataCategory.criminal:
+                    # result["is_player"] = obj.is_player
+                    result["faction"]   = obj.faction
+                elif category == DataCategory.system:
+                    result["coordinates"] = obj.coordinates
+                    result["faction"]     = obj.faction
 
                 logger.debug(f"Found object '{object_name}' in category {category.value}")
                 return result
@@ -214,11 +236,11 @@ def get_object_by_alias(alias: str, db: Session = Depends(get_db)):
                     "id": obj.id,
                     "name": obj.name,
                     "aliases": obj.aliases or [],
-                    "built_in": obj.built_in,
-                    "emoji": obj.emoji,
-                    "icon": obj.icon,
-                    "value": obj.value,
-                    "wiki": obj.wiki,
+                    "built_in": getattr(obj, "built_in", None),
+                    "emoji": getattr(obj, "emoji", None),
+                    "icon": getattr(obj, "icon", None),
+                    "value": getattr(obj, "value", None),
+                    "wiki": getattr(obj, "wiki", None),
                     "type": getattr(obj, "type", None),
                     "tech_level": getattr(obj, "tech_level", None),
                     "extra_atts": getattr(obj, "extra_atts", None),
@@ -247,6 +269,12 @@ def get_object_by_alias(alias: str, db: Session = Depends(get_db)):
                         "assets": obj.assets or [],
                         "save_due": obj.save_due,
                     })
+                elif category == DataCategory.criminal:
+                    # result["is_player"] = obj.is_player
+                    result["faction"]   = obj.faction
+                elif category == DataCategory.system:
+                    result["coordinates"] = obj.coordinates
+                    result["faction"]     = obj.faction
 
                 logger.debug(f"Found object by alias '{alias}' in {category.value}")
                 return result
@@ -277,11 +305,11 @@ def get_object_by_id(category: DataCategory, object_id: int, db: Session = Depen
             "id": obj.id,
             "name": obj.name,
             "aliases": obj.aliases or [],
-            "built_in": obj.built_in,
-            "emoji": obj.emoji,
-            "icon": obj.icon,
-            "value": obj.value,
-            "wiki": obj.wiki,
+            "built_in": getattr(obj, "built_in", None),
+            "emoji": getattr(obj, "emoji", None),
+            "icon": getattr(obj, "icon", None),
+            "value": getattr(obj, "value", None),
+            "wiki": getattr(obj, "wiki", None),
             "type": getattr(obj, "type", None),
             "tech_level": getattr(obj, "tech_level", None),
             "extra_atts": getattr(obj, "extra_atts", None),
@@ -310,6 +338,14 @@ def get_object_by_id(category: DataCategory, object_id: int, db: Session = Depen
                 "assets": obj.assets or [],
                 "save_due": obj.save_due,
             })
+        elif category == DataCategory.criminal:
+            # result["is_player"] = obj.is_player
+            result["faction"]   = obj.faction
+        elif category == DataCategory.system:
+            result["coordinates"] = obj.coordinates
+            result["faction"]     = obj.faction
+            result["neighbours"]  = getattr(obj, "neighbours", None)
+            result["security"]    = getattr(obj, "security", None)
 
         logger.debug(f"Found {category.value} {object_id}")
         return result

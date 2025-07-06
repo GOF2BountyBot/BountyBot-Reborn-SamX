@@ -1,0 +1,18 @@
+{
+    "aliases": [
+        "skolptorr"
+    ],
+    "coordinates": [
+        536,
+        575
+    ],
+    "faction": "vossk",
+    "name": "S'Kolptorr",
+    "neighbours": [
+        "K'Ontrr",
+        "Oom'Bak",
+        "V'Ikka"
+    ],
+    "security": 2,
+    "wiki": "https://galaxyonfire.fandom.com/wiki/Category:S'Kolptorr"
+}

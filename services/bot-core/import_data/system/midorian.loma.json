@@ -1,0 +1,16 @@
+{
+    "aliases": [],
+    "coordinates": [
+        327,
+        46
+    ],
+    "faction": "midorian",
+    "name": "Loma",
+    "neighbours": [
+        "Shima",
+        "Union",
+        "Aquila"
+    ],
+    "security": 3,
+    "wiki": "https://galaxyonfire.fandom.com/wiki/Category:Loma"
+}

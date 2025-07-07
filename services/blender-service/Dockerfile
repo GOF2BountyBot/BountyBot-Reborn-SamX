@@ -74,6 +74,7 @@ WORKDIR /app
 
 # Copy requirements files
 COPY services/blender-service/requirements.txt .
+# Issue with requirements file copying atm, so nixing for now...
 COPY services/blender-service/src/lib/AEPi/requirements.txt ./aepi.requirements.txt
 
 # Activate the virtual environment and upgrade pip

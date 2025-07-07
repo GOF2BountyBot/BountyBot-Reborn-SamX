@@ -106,6 +106,7 @@ async def health_check(request: Request) -> HealthResponse:
     if not database_accessible:
         flogger.warning("Marking service as unhealthy due to database connectivity issues")
     
+    flogger.debug("Exiting health_check method...")
     return HealthResponse(
         status=service_status,
         timestamp=datetime.utcnow(),
@@ -190,7 +191,7 @@ async def database_health_check(request: Request) -> Dict[str, Any]:
         # Database part
         if hasattr(request.app.state, "db_manager"):
             db_manager = request.app.state.db_manager
-            health_info["database"] = db_manager.get_health_info()
+            health_info["database"] = await db_manager.get_health_info()
         else:
             health_info["database"] = {
                 "status": "not_initialized",

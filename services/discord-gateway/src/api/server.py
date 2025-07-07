@@ -17,12 +17,12 @@ import threading
 import uvicorn
 import logging as pyLogging
 
-import shared.logging as logging
+import shared.bblogger as bblogger
 
 # Import the routers package
 import api.routers as routers
 
-logger = logging.get_logger("discord-gateway-api-server")
+flogger = bblogger.get_logger("discord-gateway-api-server")
 
 # Configuration constants with environment variable support
 GATEWAY_HOST = os.getenv("GATEWAY_HOST", "0.0.0.0")
@@ -34,18 +34,18 @@ async def lifespan(app: FastAPI):
     """
     Startup / shutdown logic for FastAPI application.
     """
-    logger.info("🚀 Discord Gateway API starting up...")
-    logger.info("📚 API Documentation available at: /docs")
-    logger.info("📖 ReDoc Documentation available at: /redoc")
+    flogger.info("🚀 Discord Gateway API starting up...")
+    flogger.info("📚 API Documentation available at: /docs")
+    flogger.info("📖 ReDoc Documentation available at: /redoc")
     
     yield  # Application runs here
     
     # Shutdown logic
-    logger.info("🛑 Discord Gateway API shutting down...")
+    flogger.info("🛑 Discord Gateway API shutting down...")
 
 def create_app() -> FastAPI:
     """Create and configure the FastAPI application."""
-    logger.trace("Initializing FastAPI...")
+    flogger.trace("Initializing FastAPI...")
     
     app = FastAPI(
         title="Discord Gateway API",
@@ -125,11 +125,11 @@ def include_routers(app: FastAPI) -> None:
                         prefix="/api/v1",  # Global API version prefix
                         tags=[modname]  # Add module name as tag
                     )
-                    logger.info(f"✓ Included router from routers.{modname}")
+                    flogger.info(f"✓ Included router from routers.{modname}")
                 else:
-                    logger.info(f"⚠ No 'router' attribute found in routers.{modname}")
+                    flogger.info(f"⚠ No 'router' attribute found in routers.{modname}")
             except ImportError as e:
-                logger.error(f"✗ Failed to import routers.{modname}: {e}")
+                flogger.error(f"✗ Failed to import routers.{modname}: {e}")
 
 class HealthFilter(pyLogging.Filter):
     """Filter to reduce noise from health check requests in logs."""
@@ -154,14 +154,14 @@ async def start_fastapi_server(host: str = None, port: int = None,
     if access_log is None:
         access_log = ACCESS_LOG
 
-    logger.trace("Starting with host: " + host)
-    logger.trace("Starting with port: " + str(port))
-    logger.trace("Starting with access_log: " + str(access_log))
+    flogger.trace("Starting with host: " + host)
+    flogger.trace("Starting with port: " + str(port))
+    flogger.trace("Starting with access_log: " + str(access_log))
 
     def run_server():
         """Run the FastAPI server in this thread"""
         try:
-            logger.info(f"🌐 FastAPI server thread starting on {host}:{port}")
+            flogger.info(f"🌐 FastAPI server thread starting on {host}:{port}")
             
             app = create_app()
             
@@ -178,7 +178,7 @@ async def start_fastapi_server(host: str = None, port: int = None,
             )
             
         except Exception as e:
-            logger.critical("💥 FastAPI failed to start, aborting entire service", exc_info=True)
+            flogger.critical("💥 FastAPI failed to start, aborting entire service", exc_info=True)
             # os._exit kills the whole process immediately
             os._exit(1)
     
@@ -190,9 +190,9 @@ async def start_fastapi_server(host: str = None, port: int = None,
     )
 
     server_thread.start()
-    logger.info(f"✅ FastAPI server thread started successfully")
-    logger.info(f"📚 API Documentation will be available at: http://{host}:{port}/docs")
-    logger.info(f"📖 ReDoc Documentation will be available at: http://{host}:{port}/redoc")
+    flogger.info(f"✅ FastAPI server thread started successfully")
+    flogger.info(f"📚 API Documentation will be available at: http://{host}:{port}/docs")
+    flogger.info(f"📖 ReDoc Documentation will be available at: http://{host}:{port}/redoc")
     
     return server_thread
 
@@ -206,7 +206,7 @@ def run_standalone(host: str = "0.0.0.0", port: int = 8080):
     # Attach filter to uvicorn.access
     pyLogging.getLogger("uvicorn.access").addFilter(HealthFilter())
     
-    logger.info("Starting uvicorn...")
+    flogger.info("Starting uvicorn...")
     uvicorn.run("main:app", 
                 host="0.0.0.0", 
                 port=8000, 
@@ -219,10 +219,10 @@ def run_standalone(host: str = "0.0.0.0", port: int = 8080):
 # Allow running as standalone script for development
 if __name__ == "__main__":
     # Log configuration being used
-    logger.info("=== FastAPI Configuration ===")
-    logger.info(f"Host: {HOST}")
-    logger.info(f"Port: {PORT}")
-    logger.info(f"Access Log: {ACCESS_LOG}")
-    logger.info("===============================")
+    flogger.info("=== FastAPI Configuration ===")
+    flogger.info(f"Host: {HOST}")
+    flogger.info(f"Port: {PORT}")
+    flogger.info(f"Access Log: {ACCESS_LOG}")
+    flogger.info("===============================")
     
     run_standalone()

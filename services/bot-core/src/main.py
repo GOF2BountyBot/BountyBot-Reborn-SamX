@@ -18,7 +18,7 @@ from pathlib import Path
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
-import shared.logging as logging
+import shared.bblogger as bblogger
 import logging as pyLogging
 # Disabling Alembic as not working as intended...
 #from alembic import command
@@ -33,7 +33,7 @@ from persist.schemas.schema_manager import initialize_schema
 # Import the routers package
 import routers
 
-logger = logging.get_logger("bot-main-script")
+flogger = bblogger.get_logger("bot-main-script")
 
 # Handle app startup/shutdown as app lifespan events
 @asynccontextmanager
@@ -43,14 +43,14 @@ async def lifespan(app: FastAPI):
     
     UPDATED: Added database initialization during startup
     """
-    logger.info("🚀 BountyBot API starting up...")
+    flogger.info("🚀 BountyBot API starting up...")
     
     # NEW: Initialize database connection and schema
     try:
-        logger.info("🗄️ Initializing database connection...")
+        flogger.info("🗄️ Initializing database connection...")
         await db_manager.initialize()
         
-        logger.info("📋 Checking and updating database schema...")
+        flogger.info("📋 Checking and updating database schema...")
         schema_manager = await initialize_schema(db_manager)
         
         # Store schema manager reference for health checks
@@ -61,55 +61,55 @@ async def lifespan(app: FastAPI):
         #  Alembic migrations (disabled)
         # -------------------------------
         #alembic_cfg = Config(os.path.join(os.path.dirname(__file__), "persist", "database", "alembic.ini"))
-        #logger.info("🔄 Checking for pending database migrations...")
+        #flogger.info("🔄 Checking for pending database migrations...")
         #command.upgrade(alembic_cfg, "head")
-        #logger.info("✅ Database up-to-date with latest migrations")
+        #flogger.info("✅ Database up-to-date with latest migrations")
         
-        logger.info("✅ Database initialization completed successfully")
+        flogger.info("✅ Database initialization completed successfully")
         
     except Exception as e:
-        logger.error(f"❌ Database initialization failed: {e}")
-        logger.error("🛑 Application startup aborted due to database issues")
+        flogger.error(f"❌ Database initialization failed: {e}")
+        flogger.error("🛑 Application startup aborted due to database issues")
         raise  # This will prevent the application from starting
 
     ## Initialize Discord application emojis
     #try:
-    #    logger.info("🔄 Initializing Discord application emojis...")
+    #    flogger.info("🔄 Initializing Discord application emojis...")
     #    emoji_resolver.load_application_emojis()
     #    emoji_stats = emoji_resolver.get_emoji_stats()
-    #    logger.info(f"✅ Successfully loaded {emoji_stats['total_emojis']} Discord application emojis")
+    #    flogger.info(f"✅ Successfully loaded {emoji_stats['total_emojis']} Discord application emojis")
     #
     #    # Store emoji resolver reference for health checks
     #    app.state.emoji_resolver = emoji_resolver
     #
     #except Exception as e:
-    #    logger.error(f"⚠️ Emoji initialization failed: {e}")
-    #    logger.warning("🔄 Bot will continue without emoji resolution capability")
+    #    flogger.error(f"⚠️ Emoji initialization failed: {e}")
+    #    flogger.warning("🔄 Bot will continue without emoji resolution capability")
     #    # Note: We don't raise here as the bot can function without emojis
     
-    logger.info("📚 API Documentation available at: /docs")
-    logger.info("📖 ReDoc Documentation available at: /redoc")
+    flogger.info("📚 API Documentation available at: /docs")
+    flogger.info("📖 ReDoc Documentation available at: /redoc")
     
     yield  # Application runs here
     
     # Shutdown logic
-    logger.info("🛑 BountyBot API shutting down...")
+    flogger.info("🛑 BountyBot API shutting down...")
     
     # NEW: Cleanup database connections
     try:
-        logger.info("🗄️ Shutting down database connections...")
+        flogger.info("🗄️ Shutting down database connections...")
         db_manager.shutdown()
-        logger.info("✅ Database connections closed successfully")
+        flogger.info("✅ Database connections closed successfully")
     except Exception as e:
-        logger.error(f"⚠️ Error during database shutdown: {e}")
+        flogger.error(f"⚠️ Error during database shutdown: {e}")
     
-    logger.info("👋 Goodbye!")
+    flogger.info("👋 Goodbye!")
 
 def create_app() -> FastAPI:
     """Create and configure the FastAPI application."""
 
     # Create FastAPI app with comprehensive metadata
-    logger.trace("Initializing FastAPI...")
+    flogger.trace("Initializing FastAPI...")
     app = FastAPI(
         title="BountyBot API",
         description="""
@@ -189,12 +189,12 @@ def include_routers(app: FastAPI) -> None:
                         prefix="/api/v1",  # Global API version prefix
                         tags=[modname]  # Add module name as tag
                     )
-                    logger.info(f"✓ Included router from routers.{modname}")
+                    flogger.info(f"✓ Included router from routers.{modname}")
                 else:
-                    logger.info(f"⚠ No 'router' attribute found in routers.{modname}")
+                    flogger.info(f"⚠ No 'router' attribute found in routers.{modname}")
 
             except ImportError as e:
-                logger.error(f"✗ Failed to import routers.{modname}: {e}")
+                flogger.error(f"✗ Failed to import routers.{modname}: {e}")
 
 # Create the app instance
 app = create_app()
@@ -221,7 +221,7 @@ class HealthFilter(pyLogging.Filter):
 
 if __name__ == "__main__":
     import uvicorn
-    logger.info("Starting uvicorn...")
+    flogger.info("Starting uvicorn...")
     # attach filter to uvicorn.access to filter health check API requests 
     # from being logged as they are particularly noisy
     pyLogging.getLogger("uvicorn.access").addFilter(HealthFilter())

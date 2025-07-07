@@ -5,8 +5,8 @@ from importlib import import_module
 from persist.database.manager import db_manager
 from utils.emoji_service import EmojiService
 
-import shared.logging as logging
-logger = logging.get_logger("bot-data-loader")
+import shared.bblogger as bblogger
+flogger = bblogger.get_logger("bot-data-loader")
 
 # Global emoji service instance
 _emoji_service: EmojiService | None = None
@@ -25,7 +25,7 @@ def get_repository(category: str):
     - file: persist/repositories/{category}_repository.py
     - class:   {SingularCategoryTitle}Repository
     """
-    logger.debug(f"Attempting to load repository for category: {category}")
+    flogger.debug(f"Attempting to load repository for category: {category}")
 
     repo_module = f"persist.repositories.{category}_repository"
     try:
@@ -46,19 +46,19 @@ def get_repository(category: str):
 
 async def load_folder(repo, data_dir: Path) -> None:
     """Async load all JSON files under a given folder into the DB."""
-    logger.debug(f"Loading data from folder: {data_dir}")
+    flogger.debug(f"Loading data from folder: {data_dir}")
 
     for json_path in data_dir.rglob("*.json"):
         try:
             payload = json.loads(json_path.read_text())
-            logger.trace(f" Loading {json_path} with payload {payload}")
+            flogger.trace(f" Loading {json_path} with payload {payload}")
         except json.JSONDecodeError as e:
-            logger.warning(f" ⏭ Skipping invalid JSON {json_path}: {e}")
+            flogger.warning(f" ⏭ Skipping invalid JSON {json_path}: {e}")
             continue
 
         async with db_manager.get_session() as db:
             obj = await repo.create_or_update(db, payload)
-            logger.debug(f" ✓ Upserted {obj!r}")
+            flogger.debug(f" ✓ Upserted {obj!r}")
 
 def _resolve_emojis(obj):
     """
@@ -77,26 +77,26 @@ async def load_data(category: str, data_root: str | Path = None) -> list[str]:
     Upsert all JSON files under data/{category}/ into the DB.
     Returns a list of status messages (one per file).
     """
-    logger.info(f"load_data called for category='{category}'")
+    flogger.info(f"load_data called for category='{category}'")
 
     # Pre-load emojis for module category
     try:
-        logger.info("Pre-loading Discord application emojis...")
+        flogger.info("Pre-loading Discord application emojis...")
         emoji_service = get_emoji_service()
         emoji_service.load_emojis()
-        logger.info("✓ Emojis pre-loaded successfully")
+        flogger.info("✓ Emojis pre-loaded successfully")
     except Exception as e:
-        logger.error(f"Failed to pre-load emojis: {e}")
+        flogger.error(f"Failed to pre-load emojis: {e}")
 
     # Determine root/data dir (one level above "src")
     project_root = Path(__file__).parents[2]
     root = Path(data_root) if data_root else project_root / "import_data"
     category_dir = root / category
 
-    logger.debug(f"Looking for data under: {category_dir}")
+    flogger.debug(f"Looking for data under: {category_dir}")
     if not category_dir.is_dir():
         msg = f"No such data directory: {category_dir}"
-        logger.error(msg)
+        flogger.error(msg)
         raise ValueError(msg)
 
     repo = get_repository(category)
@@ -107,7 +107,7 @@ async def load_data(category: str, data_root: str | Path = None) -> list[str]:
             payload = json.loads(json_path.read_text())
         except json.JSONDecodeError as e:
             warn = f"Skipping invalid JSON {json_path.name}: {e}"
-            logger.warning(warn)
+            flogger.warning(warn)
             results.append(warn)
             continue
 
@@ -115,18 +115,18 @@ async def load_data(category: str, data_root: str | Path = None) -> list[str]:
         try:
             payload = _resolve_emojis(payload)
         except Exception as e:
-            logger.warning(f"Failed to resolve emojis in {json_path.name}: {e}")
+            flogger.warning(f"Failed to resolve emojis in {json_path.name}: {e}")
 
         async with db_manager.get_session() as db:
             try:
                 obj = await repo.create_or_update(db, payload)
                 msg = f"Upserted {obj!r} from {json_path.name}"
-                logger.debug(msg)
+                flogger.debug(msg)
                 results.append(msg)
             except Exception as e:
                 err = f"Error upserting {json_path.name}: {e}"
                 logger.exception(err)
                 results.append(err)
 
-    logger.info(f"Completed load_data for '{category}', processed {len(results)} items")
+    flogger.info(f"Completed load_data for '{category}', processed {len(results)} items")
     return results

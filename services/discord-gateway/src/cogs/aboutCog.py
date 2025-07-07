@@ -3,16 +3,16 @@ import discord
 from typing import List, Optional, Dict, Any
 from discord import app_commands
 from discord.ext import commands
-import shared.logging as logging
+import shared.bblogger as bblogger
 import requests
 import json
 
 # Set up logger
-logger = logging.get_logger("discord-gateway-AboutCog")
+flogger = bblogger.get_logger("discord-gateway-AboutCog")
 
 # Define any environment variables or constants here
 api_base = os.environ.get("BOT_API_BASE_URL", "http://bot-core:8000/api/v1")
-logger.debug(f"aboutCog loading with BOT_API_BASE_URL: {api_base}")
+flogger.debug(f"aboutCog loading with BOT_API_BASE_URL: {api_base}")
 
 def is_developer():
     # Example role check, uncomment and configure as needed
@@ -32,13 +32,13 @@ class AboutCog(commands.Cog):
         """Preload all categories and objects at startup for responsiveness"""
         await self.bot.wait_until_ready()
         try:
-            logger.info("Starting preload of about data...")
+            flogger.info("Starting preload of about data...")
 
             # Load categories
             resp = requests.get(f"{api_base}/about/categories", timeout=5)
             resp.raise_for_status()
             self._categories = resp.json()
-            logger.debug(f"Preloaded categories: {self._categories}")
+            flogger.debug(f"Preloaded categories: {self._categories}")
 
             # Load objects for each category
             for category in self._categories:
@@ -47,16 +47,16 @@ class AboutCog(commands.Cog):
                     resp.raise_for_status()
                     objects = resp.json()
                     self._objects_by_category[category] = objects
-                    logger.debug(f"Preloaded {len(objects)} objects for category {category}")
+                    flogger.debug(f"Preloaded {len(objects)} objects for category {category}")
                 except Exception as e:
-                    logger.warning(f"Failed to preload objects for category {category}: {e}")
+                    flogger.warning(f"Failed to preload objects for category {category}: {e}")
                     self._objects_by_category[category] = []
 
-            logger.info(f"Preload complete: {len(self._categories)} categories, "
+            flogger.info(f"Preload complete: {len(self._categories)} categories, "
                        f"{sum(len(objs) for objs in self._objects_by_category.values())} total objects")
 
         except Exception as e:
-            logger.warning(f"Failed to preload about data: {e}")
+            flogger.warning(f"Failed to preload about data: {e}")
             # Set defaults so the cog can still function
             self._categories = []
             self._objects_by_category = {}
@@ -152,7 +152,7 @@ class AboutCog(commands.Cog):
                     ephemeral=True
                 )
         except Exception as e:
-            logger.error(f"Error in about command: {e}")
+            flogger.error(f"Error in about command: {e}")
             await interaction.followup.send(
                 f"⚠️ An error occurred while fetching object information.", 
                 ephemeral=True
@@ -345,13 +345,13 @@ class AboutCog(commands.Cog):
             await interaction.followup.send(embed=embed)
 
         except Exception as e:
-            logger.error(f"Error in list_category command: {e}")
+            flogger.error(f"Error in list_category command: {e}")
             await interaction.followup.send(
                 f"⚠️ An error occurred while listing objects.", 
                 ephemeral=True
             )
 
 async def setup(bot: commands.Bot):
-    logger.debug("Setting up AboutCog...")
+    flogger.debug("Setting up AboutCog...")
     await bot.add_cog(AboutCog(bot))
-    logger.info("AboutCog loaded")
+    flogger.info("AboutCog loaded")

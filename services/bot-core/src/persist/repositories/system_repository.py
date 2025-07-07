@@ -2,12 +2,12 @@ from typing import Any
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
-import shared.logging as logging
+import shared.bblogger as bblogger
 
 from persist.models.system import System
 from persist.repositories.generic_repository import GenericRepository
 
-logger = logging.get_logger("bot-system-repository")
+flogger = bblogger.get_logger("bot-system-repository")
 
 class SystemRepository(GenericRepository[System]):
     def __init__(self):
@@ -22,7 +22,7 @@ class SystemRepository(GenericRepository[System]):
         raw is your parsed JSON. We first look up by name,
         then insert or patch fields and commit.
         """
-        logger.trace(f"Creating or updating system from {raw}")
+        flogger.trace(f"Creating or updating system from {raw}")
 
         # look up existing
         result = await db.execute(

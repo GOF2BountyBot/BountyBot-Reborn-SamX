@@ -21,9 +21,9 @@ from sqlalchemy import create_engine, text, MetaData, inspect
 from sqlalchemy.engine import Engine
 from sqlalchemy.exc import SQLAlchemyError, OperationalError
 from sqlalchemy.orm import sessionmaker, Session
-import shared.logging as logging
+import shared.bblogger as bblogger
 
-logger = logging.get_logger("bot-database-manager")
+flogger = bblogger.get_logger("bot-database-manager")
 
 class DatabaseManager:
     """
@@ -74,7 +74,7 @@ class DatabaseManager:
             "echo": os.getenv("DB_ECHO", "false").lower() == "true"  # SQL logging
         }
         
-        logger.info(f"Database configuration loaded: {db_host}:{db_port}/{db_name}")
+        flogger.info(f"Database configuration loaded: {db_host}:{db_port}/{db_name}")
         
     def initialize(self) -> None:
         """
@@ -83,11 +83,11 @@ class DatabaseManager:
         This method should be called during application startup.
         """
         if self._engine is not None:
-            logger.warning("Database manager already initialized")
+            flogger.warning("Database manager already initialized")
             return
             
         try:
-            logger.info("Initializing database connection...")
+            flogger.info("Initializing database connection...")
             
             # Create the engine with connection pooling
             self._engine = create_engine(
@@ -104,10 +104,10 @@ class DatabaseManager:
             # Test the connection
             self._test_connection()
             
-            logger.info("Database manager initialized successfully")
+            flogger.info("Database manager initialized successfully")
             
         except Exception as e:
-            logger.error(f"Failed to initialize database manager: {e}")
+            flogger.error(f"Failed to initialize database manager: {e}")
             raise
             
     def _test_connection(self) -> None:
@@ -123,21 +123,21 @@ class DatabaseManager:
                     test_value = result.scalar()
                     
                     if test_value == 1:
-                        logger.info("Database connectivity test passed")
+                        flogger.info("Database connectivity test passed")
                         return
                     else:
                         raise RuntimeError("Unexpected test result from database")
                         
             except OperationalError as e:
                 if attempt < max_retries - 1:
-                    logger.warning(
+                    flogger.warning(
                         f"Database connection attempt {attempt + 1} failed: {e}. "
                         f"Retrying in {retry_delay} seconds..."
                     )
                     time.sleep(retry_delay)
                     retry_delay *= 2  # Exponential backoff
                 else:
-                    logger.error(f"Database connection failed after {max_retries} attempts")
+                    flogger.error(f"Database connection failed after {max_retries} attempts")
                     raise
                     
     @contextmanager
@@ -201,7 +201,7 @@ class DatabaseManager:
                 return result
                 
         except SQLAlchemyError as e:
-            logger.error(f"SQL execution failed: {e}")
+            flogger.error(f"SQL execution failed: {e}")
             raise
             
     def table_exists(self, table_name: str, schema: Optional[str] = None) -> bool:
@@ -221,7 +221,7 @@ class DatabaseManager:
                 return inspector.has_table(table_name, schema=schema)
                 
         except SQLAlchemyError as e:
-            logger.error(f"Error checking table existence: {e}")
+            flogger.error(f"Error checking table existence: {e}")
             return False
             
     def get_health_info(self) -> Dict[str, Any]:
@@ -264,7 +264,7 @@ class DatabaseManager:
         except Exception as e:
             health_info["status"] = "unhealthy"
             health_info["error"] = str(e)
-            logger.error(f"Database health check failed: {e}")
+            flogger.error(f"Database health check failed: {e}")
             
         return health_info
         
@@ -274,14 +274,14 @@ class DatabaseManager:
         
         This method should be called during application shutdown.
         """
-        logger.info("Shutting down database manager...")
+        flogger.info("Shutting down database manager...")
         
         if self._engine:
             self._engine.dispose()
             self._engine = None
             
         self._session_factory = None
-        logger.info("Database manager shutdown complete")
+        flogger.info("Database manager shutdown complete")
         
     @property
     def engine(self) -> Optional[Engine]:

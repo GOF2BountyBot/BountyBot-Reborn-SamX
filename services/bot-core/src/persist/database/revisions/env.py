@@ -12,9 +12,9 @@ from persist.database.manager import db_manager
 # from persist.models.base import Base
 from persist.models import *
 
-import shared.logging as logging
+import shared.bblogger as bblogger
 
-logger = logging.get_logger("bot-alembic-env")
+flogger = bblogger.get_logger("bot-alembic-env")
 
 # Alembic Config object, provides access to values in alembic.ini
 config = context.config
@@ -27,7 +27,7 @@ target_metadata = Base.metadata
 
 def run_migrations_offline():
     """Run migrations in 'offline' mode."""
-    logger.info("Running offline migration...")
+    flogger.info("Running offline migration...")
     url = str(db_manager._connection_string)
     context.configure(
         url=url,
@@ -42,14 +42,14 @@ def run_migrations_offline():
 
 def run_migrations_online():
     """Run migrations in 'online' mode."""
-    logger.info("Running live/online migration...")
+    flogger.info("Running live/online migration...")
     try:
-        logger.info("🗄️ Initializing database connection...")
+        flogger.info("🗄️ Initializing database connection...")
         db_manager.initialize()
         
     except Exception as e:
-        logger.error(f"❌ Database initialization failed: {e}")
-        logger.error("🛑 Application startup aborted due to database issues")
+        flogger.error(f"❌ Database initialization failed: {e}")
+        flogger.error("🛑 Application startup aborted due to database issues")
         raise  # This will prevent the application from starting
 
     connectable = db_manager._engine

@@ -2,13 +2,13 @@ import os
 import discord
 from discord import app_commands
 from discord.ext import commands
-import shared.logging as logging
+import shared.bblogger as bblogger
 import requests
 
 
-logger = logging.get_logger("discord-gateway-HealthCog")
+flogger = bblogger.get_logger("discord-gateway-HealthCog")
 api_base = os.environ.get("BOT_API_BASE_URL", "http://bot-core:8000/api/v1")
-logger.debug(f"HealthCog loading with api_base: {api_base}")
+flogger.debug(f"HealthCog loading with api_base: {api_base}")
 
 def is_developer():
     # return app_commands.checks.has_role("developer")
@@ -23,13 +23,13 @@ class HealthCog(commands.Cog):
     async def ping(self, interaction: discord.Interaction):
         latency_ms = round(self.bot.latency * 1000)
         await interaction.response.send_message(f"Pong! Latency is {latency_ms} ms")
-        logger.debug(f"/ping by {interaction.user} in guild {interaction.guild_id}: {latency_ms} ms")
+        flogger.debug(f"/ping by {interaction.user} in guild {interaction.guild_id}: {latency_ms} ms")
 
     @ping.error
     async def ping_error(self, interaction: discord.Interaction, error: app_commands.AppCommandError):
         if isinstance(error, app_commands.MissingRole):
             await interaction.response.send_message("❌ You need the 'developer' role.", ephemeral=True)
-            logger.warning(f"Unauthorized /ping by {interaction.user} in guild {interaction.guild_id}")
+            flogger.warning(f"Unauthorized /ping by {interaction.user} in guild {interaction.guild_id}")
         else:
             logger.exception("Error in /ping", exc_info=error)
             await interaction.response.send_message("⚠️ An error occurred.", ephemeral=True)
@@ -41,15 +41,15 @@ class HealthCog(commands.Cog):
     #@is_developer()
     async def health(self, interaction: discord.Interaction):
         """Calls the /health endpoint and reports status."""
-        logger.trace("/health command invoked by user...")
+        flogger.trace("/health command invoked by user...")
         await interaction.response.defer(thinking=True)
         try:
-            logger.trace("Executing API request to bot service...")
+            flogger.trace("Executing API request to bot service...")
             resp = requests.get(f"{api_base}/health", timeout=2.0)
             resp.raise_for_status()
             data = resp.json()
-            logger.trace("Response received successfully: " + str(data))
-            logger.trace("Parsing response...")
+            flogger.trace("Response received successfully: " + str(data))
+            flogger.trace("Parsing response...")
             # Extracting information from the response
             status = data.get("status", "unknown")
             timestamp = data.get("timestamp", "N/A")
@@ -60,7 +60,7 @@ class HealthCog(commands.Cog):
             database_info = data.get("database_check", {})
             schema_info = data.get("schema_check", {})
 
-            logger.trace("Building Discord response...")
+            flogger.trace("Building Discord response...")
             # Determine the emoji based on status
             if status == "healthy":
                 emoji = "✅"
@@ -136,9 +136,9 @@ class HealthCog(commands.Cog):
             )
             embed.set_footer(text=f"Checked via {api_base}/health")
             await interaction.followup.send(content=emoji, embed=embed)
-        logger.trace("/health command end")
+        flogger.trace("/health command end")
 
 async def setup(bot: commands.Bot):
-    logger.debug(f"Setting up HealthCog...")
+    flogger.debug(f"Setting up HealthCog...")
     await bot.add_cog(HealthCog(bot))
-    logger.info("HealthCog loaded")
+    flogger.info("HealthCog loaded")

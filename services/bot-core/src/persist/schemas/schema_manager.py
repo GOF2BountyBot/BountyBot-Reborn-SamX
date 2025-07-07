@@ -17,10 +17,10 @@ import os
 from persist.database.manager import db_manager
 from persist.models.base import Base
 from persist.models.schema_version import SchemaVersion
-import shared.logging as logging
+import shared.bblogger as bblogger
 from sqlalchemy import select
 
-logger = logging.get_logger("bot-schema-manager")
+flogger = bblogger.get_logger("bot-schema-manager")
 
 CURRENT_SCHEMA_VERSION = "1.0.0"  # Update as necessary
 
@@ -29,7 +29,7 @@ class SchemaManager:
         self.db_manager = db_manager
 
     async def initialize_database(self):
-        logger.info("Initializing database...")
+        flogger.info("Initializing database...")
         await self.create_tables_if_not_exist()
         await self._verify_schema_version()
 
@@ -39,9 +39,9 @@ class SchemaManager:
             async with self.db_manager.engine.begin() as conn:
                 # run_sync wraps the sync create_all call
                 await conn.run_sync(Base.metadata.create_all)
-            logger.info("Database tables ensured.")
+            flogger.info("Database tables ensured.")
         except Exception as e:
-            logger.error(f"Error creating tables: {e}")
+            flogger.error(f"Error creating tables: {e}")
             raise
 
     async def _verify_schema_version(self):
@@ -58,17 +58,17 @@ class SchemaManager:
                 )
                 session.add(schema_version)
                 await session.commit()
-                logger.info(f"Initialized schema version to {CURRENT_SCHEMA_VERSION}")
+                flogger.info(f"Initialized schema version to {CURRENT_SCHEMA_VERSION}")
             elif schema_version.version != CURRENT_SCHEMA_VERSION:
                 # Schema version mismatch here means migrations are needed (suggest using Alembic)
-                logger.warning(
+                flogger.warning(
                     f"Schema version mismatch detected: "
                     f"DB version = {schema_version.version}, "
                     f"Expected version = {CURRENT_SCHEMA_VERSION}. "
                     f"Consider running migrations."
                 )
             else:
-                logger.info(f"Schema version is up-to-date ({CURRENT_SCHEMA_VERSION}).")
+                flogger.info(f"Schema version is up-to-date ({CURRENT_SCHEMA_VERSION}).")
 
     async def get_current_version(self) -> str | None:
         """Retrieve the current schema version from the database."""
@@ -88,7 +88,7 @@ class SchemaManager:
                 "version_match": version_match
             }
         except Exception as e:
-            logger.error(f"Error retrieving schema health info: {e}")
+            flogger.error(f"Error retrieving schema health info: {e}")
             return {
                 "status": "error",
                 "error": str(e)

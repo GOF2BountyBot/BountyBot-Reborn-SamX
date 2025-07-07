@@ -12,9 +12,9 @@ from datetime import datetime
 from typing import Dict, Any, Optional
 import sys
 import platform
-import shared.logging as logging
+import shared.bblogger as bblogger
 
-logger = logging.get_logger("bot-healthcheck-api-router")
+flogger = bblogger.get_logger("bot-healthcheck-api-router")
 
 router = APIRouter(
     prefix="/health",
@@ -50,7 +50,7 @@ async def health_check(request: Request) -> HealthResponse:
     """
     Comprehensive health check endpoint.
     """
-    logger.debug("Inside health_check method...")
+    flogger.debug("Inside health_check method...")
     
     checks = {
         "python_version": sys.version_info >= (3, 8),
@@ -71,14 +71,14 @@ async def health_check(request: Request) -> HealthResponse:
             database_accessible = database_health.get("connectivity", False)
             checks["database_connectivity"] = database_accessible
         else:
-            logger.warning("Database manager not found in app state")
+            flogger.warning("Database manager not found in app state")
             checks["database_connectivity"] = False
             database_health = {
                 "status": "not_initialized",
                 "error": "Database manager not available"
             }
     except Exception as e:
-        logger.error(f"Database health check failed: {e}")
+        flogger.error(f"Database health check failed: {e}")
         checks["database_connectivity"] = False
         database_health = {"status": "error", "error": str(e)}
     
@@ -90,21 +90,21 @@ async def health_check(request: Request) -> HealthResponse:
             schema_current = schema_health.get("version_match", False)
             checks["schema_version_current"] = schema_current
         else:
-            logger.warning("Schema manager not found in app state")
+            flogger.warning("Schema manager not found in app state")
             checks["schema_version_current"] = False
             schema_health = {
                 "status": "not_initialized",
                 "error": "Schema manager not available"
             }
     except Exception as e:
-        logger.error(f"Schema health check failed: {e}")
+        flogger.error(f"Schema health check failed: {e}")
         checks["schema_version_current"] = False
         schema_health = {"status": "error", "error": str(e)}
 
     all_checks_passed = all(checks.values())
     service_status = "healthy" if all_checks_passed and database_accessible else "unhealthy"
     if not database_accessible:
-        logger.warning("Marking service as unhealthy due to database connectivity issues")
+        flogger.warning("Marking service as unhealthy due to database connectivity issues")
     
     return HealthResponse(
         status=service_status,
@@ -146,7 +146,7 @@ async def readiness_check(request: Request) -> Dict[str, str]:
             db_manager = request.app.state.db_manager
             db_health = await db_manager.get_health_info()
             if not db_health.get("connectivity", False):
-                logger.warning("Service not ready: database not accessible")
+                flogger.warning("Service not ready: database not accessible")
                 raise HTTPException(
                     status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                     detail="Database not accessible"
@@ -155,7 +155,7 @@ async def readiness_check(request: Request) -> Dict[str, str]:
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Readiness check failed: {e}")
+        flogger.error(f"Readiness check failed: {e}")
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail=f"Service not ready: {str(e)}"
@@ -219,7 +219,7 @@ async def database_health_check(request: Request) -> Dict[str, Any]:
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Database health check failed: {e}")
+        flogger.error(f"Database health check failed: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail={"error": str(e), "timestamp": datetime.utcnow()}

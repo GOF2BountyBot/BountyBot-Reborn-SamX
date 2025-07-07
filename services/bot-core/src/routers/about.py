@@ -13,9 +13,9 @@ from persist.repositories.ship_repository import ShipRepository
 from persist.repositories.system_repository import SystemRepository
 from persist.repositories.criminal_repository import CriminalRepository
 from routers.data import DataCategory
-import shared.logging as logging
+import shared.bblogger as bblogger
 
-logger = logging.get_logger("bot-about-router")
+flogger = bblogger.get_logger("bot-about-router")
 
 router = APIRouter(prefix="/about", tags=["about"])
 
@@ -116,10 +116,10 @@ async def list_categories():
     """
     try:
         categories = [category.value for category in DataCategory]
-        logger.debug(f"Returning categories: {categories}")
+        flogger.debug(f"Returning categories: {categories}")
         return categories
     except Exception as e:
-        logger.error(f"Error retrieving categories: {e}")
+        flogger.error(f"Error retrieving categories: {e}")
         raise HTTPException(status_code=500, detail="Internal server error")
 
 @router.get("/categories/{category}/objects", response_model=List[Dict[str, Any]])
@@ -145,12 +145,12 @@ async def list_objects_for_category(category: DataCategory, db: AsyncSession = D
                 "emoji": obj.emoji if hasattr(obj, 'emoji') else None
             })
 
-        logger.debug(f"Returning {len(result)} objects for category {category.value}")
+        flogger.debug(f"Returning {len(result)} objects for category {category.value}")
         return result
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error retrieving objects for category {category.value}: {e}")
+        flogger.error(f"Error retrieving objects for category {category.value}: {e}")
         raise HTTPException(status_code=500, detail="Internal server error")
 
 @router.get("/object/name/{object_name}", response_model=Dict[str, Any])
@@ -209,7 +209,7 @@ async def get_object_by_name(object_name: str, db: AsyncSession = Depends(get_db
                     result["coordinates"] = obj.coordinates
                     result["faction"]     = obj.faction
 
-                logger.debug(f"Found object '{object_name}' in category {category.value}")
+                flogger.debug(f"Found object '{object_name}' in category {category.value}")
                 return result
 
         # Object not found in any category
@@ -217,7 +217,7 @@ async def get_object_by_name(object_name: str, db: AsyncSession = Depends(get_db
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error retrieving object '{object_name}': {e}")
+        flogger.error(f"Error retrieving object '{object_name}': {e}")
         raise HTTPException(status_code=500, detail="Internal server error")
 
 @router.get("/object/alias/{alias}", response_model=Dict[str, Any])
@@ -274,14 +274,14 @@ async def get_object_by_alias(alias: str, db: AsyncSession = Depends(get_db)):
                     result["coordinates"] = obj.coordinates
                     result["faction"]     = obj.faction
 
-                logger.debug(f"Found object by alias '{alias}' in {category.value}")
+                flogger.debug(f"Found object by alias '{alias}' in {category.value}")
                 return result
 
         raise HTTPException(404, detail=f"Object with alias '{alias}' not found")
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error retrieving object by alias '{alias}': {e}")
+        flogger.error(f"Error retrieving object by alias '{alias}': {e}")
         raise HTTPException(status_code=500, detail="Internal server error")
 
 @router.get("/object/{category}/{object_id}", response_model=Dict[str, Any])
@@ -344,11 +344,11 @@ async def get_object_by_id(category: DataCategory, object_id: int, db: AsyncSess
             result["neighbours"]  = getattr(obj, "neighbours", None)
             result["security"]    = getattr(obj, "security", None)
 
-        logger.debug(f"Found {category.value} {object_id}")
+        flogger.debug(f"Found {category.value} {object_id}")
         return result
 
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error retrieving object {object_id}: {e}")
+        flogger.error(f"Error retrieving object {object_id}: {e}")
         raise HTTPException(status_code=500, detail="Internal server error")

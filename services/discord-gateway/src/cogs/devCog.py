@@ -2,13 +2,13 @@ import os
 import discord
 from discord import app_commands
 from discord.ext import commands
-import shared.logging as logging
+import shared.bblogger as bblogger
 import requests
 
 
-logger = logging.get_logger("discord-gateway-DevCog")
+flogger = bblogger.get_logger("discord-gateway-DevCog")
 api_base = os.environ.get("BOT_API_BASE_URL", "http://bot-core:8000/api/v1")
-logger.debug(f"devCog loading with api_base: {api_base}")
+flogger.debug(f"devCog loading with api_base: {api_base}")
 
 def is_developer():
     # return app_commands.checks.has_role("developer")
@@ -28,9 +28,9 @@ class DevCog(commands.Cog):
             resp = requests.get(f"{api_base}/data/categories", timeout=5)
             resp.raise_for_status()
             self._categories = resp.json()
-            logger.debug(f"Preloaded data categories: {self._categories}")
+            flogger.debug(f"Preloaded data categories: {self._categories}")
         except Exception as e:
-            logger.warning(f"Failed to preload categories: {e}")
+            flogger.warning(f"Failed to preload categories: {e}")
 
     async def category_autocomplete(
         self,
@@ -144,6 +144,6 @@ class DevCog(commands.Cog):
         await interaction.followup.send("\n".join(msg), ephemeral=True)
 
 async def setup(bot: commands.Bot):
-    logger.debug(f"Setting up DevCog...")
+    flogger.debug(f"Setting up DevCog...")
     await bot.add_cog(DevCog(bot))
-    logger.info("DevCog loaded")
+    flogger.info("DevCog loaded")

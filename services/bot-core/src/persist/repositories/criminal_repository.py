@@ -2,12 +2,12 @@ from typing import Any
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
-import shared.logging as logging
+import shared.bblogger as bblogger
 
 from persist.models.criminal import Criminal
 from persist.repositories.generic_repository import GenericRepository
 
-logger = logging.get_logger("bot-criminal-repository")
+flogger = bblogger.get_logger("bot-criminal-repository")
 
 class CriminalRepository(GenericRepository[Criminal]):
     def __init__(self):
@@ -22,7 +22,7 @@ class CriminalRepository(GenericRepository[Criminal]):
         raw: the dict loaded from JSON file
         - maps known fields into model attrs
         """
-        logger.trace(f"Creating or updating criminal from {raw}")
+        flogger.trace(f"Creating or updating criminal from {raw}")
 
         # look up existing
         result = await db.execute(

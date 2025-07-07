@@ -10,9 +10,9 @@ import time
 from enum import Enum
 from typing import Dict, Any, Callable, Optional, Type
 from dataclasses import dataclass
-import shared.logging as logging
+import shared.bblogger as bblogger
 
-logger = logging.get_logger("circuit-breaker")
+flogger = bblogger.get_logger("circuit-breaker")
 
 class CircuitState(Enum):
     CLOSED = "closed"
@@ -68,7 +68,7 @@ class CircuitBreaker:
             if self.state == CircuitState.OPEN:
                 if self._should_attempt_reset():
                     self.state = CircuitState.HALF_OPEN
-                    logger.info("Circuit breaker entering HALF_OPEN state")
+                    flogger.info("Circuit breaker entering HALF_OPEN state")
                 else:
                     raise CircuitBreakerOpenException("Circuit breaker is OPEN")
 
@@ -82,7 +82,7 @@ class CircuitBreaker:
             raise
         except Exception as e:
             # Unexpected exceptions don't count as failures
-            logger.warning(f"Unexpected exception in circuit breaker: {e}")
+            flogger.warning(f"Unexpected exception in circuit breaker: {e}")
             raise
 
     def _should_attempt_reset(self) -> bool:
@@ -101,7 +101,7 @@ class CircuitBreaker:
                 if self.success_count >= self.config.success_threshold:
                     self.state = CircuitState.CLOSED
                     self.success_count = 0
-                    logger.info("Circuit breaker CLOSED after successful operations")
+                    flogger.info("Circuit breaker CLOSED after successful operations")
 
     async def _on_failure(self) -> None:
         """Handle failed operation."""
@@ -111,10 +111,10 @@ class CircuitBreaker:
             
             if self.state == CircuitState.HALF_OPEN:
                 self.state = CircuitState.OPEN
-                logger.warning("Circuit breaker OPEN after failure in HALF_OPEN state")
+                flogger.warning("Circuit breaker OPEN after failure in HALF_OPEN state")
             elif self.failure_count >= self.config.failure_threshold:
                 self.state = CircuitState.OPEN
-                logger.warning(f"Circuit breaker OPEN after {self.failure_count} failures")
+                flogger.warning(f"Circuit breaker OPEN after {self.failure_count} failures")
 
     def get_state(self) -> Dict[str, Any]:
         """Get current circuit breaker state information."""

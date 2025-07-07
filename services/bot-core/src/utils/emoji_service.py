@@ -3,9 +3,9 @@ import re
 import unicodedata
 import requests
 from typing import Dict, Optional
-import shared.logging as logging
+import shared.bblogger as bblogger
 
-logger = logging.get_logger("bot-emoji-service")
+flogger = bblogger.get_logger("bot-emoji-service")
 
 class EmojiService:
     def __init__(self):
@@ -32,7 +32,7 @@ class EmojiService:
         s = unicodedata.normalize('NFD', s)
         s = ''.join(ch for ch in s if unicodedata.category(ch) != 'Mn')
         normalized = re.sub(r'[^a-z0-9]', '', s)
-        logger.debug(f"Normalized '{object_name}' to '{normalized}'")
+        flogger.debug(f"Normalized '{object_name}' to '{normalized}'")
         return normalized
     
     def fetch_application_emojis(self) -> Dict[str, str]:
@@ -40,7 +40,7 @@ class EmojiService:
         Fetch all application emojis from Discord API.
         Returns a dictionary mapping emoji names to their IDs.
         """
-        logger.info("Fetching application emojis from Discord API")
+        flogger.info("Fetching application emojis from Discord API")
         
         url = f"https://discord.com/api/v10/applications/{self.app_id}/emojis"
         headers = {
@@ -63,31 +63,31 @@ class EmojiService:
                 emoji_id = emoji.get('id')
                 if name and emoji_id:
                     emoji_dict[name.lower()] = emoji_id
-                    logger.trace(f"Loaded emoji: {name} -> {emoji_id}")
+                    flogger.trace(f"Loaded emoji: {name} -> {emoji_id}")
             
-            logger.info(f"Successfully loaded {len(emoji_dict)} application emojis")
+            flogger.info(f"Successfully loaded {len(emoji_dict)} application emojis")
             return emoji_dict
             
         except requests.exceptions.RequestException as e:
-            logger.error(f"Failed to fetch application emojis: {e}")
+            flogger.error(f"Failed to fetch application emojis: {e}")
             raise RuntimeError(f"Discord API request failed: {e}")
         except Exception as e:
-            logger.error(f"Error processing emoji data: {e}")
+            flogger.error(f"Error processing emoji data: {e}")
             raise RuntimeError(f"Failed to process emoji data: {e}")
     
     def load_emojis(self):
         """Load and cache all application emojis."""
         self.emojis_cache = self.fetch_application_emojis()
-        logger.info(f"Emoji cache loaded with {len(self.emojis_cache)} emojis")
+        flogger.info(f"Emoji cache loaded with {len(self.emojis_cache)} emojis")
     
     def resolve_emoji(self, object_name: str) -> Optional[str]:
         """
         Resolve an object name to Discord emoji format.
         Returns format: <:emojiname:emojiid> or None if not found.
         """
-        logger.trace(f"Resolving emoji for object name: {object_name}")
+        flogger.trace(f"Resolving emoji for object name: {object_name}")
         if not self.emojis_cache:
-            logger.warning("Emoji cache is empty, loading emojis first")
+            flogger.warning("Emoji cache is empty, loading emojis first")
             self.load_emojis()
         
         normalized_name = self.normalize_emoji_name(object_name)
@@ -95,10 +95,10 @@ class EmojiService:
         
         if emoji_id:
             emoji_format = f"<:{normalized_name}:{emoji_id}>"
-            logger.debug(f"Resolved '{object_name}' to '{emoji_format}'")
+            flogger.debug(f"Resolved '{object_name}' to '{emoji_format}'")
             return emoji_format
         else:
-            logger.warning(f"No emoji found for '{object_name}' (normalized: '{normalized_name}')")
+            flogger.warning(f"No emoji found for '{object_name}' (normalized: '{normalized_name}')")
             return None
     
     def get_available_emojis(self) -> Dict[str, str]:

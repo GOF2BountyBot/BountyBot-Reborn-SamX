@@ -13,13 +13,13 @@ from pathlib import Path
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
-import shared.logging as logging
+import shared.bblogger as bblogger
 import logging as pyLogging
 
 # Import the routers package
 import routers
 
-logger = logging.get_logger("blender-main-script")
+flogger = bblogger.get_logger("blender-main-script")
 
 # Handle app startup/shutdown as app lifespan events
 @asynccontextmanager
@@ -27,23 +27,23 @@ async def lifespan(app: FastAPI):
     """
     Startup / shutdown logic (replaces @app.on_event).
     """
-    logger.info("🚀 Blender API starting up...")
-    logger.info("📚 API Documentation available at: /docs")
-    logger.info("📖 ReDoc Documentation available at: /redoc")
+    flogger.info("🚀 Blender API starting up...")
+    flogger.info("📚 API Documentation available at: /docs")
+    flogger.info("📖 ReDoc Documentation available at: /redoc")
     
     yield  # Application runs here
     
     # Shutdown logic
-    logger.info("🛑 Blender API shutting down...")
+    flogger.info("🛑 Blender API shutting down...")
     
-    logger.info("👋 Goodbye!")
+    flogger.info("👋 Goodbye!")
 
 
 def create_app() -> FastAPI:
     """Create and configure the FastAPI application."""
 
     # Create FastAPI app with comprehensive metadata
-    logger.trace("Initializing FastAPI...")
+    flogger.trace("Initializing FastAPI...")
     app = FastAPI(
         title="Blender API",
         description="""
@@ -112,12 +112,12 @@ def include_routers(app: FastAPI) -> None:
                         prefix="/api/v1",  # Global API version prefix
                         tags=[modname]  # Add module name as tag
                     )
-                    logger.info(f"✓ Included router from routers.{modname}")
+                    flogger.info(f"✓ Included router from routers.{modname}")
                 else:
-                    logger.info(f"⚠ No 'router' attribute found in routers.{modname}")
+                    flogger.info(f"⚠ No 'router' attribute found in routers.{modname}")
 
             except ImportError as e:
-                logger.error(f"✗ Failed to import routers.{modname}: {e}")
+                flogger.error(f"✗ Failed to import routers.{modname}: {e}")
 
 # Create the app instance
 app = create_app()
@@ -144,7 +144,7 @@ class HealthFilter(pyLogging.Filter):
 
 if __name__ == "__main__":
     import uvicorn
-    logger.info("Starting uvicorn...")
+    flogger.info("Starting uvicorn...")
     # attach filter to uvicorn.access to filter health check API requests 
     # from being logged as they are particularly noisy
     pyLogging.getLogger("uvicorn.access").addFilter(HealthFilter())

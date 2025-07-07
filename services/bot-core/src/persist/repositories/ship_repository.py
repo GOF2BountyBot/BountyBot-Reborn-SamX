@@ -2,12 +2,12 @@ from typing import Any
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
-import shared.logging as logging
+import shared.bblogger as bblogger
 
 from persist.models.ship import Ship
 from persist.repositories.generic_repository import GenericRepository
 
-logger = logging.get_logger("bot-ship-repository")
+flogger = bblogger.get_logger("bot-ship-repository")
 
 class ShipRepository(GenericRepository[Ship]):
     def __init__(self):
@@ -22,7 +22,7 @@ class ShipRepository(GenericRepository[Ship]):
         raw is your parsed JSON.  We first look up by name,
         then insert or patch fields and commit.
         """
-        logger.trace(f"Creating or updating ship from {raw}")
+        flogger.trace(f"Creating or updating ship from {raw}")
 
         # look up existing
         result = await db.execute(

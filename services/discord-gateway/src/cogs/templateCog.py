@@ -2,15 +2,15 @@ import os
 import discord
 from discord import app_commands
 from discord.ext import commands
-import shared.logging as logging
+import shared.bblogger as bblogger
 import requests
 
 # Set up logger
-logger = logging.get_logger("discord-gateway-TemplateCog")
+flogger = bblogger.get_logger("discord-gateway-TemplateCog")
 
 # Define any environment variables or constants here
 api_base = os.environ.get("BOT_API_BASE_URL", "http://bot-core:8000/api/v1")
-logger.debug(f"templateCog loading with API_BASE_URL: {API_BASE_URL}")
+flogger.debug(f"templateCog loading with API_BASE_URL: {API_BASE_URL}")
 
 def is_developer():
     # Example role check, uncomment and configure as needed
@@ -20,25 +20,25 @@ def is_developer():
 class TemplateCog(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
-        logger.debug(f"TemplateCog initialized")
+        flogger.debug(f"TemplateCog initialized")
 
     @app_commands.command(name="example", description="Example command")
     #@is_developer()
     async def example(self, interaction: discord.Interaction):
         """Example command to demonstrate functionality."""
         await interaction.response.send_message("This is an example command.")
-        logger.debug(f"/example by {interaction.user} in guild {interaction.guild_id}")
+        flogger.debug(f"/example by {interaction.user} in guild {interaction.guild_id}")
 
     @example.error
     async def example_error(self, interaction: discord.Interaction, error: app_commands.AppCommandError):
         if isinstance(error, app_commands.MissingRole):
             await interaction.response.send_message("❌ You need the 'developer' role.", ephemeral=True)
-            logger.warning(f"Unauthorized /example by {interaction.user} in guild {interaction.guild_id}")
+            flogger.warning(f"Unauthorized /example by {interaction.user} in guild {interaction.guild_id}")
         else:
             logger.exception("Error in /example", exc_info=error)
             await interaction.response.send_message("⚠️ An error occurred.", ephemeral=True)
 
 async def setup(bot: commands.Bot):
-    logger.debug(f"Setting up templateCog...")
+    flogger.debug(f"Setting up templateCog...")
     await bot.add_cog(TemplateCog(bot))
-    logger.info("templateCog loaded")
+    flogger.info("templateCog loaded")

@@ -2,12 +2,12 @@ from typing import Any
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
-import shared.logging as logging
+import shared.bblogger as bblogger
 
 from persist.models.turret_weapon import TurretWeapon
 from persist.repositories.generic_repository import GenericRepository
 
-logger = logging.get_logger("bot-turret-weapon-repository")
+flogger = bblogger.get_logger("bot-turret-weapon-repository")
 
 class TurretWeaponRepository(GenericRepository[TurretWeapon]):
     def __init__(self):
@@ -29,7 +29,7 @@ class TurretWeaponRepository(GenericRepository[TurretWeapon]):
         - maps known fields into model attrs
         - stashes the rest into extra_atts (JSON column)
         """
-        logger.trace(f"Creating or updating turret weapon from {raw}")
+        flogger.trace(f"Creating or updating turret weapon from {raw}")
 
         # common item fields
         item_fields = {

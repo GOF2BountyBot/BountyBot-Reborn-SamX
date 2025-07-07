@@ -18,9 +18,9 @@ from datetime import datetime
 from typing import Dict, Any, Optional
 import sys
 import platform
-import shared.logging as logging
+import shared.bblogger as bblogger
 
-logger = logging.get_logger("gateway-healthcheck-api-router")
+flogger = bblogger.get_logger("gateway-healthcheck-api-router")
 
 router = APIRouter(
     prefix="/health",
@@ -60,7 +60,7 @@ async def health_check(request: Request) -> HealthResponse:
     environment,, and various system checks.
     
     """
-    logger.debug("Inside health_check method...")
+    flogger.debug("Inside health_check method...")
     
     # Basic system checks (unchanged)
     checks = {
@@ -71,7 +71,7 @@ async def health_check(request: Request) -> HealthResponse:
 
     # Determine overall status
     all_checks_passed = all(checks.values())
-    logger.trace("All Checks Passed: " + str(all_checks_passed))
+    flogger.trace("All Checks Passed: " + str(all_checks_passed))
     
     # UPDATED: Consider database and schema health in overall status
     service_status = "healthy" if all_checks_passed else "unhealthy"

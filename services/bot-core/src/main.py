@@ -48,10 +48,10 @@ async def lifespan(app: FastAPI):
     # NEW: Initialize database connection and schema
     try:
         logger.info("🗄️ Initializing database connection...")
-        db_manager.initialize()
+        await db_manager.initialize()
         
         logger.info("📋 Checking and updating database schema...")
-        schema_manager = initialize_schema(db_manager)
+        schema_manager = await initialize_schema(db_manager)
         
         # Store schema manager reference for health checks
         app.state.schema_manager = schema_manager

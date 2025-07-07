@@ -2,16 +2,16 @@ import json
 from pathlib import Path
 from importlib import import_module
 
-from persist.database.manager import get_db_session
-from utils.emoji_service import EmojiService  # NEW IMPORT
+from persist.database.manager import db_manager
+from utils.emoji_service import EmojiService
 
 import shared.logging as logging
 logger = logging.get_logger("bot-data-loader")
 
-# NEW: Global emoji service instance
-_emoji_service = None
+# Global emoji service instance
+_emoji_service: EmojiService | None = None
 
-def get_emoji_service():
+def get_emoji_service() -> EmojiService:
     """Get or create the global emoji service instance."""
     global _emoji_service
     if _emoji_service is None:
@@ -23,7 +23,7 @@ def get_repository(category: str):
     Dynamically import e.g. persist.repositories.modules_repository.ModuleRepository
     Expects:
     - file: persist/repositories/{category}_repository.py
-    - class: {SingularCategoryTitle}Repository
+    - class:   {SingularCategoryTitle}Repository
     """
     logger.debug(f"Attempting to load repository for category: {category}")
 
@@ -44,22 +44,20 @@ def get_repository(category: str):
 
     return repo_cls()
 
-def load_folder(repo, data_dir: Path):
+async def load_folder(repo, data_dir: Path) -> None:
+    """Async load all JSON files under a given folder into the DB."""
     logger.debug(f"Loading data from folder: {data_dir}")
 
     for json_path in data_dir.rglob("*.json"):
         try:
             payload = json.loads(json_path.read_text())
-            logger.trace(f" Loading {json_path}...")
-            logger.trace(f" {payload}")
-
+            logger.trace(f" Loading {json_path} with payload {payload}")
         except json.JSONDecodeError as e:
-            logger.warn(f" ⏭ Skipping invalid JSON {json_path}: {e}")
+            logger.warning(f" ⏭ Skipping invalid JSON {json_path}: {e}")
             continue
 
-        with get_db_session() as db:
-            obj = repo.create_or_update(db, payload)
-            db.commit()
+        async with db_manager.get_session() as db:
+            obj = await repo.create_or_update(db, payload)
             logger.debug(f" ✓ Upserted {obj!r}")
 
 def _resolve_emojis(obj):
@@ -74,15 +72,14 @@ def _resolve_emojis(obj):
             obj['emoji'] = new_emoji
     return obj
 
-# public entry‐point for FastAPI
-def load_data(category: str, data_root: str | Path = None) -> list[str]:
+async def load_data(category: str, data_root: str | Path = None) -> list[str]:
     """
     Upsert all JSON files under data/{category}/ into the DB.
     Returns a list of status messages (one per file).
     """
     logger.info(f"load_data called for category='{category}'")
-    
-    # NEW: Pre-load emojis for module category
+
+    # Pre-load emojis for module category
     try:
         logger.info("Pre-loading Discord application emojis...")
         emoji_service = get_emoji_service()
@@ -90,11 +87,12 @@ def load_data(category: str, data_root: str | Path = None) -> list[str]:
         logger.info("✓ Emojis pre-loaded successfully")
     except Exception as e:
         logger.error(f"Failed to pre-load emojis: {e}")
-    
-    # determine root/data dir (one level above "src")
+
+    # Determine root/data dir (one level above "src")
     project_root = Path(__file__).parents[2]
     root = Path(data_root) if data_root else project_root / "import_data"
     category_dir = root / category
+
     logger.debug(f"Looking for data under: {category_dir}")
     if not category_dir.is_dir():
         msg = f"No such data directory: {category_dir}"
@@ -103,8 +101,8 @@ def load_data(category: str, data_root: str | Path = None) -> list[str]:
 
     repo = get_repository(category)
     results: list[str] = []
+
     for json_path in category_dir.rglob("*.json"):
-        # load JSON
         try:
             payload = json.loads(json_path.read_text())
         except json.JSONDecodeError as e:
@@ -113,17 +111,15 @@ def load_data(category: str, data_root: str | Path = None) -> list[str]:
             results.append(warn)
             continue
 
-        # NEW: attempt emoji‐resolution on the loaded payload
+        # Attempt emoji-resolution on the loaded payload
         try:
             payload = _resolve_emojis(payload)
         except Exception as e:
             logger.warning(f"Failed to resolve emojis in {json_path.name}: {e}")
 
-        # upsert into DB
-        with get_db_session() as db:
+        async with db_manager.get_session() as db:
             try:
-                obj = repo.create_or_update(db, payload)
-                db.commit()
+                obj = await repo.create_or_update(db, payload)
                 msg = f"Upserted {obj!r} from {json_path.name}"
                 logger.debug(msg)
                 results.append(msg)

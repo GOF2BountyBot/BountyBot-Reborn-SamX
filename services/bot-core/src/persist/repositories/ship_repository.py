@@ -1,20 +1,36 @@
-from sqlalchemy.orm import Session
+from typing import Any
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
+
+import shared.logging as logging
+
 from persist.models.ship import Ship
 from persist.repositories.generic_repository import GenericRepository
+
+logger = logging.get_logger("bot-ship-repository")
 
 class ShipRepository(GenericRepository[Ship]):
     def __init__(self):
         super().__init__(Ship)
 
-    def create_or_update(self, db: Session, raw: dict) -> Ship:
+    async def create_or_update(
+        self,
+        db: AsyncSession,
+        raw: dict[str, Any],
+    ) -> Ship:
         """
         raw is your parsed JSON.  We first look up by name,
         then insert or patch fields and commit.
         """
-        session = self._unwrap(db)
-        obj = session.query(Ship).filter_by(name=raw["name"]).one_or_none()
+        logger.trace(f"Creating or updating ship from {raw}")
 
-        # Map JSON keys -> model attributes
+        # look up existing
+        result = await db.execute(
+            select(self._model).filter_by(name=raw["name"])
+        )
+        obj = result.scalars().one_or_none()
+
+        # Map JSON keys → model attributes
         mapping = {
             "builtIn":           "built_in",
             "compatibleSkins":   "compatible_skins",
@@ -29,7 +45,7 @@ class ShipRepository(GenericRepository[Ship]):
             # all others map 1:1 by lower‐snake
         }
 
-        def to_attr(k):
+        def to_attr(k: str) -> str:
             return mapping.get(k, k.lower())
 
         if obj:
@@ -38,8 +54,8 @@ class ShipRepository(GenericRepository[Ship]):
         else:
             attrs = { to_attr(k): v for k, v in raw.items() }
             obj = Ship(**attrs)
-            session.add(obj)
+            db.add(obj)
 
-        session.commit()
-        session.refresh(obj)
+        await db.commit()
+        await db.refresh(obj)
         return obj

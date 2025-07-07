@@ -1,10 +1,11 @@
 from typing import Any
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
+
+import shared.logging as logging
 
 from persist.models.turret_weapon import TurretWeapon
 from persist.repositories.generic_repository import GenericRepository
-
-import shared.logging as logging
 
 logger = logging.get_logger("bot-turret-weapon-repository")
 
@@ -12,13 +13,15 @@ class TurretWeaponRepository(GenericRepository[TurretWeapon]):
     def __init__(self):
         super().__init__(TurretWeapon)
 
-    # enable lookup by name
-    def get_by_name(self, db: Session, name: str) -> TurretWeapon | None:
-        return db.query(TurretWeapon).filter_by(name=name).one_or_none()
- 
-    def create_or_update(
+    async def get_by_name(self, db: AsyncSession, name: str) -> TurretWeapon | None:
+        result = await db.execute(
+            select(self._model).filter_by(name=name)
+        )
+        return result.scalars().one_or_none()
+
+    async def create_or_update(
         self,
-        db: Session,
+        db: AsyncSession,
         raw: dict[str, Any],
     ) -> TurretWeapon:
         """
@@ -27,7 +30,7 @@ class TurretWeaponRepository(GenericRepository[TurretWeapon]):
         - stashes the rest into extra_atts (JSON column)
         """
         logger.trace(f"Creating or updating turret weapon from {raw}")
- 
+
         # common item fields
         item_fields = {
             "name":       raw["name"],
@@ -45,18 +48,18 @@ class TurretWeaponRepository(GenericRepository[TurretWeapon]):
         }
         # turret-weapon specific fields
         turret_fields = {
-            "dps":         raw["dps"],
-            "automatic":  raw.get("automatic")
+            "dps":        raw["dps"],
+            "automatic":  raw.get("automatic"),
         }
- 
+
         # everything else → JSON blob
         extra = {
             k: v
             for k, v in raw.items()
             if k not in (*item_fields.keys(), *weapon_fields.keys(), *turret_fields.keys())
         }
- 
-        obj = self.get_by_name(db, item_fields["name"])
+
+        obj = await self.get_by_name(db, item_fields["name"])
         if obj:
             # update existing
             for k, v in item_fields.items():
@@ -75,5 +78,5 @@ class TurretWeaponRepository(GenericRepository[TurretWeapon]):
                 extra_atts=extra,
             )
             db.add(obj)
- 
+
         return obj

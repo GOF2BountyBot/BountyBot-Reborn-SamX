@@ -1,10 +1,11 @@
 from typing import Any
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
+
+import shared.logging as logging
 
 from persist.models.secondary_weapon import SecondaryWeapon
 from persist.repositories.generic_repository import GenericRepository
-
-import shared.logging as logging
 
 logger = logging.get_logger("bot-secondary-weapon-repository")
 
@@ -12,13 +13,15 @@ class SecondaryWeaponRepository(GenericRepository[SecondaryWeapon]):
     def __init__(self):
         super().__init__(SecondaryWeapon)
 
-    # enable lookup by name
-    def get_by_name(self, db: Session, name: str) -> SecondaryWeapon | None:
-        return db.query(SecondaryWeapon).filter_by(name=name).one_or_none()
+    async def get_by_name(self, db: AsyncSession, name: str) -> SecondaryWeapon | None:
+        result = await db.execute(
+            select(self._model).filter_by(name=name)
+        )
+        return result.scalars().one_or_none()
 
-    def create_or_update(
+    async def create_or_update(
         self,
-        db: Session,
+        db: AsyncSession,
         raw: dict[str, Any],
     ) -> SecondaryWeapon:
         """
@@ -28,22 +31,22 @@ class SecondaryWeaponRepository(GenericRepository[SecondaryWeapon]):
         """
         logger.trace(f"Creating or updating secondary weapon from {raw}")
 
-        # common item fields:
+        # common item fields
         item_fields = {
-            "name":     raw["name"],
-            "aliases":  raw.get("aliases", []),
-            "built_in": raw.get("builtIn", False),
-            "emoji":    raw.get("emoji"),
-            "icon":     raw.get("icon"),
-            "value":    raw.get("value"),
-            "wiki":     raw.get("wiki"),
-            "type":     raw.get("type"),
+            "name":        raw["name"],
+            "aliases":     raw.get("aliases", []),
+            "built_in":    raw.get("builtIn", False),
+            "emoji":       raw.get("emoji"),
+            "icon":        raw.get("icon"),
+            "value":       raw.get("value"),
+            "wiki":        raw.get("wiki"),
+            "type":        raw.get("type"),
         }
-        # weapon‐level fields:
+        # weapon-level fields
         weapon_fields = {
             "tech_level": raw.get("techLevel"),
         }
-        # secondary‐weapon specific:
+        # secondary-weapon specific fields
         secondary_fields = {
             "damage":        raw["damage"],
             "loading_speed": raw.get("loadingSpeed"),
@@ -53,15 +56,10 @@ class SecondaryWeaponRepository(GenericRepository[SecondaryWeapon]):
         extra = {
             k: v
             for k, v in raw.items()
-            if k
-            not in (
-                *item_fields.keys(),
-                *weapon_fields.keys(),
-                *secondary_fields.keys(),
-            )
+            if k not in (*item_fields.keys(), *weapon_fields.keys(), *secondary_fields.keys())
         }
 
-        obj = self.get_by_name(db, item_fields["name"])
+        obj = await self.get_by_name(db, item_fields["name"])
         if obj:
             # update existing
             for k, v in item_fields.items():

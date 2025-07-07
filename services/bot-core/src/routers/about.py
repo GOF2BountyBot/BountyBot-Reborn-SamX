@@ -1,7 +1,7 @@
 from enum import Enum
-from typing import List, Optional, Dict, Any, Generator
+from typing import List, Optional, Dict, Any, AsyncGenerator
 from fastapi import APIRouter, HTTPException, Depends
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
 from pydantic import BaseModel
 
 from persist.database.manager import db_manager
@@ -104,14 +104,12 @@ CATEGORY_RESPONSE_MODELS = {
     DataCategory.criminal: CriminalResponse,
 }
 
-def get_db() -> Generator[Session, None, None]:
-    # open the context‐manager, grab the Session, yield it to FastAPI,
-    # then __exit__ automatically closes it.
-    with db_manager.get_session() as session:
+async def get_db() -> AsyncGenerator[AsyncSession, None]:
+    async with db_manager.get_session() as session:
         yield session
 
 @router.get("/categories", response_model=List[str])
-def list_categories():
+async def list_categories():
     """
     GET /about/categories
     Returns all valid object categories for menu population.
@@ -125,7 +123,7 @@ def list_categories():
         raise HTTPException(status_code=500, detail="Internal server error")
 
 @router.get("/categories/{category}/objects", response_model=List[Dict[str, Any]])
-def list_objects_for_category(category: DataCategory, db: Session = Depends(get_db)):
+async def list_objects_for_category(category: DataCategory, db: AsyncSession = Depends(get_db)):
     """
     GET /about/categories/{category}/objects
     Returns all objects for a specified category for menu population.
@@ -135,7 +133,7 @@ def list_objects_for_category(category: DataCategory, db: Session = Depends(get_
             raise HTTPException(status_code=404, detail=f"Category {category.value} not found")
 
         repo = CATEGORY_REPOS[category]
-        objects = repo.list_all(db)
+        objects = await repo.list_all(db)
 
         # Convert to simplified format for dropdown menus
         result = []
@@ -156,7 +154,7 @@ def list_objects_for_category(category: DataCategory, db: Session = Depends(get_
         raise HTTPException(status_code=500, detail="Internal server error")
 
 @router.get("/object/name/{object_name}", response_model=Dict[str, Any])
-def get_object_by_name(object_name: str, db: Session = Depends(get_db)):
+async def get_object_by_name(object_name: str, db: AsyncSession = Depends(get_db)):
     """
     GET /about/object/name/{object_name}
     Get detailed object information by name.
@@ -164,7 +162,7 @@ def get_object_by_name(object_name: str, db: Session = Depends(get_db)):
     try:
         # Try each repository to find the object
         for category, repo in CATEGORY_REPOS.items():
-            obj = repo.get_by_name(db, object_name)
+            obj = await repo.get_by_name(db, object_name)
             if obj:
                 # Convert to dict format
                 result: Dict[str, Any] = {
@@ -223,14 +221,14 @@ def get_object_by_name(object_name: str, db: Session = Depends(get_db)):
         raise HTTPException(status_code=500, detail="Internal server error")
 
 @router.get("/object/alias/{alias}", response_model=Dict[str, Any])
-def get_object_by_alias(alias: str, db: Session = Depends(get_db)):
+async def get_object_by_alias(alias: str, db: AsyncSession = Depends(get_db)):
     """
     GET /about/object/alias/{alias}
     Get detailed object information by any of its aliases.
     """
     try:
         for category, repo in CATEGORY_REPOS.items():
-            obj = repo.get_by_alias(db, alias)
+            obj = await repo.get_by_alias(db, alias)
             if obj:
                 result: Dict[str, Any] = {
                     "id": obj.id,
@@ -284,22 +282,21 @@ def get_object_by_alias(alias: str, db: Session = Depends(get_db)):
         raise
     except Exception as e:
         logger.error(f"Error retrieving object by alias '{alias}': {e}")
-        raise HTTPException(500, detail="Internal server error")
-
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 @router.get("/object/{category}/{object_id}", response_model=Dict[str, Any])
-def get_object_by_id(category: DataCategory, object_id: int, db: Session = Depends(get_db)):
+async def get_object_by_id(category: DataCategory, object_id: int, db: AsyncSession = Depends(get_db)):
     """
-    GET /about/object/{object_id}
+    GET /about/object/{category}/{object_id}
     Get detailed object information by ID.
     """
     repo = CATEGORY_REPOS.get(category)
     if not repo:
-        raise HTTPException(404, f"Category {category.value} not found")
+        raise HTTPException(404, detail=f"Category {category.value} not found")
 
-    obj = repo.get_by_id(db, object_id)
+    obj = await repo.get_by_id(db, object_id)
     if not obj:
-        raise HTTPException(404, f"{category.value.title()} with ID {object_id} not found")
+        raise HTTPException(404, detail=f"{category.value.title()} with ID {object_id} not found")
     try:
         result: Dict[str, Any] = {
             "id": obj.id,
@@ -355,4 +352,3 @@ def get_object_by_id(category: DataCategory, object_id: int, db: Session = Depen
     except Exception as e:
         logger.error(f"Error retrieving object {object_id}: {e}")
         raise HTTPException(status_code=500, detail="Internal server error")
-

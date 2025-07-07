@@ -1,10 +1,11 @@
 from typing import Any
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
+
+import shared.logging as logging
 
 from persist.models.primary_weapon import PrimaryWeapon
 from persist.repositories.generic_repository import GenericRepository
-
-import shared.logging as logging
 
 logger = logging.get_logger("bot-primary-weapon-repository")
 
@@ -12,13 +13,15 @@ class PrimaryWeaponRepository(GenericRepository[PrimaryWeapon]):
     def __init__(self):
         super().__init__(PrimaryWeapon)
 
-    # enable lookup by name
-    def get_by_name(self, db: Session, name: str) -> PrimaryWeapon | None:
-        return db.query(PrimaryWeapon).filter_by(name=name).one_or_none()
- 
-    def create_or_update(
+    async def get_by_name(self, db: AsyncSession, name: str) -> PrimaryWeapon | None:
+        result = await db.execute(
+            select(self._model).filter_by(name=name)
+        )
+        return result.scalars().one_or_none()
+
+    async def create_or_update(
         self,
-        db: Session,
+        db: AsyncSession,
         raw: dict[str, Any],
     ) -> PrimaryWeapon:
         """
@@ -27,38 +30,34 @@ class PrimaryWeaponRepository(GenericRepository[PrimaryWeapon]):
         - stashes the rest into extra_atts (JSON column)
         """
         logger.trace(f"Creating or updating primary weapon from {raw}")
- 
-        # common item fields:
+
+        # common item fields
         item_fields = {
-            "name":       raw["name"],
-            "aliases":    raw.get("aliases", []),
-            "built_in":   raw.get("builtIn", False),
-            "emoji":      raw.get("emoji"),
-            "icon":       raw.get("icon"),
-            "value":      raw.get("value"),
-            "wiki":       raw.get("wiki"),
-            "type":       raw.get("type"),
+            "name":     raw["name"],
+            "aliases":  raw.get("aliases", []),
+            "built_in": raw.get("builtIn", False),
+            "emoji":    raw.get("emoji"),
+            "icon":     raw.get("icon"),
+            "value":    raw.get("value"),
+            "wiki":     raw.get("wiki"),
+            "type":     raw.get("type"),
         }
-        # weapon-level fields:
+        # weapon-level fields
         weapon_fields = {
             "tech_level": raw.get("techLevel"),
         }
-        # primary-weapon specific (adjust keys to your model):
+        # primary-weapon specific fields
         primary_fields = {
-            "dps":    raw["dps"]
-            # Maybe more someday...
-            # "fire_rate": raw.get("fireRate"),
-            # "range":     raw.get("range"),
+            "dps": raw["dps"],
         }
- 
-        # everything else → JSON blob
+        # anything else → JSON blob
         extra = {
             k: v
             for k, v in raw.items()
             if k not in (*item_fields.keys(), *weapon_fields.keys(), *primary_fields.keys())
         }
- 
-        obj = self.get_by_name(db, item_fields["name"])
+
+        obj = await self.get_by_name(db, item_fields["name"])
         if obj:
             # update existing
             for k, v in item_fields.items():
@@ -77,5 +76,5 @@ class PrimaryWeaponRepository(GenericRepository[PrimaryWeapon]):
                 extra_atts=extra,
             )
             db.add(obj)
- 
+
         return obj

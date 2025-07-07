@@ -18,7 +18,7 @@ from persist.database.manager import db_manager
 from persist.models.base import Base
 from persist.models.schema_version import SchemaVersion
 import shared.logging as logging
-from sqlalchemy import inspect
+from sqlalchemy import select
 
 logger = logging.get_logger("bot-schema-manager")
 
@@ -28,25 +28,28 @@ class SchemaManager:
     def __init__(self, db_manager):
         self.db_manager = db_manager
 
-    def initialize_database(self):
+    async def initialize_database(self):
         logger.info("Initializing database...")
-        self.create_tables_if_not_exist()
-        self._verify_schema_version()
+        await self.create_tables_if_not_exist()
+        await self._verify_schema_version()
 
-    def create_tables_if_not_exist(self):
+    async def create_tables_if_not_exist(self):
         """Creates all tables if they don't already exist."""
         try:
-            Base.metadata.create_all(bind=self.db_manager.engine)
+            async with self.db_manager.engine.begin() as conn:
+                # run_sync wraps the sync create_all call
+                await conn.run_sync(Base.metadata.create_all)
             logger.info("Database tables ensured.")
         except Exception as e:
             logger.error(f"Error creating tables: {e}")
             raise
 
-    def _verify_schema_version(self):
+    async def _verify_schema_version(self):
         """Checks and initializes schema version info."""
-        with self.db_manager.get_session() as session:
-            schema_version = session.query(SchemaVersion).first()
-            
+        async with self.db_manager.get_session() as session:
+            result = await session.execute(select(SchemaVersion))
+            schema_version = result.scalars().first()
+
             if schema_version is None:
                 # if no schema version, set the current one
                 schema_version = SchemaVersion(
@@ -54,28 +57,30 @@ class SchemaManager:
                     description="Initial Schema Version"
                 )
                 session.add(schema_version)
-                session.commit()
+                await session.commit()
                 logger.info(f"Initialized schema version to {CURRENT_SCHEMA_VERSION}")
             elif schema_version.version != CURRENT_SCHEMA_VERSION:
                 # Schema version mismatch here means migrations are needed (suggest using Alembic)
-                logger.warning(f"Schema version mismatch detected: "
-                               f"DB version = {schema_version.version}, "
-                               f"Expected version = {CURRENT_SCHEMA_VERSION}. "
-                               f"Consider running migrations.")
+                logger.warning(
+                    f"Schema version mismatch detected: "
+                    f"DB version = {schema_version.version}, "
+                    f"Expected version = {CURRENT_SCHEMA_VERSION}. "
+                    f"Consider running migrations."
+                )
             else:
                 logger.info(f"Schema version is up-to-date ({CURRENT_SCHEMA_VERSION}).")
 
-    def get_current_version(self):
+    async def get_current_version(self) -> str | None:
         """Retrieve the current schema version from the database."""
-        with self.db_manager.get_session() as session:
-            schema_version = session.query(SchemaVersion).first()
+        async with self.db_manager.get_session() as session:
+            result = await session.execute(select(SchemaVersion))
+            schema_version = result.scalars().first()
             return schema_version.version if schema_version else None
 
-    
-    def get_schema_health_info(self):
+    async def get_schema_health_info(self) -> dict:
         """Retrieve detailed schema health information."""
         try:
-            current_version = self.get_current_version()
+            current_version = await self.get_current_version()
             version_match = (current_version == CURRENT_SCHEMA_VERSION)
             return {
                 "version": current_version,
@@ -89,7 +94,11 @@ class SchemaManager:
                 "error": str(e)
             }
 
-def initialize_schema(db_manager) -> SchemaManager:
+async def initialize_schema(db_manager) -> SchemaManager:
+    """
+    Create a SchemaManager and run initialization.
+    Returns the initialized manager.
+    """
     schema_manager = SchemaManager(db_manager)
-    schema_manager.initialize_database()
+    await schema_manager.initialize_database()
     return schema_manager

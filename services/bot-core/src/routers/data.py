@@ -16,15 +16,14 @@ class DataCategory(str, Enum):
 router = APIRouter(prefix="/data", tags=["data"])
 
 @router.post("/{category}", response_model=List[str])
-def api_load_data(category: DataCategory):
+async def api_load_data(category: DataCategory):
     """
     POST /data/{category}
     Triggers an upsert of all JSON files under data/{category}/.
     Only the categories in DataCategory are accepted.
     """
     try:
-        # note: category is already a DataCategory, so use .value if you need a str
-        return load_data(category.value)
+        return await load_data(category.value)
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
 

@@ -101,6 +101,13 @@ async def get_job(req: Request, id: str):
     flogger.info(f"Retrieved job '{id}': next_run_time={info.next_run_time}")
     return info
 
+@router.delete("/jobs/all")
+async def delete_all_jobs(req: Request):
+    flogger.debug("Deleting all jobs")
+    req.app.state.scheduler.remove_all_jobs()
+    flogger.info("All jobs have been removed")
+    return {"status": "all_jobs_deleted"}
+
 @router.delete("/jobs/{id}")
 async def delete_job(req: Request, id: str):
     flogger.debug(f"Deleting job '{id}'")
@@ -112,9 +119,3 @@ async def delete_job(req: Request, id: str):
     flogger.info(f"Deleted job '{id}'")
     return {"status": "deleted", "job_id": id}
 
-@router.delete("/jobs/all")
-async def delete_all_jobs(req: Request):
-    flogger.debug("Deleting all jobs")
-    req.app.state.scheduler.remove_all_jobs()
-    flogger.info("All jobs have been removed")
-    return {"status": "all_jobs_deleted"}

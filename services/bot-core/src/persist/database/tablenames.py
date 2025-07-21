@@ -11,3 +11,4 @@ class TableNames(Enum):
     Ship                = "ship"
     System              = "system"
     Criminal            = "criminal"
+    DiscordMessage      = "discord_message"

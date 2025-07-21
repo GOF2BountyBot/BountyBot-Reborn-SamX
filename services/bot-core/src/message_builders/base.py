@@ -1,0 +1,33 @@
+"""
+Abstract base classes for message payload builders.
+
+This module defines the interface that all message-specific builders
+must implement to ensure consistency and maintainability.
+"""
+
+from abc import ABC, abstractmethod
+from typing import Dict, Any, Optional
+from pydantic import BaseModel
+
+class MessagePayloadBuilder(ABC):
+    """Abstract base class for message payload builders."""
+    
+    @abstractmethod
+    def build_payload(self, data: Dict[str, Any]) -> Dict[str, Any]:
+        """Build the embed payload from input data."""
+        pass
+    
+    @abstractmethod
+    def extract_data(self, payload: str) -> Optional[Dict[str, Any]]:
+        """Extract structured data from stored payload."""
+        pass
+    
+    @abstractmethod
+    def get_message_type(self) -> str:
+        """Return the message type identifier."""
+        pass
+    
+    @abstractmethod
+    def validate_input(self, data: Dict[str, Any]) -> bool:
+        """Validate input data for this message type."""
+        pass

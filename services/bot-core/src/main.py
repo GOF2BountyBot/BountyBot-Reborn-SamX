@@ -174,23 +174,38 @@ def create_app() -> FastAPI:
 
 def include_routers(app: FastAPI) -> None:
     """
-    Auto-discover and include all routers from the routers package.
+    Auto-discover and include all routers (even in subpackages) from the routers package.
+    Logs successes, warnings, and errors in detail.
     """
-    for _, modname, ispkg in pkgutil.iter_modules(routers.__path__):
-        if not ispkg:
-            try:
-                module = importlib.import_module(f"routers.{modname}")
-                if hasattr(module, "router"):
-                    app.include_router(
-                        module.router,
-                        prefix="/api/v1",
-                        tags=[modname]
-                    )
-                    flogger.info(f"✓ Included router from routers.{modname}")
-                else:
-                    flogger.info(f"⚠ No 'router' in routers.{modname}")
-            except ImportError as e:
-                flogger.error(f"✗ Failed to import routers.{modname}: {e}")
+    import pkgutil, importlib, routers
+    success, skipped, failed = 0, 0, 0
+
+    for finder, fullname, ispkg in pkgutil.walk_packages(routers.__path__, routers.__name__ + "."):
+        try:
+            module = importlib.import_module(fullname)
+        except Exception as e:
+            flogger.error(f"✗ Failed to import module '{fullname}': {e}")
+            failed += 1
+            continue
+
+        router_obj = getattr(module, "router", None)
+        if router_obj is None:
+            flogger.debug(f"⚠ No router in '{fullname}', skipping.")
+            skipped += 1
+            continue
+
+        try:
+            tag = fullname.rsplit(".", 1)[-1]
+            app.include_router(router_obj, prefix="/api/v1", tags=[tag])
+            flogger.info(f"✓ Included router '{tag}' from module '{fullname}'")
+            success += 1
+        except Exception as e:
+            flogger.error(f"✗ Error including router from '{fullname}': {e}")
+            failed += 1
+
+    flogger.info(
+        f"Router discovery complete: {success} included, {skipped} skipped, {failed} failed."
+    )
 
 app = create_app()
 

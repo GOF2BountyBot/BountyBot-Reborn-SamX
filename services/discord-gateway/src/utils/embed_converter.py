@@ -117,9 +117,9 @@ class EmbedConverter:
         """
         flogger.debug("embed_to_payload called")
         try:
-            title = embed.title if embed.title != discord.Embed.Empty else None
-            description = embed.description if embed.description != discord.Embed.Empty else None
-            color = embed.color.value if embed.color and embed.color != discord.Embed.Empty else None
+            title = embed.title if embed.title is not None else None
+            description = embed.description if embed.description is not None else None
+            color = embed.color.value if embed.color and embed.color is not None else None
 
             fields = [
                 EmbedField(name=f.name, value=f.value, inline=f.inline)
@@ -136,8 +136,8 @@ class EmbedConverter:
 
             timestamp = embed.timestamp
 
-            thumbnail_url = embed.thumbnail.url if embed.thumbnail and embed.thumbnail != discord.Embed.Empty else None
-            image_url = embed.image.url if embed.image and embed.image != discord.Embed.Empty else None
+            thumbnail_url = embed.thumbnail.url if embed.thumbnail and embed.thumbnail is not None else None
+            image_url = embed.image.url if embed.image and embed.image is not None else None
 
             payload = EmbedPayload(
                 title=title,

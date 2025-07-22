@@ -9,6 +9,7 @@ import json
 import os
 from fastapi import APIRouter, HTTPException, status, Request, Query
 from pydantic import BaseModel, Field
+from typing import Optional, List
 import requests
 
 import shared.bblogger as bblogger

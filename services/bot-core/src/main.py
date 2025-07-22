@@ -174,13 +174,15 @@ def create_app() -> FastAPI:
 
 def include_routers(app: FastAPI) -> None:
     """
-    Auto-discover and include all routers (even in subpackages) from the routers package.
-    Logs successes, warnings, and errors in detail.
+    Auto-discover and include all APIRouter instances
+    under services/blender-service/src/routers.
     """
-    import pkgutil, importlib, routers
-    success, skipped, failed = 0, 0, 0
+    root = Path(__file__).parent / "routers"
+    pkg_prefix = routers.__name__ + "."
 
-    for finder, fullname, ispkg in pkgutil.walk_packages(routers.__path__, routers.__name__ + "."):
+    success = skipped = failed = 0
+
+    for finder, fullname, ispkg in pkgutil.walk_packages([str(root)], pkg_prefix):
         try:
             module = importlib.import_module(fullname)
         except Exception as e:
@@ -188,20 +190,17 @@ def include_routers(app: FastAPI) -> None:
             failed += 1
             continue
 
-        router_obj = getattr(module, "router", None)
-        if router_obj is None:
+        router = getattr(module, "router", None)
+        if router is None:
             flogger.debug(f"⚠ No router in '{fullname}', skipping.")
             skipped += 1
             continue
 
-        try:
-            tag = fullname.rsplit(".", 1)[-1]
-            app.include_router(router_obj, prefix="/api/v1", tags=[tag])
-            flogger.info(f"✓ Included router '{tag}' from module '{fullname}'")
-            success += 1
-        except Exception as e:
-            flogger.error(f"✗ Error including router from '{fullname}': {e}")
-            failed += 1
+        tag = fullname.rsplit(".", 1)[-1]
+        # don’t force a tag here – let the router’s own tags win
+        app.include_router(router, prefix="/api/v1")
+        flogger.info(f"✓ Included router '{tag}' from '{fullname}'")
+        success += 1
 
     flogger.info(
         f"Router discovery complete: {success} included, {skipped} skipped, {failed} failed."

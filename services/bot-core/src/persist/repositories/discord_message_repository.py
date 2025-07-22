@@ -40,23 +40,19 @@ class DiscordMessageRepository(GenericRepository[DiscordMessage]):
         """
         flogger.trace(f"Creating or updating Discord message from {raw}")
         
-        # Extract required fields
         guild_id = raw["guild_id"]
-        channel_id = raw["channel_id"] 
+        channel_id = raw["channel_id"]
         message_id = raw["message_id"]
         
-        # Look up existing message by composite key
         existing = await self.get_by_composite_key(db, guild_id, channel_id, message_id)
         
         if existing:
-            # Update existing record
             existing.embed_payload = raw["embed_payload"]
             existing.message_type = raw.get("message_type", "general")
             existing.updated_at = datetime.now(timezone.utc)
             flogger.debug(f"Updated existing Discord message: {existing.id}")
             return existing
         else:
-            # Create new record
             message = DiscordMessage(
                 guild_id=guild_id,
                 channel_id=channel_id,
@@ -65,7 +61,7 @@ class DiscordMessageRepository(GenericRepository[DiscordMessage]):
                 message_type=raw.get("message_type", "general")
             )
             db.add(message)
-            flogger.debug(f"Created new Discord message record")
+            flogger.debug("Created new Discord message record")
             return message
     
     async def get_by_composite_key(
@@ -77,15 +73,6 @@ class DiscordMessageRepository(GenericRepository[DiscordMessage]):
     ) -> Optional[DiscordMessage]:
         """
         Get message by composite key (guild_id, channel_id, message_id).
-        
-        Args:
-            db: Database session
-            guild_id: Discord guild ID
-            channel_id: Discord channel ID
-            message_id: Discord message ID
-            
-        Returns:
-            DiscordMessage if found, None otherwise
         """
         result = await db.execute(
             select(self._model).where(
@@ -104,21 +91,12 @@ class DiscordMessageRepository(GenericRepository[DiscordMessage]):
         message_type: str,
         guild_id: Optional[int] = None,
         channel_id: Optional[int] = None
-    ) -> Optional[DiscordMessage]:
+    ) -> List[DiscordMessage]:
         """
-        Get the most recent message by type, optionally filtered by guild and channel.
-        
-        Args:
-            db: Database session
-            message_type: Type of message to find
-            guild_id: Optional guild ID filter
-            channel_id: Optional channel ID filter
-            
-        Returns:
-            Most recent DiscordMessage if found, None otherwise
+        Get messages by type, optionally filtered by guild and channel,
+        ordered by creation date descending.
         """
         conditions = [self._model.message_type == message_type]
-        
         if guild_id is not None:
             conditions.append(self._model.guild_id == guild_id)
         if channel_id is not None:
@@ -128,20 +106,12 @@ class DiscordMessageRepository(GenericRepository[DiscordMessage]):
             select(self._model)
             .where(and_(*conditions))
             .order_by(desc(self._model.created_at))
-            .limit(1)
         )
-        return result.scalars().first()
+        return list(result.scalars().all())
     
     async def list_by_guild(self, db: AsyncSession, guild_id: int) -> List[DiscordMessage]:
         """
         List all messages for a guild ordered by creation date.
-        
-        Args:
-            db: Database session
-            guild_id: Discord guild ID
-            
-        Returns:
-            List of DiscordMessage objects
         """
         result = await db.execute(
             select(self._model)
@@ -153,14 +123,6 @@ class DiscordMessageRepository(GenericRepository[DiscordMessage]):
     async def list_by_channel(self, db: AsyncSession, guild_id: int, channel_id: int) -> List[DiscordMessage]:
         """
         List all messages for a channel ordered by creation date.
-        
-        Args:
-            db: Database session
-            guild_id: Discord guild ID
-            channel_id: Discord channel ID
-            
-        Returns:
-            List of DiscordMessage objects
         """
         result = await db.execute(
             select(self._model)
@@ -173,6 +135,45 @@ class DiscordMessageRepository(GenericRepository[DiscordMessage]):
             .order_by(desc(self._model.created_at))
         )
         return list(result.scalars().all())
+
+    async def list_by_guild_and_channel(
+        self,
+        db: AsyncSession,
+        guild_id: int,
+        channel_id: int
+    ) -> List[DiscordMessage]:
+        """
+        List all messages for a specific channel in a guild,
+        ordered by creation date descending.
+        """
+        result = await db.execute(
+            select(self._model)
+            .where(
+                and_(
+                    self._model.guild_id == guild_id,
+                    self._model.channel_id == channel_id
+                )
+            )
+            .order_by(desc(self._model.created_at))
+        )
+        return list(result.scalars().all())
+
+    async def list_by_guild_and_type(
+        self,
+        db: AsyncSession,
+        guild_id: int,
+        message_type: str
+    ) -> List[DiscordMessage]:
+        """
+        List all messages of a given type in a guild,
+        ordered by creation date descending.
+        """
+        # reuse the existing get_by_type for filtering
+        return await self.get_by_type(
+            db,
+            message_type,
+            guild_id=guild_id
+        )
     
     async def delete_by_composite_key(
         self,
@@ -183,15 +184,6 @@ class DiscordMessageRepository(GenericRepository[DiscordMessage]):
     ) -> bool:
         """
         Delete message by composite key.
-        
-        Args:
-            db: Database session
-            guild_id: Discord guild ID
-            channel_id: Discord channel ID
-            message_id: Discord message ID
-            
-        Returns:
-            True if deleted, False if not found
         """
         message = await self.get_by_composite_key(db, guild_id, channel_id, message_id)
         if message:

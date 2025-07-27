@@ -129,7 +129,7 @@ class EmbedConverter:
 
             footer_text = None
             footer_icon_url = None
-            if embed.footer and embed.footer !=  is not None:
+            if embed.footer and embed.footer is not None:
                 footer_text = embed.footer.text or None
                 footer_icon_url = embed.footer.icon_url or None
                 flogger.debug(f"  extracted footer: text={footer_text!r}, icon_url={footer_icon_url!r}")

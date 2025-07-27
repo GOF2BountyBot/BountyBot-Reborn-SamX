@@ -9,6 +9,7 @@ by dedicated routers in the announcements/ subdirectory.
 import json
 import os
 from typing import Optional, List
+from uuid import UUID
 from fastapi import APIRouter, HTTPException, status, Request
 from pydantic import BaseModel, Field
 from datetime import datetime
@@ -39,7 +40,7 @@ class EmbedPayloadDict(BaseModel):
     title: Optional[str] = None
     description: Optional[str] = None
     color: Optional[int] = None
-    fields: list[dict] = []
+    fields: List[dict] = []
     footer_text: Optional[str] = None
     footer_icon_url: Optional[str] = None
     timestamp: Optional[str] = None
@@ -56,7 +57,7 @@ class DiscordMessageRequest(BaseModel):
 
 class DiscordMessageResponse(BaseModel):
     """Response model for Discord message operations."""
-    id: int
+    id: UUID
     guild_id: int
     channel_id: int
     message_id: int
@@ -67,6 +68,7 @@ class DiscordMessageResponse(BaseModel):
 
     class Config:
         from_attributes = True
+        json_encoders = { UUID: lambda u: str(u) }
 
 # Initialize repository
 discord_message_repo = DiscordMessageRepository()
@@ -231,7 +233,7 @@ async def update_discord_message(
 )
 async def get_discord_message(
     request: Request,
-    message_record_id: int
+    message_record_id: UUID,   # <- switched from int to UUID
 ) -> DiscordMessageResponse:
     flogger.info(f"Fetch request for record id={message_record_id}")
     try:
@@ -310,7 +312,7 @@ async def list_discord_messages_by_type(
 )
 async def delete_discord_message(
     request: Request,
-    message_record_id: int
+    message_record_id: UUID,   # <- switched from int to UUID
 ) -> dict:
     flogger.info(f"Delete request for record id={message_record_id}")
     try:

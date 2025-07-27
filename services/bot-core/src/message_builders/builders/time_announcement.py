@@ -43,7 +43,7 @@ class TimeAnnouncementBuilder(MessagePayloadBuilder):
         }
         logger.info(f"build_payload generated payload: {payload}")
         return payload
-    
+     
     def extract_data(self, payload: str) -> Optional[Dict[str, Any]]:
         logger.debug(f"extract_data called with payload={payload}")
         try:

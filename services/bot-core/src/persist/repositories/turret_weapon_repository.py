@@ -79,4 +79,6 @@ class TurretWeaponRepository(GenericRepository[TurretWeapon]):
             )
             db.add(obj)
 
+        await db.commit()
+        await db.refresh(obj)
         return obj

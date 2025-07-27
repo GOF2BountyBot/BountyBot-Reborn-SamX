@@ -61,6 +61,8 @@ class DiscordMessageRepository(GenericRepository[DiscordMessage]):
                 message_type=raw.get("message_type", "general")
             )
             db.add(message)
+            await db.commit()
+            await db.refresh(message)
             flogger.debug("Created new Discord message record")
             return message
     
@@ -188,5 +190,6 @@ class DiscordMessageRepository(GenericRepository[DiscordMessage]):
         message = await self.get_by_composite_key(db, guild_id, channel_id, message_id)
         if message:
             await db.delete(message)
+            await db.commit()
             return True
         return False

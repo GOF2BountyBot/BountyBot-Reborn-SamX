@@ -78,5 +78,7 @@ class SecondaryWeaponRepository(GenericRepository[SecondaryWeapon]):
                 extra_atts=extra,
             )
             db.add(obj)
-
+            
+        await db.commit()
+        await db.refresh(obj)
         return obj

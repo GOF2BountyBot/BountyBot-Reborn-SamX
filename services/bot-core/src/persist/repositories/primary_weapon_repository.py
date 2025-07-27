@@ -77,4 +77,6 @@ class PrimaryWeaponRepository(GenericRepository[PrimaryWeapon]):
             )
             db.add(obj)
 
+        await db.commit()
+        await db.refresh(obj)
         return obj

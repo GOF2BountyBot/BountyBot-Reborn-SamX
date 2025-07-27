@@ -125,7 +125,7 @@ async def load_data(category: str, data_root: str | Path = None) -> list[str]:
                 results.append(msg)
             except Exception as e:
                 err = f"Error upserting {json_path.name}: {e}"
-                logger.exception(err)
+                flogger.exception(err)
                 results.append(err)
 
     flogger.info(f"Completed load_data for '{category}', processed {len(results)} items")

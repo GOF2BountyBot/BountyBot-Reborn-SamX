@@ -66,4 +66,6 @@ class ModuleRepository(GenericRepository[Module]):
             )
             db.add(obj)
 
+        await db.commit()
+        await db.refresh(obj)
         return obj

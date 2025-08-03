@@ -5,7 +5,7 @@ This module defines request/response models for Discord channel and category
 operations including creation, updates, and management.
 """
 
-from typing import Optional, List
+from typing import Optional, List, Dict, Any
 from pydantic import BaseModel, Field
 from .base_schemas import (
     BaseListResponse, BaseDetailResponse, 

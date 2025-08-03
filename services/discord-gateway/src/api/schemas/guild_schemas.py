@@ -5,8 +5,8 @@ This module defines request/response models for Discord guild operations
 including guild listings, details, and member management.
 """
 
-from typing import List
-from pydantic import Field
+from typing import Optional, List, Dict, Any
+from pydantic import BaseModel, Field
 from .base_schemas import BaseListResponse, BaseDetailResponse
 
 class GuildSummary(BaseModel):

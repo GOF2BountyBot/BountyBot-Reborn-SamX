@@ -5,7 +5,7 @@ This module defines request/response models for Discord permission operations
 including permission overwrites and permission reference data.
 """
 
-from typing import List, Dict, Any
+from typing import Optional, List, Dict, Any
 from pydantic import BaseModel, Field
 from .base_schemas import BaseListResponse, BaseDetailResponse, BaseUpdateRequest
 

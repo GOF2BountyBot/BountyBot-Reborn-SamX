@@ -5,7 +5,7 @@ This module defines request/response models for Discord message operations
 including create, update, and delete with proper embed payload structures.
 """
 
-from typing import Optional, Dict, Any, List
+from typing import Optional, List, Dict, Any
 from pydantic import BaseModel, Field
 from datetime import datetime
 

@@ -81,7 +81,7 @@ class GuildConverter:
                 mfa_level=guild.mfa_level.name,
                 premium_tier=guild.premium_tier,
                 premium_subscription_count=guild.premium_subscription_count,
-                preferred_locale=guild.preferred_locale,
+                preferred_locale=guild.preferred_locale.value if guild.preferred_locale else None,
                 nsfw_level=guild.nsfw_level.name if hasattr(guild, 'nsfw_level') else None
             )
             flogger.trace(f" created detail: features={len(detail.features)}, tier={detail.premium_tier}")

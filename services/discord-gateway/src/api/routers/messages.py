@@ -18,6 +18,7 @@ from api.schemas.message_schemas import (
     MessageResponse
 )
 from utils.embed_converter import EmbedConverter
+from utils.discord_helpers import resolve_bot, handle_discord_exception
 
 flogger = bblogger.get_logger("gateway-message-router")
 
@@ -31,35 +32,6 @@ router = APIRouter(
         503: {"description": "Service unavailable - bot not ready"}
     }
 )
-
-
-async def _resolve_bot(request: Request) -> commands.Bot:
-    """
-    Grab the running bot from FastAPI state and wait for readiness.
-    """
-    bot = getattr(request.app.state, "bot", None)
-    flogger.debug(f"_resolve_bot: app.state.bot → {bot!r} (type={type(bot)})")
-    if not isinstance(bot, commands.Bot):
-        flogger.error("app.state.bot is not a commands.Bot instance")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Bot instance invalid"
-        )
-
-    if not bot.is_ready():
-        flogger.info("Bot not ready, awaiting wait_until_ready()")
-        try:
-            await asyncio.wait_for(bot.wait_until_ready(), timeout=15)
-        except asyncio.TimeoutError:
-            flogger.error("Timed out waiting for Discord bot to become ready")
-            raise HTTPException(
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail="Discord bot is not ready"
-            )
-
-    flogger.debug("Bot instance resolved and ready")
-    return bot
-
 
 @router.post(
     "",
@@ -76,7 +48,7 @@ async def create_message(
     flogger.debug(f"Request payload: {payload.dict()}")
 
     try:
-        bot = await _resolve_bot(request)
+        bot = await resolve_bot(request)
 
         # Resolve channel
         channel = bot.get_channel(payload.channel_id)
@@ -158,7 +130,7 @@ async def update_message(
     flogger.debug(f"Request payload: {payload.dict()}")
 
     try:
-        bot = await _resolve_bot(request)
+        bot = await resolve_bot(request)
 
         # Resolve channel
         channel = bot.get_channel(payload.channel_id)
@@ -244,7 +216,7 @@ async def delete_message(
     flogger.debug(f"Request payload: {payload.dict()}")
 
     try:
-        bot = await _resolve_bot(request)
+        bot = await resolve_bot(request)
 
         # Resolve channel
         channel = bot.get_channel(payload.channel_id)
@@ -324,7 +296,7 @@ async def get_message(
     flogger.info(f"get_message called: guild={guild_id}, channel={channel_id}, message={message_id}")
 
     try:
-        bot = await _resolve_bot(request)
+        bot = await resolve_bot(request)
 
         # Resolve channel
         channel = bot.get_channel(channel_id)

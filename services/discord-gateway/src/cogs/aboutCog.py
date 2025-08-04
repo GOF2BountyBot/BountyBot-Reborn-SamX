@@ -96,11 +96,12 @@ class AboutCog(commands.Cog):
             if current.lower() in name.lower():
                 choices.append(app_commands.Choice(name=name, value=name))
 
-                # Also check aliases
-                for alias in obj.get('aliases', []):
-                    if current.lower() in alias.lower() and len(choices) < 25:
-                        # Display alias without emoji
-                        choices.append(app_commands.Choice(name=f"{alias} (alias)", value=alias))
+                ## Nixing aliases as not really needed with auto-complete drop-downs...
+                ## Also check aliases
+                #for alias in obj.get('aliases', []):
+                #    if current.lower() in alias.lower() and len(choices) < 25:
+                #        # Display alias without emoji
+                #        choices.append(app_commands.Choice(name=f"{alias} (alias)", value=alias))
 
         return choices[:25]
 

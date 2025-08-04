@@ -294,15 +294,16 @@ class UserConverter:
         flogger.debug(f"member_to_payload called for member: {member.display_name} ({member.id})")
         try:
             user_payload = UserConverter.user_to_payload(member)
-            
+            voice_state = getattr(member, "voice", None)
+
             payload = Member(
                 user=user_payload,
                 nick=member.nick,
                 roles=[role.id for role in member.roles],
                 joined_at=member.joined_at.isoformat() if member.joined_at else None,
                 premium_since=member.premium_since.isoformat() if member.premium_since else None,
-                deaf=member.deaf,
-                mute=member.mute,
+                deaf=voice_state.deaf if voice_state else False,
+                mute=voice_state.mute if voice_state else False,
                 pending=member.pending,
                 permissions=member.guild_permissions.value
             )

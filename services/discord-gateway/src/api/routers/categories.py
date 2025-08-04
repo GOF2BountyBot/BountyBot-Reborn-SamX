@@ -311,9 +311,11 @@ async def create_category(
         flogger.trace("Creating category channel")
         category = await guild.create_category_channel(
             name=category_data.name,
-            position=category_data.position,
-            nsfw=category_data.nsfw
+            position=category_data.position
         )
+        if category_data.nsfw:
+            await category.edit(nsfw=category_data.nsfw)
+
         flogger.debug(f"Category created: {category.name} (ID: {category.id})")
         
         category_detail = ChannelConverter.category_to_detail(category)

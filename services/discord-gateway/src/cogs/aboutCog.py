@@ -43,7 +43,10 @@ class AboutCog(commands.Cog):
             # Load objects for each category
             for category in self._categories:
                 try:
-                    resp = requests.get(f"{api_base}/about/categories/{category}/objects", timeout=10)
+                    resp = requests.get(
+                        f"{api_base}/about/categories/{category}/objects",
+                        timeout=10
+                    )
                     resp.raise_for_status()
                     objects = resp.json()
                     self._objects_by_category[category] = objects
@@ -52,8 +55,10 @@ class AboutCog(commands.Cog):
                     flogger.warning(f"Failed to preload objects for category {category}: {e}")
                     self._objects_by_category[category] = []
 
-            flogger.info(f"Preload complete: {len(self._categories)} categories, "
-                       f"{sum(len(objs) for objs in self._objects_by_category.values())} total objects")
+            flogger.info(
+                f"Preload complete: {len(self._categories)} categories, "
+                f"{sum(len(objs) for objs in self._objects_by_category.values())} total objects"
+            )
 
         except Exception as e:
             flogger.warning(f"Failed to preload about data: {e}")
@@ -81,27 +86,17 @@ class AboutCog(commands.Cog):
     ) -> List[app_commands.Choice[str]]:
         """Autocomplete for object selection based on selected category"""
         # Get the category from the interaction
-        category = None
-        if hasattr(interaction.namespace, 'category'):
-            category = interaction.namespace.category
-
+        category = getattr(interaction.namespace, 'category', None)
         if not category or category not in self._objects_by_category:
             return []
 
         objects = self._objects_by_category[category]
-        choices = []
+        choices: List[app_commands.Choice[str]] = []
 
         for obj in objects:
             name = obj.get('name', '')
             if current.lower() in name.lower():
                 choices.append(app_commands.Choice(name=name, value=name))
-
-                ## Nixing aliases as not really needed with auto-complete drop-downs...
-                ## Also check aliases
-                #for alias in obj.get('aliases', []):
-                #    if current.lower() in alias.lower() and len(choices) < 25:
-                #        # Display alias without emoji
-                #        choices.append(app_commands.Choice(name=f"{alias} (alias)", value=alias))
 
         return choices[:25]
 
@@ -122,7 +117,7 @@ class AboutCog(commands.Cog):
     ):
         """Main about command that displays detailed object information"""
         await interaction.response.defer(thinking=True)
-        
+
         # ── Resolve alias to canonical name if needed ──────────────────────────────
         resolved_name = name
         if category in self._objects_by_category:
@@ -138,24 +133,23 @@ class AboutCog(commands.Cog):
 
             # Create rich embed with object information
             embed = await self._create_object_embed(obj_data)
-
             await interaction.followup.send(embed=embed)
 
         except requests.HTTPError as e:
             if e.response.status_code == 404:
                 await interaction.followup.send(
-                    f"❌ Object '{name}' not found in category '{category}'.", 
+                    f"❌ Object '{name}' not found in category '{category}'.",
                     ephemeral=True
                 )
             else:
                 await interaction.followup.send(
-                    f"❌ API Error: {e}", 
+                    f"❌ API Error: {e}",
                     ephemeral=True
                 )
         except Exception as e:
             flogger.error(f"Error in about command: {e}")
             await interaction.followup.send(
-                f"⚠️ An error occurred while fetching object information.", 
+                f"⚠️ An error occurred while fetching object information.",
                 ephemeral=True
             )
 
@@ -172,7 +166,7 @@ class AboutCog(commands.Cog):
             'turret_weapon': discord.Color.purple(),
             'ship': discord.Color.green(),
             'criminal': discord.Color.dark_red(),
-            'system':   discord.Color.gold(),
+            'system': discord.Color.gold(),
         }
         color = color_map.get(category, discord.Color.default())
 
@@ -186,6 +180,18 @@ class AboutCog(commands.Cog):
             description=f"**Category:** {category.replace('_', ' ').title()}",
             color=color
         )
+
+        # ← Generic thumbnail: check icon URL resolves before applying
+        icon_url = obj_data.get('icon')
+        if icon_url:
+            try:
+                head_resp = requests.head(icon_url, timeout=5)
+                if head_resp.status_code == 200:
+                    embed.set_thumbnail(url=icon_url)
+                else:
+                    flogger.debug(f"Icon URL returned {head_resp.status_code}: {icon_url}")
+            except Exception as e:
+                flogger.debug(f"Failed to validate icon URL {icon_url}: {e}")
 
         # Add basic information
         if obj_data.get('type'):
@@ -212,20 +218,20 @@ class AboutCog(commands.Cog):
                 embed.add_field(name="Armour", value=str(obj_data['armour']), inline=True)
             if obj_data.get('cargo') is not None:
                 embed.add_field(name="Cargo", value=f"{obj_data['cargo']} t", inline=True)
-    
+
             # Performance
             if obj_data.get('handling') is not None:
                 embed.add_field(name="Handling", value=str(obj_data['handling']), inline=True)
             if obj_data.get('shop_spawn_rate') is not None:
                 rate = obj_data['shop_spawn_rate']
                 embed.add_field(name="Shop Spawn Rate", value=f"{rate:.2f}", inline=True)
-    
+
             # Loadout limits
             embed.add_field(name="Max Modules",    value=str(obj_data.get('max_modules', '–')), inline=True)
             embed.add_field(name="Max Primaries",  value=str(obj_data.get('max_primaries', '–')), inline=True)
             embed.add_field(name="Max Secondaries",value=str(obj_data.get('max_secondaries','–')), inline=True)
             embed.add_field(name="Max Turrets",    value=str(obj_data.get('max_turrets', '–')), inline=True)
-    
+
             # Extras
             if obj_data.get('manufacturer'):
                 embed.add_field(name="Manufacturer", value=obj_data['manufacturer'], inline=True)
@@ -239,7 +245,7 @@ class AboutCog(commands.Cog):
             # Add coordinates field
             coords = obj_data.get('coordinates')
             if coords:
-                embed.add_field(name="Coordinates", value=str(", ".join(str(c) for c in coords)), inline=True)
+                embed.add_field(name="Coordinates", value=", ".join(str(c) for c in coords), inline=True)
             # Add faction field
             if obj_data.get('faction'):
                 embed.add_field(name="Faction", value=str(obj_data['faction']), inline=True)
@@ -248,11 +254,6 @@ class AboutCog(commands.Cog):
             # Add faction field
             if obj_data.get('faction'):
                 embed.add_field(name="Faction", value=str(obj_data['faction']), inline=True)
-            # Set embed image if icon url present
-            if obj_data.get('icon'):
-                embed.set_thumbnail(url=obj_data['icon'])
-
-
 
         # Add aliases if available
         if obj_data.get('aliases'):
@@ -303,7 +304,7 @@ class AboutCog(commands.Cog):
         try:
             if category not in self._objects_by_category:
                 await interaction.followup.send(
-                    f"❌ Category '{category}' not found.", 
+                    f"❌ Category '{category}' not found.",
                     ephemeral=True
                 )
                 return
@@ -312,7 +313,7 @@ class AboutCog(commands.Cog):
 
             if not objects:
                 await interaction.followup.send(
-                    f"📭 No objects found in category '{category}'.", 
+                    f"📭 No objects found in category '{category}'.",
                     ephemeral=True
                 )
                 return
@@ -348,7 +349,7 @@ class AboutCog(commands.Cog):
         except Exception as e:
             flogger.error(f"Error in list_category command: {e}")
             await interaction.followup.send(
-                f"⚠️ An error occurred while listing objects.", 
+                f"⚠️ An error occurred while listing objects.",
                 ephemeral=True
             )
 

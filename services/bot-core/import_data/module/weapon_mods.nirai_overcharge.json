@@ -1,14 +1,14 @@
 {
-    "aliases": [
-        "Overcharge"
-    ],
-    "builtIn": false,
-    "dpsMultiplier": 1.1,
-    "emoji": "<:niraiovercharge:723707184478945302>",
-    "icon": "https://cdn.discordapp.com/attachments/700683544103747594/723475785935224952/nirai_overcharge.png",
-    "name": "Nirai Overcharge",
-    "techLevel": 5,
-    "type": "PrimaryWeaponModModule",
-    "value": 29224,
-    "wiki": "https://galaxyonfire.fandom.com/wiki/Nirai_Overcharge"
+  "aliases": [
+    "Overcharge"
+  ],
+  "builtIn": false,
+  "dpsMultiplier": 1.1,
+  "emoji": "<:niraiovercharge:723707184478945302>",
+  "icon": "https://i.postimg.cc/Mpywv5n2/nirai-overcharge.png",
+  "name": "Nirai Overcharge",
+  "techLevel": 5,
+  "type": "PrimaryWeaponModModule",
+  "value": 29224,
+  "wiki": "https://galaxyonfire.fandom.com/wiki/Nirai_Overcharge"
 }

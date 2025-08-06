@@ -1,15 +1,15 @@
 {
-    "aliases":  [
-        "Sheesha"
-                ],
-    "builtIn":  false,
-    "damage":  60,
-    "icon":  "",
-    "loading speed":  3000,
-    "name":  "Shesha",
-    "value":  351,
-    "techLevel":  9,
-    "wiki":  "https://galaxyonfire.fandom.com/wiki/Shesha",
-    "type":  "SecondaryWeapon",
-    "subtype":  "cluster_missiles"
+  "aliases": [
+    "Sheesha"
+  ],
+  "builtIn": false,
+  "damage": 60,
+  "icon": "https://i.postimg.cc/WzVw8221/shesha.png",
+  "loading speed": 3000,
+  "name": "Shesha",
+  "value": 351,
+  "techLevel": 9,
+  "wiki": "https://galaxyonfire.fandom.com/wiki/Shesha",
+  "type": "SecondaryWeapon",
+  "subtype": "cluster_missiles"
 }

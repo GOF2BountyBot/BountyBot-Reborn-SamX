@@ -1,22 +1,22 @@
 {
-    "aliases":  [
-                    "M6 A1",
-                    "Wolf",
-                    "M6 Wolf",
-                    "A1 Wolf",
-                    "M6 A1 Wolf",
-                    "\"Wolf\"",
-                    "M6 \"Wolf\"",
-                    "A1 \"Wolf\""
-                ],
-    "builtIn":  false,
-    "dps":  22.5,
-    "emoji":  "<:m6a1wolf:723709564167651348>",
-    "icon":  "https://cdn.discordapp.com/attachments/700683544103747594/723486903952998430/m6_a1_wolf.png",
-    "name":  "M6 A1 \"Wolf\"",
-    "techLevel":  7,
-    "value":  38838,
-    "wiki":  "https://galaxyonfire.fandom.com/wiki/M6_A1_\"Wolf\"",
-    "type":  "PrimaryWeapon",
-    "subtype":  "beam_lasers"
+  "aliases": [
+    "M6 A1",
+    "Wolf",
+    "M6 Wolf",
+    "A1 Wolf",
+    "M6 A1 Wolf",
+    "\"Wolf\"",
+    "M6 \"Wolf\"",
+    "A1 \"Wolf\""
+  ],
+  "builtIn": false,
+  "dps": 22.5,
+  "emoji": "<:m6a1wolf:723709564167651348>",
+  "icon": "https://i.postimg.cc/brT67GJ5/m6-a1-wolf.png",
+  "name": "M6 A1 \"Wolf\"",
+  "techLevel": 7,
+  "value": 38838,
+  "wiki": "https://galaxyonfire.fandom.com/wiki/M6_A1_\"Wolf\"",
+  "type": "PrimaryWeapon",
+  "subtype": "beam_lasers"
 }

@@ -1,14 +1,14 @@
 {
-    "aliases": [
-        "SIS"
-    ],
-    "builtIn": false,
-    "emoji": "<:phoenixsis:723706755216834641>",
-    "icon": "https://cdn.discordapp.com/attachments/700683544103747594/723481950744084540/phoenix_sis.png",
-    "name": "Phoenix SIS",
-    "plasmaConsumption": 30,
-    "techLevel": 9,
-    "type": "ShieldInjectorModule",
-    "value": 535304,
-    "wiki": "https://galaxyonfire.fandom.com/wiki/Phoenix_SIS"
+  "aliases": [
+    "SIS"
+  ],
+  "builtIn": false,
+  "emoji": "<:phoenixsis:723706755216834641>",
+  "icon": "https://i.postimg.cc/d1Grfz1N/phoenix-sis.png",
+  "name": "Phoenix SIS",
+  "plasmaConsumption": 30,
+  "techLevel": 9,
+  "type": "ShieldInjectorModule",
+  "value": 535304,
+  "wiki": "https://galaxyonfire.fandom.com/wiki/Phoenix_SIS"
 }

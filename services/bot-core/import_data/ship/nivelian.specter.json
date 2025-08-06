@@ -1,51 +1,59 @@
 {
-    "aliases":  [
-                    "specter"
-                ],
-    "armour":  800,
-    "builtIn":  false,
-    "cargo":  65,
-    "compatibleSkins":  [
-                            "bloodlust",
-                            "camo",
-                            "carbon fibre",
-                            "abyss",
-                            "candy",
-                            "cargo",
-                            "ferrari",
-                            "lava",
-                            "lilac",
-                            "mint",
-                            "onyx",
-                            "slate",
-                            "neapolitan"
-                        ],
-    "emoji":  "<:specter:723705339563868160>",
-    "handling":  138,
-    "icon":  "https://cdn.discordapp.com/attachments/700683544103747594/720785904540581989/specter.png",
-    "manufacturer":  "nivelian",
-    "maxModules":  16,
-    "maxPrimaries":  4,
-    "maxSecondaries":  2,
-    "maxTurrets":  0,
-    "model":  "/app/game-objects/Nivelian/Specter.bbship/Specter_Full.obj",
-    "builtin_modules":  [
-                    "U'tool"
-                ],
-    "name":  "Specter",
-    "saveDue":  false,
-    "shopSpawnRate":  9.585,
-    "skinnable":  true,
-    "textureRegions":  1,
-    "value":  30000000,
-    "wiki":  "https://galaxyonfire.fandom.com/wiki/Specter",
-    "assets":  [
-                   "/app/game-objects/Nivelian/Specter.bbship/mask1.jpg",
-                   "/app/game-objects/Nivelian/Specter.bbship/skinBase.png",
-                   "/app/game-objects/Nivelian/Specter.bbship/sn_ship_044_elite_nivelian_diffuse.bmp",
-                   "/app/game-objects/Nivelian/Specter.bbship/sn_ship_044_elite_nivelian_normal_specular.bmp",
-                   "/app/game-objects/Nivelian/Specter.bbship/Specter_Full.mtl",
-                   "/app/game-objects/Nivelian/Specter.bbship/Specter_Full.obj"
-               ],
-    "normSpec":  "/app/game-objects/Nivelian/Specter.bbship/sn_ship_044_elite_nivelian_normal_specular.bmp"
+  "aliases": [
+    "specter"
+  ],
+  "armour": 800,
+  "builtIn": false,
+  "cargo": 65,
+  "compatibleSkins": {
+    "urban-camo": "https://i.postimg.cc/rpygXyW0/specter-urban-camo.png",
+    "racing-stripes": "https://i.postimg.cc/wMRm8Z0s/specter-racing-stripes.png",
+    "ferrari": "https://i.postimg.cc/CM2GPHmq/specter-ferrari.png",
+    "onyx": "https://i.postimg.cc/W3HkyT6v/specter-onyx.png",
+    "lilac": "https://i.postimg.cc/rpqx0hFv/specter-lilac.png",
+    "cargo": "https://i.postimg.cc/vTC54bcz/specter-cargo.png",
+    "festive": "https://i.postimg.cc/qMC89h5Z/specter-festive.png",
+    "neopolitan": "https://i.postimg.cc/0QQSZbSn/specter-neopolitan.png",
+    "bloodlust": "https://i.postimg.cc/yNThvMb1/specter-bloodlust.png",
+    "soul-marble": "https://i.postimg.cc/28v0nKr6/specter-soul-marble.png",
+    "slate": "https://i.postimg.cc/bY46DhXW/specter-slate.png",
+    "rainbow": "https://i.postimg.cc/vDR6QhN2/specter-rainbow.png",
+    "tex": "https://i.postimg.cc/W1wSHqDc/specter-tex.png",
+    "lava": "https://i.postimg.cc/y84FB6q6/specter-lava.png",
+    "camo": "https://i.postimg.cc/hjPLw2k9/specter-camo.png",
+    "carbon-fibre": "https://i.postimg.cc/prmDVpXr/specter-carbon-fibre.png",
+    "space": "https://i.postimg.cc/dVY46jV9/specter-space.png",
+    "rusted": "https://i.postimg.cc/bYZCwv51/specter-rusted.png",
+    "mint": "https://i.postimg.cc/1zM6pp84/specter-mint.png",
+    "leopard-print": "https://i.postimg.cc/9Qdyf3Vd/specter-leopard-print.png",
+    "candy": "https://i.postimg.cc/9M8djG2s/specter-candy.png"
+  },
+  "emoji": "<:specter:723705339563868160>",
+  "handling": 138,
+  "icon": "https://i.postimg.cc/KzWw931D/specter.png",
+  "manufacturer": "nivelian",
+  "maxModules": 16,
+  "maxPrimaries": 4,
+  "maxSecondaries": 2,
+  "maxTurrets": 0,
+  "model": "/app/game-objects/Nivelian/Specter.bbship/Specter_Full.obj",
+  "builtin_modules": [
+    "U'tool"
+  ],
+  "name": "Specter",
+  "saveDue": false,
+  "shopSpawnRate": 9.585,
+  "skinnable": true,
+  "textureRegions": 1,
+  "value": 30000000,
+  "wiki": "https://galaxyonfire.fandom.com/wiki/Specter",
+  "assets": [
+    "/app/game-objects/Nivelian/Specter.bbship/mask1.jpg",
+    "/app/game-objects/Nivelian/Specter.bbship/skinBase.png",
+    "/app/game-objects/Nivelian/Specter.bbship/sn_ship_044_elite_nivelian_diffuse.bmp",
+    "/app/game-objects/Nivelian/Specter.bbship/sn_ship_044_elite_nivelian_normal_specular.bmp",
+    "/app/game-objects/Nivelian/Specter.bbship/Specter_Full.mtl",
+    "/app/game-objects/Nivelian/Specter.bbship/Specter_Full.obj"
+  ],
+  "normSpec": "/app/game-objects/Nivelian/Specter.bbship/sn_ship_044_elite_nivelian_normal_specular.bmp"
 }

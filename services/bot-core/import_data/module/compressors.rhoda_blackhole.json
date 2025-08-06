@@ -1,16 +1,16 @@
 {
-    "aliases": [
-        "Blackhole",
-        "Black Hole",
-        "Rhoda Black Hole"
-    ],
-    "builtIn": false,
-    "cargoMultiplier": 2,
-    "emoji": "<:rhodablackhole:723706541160792184>",
-    "icon": "https://cdn.discordapp.com/attachments/700683544103747594/723474756875190342/rhoda_blackhole.png",
-    "name": "Rhoda Blackhole",
-    "techLevel": 9,
-    "type": "CompressorModule",
-    "value": 66305,
-    "wiki": "https://galaxyonfire.fandom.com/wiki/Rhoda_Blackhole"
+  "aliases": [
+    "Blackhole",
+    "Black Hole",
+    "Rhoda Black Hole"
+  ],
+  "builtIn": false,
+  "cargoMultiplier": 2,
+  "emoji": "<:rhodablackhole:723706541160792184>",
+  "icon": "https://i.postimg.cc/RV2C3qGf/rhoda-blackhole.png",
+  "name": "Rhoda Blackhole",
+  "techLevel": 9,
+  "type": "CompressorModule",
+  "value": 66305,
+  "wiki": "https://galaxyonfire.fandom.com/wiki/Rhoda_Blackhole"
 }

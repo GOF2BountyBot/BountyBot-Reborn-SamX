@@ -1,14 +1,14 @@
 {
-    "aliases": [
-        "Vossk Signature"
-    ],
-    "builtIn": false,
-    "emoji": "<:signaturevossk:723706653488185404>",
-    "icon": "https://cdn.discordapp.com/attachments/700683544103747594/723481857051590657/signature_vossk.png",
-    "manufacturer": "vossk",
-    "name": "Signature Vossk",
-    "techLevel": 8,
-    "type": "SignatureModule",
-    "value": 7500,
-    "wiki": "https://galaxyonfire.fandom.com/wiki/Signature"
+  "aliases": [
+    "Vossk Signature"
+  ],
+  "builtIn": false,
+  "emoji": "<:signaturevossk:723706653488185404>",
+  "icon": "https://i.postimg.cc/4xBYYX7T/signature-vossk.png",
+  "manufacturer": "vossk",
+  "name": "Signature Vossk",
+  "techLevel": 8,
+  "type": "SignatureModule",
+  "value": 7500,
+  "wiki": "https://galaxyonfire.fandom.com/wiki/Signature"
 }

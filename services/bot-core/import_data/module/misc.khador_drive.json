@@ -1,13 +1,13 @@
 {
-    "aliases": [
-        "Khador"
-    ],
-    "builtIn": false,
-    "emoji": "<:khadordrive:723706582075965511>",
-    "icon": "https://cdn.discordapp.com/attachments/700683544103747594/723475113751871548/khador_drive.png",
-    "name": "Khador Drive",
-    "techLevel": 10,
-    "type": "JumpDriveModule",
-    "value": 310037,
-    "wiki": "https://galaxyonfire.fandom.com/wiki/Khador_Drive"
+  "aliases": [
+    "Khador"
+  ],
+  "builtIn": false,
+  "emoji": "<:khadordrive:723706582075965511>",
+  "icon": "https://i.postimg.cc/76RnvgMb/khador-drive.png",
+  "name": "Khador Drive",
+  "techLevel": 10,
+  "type": "JumpDriveModule",
+  "value": 310037,
+  "wiki": "https://galaxyonfire.fandom.com/wiki/Khador_Drive"
 }

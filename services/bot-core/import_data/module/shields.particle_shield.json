@@ -1,14 +1,14 @@
 {
-    "aliases": [
-        "Particle"
-    ],
-    "builtIn": false,
-    "emoji": "<:particleshield:723706780441640982>",
-    "icon": "https://cdn.discordapp.com/attachments/700683544103747594/723475438919483432/particle_shield.png",
-    "name": "Particle Shield",
-    "shield": 380,
-    "techLevel": 10,
-    "type": "ShieldModule",
-    "value": 189194,
-    "wiki": "https://galaxyonfire.fandom.com/wiki/Particle_Shield"
+  "aliases": [
+    "Particle"
+  ],
+  "builtIn": false,
+  "emoji": "<:particleshield:723706780441640982>",
+  "icon": "https://i.postimg.cc/V6tpVLXy/particle-shield.png",
+  "name": "Particle Shield",
+  "shield": 380,
+  "techLevel": 10,
+  "type": "ShieldModule",
+  "value": 189194,
+  "wiki": "https://galaxyonfire.fandom.com/wiki/Particle_Shield"
 }

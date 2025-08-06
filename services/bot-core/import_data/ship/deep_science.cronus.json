@@ -1,29 +1,27 @@
 {
-    "aliases":  [
-                    "chronus",
-                    "kronus"
-                ],
-    "armour":  190,
-    "builtIn":  false,
-    "cargo":  95,
-    "compatibleSkins":  [
-
-                        ],
-    "emoji":  "<:cronus:723705945074434200>",
-    "handling":  120,
-    "icon":  "https://cdn.discordapp.com/attachments/700683544103747594/720693576509554818/cronus.png",
-    "manufacturer":  "deep science",
-    "maxModules":  7,
-    "maxPrimaries":  2,
-    "maxSecondaries":  2,
-    "maxTurrets":  0,
-    "model":  "/app/game-objects/Deep Science/Cronus.bbship/META.json",
-    "name":  "Cronus",
-    "normSpec":  "",
-    "saveDue":  false,
-    "skinnable":  false,
-    "textureRegions":  -1,
-    "value":  1200000,
-    "wiki":  "https://galaxyonfire.fandom.com/wiki/Cronus",
-    "assets":  null
+  "aliases": [
+    "chronus",
+    "kronus"
+  ],
+  "armour": 190,
+  "builtIn": false,
+  "cargo": 95,
+  "compatibleSkins": [],
+  "emoji": "<:cronus:723705945074434200>",
+  "handling": 120,
+  "icon": "https://i.postimg.cc/v8LZNQYw/cronus.png",
+  "manufacturer": "deep science",
+  "maxModules": 7,
+  "maxPrimaries": 2,
+  "maxSecondaries": 2,
+  "maxTurrets": 0,
+  "model": "/app/game-objects/Deep Science/Cronus.bbship/META.json",
+  "name": "Cronus",
+  "normSpec": "",
+  "saveDue": false,
+  "skinnable": false,
+  "textureRegions": -1,
+  "value": 1200000,
+  "wiki": "https://galaxyonfire.fandom.com/wiki/Cronus",
+  "assets": null
 }

@@ -1,18 +1,18 @@
 {
-    "aliases":  [
-                    "D2A2",
-                    "D2",
-                    "Hammerhead D2"
-                ],
-    "builtIn":  false,
-    "dps":  35.71,
-    "emoji":  "<:hammerheadd2a2:723707422136598568>",
-    "icon":  "https://cdn.discordapp.com/attachments/700683544103747594/723476545703772210/hammerhead_d2a2.png",
-    "name":  "Hammerhead D2A2",
-    "techLevel":  6,
-    "value":  77097,
-    "automatic":  false,
-    "wiki":  "https://galaxyonfire.fandom.com/wiki/Hammerhead_D2A2",
-    "type":  "TurretWeapon",
-    "subtype":  "manual"
+  "aliases": [
+    "D2A2",
+    "D2",
+    "Hammerhead D2"
+  ],
+  "builtIn": false,
+  "dps": 35.71,
+  "emoji": "<:hammerheadd2a2:723707422136598568>",
+  "icon": "https://i.postimg.cc/K8KFxF2z/hammerhead-d2a2.png",
+  "name": "Hammerhead D2A2",
+  "techLevel": 6,
+  "value": 77097,
+  "automatic": false,
+  "wiki": "https://galaxyonfire.fandom.com/wiki/Hammerhead_D2A2",
+  "type": "TurretWeapon",
+  "subtype": "manual"
 }

@@ -1,24 +1,24 @@
 {
-    "aliases":  [
-                    "Ion Lambda MK 2",
-                    "Lambda MK2",
-                    "Lambda MK 2",
-                    "Ion MK2",
-                    "Ion MK 2",
-                    "Ion Lambda MK II",
-                    "Lambda MKII",
-                    "Lambda MK II",
-                    "Ion MKII",
-                    "Ion MK II",
-                    "Ion Lambda MKII"
-                ],
-    "builtIn":  false,
-    "damage":  0,
-    "icon":  "",
-    "loading speed":  0,
-    "name":  "Ion Lambda MK2",
-    "value":  0,
-    "wiki":  "",
-    "type":  "SecondaryWeapon",
-    "subtype":  "ionizing_missiles"
+  "aliases": [
+    "Ion Lambda MK 2",
+    "Lambda MK2",
+    "Lambda MK 2",
+    "Ion MK2",
+    "Ion MK 2",
+    "Ion Lambda MK II",
+    "Lambda MKII",
+    "Lambda MK II",
+    "Ion MKII",
+    "Ion MK II",
+    "Ion Lambda MKII"
+  ],
+  "builtIn": false,
+  "damage": 0,
+  "icon": "https://i.postimg.cc/RhvwfXR3/ion-lambda-mk2.png",
+  "loading speed": 0,
+  "name": "Ion Lambda MK2",
+  "value": 0,
+  "wiki": "",
+  "type": "SecondaryWeapon",
+  "subtype": "ionizing_missiles"
 }

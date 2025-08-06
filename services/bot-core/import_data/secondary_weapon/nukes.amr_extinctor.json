@@ -1,14 +1,14 @@
 {
-    "aliases":  [
-                    "Extinctor"
-                ],
-    "builtIn":  false,
-    "damage":  0,
-    "icon":  "",
-    "loading speed":  0,
-    "name":  "AMR Extinctor",
-    "value":  0,
-    "wiki":  "",
-    "type":  "SecondaryWeapon",
-    "subtype":  "nukes"
+  "aliases": [
+    "Extinctor"
+  ],
+  "builtIn": false,
+  "damage": 0,
+  "icon": "https://i.postimg.cc/4dHXPgWq/amr-extinctor.png",
+  "loading speed": 0,
+  "name": "AMR Extinctor",
+  "value": 0,
+  "wiki": "",
+  "type": "SecondaryWeapon",
+  "subtype": "nukes"
 }

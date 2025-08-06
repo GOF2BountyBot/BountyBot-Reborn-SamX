@@ -1,15 +1,15 @@
 {
-    "aliases": [
-        "Beamshield 2",
-        "Beamshield"
-    ],
-    "builtIn": false,
-    "emoji": "<:beamshield:723706780202303676>",
-    "icon": "https://cdn.discordapp.com/attachments/700683544103747594/723475410679234650/beamshield_ii.png",
-    "name": "Beamshield II",
-    "shield": 150,
-    "techLevel": 7,
-    "type": "ShieldModule",
-    "value": 39331,
-    "wiki": "https://galaxyonfire.fandom.com/wiki/Beamshield_II"
+  "aliases": [
+    "Beamshield 2",
+    "Beamshield"
+  ],
+  "builtIn": false,
+  "emoji": "<:beamshield:723706780202303676>",
+  "icon": "https://i.postimg.cc/gkKFpJQm/beamshield-ii.png",
+  "name": "Beamshield II",
+  "shield": 150,
+  "techLevel": 7,
+  "type": "ShieldModule",
+  "value": 39331,
+  "wiki": "https://galaxyonfire.fandom.com/wiki/Beamshield_II"
 }

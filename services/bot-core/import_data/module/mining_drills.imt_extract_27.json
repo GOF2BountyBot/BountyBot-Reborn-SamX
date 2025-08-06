@@ -1,16 +1,16 @@
 {
-    "aliases": [
-        "IMT 2.7",
-        "Extract 2.7"
-    ],
-    "builtIn": false,
-    "emoji": "<:imtextract2:723706605887291413>",
-    "drillHandling": 1.5,
-    "icon": "https://cdn.discordapp.com/attachments/700683544103747594/723475171607969822/imt_extract_2.7.png",
-    "name": "IMT Extract 2.7",
-    "oreYield": 1.5,
-    "techLevel": 4,
-    "type": "MiningDrillModule",
-    "value": 17297,
-    "wiki": "https://galaxyonfire.fandom.com/wiki/IMT_Extract_2.7"
+  "aliases": [
+    "IMT 2.7",
+    "Extract 2.7"
+  ],
+  "builtIn": false,
+  "emoji": "<:imtextract2:723706605887291413>",
+  "drillHandling": 1.5,
+  "icon": "https://i.postimg.cc/G2snnjw5/imt-extract-2-7.png",
+  "name": "IMT Extract 2.7",
+  "oreYield": 1.5,
+  "techLevel": 4,
+  "type": "MiningDrillModule",
+  "value": 17297,
+  "wiki": "https://galaxyonfire.fandom.com/wiki/IMT_Extract_2.7"
 }

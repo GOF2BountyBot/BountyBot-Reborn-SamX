@@ -1,17 +1,17 @@
 {
-    "aliases":  [
-                    ".50AS",
-                    "50AS",
-                    "Nirai 50AS"
-                ],
-    "builtIn":  false,
-    "dps":  18.57,
-    "emoji":  "<:nirai:723709663753011221>",
-    "icon":  "https://cdn.discordapp.com/attachments/700683544103747594/723477087637340193/nirai_.50as.png",
-    "name":  "Nirai .50AS",
-    "techLevel":  5,
-    "value":  44092,
-    "wiki":  "https://galaxyonfire.fandom.com/wiki/Nirai_.50AS",
-    "type":  "PrimaryWeapon",
-    "subtype":  "scatter_guns"
+  "aliases": [
+    ".50AS",
+    "50AS",
+    "Nirai 50AS"
+  ],
+  "builtIn": false,
+  "dps": 18.57,
+  "emoji": "<:nirai:723709663753011221>",
+  "icon": "https://i.postimg.cc/9MPCKpjY/nirai-50as.png",
+  "name": "Nirai .50AS",
+  "techLevel": 5,
+  "value": 44092,
+  "wiki": "https://galaxyonfire.fandom.com/wiki/Nirai_.50AS",
+  "type": "PrimaryWeapon",
+  "subtype": "scatter_guns"
 }

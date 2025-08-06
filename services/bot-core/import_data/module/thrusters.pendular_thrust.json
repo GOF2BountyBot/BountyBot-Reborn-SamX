@@ -1,12 +1,12 @@
 {
-    "aliases": [],
-    "builtIn": false,
-    "emoji": "<:pendularthrust:723707097853722654>",
-    "handlingMultiplier": 1.4,
-    "icon": "https://cdn.discordapp.com/attachments/700683544103747594/723475613381558362/pendular_thrust.png",
-    "name": "Pendular Thrust",
-    "techLevel": 3,
-    "type": "ThrusterModule",
-    "value": 2957,
-    "wiki": "https://galaxyonfire.fandom.com/wiki/Pendular_Thrust"
+  "aliases": [],
+  "builtIn": false,
+  "emoji": "<:pendularthrust:723707097853722654>",
+  "handlingMultiplier": 1.4,
+  "icon": "https://i.postimg.cc/gcZmCGG2/pendular-thrust.png",
+  "name": "Pendular Thrust",
+  "techLevel": 3,
+  "type": "ThrusterModule",
+  "value": 2957,
+  "wiki": "https://galaxyonfire.fandom.com/wiki/Pendular_Thrust"
 }

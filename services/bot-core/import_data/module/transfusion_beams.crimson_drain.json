@@ -1,16 +1,16 @@
 {
-    "HPps": 7,
-    "aliases": [
-        "Crimson",
-        "Drain"
-    ],
-    "builtIn": false,
-    "count": 1,
-    "emoji": "<:crimsondrain:723707161146032209>",
-    "icon": "https://cdn.discordapp.com/attachments/700683544103747594/723475747825647656/crimson_drain.png",
-    "name": "Crimson Drain",
-    "techLevel": 8,
-    "type": "TransfusionBeamModule",
-    "value": 8735,
-    "wiki": "https://galaxyonfire.fandom.com/wiki/Crimson_Drain"
+  "HPps": 7,
+  "aliases": [
+    "Crimson",
+    "Drain"
+  ],
+  "builtIn": false,
+  "count": 1,
+  "emoji": "<:crimsondrain:723707161146032209>",
+  "icon": "https://i.postimg.cc/B63XjtSN/crimson-drain.png",
+  "name": "Crimson Drain",
+  "techLevel": 8,
+  "type": "TransfusionBeamModule",
+  "value": 8735,
+  "wiki": "https://galaxyonfire.fandom.com/wiki/Crimson_Drain"
 }

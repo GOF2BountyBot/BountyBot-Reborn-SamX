@@ -1,16 +1,16 @@
 {
-    "aliases":  [
-                    "EMP GL 2",
-                    "GL 2",
-                    "GL 2"
-                ],
-    "builtIn":  false,
-    "damage":  0,
-    "icon":  "",
-    "loading speed":  0,
-    "name":  "EMP GL II",
-    "value":  0,
-    "wiki":  "",
-    "type":  "SecondaryWeapon",
-    "subtype":  "emp_bombs"
+  "aliases": [
+    "EMP GL 2",
+    "GL 2",
+    "GL 2"
+  ],
+  "builtIn": false,
+  "damage": 0,
+  "icon": "https://i.postimg.cc/7ZR1c1xc/emp-gl-ii.png",
+  "loading speed": 0,
+  "name": "EMP GL II",
+  "value": 0,
+  "wiki": "",
+  "type": "SecondaryWeapon",
+  "subtype": "emp_bombs"
 }

@@ -1,19 +1,19 @@
 {
-    "aliases":  [
-                    "HH-AT",
-                    "HHAT Archimedes",
-                    "Archimedes",
-                    "\"Archimedes\""
-                ],
-    "builtIn":  false,
-    "dps":  53.33,
-    "emoji":  "<:archimedes:723707369275523094>",
-    "icon":  "https://cdn.discordapp.com/attachments/700683544103747594/723476492050235442/hh_at_archimedes.png",
-    "name":  "HH-AT \"Archimedes\"",
-    "techLevel":  6,
-    "value":  586176,
-    "automatic":  true,
-    "wiki":  "https://galaxyonfire.fandom.com/wiki/HH-AT_\"Archimedes\"",
-    "type":  "TurretWeapon",
-    "subtype":  "auto"
+  "aliases": [
+    "HH-AT",
+    "HHAT Archimedes",
+    "Archimedes",
+    "\"Archimedes\""
+  ],
+  "builtIn": false,
+  "dps": 53.33,
+  "emoji": "<:archimedes:723707369275523094>",
+  "icon": "https://i.postimg.cc/GtJtPR2r/hh-at-archimedes.png",
+  "name": "HH-AT \"Archimedes\"",
+  "techLevel": 6,
+  "value": 586176,
+  "automatic": true,
+  "wiki": "https://galaxyonfire.fandom.com/wiki/HH-AT_\"Archimedes\"",
+  "type": "TurretWeapon",
+  "subtype": "auto"
 }

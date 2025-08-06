@@ -1,16 +1,16 @@
 {
-    "aliases":  [
-                    "D1"
-                ],
-    "builtIn":  false,
-    "dps":  20,
-    "emoji":  "<:hammerheadd1:723707422065033277>",
-    "icon":  "https://cdn.discordapp.com/attachments/700683544103747594/723476535276863508/hammerhead_d1.png",
-    "name":  "Hammerhead D1",
-    "techLevel":  5,
-    "value":  24174,
-    "automatic":  false,
-    "wiki":  "https://galaxyonfire.fandom.com/wiki/Hammerhead_D1",
-    "type":  "TurretWeapon",
-    "subtype":  "manual"
+  "aliases": [
+    "D1"
+  ],
+  "builtIn": false,
+  "dps": 20,
+  "emoji": "<:hammerheadd1:723707422065033277>",
+  "icon": "https://i.postimg.cc/qMv4DyD2/hammerhead-d1.png",
+  "name": "Hammerhead D1",
+  "techLevel": 5,
+  "value": 24174,
+  "automatic": false,
+  "wiki": "https://galaxyonfire.fandom.com/wiki/Hammerhead_D1",
+  "type": "TurretWeapon",
+  "subtype": "manual"
 }

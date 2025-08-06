@@ -1,19 +1,19 @@
 {
-    "aliases":  [
-                    "EMP Mk II",
-                    "EMP Mk 2",
-                    "EMP Rocket Mark II",
-                    "EMP Mark II",
-                    "EMP Mark 2",
-                    "EMP Rocket Mark 2"
-                ],
-    "builtIn":  false,
-    "damage":  0,
-    "icon":  "",
-    "loading speed":  0,
-    "name":  "EMP Rocket Mk II",
-    "value":  0,
-    "wiki":  "",
-    "type":  "SecondaryWeapon",
-    "subtype":  "rockets"
+  "aliases": [
+    "EMP Mk II",
+    "EMP Mk 2",
+    "EMP Rocket Mark II",
+    "EMP Mark II",
+    "EMP Mark 2",
+    "EMP Rocket Mark 2"
+  ],
+  "builtIn": false,
+  "damage": 0,
+  "icon": "https://i.postimg.cc/Fs92svjv/emp-rocket-mk-ii.png",
+  "loading speed": 0,
+  "name": "EMP Rocket Mk II",
+  "value": 0,
+  "wiki": "",
+  "type": "SecondaryWeapon",
+  "subtype": "rockets"
 }

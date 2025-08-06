@@ -1,19 +1,19 @@
 {
-    "aliases": [
-        "Spectral SA-1",
-        "Spectral Filter SA-1",
-        "Filter SA-1",
-        "Spectral SA1",
-        "Filter SA1"
-    ],
-    "builtIn": false,
-    "emoji": "<:spectralfiltersa1:723707076899242004>",
-    "icon": "https://cdn.discordapp.com/attachments/700683544103747594/723475524814635019/spectral_filter_sa-1.png",
-    "name": "Spectral Filter SA-1",
-    "showInfo": false,
-    "showOnRadar": false,
-    "techLevel": 9,
-    "type": "SpectralFilterModule",
-    "value": 43856,
-    "wiki": "https://galaxyonfire.fandom.com/wiki/Spectral_Filter_SA-1"
+  "aliases": [
+    "Spectral SA-1",
+    "Spectral Filter SA-1",
+    "Filter SA-1",
+    "Spectral SA1",
+    "Filter SA1"
+  ],
+  "builtIn": false,
+  "emoji": "<:spectralfiltersa1:723707076899242004>",
+  "icon": "https://i.postimg.cc/FFBNq1Mq/spectral-filter-sa-1.png",
+  "name": "Spectral Filter SA-1",
+  "showInfo": false,
+  "showOnRadar": false,
+  "techLevel": 9,
+  "type": "SpectralFilterModule",
+  "value": 43856,
+  "wiki": "https://galaxyonfire.fandom.com/wiki/Spectral_Filter_SA-1"
 }

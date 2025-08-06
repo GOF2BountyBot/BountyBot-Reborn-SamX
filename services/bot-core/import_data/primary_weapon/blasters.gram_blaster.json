@@ -1,15 +1,15 @@
 {
-    "aliases":  [
-                    "Gram"
-                ],
-    "builtIn":  false,
-    "dps":  40,
-    "emoji":  "<:gramblaster:723709619624476795>",
-    "icon":  "https://cdn.discordapp.com/attachments/700683544103747594/723476763291680779/gram_blaster.png",
-    "name":  "Gram Blaster",
-    "techLevel":  7,
-    "value":  41703,
-    "wiki":  "https://galaxyonfire.fandom.com/wiki/Gram_Blaster",
-    "type":  "PrimaryWeapon",
-    "subtype":  "blasters"
+  "aliases": [
+    "Gram"
+  ],
+  "builtIn": false,
+  "dps": 40,
+  "emoji": "<:gramblaster:723709619624476795>",
+  "icon": "https://i.postimg.cc/9Q1x8wSw/gram-blaster.png",
+  "name": "Gram Blaster",
+  "techLevel": 7,
+  "value": 41703,
+  "wiki": "https://galaxyonfire.fandom.com/wiki/Gram_Blaster",
+  "type": "PrimaryWeapon",
+  "subtype": "blasters"
 }

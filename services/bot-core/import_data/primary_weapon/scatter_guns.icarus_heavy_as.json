@@ -1,19 +1,19 @@
 {
-    "aliases":  [
-                    "Icarus Heavy AS",
-                    "Icarus Heavy",
-                    "Icarus AS",
-                    "Heavy AS",
-                    "Icarus"
-                ],
-    "builtIn":  false,
-    "dps":  33.33,
-    "emoji":  "<:icarusheavyas:723709663723388949>",
-    "icon":  "https://cdn.discordapp.com/attachments/700683544103747594/723477069610352681/icarus_heavy_as.png",
-    "name":  "Icarus Heavy AS",
-    "techLevel":  9,
-    "value":  356787,
-    "wiki":  "https://galaxyonfire.fandom.com/wiki/Icarus_Heavy_AS",
-    "type":  "PrimaryWeapon",
-    "subtype":  "scatter_guns"
+  "aliases": [
+    "Icarus Heavy AS",
+    "Icarus Heavy",
+    "Icarus AS",
+    "Heavy AS",
+    "Icarus"
+  ],
+  "builtIn": false,
+  "dps": 33.33,
+  "emoji": "<:icarusheavyas:723709663723388949>",
+  "icon": "https://i.postimg.cc/85gTZYxC/icarus-heavy-as.png",
+  "name": "Icarus Heavy AS",
+  "techLevel": 9,
+  "value": 356787,
+  "wiki": "https://galaxyonfire.fandom.com/wiki/Icarus_Heavy_AS",
+  "type": "PrimaryWeapon",
+  "subtype": "scatter_guns"
 }

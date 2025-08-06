@@ -1,14 +1,14 @@
 {
-    "aliases": [
-        "Midorian Signature"
-    ],
-    "builtIn": false,
-    "emoji": "<:signaturemidorian:723706652716695582>",
-    "icon": "https://cdn.discordapp.com/attachments/700683544103747594/723481827783999508/signature_midorian.png",
-    "manufacturer": "midorian",
-    "name": "Signature Midorian",
-    "techLevel": 8,
-    "type": "SignatureModule",
-    "value": 7500,
-    "wiki": "https://galaxyonfire.fandom.com/wiki/Signature"
+  "aliases": [
+    "Midorian Signature"
+  ],
+  "builtIn": false,
+  "emoji": "<:signaturemidorian:723706652716695582>",
+  "icon": "https://i.postimg.cc/66v4MsSd/signature-midorian.png",
+  "manufacturer": "midorian",
+  "name": "Signature Midorian",
+  "techLevel": 8,
+  "type": "SignatureModule",
+  "value": 7500,
+  "wiki": "https://galaxyonfire.fandom.com/wiki/Signature"
 }

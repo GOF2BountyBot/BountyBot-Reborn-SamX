@@ -1,14 +1,14 @@
 {
-    "aliases":  [
-                    "Saber"
-                ],
-    "builtIn":  false,
-    "damage":  0,
-    "icon":  "",
-    "loading speed":  0,
-    "name":  "AMR Saber",
-    "value":  0,
-    "wiki":  "",
-    "type":  "SecondaryWeapon",
-    "subtype":  "mines"
+  "aliases": [
+    "Saber"
+  ],
+  "builtIn": false,
+  "damage": 0,
+  "icon": "https://i.postimg.cc/ZRW5Q35f/amr-saber.png",
+  "loading speed": 0,
+  "name": "AMR Saber",
+  "value": 0,
+  "wiki": "",
+  "type": "SecondaryWeapon",
+  "subtype": "mines"
 }

@@ -1,14 +1,14 @@
 {
-    "aliases": [
-        "Terran Signature"
-    ],
-    "builtIn": false,
-    "emoji": "<:signatureterran:723706652527689800>",
-    "icon": "https://cdn.discordapp.com/attachments/700683544103747594/723481847585046528/signature_terran.png",
-    "manufacturer": "terran",
-    "name": "Signature Terran",
-    "techLevel": 8,
-    "type": "SignatureModule",
-    "value": 7500,
-    "wiki": "https://galaxyonfire.fandom.com/wiki/Signature"
+  "aliases": [
+    "Terran Signature"
+  ],
+  "builtIn": false,
+  "emoji": "<:signatureterran:723706652527689800>",
+  "icon": "https://i.postimg.cc/Bnq8Zjvg/signature-terran.png",
+  "manufacturer": "terran",
+  "name": "Signature Terran",
+  "techLevel": 8,
+  "type": "SignatureModule",
+  "value": 7500,
+  "wiki": "https://galaxyonfire.fandom.com/wiki/Signature"
 }

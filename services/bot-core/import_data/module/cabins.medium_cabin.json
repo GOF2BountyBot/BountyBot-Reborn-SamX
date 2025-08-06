@@ -1,12 +1,12 @@
 {
-    "aliases": [],
-    "builtIn": false,
-    "cabinSize": 5,
-    "emoji": "<:mediumcabin:723706494918590475>",
-    "icon": "https://cdn.discordapp.com/attachments/700683544103747594/723474636641140736/medium_cabin.png",
-    "name": "Medium Cabin",
-    "techLevel": 6,
-    "type": "CabinModule",
-    "value": 6347,
-    "wiki": "https://galaxyonfire.fandom.com/wiki/Medium_Cabin"
+  "aliases": [],
+  "builtIn": false,
+  "cabinSize": 5,
+  "emoji": "<:mediumcabin:723706494918590475>",
+  "icon": "https://i.postimg.cc/bvTm5DB2/medium-cabin.png",
+  "name": "Medium Cabin",
+  "techLevel": 6,
+  "type": "CabinModule",
+  "value": 6347,
+  "wiki": "https://galaxyonfire.fandom.com/wiki/Medium_Cabin"
 }

@@ -1,17 +1,17 @@
 {
-    "aliases": [
-        "Spectral Omega",
-        "Filter Omega",
-        "Omega"
-    ],
-    "builtIn": false,
-    "emoji": "<:spectralfilteromega:723707076869881896>",
-    "icon": "https://cdn.discordapp.com/attachments/700683544103747594/723475501661945887/spectral_filter_omega.png",
-    "name": "Spectral Filter Omega",
-    "showInfo": true,
-    "showOnRadar": true,
-    "techLevel": 9,
-    "type": "SpectralFilterModule",
-    "value": 485406,
-    "wiki": "https://galaxyonfire.fandom.com/wiki/Spectral_Filter_Omega"
+  "aliases": [
+    "Spectral Omega",
+    "Filter Omega",
+    "Omega"
+  ],
+  "builtIn": false,
+  "emoji": "<:spectralfilteromega:723707076869881896>",
+  "icon": "https://i.postimg.cc/hv6n738g/spectral-filter-omega.png",
+  "name": "Spectral Filter Omega",
+  "showInfo": true,
+  "showOnRadar": true,
+  "techLevel": 9,
+  "type": "SpectralFilterModule",
+  "value": 485406,
+  "wiki": "https://galaxyonfire.fandom.com/wiki/Spectral_Filter_Omega"
 }

@@ -1,19 +1,19 @@
 {
-    "aliases":  [
-                    "Sol Mk II",
-                    "Sol EMP",
-                    "Sol",
-                    "EMP Mk II",
-                    "EMP II"
-                ],
-    "builtIn":  false,
-    "dps":  11.11,
-    "emoji":  "<:solempmkii:723709689212436560>",
-    "icon":  "https://cdn.discordapp.com/attachments/700683544103747594/723476876915638310/sol_emp_mk_ii.png",
-    "name":  "Sol EMP Mk II",
-    "techLevel":  5,
-    "value":  12517,
-    "wiki":  "https://galaxyonfire.fandom.com/wiki/Sol_EMP_Mk_II",
-    "type":  "PrimaryWeapon",
-    "subtype":  "emp_blasters"
+  "aliases": [
+    "Sol Mk II",
+    "Sol EMP",
+    "Sol",
+    "EMP Mk II",
+    "EMP II"
+  ],
+  "builtIn": false,
+  "dps": 11.11,
+  "emoji": "<:solempmkii:723709689212436560>",
+  "icon": "https://i.postimg.cc/W1QV4KN7/sol-emp-mk-ii.png",
+  "name": "Sol EMP Mk II",
+  "techLevel": 5,
+  "value": 12517,
+  "wiki": "https://galaxyonfire.fandom.com/wiki/Sol_EMP_Mk_II",
+  "type": "PrimaryWeapon",
+  "subtype": "emp_blasters"
 }

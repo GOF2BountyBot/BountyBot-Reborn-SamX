@@ -1,12 +1,12 @@
 {
-    "aliases": [],
-    "builtIn": false,
-    "cargoMultiplier": 1.4,
-    "emoji": "<:ultracompact:723706540971786272>",
-    "icon": "https://cdn.discordapp.com/attachments/700683544103747594/723474776039096350/ultracompact.png",
-    "name": "Ultracompact",
-    "techLevel": 5,
-    "type": "CompressorModule",
-    "value": 14992,
-    "wiki": "https://galaxyonfire.fandom.com/wiki/Ultracompact"
+  "aliases": [],
+  "builtIn": false,
+  "cargoMultiplier": 1.4,
+  "emoji": "<:ultracompact:723706540971786272>",
+  "icon": "https://i.postimg.cc/zGWzT5PQ/ultracompact.png",
+  "name": "Ultracompact",
+  "techLevel": 5,
+  "type": "CompressorModule",
+  "value": 14992,
+  "wiki": "https://galaxyonfire.fandom.com/wiki/Ultracompact"
 }

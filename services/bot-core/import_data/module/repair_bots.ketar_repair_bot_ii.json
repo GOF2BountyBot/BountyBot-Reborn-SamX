@@ -1,18 +1,18 @@
 {
-    "HPps": 15,
-    "aliases": [
-        "Ketar Repair Bot 2",
-        "Repair Bot 2",
-        "Repair Bot II",
-        "Ketar Bot 2",
-        "Ketar Bot II"
-    ],
-    "builtIn": false,
-    "emoji": "<:ketarrepairbotii:723706703975284737>",
-    "icon": "https://cdn.discordapp.com/attachments/700683544103747594/723475300582686800/ketar_repair_bot_ii.png",
-    "name": "Ketar Repair Bot II",
-    "techLevel": 7,
-    "type": "RepairBotModule",
-    "value": 141949,
-    "wiki": "https://galaxyonfire.fandom.com/wiki/Ketar_Repair_Bot_II"
+  "HPps": 15,
+  "aliases": [
+    "Ketar Repair Bot 2",
+    "Repair Bot 2",
+    "Repair Bot II",
+    "Ketar Bot 2",
+    "Ketar Bot II"
+  ],
+  "builtIn": false,
+  "emoji": "<:ketarrepairbotii:723706703975284737>",
+  "icon": "https://i.postimg.cc/J7PGh19c/ketar-repair-bot-ii.png",
+  "name": "Ketar Repair Bot II",
+  "techLevel": 7,
+  "type": "RepairBotModule",
+  "value": 141949,
+  "wiki": "https://galaxyonfire.fandom.com/wiki/Ketar_Repair_Bot_II"
 }

@@ -1,14 +1,14 @@
 {
-    "aliases": [
-        "Targe"
-    ],
-    "builtIn": false,
-    "emoji": "<:targeshield:723706780156297298>",
-    "icon": "https://cdn.discordapp.com/attachments/700683544103747594/723475473392205844/targe_shield.png",
-    "name": "Targe Shield",
-    "shield": 50,
-    "techLevel": 1,
-    "type": "ShieldModule",
-    "value": 1620,
-    "wiki": "https://galaxyonfire.fandom.com/wiki/Targe_Shield"
+  "aliases": [
+    "Targe"
+  ],
+  "builtIn": false,
+  "emoji": "<:targeshield:723706780156297298>",
+  "icon": "https://i.postimg.cc/qqXYpbmj/targe-shield.png",
+  "name": "Targe Shield",
+  "shield": 50,
+  "techLevel": 1,
+  "type": "ShieldModule",
+  "value": 1620,
+  "wiki": "https://galaxyonfire.fandom.com/wiki/Targe_Shield"
 }

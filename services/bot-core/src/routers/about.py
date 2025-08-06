@@ -59,7 +59,7 @@ class ShipResponse(ItemResponse):
     max_turrets: Optional[int] = None
     manufacturer: Optional[str] = None
     skinnable: Optional[bool] = None
-    compatible_skins: Optional[List[str]] = None
+    compatible_skins: Optional[Dict[str, str]] = None
     model: Optional[str] = None
     norm_spec: Optional[str] = None
     assets: Optional[List[str]] = None

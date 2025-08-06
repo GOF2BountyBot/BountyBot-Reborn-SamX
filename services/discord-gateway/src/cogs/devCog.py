@@ -115,6 +115,7 @@ class DevCog(commands.Cog):
         targets = [
             ("AboutCog", "_preload_data", "about data"),
             ("DevCog",   "_preload_categories", "dev categories"),
+            ("SkinsCog", "_preload_ship_skins",   "ship skins"),
             # add more cogs here if needed
         ]
 

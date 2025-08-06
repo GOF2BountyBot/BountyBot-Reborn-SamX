@@ -6,6 +6,7 @@ from discord.ext import commands
 import shared.bblogger as bblogger
 import requests
 import json
+from utils.embed_converter import EmbedConverter    # ← grid‐builder for 2-col layout
 
 # Set up logger
 flogger = bblogger.get_logger("discord-gateway-AboutCog")
@@ -85,14 +86,12 @@ class AboutCog(commands.Cog):
         current: str
     ) -> List[app_commands.Choice[str]]:
         """Autocomplete for object selection based on selected category"""
-        # Get the category from the interaction
         category = getattr(interaction.namespace, 'category', None)
         if not category or category not in self._objects_by_category:
             return []
 
         objects = self._objects_by_category[category]
         choices: List[app_commands.Choice[str]] = []
-
         for obj in objects:
             name = obj.get('name', '')
             if current.lower() in name.lower():
@@ -238,20 +237,35 @@ class AboutCog(commands.Cog):
             if obj_data.get('skinnable'):
                 embed.add_field(name="Skinnable", value="Yes", inline=True)
             if obj_data.get('compatible_skins'):
-                skins = ", ".join(obj_data['compatible_skins'])
-                embed.add_field(name="Compatible Skins", value=skins, inline=False)
+                names = list(obj_data['compatible_skins'].keys())
+                # build pairs of two
+                pairs = [names[i:i+2] for i in range(0, len(names), 2)]
+                # compute max width of left column
+                max_left = max(len(p[0]) for p in pairs)
+                lines: list[str] = []
+                for left, *rest in pairs:
+                    right = rest[0] if rest else ""
+                    if right:
+                        # pad left to max_left for perfect mono alignment
+                        lines.append(f"{left.ljust(max_left)}    {right}")
+                    else:
+                        lines.append(left)
+                # wrap in a code block so spaces are honored
+                grid = "```" + "\n".join(lines) + "```"
+                embed.add_field(
+                    name=f"Compatible Skins ({len(names)})",
+                    value=grid,
+                    inline=False
+                )
 
         elif category == 'system':
-            # Add coordinates field
             coords = obj_data.get('coordinates')
             if coords:
                 embed.add_field(name="Coordinates", value=", ".join(str(c) for c in coords), inline=True)
-            # Add faction field
             if obj_data.get('faction'):
                 embed.add_field(name="Faction", value=str(obj_data['faction']), inline=True)
 
         elif category == 'criminal':
-            # Add faction field
             if obj_data.get('faction'):
                 embed.add_field(name="Faction", value=str(obj_data['faction']), inline=True)
 
@@ -276,7 +290,6 @@ class AboutCog(commands.Cog):
             for key, value in obj_data['extra_atts'].items():
                 if isinstance(value, (int, float, str, bool)):
                     extra_text += f"**{key.replace('_', ' ').title()}:** {value}\n"
-
             if extra_text:
                 if len(extra_text) > 1024:
                     extra_text = extra_text[:1021] + "..."
@@ -284,6 +297,11 @@ class AboutCog(commands.Cog):
 
         # Add footer
         embed.set_footer(text=f"ID: {obj_data.get('id', 'N/A')}")
+
+        # ─── FORCE 2-COLUMN LAYOUT FOR MODULES, WEAPONS & SHIPS ─────────────
+        if category in ('ship', 'module', 'primary_weapon', 'secondary_weapon', 'turret_weapon'):
+            payload = EmbedConverter.embed_to_payload(embed)
+            embed   = EmbedConverter.payload_to_grid_embed(payload, fields_per_row=2)
 
         return embed
 
@@ -310,7 +328,6 @@ class AboutCog(commands.Cog):
                 return
 
             objects = self._objects_by_category[category]
-
             if not objects:
                 await interaction.followup.send(
                     f"📭 No objects found in category '{category}'.",
@@ -327,11 +344,10 @@ class AboutCog(commands.Cog):
 
             # Group objects into fields to avoid hitting embed limits
             objects_text = ""
-            for obj in objects[:50]:  # Limit to first 50 objects
+            for obj in objects[:50]:
                 name = obj.get('name', 'Unknown')
                 emoji = obj.get('emoji', '')
                 line = f"{emoji} {name}\n" if emoji else f"{name}\n"
-
                 if len(objects_text + line) > 1024:
                     embed.add_field(name="Objects", value=objects_text, inline=False)
                     objects_text = line
@@ -340,7 +356,6 @@ class AboutCog(commands.Cog):
 
             if objects_text:
                 embed.add_field(name="Objects", value=objects_text, inline=False)
-
             if len(objects) > 100:
                 embed.set_footer(text=f"Showing first 100 of {len(objects)} objects")
 

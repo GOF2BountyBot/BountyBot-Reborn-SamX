@@ -303,7 +303,7 @@ async def update_member(
         await handle_discord_exception("update member", exc)
 
 # DELETE endpoints
-
+'''
 @router.delete(
     "/guilds/{guild_id}/members/{user_id}",
     response_model=SuccessResponse,
@@ -373,3 +373,4 @@ async def kick_member(request: Request, guild_id: int, user_id: int, reason: str
     except Exception as exc:
         flogger.error(f"Unexpected error in kick_member for member {user_id}: {exc}")
         await handle_discord_exception("kick member", exc)
+'''

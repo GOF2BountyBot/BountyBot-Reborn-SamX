@@ -230,8 +230,8 @@ if __name__ == "__main__":
     pyLogging.getLogger("uvicorn.access").addFilter(HealthFilter())
     uvicorn.run(
         "main:app",
-        host=os.getenv("HOST", "0.0.0.0"),
-        port=int(os.getenv("PORT", os.getenv("PORT", "8000"))),
+        host=os.getenv("BOT_HOST", "0.0.0.0"),
+        port=int(os.getenv("BOT_PORT", os.getenv("PORT", "8000"))),
         access_log=os.getenv("ACCESS_LOG", "true").lower() == "true",
         reload=True
     )

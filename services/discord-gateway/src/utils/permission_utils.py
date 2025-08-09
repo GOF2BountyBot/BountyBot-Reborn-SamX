@@ -303,55 +303,55 @@ def get_category_permissions() -> List[Dict[str, Any]]:
 def create_permission_overwrite(allow: Optional[int] = None, deny: Optional[int] = None) -> discord.PermissionOverwrite:
     """
     Create a Discord permission overwrite from allow/deny bit values.
-    
+
     Args:
         allow: Permissions to allow (bitfield)
         deny: Permissions to deny (bitfield)
-        
+
     Returns:
         discord.PermissionOverwrite: Permission overwrite object
     """
     kwargs = {}
-    
+
     if allow is not None:
         # Convert allow bitfield to individual permission kwargs
         for name, data in PERMISSION_FLAGS.items():
             if allow & data["value"]:
                 kwargs[name.lower()] = True
-    
+
     if deny is not None:
         # Convert deny bitfield to individual permission kwargs
         for name, data in PERMISSION_FLAGS.items():
             if deny & data["value"]:
                 kwargs[name.lower()] = False
-    
+
     return discord.PermissionOverwrite(**kwargs)
 
 def check_permission(permissions_value: int, permission_name: str) -> bool:
     """
     Check if a permission value includes a specific permission.
-    
+
     Args:
         permissions_value: Integer representation of permissions
         permission_name: Name of permission to check (uppercase with underscores)
-        
+
     Returns:
         bool: True if permission is granted, False otherwise
     """
     if permission_name not in PERMISSION_FLAGS:
         raise ValueError(f"Unknown permission: {permission_name}")
-    
+
     permission_bit = PERMISSION_FLAGS[permission_name]["value"]
     return bool(permissions_value & permission_bit)
 
 def check_permissions(permissions_value: int, permission_names: List[str]) -> Dict[str, bool]:
     """
     Check multiple permissions against a permission value.
-    
+
     Args:
         permissions_value: Integer representation of permissions
         permission_names: List of permission names to check
-        
+
     Returns:
         Dict[str, bool]: Mapping of permission names to their granted status
     """
@@ -363,10 +363,10 @@ def check_permissions(permissions_value: int, permission_names: List[str]) -> Di
 def has_administrator(permissions_value: int) -> bool:
     """
     Check if permissions include Administrator (which grants all permissions).
-    
+
     Args:
         permissions_value: Integer representation of permissions
-        
+
     Returns:
         bool: True if Administrator permission is granted
     """
@@ -379,29 +379,29 @@ def calculate_effective_permissions(
 ) -> int:
     """
     Calculate effective permissions after applying overwrites.
-    
+
     Args:
         base_permissions: Base permissions (usually from roles)
         allow_overwrites: Permissions explicitly allowed in overwrites
         deny_overwrites: Permissions explicitly denied in overwrites
-        
+
     Returns:
         int: Effective permissions value
     """
     # Administrator bypasses overwrites
     if has_administrator(base_permissions):
         return base_permissions
-    
+
     effective = base_permissions
-    
+
     # Apply deny overwrites first
     if deny_overwrites is not None:
         effective &= ~deny_overwrites
-    
+
     # Then apply allow overwrites
     if allow_overwrites is not None:
         effective |= allow_overwrites
-    
+
     return effective
 
 def permissions_to_dict(permissions_value: int) -> Dict[str, bool]:
@@ -427,10 +427,10 @@ def overwrite_to_dict(overwrite: discord.PermissionOverwrite) -> Dict[str, Any]:
 def get_permission_names_by_value(permissions_value: int) -> List[str]:
     """
     Get list of permission names that are granted in a permissions value.
-    
+
     Args:
         permissions_value: Integer representation of permissions
-        
+
     Returns:
         List[str]: List of granted permission names
     """
@@ -443,10 +443,10 @@ def get_permission_names_by_value(permissions_value: int) -> List[str]:
 def combine_permissions(*permission_values: int) -> int:
     """
     Combine multiple permission values using bitwise OR.
-    
+
     Args:
         *permission_values: Variable number of permission integer values
-        
+
     Returns:
         int: Combined permissions value
     """
@@ -454,3 +454,26 @@ def combine_permissions(*permission_values: int) -> int:
     for value in permission_values:
         result |= value
     return result
+
+def has_channel_permission(
+    member: discord.Member,
+    channel: discord.abc.GuildChannel,
+    permission: str
+) -> bool:
+    """
+    Check whether `member` has the named permission in `channel`.
+    Permission name must be uppercase with underscores, e.g. "SEND_MESSAGES".
+    """
+    perms = channel.permissions_for(member)
+    return getattr(perms, permission.lower(), False)
+
+def has_guild_permission(
+    member: discord.Member,
+    permission: str
+) -> bool:
+    """
+    Check whether `member` has the named guild permission.
+    Permission name must be uppercase with underscores, e.g. "BAN_MEMBERS".
+    """
+    perms = member.guild_permissions
+    return getattr(perms, permission.lower(), False)

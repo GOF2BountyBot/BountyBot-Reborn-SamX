@@ -7,7 +7,7 @@ including role creation, updates, and member management.
 
 from typing import Optional, List, Dict, Any
 from pydantic import BaseModel, Field
-from .base_schemas import (
+from api.schemas.base_schemas import (
     BaseListResponse, BaseDetailResponse,
     BaseCreateRequest, BaseUpdateRequest
 )

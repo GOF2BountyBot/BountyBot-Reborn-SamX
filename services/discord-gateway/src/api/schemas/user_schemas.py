@@ -7,7 +7,7 @@ operations including user details and member management.
 
 from typing import Optional, List, Dict, Any
 from pydantic import BaseModel, Field
-from .base_schemas import BaseListResponse, BaseDetailResponse, BaseUpdateRequest
+from api.schemas.base_schemas import BaseListResponse, BaseDetailResponse, BaseUpdateRequest
 
 class User(BaseModel):
     """User information model."""

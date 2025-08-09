@@ -7,7 +7,7 @@ including guild listings, details, and member management.
 
 from typing import Optional, List, Dict, Any
 from pydantic import BaseModel, Field
-from .base_schemas import BaseListResponse, BaseDetailResponse
+from api.schemas.base_schemas import BaseListResponse, BaseDetailResponse
 
 class GuildSummary(BaseModel):
     """Summary guild information for list responses."""

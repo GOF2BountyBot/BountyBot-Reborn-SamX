@@ -556,15 +556,15 @@ async def update_category_permissions(
         # Set new overwrites
         flogger.debug(f"Setting {len(permissions_data.overwrites)} new overwrites")
         for overwrite_data in permissions_data.overwrites:
-            target_id = overwrite_data["id"]
-            target_type = overwrite_data["type"]
-            allow = overwrite_data.get("allow", 0)
-            deny = overwrite_data.get("deny", 0)
+            target_id = overwrite_data.target_id
+            tgt_type  = overwrite_data.type
+            allow     = overwrite_data.allow  or 0
+            deny      = overwrite_data.deny   or 0
             
-            flogger.trace(f"Processing overwrite for {target_type} {target_id}: allow={hex(allow)}, deny={hex(deny)}")
+            flogger.trace(f"Processing overwrite for {tgt_type} {target_id}: allow={hex(allow)}, deny={hex(deny)}")
             
             # Get target (role or member)
-            if target_type == "role":
+            if tgt_type == "role":
                 target = guild.get_role(target_id)
                 if not target:
                     flogger.error(f"Role {target_id} not found")

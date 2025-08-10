@@ -44,6 +44,7 @@ class RoleCreateRequest(BaseCreateRequest):
     permissions: Optional[int] = Field(None, description="Role permissions")
     color: Optional[int] = Field(0, description="Role color")
     hoist: Optional[bool] = Field(False, description="Whether role is hoisted")
+    position: Optional[int] = Field(None, description="Role position")
     mentionable: Optional[bool] = Field(False, description="Whether role is mentionable")
 
 class RoleUpdateRequest(BaseUpdateRequest):

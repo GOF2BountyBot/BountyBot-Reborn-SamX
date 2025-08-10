@@ -14,6 +14,7 @@ from api.schemas.channel_schemas import ChannelSummary, ChannelDetail, CategoryD
 from api.schemas.role_schemas import Role
 from api.schemas.user_schemas import User, Member
 from api.schemas.permission_schemas import PermissionOverwrite
+from api.schemas.message_schemas import MessageSummary
 import shared.bblogger as bblogger
 
 flogger = bblogger.get_logger("discord-converters")
@@ -359,7 +360,7 @@ class PermissionConverter:
             target_type = "role" if isinstance(target, discord.Role) else "member"
 
             payload = PermissionOverwrite(
-                id=getattr(target, "id", None),
+                target_id=getattr(target, "id", None),
                 type=target_type,
                 allow=getattr(allow, "value", 0),
                 deny=getattr(deny, "value", 0)
@@ -397,3 +398,16 @@ class PermissionConverter:
         except Exception as e:
             flogger.error(f"Round-trip test failed: {e}")
             return False
+
+class MessageConverter:
+    """
+    Convert Discord Message objects into MessageSummary payloads.
+    """
+    @staticmethod
+    def message_to_payload(message: discord.Message) -> MessageSummary:
+        return MessageSummary(
+            id=message.id,
+            author_id=message.author.id,
+            content=message.content or None,
+            timestamp=message.created_at
+        )

@@ -88,7 +88,7 @@ async def get_entity_or_404(
     fetch_func,
     entity_id: int,
     entity_type: str
-) -> Union[discord.Guild, discord.TextChannel, discord.VoiceChannel, discord.CategoryChannel, discord.User, discord.Member]:
+) -> Union[discord.Guild, discord.TextChannel, discord.VoiceChannel, discord.CategoryChannel, discord.User, discord.Member, discord.Role]:
     """
     Generic function to get entity from cache or fetch from API.
     

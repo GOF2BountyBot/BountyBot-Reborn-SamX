@@ -6,7 +6,7 @@ including listing, creating, updating, and deleting channels and their permissio
 """
 
 from typing import Union
-from fastapi import APIRouter, HTTPException, Request, status
+from fastapi import APIRouter, HTTPException, Request, status, Query
 import discord
 
 import shared.bblogger as bblogger
@@ -14,11 +14,12 @@ from api.schemas.channel_schemas import (
     ChannelListResponse, ChannelDetailResponse, ChannelCreateRequest,
     ChannelUpdateRequest
 )
+from api.schemas.message_schemas import MessageListResponse
 from api.schemas.permission_schemas import (
     PermissionOverwriteListResponse, PermissionOverwriteListRequest
 )
 from api.schemas.base_schemas import SuccessResponse, DeleteResponse
-from utils.discord_converters import ChannelConverter, PermissionConverter
+from utils.discord_converters import ChannelConverter, PermissionConverter, MessageConverter
 from utils.discord_helpers import (
     resolve_bot, get_entity_or_404, validate_guild_channel_relationship,
     validate_channel_type, handle_discord_exception
@@ -203,6 +204,34 @@ async def get_channel_permissions(request: Request, channel_id: int) -> Permissi
     except Exception as exc:
         flogger.error(f"Unexpected error in get_channel_permissions for channel {channel_id}: {exc}")
         await handle_discord_exception("get channel permissions", exc)
+
+# Get message history from channel
+@router.get(
+    "/guilds/{guild_id}/channels/{channel_id}/messages",
+    response_model=MessageListResponse,
+    status_code=status.HTTP_200_OK,
+    summary="List Channel Messages",
+    description="Get the last `limit` messages from a channel"
+)
+async def list_guild_channel_messages(
+    request: Request,
+    guild_id: int,
+    channel_id: int,
+    limit: int = Query(50, le=100, description="Number of messages to retrieve")
+) -> MessageListResponse:
+    bot     = await resolve_bot(request)
+    guild   = await get_entity_or_404(bot.get_guild, bot.fetch_guild, guild_id, "Guild")
+    channel = await get_entity_or_404(bot.get_channel, bot.fetch_channel, channel_id, "Channel")
+
+    if not hasattr(channel, "history"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Channel {channel_id} cannot contain messages"
+        )
+
+    msgs = [msg async for msg in channel.history(limit=limit)]
+    payloads = [MessageConverter.message_to_payload(m) for m in msgs]
+    return MessageListResponse(status="success", messages=payloads)
 
 # POST endpoints
 
@@ -464,15 +493,15 @@ async def update_channel_permissions(
         # Set new overwrites
         flogger.debug(f"Setting {len(permissions_data.overwrites)} new overwrites")
         for overwrite_data in permissions_data.overwrites:
-            target_id = overwrite_data["id"]
-            target_type = overwrite_data["type"]
-            allow = overwrite_data.get("allow", 0)
-            deny = overwrite_data.get("deny", 0)
+            target_id = overwrite_data.target_id
+            tgt_type  = overwrite_data.type
+            allow     = overwrite_data.allow or 0
+            deny      = overwrite_data.deny  or 0
             
-            flogger.trace(f"Processing overwrite for {target_type} {target_id}: allow={hex(allow)}, deny={hex(deny)}")
+            flogger.trace(f"Processing overwrite for {tgt_type} {target_id}: allow={hex(allow)}, deny={hex(deny)}")
             
             # Get target (role or member)
-            if target_type == "role":
+            if tgt_type == "role":
                 target = guild.get_role(target_id)
                 if not target:
                     flogger.error(f"Role {target_id} not found")

@@ -8,6 +8,7 @@ including create, update, and delete with proper embed payload structures.
 from typing import Optional, List, Dict, Any
 from pydantic import BaseModel, Field
 from datetime import datetime
+from api.schemas.base_schemas import BaseListResponse
 
 class EmbedField(BaseModel):
     """Embed field structure."""
@@ -56,3 +57,12 @@ class MessageResponse(BaseModel):
     message_id: Optional[int] = Field(None, description="Discord message ID")
     content: Optional[EmbedPayload] = Field(None, description="Message content (for GET operations)")
     timestamp: Optional[datetime] = Field(None, description="Operation timestamp")
+
+class MessageSummary(BaseModel):
+    id: int = Field(..., description="Message ID")
+    author_id: int = Field(..., description="Author (user) ID")
+    content: Optional[str] = Field(None, description="Message content (plain or embed payload)")
+    timestamp: datetime = Field(..., description="When the message was created")
+
+class MessageListResponse(BaseListResponse):
+    messages: List[MessageSummary] = Field(..., description="List of messages")

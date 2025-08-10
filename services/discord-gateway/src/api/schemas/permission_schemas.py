@@ -6,28 +6,28 @@ including permission overwrites and permission reference data.
 """
 
 from typing import Optional, List, Dict, Any
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, validator, field_validator, model_validator
 from api.schemas.base_schemas import BaseListResponse, BaseDetailResponse, BaseUpdateRequest
 
 class PermissionOverwrite(BaseModel):
     """Permission overwrite information model."""
     target_id: int = Field(..., description="Target ID (role or user)")
-    type: str = Field(..., description="Target type (role or member)")
-    allow: int = Field(0, ge=0, description="Allowed permissions (bitfield, ≥0)")
-    deny: int = Field(0, ge=0, description="Denied permissions (bitfield, ≥0)")
+    type:       str = Field(..., description="Target type (role or member)")
+    allow:      int = Field(0, ge=0, description="Allowed permissions (bitfield, ≥0)")
+    deny:       int = Field(0, ge=0, description="Denied permissions (bitfield, ≥0)")
 
-    @validator('allow', 'deny')
-    def non_negative(cls, v):
+    @field_validator('allow', 'deny')
+    def non_negative(cls, v: int) -> int:
         if v < 0:
             raise ValueError('bitfield must be non-negative')
         return v
 
-    @root_validator
-    def no_conflicting_bits(cls, values):
-        allow, deny = values.get('allow'), values.get('deny')
-        if allow is not None and deny is not None and (allow & deny):
+    @model_validator(mode='after')
+    def no_conflicting_bits(self):
+        # At this point `allow` and `deny` are both validated integers.
+        if self.allow & self.deny:
             raise ValueError('same bit(s) cannot be both allowed and denied')
-        return values
+        return self
 
 class PermissionFlag(BaseModel):
     name: str = Field(..., description="Permission name")

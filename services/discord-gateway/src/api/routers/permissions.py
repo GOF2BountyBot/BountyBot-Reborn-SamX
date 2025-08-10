@@ -284,7 +284,12 @@ async def check_channel_permission_endpoint(
         bot = await resolve_bot(request)
         channel = await get_entity_or_404(bot.get_channel, bot.fetch_channel, channel_id, "Channel")
         guild = channel.guild
-        member = guild.get_member(target_id) or await guild.fetch_member(target_id)
+        member = await get_entity_or_404(
+            guild.get_member,
+            guild.fetch_member,
+            target_id,
+            "Member"
+        )
         allowed = has_channel_permission(member, channel, permission)
         return PermissionCheckResponse(allowed=allowed)
     except HTTPException:
@@ -310,6 +315,13 @@ async def check_guild_permission_endpoint(
         bot = await resolve_bot(request)
         # fetch guild
         guild = await get_entity_or_404(bot.get_guild, bot.fetch_guild, guild_id, "Guild")
+        # now get the member
+        member = await get_entity_or_404(
+            guild.get_member,
+            guild.fetch_member,
+            member_id,
+            "Member"
+        )
         member = guild.get_member(member_id) or await guild.fetch_member(member_id)
         allowed = has_guild_permission(member, permission)
         return PermissionCheckResponse(allowed=allowed)

@@ -271,7 +271,7 @@ async def list_category_permissions() -> PermissionFlagListResponse:
     response_model=PermissionCheckResponse,
     status_code=status.HTTP_200_OK,
     summary="Check Channel Permission",
-    description="Check if a member has a specific permission in a channel",
+    description="Check if a member or role has a specific permission in a channel",
 )
 async def check_channel_permission_endpoint(
     request: Request,
@@ -282,52 +282,145 @@ async def check_channel_permission_endpoint(
     flogger.info(f"check_channel_permission called for channel={channel_id}, target={target_id}, perm={permission}")
     try:
         bot = await resolve_bot(request)
+        flogger.debug("Bot resolved successfully")
+
         channel = await get_entity_or_404(bot.get_channel, bot.fetch_channel, channel_id, "Channel")
+        flogger.debug(f"Channel retrieved: {channel.name}")
         guild = channel.guild
-        member = await get_entity_or_404(
-            guild.get_member,
-            guild.fetch_member,
-            target_id,
-            "Member"
-        )
-        allowed = has_channel_permission(member, channel, permission)
+        flogger.debug(f"Guild context: {guild.name}")
+
+        # Try member first
+        member = None
+        try:
+            member = await get_entity_or_404(
+                guild.get_member,
+                guild.fetch_member,
+                target_id,
+                "Member"
+            )
+            flogger.debug(f"Target {target_id} resolved as member {member.name}")
+        except HTTPException:
+            flogger.trace(f"Target {target_id} is not a guild member, trying role")
+
+        if member:
+            # existing path for members
+            allowed = has_channel_permission(member, channel, permission)
+            flogger.info(f"Channel permission check for member {member.name}: {allowed}")
+        else:
+            # handle role
+            role = guild.get_role(target_id)
+            if not role:
+                flogger.error(f"Role {target_id} not found in guild {guild.id}")
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,
+                                    detail=f"Role {target_id} not found in guild {guild.id}")
+
+            flogger.debug(f"Target {target_id} resolved as role {role.name}")
+            # base guild‐level permission bits for this role
+            base_perms = role.permissions.value
+            flogger.trace(f"Role base permissions: {hex(base_perms)}")
+
+            # pull any channel overwrite for this role
+            overwrite = channel.overwrites.get(role)
+            allow = deny = 0
+            if overwrite:
+                allow = getattr(overwrite, "allow", 0)
+                deny = getattr(overwrite, "deny", 0)
+                # if those are Permissions objects, extract .value
+                allow = getattr(allow, "value", allow)
+                deny = getattr(deny, "value", deny)
+            flogger.trace(f"Role channel overwrite allow={hex(allow)}, deny={hex(deny)}")
+
+            # compute effective bits
+            effective = calculate_effective_permissions(base_perms, allow, deny)
+            flogger.trace(f"Computed effective permissions: {hex(effective)}")
+
+            # check the single bit
+            bit = PERMISSION_FLAGS.get(permission, {}).get("value")
+            if bit is None:
+                flogger.error(f"Unknown permission name: {permission}")
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
+                                    detail=f"Unknown permission: {permission}")
+            allowed = bool(effective & bit)
+            flogger.info(f"Channel permission check for role {role.name}: {allowed}")
+
         return PermissionCheckResponse(allowed=allowed)
+
     except HTTPException:
+        flogger.warning(f"HTTP exception in check_channel_permission for target {target_id}")
         raise
     except Exception as exc:
+        flogger.error(f"Unexpected error in check_channel_permission for target {target_id}: {exc}")
         await handle_discord_exception("check channel permission", exc)
+
 
 @router.get(
     "/guilds/{guild_id}/members/{member_id}/permissions/check",
     response_model=PermissionCheckResponse,
     status_code=status.HTTP_200_OK,
     summary="Check Guild Permission",
-    description="Check if a guild member has a specific guild-level permission"
+    description="Check if a guild member or role has a specific guild-level permission",
 )
 async def check_guild_permission_endpoint(
     request: Request,
     guild_id: int,
     member_id: int,
-    permission: str = Query(..., description="Permission name (uppercase, e.g. BAN_MEMBERS)")
+    permission: str = Query(..., description="Permission name (uppercase, e.g. BAN_MEMBERS)"),
 ) -> PermissionCheckResponse:
-    flogger.info(f"check_guild_permission called for guild={guild_id}, member={member_id}, perm={permission}")
+    flogger.info(f"check_guild_permission called for guild={guild_id}, target={member_id}, perm={permission}")
     try:
         bot = await resolve_bot(request)
-        # fetch guild
+        flogger.debug("Bot resolved successfully")
+
         guild = await get_entity_or_404(bot.get_guild, bot.fetch_guild, guild_id, "Guild")
-        # now get the member
-        member = await get_entity_or_404(
-            guild.get_member,
-            guild.fetch_member,
-            member_id,
-            "Member"
-        )
-        member = guild.get_member(member_id) or await guild.fetch_member(member_id)
-        allowed = has_guild_permission(member, permission)
+        flogger.debug(f"Guild retrieved: {guild.name}")
+
+        # Try member first
+        target = None
+        try:
+            member = await get_entity_or_404(
+                guild.get_member,
+                guild.fetch_member,
+                member_id,
+                "Member"
+            )
+            target = member
+            flogger.debug(f"Target {member_id} resolved as member {member.name}")
+        except HTTPException:
+            flogger.trace(f"Target {member_id} is not a member, trying role")
+
+        if not target:
+            role = guild.get_role(member_id)
+            if not role:
+                flogger.error(f"Role or member {member_id} not found in guild {guild_id}")
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,
+                                    detail=f"Role or member {member_id} not found")
+            target = role
+            flogger.debug(f"Target {member_id} resolved as role {role.name}")
+
+        # Determine allowed
+        if hasattr(target, "permissions"):
+            # target is a Role
+            base = target.permissions.value
+            flogger.trace(f"Role base permissions: {hex(base)}")
+            bit = PERMISSION_FLAGS.get(permission, {}).get("value")
+            if bit is None:
+                flogger.error(f"Unknown permission name: {permission}")
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
+                                    detail=f"Unknown permission: {permission}")
+            allowed = bool(base & bit)
+            flogger.info(f"Guild permission check for role {target.name}: {allowed}")
+        else:
+            # target is a Member
+            allowed = has_guild_permission(target, permission)
+            flogger.info(f"Guild permission check for member {target.name}: {allowed}")
+
         return PermissionCheckResponse(allowed=allowed)
+
     except HTTPException:
+        flogger.warning(f"HTTP exception in check_guild_permission for target {member_id}")
         raise
     except Exception as exc:
+        flogger.error(f"Unexpected error in check_guild_permission for target {member_id}: {exc}")
         await handle_discord_exception("check guild permission", exc)
 
 @router.post(

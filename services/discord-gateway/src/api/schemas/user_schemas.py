@@ -7,7 +7,7 @@ operations including user details and member management.
 
 from typing import Optional, List, Dict, Any
 from pydantic import BaseModel, Field
-from api.schemas.base_schemas import BaseListResponse, BaseDetailResponse, BaseUpdateRequest
+from api.schemas.base_schemas import BaseResponse, PaginatedResponse, BaseUpdateRequest
 
 class User(BaseModel):
     """User information model."""
@@ -23,6 +23,7 @@ class User(BaseModel):
 class Member(BaseModel):
     """Guild member information model."""
     user: User = Field(..., description="User information")
+    guild_id: int = Field(..., description="Guild ID")
     nick: Optional[str] = Field(None, description="Nickname in guild")
     roles: List[int] = Field(default_factory=list, description="Role IDs")
     joined_at: Optional[str] = Field(None, description="When user joined guild")
@@ -32,17 +33,17 @@ class Member(BaseModel):
     pending: bool = Field(False, description="Whether user is pending verification")
     permissions: int = Field(..., description="User permissions in guild")
 
-class UserDetailResponse(BaseDetailResponse):
+class UserResponse(BaseResponse):
     """Response model for user detail endpoint."""
-    user: User = Field(..., description="User details")
+    data: User = Field(..., description="User data")
 
-class MemberListResponse(BaseListResponse):
-    """Response model for member list endpoint."""
-    members: List[Member] = Field(..., description="List of guild members")
-
-class MemberDetailResponse(BaseDetailResponse):
+class MemberResponse(BaseResponse):
     """Response model for member detail endpoint."""
-    member: Member = Field(..., description="Member details")
+    data: Member = Field(..., description="Member data")
+
+class MemberListResponse(PaginatedResponse):
+    """Response model for member list endpoint."""
+    data: List[Member] = Field(..., description="List of guild members")
 
 class MemberUpdateRequest(BaseUpdateRequest):
     """Request model for updating member properties."""

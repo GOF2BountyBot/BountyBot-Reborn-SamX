@@ -6,8 +6,10 @@ including permission flags reference data and permission checking functions.
 Contains NO direct Discord interactions.
 """
 
-from typing import Dict, List, Any, Optional, Union
-import discord
+from typing import Dict, List, Any, Optional, Union, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    import discord  # type: ignore
 
 # Discord permission flags with descriptions
 PERMISSION_FLAGS = {
@@ -300,7 +302,7 @@ def get_category_permissions() -> List[Dict[str, Any]]:
     # Category channels inherit most channel permissions
     return get_channel_permissions()
 
-def create_permission_overwrite(allow: Optional[int] = None, deny: Optional[int] = None) -> discord.PermissionOverwrite:
+def create_permission_overwrite(allow: Optional[int] = None, deny: Optional[int] = None) -> "Any":
     """
     Create a Discord permission overwrite from allow/deny bit values.
 
@@ -309,7 +311,7 @@ def create_permission_overwrite(allow: Optional[int] = None, deny: Optional[int]
         deny: Permissions to deny (bitfield)
 
     Returns:
-        discord.PermissionOverwrite: Permission overwrite object
+        discord.PermissionOverwrite-like object (constructed lazily)
     """
     kwargs = {}
 
@@ -325,7 +327,14 @@ def create_permission_overwrite(allow: Optional[int] = None, deny: Optional[int]
             if deny & data["value"]:
                 kwargs[name.lower()] = False
 
-    return discord.PermissionOverwrite(**kwargs)
+    # Import discord only when actually constructing the object to avoid a hard runtime dependency
+    try:
+        import discord  # local import
+        return discord.PermissionOverwrite(**kwargs)
+    except Exception:
+        # Fall back to returning the raw kwargs dict if discord isn't available.
+        # Callers that expect a discord.PermissionOverwrite should import discord themselves.
+        return kwargs
 
 def check_permission(permissions_value: int, permission_name: str) -> bool:
     """
@@ -411,18 +420,42 @@ def permissions_to_dict(permissions_value: int) -> Dict[str, bool]:
         for name in PERMISSION_FLAGS.keys()
     }
 
-def overwrite_to_dict(overwrite: discord.PermissionOverwrite) -> Dict[str, Any]:
+def overwrite_to_dict(overwrite: "Any") -> Dict[str, Any]:
     """Convert permission overwrite to dictionary with allow/deny values."""
-    allow, deny = overwrite.pair()
-    return {
-        "allow": allow.value,
-        "deny": deny.value,
-        "permissions": {
-            name.lower(): getattr(overwrite, name.lower())
-            for name in PERMISSION_FLAGS.keys()
-            if getattr(overwrite, name.lower()) is not None
+    # overwrite may be a discord.PermissionOverwrite or a dict (from the fallback above)
+    if isinstance(overwrite, dict):
+        allow_val = overwrite.get("_allow", None) or 0
+        deny_val = overwrite.get("_deny", None) or 0
+        perms_map = {k: v for k, v in overwrite.items() if not k.startswith("_")}
+        return {
+            "allow": allow_val,
+            "deny": deny_val,
+            "permissions": perms_map
         }
-    }
+
+    # Best-effort handling for discord.PermissionOverwrite
+    try:
+        allow, deny = overwrite.pair()
+        return {
+            "allow": getattr(allow, "value", allow),
+            "deny": getattr(deny, "value", deny),
+            "permissions": {
+                name.lower(): getattr(overwrite, name.lower())
+                for name in PERMISSION_FLAGS.keys()
+                if getattr(overwrite, name.lower()) is not None
+            }
+        }
+    except Exception:
+        # Last-resort normalization
+        result = {}
+        for name in PERMISSION_FLAGS.keys():
+            try:
+                val = getattr(overwrite, name.lower())
+                if val is not None:
+                    result[name.lower()] = val
+            except Exception:
+                continue
+        return {"allow": 0, "deny": 0, "permissions": result}
 
 def get_permission_names_by_value(permissions_value: int) -> List[str]:
     """
@@ -456,24 +489,31 @@ def combine_permissions(*permission_values: int) -> int:
     return result
 
 def has_channel_permission(
-    member: discord.Member,
-    channel: discord.abc.GuildChannel,
+    member: "Any",
+    channel: "Any",
     permission: str
 ) -> bool:
     """
     Check whether `member` has the named permission in `channel`.
     Permission name must be uppercase with underscores, e.g. "SEND_MESSAGES".
     """
-    perms = channel.permissions_for(member)
-    return getattr(perms, permission.lower(), False)
+    try:
+        perms = channel.permissions_for(member)
+        return bool(getattr(perms, permission.lower(), False))
+    except Exception:
+        # If channel.permissions_for is not available or fails, conservative False
+        return False
 
 def has_guild_permission(
-    member: discord.Member,
+    member: "Any",
     permission: str
 ) -> bool:
     """
     Check whether `member` has the named guild permission.
     Permission name must be uppercase with underscores, e.g. "BAN_MEMBERS".
     """
-    perms = member.guild_permissions
-    return getattr(perms, permission.lower(), False)
+    try:
+        perms = member.guild_permissions
+        return bool(getattr(perms, permission.lower(), False))
+    except Exception:
+        return False

@@ -8,7 +8,7 @@ including create, update, and delete with proper embed payload structures.
 from typing import Optional, List, Dict, Any
 from pydantic import BaseModel, Field
 from datetime import datetime
-from api.schemas.base_schemas import BaseListResponse
+from api.schemas.base_schemas import BaseResponse, PaginatedResponse
 
 class EmbedField(BaseModel):
     """Embed field structure."""
@@ -28,41 +28,39 @@ class EmbedPayload(BaseModel):
     thumbnail_url: Optional[str] = Field(None, description="Thumbnail image URL")
     image_url: Optional[str] = Field(None, description="Main image URL")
 
-class MessageRequest(BaseModel):
-    """Request schema for message operations."""
-    guild_id: int = Field(..., description="Discord guild ID (required)")
-    channel_id: int = Field(..., description="Discord channel ID (required)")
+class Message(BaseModel):
+    """Consolidated message information model."""
+    id: int = Field(..., description="Message ID")
+    channel_id: int = Field(..., description="Channel ID")
+    guild_id: Optional[int] = Field(None, description="Guild ID")
+    author_id: int = Field(..., description="Author (user) ID")
+    content: Optional[str] = Field(None, description="Message text content")
+    embed_content: Optional[EmbedPayload] = Field(None, description="Message embed content")
+    timestamp: datetime = Field(..., description="When the message was created")
+    edited_timestamp: Optional[datetime] = Field(None, description="When the message was last edited")
+    message_type: str = Field("general", description="Type of message")
+
+class MessageSummary(BaseModel):
+    """Minimal message summary for Discord Gateway conversions."""
+    id: int = Field(..., description="Message ID")
+    author_id: int = Field(..., description="Author (user) ID")
+    content: Optional[str] = Field(None, description="Message text content")
+    timestamp: datetime = Field(..., description="When the message was created")
+
+class MessageCreateRequest(BaseModel):
+    """Request schema for creating messages. Context inferred from URI."""
     content: EmbedPayload = Field(..., description="Message embed content")
     message_type: str = Field("general", description="Type of message")
 
 class MessageUpdateRequest(BaseModel):
-    """Request schema for message updates."""
-    guild_id: int = Field(..., description="Discord guild ID (required)")
-    channel_id: int = Field(..., description="Discord channel ID (required)")
-    message_id: int = Field(..., description="Discord message ID (required)")
+    """Request schema for updating messages. Context inferred from URI."""
     content: EmbedPayload = Field(..., description="Updated message embed content")
     message_type: str = Field("general", description="Type of message")
 
-class MessageDeleteRequest(BaseModel):
-    """Request schema for message deletion."""
-    guild_id: int = Field(..., description="Discord guild ID (required)")
-    channel_id: int = Field(..., description="Discord channel ID (required)")
-    message_id: int = Field(..., description="Discord message ID (required)")
+class MessageResponse(BaseResponse):
+    """Response model for single message endpoint."""
+    data: Message = Field(..., description="Message data")
 
-class MessageResponse(BaseModel):
-    """Response schema for message operations."""
-    status: str = Field(..., description="Operation status")
-    guild_id: Optional[int] = Field(None, description="Discord guild ID")
-    channel_id: Optional[int] = Field(None, description="Discord channel ID")
-    message_id: Optional[int] = Field(None, description="Discord message ID")
-    content: Optional[EmbedPayload] = Field(None, description="Message content (for GET operations)")
-    timestamp: Optional[datetime] = Field(None, description="Operation timestamp")
-
-class MessageSummary(BaseModel):
-    id: int = Field(..., description="Message ID")
-    author_id: int = Field(..., description="Author (user) ID")
-    content: Optional[str] = Field(None, description="Message content (plain or embed payload)")
-    timestamp: datetime = Field(..., description="When the message was created")
-
-class MessageListResponse(BaseListResponse):
-    messages: List[MessageSummary] = Field(..., description="List of messages")
+class MessageListResponse(PaginatedResponse):
+    """Response model for message list endpoint."""
+    data: List[Message] = Field(..., description="List of messages")

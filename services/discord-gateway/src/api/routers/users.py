@@ -2,18 +2,17 @@
 User router for Discord Gateway API.
 
 This module provides REST endpoints for managing Discord users and members
-including getting user details, member info, and performing member actions.
+with simplified URIs that don't require guild context where possible.
 """
 
-from fastapi import APIRouter, HTTPException, Request, status
-
+from fastapi import APIRouter, HTTPException, Request, status, Query
+import discord
 import shared.bblogger as bblogger
-from api.schemas.user_schemas import (
-    UserDetailResponse, MemberDetailResponse, MemberUpdateRequest
-)
-from api.schemas.base_schemas import SuccessResponse
+from api.schemas.user_schemas import UserResponse, MemberResponse, MemberUpdateRequest
+from api.schemas.permission_schemas import PermissionCheckResponse
 from utils.discord_converters import UserConverter
-from utils.discord_helpers import resolve_bot, get_entity_or_404, handle_discord_exception
+from utils.discord_helpers import resolve_bot, handle_discord_exception
+from utils.permission_utils import PERMISSION_FLAGS, has_guild_permission
 
 flogger = bblogger.get_logger("gateway-user-router")
 
@@ -27,40 +26,26 @@ router = APIRouter(
     }
 )
 
-# GET endpoints (ordered: List, Get Details, Get Extra Info)
-
 @router.get(
     "/users/@me",
-    response_model=UserDetailResponse,
+    response_model=UserResponse,
     status_code=status.HTTP_200_OK,
     summary="Get Bot Identity",
     description="Get information about the bot user"
 )
-async def get_bot_identity(request: Request) -> UserDetailResponse:
-    """
-    Get information about the bot user.
-    
-    Returns:
-        Bot user information
-    """
+async def get_bot_identity(request: Request) -> UserResponse:
+    """Get information about the bot user."""
     flogger.info("get_bot_identity endpoint called")
-    flogger.debug("Starting bot identity retrieval")
-    
     try:
         bot = await resolve_bot(request)
-        flogger.debug("Bot resolved successfully")
-        
-        user_payload = UserConverter.user_to_payload(bot.user)
-        flogger.trace(f"Bot identity conversion completed for {bot.user.name}")
+        user_data = UserConverter.user_to_payload(bot.user)
         
         flogger.info(f"Successfully retrieved bot identity: {bot.user.name}")
-        return UserDetailResponse(
+        return UserResponse(
             status="success",
-            user=user_payload
+            data=user_data
         )
-        
     except HTTPException:
-        flogger.warning("HTTP exception occurred in get_bot_identity")
         raise
     except Exception as exc:
         flogger.error(f"Unexpected error in get_bot_identity: {exc}")
@@ -68,207 +53,155 @@ async def get_bot_identity(request: Request) -> UserDetailResponse:
 
 @router.get(
     "/users/{user_id}",
-    response_model=UserDetailResponse,
+    response_model=UserResponse,
     status_code=status.HTTP_200_OK,
     summary="Get User Details",
     description="Get information about a specific user"
 )
-async def get_user(request: Request, user_id: int) -> UserDetailResponse:
-    """
-    Get information about a specific user.
-    
-    Args:
-        user_id: The ID of the user to retrieve
-        
-    Returns:
-        User information
-    """
+async def get_user(request: Request, user_id: int) -> UserResponse:
+    """Get information about a specific user."""
     flogger.info(f"get_user endpoint called for user_id: {user_id}")
-    flogger.debug(f"Starting user detail retrieval for user {user_id}")
-    
     try:
         bot = await resolve_bot(request)
-        flogger.debug("Bot resolved successfully")
         
-        user = await get_entity_or_404(
-            bot.get_user,
-            bot.fetch_user,
-            user_id,
-            "User"
-        )
-        flogger.debug(f"User retrieved: {user.name}")
+        # Try to get user from cache first
+        user = bot.get_user(user_id)
+        if not user:
+            try:
+                user = await bot.fetch_user(user_id)
+            except discord.NotFound:
+                flogger.error(f"User {user_id} not found")
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"User {user_id} not found"
+                )
         
-        user_payload = UserConverter.user_to_payload(user)
-        flogger.trace(f"User detail conversion completed for {user.name}")
-        
+        user_data = UserConverter.user_to_payload(user)
         flogger.info(f"Successfully retrieved user details for {user.name}")
-        return UserDetailResponse(
-            status="success",
-            user=user_payload
-        )
         
+        return UserResponse(
+            status="success",
+            data=user_data
+        )
     except HTTPException:
-        flogger.warning(f"HTTP exception occurred in get_user for user {user_id}")
         raise
     except Exception as exc:
         flogger.error(f"Unexpected error in get_user for user {user_id}: {exc}")
         await handle_discord_exception("get user details", exc)
 
 @router.get(
-    "/guilds/{guild_id}/members/{user_id}",
-    response_model=MemberDetailResponse,
+    "/members/{member_id}",
+    response_model=MemberResponse,
     status_code=status.HTTP_200_OK,
     summary="Get Member Details",
     description="Get information about a guild member"
 )
-async def get_member(request: Request, guild_id: int, user_id: int) -> MemberDetailResponse:
-    """
-    Get information about a guild member.
-    
-    Args:
-        guild_id: The ID of the guild
-        user_id: The ID of the user/member to retrieve
-        
-    Returns:
-        Member information including guild-specific data
-    """
-    flogger.info(f"get_member endpoint called for guild_id: {guild_id}, user_id: {user_id}")
-    flogger.debug(f"Starting member detail retrieval for user {user_id}")
-    
+async def get_member(request: Request, member_id: int) -> MemberResponse:
+    """Get information about a guild member."""
+    flogger.info(f"get_member endpoint called for member_id: {member_id}")
     try:
         bot = await resolve_bot(request)
-        flogger.debug("Bot resolved successfully")
         
-        guild = await get_entity_or_404(
-            bot.get_guild,
-            bot.fetch_guild,
-            guild_id,
-            "Guild"
-        )
-        flogger.debug(f"Guild retrieved: {guild.name}")
-        
-        member = guild.get_member(user_id)
-        if not member:
-            flogger.trace(f"Member {user_id} not in cache, fetching")
+        # Search for the member across all guilds
+        # Note: member_id in this context is actually user_id, but we search for them as a member
+        member = None
+        for guild in bot.guilds:
+            member = guild.get_member(member_id)
+            if member:
+                break
+            
+            # Try fetching if not in cache
             try:
-                member = await guild.fetch_member(user_id)
-            except Exception:
-                flogger.error(f"Member {user_id} not found in guild {guild_id}")
-                raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND,
-                    detail=f"Member {user_id} not found in guild {guild_id}"
-                )
+                member = await guild.fetch_member(member_id)
+                if member:
+                    break
+            except discord.NotFound:
+                continue
         
-        flogger.debug(f"Member retrieved: {member.display_name}")
+        if not member:
+            flogger.error(f"Member {member_id} not found")
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Member {member_id} not found"
+            )
         
-        member_payload = UserConverter.member_to_payload(member)
-        flogger.trace(f"Member detail conversion completed for {member.display_name}")
-        
+        member_data = UserConverter.member_to_payload(member)
         flogger.info(f"Successfully retrieved member details for {member.display_name}")
-        return MemberDetailResponse(
-            status="success",
-            member=member_payload
-        )
         
+        return MemberResponse(
+            status="success",
+            data=member_data
+        )
     except HTTPException:
-        flogger.warning(f"HTTP exception occurred in get_member for member {user_id}")
         raise
     except Exception as exc:
-        flogger.error(f"Unexpected error in get_member for member {user_id}: {exc}")
+        flogger.error(f"Unexpected error in get_member for member {member_id}: {exc}")
         await handle_discord_exception("get member details", exc)
 
-# PUT endpoints
-
 @router.put(
-    "/guilds/{guild_id}/members/{user_id}",
-    response_model=MemberDetailResponse,
+    "/members/{member_id}",
+    response_model=MemberResponse,
     status_code=status.HTTP_200_OK,
     summary="Update Member",
-    description="Update a guild member's properties (wrapper for PATCH)"
+    description="Update a guild member's properties"
 )
 async def update_member(
-    request: Request,
-    guild_id: int,
-    user_id: int,
-    member_data: MemberUpdateRequest
-) -> MemberDetailResponse:
-    """
-    Update a guild member's properties.
-    
-    Args:
-        guild_id: The ID of the guild
-        user_id: The ID of the member to update
-        member_data: Member update parameters
-        
-    Returns:
-        Updated member information
-    """
-    flogger.info(f"update_member endpoint called for guild_id: {guild_id}, user_id: {user_id}")
-    flogger.debug(f"Starting member update with data: {member_data.dict()}")
-    
+    request: Request, member_id: int, member_data: MemberUpdateRequest
+) -> MemberResponse:
+    """Update a guild member's properties."""
+    flogger.info(f"update_member endpoint called for member_id: {member_id}")
     try:
         bot = await resolve_bot(request)
-        flogger.debug("Bot resolved successfully")
         
-        guild = await get_entity_or_404(
-            bot.get_guild,
-            bot.fetch_guild,
-            guild_id,
-            "Guild"
-        )
-        flogger.debug(f"Guild retrieved: {guild.name}")
-        
-        member = guild.get_member(user_id)
-        if not member:
-            flogger.trace(f"Member {user_id} not in cache, fetching")
+        # Search for the member across all guilds
+        member = None
+        for guild in bot.guilds:
+            member = guild.get_member(member_id)
+            if member:
+                break
+            
+            # Try fetching if not in cache
             try:
-                member = await guild.fetch_member(user_id)
-            except Exception:
-                flogger.error(f"Member {user_id} not found in guild {guild_id}")
-                raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND,
-                    detail=f"Member {user_id} not found in guild {guild_id}"
-                )
+                member = await guild.fetch_member(member_id)
+                if member:
+                    break
+            except discord.NotFound:
+                continue
         
-        flogger.debug(f"Member retrieved: {member.display_name}")
+        if not member:
+            flogger.error(f"Member {member_id} not found")
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Member {member_id} not found"
+            )
         
         # Build update kwargs
         update_kwargs = {}
-        
         if member_data.nick is not None:
             update_kwargs["nick"] = member_data.nick
-            flogger.trace(f"Will update nick to: {member_data.nick}")
         if member_data.mute is not None:
             update_kwargs["mute"] = member_data.mute
-            flogger.trace(f"Will update mute to: {member_data.mute}")
         if member_data.deaf is not None:
             update_kwargs["deafen"] = member_data.deaf
-            flogger.trace(f"Will update deafen to: {member_data.deaf}")
         
-        # Handle role updates
         if member_data.roles is not None:
             roles = []
-            flogger.debug(f"Processing {len(member_data.roles)} role assignments")
             for role_id in member_data.roles:
-                role = guild.get_role(role_id)
+                role = member.guild.get_role(role_id)
                 if not role:
-                    flogger.error(f"Role {role_id} not found in guild {guild_id}")
+                    flogger.error(f"Role {role_id} not found in guild {member.guild.id}")
                     raise HTTPException(
                         status_code=status.HTTP_404_NOT_FOUND,
-                        detail=f"Role {role_id} not found in guild {guild_id}"
+                        detail=f"Role {role_id} not found"
                     )
                 roles.append(role)
-                flogger.trace(f"Added role to assignment: {role.name}")
             update_kwargs["roles"] = roles
         
-        # Handle voice channel move
         if member_data.channel_id is not None:
             if member_data.channel_id == 0:
-                # Disconnect from voice
                 update_kwargs["voice_channel"] = None
-                flogger.trace("Will disconnect member from voice")
             else:
-                voice_channel = guild.get_channel(member_data.channel_id)
+                voice_channel = member.guild.get_channel(member_data.channel_id)
                 if not voice_channel:
                     flogger.error(f"Voice channel {member_data.channel_id} not found")
                     raise HTTPException(
@@ -276,101 +209,90 @@ async def update_member(
                         detail=f"Voice channel {member_data.channel_id} not found"
                     )
                 update_kwargs["voice_channel"] = voice_channel
-                flogger.trace(f"Will move member to voice channel: {voice_channel.name}")
         
-        # Update member
+        # Apply updates
         if update_kwargs:
-            flogger.debug(f"Applying updates: {update_kwargs}")
-            await member.edit(**update_kwargs)
-        else:
-            flogger.debug("No updates to apply")
+            try:
+                await member.edit(**update_kwargs)
+            except discord.HTTPException as exc:
+                if getattr(exc, "code", None) == 40032:
+                    flogger.error("Target user not connected to voice")
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="user not in a voice channel"
+                    ) from exc
+                raise
         
-        # Return updated member data
-        member_payload = UserConverter.member_to_payload(member)
-        flogger.trace("Member detail conversion completed")
-        
+        updated_member_data = UserConverter.member_to_payload(member)
         flogger.info(f"Successfully updated member {member.display_name}")
-        return MemberDetailResponse(
-            status="updated",
-            member=member_payload
-        )
         
+        return MemberResponse(
+            status="updated",
+            data=updated_member_data
+        )
     except HTTPException:
-        flogger.warning(f"HTTP exception occurred in update_member for member {user_id}")
         raise
     except Exception as exc:
-        flogger.error(f"Unexpected error in update_member for member {user_id}: {exc}")
+        flogger.error(f"Unexpected error in update_member for member {member_id}: {exc}")
         await handle_discord_exception("update member", exc)
 
-# DELETE endpoints
-'''
-@router.delete(
-    "/guilds/{guild_id}/members/{user_id}",
-    response_model=SuccessResponse,
+@router.get(
+    "/members/{member_id}/permissions/check",
+    response_model=PermissionCheckResponse,
     status_code=status.HTTP_200_OK,
-    summary="Kick Member",
-    description="Kick a user from a guild"
+    summary="Check Member Permission",
+    description="Check if a member has a specific guild-level permission"
 )
-async def kick_member(request: Request, guild_id: int, user_id: int, reason: str = None) -> SuccessResponse:
-    """
-    Kick a user from a guild.
+async def check_member_permission(
+    request: Request,
+    member_id: int,
+    permission: str = Query(..., description="Permission name (uppercase, e.g. BAN_MEMBERS)")
+) -> PermissionCheckResponse:
+    """Check whether a member has the named guild-level permission."""
+    flogger.info(f"check_member_permission called for member_id={member_id}, permission={permission}")
     
-    Args:
-        guild_id: The ID of the guild
-        user_id: The ID of the user to kick
-        reason: Optional reason for the kick
-        
-    Returns:
-        Success confirmation
-    """
-    flogger.info(f"kick_member endpoint called for guild_id: {guild_id}, user_id: {user_id}")
-    flogger.debug(f"Starting member kick with reason: {reason}")
+    # Validate permission name
+    if permission not in PERMISSION_FLAGS:
+        flogger.error(f"check_member_permission: unknown permission '{permission}'")
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Unknown permission: {permission}"
+        )
     
     try:
         bot = await resolve_bot(request)
-        flogger.debug("Bot resolved successfully")
         
-        guild = await get_entity_or_404(
-            bot.get_guild,
-            bot.fetch_guild,
-            guild_id,
-            "Guild"
-        )
-        flogger.debug(f"Guild retrieved: {guild.name}")
-        
-        member = guild.get_member(user_id)
-        if not member:
-            flogger.trace(f"Member {user_id} not in cache, fetching")
+        # Search for the member across all guilds
+        member = None
+        for guild in bot.guilds:
+            member = guild.get_member(member_id)
+            if member:
+                break
+            
+            # Try fetching if not in cache
             try:
-                member = await guild.fetch_member(user_id)
-            except Exception:
-                flogger.error(f"Member {user_id} not found in guild {guild_id}")
-                raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND,
-                    detail=f"Member {user_id} not found in guild {guild_id}"
-                )
+                member = await guild.fetch_member(member_id)
+                if member:
+                    break
+            except discord.NotFound:
+                continue
         
-        member_name = member.display_name
-        flogger.debug(f"Member retrieved: {member_name}")
+        if not member:
+            flogger.error(f"Member {member_id} not found")
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Member {member_id} not found"
+            )
         
-        # Kick the member
-        flogger.debug(f"Kicking member {member_name} from guild {guild.name}")
-        await member.kick(reason=reason)
+        allowed = has_guild_permission(member, permission)
+        flogger.info(f"Guild permission '{permission}' for member '{member.display_name}': {allowed}")
         
-        message = f"Member {member_name} kicked from {guild.name}"
-        if reason:
-            message += f" (Reason: {reason})"
-        
-        flogger.info(message)
-        return SuccessResponse(
-            status="kicked",
-            message=message
+        return PermissionCheckResponse(
+            status="success",
+            data={"allowed": allowed}
         )
-        
     except HTTPException:
-        flogger.warning(f"HTTP exception occurred in kick_member for member {user_id}")
         raise
     except Exception as exc:
-        flogger.error(f"Unexpected error in kick_member for member {user_id}: {exc}")
-        await handle_discord_exception("kick member", exc)
-'''
+        flogger.error(f"Unexpected error in check_member_permission for member {member_id}: {exc}")
+        await handle_discord_exception("check member permission", exc)

@@ -7,15 +7,12 @@ including role creation, updates, and member management.
 
 from typing import Optional, List, Dict, Any
 from pydantic import BaseModel, Field
-from api.schemas.base_schemas import (
-    BaseListResponse, BaseDetailResponse,
-    BaseCreateRequest, BaseUpdateRequest
-)
-from .user_schemas import Member
+from api.schemas.base_schemas import BaseResponse, PaginatedResponse, BaseCreateRequest, BaseUpdateRequest
 
 class Role(BaseModel):
-    """Role information model."""
+    """Consolidated role information model."""
     id: int = Field(..., description="Role ID")
+    guild_id: int = Field(..., description="Guild ID")
     name: str = Field(..., description="Role name")
     color: int = Field(..., description="Role color")
     hoist: bool = Field(..., description="Whether role is hoisted")
@@ -26,17 +23,13 @@ class Role(BaseModel):
     created_at: str = Field(..., description="Role creation timestamp")
     tags: Optional[Dict[str, Any]] = Field(None, description="Role tags")
 
-class RoleListResponse(BaseListResponse):
+class RoleResponse(BaseResponse):
+    """Response model for single role endpoint."""
+    data: Role = Field(..., description="Role data")
+
+class RoleListResponse(PaginatedResponse):
     """Response model for role list endpoint."""
-    roles: List[Role] = Field(..., description="List of roles")
-
-class RoleDetailResponse(BaseDetailResponse):
-    """Response model for role detail endpoint."""
-    role: Role = Field(..., description="Role details")
-
-class RoleMemberListResponse(BaseListResponse):
-    """Response model for role member list endpoint."""
-    members: List[Member] = Field(..., description="List of members with role")
+    data: List[Role] = Field(..., description="List of roles")
 
 class RoleCreateRequest(BaseCreateRequest):
     """Request model for creating a role."""

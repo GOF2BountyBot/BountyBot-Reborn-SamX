@@ -7,18 +7,15 @@ including guild listings, details, and member management.
 
 from typing import Optional, List, Dict, Any
 from pydantic import BaseModel, Field
-from api.schemas.base_schemas import BaseListResponse, BaseDetailResponse
+from api.schemas.base_schemas import BaseResponse, PaginatedResponse
 
-class GuildSummary(BaseModel):
-    """Summary guild information for list responses."""
+class Guild(BaseModel):
+    """Consolidated guild information model."""
     id: int = Field(..., description="Guild ID")
     name: str = Field(..., description="Guild name")
     icon: Optional[str] = Field(None, description="Guild icon URL")
     member_count: Optional[int] = Field(None, description="Number of members")
     owner_id: int = Field(..., description="Guild owner ID")
-
-class GuildDetail(GuildSummary):
-    """Detailed guild information for detail responses."""
     description: Optional[str] = Field(None, description="Guild description")
     created_at: str = Field(..., description="Guild creation timestamp")
     features: List[str] = Field(default_factory=list, description="Guild features")
@@ -31,10 +28,16 @@ class GuildDetail(GuildSummary):
     preferred_locale: str = Field(..., description="Preferred locale")
     nsfw_level: Optional[str] = Field(None, description="NSFW level")
 
-class GuildListResponse(BaseListResponse):
-    """Response model for guild list endpoint."""
-    guilds: List[GuildSummary] = Field(..., description="List of guilds")
+class GuildResponse(BaseResponse):
+    """Response model for single guild endpoint."""
+    data: Guild = Field(..., description="Guild data")
 
-class GuildDetailResponse(BaseDetailResponse):
-    """Response model for guild detail endpoint."""
-    guild: GuildDetail = Field(..., description="Guild details")
+class GuildListResponse(PaginatedResponse):
+    """Response model for guild list endpoint."""
+    data: List[Guild] = Field(..., description="List of guilds")
+
+class GuildSummary(BaseModel):
+    """A minimal guild representation."""
+    id: int = Field(..., description="Guild ID")
+    name: str = Field(..., description="Guild name")
+    owner_id: int = Field(..., description="Guild owner ID")

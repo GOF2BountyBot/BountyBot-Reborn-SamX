@@ -253,10 +253,12 @@ def normalize_emoji(val: str) -> str:
     """
     Normalize an emoji input into the full unicode emoji string.
 
-    Accepts either:
+    Accepts:
       - a unicode emoji string (e.g. "🏷️", "📌")
-      - a hex/codepoint string such as "1f4cc" or "1f1fa-1f1f8" or
-        with prefixes "U+1F4CC" / "0x1f4cc"
+      - a hex/codepoint string such as "1f4cc" or "1f1fa-1f1f8" or with prefixes "U+1F4CC" / "0x1f4cc"
+      - concatenated hex codepoint strings like "1f3f7fe0f"
+      - full custom emoji forms "<:name:id>" and "<a:name:id>" — returned as-is
+      - short custom name form ":name:" — returned as "name" (without colons)
 
     Returns the normalized unicode emoji (or the original input on parse failure).
     """
@@ -266,16 +268,60 @@ def normalize_emoji(val: str) -> str:
     if not s:
         return s
 
-    # Remove common prefixes like "U+" or "0x"
-    cleaned = re.sub(r'(?i)^(?:u\+|0x)+', '', s)
+    # If the value is a full custom emoji like <a:name:id> or <:name:id>, accept as-is.
+    m_full_custom = re.fullmatch(r'^<a?:([A-Za-z0-9_~]+):(\d+)>$', s)
+    if m_full_custom:
+        return s  # keep full custom emoji notation
+
+    # If the value is a short form like :name:, normalize to "name" (no colons).
+    m_short = re.fullmatch(r'^:([A-Za-z0-9_~]+):$', s)
+    if m_short:
+        return m_short.group(1)
+
+    # Remove common prefixes like "U+" or "0x" (single prefix)
+    cleaned = re.sub(r'(?i)^(?:u\+|0x)', '', s)
 
     # If looks like hex codepoints separated by -, _, or whitespace, convert
     if re.fullmatch(r'[0-9A-Fa-f]+(?:[-_\s][0-9A-Fa-f]+)*', cleaned):
         parts = re.split(r'[-_\s]+', cleaned)
-        try:
-            return ''.join(chr(int(p, 16)) for p in parts)
-        except Exception:
-            return val
+        # If there are explicit separators, just decode each part
+        if len(parts) > 1:
+            try:
+                return ''.join(chr(int(p, 16)) for p in parts)
+            except Exception:
+                return val
 
-    # Otherwise assume it's already a unicode emoji
+        # Single concatenated hex string (no separators) — attempt to split into valid codepoints.
+        hexstr = parts[0]
+
+        # Backtracking splitter: try to partition hexstr into chunks of length 1..6
+        # (unicode scalars fit in up to 6 hex digits), greedy longest-first to favor larger codepoints.
+        from functools import lru_cache
+
+        @lru_cache(maxsize=None)
+        def try_split(idx):
+            if idx == len(hexstr):
+                return []
+            # try lengths 6..1
+            for L in range(6, 0, -1):
+                if idx + L <= len(hexstr):
+                    part = hexstr[idx:idx + L]
+                    try:
+                        cp = int(part, 16)
+                        if cp <= 0x10FFFF:
+                            rest = try_split(idx + L)
+                            if rest is not None:
+                                return [part] + rest
+                    except Exception:
+                        continue
+            return None
+
+        split = try_split(0)
+        if split:
+            try:
+                return ''.join(chr(int(p, 16)) for p in split)
+            except Exception:
+                return val
+
+    # Otherwise assume it's already a unicode emoji (or some other acceptable string)
     return s

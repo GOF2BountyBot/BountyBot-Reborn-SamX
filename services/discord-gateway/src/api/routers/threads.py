@@ -29,17 +29,59 @@ router = APIRouter(
 )
 
 def find_thread_by_id(bot, thread_id: int):
-    """Find a thread by ID across all guilds."""
-    for guild in bot.guilds:
-        for channel in guild.channels:
-            if isinstance(channel, discord.ForumChannel):
-                thread = channel.get_thread(thread_id)
-                if thread:
-                    return thread
-                # Also check archived/inactive threads
-                for thread in channel.threads:
-                    if thread.id == thread_id:
-                        return thread
+    """Find a thread by ID across the bot's cache.
+
+    Strategy:
+      1) Try bot.get_channel(thread_id) — threads are channels, so this
+         returns a Thread object when cached.
+      2) Otherwise scan guilds -> forum channels:
+         - call get_thread if it exists (some versions provide it)
+         - iterate channel.threads if present
+    Returns the thread/channel object or None.
+    """
+    # 1) Direct cached lookup (fast path)
+    try:
+        ch = bot.get_channel(thread_id)
+        # Accept if it's a thread-like channel (discord.Thread) or has forum parent
+        if ch is not None:
+            # Prefer explicit Thread type check when available
+            if getattr(discord, "Thread", None) and isinstance(ch, discord.Thread):
+                return ch
+            # Some builds may represent thread channels as Channel objects with 'parent' attr
+            if hasattr(ch, "parent") and getattr(ch, "parent", None) is not None:
+                # If parent is a ForumChannel, treat this as the thread we want
+                parent = getattr(ch, "parent", None)
+                if getattr(discord, "ForumChannel", None) and isinstance(parent, discord.ForumChannel):
+                    return ch
+            # Fallback: if object has 'archived' attribute it is likely a Thread
+            if hasattr(ch, "archived"):
+                return ch
+    except Exception:
+        # Defensive: don't allow a single lookup failure to crash search
+        pass
+
+    # 2) Scan guilds/forum channels in cache (fallback)
+    for guild in getattr(bot, "guilds", []):
+        for channel in getattr(guild, "channels", []):
+            # only consider forum-like channels
+            if getattr(discord, "ForumChannel", None) and isinstance(channel, discord.ForumChannel):
+                # safe-get get_thread if provided by this discord.py variant
+                gfn = getattr(channel, "get_thread", None)
+                if callable(gfn):
+                    try:
+                        t = gfn(thread_id)
+                        if t:
+                            return t
+                    except Exception:
+                        # ignore non-fatal errors from variant-specific helpers
+                        pass
+                # iterate known threads list if present
+                for t in getattr(channel, "threads", []):
+                    try:
+                        if getattr(t, "id", None) == thread_id:
+                            return t
+                    except Exception:
+                        continue
     return None
 
 @router.get(
@@ -50,46 +92,58 @@ def find_thread_by_id(bot, thread_id: int):
     description="Get detailed information about a specific thread"
 )
 async def get_thread(request: Request, thread_id: int) -> ThreadResponse:
-    """Get detailed information about a specific thread."""
+    """Get detailed information about a specific thread.
+
+    Resolution strategy:
+      1) fast cached lookup via find_thread_by_id(bot, id)
+      2) bot.get_channel(id) (cached)
+      3) await bot.fetch_channel(id) (API fetch)
+    Raises 404 if not found and delegates other exceptions to handle_discord_exception.
+    """
     flogger.info(f"get_thread called for thread_id={thread_id}")
     try:
         bot = await resolve_bot(request)
-        
+
+        # 1) cached scan helper
         thread = find_thread_by_id(bot, thread_id)
+
+        # 2) direct cached channel lookup
         if not thread:
-            # Try to fetch it if not in cache
-            for guild in bot.guilds:
-                for channel in guild.channels:
-                    if isinstance(channel, discord.ForumChannel):
-                        try:
-                            thread = await channel.fetch_thread(thread_id)
-                            if thread:
-                                break
-                        except discord.NotFound:
-                            continue
-                        except discord.Forbidden:
-                            continue
-                if thread:
-                    break
-        
+            try:
+                thread = bot.get_channel(thread_id)
+            except Exception:
+                thread = None
+
+        # 3) final attempt: fetch from API (threads are channels)
+        if not thread:
+            try:
+                thread = await bot.fetch_channel(thread_id)
+            except discord.NotFound:
+                thread = None
+            except discord.Forbidden:
+                # treat inaccessible as not found for API purposes
+                thread = None
+
         if not thread:
             flogger.error(f"Thread {thread_id} not found")
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"Thread {thread_id} not found"
             )
-        
+
         thread_data = ChannelConverter.thread_to_detail(thread)
-        flogger.info(f"Successfully retrieved thread {thread.name}")
-        
+        flogger.info(f"Successfully retrieved thread {getattr(thread, 'name', thread_id)}")
+
         return ThreadResponse(
             status="success",
             data=thread_data
         )
     except HTTPException:
+        # re-raise FastAPI HTTP errors unchanged
         raise
     except Exception as exc:
         flogger.error(f"Unexpected error in get_thread: {exc}")
+        # centralized handler converts/logs and raises appropriate HTTPException
         await handle_discord_exception("get thread", exc)
 
 @router.put(
@@ -102,36 +156,42 @@ async def get_thread(request: Request, thread_id: int) -> ThreadResponse:
 async def update_thread(
     request: Request, thread_id: int, thread_data: ThreadUpdateRequest
 ) -> ThreadResponse:
-    """Update a thread's properties."""
+    """Update a thread's properties.
+
+    Resolution strategy same as get_thread: try cache first, then fetch.
+    Applies the provided updates via thread.edit(...) when necessary.
+    """
     flogger.info(f"update_thread called for thread_id={thread_id}")
     try:
         bot = await resolve_bot(request)
-        
+
+        # 1) cached scan helper
         thread = find_thread_by_id(bot, thread_id)
+
+        # 2) direct cached channel lookup
         if not thread:
-            # Try to fetch it if not in cache
-            for guild in bot.guilds:
-                for channel in guild.channels:
-                    if isinstance(channel, discord.ForumChannel):
-                        try:
-                            thread = await channel.fetch_thread(thread_id)
-                            if thread:
-                                break
-                        except discord.NotFound:
-                            continue
-                        except discord.Forbidden:
-                            continue
-                if thread:
-                    break
-        
+            try:
+                thread = bot.get_channel(thread_id)
+            except Exception:
+                thread = None
+
+        # 3) final attempt: fetch from API
+        if not thread:
+            try:
+                thread = await bot.fetch_channel(thread_id)
+            except discord.NotFound:
+                thread = None
+            except discord.Forbidden:
+                thread = None
+
         if not thread:
             flogger.error(f"Thread {thread_id} not found")
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"Thread {thread_id} not found"
             )
-        
-        # Apply updates
+
+        # Compose update kwargs from the request model
         update_kwargs = {}
         if thread_data.name is not None:
             update_kwargs["name"] = thread_data.name
@@ -139,13 +199,21 @@ async def update_thread(
             update_kwargs["archived"] = thread_data.archived
         if thread_data.locked is not None:
             update_kwargs["locked"] = thread_data.locked
-        
+
         if update_kwargs:
             await thread.edit(**update_kwargs)
-        
+            # best-effort: refresh from cache/fetch for up-to-date returned payload
+            try:
+                refreshed = bot.get_channel(thread_id) or await bot.fetch_channel(thread_id)
+                if refreshed is not None:
+                    thread = refreshed
+            except Exception:
+                # ignore refresh failures; use the object we have
+                pass
+
         updated_thread_data = ChannelConverter.thread_to_detail(thread)
-        flogger.info(f"Successfully updated thread {thread.name}")
-        
+        flogger.info(f"Successfully updated thread {getattr(thread, 'name', thread_id)}")
+
         return ThreadResponse(
             status="updated",
             data=updated_thread_data
@@ -168,17 +236,30 @@ async def close_thread(request: Request, thread_id: int) -> SuccessResponse:
     flogger.info(f"close_thread called for thread_id={thread_id}")
     try:
         bot = await resolve_bot(request)
-        
+        # 1) cached scan helper
         thread = find_thread_by_id(bot, thread_id)
+        # 2) direct cached channel lookup
+        if not thread:
+            try:
+                thread = bot.get_channel(thread_id)
+            except Exception:
+                thread = None
+        # 3) final attempt: fetch from API (threads are channels)
+        if not thread:
+            try:
+                thread = await bot.fetch_channel(thread_id)
+            except discord.NotFound:
+                thread = None
+            except discord.Forbidden:
+                # treat inaccessible as not found for API purposes
+                thread = None
         if not thread:
             flogger.error(f"Thread {thread_id} not found")
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"Thread {thread_id} not found"
             )
-        
         await thread.edit(archived=True)
-        
         message = f"Thread {thread.name} closed"
         flogger.info(message)
         return SuccessResponse(status="closed", message=message)
@@ -187,6 +268,7 @@ async def close_thread(request: Request, thread_id: int) -> SuccessResponse:
     except Exception as exc:
         flogger.error(f"Unexpected error in close_thread: {exc}")
         await handle_discord_exception("close thread", exc)
+
 
 @router.put(
     "/threads/{thread_id}/open",
@@ -200,17 +282,30 @@ async def open_thread(request: Request, thread_id: int) -> SuccessResponse:
     flogger.info(f"open_thread called for thread_id={thread_id}")
     try:
         bot = await resolve_bot(request)
-        
+        # 1) cached scan helper
         thread = find_thread_by_id(bot, thread_id)
+        # 2) direct cached channel lookup
+        if not thread:
+            try:
+                thread = bot.get_channel(thread_id)
+            except Exception:
+                thread = None
+        # 3) final attempt: fetch from API (threads are channels)
+        if not thread:
+            try:
+                thread = await bot.fetch_channel(thread_id)
+            except discord.NotFound:
+                thread = None
+            except discord.Forbidden:
+                # treat inaccessible as not found for API purposes
+                thread = None
         if not thread:
             flogger.error(f"Thread {thread_id} not found")
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"Thread {thread_id} not found"
             )
-        
         await thread.edit(archived=False)
-        
         message = f"Thread {thread.name} opened"
         flogger.info(message)
         return SuccessResponse(status="opened", message=message)

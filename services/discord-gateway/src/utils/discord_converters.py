@@ -10,11 +10,12 @@ from typing import Dict, Any, Optional, List, Union
 import discord
 from datetime import datetime
 from api.schemas.guild_schemas import Guild
-from api.schemas.channel_schemas import Channel, Category
+from api.schemas.channel_schemas import Channel, Category, Thread
 from api.schemas.role_schemas import Role
 from api.schemas.user_schemas import User, Member
 from api.schemas.permission_schemas import PermissionOverwrite
-from api.schemas.message_schemas import MessageSummary
+from api.schemas.message_schemas import Message, MessageSummary
+from utils.embed_converter import EmbedConverter
 import shared.bblogger as bblogger
 
 flogger = bblogger.get_logger("discord-converters")
@@ -139,6 +140,176 @@ class ChannelConverter:
             flogger.exception("Error converting category to detail")
             raise
 
+    @staticmethod
+    def thread_to_summary(thread: Union[discord.Thread, discord.TextChannel, discord.Thread]) -> Thread:
+        """
+        Convert a Discord Thread (or thread-like channel) to a Thread payload.
+
+        Defensive: uses getattr with sensible defaults to avoid attribute errors
+        across discord.py versions and different runtime objects.
+        """
+        flogger.debug(f"thread_to_summary called for thread: {getattr(thread, 'name', None)} ({getattr(thread, 'id', None)})")
+        try:
+            # parent/channel id: some versions expose parent_id, some expose parent object
+            parent_id = getattr(thread, "parent_id", None)
+            if parent_id is None:
+                parent = getattr(thread, "parent", None) or getattr(thread, "channel", None)
+                parent_id = getattr(parent, "id", None) if parent is not None else None
+
+            guild_obj = getattr(thread, "guild", None)
+            guild_id = getattr(guild_obj, "id", None) if guild_obj is not None else None
+
+            # owner info: prefer owner_id then owner attribute then fallbacks
+            owner_id = getattr(thread, "owner_id", None)
+            if owner_id is None:
+                owner = getattr(thread, "owner", None) or getattr(thread, "creator", None)
+                owner_id = getattr(owner, "id", None) if owner is not None else None
+            try:
+                owner_id_int = int(owner_id) if owner_id is not None else 0
+            except Exception:
+                owner_id_int = 0
+
+            # numeric optional fields
+            def _int_or_none(v):
+                try:
+                    return int(v) if v is not None else None
+                except Exception:
+                    return None
+
+            msg_count = _int_or_none(getattr(thread, "message_count", None))
+            mem_count = _int_or_none(getattr(thread, "member_count", None))
+            default_auto = _int_or_none(getattr(thread, "auto_archive_duration", None) or getattr(thread, "default_auto_archive_duration", None))
+            last_msg = _int_or_none(getattr(thread, "last_message_id", None))
+
+            created_at = getattr(getattr(thread, "created_at", None), "isoformat", lambda: "")()
+
+            # --- New: extract applied tag ids and (when available) full tag payloads ---
+            applied_tag_ids = None
+            applied_tags_payload = None
+            try:
+                # Many discord.py variants expose thread.applied_tags as a list of Tag objects or ints
+                applied = getattr(thread, "applied_tags", None)
+                if applied is not None:
+                    # normalize to list of ids when possible, and also produce tag payloads when Tag objects present
+                    ids = []
+                    payloads = []
+                    for at in applied:
+                        # if element is an object with id attribute
+                        tid = getattr(at, "id", None)
+                        if tid is None:
+                            # might be an int
+                            try:
+                                tid = int(at)
+                            except Exception:
+                                tid = None
+                        if tid is not None:
+                            ids.append(int(tid))
+                        # try to build full tag payload if the object looks like a Tag
+                        if hasattr(at, "name") or hasattr(at, "emoji"):
+                            try:
+                                payloads.append(ChannelConverter.forum_tag_to_payload(at, channel_id=parent_id))
+                            except Exception:
+                                # ignore individual tag conversion failure
+                                pass
+                    applied_tag_ids = ids if ids else None
+                    applied_tags_payload = payloads if payloads else None
+                else:
+                    # fallback to attribute applied_tag_ids (some libs expose this)
+                    atids = getattr(thread, "applied_tag_ids", None)
+                    if atids:
+                        try:
+                            applied_tag_ids = [int(x) for x in atids]
+                        except Exception:
+                            applied_tag_ids = None
+            except Exception:
+                # non-fatal; leave tag info as None if anything goes wrong
+                applied_tag_ids = None
+                applied_tags_payload = None
+
+            return Thread(
+                id=int(getattr(thread, "id", 0)),
+                name=getattr(thread, "name", "") or "",
+                channel_id=int(parent_id) if parent_id is not None else 0,
+                guild_id=int(guild_id) if guild_id is not None else None,
+                owner_id=owner_id_int,
+                archived=bool(getattr(thread, "archived", False)),
+                locked=bool(getattr(thread, "locked", False)),
+                message_count=msg_count,
+                member_count=mem_count,
+                default_auto_archive_duration=default_auto,
+                created_at=created_at,
+                last_message_id=last_msg,
+                # attach new tag fields
+                applied_tag_ids=applied_tag_ids,
+                applied_tags=applied_tags_payload
+            )
+        except Exception:
+            flogger.exception("Error converting thread to summary")
+            raise
+
+    @staticmethod
+    def thread_to_detail(thread: Union[discord.Thread, discord.TextChannel]) -> Thread:
+        """
+        Detailed conversion for a thread. Currently delegates to thread_to_summary
+        since the Thread schema fields are satisfied by summary conversion.
+        Kept as a separate method for future expansion.
+        """
+        return ChannelConverter.thread_to_summary(thread)
+
+    @staticmethod
+    def forum_tag_to_payload(tag, channel_id: Optional[int] = None) -> dict:
+        """
+        Convert a discord ForumTag (or similar object) to the API payload:
+          { "id": int, "channel_id": int, "name": str, "emoji": Optional[str] }
+
+        Accepts an optional channel_id which will be used if provided (useful
+        when the Tag object does not include channel_id itself).
+        """
+        # defensive accessors with sensible fallbacks
+        tid = getattr(tag, "id", None)
+        if tid is not None:
+            try:
+                tid = int(tid)
+            except Exception:
+                tid = None
+
+        # If caller supplied channel_id prefer it; otherwise try to extract from tag
+        cid = None
+        if channel_id is not None:
+            try:
+                cid = int(channel_id)
+            except Exception:
+                cid = None
+        else:
+            cid = getattr(tag, "channel_id", None)
+            if cid is None:
+                # try nested channel attr if present
+                ch = getattr(tag, "channel", None)
+                cid = getattr(ch, "id", None) if ch is not None else None
+            if cid is not None:
+                try:
+                    cid = int(cid)
+                except Exception:
+                    cid = None
+
+        name = getattr(tag, "name", None)
+        # emoji may be a PartialEmoji, str, or None — normalize to str or None
+        emoji_attr = getattr(tag, "emoji", None)
+        emoji = None
+        if emoji_attr is not None:
+            try:
+                # If discord.partial_emoji.PartialEmoji or Emoji object: str() yields a usable representation
+                emoji = str(emoji_attr)
+            except Exception:
+                # last resort: try .name
+                emoji = getattr(emoji_attr, "name", None)
+
+        return {
+            "id": tid,
+            "channel_id": cid,
+            "name": name,
+            "emoji": emoji,
+        }
 
 class PermissionConverter:
     @staticmethod
@@ -252,13 +423,123 @@ class UserConverter:
 
 class MessageConverter:
     @staticmethod
-    def message_to_payload(message: discord.Message) -> MessageSummary:
+    def message_to_payload(message: discord.Message) -> Message:
         """
-        Convert a Discord message to a MessageSummary payload.
+        Convert a discord.Message into a full Message Pydantic model.
+
+        Behavior:
+        - If the Discord message has embeds, prefer the first embed and convert it
+            into an EmbedPayload via EmbedConverter.embed_to_payload().
+        - If embed conversion fails, fall back to leaving content as None.
+        - Populate required Message fields (id, channel_id, author_id, timestamp).
+        - Returns an instance of api.schemas.message_schemas.Message.
+
+        Note: This implementation assumes Message.content expects an EmbedPayload (the
+        full Message schema). If you need text-only fallback, see the
+        message_to_summary variant below.
         """
-        return MessageSummary(
-            id=message.id,
-            author_id=message.author.id,
-            content=message.content or None,
-            timestamp=message.created_at
-        )
+        try:
+            content_payload = None
+
+            # Prefer first embed as stored structured content when present
+            embeds = getattr(message, "embeds", None)
+            if embeds:
+                try:
+                    content_payload = EmbedConverter.embed_to_payload(embeds[0])
+                except Exception:
+                    # best-effort: convert may fail for odd embed shapes; log and continue
+                    flogger.exception("embed_to_payload failed while converting message; content left as None")
+                    content_payload = None
+
+            # Compose the full message payload that matches the Message schema
+            msg = Message(
+                id=int(message.id),
+                channel_id=int(getattr(message.channel, "id", 0)),
+                guild_id=(int(getattr(getattr(message, "guild", None), "id")) if getattr(message, "guild", None) else None),
+                author_id=int(getattr(getattr(message, "author", None), "id", 0)),
+                content=(content_payload if content_payload is not None else None),
+                timestamp=getattr(message, "created_at", None),
+                edited_timestamp=getattr(message, "edited_at", None),
+                message_type=(getattr(getattr(message, "type", None), "name", "default") if getattr(message, "type", None) is not None else "default"),
+            )
+            return msg
+        except Exception:
+            flogger.exception("Error converting message to full Message payload")
+            raise
+
+    @staticmethod
+    def message_to_summary(message: discord.Message) -> MessageSummary:
+        """
+        Convert a discord.Message into a MessageSummary (text-focused).
+
+        Behavior:
+        - Prefer plain text message.content if non-empty.
+        - Otherwise prefer the first embed: use EmbedConverter.embed_to_payload()
+            to extract a structured EmbedPayload and then choose a best textual
+            representation (description, then title, then joined fields, then footer).
+        - If EmbedConverter fails, fall back to raw embed attributes (description/title/fields).
+        - Returns an instance of api.schemas.message_schemas.MessageSummary.
+        """
+        try:
+            # 1) Prefer plain text content when present
+            text_content = None
+            raw_text = getattr(message, "content", None)
+            if raw_text:
+                s = raw_text.strip()
+                if s:
+                    text_content = s
+
+            # 2) If no plain text, try to extract a texty representation from the first embed
+            if not text_content:
+                embeds = getattr(message, "embeds", None) or []
+                if embeds:
+                    e = embeds[0]
+                    try:
+                        # Use the canonical converter to get an EmbedPayload
+                        ep = EmbedConverter.embed_to_payload(e)
+                        # Prefer description, then title, then fields, then footer
+                        if getattr(ep, "description", None):
+                            text_content = ep.description
+                        elif getattr(ep, "title", None):
+                            text_content = ep.title
+                        elif getattr(ep, "fields", None):
+                            # join fields as "name: value" pairs
+                            fld_texts = []
+                            for f in ep.fields:
+                                try:
+                                    fld_texts.append(f"{f.name}: {f.value}")
+                                except Exception:
+                                    # defensive: skip malformed field
+                                    continue
+                            text_content = " | ".join(fld_texts) if fld_texts else None
+                        elif getattr(ep, "footer_text", None):
+                            text_content = ep.footer_text
+                        else:
+                            text_content = None
+                    except Exception:
+                        # best-effort fallback to raw embed attributes if converter fails
+                        flogger.exception("EmbedConverter.embed_to_payload failed; falling back to raw embed attrs")
+                        desc = getattr(e, "description", None)
+                        title = getattr(e, "title", None)
+                        fields = getattr(e, "fields", None)
+                        if desc:
+                            text_content = desc
+                        elif title:
+                            text_content = title
+                        elif fields:
+                            try:
+                                text_content = " | ".join(f"{f.name}: {f.value}" for f in fields)
+                            except Exception:
+                                text_content = None
+
+            # 3) Build and return the MessageSummary
+            summary = MessageSummary(
+                id=int(message.id),
+                author_id=int(getattr(getattr(message, "author", None), "id", 0)),
+                content=text_content,
+                timestamp=getattr(message, "created_at", None)
+            )
+            return summary
+        except Exception:
+            flogger.exception("Error converting message to MessageSummary")
+            raise

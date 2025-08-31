@@ -157,6 +157,14 @@ class Thread(BaseModel):
     created_at: str = Field(..., description="Thread creation timestamp")
     last_message_id: Optional[int] = Field(None, description="Last message ID in the thread")
 
+    # Newly added fields to surface forum tag information on thread detail responses
+    applied_tag_ids: Optional[List[int]] = Field(
+        None, description="List of applied forum tag IDs on this thread"
+    )
+    applied_tags: Optional[List[ForumTag]] = Field(
+        None, description="List of applied forum tag objects (when available)"
+    )
+
 class ThreadCreateRequest(BaseModel):
     """Request model for creating a forum thread."""
     name: str = Field(..., description="Thread name/title")

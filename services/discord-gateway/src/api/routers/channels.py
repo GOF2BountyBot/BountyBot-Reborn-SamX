@@ -246,22 +246,44 @@ async def create_channel_message(
     try:
         bot = await resolve_bot(request)
         channel = await get_entity_or_404(bot.get_channel, bot.fetch_channel, channel_id, "Channel")
-        
+
         if not hasattr(channel, "send"):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"Channel {channel_id} cannot receive messages"
             )
-        
+        # Convert the incoming embed-payload to a discord.Embed (EmbedConverter raises on invalid payload)
         embed = EmbedConverter.payload_to_embed(payload.content)
-        message = await channel.send(embed=embed)
-        
-        message_data = MessageConverter.message_to_payload(message)
+        # Send the message (discord.py may raise; also handle older/newer signature differences if needed)
+        try:
+            message = await channel.send(embed=embed)
+        except TypeError:
+            # fallback if discord.py variant doesn't accept embed arg on send
+            message = await channel.send()
+            if embed:
+                await message.reply(embed=embed)  # or send as follow-up; adjust per your bot library version
+        # Build a canonical Message-shaped dict (fields must match api.schemas.message_schemas.Message)
+        # Prefer the request payload's content as the authoritative embed payload we've converted from.
+        try:
+            content_obj = payload.content.model_dump()  # EmbedPayload -> dict
+        except Exception:
+            # if payload.content is already a plain dict or not a pydantic model
+            content_obj = getattr(payload, "content", None)
+        message_obj = {
+            "id": int(message.id),
+            "channel_id": int(channel.id),
+            "guild_id": int(channel.guild.id) if getattr(channel, "guild", None) else None,
+            "author_id": int(getattr(message.author, "id", None)),
+            "content": content_obj,
+            "timestamp": message.created_at,
+            "edited_timestamp": getattr(message, "edited_at", None) or None,
+            "message_type": getattr(getattr(message, "type", None), "name", "general") if getattr(message, "type", None) is not None else "general",
+        }
         flogger.info(f"Created message {message.id} in channel {channel_id}")
-        
+        # Return a plain dict matching the Message schema so Pydantic can validate it for MessageResponse
         return MessageResponse(
             status="created",
-            data=message_data
+            data=message_obj
         )
     except HTTPException:
         raise
@@ -470,7 +492,7 @@ async def list_forum_tags(request: Request, channel_id: int) -> ForumTagListResp
                 detail="Channel is not a forum"
             )
         
-        tags = [ChannelConverter.forum_tag_to_payload(t) for t in channel.available_tags]
+        tags = [ChannelConverter.forum_tag_to_payload(t, channel_id=channel_id) for t in channel.available_tags]
         
         flogger.info(f"Retrieved {len(tags)} tags from forum {channel_id}")
         return ForumTagListResponse(
@@ -516,7 +538,7 @@ async def create_forum_tag(
                 )
         
         new_tag = await channel.create_tag(name=tag.name, emoji=emoji_value)
-        tag_data = ChannelConverter.forum_tag_to_payload(new_tag)
+        tag_data = ChannelConverter.forum_tag_to_payload(new_tag, channel_id=channel_id)
         
         flogger.info(f"Successfully created tag {new_tag.name}")
         return ForumTagResponse(

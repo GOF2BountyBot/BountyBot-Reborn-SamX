@@ -6,7 +6,7 @@ and Discord embeds, ensuring 100% consistency and round-trip accuracy.
 The converter is completely generic and contains no business logic.
 """
 
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional, List, Union
 import discord
 from datetime import datetime
 from api.schemas.message_schemas import EmbedPayload, EmbedField
@@ -20,51 +20,120 @@ class EmbedConverter:
     Utility class for bidirectional conversion between payloads and Discord embeds.
     
     This converter is completely generic and maintains 100% consistency:
-    payload -> embed -> payload should return identical data.
+    payload -> embed -> payload should return identical data (modulo trivial
+    normalization such as None vs omitted).
     """
 
     @staticmethod
-    def payload_to_embed(payload: EmbedPayload) -> discord.Embed:
+    def _coerce_to_embed_payload(payload: Union[EmbedPayload, Dict[str, Any], Any]) -> EmbedPayload:
         """
-        Convert a JSON payload to a Discord embed.
-        
-        Args:
-            payload: EmbedPayload containing embed structure
-            
-        Returns:
-            discord.Embed object
+        Coerce various input shapes into an EmbedPayload instance.
+
+        Accepted input:
+          - EmbedPayload (returned unchanged)
+          - dict (used to instantiate EmbedPayload)
+          - an object exposing .dict() that returns a mapping (e.g., another Pydantic model)
+          - any mapping convertible via dict(payload)
+
+        Raises TypeError / ValueError on unsupported types or validation failures.
         """
-        flogger.debug(f"payload_to_embed called with payload: {payload.dict()}")
+        if isinstance(payload, EmbedPayload):
+            return payload
+
+        # direct dict -> model
+        if isinstance(payload, dict):
+            return EmbedPayload(**payload)
+
+        # pydantic model or mapping-like with dict()
+        if hasattr(payload, "dict") and callable(getattr(payload, "dict")):
+            try:
+                return EmbedPayload(**payload.dict())
+            except Exception as e:
+                flogger.debug("Failed to coerce payload via .dict(): %s", e)
+                raise
+
+        # last-ditch: try to cast to dict()
         try:
+            maybe_dict = dict(payload)
+        except Exception:
+            flogger.debug("payload_to_embed received unsupported payload type: %r", type(payload))
+            raise TypeError("payload must be an EmbedPayload or a dict-like mapping convertible to it")
+        try:
+            return EmbedPayload(**maybe_dict)
+        except Exception:
+            flogger.debug("Failed to coerce iterable-mapping payload to EmbedPayload")
+            raise
+
+    @staticmethod
+    def payload_to_embed(payload: Union[EmbedPayload, Dict[str, Any], Any]) -> discord.Embed:
+        """
+        Convert a JSON payload (or EmbedPayload model) to a Discord embed.
+
+        Accepts:
+          - an EmbedPayload instance
+          - a dict (will be coerced to EmbedPayload)
+          - any mapping convertible to dict that matches EmbedPayload fields
+
+        Returns:
+          discord.Embed object
+
+        Raises:
+          - TypeError / ValueError if coercion fails or payload is of unsupported type
+        """
+        ep = EmbedConverter._coerce_to_embed_payload(payload)
+
+        flogger.debug(f"payload_to_embed called with payload: {ep.dict()}")
+        try:
+            # Create embed and set canonical fields
             embed = discord.Embed()
-            if payload.title is not None:
-                embed.title = payload.title
-                flogger.debug(f"  set title: {payload.title!r}")
-            if payload.description is not None:
-                embed.description = payload.description
-                flogger.debug(f"  set description: {payload.description!r}")
-            if payload.color is not None:
-                embed.color = discord.Color(payload.color)
-                flogger.debug(f"  set color: {hex(payload.color)}")
+            if ep.title is not None:
+                embed.title = ep.title
+                flogger.debug(f"  set title: {ep.title!r}")
+            if ep.description is not None:
+                embed.description = ep.description
+                flogger.debug(f"  set description: {ep.description!r}")
+            if ep.color is not None:
+                try:
+                    embed.color = discord.Color(ep.color)
+                except Exception:
+                    # discord.Color may raise for invalid values; try int coercion
+                    try:
+                        embed.color = discord.Color(int(ep.color))
+                    except Exception:
+                        flogger.debug("Invalid color value provided to payload_to_embed: %r", ep.color)
+                        raise
+                flogger.debug(f"  set color: {hex(ep.color)}")
 
-            for idx, field in enumerate(payload.fields):
-                embed.add_field(name=field.name, value=field.value, inline=field.inline)
-                flogger.debug(f"  added field[{idx}]: name={field.name!r}, inline={field.inline}")
+            # Fields: be defensive if fields is None
+            for idx, field in enumerate(ep.fields or []):
+                # field is expected to be an EmbedField (pydantic) already
+                name = getattr(field, "name", "")
+                value = getattr(field, "value", "")
+                inline = bool(getattr(field, "inline", False))
+                embed.add_field(name=name, value=value, inline=inline)
+                flogger.debug(f"  added field[{idx}]: name={name!r}, inline={inline}")
 
-            if payload.footer_text is not None:
-                embed.set_footer(text=payload.footer_text, icon_url=payload.footer_icon_url)
-                flogger.debug(f"  set footer: text={payload.footer_text!r}, icon_url={payload.footer_icon_url!r}")
+            # Footer
+            if ep.footer_text is not None:
+                embed.set_footer(text=ep.footer_text, icon_url=ep.footer_icon_url)
+                flogger.debug(f"  set footer: text={ep.footer_text!r}, icon_url={ep.footer_icon_url!r}")
 
-            if payload.timestamp is not None:
-                embed.timestamp = payload.timestamp
-                flogger.debug(f"  set timestamp: {payload.timestamp}")
+            # Timestamp
+            if ep.timestamp is not None:
+                # discord.Embed expects a datetime; ensure instance is a datetime
+                if not isinstance(ep.timestamp, datetime):
+                    flogger.debug("payload_to_embed: timestamp was not a datetime instance: %r", ep.timestamp)
+                    raise TypeError("timestamp must be a datetime instance")
+                embed.timestamp = ep.timestamp
+                flogger.debug(f"  set timestamp: {ep.timestamp}")
 
-            if payload.thumbnail_url is not None:
-                embed.set_thumbnail(url=payload.thumbnail_url)
-                flogger.debug(f"  set thumbnail_url: {payload.thumbnail_url!r}")
-            if payload.image_url is not None:
-                embed.set_image(url=payload.image_url)
-                flogger.debug(f"  set image_url: {payload.image_url!r}")
+            # Images
+            if ep.thumbnail_url is not None:
+                embed.set_thumbnail(url=ep.thumbnail_url)
+                flogger.debug(f"  set thumbnail_url: {ep.thumbnail_url!r}")
+            if ep.image_url is not None:
+                embed.set_image(url=ep.image_url)
+                flogger.debug(f"  set image_url: {ep.image_url!r}")
 
             flogger.info("payload_to_embed successfully created embed")
             return embed
@@ -91,16 +160,18 @@ class EmbedConverter:
 
     @staticmethod
     def payload_to_grid_embed(
-        payload: EmbedPayload,
+        payload: Union[EmbedPayload, Dict[str, Any], Any],
         fields_per_row: int
     ) -> discord.Embed:
         """
         Same as payload_to_embed, but first injects zero-width spacers
         so you get exactly `fields_per_row` inline fields per row.
         """
+        # Coerce to EmbedPayload so we can copy/update
+        ep = EmbedConverter._coerce_to_embed_payload(payload)
         flogger.debug(f"payload_to_grid_embed called: {fields_per_row} per row")
-        grid_payload = payload.copy(update={
-            "fields": EmbedConverter._inject_spacers(payload.fields, fields_per_row)
+        grid_payload = ep.copy(update={
+            "fields": EmbedConverter._inject_spacers(ep.fields or [], fields_per_row)
         })
         return EmbedConverter.payload_to_embed(grid_payload)
 
@@ -108,10 +179,10 @@ class EmbedConverter:
     def embed_to_payload(embed: discord.Embed) -> EmbedPayload:
         """
         Convert a Discord embed to a JSON payload.
-        
+
         Args:
             embed: Discord embed object
-            
+
         Returns:
             EmbedPayload containing embed structure
         """
@@ -119,25 +190,59 @@ class EmbedConverter:
         try:
             title = embed.title if embed.title is not None else None
             description = embed.description if embed.description is not None else None
-            color = embed.color.value if embed.color and embed.color is not None else None
+            color = None
+            if getattr(embed, "color", None) is not None:
+                try:
+                    # color may be a discord.Color; try to extract integer value
+                    color = getattr(embed.color, "value", None)
+                    if color is None:
+                        # as fallback, try int()
+                        color = int(embed.color)
+                except Exception:
+                    color = None
 
-            fields = [
-                EmbedField(name=f.name, value=f.value, inline=f.inline)
-                for f in embed.fields
-            ]
+            fields: List[EmbedField] = []
+            try:
+                for f in getattr(embed, "fields", []) or []:
+                    # discord embed fields expose name/value/inline
+                    fname = getattr(f, "name", "")
+                    fval = getattr(f, "value", "")
+                    finline = bool(getattr(f, "inline", False))
+                    fields.append(EmbedField(name=fname, value=fval, inline=finline))
+            except Exception:
+                flogger.debug("Failed to iterate embed.fields defensively; setting fields empty")
+                fields = []
+
             flogger.debug(f"  extracted {len(fields)} fields")
 
             footer_text = None
             footer_icon_url = None
-            if embed.footer and embed.footer is not None:
-                footer_text = embed.footer.text or None
-                footer_icon_url = embed.footer.icon_url or None
-                flogger.debug(f"  extracted footer: text={footer_text!r}, icon_url={footer_icon_url!r}")
+            try:
+                if getattr(embed, "footer", None) is not None:
+                    footer = getattr(embed, "footer")
+                    footer_text = getattr(footer, "text", None) or None
+                    footer_icon_url = getattr(footer, "icon_url", None) or None
+                    flogger.debug(f"  extracted footer: text={footer_text!r}, icon_url={footer_icon_url!r}")
+            except Exception:
+                # swallow — treat as no footer
+                footer_text = None
+                footer_icon_url = None
 
-            timestamp = embed.timestamp
+            timestamp = getattr(embed, "timestamp", None)
 
-            thumbnail_url = embed.thumbnail.url if embed.thumbnail and embed.thumbnail is not None else None
-            image_url = embed.image.url if embed.image and embed.image is not None else None
+            thumbnail_url = None
+            try:
+                if getattr(embed, "thumbnail", None) is not None:
+                    thumbnail_url = getattr(getattr(embed, "thumbnail"), "url", None)
+            except Exception:
+                thumbnail_url = None
+
+            image_url = None
+            try:
+                if getattr(embed, "image", None) is not None:
+                    image_url = getattr(getattr(embed, "image"), "url", None)
+            except Exception:
+                image_url = None
 
             payload = EmbedPayload(
                 title=title,
@@ -158,21 +263,22 @@ class EmbedConverter:
             raise
 
     @staticmethod
-    def test_round_trip_consistency(payload: EmbedPayload) -> bool:
+    def test_round_trip_consistency(payload: Union[EmbedPayload, Dict[str, Any], Any]) -> bool:
         """
         Test that payload -> embed -> payload maintains consistency.
-        
+
         Args:
-            payload: Original EmbedPayload
-            
+            payload: Original EmbedPayload or dict-like
+
         Returns:
             True if round-trip is consistent, False otherwise
         """
         flogger.debug("test_round_trip_consistency called")
         try:
-            embed = EmbedConverter.payload_to_embed(payload)
+            ep = EmbedConverter._coerce_to_embed_payload(payload)
+            embed = EmbedConverter.payload_to_embed(ep)
             result_payload = EmbedConverter.embed_to_payload(embed)
-            consistent = payload.dict() == result_payload.dict()
+            consistent = ep.dict() == result_payload.dict()
             flogger.info(f"Round-trip consistency: {consistent}")
             return consistent
         except Exception as e:

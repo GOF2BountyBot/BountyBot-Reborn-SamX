@@ -1,7 +1,7 @@
 # Below should always be the latest LTS release
 ARG UBUNTU_RELEASE=24.04
 # Below should be a reasonably current Cuda version
-ARG CUDA_VERSION=12.9.1
+ARG CUDA_VERSION=13.0.0
 
 # Might be able to change this to something a bit smaller (like runtime instead of devel) 
 # from https://hub.docker.com/r/nvidia/cuda/tags
@@ -11,7 +11,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 ENV LANG=C.UTF-8
 ENV LC_ALL=C.UTF-8
 ENV PYTHONUNBUFFERED=1
-ENV CUDA_HOME=/usr/local/cuda-12.9
+ENV CUDA_HOME=/usr/local/cuda-13
 ENV PATH=/opt/venv/bin:/usr/local/nvidia/bin:/usr/local/cuda/bin:${PATH}
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONPATH=/opt/venv/

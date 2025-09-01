@@ -32,11 +32,9 @@ router = APIRouter(
     summary="Get Forum Tag",
     description="Get details for a single forum tag"
 )
-async def update_tag(
-    request: Request, tag_id: int, tag_data: ForumTagUpdateRequest
-) -> ForumTagResponse:
-    """Update a forum tag's properties."""
-    flogger.info(f"update_tag called for tag_id={tag_id}")
+async def get_tag(request: Request, tag_id: int) -> ForumTagResponse:
+    """Get details for a single forum tag."""
+    flogger.info(f"get_tag called for tag_id={tag_id}")
     try:
         bot = await resolve_bot(request)
         # Search for the tag across all forum channels
@@ -57,103 +55,27 @@ async def update_tag(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"Tag {tag_id} not found"
             )
-        # Prepare update parameters
-        update_kwargs = {}
-        if tag_data.name is not None:
-            update_kwargs["name"] = tag_data.name
-        if tag_data.emoji is not None:
-            try:
-                emoji_value = normalize_emoji(tag_data.emoji)
-                update_kwargs["emoji"] = emoji_value
-            except Exception:
-                raise HTTPException(
-                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                    detail=f"Invalid emoji: {tag_data.emoji}"
-                )
-        # Update the tag — defensive across library variants
-        if update_kwargs:
-            try:
-                # Preferred API if present on ForumChannel
-                if hasattr(parent_channel, "edit_tag"):
-                    await parent_channel.edit_tag(tag, **update_kwargs)
-                # Fallback to tag.edit() if tag object supports it
-                elif hasattr(tag, "edit"):
-                    await tag.edit(**update_kwargs)
-                else:
-                    # Final fallback: rebuild available_tags excluding/including updated entry
-                    remaining = []
-                    for t in parent_channel.available_tags:
-                        try:
-                            tid = getattr(t, "id", None)
-                        except Exception:
-                            tid = None
-                        if tid == tag_id:
-                            # construct updated representation for this tag
-                            try:
-                                # prefer object-like substitution if channel.edit accepts it
-                                updated_obj = t
-                                if "name" in update_kwargs:
-                                    setattr(updated_obj, "name", update_kwargs["name"])
-                                if "emoji" in update_kwargs:
-                                    setattr(updated_obj, "emoji", update_kwargs["emoji"])
-                                remaining.append(updated_obj)
-                            except Exception:
-                                # fallback to dict payload
-                                payload = {"name": update_kwargs.get("name", getattr(t, "name", None))}
-                                emoji_val = update_kwargs.get("emoji", getattr(t, "emoji", None))
-                                if emoji_val is not None:
-                                    payload["emoji"] = emoji_val
-                                remaining.append(payload)
-                        else:
-                            remaining.append(t)
-                    # try to apply as objects first
-                    try:
-                        await parent_channel.edit(available_tags=remaining)
-                    except TypeError:
-                        # fallback to serializable dict form
-                        serial = []
-                        for t in remaining:
-                            if isinstance(t, dict):
-                                serial.append(t)
-                            else:
-                                try:
-                                    serial.append({"name": getattr(t, "name", None), "emoji": getattr(t, "emoji", None)})
-                                except Exception:
-                                    continue
-                        await parent_channel.edit(available_tags=serial)
-            except HTTPException:
-                raise
-            except Exception as exc:
-                # let centralized handler map/log/raise
-                raise exc
-        # Re-fetch the tag to get updated data
-        updated_tag = discord.utils.get(parent_channel.available_tags, id=tag_id)
-        if not updated_tag:
-            # Fallback - the tag might have changed ID, search by name
-            if tag_data.name:
-                updated_tag = discord.utils.get(parent_channel.available_tags, name=tag_data.name)
-        if not updated_tag:
-            updated_tag = tag  # Use original if we can't find updated
-        updated_tag_data = ChannelConverter.forum_tag_to_payload(updated_tag)
-        # Ensure channel_id exists on the returned payload (support dict/object)
-        if isinstance(updated_tag_data, dict):
-            updated_tag_data["channel_id"] = parent_channel.id
+        # Convert to payload and ensure channel_id present
+        tag_payload = ChannelConverter.forum_tag_to_payload(tag, channel_id=parent_channel.id)
+        if isinstance(tag_payload, dict):
+            tag_payload["channel_id"] = parent_channel.id
         else:
             try:
-                setattr(updated_tag_data, "channel_id", parent_channel.id)
+                setattr(tag_payload, "channel_id", parent_channel.id)
             except Exception:
-                updated_tag_data = dict(getattr(updated_tag_data, "__dict__", {}) or {})
-                updated_tag_data["channel_id"] = parent_channel.id
-        flogger.info(f"Successfully updated tag {updated_tag.name}")
+                tag_payload = dict(getattr(tag_payload, "__dict__", {}) or {})
+                tag_payload["channel_id"] = parent_channel.id
+
+        flogger.info(f"Successfully retrieved tag {getattr(tag, 'name', tag_id)}")
         return ForumTagResponse(
-            status="updated",
-            data=updated_tag_data
+            status="success",
+            data=tag_payload
         )
     except HTTPException:
         raise
     except Exception as exc:
-        flogger.error(f"Unexpected error in update_tag: {exc}")
-        await handle_discord_exception("update tag", exc)
+        flogger.error(f"Unexpected error in get_tag: {exc}")
+        await handle_discord_exception("get tag", exc)
 
 @router.put(
     "/tags/{tag_id}",
@@ -202,7 +124,43 @@ async def update_tag(
                 )
         # Update the tag
         if update_kwargs:
-            await parent_channel.edit_tag(tag, **update_kwargs)
+            # Try several library shapes in order of likelihood:
+            # 1) Tag object exposes edit()
+            # 2) ForumChannel exposes edit_tag()
+            # 3) Fallback: provide objects implementing to_dict() so runtimes that call tag.to_dict()
+            #    succeed while still being serializable as dicts.
+            try:
+                if hasattr(tag, "edit"):
+                    await tag.edit(**update_kwargs)
+                elif hasattr(parent_channel, "edit_tag"):
+                    await parent_channel.edit_tag(tag, **update_kwargs)
+                else:
+                    # Proxy object that preserves id so runtimes can edit in-place
+                    class _TagProxy:
+                        def __init__(self, id, name, emoji):
+                            self.id = id
+                            self.name = name
+                            self.emoji = emoji
+                        def to_dict(self):
+                            d = {"name": self.name, "emoji": self.emoji}
+                            # include id when available so library can match/modify existing tags
+                            if self.id is not None:
+                                try:
+                                    d["id"] = int(self.id)
+                                except Exception:
+                                    d["id"] = self.id
+                            return d
+
+                    remaining = []
+                    for t in parent_channel.available_tags:
+                        tid = getattr(t, "id", None)
+                        name = update_kwargs.get("name", getattr(t, "name", None))
+                        emoji = update_kwargs.get("emoji", getattr(t, "emoji", None))
+                        remaining.append(_TagProxy(tid, name, emoji))
+                    await parent_channel.edit(available_tags=remaining)
+            except Exception as exc:
+                # let centralized handler map/log/raise
+                raise exc
         # Re-fetch the tag to get updated data
         updated_tag = discord.utils.get(parent_channel.available_tags, id=tag_id)
         if not updated_tag:

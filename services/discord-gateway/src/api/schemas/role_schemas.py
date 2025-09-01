@@ -7,7 +7,12 @@ including role creation, updates, and member management.
 
 from typing import Optional, List, Dict, Any
 from pydantic import BaseModel, Field
+from uuid import uuid4
 from api.schemas.base_schemas import BaseResponse, PaginatedResponse, BaseCreateRequest, BaseUpdateRequest
+
+
+def _generate_role_name() -> str:
+    return f"unk-role-{uuid4().hex[:8]}"
 
 class Role(BaseModel):
     """Consolidated role information model."""
@@ -33,7 +38,7 @@ class RoleListResponse(PaginatedResponse):
 
 class RoleCreateRequest(BaseCreateRequest):
     """Request model for creating a role."""
-    name: Optional[str] = Field("new role", description="Role name")
+    name: Optional[str] = Field(default_factory=_generate_role_name, description="Role name")
     permissions: Optional[int] = Field(None, description="Role permissions")
     color: Optional[int] = Field(0, description="Role color")
     hoist: Optional[bool] = Field(False, description="Whether role is hoisted")

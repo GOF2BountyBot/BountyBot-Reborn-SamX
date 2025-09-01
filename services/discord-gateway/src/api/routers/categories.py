@@ -217,7 +217,7 @@ async def get_category_permissions(request: Request, category_id: int) -> Permis
         
         overwrites = []
         for target, overwrite in channel.overwrites.items():
-            overwrite_data = PermissionConverter.overwrite_to_payload(target, overwrite)
+            overwrite_data = PermissionConverter.overwrite_to_payload(target, overwrite, channel.id)
             overwrites.append(overwrite_data)
         
         flogger.info(f"Successfully retrieved {len(overwrites)} permission overwrites for category {channel.name}")

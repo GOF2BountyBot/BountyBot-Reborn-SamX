@@ -241,7 +241,8 @@ async def update_member(
     response_model=PermissionCheckResponse,
     status_code=status.HTTP_200_OK,
     summary="Check Member Permission",
-    description="Check if a member has a specific guild-level permission"
+    description="Check if a member has a specific guild-level permission.  Superceded by /permissions/check.",
+    deprecated=True
 )
 async def check_member_permission(
     request: Request,

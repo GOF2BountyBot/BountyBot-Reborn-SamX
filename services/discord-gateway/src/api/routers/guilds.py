@@ -19,6 +19,9 @@ from api.schemas.role_schemas import RoleListResponse, RoleCreateRequest, RoleRe
 from utils.discord_converters import GuildConverter, UserConverter, ChannelConverter, RoleConverter
 from utils.discord_helpers import resolve_bot, get_entity_or_404, handle_discord_exception
 import discord
+import asyncio
+import random
+import time
 
 flogger = bblogger.get_logger("gateway-guild-router")
 
@@ -384,14 +387,12 @@ async def create_role(
             guild_id,
             "Guild"
         )
-        
         # Create role with provided parameters
         create_kwargs = {
             "name": role_data.name or "new role",
             "hoist": role_data.hoist or False,
             "mentionable": role_data.mentionable or False
         }
-        
         if role_data.permissions is not None:
             if role_data.permissions < 0:
                 raise HTTPException(
@@ -405,18 +406,52 @@ async def create_role(
                     detail="Invalid permissions bitmask"
                 )
             create_kwargs["permissions"] = perms
-        
         if role_data.color is not None:
             create_kwargs["color"] = discord.Color(role_data.color)
-        
-        role = await guild.create_role(**create_kwargs)
-        role_payload = RoleConverter.role_to_payload(role)
-        
-        flogger.info(f"Successfully created role {role.name}")
-        return RoleResponse(
-            status="created",
-            data=role_payload
-        )
+        # Instrumentation + retry logic to handle transient timeouts/rate-limits
+        max_attempts = 3
+        attempt = 0
+        last_exc = None
+        timeout_seconds = 30  # tune this to your environment
+        while attempt < max_attempts:
+            attempt += 1
+            start_ts = time.time()
+            try:
+                flogger.debug(f"Attempt {attempt} to create role in guild {guild_id} (timeout={timeout_seconds}s)")
+                # Bound the single HTTP call to avoid hanging indefinitely
+                role = await asyncio.wait_for(guild.create_role(**create_kwargs), timeout=timeout_seconds)
+                elapsed = time.time() - start_ts
+                flogger.info(f"Successfully created role {role.name} in {elapsed:.2f}s (attempt {attempt})")
+                role_payload = RoleConverter.role_to_payload(role)
+                return RoleResponse(
+                    status="created",
+                    data=role_payload
+                )
+            except asyncio.TimeoutError as te:
+                last_exc = te
+                flogger.warning(f"Timeout creating role on attempt {attempt}: {te}")
+                if attempt >= max_attempts:
+                    flogger.error("Exceeded retries for create_role due to repeated timeouts")
+                    raise HTTPException(
+                        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                        detail="Timeout creating role (transient error). Please retry."
+                    )
+                backoff = (2 ** attempt) + random.uniform(1, 3)
+                flogger.debug(f"Sleeping {backoff:.2f}s before retrying create_role")
+                await asyncio.sleep(backoff)
+            except discord.HTTPException as http_exc:
+                last_exc = http_exc
+                flogger.warning(f"discord.HTTPException when creating role: {http_exc}")
+                # retry on 5xx server errors; otherwise re-raise (403/400 etc. are client errors)
+                status_code = getattr(http_exc, "status", None) or getattr(http_exc, "code", None)
+                if status_code and 500 <= int(status_code) < 600 and attempt < max_attempts:
+                    backoff = (2 ** attempt) + random.uniform(1, 3)
+                    flogger.debug(f"Server error; sleeping {backoff:.2f}s and retrying (attempt {attempt})")
+                    await asyncio.sleep(backoff)
+                    continue
+                raise
+        # Shouldn't reach here, but rethrow last exception if it does
+        raise last_exc
     except HTTPException:
         raise
     except Exception as exc:

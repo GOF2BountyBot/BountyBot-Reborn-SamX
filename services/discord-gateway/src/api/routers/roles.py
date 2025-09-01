@@ -346,7 +346,8 @@ async def remove_role_from_user(
     response_model=PermissionCheckResponse,
     status_code=status.HTTP_200_OK,
     summary="Check Role Guild Permission",
-    description="Check whether a role (by id) has a specific guild-level permission"
+    description="Check whether a role (by id) has a specific guild-level permission.  Superceded by /permissions/check.", 
+    deprecated=True
 )
 async def check_role_permission(request: Request, role_id: int, permission: str = Query(..., description="Permission name (uppercase, e.g. MANAGE_GUILD)")) -> PermissionCheckResponse:
     """Check whether a role has the named guild-level permission."""
@@ -390,3 +391,53 @@ async def check_role_permission(request: Request, role_id: int, permission: str 
     except Exception as exc:
         flogger.error(f"Unexpected error in check_role_permission for role {role_id}: {exc}")
         await handle_discord_exception("check role permission", exc)
+
+@router.get(
+    "/roles/{role_id}/members/{user_id}/check",
+    response_model=PermissionCheckResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Check User Role Membership",
+    description="Check whether a given user has a specific role (by role id)"
+)
+async def check_user_has_role(request: Request, role_id: int, user_id: int) -> PermissionCheckResponse:
+    """Check whether a user has the specified role."""
+    flogger.info(f"check_user_has_role called for role_id={role_id}, user_id={user_id}")
+    try:
+        bot = await resolve_bot(request)
+        # Find role and its guild
+        role = None
+        guild = None
+        for g in bot.guilds:
+            r = g.get_role(role_id)
+            if r:
+                role = r
+                guild = g
+                break
+        if not role:
+            flogger.error(f"Role {role_id} not found")
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Role {role_id} not found"
+            )
+        # Get member
+        member = guild.get_member(user_id)
+        if not member:
+            try:
+                member = await guild.fetch_member(user_id)
+            except discord.NotFound:
+                flogger.error(f"Member {user_id} not found in guild {guild.id}")
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"Member {user_id} not found in guild {guild.id}"
+                )
+        has_role = any(r.id == role_id for r in member.roles)
+        flogger.info(f"User {user_id} has role {role_id}: {has_role}")
+        return PermissionCheckResponse(
+            status="success",
+            data={"allowed": has_role}
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        flogger.error(f"Unexpected error in check_user_has_role for role {role_id}, user {user_id}: {exc}")
+        await handle_discord_exception("check user role membership", exc)

@@ -316,19 +316,20 @@ class PermissionConverter:
     def overwrite_to_payload(
         target: Union[discord.Role, discord.Member],
         overwrite: discord.PermissionOverwrite,
-        channel_id: int
+        channel_id: Optional[int] = None
     ) -> PermissionOverwrite:
         """
         Convert a Discord permission overwrite to a PermissionOverwrite payload.
+        channel_id is optional (None for non-channel-scoped contexts).
         """
         flogger.debug(f"overwrite_to_payload for target: {getattr(target, 'name', None)} ({getattr(target, 'id', None)}) on channel {channel_id}")
         try:
             allow, deny = overwrite.pair()
             target_type = "role" if isinstance(target, discord.Role) else "member"
             return PermissionOverwrite(
-                id=f"{channel_id}:{target.id}",
+                id=f"{int(channel_id)}:{int(target.id)}" if channel_id is not None else None,
                 channel_id=channel_id,
-                target_id=target.id,
+                target_id=int(target.id),
                 type=target_type,
                 allow=getattr(allow, "value", 0),
                 deny=getattr(deny, "value", 0)

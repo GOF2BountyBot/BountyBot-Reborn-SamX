@@ -77,6 +77,53 @@ async def get_tag(request: Request, tag_id: int) -> ForumTagResponse:
         flogger.error(f"Unexpected error in get_tag: {exc}")
         await handle_discord_exception("get tag", exc)
 
+
+@router.post(
+    "/channels/{channel_id}/tags",
+    response_model=ForumTagResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Create Forum Tag",
+    description="Create a new tag in a forum channel"
+)
+async def create_forum_tag(
+    request: Request, channel_id: int, tag: ForumTagCreateRequest
+) -> ForumTagResponse:
+    """Create a tag in a ForumChannel."""
+    flogger.info(f"create_forum_tag called for channel_id={channel_id}")
+    try:
+        bot = await resolve_bot(request)
+        channel = await get_entity_or_404(bot.get_channel, bot.fetch_channel, channel_id, "Channel")
+        
+        if not isinstance(channel, discord.ForumChannel):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Not a forum channel"
+            )
+        
+        emoji_value = None
+        if tag.emoji:
+            try:
+                emoji_value = normalize_emoji(tag.emoji)
+            except Exception:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail=f"Invalid emoji: {tag.emoji}"
+                )
+        
+        new_tag = await channel.create_tag(name=tag.name, emoji=emoji_value)
+        tag_data = ChannelConverter.forum_tag_to_payload(new_tag, channel_id=channel_id)
+        
+        flogger.info(f"Successfully created tag {new_tag.name}")
+        return ForumTagResponse(
+            status="created",
+            data=tag_data
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        flogger.error(f"Unexpected error in create_forum_tag: {exc}")
+        await handle_discord_exception("create forum tag", exc)
+        
 @router.put(
     "/tags/{tag_id}",
     response_model=ForumTagResponse,

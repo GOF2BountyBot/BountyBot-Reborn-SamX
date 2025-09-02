@@ -3556,9 +3556,12 @@ class PermissionsTests(BaseTests):
     def _create_helper_role(self) -> Optional[int]:
         return RoleTests(self.guild_id, self.user_id, self.delay, self.vdelay)._create_helper_role()
     
-        # Add this small helper so PermissionsTests can create forum channels when needed
+    # Add this small helper so PermissionsTests can create forum channels when needed
     def _create_forum_channel(self) -> Optional[int]:
         return ForumTests(self.guild_id, self.user_id, self.delay, self.vdelay)._create_forum_channel()
+
+    def _create_thread(self) -> Optional[int]:
+        return ForumTests(self.guild_id, self.user_id, self.delay, self.vdelay)._create_thread()
 
     def _mk_category(self) -> Optional[int]:
         return CategoryTests(self.guild_id, self.user_id, self.delay, self.vdelay)._mk_category()

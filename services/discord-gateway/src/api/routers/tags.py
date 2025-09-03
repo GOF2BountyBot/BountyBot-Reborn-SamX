@@ -5,6 +5,7 @@ This module provides REST endpoints for managing Discord forum tags
 with simplified URIs that don't require channel context.
 """
 
+from typing import Any, Dict, Optional
 from fastapi import APIRouter, HTTPException, Request, status
 import discord
 import shared.bblogger as bblogger
@@ -19,6 +20,8 @@ from utils.discord_helpers import (
     handle_discord_exception,
     normalize_emoji,
     get_entity_or_404,
+    tag_to_dict,
+    tags_to_edit_payload,
 )
 from utils.discord_converters import ChannelConverter
 
@@ -33,6 +36,7 @@ router = APIRouter(
         503: {"description": "Service unavailable - bot not ready"},
     },
 )
+
 
 @router.get(
     "/tags/{tag_id}",
@@ -95,6 +99,7 @@ async def get_tag(request: Request, tag_id: int) -> ForumTagResponse:
         flogger.error(f"Unexpected error in get_tag: {exc}")
         await handle_discord_exception("get tag", exc)
 
+
 @router.post(
     "/channels/{channel_id}/tags",
     response_model=ForumTagResponse,
@@ -130,15 +135,31 @@ async def create_forum_tag(request: Request, channel_id: int, tag: ForumTagCreat
         except AttributeError:
             # Some runtimes may not expose create_tag; try edit-based fallback
             existing = list(getattr(channel, "available_tags", []) or [])
-            # Append a dict/obj representing the new tag and call edit to persist
-            payloads = []
-            for t in existing:
-                try:
-                    payloads.append({"name": getattr(t, "name", None), "emoji": getattr(t, "emoji", None)})
-                except Exception:
-                    continue
+            # Use centralized helper to build a normalized edit payload (includes ids when available)
+            payloads = tags_to_edit_payload(existing)
+            # append the new tag as a serializable dict
             payloads.append({"name": tag.name, "emoji": emoji_value})
-            await channel.edit(available_tags=payloads)
+            # Many runtimes accept a list of dicts; some expect objects implementing to_dict()
+            try:
+                await channel.edit(available_tags=payloads)
+            except AttributeError:
+                # Fallback: wrap dicts in proxy objects exposing to_dict()
+                class _TagProxy:
+                    def __init__(self, d: Dict[str, Any]):
+                        self._d = d
+
+                    def to_dict(self):
+                        out = {"name": self._d.get("name"), "emoji": self._d.get("emoji")}
+                        if "id" in self._d and self._d["id"] is not None:
+                            try:
+                                out["id"] = int(self._d["id"])
+                            except Exception:
+                                out["id"] = self._d["id"]
+                        return out
+
+                proxy_payloads = [_TagProxy(p) for p in payloads]
+                await channel.edit(available_tags=proxy_payloads)
+
             # Re-resolve the created tag
             new_tag = discord.utils.get(channel.available_tags, name=tag.name)
 
@@ -171,6 +192,7 @@ async def create_forum_tag(request: Request, channel_id: int, tag: ForumTagCreat
         flogger.error(f"Unexpected error in create_forum_tag: {exc}")
         await handle_discord_exception("create forum tag", exc)
 
+
 @router.put(
     "/tags/{tag_id}",
     response_model=ForumTagResponse,
@@ -202,7 +224,7 @@ async def update_tag(request: Request, tag_id: int, tag_data: ForumTagUpdateRequ
             )
 
         # Prepare update parameters
-        update_kwargs = {}
+        update_kwargs: Dict[str, Any] = {}
         if tag_data.name is not None:
             update_kwargs["name"] = tag_data.name
         if tag_data.emoji is not None:
@@ -220,36 +242,41 @@ async def update_tag(request: Request, tag_id: int, tag_data: ForumTagUpdateRequ
             # Try several library shapes in order of likelihood:
             # 1) Tag object exposes edit()
             # 2) ForumChannel exposes edit_tag()
-            # 3) Fallback: edit available_tags list
+            # 3) Fallback: edit available_tags list using centralized helper
             try:
                 if hasattr(tag, "edit"):
                     await tag.edit(**update_kwargs)
                 elif hasattr(parent_channel, "edit_tag"):
                     await parent_channel.edit_tag(tag, **update_kwargs)
                 else:
-                    # Proxy object that preserves id so runtimes can edit in-place
-                    class _TagProxy:
-                        def __init__(self, id, name, emoji):
-                            self.id = id
-                            self.name = name
-                            self.emoji = emoji
+                    # Build updates map keyed by id -> {"name": ..., "emoji": ...}
+                    upd_map: Dict[Any, Dict[str, Optional[str]]] = {}
+                    try:
+                        upd_map[int(tag_id)] = {"name": update_kwargs.get("name"), "emoji": update_kwargs.get("emoji")}
+                    except Exception:
+                        # If tag_id isn't int-like, keep as-is
+                        upd_map[tag_id] = {"name": update_kwargs.get("name"), "emoji": update_kwargs.get("emoji")}
 
-                        def to_dict(self):
-                            d = {"name": self.name, "emoji": self.emoji}
-                            if self.id is not None:
-                                try:
-                                    d["id"] = int(self.id)
-                                except Exception:
-                                    d["id"] = self.id
-                            return d
+                    payloads = tags_to_edit_payload(parent_channel.available_tags, updates=upd_map)
+                    try:
+                        await parent_channel.edit(available_tags=payloads)
+                    except AttributeError:
+                        # Wrap dicts in proxy objects that implement to_dict()
+                        class _TagProxy:
+                            def __init__(self, d: Dict[str, Any]):
+                                self._d = d
 
-                    remaining = []
-                    for t in parent_channel.available_tags:
-                        tid = getattr(t, "id", None)
-                        name = update_kwargs.get("name", getattr(t, "name", None))
-                        emoji = update_kwargs.get("emoji", getattr(t, "emoji", None))
-                        remaining.append(_TagProxy(tid, name, emoji))
-                    await parent_channel.edit(available_tags=remaining)
+                            def to_dict(self):
+                                out = {"name": self._d.get("name"), "emoji": self._d.get("emoji")}
+                                if "id" in self._d and self._d["id"] is not None:
+                                    try:
+                                        out["id"] = int(self._d["id"])
+                                    except Exception:
+                                        out["id"] = self._d["id"]
+                                return out
+
+                        proxy_payloads = [_TagProxy(p) for p in payloads]
+                        await parent_channel.edit(available_tags=proxy_payloads)
             except Exception as exc:
                 # let centralized handler map/log/raise
                 raise exc
@@ -263,8 +290,8 @@ async def update_tag(request: Request, tag_id: int, tag_data: ForumTagUpdateRequ
         if not updated_tag:
             updated_tag = tag  # Use original if we can't find updated
 
-        updated_tag_data = ChannelConverter.forum_tag_to_payload(updated_tag)
-        # Ensure channel_id exists on the returned payload (support dict/object) and normalize emoji.
+        # Use converter (delegates to centralized helpers) and ensure channel_id present
+        updated_tag_data = ChannelConverter.forum_tag_to_payload(updated_tag, channel_id=parent_channel.id)
         if isinstance(updated_tag_data, dict):
             updated_tag_data["channel_id"] = parent_channel.id
             if updated_tag_data.get("emoji") is not None:
@@ -302,6 +329,7 @@ async def update_tag(request: Request, tag_id: int, tag_data: ForumTagUpdateRequ
     except Exception as exc:
         flogger.error(f"Unexpected error in update_tag: {exc}")
         await handle_discord_exception("update tag", exc)
+
 
 @router.delete(
     "/tags/{tag_id}",
@@ -362,8 +390,27 @@ async def delete_tag(request: Request, tag_id: int) -> DeleteResponse:
                         except Exception:
                             # best-effort: skip malformed tag objects
                             continue
-                    await parent_channel.edit(available_tags=payloads)
-                    deleted = True
+                    try:
+                        await parent_channel.edit(available_tags=payloads)
+                        deleted = True
+                    except AttributeError:
+                        # Wrap dicts in proxy objects implementing to_dict()
+                        class _TagProxy:
+                            def __init__(self, d: Dict[str, Any]):
+                                self._d = d
+
+                            def to_dict(self):
+                                out = {"name": self._d.get("name"), "emoji": self._d.get("emoji")}
+                                if "id" in self._d and self._d["id"] is not None:
+                                    try:
+                                        out["id"] = int(self._d["id"])
+                                    except Exception:
+                                        out["id"] = self._d["id"]
+                                return out
+
+                        proxy_payloads = [_TagProxy(p) for p in payloads]
+                        await parent_channel.edit(available_tags=proxy_payloads)
+                        deleted = True
         except Exception as exc:
             # Allow centralized handler below to map/log/raise appropriately
             raise exc

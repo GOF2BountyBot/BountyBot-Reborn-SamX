@@ -7,6 +7,7 @@ including bot resolution and error handling.
 
 import asyncio
 from typing import Optional, Union, Dict, Any, List
+from collections.abc import Mapping
 import re
 import discord
 from discord.ext import commands
@@ -325,3 +326,220 @@ def normalize_emoji(val: str) -> str:
 
     # Otherwise assume it's already a unicode emoji (or some other acceptable string)
     return s
+
+# ---------------------------------------------------------------------
+# New helpers: tag <-> payload helpers to centralize emoji/tag normalization
+# ---------------------------------------------------------------------
+def tag_to_dict(tag, channel_id: Optional[int] = None) -> dict:
+    """
+    Normalize a ForumTag-like object into a dict:
+      { "id": int|None, "channel_id": int|None, "name": str|None, "emoji": str|None }
+
+    Behaviors:
+      - If `tag` is a Mapping (e.g. dict), prefer direct key lookups for id/channel_id/name/emoji.
+      - Otherwise, attempt common attribute access patterns (tag.emoji, tag.to_dict(), __dict__ fields).
+      - Use normalize_emoji(...) for final emoji normalization when a candidate is found.
+      - Always returns a dict and never raises on attribute access.
+    """
+    # 1) id / channel resolution (safe conversions)
+    tid = None
+    cid = None
+    name = None
+    emoji = None
+
+    # Fast path for dict-like tag representations (common in some runtimes)
+    try:
+        if isinstance(tag, Mapping):
+            # id
+            tid_val = tag.get("id") if "id" in tag else tag.get("tag_id") or tag.get("emoji_id")
+            try:
+                tid = int(tid_val) if tid_val is not None else None
+            except Exception:
+                tid = None
+
+            # channel id
+            if channel_id is not None:
+                try:
+                    cid = int(channel_id)
+                except Exception:
+                    cid = None
+            else:
+                cid_val = tag.get("channel_id") or (tag.get("channel") and (tag.get("channel").get("id") if isinstance(tag.get("channel"), Mapping) else None))
+                try:
+                    cid = int(cid_val) if cid_val is not None else None
+                except Exception:
+                    cid = None
+
+            # name
+            name = tag.get("name") or tag.get("tag_name") or tag.get("label")
+
+            # emoji - try common dict keys
+            for k in ("emoji", "raw_emoji", "unicode", "emoji_str", "emoji_name", "partial_emoji", "raw"):
+                if k in tag and tag.get(k) is not None:
+                    cand = tag.get(k)
+                    try:
+                        if isinstance(cand, Mapping):
+                            # nested mapping may contain emoji/name fields
+                            emoji = cand.get("emoji") or cand.get("name") or cand.get("unicode")
+                        else:
+                            emoji = normalize_emoji(str(cand))
+                        break
+                    except Exception:
+                        try:
+                            emoji = str(cand)
+                            break
+                        except Exception:
+                            emoji = None
+            # final dict-to-str fallback
+            if emoji is None:
+                try:
+                    s = str(tag)
+                    if any(ord(c) > 127 for c in s):
+                        emoji = normalize_emoji(s)
+                except Exception:
+                    emoji = None
+
+            return {"id": tid, "channel_id": cid, "name": name, "emoji": emoji}
+    except Exception:
+        # non-fatal - fall back to attribute heuristics below
+        pass
+
+    # Non-mapping objects: previous heuristic extraction (attributes, to_dict, __dict__, etc.)
+    try:
+        # id
+        tid_attr = getattr(tag, "id", None)
+        try:
+            tid = int(tid_attr) if tid_attr is not None else None
+        except Exception:
+            tid = None
+
+        # channel id
+        if channel_id is not None:
+            try:
+                cid = int(channel_id)
+            except Exception:
+                cid = None
+        else:
+            cid_attr = getattr(tag, "channel_id", None)
+            if cid_attr is None:
+                ch = getattr(tag, "channel", None)
+                cid_attr = getattr(ch, "id", None) if ch is not None else None
+            try:
+                cid = int(cid_attr) if cid_attr is not None else None
+            except Exception:
+                cid = None
+
+        # name
+        name = getattr(tag, "name", None)
+
+        # emoji: prefer direct attribute first
+        emoji_candidate = None
+        emoji_attr = getattr(tag, "emoji", None)
+        if emoji_attr is not None:
+            emoji_candidate = emoji_attr
+        else:
+            # try to call to_dict() if available and safe
+            to_dict_fn = getattr(tag, "to_dict", None)
+            if callable(to_dict_fn):
+                try:
+                    td = to_dict_fn()
+                    if isinstance(td, Mapping) and "emoji" in td and td.get("emoji") is not None:
+                        emoji_candidate = td.get("emoji")
+                except Exception:
+                    emoji_candidate = None
+
+            # inspect __dict__ fields
+            if emoji_candidate is None:
+                try:
+                    d = getattr(tag, "__dict__", None) or {}
+                    for k, v in d.items():
+                        if "emoji" in str(k).lower() and v is not None:
+                            emoji_candidate = v
+                            break
+                except Exception:
+                    emoji_candidate = None
+
+            # check alternate attribute names
+            if emoji_candidate is None:
+                for alt in ("raw_emoji", "unicode", "emoji_str", "emoji_name"):
+                    val = getattr(tag, alt, None)
+                    if val is not None:
+                        emoji_candidate = val
+                        break
+
+            # last ditch: if str(tag) contains non-ascii / emoji characters
+            if emoji_candidate is None:
+                try:
+                    s = str(tag)
+                    if any(ord(c) > 127 for c in s):
+                        emoji_candidate = s
+                except Exception:
+                    emoji_candidate = None
+
+        # normalize emoji_candidate to string via normalize_emoji when possible
+        if emoji_candidate is not None:
+            try:
+                if isinstance(emoji_candidate, Mapping):
+                    # pick likely key
+                    emoji_val = emoji_candidate.get("emoji") or emoji_candidate.get("name") or None
+                    emoji = normalize_emoji(str(emoji_val)) if emoji_val is not None else None
+                else:
+                    emoji = normalize_emoji(str(emoji_candidate))
+            except Exception:
+                try:
+                    emoji = str(emoji_candidate)
+                except Exception:
+                    emoji = None
+
+    except Exception:
+        # If everything fails, return best-effort structure with None fields
+        return {"id": tid, "channel_id": cid, "name": name, "emoji": None}
+
+    return {"id": tid, "channel_id": cid, "name": name, "emoji": emoji}
+
+def tags_to_edit_payload(tags_iterable, *, updates: Optional[dict] = None) -> list:
+    """
+    Build a serializable available_tags payload suitable for ForumChannel.edit(...).
+
+    - tags_iterable: iterable of existing tag objects (ForumTag-like)
+    - updates: optional dict mapping tag_id -> {"name": ..., "emoji": ...} to apply changes
+      If a tag in updates is not present in tags_iterable, it will be appended.
+    Returns a list of dict entries: [{"id": id?, "name": ..., "emoji": ...}, ...]
+    """
+    out = []
+    seen_ids = set()
+    for t in (tags_iterable or []):
+        td = tag_to_dict(t)
+        tid = td.get("id")
+        if tid is not None:
+            seen_ids.add(tid)
+        # allow update override by id when provided
+        if updates and tid is not None and tid in updates:
+            u = updates[tid] or {}
+            name = u.get("name", td.get("name"))
+            emoji = u.get("emoji", td.get("emoji"))
+        else:
+            name = td.get("name")
+            emoji = td.get("emoji")
+        entry = {"name": name, "emoji": emoji}
+        if tid is not None:
+            # include id when available so runtimes that accept it can preserve identity
+            entry["id"] = tid
+        out.append(entry)
+
+    # append any updates for tags not in existing list (e.g. create/update by id not present)
+    if updates:
+        for k, v in updates.items():
+            try:
+                kid = int(k)
+            except Exception:
+                kid = k
+            if kid not in seen_ids:
+                entry = {"name": v.get("name"), "emoji": v.get("emoji")}
+                try:
+                    entry["id"] = int(k)
+                except Exception:
+                    # keep whatever the caller passed if it is not integer-like
+                    entry["id"] = k
+                out.append(entry)
+    return out

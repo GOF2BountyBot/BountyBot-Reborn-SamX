@@ -16,6 +16,7 @@ from api.schemas.user_schemas import User, Member
 from api.schemas.permission_schemas import PermissionOverwrite
 from api.schemas.message_schemas import Message, MessageSummary
 from utils.embed_converter import EmbedConverter
+from utils.discord_helpers import tag_to_dict
 import shared.bblogger as bblogger
 
 flogger = bblogger.get_logger("discord-converters")
@@ -262,54 +263,20 @@ class ChannelConverter:
         Convert a discord ForumTag (or similar object) to the API payload:
           { "id": int, "channel_id": int, "name": str, "emoji": Optional[str] }
 
-        Accepts an optional channel_id which will be used if provided (useful
-        when the Tag object does not include channel_id itself).
+        Delegates to utils.discord_helpers.tag_to_dict(...) for consistent behavior.
         """
-        # defensive accessors with sensible fallbacks
-        tid = getattr(tag, "id", None)
-        if tid is not None:
-            try:
-                tid = int(tid)
-            except Exception:
-                tid = None
-
-        # If caller supplied channel_id prefer it; otherwise try to extract from tag
-        cid = None
-        if channel_id is not None:
-            try:
-                cid = int(channel_id)
-            except Exception:
-                cid = None
-        else:
-            cid = getattr(tag, "channel_id", None)
-            if cid is None:
-                # try nested channel attr if present
-                ch = getattr(tag, "channel", None)
-                cid = getattr(ch, "id", None) if ch is not None else None
-            if cid is not None:
-                try:
-                    cid = int(cid)
-                except Exception:
-                    cid = None
-
-        name = getattr(tag, "name", None)
-        # emoji may be a PartialEmoji, str, or None — normalize to str or None
-        emoji_attr = getattr(tag, "emoji", None)
-        emoji = None
-        if emoji_attr is not None:
-            try:
-                # If discord.partial_emoji.PartialEmoji or Emoji object: str() yields a usable representation
-                emoji = str(emoji_attr)
-            except Exception:
-                # last resort: try .name
-                emoji = getattr(emoji_attr, "name", None)
-
-        return {
-            "id": tid,
-            "channel_id": cid,
-            "name": name,
-            "emoji": emoji,
-        }
+        try:
+            payload = tag_to_dict(tag, channel_id=channel_id)
+            # Ensure fields conform to expected types (id -> int or None, channel_id -> int or None)
+            return {
+                "id": payload.get("id"),
+                "channel_id": payload.get("channel_id"),
+                "name": payload.get("name"),
+                "emoji": payload.get("emoji"),
+            }
+        except Exception:
+            flogger.exception("Error converting forum tag to payload")
+            raise
 
 class PermissionConverter:
     @staticmethod

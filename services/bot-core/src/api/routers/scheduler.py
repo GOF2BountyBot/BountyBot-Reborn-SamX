@@ -1,45 +1,19 @@
 from fastapi import APIRouter, Request, HTTPException
-from pydantic import BaseModel
-from datetime import datetime, timezone, timedelta
-from apscheduler.triggers.cron import CronTrigger
-from typing import Optional, List, Any
+from typing import List, Any
 import uuid
 
 from shared.bblogger import get_logger
 from utils.job_executor import run_job   # ← external executor
+from api.schemas.scheduler_schema import (
+    OneTimeJob,
+    RecurringJob,
+    JobInfo,
+    UpdateJob
+)
 
 flogger = get_logger("bot-router-scheduler")
 router = APIRouter(tags=["job-scheduler"])
 
-
-# —— Pydantic models —— 
-class OneTimeJob(BaseModel):
-    payload: Optional[dict] = {}
-    run_at: Optional[datetime] = None
-    delay_seconds: Optional[int] = None
-
-
-class RecurringJob(BaseModel):
-    payload: Optional[dict] = {}
-    cron: str  # e.g. "*/5 * * * *"
-
-
-class JobInfo(BaseModel):
-    id: str
-    next_run_time: Optional[datetime]
-    trigger: str
-    args: List[Any]
-
-
-class UpdateJob(BaseModel):
-    """
-    Model for updating the 'payload' of an existing job.
-    Matches the shape of the original payload passed at scheduling time.
-    """
-    payload: Optional[dict] = {}
-
-
-# —— End models ——
 
 @router.get("/jobs", response_model=List[JobInfo])
 async def list_jobs(req: Request):
@@ -158,5 +132,3 @@ async def delete_job(req: Request, id: str):
     sched.remove_job(id)
     flogger.info(f"Deleted job '{id}'")
     return {"status": "deleted", "job_id": id}
-
-

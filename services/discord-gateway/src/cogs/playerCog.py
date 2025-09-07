@@ -1,0 +1,250 @@
+import os
+import discord
+from discord import app_commands
+from discord.ext import commands
+import shared.bblogger as bblogger
+import requests
+from typing import Optional, Dict, Any
+from cogs.adminCog import is_admin
+
+# Set up logger
+flogger = bblogger.get_logger("discord-gateway-PlayerCog")
+
+# Define any environment variables or constants here
+api_base = os.environ.get("BOT_API_BASE_URL", "http://bot-core:8000/api/v1")
+flogger.debug(f"playerCog loading with API_BASE_URL: {api_base}")
+
+class PlayerCog(commands.Cog):
+    def __init__(self, bot: commands.Bot):
+        self.bot = bot
+        flogger.debug("PlayerCog initialized")
+
+    @app_commands.command(name="profile", description="View your player profile and statistics")
+    async def profile(self, interaction: discord.Interaction):
+        """Display player profile with statistics."""
+        await interaction.response.defer(thinking=True)
+        
+        try:
+            # First ensure user/player exists
+            user_data = {
+                "discord_id": interaction.user.id,
+                "guild_id": interaction.guild_id,
+                "discord_username": str(interaction.user)
+            }
+            
+            resp = requests.post(
+                f"{api_base}/players/",
+                json=user_data,
+                timeout=10
+            )
+            resp.raise_for_status()
+            player_data = resp.json()
+            
+            # Get detailed statistics
+            stats_resp = requests.get(
+                f"{api_base}/players/{player_data['id']}/statistics",
+                timeout=10
+            )
+            stats_resp.raise_for_status()
+            stats = stats_resp.json()
+            
+            # Create profile embed
+            embed = discord.Embed(
+                title=f"🎮 {interaction.user.display_name}'s Profile",
+                color=self._get_tier_color(player_data['tier'])
+            )
+            
+            # Basic info
+            embed.add_field(name="Tier", value=f"**{player_data['tier']}**", inline=True)
+            embed.add_field(name="XP", value=f"{player_data['xp']:,}", inline=True)
+            embed.add_field(name="Credits", value=f"{player_data['credits']:,}", inline=True)
+            
+            # Progression
+            if player_data['prestige_count'] > 0:
+                embed.add_field(name="Prestige", value=f"⭐ {player_data['prestige_count']}", inline=True)
+            
+            embed.add_field(name="Lifetime Credits", value=f"{player_data['lifetime_credits']:,}", inline=True)
+            embed.add_field(name="Systems Checked", value=f"{player_data['systems_checked']:,}", inline=True)
+            
+            # Bounty stats
+            bounty_stats = stats['bounty_stats']
+            embed.add_field(
+                name="Bounty Wins", 
+                value=f"{bounty_stats['bounty_wins']}", 
+                inline=True
+            )
+            
+            # Duel stats
+            duel_stats = stats['duel_stats']
+            if duel_stats['wins'] > 0 or duel_stats['losses'] > 0:
+                embed.add_field(
+                    name="Duel Record", 
+                    value=f"W: {duel_stats['wins']} | L: {duel_stats['losses']}", 
+                    inline=True
+                )
+                embed.add_field(
+                    name="Duel Win Rate", 
+                    value=f"{duel_stats['win_rate']}%", 
+                    inline=True
+                )
+                
+            # Set thumbnail based on tier
+            embed.set_thumbnail(url=interaction.user.display_avatar.url)
+            embed.set_footer(text=f"Player ID: {player_data['id']} | Joined: {player_data['created_at'][:10]}")
+            
+            await interaction.followup.send(embed=embed)
+            flogger.debug(f"/profile by {interaction.user} in guild {interaction.guild_id}")
+            
+        except requests.HTTPError as e:
+            if e.response.status_code == 404:
+                await interaction.followup.send("❌ Player profile not found.", ephemeral=True)
+            else:
+                await interaction.followup.send(f"❌ API Error: {e}", ephemeral=True)
+        except Exception as e:
+            flogger.error(f"Error in /profile: {e}")
+            await interaction.followup.send("⚠️ An error occurred while fetching your profile.", ephemeral=True)
+
+    @app_commands.command(name="leaderboard", description="View the guild leaderboard")
+    @app_commands.describe(tier="Filter by specific tier")
+    async def leaderboard(self, interaction: discord.Interaction, tier: Optional[str] = None):
+        """Display guild leaderboard."""
+        await interaction.response.defer(thinking=True)
+        
+        try:
+            # Build URL with tier filter if provided
+            url = f"{api_base}/players/guild/{interaction.guild_id}"
+            params = {}
+            if tier:
+                params['tier'] = tier
+                
+            resp = requests.get(url, params=params, timeout=10)
+            resp.raise_for_status()
+            players = resp.json()
+            
+            if not players:
+                await interaction.followup.send("📭 No players found in this guild.", ephemeral=True)
+                return
+                
+            # Sort by XP descending
+            players.sort(key=lambda p: p['xp'], reverse=True)
+            
+            # Create leaderboard embed
+            title = f"🏆 Guild Leaderboard"
+            if tier:
+                title += f" - {tier} Tier"
+                
+            embed = discord.Embed(
+                title=title,
+                color=discord.Color.gold()
+            )
+            
+            # Top 10 players
+            leaderboard_text = ""
+            for i, player in enumerate(players[:10]):
+                rank_emoji = ["🥇", "🥈", "🥉"] + ["🏅"] * 7
+                emoji = rank_emoji[i] if i < len(rank_emoji) else "🏅"
+                
+                # Get Discord user if possible
+                try:
+                    user = await self.bot.fetch_user(player['user_id'])
+                    username = user.display_name
+                except:
+                    username = f"User {player['user_id']}"
+                    
+                leaderboard_text += (
+                    f"{emoji} **{username}**\n"
+                    f"    {player['tier']} | {player['xp']:,} XP | {player['credits']:,} Credits\n"
+                )
+                
+            embed.description = leaderboard_text
+            embed.set_footer(text=f"Showing top {min(10, len(players))} of {len(players)} players")
+            
+            await interaction.followup.send(embed=embed)
+            flogger.debug(f"/leaderboard by {interaction.user} in guild {interaction.guild_id}")
+            
+        except requests.HTTPError as e:
+            await interaction.followup.send(f"❌ API Error: {e}", ephemeral=True)
+        except Exception as e:
+            flogger.error(f"Error in /leaderboard: {e}")
+            await interaction.followup.send("⚠️ An error occurred while fetching the leaderboard.", ephemeral=True)
+
+    @app_commands.command(name="prestige", description="Prestige your character (Platinum tier only)")
+    async def prestige(self, interaction: discord.Interaction):
+        """Prestige player character."""
+        await interaction.response.defer(thinking=True)
+        
+        try:
+            # Get player data first
+            user_data = {
+                "discord_id": interaction.user.id,
+                "guild_id": interaction.guild_id,
+                "discord_username": str(interaction.user)
+            }
+            
+            resp = requests.post(
+                f"{api_base}/players/",
+                json=user_data,
+                timeout=10
+            )
+            resp.raise_for_status()
+            player_data = resp.json()
+            
+            if player_data['tier'] != 'Platinum':
+                await interaction.followup.send(
+                    "❌ You must be Platinum tier to prestige!", 
+                    ephemeral=True
+                )
+                return
+                
+            # Confirm prestige
+            embed = discord.Embed(
+                title="⚠️ Prestige Confirmation",
+                description=(
+                    "Prestiging will reset you to **Bronze tier** with **0 XP**, "
+                    "but you'll keep your ships, credits, and gain a prestige star!\n\n"
+                    "Are you sure you want to prestige?"
+                ),
+                color=discord.Color.orange()
+            )
+            
+            # Note: In a real implementation, you'd want to add confirmation buttons
+            # For now, we'll just show the warning
+            await interaction.followup.send(embed=embed, ephemeral=True)
+            flogger.debug(f"/prestige by {interaction.user} in guild {interaction.guild_id}")
+            
+        except Exception as e:
+            flogger.error(f"Error in /prestige: {e}")
+            await interaction.followup.send("⚠️ An error occurred.", ephemeral=True)
+
+    def _get_tier_color(self, tier: str) -> discord.Color:
+        """Get Discord color based on player tier."""
+        tier_colors = {
+            "Bronze": discord.Color.from_rgb(205, 127, 50),
+            "Silver": discord.Color.from_rgb(192, 192, 192),
+            "Gold": discord.Color.from_rgb(255, 215, 0),
+            "Platinum": discord.Color.from_rgb(229, 228, 226)
+        }
+        return tier_colors.get(tier, discord.Color.default())
+
+    @profile.error
+    async def profile_error(self, interaction: discord.Interaction, error: app_commands.AppCommandError):
+        flogger.exception("Error in /profile", exc_info=error)
+        if not interaction.response.is_done():
+            await interaction.response.send_message("⚠️ An error occurred.", ephemeral=True)
+
+    @leaderboard.error
+    async def leaderboard_error(self, interaction: discord.Interaction, error: app_commands.AppCommandError):
+        flogger.exception("Error in /leaderboard", exc_info=error)
+        if not interaction.response.is_done():
+            await interaction.response.send_message("⚠️ An error occurred.", ephemeral=True)
+
+    @prestige.error
+    async def prestige_error(self, interaction: discord.Interaction, error: app_commands.AppCommandError):
+        flogger.exception("Error in /prestige", exc_info=error)
+        if not interaction.response.is_done():
+            await interaction.response.send_message("⚠️ An error occurred.", ephemeral=True)
+
+async def setup(bot: commands.Bot):
+    flogger.debug("Setting up PlayerCog...")
+    await bot.add_cog(PlayerCog(bot))
+    flogger.info("PlayerCog loaded")

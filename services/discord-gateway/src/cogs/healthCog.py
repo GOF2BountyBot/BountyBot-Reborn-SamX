@@ -4,25 +4,22 @@ from discord import app_commands
 from discord.ext import commands
 import shared.bblogger as bblogger
 import requests
-
+from cogs.adminCog import is_admin
 
 flogger = bblogger.get_logger("discord-gateway-HealthCog")
 api_base = os.environ.get("BOT_API_BASE_URL", "http://bot-core:8000/api/v1")
 flogger.debug(f"HealthCog loading with api_base: {api_base}")
-
-def is_developer():
-    # return app_commands.checks.has_role("developer")
-    return True
 
 class HealthCog(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
 
     @app_commands.command(name="ping", description="Pong + latency")
-    #@is_developer()
+    @is_admin()
     async def ping(self, interaction: discord.Interaction):
         latency_ms = round(self.bot.latency * 1000)
-        await interaction.response.send_message(f"Pong! Latency is {latency_ms} ms")
+        # ephemeral: visible only to the user who invoked the command
+        await interaction.response.send_message(f"Pong! Latency is {latency_ms} ms", ephemeral=True)
         flogger.debug(f"/ping by {interaction.user} in guild {interaction.guild_id}: {latency_ms} ms")
 
     @ping.error
@@ -31,18 +28,27 @@ class HealthCog(commands.Cog):
             await interaction.response.send_message("❌ You need the 'developer' role.", ephemeral=True)
             flogger.warning(f"Unauthorized /ping by {interaction.user} in guild {interaction.guild_id}")
         else:
-            logger.exception("Error in /ping", exc_info=error)
-            await interaction.response.send_message("⚠️ An error occurred.", ephemeral=True)
+            # use the cog logger and send an ephemeral error response
+            flogger.exception("Error in /ping", exc_info=error)
+            try:
+                if not interaction.response.is_done():
+                    await interaction.response.send_message("⚠️ An error occurred.", ephemeral=True)
+                else:
+                    await interaction.followup.send("⚠️ An error occurred.", ephemeral=True)
+            except Exception:
+                # ensure we don't raise while handling errors
+                pass
 
     @app_commands.command(
         name="health",
         description="Check the health of the BountyBot API service."
     )
-    #@is_developer()
+    @is_admin()
     async def health(self, interaction: discord.Interaction):
         """Calls the /health endpoint and reports status."""
         flogger.trace("/health command invoked by user...")
-        await interaction.response.defer(thinking=True)
+        # defer so we can do processing; we'll send an ephemeral followup
+        await interaction.response.defer(thinking=True, ephemeral=True)
         try:
             flogger.trace("Executing API request to bot service...")
             resp = requests.get(f"{api_base}/health", timeout=2.0)
@@ -124,7 +130,8 @@ class HealthCog(commands.Cog):
                 )
                 embed.add_field(name="Schema", value=schema_details, inline=False)
 
-            await interaction.followup.send(content=emoji, embed=embed)
+            # send the health embed as ephemeral (visible only to the invoking user)
+            await interaction.followup.send(content=emoji, embed=embed, ephemeral=True)
         except requests.RequestException as e:
             emoji = "❌"
             msg = f"Health check failed: `{e}`"
@@ -135,7 +142,11 @@ class HealthCog(commands.Cog):
                 color=discord.Colour.red()
             )
             embed.set_footer(text=f"Checked via {api_base}/health")
-            await interaction.followup.send(content=emoji, embed=embed)
+            try:
+                await interaction.followup.send(content=emoji, embed=embed, ephemeral=True)
+            except Exception:
+                # swallow any followup/send errors to avoid raising during error handling
+                pass
         flogger.trace("/health command end")
 
 async def setup(bot: commands.Bot):

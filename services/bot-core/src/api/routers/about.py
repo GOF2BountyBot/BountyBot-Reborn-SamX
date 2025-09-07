@@ -12,66 +12,25 @@ from persist.repositories.turret_weapon_repository import TurretWeaponRepository
 from persist.repositories.ship_repository import ShipRepository
 from persist.repositories.system_repository import SystemRepository
 from persist.repositories.criminal_repository import CriminalRepository
-from routers.data import DataCategory
+from api.routers.data import DataCategory
 import shared.bblogger as bblogger
 
 flogger = bblogger.get_logger("bot-about-router")
 
 router = APIRouter(prefix="/about", tags=["about"])
 
-# Pydantic models for responses
-class ItemResponse(BaseModel):
-    id: int
-    name: str
-    aliases: List[str]
-    built_in: bool
-    emoji: Optional[str]
-    icon: Optional[str]
-    value: Optional[int]
-    wiki: Optional[str]
-    type: str
-    tech_level: Optional[int] = None
-    extra_atts: Optional[Dict[str, Any]] = None
-
-class ModuleResponse(ItemResponse):
-    max_equipped: Optional[int] = None
-
-class WeaponResponse(ItemResponse):
-    pass
-
-class PrimaryWeaponResponse(WeaponResponse):
-    dps: Optional[float] = None
-
-class SecondaryWeaponResponse(WeaponResponse):
-    pass
-
-class TurretWeaponResponse(WeaponResponse):
-    pass
-
-class ShipResponse(ItemResponse):
-    armour: Optional[int] = None
-    cargo: Optional[int] = None
-    handling: Optional[int] = None
-    shop_spawn_rate: Optional[float] = None
-    max_modules: Optional[int] = None
-    max_primaries: Optional[int] = None
-    max_secondaries: Optional[int] = None
-    max_turrets: Optional[int] = None
-    manufacturer: Optional[str] = None
-    skinnable: Optional[bool] = None
-    compatible_skins: Optional[Dict[str, str]] = None
-    model: Optional[str] = None
-    norm_spec: Optional[str] = None
-    assets: Optional[List[str]] = None
-    save_due: Optional[bool] = None
-
-class CriminalResponse(ItemResponse):
-    is_player: bool
-    faction: str                   # ← add faction
-
-class SystemResponse(ItemResponse):
-    coordinates: List[float]       # ← e.g. [x, y, z]
-    faction: str                   # ← add faction
+# Import response models from schemas
+from api.schemas.about_schema import (
+    ItemResponse,
+    ModuleResponse,
+    WeaponResponse,
+    PrimaryWeaponResponse,
+    SecondaryWeaponResponse,
+    TurretWeaponResponse,
+    ShipResponse,
+    CriminalResponse,
+    SystemResponse
+)
 
 # Repository instances
 module_repo = ModuleRepository()

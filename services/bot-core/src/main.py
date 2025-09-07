@@ -33,7 +33,7 @@ from sqlalchemy.ext.asyncio import create_async_engine
 from sqlalchemy import create_engine
 
 # Import the routers package
-import routers
+import api.routers as routers
 
 flogger = bblogger.get_logger("bot-main-script")
 
@@ -175,14 +175,13 @@ def create_app() -> FastAPI:
 def include_routers(app: FastAPI) -> None:
     """
     Auto-discover and include all APIRouter instances
-    under services/blender-service/src/routers.
+    under api/routers.
     """
-    root = Path(__file__).parent / "routers"
-    pkg_prefix = routers.__name__ + "."
-
     success = skipped = failed = 0
 
-    for finder, fullname, ispkg in pkgutil.walk_packages([str(root)], pkg_prefix):
+    # Iterate modules in the api.routers package
+    for finder, name, ispkg in pkgutil.iter_modules(routers.__path__):
+        fullname = f"{routers.__name__}.{name}"
         try:
             module = importlib.import_module(fullname)
         except Exception as e:
@@ -196,8 +195,7 @@ def include_routers(app: FastAPI) -> None:
             skipped += 1
             continue
 
-        tag = fullname.rsplit(".", 1)[-1]
-        # don’t force a tag here – let the router’s own tags win
+        tag = name
         app.include_router(router, prefix="/api/v1")
         flogger.info(f"✓ Included router '{tag}' from '{fullname}'")
         success += 1

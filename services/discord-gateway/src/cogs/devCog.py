@@ -4,16 +4,12 @@ from discord import app_commands
 from discord.ext import commands
 import shared.bblogger as bblogger
 import requests
-
+from cogs.adminCog import is_admin
 
 flogger = bblogger.get_logger("discord-gateway-DevCog")
 api_base = os.environ.get("BOT_API_BASE_URL", "http://bot-core:8000/api/v1")
 flogger.debug(f"devCog loading with api_base: {api_base}")
-
-def is_developer():
-    # return app_commands.checks.has_role("developer")
-    return True
-
+#TODO:  COme back and make a proper dev check since these are global commands and not limited to a single guild
 class DevCog(commands.Cog):
     
     def __init__(self, bot: commands.Bot):
@@ -49,7 +45,7 @@ class DevCog(commands.Cog):
         name="load_data",
         description="Trigger a JSON → DB load for a given category"
     )
-    #@is_developer()
+    @is_admin()
     @app_commands.describe(category="Choose a data category")
     @app_commands.autocomplete(category=category_autocomplete)
     async def load_data(self, interaction: discord.Interaction, category: str):
@@ -104,7 +100,7 @@ class DevCog(commands.Cog):
         name="reload_autocomplete",
         description="Force‐reload all autocomplete data in other cogs"
     )
-    #@is_developer()
+    @is_admin()
     async def reload_autocomplete(self, interaction: discord.Interaction):
         """Call each cog’s preload method so you don’t have to restart."""
         await interaction.response.defer(thinking=True)

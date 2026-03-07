@@ -3,7 +3,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 import shared.bblogger as bblogger
-import requests
+import httpx
 from typing import Optional, List, Dict, Any
 
 # Set up logger
@@ -16,7 +16,11 @@ flogger.debug(f"inventoryCog loading with API_BASE_URL: {api_base}")
 class InventoryCog(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
+        self.http_client = httpx.AsyncClient()
         flogger.debug("InventoryCog initialized")
+
+    async def cog_unload(self):
+        await self.http_client.aclose()
 
     async def _get_player_id(self, user_id: int, guild_id: int) -> Optional[int]:
         """Helper to get player ID from Discord user ID."""
@@ -27,7 +31,7 @@ class InventoryCog(commands.Cog):
                 "discord_username": "temp"
             }
             
-            resp = requests.post(f"{api_base}/players/", json=user_data, timeout=5)
+            resp = await self.http_client.post(f"{api_base}/players/", json=user_data, timeout=5)
             resp.raise_for_status()
             return resp.json()['id']
         except:
@@ -64,7 +68,7 @@ class InventoryCog(commands.Cog):
             if item_type:
                 params['item_type'] = item_type
                 
-            resp = requests.get(
+            resp = await self.http_client.get(
                 f"{api_base}/inventory/player/{player_id}",
                 params=params,
                 timeout=10
@@ -81,7 +85,7 @@ class InventoryCog(commands.Cog):
                 return
                 
             # Get inventory summary for overview
-            summary_resp = requests.get(
+            summary_resp = await self.http_client.get(
                 f"{api_base}/inventory/player/{player_id}/summary",
                 timeout=10
             )
@@ -140,7 +144,7 @@ class InventoryCog(commands.Cog):
             await interaction.followup.send(embed=embed)
             flogger.debug(f"/inventory by {interaction.user} for {target_user} in guild {interaction.guild_id}")
             
-        except requests.HTTPError as e:
+        except httpx.HTTPStatusError as e:
             await interaction.followup.send(f"❌ API Error: {e}", ephemeral=True)
         except Exception as e:
             flogger.error(f"Error in /inventory: {e}")
@@ -159,7 +163,7 @@ class InventoryCog(commands.Cog):
                 return
                 
             # Search inventory
-            resp = requests.get(
+            resp = await self.http_client.get(
                 f"{api_base}/inventory/player/{player_id}/search",
                 params={'q': query},
                 timeout=10
@@ -207,7 +211,7 @@ class InventoryCog(commands.Cog):
             await interaction.followup.send(embed=embed)
             flogger.debug(f"/search '{query}' by {interaction.user} in guild {interaction.guild_id}")
             
-        except requests.HTTPError as e:
+        except httpx.HTTPStatusError as e:
             await interaction.followup.send(f"❌ API Error: {e}", ephemeral=True)
         except Exception as e:
             flogger.error(f"Error in /search: {e}")
@@ -229,7 +233,7 @@ class InventoryCog(commands.Cog):
                 return
                 
             # Get item count
-            resp = requests.get(
+            resp = await self.http_client.get(
                 f"{api_base}/inventory/player/{player_id}/item/{item_name}/count",
                 params={'item_type': item_type},
                 timeout=10
@@ -257,7 +261,7 @@ class InventoryCog(commands.Cog):
             await interaction.followup.send(embed=embed)
             flogger.debug(f"/item {item_name} by {interaction.user} in guild {interaction.guild_id}")
             
-        except requests.HTTPError as e:
+        except httpx.HTTPStatusError as e:
             if e.response.status_code == 404:
                 await interaction.followup.send(f"❌ Item '{item_name}' not found.", ephemeral=True)
             else:

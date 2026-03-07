@@ -10,7 +10,7 @@ import os
 from fastapi import APIRouter, HTTPException, status, Request, Query
 from pydantic import BaseModel, Field
 from typing import Optional, List
-import requests
+import httpx
 
 import shared.bblogger as bblogger
 from persist.repositories.discord_message_repository import DiscordMessageRepository
@@ -70,11 +70,12 @@ async def create_time_announcement(
             "content": embed_payload.dict()
         }
         flogger.debug(f"Forwarding to gateway: {gateway_request}")
-        resp = requests.post(
-            f"{DISCORD_GATEWAY_BASE_URL}/messages",
-            json=gateway_request,
-            timeout=10
-        )
+        async with httpx.AsyncClient() as client:
+            resp = await client.post(
+                f"{DISCORD_GATEWAY_BASE_URL}/messages",
+                json=gateway_request,
+                timeout=10
+            )
         flogger.debug(f"Gateway HTTP status: {resp.status_code}")
         resp.raise_for_status()
         gateway_data = resp.json()
@@ -101,7 +102,7 @@ async def create_time_announcement(
             flogger.info(f"Time announcement persisted (db id={message.id})")
             return DiscordMessageResponse.from_orm(message)
 
-    except requests.HTTPError:
+    except httpx.HTTPStatusError:
         flogger.exception("Discord Gateway API error while creating time announcement")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -130,6 +131,11 @@ async def update_time_announcement(
     )
     flogger.debug(f"Request body: {announcement_request.dict()}")
     try:
+        if announcement_request.message_id is None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="message_id is required for update operations"
+            )
         db_manager = request.app.state.db_manager
         async with db_manager.get_session() as db:
             # lookup by composite key instead of by type
@@ -159,11 +165,12 @@ async def update_time_announcement(
                 "content": embed_payload.dict()
             }
             flogger.debug(f"Forwarding update to gateway: {gateway_request}")
-            resp = requests.put(
-                f"{DISCORD_GATEWAY_BASE_URL}/messages",
-                json=gateway_request,
-                timeout=10
-            )
+            async with httpx.AsyncClient() as client:
+                resp = await client.put(
+                    f"{DISCORD_GATEWAY_BASE_URL}/messages",
+                    json=gateway_request,
+                    timeout=10
+                )
             flogger.debug(f"Gateway HTTP status: {resp.status_code}")
             resp.raise_for_status()
             gateway_data = resp.json()
@@ -188,7 +195,7 @@ async def update_time_announcement(
             flogger.info(f"Time announcement updated (db id={updated.id})")
             return DiscordMessageResponse.from_orm(updated)
 
-    except requests.HTTPError:
+    except httpx.HTTPStatusError:
         flogger.exception("Discord Gateway API error while updating time announcement")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -236,11 +243,12 @@ async def delete_time_announcement(
                 "message_id": message_id
             }
             flogger.debug(f"Forwarding delete to gateway: {gateway_request}")
-            resp = requests.delete(
-                f"{DISCORD_GATEWAY_BASE_URL}/messages",
-                json=gateway_request,
-                timeout=10
-            )
+            async with httpx.AsyncClient() as client:
+                resp = await client.delete(
+                    f"{DISCORD_GATEWAY_BASE_URL}/messages",
+                    json=gateway_request,
+                    timeout=10
+                )
             flogger.debug(f"Gateway HTTP status: {resp.status_code}")
             resp.raise_for_status()
             gateway_data = resp.json()
@@ -270,7 +278,7 @@ async def delete_time_announcement(
                 "message_id": gateway_data["message_id"]
             }
 
-    except requests.HTTPError:
+    except httpx.HTTPStatusError:
         flogger.exception("Discord Gateway API error while deleting time announcement")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -347,7 +355,7 @@ async def list_time_announcements_by_guild(
 @router.get(
     "/guild/{guild_id}/channel/{channel_id}",
     response_model=List[DiscordMessageResponse],
-    summary="List Time Announcements by Channel",
+    summary="List TimeAnanouncements by Channel",
     description="Returns all time‐announcement messages for the given guild and channel."
 )
 async def list_time_announcements_by_channel(

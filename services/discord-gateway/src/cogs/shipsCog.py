@@ -3,7 +3,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 import shared.bblogger as bblogger
-import requests
+import httpx
 from typing import Optional, List, Dict, Any
 
 # Set up logger
@@ -16,7 +16,11 @@ flogger.debug(f"shipsCog loading with API_BASE_URL: {api_base}")
 class ShipsCog(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
+        self.http_client = httpx.AsyncClient()
         flogger.debug("ShipsCog initialized")
+
+    async def cog_unload(self):
+        await self.http_client.aclose()
 
     async def _get_player_id(self, user_id: int, guild_id: int) -> Optional[int]:
         """Helper to get player ID from Discord user ID."""
@@ -27,7 +31,7 @@ class ShipsCog(commands.Cog):
                 "discord_username": "temp"
             }
             
-            resp = requests.post(f"{api_base}/players/", json=user_data, timeout=5)
+            resp = await self.http_client.post(f"{api_base}/players/", json=user_data, timeout=5)
             resp.raise_for_status()
             return resp.json()['id']
         except:
@@ -52,7 +56,7 @@ class ShipsCog(commands.Cog):
                 return
                 
             # Get player ships
-            resp = requests.get(f"{api_base}/ships/player/{player_id}", timeout=10)
+            resp = await self.http_client.get(f"{api_base}/ships/player/{player_id}", timeout=10)
             resp.raise_for_status()
             ships = resp.json()
             
@@ -107,7 +111,7 @@ class ShipsCog(commands.Cog):
             await interaction.followup.send(embed=embed)
             flogger.debug(f"/ships by {interaction.user} for {target_user} in guild {interaction.guild_id}")
             
-        except requests.HTTPError as e:
+        except httpx.HTTPStatusError as e:
             await interaction.followup.send(f"❌ API Error: {e}", ephemeral=True)
         except Exception as e:
             flogger.error(f"Error in /ships: {e}")
@@ -121,7 +125,7 @@ class ShipsCog(commands.Cog):
         
         try:
             # Get ship details
-            resp = requests.get(f"{api_base}/ships/{ship_id}", timeout=10)
+            resp = await self.http_client.get(f"{api_base}/ships/{ship_id}", timeout=10)
             resp.raise_for_status()
             ship = resp.json()
             
@@ -132,7 +136,7 @@ class ShipsCog(commands.Cog):
                 return
                 
             # Get detailed loadout
-            loadout_resp = requests.get(f"{api_base}/ships/{ship_id}/loadout", timeout=10)
+            loadout_resp = await self.http_client.get(f"{api_base}/ships/{ship_id}/loadout", timeout=10)
             loadout_resp.raise_for_status()
             loadout = loadout_resp.json()
             
@@ -189,7 +193,7 @@ class ShipsCog(commands.Cog):
             await interaction.followup.send(embed=embed)
             flogger.debug(f"/ship {ship_id} by {interaction.user} in guild {interaction.guild_id}")
             
-        except requests.HTTPError as e:
+        except httpx.HTTPStatusError as e:
             if e.response.status_code == 404:
                 await interaction.followup.send("❌ Ship not found.", ephemeral=True)
             else:
@@ -211,7 +215,7 @@ class ShipsCog(commands.Cog):
                 return
                 
             # Set active ship
-            resp = requests.put(
+            resp = await self.http_client.put(
                 f"{api_base}/ships/{ship_id}/set-active",
                 params={"player_id": player_id},
                 timeout=10
@@ -235,7 +239,7 @@ class ShipsCog(commands.Cog):
             await interaction.followup.send(embed=embed)
             flogger.debug(f"/setactive {ship_id} by {interaction.user} in guild {interaction.guild_id}")
             
-        except requests.HTTPError as e:
+        except httpx.HTTPStatusError as e:
             if e.response.status_code == 400:
                 await interaction.followup.send("❌ Invalid ship or you don't own this ship.", ephemeral=True)
             elif e.response.status_code == 404:
@@ -262,7 +266,7 @@ class ShipsCog(commands.Cog):
                 return
                 
             # First check if user owns the ship
-            resp = requests.get(f"{api_base}/ships/{ship_id}", timeout=10)
+            resp = await self.http_client.get(f"{api_base}/ships/{ship_id}", timeout=10)
             resp.raise_for_status()
             ship = resp.json()
             
@@ -272,7 +276,7 @@ class ShipsCog(commands.Cog):
                 return
                 
             # Update nickname
-            nick_resp = requests.put(
+            nick_resp = await self.http_client.put(
                 f"{api_base}/ships/{ship_id}/nickname",
                 json={"nickname": nickname},
                 timeout=10
@@ -293,7 +297,7 @@ class ShipsCog(commands.Cog):
             await interaction.followup.send(embed=embed)
             flogger.debug(f"/nickname {ship_id} '{nickname}' by {interaction.user} in guild {interaction.guild_id}")
             
-        except requests.HTTPError as e:
+        except httpx.HTTPStatusError as e:
             if e.response.status_code == 404:
                 await interaction.followup.send("❌ Ship not found.", ephemeral=True)
             else:

@@ -1,7 +1,7 @@
 import os
 import re
 import unicodedata
-import requests
+import httpx
 from typing import Dict, Optional
 import shared.bblogger as bblogger
 
@@ -49,7 +49,8 @@ class EmojiService:
         }
         
         try:
-            response = requests.get(url, headers=headers)
+            with httpx.Client() as client:
+                response = client.get(url, headers=headers, timeout=10)
             response.raise_for_status()
             
             data = response.json()
@@ -68,7 +69,7 @@ class EmojiService:
             flogger.info(f"Successfully loaded {len(emoji_dict)} application emojis")
             return emoji_dict
             
-        except requests.exceptions.RequestException as e:
+        except httpx.HTTPError as e:
             flogger.error(f"Failed to fetch application emojis: {e}")
             raise RuntimeError(f"Discord API request failed: {e}")
         except Exception as e:

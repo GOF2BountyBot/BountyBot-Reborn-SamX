@@ -3,7 +3,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 import shared.bblogger as bblogger
-import requests
+import httpx
 from cogs.adminCog import is_admin
 
 flogger = bblogger.get_logger("discord-gateway-HealthCog")
@@ -13,6 +13,10 @@ flogger.debug(f"HealthCog loading with api_base: {api_base}")
 class HealthCog(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
+        self.http_client = httpx.AsyncClient()
+
+    async def cog_unload(self):
+        await self.http_client.aclose()
 
     @app_commands.command(name="ping", description="Pong + latency")
     @is_admin()
@@ -51,7 +55,7 @@ class HealthCog(commands.Cog):
         await interaction.response.defer(thinking=True, ephemeral=True)
         try:
             flogger.trace("Executing API request to bot service...")
-            resp = requests.get(f"{api_base}/health", timeout=2.0)
+            resp = await self.http_client.get(f"{api_base}/health", timeout=2.0)
             resp.raise_for_status()
             data = resp.json()
             flogger.trace("Response received successfully: " + str(data))
@@ -132,7 +136,7 @@ class HealthCog(commands.Cog):
 
             # send the health embed as ephemeral (visible only to the invoking user)
             await interaction.followup.send(content=emoji, embed=embed, ephemeral=True)
-        except requests.RequestException as e:
+        except httpx.HTTPError as e:
             emoji = "❌"
             msg = f"Health check failed: `{e}`"
 

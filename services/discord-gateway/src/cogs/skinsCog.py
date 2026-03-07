@@ -2,7 +2,7 @@ import os
 import discord
 from discord import app_commands
 from discord.ext import commands
-import requests
+import httpx
 import shared.bblogger as bblogger
 from typing import Dict, List
 
@@ -12,15 +12,19 @@ api_base = os.environ.get("BOT_API_BASE_URL", "http://bot-core:8000/api/v1")
 class SkinsCog(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
+        self.http_client = httpx.AsyncClient()
         # map ship name → list of skin names
         self._ship_skins: Dict[str, List[str]] = {}
         bot.loop.create_task(self._preload_ship_skins())
+
+    async def cog_unload(self):
+        await self.http_client.aclose()
 
     async def _preload_ship_skins(self):
         await self.bot.wait_until_ready()
         try:
             flogger.info("Preloading ship skins…")
-            resp = requests.get(f"{api_base}/about/categories/ship/objects", timeout=10)
+            resp = await self.http_client.get(f"{api_base}/about/categories/ship/objects", timeout=10)
             resp.raise_for_status()
             ships = resp.json()
             for sh in ships:
@@ -28,7 +32,7 @@ class SkinsCog(commands.Cog):
                 if not name:
                     continue
                 try:
-                    full = requests.get(f"{api_base}/about/object/name/{name}", timeout=10)
+                    full = await self.http_client.get(f"{api_base}/about/object/name/{name}", timeout=10)
                     full.raise_for_status()
                     data = full.json()
                     skins = data.get("compatible_skins") or {}
@@ -99,10 +103,10 @@ class SkinsCog(commands.Cog):
         await interaction.response.defer(thinking=True)
         # fetch full ship object to get URLs
         try:
-            resp = requests.get(f"{api_base}/about/object/name/{ship}", timeout=10)
+            resp = await self.http_client.get(f"{api_base}/about/object/name/{ship}", timeout=10)
             resp.raise_for_status()
             obj = resp.json()
-        except requests.HTTPError as e:
+        except httpx.HTTPStatusError as e:
             if e.response.status_code == 404:
                 return await interaction.followup.send(
                     f"❌ Ship '{ship}' not found.", ephemeral=True

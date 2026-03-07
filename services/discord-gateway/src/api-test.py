@@ -37,7 +37,7 @@ from datetime import datetime, timezone
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 # Solely to avoid having to re-implement all the emoji normalization/conversion...
 from utils.discord_helpers import normalize_emoji
-import requests
+import httpx
 
 # -----------------------------------------------------------------------------
 # ANSI color codes for stdout
@@ -115,17 +115,18 @@ def api_call(
     *,
     body: Optional[dict] = None,
     headers: Optional[dict] = None
-) -> Tuple[Optional[requests.Response], Optional[str]]:
+) -> Tuple[Optional[httpx.Response], Optional[str]]:
     url = ARGS.base_url.rstrip("/") + path
     LOGGER.info(f"--> {method.upper()} {url}")
     if body is not None:
         LOGGER.debug("Request body:\n" + pretty(body))
     hdrs = headers or {"Content-Type": "application/json"}
     try:
-        resp = requests.request(
-            method=method, url=url, json=body, headers=hdrs, timeout=REQUEST_TIMEOUT
-        )
-    except requests.RequestException as e:
+        with httpx.Client() as client:
+            resp = client.request(
+                method=method, url=url, json=body, headers=hdrs, timeout=REQUEST_TIMEOUT
+            )
+    except httpx.HTTPError as e:
         LOGGER.error(f"<-- NETWORK ERROR: {e}")
         return None, str(e)
     LOGGER.info(f"<-- {resp.status_code} {resp.reason}")
@@ -393,7 +394,7 @@ class BaseTests:
         path: str,
         body: Optional[dict],
         expected: List[int]
-    ) -> Optional[requests.Response]:
+    ) -> Optional[httpx.Response]:
         """
         Send a request and assert the status is in `expected`.
 

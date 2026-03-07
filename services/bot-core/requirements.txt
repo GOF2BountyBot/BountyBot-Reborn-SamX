@@ -14,7 +14,7 @@ psycopg2-binary
 asyncpg
 alembic
 pydantic
-requests
+httpx
 # Scheduling library
 apscheduler
 python-dotenv

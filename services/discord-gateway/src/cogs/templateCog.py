@@ -3,7 +3,6 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 import shared.bblogger as bblogger
-import requests
 
 # Set up logger
 flogger = bblogger.get_logger("discord-gateway-TemplateCog")

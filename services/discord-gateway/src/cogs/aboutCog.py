@@ -4,7 +4,7 @@ from typing import List, Optional, Dict, Any
 from discord import app_commands
 from discord.ext import commands
 import shared.bblogger as bblogger
-import requests
+import httpx
 import json
 from utils.embed_converter import EmbedConverter    # ← grid‐builder for 2-col layout
 
@@ -25,9 +25,13 @@ class AboutCog(commands.Cog):
         self.bot = bot
         self._categories: List[str] = []
         self._objects_by_category: Dict[str, List[Dict]] = {}
+        self.http_client = httpx.AsyncClient()
 
         # Schedule preload once bot is ready
         bot.loop.create_task(self._preload_data())
+
+    async def cog_unload(self):
+        await self.http_client.aclose()
 
     async def _preload_data(self):
         """Preload all categories and objects at startup for responsiveness"""
@@ -36,7 +40,7 @@ class AboutCog(commands.Cog):
             flogger.info("Starting preload of about data...")
 
             # Load categories
-            resp = requests.get(f"{api_base}/about/categories", timeout=5)
+            resp = await self.http_client.get(f"{api_base}/about/categories", timeout=5)
             resp.raise_for_status()
             self._categories = resp.json()
             flogger.debug(f"Preloaded categories: {self._categories}")
@@ -44,7 +48,7 @@ class AboutCog(commands.Cog):
             # Load objects for each category
             for category in self._categories:
                 try:
-                    resp = requests.get(
+                    resp = await self.http_client.get(
                         f"{api_base}/about/categories/{category}/objects",
                         timeout=10
                     )
@@ -126,7 +130,7 @@ class AboutCog(commands.Cog):
                     break
         try:
             # Get object by name from the API
-            resp = requests.get(f"{api_base}/about/object/name/{resolved_name}", timeout=10)
+            resp = await self.http_client.get(f"{api_base}/about/object/name/{resolved_name}", timeout=10)
             resp.raise_for_status()
             obj_data = resp.json()
 
@@ -134,7 +138,7 @@ class AboutCog(commands.Cog):
             embed = await self._create_object_embed(obj_data)
             await interaction.followup.send(embed=embed)
 
-        except requests.HTTPError as e:
+        except httpx.HTTPStatusError as e:
             if e.response.status_code == 404:
                 await interaction.followup.send(
                     f"❌ Object '{name}' not found in category '{category}'.",
@@ -184,7 +188,7 @@ class AboutCog(commands.Cog):
         icon_url = obj_data.get('icon')
         if icon_url:
             try:
-                head_resp = requests.head(icon_url, timeout=5)
+                head_resp = await self.http_client.head(icon_url, timeout=5)
                 if head_resp.status_code == 200:
                     embed.set_thumbnail(url=icon_url)
                 else:

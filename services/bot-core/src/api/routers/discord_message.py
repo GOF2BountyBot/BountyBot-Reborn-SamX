@@ -8,15 +8,18 @@ by dedicated routers in the announcements/ subdirectory.
 
 import json
 import os
-from typing import Optional, List
+from typing import List
 from uuid import UUID
 from fastapi import APIRouter, HTTPException, status, Request
-from pydantic import BaseModel, Field
-from datetime import datetime
-import requests
+import httpx
 
 import shared.bblogger as bblogger
 from persist.repositories.discord_message_repository import DiscordMessageRepository
+from api.schemas.discord_message_schema import (
+    EmbedPayloadDict,
+    DiscordMessageRequest,
+    DiscordMessageResponse,
+)
 
 flogger = bblogger.get_logger("bot-discord-message-router")
 
@@ -33,13 +36,6 @@ router = APIRouter(
 DISCORD_GATEWAY_HOST = os.getenv("DISCORD_GATEWAY_HOST", "discord-gateway")
 DISCORD_GATEWAY_PORT = os.getenv("GATEWAY_PORT", "7999")
 DISCORD_GATEWAY_BASE_URL = f"http://{DISCORD_GATEWAY_HOST}:{DISCORD_GATEWAY_PORT}/api/v1"
-
-# Import response models from schemas
-from api.schemas.discord_message_schema import (
-    EmbedPayloadDict,
-    DiscordMessageRequest,
-    DiscordMessageResponse
-)
 
 # Initialize repository
 discord_message_repo = DiscordMessageRepository()
@@ -68,18 +64,19 @@ async def create_discord_message(
             "content": message_request.embed_payload.dict()
         }
         flogger.debug(f"Forwarding to gateway: {gateway_request}")
-        response = requests.post(
-            f"{DISCORD_GATEWAY_BASE_URL}/messages",
-            json=gateway_request,
-            timeout=10
-        )
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                f"{DISCORD_GATEWAY_BASE_URL}/messages",
+                json=gateway_request,
+                timeout=10
+            )
         flogger.debug(f"Gateway HTTP status: {response.status_code}")
         response.raise_for_status()
         gateway_data = response.json()
         flogger.debug(f"Gateway response: {gateway_data}")
 
         # Extract IDs from gateway response
-        if not all(k in gateway_data for k in ('guild_id','channel_id','message_id')):
+        if not all(k in gateway_data for k in ('guild_id', 'channel_id', 'message_id')):
             flogger.error("Gateway response missing required identifiers")
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -103,7 +100,7 @@ async def create_discord_message(
             flogger.info(f"Discord message record created (db id={message.id})")
             return DiscordMessageResponse.from_orm(message)
 
-    except requests.HTTPError:
+    except httpx.HTTPStatusError:
         flogger.exception("Discord Gateway API error while creating message")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -149,17 +146,18 @@ async def update_discord_message(
             "content": message_request.embed_payload.dict()
         }
         flogger.debug(f"Forwarding update to gateway: {gateway_request}")
-        resp = requests.put(
-            f"{DISCORD_GATEWAY_BASE_URL}/messages",
-            json=gateway_request,
-            timeout=10
-        )
+        async with httpx.AsyncClient() as client:
+            resp = await client.put(
+                f"{DISCORD_GATEWAY_BASE_URL}/messages",
+                json=gateway_request,
+                timeout=10
+            )
         flogger.debug(f"Gateway HTTP status: {resp.status_code}")
         resp.raise_for_status()
         gateway_data = resp.json()
         flogger.debug(f"Gateway response: {gateway_data}")
 
-        if not all(k in gateway_data for k in ("guild_id","channel_id","message_id")):
+        if not all(k in gateway_data for k in ("guild_id", "channel_id", "message_id")):
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail="Discord gateway did not return required message identifiers"
@@ -181,7 +179,7 @@ async def update_discord_message(
             flogger.info(f"Discord message updated (db id={msg.id})")
             return DiscordMessageResponse.from_orm(msg)
 
-    except requests.HTTPError:
+    except httpx.HTTPStatusError:
         flogger.exception("Discord Gateway API error while updating message")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -204,7 +202,7 @@ async def update_discord_message(
 )
 async def get_discord_message(
     request: Request,
-    message_record_id: UUID,   # <- switched from int to UUID
+    message_record_id: UUID,
 ) -> DiscordMessageResponse:
     flogger.info(f"Fetch request for record id={message_record_id}")
     try:
@@ -283,7 +281,7 @@ async def list_discord_messages_by_type(
 )
 async def delete_discord_message(
     request: Request,
-    message_record_id: UUID,   # <- switched from int to UUID
+    message_record_id: UUID,
 ) -> dict:
     flogger.info(f"Delete request for record id={message_record_id}")
     try:

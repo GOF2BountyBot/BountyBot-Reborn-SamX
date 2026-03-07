@@ -3,7 +3,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 import shared.bblogger as bblogger
-import requests
+import httpx
 from typing import Optional, List, Dict, Any
 
 # Set up logger
@@ -30,10 +30,11 @@ def is_admin():
 
         # 2) configured Bot Admin role from API
         try:
-            resp = requests.get(
-                f"{api_base}/config/guild/{interaction.guild_id}",
-                timeout=5
-            )
+            async with httpx.AsyncClient() as client:
+                resp = await client.get(
+                    f"{api_base}/config/guild/{interaction.guild_id}",
+                    timeout=5
+                )
             resp.raise_for_status()
             admin_role_id = resp.json().get("admin_role_id")
             if admin_role_id and any(r.id == admin_role_id for r in interaction.user.roles):
@@ -49,7 +50,11 @@ class AdminCog(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
         self._valid_tiers = ["Bronze", "Silver", "Gold", "Platinum"]
+        self.http_client = httpx.AsyncClient()
         flogger.debug("AdminCog initialized")
+
+    async def cog_unload(self):
+        await self.http_client.aclose()
 
     async def tier_autocomplete(
         self,
@@ -100,7 +105,7 @@ class AdminCog(commands.Cog):
         # 3) custom Bot Admin role
         if not has_admin:
             try:
-                resp = requests.get(
+                resp = await self.http_client.get(
                     f"{api_base}/config/guild/{interaction.guild_id}",
                     timeout=5
                 )
@@ -148,7 +153,7 @@ class AdminCog(commands.Cog):
                     "hoist": False,
                     "mentionable": False
                 }
-                resp = requests.post(
+                resp = await self.http_client.post(
                     f"{api_base}/guilds/{interaction.guild_id}/roles",
                     json=payload,
                     timeout=30
@@ -167,7 +172,7 @@ class AdminCog(commands.Cog):
                 "admin_role_id": admin_role.id,
                 "starting_credits": max(0, starting_credits)
             }
-            resp = requests.post(
+            resp = await self.http_client.post(
                 f"{api_base}/admin/guilds/initialize",
                 json=init_payload,
                 timeout=30
@@ -190,7 +195,7 @@ class AdminCog(commands.Cog):
             await interaction.followup.send(embed=embed, ephemeral=True)
             flogger.info(f"Guild {interaction.guild_id} initialized by {interaction.user}")
 
-        except requests.HTTPError as e:
+        except httpx.HTTPStatusError as e:
             await interaction.followup.send(f"❌ API Error: {e}", ephemeral=True)
         except Exception as e:
             flogger.error(f"Error in /admin_setup: {e}")
@@ -234,7 +239,7 @@ class AdminCog(commands.Cog):
                 "guild_id": interaction.guild_id,
                 "discord_username": str(user)
             }
-            player_resp = requests.post(
+            player_resp = await self.http_client.post(
                 f"{api_base}/players/",
                 json=user_data,
                 timeout=10
@@ -244,7 +249,7 @@ class AdminCog(commands.Cog):
 
             # View stats
             if action == "view_stats":
-                stats_resp = requests.get(
+                stats_resp = await self.http_client.get(
                     f"{api_base}/players/{player['id']}/statistics",
                     timeout=10
                 )
@@ -271,7 +276,7 @@ class AdminCog(commands.Cog):
                 if credits is None:
                     await interaction.followup.send("❌ Credits amount required.", ephemeral=True)
                     return
-                resp = requests.put(
+                resp = await self.http_client.put(
                     f"{api_base}/admin/players/credits",
                     json={
                         "player_id": player['id'],
@@ -297,7 +302,7 @@ class AdminCog(commands.Cog):
                     await interaction.followup.send("❌ Credits amount required.", ephemeral=True)
                     return
                 new_total = max(0, player['credits'] + credits)
-                resp = requests.put(
+                resp = await self.http_client.put(
                     f"{api_base}/admin/players/credits",
                     json={
                         "player_id": player['id'],
@@ -322,7 +327,7 @@ class AdminCog(commands.Cog):
                 if xp is None:
                     await interaction.followup.send("❌ XP amount required.", ephemeral=True)
                     return
-                resp = requests.put(
+                resp = await self.http_client.put(
                     f"{api_base}/admin/players/xp",
                     json={
                         "player_id": player['id'],
@@ -347,7 +352,7 @@ class AdminCog(commands.Cog):
 
             flogger.info(f"Admin {interaction.user} performed {action} on player {user} in guild {interaction.guild_id}")
 
-        except requests.HTTPError as e:
+        except httpx.HTTPStatusError as e:
             await interaction.followup.send(f"❌ API Error: {e}", ephemeral=True)
         except Exception as e:
             flogger.error(f"Error in /admin_player: {e}")
@@ -387,7 +392,7 @@ class AdminCog(commands.Cog):
                 "tier": tier,
                 "force_tech_level": force_tech_level
             }
-            resp = requests.post(
+            resp = await self.http_client.post(
                 f"{api_base}/admin/shops/refresh",
                 json=refresh_data,
                 timeout=30
@@ -408,7 +413,7 @@ class AdminCog(commands.Cog):
             await interaction.followup.send(embed=embed, ephemeral=True)
             flogger.info(f"Admin {interaction.user} refreshed {tier} shop in guild {interaction.guild_id}")
 
-        except requests.HTTPError as e:
+        except httpx.HTTPStatusError as e:
             await interaction.followup.send(f"❌ API Error: {e}", ephemeral=True)
         except Exception as e:
             flogger.error(f"Error in /admin_refresh_shop: {e}")
@@ -426,7 +431,7 @@ class AdminCog(commands.Cog):
         """View comprehensive guild statistics."""
         await interaction.response.defer(thinking=True, ephemeral=True)
         try:
-            resp = requests.get(
+            resp = await self.http_client.get(
                 f"{api_base}/admin/guilds/{interaction.guild_id}/stats",
                 timeout=10
             )
@@ -451,7 +456,7 @@ class AdminCog(commands.Cog):
             await interaction.followup.send(embed=embed, ephemeral=True)
             flogger.debug(f"Admin {interaction.user} viewed guild stats for {interaction.guild_id}")
 
-        except requests.HTTPError as e:
+        except httpx.HTTPStatusError as e:
             await interaction.followup.send(f"❌ API Error: {e}", ephemeral=True)
         except Exception as e:
             flogger.error(f"Error in /admin_guild_stats: {e}")
@@ -484,7 +489,7 @@ class AdminCog(commands.Cog):
         await interaction.response.defer(thinking=True, ephemeral=True)
         try:
             if action == "view":
-                resp = requests.get(
+                resp = await self.http_client.get(
                     f"{api_base}/config/guild/{interaction.guild_id}",
                     timeout=10
                 )
@@ -516,7 +521,7 @@ class AdminCog(commands.Cog):
                 if starting_credits is None:
                     await interaction.followup.send("❌ Starting credits amount required.", ephemeral=True)
                     return
-                resp = requests.put(
+                resp = await self.http_client.put(
                     f"{api_base}/config/guild/{interaction.guild_id}/starting-credits/{max(0, starting_credits)}",
                     timeout=10
                 )
@@ -530,7 +535,7 @@ class AdminCog(commands.Cog):
                 if admin_role is None:
                     await interaction.followup.send("❌ Admin role required.", ephemeral=True)
                     return
-                resp = requests.put(
+                resp = await self.http_client.put(
                     f"{api_base}/config/guild/{interaction.guild_id}/admin-role/{admin_role.id}",
                     timeout=10
                 )
@@ -541,7 +546,7 @@ class AdminCog(commands.Cog):
                 )
 
             elif action == "reset":
-                resp = requests.post(
+                resp = await self.http_client.post(
                     f"{api_base}/config/guild/{interaction.guild_id}/reset",
                     timeout=10
                 )
@@ -553,7 +558,7 @@ class AdminCog(commands.Cog):
 
             flogger.info(f"Admin {interaction.user} performed config {action} in guild {interaction.guild_id}")
 
-        except requests.HTTPError as e:
+        except httpx.HTTPStatusError as e:
             await interaction.followup.send(f"❌ API Error: {e}", ephemeral=True)
         except Exception as e:
             flogger.error(f"Error in /admin_config: {e}")

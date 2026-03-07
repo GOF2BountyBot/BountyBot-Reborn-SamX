@@ -1,9 +1,7 @@
 import os
 import json
 import traceback
-import requests
-from requests.exceptions import RequestException, Timeout
-import asyncio
+import httpx
 from datetime import datetime, timezone
 from urllib.parse import urlencode
 from shared.bblogger import get_logger
@@ -42,16 +40,15 @@ async def execute_time_announcement_job(job_id: str, payload: dict):
 
     try:
         flogger.debug(f"TimeJob[{job_id}] → GET {BASE_TIME_URL}")
-        resp = await asyncio.to_thread(
-            requests.get, BASE_TIME_URL, params=params, timeout=15
-        )
+        async with httpx.AsyncClient() as client:
+            resp = await client.get(BASE_TIME_URL, params=params, timeout=15)
         flogger.trace(f"TimeJob[{job_id}] GET response: status={resp.status_code}, body={resp.text}")
         exists = resp.status_code == 200
-    except Timeout as e:
+    except httpx.TimeoutException as e:
         flogger.error(f"TimeJob[{job_id}] GET timeout: {e}")
         flogger.trace(traceback.format_exc())
         raise
-    except RequestException as e:
+    except httpx.HTTPError as e:
         flogger.error(f"TimeJob[{job_id}] GET error: {e}")
         flogger.trace(traceback.format_exc())
         raise
@@ -73,22 +70,19 @@ async def execute_time_announcement_job(job_id: str, payload: dict):
     # 3) Create or update via REST
     try:
         flogger.debug(f"TimeJob[{job_id}] → {method} {BASE_TIME_URL}")
-        if exists:
-            r2 = await asyncio.to_thread(
-                requests.put, BASE_TIME_URL, json=body, timeout=30
-            )
-        else:
-            r2 = await asyncio.to_thread(
-                requests.post, BASE_TIME_URL, json=body, timeout=30
-            )
+        async with httpx.AsyncClient() as client:
+            if exists:
+                r2 = await client.put(BASE_TIME_URL, json=body, timeout=30)
+            else:
+                r2 = await client.post(BASE_TIME_URL, json=body, timeout=30)
         flogger.trace(f"TimeJob[{job_id}] {method} response: status={r2.status_code}, body={r2.text}")
         r2.raise_for_status()
         data = r2.json()
-    except Timeout as e:
+    except httpx.TimeoutException as e:
         flogger.error(f"TimeJob[{job_id}] {method} timeout: {e}")
         flogger.trace(traceback.format_exc())
         raise
-    except RequestException as e:
+    except httpx.HTTPError as e:
         flogger.error(f"TimeJob[{job_id}] {method} error: {e}")
         flogger.trace(traceback.format_exc())
         raise
@@ -105,12 +99,12 @@ async def execute_time_announcement_job(job_id: str, payload: dict):
             new_payload = {**payload, "message_id": data["message_id"]}
             url = f"http://{API_HOST}:{API_PORT}/api/v1/jobs/{job_id}"
             # fire off the PUT to our scheduler API
-            await asyncio.to_thread(
-                requests.put,
-                url,
-                json={"payload": new_payload},   # <-- use "payload" instead of "args"
-                timeout=10,
-            )
+            async with httpx.AsyncClient() as client:
+                await client.put(
+                    url,
+                    json={"payload": new_payload},   # <-- use "payload" instead of "args"
+                    timeout=10,
+                )
             flogger.debug(f"TimeJob[{job_id}] PUT {url} payload updated")
         except Exception as e:
             flogger.error(f"TimeJob[{job_id}] failed to update job args via API: {e}")

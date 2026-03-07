@@ -3,7 +3,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 import shared.bblogger as bblogger
-import requests
+import httpx
 from typing import Optional, Dict, Any
 from cogs.adminCog import is_admin
 
@@ -17,7 +17,11 @@ flogger.debug(f"playerCog loading with API_BASE_URL: {api_base}")
 class PlayerCog(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
+        self.http_client = httpx.AsyncClient()
         flogger.debug("PlayerCog initialized")
+
+    async def cog_unload(self):
+        await self.http_client.aclose()
 
     @app_commands.command(name="profile", description="View your player profile and statistics")
     async def profile(self, interaction: discord.Interaction):
@@ -32,7 +36,7 @@ class PlayerCog(commands.Cog):
                 "discord_username": str(interaction.user)
             }
             
-            resp = requests.post(
+            resp = await self.http_client.post(
                 f"{api_base}/players/",
                 json=user_data,
                 timeout=10
@@ -41,7 +45,7 @@ class PlayerCog(commands.Cog):
             player_data = resp.json()
             
             # Get detailed statistics
-            stats_resp = requests.get(
+            stats_resp = await self.http_client.get(
                 f"{api_base}/players/{player_data['id']}/statistics",
                 timeout=10
             )
@@ -95,7 +99,7 @@ class PlayerCog(commands.Cog):
             await interaction.followup.send(embed=embed)
             flogger.debug(f"/profile by {interaction.user} in guild {interaction.guild_id}")
             
-        except requests.HTTPError as e:
+        except httpx.HTTPStatusError as e:
             if e.response.status_code == 404:
                 await interaction.followup.send("❌ Player profile not found.", ephemeral=True)
             else:
@@ -117,7 +121,7 @@ class PlayerCog(commands.Cog):
             if tier:
                 params['tier'] = tier
                 
-            resp = requests.get(url, params=params, timeout=10)
+            resp = await self.http_client.get(url, params=params, timeout=10)
             resp.raise_for_status()
             players = resp.json()
             
@@ -162,7 +166,7 @@ class PlayerCog(commands.Cog):
             await interaction.followup.send(embed=embed)
             flogger.debug(f"/leaderboard by {interaction.user} in guild {interaction.guild_id}")
             
-        except requests.HTTPError as e:
+        except httpx.HTTPStatusError as e:
             await interaction.followup.send(f"❌ API Error: {e}", ephemeral=True)
         except Exception as e:
             flogger.error(f"Error in /leaderboard: {e}")
@@ -181,7 +185,7 @@ class PlayerCog(commands.Cog):
                 "discord_username": str(interaction.user)
             }
             
-            resp = requests.post(
+            resp = await self.http_client.post(
                 f"{api_base}/players/",
                 json=user_data,
                 timeout=10

@@ -3,7 +3,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 import shared.bblogger as bblogger
-import requests
+import httpx
 from cogs.adminCog import is_admin
 
 flogger = bblogger.get_logger("discord-gateway-DevCog")
@@ -15,13 +15,17 @@ class DevCog(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
         self._categories: list[str] = []
+        self.http_client = httpx.AsyncClient()
         # schedule preload once
         bot.loop.create_task(self._preload_categories())
+
+    async def cog_unload(self):
+        await self.http_client.aclose()
 
     async def _preload_categories(self):
         await self.bot.wait_until_ready()
         try:
-            resp = requests.get(f"{api_base}/data/categories", timeout=5)
+            resp = await self.http_client.get(f"{api_base}/data/categories", timeout=5)
             resp.raise_for_status()
             self._categories = resp.json()
             flogger.debug(f"Preloaded data categories: {self._categories}")
@@ -58,7 +62,7 @@ class DevCog(commands.Cog):
 
             for cat in self._categories:
                 try:
-                    resp = requests.post(f"{api_base}/data/{cat}", timeout=10)
+                    resp = await self.http_client.post(f"{api_base}/data/{cat}", timeout=10)
                     resp.raise_for_status()
                     msgs = resp.json() or []
                     count = len(msgs)
@@ -80,14 +84,14 @@ class DevCog(commands.Cog):
 
         # single‐category path
         try:
-            resp = requests.post(f"{api_base}/data/{category}", timeout=10)
+            resp = await self.http_client.post(f"{api_base}/data/{category}", timeout=10)
             resp.raise_for_status()
             msgs = resp.json() or []
             count = len(msgs)
             await interaction.followup.send(
                 f"✅ Data load complete for **{category}**: {count} file{'s' if count!=1 else ''} processed."
             )
-        except requests.HTTPError as e:
+        except httpx.HTTPStatusError as e:
             await interaction.followup.send(f"❌ {e}", ephemeral=True)
         except Exception as e:
             err_str = str(e)
@@ -102,7 +106,7 @@ class DevCog(commands.Cog):
     )
     @is_admin()
     async def reload_autocomplete(self, interaction: discord.Interaction):
-        """Call each cog’s preload method so you don’t have to restart."""
+        """Call each cog's preload method so you don't have to restart."""
         await interaction.response.defer(thinking=True)
         reloaded = []
         failed = []

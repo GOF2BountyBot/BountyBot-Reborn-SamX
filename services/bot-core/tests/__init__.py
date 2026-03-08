@@ -1,0 +1,1 @@
+# bot-core tests package

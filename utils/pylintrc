@@ -1,0 +1,27 @@
+[BASIC]
+good-names=i,j,k,ex,_,id,db,e,f,v
+
+[MESSAGES CONTROL]
+# C0111: Missing docstring
+# C0103: Variable name doesn't conform to naming style
+# R0903: Too few public methods
+# R0913: Too many arguments
+# W0511: TODO/FIXME notes
+# C0114: Missing module docstring
+# C0115: Missing class docstring
+# C0116: Missing function/method docstring
+disable=C0111,C0103,R0903,R0913,W0511,C0114,C0115,C0116
+
+[FORMAT]
+max-line-length=120
+
+[DESIGN]
+max-args=8
+max-attributes=12
+max-locals=20
+
+[SIMILARITIES]
+min-similarity-lines=6
+
+[IMPORTS]
+known-third-party=fastapi,sqlalchemy,discord,httpx,pydantic,uvicorn,apscheduler

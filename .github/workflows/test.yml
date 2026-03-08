@@ -1,0 +1,102 @@
+name: Quality Control
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          pip install pylint
+          pip install -r services/bot-core/requirements.txt
+          pip install -r services/discord-gateway/requirements.txt
+
+      - name: Lint bot-core
+        run: |
+          pylint services/bot-core/src \
+            --rcfile=utils/pylintrc \
+            --ignore=__pycache__ \
+            || true  # Don't fail CI on lint warnings initially
+
+      - name: Lint discord-gateway
+        run: |
+          pylint services/discord-gateway/src \
+            --rcfile=utils/pylintrc \
+            --ignore=__pycache__,api-test.py \
+            || true  # Don't fail CI on lint warnings initially
+
+  unit-tests-bot-core:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          pip install -r services/bot-core/requirements.txt
+
+      - name: Run bot-core tests
+        run: |
+          cd services/bot-core
+          python -m pytest tests/ \
+            -v --tb=short \
+            --cov=src \
+            --cov-report=term-missing \
+            --cov-report=xml:coverage.xml
+        env:
+          PYTHONPATH: src
+
+      - name: Upload coverage
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bot-core-coverage
+          path: services/bot-core/coverage.xml
+
+  unit-tests-discord-gateway:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          pip install -r services/discord-gateway/requirements.txt
+
+      - name: Run discord-gateway tests
+        run: |
+          cd services/discord-gateway
+          python -m pytest tests/ \
+            -v --tb=short \
+            --cov=src \
+            --cov-report=term-missing \
+            --cov-report=xml:coverage.xml
+        env:
+          PYTHONPATH: src
+
+      - name: Upload coverage
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: discord-gateway-coverage
+          path: services/discord-gateway/coverage.xml

@@ -2,7 +2,7 @@ name: Quality Control
 
 on:
   push:
-    branches: [main, develop]
+    branches: [main, develop, samx-wip]
   pull_request:
     branches: [main, develop]
 

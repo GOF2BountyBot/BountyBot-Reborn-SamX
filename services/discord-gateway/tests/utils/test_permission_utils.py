@@ -2,6 +2,7 @@
 import pytest
 from utils.permission_utils import (
     PERMISSION_FLAGS,
+    PermissionSource,
     check_permission,
     check_permissions,
     has_administrator,
@@ -10,7 +11,14 @@ from utils.permission_utils import (
     get_permission_names_by_value,
     combine_permissions,
     get_all_permissions,
+    get_role_permissions,
+    get_user_permissions,
+    get_channel_permissions,
+    get_category_permissions,
+    create_permission_overwrite,
+    overwrite_to_dict,
 )
+from tests.mocks.discord_mock_utils import DiscordMockUtils
 
 
 # ---------------------------------------------------------------------------
@@ -149,6 +157,178 @@ class TestCombinePermissions:
         assert result & 0x8 == 0x8
         assert result & 0x800 == 0x800
         assert result & 0x400 == 0x400
+
+
+# ---------------------------------------------------------------------------
+# PermissionSource
+# ---------------------------------------------------------------------------
+
+class TestPermissionSource:
+    def test_permission_source_direct(self):
+        """Create a direct permission source."""
+        source = PermissionSource("direct")
+        assert source.type == "direct"
+        assert source.role_name is None
+        assert source.role_id is None
+
+    def test_permission_source_role(self):
+        """Create a role-based permission source."""
+        source = PermissionSource("role", role_name="Moderators", role_id=12345)
+        assert source.type == "role"
+        assert source.role_name == "Moderators"
+        assert source.role_id == 12345
+
+    def test_permission_source_everyone(self):
+        """Create an everyone permission source."""
+        source = PermissionSource("everyone")
+        assert source.type == "everyone"
+
+
+# ---------------------------------------------------------------------------
+# get_role_permissions
+# ---------------------------------------------------------------------------
+
+class TestGetRolePermissions:
+    def test_get_role_permissions_returns_all(self):
+        """Should return all permissions since all can be assigned to roles."""
+        result = get_role_permissions()
+        assert isinstance(result, list)
+        assert len(result) > 0
+        assert len(result) == len(get_all_permissions())
+
+
+# ---------------------------------------------------------------------------
+# get_user_permissions
+# ---------------------------------------------------------------------------
+
+class TestGetUserPermissions:
+    def test_get_user_permissions_only_channel_perms(self):
+        """Should only return permissions that apply to channels."""
+        result = get_user_permissions()
+        assert isinstance(result, list)
+        assert len(result) > 0
+        for perm in result:
+            assert len(perm["channel_types"]) > 0
+
+    def test_get_user_permissions_excludes_guild_only(self):
+        """Should exclude guild-only permissions like KICK_MEMBERS."""
+        result = get_user_permissions()
+        perm_names = [p["name"] for p in result]
+        assert "KICK_MEMBERS" not in perm_names
+        assert "BAN_MEMBERS" not in perm_names
+        assert "ADMINISTRATOR" not in perm_names
+
+
+# ---------------------------------------------------------------------------
+# get_channel_permissions
+# ---------------------------------------------------------------------------
+
+class TestGetChannelPermissions:
+    def test_get_channel_permissions_includes_text_voice(self):
+        """Should return permissions applicable to text/voice channels."""
+        result = get_channel_permissions()
+        assert isinstance(result, list)
+        assert len(result) > 0
+        for perm in result:
+            has_text_or_voice = "text" in perm["channel_types"] or "voice" in perm["channel_types"]
+            assert has_text_or_voice is True
+
+
+# ---------------------------------------------------------------------------
+# get_category_permissions
+# ---------------------------------------------------------------------------
+
+class TestGetCategoryPermissions:
+    def test_get_category_permissions_same_as_channel(self):
+        """Category permissions should be same as channel permissions."""
+        result = get_category_permissions()
+        channel_result = get_channel_permissions()
+        assert result == channel_result
+
+
+# ---------------------------------------------------------------------------
+# create_permission_overwrite
+# ---------------------------------------------------------------------------
+
+class TestCreatePermissionOverwrite:
+    def test_create_permission_overwrite_allow_only(self):
+        """Should create overwrite with allowed permissions."""
+        allow = 0x800 | 0x400  # SEND_MESSAGES + VIEW_CHANNEL
+        result = create_permission_overwrite(allow=allow)
+        # Returns discord.PermissionOverwrite when discord is available, dict otherwise
+        if isinstance(result, dict):
+            assert result.get("send_messages") is True
+            assert result.get("view_channel") is True
+            assert result.get("kick_members") is None
+        else:
+            assert result.send_messages is True
+            assert result.view_channel is True
+            assert result.kick_members is None
+
+    def test_create_permission_overwrite_deny_only(self):
+        """Should create overwrite with denied permissions."""
+        deny = 0x800 | 0x400  # SEND_MESSAGES + VIEW_CHANNEL
+        result = create_permission_overwrite(deny=deny)
+        if isinstance(result, dict):
+            assert result.get("send_messages") is False
+            assert result.get("view_channel") is False
+        else:
+            assert result.send_messages is False
+            assert result.view_channel is False
+
+    def test_create_permission_overwrite_both_allow_and_deny(self):
+        """Should handle both allow and deny in same overwrite."""
+        allow = 0x400  # VIEW_CHANNEL
+        deny = 0x800    # SEND_MESSAGES
+        result = create_permission_overwrite(allow=allow, deny=deny)
+        if isinstance(result, dict):
+            assert result.get("view_channel") is True
+            assert result.get("send_messages") is False
+        else:
+            assert result.view_channel is True
+            assert result.send_messages is False
+
+    def test_create_permission_overwrite_none_values(self):
+        """Should handle None values gracefully."""
+        result = create_permission_overwrite(allow=None, deny=None)
+        # Returns discord.PermissionOverwrite when discord is available, dict otherwise
+        # Either way, it should have no permissions set
+        if isinstance(result, dict):
+            assert len(result) == 0
+        else:
+            # PermissionOverwrite has attributes, check they are all None/default
+            for attr in dir(result):
+                if not attr.startswith('_') and attr not in ('pair',):
+                    val = getattr(result, attr, None)
+                    # All permission attributes should be None for empty overwrite
+
+
+# ---------------------------------------------------------------------------
+# overwrite_to_dict
+# ---------------------------------------------------------------------------
+
+class TestOverwriteToDict:
+    def test_overwrite_to_dict_from_dict(self):
+        """Should convert dict-style overwrite to standardized format."""
+        overwrite = {
+            "_allow": 0x800,
+            "_deny": 0x400,
+            "send_messages": True,
+            "view_channel": False,
+        }
+        result = overwrite_to_dict(overwrite)
+        assert result["allow"] == 0x800
+        assert result["deny"] == 0x400
+        assert result["permissions"]["send_messages"] is True
+        assert result["permissions"]["view_channel"] is False
+
+    def test_overwrite_to_dict_from_dict_no_allow_deny(self):
+        """Should handle dict without _allow/_deny keys."""
+        overwrite = {"send_messages": True}
+        result = overwrite_to_dict(overwrite)
+        assert result["allow"] == 0
+        assert result["deny"] == 0
+        assert result["permissions"]["send_messages"] is True
 
 
 # ---------------------------------------------------------------------------

@@ -93,6 +93,73 @@ The service exposes REST endpoints for programmatic Discord access:
 
 ---
 
+## Testing
+
+### Running Tests
+
+#### Unit Tests (Pytest)
+
+Run all unit tests:
+```bash
+pytest
+```
+
+Run tests with coverage:
+```bash
+pytest --cov=src --cov-report=html
+```
+
+Generate coverage report:
+```bash
+coverage run -m pytest
+coverage report
+```
+
+View HTML coverage report:
+```bash
+open htmlcov/index.html
+```
+
+Run specific test files:
+```bash
+pytest tests/cogs/test_healthCog.py
+pytest tests/api/test_users.py
+```
+
+#### API Integration Tests
+
+The project includes a comprehensive API test harness in `src/api-test.py`. This is a self-contained test runner that:
+
+- Tests all API endpoints
+- Creates disposable resources with "test-" prefix
+- Automatically cleans up all created resources
+- Provides detailed audit logging
+- Handles rate limits with configurable delays
+
+Run the API test harness:
+```bash
+python src/api-test.py
+```
+
+#### Test Options
+
+The API test harness supports these command-line options:
+
+```bash
+python src/api-test.py --help
+```
+
+Common options:
+- `--base-url`: API base URL (default: http://localhost:7999)
+- `--guild-id`: Test guild ID (default: 711548456019296289)
+- `--user-id`: Test user ID (default: 640882072516427787)
+- `--delay`: Delay between tests (default: 2 seconds)
+- `--validation-delay`: Delay for validation (default: 5 seconds)
+- `--log-file`: Log file path (default: /app/data/logs/app.log)
+- `--cleanup-file`: Cleanup log file path (default: /app/data/logs/created_objects.log)
+
+---
+
 ## Adding New Features
 
 ### Adding a New Discord Cog
@@ -125,4 +192,4 @@ See root `.env.example`. Key variables:
 
 ---
 
-*Last updated: 2026-03-07*
+*Last updated: 2026-03-10*

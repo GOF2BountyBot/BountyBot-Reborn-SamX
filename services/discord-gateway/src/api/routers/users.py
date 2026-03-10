@@ -256,7 +256,7 @@ async def check_member_permission(
     if permission not in PERMISSION_FLAGS:
         flogger.error(f"check_member_permission: unknown permission '{permission}'")
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail=f"Unknown permission: {permission}"
         )
     

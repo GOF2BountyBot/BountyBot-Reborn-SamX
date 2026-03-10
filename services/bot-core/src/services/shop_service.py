@@ -10,7 +10,7 @@ Handles business logic for multi-tier shop management including:
 
 import random
 from typing import List, Dict, Any, Optional
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, UTC
 from sqlalchemy.ext.asyncio import AsyncSession
 import shared.bblogger as bblogger
 from persist.repositories.shop_repository import ShopRepository
@@ -275,7 +275,7 @@ class ShopService:
                         "item_name": item_name,
                         "quantity": item_quantity,
                         "price": base_price,
-                        "last_restocked": datetime.utcnow()
+                        "last_restocked": datetime.now(UTC)
                     }
                     
                     shop_item = await self.shop_repo.create_or_update(db, shop_item_data)
@@ -286,7 +286,7 @@ class ShopService:
                 "tier": tier,
                 "tech_level": shop_tech_level,
                 "items_generated": len(generated_items),
-                "refresh_time": datetime.utcnow().isoformat()
+                "refresh_time": datetime.now(UTC).isoformat()
             }
             
             flogger.info(f"Refreshed {tier} shop for guild {guild_id}: {len(generated_items)} items generated")
@@ -394,7 +394,7 @@ class ShopService:
                     "item_name": item_name,
                     "quantity": quantity,
                     "price": base_price,
-                    "last_restocked": datetime.utcnow()
+                    "last_restocked": datetime.now(UTC)
                 }
                 await self.shop_repo.create_or_update(db, shop_item_data)
                 

@@ -7,7 +7,7 @@ Each player can own multiple ships, but only one can be active at a time.
 
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy import Integer, String, DateTime, Boolean, JSON, ForeignKey
-from datetime import datetime
+from datetime import datetime, UTC
 from typing import List, Optional
 from persist.models.base import Base
 from persist.database.tablenames import TableNames
@@ -30,7 +30,7 @@ class PlayerShip(Base):
     modules: Mapped[Optional[List[str]]] = mapped_column(JSON, nullable=True)  # Array of equipped module names
     turrets: Mapped[Optional[List[str]]] = mapped_column(JSON, nullable=True)  # Array of equipped turret names
 
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(UTC))
 
     # Relationships
     player: Mapped["Player"] = relationship("Player", back_populates="ships", foreign_keys=[player_id])

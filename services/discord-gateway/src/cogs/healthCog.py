@@ -14,6 +14,7 @@ class HealthCog(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
         self.http_client = httpx.AsyncClient()
+        flogger.debug("HealthCog initialized")
 
     async def cog_unload(self):
         await self.http_client.aclose()

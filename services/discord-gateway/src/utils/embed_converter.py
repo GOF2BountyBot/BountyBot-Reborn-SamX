@@ -32,7 +32,7 @@ class EmbedConverter:
         Accepted input:
           - EmbedPayload (returned unchanged)
           - dict (used to instantiate EmbedPayload)
-          - an object exposing .dict() that returns a mapping (e.g., another Pydantic model)
+          - an object exposing .model_dump() that returns a mapping (e.g., another Pydantic model)
           - any mapping convertible via dict(payload)
 
         Raises TypeError / ValueError on unsupported types or validation failures.
@@ -44,7 +44,15 @@ class EmbedConverter:
         if isinstance(payload, dict):
             return EmbedPayload(**payload)
 
-        # pydantic model or mapping-like with dict()
+        # pydantic v2 model or mapping-like with model_dump()
+        if hasattr(payload, "model_dump") and callable(getattr(payload, "model_dump")):
+            try:
+                return EmbedPayload(**payload.model_dump())
+            except Exception as e:
+                flogger.debug("Failed to coerce payload via .model_dump(): %s", e)
+                raise
+
+        # pydantic v1 / legacy model with dict()
         if hasattr(payload, "dict") and callable(getattr(payload, "dict")):
             try:
                 return EmbedPayload(**payload.dict())
@@ -82,7 +90,7 @@ class EmbedConverter:
         """
         ep = EmbedConverter._coerce_to_embed_payload(payload)
 
-        flogger.debug(f"payload_to_embed called with payload: {ep.dict()}")
+        flogger.debug(f"payload_to_embed called with payload: {ep.model_dump(warnings=False)}")
         try:
             # Create embed and set canonical fields
             embed = discord.Embed()
@@ -170,7 +178,7 @@ class EmbedConverter:
         # Coerce to EmbedPayload so we can copy/update
         ep = EmbedConverter._coerce_to_embed_payload(payload)
         flogger.debug(f"payload_to_grid_embed called: {fields_per_row} per row")
-        grid_payload = ep.copy(update={
+        grid_payload = ep.model_copy(update={
             "fields": EmbedConverter._inject_spacers(ep.fields or [], fields_per_row)
         })
         return EmbedConverter.payload_to_embed(grid_payload)
@@ -278,7 +286,7 @@ class EmbedConverter:
             ep = EmbedConverter._coerce_to_embed_payload(payload)
             embed = EmbedConverter.payload_to_embed(ep)
             result_payload = EmbedConverter.embed_to_payload(embed)
-            consistent = ep.dict() == result_payload.dict()
+            consistent = ep.model_dump() == result_payload.model_dump()
             flogger.info(f"Round-trip consistency: {consistent}")
             return consistent
         except Exception as e:

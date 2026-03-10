@@ -31,22 +31,26 @@ class GuildConverter:
         flogger.debug(f"guild_to_summary called for guild: {guild.name} ({guild.id})")
         try:
             icon_url = getattr(getattr(guild, "icon", None), "url", None)
+            # Handle required fields with proper defaults
+            features = getattr(guild, "features", None) or []
+            premium_tier = getattr(guild, "premium_tier", None)
+            premium_tier = 0 if premium_tier is None else premium_tier
             return Guild(
                 id=guild.id,
                 name=guild.name,
                 icon=icon_url,
-                member_count=getattr(guild, "member_count", 0),
-                owner_id=getattr(guild, "owner_id", None),
+                member_count=getattr(guild, "member_count", 0) or 0,
+                owner_id=getattr(guild, "owner_id", 0) or 0,
                 description=getattr(guild, "description", None),
                 created_at=getattr(getattr(guild, "created_at", None), "isoformat", lambda: "")(),
-                features=getattr(guild, "features", []),
-                verification_level=getattr(getattr(guild, "verification_level", None), "name", ""),
-                default_notifications=getattr(getattr(guild, "default_notifications", None), "name", ""),
-                explicit_content_filter=getattr(getattr(guild, "explicit_content_filter", None), "name", ""),
-                mfa_level=getattr(getattr(guild, "mfa_level", None), "name", ""),
-                premium_tier=getattr(guild, "premium_tier", 0),
+                features=features,
+                verification_level=getattr(getattr(guild, "verification_level", None), "name", "") or "",
+                default_notifications=getattr(getattr(guild, "default_notifications", None), "name", "") or "",
+                explicit_content_filter=getattr(getattr(guild, "explicit_content_filter", None), "name", "") or "",
+                mfa_level=getattr(getattr(guild, "mfa_level", None), "name", "") or "",
+                premium_tier=premium_tier,
                 premium_subscription_count=getattr(guild, "premium_subscription_count", None),
-                preferred_locale=getattr(getattr(guild, "preferred_locale", None), "value", ""),
+                preferred_locale=getattr(getattr(guild, "preferred_locale", None), "value", "") or "",
                 nsfw_level=getattr(getattr(guild, "nsfw_level", None), "name", None),
             )
         except Exception:
@@ -248,14 +252,8 @@ class ChannelConverter:
             flogger.exception("Error converting thread to summary")
             raise
 
-    @staticmethod
-    def thread_to_detail(thread: Union[discord.Thread, discord.TextChannel]) -> Thread:
-        """
-        Detailed conversion for a thread. Currently delegates to thread_to_summary
-        since the Thread schema fields are satisfied by summary conversion.
-        Kept as a separate method for future expansion.
-        """
-        return ChannelConverter.thread_to_summary(thread)
+    # alias detail to summary since single Thread model covers both
+    thread_to_detail = thread_to_summary
 
     @staticmethod
     def forum_tag_to_payload(tag, channel_id: Optional[int] = None) -> dict:

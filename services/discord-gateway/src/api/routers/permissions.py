@@ -403,7 +403,7 @@ async def convert_names_to_value(body: NamesToValueRequest) -> NamesToValueRespo
 
     if not body.names:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail="names list must contain at least one permission"
         )
 
@@ -481,7 +481,7 @@ async def check_comprehensive_permissions(
     invalid_perms = [p for p in provided_perms if p not in PERMISSION_FLAGS]
     if invalid_perms:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail=f"Unknown permission(s): {invalid_perms}"
         )
 

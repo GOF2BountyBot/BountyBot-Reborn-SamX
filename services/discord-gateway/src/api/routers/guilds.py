@@ -396,13 +396,13 @@ async def create_role(
         if role_data.permissions is not None:
             if role_data.permissions < 0:
                 raise HTTPException(
-                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    status_code=status.HTTP_422,
                     detail="Invalid permissions bitmask"
                 )
             perms = discord.Permissions(role_data.permissions)
             if perms.value != role_data.permissions:
                 raise HTTPException(
-                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    status_code=status.HTTP_422,
                     detail="Invalid permissions bitmask"
                 )
             create_kwargs["permissions"] = perms

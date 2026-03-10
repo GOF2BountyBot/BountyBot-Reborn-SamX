@@ -1,0 +1,121 @@
+# CI workflow for the discord-gateway service.
+#
+# Runs on every push/PR to main or master, and whenever any file under
+# services/discord-gateway/ changes.  Uses Python 3.12 to match the
+# service's runtime (see services/discord-gateway/Dockerfile).
+#
+# Jobs
+# ────
+#   lint      – ruff check (fast, modern linter that supersedes flake8/pylint)
+#   test      – full pytest suite with coverage; fails the build on test failure
+
+name: discord-gateway CI
+
+on:
+  push:
+    branches:
+      - main
+      - master
+    paths:
+      - "services/discord-gateway/**"
+      - ".github/workflows/discord-gateway-tests.yml"
+  pull_request:
+    branches:
+      - main
+      - master
+    paths:
+      - "services/discord-gateway/**"
+      - ".github/workflows/discord-gateway-tests.yml"
+
+defaults:
+  run:
+    # All run steps execute from the service root unless overridden.
+    working-directory: services/discord-gateway
+
+# ────────────────────────────────────────────────────────────────────────────
+# Job: lint
+# ────────────────────────────────────────────────────────────────────────────
+jobs:
+  lint:
+    name: Lint (ruff)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: services/discord-gateway/requirements.txt
+
+      # ruff is not in requirements.txt (it's a dev/CI-only tool), so we
+      # install it separately.  Pin to a specific minor version for
+      # reproducible CI; bump intentionally.
+      - name: Install ruff
+        run: pip install "ruff>=0.4,<1"
+
+      # --output-format=github annotates PRs with inline lint warnings.
+      # Exit code 1 if any violations are found → build fails.
+      - name: Run ruff check
+        run: |
+          ruff check src/ tests/ \
+            --output-format=github \
+            --exclude "src/api-test.py"
+
+# ────────────────────────────────────────────────────────────────────────────
+# Job: test
+# ────────────────────────────────────────────────────────────────────────────
+  test:
+    name: Unit tests & coverage (Python 3.12)
+    runs-on: ubuntu-latest
+    # Run tests even when lint fails so we always get a full picture.
+    # Remove `if: always()` or add `needs: lint` if you prefer tests to
+    # gate on lint passing first.
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: services/discord-gateway/requirements.txt
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      # pytest.ini already sets --cov=src --cov-report=term-missing, so the
+      # flags below add XML output for the upload step and quiet the output.
+      # PYTHONPATH=src ensures application imports resolve correctly without
+      # the service being installed as a package.
+      - name: Run pytest with coverage
+        env:
+          PYTHONPATH: src
+        run: |
+          python -m pytest tests/ \
+            --cov=src \
+            --cov-report=term-missing \
+            --cov-report=xml:coverage.xml \
+            -q
+
+      # Always upload the coverage XML so it is available even on failure.
+      - name: Upload coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: discord-gateway-coverage
+          path: services/discord-gateway/coverage.xml
+          if-no-files-found: warn
+
+      # Print a human-readable summary to the Actions workflow summary page.
+      - name: Write coverage summary
+        if: always()
+        run: |
+          python -m coverage report --format=markdown >> "$GITHUB_STEP_SUMMARY" 2>/dev/null \
+            || python -m coverage report >> "$GITHUB_STEP_SUMMARY" 2>/dev/null \
+            || echo "Coverage summary not available." >> "$GITHUB_STEP_SUMMARY"

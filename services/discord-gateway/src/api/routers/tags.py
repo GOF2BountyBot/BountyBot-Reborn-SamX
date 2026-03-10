@@ -125,7 +125,7 @@ async def create_forum_tag(request: Request, channel_id: int, tag: ForumTagCreat
                 emoji_value = normalize_emoji(tag.emoji)
             except Exception:
                 raise HTTPException(
-                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    status_code=status.HTTP_422,
                     detail=f"Invalid emoji: {tag.emoji}",
                 )
 
@@ -233,7 +233,7 @@ async def update_tag(request: Request, tag_id: int, tag_data: ForumTagUpdateRequ
                 update_kwargs["emoji"] = emoji_value
             except Exception:
                 raise HTTPException(
-                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    status_code=status.HTTP_422,
                     detail=f"Invalid emoji: {tag_data.emoji}",
                 )
 

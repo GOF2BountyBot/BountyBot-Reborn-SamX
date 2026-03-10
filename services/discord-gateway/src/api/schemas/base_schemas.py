@@ -8,12 +8,12 @@ for all API operations.
 
 from typing import Optional, List, Dict, Any
 from pydantic import BaseModel, Field
-from datetime import datetime
+from datetime import datetime, UTC
 
 class BaseResponse(BaseModel):
     """Base response model for all API endpoints."""
     status: str = Field(..., description="Operation status")
-    timestamp: datetime = Field(default_factory=datetime.utcnow, description="Response timestamp")
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(UTC), description="Response timestamp")
     message: Optional[str] = Field(None, description="Optional response message")
 
 class PaginatedResponse(BaseResponse):

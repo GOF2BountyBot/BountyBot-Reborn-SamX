@@ -83,8 +83,6 @@ class ChannelCreateRequest(BaseCreateRequest):
         None, ge=0, description="Forum auto-archive duration in minutes (≥0)"
     )
 
-    class Config:
-        extra = "forbid"  # reject unknown fields
 
 class ChannelUpdateRequest(BaseUpdateRequest):
     """Request model for updating a channel."""
@@ -100,8 +98,6 @@ class ChannelUpdateRequest(BaseUpdateRequest):
         None, ge=0, description="Forum auto-archive duration in minutes (≥0)"
     )
 
-    class Config:
-        extra = "forbid"  # reject unknown fields
 
 # -------------------------------------------------------------------
 # Forum Tag schemas

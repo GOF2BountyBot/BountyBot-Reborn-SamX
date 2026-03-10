@@ -7,7 +7,7 @@ economic factors, progression thresholds, and administrative settings.
 
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy import BigInteger, Integer, String, DateTime, Float, JSON
-from datetime import datetime
+from datetime import datetime, UTC
 from typing import List, Dict, Any
 from persist.models.base import Base
 from persist.database.tablenames import TableNames
@@ -52,8 +52,8 @@ class GuildConfig(Base):
     })
     
     # Timestamps
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
-    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(UTC))
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(UTC), onupdate=lambda: datetime.now(UTC))
     
     # Relationships
     shops: Mapped[List["GuildShop"]] = relationship("GuildShop", back_populates="guild_config")

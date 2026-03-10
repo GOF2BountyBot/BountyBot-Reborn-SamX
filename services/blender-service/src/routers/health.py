@@ -4,7 +4,7 @@ Health check router for the Blender service API.
 
 from fastapi import APIRouter, status, Request, HTTPException
 from pydantic import BaseModel
-from datetime import datetime
+from datetime import datetime, UTC
 from typing import Dict, Any, Optional
 import sys
 import platform
@@ -67,7 +67,7 @@ async def health_check(request: Request) -> HealthResponse:
     
     return HealthResponse(
         status=service_status,
-        timestamp=datetime.utcnow(),
+        timestamp=datetime.now(UTC),
         version="1.0.0",  # Should come from your app config
         service="BountyBot API",
         environment={
@@ -93,7 +93,7 @@ async def simple_health_check() -> SimpleHealthResponse:
     """
     return SimpleHealthResponse(
         status="healthy",
-        timestamp=datetime.utcnow()
+        timestamp=datetime.now(UTC)
     )
 
 @router.get(

@@ -8,7 +8,7 @@ and schema version information.
 
 from fastapi import APIRouter, status, Request, HTTPException
 from pydantic import BaseModel
-from datetime import datetime
+from datetime import datetime, UTC
 from typing import Dict, Any, Optional
 import sys
 import platform
@@ -98,7 +98,7 @@ async def health_check(request: Request) -> HealthResponse:
     flogger.debug("Exiting health_check method...")
     return HealthResponse(
         status=service_status,
-        timestamp=datetime.utcnow(),
+        timestamp=datetime.now(UTC),
         version="1.0.0",
         service="BountyBot API",
         environment={
@@ -121,7 +121,7 @@ async def health_check(request: Request) -> HealthResponse:
 async def simple_health_check() -> SimpleHealthResponse:
     return SimpleHealthResponse(
         status="healthy",
-        timestamp=datetime.utcnow()
+        timestamp=datetime.now(UTC)
     )
 
 @router.get(
@@ -172,7 +172,7 @@ async def database_health_check(request: Request) -> Dict[str, Any]:
     """
     try:
         health_info = {
-            "timestamp": datetime.utcnow(),
+            "timestamp": datetime.now(UTC),
             "database": None,
             "schema": None
         }
@@ -212,5 +212,5 @@ async def database_health_check(request: Request) -> Dict[str, Any]:
         flogger.error(f"Database health check failed: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail={"error": str(e), "timestamp": datetime.utcnow()}
+            detail={"error": str(e), "timestamp": datetime.now(UTC)}
         )

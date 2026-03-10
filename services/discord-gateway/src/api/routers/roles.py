@@ -105,13 +105,13 @@ async def update_role(
         if role_data.permissions is not None:
             if role_data.permissions < 0:
                 raise HTTPException(
-                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                     detail="Invalid permissions bitmask"
                 )
             perms = discord.Permissions(role_data.permissions)
             if perms.value != role_data.permissions:
                 raise HTTPException(
-                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                     detail="Invalid permissions bitmask"
                 )
             update_kwargs["permissions"] = perms
@@ -356,7 +356,7 @@ async def check_role_permission(request: Request, role_id: int, permission: str 
     if permission not in PERMISSION_FLAGS:
         flogger.error(f"check_role_permission: unknown permission '{permission}'")
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail=f"Unknown permission: {permission}"
         )
 

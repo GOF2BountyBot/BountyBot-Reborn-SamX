@@ -7,7 +7,7 @@ multiple players (one per guild) with completely isolated game state.
 
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy import BigInteger, Integer, String, DateTime, ForeignKey
-from datetime import datetime
+from datetime import datetime, UTC
 from typing import List, Optional
 from persist.models.base import Base
 from persist.database.tablenames import TableNames
@@ -50,8 +50,8 @@ class Player(Base):
     )
 
     # Timestamps
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
-    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(UTC))
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(UTC), onupdate=lambda: datetime.now(UTC))
 
     # Relationships
     user: Mapped["User"] = relationship("User", back_populates="players")

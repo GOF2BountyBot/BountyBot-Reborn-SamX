@@ -1,5 +1,5 @@
 """Tests for health check Pydantic schemas."""
-from datetime import datetime
+from datetime import datetime, UTC
 
 from api.schemas.health_schema import HealthResponse, SimpleHealthResponse
 
@@ -9,7 +9,7 @@ class TestHealthResponseSchema:
 
     def test_health_response_schema_valid(self):
         """Construct a HealthResponse and verify all fields are set correctly."""
-        now = datetime.utcnow()
+        now = datetime.now(UTC)
         response = HealthResponse(
             status="healthy",
             timestamp=now,
@@ -54,7 +54,7 @@ class TestHealthResponseSchema:
 
     def test_health_response_optional_fields(self):
         """Verify database_check and schema_check default to None when omitted."""
-        now = datetime.utcnow()
+        now = datetime.now(UTC)
         response = HealthResponse(
             status="unhealthy",
             timestamp=now,
@@ -76,7 +76,7 @@ class TestSimpleHealthResponseSchema:
 
     def test_simple_health_response_schema_valid(self):
         """Construct a SimpleHealthResponse and verify fields."""
-        now = datetime.utcnow()
+        now = datetime.now(UTC)
         response = SimpleHealthResponse(
             status="healthy",
             timestamp=now,

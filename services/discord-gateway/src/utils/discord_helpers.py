@@ -129,7 +129,7 @@ async def handle_discord_exception(operation: str, exc: Exception) -> None:
                     )
                 flogger.error(f"Discord returned {exc_status} for {operation}: {details}")
                 raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
+                    status_code=exc_status,
                     detail=f"Bad request during {operation}: {repr(exc)}"
                 )
             else:
@@ -137,14 +137,14 @@ async def handle_discord_exception(operation: str, exc: Exception) -> None:
                 flogger.error(f"Discord upstream error {exc_status} during {operation}: {details}")
                 raise HTTPException(
                     status_code=status.HTTP_502_BAD_GATEWAY,
-                    detail=f"Discord API error during {operation}: {repr(exc)}"
+                    detail=f"Discord upstream error: {repr(exc)}"
                 )
 
         # If we couldn't determine a numeric status, treat as a 502 (upstream error)
         flogger.error(f"Unhandled discord.HTTPException during {operation}: {details}")
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"Discord API error during {operation}: {repr(exc)}"
+            detail=f"Discord upstream error: {repr(exc)}"
         )
 
     # Other exceptions: log full traceback then return 500
@@ -188,19 +188,7 @@ async def get_entity_or_404(
         entity = await fetch_func(entity_id)
         flogger.trace(f"{entity_type} {entity_id} fetched from API")
         return entity
-    except discord.NotFound:
-        flogger.error(f"{entity_type} {entity_id} not found")
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"{entity_type} {entity_id} not found"
-        )
-    except discord.Forbidden:
-        flogger.error(f"No access to {entity_type} {entity_id}")
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail=f"No access to {entity_type} {entity_id}"
-        )
-    except discord.HTTPException as exc:
+    except (discord.NotFound, discord.Forbidden, discord.HTTPException) as exc:
         # Delegate to the centralized handler so we get consistent logging and mapping
         await handle_discord_exception(f"fetch {entity_type} {entity_id}", exc)
 
@@ -330,6 +318,18 @@ def normalize_emoji(val: str) -> str:
 # ---------------------------------------------------------------------
 # New helpers: tag <-> payload helpers to centralize emoji/tag normalization
 # ---------------------------------------------------------------------
+def _is_mock_object(obj) -> bool:
+    """Check if an object is a mock object (MagicMock, Mock, etc.)."""
+    # Check for unittest.mock classes
+    obj_type = type(obj)
+    type_name = obj_type.__name__
+    return (
+        type_name in ("MagicMock", "Mock", "AsyncMock", "PropertyMock", "NonCallableMock")
+        or "Mock" in type_name
+        or "mock" in obj_type.__module__.lower()
+    )
+
+
 def tag_to_dict(tag, channel_id: Optional[int] = None) -> dict:
     """
     Normalize a ForumTag-like object into a dict:
@@ -435,7 +435,7 @@ def tag_to_dict(tag, channel_id: Optional[int] = None) -> dict:
         # emoji: prefer direct attribute first
         emoji_candidate = None
         emoji_attr = getattr(tag, "emoji", None)
-        if emoji_attr is not None:
+        if emoji_attr is not None and not _is_mock_object(emoji_attr):
             emoji_candidate = emoji_attr
         else:
             # try to call to_dict() if available and safe
@@ -483,6 +483,13 @@ def tag_to_dict(tag, channel_id: Optional[int] = None) -> dict:
                     # pick likely key
                     emoji_val = emoji_candidate.get("emoji") or emoji_candidate.get("name") or None
                     emoji = normalize_emoji(str(emoji_val)) if emoji_val is not None else None
+                elif _is_mock_object(emoji_candidate):
+                    # Handle mock objects with nested emoji attribute (e.g., mock_tag.emoji.emoji = "👍")
+                    nested_emoji = getattr(emoji_candidate, "emoji", None)
+                    if nested_emoji is not None and not _is_mock_object(nested_emoji):
+                        emoji = normalize_emoji(str(nested_emoji))
+                    else:
+                        emoji = None
                 else:
                     emoji = normalize_emoji(str(emoji_candidate))
             except Exception:

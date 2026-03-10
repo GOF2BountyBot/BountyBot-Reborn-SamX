@@ -5,7 +5,7 @@ This module contains the business logic for constructing and
 parsing time announcement embed payloads.
 """
 
-from datetime import datetime
+from datetime import datetime, UTC
 from typing import Dict, Any, Optional
 import json
 
@@ -39,7 +39,7 @@ class TimeAnnouncementBuilder(MessagePayloadBuilder):
             "description": f"**Current time:** {data['current_time']}",
             "color": 0x3498db,
             "footer_text": "Time Announcement",
-            "timestamp": datetime.utcnow().isoformat()
+            "timestamp": datetime.now(UTC).isoformat()
         }
         logger.info(f"build_payload generated payload: {payload}")
         return payload

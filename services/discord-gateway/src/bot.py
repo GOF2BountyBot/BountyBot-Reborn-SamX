@@ -3,6 +3,9 @@ import pkgutil
 import importlib
 import asyncio
 from contextlib import asynccontextmanager
+import sys
+import time
+from typing import Callable, Any, Dict
 
 import discord
 from discord.ext import commands
@@ -12,6 +15,11 @@ from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
 
 import shared.bblogger as bblogger
+
+# Add the current directory to path for relative imports
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+
+from utils.command_utils import CommandHandler, get_command_handler
 
 # ─── Bot Configuration ──────────────────────────────────────────────────────────
 class GatewayBot(commands.Bot):
@@ -29,6 +37,7 @@ class GatewayBot(commands.Bot):
 
         self.flogger = bblogger.get_logger("discord-gateway")
         self.startup_complete = False
+        self.command_handler = get_command_handler(self)
 
     async def setup_hook(self):
         self.flogger.info("=== SETUP HOOK STARTED ===")
@@ -45,6 +54,23 @@ class GatewayBot(commands.Bot):
                     self.flogger.error(f"✗ Cog load failed {fn}: {e}")
                     raise
         self.flogger.info(f"=== SETUP HOOK COMPLETED ({count} cogs) ===")
+
+    async def execute_command_with_validation(
+        self, 
+        ctx: commands.Context, 
+        command_name: str, 
+        handler: Callable[[commands.Context], Any],
+        permissions: Dict[str, Any] = None,
+        cooldown_seconds: int = 5
+    ) -> bool:
+        """Execute a command with validation and error handling"""
+        return await self.command_handler.execute_command(
+            ctx, 
+            command_name, 
+            handler,
+            permissions,
+            cooldown_seconds
+        )
 
     async def on_ready(self):
         self.flogger.info(f"Bot logged in as {self.user} ({self.user.id})")

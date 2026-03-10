@@ -200,3 +200,9 @@ saveData
 .DS_STORE
 .env
 mappings
+.ralph
+RULES.md
+opencode.json
+.mcp.json
+.opencode
+.claude

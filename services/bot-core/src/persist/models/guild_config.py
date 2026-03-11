@@ -6,7 +6,6 @@ economic factors, progression thresholds, and administrative settings.
 """
 
 from datetime import UTC, datetime
-from typing import Dict, List
 
 from sqlalchemy import JSON, BigInteger, DateTime, Float, Integer
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -25,19 +24,19 @@ class GuildConfig(Base):
     admin_role_id: Mapped[int] = mapped_column(BigInteger, nullable=True)
 
     # Shop inventory size ranges (JSON objects with min/max values)
-    ship_count_range: Mapped[Dict[str, int]] = mapped_column(JSON, default={"min": 3, "max": 5})
-    weapon_count_range: Mapped[Dict[str, int]] = mapped_column(JSON, default={"min": 3, "max": 5})
-    module_count_range: Mapped[Dict[str, int]] = mapped_column(JSON, default={"min": 3, "max": 5})
-    turret_count_range: Mapped[Dict[str, int]] = mapped_column(JSON, default={"min": 3, "max": 5})
+    ship_count_range: Mapped[dict[str, int]] = mapped_column(JSON, default={"min": 3, "max": 5})
+    weapon_count_range: Mapped[dict[str, int]] = mapped_column(JSON, default={"min": 3, "max": 5})
+    module_count_range: Mapped[dict[str, int]] = mapped_column(JSON, default={"min": 3, "max": 5})
+    turret_count_range: Mapped[dict[str, int]] = mapped_column(JSON, default={"min": 3, "max": 5})
 
     # Quantity ranges for each item type
-    ship_quantity_range: Mapped[Dict[str, int]] = mapped_column(JSON, default={"min": 1, "max": 1})
-    weapon_quantity_range: Mapped[Dict[str, int]] = mapped_column(JSON, default={"min": 2, "max": 4})
-    module_quantity_range: Mapped[Dict[str, int]] = mapped_column(JSON, default={"min": 2, "max": 4})
-    turret_quantity_range: Mapped[Dict[str, int]] = mapped_column(JSON, default={"min": 2, "max": 4})
+    ship_quantity_range: Mapped[dict[str, int]] = mapped_column(JSON, default={"min": 1, "max": 1})
+    weapon_quantity_range: Mapped[dict[str, int]] = mapped_column(JSON, default={"min": 2, "max": 4})
+    module_quantity_range: Mapped[dict[str, int]] = mapped_column(JSON, default={"min": 2, "max": 4})
+    turret_quantity_range: Mapped[dict[str, int]] = mapped_column(JSON, default={"min": 2, "max": 4})
 
     # Tech level probabilities (JSON objects)
-    tech_level_probabilities: Mapped[Dict[str, float]] = mapped_column(JSON, default={
+    tech_level_probabilities: Mapped[dict[str, float]] = mapped_column(JSON, default={
         "same_level": 0.70,
         "one_lower": 0.20,
         "two_lower": 0.10
@@ -48,7 +47,7 @@ class GuildConfig(Base):
     starting_credits: Mapped[int] = mapped_column(Integer, default=0)
 
     # XP and tier thresholds
-    xp_thresholds: Mapped[Dict[str, int]] = mapped_column(JSON, default={
+    xp_thresholds: Mapped[dict[str, int]] = mapped_column(JSON, default={
         "Silver": 1000,
         "Gold": 5000,
         "Platinum": 15000
@@ -61,7 +60,7 @@ class GuildConfig(Base):
     )
 
     # Relationships
-    shops: Mapped[List["GuildShop"]] = relationship("GuildShop", back_populates="guild_config")
+    shops: Mapped[list["GuildShop"]] = relationship("GuildShop", back_populates="guild_config")
 
     def __repr__(self) -> str:
         return f"<GuildConfig(guild_id={self.guild_id}, starting_credits={self.starting_credits})>"
@@ -70,7 +69,7 @@ class GuildConfig(Base):
         """Get XP threshold for a specific tier."""
         return self.xp_thresholds.get(tier, 0)
 
-    def get_count_range(self, item_type: str) -> Dict[str, int]:
+    def get_count_range(self, item_type: str) -> dict[str, int]:
         """Get item count range for shop generation."""
         range_map = {
             "ship": self.ship_count_range,
@@ -80,7 +79,7 @@ class GuildConfig(Base):
         }
         return range_map.get(item_type, {"min": 1, "max": 1})
 
-    def get_quantity_range(self, item_type: str) -> Dict[str, int]:
+    def get_quantity_range(self, item_type: str) -> dict[str, int]:
         """Get quantity range for shop items of a specific type."""
         range_map = {
             "ship": self.ship_quantity_range,

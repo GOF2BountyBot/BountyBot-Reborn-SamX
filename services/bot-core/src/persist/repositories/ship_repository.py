@@ -42,7 +42,7 @@ class ShipRepository(GenericRepository[Ship]):
             "maxTurrets":        "max_turrets",
             "saveDue":           "save_due",
             "normSpec":          "norm_spec",
-            # all others map 1:1 by lower‐snake
+            # all others map 1:1 by lower-snake
         }
 
         def to_attr(k: str) -> str:

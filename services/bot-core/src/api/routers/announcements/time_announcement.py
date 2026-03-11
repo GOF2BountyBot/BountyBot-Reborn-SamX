@@ -7,7 +7,6 @@ messages, using the modular message builder pattern.
 
 import json
 import os
-from typing import List, Optional
 
 import httpx
 from fastapi import APIRouter, HTTPException, Query, Request, status
@@ -37,7 +36,7 @@ class TimeAnnouncementRequest(BaseModel):
     """Request for time announcement creation/update."""
     guild_id: int = Field(..., description="Discord guild ID")
     channel_id: int = Field(..., description="Discord channel ID")
-    message_id: Optional[int] = Field(None, description="Discord message ID (use for update/get/delete operations)")
+    message_id: int | None = Field(None, description="Discord message ID (use for update/get/delete operations)")
     current_time: str = Field(..., description="Current time to announce")
 
 discord_message_repo = DiscordMessageRepository()
@@ -335,14 +334,14 @@ async def get_time_announcement(
 
 @router.get(
     "/guild/{guild_id}",
-    response_model=List[DiscordMessageResponse],
+    response_model=list[DiscordMessageResponse],
     summary="List Time Announcements by Guild",
-    description="Returns all time‐announcement messages for the given guild."
+    description="Returns all time-announcement messages for the given guild."
 )
 async def list_time_announcements_by_guild(
     request: Request,
     guild_id: int
-) -> List[DiscordMessageResponse]:
+) -> list[DiscordMessageResponse]:
     """
     GET /time/guild/{guild_id}
     """
@@ -354,15 +353,15 @@ async def list_time_announcements_by_guild(
 
 @router.get(
     "/guild/{guild_id}/channel/{channel_id}",
-    response_model=List[DiscordMessageResponse],
+    response_model=list[DiscordMessageResponse],
     summary="List TimeAnanouncements by Channel",
-    description="Returns all time‐announcement messages for the given guild and channel."
+    description="Returns all time-announcement messages for the given guild and channel."
 )
 async def list_time_announcements_by_channel(
     request: Request,
     guild_id: int,
     channel_id: int
-) -> List[DiscordMessageResponse]:
+) -> list[DiscordMessageResponse]:
     """
     GET /time/guild/{guild_id}/channel/{channel_id}
     """
@@ -376,15 +375,15 @@ async def list_time_announcements_by_channel(
 
 @router.get(
     "/guild/{guild_id}/type/{message_type}",
-    response_model=List[DiscordMessageResponse],
+    response_model=list[DiscordMessageResponse],
     summary="List Time Announcements by Type",
-    description="Returns all time‐announcement messages for the given guild and message type."
+    description="Returns all time-announcement messages for the given guild and message type."
 )
 async def list_time_announcements_by_type(
     request: Request,
     guild_id: int,
     message_type: str
-) -> List[DiscordMessageResponse]:
+) -> list[DiscordMessageResponse]:
     """
     GET /time/guild/{guild_id}/type/{message_type}
     """

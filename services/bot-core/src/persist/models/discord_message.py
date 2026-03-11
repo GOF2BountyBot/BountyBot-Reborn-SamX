@@ -6,7 +6,7 @@ information including embed payloads with proper composite key constraints.
 """
 
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from sqlalchemy import BigInteger, DateTime, Index, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
@@ -20,7 +20,7 @@ class DiscordMessage(Base):
     """Model for Discord message persistence with embed support."""
     __tablename__ = TableNames.DiscordMessage.value
 
-    # cross‐dialect UUID column: native on Postgres, CHAR(36) elsewhere
+    # cross-dialect UUID column: native on Postgres, CHAR(36) elsewhere
     id: Mapped[uuid.UUID] = mapped_column(
         UUIDType(binary=False),
         primary_key=True,
@@ -36,16 +36,16 @@ class DiscordMessage(Base):
 
     created_at: Mapped[datetime]  = mapped_column(
         DateTime(timezone=True),
-        default=lambda: datetime.now(timezone.utc)
+        default=lambda: datetime.now(UTC)
     )
     updated_at: Mapped[datetime]  = mapped_column(
         DateTime(timezone=True),
-        default=lambda: datetime.now(timezone.utc),
-        onupdate=lambda: datetime.now(timezone.utc)
+        default=lambda: datetime.now(UTC),
+        onupdate=lambda: datetime.now(UTC)
     )
 
     __table_args__ = (
-        # ensure one record per guild/channel/message‐ID triple
+        # ensure one record per guild/channel/message-ID triple
         UniqueConstraint('guild_id', 'channel_id', 'message_id', name='uq_guild_channel_message'),
         # useful lookup indices
         Index('ix_discord_message_guild_channel', 'guild_id', 'channel_id'),

@@ -6,7 +6,6 @@ This router follows the requirement that all major subsystem interactions
 must be done via REST API.
 """
 
-from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from persist.database.manager import get_db_session
@@ -131,12 +130,12 @@ async def get_player(
             detail="Failed to get player"
         ) from e
 
-@router.get("/guild/{guild_id}", response_model=List[PlayerResponse])
+@router.get("/guild/{guild_id}", response_model=list[PlayerResponse])
 async def get_players_by_guild(
     guild_id: int,
     skip: int = 0,
     limit: int = 100,
-    tier: Optional[str] = None,
+    tier: str | None = None,
     player_service: PlayerService = Depends(get_player_service)
 ):
     """Get all players in a guild, optionally filtered by tier."""

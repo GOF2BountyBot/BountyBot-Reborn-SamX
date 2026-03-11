@@ -9,7 +9,7 @@ and schema version information.
 import platform
 import sys
 from datetime import UTC, datetime
-from typing import Any, Dict
+from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request, status
 from shared import bblogger
@@ -129,7 +129,7 @@ async def simple_health_check() -> SimpleHealthResponse:
     summary="Readiness Check",
     description="Checks if the service is ready to accept requests (includes database connectivity)"
 )
-async def readiness_check(request: Request) -> Dict[str, str]:
+async def readiness_check(request: Request) -> dict[str, str]:
     try:
         if hasattr(request.app.state, "db_manager"):
             db_manager = request.app.state.db_manager
@@ -147,7 +147,7 @@ async def readiness_check(request: Request) -> Dict[str, str]:
         flogger.error(f"Readiness check failed: {e}")
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=f"Service not ready: {str(e)}"
+            detail=f"Service not ready: {e!s}"
         ) from e
 
 @router.get(
@@ -156,7 +156,7 @@ async def readiness_check(request: Request) -> Dict[str, str]:
     summary="Liveness Check",
     description="Checks if the service is alive and responsive"
 )
-async def liveness_check() -> Dict[str, str]:
+async def liveness_check() -> dict[str, str]:
     return {"status": "alive"}
 
 @router.get(
@@ -165,7 +165,7 @@ async def liveness_check() -> Dict[str, str]:
     summary="Database Health Check",
     description="Detailed database connectivity and schema information"
 )
-async def database_health_check(request: Request) -> Dict[str, Any]:
+async def database_health_check(request: Request) -> dict[str, Any]:
     """
     Database-specific health check endpoint.
     """

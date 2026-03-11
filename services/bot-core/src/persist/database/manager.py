@@ -16,7 +16,7 @@ Key Features:
 import os
 import time
 from contextlib import asynccontextmanager
-from typing import Any, Dict, Optional
+from typing import Any
 
 from shared import bblogger
 from sqlalchemy import MetaData, inspect, text
@@ -37,9 +37,9 @@ class DatabaseManager:
 
     def __init__(self):
         """Initialize the database manager with environment configuration."""
-        self._engine: Optional[AsyncEngine] = None
-        self._session_factory: Optional[sessionmaker] = None
-        self._connection_string: Optional[str] = None
+        self._engine: AsyncEngine | None = None
+        self._session_factory: sessionmaker | None = None
+        self._connection_string: str | None = None
         self._metadata = MetaData()
         self._load_config()
 
@@ -161,7 +161,7 @@ class DatabaseManager:
     async def execute_sql(
         self,
         sql_statement: str,
-        parameters: Optional[Dict[str, Any]] = None
+        parameters: dict[str, Any] | None = None
     ) -> Any:
         """
         Execute a raw SQL statement in a transaction.
@@ -179,7 +179,7 @@ class DatabaseManager:
     async def table_exists(
         self,
         table_name: str,
-        schema: Optional[str] = None
+        schema: str | None = None
     ) -> bool:
         """
         Check if a table exists in the database.
@@ -194,7 +194,7 @@ class DatabaseManager:
             flogger.error(f"Error checking table existence: {e}")
             return False
 
-    async def get_health_info(self) -> Dict[str, Any]:
+    async def get_health_info(self) -> dict[str, Any]:
         """
         Get database health information for health checks.
         """
@@ -244,7 +244,7 @@ class DatabaseManager:
         flogger.info("Database manager shutdown complete")
 
     @property
-    def engine(self) -> Optional[AsyncEngine]:
+    def engine(self) -> AsyncEngine | None:
         """Get the AsyncEngine (for advanced usage)."""
         return self._engine
 
@@ -266,10 +266,10 @@ def get_db_session():
     """Convenience function to get a database session."""
     return db_manager.get_session()
 
-async def execute_sql(sql: str, params: Optional[Dict[str, Any]] = None):
+async def execute_sql(sql: str, params: dict[str, Any] | None = None):
     """Convenience function to execute SQL."""
     return await db_manager.execute_sql(sql, params)
 
-async def table_exists(table_name: str, schema: Optional[str] = None) -> bool:
+async def table_exists(table_name: str, schema: str | None = None) -> bool:
     """Convenience function to check if a table exists."""
     return await db_manager.table_exists(table_name, schema)

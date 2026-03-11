@@ -5,7 +5,7 @@ Handles REST API endpoints for shop management including browsing,
 purchasing, selling, and shop refresh operations.
 """
 
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from persist.database.manager import get_db_session
@@ -36,11 +36,11 @@ router = APIRouter(
 async def get_shop_service():
     return ShopService()
 
-@router.get("/guild/{guild_id}/tier/{tier}", response_model=List[ShopItemResponse])
+@router.get("/guild/{guild_id}/tier/{tier}", response_model=list[ShopItemResponse])
 async def get_shop_items(
     guild_id: int,
     tier: str,
-    item_type: Optional[str] = None,
+    item_type: str | None = None,
     shop_service: ShopService = Depends(get_shop_service)
 ):
     """Get all items in a specific guild shop tier."""
@@ -179,7 +179,7 @@ async def sell_item(
             detail="Failed to process sale"
         ) from e
 
-@router.post("/refresh", response_model=Dict[str, Any])
+@router.post("/refresh", response_model=dict[str, Any])
 async def refresh_shop(
     request: RefreshShopRequest,
     shop_service: ShopService = Depends(get_shop_service)

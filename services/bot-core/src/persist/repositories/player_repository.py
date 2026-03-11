@@ -5,7 +5,6 @@ Handles database operations for Player entities including guild-isolated
 player management, progression tracking, and statistics.
 """
 
-from typing import List, Optional
 
 from shared import bblogger
 from sqlalchemy import and_, select, update
@@ -18,7 +17,7 @@ flogger = bblogger.get_logger("player-repository")
 
 class PlayerRepository(IRepository[Player]):
 
-    async def get_by_id(self, db: AsyncSession, obj_id: int) -> Optional[Player]:
+    async def get_by_id(self, db: AsyncSession, obj_id: int) -> Player | None:
         """Get player by ID."""
         try:
             return await db.get(Player, obj_id)
@@ -26,11 +25,11 @@ class PlayerRepository(IRepository[Player]):
             flogger.error(f"Error getting player by ID {obj_id}: {e}")
             raise
 
-    async def get_by_name(self, db: AsyncSession, name: str) -> Optional[Player]:
+    async def get_by_name(self, db: AsyncSession, name: str) -> Player | None:
         """Not applicable for players - they don't have names."""
         raise NotImplementedError("Players don't have searchable names")
 
-    async def list_all(self, db: AsyncSession) -> List[Player]:
+    async def list_all(self, db: AsyncSession) -> list[Player]:
         """Get all players."""
         try:
             result = await db.execute(select(Player))
@@ -94,7 +93,7 @@ class PlayerRepository(IRepository[Player]):
             await db.rollback()
             raise
 
-    async def get_by_user_and_guild(self, db: AsyncSession, user_id: int, guild_id: int) -> Optional[Player]:
+    async def get_by_user_and_guild(self, db: AsyncSession, user_id: int, guild_id: int) -> Player | None:
         """Get player by user ID and guild ID combination."""
         try:
             result = await db.execute(
@@ -107,7 +106,7 @@ class PlayerRepository(IRepository[Player]):
             flogger.error(f"Error getting player for user {user_id} in guild {guild_id}: {e}")
             raise
 
-    async def get_players_by_guild(self, db: AsyncSession, guild_id: int) -> List[Player]:
+    async def get_players_by_guild(self, db: AsyncSession, guild_id: int) -> list[Player]:
         """Get all players in a specific guild."""
         try:
             result = await db.execute(
@@ -118,7 +117,7 @@ class PlayerRepository(IRepository[Player]):
             flogger.error(f"Error getting players for guild {guild_id}: {e}")
             raise
 
-    async def get_players_by_user(self, db: AsyncSession, user_id: int) -> List[Player]:
+    async def get_players_by_user(self, db: AsyncSession, user_id: int) -> list[Player]:
         """Get all players for a specific user across all guilds."""
         try:
             result = await db.execute(
@@ -187,7 +186,7 @@ class PlayerRepository(IRepository[Player]):
             await db.rollback()
             raise
 
-    async def update_active_ship(self, db: AsyncSession, player_id: int, ship_id: Optional[int]) -> Player:
+    async def update_active_ship(self, db: AsyncSession, player_id: int, ship_id: int | None) -> Player:
         """Update player's active ship."""
         try:
             await db.execute(

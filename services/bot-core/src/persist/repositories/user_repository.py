@@ -5,7 +5,6 @@ Handles database operations for User entities including creation,
 retrieval, and user management operations.
 """
 
-from typing import List, Optional
 
 from shared import bblogger
 from sqlalchemy import select
@@ -18,7 +17,7 @@ flogger = bblogger.get_logger("user-repository")
 
 class UserRepository(IRepository[User]):
 
-    async def get_by_id(self, db: AsyncSession, obj_id: int) -> Optional[User]:
+    async def get_by_id(self, db: AsyncSession, obj_id: int) -> User | None:
         """Get user by Discord ID."""
         try:
             return await db.get(User, obj_id)
@@ -26,7 +25,7 @@ class UserRepository(IRepository[User]):
             flogger.error(f"Error getting user by ID {obj_id}: {e}")
             raise
 
-    async def get_by_name(self, db: AsyncSession, name: str) -> Optional[User]:
+    async def get_by_name(self, db: AsyncSession, name: str) -> User | None:
         """Get user by Discord username."""
         try:
             result = await db.execute(
@@ -37,7 +36,7 @@ class UserRepository(IRepository[User]):
             flogger.error(f"Error getting user by name {name}: {e}")
             raise
 
-    async def list_all(self, db: AsyncSession) -> List[User]:
+    async def list_all(self, db: AsyncSession) -> list[User]:
         """Get all users."""
         try:
             result = await db.execute(select(User))
@@ -101,7 +100,7 @@ class UserRepository(IRepository[User]):
             await db.rollback()
             raise
 
-    async def get_or_create_user(self, db: AsyncSession, discord_id: int, username: str = None) -> User:
+    async def get_or_create_user(self, db: AsyncSession, discord_id: int, username: str | None = None) -> User:
         """Get existing user or create new one."""
         try:
             user = await self.get_by_id(db, discord_id)

@@ -1,4 +1,4 @@
-from typing import Generic, Optional, Type, TypeVar
+from typing import Generic, TypeVar
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -8,7 +8,7 @@ from persist.interfaces.repository_interface import IRepository
 T = TypeVar('T')
 
 class GenericRepository(IRepository[T], Generic[T]):
-    def __init__(self, model: Type[T]):
+    def __init__(self, model: type[T]):
         self._model = model
 
     async def add(self, db: AsyncSession, obj: T) -> T:
@@ -20,16 +20,16 @@ class GenericRepository(IRepository[T], Generic[T]):
     async def create_or_update(self, db: AsyncSession, raw: dict) -> T:
         raise NotImplementedError("Subclasses must implement create_or_update")
 
-    async def get_by_id(self, db: AsyncSession, obj_id: int) -> Optional[T]:
+    async def get_by_id(self, db: AsyncSession, obj_id: int) -> T | None:
         return await db.get(self._model, obj_id)
 
-    async def get_by_name(self, db: AsyncSession, name: str) -> Optional[T]:
+    async def get_by_name(self, db: AsyncSession, name: str) -> T | None:
         result = await db.execute(
             select(self._model).filter_by(name=name)
         )
         return result.scalars().one_or_none()
 
-    async def get_by_alias(self, db: AsyncSession, alias: str) -> Optional[T]:
+    async def get_by_alias(self, db: AsyncSession, alias: str) -> T | None:
         result = await db.execute(
             select(self._model).where(self._model.aliases.any(alias))
         )

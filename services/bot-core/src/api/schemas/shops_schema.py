@@ -1,4 +1,3 @@
-from typing import Dict, Optional
 
 from pydantic import BaseModel, Field
 
@@ -19,7 +18,7 @@ class ShopItemResponse(BaseModel):
 class ShopSummaryResponse(BaseModel):
     guild_id: int
     total_items: int
-    shops: Dict[str, Dict[str, int]]
+    shops: dict[str, dict[str, int]]
 
 class PurchaseRequest(BaseModel):
     player_id: int
@@ -38,12 +37,12 @@ class TransactionResponse(BaseModel):
     item_type: str
     item_name: str
     quantity: int
-    total_cost: Optional[int] = None
-    total_value: Optional[int] = None
+    total_cost: int | None = None
+    total_value: int | None = None
     remaining_credits: int
     transaction_type: str
 
 class RefreshShopRequest(BaseModel):
     guild_id: int
     tier: str = Field(pattern="^(Bronze|Silver|Gold|Platinum)$")
-    force_tech_level: Optional[int] = Field(None, ge=1, le=9)
+    force_tech_level: int | None = Field(None, ge=1, le=9)

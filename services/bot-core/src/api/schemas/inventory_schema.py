@@ -1,4 +1,4 @@
-from typing import Any, Dict, Optional
+from typing import Any
 
 from pydantic import BaseModel, Field
 
@@ -10,7 +10,7 @@ class InventoryItemResponse(BaseModel):
     item_name: str
     quantity: int
     acquired_at: str
-    item_details: Dict[str, Any]
+    item_details: dict[str, Any]
 
 class InventorySummaryResponse(BaseModel):
     player_id: int
@@ -47,4 +47,4 @@ class ItemTransactionResponse(BaseModel):
     item_name: str
     quantity_changed: int
     new_total_quantity: int
-    transaction_time: Optional[str]
+    transaction_time: str | None

@@ -1,4 +1,3 @@
-from typing import List, Optional
 
 from pydantic import BaseModel, Field
 
@@ -8,11 +7,11 @@ class ShipResponse(BaseModel):
     id: int
     player_id: int
     ship_name: str
-    nickname: Optional[str]
+    nickname: str | None
     is_active: bool
-    weapons: Optional[List[str]]
-    modules: Optional[List[str]]
-    turrets: Optional[List[str]]
+    weapons: list[str] | None
+    modules: list[str] | None
+    turrets: list[str] | None
     created_at: str
 
     class Config:
@@ -21,11 +20,11 @@ class ShipResponse(BaseModel):
 class ShipLoadoutSummaryResponse(BaseModel):
     ship_id: int
     ship_name: str
-    nickname: Optional[str]
+    nickname: str | None
     is_active: bool
-    weapons: List[str]
-    modules: List[str]
-    turrets: List[str]
+    weapons: list[str]
+    modules: list[str]
+    turrets: list[str]
     weapons_count: int
     modules_count: int
     turrets_count: int
@@ -33,15 +32,15 @@ class ShipLoadoutSummaryResponse(BaseModel):
 class CreateShipRequest(BaseModel):
     player_id: int
     ship_name: str
-    nickname: Optional[str] = None
-    weapons: Optional[List[str]] = []
-    modules: Optional[List[str]] = []
-    turrets: Optional[List[str]] = []
+    nickname: str | None = None
+    weapons: list[str] | None = []
+    modules: list[str] | None = []
+    turrets: list[str] | None = []
 
 class UpdateLoadoutRequest(BaseModel):
-    weapons: Optional[List[str]] = None
-    modules: Optional[List[str]] = None
-    turrets: Optional[List[str]] = None
+    weapons: list[str] | None = None
+    modules: list[str] | None = None
+    turrets: list[str] | None = None
 
 class UpdateNicknameRequest(BaseModel):
     nickname: str

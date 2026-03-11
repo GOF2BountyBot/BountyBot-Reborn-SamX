@@ -73,7 +73,7 @@ def _resolve_emojis(obj):
             obj['emoji'] = new_emoji
     return obj
 
-async def load_data(category: str, data_root: str | Path = None) -> list[str]:
+async def load_data(category: str, data_root: str | Path | None = None) -> list[str]:
     """
     Upsert all JSON files under data/{category}/ into the DB.
     Returns a list of status messages (one per file).

@@ -5,7 +5,7 @@ Handles business logic for inventory management including
 item storage, quantity tracking, and inventory operations.
 """
 
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from persist.repositories.inventory_repository import InventoryRepository
 from persist.repositories.player_repository import PlayerRepository
@@ -26,8 +26,8 @@ class InventoryService:
         self,
         db: AsyncSession,
         player_id: int,
-        item_type: Optional[str] = None
-    ) -> List[Dict[str, Any]]:
+        item_type: str | None = None
+    ) -> list[dict[str, Any]]:
         """
         Get a player's inventory, optionally filtered by item type.
         Returns formatted inventory data with item details.
@@ -72,7 +72,7 @@ class InventoryService:
         item_type: str,
         item_name: str,
         quantity: int = 1
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
         Add items to a player's inventory.
         Returns transaction details.
@@ -122,7 +122,7 @@ class InventoryService:
         item_type: str,
         item_name: str,
         quantity: int = 1
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
         Remove items from a player's inventory.
         Returns transaction details.
@@ -188,7 +188,7 @@ class InventoryService:
         item_type: str,
         item_name: str,
         quantity: int = 1
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
         Transfer items between players (future feature for trading).
         Returns transfer details.
@@ -233,7 +233,7 @@ class InventoryService:
             flogger.error(f"Error transferring item between players: {e}")
             raise
 
-    async def get_inventory_summary(self, db: AsyncSession, player_id: int) -> Dict[str, Any]:
+    async def get_inventory_summary(self, db: AsyncSession, player_id: int) -> dict[str, Any]:
         """Get a summary of a player's inventory by item type."""
         try:
             # Verify player exists
@@ -259,7 +259,7 @@ class InventoryService:
         db: AsyncSession,
         player_id: int,
         search_term: str
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """Search player's inventory for items matching a search term."""
         try:
             # Get all inventory items
@@ -286,7 +286,7 @@ class InventoryService:
         ship_name: str,
         item_type: str,
         item_name: str
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
         Validate if an item can be equipped on a specific ship.
         Returns compatibility information.
@@ -315,7 +315,7 @@ class InventoryService:
             flogger.error(f"Error validating item compatibility: {e}")
             raise
 
-    async def _get_item_details(self, item_name: str) -> Dict[str, Any]:
+    async def _get_item_details(self, item_name: str) -> dict[str, Any]:
         """Get item details from static data (placeholder for integration)."""
         # TODO: Integrate with existing static data system
         return {
@@ -325,7 +325,7 @@ class InventoryService:
             "value": 100      # Placeholder
         }
 
-    async def _get_ship_details(self, ship_name: str) -> Optional[Dict[str, Any]]:
+    async def _get_ship_details(self, ship_name: str) -> dict[str, Any] | None:
         """Get ship details from static data (placeholder for integration)."""
         # TODO: Integrate with existing static data system
         return {
@@ -360,7 +360,7 @@ class InventoryService:
             flogger.error(f"Error getting item count for player {player_id}: {e}")
             raise
 
-    async def consolidate_inventory(self, _db: AsyncSession, player_id: int) -> Dict[str, Any]:
+    async def consolidate_inventory(self, _db: AsyncSession, player_id: int) -> dict[str, Any]:
         """
         Consolidate duplicate inventory entries (maintenance function).
         Returns consolidation results.

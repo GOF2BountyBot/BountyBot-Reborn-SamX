@@ -1,4 +1,4 @@
-from typing import Any, Dict, Optional
+from typing import Any
 
 from pydantic import BaseModel, Field
 
@@ -19,7 +19,7 @@ class PlayerResponse(BaseModel):
     duel_losses: int
     duel_credits_won: int
     duel_credits_lost: int
-    active_ship_id: Optional[int]
+    active_ship_id: int | None
     created_at: str
     updated_at: str
 
@@ -34,15 +34,15 @@ class PlayerStatisticsResponse(BaseModel):
     prestige_count: int
     credits: int
     lifetime_credits: int
-    bounty_stats: Dict[str, int]
-    duel_stats: Dict[str, Any]
+    bounty_stats: dict[str, int]
+    duel_stats: dict[str, Any]
     created_at: str
     updated_at: str
 
 class CreatePlayerRequest(BaseModel):
     discord_id: int
     guild_id: int
-    discord_username: Optional[str] = None
+    discord_username: str | None = None
 
 class UpdateCreditsRequest(BaseModel):
     credits: int = Field(ge=0, description="Credits must be non-negative")

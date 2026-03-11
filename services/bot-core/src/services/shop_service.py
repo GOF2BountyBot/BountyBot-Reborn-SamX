@@ -10,7 +10,7 @@ Handles business logic for multi-tier shop management including:
 
 import random
 from datetime import UTC, datetime
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from persist.models.guild_shop import GuildShop
 from persist.repositories.config_repository import ConfigRepository
@@ -38,8 +38,8 @@ class ShopService:
         db: AsyncSession,
         guild_id: int,
         tier: str,
-        item_type: Optional[str] = None
-    ) -> List[GuildShop]:
+        item_type: str | None = None
+    ) -> list[GuildShop]:
         """
         Get shop items for a specific guild tier.
         Optionally filter by item type.
@@ -70,7 +70,7 @@ class ShopService:
         player_id: int,
         shop_item_id: int,
         quantity: int = 1
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
         Purchase an item from the shop.
 
@@ -147,7 +147,7 @@ class ShopService:
         item_name: str,
         quantity: int = 1,
         target_tier: str = "Bronze"
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
         Sell an item back to the shop.
 
@@ -220,8 +220,8 @@ class ShopService:
         db: AsyncSession,
         guild_id: int,
         tier: str,
-        force_tech_level: Optional[int] = None
-    ) -> Dict[str, Any]:
+        force_tech_level: int | None = None
+    ) -> dict[str, Any]:
         """
         Refresh a shop's inventory based on guild configuration.
 
@@ -327,7 +327,7 @@ class ShopService:
         shop_level = tier_levels.get(shop_tier, 1)
         return player_level >= shop_level
 
-    def _select_item_tech_level(self, shop_tech_level: int, probabilities: Dict[str, float]) -> int:
+    def _select_item_tech_level(self, shop_tech_level: int, probabilities: dict[str, float]) -> int:
         """Select item tech level based on shop tech level and probability distribution."""
         same_level_prob = probabilities.get("same_level", 0.7)
         one_lower_prob = probabilities.get("one_lower", 0.2)
@@ -341,7 +341,7 @@ class ShopService:
             return max(1, shop_tech_level - 1)
         return max(1, shop_tech_level - 2)
 
-    async def _get_random_item_by_tech_level(self, item_type: str, tech_level: int) -> Optional[str]:
+    async def _get_random_item_by_tech_level(self, item_type: str, tech_level: int) -> str | None:
         """Get a random item name by type and tech level from static data."""
         # TODO: Integrate with existing static data loading system
         # For now, return placeholder items

@@ -5,7 +5,7 @@ Handles database operations for PlayerShip entities including
 ship ownership, loadout management, and active ship tracking.
 """
 
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from shared import bblogger
 from sqlalchemy import and_, select, update
@@ -18,7 +18,7 @@ flogger = bblogger.get_logger("ship-repository")
 
 class PlayerShipRepository(IRepository[PlayerShip]):
 
-    async def get_by_id(self, db: AsyncSession, obj_id: int) -> Optional[PlayerShip]:
+    async def get_by_id(self, db: AsyncSession, obj_id: int) -> PlayerShip | None:
         """Get ship by ID."""
         try:
             return await db.get(PlayerShip, obj_id)
@@ -26,11 +26,11 @@ class PlayerShipRepository(IRepository[PlayerShip]):
             flogger.error(f"Error getting ship by ID {obj_id}: {e}")
             raise
 
-    async def get_by_name(self, db: AsyncSession, name: str) -> Optional[PlayerShip]:
+    async def get_by_name(self, db: AsyncSession, name: str) -> PlayerShip | None:
         """Not applicable for ships - they don't have unique names."""
         raise NotImplementedError("Ships don't have globally unique names")
 
-    async def list_all(self, db: AsyncSession) -> List[PlayerShip]:
+    async def list_all(self, db: AsyncSession) -> list[PlayerShip]:
         """Get all ships."""
         try:
             result = await db.execute(select(PlayerShip))
@@ -96,7 +96,7 @@ class PlayerShipRepository(IRepository[PlayerShip]):
             await db.rollback()
             raise
 
-    async def get_player_ships(self, db: AsyncSession, player_id: int) -> List[PlayerShip]:
+    async def get_player_ships(self, db: AsyncSession, player_id: int) -> list[PlayerShip]:
         """Get all ships owned by a player."""
         try:
             result = await db.execute(
@@ -109,7 +109,7 @@ class PlayerShipRepository(IRepository[PlayerShip]):
             flogger.error(f"Error getting ships for player {player_id}: {e}")
             raise
 
-    async def get_active_ship(self, db: AsyncSession, player_id: int) -> Optional[PlayerShip]:
+    async def get_active_ship(self, db: AsyncSession, player_id: int) -> PlayerShip | None:
         """Get the active ship for a player."""
         try:
             result = await db.execute(
@@ -163,7 +163,7 @@ class PlayerShipRepository(IRepository[PlayerShip]):
         self,
         db: AsyncSession,
         ship_id: int,
-        loadout: Dict[str, List[str]]
+        loadout: dict[str, list[str]]
     ) -> PlayerShip:
         """Update a ship's equipment loadout."""
         try:
@@ -288,7 +288,7 @@ class PlayerShipRepository(IRepository[PlayerShip]):
             await db.rollback()
             raise
 
-    async def get_ships_by_name(self, db: AsyncSession, player_id: int, ship_name: str) -> List[PlayerShip]:
+    async def get_ships_by_name(self, db: AsyncSession, player_id: int, ship_name: str) -> list[PlayerShip]:
         """Get all ships of a specific type owned by a player."""
         try:
             result = await db.execute(
@@ -304,7 +304,7 @@ class PlayerShipRepository(IRepository[PlayerShip]):
             flogger.error(f"Error getting ships by name for player {player_id}: {e}")
             raise
 
-    async def get_ship_loadout_summary(self, db: AsyncSession, ship_id: int) -> Dict[str, Any]:
+    async def get_ship_loadout_summary(self, db: AsyncSession, ship_id: int) -> dict[str, Any]:
         """Get a summary of a ship's current loadout."""
         try:
             ship = await self.get_by_id(db, ship_id)

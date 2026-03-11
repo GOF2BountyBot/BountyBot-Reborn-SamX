@@ -6,7 +6,6 @@ that can have multiple players across different guilds.
 """
 
 from datetime import UTC, datetime
-from typing import List
 
 from sqlalchemy import BigInteger, DateTime, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -26,7 +25,7 @@ class User(Base):
     )
 
     # Relationships
-    players: Mapped[List["Player"]] = relationship("Player", back_populates="user", cascade="all, delete-orphan")
+    players: Mapped[list["Player"]] = relationship("Player", back_populates="user", cascade="all, delete-orphan")
 
     def __repr__(self) -> str:
         return f"<User(id={self.id}, username='{self.discord_username}')>"

@@ -5,7 +5,7 @@ Handles database operations for GuildConfig entities including
 guild configuration management, settings persistence, and defaults.
 """
 
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from shared import bblogger
 from sqlalchemy import select
@@ -18,7 +18,7 @@ flogger = bblogger.get_logger("config-repository")
 
 class ConfigRepository(IRepository[GuildConfig]):
 
-    async def get_by_id(self, db: AsyncSession, obj_id: int) -> Optional[GuildConfig]:
+    async def get_by_id(self, db: AsyncSession, obj_id: int) -> GuildConfig | None:
         """Get config by ID."""
         try:
             return await db.get(GuildConfig, obj_id)
@@ -26,11 +26,11 @@ class ConfigRepository(IRepository[GuildConfig]):
             flogger.error(f"Error getting config by ID {obj_id}: {e}")
             raise
 
-    async def get_by_name(self, db: AsyncSession, name: str) -> Optional[GuildConfig]:
+    async def get_by_name(self, db: AsyncSession, name: str) -> GuildConfig | None:
         """Not applicable for configs."""
         raise NotImplementedError("Configs don't have searchable names")
 
-    async def list_all(self, db: AsyncSession) -> List[GuildConfig]:
+    async def list_all(self, db: AsyncSession) -> list[GuildConfig]:
         """Get all guild configs."""
         try:
             result = await db.execute(select(GuildConfig))
@@ -90,7 +90,7 @@ class ConfigRepository(IRepository[GuildConfig]):
             await db.rollback()
             raise
 
-    async def get_by_guild_id(self, db: AsyncSession, guild_id: int) -> Optional[GuildConfig]:
+    async def get_by_guild_id(self, db: AsyncSession, guild_id: int) -> GuildConfig | None:
         """Get config by guild ID."""
         try:
             result = await db.execute(
@@ -137,7 +137,7 @@ class ConfigRepository(IRepository[GuildConfig]):
             flogger.error(f"Error creating default config for guild {guild_id}: {e}")
             raise
 
-    async def update_shop_config(self, db: AsyncSession, config_updates: Dict[str, Any]) -> GuildConfig:
+    async def update_shop_config(self, db: AsyncSession, config_updates: dict[str, Any]) -> GuildConfig:
         """Update shop-related configuration."""
         try:
             guild_id = config_updates.get("guild_id")
@@ -230,7 +230,7 @@ class ConfigRepository(IRepository[GuildConfig]):
             await db.rollback()
             raise
 
-    async def update_xp_thresholds(self, db: AsyncSession, guild_id: int, thresholds: Dict[str, int]) -> GuildConfig:
+    async def update_xp_thresholds(self, db: AsyncSession, guild_id: int, thresholds: dict[str, int]) -> GuildConfig:
         """Update XP thresholds for tier advancement."""
         try:
             config = await self.get_by_guild_id(db, guild_id)
@@ -259,7 +259,7 @@ class ConfigRepository(IRepository[GuildConfig]):
             await db.rollback()
             raise
 
-    async def get_config_summary(self, db: AsyncSession, guild_id: int) -> Dict[str, Any]:
+    async def get_config_summary(self, db: AsyncSession, guild_id: int) -> dict[str, Any]:
         """Get a summary of guild configuration."""
         try:
             config = await self.get_by_guild_id(db, guild_id)
@@ -296,7 +296,7 @@ class ConfigRepository(IRepository[GuildConfig]):
             flogger.error(f"Error getting config summary for guild {guild_id}: {e}")
             raise
 
-    async def get_all_guild_configs(self, db: AsyncSession) -> List[Dict[str, Any]]:
+    async def get_all_guild_configs(self, db: AsyncSession) -> list[dict[str, Any]]:
         """Get summary information for all guild configs."""
         try:
             configs = await self.list_all(db)

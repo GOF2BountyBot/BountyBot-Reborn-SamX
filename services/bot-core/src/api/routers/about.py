@@ -1,4 +1,5 @@
-from typing import Any, AsyncGenerator, Dict, List
+from collections.abc import AsyncGenerator
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
 from persist.database.manager import db_manager
@@ -62,7 +63,7 @@ async def get_db() -> AsyncGenerator[AsyncSession, None]:
     async with db_manager.get_session() as session:
         yield session
 
-@router.get("/categories", response_model=List[str])
+@router.get("/categories", response_model=list[str])
 async def list_categories():
     """
     GET /about/categories
@@ -76,7 +77,7 @@ async def list_categories():
         flogger.error(f"Error retrieving categories: {e}")
         raise HTTPException(status_code=500, detail="Internal server error") from e
 
-@router.get("/categories/{category}/objects", response_model=List[Dict[str, Any]])
+@router.get("/categories/{category}/objects", response_model=list[dict[str, Any]])
 async def list_objects_for_category(category: DataCategory, db: AsyncSession = Depends(get_db)):
     """
     GET /about/categories/{category}/objects
@@ -107,7 +108,7 @@ async def list_objects_for_category(category: DataCategory, db: AsyncSession = D
         flogger.error(f"Error retrieving objects for category {category.value}: {e}")
         raise HTTPException(status_code=500, detail="Internal server error") from e
 
-@router.get("/object/name/{object_name}", response_model=Dict[str, Any])
+@router.get("/object/name/{object_name}", response_model=dict[str, Any])
 async def get_object_by_name(object_name: str, db: AsyncSession = Depends(get_db)):
     """
     GET /about/object/name/{object_name}
@@ -119,7 +120,7 @@ async def get_object_by_name(object_name: str, db: AsyncSession = Depends(get_db
             obj = await repo.get_by_name(db, object_name)
             if obj:
                 # Convert to dict format
-                result: Dict[str, Any] = {
+                result: dict[str, Any] = {
                     "id": obj.id,
                     "name": obj.name,
                     "aliases": obj.aliases or [],
@@ -174,7 +175,7 @@ async def get_object_by_name(object_name: str, db: AsyncSession = Depends(get_db
         flogger.error(f"Error retrieving object '{object_name}': {e}")
         raise HTTPException(status_code=500, detail="Internal server error") from e
 
-@router.get("/object/alias/{alias}", response_model=Dict[str, Any])
+@router.get("/object/alias/{alias}", response_model=dict[str, Any])
 async def get_object_by_alias(alias: str, db: AsyncSession = Depends(get_db)):
     """
     GET /about/object/alias/{alias}
@@ -184,7 +185,7 @@ async def get_object_by_alias(alias: str, db: AsyncSession = Depends(get_db)):
         for category, repo in CATEGORY_REPOS.items():
             obj = await repo.get_by_alias(db, alias)
             if obj:
-                result: Dict[str, Any] = {
+                result: dict[str, Any] = {
                     "id": obj.id,
                     "name": obj.name,
                     "aliases": obj.aliases or [],
@@ -238,7 +239,7 @@ async def get_object_by_alias(alias: str, db: AsyncSession = Depends(get_db)):
         flogger.error(f"Error retrieving object by alias '{alias}': {e}")
         raise HTTPException(status_code=500, detail="Internal server error") from e
 
-@router.get("/object/{category}/{object_id}", response_model=Dict[str, Any])
+@router.get("/object/{category}/{object_id}", response_model=dict[str, Any])
 async def get_object_by_id(category: DataCategory, object_id: int, db: AsyncSession = Depends(get_db)):
     """
     GET /about/object/{category}/{object_id}
@@ -252,7 +253,7 @@ async def get_object_by_id(category: DataCategory, object_id: int, db: AsyncSess
     if not obj:
         raise HTTPException(404, detail=f"{category.value.title()} with ID {object_id} not found")
     try:
-        result: Dict[str, Any] = {
+        result: dict[str, Any] = {
             "id": obj.id,
             "name": obj.name,
             "aliases": obj.aliases or [],

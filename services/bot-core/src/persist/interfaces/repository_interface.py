@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from typing import Generic, List, Optional, TypeVar
+from typing import Generic, TypeVar
 
 from sqlalchemy.ext.asyncio import AsyncSession  # switched
 
@@ -8,15 +8,15 @@ T = TypeVar('T')
 class IRepository(ABC, Generic[T]):
 
     @abstractmethod
-    async def get_by_id(self, db: AsyncSession, obj_id: int) -> Optional[T]:
+    async def get_by_id(self, db: AsyncSession, obj_id: int) -> T | None:
         pass
 
     @abstractmethod
-    async def get_by_name(self, db: AsyncSession, name: str) -> Optional[T]:
+    async def get_by_name(self, db: AsyncSession, name: str) -> T | None:
         """Fetch a T by its unique name"""
 
     @abstractmethod
-    async def list_all(self, db: AsyncSession) -> List[T]:
+    async def list_all(self, db: AsyncSession) -> list[T]:
         pass
 
     @abstractmethod

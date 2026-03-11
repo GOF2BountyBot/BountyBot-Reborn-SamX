@@ -5,7 +5,6 @@ Handles database operations for PlayerInventory entities including
 item management, quantity tracking, and inventory queries.
 """
 
-from typing import List, Optional
 
 from shared import bblogger
 from sqlalchemy import and_, select, update
@@ -18,7 +17,7 @@ flogger = bblogger.get_logger("inventory-repository")
 
 class InventoryRepository(IRepository[PlayerInventory]):
 
-    async def get_by_id(self, db: AsyncSession, obj_id: int) -> Optional[PlayerInventory]:
+    async def get_by_id(self, db: AsyncSession, obj_id: int) -> PlayerInventory | None:
         """Get inventory item by ID."""
         try:
             return await db.get(PlayerInventory, obj_id)
@@ -26,11 +25,11 @@ class InventoryRepository(IRepository[PlayerInventory]):
             flogger.error(f"Error getting inventory item by ID {obj_id}: {e}")
             raise
 
-    async def get_by_name(self, db: AsyncSession, name: str) -> Optional[PlayerInventory]:
+    async def get_by_name(self, db: AsyncSession, name: str) -> PlayerInventory | None:
         """Not applicable for inventory items."""
         raise NotImplementedError("Inventory items don't have searchable names")
 
-    async def list_all(self, db: AsyncSession) -> List[PlayerInventory]:
+    async def list_all(self, db: AsyncSession) -> list[PlayerInventory]:
         """Get all inventory items."""
         try:
             result = await db.execute(select(PlayerInventory))
@@ -97,8 +96,8 @@ class InventoryRepository(IRepository[PlayerInventory]):
         self,
         db: AsyncSession,
         player_id: int,
-        item_type: Optional[str] = None
-    ) -> List[PlayerInventory]:
+        item_type: str | None = None
+    ) -> list[PlayerInventory]:
         """Get all inventory items for a player, optionally filtered by type."""
         try:
             query = select(PlayerInventory).where(PlayerInventory.player_id == player_id)
@@ -118,7 +117,7 @@ class InventoryRepository(IRepository[PlayerInventory]):
         player_id: int,
         item_type: str,
         item_name: str
-    ) -> Optional[PlayerInventory]:
+    ) -> PlayerInventory | None:
         """Get a specific item from player's inventory."""
         try:
             result = await db.execute(

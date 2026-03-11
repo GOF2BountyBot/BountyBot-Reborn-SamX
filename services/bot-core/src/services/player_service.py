@@ -5,7 +5,7 @@ Handles business logic for player management including creation,
 progression, and guild-isolated operations.
 """
 
-from typing import Any, Dict, List
+from typing import Any
 
 from persist.models.player import Player
 from persist.models.user import User
@@ -28,7 +28,7 @@ class PlayerService:
         db: AsyncSession,
         discord_id: int,
         guild_id: int,
-        discord_username: str = None
+        discord_username: str | None = None
     ) -> Player:
         """
         Get existing player or create new one with starter loadout.
@@ -179,7 +179,7 @@ class PlayerService:
             flogger.error(f"Error updating XP for player {player_id}: {e}")
             raise
 
-    def _calculate_tier_from_xp(self, xp: int, thresholds: Dict[str, int]) -> str:
+    def _calculate_tier_from_xp(self, xp: int, thresholds: dict[str, int]) -> str:
         """Calculate player tier based on XP and thresholds."""
         if xp >= thresholds.get("Platinum", 15000):
             return "Platinum"
@@ -215,7 +215,7 @@ class PlayerService:
             flogger.error(f"Error prestiging player {player_id}: {e}")
             raise
 
-    async def get_player_statistics(self, db: AsyncSession, player_id: int) -> Dict[str, Any]:
+    async def get_player_statistics(self, db: AsyncSession, player_id: int) -> dict[str, Any]:
         """Get comprehensive player statistics."""
         try:
             player = await self.player_repo.get_by_id(db, player_id)
@@ -255,7 +255,7 @@ class PlayerService:
             flogger.error(f"Error getting statistics for player {player_id}: {e}")
             raise
 
-    async def get_players_by_tier(self, db: AsyncSession, guild_id: int, tier: str) -> List[Player]:
+    async def get_players_by_tier(self, db: AsyncSession, guild_id: int, tier: str) -> list[Player]:
         """Get all players in a guild with a specific tier."""
         try:
             players = await self.player_repo.get_players_by_guild(db, guild_id)

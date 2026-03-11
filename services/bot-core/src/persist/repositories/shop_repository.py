@@ -5,7 +5,6 @@ Handles database operations for GuildShop entities including
 tier-based shop management, item queries, and inventory operations.
 """
 
-from typing import List, Optional
 
 from shared import bblogger
 from sqlalchemy import and_, delete, select, update
@@ -18,7 +17,7 @@ flogger = bblogger.get_logger("shop-repository")
 
 class ShopRepository(IRepository[GuildShop]):
 
-    async def get_by_id(self, db: AsyncSession, obj_id: int) -> Optional[GuildShop]:
+    async def get_by_id(self, db: AsyncSession, obj_id: int) -> GuildShop | None:
         """Get shop item by ID."""
         try:
             return await db.get(GuildShop, obj_id)
@@ -26,11 +25,11 @@ class ShopRepository(IRepository[GuildShop]):
             flogger.error(f"Error getting shop item by ID {obj_id}: {e}")
             raise
 
-    async def get_by_name(self, db: AsyncSession, name: str) -> Optional[GuildShop]:
+    async def get_by_name(self, db: AsyncSession, name: str) -> GuildShop | None:
         """Not applicable for shop items."""
         raise NotImplementedError("Shop items don't have searchable names without context")
 
-    async def list_all(self, db: AsyncSession) -> List[GuildShop]:
+    async def list_all(self, db: AsyncSession) -> list[GuildShop]:
         """Get all shop items."""
         try:
             result = await db.execute(select(GuildShop))
@@ -99,8 +98,8 @@ class ShopRepository(IRepository[GuildShop]):
         db: AsyncSession,
         guild_id: int,
         tier: str,
-        item_type: Optional[str] = None
-    ) -> List[GuildShop]:
+        item_type: str | None = None
+    ) -> list[GuildShop]:
         """Get all items in a specific guild shop tier, optionally filtered by type."""
         try:
             query = select(GuildShop).where(
@@ -126,7 +125,7 @@ class ShopRepository(IRepository[GuildShop]):
         guild_id: int,
         tier: str,
         item_name: str
-    ) -> Optional[GuildShop]:
+    ) -> GuildShop | None:
         """Get a specific item from a guild shop."""
         try:
             result = await db.execute(
@@ -230,7 +229,7 @@ class ShopRepository(IRepository[GuildShop]):
         guild_id: int,
         tier: str,
         tech_level: int
-    ) -> List[GuildShop]:
+    ) -> list[GuildShop]:
         """Get all items of a specific tech level from a shop."""
         try:
             result = await db.execute(
@@ -268,7 +267,7 @@ class ShopRepository(IRepository[GuildShop]):
             await db.rollback()
             raise
 
-    async def get_items_due_for_refresh(self, db: AsyncSession, guild_id: int) -> List[GuildShop]:
+    async def get_items_due_for_refresh(self, db: AsyncSession, guild_id: int) -> list[GuildShop]:
         """Get all shop items that are due for refresh based on their intervals."""
         try:
             result = await db.execute(

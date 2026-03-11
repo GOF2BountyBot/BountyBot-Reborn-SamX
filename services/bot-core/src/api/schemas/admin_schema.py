@@ -1,4 +1,3 @@
-from typing import Dict, Optional
 
 from pydantic import BaseModel, Field
 
@@ -6,12 +5,12 @@ from pydantic import BaseModel, Field
 # Request/Response Models
 class InitializeGuildRequest(BaseModel):
     guild_id: int
-    admin_role_id: Optional[int] = None
+    admin_role_id: int | None = None
     starting_credits: int = Field(default=0, ge=0)
 
 class GuildInitializationResponse(BaseModel):
     guild_id: int
-    admin_role_id: Optional[int]
+    admin_role_id: int | None
     shops_created: int
     config_created: bool
     message: str
@@ -40,14 +39,14 @@ class RemoveInventoryItemRequest(BaseModel):
 class RefreshShopRequest(BaseModel):
     guild_id: int
     tier: str = Field(pattern="^(Bronze|Silver|Gold|Platinum)$")
-    force_tech_level: Optional[int] = Field(None, ge=1, le=9)
+    force_tech_level: int | None = Field(None, ge=1, le=9)
 
 class UpdateShopConfigRequest(BaseModel):
     guild_id: int
-    tech_level_probabilities: Optional[Dict[str, float]] = None
-    sale_price_factor: Optional[float] = Field(None, gt=0, le=1)
-    item_count_ranges: Optional[Dict[str, Dict[str, int]]] = None
-    quantity_ranges: Optional[Dict[str, Dict[str, int]]] = None
+    tech_level_probabilities: dict[str, float] | None = None
+    sale_price_factor: float | None = Field(None, gt=0, le=1)
+    item_count_ranges: dict[str, dict[str, int]] | None = None
+    quantity_ranges: dict[str, dict[str, int]] | None = None
 
 class SystemHealthResponse(BaseModel):
     database_status: str

@@ -6,7 +6,6 @@ Each player can own multiple ships, but only one can be active at a time.
 """
 
 from datetime import UTC, datetime
-from typing import List, Optional
 
 from sqlalchemy import JSON, Boolean, DateTime, ForeignKey, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -25,13 +24,13 @@ class PlayerShip(Base):
         nullable=False
     )
     ship_name: Mapped[str] = mapped_column(String(100), nullable=False)  # References static ship data
-    nickname: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)  # Custom ship name
+    nickname: Mapped[str | None] = mapped_column(String(100), nullable=True)  # Custom ship name
     is_active: Mapped[bool] = mapped_column(Boolean, default=False)
 
     # Equipment loadouts (stored as JSON arrays of item names)
-    weapons: Mapped[Optional[List[str]]] = mapped_column(JSON, nullable=True)  # Array of equipped weapon names
-    modules: Mapped[Optional[List[str]]] = mapped_column(JSON, nullable=True)  # Array of equipped module names
-    turrets: Mapped[Optional[List[str]]] = mapped_column(JSON, nullable=True)  # Array of equipped turret names
+    weapons: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)  # Array of equipped weapon names
+    modules: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)  # Array of equipped module names
+    turrets: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)  # Array of equipped turret names
 
     created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(UTC))
 

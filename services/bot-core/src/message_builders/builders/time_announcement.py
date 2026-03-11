@@ -7,7 +7,7 @@ parsing time announcement embed payloads.
 
 import json
 from datetime import UTC, datetime
-from typing import Any, Dict, Optional
+from typing import Any
 
 from shared import bblogger
 
@@ -23,13 +23,13 @@ class TimeAnnouncementBuilder(MessagePayloadBuilder):
         logger.debug("get_message_type called")
         return "time_announcement"
 
-    def validate_input(self, data: Dict[str, Any]) -> bool:
+    def validate_input(self, data: dict[str, Any]) -> bool:
         logger.debug(f"validate_input called with data={data}")
         valid = "current_time" in data and isinstance(data["current_time"], str)
         logger.debug(f"validate_input result={valid}")
         return valid
 
-    def build_payload(self, data: Dict[str, Any]) -> Dict[str, Any]:
+    def build_payload(self, data: dict[str, Any]) -> dict[str, Any]:
         logger.debug(f"build_payload called with data={data}")
         if not self.validate_input(data):
             logger.error(f"Invalid input data for time announcement: {data}")
@@ -45,7 +45,7 @@ class TimeAnnouncementBuilder(MessagePayloadBuilder):
         logger.info(f"build_payload generated payload: {payload}")
         return payload
 
-    def extract_data(self, payload: str) -> Optional[Dict[str, Any]]:
+    def extract_data(self, payload: str) -> dict[str, Any] | None:
         logger.debug(f"extract_data called with payload={payload}")
         try:
             payload_dict = json.loads(payload)

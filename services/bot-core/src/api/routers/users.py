@@ -5,7 +5,6 @@ Handles REST API endpoints for user management operations.
 All operations are performed via this API by the discord-gateway service.
 """
 
-from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from persist.database.manager import get_db_session
@@ -151,7 +150,7 @@ async def update_user(
             detail="Failed to update user"
         ) from e
 
-@router.get("/", response_model=List[UserResponse])
+@router.get("/", response_model=list[UserResponse])
 async def list_users(
     skip: int = 0,
     limit: int = 100,
@@ -189,7 +188,7 @@ async def list_users(
 @router.post("/{user_id}/get-or-create", response_model=UserResponse)
 async def get_or_create_user(
     user_id: int,
-    discord_username: Optional[str] = None,
+    discord_username: str | None = None,
     user_repo: UserRepository = Depends(get_user_repository)
 ):
     """

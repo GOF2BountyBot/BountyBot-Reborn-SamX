@@ -8,7 +8,6 @@ by dedicated routers in the announcements/ subdirectory.
 
 import json
 import os
-from typing import List
 from uuid import UUID
 
 import httpx
@@ -112,7 +111,7 @@ async def create_discord_message(
         flogger.exception("Unexpected error in create_discord_message")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to create message: {str(e)}"
+            detail=f"Failed to create message: {e!s}"
         ) from e
 
 @router.put(
@@ -224,19 +223,19 @@ async def get_discord_message(
         flogger.exception("Unexpected error in get_discord_message")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to get message record: {str(e)}"
+            detail=f"Failed to get message record: {e!s}"
         ) from e
 
 @router.get(
     "/guild/{guild_id}",
-    response_model=List[DiscordMessageResponse],
+    response_model=list[DiscordMessageResponse],
     summary="List Discord Messages by Guild",
     description="Return all Discord message records for the given guild."
 )
 async def list_discord_messages_by_guild(
     request: Request,
     guild_id: int
-) -> List[DiscordMessageResponse]:
+) -> list[DiscordMessageResponse]:
     db_manager = request.app.state.db_manager
     async with db_manager.get_session() as db:
         records = await discord_message_repo.list_by_guild(db, guild_id)
@@ -244,7 +243,7 @@ async def list_discord_messages_by_guild(
 
 @router.get(
     "/guild/{guild_id}/channel/{channel_id}",
-    response_model=List[DiscordMessageResponse],
+    response_model=list[DiscordMessageResponse],
     summary="List Discord Messages by Channel",
     description="Return all Discord message records for the given guild and channel."
 )
@@ -252,7 +251,7 @@ async def list_discord_messages_by_channel(
     request: Request,
     guild_id: int,
     channel_id: int
-) -> List[DiscordMessageResponse]:
+) -> list[DiscordMessageResponse]:
     db_manager = request.app.state.db_manager
     async with db_manager.get_session() as db:
         records = await discord_message_repo.list_by_guild_and_channel(db, guild_id, channel_id)
@@ -260,7 +259,7 @@ async def list_discord_messages_by_channel(
 
 @router.get(
     "/guild/{guild_id}/type/{message_type}",
-    response_model=List[DiscordMessageResponse],
+    response_model=list[DiscordMessageResponse],
     summary="List Discord Messages by Type",
     description="Return all Discord message records for the given guild and message type."
 )
@@ -268,7 +267,7 @@ async def list_discord_messages_by_type(
     request: Request,
     guild_id: int,
     message_type: str
-) -> List[DiscordMessageResponse]:
+) -> list[DiscordMessageResponse]:
     db_manager = request.app.state.db_manager
     async with db_manager.get_session() as db:
         records = await discord_message_repo.list_by_guild_and_type(db, guild_id, message_type)
@@ -305,5 +304,5 @@ async def delete_discord_message(
         flogger.exception("Unexpected error in delete_discord_message")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to delete message record: {str(e)}"
+            detail=f"Failed to delete message record: {e!s}"
         ) from e

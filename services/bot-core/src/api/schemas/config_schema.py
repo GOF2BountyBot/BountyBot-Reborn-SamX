@@ -1,4 +1,4 @@
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from pydantic import BaseModel, Field
 
@@ -10,33 +10,33 @@ class GuildConfigResponse(BaseModel):
     admin_role_configured: bool
     starting_credits: int
     sale_price_factor: float
-    xp_thresholds: Dict[str, int]
-    shop_config: Dict[str, Any]
+    xp_thresholds: dict[str, int]
+    shop_config: dict[str, Any]
     created_at: str
     updated_at: str
 
 class ConfigValidationResponse(BaseModel):
     valid: bool
-    errors: List[str]
-    warnings: List[str]
+    errors: list[str]
+    warnings: list[str]
     guild_id: int
 
 class UpdateConfigRequest(BaseModel):
     guild_id: int
-    admin_role_id: Optional[int] = None
-    starting_credits: Optional[int] = Field(None, ge=0)
-    sale_price_factor: Optional[float] = Field(None, gt=0, le=1)
-    xp_thresholds: Optional[Dict[str, int]] = None
+    admin_role_id: int | None = None
+    starting_credits: int | None = Field(None, ge=0)
+    sale_price_factor: float | None = Field(None, gt=0, le=1)
+    xp_thresholds: dict[str, int] | None = None
 
 class UpdateShopConfigRequest(BaseModel):
     guild_id: int
-    tech_level_probabilities: Optional[Dict[str, float]] = None
-    item_count_ranges: Optional[Dict[str, Dict[str, int]]] = None
-    quantity_ranges: Optional[Dict[str, Dict[str, int]]] = None
+    tech_level_probabilities: dict[str, float] | None = None
+    item_count_ranges: dict[str, dict[str, int]] | None = None
+    quantity_ranges: dict[str, dict[str, int]] | None = None
 
 class UpdateXPThresholdsRequest(BaseModel):
     guild_id: int
-    thresholds: Dict[str, int] = Field(
+    thresholds: dict[str, int] = Field(
         ...,
         description="XP thresholds for Silver, Gold, and Platinum tiers"
     )

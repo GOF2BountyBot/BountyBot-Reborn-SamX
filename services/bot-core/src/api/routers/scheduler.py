@@ -1,6 +1,5 @@
 import uuid
-from datetime import datetime, timedelta, timezone
-from typing import List
+from datetime import UTC, datetime, timedelta
 
 from apscheduler.triggers.cron import CronTrigger
 from fastapi import APIRouter, HTTPException, Request
@@ -13,7 +12,7 @@ flogger = get_logger("bot-router-scheduler")
 router = APIRouter(tags=["job-scheduler"])
 
 
-@router.get("/jobs", response_model=List[JobInfo])
+@router.get("/jobs", response_model=list[JobInfo])
 async def list_jobs(req: Request):
     flogger.debug("Listing all scheduled jobs")
     jobs = req.app.state.scheduler.get_jobs()
@@ -52,7 +51,7 @@ async def schedule_job(req: Request, job: OneTimeJob):
     if not job.run_at and job.delay_seconds is None:
         flogger.warning("One-time job request missing both run_at and delay_seconds")
         raise HTTPException(400, "Provide either run_at or delay_seconds")
-    run_date = job.run_at or (datetime.now(timezone.utc) + timedelta(seconds=job.delay_seconds))
+    run_date = job.run_at or (datetime.now(UTC) + timedelta(seconds=job.delay_seconds))
 
     try:
         req.app.state.scheduler.add_job(

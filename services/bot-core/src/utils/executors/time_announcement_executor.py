@@ -1,6 +1,6 @@
 import os
 import traceback
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from urllib.parse import urlencode
 
 import httpx
@@ -21,7 +21,7 @@ async def execute_time_announcement_job(job_id: str, payload: dict):
     - PUT /time to update
     - On first POST, modify the scheduler job to carry the new message_id.
     """
-    start_ts = datetime.now(timezone.utc)
+    start_ts = datetime.now(UTC)
     flogger.info(f"TimeJob[{job_id}] START")
     flogger.trace(f"TimeJob[{job_id}] payload: {payload}")
 

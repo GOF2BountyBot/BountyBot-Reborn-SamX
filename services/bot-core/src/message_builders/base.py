@@ -6,18 +6,18 @@ must implement to ensure consistency and maintainability.
 """
 
 from abc import ABC, abstractmethod
-from typing import Any, Dict, Optional
+from typing import Any
 
 
 class MessagePayloadBuilder(ABC):
     """Abstract base class for message payload builders."""
 
     @abstractmethod
-    def build_payload(self, data: Dict[str, Any]) -> Dict[str, Any]:
+    def build_payload(self, data: dict[str, Any]) -> dict[str, Any]:
         """Build the embed payload from input data."""
 
     @abstractmethod
-    def extract_data(self, payload: str) -> Optional[Dict[str, Any]]:
+    def extract_data(self, payload: str) -> dict[str, Any] | None:
         """Extract structured data from stored payload."""
 
     @abstractmethod
@@ -25,5 +25,5 @@ class MessagePayloadBuilder(ABC):
         """Return the message type identifier."""
 
     @abstractmethod
-    def validate_input(self, data: Dict[str, Any]) -> bool:
+    def validate_input(self, data: dict[str, Any]) -> bool:
         """Validate input data for this message type."""

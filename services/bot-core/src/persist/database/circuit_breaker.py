@@ -7,9 +7,10 @@ the database is experiencing issues.
 
 import asyncio
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Callable, Dict, Type
+from typing import Any
 
 from shared import bblogger
 
@@ -24,7 +25,7 @@ class CircuitState(Enum):
 class CircuitBreakerConfig:
     failure_threshold: int = 5
     recovery_timeout: int = 60
-    expected_exception: Type[Exception] = Exception
+    expected_exception: type[Exception] = Exception
     success_threshold: int = 3  # Successful calls needed to close circuit
 
 class CircuitBreaker:
@@ -38,7 +39,7 @@ class CircuitBreaker:
     """
 
     def __init__(self, failure_threshold: int = 5, recovery_timeout: int = 60,
-                 expected_exception: Type[Exception] = Exception):
+                 expected_exception: type[Exception] = Exception):
         self.config = CircuitBreakerConfig(
             failure_threshold=failure_threshold,
             recovery_timeout=recovery_timeout,
@@ -117,7 +118,7 @@ class CircuitBreaker:
                 self.state = CircuitState.OPEN
                 flogger.warning(f"Circuit breaker OPEN after {self.failure_count} failures")
 
-    def get_state(self) -> Dict[str, Any]:
+    def get_state(self) -> dict[str, Any]:
         """Get current circuit breaker state information."""
         return {
             "state": self.state.value,

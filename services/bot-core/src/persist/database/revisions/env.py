@@ -5,7 +5,7 @@ from logging.config import fileConfig
 
 from alembic import context
 from persist.database.manager import db_manager
-from persist.models import *  # noqa: F401, F403  # pylint: disable=wildcard-import,unused-wildcard-import
+from persist.models import *  # noqa: F403  # pylint: disable=wildcard-import,unused-wildcard-import
 from persist.models.base import Base
 from shared import bblogger
 

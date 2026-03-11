@@ -1,7 +1,6 @@
 import os
 import re
 import unicodedata
-from typing import Dict, Optional
 
 import httpx
 from shared import bblogger
@@ -12,7 +11,7 @@ class EmojiService:
     def __init__(self):
         self.bot_token = os.getenv('BOTTOKEN')
         self.app_id = os.getenv('BOTAPPID')
-        self.emojis_cache: Dict[str, str] = {}
+        self.emojis_cache: dict[str, str] = {}
 
         if not self.bot_token:
             raise ValueError("BOTTOKEN environment variable is required")
@@ -29,14 +28,14 @@ class EmojiService:
                  "Mass Driver MD 10" -> "mass_driver_md_10"
         """
         s = object_name.lower()
-        # → decompose accents (e.g. 'é' → 'e' + '´') and drop the accent parts
+        # decompose accents (e.g. 'e' -> 'e' + accent) and drop the accent parts
         s = unicodedata.normalize('NFD', s)
         s = ''.join(ch for ch in s if unicodedata.category(ch) != 'Mn')
         normalized = re.sub(r'[^a-z0-9]', '', s)
         flogger.debug(f"Normalized '{object_name}' to '{normalized}'")
         return normalized
 
-    def fetch_application_emojis(self) -> Dict[str, str]:
+    def fetch_application_emojis(self) -> dict[str, str]:
         """
         Fetch all application emojis from Discord API.
         Returns a dictionary mapping emoji names to their IDs.
@@ -82,7 +81,7 @@ class EmojiService:
         self.emojis_cache = self.fetch_application_emojis()
         flogger.info(f"Emoji cache loaded with {len(self.emojis_cache)} emojis")
 
-    def resolve_emoji(self, object_name: str) -> Optional[str]:
+    def resolve_emoji(self, object_name: str) -> str | None:
         """
         Resolve an object name to Discord emoji format.
         Returns format: <:emojiname:emojiid> or None if not found.
@@ -103,6 +102,6 @@ class EmojiService:
         flogger.warning(f"No emoji found for '{object_name}' (normalized: '{normalized_name}')")
         return None
 
-    def get_available_emojis(self) -> Dict[str, str]:
+    def get_available_emojis(self) -> dict[str, str]:
         """Return a copy of the current emoji cache."""
         return self.emojis_cache.copy()

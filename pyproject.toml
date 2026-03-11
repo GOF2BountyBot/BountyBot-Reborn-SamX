@@ -34,8 +34,14 @@ exclude = [
 ]
 
 [tool.ruff.lint]
-select = ["E", "F", "W", "I"]
-ignore = ["E712", "E402"]
+select = ["E", "F", "W", "I", "UP", "B", "SIM", "RUF"]
+ignore = [
+    "E712",   # true-false-comparison (SQLAlchemy filter style)
+    "E402",   # module-level import not at top
+    "B008",   # function-call-in-default-argument (FastAPI Depends())
+    "RUF012", # mutable-class-default (SQLAlchemy model columns)
+    "UP046",  # non-pep695-generic-class (keep Generic[T] style for clarity)
+]
 
 [tool.ruff.lint.per-file-ignores]
 "services/bot-core/src/persist/models/*.py" = ["F821"]

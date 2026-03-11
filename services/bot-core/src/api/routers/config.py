@@ -5,7 +5,7 @@ Handles REST API endpoints for guild configuration management including
 settings persistence, validation, and default configurations.
 """
 
-from typing import Any, Dict, List
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Path, status
 from persist.database.manager import get_db_session
@@ -314,7 +314,7 @@ async def validate_guild_config(
             detail="Failed to validate configuration"
         ) from e
 
-@router.get("/guilds", response_model=List[Dict[str, Any]])
+@router.get("/guilds", response_model=list[dict[str, Any]])
 async def get_all_guild_configs(
     skip: int = 0,
     limit: int = 100,

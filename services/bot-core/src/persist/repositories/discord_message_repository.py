@@ -5,8 +5,7 @@ This module provides data access methods for Discord message persistence
 following the repository pattern with embed payload support.
 """
 
-from datetime import datetime, timezone
-from typing import List, Optional
+from datetime import UTC, datetime
 
 from shared import bblogger
 from sqlalchemy import and_, desc, select
@@ -49,7 +48,7 @@ class DiscordMessageRepository(GenericRepository[DiscordMessage]):
         if existing:
             existing.embed_payload = raw["embed_payload"]
             existing.message_type = raw.get("message_type", "general")
-            existing.updated_at = datetime.now(timezone.utc)
+            existing.updated_at = datetime.now(UTC)
             flogger.debug(f"Updated existing Discord message: {existing.id}")
             return existing
 
@@ -72,7 +71,7 @@ class DiscordMessageRepository(GenericRepository[DiscordMessage]):
         guild_id: int,
         channel_id: int,
         message_id: int
-    ) -> Optional[DiscordMessage]:
+    ) -> DiscordMessage | None:
         """
         Get message by composite key (guild_id, channel_id, message_id).
         """
@@ -91,9 +90,9 @@ class DiscordMessageRepository(GenericRepository[DiscordMessage]):
         self,
         db: AsyncSession,
         message_type: str,
-        guild_id: Optional[int] = None,
-        channel_id: Optional[int] = None
-    ) -> List[DiscordMessage]:
+        guild_id: int | None = None,
+        channel_id: int | None = None
+    ) -> list[DiscordMessage]:
         """
         Get messages by type, optionally filtered by guild and channel,
         ordered by creation date descending.
@@ -111,7 +110,7 @@ class DiscordMessageRepository(GenericRepository[DiscordMessage]):
         )
         return list(result.scalars().all())
 
-    async def list_by_guild(self, db: AsyncSession, guild_id: int) -> List[DiscordMessage]:
+    async def list_by_guild(self, db: AsyncSession, guild_id: int) -> list[DiscordMessage]:
         """
         List all messages for a guild ordered by creation date.
         """
@@ -122,7 +121,7 @@ class DiscordMessageRepository(GenericRepository[DiscordMessage]):
         )
         return list(result.scalars().all())
 
-    async def list_by_channel(self, db: AsyncSession, guild_id: int, channel_id: int) -> List[DiscordMessage]:
+    async def list_by_channel(self, db: AsyncSession, guild_id: int, channel_id: int) -> list[DiscordMessage]:
         """
         List all messages for a channel ordered by creation date.
         """
@@ -143,7 +142,7 @@ class DiscordMessageRepository(GenericRepository[DiscordMessage]):
         db: AsyncSession,
         guild_id: int,
         channel_id: int
-    ) -> List[DiscordMessage]:
+    ) -> list[DiscordMessage]:
         """
         List all messages for a specific channel in a guild,
         ordered by creation date descending.
@@ -165,7 +164,7 @@ class DiscordMessageRepository(GenericRepository[DiscordMessage]):
         db: AsyncSession,
         guild_id: int,
         message_type: str
-    ) -> List[DiscordMessage]:
+    ) -> list[DiscordMessage]:
         """
         List all messages of a given type in a guild,
         ordered by creation date descending.

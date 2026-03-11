@@ -1,5 +1,5 @@
 import traceback
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from shared.bblogger import get_logger
 
@@ -22,7 +22,7 @@ class JobExecutor:
         :param job_id:   Unique identifier of the job
         :param payload:  Arbitrary dict passed in when the job was scheduled
         """
-        start_ts = datetime.now(timezone.utc)
+        start_ts = datetime.now(UTC)
         flogger.info(f"[{start_ts.isoformat()}] Starting job '{job_id}' with payload")
         flogger.trace(f"JobExecutor payload: job_id={job_id}, payload={payload}")
 
@@ -36,13 +36,13 @@ class JobExecutor:
             flogger.debug(f"Job '{job_id}': executing generic payload handler")
             # … your existing task/logic here …
 
-            end_ts = datetime.now(timezone.utc)
+            end_ts = datetime.now(UTC)
             duration = (end_ts - start_ts).total_seconds()
             flogger.info(f"[{end_ts.isoformat()}] Completed job '{job_id}' in {duration:.2f}s")
 
         except Exception as e:  # pylint: disable=broad-exception-caught
             flogger.error(
-                f"[{datetime.now(timezone.utc).isoformat()}] "
+                f"[{datetime.now(UTC).isoformat()}] "
                 f"Job '{job_id}' failed: {e}",
                 exc_info=True
             )

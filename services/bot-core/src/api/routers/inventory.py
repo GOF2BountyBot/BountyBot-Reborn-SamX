@@ -6,7 +6,7 @@ This router follows the requirement that all major subsystem interactions
 must be done via REST API.
 """
 
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from persist.database.manager import get_db_session
@@ -37,10 +37,10 @@ router = APIRouter(
 async def get_inventory_service():
     return InventoryService()
 
-@router.get("/player/{player_id}", response_model=List[InventoryItemResponse])
+@router.get("/player/{player_id}", response_model=list[InventoryItemResponse])
 async def get_player_inventory(
     player_id: int,
-    item_type: Optional[str] = None,
+    item_type: str | None = None,
     inventory_service: InventoryService = Depends(get_inventory_service)
 ):
     """
@@ -181,7 +181,7 @@ async def remove_item_from_inventory(
             detail="Failed to remove item from inventory"
         ) from e
 
-@router.post("/transfer", response_model=Dict[str, Any])
+@router.post("/transfer", response_model=dict[str, Any])
 async def transfer_item_between_players(
     request: TransferItemRequest,
     inventory_service: InventoryService = Depends(get_inventory_service)
@@ -217,7 +217,7 @@ async def transfer_item_between_players(
             detail="Failed to transfer item"
         ) from e
 
-@router.get("/player/{player_id}/search", response_model=List[InventoryItemResponse])
+@router.get("/player/{player_id}/search", response_model=list[InventoryItemResponse])
 async def search_inventory(
     player_id: int,
     q: str,

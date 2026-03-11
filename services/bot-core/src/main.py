@@ -217,9 +217,7 @@ async def root():
 class HealthFilter(pyLogging.Filter):
     def filter(self, record: pyLogging.LogRecord) -> bool:
         msg = record.getMessage()
-        if "/api/v1/health/" in msg:
-            return False
-        return True
+        return "/api/v1/health/" not in msg
 
 if __name__ == "__main__":
     import uvicorn

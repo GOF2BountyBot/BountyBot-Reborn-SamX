@@ -5,7 +5,7 @@ Handles business logic for guild configuration management including
 settings persistence, validation, and default configurations.
 """
 
-from typing import Any, Dict, List
+from typing import Any
 
 from persist.repositories.config_repository import ConfigRepository
 from persist.repositories.player_repository import PlayerRepository
@@ -21,7 +21,7 @@ class ConfigService:
         self.player_repo = PlayerRepository()
         self.shop_repo = ShopRepository()
 
-    async def get_guild_config(self, db: AsyncSession, guild_id: int) -> Dict[str, Any]:
+    async def get_guild_config(self, db: AsyncSession, guild_id: int) -> dict[str, Any]:
         """Get guild configuration, creating default if none exists."""
         try:
             config = await self.config_repo.get_by_guild_id(db, guild_id)
@@ -37,7 +37,7 @@ class ConfigService:
             flogger.error(f"Error getting guild config for {guild_id}: {e}")
             raise
 
-    async def create_or_update_config(self, db: AsyncSession, config_data: Dict[str, Any]) -> Dict[str, Any]:
+    async def create_or_update_config(self, db: AsyncSession, config_data: dict[str, Any]) -> dict[str, Any]:
         """Create or update guild configuration."""
         try:
             guild_id = config_data.get("guild_id")
@@ -57,7 +57,7 @@ class ConfigService:
             flogger.error(f"Error creating/updating config: {e}")
             raise
 
-    async def update_shop_config(self, db: AsyncSession, config_updates: Dict[str, Any]) -> Dict[str, Any]:
+    async def update_shop_config(self, db: AsyncSession, config_updates: dict[str, Any]) -> dict[str, Any]:
         """Update shop-specific configuration parameters."""
         try:
             guild_id = config_updates.get("guild_id")
@@ -77,7 +77,7 @@ class ConfigService:
             flogger.error(f"Error updating shop config: {e}")
             raise
 
-    async def reset_to_defaults(self, db: AsyncSession, guild_id: int) -> Dict[str, Any]:
+    async def reset_to_defaults(self, db: AsyncSession, guild_id: int) -> dict[str, Any]:
         """Reset guild configuration to default values."""
         try:
             await self.config_repo.reset_to_defaults(db, guild_id)
@@ -89,7 +89,7 @@ class ConfigService:
             flogger.error(f"Error resetting config for guild {guild_id}: {e}")
             raise
 
-    async def update_admin_role(self, db: AsyncSession, guild_id: int, role_id: int) -> Dict[str, Any]:
+    async def update_admin_role(self, db: AsyncSession, guild_id: int, role_id: int) -> dict[str, Any]:
         """Update the admin role for a guild."""
         try:
             if role_id <= 0:
@@ -104,7 +104,7 @@ class ConfigService:
             flogger.error(f"Error updating admin role for guild {guild_id}: {e}")
             raise
 
-    async def update_starting_credits(self, db: AsyncSession, guild_id: int, new_credits: int) -> Dict[str, Any]:
+    async def update_starting_credits(self, db: AsyncSession, guild_id: int, new_credits: int) -> dict[str, Any]:
         """Update the starting new_credits amount for new players."""
         try:
             if new_credits < 0:
@@ -123,8 +123,8 @@ class ConfigService:
         self,
         db: AsyncSession,
         guild_id: int,
-        thresholds: Dict[str, int]
-    ) -> Dict[str, Any]:
+        thresholds: dict[str, int]
+    ) -> dict[str, Any]:
         """Update XP thresholds for tier advancement."""
         try:
             # Validate thresholds
@@ -148,7 +148,7 @@ class ConfigService:
             flogger.error(f"Error updating XP thresholds for guild {guild_id}: {e}")
             raise
 
-    async def clear_guild_players(self, db: AsyncSession, guild_id: int) -> Dict[str, Any]:
+    async def clear_guild_players(self, db: AsyncSession, guild_id: int) -> dict[str, Any]:
         """Clear all player data for a guild (used in reset operations)."""
         try:
             # Get all players in the guild
@@ -172,7 +172,7 @@ class ConfigService:
             flogger.error(f"Error clearing players for guild {guild_id}: {e}")
             raise
 
-    async def uninstall_guild(self, db: AsyncSession, guild_id: int) -> Dict[str, Any]:
+    async def uninstall_guild(self, db: AsyncSession, guild_id: int) -> dict[str, Any]:
         """Completely remove all data for a guild."""
         try:
             removed_counts = {
@@ -201,7 +201,7 @@ class ConfigService:
             flogger.error(f"Error uninstalling guild {guild_id}: {e}")
             raise
 
-    async def get_all_guild_configs(self, db: AsyncSession) -> List[Dict[str, Any]]:
+    async def get_all_guild_configs(self, db: AsyncSession) -> list[dict[str, Any]]:
         """Get summary information for all configured guilds."""
         try:
             configs = await self.config_repo.get_all_guild_configs(db)
@@ -217,7 +217,7 @@ class ConfigService:
         self,
         db: AsyncSession,
         guild_id: int
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Validate that current configuration is compatible with system requirements."""
         try:
             config = await self.config_repo.get_by_guild_id(db, guild_id)
@@ -269,13 +269,12 @@ class ConfigService:
             flogger.error(f"Error validating config for guild {guild_id}: {e}")
             raise
 
-    async def _validate_config_data(self, config_data: Dict[str, Any]) -> Dict[str, Any]:
+    async def _validate_config_data(self, config_data: dict[str, Any]) -> dict[str, Any]:
         """Validate configuration data before saving."""
         validated_config = config_data.copy()
 
         # Validate starting credits
-        if "starting_credits" in validated_config:
-            if validated_config["starting_credits"] < 0:
+        if "starting_credits" in validated_config and validated_config["starting_credits"] < 0:
                 raise ValueError("Starting credits cannot be negative")
 
         # Validate sale price factor
@@ -300,7 +299,7 @@ class ConfigService:
 
         return validated_config
 
-    async def _validate_shop_config(self, config_updates: Dict[str, Any]) -> Dict[str, Any]:
+    async def _validate_shop_config(self, config_updates: dict[str, Any]) -> dict[str, Any]:
         """Validate shop configuration updates."""
         validated_updates = config_updates.copy()
 

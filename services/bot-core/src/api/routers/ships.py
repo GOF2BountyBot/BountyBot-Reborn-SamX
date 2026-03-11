@@ -5,7 +5,6 @@ Handles REST API endpoints for ship management including ownership,
 loadout management, and active ship selection.
 """
 
-from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from persist.database.manager import get_db_session
@@ -41,7 +40,7 @@ async def get_ship_repository():
 async def get_player_repository():
     return PlayerRepository()
 
-@router.get("/player/{player_id}", response_model=List[ShipResponse])
+@router.get("/player/{player_id}", response_model=list[ShipResponse])
 async def get_player_ships(
     player_id: int,
     ship_repo: ShipRepository = Depends(get_ship_repository)
@@ -157,7 +156,7 @@ async def create_ship(
             detail="Failed to create ship"
         ) from e
 
-@router.get("/player/{player_id}/active", response_model=Optional[ShipResponse])
+@router.get("/player/{player_id}/active", response_model=ShipResponse | None)
 async def get_active_ship(
     player_id: int,
     ship_repo: ShipRepository = Depends(get_ship_repository)

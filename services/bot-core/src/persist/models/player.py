@@ -6,7 +6,7 @@ multiple players (one per guild) with completely isolated game state.
 """
 
 from datetime import UTC, datetime
-from typing import List, Optional
+from typing import Optional
 
 from sqlalchemy import BigInteger, DateTime, ForeignKey, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -46,7 +46,7 @@ class Player(Base):
     duel_credits_lost: Mapped[int] = mapped_column(Integer, default=0)
 
     # Active ship reference
-    active_ship_id: Mapped[Optional[int]] = mapped_column(
+    active_ship_id: Mapped[int | None] = mapped_column(
         Integer,
         ForeignKey(f"{TableNames.PlayerShips.value}.id"),
         nullable=True
@@ -60,10 +60,10 @@ class Player(Base):
 
     # Relationships
     user: Mapped["User"] = relationship("User", back_populates="players")
-    inventory: Mapped[List["PlayerInventory"]] = relationship(
+    inventory: Mapped[list["PlayerInventory"]] = relationship(
         "PlayerInventory", back_populates="player", cascade="all, delete-orphan"
     )
-    ships: Mapped[List["PlayerShip"]] = relationship(
+    ships: Mapped[list["PlayerShip"]] = relationship(
         "PlayerShip",
         back_populates="player",
         cascade="all, delete-orphan",

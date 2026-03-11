@@ -5,7 +5,6 @@ This factory pattern allows for easy registration and creation
 of message-specific payload builders.
 """
 
-from typing import Dict, List, Type
 
 from shared import bblogger
 
@@ -17,7 +16,7 @@ logger = bblogger.get_logger("message-builder-factory")
 class MessageBuilderFactory:
     """Factory for creating message payload builders."""
 
-    _builders: Dict[str, Type[MessagePayloadBuilder]] = {
+    _builders: dict[str, type[MessagePayloadBuilder]] = {
         "time_announcement": TimeAnnouncementBuilder,
         # Add more builders as they're created
     }
@@ -35,13 +34,13 @@ class MessageBuilderFactory:
         return builder
 
     @classmethod
-    def register_builder(cls, message_type: str, builder_class: Type[MessagePayloadBuilder]):
+    def register_builder(cls, message_type: str, builder_class: type[MessagePayloadBuilder]):
         """Register a new builder type."""
         logger.info(f"Registering new builder '{builder_class.__name__}' under message_type='{message_type}'")
         cls._builders[message_type] = builder_class
 
     @classmethod
-    def get_supported_types(cls) -> List[str]:
+    def get_supported_types(cls) -> list[str]:
         """Get list of supported message types."""
         types = list(cls._builders.keys())
         logger.debug(f"Supported message types: {types}")

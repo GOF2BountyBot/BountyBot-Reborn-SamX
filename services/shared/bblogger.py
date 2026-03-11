@@ -83,7 +83,7 @@ def get_logger(module_name: str) -> logging.Logger:
             try:
                 os.makedirs(log_dir, exist_ok=True)
             except Exception as e:
-                flogger.error(f"Failed to create log directory '{log_dir}': {e}")
+                logger.error("Failed to create log directory '%s': %s", log_dir, e)
 
         file_handler = RotatingFileHandler(
             filename=log_file,

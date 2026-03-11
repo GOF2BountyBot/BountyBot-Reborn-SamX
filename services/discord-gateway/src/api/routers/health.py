@@ -5,13 +5,14 @@ This module provides health check endpoints to monitor the status
 of the bot service using the new consolidated response schemas.
 """
 
-from fastapi import APIRouter, status, Request
-from datetime import datetime, UTC
-from typing import Dict, Any
-import sys
 import platform
-import shared.bblogger as bblogger
+import sys
+from datetime import UTC, datetime
+from typing import Any, Dict
+
+from shared import bblogger
 from api.schemas.base_schemas import BaseResponse
+from fastapi import APIRouter, Request, status
 
 flogger = bblogger.get_logger("gateway-healthcheck-api-router")
 
@@ -33,7 +34,6 @@ class HealthCheckResponse(BaseResponse):
 
 class SimpleHealthResponse(BaseResponse):
     """Simple health check response for load balancers."""
-    pass
 
 @router.get(
     "",
@@ -42,27 +42,27 @@ class SimpleHealthResponse(BaseResponse):
     summary="Comprehensive Health Check",
     description="Returns detailed health information about the Discord Gateway API service"
 )
-async def health_check(request: Request) -> HealthCheckResponse:
+async def health_check(_request: Request) -> HealthCheckResponse:
     """
     Comprehensive health check endpoint.
     Returns detailed information about the service status,
     environment, and various system checks.
     """
     flogger.debug("Inside health_check method...")
-    
+
     # Basic system checks
     checks = {
         "python_version": sys.version_info >= (3, 8),
         "memory_available": True,  # Could implement actual memory check
         "disk_space": True,  # Could implement actual disk check
     }
-    
+
     # Determine overall status
     all_checks_passed = all(checks.values())
     flogger.trace(f"All Checks Passed: {all_checks_passed}")
-    
+
     service_status = "healthy" if all_checks_passed else "unhealthy"
-    
+
     return HealthCheckResponse(
         status=service_status,
         timestamp=datetime.now(UTC),

@@ -1,10 +1,11 @@
 import os
+from typing import Dict, List
+
 import discord
+import httpx
+from shared import bblogger
 from discord import app_commands
 from discord.ext import commands
-import httpx
-import shared.bblogger as bblogger
-from typing import Dict, List
 
 flogger = bblogger.get_logger("discord-gateway-SkinsCog")
 api_base = os.environ.get("BOT_API_BASE_URL", "http://bot-core:8000/api/v1")
@@ -37,16 +38,16 @@ class SkinsCog(commands.Cog):
                     data = full.json()
                     skins = data.get("compatible_skins") or {}
                     self._ship_skins[name] = list(skins.keys())
-                except Exception as e:
+                except Exception as e:  # pylint: disable=broad-exception-caught
                     flogger.warning(f"Failed to load skins for {name}: {e}")
                     self._ship_skins[name] = []
             flogger.info(f"Finished preloading skins for {len(self._ship_skins)} ships")
-        except Exception as e:
+        except Exception as e:  # pylint: disable=broad-exception-caught
             flogger.error(f"Could not preload ship list: {e}")
 
     async def ship_autocomplete(
         self,
-        interaction: discord.Interaction,
+        _interaction: discord.Interaction,
         current: str
     ) -> List[app_commands.Choice[str]]:
         txt = current.lower()
@@ -112,7 +113,7 @@ class SkinsCog(commands.Cog):
                     f"❌ Ship '{ship}' not found.", ephemeral=True
                 )
             return await interaction.followup.send(f"❌ API error: {e}", ephemeral=True)
-        except Exception as e:
+        except Exception as e:  # pylint: disable=broad-exception-caught
             flogger.error(f"Error fetching ship '{ship}': {e}")
             return await interaction.followup.send(
                 "⚠️ Unexpected error fetching ship data.", ephemeral=True

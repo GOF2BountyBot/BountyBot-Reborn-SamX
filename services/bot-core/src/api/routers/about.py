@@ -1,36 +1,30 @@
-from enum import Enum
-from typing import List, Optional, Dict, Any, AsyncGenerator
-from fastapi import APIRouter, HTTPException, Depends
-from sqlalchemy.ext.asyncio import AsyncSession
-from pydantic import BaseModel
+from typing import Any, AsyncGenerator, Dict, List
 
+from shared import bblogger
+from api.routers.data import DataCategory
+from api.schemas.about_schema import (
+    CriminalResponse,
+    ModuleResponse,
+    PrimaryWeaponResponse,
+    SecondaryWeaponResponse,
+    ShipResponse,
+    SystemResponse,
+    TurretWeaponResponse,
+)
+from fastapi import APIRouter, Depends, HTTPException
 from persist.database.manager import db_manager
+from persist.repositories.criminal_repository import CriminalRepository
 from persist.repositories.module_repository import ModuleRepository
 from persist.repositories.primary_weapon_repository import PrimaryWeaponRepository
 from persist.repositories.secondary_weapon_repository import SecondaryWeaponRepository
-from persist.repositories.turret_weapon_repository import TurretWeaponRepository
 from persist.repositories.ship_repository import ShipRepository
 from persist.repositories.system_repository import SystemRepository
-from persist.repositories.criminal_repository import CriminalRepository
-from api.routers.data import DataCategory
-import shared.bblogger as bblogger
+from persist.repositories.turret_weapon_repository import TurretWeaponRepository
+from sqlalchemy.ext.asyncio import AsyncSession
 
 flogger = bblogger.get_logger("bot-about-router")
 
 router = APIRouter(prefix="/about", tags=["about"])
-
-# Import response models from schemas
-from api.schemas.about_schema import (
-    ItemResponse,
-    ModuleResponse,
-    WeaponResponse,
-    PrimaryWeaponResponse,
-    SecondaryWeaponResponse,
-    TurretWeaponResponse,
-    ShipResponse,
-    CriminalResponse,
-    SystemResponse
-)
 
 # Repository instances
 module_repo = ModuleRepository()
@@ -58,7 +52,7 @@ CATEGORY_RESPONSE_MODELS = {
     DataCategory.primary: PrimaryWeaponResponse,
     DataCategory.secondary: SecondaryWeaponResponse,
     DataCategory.turret: TurretWeaponResponse,
-    DataCategory.ship: ShipResponse,  
+    DataCategory.ship: ShipResponse,
     DataCategory.system:   SystemResponse,
     DataCategory.criminal: CriminalResponse,
 }
@@ -79,7 +73,7 @@ async def list_categories():
         return categories
     except Exception as e:
         flogger.error(f"Error retrieving categories: {e}")
-        raise HTTPException(status_code=500, detail="Internal server error")
+        raise HTTPException(status_code=500, detail="Internal server error") from e
 
 @router.get("/categories/{category}/objects", response_model=List[Dict[str, Any]])
 async def list_objects_for_category(category: DataCategory, db: AsyncSession = Depends(get_db)):
@@ -110,7 +104,7 @@ async def list_objects_for_category(category: DataCategory, db: AsyncSession = D
         raise
     except Exception as e:
         flogger.error(f"Error retrieving objects for category {category.value}: {e}")
-        raise HTTPException(status_code=500, detail="Internal server error")
+        raise HTTPException(status_code=500, detail="Internal server error") from e
 
 @router.get("/object/name/{object_name}", response_model=Dict[str, Any])
 async def get_object_by_name(object_name: str, db: AsyncSession = Depends(get_db)):
@@ -177,7 +171,7 @@ async def get_object_by_name(object_name: str, db: AsyncSession = Depends(get_db
         raise
     except Exception as e:
         flogger.error(f"Error retrieving object '{object_name}': {e}")
-        raise HTTPException(status_code=500, detail="Internal server error")
+        raise HTTPException(status_code=500, detail="Internal server error") from e
 
 @router.get("/object/alias/{alias}", response_model=Dict[str, Any])
 async def get_object_by_alias(alias: str, db: AsyncSession = Depends(get_db)):
@@ -241,7 +235,7 @@ async def get_object_by_alias(alias: str, db: AsyncSession = Depends(get_db)):
         raise
     except Exception as e:
         flogger.error(f"Error retrieving object by alias '{alias}': {e}")
-        raise HTTPException(status_code=500, detail="Internal server error")
+        raise HTTPException(status_code=500, detail="Internal server error") from e
 
 @router.get("/object/{category}/{object_id}", response_model=Dict[str, Any])
 async def get_object_by_id(category: DataCategory, object_id: int, db: AsyncSession = Depends(get_db)):
@@ -310,4 +304,4 @@ async def get_object_by_id(category: DataCategory, object_id: int, db: AsyncSess
         raise
     except Exception as e:
         flogger.error(f"Error retrieving object {object_id}: {e}")
-        raise HTTPException(status_code=500, detail="Internal server error")
+        raise HTTPException(status_code=500, detail="Internal server error") from e

@@ -7,10 +7,11 @@ the database is experiencing issues.
 
 import asyncio
 import time
-from enum import Enum
-from typing import Dict, Any, Callable, Optional, Type
 from dataclasses import dataclass
-import shared.bblogger as bblogger
+from enum import Enum
+from typing import Any, Callable, Dict, Type
+
+from shared import bblogger
 
 flogger = bblogger.get_logger("circuit-breaker")
 
@@ -29,14 +30,14 @@ class CircuitBreakerConfig:
 class CircuitBreaker:
     """
     Circuit breaker implementation for database operations.
-    
+
     Provides automatic fault tolerance by:
     - Opening circuit after failure threshold is reached
     - Allowing limited testing after recovery timeout
     - Closing circuit after successful operations
     """
 
-    def __init__(self, failure_threshold: int = 5, recovery_timeout: int = 60, 
+    def __init__(self, failure_threshold: int = 5, recovery_timeout: int = 60,
                  expected_exception: Type[Exception] = Exception):
         self.config = CircuitBreakerConfig(
             failure_threshold=failure_threshold,
@@ -52,14 +53,14 @@ class CircuitBreaker:
     async def call(self, func: Callable, *args, **kwargs) -> Any:
         """
         Execute a function with circuit breaker protection.
-        
+
         Args:
             func: Function to execute
             *args, **kwargs: Function arguments
-            
+
         Returns:
             Function result
-            
+
         Raises:
             CircuitBreakerOpenException: When circuit is open
             Original exception: When function fails
@@ -76,13 +77,13 @@ class CircuitBreaker:
             result = await func(*args, **kwargs) if asyncio.iscoroutinefunction(func) else func(*args, **kwargs)
             await self._on_success()
             return result
-            
-        except self.config.expected_exception as e:
-            await self._on_failure()
-            raise
+
         except Exception as e:
-            # Unexpected exceptions don't count as failures
-            flogger.warning(f"Unexpected exception in circuit breaker: {e}")
+            if isinstance(e, self.config.expected_exception):
+                await self._on_failure()
+            else:
+                # Unexpected exceptions don't count as failures
+                flogger.warning(f"Unexpected exception in circuit breaker: {e}")
             raise
 
     def _should_attempt_reset(self) -> bool:
@@ -95,7 +96,7 @@ class CircuitBreaker:
         """Handle successful operation."""
         async with self._lock:
             self.failure_count = 0
-            
+
             if self.state == CircuitState.HALF_OPEN:
                 self.success_count += 1
                 if self.success_count >= self.config.success_threshold:
@@ -108,7 +109,7 @@ class CircuitBreaker:
         async with self._lock:
             self.failure_count += 1
             self.last_failure_time = time.time()
-            
+
             if self.state == CircuitState.HALF_OPEN:
                 self.state = CircuitState.OPEN
                 flogger.warning("Circuit breaker OPEN after failure in HALF_OPEN state")
@@ -129,4 +130,3 @@ class CircuitBreaker:
 
 class CircuitBreakerOpenException(Exception):
     """Exception raised when circuit breaker is open."""
-    pass

@@ -1,7 +1,8 @@
-from sqlalchemy.orm import Mapped, mapped_column
-from sqlalchemy import String, Integer, ARRAY
-from persist.models.base import Base
 from persist.database.tablenames import TableNames
+from persist.models.base import Base
+from sqlalchemy import ARRAY, Integer, String
+from sqlalchemy.orm import Mapped, mapped_column
+
 
 class System(Base):
     __tablename__ = TableNames.System.value

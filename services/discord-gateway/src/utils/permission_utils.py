@@ -6,14 +6,14 @@ including permission flags reference data and permission checking functions.
 Contains NO direct Discord interactions.
 """
 
-from typing import Dict, List, Any, Optional, Union, Set, Tuple, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Set, Tuple
 
 if TYPE_CHECKING:
-    import discord  # type: ignore
+    pass  # type: ignore
 
 class PermissionSource:
     """Represents how a permission was granted."""
-    
+
     def __init__(self, source_type: str, role_name: Optional[str] = None, role_id: Optional[int] = None):
         self.type = source_type  # "direct", "role", "everyone"
         self.role_name = role_name
@@ -73,7 +73,10 @@ PERMISSION_FLAGS = {
     },
     "VIEW_CHANNEL": {
         "value": 0x0000000000000400,
-        "description": "Allows guild members to view a channel, which includes reading messages in text channels and joining voice channels",
+        "description": (
+            "Allows guild members to view a channel, which includes reading messages "
+            "in text channels and joining voice channels"
+        ),
         "channel_types": ["text", "voice", "stage"]
     },
     "SEND_MESSAGES": {
@@ -108,7 +111,10 @@ PERMISSION_FLAGS = {
     },
     "MENTION_EVERYONE": {
         "value": 0x0000000000020000,
-        "description": "Allows for using the @everyone tag to notify all users in a channel, and the @here tag to notify all online users in a channel",
+        "description": (
+            "Allows for using the @everyone tag to notify all users in a channel, "
+            "and the @here tag to notify all online users in a channel"
+        ),
         "channel_types": ["text", "voice", "stage"]
     },
     "USE_EXTERNAL_EMOJIS": {
@@ -223,7 +229,10 @@ PERMISSION_FLAGS = {
     },
     "MODERATE_MEMBERS": {
         "value": 0x0000010000000000,
-        "description": "Allows for timing out users to prevent them from sending or reacting to messages in chat and threads, and from speaking in voice and stage channels",
+        "description": (
+            "Allows for timing out users to prevent them from sending or reacting to messages "
+            "in chat and threads, and from speaking in voice and stage channels"
+        ),
         "channel_types": []
     },
     "VIEW_CREATOR_MONETIZATION_ANALYTICS": {
@@ -238,7 +247,10 @@ PERMISSION_FLAGS = {
     },
     "CREATE_EXPRESSIONS": {
         "value": 0x0000080000000000,
-        "description": "Allows for creating emojis, stickers, and soundboard sounds, and editing/deleting ones created by the current user",
+        "description": (
+            "Allows for creating emojis, stickers, and soundboard sounds, "
+            "and editing/deleting ones created by the current user"
+        ),
         "channel_types": []
     },
     "CREATE_EVENTS": {
@@ -337,9 +349,9 @@ def create_permission_overwrite(allow: Optional[int] = None, deny: Optional[int]
 
     # Import discord only when actually constructing the object to avoid a hard runtime dependency
     try:
-        import discord  # local import
+        import discord  # pylint: disable=import-outside-toplevel
         return discord.PermissionOverwrite(**kwargs)
-    except Exception:
+    except Exception:  # pylint: disable=broad-exception-caught
         # Fall back to returning the raw kwargs dict if discord isn't available.
         # Callers that expect a discord.PermissionOverwrite should import discord themselves.
         return kwargs
@@ -425,7 +437,7 @@ def permissions_to_dict(permissions_value: int) -> Dict[str, bool]:
     """Convert integer permissions value to dictionary of permission flags."""
     return {
         name.lower(): check_permission(permissions_value, name)
-        for name in PERMISSION_FLAGS.keys()
+        for name in PERMISSION_FLAGS
     }
 
 def overwrite_to_dict(overwrite: "Any") -> Dict[str, Any]:
@@ -449,19 +461,19 @@ def overwrite_to_dict(overwrite: "Any") -> Dict[str, Any]:
             "deny": getattr(deny, "value", deny),
             "permissions": {
                 name.lower(): getattr(overwrite, name.lower())
-                for name in PERMISSION_FLAGS.keys()
+                for name in PERMISSION_FLAGS
                 if getattr(overwrite, name.lower()) is not None
             }
         }
-    except Exception:
+    except Exception:  # pylint: disable=broad-exception-caught
         # Last-resort normalization
         result = {}
-        for name in PERMISSION_FLAGS.keys():
+        for name in PERMISSION_FLAGS:
             try:
                 val = getattr(overwrite, name.lower())
                 if val is not None:
                     result[name.lower()] = val
-            except Exception:
+            except Exception:  # pylint: disable=broad-exception-caught
                 continue
         return {"allow": 0, "deny": 0, "permissions": result}
 
@@ -508,7 +520,7 @@ def has_channel_permission(
     try:
         perms = channel.permissions_for(member)
         return bool(getattr(perms, permission.lower(), False))
-    except Exception:
+    except Exception:  # pylint: disable=broad-exception-caught
         # If channel.permissions_for is not available or fails, conservative False
         return False
 
@@ -523,28 +535,28 @@ def has_guild_permission(
     try:
         perms = member.guild_permissions
         return bool(getattr(perms, permission.lower(), False))
-    except Exception:
+    except Exception:  # pylint: disable=broad-exception-caught
         return False
 
 def evaluate_user_guild_permissions(
-    member: "Any", 
-    guild: "Any",
+    member: "Any",
+    _guild: "Any",
     requested_permissions: List[str]
 ) -> Tuple[Dict[str, PermissionSource], Set[str]]:
     """
     Evaluate guild-level permissions for a user.
-    
+
     Returns:
         Tuple of (granted_permissions_dict, denied_permissions_set)
     """
     granted = {}
     denied = set()
-    
+
     try:
         # Get effective guild permissions
         guild_perms = member.guild_permissions
         perms_value = getattr(guild_perms, "value", 0)
-        
+
         # Check administrator first (grants everything)
         if has_administrator(perms_value):
             for perm in requested_permissions:
@@ -553,45 +565,45 @@ def evaluate_user_guild_permissions(
                     admin_source = _find_admin_source(member)
                     granted[perm] = admin_source
             return granted, denied
-        
+
         # Check each requested permission
         for perm in requested_permissions:
             if perm not in PERMISSION_FLAGS:
                 denied.add(perm)
                 continue
-            
+
             if check_permission(perms_value, perm):
                 # Find the source of this permission
                 source = _find_permission_source(member, perm)
                 granted[perm] = source
             else:
                 denied.add(perm)
-                
-    except Exception:
+
+    except Exception:  # pylint: disable=broad-exception-caught
         # Conservative: deny all on error
         denied.update(requested_permissions)
-    
+
     return granted, denied
 
 def evaluate_user_channel_permissions(
     member: "Any",
-    channel: "Any", 
+    channel: "Any",
     requested_permissions: List[str]
 ) -> Tuple[Dict[str, PermissionSource], Set[str]]:
     """
     Evaluate channel-level permissions for a user.
-    
+
     Returns:
         Tuple of (granted_permissions_dict, denied_permissions_set)
     """
     granted = {}
     denied = set()
-    
+
     try:
         # Get effective channel permissions
         channel_perms = channel.permissions_for(member)
         perms_value = getattr(channel_perms, "value", 0)
-        
+
         # Check administrator first (grants everything)
         if has_administrator(perms_value):
             for perm in requested_permissions:
@@ -599,64 +611,64 @@ def evaluate_user_channel_permissions(
                     admin_source = _find_admin_source(member)
                     granted[perm] = admin_source
             return granted, denied
-        
+
         # Check each requested permission
         for perm in requested_permissions:
             if perm not in PERMISSION_FLAGS:
                 denied.add(perm)
                 continue
-            
+
             # Check if permission applies to this channel type
             perm_data = PERMISSION_FLAGS[perm]
             channel_type = getattr(channel, "type", None)
             channel_type_name = getattr(channel_type, "name", "unknown") if channel_type else "unknown"
-            
+
             # Map Discord channel types to our permission channel types
             type_mapping = {
                 "text": "text",
-                "voice": "voice", 
+                "voice": "voice",
                 "stage_voice": "stage",
                 "category": "category",
                 "forum": "text"  # Forum channels use text permissions
             }
-            
+
             mapped_type = type_mapping.get(channel_type_name, "text")
             if perm_data["channel_types"] and mapped_type not in perm_data["channel_types"]:
                 denied.add(perm)
                 continue
-            
+
             if check_permission(perms_value, perm):
                 # Find the source of this permission
                 source = _find_channel_permission_source(member, channel, perm)
                 granted[perm] = source
             else:
                 denied.add(perm)
-                
-    except Exception:
+
+    except Exception:  # pylint: disable=broad-exception-caught
         # Conservative: deny all on error
         denied.update(requested_permissions)
-    
+
     return granted, denied
 
 def evaluate_role_guild_permissions(
     role: "Any",
-    guild: "Any", 
+    _guild: "Any",
     requested_permissions: List[str]
 ) -> Tuple[Dict[str, PermissionSource], Set[str]]:
     """
     Evaluate guild-level permissions for a role.
-    
+
     Returns:
         Tuple of (granted_permissions_dict, denied_permissions_set)
     """
     granted = {}
     denied = set()
-    
+
     try:
         # Get role permissions
         role_perms = role.permissions
         perms_value = getattr(role_perms, "value", 0)
-        
+
         # Check administrator first
         if has_administrator(perms_value):
             for perm in requested_permissions:
@@ -664,22 +676,22 @@ def evaluate_role_guild_permissions(
                     source = PermissionSource("role", role.name, role.id)
                     granted[perm] = source
             return granted, denied
-        
+
         # Check each requested permission
         for perm in requested_permissions:
             if perm not in PERMISSION_FLAGS:
                 denied.add(perm)
                 continue
-            
+
             if check_permission(perms_value, perm):
                 source = PermissionSource("role", role.name, role.id)
                 granted[perm] = source
             else:
                 denied.add(perm)
-                
-    except Exception:
+
+    except Exception:  # pylint: disable=broad-exception-caught
         denied.update(requested_permissions)
-    
+
     return granted, denied
 
 def evaluate_role_channel_permissions(
@@ -689,27 +701,27 @@ def evaluate_role_channel_permissions(
 ) -> Tuple[Dict[str, PermissionSource], Set[str]]:
     """
     Evaluate channel-level permissions for a role.
-    
+
     Returns:
         Tuple of (granted_permissions_dict, denied_permissions_set)
     """
     granted = {}
     denied = set()
-    
+
     try:
         # Get base role permissions
         base_perms = getattr(role.permissions, "value", 0)
-        
+
         # Get channel overwrites for this role
         overwrite = channel.overwrites.get(role)
         allow_val = deny_val = 0
-        
+
         if overwrite:
             try:
                 allow_perm, deny_perm = overwrite.pair()
                 allow_val = getattr(allow_perm, "value", 0)
                 deny_val = getattr(deny_perm, "value", 0)
-            except Exception:
+            except Exception:  # pylint: disable=broad-exception-caught
                 # Fallback: extract from overwrite attributes
                 for perm_name, perm_data in PERMISSION_FLAGS.items():
                     attr_name = perm_name.lower()
@@ -718,10 +730,10 @@ def evaluate_role_channel_permissions(
                         allow_val |= perm_data["value"]
                     elif value is False:
                         deny_val |= perm_data["value"]
-        
+
         # Calculate effective permissions
         effective_perms = calculate_effective_permissions(base_perms, allow_val, deny_val)
-        
+
         # Check administrator
         if has_administrator(effective_perms):
             for perm in requested_permissions:
@@ -729,40 +741,40 @@ def evaluate_role_channel_permissions(
                     source = PermissionSource("role", role.name, role.id)
                     granted[perm] = source
             return granted, denied
-        
+
         # Check each requested permission
         for perm in requested_permissions:
             if perm not in PERMISSION_FLAGS:
                 denied.add(perm)
                 continue
-            
+
             # Check if permission applies to this channel type
             perm_data = PERMISSION_FLAGS[perm]
             channel_type = getattr(channel, "type", None)
             channel_type_name = getattr(channel_type, "name", "unknown") if channel_type else "unknown"
-            
+
             type_mapping = {
                 "text": "text",
                 "voice": "voice",
-                "stage_voice": "stage", 
+                "stage_voice": "stage",
                 "category": "category",
                 "forum": "text"
             }
-            
+
             mapped_type = type_mapping.get(channel_type_name, "text")
             if perm_data["channel_types"] and mapped_type not in perm_data["channel_types"]:
                 denied.add(perm)
                 continue
-            
+
             if check_permission(effective_perms, perm):
                 source = PermissionSource("role", role.name, role.id)
                 granted[perm] = source
             else:
                 denied.add(perm)
-                
-    except Exception:
+
+    except Exception:  # pylint: disable=broad-exception-caught
         denied.update(requested_permissions)
-    
+
     return granted, denied
 
 def _find_admin_source(member: "Any") -> PermissionSource:
@@ -777,7 +789,7 @@ def _find_admin_source(member: "Any") -> PermissionSource:
 def _find_permission_source(member: "Any", permission: str) -> PermissionSource:
     """Find the source of a specific permission for a member."""
     perm_bit = PERMISSION_FLAGS[permission]["value"]
-    
+
     # Check roles from highest to lowest priority
     for role in reversed(member.roles):
         role_perms = getattr(role.permissions, "value", 0)
@@ -785,7 +797,7 @@ def _find_permission_source(member: "Any", permission: str) -> PermissionSource:
             if role.name == "@everyone":
                 return PermissionSource("everyone")
             return PermissionSource("role", role.name, role.id)
-    
+
     return PermissionSource("direct")  # Fallback
 
 def _find_channel_permission_source(member: "Any", channel: "Any", permission: str) -> PermissionSource:
@@ -801,7 +813,7 @@ def _find_channel_permission_source(member: "Any", channel: "Any", permission: s
     def _get_id(obj):
         try:
             return getattr(obj, "id", None)
-        except Exception:
+        except Exception:  # pylint: disable=broad-exception-caught
             return None
 
     member_id = _get_id(member)
@@ -816,12 +828,12 @@ def _find_channel_permission_source(member: "Any", channel: "Any", permission: s
                     allow_perm, _ = user_overwrite.pair()
                     if getattr(allow_perm, "value", 0) & perm_bit:
                         return PermissionSource("direct")
-                except Exception:
+                except Exception:  # pylint: disable=broad-exception-caught
                     if getattr(user_overwrite, permission.lower(), None) is True:
                         return PermissionSource("direct")
                 # If a user overwrite exists but doesn't allow this perm, still continue to check role overwrites
                 break
-    except Exception:
+    except Exception:  # pylint: disable=broad-exception-caught
         # Non-fatal: continue to role checks
         pass
 
@@ -833,7 +845,7 @@ def _find_channel_permission_source(member: "Any", channel: "Any", permission: s
             role_overwrite = None
             try:
                 role_overwrite = channel.overwrites.get(role)
-            except Exception:
+            except Exception:  # pylint: disable=broad-exception-caught
                 role_overwrite = None
 
             # Fallback: search overwrites by matching target id and target looks like a role
@@ -845,7 +857,7 @@ def _find_channel_permission_source(member: "Any", channel: "Any", permission: s
                         if targ_id == role_id and hasattr(targ, "permissions"):
                             role_overwrite = ow
                             break
-                except Exception:
+                except Exception:  # pylint: disable=broad-exception-caught
                     role_overwrite = None
 
             if role_overwrite:
@@ -855,12 +867,12 @@ def _find_channel_permission_source(member: "Any", channel: "Any", permission: s
                         if getattr(role, "name", "") == "@everyone":
                             return PermissionSource("everyone")
                         return PermissionSource("role", role.name, role.id)
-                except Exception:
+                except Exception:  # pylint: disable=broad-exception-caught
                     if getattr(role_overwrite, permission.lower(), None) is True:
                         if getattr(role, "name", "") == "@everyone":
                             return PermissionSource("everyone")
                         return PermissionSource("role", role.name, role.id)
-    except Exception:
+    except Exception:  # pylint: disable=broad-exception-caught
         # Non-fatal; fall back to guild perms
         pass
 

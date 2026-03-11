@@ -5,25 +5,25 @@ This module provides REST endpoints for managing Discord channels
 with simplified URIs and consolidated operations.
 """
 
-from fastapi import APIRouter, HTTPException, Request, status, Query
 import discord
-import shared.bblogger as bblogger
+from shared import bblogger
+from api.schemas.base_schemas import DeleteResponse, SuccessResponse
 from api.schemas.channel_schemas import (
-    ChannelResponse, ChannelUpdateRequest,
-    ForumTagListResponse, ForumTagCreateRequest, ForumTagResponse,
-    ThreadListResponse, ThreadCreateRequest, ThreadResponse
+    ChannelResponse,
+    ChannelUpdateRequest,
+    ForumTagListResponse,
+    ThreadCreateRequest,
+    ThreadListResponse,
+    ThreadResponse,
 )
-from api.schemas.message_schemas import MessageCreateRequest, MessageResponse, MessageListResponse
-from api.schemas.permission_schemas import (
-    PermissionOverwriteListResponse, PermissionOverwriteListRequest
-)
-from api.schemas.base_schemas import SuccessResponse, DeleteResponse
+from api.schemas.message_schemas import MessageCreateRequest, MessageListResponse, MessageResponse
+from api.schemas.permission_schemas import PermissionOverwriteListRequest, PermissionOverwriteListResponse
+from fastapi import APIRouter, HTTPException, Query, Request, status
+
 from utils.discord_converters import ChannelConverter, MessageConverter, PermissionConverter
-from utils.discord_helpers import (
-    resolve_bot, get_entity_or_404, validate_channel_type, handle_discord_exception, normalize_emoji
-)
-from utils.permission_utils import create_permission_overwrite
+from utils.discord_helpers import get_entity_or_404, handle_discord_exception, resolve_bot, validate_channel_type
 from utils.embed_converter import EmbedConverter
+from utils.permission_utils import create_permission_overwrite
 
 flogger = bblogger.get_logger("gateway-channel-router")
 
@@ -54,23 +54,23 @@ async def get_channel(request: Request, channel_id: int) -> ChannelResponse:
         channel = await get_entity_or_404(
             bot.get_channel, bot.fetch_channel, channel_id, "Channel"
         )
-        
+
         if isinstance(channel, discord.CategoryChannel):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"Channel {channel_id} is a category. Use category endpoints instead."
             )
-        
+
         channel_data = ChannelConverter.channel_to_detail(channel)
         flogger.info(f"Successfully retrieved channel details for {channel.name}")
-        
+
         return ChannelResponse(
             status="success",
             data=channel_data
         )
     except HTTPException:
         raise
-    except Exception as exc:
+    except Exception as exc:  # pylint: disable=broad-exception-caught
         flogger.error(f"Unexpected error in get_channel for channel {channel_id}: {exc}")
         await handle_discord_exception("get channel details", exc)
 
@@ -91,13 +91,13 @@ async def update_channel(
         channel = await get_entity_or_404(
             bot.get_channel, bot.fetch_channel, channel_id, "Channel"
         )
-        
+
         if isinstance(channel, discord.CategoryChannel):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Use category endpoints to update categories"
             )
-        
+
         # Resolve optional category change
         category = None
         if channel_data.category_id is not None:
@@ -110,7 +110,7 @@ async def update_channel(
                         status_code=status.HTTP_404_NOT_FOUND,
                         detail=f"Category {channel_data.category_id} not found"
                     )
-        
+
         # Collect updates
         kwargs = {}
         if channel_data.name is not None:
@@ -119,7 +119,7 @@ async def update_channel(
             kwargs["position"] = channel_data.position
         if category is not None or channel_data.category_id == 0:
             kwargs["category"] = category
-        
+
         # Type-specific fields
         if isinstance(channel, discord.TextChannel):
             if channel_data.topic is not None:
@@ -138,7 +138,7 @@ async def update_channel(
                 kwargs["topic"] = channel_data.topic
             if channel_data.default_auto_archive_duration is not None:
                 kwargs["default_auto_archive_duration"] = channel_data.default_auto_archive_duration
-        
+
         # Apply updates
         if kwargs:
             await channel.edit(**kwargs)
@@ -146,17 +146,17 @@ async def update_channel(
             channel = await get_entity_or_404(
                 bot.get_channel, bot.fetch_channel, channel_id, "Channel"
             )
-        
+
         updated_channel_data = ChannelConverter.channel_to_detail(channel)
         flogger.info(f"Successfully updated channel {channel.name}")
-        
+
         return ChannelResponse(
             status="updated",
             data=updated_channel_data
         )
     except HTTPException:
         raise
-    except Exception as exc:
+    except Exception as exc:  # pylint: disable=broad-exception-caught
         flogger.error(f"Unexpected error in update_channel: {exc}")
         await handle_discord_exception("update channel", exc)
 
@@ -175,13 +175,13 @@ async def delete_channel(request: Request, channel_id: int) -> DeleteResponse:
         channel = await get_entity_or_404(
             bot.get_channel, bot.fetch_channel, channel_id, "Channel"
         )
-        
+
         name, ctype = channel.name, channel.type.name
         await channel.delete()
-        
+
         message = f"{ctype.title()} channel {name} deleted"
         flogger.info(message)
-        
+
         return DeleteResponse(
             status="deleted",
             deleted=True,
@@ -189,7 +189,7 @@ async def delete_channel(request: Request, channel_id: int) -> DeleteResponse:
         )
     except HTTPException:
         raise
-    except Exception as exc:
+    except Exception as exc:  # pylint: disable=broad-exception-caught
         flogger.error(f"Unexpected error in delete_channel: {exc}")
         await handle_discord_exception("delete channel", exc)
 
@@ -210,16 +210,16 @@ async def list_channel_messages(
     try:
         bot = await resolve_bot(request)
         channel = await get_entity_or_404(bot.get_channel, bot.fetch_channel, channel_id, "Channel")
-        
+
         if not hasattr(channel, "history"):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"Channel {channel_id} cannot contain messages"
             )
-        
+
         msgs = [msg async for msg in channel.history(limit=limit)]
         message_data = [MessageConverter.message_to_payload(m) for m in msgs]
-        
+
         flogger.info(f"Retrieved {len(message_data)} messages from channel {channel_id}")
         return MessageListResponse(
             status="success",
@@ -227,7 +227,7 @@ async def list_channel_messages(
         )
     except HTTPException:
         raise
-    except Exception as exc:
+    except Exception as exc:  # pylint: disable=broad-exception-caught
         flogger.error(f"Unexpected error in list_channel_messages: {exc}")
         await handle_discord_exception("list channel messages", exc)
 
@@ -266,7 +266,7 @@ async def create_channel_message(
         # Prefer the request payload's content as the authoritative embed payload we've converted from.
         try:
             content_obj = payload.content.model_dump()  # EmbedPayload -> dict
-        except Exception:
+        except Exception:  # pylint: disable=broad-exception-caught
             # if payload.content is already a plain dict or not a pydantic model
             content_obj = getattr(payload, "content", None)
         message_obj = {
@@ -277,7 +277,10 @@ async def create_channel_message(
             "content": content_obj,
             "timestamp": message.created_at,
             "edited_timestamp": getattr(message, "edited_at", None) or None,
-            "message_type": getattr(getattr(message, "type", None), "name", "general") if getattr(message, "type", None) is not None else "general",
+            "message_type": (
+                getattr(getattr(message, "type", None), "name", "general")
+                if getattr(message, "type", None) is not None else "general"
+            ),
         }
         flogger.info(f"Created message {message.id} in channel {channel_id}")
         # Return a plain dict matching the Message schema so Pydantic can validate it for MessageResponse
@@ -287,7 +290,7 @@ async def create_channel_message(
         )
     except HTTPException:
         raise
-    except Exception as exc:
+    except Exception as exc:  # pylint: disable=broad-exception-caught
         flogger.error(f"Unexpected error in create_channel_message: {exc}")
         await handle_discord_exception("create channel message", exc)
 
@@ -306,12 +309,12 @@ async def get_channel_permissions(request: Request, channel_id: int) -> Permissi
         channel = await get_entity_or_404(
             bot.get_channel, bot.fetch_channel, channel_id, "Channel"
         )
-        
+
         overwrites = []
         for target, overwrite in channel.overwrites.items():
             overwrite_data = PermissionConverter.overwrite_to_payload(target, overwrite, channel.id)
             overwrites.append(overwrite_data)
-        
+
         flogger.info(f"Successfully retrieved {len(overwrites)} permission overwrites for channel {channel.name}")
         return PermissionOverwriteListResponse(
             status="success",
@@ -319,7 +322,7 @@ async def get_channel_permissions(request: Request, channel_id: int) -> Permissi
         )
     except HTTPException:
         raise
-    except Exception as exc:
+    except Exception as exc:  # pylint: disable=broad-exception-caught
         flogger.error(f"Unexpected error in get_channel_permissions for channel {channel_id}: {exc}")
         await handle_discord_exception("get channel permissions", exc)
 
@@ -343,15 +346,15 @@ async def update_channel_permissions(
             bot.get_channel, bot.fetch_channel, channel_id, "Channel"
         )
         guild = channel.guild
-        
+
         # Clear existing
         for target in list(channel.overwrites.keys()):
             await channel.set_permissions(target, overwrite=None)
-        
+
         # Apply new
         for od in permissions_data.overwrites:
             allow, deny = od.allow or 0, od.deny or 0
-            
+
             if od.type == "role":
                 target = guild.get_role(od.target_id)
                 if not target:
@@ -362,19 +365,19 @@ async def update_channel_permissions(
                 if not target:
                     try:
                         target = await guild.fetch_member(od.target_id)
-                    except Exception:
+                    except Exception:  # pylint: disable=broad-exception-caught
                         flogger.warning(f"Member {od.target_id} not found—skipping")
                         continue
-            
+
             overwrite = create_permission_overwrite(allow=allow, deny=deny)
             await channel.set_permissions(target, overwrite=overwrite)
-        
+
         message = f"Permissions updated for channel {channel.name}"
         flogger.info(message)
         return SuccessResponse(status="updated", message=message)
     except HTTPException:
         raise
-    except Exception as exc:
+    except Exception as exc:  # pylint: disable=broad-exception-caught
         flogger.error(f"Unexpected error in update_channel_permissions: {exc}")
         await handle_discord_exception("update channel permissions", exc)
 
@@ -391,15 +394,15 @@ async def list_threads(request: Request, channel_id: int) -> ThreadListResponse:
     try:
         bot = await resolve_bot(request)
         channel = await get_entity_or_404(bot.get_channel, bot.fetch_channel, channel_id, "Channel")
-        
+
         if not isinstance(channel, discord.ForumChannel):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Not a forum channel"
             )
-        
+
         threads = [ChannelConverter.thread_to_summary(t) for t in channel.threads]
-        
+
         flogger.info(f"Retrieved {len(threads)} threads from forum {channel_id}")
         return ThreadListResponse(
             status="success",
@@ -407,7 +410,7 @@ async def list_threads(request: Request, channel_id: int) -> ThreadListResponse:
         )
     except HTTPException:
         raise
-    except Exception as exc:
+    except Exception as exc:  # pylint: disable=broad-exception-caught
         flogger.error(f"Unexpected error in list_threads: {exc}")
         await handle_discord_exception("list threads", exc)
 
@@ -426,15 +429,15 @@ async def create_thread(
     try:
         bot = await resolve_bot(request)
         channel = await get_entity_or_404(bot.get_channel, bot.fetch_channel, channel_id, "Channel")
-        
+
         if not isinstance(channel, discord.ForumChannel):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Not a forum channel"
             )
-        
+
         embed = EmbedConverter.payload_to_embed(payload.initial_message) if payload.initial_message else None
-        
+
         # Create the thread
         try:
             result = await channel.create_thread(
@@ -450,7 +453,7 @@ async def create_thread(
             )
             if embed:
                 await result.send(embed=embed)
-        
+
         # Unpack ThreadWithMessage → actual Thread object
         thread_obj = getattr(result, "thread", result)
         if thread_obj is None:
@@ -458,17 +461,17 @@ async def create_thread(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail="Thread creation failed"
             )
-        
+
         thread_data = ChannelConverter.thread_to_detail(thread_obj)
         flogger.info(f"Successfully created thread {thread_obj.name}")
-        
+
         return ThreadResponse(
             status="created",
             data=thread_data
         )
     except HTTPException:
         raise
-    except Exception as exc:
+    except Exception as exc:  # pylint: disable=broad-exception-caught
         flogger.error(f"Unexpected error in create_thread: {exc}")
         await handle_discord_exception("create thread", exc)
 
@@ -485,15 +488,15 @@ async def list_forum_tags(request: Request, channel_id: int) -> ForumTagListResp
     try:
         bot = await resolve_bot(request)
         channel = await get_entity_or_404(bot.get_channel, bot.fetch_channel, channel_id, "Channel")
-        
+
         if not isinstance(channel, discord.ForumChannel):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Channel is not a forum"
             )
-        
+
         tags = [ChannelConverter.forum_tag_to_payload(t, channel_id=channel_id) for t in channel.available_tags]
-        
+
         flogger.info(f"Retrieved {len(tags)} tags from forum {channel_id}")
         return ForumTagListResponse(
             status="success",
@@ -501,7 +504,7 @@ async def list_forum_tags(request: Request, channel_id: int) -> ForumTagListResp
         )
     except HTTPException:
         raise
-    except Exception as exc:
+    except Exception as exc:  # pylint: disable=broad-exception-caught
         flogger.error(f"Unexpected error in list_forum_tags: {exc}")
         await handle_discord_exception("list forum tags", exc)
 
@@ -519,24 +522,24 @@ async def move_channel_to_category(
     flogger.info(f"move_channel_to_category called for channel_id={channel_id}, category_id={category_id}")
     try:
         bot = await resolve_bot(request)
-        
+
         channel = await get_entity_or_404(
             bot.get_channel, bot.fetch_channel, channel_id, "Channel"
         )
         category = await get_entity_or_404(
             bot.get_channel, bot.fetch_channel, category_id, "Channel"
         )
-        
+
         validate_channel_type(category, ["category"], category_id)
-        
+
         if isinstance(channel, discord.CategoryChannel):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"Cannot move category {channel_id} into another category"
             )
-        
+
         await channel.edit(category=category)
-        
+
         message = f"Channel {channel.name} moved to category {category.name}"
         flogger.info(message)
         return SuccessResponse(
@@ -545,6 +548,6 @@ async def move_channel_to_category(
         )
     except HTTPException:
         raise
-    except Exception as exc:
+    except Exception as exc:  # pylint: disable=broad-exception-caught
         flogger.error(f"Unexpected error in move_channel_to_category: {exc}")
         await handle_discord_exception("move channel to category", exc)

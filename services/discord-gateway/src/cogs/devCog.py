@@ -1,17 +1,18 @@
 import os
+
 import discord
+import httpx
+from shared import bblogger
+from cogs.adminCog import is_admin
 from discord import app_commands
 from discord.ext import commands
-import shared.bblogger as bblogger
-import httpx
-from cogs.adminCog import is_admin
 
 flogger = bblogger.get_logger("discord-gateway-DevCog")
 api_base = os.environ.get("BOT_API_BASE_URL", "http://bot-core:8000/api/v1")
 flogger.debug(f"devCog loading with api_base: {api_base}")
 #TODO:  COme back and make a proper dev check since these are global commands and not limited to a single guild
 class DevCog(commands.Cog):
-    
+
     def __init__(self, bot: commands.Bot):
         self.bot = bot
         self._categories: list[str] = []
@@ -29,12 +30,12 @@ class DevCog(commands.Cog):
             resp.raise_for_status()
             self._categories = resp.json()
             flogger.debug(f"Preloaded data categories: {self._categories}")
-        except Exception as e:
+        except Exception as e:  # pylint: disable=broad-exception-caught
             flogger.warning(f"Failed to preload categories: {e}")
 
     async def category_autocomplete(
         self,
-        interaction: discord.Interaction,
+        _interaction: discord.Interaction,
         current: str
     ) -> list[app_commands.Choice[str]]:
         # include a virtual "All" option
@@ -68,7 +69,7 @@ class DevCog(commands.Cog):
                     count = len(msgs)
                     total_count += count
                     summary_lines.append(f"{cat}: {count} files")
-                except Exception as e:
+                except Exception as e:  # pylint: disable=broad-exception-caught
                     errors.append(f"{cat}: {e}")
 
             header = f"✅ Loaded ALL categories. Total files: {total_count}"
@@ -93,7 +94,7 @@ class DevCog(commands.Cog):
             )
         except httpx.HTTPStatusError as e:
             await interaction.followup.send(f"❌ {e}", ephemeral=True)
-        except Exception as e:
+        except Exception as e:  # pylint: disable=broad-exception-caught
             err_str = str(e)
             max_len = 500
             if len(err_str) > max_len:
@@ -134,7 +135,7 @@ class DevCog(commands.Cog):
                 # call the preload method; most are async
                 await method()
                 reloaded.append(label)
-            except Exception as e:
+            except Exception as e:  # pylint: disable=broad-exception-caught
                 failed.append(f"{label}: {e}")
 
         msg = []
@@ -145,6 +146,6 @@ class DevCog(commands.Cog):
         await interaction.followup.send("\n".join(msg), ephemeral=True)
 
 async def setup(bot: commands.Bot):
-    flogger.debug(f"Setting up DevCog...")
+    flogger.debug("Setting up DevCog...")
     await bot.add_cog(DevCog(bot))
     flogger.info("DevCog loaded")

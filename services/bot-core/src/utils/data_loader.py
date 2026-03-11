@@ -1,11 +1,12 @@
 import json
-from pathlib import Path
 from importlib import import_module
+from pathlib import Path
 
+from shared import bblogger
 from persist.database.manager import db_manager
+
 from utils.emoji_service import EmojiService
 
-import shared.bblogger as bblogger
 flogger = bblogger.get_logger("bot-data-loader")
 
 # Global emoji service instance
@@ -30,8 +31,8 @@ def get_repository(category: str):
     repo_module = f"persist.repositories.{category}_repository"
     try:
         mod = import_module(repo_module)
-    except ModuleNotFoundError:
-        raise RuntimeError(f"No repository module at {repo_module}.py")
+    except ModuleNotFoundError as exc:
+        raise RuntimeError(f"No repository module at {repo_module}.py") from exc
 
     # singularize by dropping trailing 's'
     singular = category[:-1] if category.endswith("s") else category
@@ -39,8 +40,8 @@ def get_repository(category: str):
 
     try:
         repo_cls = getattr(mod, class_name)
-    except AttributeError:
-        raise RuntimeError(f"{repo_module}.py does not export class {class_name}")
+    except AttributeError as exc:
+        raise RuntimeError(f"{repo_module}.py does not export class {class_name}") from exc
 
     return repo_cls()
 
@@ -85,7 +86,7 @@ async def load_data(category: str, data_root: str | Path = None) -> list[str]:
         emoji_service = get_emoji_service()
         emoji_service.load_emojis()
         flogger.info("✓ Emojis pre-loaded successfully")
-    except Exception as e:
+    except Exception as e:  # pylint: disable=broad-exception-caught
         flogger.error(f"Failed to pre-load emojis: {e}")
 
     # Determine root/data dir (one level above "src")
@@ -114,7 +115,7 @@ async def load_data(category: str, data_root: str | Path = None) -> list[str]:
         # Attempt emoji-resolution on the loaded payload
         try:
             payload = _resolve_emojis(payload)
-        except Exception as e:
+        except Exception as e:  # pylint: disable=broad-exception-caught
             flogger.warning(f"Failed to resolve emojis in {json_path.name}: {e}")
 
         async with db_manager.get_session() as db:
@@ -123,7 +124,7 @@ async def load_data(category: str, data_root: str | Path = None) -> list[str]:
                 msg = f"Upserted {obj!r} from {json_path.name}"
                 flogger.debug(msg)
                 results.append(msg)
-            except Exception as e:
+            except Exception as e:  # pylint: disable=broad-exception-caught
                 err = f"Error upserting {json_path.name}: {e}"
                 flogger.exception(err)
                 results.append(err)

@@ -5,9 +5,17 @@ Handles REST API endpoints for guild configuration management including
 settings persistence, validation, and default configurations.
 """
 
-from fastapi import APIRouter, HTTPException, Depends, status, Path
-from typing import List, Optional, Dict, Any
-import shared.bblogger as bblogger
+from typing import Any, Dict, List
+
+from shared import bblogger
+from api.schemas.config_schema import (
+    ConfigValidationResponse,
+    GuildConfigResponse,
+    UpdateConfigRequest,
+    UpdateShopConfigRequest,
+    UpdateXPThresholdsRequest,
+)
+from fastapi import APIRouter, Depends, HTTPException, Path, status
 from persist.database.manager import get_db_session
 from services.config_service import ConfigService
 
@@ -22,15 +30,6 @@ router = APIRouter(
     }
 )
 
-# Import response models from schemas
-from api.schemas.config_schema import (
-    GuildConfigResponse,
-    ConfigValidationResponse,
-    UpdateConfigRequest,
-    UpdateShopConfigRequest,
-    UpdateXPThresholdsRequest
-)
-
 # Dependency injection
 async def get_config_service():
     return ConfigService()
@@ -42,11 +41,11 @@ async def get_guild_config(
 ):
     """Get guild configuration, creating default if none exists."""
     flogger.debug(f"Getting config for guild {guild_id}")
-    
+
     try:
         async with get_db_session() as db:
             config = await config_service.get_guild_config(db, guild_id)
-            
+
             return GuildConfigResponse(
                 guild_id=config["guild_id"],
                 configured=config["configured"],
@@ -58,13 +57,13 @@ async def get_guild_config(
                 created_at=config["created_at"],
                 updated_at=config["updated_at"]
             )
-            
+
     except Exception as e:
         flogger.error(f"Error getting guild config: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to get guild configuration"
-        )
+        ) from e
 
 @router.put("/guild/{guild_id}", response_model=GuildConfigResponse)
 async def update_guild_config(
@@ -74,14 +73,14 @@ async def update_guild_config(
 ):
     """Update guild configuration."""
     flogger.info(f"Updating config for guild {guild_id}")
-    
+
     try:
         # Ensure guild_id matches
         request.guild_id = guild_id
-        
+
         async with get_db_session() as db:
             config = await config_service.create_or_update_config(db, request.dict(exclude_unset=True))
-            
+
             return GuildConfigResponse(
                 guild_id=config["guild_id"],
                 configured=config["configured"],
@@ -93,18 +92,18 @@ async def update_guild_config(
                 created_at=config["created_at"],
                 updated_at=config["updated_at"]
             )
-            
+
     except ValueError as e:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(e)
-        )
+        ) from e
     except Exception as e:
         flogger.error(f"Error updating guild config: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to update guild configuration"
-        )
+        ) from e
 
 @router.put("/guild/{guild_id}/shop", response_model=GuildConfigResponse)
 async def update_shop_config(
@@ -114,14 +113,14 @@ async def update_shop_config(
 ):
     """Update shop-specific configuration parameters."""
     flogger.info(f"Updating shop config for guild {guild_id}")
-    
+
     try:
         # Ensure guild_id matches
         request.guild_id = guild_id
-        
+
         async with get_db_session() as db:
             config = await config_service.update_shop_config(db, request.dict(exclude_unset=True))
-            
+
             return GuildConfigResponse(
                 guild_id=config["guild_id"],
                 configured=config["configured"],
@@ -133,18 +132,18 @@ async def update_shop_config(
                 created_at=config["created_at"],
                 updated_at=config["updated_at"]
             )
-            
+
     except ValueError as e:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(e)
-        )
+        ) from e
     except Exception as e:
         flogger.error(f"Error updating shop config: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to update shop configuration"
-        )
+        ) from e
 
 @router.post("/guild/{guild_id}/reset", response_model=GuildConfigResponse)
 async def reset_guild_config(
@@ -153,11 +152,11 @@ async def reset_guild_config(
 ):
     """Reset guild configuration to default values."""
     flogger.info(f"Resetting config to defaults for guild {guild_id}")
-    
+
     try:
         async with get_db_session() as db:
             config = await config_service.reset_to_defaults(db, guild_id)
-            
+
             return GuildConfigResponse(
                 guild_id=config["guild_id"],
                 configured=config["configured"],
@@ -169,13 +168,13 @@ async def reset_guild_config(
                 created_at=config["created_at"],
                 updated_at=config["updated_at"]
             )
-            
+
     except Exception as e:
         flogger.error(f"Error resetting guild config: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to reset guild configuration"
-        )
+        ) from e
 
 @router.put("/guild/{guild_id}/admin-role/{role_id}", response_model=GuildConfigResponse)
 async def update_admin_role(
@@ -185,11 +184,11 @@ async def update_admin_role(
 ):
     """Update the admin role for a guild."""
     flogger.info(f"Updating admin role for guild {guild_id}: {role_id}")
-    
+
     try:
         async with get_db_session() as db:
             config = await config_service.update_admin_role(db, guild_id, role_id)
-            
+
             return GuildConfigResponse(
                 guild_id=config["guild_id"],
                 configured=config["configured"],
@@ -201,32 +200,32 @@ async def update_admin_role(
                 created_at=config["created_at"],
                 updated_at=config["updated_at"]
             )
-            
+
     except ValueError as e:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(e)
-        )
+        ) from e
     except Exception as e:
         flogger.error(f"Error updating admin role: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to update admin role"
-        )
+        ) from e
 
 @router.put("/guild/{guild_id}/starting-credits/{credits}", response_model=GuildConfigResponse)
 async def update_starting_credits(
     guild_id: int,
-    credits: int = Path(..., ge=0),
+    starting_credits: int = Path(..., ge=0),
     config_service: ConfigService = Depends(get_config_service)
 ):
     """Update the starting credits amount for new players."""
-    flogger.info(f"Updating starting credits for guild {guild_id}: {credits}")
-    
+    flogger.info(f"Updating starting credits for guild {guild_id}: {starting_credits}")
+
     try:
         async with get_db_session() as db:
-            config = await config_service.update_starting_credits(db, guild_id, credits)
-            
+            config = await config_service.update_starting_credits(db, guild_id, starting_credits)
+
             return GuildConfigResponse(
                 guild_id=config["guild_id"],
                 configured=config["configured"],
@@ -238,18 +237,18 @@ async def update_starting_credits(
                 created_at=config["created_at"],
                 updated_at=config["updated_at"]
             )
-            
+
     except ValueError as e:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(e)
-        )
+        ) from e
     except Exception as e:
         flogger.error(f"Error updating starting credits: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to update starting credits"
-        )
+        ) from e
 
 @router.put("/guild/{guild_id}/xp-thresholds", response_model=GuildConfigResponse)
 async def update_xp_thresholds(
@@ -259,11 +258,11 @@ async def update_xp_thresholds(
 ):
     """Update XP thresholds for tier advancement."""
     flogger.info(f"Updating XP thresholds for guild {guild_id}")
-    
+
     try:
         async with get_db_session() as db:
             config = await config_service.update_xp_thresholds(db, guild_id, request.thresholds)
-            
+
             return GuildConfigResponse(
                 guild_id=config["guild_id"],
                 configured=config["configured"],
@@ -275,18 +274,18 @@ async def update_xp_thresholds(
                 created_at=config["created_at"],
                 updated_at=config["updated_at"]
             )
-            
+
     except ValueError as e:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(e)
-        )
+        ) from e
     except Exception as e:
         flogger.error(f"Error updating XP thresholds: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to update XP thresholds"
-        )
+        ) from e
 
 @router.get("/guild/{guild_id}/validate", response_model=ConfigValidationResponse)
 async def validate_guild_config(
@@ -295,24 +294,24 @@ async def validate_guild_config(
 ):
     """Validate that current configuration is compatible with system requirements."""
     flogger.debug(f"Validating config for guild {guild_id}")
-    
+
     try:
         async with get_db_session() as db:
             validation = await config_service.validate_config_compatibility(db, guild_id)
-            
+
             return ConfigValidationResponse(
                 valid=validation["valid"],
                 errors=validation["errors"],
                 warnings=validation["warnings"],
                 guild_id=validation["guild_id"]
             )
-            
+
     except Exception as e:
         flogger.error(f"Error validating config: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to validate configuration"
-        )
+        ) from e
 
 @router.get("/guilds", response_model=List[Dict[str, Any]])
 async def get_all_guild_configs(
@@ -322,22 +321,22 @@ async def get_all_guild_configs(
 ):
     """Get summary information for all configured guilds."""
     flogger.debug(f"Getting all guild configs: skip={skip}, limit={limit}")
-    
+
     try:
         async with get_db_session() as db:
             configs = await config_service.get_all_guild_configs(db)
-            
+
             # Apply pagination
             paginated_configs = configs[skip:skip + limit]
-            
+
             return paginated_configs
-            
+
     except Exception as e:
         flogger.error(f"Error getting all guild configs: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to get guild configurations"
-        )
+        ) from e
 
 @router.get("/defaults")
 async def get_default_config():

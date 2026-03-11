@@ -126,11 +126,11 @@ class TestAdminCheckCommand:
         interaction = _create_mock_interaction()
         user = _create_mock_user()
         interaction.user = user
-        
+
         # Mock developer override
         with patch.dict(os.environ, {"DEVELOPERS": "111111111"}):
             asyncio.run(mock_admin_cog.admin_check.callback(mock_admin_cog, interaction, user))
-        
+
         # Verify response
         interaction.response.defer.assert_called_once_with(thinking=True, ephemeral=True)
         interaction.followup.send.assert_called_once()
@@ -146,7 +146,7 @@ class TestAdminCheckCommand:
         user = _create_mock_user(is_admin=True)
         interaction.user = user
         interaction.guild_id = 987654321
-        
+
         # Mock guild and member
         guild = MagicMock()
         member = MagicMock()
@@ -156,9 +156,9 @@ class TestAdminCheckCommand:
         guild.get_member = MagicMock(return_value=member)
         guild.fetch_member = AsyncMock(return_value=member)
         mock_admin_cog.bot.get_guild = MagicMock(return_value=guild)
-        
+
         asyncio.run(mock_admin_cog.admin_check.callback(mock_admin_cog, interaction, user))
-        
+
         # Verify response
         interaction.response.defer.assert_called_once_with(thinking=True, ephemeral=True)
         interaction.followup.send.assert_called_once()
@@ -173,7 +173,7 @@ class TestAdminCheckCommand:
         user = _create_mock_user(is_admin=False)
         interaction.user = user
         interaction.guild_id = 987654321
-        
+
         # Mock guild and member with role
         guild = MagicMock()
         role = MagicMock()
@@ -182,19 +182,19 @@ class TestAdminCheckCommand:
         member.roles = [role]
         member.guild_permissions = MagicMock()
         member.guild_permissions.administrator = False
-        
+
         guild.get_member = MagicMock(return_value=member)
         guild.fetch_member = AsyncMock(return_value=member)
         mock_admin_cog.bot.get_guild = MagicMock(return_value=guild)
-        
+
         # Mock API response with admin role - patch the cog's http_client
         api_response = MagicMock()
         api_response.status_code = 200
         api_response.json.return_value = {"admin_role_id": 222222222}
         mock_admin_cog.http_client.get = AsyncMock(return_value=api_response)
-        
+
         asyncio.run(mock_admin_cog.admin_check.callback(mock_admin_cog, interaction, user))
-        
+
         # Verify response
         interaction.response.defer.assert_called_once_with(thinking=True, ephemeral=True)
         interaction.followup.send.assert_called_once()
@@ -209,26 +209,26 @@ class TestAdminCheckCommand:
         user = _create_mock_user(is_admin=False)
         interaction.user = user
         interaction.guild_id = 987654321
-        
+
         # Mock guild without admin role
         guild = MagicMock()
         member = MagicMock()
         member.roles = []
         member.guild_permissions = MagicMock()
         member.guild_permissions.administrator = False
-        
+
         guild.get_member = MagicMock(return_value=member)
         guild.fetch_member = AsyncMock(return_value=member)
         mock_admin_cog.bot.get_guild = MagicMock(return_value=guild)
-        
+
         # Mock API response with no admin role - patch the cog's http_client
         api_response = MagicMock()
         api_response.status_code = 200
         api_response.json.return_value = {"admin_role_id": None}
         mock_admin_cog.http_client.get = AsyncMock(return_value=api_response)
-        
+
         asyncio.run(mock_admin_cog.admin_check.callback(mock_admin_cog, interaction, user))
-        
+
         # Verify response
         interaction.response.defer.assert_called_once_with(thinking=True, ephemeral=True)
         interaction.followup.send.assert_called_once()
@@ -250,21 +250,21 @@ class TestAdminSetupCommand:
         interaction.guild.icon = None
         user = _create_mock_user()
         interaction.user = user
-        
+
         # Mock provided role
         role = MagicMock()
         role.id = 222222222
         type(role).mention = PropertyMock(return_value="<@&222222222>")
-        
+
         # Mock HTTP client
         mock_client = MagicMock()
         mock_httpx_client.return_value = mock_client
-        
+
         # Mock API responses
         guild_create_resp = MagicMock()
         guild_create_resp.status_code = 200
         guild_create_resp.json.return_value = {"data": {"id": 987654321}}
-        
+
         init_resp = MagicMock()
         init_resp.status_code = 200
         init_resp.json.return_value = {
@@ -272,12 +272,12 @@ class TestAdminSetupCommand:
             "guild_id": 987654321,
             "shops_created": 4
         }
-        
+
         mock_client.post.side_effect = [guild_create_resp, init_resp]
         mock_client.aclose = AsyncMock()
-        
+
         asyncio.run(mock_admin_cog.admin_setup.callback(mock_admin_cog, interaction, role, 1000))
-        
+
         # Verify behavior
         interaction.response.defer.assert_called_once_with(thinking=True, ephemeral=True)
         interaction.followup.send.assert_called_once()
@@ -290,25 +290,25 @@ class TestAdminSetupCommand:
         interaction.guild = MagicMock()
         interaction.guild.id = 987654321
         interaction.guild.name = "Test Guild"
-        
+
         # Mock role creation
         created_role = MagicMock()
         created_role.id = 222222222
         type(created_role).mention = PropertyMock(return_value="<@&222222222>")
         interaction.guild.create_role = AsyncMock(return_value=created_role)
-        
+
         user = _create_mock_user()
         interaction.user = user
-        
+
         # Mock HTTP client
         mock_client = MagicMock()
         mock_httpx_client.return_value = mock_client
-        
+
         # Mock API responses
         role_create_resp = MagicMock()
         role_create_resp.status_code = 200
         role_create_resp.json.return_value = {"data": {"id": 222222222}}
-        
+
         init_resp = MagicMock()
         init_resp.status_code = 200
         init_resp.json.return_value = {
@@ -316,16 +316,16 @@ class TestAdminSetupCommand:
             "guild_id": 987654321,
             "shops_created": 4
         }
-        
+
         mock_client.post.side_effect = [role_create_resp, init_resp]
         mock_client.aclose = AsyncMock()
-        
+
         # Mock guild.get_role to return the created role
         mock_admin_cog.bot.get_guild = MagicMock(return_value=interaction.guild)
         interaction.guild.get_role = MagicMock(return_value=created_role)
-        
+
         asyncio.run(mock_admin_cog.admin_setup.callback(mock_admin_cog, interaction, None, 1000))
-        
+
         # Verify behavior
         interaction.response.defer.assert_called_once_with(thinking=True, ephemeral=True)
         interaction.followup.send.assert_called_once()
@@ -340,14 +340,14 @@ class TestAdminPlayerCommand:
         # Mock interaction
         interaction = _create_mock_interaction()
         interaction.guild_id = 987654321
-        
+
         # Mock user
         user = _create_mock_user(user_id=111111111, name="Test User")
-        
+
         # Mock HTTP client
         mock_client = MagicMock()
         mock_httpx_client.return_value = mock_client
-        
+
         # Mock API responses
         player_create_resp = MagicMock()
         player_create_resp.status_code = 200
@@ -362,7 +362,7 @@ class TestAdminPlayerCommand:
             "prestige_count": 0,
             "created_at": "2024-01-01T00:00:00"
         }
-        
+
         stats_resp = MagicMock()
         stats_resp.status_code = 200
         stats_resp.json.return_value = {
@@ -370,15 +370,15 @@ class TestAdminPlayerCommand:
             "total_victory": 2,
             "total_defeat": 3
         }
-        
+
         mock_client.post.return_value = player_create_resp
         mock_client.get.return_value = stats_resp
         mock_client.aclose = AsyncMock()
-        
+
         asyncio.run(mock_admin_cog.admin_player.callback(
             mock_admin_cog, interaction, user, "view_stats", None, None
         ))
-        
+
         # Verify behavior
         interaction.response.defer.assert_called_once_with(thinking=True, ephemeral=True)
         interaction.followup.send.assert_called_once()
@@ -389,34 +389,34 @@ class TestAdminPlayerCommand:
         # Mock interaction
         interaction = _create_mock_interaction()
         interaction.guild_id = 987654321
-        
+
         # Mock user
         user = _create_mock_user(user_id=111111111, name="Test User")
-        
+
         # Mock HTTP client
         mock_client = MagicMock()
         mock_httpx_client.return_value = mock_client
-        
+
         # Mock API responses
         player_create_resp = MagicMock()
         player_create_resp.status_code = 200
         player_create_resp.json.return_value = {"id": 1}
-        
+
         update_resp = MagicMock()
         update_resp.status_code = 200
         update_resp.json.return_value = {
             "old_credits": 500,
             "new_credits": 1000
         }
-        
+
         mock_client.post.return_value = player_create_resp
         mock_client.put.return_value = update_resp
         mock_client.aclose = AsyncMock()
-        
+
         asyncio.run(mock_admin_cog.admin_player.callback(
             mock_admin_cog, interaction, user, "set_credits", 1000, None
         ))
-        
+
         # Verify behavior
         interaction.response.defer.assert_called_once_with(thinking=True, ephemeral=True)
         interaction.followup.send.assert_called_once()
@@ -434,15 +434,15 @@ class TestErrorHandling:
         interaction.guild.id = 987654321
         user = _create_mock_user()
         interaction.user = user
-        
+
         # Mock HTTP client with error
         mock_client = MagicMock()
         mock_httpx_client.return_value = mock_client
         mock_client.post = AsyncMock(side_effect=Exception("API error"))
         mock_client.aclose = AsyncMock()
-        
+
         asyncio.run(mock_admin_cog.admin_setup.callback(mock_admin_cog, interaction, None, 1000))
-        
+
         # Verify error handling
         interaction.response.defer.assert_called_once_with(thinking=True, ephemeral=True)
         interaction.followup.send.assert_called_once()
@@ -454,9 +454,9 @@ class TestCogSetup:
     def test_setup_function(self, mock_bot):
         """setup function should add adminCog to bot."""
         from cogs.adminCog import setup
-        
+
         asyncio.run(setup(mock_bot))
-        
+
         mock_bot.add_cog.assert_called_once()
 
 

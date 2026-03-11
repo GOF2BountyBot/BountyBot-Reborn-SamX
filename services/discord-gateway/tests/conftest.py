@@ -8,7 +8,7 @@ from typing import Any, Generator
 
 # ---------------------------------------------------------------------------
 # Mock shared.bblogger BEFORE any application imports.
-# The gateway source does ``import shared.bblogger as bblogger`` at module
+# The gateway source does ``from shared import bblogger`` at module
 # level, so we need fake modules registered in sys.modules before the import
 # chain reaches them.
 # ---------------------------------------------------------------------------
@@ -96,7 +96,7 @@ def mock_discord_module() -> Generator[None, None, None]:
         mock_discord.Embed = MagicMock
         mock_discord.Colour = MagicMock
         mock_discord.Intents = MagicMock
-        
+
         yield mock_discord
 
 
@@ -123,9 +123,9 @@ def mock_discord_bot() -> Generator[MagicMock, None, None]:
     bot.get_cog = MagicMock(return_value=None)
     bot.dispatch = AsyncMock()
     bot.http = MagicMock()
-    
+
     yield bot
-    
+
     # Clean up
     bot.reset_mock()
 
@@ -159,7 +159,7 @@ def test_app() -> Generator[FastAPI, None, None]:
     app.include_router(users_router, prefix="/api/v1")
 
     yield app
-    
+
     # Clean up
     app.state = {}
 
@@ -168,9 +168,9 @@ def test_app() -> Generator[FastAPI, None, None]:
 def client(test_app: FastAPI) -> Generator[TestClient, None, None]:
     """Create a test client for the discord-gateway API."""
     client = TestClient(test_app)
-    
+
     yield client
-    
+
     # Clean up
     client.close()
 
@@ -291,9 +291,9 @@ def mock_discord_intents() -> MagicMock:
 def mock_async_discord_method() -> Generator[AsyncMock, None, None]:
     """Fixture for mocking async Discord methods."""
     mock_method = AsyncMock()
-    
+
     yield mock_method
-    
+
     # Clean up
     mock_method.reset_mock()
 
@@ -302,9 +302,9 @@ def mock_async_discord_method() -> Generator[AsyncMock, None, None]:
 def mock_sync_discord_method() -> Generator[MagicMock, None, None]:
     """Fixture for mocking sync Discord methods."""
     mock_method = MagicMock()
-    
+
     yield mock_method
-    
+
     # Clean up
     mock_method.reset_mock()
 
@@ -356,9 +356,9 @@ def mock_database_session() -> Generator[MagicMock, None, None]:
     session.rollback = MagicMock()
     session.close = MagicMock()
     session.query = MagicMock()
-    
+
     yield session
-    
+
     # Clean up
     session.reset_mock()
 

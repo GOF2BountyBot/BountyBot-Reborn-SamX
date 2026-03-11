@@ -1,25 +1,23 @@
+import asyncio
+import importlib
 import os
 import pkgutil
-import importlib
-import asyncio
-from contextlib import asynccontextmanager
 import sys
-import time
-from typing import Callable, Any, Dict
+from contextlib import asynccontextmanager
+from typing import Any, Callable, Dict
 
 import discord
+import uvicorn
 from discord.ext import commands
-
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-import uvicorn
 
-import shared.bblogger as bblogger
+from shared import bblogger
 
 # Add the current directory to path for relative imports
-sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from utils.command_utils import get_command_handler
 
-from utils.command_utils import CommandHandler, get_command_handler
 
 # ─── Bot Configuration ──────────────────────────────────────────────────────────
 class GatewayBot(commands.Bot):
@@ -56,17 +54,17 @@ class GatewayBot(commands.Bot):
         self.flogger.info(f"=== SETUP HOOK COMPLETED ({count} cogs) ===")
 
     async def execute_command_with_validation(
-        self, 
-        ctx: commands.Context, 
-        command_name: str, 
+        self,
+        ctx: commands.Context,
+        command_name: str,
         handler: Callable[[commands.Context], Any],
         permissions: Dict[str, Any] = None,
         cooldown_seconds: int = 5
     ) -> bool:
         """Execute a command with validation and error handling"""
         return await self.command_handler.execute_command(
-            ctx, 
-            command_name, 
+            ctx,
+            command_name,
             handler,
             permissions,
             cooldown_seconds

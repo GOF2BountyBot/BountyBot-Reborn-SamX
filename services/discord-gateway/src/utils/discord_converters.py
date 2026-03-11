@@ -6,18 +6,19 @@ and Discord objects, ensuring 100% consistency and round-trip accuracy.
 All converters are completely generic and contain no business logic.
 """
 
-from typing import Dict, Any, Optional, List, Union
+from typing import Any, Dict, Optional, Union
+
 import discord
-from datetime import datetime
+from shared import bblogger
+from api.schemas.channel_schemas import Category, Channel, Thread
 from api.schemas.guild_schemas import Guild
-from api.schemas.channel_schemas import Channel, Category, Thread
-from api.schemas.role_schemas import Role
-from api.schemas.user_schemas import User, Member
-from api.schemas.permission_schemas import PermissionOverwrite
 from api.schemas.message_schemas import Message, MessageSummary
-from utils.embed_converter import EmbedConverter
+from api.schemas.permission_schemas import PermissionOverwrite
+from api.schemas.role_schemas import Role
+from api.schemas.user_schemas import Member, User
+
 from utils.discord_helpers import tag_to_dict
-import shared.bblogger as bblogger
+from utils.embed_converter import EmbedConverter
 
 flogger = bblogger.get_logger("discord-converters")
 
@@ -53,7 +54,7 @@ class GuildConverter:
                 preferred_locale=getattr(getattr(guild, "preferred_locale", None), "value", "") or "",
                 nsfw_level=getattr(getattr(guild, "nsfw_level", None), "name", None),
             )
-        except Exception:
+        except Exception:  # pylint: disable=broad-exception-caught
             flogger.exception("Error converting guild to summary")
             raise
 
@@ -66,7 +67,7 @@ class ChannelConverter:
     def _coerce_position(pos: Any) -> int:
         try:
             return 0 if pos is None else int(pos)
-        except Exception:
+        except Exception:  # pylint: disable=broad-exception-caught
             return 0
 
     @staticmethod
@@ -76,7 +77,10 @@ class ChannelConverter:
         """
         Convert a Discord channel to a summary payload.
         """
-        flogger.debug(f"channel_to_summary called for channel: {getattr(channel, 'name', None)} ({getattr(channel, 'id', None)})")
+        flogger.debug(
+            f"channel_to_summary called for channel: "
+            f"{getattr(channel, 'name', None)} ({getattr(channel, 'id', None)})"
+        )
         try:
             position = ChannelConverter._coerce_position(getattr(channel, "position", None))
             return Channel(
@@ -87,7 +91,7 @@ class ChannelConverter:
                 guild_id=getattr(getattr(channel, "guild", None), "id", None),
                 created_at=getattr(getattr(channel, "created_at", None), "isoformat", lambda: "")()
             )
-        except Exception:
+        except Exception:  # pylint: disable=broad-exception-caught
             flogger.exception("Error converting channel to summary")
             raise
 
@@ -98,7 +102,10 @@ class ChannelConverter:
         """
         Convert a Discord channel to a full detail payload.
         """
-        flogger.debug(f"channel_to_detail called for channel: {getattr(channel, 'name', None)} ({getattr(channel, 'id', None)})")
+        flogger.debug(
+            f"channel_to_detail called for channel: "
+            f"{getattr(channel, 'name', None)} ({getattr(channel, 'id', None)})"
+        )
         try:
             position = ChannelConverter._coerce_position(getattr(channel, "position", None))
             data: Dict[str, Any] = {
@@ -122,7 +129,7 @@ class ChannelConverter:
             })
 
             return Channel(**data)
-        except Exception:
+        except Exception:  # pylint: disable=broad-exception-caught
             flogger.exception("Error converting channel to detail")
             raise
 
@@ -131,7 +138,10 @@ class ChannelConverter:
         """
         Convert a Discord category to a payload.
         """
-        flogger.debug(f"category_to_detail called for category: {getattr(category, 'name', None)} ({getattr(category, 'id', None)})")
+        flogger.debug(
+            f"category_to_detail called for category: "
+            f"{getattr(category, 'name', None)} ({getattr(category, 'id', None)})"
+        )
         try:
             position = ChannelConverter._coerce_position(getattr(category, "position", None))
             return Category(
@@ -141,7 +151,7 @@ class ChannelConverter:
                 guild_id=getattr(getattr(category, "guild", None), "id", None),
                 created_at=getattr(getattr(category, "created_at", None), "isoformat", lambda: "")()
             )
-        except Exception:
+        except Exception:  # pylint: disable=broad-exception-caught
             flogger.exception("Error converting category to detail")
             raise
 
@@ -153,7 +163,10 @@ class ChannelConverter:
         Defensive: uses getattr with sensible defaults to avoid attribute errors
         across discord.py versions and different runtime objects.
         """
-        flogger.debug(f"thread_to_summary called for thread: {getattr(thread, 'name', None)} ({getattr(thread, 'id', None)})")
+        flogger.debug(
+            f"thread_to_summary called for thread: "
+            f"{getattr(thread, 'name', None)} ({getattr(thread, 'id', None)})"
+        )
         try:
             # parent/channel id: some versions expose parent_id, some expose parent object
             parent_id = getattr(thread, "parent_id", None)
@@ -171,19 +184,22 @@ class ChannelConverter:
                 owner_id = getattr(owner, "id", None) if owner is not None else None
             try:
                 owner_id_int = int(owner_id) if owner_id is not None else 0
-            except Exception:
+            except Exception:  # pylint: disable=broad-exception-caught
                 owner_id_int = 0
 
             # numeric optional fields
             def _int_or_none(v):
                 try:
                     return int(v) if v is not None else None
-                except Exception:
+                except Exception:  # pylint: disable=broad-exception-caught
                     return None
 
             msg_count = _int_or_none(getattr(thread, "message_count", None))
             mem_count = _int_or_none(getattr(thread, "member_count", None))
-            default_auto = _int_or_none(getattr(thread, "auto_archive_duration", None) or getattr(thread, "default_auto_archive_duration", None))
+            default_auto = _int_or_none(
+                getattr(thread, "auto_archive_duration", None)
+                or getattr(thread, "default_auto_archive_duration", None)
+            )
             last_msg = _int_or_none(getattr(thread, "last_message_id", None))
 
             created_at = getattr(getattr(thread, "created_at", None), "isoformat", lambda: "")()
@@ -205,7 +221,7 @@ class ChannelConverter:
                             # might be an int
                             try:
                                 tid = int(at)
-                            except Exception:
+                            except Exception:  # pylint: disable=broad-exception-caught
                                 tid = None
                         if tid is not None:
                             ids.append(int(tid))
@@ -213,7 +229,7 @@ class ChannelConverter:
                         if hasattr(at, "name") or hasattr(at, "emoji"):
                             try:
                                 payloads.append(ChannelConverter.forum_tag_to_payload(at, channel_id=parent_id))
-                            except Exception:
+                            except Exception:  # pylint: disable=broad-exception-caught
                                 # ignore individual tag conversion failure
                                 pass
                     applied_tag_ids = ids if ids else None
@@ -224,9 +240,9 @@ class ChannelConverter:
                     if atids:
                         try:
                             applied_tag_ids = [int(x) for x in atids]
-                        except Exception:
+                        except Exception:  # pylint: disable=broad-exception-caught
                             applied_tag_ids = None
-            except Exception:
+            except Exception:  # pylint: disable=broad-exception-caught
                 # non-fatal; leave tag info as None if anything goes wrong
                 applied_tag_ids = None
                 applied_tags_payload = None
@@ -248,7 +264,7 @@ class ChannelConverter:
                 applied_tag_ids=applied_tag_ids,
                 applied_tags=applied_tags_payload
             )
-        except Exception:
+        except Exception:  # pylint: disable=broad-exception-caught
             flogger.exception("Error converting thread to summary")
             raise
 
@@ -272,7 +288,7 @@ class ChannelConverter:
                 "name": payload.get("name"),
                 "emoji": payload.get("emoji"),
             }
-        except Exception:
+        except Exception:  # pylint: disable=broad-exception-caught
             flogger.exception("Error converting forum tag to payload")
             raise
 
@@ -287,7 +303,10 @@ class PermissionConverter:
         Convert a Discord permission overwrite to a PermissionOverwrite payload.
         channel_id is optional (None for non-channel-scoped contexts).
         """
-        flogger.debug(f"overwrite_to_payload for target: {getattr(target, 'name', None)} ({getattr(target, 'id', None)}) on channel {channel_id}")
+        flogger.debug(
+            f"overwrite_to_payload for target: {getattr(target, 'name', None)} "
+            f"({getattr(target, 'id', None)}) on channel {channel_id}"
+        )
         try:
             allow, deny = overwrite.pair()
             target_type = "role" if isinstance(target, discord.Role) else "member"
@@ -299,7 +318,7 @@ class PermissionConverter:
                 allow=getattr(allow, "value", 0),
                 deny=getattr(deny, "value", 0)
             )
-        except Exception:
+        except Exception:  # pylint: disable=broad-exception-caught
             flogger.exception("Error converting overwrite to payload")
             raise
 
@@ -333,7 +352,7 @@ class RoleConverter:
                 created_at=getattr(getattr(role, "created_at", None), "isoformat", lambda: "")(),
                 tags=tags_data
             )
-        except Exception:
+        except Exception:  # pylint: disable=broad-exception-caught
             flogger.exception("Error converting role to payload")
             raise
 
@@ -357,7 +376,7 @@ class UserConverter:
                 created_at=getattr(getattr(user, "created_at", None), "isoformat", lambda: "")(),
                 public_flags=getattr(getattr(user, "public_flags", None), "value", 0)
             )
-        except Exception:
+        except Exception:  # pylint: disable=broad-exception-caught
             flogger.exception("Error converting user to payload")
             raise
 
@@ -382,7 +401,7 @@ class UserConverter:
                 pending=getattr(member, "pending", False),
                 permissions=getattr(getattr(member, "guild_permissions", None), "value", 0)
             )
-        except Exception:
+        except Exception:  # pylint: disable=broad-exception-caught
             flogger.exception("Error converting member to payload")
             raise
 
@@ -412,7 +431,7 @@ class MessageConverter:
             if embeds:
                 try:
                     content_payload = EmbedConverter.embed_to_payload(embeds[0])
-                except Exception:
+                except Exception:  # pylint: disable=broad-exception-caught
                     # best-effort: convert may fail for odd embed shapes; log and continue
                     flogger.exception("embed_to_payload failed while converting message; content left as None")
                     content_payload = None
@@ -421,15 +440,21 @@ class MessageConverter:
             msg = Message(
                 id=int(message.id),
                 channel_id=int(getattr(message.channel, "id", 0)),
-                guild_id=(int(getattr(getattr(message, "guild", None), "id")) if getattr(message, "guild", None) else None),
+                guild_id=(
+                    int(getattr(getattr(message, "guild", None), "id"))
+                    if getattr(message, "guild", None) else None
+                ),
                 author_id=int(getattr(getattr(message, "author", None), "id", 0)),
                 content=(content_payload if content_payload is not None else None),
                 timestamp=getattr(message, "created_at", None),
                 edited_timestamp=getattr(message, "edited_at", None),
-                message_type=(getattr(getattr(message, "type", None), "name", "default") if getattr(message, "type", None) is not None else "default"),
+                message_type=(
+                    getattr(getattr(message, "type", None), "name", "default")
+                    if getattr(message, "type", None) is not None else "default"
+                ),
             )
             return msg
-        except Exception:
+        except Exception:  # pylint: disable=broad-exception-caught
             flogger.exception("Error converting message to full Message payload")
             raise
 
@@ -474,7 +499,7 @@ class MessageConverter:
                             for f in ep.fields:
                                 try:
                                     fld_texts.append(f"{f.name}: {f.value}")
-                                except Exception:
+                                except Exception:  # pylint: disable=broad-exception-caught
                                     # defensive: skip malformed field
                                     continue
                             text_content = " | ".join(fld_texts) if fld_texts else None
@@ -482,7 +507,7 @@ class MessageConverter:
                             text_content = ep.footer_text
                         else:
                             text_content = None
-                    except Exception:
+                    except Exception:  # pylint: disable=broad-exception-caught
                         # best-effort fallback to raw embed attributes if converter fails
                         flogger.exception("EmbedConverter.embed_to_payload failed; falling back to raw embed attrs")
                         desc = getattr(e, "description", None)
@@ -495,7 +520,7 @@ class MessageConverter:
                         elif fields:
                             try:
                                 text_content = " | ".join(f"{f.name}: {f.value}" for f in fields)
-                            except Exception:
+                            except Exception:  # pylint: disable=broad-exception-caught
                                 text_content = None
 
             # 3) Build and return the MessageSummary
@@ -506,6 +531,6 @@ class MessageConverter:
                 timestamp=getattr(message, "created_at", None)
             )
             return summary
-        except Exception:
+        except Exception:  # pylint: disable=broad-exception-caught
             flogger.exception("Error converting message to MessageSummary")
             raise

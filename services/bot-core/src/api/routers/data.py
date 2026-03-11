@@ -1,8 +1,10 @@
 from enum import Enum
-from fastapi import APIRouter, HTTPException
 from typing import List
 
+from fastapi import APIRouter, HTTPException
+
 from utils.data_loader import load_data
+
 
 class DataCategory(str, Enum):
     module     = "module"
@@ -25,7 +27,7 @@ async def api_load_data(category: DataCategory):
     try:
         return await load_data(category.value)
     except ValueError as e:
-        raise HTTPException(status_code=404, detail=str(e))
+        raise HTTPException(status_code=404, detail=str(e)) from e
 
 @router.get("/categories", response_model=List[str])
 def list_data_categories():

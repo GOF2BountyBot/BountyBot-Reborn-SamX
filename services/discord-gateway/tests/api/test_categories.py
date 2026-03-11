@@ -81,7 +81,7 @@ def _restore_real_discord():
     import tests.mocks.discord_mock_utils as _dmu_mod
     importlib.reload(_dmu_mod)
     # Force the categories router to re-bind its 'discord' global to real discord
-    import api.routers.categories as _categories_mod
+    from api.routers import categories as _categories_mod
     importlib.reload(_categories_mod)
     yield
 

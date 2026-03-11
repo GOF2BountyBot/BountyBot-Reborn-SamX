@@ -1,10 +1,11 @@
 import os
+from typing import List, Optional
+
 import discord
+import httpx
+from shared import bblogger
 from discord import app_commands
 from discord.ext import commands
-import shared.bblogger as bblogger
-import httpx
-from typing import Optional, List, Dict, Any
 
 # Set up logger
 flogger = bblogger.get_logger("discord-gateway-AdminCog")
@@ -39,7 +40,7 @@ def is_admin():
             admin_role_id = resp.json().get("admin_role_id")
             if admin_role_id and any(r.id == admin_role_id for r in interaction.user.roles):
                 return True
-        except Exception:
+        except Exception:  # pylint: disable=broad-exception-caught
             pass
 
         return False
@@ -58,7 +59,7 @@ class AdminCog(commands.Cog):
 
     async def tier_autocomplete(
         self,
-        interaction: discord.Interaction,
+        _interaction: discord.Interaction,
         current: str
     ) -> List[app_commands.Choice[str]]:
         """Autocomplete for shop tiers."""
@@ -114,7 +115,7 @@ class AdminCog(commands.Cog):
                 if admin_role_id and any(r.id == admin_role_id for r in member.roles):
                     has_admin = True
                     reason = "Assigned Bot Admin role"
-            except Exception:
+            except Exception:  # pylint: disable=broad-exception-caught
                 pass
 
         # Build response
@@ -197,7 +198,7 @@ class AdminCog(commands.Cog):
 
         except httpx.HTTPStatusError as e:
             await interaction.followup.send(f"❌ API Error: {e}", ephemeral=True)
-        except Exception as e:
+        except Exception as e:  # pylint: disable=broad-exception-caught
             flogger.error(f"Error in /admin_setup: {e}")
             await interaction.followup.send(
                 "⚠️ An error occurred during guild initialization.",
@@ -211,9 +212,10 @@ class AdminCog(commands.Cog):
     @app_commands.describe(
         user="Player to manage",
         action="Action to perform",
-        credits="Credits to set/add (for credit actions)",
+        credit_amount="Credits to set/add (for credit actions)",
         xp="XP to set (for XP actions)"
     )
+    @app_commands.rename(credit_amount="credits")
     @app_commands.choices(action=[
         app_commands.Choice(name="Set Credits", value="set_credits"),
         app_commands.Choice(name="Add Credits", value="add_credits"),
@@ -227,7 +229,7 @@ class AdminCog(commands.Cog):
         interaction: discord.Interaction,
         user: discord.User,
         action: str,
-        credits: Optional[int] = None,
+        credit_amount: Optional[int] = None,
         xp: Optional[int] = None
     ):
         """Manage player data."""
@@ -254,7 +256,7 @@ class AdminCog(commands.Cog):
                     timeout=10
                 )
                 stats_resp.raise_for_status()
-                stats = stats_resp.json()
+                stats_resp.json()
 
                 embed = discord.Embed(
                     title=f"📊 Admin View - {user.display_name}",
@@ -273,14 +275,14 @@ class AdminCog(commands.Cog):
 
             # Set credits
             elif action == "set_credits":
-                if credits is None:
+                if credit_amount is None:
                     await interaction.followup.send("❌ Credits amount required.", ephemeral=True)
                     return
                 resp = await self.http_client.put(
                     f"{api_base}/admin/players/credits",
                     json={
                         "player_id": player['id'],
-                        "credits": max(0, credits),
+                        "credits": max(0, credit_amount),
                         "update_lifetime": False
                     },
                     timeout=10
@@ -289,7 +291,7 @@ class AdminCog(commands.Cog):
                 result = resp.json()
                 embed = discord.Embed(
                     title="✅ Credits Updated",
-                    description=f"Set {user.display_name}'s credits to {credits:,}",
+                    description=f"Set {user.display_name}'s credits to {credit_amount:,}",
                     color=discord.Color.green()
                 )
                 embed.add_field(name="Old Credits", value=f"{result['old_credits']:,}", inline=True)
@@ -298,10 +300,10 @@ class AdminCog(commands.Cog):
 
             # Add credits
             elif action == "add_credits":
-                if credits is None:
+                if credit_amount is None:
                     await interaction.followup.send("❌ Credits amount required.", ephemeral=True)
                     return
-                new_total = max(0, player['credits'] + credits)
+                new_total = max(0, player['credits'] + credit_amount)
                 resp = await self.http_client.put(
                     f"{api_base}/admin/players/credits",
                     json={
@@ -315,10 +317,10 @@ class AdminCog(commands.Cog):
                 result = resp.json()
                 embed = discord.Embed(
                     title="✅ Credits Added",
-                    description=f"Added {credits:,} credits to {user.display_name}",
+                    description=f"Added {credit_amount:,} credits to {user.display_name}",
                     color=discord.Color.green()
                 )
-                embed.add_field(name="Amount Added", value=f"{credits:,}", inline=True)
+                embed.add_field(name="Amount Added", value=f"{credit_amount:,}", inline=True)
                 embed.add_field(name="New Total", value=f"{result['new_credits']:,}", inline=True)
                 await interaction.followup.send(embed=embed, ephemeral=True)
 
@@ -350,11 +352,14 @@ class AdminCog(commands.Cog):
                     embed.add_field(name="Tier Change", value="✅ Tier Updated!", inline=True)
                 await interaction.followup.send(embed=embed, ephemeral=True)
 
-            flogger.info(f"Admin {interaction.user} performed {action} on player {user} in guild {interaction.guild_id}")
+            flogger.info(
+                f"Admin {interaction.user} performed {action} on player {user} "
+                f"in guild {interaction.guild_id}"
+            )
 
         except httpx.HTTPStatusError as e:
             await interaction.followup.send(f"❌ API Error: {e}", ephemeral=True)
-        except Exception as e:
+        except Exception as e:  # pylint: disable=broad-exception-caught
             flogger.error(f"Error in /admin_player: {e}")
             await interaction.followup.send("⚠️ An error occurred while managing player.", ephemeral=True)
 
@@ -415,7 +420,7 @@ class AdminCog(commands.Cog):
 
         except httpx.HTTPStatusError as e:
             await interaction.followup.send(f"❌ API Error: {e}", ephemeral=True)
-        except Exception as e:
+        except Exception as e:  # pylint: disable=broad-exception-caught
             flogger.error(f"Error in /admin_refresh_shop: {e}")
             await interaction.followup.send("⚠️ An error occurred while refreshing shop.", ephemeral=True)
 
@@ -458,7 +463,7 @@ class AdminCog(commands.Cog):
 
         except httpx.HTTPStatusError as e:
             await interaction.followup.send(f"❌ API Error: {e}", ephemeral=True)
-        except Exception as e:
+        except Exception as e:  # pylint: disable=broad-exception-caught
             flogger.error(f"Error in /admin_guild_stats: {e}")
             await interaction.followup.send("⚠️ An error occurred while fetching guild statistics.", ephemeral=True)
 
@@ -560,7 +565,7 @@ class AdminCog(commands.Cog):
 
         except httpx.HTTPStatusError as e:
             await interaction.followup.send(f"❌ API Error: {e}", ephemeral=True)
-        except Exception as e:
+        except Exception as e:  # pylint: disable=broad-exception-caught
             flogger.error(f"Error in /admin_config: {e}")
             await interaction.followup.send("⚠️ An error occurred while managing configuration.", ephemeral=True)
 

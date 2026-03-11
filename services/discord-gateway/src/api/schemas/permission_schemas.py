@@ -6,9 +6,11 @@ including permission overwrites, permission reference data, multi-checks,
 and comprehensive permission evaluation schemas.
 """
 
-from typing import Optional, List, Dict, Any
+from typing import Dict, List, Optional
+
+from api.schemas.base_schemas import BaseResponse, BaseUpdateRequest, PaginatedResponse
 from pydantic import BaseModel, Field, field_validator, model_validator
-from api.schemas.base_schemas import BaseResponse, PaginatedResponse, BaseUpdateRequest
+
 
 # -----------------------------------------------------------------------------
 # Core permission/overwrite schemas
@@ -17,14 +19,16 @@ class PermissionOverwrite(BaseModel):
     """Permission overwrite information model."""
     id: Optional[str] = Field(None, description="Permission overwrite ID (channel_id:target_id)")
     # Make channel_id optional so channel-scoped endpoints can omit it
-    channel_id: Optional[int] = Field(None, description="Channel ID (optional when used inside channel-scoped requests)")
+    channel_id: Optional[int] = Field(
+        None, description="Channel ID (optional when used inside channel-scoped requests)"
+    )
     target_id: int = Field(..., description="Target ID (role or user)")
     type: str = Field(..., description="Target type (role or member)")
     allow: int = Field(0, ge=0, description="Allowed permissions (bitfield, ≥0)")
     deny: int = Field(0, ge=0, description="Denied permissions (bitfield, ≥0)")
 
     @field_validator('allow', 'deny')
-    def non_negative(cls, v: int) -> int:
+    def non_negative(cls, v: int) -> int:  # pylint: disable=no-self-argument
         if v is None:
             return 0
         if v < 0:
@@ -40,10 +44,12 @@ class PermissionOverwrite(BaseModel):
     @model_validator(mode='after')
     def finalize_and_validate(self):
         # auto-populate id when possible (format chosen here is "channel_id:target_id")
-        if not getattr(self, "id", None) and getattr(self, "channel_id", None) is not None and getattr(self, "target_id", None) is not None:
+        if (not getattr(self, "id", None)
+                and getattr(self, "channel_id", None) is not None
+                and getattr(self, "target_id", None) is not None):
             try:
                 object.__setattr__(self, "id", f"{int(self.channel_id)}:{int(self.target_id)}")
-            except Exception:
+            except Exception:  # pylint: disable=broad-exception-caught
                 pass
         return self
 
@@ -124,12 +130,24 @@ class CalculatePermissionsResponse(BaseResponse):
 class PermissionCheckTarget(BaseModel):
     """Target to check permissions for (legacy/convenience)."""
     type: str = Field(..., description="Target type: 'member', 'role', or 'bot'")
-    id: Optional[int] = Field(None, description="Target ID (user id or role id). Not required for 'bot' when scope is guild-wide and bot identity is implied")
+    id: Optional[int] = Field(
+        None,
+        description=(
+            "Target ID (user id or role id). Not required for 'bot' "
+            "when scope is guild-wide and bot identity is implied"
+        )
+    )
 
 class PermissionScope(BaseModel):
     """Scope where permissions are evaluated (legacy/convenience)."""
     type: str = Field(..., description="Scope type: 'guild', 'channel', 'category', or 'thread'")
-    id: Optional[int] = Field(None, description="ID of the scope (guild_id, channel_id, category_id, or thread_id). Required for non-guild scopes")
+    id: Optional[int] = Field(
+        None,
+        description=(
+            "ID of the scope (guild_id, channel_id, category_id, or thread_id). "
+            "Required for non-guild scopes"
+        )
+    )
 
 class PermissionCheckRequest(BaseModel):
     """
@@ -194,7 +212,9 @@ class BotPermissionSummaryResponse(BaseModel):
 class PermissionGrantSource(BaseModel):
     """Details about how a permission was granted."""
     type: str = Field(..., description="How the permission was granted: 'direct', 'role', or 'everyone'")
-    role_name: Optional[str] = Field(None, description="Name of the role that granted the permission (if type is 'role')")
+    role_name: Optional[str] = Field(
+        None, description="Name of the role that granted the permission (if type is 'role')"
+    )
     role_id: Optional[int] = Field(None, description="ID of the role that granted the permission (if type is 'role')")
 
 class PermissionGrant(BaseModel):
@@ -209,7 +229,13 @@ class PermissionCheckSubject(BaseModel):
 
 class PermissionTarget(BaseModel):
     """Target/scope entity for comprehensive permission checks."""
-    id: Optional[int] = Field(None, description="Entity ID of the target (guild_id, channel_id, category_id, or thread_id). Required for non-guild targets.")
+    id: Optional[int] = Field(
+        None,
+        description=(
+            "Entity ID of the target (guild_id, channel_id, category_id, or thread_id). "
+            "Required for non-guild targets."
+        )
+    )
     type: str = Field(..., description="Target type: 'guild', 'channel', 'category', or 'thread'")
 
 class ComprehensivePermissionCheckRequest(BaseModel):
@@ -220,14 +246,22 @@ class ComprehensivePermissionCheckRequest(BaseModel):
     """
     subject: PermissionCheckSubject = Field(..., description="Subject to check permissions for")
     target: PermissionTarget = Field(..., description="Target entity (scope) to evaluate")
-    permissions: Optional[List[str]] = Field(None, description="Optional list of permission names to check (uppercase). Omit or send an empty list to get an evaluate-style summary.")
-   
+    permissions: Optional[List[str]] = Field(
+        None,
+        description=(
+            "Optional list of permission names to check (uppercase). "
+            "Omit or send an empty list to get an evaluate-style summary."
+        )
+    )
+
 
 class ComprehensivePermissionCheckData(BaseModel):
     """Data for comprehensive permission check results."""
     allowed: bool = Field(..., description="True if ALL requested permissions are granted")
     denied: List[str] = Field(..., description="List of permissions from the input that are NOT allowed")
-    granted: List[PermissionGrant] = Field(..., description="List of permissions from the input that ARE allowed (with sources)")
+    granted: List[PermissionGrant] = Field(
+        ..., description="List of permissions from the input that ARE allowed (with sources)"
+    )
 
 class ComprehensivePermissionCheckResponse(BaseResponse):
     """Response for the comprehensive permission check endpoint."""

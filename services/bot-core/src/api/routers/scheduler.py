@@ -1,15 +1,13 @@
-from fastapi import APIRouter, Request, HTTPException
-from typing import List, Any
 import uuid
+from datetime import datetime, timedelta, timezone
+from typing import List
 
+from api.schemas.scheduler_schema import JobInfo, OneTimeJob, RecurringJob, UpdateJob
+from apscheduler.triggers.cron import CronTrigger
+from fastapi import APIRouter, HTTPException, Request
 from shared.bblogger import get_logger
-from utils.job_executor import run_job   # ← external executor
-from api.schemas.scheduler_schema import (
-    OneTimeJob,
-    RecurringJob,
-    JobInfo,
-    UpdateJob
-)
+
+from utils.job_executor import run_job  # ← external executor
 
 flogger = get_logger("bot-router-scheduler")
 router = APIRouter(tags=["job-scheduler"])
@@ -21,7 +19,7 @@ async def list_jobs(req: Request):
     jobs = req.app.state.scheduler.get_jobs()
     result = [
         JobInfo(
-            id=j.id,
+            id=j.job_id,
             next_run_time=j.next_run_time,
             trigger=str(j.trigger),
             args=j.args,
@@ -31,15 +29,15 @@ async def list_jobs(req: Request):
     flogger.info(f"Found {len(result)} scheduled job(s)")
     return result
 
-@router.get("/jobs/{id}", response_model=JobInfo)
-async def get_job(req: Request, id: str):
-    flogger.debug(f"Fetching job '{id}'")
-    job = req.app.state.scheduler.get_job(id)
+@router.get("/jobs/{job_id}", response_model=JobInfo)
+async def get_job(req: Request, job_id: str):
+    flogger.debug(f"Fetching job '{job_id}'")
+    job = req.app.state.scheduler.get_job(job_id)
     if not job:
-        flogger.warning(f"Job '{id}' not found")
+        flogger.warning(f"Job '{job_id}' not found")
         raise HTTPException(404, "Job not found")
     info = JobInfo(
-        id=job.id,
+        id=job.job_id,
         next_run_time=job.next_run_time,
         trigger=str(job.trigger),
         args=job.args,
@@ -67,7 +65,7 @@ async def schedule_job(req: Request, job: OneTimeJob):
         flogger.info(f"Scheduled one-time job '{job_id}' at {run_date.isoformat()}")
     except Exception as e:
         flogger.error(f"Failed to schedule one-time job '{job_id}': {e}", exc_info=True)
-        raise HTTPException(400, f"Could not schedule job: {e}")
+        raise HTTPException(400, f"Could not schedule job: {e}") from e
 
     return {"status": "scheduled", "job_id": job_id, "run_date": run_date}
 
@@ -87,30 +85,30 @@ async def schedule_recurring(req: Request, job: RecurringJob):
         flogger.info(f"Scheduled recurring job '{job_id}' with CRON '{job.cron}'")
     except Exception as e:
         flogger.error(f"Failed to schedule recurring job '{job_id}': {e}", exc_info=True)
-        raise HTTPException(400, f"Could not schedule recurring job: {e}")
+        raise HTTPException(400, f"Could not schedule recurring job: {e}") from e
 
     return {"status": "scheduled_recurring", "job_id": job_id, "cron": job.cron}
 
-@router.put("/jobs/{id}")
-async def update_job(req: Request, id: str, update: UpdateJob):
+@router.put("/jobs/{job_id}")
+async def update_job(req: Request, job_id: str, update: UpdateJob):
     """
     Update the payload args for an existing job.
     This will replace the original payload passed at scheduling time.
     """
-    flogger.debug(f"Updating job '{id}' with new payload: {update.payload}")
+    flogger.debug(f"Updating job '{job_id}' with new payload: {update.payload}")
     sched = req.app.state.scheduler
-    job = sched.get_job(id)
+    job = sched.get_job(job_id)
     if not job:
         flogger.warning(f"Cannot update job '{id}': not found")
         raise HTTPException(404, "Job not found")
 
-    new_args = [id, update.payload]
+    new_args = [job_id, update.payload]
     try:
-        sched.modify_job(id, args=new_args)
+        sched.modify_job(job_id, args=new_args)
         flogger.info(f"Updated job '{id}' args successfully")
     except Exception as e:
         flogger.error(f"Failed to update job '{id}': {e}", exc_info=True)
-        raise HTTPException(400, f"Could not update job: {e}")
+        raise HTTPException(400, f"Could not update job: {e}") from e
 
     return {"status": "updated", "job_id": id}
 
@@ -123,12 +121,12 @@ async def delete_all_jobs(req: Request):
 
 
 @router.delete("/jobs/{id}")
-async def delete_job(req: Request, id: str):
+async def delete_job(req: Request, job_id: str):
     flogger.debug(f"Deleting job '{id}'")
     sched = req.app.state.scheduler
-    if not sched.get_job(id):
+    if not sched.get_job(job_id):
         flogger.warning(f"Cannot delete job '{id}': not found")
         raise HTTPException(404, "Job not found")
-    sched.remove_job(id)
+    sched.remove_job(job_id)
     flogger.info(f"Deleted job '{id}'")
     return {"status": "deleted", "job_id": id}

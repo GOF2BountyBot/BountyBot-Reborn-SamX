@@ -5,14 +5,15 @@ This module provides REST endpoints for managing Discord threads
 with simplified URIs that don't require channel context.
 """
 
-from fastapi import APIRouter, HTTPException, Request, status
 import discord
-import shared.bblogger as bblogger
-from api.schemas.channel_schemas import ThreadResponse, ThreadUpdateRequest, ForumTagListRequest
-from api.schemas.message_schemas import MessageListResponse, MessageCreateRequest, MessageResponse, MessageUpdateRequest
-from api.schemas.base_schemas import SuccessResponse, DeleteResponse
+from shared import bblogger
+from api.schemas.base_schemas import DeleteResponse, SuccessResponse
+from api.schemas.channel_schemas import ForumTagListRequest, ThreadResponse, ThreadUpdateRequest
+from api.schemas.message_schemas import MessageCreateRequest, MessageListResponse, MessageResponse, MessageUpdateRequest
+from fastapi import APIRouter, HTTPException, Request, status
+
 from utils.discord_converters import ChannelConverter, MessageConverter
-from utils.discord_helpers import resolve_bot, handle_discord_exception, normalize_emoji
+from utils.discord_helpers import handle_discord_exception, normalize_emoji, resolve_bot
 from utils.embed_converter import EmbedConverter
 
 flogger = bblogger.get_logger("gateway-thread-router")
@@ -56,7 +57,7 @@ def find_thread_by_id(bot, thread_id: int):
             # Fallback: if object has 'archived' attribute it is likely a Thread
             if hasattr(ch, "archived"):
                 return ch
-    except Exception:
+    except Exception:  # pylint: disable=broad-exception-caught
         # Defensive: don't allow a single lookup failure to crash search
         pass
 
@@ -72,7 +73,7 @@ def find_thread_by_id(bot, thread_id: int):
                         t = gfn(thread_id)
                         if t:
                             return t
-                    except Exception:
+                    except Exception:  # pylint: disable=broad-exception-caught
                         # ignore non-fatal errors from variant-specific helpers
                         pass
                 # iterate known threads list if present
@@ -80,7 +81,7 @@ def find_thread_by_id(bot, thread_id: int):
                     try:
                         if getattr(t, "id", None) == thread_id:
                             return t
-                    except Exception:
+                    except Exception:  # pylint: disable=broad-exception-caught
                         continue
     return None
 
@@ -111,7 +112,7 @@ async def get_thread(request: Request, thread_id: int) -> ThreadResponse:
         if not thread:
             try:
                 thread = bot.get_channel(thread_id)
-            except Exception:
+            except Exception:  # pylint: disable=broad-exception-caught
                 thread = None
 
         # 3) final attempt: fetch from API (threads are channels)
@@ -141,7 +142,7 @@ async def get_thread(request: Request, thread_id: int) -> ThreadResponse:
     except HTTPException:
         # re-raise FastAPI HTTP errors unchanged
         raise
-    except Exception as exc:
+    except Exception as exc:  # pylint: disable=broad-exception-caught
         flogger.error(f"Unexpected error in get_thread: {exc}")
         # centralized handler converts/logs and raises appropriate HTTPException
         await handle_discord_exception("get thread", exc)
@@ -172,7 +173,7 @@ async def update_thread(
         if not thread:
             try:
                 thread = bot.get_channel(thread_id)
-            except Exception:
+            except Exception:  # pylint: disable=broad-exception-caught
                 thread = None
 
         # 3) final attempt: fetch from API
@@ -207,7 +208,7 @@ async def update_thread(
                 refreshed = bot.get_channel(thread_id) or await bot.fetch_channel(thread_id)
                 if refreshed is not None:
                     thread = refreshed
-            except Exception:
+            except Exception:  # pylint: disable=broad-exception-caught
                 # ignore refresh failures; use the object we have
                 pass
 
@@ -220,7 +221,7 @@ async def update_thread(
         )
     except HTTPException:
         raise
-    except Exception as exc:
+    except Exception as exc:  # pylint: disable=broad-exception-caught
         flogger.error(f"Unexpected error in update_thread: {exc}")
         await handle_discord_exception("update thread", exc)
 
@@ -242,7 +243,7 @@ async def close_thread(request: Request, thread_id: int) -> SuccessResponse:
         if not thread:
             try:
                 thread = bot.get_channel(thread_id)
-            except Exception:
+            except Exception:  # pylint: disable=broad-exception-caught
                 thread = None
         # 3) final attempt: fetch from API (threads are channels)
         if not thread:
@@ -265,7 +266,7 @@ async def close_thread(request: Request, thread_id: int) -> SuccessResponse:
         return SuccessResponse(status="closed", message=message)
     except HTTPException:
         raise
-    except Exception as exc:
+    except Exception as exc:  # pylint: disable=broad-exception-caught
         flogger.error(f"Unexpected error in close_thread: {exc}")
         await handle_discord_exception("close thread", exc)
 
@@ -288,7 +289,7 @@ async def open_thread(request: Request, thread_id: int) -> SuccessResponse:
         if not thread:
             try:
                 thread = bot.get_channel(thread_id)
-            except Exception:
+            except Exception:  # pylint: disable=broad-exception-caught
                 thread = None
         # 3) final attempt: fetch from API (threads are channels)
         if not thread:
@@ -311,7 +312,7 @@ async def open_thread(request: Request, thread_id: int) -> SuccessResponse:
         return SuccessResponse(status="opened", message=message)
     except HTTPException:
         raise
-    except Exception as exc:
+    except Exception as exc:  # pylint: disable=broad-exception-caught
         flogger.error(f"Unexpected error in open_thread: {exc}")
         await handle_discord_exception("open thread", exc)
 
@@ -329,7 +330,7 @@ async def update_thread_tags(
     flogger.info(f"update_thread_tags called for thread_id={thread_id}")
     try:
         bot = await resolve_bot(request)
-        
+
         thread = find_thread_by_id(bot, thread_id)
         if not thread:
             flogger.error(f"Thread {thread_id} not found")
@@ -337,7 +338,7 @@ async def update_thread_tags(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"Thread {thread_id} not found"
             )
-        
+
         # Get parent forum channel
         parent_channel = thread.parent
         if not isinstance(parent_channel, discord.ForumChannel):
@@ -346,11 +347,11 @@ async def update_thread_tags(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Thread is not in a forum channel"
             )
-        
+
         # Resolve tag IDs to tag objects
         available = parent_channel.available_tags
         resolved_tags = []
-        
+
         for t in tags_data.tags:
             if isinstance(t, int):
                 # Integer ID → resolve to Tag object
@@ -366,7 +367,7 @@ async def update_thread_tags(
                 tid = getattr(t, "id", None) if not isinstance(t, dict) else t.get("id")
                 name = getattr(t, "name", None) if not isinstance(t, dict) else t.get("name")
                 emoji_val = getattr(t, "emoji", None) if not isinstance(t, dict) else t.get("emoji")
-                
+
                 # ID-based resolution
                 if tid is not None:
                     tag_obj = discord.utils.get(available, id=tid)
@@ -377,18 +378,18 @@ async def update_thread_tags(
                         )
                     resolved_tags.append(tag_obj)
                     continue
-                
+
                 # Name or emoji matching
                 matched = None
                 if name:
                     matched = discord.utils.get(available, name=name)
-                
+
                 if matched is None and emoji_val:
                     try:
                         norm = normalize_emoji(emoji_val)
-                    except Exception:
+                    except Exception:  # pylint: disable=broad-exception-caught
                         norm = emoji_val
-                    
+
                     for at in available:
                         at_e = getattr(at, "emoji", None)
                         if not at_e:
@@ -397,7 +398,7 @@ async def update_thread_tags(
                         if norm == at_name or norm == str(at_e):
                             matched = at
                             break
-                
+
                 if matched is None:
                     raise HTTPException(
                         status_code=status.HTTP_404_NOT_FOUND,
@@ -406,17 +407,17 @@ async def update_thread_tags(
                             "Create the tag first or provide an existing tag id."
                         )
                     )
-                
+
                 resolved_tags.append(matched)
-        
+
         await thread.edit(applied_tags=resolved_tags)
-        
+
         message = "Thread tags updated"
         flogger.info(message)
         return SuccessResponse(status="updated", message=message)
     except HTTPException:
         raise
-    except Exception as exc:
+    except Exception as exc:  # pylint: disable=broad-exception-caught
         flogger.error(f"Unexpected error in update_thread_tags: {exc}")
         await handle_discord_exception("update thread tags", exc)
 
@@ -432,7 +433,7 @@ async def list_thread_messages(request: Request, thread_id: int) -> MessageListR
     flogger.info(f"list_thread_messages called for thread_id={thread_id}")
     try:
         bot = await resolve_bot(request)
-        
+
         thread = find_thread_by_id(bot, thread_id)
         if not thread:
             flogger.error(f"Thread {thread_id} not found")
@@ -440,10 +441,10 @@ async def list_thread_messages(request: Request, thread_id: int) -> MessageListR
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"Thread {thread_id} not found"
             )
-        
+
         msgs = [m async for m in thread.history(limit=100)]
         message_data = [MessageConverter.message_to_payload(m) for m in msgs]
-        
+
         flogger.info(f"Retrieved {len(message_data)} messages from thread {thread_id}")
         return MessageListResponse(
             status="success",
@@ -451,7 +452,7 @@ async def list_thread_messages(request: Request, thread_id: int) -> MessageListR
         )
     except HTTPException:
         raise
-    except Exception as exc:
+    except Exception as exc:  # pylint: disable=broad-exception-caught
         flogger.error(f"Unexpected error in list_thread_messages: {exc}")
         await handle_discord_exception("list thread messages", exc)
 
@@ -469,7 +470,7 @@ async def create_thread_message(
     flogger.info(f"create_thread_message called for thread_id={thread_id}")
     try:
         bot = await resolve_bot(request)
-        
+
         thread = find_thread_by_id(bot, thread_id)
         if not thread:
             flogger.error(f"Thread {thread_id} not found")
@@ -477,20 +478,20 @@ async def create_thread_message(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"Thread {thread_id} not found"
             )
-        
+
         embed = EmbedConverter.payload_to_embed(payload.content)
         msg = await thread.send(embed=embed)
-        
+
         message_data = MessageConverter.message_to_payload(msg)
         flogger.info(f"Created message {msg.id} in thread {thread_id}")
-        
+
         return MessageResponse(
             status="created",
             data=message_data
         )
     except HTTPException:
         raise
-    except Exception as exc:
+    except Exception as exc:  # pylint: disable=broad-exception-caught
         flogger.error(f"Unexpected error in create_thread_message: {exc}")
         await handle_discord_exception("create thread message", exc)
 
@@ -508,7 +509,7 @@ async def get_thread_message(
     flogger.info(f"get_thread_message called for thread_id={thread_id}, message_id={message_id}")
     try:
         bot = await resolve_bot(request)
-        
+
         thread = find_thread_by_id(bot, thread_id)
         if not thread:
             flogger.error(f"Thread {thread_id} not found")
@@ -516,26 +517,26 @@ async def get_thread_message(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"Thread {thread_id} not found"
             )
-        
+
         try:
             msg = await thread.fetch_message(message_id)
-        except discord.NotFound:
+        except discord.NotFound as exc:
             flogger.error(f"Message {message_id} not found in thread {thread_id}")
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"Message {message_id} not found in thread {thread_id}"
-            )
-        
+            ) from exc
+
         message_data = MessageConverter.message_to_payload(msg)
         flogger.info(f"Retrieved message {message_id} from thread {thread_id}")
-        
+
         return MessageResponse(
             status="found",
             data=message_data
         )
     except HTTPException:
         raise
-    except Exception as exc:
+    except Exception as exc:  # pylint: disable=broad-exception-caught
         flogger.error(f"Unexpected error in get_thread_message: {exc}")
         await handle_discord_exception("get thread message", exc)
 
@@ -553,7 +554,7 @@ async def edit_thread_message(
     flogger.info(f"edit_thread_message called for thread_id={thread_id}, message_id={message_id}")
     try:
         bot = await resolve_bot(request)
-        
+
         thread = find_thread_by_id(bot, thread_id)
         if not thread:
             flogger.error(f"Thread {thread_id} not found")
@@ -561,16 +562,16 @@ async def edit_thread_message(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"Thread {thread_id} not found"
             )
-        
+
         try:
             msg = await thread.fetch_message(message_id)
-        except discord.NotFound:
+        except discord.NotFound as exc:
             flogger.error(f"Message {message_id} not found in thread {thread_id}")
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"Message {message_id} not found in thread {thread_id}"
-            )
-        
+            ) from exc
+
         # Check if bot can edit this message
         if msg.author.id != bot.user.id:
             flogger.error(f"Cannot edit message {message_id} - not sent by bot")
@@ -578,20 +579,20 @@ async def edit_thread_message(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Can only edit messages sent by the bot"
             )
-        
+
         embed = EmbedConverter.payload_to_embed(payload.content)
         await msg.edit(embed=embed)
-        
+
         updated_message_data = MessageConverter.message_to_payload(msg)
         flogger.info(f"Updated message {message_id} in thread {thread_id}")
-        
+
         return MessageResponse(
             status="updated",
             data=updated_message_data
         )
     except HTTPException:
         raise
-    except Exception as exc:
+    except Exception as exc:  # pylint: disable=broad-exception-caught
         flogger.error(f"Unexpected error in edit_thread_message: {exc}")
         await handle_discord_exception("edit thread message", exc)
 
@@ -609,7 +610,7 @@ async def delete_thread_message(
     flogger.info(f"delete_thread_message called for thread_id={thread_id}, message_id={message_id}")
     try:
         bot = await resolve_bot(request)
-        
+
         thread = find_thread_by_id(bot, thread_id)
         if not thread:
             flogger.error(f"Thread {thread_id} not found")
@@ -617,16 +618,16 @@ async def delete_thread_message(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"Thread {thread_id} not found"
             )
-        
+
         try:
             msg = await thread.fetch_message(message_id)
-        except discord.NotFound:
+        except discord.NotFound as exc:
             flogger.error(f"Message {message_id} not found in thread {thread_id}")
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"Message {message_id} not found in thread {thread_id}"
-            )
-        
+            ) from exc
+
         # Check if bot can delete this message
         if msg.author.id != bot.user.id:
             # Check if bot has manage_messages permission in the thread
@@ -637,12 +638,12 @@ async def delete_thread_message(
                     status_code=status.HTTP_403_FORBIDDEN,
                     detail="Insufficient permissions to delete this message"
                 )
-        
+
         await msg.delete()
-        
+
         message = f"Message {message_id} deleted from thread {thread_id}"
         flogger.info(message)
-        
+
         return DeleteResponse(
             status="deleted",
             deleted=True,
@@ -650,6 +651,6 @@ async def delete_thread_message(
         )
     except HTTPException:
         raise
-    except Exception as exc:
+    except Exception as exc:  # pylint: disable=broad-exception-caught
         flogger.error(f"Unexpected error in delete_thread_message: {exc}")
         await handle_discord_exception("delete thread message", exc)

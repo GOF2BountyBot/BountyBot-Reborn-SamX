@@ -5,10 +5,12 @@ This module defines request/response models for Discord message operations
 including create, update, and delete with proper embed payload structures.
 """
 
-from typing import Optional, List, Dict, Any, Union
-from pydantic import BaseModel, Field
 from datetime import datetime
+from typing import List, Optional, Union
+
 from api.schemas.base_schemas import BaseResponse, PaginatedResponse
+from pydantic import BaseModel, Field
+
 
 class EmbedField(BaseModel):
     """Embed field structure."""

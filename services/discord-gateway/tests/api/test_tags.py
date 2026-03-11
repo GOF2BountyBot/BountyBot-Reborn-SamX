@@ -91,7 +91,7 @@ def _restore_real_discord():
     import tests.mocks.discord_mock_utils as _dmu_mod
     importlib.reload(_dmu_mod)
     # Force the tags router to re-bind its 'discord' global to real discord
-    import api.routers.tags as _tags_mod
+    from api.routers import tags as _tags_mod
     importlib.reload(_tags_mod)
     yield
 

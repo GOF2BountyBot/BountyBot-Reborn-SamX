@@ -8,7 +8,7 @@ from datetime import datetime, UTC
 from typing import Dict, Any, Optional
 import sys
 import platform
-import shared.bblogger as bblogger
+from shared import bblogger
 
 flogger = bblogger.get_logger("blender-healthcheck-api-router")
 
@@ -50,7 +50,7 @@ async def health_check(request: Request) -> HealthResponse:
     environment, and various system checks.
     """
     flogger.debug("Inside health_check method...")
-    
+
     # Basic system checks (unchanged)
     checks = {
         "python_version": sys.version_info >= (3, 8),
@@ -61,10 +61,10 @@ async def health_check(request: Request) -> HealthResponse:
     # Determine overall status
     all_checks_passed = all(checks.values())
     flogger.trace("All Checks Passed: " + str(all_checks_passed))
-    
+
     # UPDATED: Consider database and schema health in overall status
     service_status = "healthy" if all_checks_passed else "unhealthy"
-    
+
     return HealthResponse(
         status=service_status,
         timestamp=datetime.now(UTC),
@@ -99,7 +99,7 @@ async def simple_health_check() -> SimpleHealthResponse:
 @router.get(
     "/liveness",
     status_code=status.HTTP_200_OK,
-    summary="Liveness Check", 
+    summary="Liveness Check",
     description="Checks if the service is alive and responsive"
 )
 async def liveness_check() -> Dict[str, str]:

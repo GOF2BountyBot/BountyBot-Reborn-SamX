@@ -13,11 +13,9 @@ Key Features:
 - Future-ready for Alembic integration
 """
 
-import os
-from persist.database.manager import db_manager
+from shared import bblogger
 from persist.models.base import Base
 from persist.models.schema_version import SchemaVersion
-import shared.bblogger as bblogger
 from sqlalchemy import select
 
 flogger = bblogger.get_logger("bot-schema-manager")
@@ -81,13 +79,13 @@ class SchemaManager:
         """Retrieve detailed schema health information."""
         try:
             current_version = await self.get_current_version()
-            version_match = (current_version == CURRENT_SCHEMA_VERSION)
+            version_match = current_version == CURRENT_SCHEMA_VERSION
             return {
                 "version": current_version,
                 "expected_version": CURRENT_SCHEMA_VERSION,
                 "version_match": version_match
             }
-        except Exception as e:
+        except Exception as e:  # pylint: disable=broad-exception-caught
             flogger.error(f"Error retrieving schema health info: {e}")
             return {
                 "status": "error",

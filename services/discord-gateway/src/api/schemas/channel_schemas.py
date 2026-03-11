@@ -5,10 +5,11 @@ This module defines request/response models for Discord channel, category,
 forum-tag and forum-thread operations.
 """
 
-from typing import Optional, List, Union
-from pydantic import BaseModel, Field
-from api.schemas.base_schemas import BaseResponse, PaginatedResponse, BaseCreateRequest, BaseUpdateRequest
+from typing import List, Optional, Union
+
+from api.schemas.base_schemas import BaseCreateRequest, BaseResponse, BaseUpdateRequest, PaginatedResponse
 from api.schemas.message_schemas import EmbedPayload
+from pydantic import BaseModel, Field
 
 # -------------------------------------------------------------------
 # Channel / Category core schemas

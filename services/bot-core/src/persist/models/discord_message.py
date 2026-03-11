@@ -8,12 +8,12 @@ information including embed payloads with proper composite key constraints.
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import String, BigInteger, DateTime, Text, UniqueConstraint, Index
+from persist.database.tablenames import TableNames
+from persist.models.base import Base
+from sqlalchemy import BigInteger, DateTime, Index, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy_utils import UUIDType
 
-from persist.models.base import Base
-from persist.database.tablenames import TableNames
 
 class DiscordMessage(Base):
     """Model for Discord message persistence with embed support."""

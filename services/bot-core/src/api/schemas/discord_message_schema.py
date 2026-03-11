@@ -2,10 +2,11 @@
 Pydantic schemas for Discord message operations.
 """
 
-from typing import Optional, List
-from uuid import UUID
-from pydantic import BaseModel, Field
 from datetime import datetime
+from typing import List, Optional
+from uuid import UUID
+
+from pydantic import BaseModel, Field
 
 
 class EmbedPayloadDict(BaseModel):
@@ -43,4 +44,4 @@ class DiscordMessageResponse(BaseModel):
 
     class Config:
         from_attributes = True
-        json_encoders = {UUID: lambda u: str(u)}
+        json_encoders = {UUID: str}

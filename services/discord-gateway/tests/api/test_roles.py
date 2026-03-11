@@ -81,7 +81,7 @@ def _restore_real_discord():
     import tests.mocks.discord_mock_utils as _dmu_mod
     importlib.reload(_dmu_mod)
     # Force the roles router to re-bind its 'discord' global to real discord
-    import api.routers.roles as _roles_mod
+    from api.routers import roles as _roles_mod
     importlib.reload(_roles_mod)
     yield
 

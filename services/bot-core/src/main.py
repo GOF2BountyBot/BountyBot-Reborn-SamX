@@ -12,33 +12,30 @@ CHANGES MADE:
 - Option 2: Use SQLAlchemy AsyncEngine and a real sync_engine for APScheduler
 """
 
-import os
 import importlib
+import logging as pyLogging
+import os
 import pkgutil
-from pathlib import Path
+from contextlib import asynccontextmanager
+
+# Import the routers package
+from api import routers
+from shared import bblogger
+from apscheduler.jobstores.sqlalchemy import SQLAlchemyJobStore
+# Scheduler
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from contextlib import asynccontextmanager
-import shared.bblogger as bblogger
-import logging as pyLogging
-
 # Database management
 from persist.database.manager import db_manager
 from persist.schemas.schema_manager import initialize_schema
-
-# Scheduler
-from apscheduler.schedulers.asyncio import AsyncIOScheduler
-from apscheduler.jobstores.sqlalchemy import SQLAlchemyJobStore
-from sqlalchemy.ext.asyncio import create_async_engine
 from sqlalchemy import create_engine
-
-# Import the routers package
-import api.routers as routers
+from sqlalchemy.ext.asyncio import create_async_engine
 
 flogger = bblogger.get_logger("bot-main-script")
 
 @asynccontextmanager
-async def lifespan(app: FastAPI):
+async def lifespan(fastapi_app: FastAPI):
     """
     Startup / shutdown logic (replaces @app.on_event).
     Includes DB init, schema checks, and scheduler startup/shutdown.
@@ -52,8 +49,8 @@ async def lifespan(app: FastAPI):
 
         flogger.info("📋 Checking and updating database schema...")
         schema_manager = await initialize_schema(db_manager)
-        app.state.schema_manager = schema_manager
-        app.state.db_manager = db_manager
+        fastapi_app.state.schema_manager = schema_manager
+        fastapi_app.state.db_manager = db_manager
 
         flogger.info("✅ Database initialization completed successfully")
     except Exception as e:
@@ -66,7 +63,7 @@ async def lifespan(app: FastAPI):
         flogger.info("⏰ Initializing Scheduler…")
 
         # existing async engine (if you need it elsewhere)
-        async_engine = create_async_engine(
+        create_async_engine(
             db_manager._connection_string,  # asyncpg URL
             echo=False,
             future=True,
@@ -89,7 +86,7 @@ async def lifespan(app: FastAPI):
             )
         }
         scheduler = AsyncIOScheduler(jobstores=jobstores, timezone="UTC")
-        app.state.scheduler = scheduler
+        fastapi_app.state.scheduler = scheduler
         scheduler.start()
         flogger.info("✅ Scheduler started")
     except Exception as e:
@@ -106,16 +103,16 @@ async def lifespan(app: FastAPI):
     flogger.info("🛑 BountyBot API shutting down...")
     try:
         flogger.info("⏰ Shutting down Scheduler…")
-        app.state.scheduler.shutdown(wait=False)
+        fastapi_app.state.scheduler.shutdown(wait=False)
         flogger.info("✅ Scheduler stopped")
-    except Exception as e:
+    except Exception as e:  # pylint: disable=broad-exception-caught
         flogger.error(f"⚠️ Error shutting down scheduler: {e}")
 
     try:
         flogger.info("🗄️ Shutting down database connections...")
         db_manager.shutdown()
         flogger.info("✅ Database connections closed successfully")
-    except Exception as e:
+    except Exception as e:  # pylint: disable=broad-exception-caught
         flogger.error(f"⚠️ Error during database shutdown: {e}")
 
     flogger.info("👋 Goodbye!")
@@ -123,11 +120,11 @@ async def lifespan(app: FastAPI):
 def create_app() -> FastAPI:
     """Create and configure the FastAPI application."""
     flogger.trace("Initializing FastAPI...")
-    app = FastAPI(
+    fastapi_app = FastAPI(
         title="BountyBot API",
         description="""
-        BountyBot API provides endpoints for managing the Galaxy on Fire 2 
-        Discord bot functionality including bounty hunting, trading, 
+        BountyBot API provides endpoints for managing the Galaxy on Fire 2
+        Discord bot functionality including bounty hunting, trading,
         dueling, and ship management.
 
         ## Features
@@ -161,7 +158,7 @@ def create_app() -> FastAPI:
     )
 
     # CORS middleware
-    app.add_middleware(
+    fastapi_app.add_middleware(
         CORSMiddleware,
         allow_origins=["*"],
         allow_credentials=True,
@@ -169,10 +166,10 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
 
-    include_routers(app)
-    return app
+    include_routers(fastapi_app)
+    return fastapi_app
 
-def include_routers(app: FastAPI) -> None:
+def include_routers(fastapi_app: FastAPI) -> None:
     """
     Auto-discover and include all APIRouter instances
     under api/routers.
@@ -180,11 +177,11 @@ def include_routers(app: FastAPI) -> None:
     success = skipped = failed = 0
 
     # Iterate modules in the api.routers package
-    for finder, name, ispkg in pkgutil.iter_modules(routers.__path__):
+    for _finder, name, _ispkg in pkgutil.iter_modules(routers.__path__):
         fullname = f"{routers.__name__}.{name}"
         try:
             module = importlib.import_module(fullname)
-        except Exception as e:
+        except Exception as e:  # pylint: disable=broad-exception-caught
             flogger.error(f"✗ Failed to import module '{fullname}': {e}")
             failed += 1
             continue
@@ -196,7 +193,7 @@ def include_routers(app: FastAPI) -> None:
             continue
 
         tag = name
-        app.include_router(router, prefix="/api/v1")
+        fastapi_app.include_router(router, prefix="/api/v1")
         flogger.info(f"✓ Included router '{tag}' from '{fullname}'")
         success += 1
 

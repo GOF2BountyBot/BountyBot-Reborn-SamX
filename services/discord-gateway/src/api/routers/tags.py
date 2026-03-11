@@ -6,24 +6,25 @@ with simplified URIs that don't require channel context.
 """
 
 from typing import Any, Dict, Optional
-from fastapi import APIRouter, HTTPException, Request, status
+
 import discord
-import shared.bblogger as bblogger
+from shared import bblogger
+from api.schemas.base_schemas import DeleteResponse
 from api.schemas.channel_schemas import (
+    ForumTagCreateRequest,
     ForumTagResponse,
     ForumTagUpdateRequest,
-    ForumTagCreateRequest,
 )
-from api.schemas.base_schemas import DeleteResponse
+from fastapi import APIRouter, HTTPException, Request, status
+
+from utils.discord_converters import ChannelConverter
 from utils.discord_helpers import (
-    resolve_bot,
+    get_entity_or_404,
     handle_discord_exception,
     normalize_emoji,
-    get_entity_or_404,
-    tag_to_dict,
+    resolve_bot,
     tags_to_edit_payload,
 )
-from utils.discord_converters import ChannelConverter
 
 flogger = bblogger.get_logger("gateway-tag-router")
 
@@ -76,26 +77,26 @@ async def get_tag(request: Request, tag_id: int) -> ForumTagResponse:
             if tag_payload.get("emoji") is not None:
                 try:
                     tag_payload["emoji"] = normalize_emoji(tag_payload["emoji"])
-                except Exception:
+                except Exception:  # pylint: disable=broad-exception-caught
                     # best-effort: leave original if normalization fails
                     pass
         else:
             try:
                 setattr(tag_payload, "channel_id", parent_channel.id)
-            except Exception:
+            except Exception:  # pylint: disable=broad-exception-caught
                 tag_payload = dict(getattr(tag_payload, "__dict__", {}) or {})
                 tag_payload["channel_id"] = parent_channel.id
                 if tag_payload.get("emoji") is not None:
                     try:
                         tag_payload["emoji"] = normalize_emoji(tag_payload["emoji"])
-                    except Exception:
+                    except Exception:  # pylint: disable=broad-exception-caught
                         pass
 
         flogger.info(f"Successfully retrieved tag {getattr(tag, 'name', tag_id)}")
         return ForumTagResponse(status="success", data=tag_payload)
     except HTTPException:
         raise
-    except Exception as exc:
+    except Exception as exc:  # pylint: disable=broad-exception-caught
         flogger.error(f"Unexpected error in get_tag: {exc}")
         await handle_discord_exception("get tag", exc)
 
@@ -123,11 +124,11 @@ async def create_forum_tag(request: Request, channel_id: int, tag: ForumTagCreat
         if tag.emoji:
             try:
                 emoji_value = normalize_emoji(tag.emoji)
-            except Exception:
+            except Exception as exc:  # pylint: disable=broad-exception-caught
                 raise HTTPException(
                     status_code=status.HTTP_422,
                     detail=f"Invalid emoji: {tag.emoji}",
-                )
+                ) from exc
 
         # Prefer higher-level API when available
         try:
@@ -153,7 +154,7 @@ async def create_forum_tag(request: Request, channel_id: int, tag: ForumTagCreat
                         if "id" in self._d and self._d["id"] is not None:
                             try:
                                 out["id"] = int(self._d["id"])
-                            except Exception:
+                            except Exception:  # pylint: disable=broad-exception-caught
                                 out["id"] = self._d["id"]
                         return out
 
@@ -170,25 +171,25 @@ async def create_forum_tag(request: Request, channel_id: int, tag: ForumTagCreat
             if tag_data.get("emoji") is not None:
                 try:
                     tag_data["emoji"] = normalize_emoji(tag_data["emoji"])
-                except Exception:
+                except Exception:  # pylint: disable=broad-exception-caught
                     pass
         else:
             try:
                 setattr(tag_data, "channel_id", channel_id)
-            except Exception:
+            except Exception:  # pylint: disable=broad-exception-caught
                 tag_data = dict(getattr(tag_data, "__dict__", {}) or {})
                 tag_data["channel_id"] = channel_id
                 if tag_data.get("emoji") is not None:
                     try:
                         tag_data["emoji"] = normalize_emoji(tag_data["emoji"])
-                    except Exception:
+                    except Exception:  # pylint: disable=broad-exception-caught
                         pass
 
         flogger.info(f"Successfully created tag {getattr(new_tag, 'name', tag.name)}")
         return ForumTagResponse(status="created", data=tag_data)
     except HTTPException:
         raise
-    except Exception as exc:
+    except Exception as exc:  # pylint: disable=broad-exception-caught
         flogger.error(f"Unexpected error in create_forum_tag: {exc}")
         await handle_discord_exception("create forum tag", exc)
 
@@ -231,11 +232,11 @@ async def update_tag(request: Request, tag_id: int, tag_data: ForumTagUpdateRequ
             try:
                 emoji_value = normalize_emoji(tag_data.emoji)
                 update_kwargs["emoji"] = emoji_value
-            except Exception:
+            except Exception as exc:  # pylint: disable=broad-exception-caught
                 raise HTTPException(
                     status_code=status.HTTP_422,
                     detail=f"Invalid emoji: {tag_data.emoji}",
-                )
+                ) from exc
 
         # Update the tag
         if update_kwargs:
@@ -253,7 +254,7 @@ async def update_tag(request: Request, tag_id: int, tag_data: ForumTagUpdateRequ
                     upd_map: Dict[Any, Dict[str, Optional[str]]] = {}
                     try:
                         upd_map[int(tag_id)] = {"name": update_kwargs.get("name"), "emoji": update_kwargs.get("emoji")}
-                    except Exception:
+                    except Exception:  # pylint: disable=broad-exception-caught
                         # If tag_id isn't int-like, keep as-is
                         upd_map[tag_id] = {"name": update_kwargs.get("name"), "emoji": update_kwargs.get("emoji")}
 
@@ -271,15 +272,15 @@ async def update_tag(request: Request, tag_id: int, tag_data: ForumTagUpdateRequ
                                 if "id" in self._d and self._d["id"] is not None:
                                     try:
                                         out["id"] = int(self._d["id"])
-                                    except Exception:
+                                    except Exception:  # pylint: disable=broad-exception-caught
                                         out["id"] = self._d["id"]
                                 return out
 
                         proxy_payloads = [_TagProxy(p) for p in payloads]
                         await parent_channel.edit(available_tags=proxy_payloads)
-            except Exception as exc:
+            except Exception as exc:  # pylint: disable=broad-exception-caught
                 # let centralized handler map/log/raise
-                raise exc
+                raise exc from exc
 
         # Re-fetch the tag to get updated data
         updated_tag = discord.utils.get(parent_channel.available_tags, id=tag_id)
@@ -297,36 +298,36 @@ async def update_tag(request: Request, tag_id: int, tag_data: ForumTagUpdateRequ
             if updated_tag_data.get("emoji") is not None:
                 try:
                     updated_tag_data["emoji"] = normalize_emoji(updated_tag_data["emoji"])
-                except Exception:
+                except Exception:  # pylint: disable=broad-exception-caught
                     pass
             elif tag_data.emoji is not None:
                 # best-effort: reflect requested emoji when runtime didn't expose it
                 try:
                     updated_tag_data["emoji"] = normalize_emoji(tag_data.emoji)
-                except Exception:
+                except Exception:  # pylint: disable=broad-exception-caught
                     updated_tag_data["emoji"] = tag_data.emoji
         else:
             try:
                 setattr(updated_tag_data, "channel_id", parent_channel.id)
-            except Exception:
+            except Exception:  # pylint: disable=broad-exception-caught
                 updated_tag_data = dict(getattr(updated_tag_data, "__dict__", {}) or {})
                 updated_tag_data["channel_id"] = parent_channel.id
                 if updated_tag_data.get("emoji") is not None:
                     try:
                         updated_tag_data["emoji"] = normalize_emoji(updated_tag_data["emoji"])
-                    except Exception:
+                    except Exception:  # pylint: disable=broad-exception-caught
                         pass
                 elif tag_data.emoji is not None:
                     try:
                         updated_tag_data["emoji"] = normalize_emoji(tag_data.emoji)
-                    except Exception:
+                    except Exception:  # pylint: disable=broad-exception-caught
                         updated_tag_data["emoji"] = tag_data.emoji
 
         flogger.info(f"Successfully updated tag {getattr(updated_tag, 'name', tag_id)}")
         return ForumTagResponse(status="updated", data=updated_tag_data)
     except HTTPException:
         raise
-    except Exception as exc:
+    except Exception as exc:  # pylint: disable=broad-exception-caught
         flogger.error(f"Unexpected error in update_tag: {exc}")
         await handle_discord_exception("update tag", exc)
 
@@ -387,7 +388,7 @@ async def delete_tag(request: Request, tag_id: int) -> DeleteResponse:
                     for t in remaining:
                         try:
                             payloads.append({"name": t.name, "emoji": getattr(t, "emoji", None)})
-                        except Exception:
+                        except Exception:  # pylint: disable=broad-exception-caught
                             # best-effort: skip malformed tag objects
                             continue
                     try:
@@ -404,16 +405,16 @@ async def delete_tag(request: Request, tag_id: int) -> DeleteResponse:
                                 if "id" in self._d and self._d["id"] is not None:
                                     try:
                                         out["id"] = int(self._d["id"])
-                                    except Exception:
+                                    except Exception:  # pylint: disable=broad-exception-caught
                                         out["id"] = self._d["id"]
                                 return out
 
                         proxy_payloads = [_TagProxy(p) for p in payloads]
                         await parent_channel.edit(available_tags=proxy_payloads)
                         deleted = True
-        except Exception as exc:
+        except Exception as exc:  # pylint: disable=broad-exception-caught
             # Allow centralized handler below to map/log/raise appropriately
-            raise exc
+            raise exc from exc
 
         if not deleted:
             # If none of the strategies worked, raise a server error
@@ -428,6 +429,6 @@ async def delete_tag(request: Request, tag_id: int) -> DeleteResponse:
         return DeleteResponse(status="deleted", deleted=True, message=message)
     except HTTPException:
         raise
-    except Exception as exc:
+    except Exception as exc:  # pylint: disable=broad-exception-caught
         flogger.error(f"Unexpected error in delete_tag: {exc}")
         await handle_discord_exception("delete tag", exc)

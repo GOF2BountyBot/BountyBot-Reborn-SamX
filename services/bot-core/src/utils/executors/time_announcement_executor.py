@@ -1,9 +1,9 @@
 import os
-import json
 import traceback
-import httpx
 from datetime import datetime, timezone
 from urllib.parse import urlencode
+
+import httpx
 from shared.bblogger import get_logger
 
 flogger = get_logger("time-ann-executor")
@@ -106,6 +106,6 @@ async def execute_time_announcement_job(job_id: str, payload: dict):
                     timeout=10,
                 )
             flogger.debug(f"TimeJob[{job_id}] PUT {url} payload updated")
-        except Exception as e:
+        except Exception as e:  # pylint: disable=broad-exception-caught
             flogger.error(f"TimeJob[{job_id}] failed to update job args via API: {e}")
             flogger.trace(traceback.format_exc())

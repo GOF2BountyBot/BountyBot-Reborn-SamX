@@ -80,7 +80,7 @@ class _MockColor:
                 self.value = int(value)
             except (TypeError, ValueError):
                 raise ValueError(f"Invalid color value: {value}")
-    
+
     def __int__(self):
         return self.value
 
@@ -96,19 +96,19 @@ class _MockEmbed:
         self.timestamp = None
         self.thumbnail = None
         self.image = None
-    
+
     def add_field(self, name, value, inline=False):
         """Add a field to the embed."""
         self.fields.append(_MockField(name, value, inline))
-    
+
     def set_footer(self, text=None, icon_url=None):
         """Set the footer."""
         self.footer = _MockFooter(text, icon_url)
-    
+
     def set_thumbnail(self, url=None):
         """Set the thumbnail."""
         self.thumbnail = _MockMedia(url)
-    
+
     def set_image(self, url=None):
         """Set the image."""
         self.image = _MockMedia(url)
@@ -258,7 +258,7 @@ class TestEmbedConverter:
         """payload_to_embed should handle invalid color values gracefully."""
         mock_embed_payload.color = "invalid_color"
         from utils.embed_converter import EmbedConverter
-        
+
         with pytest.raises(Exception):
             EmbedConverter.payload_to_embed(mock_embed_payload)
 
@@ -386,7 +386,7 @@ class TestEmbedConverter:
         # This should result in: field0, field1, spacer, field2
         from api.schemas.message_schemas import EmbedField
         mock_embed_payload.fields.append(EmbedField(name="Field3", value="Value3", inline=True))
-        
+
         from utils.embed_converter import EmbedConverter
         result = EmbedConverter.payload_to_grid_embed(mock_embed_payload, fields_per_row=2)
 
@@ -425,3 +425,70 @@ class TestEmbedConverter:
         from utils.embed_converter import EmbedConverter
         result = EmbedConverter.test_round_trip_consistency(empty_payload)
         assert result is True  # Should handle empty payload gracefully
+
+    def test_payload_to_embed_with_thumbnail_and_image(self, mock_embed_payload):
+        """Test that thumbnail and image fields are properly converted."""
+        from utils.embed_converter import EmbedConverter
+        mock_embed_payload.thumbnail_url = "https://example.com/thumb.png"
+        mock_embed_payload.image_url = "https://example.com/image.png"
+        embed = EmbedConverter.payload_to_embed(mock_embed_payload)
+        assert embed.thumbnail is not None
+        assert embed.image is not None
+
+    def test_embed_to_payload_with_multiple_fields(self, mock_discord_embed):
+        """Test that multiple fields are properly extracted from embed."""
+        from utils.embed_converter import EmbedConverter
+        field1 = MagicMock()
+        field1.name = "Field 1"
+        field1.value = "Value 1"
+        field1.inline = True
+        field2 = MagicMock()
+        field2.name = "Field 2"
+        field2.value = "Value 2"
+        field2.inline = False
+        mock_discord_embed.fields = [field1, field2]
+        payload = EmbedConverter.embed_to_payload(mock_discord_embed)
+        assert len(payload.fields) == 2
+        assert payload.fields[0].name == "Field 1"
+        assert payload.fields[1].name == "Field 2"
+
+    def test_coerce_to_embed_payload_with_none_input(self):
+        """Test that None input raises appropriate error."""
+        from utils.embed_converter import EmbedConverter
+        with pytest.raises(Exception):
+            EmbedConverter._coerce_to_embed_payload(None)
+
+    def test_payload_to_embed_with_all_fields(self, mock_embed_payload):
+        """Test payload_to_embed with all fields populated."""
+        from utils.embed_converter import EmbedConverter
+        # Set various fields
+        mock_embed_payload.title = "Full Embed"
+        mock_embed_payload.description = "Complete embed with all fields"
+        mock_embed_payload.color = 0xFF0000
+        mock_embed_payload.footer_text = "Footer"
+        mock_embed_payload.footer_icon_url = "https://example.com/footer.png"
+
+        embed = EmbedConverter.payload_to_embed(mock_embed_payload)
+        assert embed.title == "Full Embed"
+        assert embed.description == "Complete embed with all fields"
+
+    def test_embed_to_payload_defensive_access(self, mock_discord_embed):
+        """Test that embed_to_payload safely handles missing attributes."""
+        from utils.embed_converter import EmbedConverter
+        # Remove fields attribute to test defensive access
+        mock_discord_embed.fields = None
+        payload = EmbedConverter.embed_to_payload(mock_discord_embed)
+        assert payload.fields == []
+
+    def test_payload_to_grid_embed_with_fields(self, mock_embed_payload):
+        """Test that payload_to_grid_embed properly formats embed for grid layout."""
+        from utils.embed_converter import EmbedConverter
+        # Add some fields to the payload
+        from api.schemas.message_schemas import EmbedField
+        field1 = EmbedField(name="Field 1", value="Value 1", inline=True)
+        field2 = EmbedField(name="Field 2", value="Value 2", inline=True)
+        mock_embed_payload.fields = [field1, field2]
+        mock_embed_payload.title = "Grid Embed"
+
+        grid_embed = EmbedConverter.payload_to_grid_embed(mock_embed_payload, fields_per_row=2)
+        assert grid_embed is not None

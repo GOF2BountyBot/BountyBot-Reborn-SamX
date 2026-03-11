@@ -5,23 +5,24 @@ Handles database operations for Player entities including guild-isolated
 player management, progression tracking, and statistics.
 """
 
-from typing import Optional, List
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, and_, update
-import shared.bblogger as bblogger
+from typing import List, Optional
+
+from shared import bblogger
 from persist.interfaces.repository_interface import IRepository
 from persist.models.player import Player
+from sqlalchemy import and_, select, update
+from sqlalchemy.ext.asyncio import AsyncSession
 
 flogger = bblogger.get_logger("player-repository")
 
 class PlayerRepository(IRepository[Player]):
-    
-    async def get_by_id(self, db: AsyncSession, player_id: int) -> Optional[Player]:
+
+    async def get_by_id(self, db: AsyncSession, obj_id: int) -> Optional[Player]:
         """Get player by ID."""
         try:
-            return await db.get(Player, player_id)
+            return await db.get(Player, obj_id)
         except Exception as e:
-            flogger.error(f"Error getting player by ID {player_id}: {e}")
+            flogger.error(f"Error getting player by ID {obj_id}: {e}")
             raise
 
     async def get_by_name(self, db: AsyncSession, name: str) -> Optional[Player]:
@@ -37,14 +38,14 @@ class PlayerRepository(IRepository[Player]):
             flogger.error(f"Error listing all players: {e}")
             raise
 
-    async def add(self, db: AsyncSession, player: Player) -> Player:
+    async def add(self, db: AsyncSession, obj: Player) -> Player:
         """Add new player to database."""
         try:
-            db.add(player)
+            db.add(obj)
             await db.commit()
-            await db.refresh(player)
-            flogger.info(f"Added new player: {player.id} for user {player.user_id} in guild {player.guild_id}")
-            return player
+            await db.refresh(obj)
+            flogger.info(f"Added new player: {obj.id} for user {obj.user_id} in guild {obj.guild_id}")
+            return obj
         except Exception as e:
             flogger.error(f"Error adding player: {e}")
             await db.rollback()
@@ -55,13 +56,13 @@ class PlayerRepository(IRepository[Player]):
         try:
             user_id = raw.get("user_id")
             guild_id = raw.get("guild_id")
-            
+
             if not user_id or not guild_id:
                 raise ValueError("Both user_id and guild_id are required")
-                
+
             # Try to get existing player
             player = await self.get_by_user_and_guild(db, user_id, guild_id)
-            
+
             if player:
                 # Update existing player
                 for key, value in raw.items():
@@ -75,20 +76,20 @@ class PlayerRepository(IRepository[Player]):
                 player = Player(**raw)
                 player = await self.add(db, player)
                 flogger.info(f"Created new player for user {user_id} in guild {guild_id}")
-                
+
             return player
         except Exception as e:
             flogger.error(f"Error creating/updating player: {e}")
             raise
 
-    async def remove(self, db: AsyncSession, player: Player) -> None:
+    async def remove(self, db: AsyncSession, obj: Player) -> None:
         """Remove player from database."""
         try:
-            await db.delete(player)
+            await db.delete(obj)
             await db.commit()
-            flogger.info(f"Removed player: {player.id}")
+            flogger.info(f"Removed player: {obj.id}")
         except Exception as e:
-            flogger.error(f"Error removing player {player.id}: {e}")
+            flogger.error(f"Error removing player {obj.id}: {e}")
             await db.rollback()
             raise
 
@@ -127,21 +128,21 @@ class PlayerRepository(IRepository[Player]):
             flogger.error(f"Error getting players for user {user_id}: {e}")
             raise
 
-    async def update_credits(self, db: AsyncSession, player_id: int, credits: int) -> Player:
-        """Update player credits."""
+    async def update_credits(self, db: AsyncSession, player_id: int, new_credits: int) -> Player:
+        """Update player new_credits."""
         try:
             await db.execute(
                 update(Player)
                 .where(Player.id == player_id)
-                .values(credits=credits)
+                .values(new_credits=new_credits)
             )
             await db.commit()
-            
+
             player = await self.get_by_id(db, player_id)
-            flogger.debug(f"Updated credits for player {player_id}: {credits}")
+            flogger.debug(f"Updated new_credits for player {player_id}: {new_credits}")
             return player
         except Exception as e:
-            flogger.error(f"Error updating credits for player {player_id}: {e}")
+            flogger.error(f"Error updating new_credits for player {player_id}: {e}")
             await db.rollback()
             raise
 
@@ -154,7 +155,7 @@ class PlayerRepository(IRepository[Player]):
                 .values(xp=xp)
             )
             await db.commit()
-            
+
             player = await self.get_by_id(db, player_id)
             flogger.debug(f"Updated XP for player {player_id}: {xp}")
             return player
@@ -169,14 +170,14 @@ class PlayerRepository(IRepository[Player]):
             valid_tiers = ["Bronze", "Silver", "Gold", "Platinum"]
             if tier not in valid_tiers:
                 raise ValueError(f"Invalid tier: {tier}. Must be one of {valid_tiers}")
-                
+
             await db.execute(
                 update(Player)
                 .where(Player.id == player_id)
                 .values(tier=tier)
             )
             await db.commit()
-            
+
             player = await self.get_by_id(db, player_id)
             flogger.info(f"Updated tier for player {player_id}: {tier}")
             return player
@@ -194,7 +195,7 @@ class PlayerRepository(IRepository[Player]):
                 .values(active_ship_id=ship_id)
             )
             await db.commit()
-            
+
             player = await self.get_by_id(db, player_id)
             flogger.debug(f"Updated active ship for player {player_id}: {ship_id}")
             return player

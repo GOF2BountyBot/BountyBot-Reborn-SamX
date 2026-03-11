@@ -1,5 +1,5 @@
-from datetime import datetime, timezone
 import traceback
+from datetime import datetime, timezone
 
 from shared.bblogger import get_logger
 
@@ -40,10 +40,10 @@ class JobExecutor:
             duration = (end_ts - start_ts).total_seconds()
             flogger.info(f"[{end_ts.isoformat()}] Completed job '{job_id}' in {duration:.2f}s")
 
-        except Exception as e:
+        except Exception as e:  # pylint: disable=broad-exception-caught
             flogger.error(
                 f"[{datetime.now(timezone.utc).isoformat()}] "
-                f"Job '{job_id}' failed: {e}", 
+                f"Job '{job_id}' failed: {e}",
                 exc_info=True
             )
             flogger.trace(traceback.format_exc())

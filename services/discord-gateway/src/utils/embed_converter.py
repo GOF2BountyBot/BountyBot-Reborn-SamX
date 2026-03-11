@@ -6,11 +6,12 @@ and Discord embeds, ensuring 100% consistency and round-trip accuracy.
 The converter is completely generic and contains no business logic.
 """
 
-from typing import Dict, Any, Optional, List, Union
-import discord
 from datetime import datetime
-from api.schemas.message_schemas import EmbedPayload, EmbedField
-import shared.bblogger as bblogger
+from typing import Any, Dict, List, Union
+
+import discord
+from shared import bblogger
+from api.schemas.message_schemas import EmbedField, EmbedPayload
 
 flogger = bblogger.get_logger("discord-embed-converter")
 
@@ -18,7 +19,7 @@ flogger = bblogger.get_logger("discord-embed-converter")
 class EmbedConverter:
     """
     Utility class for bidirectional conversion between payloads and Discord embeds.
-    
+
     This converter is completely generic and maintains 100% consistency:
     payload -> embed -> payload should return identical data (modulo trivial
     normalization such as None vs omitted).
@@ -48,7 +49,7 @@ class EmbedConverter:
         if hasattr(payload, "model_dump") and callable(getattr(payload, "model_dump")):
             try:
                 return EmbedPayload(**payload.model_dump())
-            except Exception as e:
+            except Exception as e:  # pylint: disable=broad-exception-caught
                 flogger.debug("Failed to coerce payload via .model_dump(): %s", e)
                 raise
 
@@ -56,19 +57,19 @@ class EmbedConverter:
         if hasattr(payload, "dict") and callable(getattr(payload, "dict")):
             try:
                 return EmbedPayload(**payload.dict())
-            except Exception as e:
+            except Exception as e:  # pylint: disable=broad-exception-caught
                 flogger.debug("Failed to coerce payload via .dict(): %s", e)
                 raise
 
         # last-ditch: try to cast to dict()
         try:
             maybe_dict = dict(payload)
-        except Exception:
+        except Exception as exc:  # pylint: disable=broad-exception-caught
             flogger.debug("payload_to_embed received unsupported payload type: %r", type(payload))
-            raise TypeError("payload must be an EmbedPayload or a dict-like mapping convertible to it")
+            raise TypeError("payload must be an EmbedPayload or a dict-like mapping convertible to it") from exc
         try:
             return EmbedPayload(**maybe_dict)
-        except Exception:
+        except Exception:  # pylint: disable=broad-exception-caught
             flogger.debug("Failed to coerce iterable-mapping payload to EmbedPayload")
             raise
 
@@ -103,11 +104,11 @@ class EmbedConverter:
             if ep.color is not None:
                 try:
                     embed.color = discord.Color(ep.color)
-                except Exception:
+                except Exception:  # pylint: disable=broad-exception-caught
                     # discord.Color may raise for invalid values; try int coercion
                     try:
                         embed.color = discord.Color(int(ep.color))
-                    except Exception:
+                    except Exception:  # pylint: disable=broad-exception-caught
                         flogger.debug("Invalid color value provided to payload_to_embed: %r", ep.color)
                         raise
                 flogger.debug(f"  set color: {hex(ep.color)}")
@@ -146,7 +147,7 @@ class EmbedConverter:
             flogger.info("payload_to_embed successfully created embed")
             return embed
 
-        except Exception as exc:
+        except Exception:  # pylint: disable=broad-exception-caught
             flogger.exception("Error converting payload to embed")
             raise
 
@@ -206,7 +207,7 @@ class EmbedConverter:
                     if color is None:
                         # as fallback, try int()
                         color = int(embed.color)
-                except Exception:
+                except Exception:  # pylint: disable=broad-exception-caught
                     color = None
 
             fields: List[EmbedField] = []
@@ -217,7 +218,7 @@ class EmbedConverter:
                     fval = getattr(f, "value", "")
                     finline = bool(getattr(f, "inline", False))
                     fields.append(EmbedField(name=fname, value=fval, inline=finline))
-            except Exception:
+            except Exception:  # pylint: disable=broad-exception-caught
                 flogger.debug("Failed to iterate embed.fields defensively; setting fields empty")
                 fields = []
 
@@ -231,7 +232,7 @@ class EmbedConverter:
                     footer_text = getattr(footer, "text", None) or None
                     footer_icon_url = getattr(footer, "icon_url", None) or None
                     flogger.debug(f"  extracted footer: text={footer_text!r}, icon_url={footer_icon_url!r}")
-            except Exception:
+            except Exception:  # pylint: disable=broad-exception-caught
                 # swallow — treat as no footer
                 footer_text = None
                 footer_icon_url = None
@@ -242,14 +243,14 @@ class EmbedConverter:
             try:
                 if getattr(embed, "thumbnail", None) is not None:
                     thumbnail_url = getattr(getattr(embed, "thumbnail"), "url", None)
-            except Exception:
+            except Exception:  # pylint: disable=broad-exception-caught
                 thumbnail_url = None
 
             image_url = None
             try:
                 if getattr(embed, "image", None) is not None:
                     image_url = getattr(getattr(embed, "image"), "url", None)
-            except Exception:
+            except Exception:  # pylint: disable=broad-exception-caught
                 image_url = None
 
             payload = EmbedPayload(
@@ -266,7 +267,7 @@ class EmbedConverter:
             flogger.info("embed_to_payload successfully created payload")
             return payload
 
-        except Exception as exc:
+        except Exception:  # pylint: disable=broad-exception-caught
             flogger.exception("Error converting embed to payload")
             raise
 
@@ -289,6 +290,6 @@ class EmbedConverter:
             consistent = ep.model_dump() == result_payload.model_dump()
             flogger.info(f"Round-trip consistency: {consistent}")
             return consistent
-        except Exception as e:
+        except Exception as e:  # pylint: disable=broad-exception-caught
             flogger.error(f"Round-trip test failed: {e}")
             return False

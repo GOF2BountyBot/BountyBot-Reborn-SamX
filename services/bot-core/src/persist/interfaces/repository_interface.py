@@ -1,5 +1,6 @@
 from abc import ABC, abstractmethod
-from typing import TypeVar, Generic, Optional, List
+from typing import Generic, List, Optional, TypeVar
+
 from sqlalchemy.ext.asyncio import AsyncSession  # switched
 
 T = TypeVar('T')
@@ -13,7 +14,6 @@ class IRepository(ABC, Generic[T]):
     @abstractmethod
     async def get_by_name(self, db: AsyncSession, name: str) -> Optional[T]:
         """Fetch a T by its unique name"""
-        pass
 
     @abstractmethod
     async def list_all(self, db: AsyncSession) -> List[T]:
@@ -28,7 +28,6 @@ class IRepository(ABC, Generic[T]):
         """
         Upsert from a raw JSON dict.
         """
-        pass
 
     @abstractmethod
     async def remove(self, db: AsyncSession, obj: T) -> None:

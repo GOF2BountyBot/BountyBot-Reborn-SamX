@@ -5,12 +5,14 @@ Represents a player instance within a specific guild. Each user can have
 multiple players (one per guild) with completely isolated game state.
 """
 
-from sqlalchemy.orm import Mapped, mapped_column, relationship
-from sqlalchemy import BigInteger, Integer, String, DateTime, ForeignKey
-from datetime import datetime, UTC
+from datetime import UTC, datetime
 from typing import List, Optional
-from persist.models.base import Base
+
 from persist.database.tablenames import TableNames
+from persist.models.base import Base
+from sqlalchemy import BigInteger, DateTime, ForeignKey, Integer, String
+from sqlalchemy.orm import Mapped, mapped_column, relationship
+
 
 class Player(Base):
     __tablename__ = TableNames.Players.value
@@ -51,18 +53,24 @@ class Player(Base):
 
     # Timestamps
     created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(UTC))
-    updated_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(UTC), onupdate=lambda: datetime.now(UTC))
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, default=lambda: datetime.now(UTC), onupdate=lambda: datetime.now(UTC)
+    )
 
     # Relationships
     user: Mapped["User"] = relationship("User", back_populates="players")
-    inventory: Mapped[List["PlayerInventory"]] = relationship("PlayerInventory", back_populates="player", cascade="all, delete-orphan")
+    inventory: Mapped[List["PlayerInventory"]] = relationship(
+        "PlayerInventory", back_populates="player", cascade="all, delete-orphan"
+    )
     ships: Mapped[List["PlayerShip"]] = relationship(
         "PlayerShip",
         back_populates="player",
         cascade="all, delete-orphan",
         foreign_keys="PlayerShip.player_id"
     )
-    active_ship: Mapped[Optional["PlayerShip"]] = relationship("PlayerShip", foreign_keys=[active_ship_id], post_update=True)
+    active_ship: Mapped[Optional["PlayerShip"]] = relationship(
+        "PlayerShip", foreign_keys=[active_ship_id], post_update=True
+    )
 
     def __repr__(self) -> str:
         return f"<Player(id={self.id}, user_id={self.user_id}, guild_id={self.guild_id}, tier='{self.tier}')>"

@@ -1,5 +1,7 @@
-from typing import List, Optional, Dict, Any
+from typing import List, Optional
+
 from pydantic import BaseModel, Field
+
 
 # Response Models
 class ShipResponse(BaseModel):
@@ -12,7 +14,7 @@ class ShipResponse(BaseModel):
     modules: Optional[List[str]]
     turrets: Optional[List[str]]
     created_at: str
-    
+
     class Config:
         from_attributes = True
 

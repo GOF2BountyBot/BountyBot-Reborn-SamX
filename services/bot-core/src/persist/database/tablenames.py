@@ -1,5 +1,6 @@
 from enum import Enum
 
+
 class TableNames(Enum):
     Criminal            = "criminal"
     DiscordMessage      = "discord_message"

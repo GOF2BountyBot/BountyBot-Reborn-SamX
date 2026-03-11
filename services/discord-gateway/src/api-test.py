@@ -35,9 +35,11 @@ import threading
 import time
 from datetime import datetime, timezone
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
+
+import httpx
+
 # Solely to avoid having to re-implement all the emoji normalization/conversion...
 from utils.discord_helpers import normalize_emoji
-import httpx
 
 # -----------------------------------------------------------------------------
 # ANSI color codes for stdout
@@ -77,7 +79,7 @@ def now_iso() -> str:
 def pretty(obj: Any) -> str:
     try:
         return json.dumps(obj, indent=2, sort_keys=True, ensure_ascii=False)
-    except Exception:
+    except Exception:  # pylint: disable=broad-exception-caught
         return str(obj)
 
 def safe_append_cleanup(entry: Dict[str, Any]) -> None:
@@ -106,7 +108,7 @@ def schedule_cleanup(
     with CLEANUP_LOCK:
         CLEANUP_QUEUE.append(entry)
     safe_append_cleanup(entry)
-    LOGGER.warning(f"(cleanup scheduled) {resource_type} {resource_id}")
+    LOGGER.warning("(cleanup scheduled) %s %s", resource_type, resource_id)
 
 # -----------------------------------------------------------------------------
 def api_call(
@@ -117,9 +119,9 @@ def api_call(
     headers: Optional[dict] = None
 ) -> Tuple[Optional[httpx.Response], Optional[str]]:
     url = ARGS.base_url.rstrip("/") + path
-    LOGGER.info(f"--> {method.upper()} {url}")
+    LOGGER.info("--> %s %s", method.upper(), url)
     if body is not None:
-        LOGGER.debug("Request body:\n" + pretty(body))
+        LOGGER.debug("Request body:\n%s", pretty(body))
     hdrs = headers or {"Content-Type": "application/json"}
     try:
         with httpx.Client() as client:
@@ -127,17 +129,18 @@ def api_call(
                 method=method, url=url, json=body, headers=hdrs, timeout=REQUEST_TIMEOUT
             )
     except httpx.HTTPError as e:
-        LOGGER.error(f"<-- NETWORK ERROR: {e}")
+        LOGGER.error("<-- NETWORK ERROR: %s", e)
         return None, str(e)
-    LOGGER.info(f"<-- {resp.status_code} {resp.reason}")
+    LOGGER.info("<-- %s %s", resp.status_code, resp.reason)
     text = resp.text or ""
-    if "application/json" in resp.headers.get("Content-Type", "") or text.lstrip().startswith(("{","[")):
+    content_type = resp.headers.get("Content-Type", "")
+    if "application/json" in content_type or text.lstrip().startswith(("{", "[")):
         try:
-            LOGGER.debug("Response body:\n" + pretty(resp.json()))
-        except Exception:
-            LOGGER.debug("Response raw:\n" + text[:5000])
+            LOGGER.debug("Response body:\n%s", pretty(resp.json()))
+        except Exception:  # pylint: disable=broad-exception-caught
+            LOGGER.debug("Response raw:\n%s", text[:5000])
     else:
-        LOGGER.debug("Response text:\n" + text[:5000])
+        LOGGER.debug("Response text:\n%s", text[:5000])
     return resp, None
 
 # -----------------------------------------------------------------------------
@@ -146,8 +149,8 @@ def compare_lists_by_set(a: List[Any], b: List[Any]) -> bool:
         set_a = {json.dumps(x, sort_keys=True) for x in a}
         set_b = {json.dumps(x, sort_keys=True) for x in b}
         return set_a == set_b
-    except Exception:
-        from collections import Counter
+    except Exception:  # pylint: disable=broad-exception-caught
+        from collections import Counter  # pylint: disable=import-outside-toplevel
         ca = Counter(json.dumps(x, sort_keys=True) for x in a)
         cb = Counter(json.dumps(x, sort_keys=True) for x in b)
         return ca == cb
@@ -173,7 +176,7 @@ def _validate_recursive(req: Any, resp: Any) -> Tuple[bool, str]:
         return (True, "") if compare_lists_by_set(req, resp) else (False, "array mismatch")
     return (True, "") if req == resp else (False, f"expected {req!r}, got {resp!r}")
 
-def validate_object(request_body: Dict[str, Any], get_response_json: Dict[str, Any]) -> Tuple[bool, str]:
+def validate_object(request_body: Dict[str, Any], get_response_json: Dict[str, Any]) -> Tuple[bool, str]:  # pylint: disable=line-too-long
     """
     Validate that the GET response contains the fields from request_body.
 
@@ -190,7 +193,10 @@ def validate_object(request_body: Dict[str, Any], get_response_json: Dict[str, A
 
     # 2) Unwrap any known single-resource wrapper(s).
     if isinstance(resp_obj, dict):
-        for wrapper in ("message", "guild", "member", "role", "channel", "category", "thread", "tag"):
+        known_wrappers = (
+            "message", "guild", "member", "role", "channel", "category", "thread", "tag"
+        )
+        for wrapper in known_wrappers:
             if wrapper in resp_obj and isinstance(resp_obj[wrapper], (dict, list)):
                 resp_obj = resp_obj[wrapper]
                 break
@@ -202,7 +208,7 @@ def validate_object(request_body: Dict[str, Any], get_response_json: Dict[str, A
             ok = compare_lists_by_set(request_body, resp_obj)
             return (True, "") if ok else (False, "array mismatch")
         # Otherwise we expected an object but got an array.
-        return False, f"expected object, got array"
+        return False, "expected object, got array"
 
     # 4) If response is not a dict at this point, cannot validate fields.
     if not isinstance(resp_obj, dict):
@@ -264,7 +270,7 @@ def cleanup_all() -> None:
     for entry in items:
         rt, rid = entry["resource_type"], entry["resource_id"]
         meth, uri, bdy = entry["delete_method"], entry["delete_uri"], entry["delete_body"]
-        LOGGER.warning(f"Cleaning {rt} {rid} via {meth} {uri}")
+        LOGGER.warning("Cleaning %s %s via %s %s", rt, rid, meth, uri)
         resp, _ = api_call(meth, uri, body=bdy)
         if resp is None:
             res = "network-error"
@@ -279,8 +285,8 @@ def cleanup_all() -> None:
     CLEANUP_DONE = True
     sys.stdout.write(YELLOW + "=== CLEANUP END ===\n" + RESET)
 
-def _on_signal(signum, frame):
-    LOGGER.warning(f"Signal {signum} received — running cleanup")
+def _on_signal(signum, _frame):
+    LOGGER.warning("Signal %s received — running cleanup", signum)
     cleanup_all()
     _print_summary_and_exit()
 
@@ -290,7 +296,7 @@ signal.signal(signal.SIGTERM, _on_signal)
 
 def _handle_uncaught(exc_type, exc_value, exc_traceback):
     # log it…
-    LOGGER.error("Uncaught exception, running cleanup", 
+    LOGGER.error("Uncaught exception, running cleanup",
                  exc_info=(exc_type, exc_value, exc_traceback))
     # then force the cleanup & summary
     cleanup_all()
@@ -344,7 +350,7 @@ class BaseTests:
                 if key in j:
                     try:
                         return int(j[key])
-                    except Exception:
+                    except Exception:  # pylint: disable=broad-exception-caught
                         pass
             # try nested common resource keys
             for key in ("category","channel","role","thread","tag","message"):
@@ -352,7 +358,7 @@ class BaseTests:
                 if isinstance(tmp, dict) and "id" in tmp:
                     try:
                         return int(tmp["id"])
-                    except Exception:
+                    except Exception:  # pylint: disable=broad-exception-caught
                         pass
         return None
 
@@ -380,7 +386,10 @@ class BaseTests:
 
         if isinstance(data, dict):
             # common container keys which may hold arrays
-            for key in ("items", "members", "roles", "channels", "overwrites", "tags", "threads", "messages"):
+            container_keys = (
+                "items", "members", "roles", "channels", "overwrites", "tags", "threads", "messages"
+            )
+            for key in container_keys:
                 val = data.get(key)
                 if isinstance(val, list):
                     return val
@@ -417,7 +426,7 @@ class BaseTests:
         if method.upper() == "POST" and status in (200, 201):
             try:
                 j = resp.json()
-            except Exception:
+            except Exception:  # pylint: disable=broad-exception-caught
                 j = {}
 
             # unwrap canonical envelope -> data
@@ -429,7 +438,7 @@ class BaseTests:
             if isinstance(data, dict) and "id" in data:
                 try:
                     rid = int(data["id"])
-                except Exception:
+                except Exception:  # pylint: disable=broad-exception-caught
                     rid = None
 
             if rid is not None:
@@ -441,9 +450,11 @@ class BaseTests:
                 if path.startswith("/api/v1/channels/") and path.endswith("/messages"):
                     delete_uri = f"/api/v1/messages/{rid}"
                 # tags created under channel -> DELETE /api/v1/tags/{id}
-                elif path.startswith("/api/v1/channels/") and path.endswith("/tags"):
+                elif (path.startswith("/api/v1/channels/")
+                      and path.endswith("/tags")):
                     delete_uri = f"/api/v1/tags/{rid}"
-                # threads are channels (created under /channels/{id}/threads) -> DELETE /api/v1/channels/{id}
+                # threads are channels (created under /channels/{id}/threads)
+                # -> DELETE /api/v1/channels/{id}
                 elif path.startswith("/api/v1/channels/") and path.endswith("/threads"):
                     delete_uri = f"/api/v1/channels/{rid}"
                 # channels created under a guild -> DELETE /api/v1/channels/{id}
@@ -492,7 +503,7 @@ class BaseTests:
         if method.upper() == "POST":
             try:
                 j = resp.json()
-            except Exception:
+            except Exception:  # pylint: disable=broad-exception-caught
                 j = {}
             rid = self._extract_created_id(j)
             if rid is not None:
@@ -523,7 +534,7 @@ class BaseTests:
             if rid is not None:
                 try:
                     get_path_used = get_path.format(id=rid)
-                except Exception:
+                except Exception:  # pylint: disable=broad-exception-caught
                     record_result(name, "GET", get_path, None, False, "GET path formatting failed")
                     return
             else:
@@ -545,7 +556,7 @@ class BaseTests:
                     None if ok else f"validation:{reason}")
         self.wait()
 
-    def run_forbidden(self, name:str, method:str, path:str, body:Optional[dict]=None):
+    def run_forbidden(self, name:str, method:str, path:str, _body:Optional[dict]=None):
         record_result(name, method, path, None, False, "SKIPPED (no auth)")
 
 # -----------------------------------------------------------------------------
@@ -598,7 +609,7 @@ class MessageTests(BaseTests):
         ):
             try:
                 test(cid)
-            except Exception:
+            except Exception:  # pylint: disable=broad-exception-caught
                 LOGGER.exception("Unhandled exception in message test")
 
     def _make_channel(self) -> Optional[int]:
@@ -614,7 +625,7 @@ class MessageTests(BaseTests):
             return None
         try:
             j = resp.json()
-        except Exception:
+        except Exception:  # pylint: disable=broad-exception-caught
             j = {}
         # use the robust extractor (handles canonical data envelope)
         cid = self._extract_created_id(j)
@@ -641,7 +652,7 @@ class MessageTests(BaseTests):
             return None
         try:
             j = resp.json()
-        except Exception:
+        except Exception:  # pylint: disable=broad-exception-caught
             j = {}
         mid = self._extract_created_id(j)
         if mid is None:
@@ -683,7 +694,7 @@ class MessageTests(BaseTests):
             f"/api/v1/channels/{cid}/messages", body, [400, 422]
         )
 
-    def test_create_invalid_ids(self, cid: int):
+    def test_create_invalid_ids(self, _cid: int):
         # Attempt to POST to a non-existent channel -> expect 404
         body = {"content": {"title": "test-invalid"}}
         self.run_simple_expected(
@@ -728,9 +739,9 @@ class MessageTests(BaseTests):
             "PUT missing fields", "PUT", path, {}, [400, 422]
         )
 
-    def test_update_nonexistent(self, cid: int):
+    def test_update_nonexistent(self, _cid: int):
         # PUT to canonical single-message path for nonexistent id
-        path = f"/api/v1/messages/999999999"
+        path = "/api/v1/messages/999999999"
         body = {"content": {}}
         self.run_simple_expected(
             "PUT nonexistent", "PUT", path, body, [404]
@@ -774,13 +785,13 @@ class MessageTests(BaseTests):
             f"/api/v1/messages/{mid}", None, [404]
         )
 
-    def test_delete_missing(self, cid: int):
+    def test_delete_missing(self, _cid: int):
         self.run_simple_expected(
             "DELETE missing fields", "DELETE", "/api/v1/messages",
             {"guild_id": self.guild_id}, [404]
         )
 
-    def test_delete_nonexistent(self, cid: int):
+    def test_delete_nonexistent(self, _cid: int):
         self.run_simple_expected(
             "DELETE nonexistent", "DELETE", "/api/v1/messages/999999999", None, [404]
         )
@@ -802,12 +813,12 @@ class MessageTests(BaseTests):
             f"/api/v1/messages/{mid}", None, [200]
         )
 
-    def test_get_missing_path(self, cid: int):
+    def test_get_missing_path(self, _cid: int):
         self.run_simple_expected(
            "GET missing path", "GET", "/api/v1/messages/", None, [400, 404]
         )
 
-    def test_get_invalid_ids(self, cid: int):
+    def test_get_invalid_ids(self, _cid: int):
         self.run_simple_expected(
             "GET invalid id format", "GET",
             "/api/v1/messages/abc", None, list(range(400, 500))
@@ -819,7 +830,7 @@ class MessageTests(BaseTests):
             f"/api/v1/messages/{self.guild_id}/{cid}/999999999", None, [404]
         )
 
-    def test_get_forbidden(self, cid: int):
+    def test_get_forbidden(self, _cid: int):
         self.run_forbidden(
             "GET forbidden", "GET", "/api/v1/messages/0"
         )
@@ -915,7 +926,7 @@ class UserTests(BaseTests):
         ):
             try:
                 test()
-            except Exception:
+            except Exception:  # pylint: disable=broad-exception-caught
                 LOGGER.exception("Unhandled exception in user test")
 
     def test_get_me(self):
@@ -926,9 +937,21 @@ class UserTests(BaseTests):
     def test_get_user_valid(self):
         self.run_simple_expected("GET user valid","GET",f"/api/v1/users/{self.user_id}",None,[200])
     def test_get_user_notfound(self):
-        self.run_simple_expected("GET user notfound","GET","/api/v1/users/999999999999",None,[404])
+        self.run_simple_expected(
+            "GET user notfound",
+            "GET",
+            "/api/v1/users/999999999999",
+            None,
+            [404]
+        )
     def test_get_user_invalid_type(self):
-        self.run_simple_expected("GET user invalid","GET","/api/v1/users/abc",None,list(range(400,500)))
+        self.run_simple_expected(
+            "GET user invalid",
+            "GET",
+            "/api/v1/users/abc",
+            None,
+            list(range(400,500))
+        )
     def test_get_user_forbid(self):
         self.run_forbidden("GET user forbid","GET",f"/api/v1/users/{self.user_id}")
 
@@ -936,17 +959,23 @@ class UserTests(BaseTests):
         path = f"/api/v1/members/{self.user_id}"
         self.run_simple_expected("GET member valid","GET",path,None,[200])
     def test_get_member_notfound(self):
-        path = f"/api/v1/members/999999999999"
+        path = "/api/v1/members/999999999999"
         self.run_simple_expected("GET member notfound","GET",path,None,[404])
     def test_get_member_invalid(self):
-        path = f"/api/v1/members/abc"
+        path = "/api/v1/members/abc"
         self.run_simple_expected("GET member invalid","GET",path,None,list(range(400,500)))
     def test_get_member_forbid(self):
         path = f"/api/v1/members/{self.user_id}"
         self.run_forbidden("GET member forbid","GET",path)
     def test_update_member_nick(self):
         path = f"/api/v1/members/{self.user_id}"
-        self.run_simple_expected("PUT change nick","PUT",path,{"nick":f"n-{int(time.time())}"},[200])
+        self.run_simple_expected(
+            "PUT change nick",
+            "PUT",
+            path,
+            {"nick":f"n-{int(time.time())}"},
+            [200]
+        )
 
     def test_update_member_roles(self):
         """
@@ -966,7 +995,7 @@ class UserTests(BaseTests):
             return
         try:
             rj = rresp.json()
-        except Exception:
+        except Exception:  # pylint: disable=broad-exception-caught
             rj = {}
         # robust id extraction (handles data.id)
         role_id = self._extract_created_id(rj)
@@ -997,7 +1026,7 @@ class UserTests(BaseTests):
                 roles = j.get("roles") or []
             try:
                 ok = int(role_id) in [int(x) for x in roles]
-            except Exception:
+            except Exception:  # pylint: disable=broad-exception-caught
                 ok = False
             return (True, "") if ok else (False, f"role {role_id} not present on member")
 
@@ -1015,7 +1044,8 @@ class UserTests(BaseTests):
         # Remove scheduled cleanup entry for this role (we deleted it explicitly)
         with CLEANUP_LOCK:
             CLEANUP_QUEUE[:] = [e for e in CLEANUP_QUEUE
-                                if not (e["resource_type"] == "role" and e["resource_id"] == str(role_id))]
+                                if not (e["resource_type"] == "role"
+                           and e["resource_id"] == str(role_id))]
         self.wait()
 
     def test_update_member_mute_deaf(self):
@@ -1024,7 +1054,13 @@ class UserTests(BaseTests):
 
     def test_update_member_invalid_roles(self):
         path = f"/api/v1/members/{self.user_id}"
-        self.run_simple_expected("PUT invalid roles","PUT",path,{"roles":["nope"]},list(range(400,500)))
+        self.run_simple_expected(
+            "PUT invalid roles",
+            "PUT",
+            path,
+            {"roles":["nope"]},
+            list(range(400,500))
+        )
 
     def test_update_member_forbid(self):
         path = f"/api/v1/members/{self.user_id}"
@@ -1073,7 +1109,7 @@ class RoleTests(BaseTests):
         ):
             try:
                 test()
-            except Exception:
+            except Exception:  # pylint: disable=broad-exception-caught
                 LOGGER.exception("Unhandled exception in role test")
 
     # GET /roles
@@ -1082,7 +1118,7 @@ class RoleTests(BaseTests):
         self.run_simple_expected("GET list roles","GET",p,None,[200])
 
     def test_list_roles_invalid(self):
-        p=f"/api/v1/guilds/999999999999/roles"
+        p="/api/v1/guilds/999999999999/roles"
         self.run_simple_expected("GET list roles invalid guild","GET",p,None,[404])
 
     def test_list_roles_forbid(self):
@@ -1101,7 +1137,7 @@ class RoleTests(BaseTests):
         path = f"/api/v1/guilds/{self.guild_id}/roles"
         body = {"name": f"test-role-{int(time.time())}", "permissions": 0}
         # use templated GET path; run_validation will substitute {id}
-        self.run_validation(name, "POST", path, body, f"/api/v1/roles/{{id}}")
+        self.run_validation(name, "POST", path, body, "/api/v1/roles/{id}")
 
     def test_create_role_missing_name(self):
         name, path = "POST create role missing name", f"/api/v1/guilds/{self.guild_id}/roles"
@@ -1111,13 +1147,15 @@ class RoleTests(BaseTests):
         if resp and resp.status_code in (200, 201):
             try:
                 j = resp.json()
-            except Exception:
+            except Exception:  # pylint: disable=broad-exception-caught
                 j = {}
             rid = self._extract_created_id(j)
             if rid is not None:
                 schedule_cleanup(name, "role", rid, "DELETE", f"/api/v1/roles/{rid}")
         record_result(name, "POST", path, getattr(resp, "status_code", None), ok,
-                      None if ok else f"expected [201|422], got {resp.status_code if resp else 'ERR'}")
+                      None if ok else (
+                          f"expected [201|422], got "
+                          f"{resp.status_code if resp else 'ERR'}"))
         self.wait()
 
     def test_create_role_invalid_perms(self):
@@ -1138,11 +1176,11 @@ class RoleTests(BaseTests):
         self.run_simple_expected("GET role valid", "GET", p, None, [200])
 
     def test_get_role_notfound(self):
-        p = f"/api/v1/roles/999999999999"
+        p = "/api/v1/roles/999999999999"
         self.run_simple_expected("GET role not found", "GET", p, None, [404])
 
     def test_get_role_forbid(self):
-        p = f"/api/v1/roles/0"
+        p = "/api/v1/roles/0"
         self.run_forbidden("GET role forbid", "GET", p, None)
 
     # PUT /roles/{role_id}
@@ -1176,7 +1214,8 @@ class RoleTests(BaseTests):
             return
         with CLEANUP_LOCK:
             CLEANUP_QUEUE[:] = [e for e in CLEANUP_QUEUE
-                                if not (e["resource_type"] == "role" and e["resource_id"] == str(rid))]
+                                if not (e["resource_type"] == "role"
+                           and e["resource_id"] == str(rid))]
         p = f"/api/v1/roles/{rid}"
         self.run_simple_expected("DELETE role valid", "DELETE", p, None, [200, 204])
 
@@ -1186,11 +1225,11 @@ class RoleTests(BaseTests):
         self.run_simple_expected("DELETE protected role", "DELETE", p, None, list(range(400, 500)))
 
     def test_delete_role_invalid(self):
-        p = f"/api/v1/roles/999999999999"
+        p = "/api/v1/roles/999999999999"
         self.run_simple_expected("DELETE role invalid", "DELETE", p, None, [404])
 
     def test_delete_role_forbid(self):
-        p = f"/api/v1/roles/0"
+        p = "/api/v1/roles/0"
         self.run_forbidden("DELETE role forbid", "DELETE", p, None)
 
     # GET /roles/{role_id}/members
@@ -1210,7 +1249,7 @@ class RoleTests(BaseTests):
         if resp and resp.status_code == 200:
             try:
                 j = resp.json()
-            except Exception:
+            except Exception:  # pylint: disable=broad-exception-caught
                 j = {}
             arr = self._normalize_data_to_list(j)
             ok = isinstance(arr, list) and len(arr) == 0
@@ -1218,7 +1257,7 @@ class RoleTests(BaseTests):
                           None if ok else "members not empty")
 
     def test_list_role_members_forbid(self):
-        p = f"/api/v1/roles/0/members"
+        p = "/api/v1/roles/0/members"
         self.run_forbidden("GET role members forbid", "GET", p, None)
 
     # PUT /roles/{role_id}/members/{user_id}
@@ -1248,12 +1287,15 @@ class RoleTests(BaseTests):
                 roles = j.get("roles") or []
             try:
                 ok = int(rid) in [int(x) for x in roles]
-            except Exception:
+            except Exception:  # pylint: disable=broad-exception-caught
                 ok = False
             return (True, "") if ok else (False, f"role {rid} not present on member")
 
         # Use {} as body since this endpoint does not require a payload.
-        self.run_validation("PUT assign role valid", "PUT", p, {}, f"/api/v1/members/{self.user_id}", validate_fn=validate_member_has_role)
+        self.run_validation(
+            "PUT assign role valid", "PUT", p, {}, f"/api/v1/members/{self.user_id}",
+            validate_fn=validate_member_has_role
+        )
 
 
     def test_assign_role_notin_guild(self):
@@ -1306,12 +1348,15 @@ class RoleTests(BaseTests):
                 roles = j.get("roles") or []
             try:
                 ok = int(rid) not in [int(x) for x in roles]
-            except Exception:
+            except Exception:  # pylint: disable=broad-exception-caught
                 ok = False
             return (True, "") if ok else (False, f"role {rid} still present on member")
 
         # run_validation will perform the DELETE then GET the member to validate
-        self.run_validation("DELETE remove role valid", "DELETE", p, {}, f"/api/v1/members/{self.user_id}", validate_fn=validate_member_no_role)
+        self.run_validation(
+            "DELETE remove role valid", "DELETE", p, {}, f"/api/v1/members/{self.user_id}",
+            validate_fn=validate_member_no_role
+        )
 
     def test_remove_role_notassigned(self):
         rid = self._create_helper_role()
@@ -1348,14 +1393,23 @@ class RoleTests(BaseTests):
         check_path = f"/api/v1/roles/{rid}/members/{self.user_id}/check"
         cresp, _ = api_call("GET", check_path, headers=self.headers())
         if not cresp:
-            record_result(name + " check (after assign)", "GET", check_path, None, False, "network error")
+            record_result(
+                name + " check (after assign)",
+                "GET",
+                check_path,
+                None,
+                False,
+                "network error"
+            )
         elif cresp.status_code != 200:
-            record_result(name + " check (after assign)", "GET", check_path, cresp.status_code, False,
+            record_result(
+                name + " check (after assign)", "GET", check_path,
+                cresp.status_code, False,
                           f"expected 200, got {cresp.status_code}")
         else:
             try:
                 cj = cresp.json()
-            except Exception:
+            except Exception:  # pylint: disable=broad-exception-caught
                 cj = {}
             data = cj.get("data", cj if isinstance(cj, dict) else {})
             allowed = None
@@ -1369,12 +1423,20 @@ class RoleTests(BaseTests):
         dresp, _ = api_call("DELETE", ap, headers=self.headers())
         removed_ok = bool(dresp and dresp.status_code in (200, 204, 404))
         # Accept 404 (not-in-guild) as a possible remove outcome but still proceed
-        record_result(name + " remove", "DELETE", ap, getattr(dresp, "status_code", None), removed_ok,
+        record_result(
+            name + " remove", "DELETE", ap, getattr(dresp, "status_code", None), removed_ok,
                       None if removed_ok else "remove failed")
         self.wait_valid()
         cresp2, _ = api_call("GET", check_path, headers=self.headers())
         if not cresp2:
-            record_result(name + " check (after remove)", "GET", check_path, None, False, "network error")
+            record_result(
+                name + " check (after remove)",
+                "GET",
+                check_path,
+                None,
+                False,
+                "network error"
+            )
             return
         if cresp2.status_code != 200:
             # if resource/guild/member removed, server may return 404 — record as expected failure
@@ -1384,7 +1446,7 @@ class RoleTests(BaseTests):
             return
         try:
             cj2 = cresp2.json()
-        except Exception:
+        except Exception:  # pylint: disable=broad-exception-caught
             cj2 = {}
         data2 = cj2.get("data", cj2 if isinstance(cj2, dict) else {})
         allowed2 = None
@@ -1422,7 +1484,7 @@ class RoleTests(BaseTests):
 
         try:
             cj = cresp.json()
-        except Exception:
+        except Exception:  # pylint: disable=broad-exception-caught
             cj = {}
         data = cj.get("data", cj if isinstance(cj, dict) else {})
         allowed = None
@@ -1444,14 +1506,21 @@ class RoleTests(BaseTests):
         """
         Invalid id formats should produce 4xx
         """
-        p = f"/api/v1/roles/abc/members/def/check"
-        self.run_simple_expected("GET check user role invalid ids", "GET", p, None, list(range(400,500)))
+        p = "/api/v1/roles/abc/members/def/check"
+        self.run_simple_expected(
+            "GET check user role invalid ids",
+            "GET",
+            p,
+            None,
+            list(range(400,500))
+        )
 
     def test_check_user_has_role_forbid(self):
         """
         Forbidden (no-auth) case — harness marks as skipped
         """
-        self.run_forbidden("GET check user role forbid", "GET", f"/api/v1/roles/0/members/0/check", None)
+        self.run_forbidden(
+            "GET check user role forbid", "GET", "/api/v1/roles/0/members/0/check", None)
 
 
     # Role position ordering tests
@@ -1471,15 +1540,29 @@ class RoleTests(BaseTests):
         a = {"name": f"test-role-pos-A-{int(time.time())}", "position": 10}
         ra, _ = api_call("POST", base, body=a, headers=self.headers())
         if not ra or ra.status_code not in (200, 201):
-            record_result(name, "POST", base, getattr(ra, "status_code", None), False, "A create failed")
+            record_result(
+                name,
+                "POST",
+                base,
+                getattr(ra, "status_code", None),
+                False,
+                "A create failed"
+            )
             return
         try:
             rja = ra.json()
-        except Exception:
+        except Exception:  # pylint: disable=broad-exception-caught
             rja = {}
         ridA = self._extract_created_id(rja)
         if not ridA:
-            record_result(name, "POST", base, getattr(ra, "status_code", None), False, "A id parse failed")
+            record_result(
+                name,
+                "POST",
+                base,
+                getattr(ra, "status_code", None),
+                False,
+                "A id parse failed"
+            )
             return
         schedule_cleanup(name, "role", ridA, "DELETE", f"/api/v1/roles/{ridA}")
 
@@ -1487,15 +1570,29 @@ class RoleTests(BaseTests):
         b = {"name": f"test-role-pos-B-{int(time.time())}", "position": 20}
         rb, _ = api_call("POST", base, body=b, headers=self.headers())
         if not rb or rb.status_code not in (200, 201):
-            record_result(name, "POST", base, getattr(rb, "status_code", None), False, "B create failed")
+            record_result(
+                name,
+                "POST",
+                base,
+                getattr(rb, "status_code", None),
+                False,
+                "B create failed"
+            )
             return
         try:
             rjb = rb.json()
-        except Exception:
+        except Exception:  # pylint: disable=broad-exception-caught
             rjb = {}
         ridB = self._extract_created_id(rjb)
         if not ridB:
-            record_result(name, "POST", base, getattr(rb, "status_code", None), False, "B id parse failed")
+            record_result(
+                name,
+                "POST",
+                base,
+                getattr(rb, "status_code", None),
+                False,
+                "B id parse failed"
+            )
             return
         schedule_cleanup(name, "role", ridB, "DELETE", f"/api/v1/roles/{ridB}")
 
@@ -1508,18 +1605,26 @@ class RoleTests(BaseTests):
             return
         try:
             jr = rl.json()
-        except Exception:
+        except Exception:  # pylint: disable=broad-exception-caught
             jr = {}
         arr = self._normalize_data_to_list(jr)
 
         # Build quick lookup maps and indices
-        id_to_index = {int(r.get("id")): i for i, r in enumerate(arr) if isinstance(r, dict) and "id" in r}
+        id_to_index = {
+            int(r.get("id")): i
+            for i, r in enumerate(arr)
+            if isinstance(r, dict) and "id" in r
+        }
         def _safe_pos(x):
             try:
                 return int(x)
-            except Exception:
+            except Exception:  # pylint: disable=broad-exception-caught
                 return None
-        id_to_pos = {int(r.get("id")): _safe_pos(r.get("position")) for r in arr if isinstance(r, dict) and "id" in r}
+        id_to_pos = {
+            int(r.get("id")): _safe_pos(r.get("position"))
+            for r in arr
+            if isinstance(r, dict) and "id" in r
+        }
 
         idxA = id_to_index.get(int(ridA))
         idxB = id_to_index.get(int(ridB))
@@ -1529,11 +1634,19 @@ class RoleTests(BaseTests):
         # Validate presence
         if idxA is None or idxB is None or posA is None or posB is None:
             reason = f"A(id={ridA}) idx={idxA} pos={posA} ; B(id={ridB}) idx={idxB} pos={posB}"
-            record_result(name, "GET", base, rl.status_code, False, f"missing role/position in listing: {reason}")
+            record_result(
+                name,
+                "GET",
+                base,
+                rl.status_code,
+                False,
+                f"missing role/position in listing: {reason}"
+            )
             return
 
         # Accept cases where the server normalizes new roles to the same position.
-        # Require positions are non-decreasing; only enforce index ordering when positions are strictly ordered.
+        # Require positions are non-decreasing;
+        # only enforce index ordering when positions are strictly ordered.
         try:
             posA_int = int(posA)
             posB_int = int(posB)
@@ -1542,7 +1655,7 @@ class RoleTests(BaseTests):
             if posA_int < posB_int:
                 ok_indices = idxA < idxB
             ok = ok_positions and ok_indices
-        except Exception:
+        except Exception:  # pylint: disable=broad-exception-caught
             ok = False
 
         reason = None
@@ -1558,14 +1671,25 @@ class RoleTests(BaseTests):
             body = {"name": f"test-role-sort-{pos}-{int(time.time())}", "position": pos}
             r, _ = api_call("POST", base, body=body, headers=self.headers())
             if not r or r.status_code not in (200, 201):
-                record_result(name, "POST", base, getattr(r, "status_code", None), False, f"create pos={pos} failed"); return
+                record_result(
+                    name,
+                    "POST",
+                    base,
+                    getattr(r, "status_code", None),
+                    False,
+                    f"create pos={pos} failed"
+                )
+                return
             try:
                 jr = r.json()
-            except Exception:
+            except Exception:  # pylint: disable=broad-exception-caught
                 jr = {}
             rid = self._extract_created_id(jr)
             if not rid:
-                record_result(name, "POST", base, getattr(r, "status_code", None), False, f"create pos={pos} id parse failed"); return
+                record_result(
+                    name, "POST", base, getattr(r, "status_code", None),
+                    False, f"create pos={pos} id parse failed")
+                return
             schedule_cleanup(name, "role", rid, "DELETE", f"/api/v1/roles/{rid}")
             created.append((rid, pos))
             time.sleep(0.2)
@@ -1573,10 +1697,13 @@ class RoleTests(BaseTests):
 
         rl, _ = api_call("GET", base, headers=self.headers())
         if not rl or rl.status_code != 200:
-            record_result(name, "GET", base, getattr(rl, "status_code", None), False, "list failed"); return
+            record_result(
+                name, "GET", base, getattr(rl, "status_code", None),
+                False, "list failed")
+            return
         try:
             jr = rl.json()
-        except Exception:
+        except Exception:  # pylint: disable=broad-exception-caught
             jr = {}
         arr = self._normalize_data_to_list(jr)
 
@@ -1596,15 +1723,29 @@ class RoleTests(BaseTests):
         body = {"name": f"test-role-{int(time.time())}"}
         r, _ = api_call("POST", path, body=body, headers=self.headers())
         if not r or r.status_code not in (200, 201):
-            record_result("setup_role", "POST", path, getattr(r, "status_code", None), False, "role setup fail")
+            record_result(
+                "setup_role",
+                "POST",
+                path,
+                getattr(r, "status_code", None),
+                False,
+                "role setup fail"
+            )
             return None
         try:
             j = r.json()
-        except Exception:
+        except Exception:  # pylint: disable=broad-exception-caught
             j = {}
         rid = self._extract_created_id(j)
         if rid is None:
-            record_result("setup_role", "POST", path, getattr(r, "status_code", None), False, "unable to parse role id")
+            record_result(
+                "setup_role",
+                "POST",
+                path,
+                getattr(r, "status_code", None),
+                False,
+                "unable to parse role id"
+            )
             return None
         # schedule cleanup using canonical single-role endpoint per OpenAPI
         schedule_cleanup("setup_role", "role", rid, "DELETE", f"/api/v1/roles/{rid}")
@@ -1631,14 +1772,21 @@ class GuildTests(BaseTests):
         ):
             try:
                 test()
-            except Exception:
+            except Exception:  # pylint: disable=broad-exception-caught
                 LOGGER.exception("Unhandled exception in guild test")
 
     def test_list_guilds(self):
         self.run_simple_expected("GET list guilds","GET","/api/v1/guilds",None,[200])
 
     def test_list_guilds_empty(self):
-        record_result("GET list guilds empty","GET","/api/v1/guilds",None,False,"SKIPPED (cannot simulate empty)")
+        record_result(
+            "GET list guilds empty",
+            "GET",
+            "/api/v1/guilds",
+            None,
+            False,
+            "SKIPPED (cannot simulate empty)"
+        )
 
     def test_list_guilds_forbid(self):
         self.run_forbidden("GET list guilds forbid","GET","/api/v1/guilds",None)
@@ -1648,10 +1796,22 @@ class GuildTests(BaseTests):
         self.run_simple_expected("GET guild valid","GET",p,None,[200])
 
     def test_get_guild_notfound(self):
-        self.run_simple_expected("GET guild notfound","GET","/api/v1/guilds/999999999999",None,[404])
+        self.run_simple_expected(
+            "GET guild notfound",
+            "GET",
+            "/api/v1/guilds/999999999999",
+            None,
+            [404]
+        )
 
     def test_get_guild_invalid_type(self):
-        self.run_simple_expected("GET guild invalid","GET","/api/v1/guilds/abc",None,list(range(400,500)))
+        self.run_simple_expected(
+            "GET guild invalid",
+            "GET",
+            "/api/v1/guilds/abc",
+            None,
+            list(range(400,500))
+        )
 
     def test_get_guild_forbid(self):
         p=f"/api/v1/guilds/{self.guild_id}"
@@ -1667,7 +1827,7 @@ class GuildTests(BaseTests):
         if resp and resp.status_code == 200:
             try:
                 j = resp.json()
-            except Exception:
+            except Exception:  # pylint: disable=broad-exception-caught
                 j = {}
             # unwrap canonical envelope -> data, but accept either dict or list
             if isinstance(j, dict) and "data" in j:
@@ -1691,7 +1851,7 @@ class GuildTests(BaseTests):
 
     def test_list_members_invalid(self):
         self.run_simple_expected("GET members invalid guild","GET",
-                                 f"/api/v1/guilds/abc/members",None,list(range(400,500)))
+                                 "/api/v1/guilds/abc/members",None,list(range(400,500)))
 
     def test_list_members_forbid(self):
         p=f"/api/v1/guilds/{self.guild_id}/members"
@@ -1753,7 +1913,7 @@ class CategoryTests(BaseTests):
         ):
             try:
                 test()
-            except Exception:
+            except Exception:  # pylint: disable=broad-exception-caught
                 LOGGER.exception("Unhandled exception in category test")
 
     def _mk_category(self) -> Optional[int]:
@@ -1767,7 +1927,7 @@ class CategoryTests(BaseTests):
         # robust extraction of created id handling canonical envelope & wrappers
         try:
             j = resp.json()
-        except Exception:
+        except Exception:  # pylint: disable=broad-exception-caught
             j = {}
         cid = self._extract_created_id(j)
         if cid is None:
@@ -1789,7 +1949,7 @@ class CategoryTests(BaseTests):
             return None
         try:
             j = resp.json()
-        except Exception:
+        except Exception:  # pylint: disable=broad-exception-caught
             j = {}
         # robustly extract created channel id (handles canonical "data" envelope)
         ch = self._extract_created_id(j)
@@ -1819,9 +1979,9 @@ class CategoryTests(BaseTests):
             return
         try:
             j = resp.json()
-        except Exception:
+        except Exception:  # pylint: disable=broad-exception-caught
             j = {}
-        data = j.get("data", j if isinstance(j, dict) else {})
+        j.get("data", j if isinstance(j, dict) else {})
         arr = self._normalize_data_to_list(j)
         ok = isinstance(arr, list)
         record_result("GET list categories verify", "GET", p, resp.status_code, ok,
@@ -1858,7 +2018,7 @@ class CategoryTests(BaseTests):
         path = f"/api/v1/guilds/{self.guild_id}/categories"
         body = {"name": f"test-category-{int(time.time())}", "position": 1}
         # Use a templated get_path; run_validation will substitute {id} from the POST response.
-        self.run_validation(name, "POST", path, body, f"/api/v1/categories/{{id}}")
+        self.run_validation(name, "POST", path, body, "/api/v1/categories/{id}")
 
     def test_create_category_missing_name(self):
         self.run_simple_expected(
@@ -1904,19 +2064,19 @@ class CategoryTests(BaseTests):
         # Single-category notfound path
         self.run_simple_expected(
             "GET category notfound", "GET",
-            f"/api/v1/categories/999999999999", None, [404]
+            "/api/v1/categories/999999999999", None, [404]
         )
 
     def test_get_category_invalid_type(self):
         self.run_simple_expected(
             "GET category invalid", "GET",
-            f"/api/v1/categories/abc", None, list(range(400,500))
+            "/api/v1/categories/abc", None, list(range(400,500))
         )
 
     def test_get_category_forbid(self):
         self.run_forbidden(
             "GET category forbid", "GET",
-            f"/api/v1/categories/0", None
+            "/api/v1/categories/0", None
         )
 
     def test_update_category_valid(self):
@@ -1954,12 +2114,14 @@ class CategoryTests(BaseTests):
                     return False, "position missing"
                 try:
                     int(got_pos)
-                except Exception:
+                except Exception:  # pylint: disable=broad-exception-caught
                     return False, f"position not integer: {got_pos!r}"
                 return True, ""
 
             # Use custom validator so we don't false-fail on server-side position normalization
-            self.run_validation("PUT update category valid", "PUT", p, body, p, validate_fn=validate_category_update)
+            self.run_validation(
+                "PUT update category valid", "PUT", p, body, p,
+                validate_fn=validate_category_update)
 
 
     def test_update_category_partial(self):
@@ -1982,7 +2144,8 @@ class CategoryTests(BaseTests):
     def test_update_category_null_fields(self):
         cid = self._mk_category()
         if cid:
-            # Nulling name/position is allowed by the update schema (anyOf string|null / integer|null)
+            # Nulling name/position is allowed by the update schema
+            # (anyOf string|null / integer|null)
             body = {"name": None, "position": None}
             p = f"/api/v1/categories/{cid}"
             self.run_validation("PUT update category null", "PUT", p, body, p)
@@ -1990,14 +2153,14 @@ class CategoryTests(BaseTests):
     def test_update_category_notfound(self):
         self.run_simple_expected(
             "PUT update category notfound", "PUT",
-            f"/api/v1/categories/999999999999",
+            "/api/v1/categories/999999999999",
             {"name": f"test-invalid-{int(time.time())}"}, [404]
         )
 
     def test_update_category_forbid(self):
         self.run_forbidden(
             "PUT update category forbid", "PUT",
-            f"/api/v1/categories/0", {"name":"test-invalid"}
+            "/api/v1/categories/0", {"name":"test-invalid"}
         )
 
     def test_delete_category_valid(self):
@@ -2049,7 +2212,7 @@ class CategoryTests(BaseTests):
     def test_delete_category_notfound(self):
         self.run_simple_expected(
             "DELETE category notfound", "DELETE",
-            f"/api/v1/categories/999999999999", None, [404]
+            "/api/v1/categories/999999999999", None, [404]
         )
 
     def test_delete_category_invalid_cascade(self):
@@ -2063,7 +2226,7 @@ class CategoryTests(BaseTests):
     def test_delete_category_forbid(self):
         self.run_forbidden(
             "DELETE category forbid", "DELETE",
-            f"/api/v1/categories/0", None
+            "/api/v1/categories/0", None
         )
 
     #
@@ -2079,7 +2242,7 @@ class CategoryTests(BaseTests):
             if resp and resp.status_code == 200:
                 try:
                     j = resp.json()
-                except Exception:
+                except Exception:  # pylint: disable=broad-exception-caught
                     j = {}
                 arr = self._normalize_data_to_list(j)
                 ok = isinstance(arr, list)
@@ -2090,13 +2253,13 @@ class CategoryTests(BaseTests):
     def test_list_category_channels_notfound(self):
         self.run_simple_expected(
             "GET list category channels notfound", "GET",
-            f"/api/v1/categories/999999999999/channels", None, [404]
+            "/api/v1/categories/999999999999/channels", None, [404]
         )
 
     def test_list_category_channels_forbid(self):
         self.run_forbidden(
             "GET list category channels forbid", "GET",
-            f"/api/v1/categories/0/channels", None
+            "/api/v1/categories/0/channels", None
         )
 
     #
@@ -2110,7 +2273,6 @@ class CategoryTests(BaseTests):
         # canonical move: PUT /api/v1/channels/{channel_id}/category/{category_id}
         p = f"/api/v1/channels/{ch}/category/{cid}"
         # Use run_validation so the PUT is followed by a GET of the channel to confirm category_id
-        body = None  # endpoint does not require a body
         # run_validation expects a dict body; pass {} if None would be problematic
         self.run_validation("PUT move channel", "PUT", p, {} , f"/api/v1/channels/{ch}")
 
@@ -2133,7 +2295,7 @@ class CategoryTests(BaseTests):
         # canonical forbid case (invalid zero ids)
         self.run_forbidden(
             "PUT move channel forbid", "PUT",
-            f"/api/v1/channels/0/category/0", None
+            "/api/v1/channels/0/category/0", None
         )
 
     #
@@ -2147,7 +2309,7 @@ class CategoryTests(BaseTests):
             if resp and resp.status_code == 200:
                 try:
                     j = resp.json()
-                except Exception:
+                except Exception:  # pylint: disable=broad-exception-caught
                     j = {}
                 # Robust extraction: accept either {"data": {...}} OR a top-level list
                 if isinstance(j, dict) and "data" in j:
@@ -2167,7 +2329,7 @@ class CategoryTests(BaseTests):
     def test_get_category_permissions_notfound(self):
         self.run_simple_expected(
             "GET category perms notfound", "GET",
-            f"/api/v1/categories/999999999999/permissions", None, [404]
+            "/api/v1/categories/999999999999/permissions", None, [404]
         )
 
     def test_get_category_permissions_empty(self):
@@ -2178,7 +2340,7 @@ class CategoryTests(BaseTests):
             if resp and resp.status_code == 200:
                 try:
                     j = resp.json()
-                except Exception:
+                except Exception:  # pylint: disable=broad-exception-caught
                     j = {}
                 # Robust extraction: accept either {"data": {...}} OR a top-level list
                 if isinstance(j, dict) and "data" in j:
@@ -2198,7 +2360,7 @@ class CategoryTests(BaseTests):
     def test_get_category_permissions_forbid(self):
         self.run_forbidden(
             "GET category perms forbid", "GET",
-            f"/api/v1/categories/0/permissions", None
+            "/api/v1/categories/0/permissions", None
         )
 
     def test_update_category_permissions_valid(self):
@@ -2224,7 +2386,7 @@ class CategoryTests(BaseTests):
 
         try:
             rj = rresp.json()
-        except Exception:
+        except Exception:  # pylint: disable=broad-exception-caught
             rj = {}
         role_id = self._extract_created_id(rj)
         if role_id is None:
@@ -2260,7 +2422,7 @@ class CategoryTests(BaseTests):
                 tid = ow.get("target_id")
                 try:
                     tid_int = int(tid)
-                except Exception:
+                except Exception:  # pylint: disable=broad-exception-caught
                     tid_int = None
                 if tid_int == role_id and ow.get("type") == "role":
                     try:
@@ -2268,8 +2430,10 @@ class CategoryTests(BaseTests):
                         ok_deny = int(ow.get("deny", -1)) == 4096
                         if ok_allow and ok_deny:
                             return True, ""
-                        return False, f"allow/deny mismatch (got allow={ow.get('allow')}, deny={ow.get('deny')})"
-                    except Exception:
+                        msg = (f"allow/deny mismatch (got allow={ow.get('allow')},"
+                               f" deny={ow.get('deny')})")
+                        return False, msg
+                    except Exception:  # pylint: disable=broad-exception-caught
                         return False, "allow/deny not integers"
             return False, "overwrite for created role not found"
 
@@ -2294,7 +2458,7 @@ class CategoryTests(BaseTests):
     def test_update_category_permissions_forbid(self):
         self.run_forbidden(
             "PUT category perms forbid", "PUT",
-            f"/api/v1/categories/0/permissions", {"overwrites": []}
+            "/api/v1/categories/0/permissions", {"overwrites": []}
         )
 
 # -----------------------------------------------------------------------------
@@ -2350,12 +2514,12 @@ class ChannelTests(BaseTests):
         ):
             try:
                 test()
-            except Exception:
+            except Exception:  # pylint: disable=broad-exception-caught
                 LOGGER.exception("Unhandled exception in channel test")
 
     def _mk_category(self) -> Optional[int]:
         return CategoryTests(self.guild_id, self.user_id, self.delay, self.vdelay)._mk_category()
-        
+
     def _make_channel(self) -> Optional[int]:
         return MessageTests(self.guild_id, self.user_id, self.delay, self.vdelay)._make_channel()
 
@@ -2371,11 +2535,12 @@ class ChannelTests(BaseTests):
         resp, _ = api_call("POST", path, body=body, headers=self.headers())
         if not resp or resp.status_code not in (200, 201):
             record_result("setup_voice_channel", "POST", path,
-                          getattr(resp, "status_code", None), False, "voice channel creation failed")
+                          getattr(resp, "status_code", None), False,
+                           "voice channel creation failed")
             return None
         try:
             j = resp.json()
-        except Exception:
+        except Exception:  # pylint: disable=broad-exception-caught
             j = {}
         # Robust extraction of created id (handles canonical data envelope and legacy wrappers)
         cid = self._extract_created_id(j)
@@ -2385,7 +2550,7 @@ class ChannelTests(BaseTests):
                 cid = j.get("channel", {}).get("id") or j.get("data", {}).get("id") or j.get("id")
         try:
             cid = int(cid)
-        except Exception:
+        except Exception:  # pylint: disable=broad-exception-caught
             record_result("setup_voice_channel", "POST", path,
                           getattr(resp, "status_code", None), False, "unable to parse channel id")
             return None
@@ -2400,9 +2565,9 @@ class ChannelTests(BaseTests):
             return
         try:
             j = resp.json()
-        except Exception:
+        except Exception:  # pylint: disable=broad-exception-caught
             j = {}
-        data = j.get("data", j if isinstance(j, dict) else {})
+        j.get("data", j if isinstance(j, dict) else {})
         arr = self._normalize_data_to_list(j)
         ok = isinstance(arr, list)
         record_result("GET list guild channels verify", "GET", p, resp.status_code, ok,
@@ -2426,7 +2591,7 @@ class ChannelTests(BaseTests):
             return
         try:
             j = resp.json()
-        except Exception:
+        except Exception:  # pylint: disable=broad-exception-caught
             j = {}
         arr = self._normalize_data_to_list(j)
         ok = isinstance(arr, list)
@@ -2439,7 +2604,13 @@ class ChannelTests(BaseTests):
 
     def test_list_channel_messages_invalid(self):
         p = "/api/v1/channels/abc/messages"
-        self.run_simple_expected("GET channel messages invalid", "GET", p, None, list(range(400,500)))
+        self.run_simple_expected(
+            "GET channel messages invalid",
+            "GET",
+            p,
+            None,
+            list(range(400,500))
+        )
 
     # NEW: valid channel‐only message listing
     def test_create_channel_valid(self):
@@ -2451,7 +2622,8 @@ class ChannelTests(BaseTests):
             "nsfw": False
         }
         # POST then GET /api/v1/channels/{id} and validate persisted fields
-        self.run_validation("POST create channel valid", "POST", path, body, "/api/v1/channels/{id}")
+        self.run_validation(
+            "POST create channel valid", "POST", path, body, "/api/v1/channels/{id}")
 
     def test_create_channel_missing_name(self):
         self.run_simple_expected(
@@ -2493,7 +2665,10 @@ class ChannelTests(BaseTests):
                 nsfw = j.get("nsfw")
             return (True, "") if nsfw is False else (False, f"expected nsfw False, got {nsfw}")
 
-        self.run_validation("POST create channel default nsfw", "POST", path, body, "/api/v1/channels/{id}", validate_fn=validate_default_nsfw)
+        self.run_validation(
+            "POST create channel default nsfw", "POST", path, body, "/api/v1/channels/{id}",
+            validate_fn=validate_default_nsfw
+        )
 
     def test_create_channel_nsfw_flag(self):
         path = f"/api/v1/guilds/{self.guild_id}/channels"
@@ -2513,7 +2688,10 @@ class ChannelTests(BaseTests):
                 nsfw = j.get("nsfw")
             return (True, "") if nsfw is True else (False, f"expected nsfw True, got {nsfw}")
 
-        self.run_validation("POST create channel nsfw flag", "POST", path, body, "/api/v1/channels/{id}", validate_fn=validate_nsfw_true)
+        self.run_validation(
+            "POST create channel nsfw flag", "POST", path, body, "/api/v1/channels/{id}",
+            validate_fn=validate_nsfw_true
+        )
 
     def test_create_channel_slowmode(self):
         path = f"/api/v1/guilds/{self.guild_id}/channels"
@@ -2533,7 +2711,10 @@ class ChannelTests(BaseTests):
                 val = j.get("slowmode_delay")
             return (True, "") if val == 5 else (False, f"expected slowmode 5, got {val}")
 
-        self.run_validation("POST create channel slowmode", "POST", path, body, "/api/v1/channels/{id}", validate_fn=validate_slowmode)
+        self.run_validation(
+            "POST create channel slowmode", "POST", path, body, "/api/v1/channels/{id}",
+            validate_fn=validate_slowmode
+        )
 
     def test_create_channel_notfound(self):
         self.run_simple_expected(
@@ -2571,11 +2752,18 @@ class ChannelTests(BaseTests):
             if isinstance(j, dict):
                 b = j.get("bitrate")
                 ul = j.get("user_limit")
-            ok = (int(b) == 64000 if b is not None else False) and (int(ul) == 10 if ul is not None else False)
-            return (True, "") if ok else (False, f"bitrate/user_limit mismatch got bitrate={b} user_limit={ul}")
+            ok_b = (int(b) == 64000 if b is not None else False)
+            ok_ul = (int(ul) == 10 if ul is not None else False)
+            ok = ok_b and ok_ul
+            if ok:
+                return True, ""
+            return False, f"bitrate/user_limit mismatch got bitrate={b} user_limit={ul}"
 
         # Use run_validation so the create is followed by GET /api/v1/channels/{id} and validation
-        self.run_validation("POST create voice channel", "POST", path, body, "/api/v1/channels/{id}", validate_fn=validate_voice)
+        self.run_validation(
+            "POST create voice channel", "POST", path, body, "/api/v1/channels/{id}",
+            validate_fn=validate_voice
+        )
 
     # Get / Update / Delete Channel
     def test_get_channel_valid(self):
@@ -2587,7 +2775,7 @@ class ChannelTests(BaseTests):
                 return
             try:
                 j = resp.json()
-            except Exception:
+            except Exception:  # pylint: disable=broad-exception-caught
                 j = {}
             # unwrap canonical envelope & wrappers
             obj = j.get("data", j if isinstance(j, dict) else {})
@@ -2623,16 +2811,18 @@ class ChannelTests(BaseTests):
                 # topic may be None or a string; slowmode_delay should equal the requested value
                 got_topic = j.get("topic") if isinstance(j, dict) else None
                 got_slow = j.get("slowmode_delay") if isinstance(j, dict) else None
-                ok_topic = (got_topic == body["topic"])
+                ok_topic = got_topic == body["topic"]
                 try:
                     ok_slow = int(got_slow) == int(body["slowmode_delay"])
-                except Exception:
+                except Exception:  # pylint: disable=broad-exception-caught
                     ok_slow = False
                 if ok_topic and ok_slow:
                     return True, ""
                 return False, f"topic={got_topic!r} slowmode_delay={got_slow!r}"
 
-            self.run_validation("PUT update channel valid", "PUT", p, body, p, validate_fn=validate_channel_update)
+            self.run_validation(
+                "PUT update channel valid", "PUT", p, body, p,
+                validate_fn=validate_channel_update)
 
     def test_update_channel_readonly(self):
         ch = self._make_channel()
@@ -2669,7 +2859,9 @@ class ChannelTests(BaseTests):
                     return True, ""
                 return False, f"expected topic null/omitted, got {j.get('topic')!r}"
 
-            self.run_validation("PUT update channel null", "PUT", p, body, p, validate_fn=validate_null_topic)
+            self.run_validation(
+                "PUT update channel null", "PUT", p, body, p,
+                validate_fn=validate_null_topic)
 
     def test_update_channel_notfound(self):
         self.run_simple_expected(
@@ -2712,7 +2904,7 @@ class ChannelTests(BaseTests):
         """DELETE with forbidden/invalid id should be SKIPPED (no auth) in harness."""
         self.run_forbidden("DELETE channel forbid", "DELETE", "/api/v1/channels/0")
 
-    
+
     def test_update_voice_channel(self):
         cid = self._make_voice_channel()
         if not cid:
@@ -2732,13 +2924,15 @@ class ChannelTests(BaseTests):
                 got_bitrate = j.get("bitrate")
                 got_ul = j.get("user_limit")
                 got_type = j.get("type")
-                ok_bitrate = int(got_bitrate) == int(body["bitrate"]) if got_bitrate is not None else False
+                ok_bitrate = (
+                    int(got_bitrate) == int(body["bitrate"]) if got_bitrate is not None else False
+                )
                 ok_ul = int(got_ul) == int(body["user_limit"]) if got_ul is not None else False
                 ok_type = (got_type == "voice") if got_type is not None else True
                 if ok_bitrate and ok_ul and ok_type:
                     return True, ""
                 return False, f"bitrate={got_bitrate} user_limit={got_ul} type={got_type}"
-            except Exception:
+            except Exception:  # pylint: disable=broad-exception-caught
                 return False, "invalid types in response"
         # Validate update via GET of the same channel
         self.run_validation(
@@ -2789,9 +2983,9 @@ class ChannelTests(BaseTests):
                 return
             try:
                 j = resp.json()
-            except Exception:
+            except Exception:  # pylint: disable=broad-exception-caught
                 j = {}
-            data = j.get("data", j if isinstance(j, dict) else {})
+            j.get("data", j if isinstance(j, dict) else {})
             arr = self._normalize_data_to_list(j)
             ok = isinstance(arr, list)
             record_result("GET channel perms verify", "GET", p, resp.status_code, ok,
@@ -2819,7 +3013,9 @@ class ChannelTests(BaseTests):
         name = "PUT channel perms valid"
         # 1) create temporary role
         role_body = {"name": f"test-role-perm-{int(time.time())}", "permissions": 0}
-        rresp, _ = api_call("POST", f"/api/v1/guilds/{self.guild_id}/roles", body=role_body, headers=self.headers())
+        rresp, _ = api_call(
+            "POST", f"/api/v1/guilds/{self.guild_id}/roles",
+            body=role_body, headers=self.headers())
         if not rresp or rresp.status_code not in (200, 201):
             record_result(name + " (role create)", "POST",
                         f"/api/v1/guilds/{self.guild_id}/roles",
@@ -2827,7 +3023,7 @@ class ChannelTests(BaseTests):
             return
         try:
             rj = rresp.json()
-        except Exception:
+        except Exception:  # pylint: disable=broad-exception-caught
             rj = {}
         role_id = self._extract_created_id(rj)
         if role_id is None:
@@ -2843,7 +3039,8 @@ class ChannelTests(BaseTests):
         body = {"overwrites": [{"target_id": role_id, "type": "role", "allow": 3072, "deny": 4096}]}
 
         def validate_channel_overwrite(get_json: dict) -> Tuple[bool, str]:
-            # Normalize the GET response into a list (handles data=[...], data={"overwrites":[...]}, wrappers, etc.)
+            # Normalize the GET response into a list
+            # (handles data=[...], data={"overwrites":[...]}, wrappers, etc.)
             arr = self._normalize_data_to_list(get_json)
             if not isinstance(arr, list):
                 return False, "permissions payload not an array"
@@ -2852,7 +3049,7 @@ class ChannelTests(BaseTests):
                     continue
                 try:
                     tid = int(ow.get("target_id")) if ow.get("target_id") is not None else None
-                except Exception:
+                except Exception:  # pylint: disable=broad-exception-caught
                     tid = None
                 if tid == int(role_id) and ow.get("type") == "role":
                     try:
@@ -2860,8 +3057,10 @@ class ChannelTests(BaseTests):
                         ok_deny = int(ow.get("deny", -1)) == 4096
                         if ok_allow and ok_deny:
                             return True, ""
-                        return False, f"allow/deny mismatch (got allow={ow.get('allow')}, deny={ow.get('deny')})"
-                    except Exception:
+                        msg = (f"allow/deny mismatch (got allow={ow.get('allow')},"
+                               f" deny={ow.get('deny')})")
+                        return False, msg
+                    except Exception:  # pylint: disable=broad-exception-caught
                         return False, "allow/deny not integers"
             return False, "overwrite for created role not found"
 
@@ -2919,7 +3118,7 @@ class ForumTests(BaseTests):
         ):
             try:
                 test()
-            except Exception:
+            except Exception:  # pylint: disable=broad-exception-caught
                 LOGGER.exception("Unhandled exception in forum test")
 
     # Helpers
@@ -2929,11 +3128,12 @@ class ForumTests(BaseTests):
         resp, _ = api_call("POST", path, body=body, headers=self.headers())
         if not resp or resp.status_code not in (200, 201):
             record_result("setup_forum_channel", "POST", path,
-                          getattr(resp, "status_code", None), False, "forum channel creation failed")
+                          getattr(resp, "status_code", None), False,
+                           "forum channel creation failed")
             return None
         try:
             j = resp.json()
-        except Exception:
+        except Exception:  # pylint: disable=broad-exception-caught
             j = {}
         cid = self._extract_created_id(j)
         if cid is None:
@@ -2942,7 +3142,7 @@ class ForumTests(BaseTests):
                 cid = j.get("channel", {}).get("id") or j.get("data", {}).get("id") or j.get("id")
         try:
             cid = int(cid)
-        except Exception:
+        except Exception:  # pylint: disable=broad-exception-caught
             record_result("setup_forum_channel", "POST", path,
                           getattr(resp, "status_code", None), False, "unable to parse channel id")
             return None
@@ -2953,14 +3153,17 @@ class ForumTests(BaseTests):
         gresp, _ = api_call("GET", f"/api/v1/channels/{cid}", headers=self.headers())
         if not gresp or gresp.status_code != 200:
             record_result("setup_forum_channel verify", "GET", f"/api/v1/channels/{cid}",
-                          getattr(gresp, "status_code", None), False, "GET failed for created forum channel")
+                          getattr(gresp, "status_code", None), False,
+                           "GET failed for created forum channel")
             return cid
         try:
             gj = gresp.json()
-        except Exception:
+        except Exception:  # pylint: disable=broad-exception-caught
             gj = {}
         ok, reason = validate_object({"name": body["name"], "type": body["type"]}, gj)
-        record_result("setup_forum_channel verify", "GET", f"/api/v1/channels/{cid}", gresp.status_code, ok,
+        record_result(
+            "setup_forum_channel verify", "GET", f"/api/v1/channels/{cid}",
+            gresp.status_code, ok,
                       None if ok else f"validation:{reason}")
         return cid
 
@@ -2974,7 +3177,7 @@ class ForumTests(BaseTests):
             return None
         try:
             j = resp.json()
-        except Exception:
+        except Exception:  # pylint: disable=broad-exception-caught
             j = {}
         tid = self._extract_created_id(j)
         if tid is None:
@@ -2983,7 +3186,7 @@ class ForumTests(BaseTests):
                 tid = j.get("tag", {}).get("id") or j.get("data", {}).get("id") or j.get("id")
         try:
             tid = int(tid)
-        except Exception:
+        except Exception:  # pylint: disable=broad-exception-caught
             record_result("setup_tag", "POST", path, getattr(resp, "status_code", None),
                         False, "unable to parse tag id")
             return None
@@ -2998,15 +3201,15 @@ class ForumTests(BaseTests):
             return tid
         try:
             gj = gresp.json()
-        except Exception:
+        except Exception:  # pylint: disable=broad-exception-caught
             gj = {}
         # Normalize emoji in expected body so hex/codepoint inputs like "1f4cc"
         # compare equal to the server-returned unicode "📌".
         expected_body = dict(body)
         try:
-            from utils.discord_helpers import normalize_emoji
+            from utils.discord_helpers import normalize_emoji  # pylint: disable=import-outside-toplevel
             expected_body["emoji"] = normalize_emoji(expected_body.get("emoji", ""))
-        except Exception:
+        except Exception:  # pylint: disable=broad-exception-caught
             # If normalization or import fails, fall back to original value
             pass
         ok, reason = validate_object(expected_body, gj)
@@ -3014,7 +3217,9 @@ class ForumTests(BaseTests):
                     None if ok else f"validation:{reason}")
         return tid
 
-    def _create_thread(self, forum_channel_id: int, name: str, initial_message: Optional[dict] = None) -> Optional[int]:
+    def _create_thread(  # pylint: disable=line-too-long
+            self, forum_channel_id: int, name: str,
+            initial_message: Optional[dict] = None) -> Optional[int]:
         path = f"/api/v1/channels/{forum_channel_id}/threads"
         body = {"name": name}
         # Ensure initial_message is present (schema requires content in newer API)
@@ -3028,7 +3233,7 @@ class ForumTests(BaseTests):
             return None
         try:
             j = resp.json()
-        except Exception:
+        except Exception:  # pylint: disable=broad-exception-caught
             j = {}
         tid = self._extract_created_id(j)
         if tid is None:
@@ -3037,7 +3242,7 @@ class ForumTests(BaseTests):
                 tid = j.get("thread", {}).get("id") or j.get("data", {}).get("id") or j.get("id")
         try:
             tid = int(tid)
-        except Exception:
+        except Exception:  # pylint: disable=broad-exception-caught
             record_result("setup_thread", "POST", path, getattr(resp, "status_code", None),
                           False, "unable to parse thread id")
             return None
@@ -3053,10 +3258,12 @@ class ForumTests(BaseTests):
             return tid
         try:
             gj = gresp.json()
-        except Exception:
+        except Exception:  # pylint: disable=broad-exception-caught
             gj = {}
         ok, reason = validate_object({"name": name}, gj)
-        record_result("setup_thread verify", "GET", f"/api/v1/channels/{tid}", gresp.status_code, ok,
+        record_result(
+            "setup_thread verify", "GET", f"/api/v1/channels/{tid}",
+            gresp.status_code, ok,
                       None if ok else f"validation:{reason}")
         return tid
 
@@ -3071,16 +3278,17 @@ class ForumTests(BaseTests):
             return None
         try:
             j = resp.json()
-        except Exception:
+        except Exception:  # pylint: disable=broad-exception-caught
             j = {}
         mid = self._extract_created_id(j)
         if mid is None:
             # fallback legacy shapes
             if isinstance(j, dict):
-                mid = j.get("message", {}).get("id") or j.get("data", {}).get("id") or j.get("message_id") or j.get("id")
+                mid = (j.get("message", {}).get("id") or j.get("data", {}).get("id")
+                       or j.get("message_id") or j.get("id"))
         try:
             mid = int(mid)
-        except Exception:
+        except Exception:  # pylint: disable=broad-exception-caught
             record_result("setup_message", "POST", path, getattr(resp, "status_code", None),
                           False, "unable to parse message id")
             return None
@@ -3091,15 +3299,18 @@ class ForumTests(BaseTests):
         gresp, _ = api_call("GET", f"/api/v1/messages/{mid}", headers=self.headers())
         if not gresp or gresp.status_code != 200:
             record_result("setup_message verify", "GET", f"/api/v1/messages/{mid}",
-                          getattr(gresp, "status_code", None), False, "GET failed for created message")
+                          getattr(gresp, "status_code", None), False,
+                           "GET failed for created message")
             return mid
         try:
             gj = gresp.json()
-        except Exception:
+        except Exception:  # pylint: disable=broad-exception-caught
             gj = {}
         # Validate that the embed/content we sent is present in the stored message
         ok, reason = validate_object({"content": content}, gj)
-        record_result("setup_message verify", "GET", f"/api/v1/messages/{mid}", gresp.status_code, ok,
+        record_result(
+            "setup_message verify", "GET", f"/api/v1/messages/{mid}",
+            gresp.status_code, ok,
                       None if ok else f"validation:{reason}")
         return mid
 
@@ -3114,7 +3325,7 @@ class ForumTests(BaseTests):
             return
         try:
             j = resp.json()
-        except Exception:
+        except Exception:  # pylint: disable=broad-exception-caught
             j = {}
         arr = self._normalize_data_to_list(j)
         ok = isinstance(arr, list)
@@ -3147,7 +3358,9 @@ class ForumTests(BaseTests):
                 return False, f"field 'name': expected {body['name']!r}, got {ret_name!r}"
             return True, ""
         # POST -> GET /api/v1/tags/{id} validation using custom validator
-        self.run_validation("POST create tag", "POST", p, body, "/api/v1/tags/{id}", validate_fn=validate_tag)
+        self.run_validation(
+            "POST create tag", "POST", p, body, "/api/v1/tags/{id}",
+            validate_fn=validate_tag)
 
     def test_update_tag(self):
         forum = self._create_forum_channel()
@@ -3173,7 +3386,10 @@ class ForumTests(BaseTests):
             return
         # Prevent double-delete from scheduled cleanup
         with CLEANUP_LOCK:
-            CLEANUP_QUEUE[:] = [e for e in CLEANUP_QUEUE if not (e["resource_type"] == "tag" and e["resource_id"] == str(tid))]
+            CLEANUP_QUEUE[:] = [
+                e for e in CLEANUP_QUEUE
+                if not (e["resource_type"] == "tag" and e["resource_id"] == str(tid))
+            ]
         # DELETE canonical single-tag endpoint and verify 404 afterwards
         self.run_simple_expected("DELETE tag", "DELETE", f"/api/v1/tags/{tid}", None, [200, 204])
         self.wait_valid()
@@ -3183,7 +3399,8 @@ class ForumTests(BaseTests):
         path = f"/api/v1/guilds/{self.guild_id}/channels"
         body = {"name": f"test-forum-{int(time.time())}", "type": "forum", "position": 1}
         # POST -> GET /api/v1/channels/{id} validation
-        self.run_validation("POST create forum channel", "POST", path, body, "/api/v1/channels/{id}")
+        self.run_validation(
+            "POST create forum channel", "POST", path, body, "/api/v1/channels/{id}")
 
     def test_update_forum_channel(self):
         cid = self._create_forum_channel()
@@ -3202,13 +3419,18 @@ class ForumTests(BaseTests):
                 return False, "unexpected response shape"
             got_topic = j.get("topic")
             got_auto = j.get("default_auto_archive_duration")
-            ok_topic = (got_topic == body["topic"])
-            ok_auto = (int(got_auto) == int(body["default_auto_archive_duration"])) if got_auto is not None else False
+            ok_topic = got_topic == body["topic"]
+            ok_auto = (
+                int(got_auto) == int(body["default_auto_archive_duration"])
+                if got_auto is not None else False
+            )
             if ok_topic and ok_auto:
                 return True, ""
             return False, f"topic={got_topic!r} default_auto_archive_duration={got_auto!r}"
 
-        self.run_validation("PUT update forum channel", "PUT", p, body, p, validate_fn=validate_forum_update)
+        self.run_validation(
+            "PUT update forum channel", "PUT", p, body, p,
+            validate_fn=validate_forum_update)
 
     def test_delete_forum_channel(self):
         cid = self._create_forum_channel()
@@ -3216,10 +3438,25 @@ class ForumTests(BaseTests):
             return
         # Prevent auto-cleanup so we delete explicitly
         with CLEANUP_LOCK:
-            CLEANUP_QUEUE[:] = [e for e in CLEANUP_QUEUE if not (e["resource_type"] == "channel" and e["resource_id"] == str(cid))]
-        self.run_simple_expected("DELETE forum channel", "DELETE", f"/api/v1/channels/{cid}", None, [200, 204])
+            CLEANUP_QUEUE[:] = [
+                e for e in CLEANUP_QUEUE
+                if not (e["resource_type"] == "channel" and e["resource_id"] == str(cid))
+            ]
+        self.run_simple_expected(
+            "DELETE forum channel",
+            "DELETE",
+            f"/api/v1/channels/{cid}",
+            None,
+            [200, 204]
+        )
         self.wait_valid()
-        self.run_simple_expected("GET forum channel after delete", "GET", f"/api/v1/channels/{cid}", None, [404])
+        self.run_simple_expected(
+            "GET forum channel after delete",
+            "GET",
+            f"/api/v1/channels/{cid}",
+            None,
+            [404]
+        )
 
     # Threads and tag assignment
     def test_create_thread(self):
@@ -3227,7 +3464,10 @@ class ForumTests(BaseTests):
         if not forum:
             return
         p = f"/api/v1/channels/{forum}/threads"
-        body = {"name": f"thread-{int(time.time())}", "initial_message": {"title": "init", "description": "hello"}}
+        body = {
+            "name": f"thread-{int(time.time())}",
+            "initial_message": {"title": "init", "description": "hello"}
+        }
 
         # Validate by listing thread messages (canonical design: messages are separate resources)
         def validate_initial_message_in_thread(get_json: dict) -> Tuple[bool, str]:
@@ -3250,14 +3490,21 @@ class ForumTests(BaseTests):
                 if not isinstance(content, dict):
                     continue
                 try:
-                    if content.get("title") == body["initial_message"]["title"] and content.get("description") == body["initial_message"]["description"]:
+                    title_match = content.get("title") == body["initial_message"]["title"]
+                    desc_match = (
+                        content.get("description") == body["initial_message"]["description"]
+                    )
+                    if title_match and desc_match:
                         return True, ""
-                except Exception:
+                except Exception:  # pylint: disable=broad-exception-caught
                     continue
             return False, "initial_message not found in thread messages"
 
         # POST -> GET /api/v1/threads/{id}/messages and use custom validator
-        self.run_validation("POST create thread", "POST", p, body, "/api/v1/threads/{id}/messages", validate_fn=validate_initial_message_in_thread)
+        self.run_validation(
+            "POST create thread", "POST", p, body,
+            "/api/v1/threads/{id}/messages",
+            validate_fn=validate_initial_message_in_thread)
 
     def test_update_thread(self):
         forum = self._create_forum_channel()
@@ -3294,11 +3541,17 @@ class ForumTests(BaseTests):
             arr = []
             if isinstance(j, dict):
                 arr = j.get("tags") or j.get("applied_tags") or j.get("tag_ids") or []
-            if isinstance(arr, list) and any((int(x) == int(tag_id) if not isinstance(x, dict) else int(x.get("id", -1)) == int(tag_id)) for x in arr):
+            def _tag_matches(x):
+                if isinstance(x, dict):
+                    return int(x.get("id", -1)) == int(tag_id)
+                return int(x) == int(tag_id)
+            if isinstance(arr, list) and any(_tag_matches(x) for x in arr):
                 return True, ""
             return False, "tag not applied to thread (no tags field or missing tag)"
 
-        self.run_validation("PUT add tags to thread", "PUT", p, body, f"/api/v1/threads/{tid}", validate_fn=validate_thread_has_tag)
+        self.run_validation(
+            "PUT add tags to thread", "PUT", p, body,
+            f"/api/v1/threads/{tid}", validate_fn=validate_thread_has_tag)
 
     def test_remove_tags_from_thread(self):
         forum = self._create_forum_channel()
@@ -3312,7 +3565,8 @@ class ForumTests(BaseTests):
         if not tag_id:
             return
         # First add tag
-        api_call("PUT", f"/api/v1/threads/{tid}/tags", body={"tags": [tag_id]}, headers=self.headers())
+        api_call("PUT", f"/api/v1/threads/{tid}/tags",
+                 body={"tags": [tag_id]}, headers=self.headers())
         self.wait_valid()
         # Now remove tags using canonical endpoint -> validate none present
         p = f"/api/v1/threads/{tid}/tags"
@@ -3328,7 +3582,9 @@ class ForumTests(BaseTests):
             ok = isinstance(arr, list) and len(arr) == 0
             return (True, "") if ok else (False, "tags still present on thread")
 
-        self.run_validation("PUT remove tags from thread", "PUT", p, body, f"/api/v1/threads/{tid}", validate_fn=validate_thread_no_tags)
+        self.run_validation(
+            "PUT remove tags from thread", "PUT", p, body,
+            f"/api/v1/threads/{tid}", validate_fn=validate_thread_no_tags)
 
     def test_close_reopen_thread(self):
         forum = self._create_forum_channel()
@@ -3351,9 +3607,13 @@ class ForumTests(BaseTests):
                     archived = j["thread"].get("archived")
                 else:
                     archived = j.get("archived")
-            return (True, "") if archived is True else (False, f"expected archived True, got {archived}")
+            if archived is True:
+                return True, ""
+            return False, f"expected archived True, got {archived}"
 
-        self.run_validation("PUT close thread", "PUT", pclose, None, f"/api/v1/threads/{tid}", validate_fn=validate_archived)
+        self.run_validation(
+            "PUT close thread", "PUT", pclose, None,
+            f"/api/v1/threads/{tid}", validate_fn=validate_archived)
         # Reopen (unarchive) thread -> validate archived=False
         preopen = f"/api/v1/threads/{tid}/open"
 
@@ -3367,9 +3627,13 @@ class ForumTests(BaseTests):
                     archived = j["thread"].get("archived")
                 else:
                     archived = j.get("archived")
-            return (True, "") if archived is False else (False, f"expected archived False, got {archived}")
+            if archived is False:
+                return True, ""
+            return False, f"expected archived False, got {archived}"
 
-        self.run_validation("PUT reopen thread", "PUT", preopen, None, f"/api/v1/threads/{tid}", validate_fn=validate_unarchived)
+        self.run_validation(
+            "PUT reopen thread", "PUT", preopen, None,
+            f"/api/v1/threads/{tid}", validate_fn=validate_unarchived)
 
     def test_add_reply_to_thread(self):
         forum = self._create_forum_channel()
@@ -3411,11 +3675,26 @@ class ForumTests(BaseTests):
             return
         # Prevent scheduled cleanup so we delete explicitly
         with CLEANUP_LOCK:
-            CLEANUP_QUEUE[:] = [e for e in CLEANUP_QUEUE if not (e["resource_type"] == "message" and e["resource_id"] == str(mid))]
+            CLEANUP_QUEUE[:] = [
+                e for e in CLEANUP_QUEUE
+                if not (e["resource_type"] == "message" and e["resource_id"] == str(mid))
+            ]
         # DELETE canonical message endpoint then verify 404
-        self.run_simple_expected("DELETE reply", "DELETE", f"/api/v1/messages/{mid}", None, [200, 204])
+        self.run_simple_expected(
+            "DELETE reply",
+            "DELETE",
+            f"/api/v1/messages/{mid}",
+            None,
+            [200, 204]
+        )
         self.wait_valid()
-        self.run_simple_expected("GET reply after delete", "GET", f"/api/v1/messages/{mid}", None, [404])
+        self.run_simple_expected(
+            "GET reply after delete",
+            "GET",
+            f"/api/v1/messages/{mid}",
+            None,
+            [404]
+        )
 
     def test_list_threads_in_channel(self):
         forum = self._create_forum_channel()
@@ -3431,9 +3710,9 @@ class ForumTests(BaseTests):
             return
         try:
             j = resp.json()
-        except Exception:
+        except Exception:  # pylint: disable=broad-exception-caught
             j = {}
-        data = j.get("data", j if isinstance(j, dict) else {})
+        j.get("data", j if isinstance(j, dict) else {})
         arr = self._normalize_data_to_list(j)
         ok = isinstance(arr, list) and any((t.get("id") == tid) for t in arr if isinstance(t, dict))
         record_result("GET list threads verify", "GET", p, resp.status_code, ok,
@@ -3452,7 +3731,7 @@ class ForumTests(BaseTests):
             return
         try:
             j = resp.json()
-        except Exception:
+        except Exception:  # pylint: disable=broad-exception-caught
             j = {}
         obj = j.get("data", j if isinstance(j, dict) else {})
         if isinstance(obj, dict) and "thread" in obj and isinstance(obj["thread"], dict):
@@ -3477,9 +3756,9 @@ class ForumTests(BaseTests):
             return
         try:
             j = resp.json()
-        except Exception:
+        except Exception:  # pylint: disable=broad-exception-caught
             j = {}
-        data = j.get("data", j if isinstance(j, dict) else {})
+        j.get("data", j if isinstance(j, dict) else {})
         arr = self._normalize_data_to_list(j)
         ok = isinstance(arr, list) and any((m.get("id") == mid) for m in arr if isinstance(m, dict))
         record_result("GET list messages in thread verify", "GET", p, resp.status_code, ok,
@@ -3550,23 +3829,24 @@ class PermissionsTests(BaseTests):
         ):
             try:
                 test()
-            except Exception:
+            except Exception:  # pylint: disable=broad-exception-caught
                 LOGGER.exception("Unhandled exception in permissions test")
 
     # Helper: reuse RoleTests helper
     def _create_helper_role(self) -> Optional[int]:
         return RoleTests(self.guild_id, self.user_id, self.delay, self.vdelay)._create_helper_role()
-    
+
     # Add this small helper so PermissionsTests can create forum channels when needed
     def _create_forum_channel(self) -> Optional[int]:
-        return ForumTests(self.guild_id, self.user_id, self.delay, self.vdelay)._create_forum_channel()
+        ft = ForumTests(self.guild_id, self.user_id, self.delay, self.vdelay)
+        return ft._create_forum_channel()
 
     def _create_thread(self) -> Optional[int]:
         return ForumTests(self.guild_id, self.user_id, self.delay, self.vdelay)._create_thread()
 
     def _mk_category(self) -> Optional[int]:
         return CategoryTests(self.guild_id, self.user_id, self.delay, self.vdelay)._mk_category()
-        
+
     def _make_channel(self) -> Optional[int]:
         return MessageTests(self.guild_id, self.user_id, self.delay, self.vdelay)._make_channel()
 
@@ -3574,52 +3854,72 @@ class PermissionsTests(BaseTests):
     # Listing tests (unchanged)
     # -----------------------
     def test_list_all_permissions(self):
-        resp = self.run_simple_expected("GET list all permissions", "GET", "/api/v1/permissions", None, [200])
+        resp = self.run_simple_expected(
+            "GET list all permissions", "GET", "/api/v1/permissions", None, [200])
         if not resp or resp.status_code != 200:
             return
         try:
             j = resp.json()
-        except Exception:
+        except Exception:  # pylint: disable=broad-exception-caught
             j = {}
         arr = self._normalize_data_to_list(j)
-        ok = isinstance(arr, list) and all(isinstance(x, dict) and "name" in x and "value" in x for x in arr)
-        record_result("GET list all permissions verify", "GET", "/api/v1/permissions", resp.status_code, ok,
+        ok = isinstance(arr, list) and all(
+            isinstance(x, dict) and "name" in x and "value" in x for x in arr
+        )
+        record_result(
+            "GET list all permissions verify", "GET", "/api/v1/permissions",
+            resp.status_code, ok,
                       None if ok else "permissions payload missing or malformed")
 
     def test_list_role_permissions(self):
-        resp = self.run_simple_expected("GET list role permissions", "GET", "/api/v1/permissions/roles", None, [200])
+        resp = self.run_simple_expected(
+            "GET list role permissions", "GET", "/api/v1/permissions/roles", None, [200])
         if not resp or resp.status_code != 200:
             return
         arr = self._normalize_data_to_list(resp.json() if resp else {})
         ok = isinstance(arr, list)
-        record_result("GET list role permissions verify", "GET", "/api/v1/permissions/roles", resp.status_code, ok,
+        record_result(
+            "GET list role permissions verify", "GET", "/api/v1/permissions/roles",
+            resp.status_code, ok,
                       None if ok else "data.items not list")
 
     def test_list_user_permissions(self):
-        resp = self.run_simple_expected("GET list user permissions", "GET", "/api/v1/permissions/users", None, [200])
+        resp = self.run_simple_expected(
+            "GET list user permissions", "GET", "/api/v1/permissions/users", None, [200])
         if not resp or resp.status_code != 200:
             return
         arr = self._normalize_data_to_list(resp.json() if resp else {})
         ok = isinstance(arr, list)
-        record_result("GET list user permissions verify", "GET", "/api/v1/permissions/users", resp.status_code, ok,
+        record_result(
+            "GET list user permissions verify", "GET", "/api/v1/permissions/users",
+            resp.status_code, ok,
                       None if ok else "data.items not list")
 
     def test_list_channel_permissions(self):
-        resp = self.run_simple_expected("GET list channel permissions", "GET", "/api/v1/permissions/channels", None, [200])
+        resp = self.run_simple_expected(
+            "GET list channel permissions", "GET",
+            "/api/v1/permissions/channels", None, [200])
         if not resp or resp.status_code != 200:
             return
         arr = self._normalize_data_to_list(resp.json() if resp else {})
         ok = isinstance(arr, list)
-        record_result("GET list channel permissions verify", "GET", "/api/v1/permissions/channels", resp.status_code, ok,
+        record_result(
+            "GET list channel permissions verify", "GET", "/api/v1/permissions/channels",
+            resp.status_code, ok,
                       None if ok else "data.items not list")
 
     def test_list_category_permissions(self):
-        resp = self.run_simple_expected("GET list category permissions", "GET", "/api/v1/permissions/categories", None, [200])
+        resp = self.run_simple_expected(
+            "GET list category permissions", "GET",
+            "/api/v1/permissions/categories", None, [200])
         if not resp or resp.status_code != 200:
             return
         arr = self._normalize_data_to_list(resp.json() if resp else {})
         ok = isinstance(arr, list)
-        record_result("GET list category permissions verify", "GET", "/api/v1/permissions/categories", resp.status_code, ok,
+        record_result(
+            "GET list category permissions verify", "GET",
+            "/api/v1/permissions/categories",
+            resp.status_code, ok,
                       None if ok else "data.items not list")
 
     # -----------------------
@@ -3633,7 +3933,7 @@ class PermissionsTests(BaseTests):
             return
         try:
             j = resp.json()
-        except Exception:
+        except Exception:  # pylint: disable=broad-exception-caught
             j = {}
         data = j.get("data", {})
         ok = False
@@ -3644,7 +3944,10 @@ class PermissionsTests(BaseTests):
                     break
         elif isinstance(data, int):
             ok = True
-        record_result("POST convert names→value verify", "POST", "/api/v1/permissions/convert/names-to-value", resp.status_code, ok,
+        record_result(
+            "POST convert names→value verify", "POST",
+            "/api/v1/permissions/convert/names-to-value",
+            resp.status_code, ok,
                       None if ok else "response data missing integer bitfield")
 
     def test_convert_names_to_value_invalid_name(self):
@@ -3659,7 +3962,8 @@ class PermissionsTests(BaseTests):
 
     def test_convert_names_to_value_forbid(self):
         self.run_forbidden("POST convert names→value forbid", "POST",
-                           "/api/v1/permissions/convert/names-to-value", {"names": ["SEND_MESSAGES"]})
+                           "/api/v1/permissions/convert/names-to-value",
+                           {"names": ["SEND_MESSAGES"]})
 
     def test_convert_value_to_names_valid(self):
         body = {"value": 1}
@@ -3674,7 +3978,10 @@ class PermissionsTests(BaseTests):
             ok = all(isinstance(x, str) for x in data)
         elif isinstance(data, dict):
             ok = any(isinstance(k, str) for k in data.keys())
-        record_result("POST convert value→names verify", "POST", "/api/v1/permissions/convert/value-to-names", resp.status_code, ok,
+        record_result(
+            "POST convert value→names verify", "POST",
+            "/api/v1/permissions/convert/value-to-names",
+            resp.status_code, ok,
                       None if ok else "unexpected response shape for names list")
 
     def test_convert_value_to_names_invalid(self):
@@ -3702,8 +4009,11 @@ class PermissionsTests(BaseTests):
                     ok = True
                     break
         elif isinstance(data, int):
-            ok = (data == expected)
-        record_result("POST calculate permissions verify", "POST", "/api/v1/permissions/calculate", resp.status_code, ok,
+            ok = data == expected
+        record_result(
+            "POST calculate permissions verify", "POST",
+            "/api/v1/permissions/calculate",
+            resp.status_code, ok,
                       None if ok else f"expected effective {expected}, got {data}")
 
     def test_calculate_permissions_omit_allow_deny(self):
@@ -3722,8 +4032,11 @@ class PermissionsTests(BaseTests):
                     ok = True
                     break
         elif isinstance(data, int):
-            ok = (data == expected)
-        record_result("POST calculate permissions omit verify", "POST", "/api/v1/permissions/calculate", resp.status_code, ok,
+            ok = data == expected
+        record_result(
+            "POST calculate permissions omit verify", "POST",
+            "/api/v1/permissions/calculate",
+            resp.status_code, ok,
                       None if ok else f"expected {expected}, got {data}")
 
     def test_calculate_permissions_invalid_base(self):
@@ -3741,14 +4054,29 @@ class PermissionsTests(BaseTests):
     def test_check_permissions_evaluate_user_guild(self):
         name = "POST permissions/check evaluate (user @ guild)"
         path = "/api/v1/permissions/check"
-        body = {"subject": {"type": "user", "id": self.user_id}, "target": {"type": "guild", "id": self.guild_id}}
+        body = {
+            "subject": {"type": "user", "id": self.user_id},
+            "target": {"type": "guild", "id": self.guild_id}
+        }
         resp = self.run_simple_expected(name, "POST", path, body, [200])
         if not resp or resp.status_code != 200:
             return
         j = resp.json() if resp else {}
         data = j.get("data", j if isinstance(j, dict) else {})
-        ok = isinstance(data, dict) and isinstance(data.get("base"), int) and isinstance(data.get("allowed_names"), list) and isinstance(data.get("denied_names"), list)
-        record_result(name + " verify", "POST", path, resp.status_code, ok, None if ok else "evaluate response missing expected fields")
+        ok = (
+            isinstance(data, dict)
+            and isinstance(data.get("base"), int)
+            and isinstance(data.get("allowed_names"), list)
+            and isinstance(data.get("denied_names"), list)
+        )
+        record_result(
+            name + " verify",
+            "POST",
+            path,
+            resp.status_code,
+            ok,
+            None if ok else "evaluate response missing expected fields"
+        )
 
     def test_check_permissions_evaluate_user_channel(self):
         ch = self._make_channel_for_perms()
@@ -3756,27 +4084,49 @@ class PermissionsTests(BaseTests):
             return
         name = "POST permissions/check evaluate (user @ channel)"
         path = "/api/v1/permissions/check"
-        body = {"subject": {"type": "user", "id": self.user_id}, "target": {"type": "channel", "id": ch}}
+        body = {
+            "subject": {"type": "user", "id": self.user_id},
+            "target": {"type": "channel", "id": ch}
+        }
         resp = self.run_simple_expected(name, "POST", path, body, [200])
         if not resp or resp.status_code != 200:
             return
         j = resp.json() if resp else {}
         data = j.get("data", j if isinstance(j, dict) else {})
         ok = isinstance(data, dict) and isinstance(data.get("base"), int)
-        record_result(name + " verify", "POST", path, resp.status_code, ok, None if ok else "evaluate response missing base bitfield")
+        record_result(
+            name + " verify",
+            "POST",
+            path,
+            resp.status_code,
+            ok,
+            None if ok else "evaluate response missing base bitfield"
+        )
 
     def test_check_permissions_evaluate_role_guild(self):
         rid = self._create_helper_role()
         if not rid:
             return
-        body = {"subject": {"type": "role", "id": rid}, "target": {"type": "guild", "id": self.guild_id}}
-        resp = self.run_simple_expected("POST permissions/check evaluate (role@guild)", "POST", "/api/v1/permissions/check", body, [200])
+        body = {
+            "subject": {"type": "role", "id": rid},
+            "target": {"type": "guild", "id": self.guild_id}
+        }
+        resp = self.run_simple_expected(
+            "POST permissions/check evaluate (role@guild)",
+            "POST", "/api/v1/permissions/check", body, [200])
         if not resp or resp.status_code != 200:
             return
         j = resp.json() if resp else {}
         data = j.get("data", j if isinstance(j, dict) else {})
         ok = isinstance(data, dict) and isinstance(data.get("base"), int)
-        record_result("evaluate role@guild verify", "POST", "/api/v1/permissions/check", resp.status_code, ok, None if ok else "missing base")
+        record_result(
+            "evaluate role@guild verify",
+            "POST",
+            "/api/v1/permissions/check",
+            resp.status_code,
+            ok,
+            None if ok else "missing base"
+        )
 
     def test_check_permissions_evaluate_role_channel(self):
         rid = self._create_helper_role()
@@ -3786,13 +4136,22 @@ class PermissionsTests(BaseTests):
         if not ch:
             return
         body = {"subject": {"type": "role", "id": rid}, "target": {"type": "channel", "id": ch}}
-        resp = self.run_simple_expected("POST permissions/check evaluate (role@channel)", "POST", "/api/v1/permissions/check", body, [200])
+        resp = self.run_simple_expected(
+            "POST permissions/check evaluate (role@channel)",
+            "POST", "/api/v1/permissions/check", body, [200])
         if not resp or resp.status_code != 200:
             return
         j = resp.json() if resp else {}
         data = j.get("data", j if isinstance(j, dict) else {})
         ok = isinstance(data, dict) and isinstance(data.get("base"), int)
-        record_result("evaluate role@channel verify", "POST", "/api/v1/permissions/check", resp.status_code, ok, None if ok else "missing base")
+        record_result(
+            "evaluate role@channel verify",
+            "POST",
+            "/api/v1/permissions/check",
+            resp.status_code,
+            ok,
+            None if ok else "missing base"
+        )
 
     def test_check_permissions_detailed_user_channel(self):
         ch = self._make_channel_for_perms()
@@ -3801,7 +4160,11 @@ class PermissionsTests(BaseTests):
         name = "POST permissions/check detailed (user @ channel)"
         path = "/api/v1/permissions/check"
         perms = ["SEND_MESSAGES", "VIEW_CHANNEL"]
-        body = {"subject": {"type": "user", "id": self.user_id}, "target": {"type": "channel", "id": ch}, "permissions": perms}
+        body = {
+            "subject": {"type": "user", "id": self.user_id},
+            "target": {"type": "channel", "id": ch},
+            "permissions": perms
+        }
         resp = self.run_simple_expected(name, "POST", path, body, [200])
         if not resp or resp.status_code != 200:
             return
@@ -3815,7 +4178,14 @@ class PermissionsTests(BaseTests):
             if ok and len(data.get("granted")) > 0:
                 g0 = data["granted"][0]
                 ok = ok and isinstance(g0, dict) and "permission" in g0 and "source" in g0
-        record_result(name + " verify", "POST", path, resp.status_code, ok, None if ok else "detailed check response malformed")
+        record_result(
+            name + " verify",
+            "POST",
+            path,
+            resp.status_code,
+            ok,
+            None if ok else "detailed check response malformed"
+        )
 
     def test_check_permissions_detailed_role_channel(self):
         rid = self._create_helper_role()
@@ -3827,27 +4197,56 @@ class PermissionsTests(BaseTests):
         name = "POST permissions/check detailed (role @ channel)"
         path = "/api/v1/permissions/check"
         perms = ["MANAGE_CHANNELS", "VIEW_CHANNEL"]
-        body = {"subject": {"type": "role", "id": rid}, "target": {"type": "channel", "id": ch}, "permissions": perms}
+        body = {
+            "subject": {"type": "role", "id": rid},
+            "target": {"type": "channel", "id": ch},
+            "permissions": perms
+        }
         resp = self.run_simple_expected(name, "POST", path, body, [200])
         if not resp or resp.status_code != 200:
             return
         j = resp.json() if resp else {}
         data = j.get("data", j if isinstance(j, dict) else {})
-        ok = isinstance(data, dict) and "granted" in data and isinstance(data.get("granted"), list) and "denied" in data
-        record_result(name + " verify", "POST", path, resp.status_code, ok, None if ok else "role/channel detailed response malformed")
+        ok = (
+            isinstance(data, dict)
+            and "granted" in data
+            and isinstance(data.get("granted"), list)
+            and "denied" in data
+        )
+        record_result(
+            name + " verify",
+            "POST",
+            path,
+            resp.status_code,
+            ok,
+            None if ok else "role/channel detailed response malformed"
+        )
 
     def test_check_permissions_detailed_role_guild(self):
         rid = self._create_helper_role()
         if not rid:
             return
-        body = {"subject": {"type": "role", "id": rid}, "target": {"type": "guild", "id": self.guild_id}, "permissions": ["MANAGE_GUILD", "VIEW_AUDIT_LOG"]}
-        resp = self.run_simple_expected("POST permissions/check detailed (role@guild)", "POST", "/api/v1/permissions/check", body, [200])
+        body = {
+            "subject": {"type": "role", "id": rid},
+            "target": {"type": "guild", "id": self.guild_id},
+            "permissions": ["MANAGE_GUILD", "VIEW_AUDIT_LOG"]
+        }
+        resp = self.run_simple_expected(
+            "POST permissions/check detailed (role@guild)",
+            "POST", "/api/v1/permissions/check", body, [200])
         if not resp or resp.status_code != 200:
             return
         j = resp.json() if resp else {}
         d = j.get("data", j if isinstance(j, dict) else {})
         ok = isinstance(d, dict) and "granted" in d and "denied" in d
-        record_result("role@guild detailed verify", "POST", "/api/v1/permissions/check", resp.status_code, ok, None if ok else "malformed")
+        record_result(
+            "role@guild detailed verify",
+            "POST",
+            "/api/v1/permissions/check",
+            resp.status_code,
+            ok,
+            None if ok else "malformed"
+        )
 
     def test_check_permissions_admin_role_grants_all(self):
         rid = self._create_helper_role()
@@ -3857,40 +4256,91 @@ class PermissionsTests(BaseTests):
         body_upd = {"permissions": 0x8}
         r, _ = api_call("PUT", f"/api/v1/roles/{rid}", body=body_upd, headers=self.headers())
         if not r or r.status_code not in (200, 201, 204):
-            record_result("setup admin role failed", "PUT", f"/api/v1/roles/{rid}", getattr(r, "status_code", None), False, "cannot set admin")
+            record_result(
+                "setup admin role failed",
+                "PUT",
+                f"/api/v1/roles/{rid}",
+                getattr(r, "status_code", None),
+                False,
+                "cannot set admin"
+            )
             return
         perms = ["BAN_MEMBERS", "MANAGE_CHANNELS", "CONNECT", "VIEW_AUDIT_LOG"]
-        body = {"subject": {"type": "role", "id": rid}, "target": {"type": "guild", "id": self.guild_id}, "permissions": perms}
-        resp = self.run_simple_expected("POST permissions/check admin role grants all", "POST", "/api/v1/permissions/check", body, [200])
+        body = {
+            "subject": {"type": "role", "id": rid},
+            "target": {"type": "guild", "id": self.guild_id},
+            "permissions": perms
+        }
+        resp = self.run_simple_expected(
+            "POST permissions/check admin role grants all",
+            "POST", "/api/v1/permissions/check", body, [200])
         if not resp or resp.status_code != 200:
             return
         j = resp.json() if resp else {}
         data = j.get("data", j if isinstance(j, dict) else {})
         ok = isinstance(data, dict) and data.get("allowed") is True
-        record_result("admin role grants all verify", "POST", "/api/v1/permissions/check", resp.status_code, ok, None if ok else "admin did not grant all")
+        record_result(
+            "admin role grants all verify",
+            "POST",
+            "/api/v1/permissions/check",
+            resp.status_code,
+            ok,
+            None if ok else "admin did not grant all"
+        )
 
     def test_check_permissions_user_direct_overwrite_allow_and_deny(self):
         ch = self._make_channel_for_perms()
         if not ch:
             return
-        # set user-specific overwrite on channel: allow SEND_MESSAGES (0x800), deny MANAGE_MESSAGES (0x2000)
-        put_body = {"overwrites": [{"target_id": self.user_id, "type": "member", "allow": 0x800, "deny": 0x2000}]}
-        resp_put, _ = api_call("PUT", f"/api/v1/channels/{ch}/permissions", body=put_body, headers=self.headers())
+        # set user-specific overwrite: allow SEND_MESSAGES (0x800), deny MANAGE_MESSAGES (0x2000)
+        put_body = {"overwrites": [
+            {"target_id": self.user_id, "type": "member", "allow": 0x800, "deny": 0x2000}
+        ]}
+        resp_put, _ = api_call(
+            "PUT", f"/api/v1/channels/{ch}/permissions",
+            body=put_body, headers=self.headers())
         if not resp_put or resp_put.status_code not in (200, 201):
-            record_result("setup user overwrite failed", "PUT", f"/api/v1/channels/{ch}/permissions", getattr(resp_put, "status_code", None), False, "overwrite PUT failed")
+            record_result(
+                "setup user overwrite failed",
+                "PUT",
+                f"/api/v1/channels/{ch}/permissions",
+                getattr(resp_put, "status_code", None),
+                False,
+                "overwrite PUT failed"
+            )
             return
-        body = {"subject": {"type": "user", "id": self.user_id}, "target": {"type": "channel", "id": ch}, "permissions": ["SEND_MESSAGES", "MANAGE_MESSAGES"]}
-        resp = self.run_simple_expected("POST permissions/check user direct overwrite", "POST", "/api/v1/permissions/check", body, [200])
+        body = {
+            "subject": {"type": "user", "id": self.user_id},
+            "target": {"type": "channel", "id": ch},
+            "permissions": ["SEND_MESSAGES", "MANAGE_MESSAGES"]
+        }
+        resp = self.run_simple_expected(
+            "POST permissions/check user direct overwrite",
+            "POST", "/api/v1/permissions/check", body, [200])
         if not resp or resp.status_code != 200:
             return
         j = resp.json() if resp else {}
         data = j.get("data", j if isinstance(j, dict) else {})
         ok = False
         if isinstance(data, dict):
-            granted_perms = {g["permission"]: g["source"]["type"] for g in data.get("granted", []) if isinstance(g, dict)}
+            granted_perms = {
+                g["permission"]: g["source"]["type"]
+                for g in data.get("granted", []) if isinstance(g, dict)
+            }
             denied = data.get("denied", [])
-            ok = ("SEND_MESSAGES" in granted_perms and granted_perms["SEND_MESSAGES"] == "direct" and "MANAGE_MESSAGES" in denied)
-        record_result("user overwrite allow/deny verify", "POST", "/api/v1/permissions/check", resp.status_code, ok, None if ok else "overwrite not respected")
+            ok = (
+                "SEND_MESSAGES" in granted_perms
+                and granted_perms["SEND_MESSAGES"] == "direct"
+                and "MANAGE_MESSAGES" in denied
+            )
+        record_result(
+            "user overwrite allow/deny verify",
+            "POST",
+            "/api/v1/permissions/check",
+            resp.status_code,
+            ok,
+            None if ok else "overwrite not respected"
+        )
 
     def test_check_permissions_inherited_category_overwrites(self):
         cat = CategoryTests(self.guild_id, self.user_id, self.delay, self.vdelay)._mk_category()
@@ -3901,30 +4351,64 @@ class PermissionsTests(BaseTests):
         b = {"name": f"test-cat-channel-{int(time.time())}", "category_id": cat}
         r, _ = api_call("POST", p, body=b, headers=self.headers())
         if not r or r.status_code not in (200, 201):
-            record_result("setup channel in category failed", "POST", p, getattr(r, "status_code", None), False, "channel create failed")
+            record_result(
+                "setup channel in category failed",
+                "POST",
+                p,
+                getattr(r, "status_code", None),
+                False,
+                "channel create failed"
+            )
             return
         try:
             jr = r.json()
-        except Exception:
+        except Exception:  # pylint: disable=broad-exception-caught
             jr = {}
         ch = self._extract_created_id(jr)
         if not ch:
             return
         schedule_cleanup("setup_channel_in_cat", "channel", ch, "DELETE", f"/api/v1/channels/{ch}")
         # deny SEND_MESSAGES on category for @everyone via guild id as role id (common pattern)
-        overwrite_body = {"overwrites": [{"target_id": self.guild_id, "type": "role", "deny": 0x800}]}
-        resp_put, _ = api_call("PUT", f"/api/v1/categories/{cat}/permissions", body=overwrite_body, headers=self.headers())
+        overwrite_body = {"overwrites": [
+            {"target_id": self.guild_id, "type": "role", "deny": 0x800}
+        ]}
+        resp_put, _ = api_call(
+            "PUT", f"/api/v1/categories/{cat}/permissions",
+            body=overwrite_body, headers=self.headers())
         if not resp_put or resp_put.status_code not in (200, 201):
-            record_result("setup category overwrite failed", "PUT", f"/api/v1/categories/{cat}/permissions", getattr(resp_put, "status_code", None), False, "cat overwrite failed")
+            record_result(
+                "setup category overwrite failed",
+                "PUT",
+                f"/api/v1/categories/{cat}/permissions",
+                getattr(resp_put, "status_code", None),
+                False,
+                "cat overwrite failed"
+            )
             return
-        body = {"subject": {"type": "user", "id": self.user_id}, "target": {"type": "channel", "id": ch}, "permissions": ["SEND_MESSAGES"]}
-        resp = self.run_simple_expected("POST permissions/check inherited from category", "POST", "/api/v1/permissions/check", body, [200])
+        body = {
+            "subject": {"type": "user", "id": self.user_id},
+            "target": {"type": "channel", "id": ch},
+            "permissions": ["SEND_MESSAGES"]
+        }
+        resp = self.run_simple_expected(
+            "POST permissions/check inherited from category",
+            "POST", "/api/v1/permissions/check", body, [200])
         if not resp or resp.status_code != 200:
             return
         j = resp.json() if resp else {}
         d = j.get("data", j if isinstance(j, dict) else {})
-        ok = isinstance(d, dict) and ("SEND_MESSAGES" in d.get("denied", []) or d.get("allowed") is False)
-        record_result("category inheritance verify", "POST", "/api/v1/permissions/check", resp.status_code, ok, None if ok else "inheritance not observed")
+        ok = (
+            isinstance(d, dict)
+            and ("SEND_MESSAGES" in d.get("denied", []) or d.get("allowed") is False)
+        )
+        record_result(
+            "category inheritance verify",
+            "POST",
+            "/api/v1/permissions/check",
+            resp.status_code,
+            ok,
+            None if ok else "inheritance not observed"
+        )
 
     def test_check_permissions_thread_scope_inheritance(self):
         forum = self._create_forum_channel()
@@ -3934,43 +4418,92 @@ class PermissionsTests(BaseTests):
         if not tid:
             return
         # set forum-level overwrite denying SEND_MESSAGES
-        overwrite_body = {"overwrites": [{"target_id": self.guild_id, "type": "role", "deny": 0x800}]}
-        resp_put, _ = api_call("PUT", f"/api/v1/channels/{forum}/permissions", body=overwrite_body, headers=self.headers())
+        overwrite_body = {"overwrites": [
+            {"target_id": self.guild_id, "type": "role", "deny": 0x800}
+        ]}
+        _resp_put, _ = api_call(
+            "PUT", f"/api/v1/channels/{forum}/permissions",
+            body=overwrite_body, headers=self.headers())
         self.wait_valid()
-        body = {"subject": {"type": "user", "id": self.user_id}, "target": {"type": "thread", "id": tid}, "permissions": ["SEND_MESSAGES"]}
-        resp = self.run_simple_expected("POST permissions/check thread inheritance", "POST", "/api/v1/permissions/check", body, [200])
+        body = {
+            "subject": {"type": "user", "id": self.user_id},
+            "target": {"type": "thread", "id": tid},
+            "permissions": ["SEND_MESSAGES"]
+        }
+        resp = self.run_simple_expected(
+            "POST permissions/check thread inheritance",
+            "POST", "/api/v1/permissions/check", body, [200])
         if not resp or resp.status_code != 200:
             return
         j = resp.json() if resp else {}
         d = j.get("data", j if isinstance(j, dict) else {})
-        ok = isinstance(d, dict) and ("SEND_MESSAGES" in d.get("denied", []) or d.get("allowed") is False)
-        record_result("thread inheritance verify", "POST", "/api/v1/permissions/check", resp.status_code, ok, None if ok else "thread inheritance not observed")
+        ok = (
+            isinstance(d, dict)
+            and ("SEND_MESSAGES" in d.get("denied", []) or d.get("allowed") is False)
+        )
+        record_result(
+            "thread inheritance verify",
+            "POST",
+            "/api/v1/permissions/check",
+            resp.status_code,
+            ok,
+            None if ok else "thread inheritance not observed"
+        )
 
     def test_check_permissions_non_applicable_permission(self):
         ch = self._make_channel_for_perms()
         if not ch:
             return
-        body = {"subject": {"type": "user", "id": self.user_id}, "target": {"type": "channel", "id": ch}, "permissions": ["SPEAK"]}
-        resp = self.run_simple_expected("POST permissions/check non-applicable perm", "POST", "/api/v1/permissions/check", body, [200])
+        body = {
+            "subject": {"type": "user", "id": self.user_id},
+            "target": {"type": "channel", "id": ch},
+            "permissions": ["SPEAK"]
+        }
+        resp = self.run_simple_expected(
+            "POST permissions/check non-applicable perm",
+            "POST", "/api/v1/permissions/check", body, [200])
         if not resp or resp.status_code != 200:
             return
         j = resp.json() if resp else {}
         d = j.get("data", j if isinstance(j, dict) else {})
         ok = isinstance(d, dict) and ("SPEAK" in d.get("denied", []) or d.get("allowed") is False)
-        record_result("non-applicable perm verify", "POST", "/api/v1/permissions/check", resp.status_code, ok, None if ok else "unexpectedly allowed")
+        record_result(
+            "non-applicable perm verify",
+            "POST",
+            "/api/v1/permissions/check",
+            resp.status_code,
+            ok,
+            None if ok else "unexpectedly allowed"
+        )
 
     def test_check_permissions_case_insensitive_and_duplicates(self):
         ch = self._make_channel_for_perms()
         if not ch:
             return
-        body = {"subject": {"type": "user", "id": self.user_id}, "target": {"type": "channel", "id": ch}, "permissions": ["view_channel", "VIEW_CHANNEL", "View_Channel"]}
-        resp = self.run_simple_expected("POST permissions/check case-insensitive/duplicates", "POST", "/api/v1/permissions/check", body, [200, 422])
+        body = {
+            "subject": {"type": "user", "id": self.user_id},
+            "target": {"type": "channel", "id": ch},
+            "permissions": ["view_channel", "VIEW_CHANNEL", "View_Channel"]
+        }
+        resp = self.run_simple_expected(
+            "POST permissions/check case-insensitive/duplicates",
+            "POST", "/api/v1/permissions/check", body, [200, 422])
         if not resp or resp.status_code != 200:
             return
         j = resp.json() if resp else {}
         d = j.get("data", j if isinstance(j, dict) else {})
-        ok = isinstance(d, dict) and (isinstance(d.get("allowed"), bool) or isinstance(d.get("denied"), list))
-        record_result("case-insensitive/dup verify", "POST", "/api/v1/permissions/check", resp.status_code, ok, None if ok else "unexpected response")
+        ok = (
+            isinstance(d, dict)
+            and (isinstance(d.get("allowed"), bool) or isinstance(d.get("denied"), list))
+        )
+        record_result(
+            "case-insensitive/dup verify",
+            "POST",
+            "/api/v1/permissions/check",
+            resp.status_code,
+            ok,
+            None if ok else "unexpected response"
+        )
 
     def test_check_permissions_bot_subject_guild(self):
         """
@@ -3981,36 +4514,82 @@ class PermissionsTests(BaseTests):
         # ARGS is global; ensure a bot id was supplied on the command line
         bot_id = getattr(ARGS, "bot_id", None)
         if bot_id is None:
-            record_result("POST permissions/check subject=bot (guild)", "POST", "/api/v1/permissions/check", None, False,
+            record_result(
+                "POST permissions/check subject=bot (guild)",
+                "POST", "/api/v1/permissions/check", None, False,
                         "SKIPPED (no --bot-id provided)")
             return
 
-        body = {"subject": {"type": "user", "id": bot_id}, "target": {"type": "guild", "id": self.guild_id}}
-        resp = self.run_simple_expected("POST permissions/check subject=bot (guild)", "POST", "/api/v1/permissions/check", body, [200, 503, 404])
+        body = {
+            "subject": {"type": "user", "id": bot_id},
+            "target": {"type": "guild", "id": self.guild_id}
+        }
+        resp = self.run_simple_expected(
+            "POST permissions/check subject=bot (guild)",
+            "POST", "/api/v1/permissions/check", body, [200, 503, 404])
         if not resp or resp.status_code != 200:
             return
         j = resp.json() if resp else {}
         d = j.get("data", j if isinstance(j, dict) else {})
         ok = isinstance(d, dict) and isinstance(d.get("base"), int)
-        record_result("bot subject guild verify", "POST", "/api/v1/permissions/check", resp.status_code, ok, None if ok else "bot summary missing")
+        record_result(
+            "bot subject guild verify",
+            "POST",
+            "/api/v1/permissions/check",
+            resp.status_code,
+            ok,
+            None if ok else "bot summary missing"
+        )
 
 
     def test_check_permissions_invalid_permission_name(self):
         ch = self._make_channel_for_perms()
         if not ch:
             return
-        body = {"subject": {"type": "user", "id": self.user_id}, "target": {"type": "channel", "id": ch}, "permissions": ["THIS_IS_NOT_A_PERMISSION"]}
-        self.run_simple_expected("POST permissions/check invalid perm name", "POST", "/api/v1/permissions/check", body, [422])
+        body = {
+            "subject": {"type": "user", "id": self.user_id},
+            "target": {"type": "channel", "id": ch},
+            "permissions": ["THIS_IS_NOT_A_PERMISSION"]
+        }
+        self.run_simple_expected(
+            "POST permissions/check invalid perm name",
+            "POST",
+            "/api/v1/permissions/check",
+            body,
+            [422]
+        )
 
     def test_check_permissions_missing_subject_or_target(self):
         body1 = {"subject": {"type": "user", "id": self.user_id}, "permissions": ["VIEW_CHANNEL"]}
-        self.run_simple_expected("POST permissions/check missing target", "POST", "/api/v1/permissions/check", body1, [400, 422])
+        self.run_simple_expected(
+            "POST permissions/check missing target",
+            "POST",
+            "/api/v1/permissions/check",
+            body1,
+            [400, 422]
+        )
         body2 = {"target": {"type": "channel", "id": 12345}, "permissions": ["VIEW_CHANNEL"]}
-        self.run_simple_expected("POST permissions/check missing subject", "POST", "/api/v1/permissions/check", body2, [400, 422])
+        self.run_simple_expected(
+            "POST permissions/check missing subject",
+            "POST",
+            "/api/v1/permissions/check",
+            body2,
+            [400, 422]
+        )
 
     def test_check_permissions_target_notfound(self):
-        body = {"subject": {"type": "user", "id": self.user_id}, "target": {"type": "channel", "id": 999999999999}, "permissions": ["VIEW_CHANNEL"]}
-        self.run_simple_expected("POST permissions/check target notfound", "POST", "/api/v1/permissions/check", body, [404])
+        body = {
+            "subject": {"type": "user", "id": self.user_id},
+            "target": {"type": "channel", "id": 999999999999},
+            "permissions": ["VIEW_CHANNEL"]
+        }
+        self.run_simple_expected(
+            "POST permissions/check target notfound",
+            "POST",
+            "/api/v1/permissions/check",
+            body,
+            [404]
+        )
 
     def test_check_permissions_forbid(self):
         self.run_forbidden("POST permissions/check forbid", "POST", "/api/v1/permissions/check", {
@@ -4027,11 +4606,18 @@ class PermissionsTests(BaseTests):
         body = {"name": f"test-perm-channel-{int(time.time())}"}
         resp, _ = api_call("POST", p, body=body, headers=self.headers())
         if not resp or resp.status_code not in (200, 201):
-            record_result("setup_channel_perms", "POST", p, getattr(resp, "status_code", None), False, "channel create failed")
+            record_result(
+                "setup_channel_perms",
+                "POST",
+                p,
+                getattr(resp, "status_code", None),
+                False,
+                "channel create failed"
+            )
             return None
         try:
             j = resp.json()
-        except Exception:
+        except Exception:  # pylint: disable=broad-exception-caught
             j = {}
         ch = self._extract_created_id(j)
         if ch is None:
@@ -4039,15 +4625,24 @@ class PermissionsTests(BaseTests):
                 ch = j.get("channel", {}).get("id") or j.get("data", {}).get("id") or j.get("id")
         try:
             ch = int(ch)
-        except Exception:
-            record_result("setup_channel_perms", "POST", p, getattr(resp, "status_code", None), False, "unable to parse channel id")
+        except Exception:  # pylint: disable=broad-exception-caught
+            record_result(
+                "setup_channel_perms",
+                "POST",
+                p,
+                getattr(resp, "status_code", None),
+                False,
+                "unable to parse channel id"
+            )
             return None
         schedule_cleanup("setup_channel_perms", "channel", ch, "DELETE", f"/api/v1/channels/{ch}")
         self.wait_valid()
         return ch
 
     @staticmethod
-    def get_permission_check_result(path_no_query: str, permission_name: str, *, query_key: str = "permission") -> Tuple[Optional[int], Optional[bool], Optional[str]]:
+    def get_permission_check_result(  # pylint: disable=line-too-long
+            path_no_query: str, permission_name: str, *,
+            query_key: str = "permission") -> Tuple[Optional[int], Optional[bool], Optional[str]]:
         p = path_no_query if path_no_query.startswith("/") else f"/{path_no_query}"
         sep = "&" if "?" in p else "?"
         full = f"{p}{sep}{query_key}={permission_name}"
@@ -4059,13 +4654,14 @@ class PermissionsTests(BaseTests):
             return status, None, f"expected 200, got {status}"
         try:
             body = resp.json()
-        except Exception:
+        except Exception:  # pylint: disable=broad-exception-caught
             return status, None, "non-JSON body"
         obj = body
         if isinstance(obj, dict) and "data" in obj:
             obj = obj["data"]
         if isinstance(obj, dict):
-            for wrapper in ("message", "guild", "member", "role", "channel", "category", "thread", "tag"):
+            inner_wrappers = ("message", "guild", "member", "role", "channel", "category", "thread", "tag")
+            for wrapper in inner_wrappers:
                 if wrapper in obj and isinstance(obj[wrapper], (dict, list)):
                     obj = obj[wrapper]
                     break
@@ -4111,7 +4707,7 @@ class HealthTests(BaseTests):
         ):
             try:
                 test()
-            except Exception:
+            except Exception:  # pylint: disable=broad-exception-caught
                 LOGGER.exception("Unhandled exception in health test")
 
     def test_health_comprehensive(self):
@@ -4149,11 +4745,16 @@ def _print_summary_and_exit():
     executed = total - skipped
     passed   = sum(1 for r in TEST_RESULTS if r["passed"])
     failed   = executed - passed
-    LOGGER.info(f"=== SUMMARY: total={total} exec={executed} pass={passed} fail={failed} skip={skipped} ===\n")
+    summary = (
+        f"=== SUMMARY: total={total} exec={executed}"
+        f" pass={passed} fail={failed} skip={skipped} ==="
+    )
+    LOGGER.info(summary)
     print(GREEN + "--- PASSED TESTS ---" + RESET)
     for r in TEST_RESULTS:
         if r["passed"]:
-            print(GREEN + f"{r['test_name']} | {r['method']} {r['uri']} | {r['status_code']}" + RESET)
+            line = f"{r['test_name']} | {r['method']} {r['uri']} | {r['status_code']}"
+            print(GREEN + line + RESET)
     print(RED + "\n--- FAILED TESTS ---" + RESET)
     for r in TEST_RESULTS:
         if not r["passed"] and not r.get("skipped"):
@@ -4173,21 +4774,25 @@ def _print_summary_and_exit():
         runtime = f"{int(mins)}m {secs:.2f}s"
     else:
         runtime = f"{secs:.2f}s"
-    LOGGER.info(f"=== TOTAL RUNTIME: {runtime} ===")
+    LOGGER.info("=== TOTAL RUNTIME: %s ===", runtime)
     exit_code = 0 if (failed == 0 and not CLEANUP_FAILED) else 1
-    LOGGER.info(f"Exiting with code {exit_code}")
+    LOGGER.info("Exiting with code %s", exit_code)
     sys.exit(exit_code)
 
 # -----------------------------------------------------------------------------
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Discord Gateway API Test Runner")
     p.add_argument("--base-url",        default=DEFAULT_BASE_URL,    help="API base URL")
-    p.add_argument("--guild-id",        default=DEFAULT_GUILD_ID,    type=int, help="Guild ID for tests")
-    p.add_argument("--user-id",         default=DEFAULT_USER_ID,     type=int, help="User ID for tests")
-    p.add_argument("--bot-id",          default=DEFAULT_BOT_ID,      type=int, help="Bot User ID for tests")
+    p.add_argument("--guild-id",
+                   default=DEFAULT_GUILD_ID, type=int, help="Guild ID for tests")
+    p.add_argument("--user-id",
+                   default=DEFAULT_USER_ID, type=int, help="User ID for tests")
+    p.add_argument("--bot-id",
+                   default=DEFAULT_BOT_ID, type=int, help="Bot User ID for tests")
     p.add_argument("--log-file",        default=DEFAULT_LOG_FILE,    help="Log file (overwrite)")
     p.add_argument("--cleanup-log",     default=DEFAULT_CLEANUP_FILE,help="Cleanup JSONL log")
-    p.add_argument("--delay",           default=DEFAULT_DELAY,       type=float, help="Delay between tests")
+    p.add_argument("--delay",
+                   default=DEFAULT_DELAY, type=float, help="Delay between tests")
     p.add_argument("--validation-delay",default=DEFAULT_VALIDATION_DELAY,type=float,
                    help="Delay before validation GETs")
     return p.parse_args()
@@ -4204,13 +4809,13 @@ def setup_logger(logpath: str):
     ch = logging.StreamHandler(sys.stdout)
     ch.setLevel(logging.INFO)
     class ColorFmt(logging.Formatter):
-        def format(self, rec):
-            msg = super().format(rec)
+        def format(self, record):
+            msg = super().format(record)
             if msg.startswith("[PASS]"):
                 return GREEN + msg + RESET
             if msg.startswith("[FAIL]"):
                 return RED + msg + RESET
-            if rec.levelno == logging.WARNING or msg.startswith("[SKIP]"):
+            if record.levelno == logging.WARNING or msg.startswith("[SKIP]"):
                 return YELLOW + msg + RESET
             return WHITE + msg + RESET
     ch.setFormatter(ColorFmt("%(message)s"))
@@ -4223,7 +4828,7 @@ def main():
     ARGS = parse_args()
     setup_logger(ARGS.log_file)
     START_TIME = time.monotonic()
-    LOGGER.info(f"Starting test run at {now_iso()}\n")
+    LOGGER.info("Starting test run at %s", now_iso())
     open(ARGS.cleanup_log, "w").close()  # truncate cleanup log
 
     suites = [
@@ -4239,11 +4844,13 @@ def main():
     ]
 
     for suite in suites:
-        LOGGER.warning(f"=== Suite: {suite.__class__.__name__} ===")
+        LOGGER.warning("=== Suite: %s ===", suite.__class__.__name__)
         try:
             suite.run_all()
-        except Exception:
-            LOGGER.exception("Unhandled exception while running suite %s — continuing with next suite", suite.__class__.__name__)
+        except Exception:  # pylint: disable=broad-exception-caught
+            LOGGER.exception(
+                "Unhandled exception while running suite %s — continuing with next suite",
+                suite.__class__.__name__)
 
 
     LOGGER.warning("All suites complete → performing cleanup")

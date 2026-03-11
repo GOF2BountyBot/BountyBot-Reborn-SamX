@@ -1,8 +1,7 @@
-from typing import Any
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from persist.models.item import Item
 from persist.repositories.generic_repository import GenericRepository
+
 
 class ItemRepository(GenericRepository[Item]):
     def __init__(self):

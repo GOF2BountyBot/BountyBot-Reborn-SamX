@@ -1,7 +1,8 @@
-from sqlalchemy.orm import Mapped, mapped_column
-from sqlalchemy import String, Boolean, ARRAY, Integer
-from persist.models.base import Base
 from persist.database.tablenames import TableNames
+from persist.models.base import Base
+from sqlalchemy import ARRAY, Boolean, Integer, String
+from sqlalchemy.orm import Mapped, mapped_column
+
 
 class Criminal(Base):
     __tablename__ = TableNames.Criminal.value

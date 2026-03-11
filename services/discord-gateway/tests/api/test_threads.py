@@ -89,7 +89,7 @@ def _restore_real_discord():
     import tests.mocks.discord_mock_utils as _dmu_mod
     importlib.reload(_dmu_mod)
     # Force the threads router to re-bind its 'discord' global to real discord
-    import api.routers.threads as _threads_mod
+    from api.routers import threads as _threads_mod
     importlib.reload(_threads_mod)
     yield
 

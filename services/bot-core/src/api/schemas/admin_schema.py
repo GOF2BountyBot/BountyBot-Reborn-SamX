@@ -1,5 +1,7 @@
-from typing import List, Optional, Dict, Any
+from typing import Dict, Optional
+
 from pydantic import BaseModel, Field
+
 
 # Request/Response Models
 class InitializeGuildRequest(BaseModel):

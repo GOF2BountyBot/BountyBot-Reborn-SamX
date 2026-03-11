@@ -1,6 +1,5 @@
 import importlib
 import pkgutil
-import sys
 
 # Automatically import all modules in this package
 package_name = __name__

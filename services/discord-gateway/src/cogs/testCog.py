@@ -1,7 +1,6 @@
 
-import discord
+from shared import bblogger
 from discord.ext import commands
-import shared.bblogger as bblogger
 
 flogger = bblogger.get_logger('test-cog-Test')
 

@@ -1,6 +1,7 @@
-from enum import Enum
-from typing import List, Optional, Dict, Any
+from typing import Any, Dict, List, Optional
+
 from pydantic import BaseModel
+
 
 # Pydantic models for responses
 class ItemResponse(BaseModel):

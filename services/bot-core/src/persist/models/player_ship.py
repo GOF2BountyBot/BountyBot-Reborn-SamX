@@ -5,12 +5,14 @@ Represents ships owned by a player with their equipped loadouts.
 Each player can own multiple ships, but only one can be active at a time.
 """
 
-from sqlalchemy.orm import Mapped, mapped_column, relationship
-from sqlalchemy import Integer, String, DateTime, Boolean, JSON, ForeignKey
-from datetime import datetime, UTC
+from datetime import UTC, datetime
 from typing import List, Optional
-from persist.models.base import Base
+
 from persist.database.tablenames import TableNames
+from persist.models.base import Base
+from sqlalchemy import JSON, Boolean, DateTime, ForeignKey, Integer, String
+from sqlalchemy.orm import Mapped, mapped_column, relationship
+
 
 class PlayerShip(Base):
     __tablename__ = TableNames.PlayerShips.value

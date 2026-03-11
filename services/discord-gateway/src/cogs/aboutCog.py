@@ -1,12 +1,13 @@
 import os
+from typing import Dict, List
+
 import discord
-from typing import List, Optional, Dict, Any
+import httpx
+from shared import bblogger
 from discord import app_commands
 from discord.ext import commands
-import shared.bblogger as bblogger
-import httpx
-import json
-from utils.embed_converter import EmbedConverter    # ← grid‐builder for 2-col layout
+
+from utils.embed_converter import EmbedConverter  # ← grid‐builder for 2-col layout
 
 # Set up logger
 flogger = bblogger.get_logger("discord-gateway-AboutCog")
@@ -56,7 +57,7 @@ class AboutCog(commands.Cog):
                     objects = resp.json()
                     self._objects_by_category[category] = objects
                     flogger.debug(f"Preloaded {len(objects)} objects for category {category}")
-                except Exception as e:
+                except Exception as e:  # pylint: disable=broad-exception-caught
                     flogger.warning(f"Failed to preload objects for category {category}: {e}")
                     self._objects_by_category[category] = []
 
@@ -65,7 +66,7 @@ class AboutCog(commands.Cog):
                 f"{sum(len(objs) for objs in self._objects_by_category.values())} total objects"
             )
 
-        except Exception as e:
+        except Exception as e:  # pylint: disable=broad-exception-caught
             flogger.warning(f"Failed to preload about data: {e}")
             # Set defaults so the cog can still function
             self._categories = []
@@ -73,7 +74,7 @@ class AboutCog(commands.Cog):
 
     async def category_autocomplete(
         self,
-        interaction: discord.Interaction,
+        _interaction: discord.Interaction,
         current: str
     ) -> List[app_commands.Choice[str]]:
         """Autocomplete for category selection"""
@@ -149,10 +150,10 @@ class AboutCog(commands.Cog):
                     f"❌ API Error: {e}",
                     ephemeral=True
                 )
-        except Exception as e:
+        except Exception as e:  # pylint: disable=broad-exception-caught
             flogger.error(f"Error in about command: {e}")
             await interaction.followup.send(
-                f"⚠️ An error occurred while fetching object information.",
+                "⚠️ An error occurred while fetching object information.",
                 ephemeral=True
             )
 
@@ -193,7 +194,7 @@ class AboutCog(commands.Cog):
                     embed.set_thumbnail(url=icon_url)
                 else:
                     flogger.debug(f"Icon URL returned {head_resp.status_code}: {icon_url}")
-            except Exception as e:
+            except Exception as e:  # pylint: disable=broad-exception-caught
                 flogger.debug(f"Failed to validate icon URL {icon_url}: {e}")
 
         # Add basic information
@@ -365,10 +366,10 @@ class AboutCog(commands.Cog):
 
             await interaction.followup.send(embed=embed)
 
-        except Exception as e:
+        except Exception as e:  # pylint: disable=broad-exception-caught
             flogger.error(f"Error in list_category command: {e}")
             await interaction.followup.send(
-                f"⚠️ An error occurred while listing objects.",
+                "⚠️ An error occurred while listing objects.",
                 ephemeral=True
             )
 

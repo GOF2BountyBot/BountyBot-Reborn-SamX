@@ -1,8 +1,10 @@
 from typing import Any
-from sqlalchemy.orm import Mapped, mapped_column
-from sqlalchemy import String, Integer, ForeignKey, JSON
-from persist.models.item import Item
+
 from persist.database.tablenames import TableNames
+from persist.models.item import Item
+from sqlalchemy import JSON, ForeignKey, Integer
+from sqlalchemy.orm import Mapped, mapped_column
+
 
 class Weapon(Item):
     __tablename__ = TableNames.Weapon.value   # Enum for 'weapon'

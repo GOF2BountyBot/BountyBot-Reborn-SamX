@@ -1,7 +1,8 @@
-from sqlalchemy.orm import Mapped, mapped_column
-from sqlalchemy import Integer, ForeignKey
-from persist.models.weapon import Weapon
 from persist.database.tablenames import TableNames
+from persist.models.weapon import Weapon
+from sqlalchemy import ForeignKey, Integer
+from sqlalchemy.orm import Mapped, mapped_column
+
 
 class SecondaryWeapon(Weapon):
     __tablename__ = TableNames.SecondaryWeapon.value

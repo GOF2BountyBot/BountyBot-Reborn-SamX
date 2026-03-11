@@ -1,8 +1,10 @@
-from sqlalchemy.orm import Mapped, mapped_column
-from sqlalchemy import String, Integer, Boolean, ARRAY, DateTime
-from datetime import datetime, UTC
-from persist.models.base import Base
+from datetime import UTC, datetime
+
 from persist.database.tablenames import TableNames
+from persist.models.base import Base
+from sqlalchemy import DateTime, String
+from sqlalchemy.orm import Mapped, mapped_column
+
 
 class SchemaVersion(Base):
     __tablename__ = TableNames.SchemaVersion.value  # Using the Enum to get the name of the table

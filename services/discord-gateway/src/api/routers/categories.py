@@ -5,20 +5,14 @@ This module provides REST endpoints for managing Discord category channels
 including getting, updating, and deleting categories and their permissions.
 """
 
-from fastapi import APIRouter, HTTPException, Request, status, Query
-import discord
-import shared.bblogger as bblogger
-from api.schemas.channel_schemas import (
-    CategoryResponse, CategoryUpdateRequest, ChannelListResponse
-)
-from api.schemas.permission_schemas import (
-    PermissionOverwriteListResponse, PermissionOverwriteListRequest
-)
-from api.schemas.base_schemas import SuccessResponse, DeleteResponse
+from shared import bblogger
+from api.schemas.base_schemas import DeleteResponse, SuccessResponse
+from api.schemas.channel_schemas import CategoryResponse, CategoryUpdateRequest, ChannelListResponse
+from api.schemas.permission_schemas import PermissionOverwriteListRequest, PermissionOverwriteListResponse
+from fastapi import APIRouter, HTTPException, Query, Request, status
+
 from utils.discord_converters import ChannelConverter, PermissionConverter
-from utils.discord_helpers import (
-    resolve_bot, get_entity_or_404, validate_channel_type, handle_discord_exception
-)
+from utils.discord_helpers import get_entity_or_404, handle_discord_exception, resolve_bot, validate_channel_type
 from utils.permission_utils import create_permission_overwrite
 
 flogger = bblogger.get_logger("gateway-category-router")
@@ -48,19 +42,19 @@ async def get_category(request: Request, category_id: int) -> CategoryResponse:
         channel = await get_entity_or_404(
             bot.get_channel, bot.fetch_channel, category_id, "Channel"
         )
-        
+
         validate_channel_type(channel, ["category"], category_id)
-        
+
         category_data = ChannelConverter.category_to_detail(channel)
         flogger.info(f"Successfully retrieved category details for {channel.name}")
-        
+
         return CategoryResponse(
             status="success",
             data=category_data
         )
     except HTTPException:
         raise
-    except Exception as exc:
+    except Exception as exc:  # pylint: disable=broad-exception-caught
         flogger.error(f"Unexpected error in get_category for category {category_id}: {exc}")
         await handle_discord_exception("get category details", exc)
 
@@ -81,33 +75,33 @@ async def update_category(
         channel = await get_entity_or_404(
             bot.get_channel, bot.fetch_channel, category_id, "Channel"
         )
-        
+
         validate_channel_type(channel, ["category"], category_id)
-        
+
         # Update category with provided parameters
         update_kwargs = {}
         if category_data.name is not None:
             update_kwargs["name"] = category_data.name
         if category_data.position is not None:
             update_kwargs["position"] = category_data.position
-        
+
         if update_kwargs:
             await channel.edit(**update_kwargs)
             # Re-fetch the channel after the edit
             channel = await get_entity_or_404(
                 bot.get_channel, bot.fetch_channel, category_id, "Channel"
             )
-        
+
         category_detail = ChannelConverter.category_to_detail(channel)
         flogger.info(f"Successfully updated category {channel.name}")
-        
+
         return CategoryResponse(
             status="updated",
             data=category_detail
         )
     except HTTPException:
         raise
-    except Exception as exc:
+    except Exception as exc:  # pylint: disable=broad-exception-caught
         flogger.error(f"Unexpected error in update_category for category {category_id}: {exc}")
         await handle_discord_exception("update category", exc)
 
@@ -130,25 +124,25 @@ async def delete_category(
         channel = await get_entity_or_404(
             bot.get_channel, bot.fetch_channel, category_id, "Channel"
         )
-        
+
         validate_channel_type(channel, ["category"], category_id)
-        
+
         category_name = channel.name
         child_channels = list(channel.channels)
-        
+
         if cascade:
             # Delete all child channels first
             for child_channel in child_channels:
                 await child_channel.delete()
             flogger.info(f"Deleted {len(child_channels)} child channels")
-        
+
         # Delete the category
         await channel.delete()
-        
+
         message = f"Category {category_name} deleted"
         if cascade and child_channels:
             message += f" along with {len(child_channels)} child channels"
-        
+
         flogger.info(message)
         return DeleteResponse(
             status="deleted",
@@ -157,7 +151,7 @@ async def delete_category(
         )
     except HTTPException:
         raise
-    except Exception as exc:
+    except Exception as exc:  # pylint: disable=broad-exception-caught
         flogger.error(f"Unexpected error in delete_category for category {category_id}: {exc}")
         await handle_discord_exception("delete category", exc)
 
@@ -176,16 +170,16 @@ async def list_category_channels(request: Request, category_id: int) -> ChannelL
         channel = await get_entity_or_404(
             bot.get_channel, bot.fetch_channel, category_id, "Channel"
         )
-        
+
         validate_channel_type(channel, ["category"], category_id)
-        
+
         # Sort channels in this category by their position
         channels = []
         sorted_chs = sorted(channel.channels, key=lambda ch: ch.position)
         for ch in sorted_chs:
             channel_data = ChannelConverter.channel_to_summary(ch)
             channels.append(channel_data)
-        
+
         flogger.info(f"Successfully retrieved {len(channels)} channels from category {channel.name}")
         return ChannelListResponse(
             status="success",
@@ -193,7 +187,7 @@ async def list_category_channels(request: Request, category_id: int) -> ChannelL
         )
     except HTTPException:
         raise
-    except Exception as exc:
+    except Exception as exc:  # pylint: disable=broad-exception-caught
         flogger.error(f"Unexpected error in list_category_channels for category {category_id}: {exc}")
         await handle_discord_exception("list category channels", exc)
 
@@ -212,14 +206,14 @@ async def get_category_permissions(request: Request, category_id: int) -> Permis
         channel = await get_entity_or_404(
             bot.get_channel, bot.fetch_channel, category_id, "Channel"
         )
-        
+
         validate_channel_type(channel, ["category"], category_id)
-        
+
         overwrites = []
         for target, overwrite in channel.overwrites.items():
             overwrite_data = PermissionConverter.overwrite_to_payload(target, overwrite, channel.id)
             overwrites.append(overwrite_data)
-        
+
         flogger.info(f"Successfully retrieved {len(overwrites)} permission overwrites for category {channel.name}")
         return PermissionOverwriteListResponse(
             status="success",
@@ -227,7 +221,7 @@ async def get_category_permissions(request: Request, category_id: int) -> Permis
         )
     except HTTPException:
         raise
-    except Exception as exc:
+    except Exception as exc:  # pylint: disable=broad-exception-caught
         flogger.error(f"Unexpected error in get_category_permissions for category {category_id}: {exc}")
         await handle_discord_exception("get category permissions", exc)
 
@@ -250,20 +244,20 @@ async def update_category_permissions(
         channel = await get_entity_or_404(
             bot.get_channel, bot.fetch_channel, category_id, "Channel"
         )
-        
+
         validate_channel_type(channel, ["category"], category_id)
         guild = channel.guild
-        
+
         # Clear existing overwrites
         existing = list(channel.overwrites.keys())
         for target in existing:
             await channel.set_permissions(target, overwrite=None)
-        
+
         # Apply new overwrites, skipping missing roles/members
         for od in permissions_data.overwrites:
             target_id, tgt_type = od.target_id, od.type
             allow, deny = od.allow or 0, od.deny or 0
-            
+
             if tgt_type == "role":
                 target = guild.get_role(target_id)
                 if not target:
@@ -274,18 +268,18 @@ async def update_category_permissions(
                 if not target:
                     try:
                         target = await guild.fetch_member(target_id)
-                    except Exception:
+                    except Exception:  # pylint: disable=broad-exception-caught
                         flogger.warning(f"Member {target_id} not found—skipping")
                         continue
-            
+
             overwrite = create_permission_overwrite(allow=allow, deny=deny)
             await channel.set_permissions(target, overwrite=overwrite)
-        
+
         message = f"Permissions updated for category {channel.name}"
         flogger.info(message)
         return SuccessResponse(status="updated", message=message)
     except HTTPException:
         raise
-    except Exception as exc:
+    except Exception as exc:  # pylint: disable=broad-exception-caught
         flogger.error(f"Unexpected error in update_category_permissions for category {category_id}: {exc}")
         await handle_discord_exception("update category permissions", exc)

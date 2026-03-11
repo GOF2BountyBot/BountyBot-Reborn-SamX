@@ -5,12 +5,13 @@ Represents shop items available for purchase in each guild's tier-based shops.
 Each guild has four shops (one per tier) with separate inventories and refresh schedules.
 """
 
-from sqlalchemy.orm import Mapped, mapped_column, relationship
-from sqlalchemy import BigInteger, Integer, String, DateTime, ForeignKey
-from datetime import datetime, UTC
-from typing import Optional
-from persist.models.base import Base
+from datetime import UTC, datetime
+
 from persist.database.tablenames import TableNames
+from persist.models.base import Base
+from sqlalchemy import BigInteger, DateTime, ForeignKey, Integer, String
+from sqlalchemy.orm import Mapped, mapped_column, relationship
+
 
 class GuildShop(Base):
     __tablename__ = TableNames.GuildShops.value
@@ -38,7 +39,10 @@ class GuildShop(Base):
     )
 
     def __repr__(self) -> str:
-        return f"<GuildShop(guild_id={self.guild_id}, tier='{self.tier}', item='{self.item_name}', qty={self.quantity}, price={self.price})>"
+        return (
+            f"<GuildShop(guild_id={self.guild_id}, tier='{self.tier}', "
+            f"item='{self.item_name}', qty={self.quantity}, price={self.price})>"
+        )
 
     def is_refresh_due(self) -> bool:
         """Check if this shop item is due for refresh based on its interval."""

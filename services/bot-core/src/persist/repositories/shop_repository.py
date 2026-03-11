@@ -8,20 +8,21 @@ tier-based shop management, item queries, and inventory operations.
 from typing import Optional, List
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, and_, update, delete
-import shared.bblogger as bblogger
+
+from shared import bblogger
 from persist.interfaces.repository_interface import IRepository
 from persist.models.guild_shop import GuildShop
 
 flogger = bblogger.get_logger("shop-repository")
 
 class ShopRepository(IRepository[GuildShop]):
-    
-    async def get_by_id(self, db: AsyncSession, shop_item_id: int) -> Optional[GuildShop]:
+
+    async def get_by_id(self, db: AsyncSession, obj_id: int) -> Optional[GuildShop]:
         """Get shop item by ID."""
         try:
-            return await db.get(GuildShop, shop_item_id)
+            return await db.get(GuildShop, obj_id)
         except Exception as e:
-            flogger.error(f"Error getting shop item by ID {shop_item_id}: {e}")
+            flogger.error(f"Error getting shop item by ID {obj_id}: {e}")
             raise
 
     async def get_by_name(self, db: AsyncSession, name: str) -> Optional[GuildShop]:
@@ -37,14 +38,14 @@ class ShopRepository(IRepository[GuildShop]):
             flogger.error(f"Error listing all shop items: {e}")
             raise
 
-    async def add(self, db: AsyncSession, shop_item: GuildShop) -> GuildShop:
+    async def add(self, db: AsyncSession, obj: GuildShop) -> GuildShop:
         """Add new shop item to database."""
         try:
-            db.add(shop_item)
+            db.add(obj)
             await db.commit()
-            await db.refresh(shop_item)
-            flogger.info(f"Added shop item: {shop_item.item_name} to {shop_item.tier} shop in guild {shop_item.guild_id}")
-            return shop_item
+            await db.refresh(obj)
+            flogger.info(f"Added shop item: {obj.item_name} to {obj.tier} shop in guild {obj.guild_id}")
+            return obj
         except Exception as e:
             flogger.error(f"Error adding shop item: {e}")
             await db.rollback()
@@ -56,13 +57,13 @@ class ShopRepository(IRepository[GuildShop]):
             guild_id = raw.get("guild_id")
             tier = raw.get("tier")
             item_name = raw.get("item_name")
-            
+
             if not all([guild_id, tier, item_name]):
                 raise ValueError("guild_id, tier, and item_name are required")
-                
+
             # Check if item already exists in this shop
             existing_item = await self.get_shop_item_by_name(db, guild_id, tier, item_name)
-            
+
             if existing_item:
                 # Update existing item
                 for key, value in raw.items():
@@ -72,31 +73,31 @@ class ShopRepository(IRepository[GuildShop]):
                 await db.refresh(existing_item)
                 flogger.debug(f"Updated shop item: {item_name} in {tier} shop")
                 return existing_item
-            else:
-                # Create new shop item
-                shop_item = GuildShop(**raw)
-                return await self.add(db, shop_item)
-                
+
+            # Create new shop item
+            shop_item = GuildShop(**raw)
+            return await self.add(db, shop_item)
+
         except Exception as e:
             flogger.error(f"Error creating/updating shop item: {e}")
             raise
 
-    async def remove(self, db: AsyncSession, shop_item: GuildShop) -> None:
+    async def remove(self, db: AsyncSession, obj: GuildShop) -> None:
         """Remove shop item from database."""
         try:
-            await db.delete(shop_item)
+            await db.delete(obj)
             await db.commit()
-            flogger.info(f"Removed shop item: {shop_item.item_name} from {shop_item.tier} shop")
+            flogger.info(f"Removed shop item: {obj.item_name} from {obj.tier} shop")
         except Exception as e:
             flogger.error(f"Error removing shop item: {e}")
             await db.rollback()
             raise
 
     async def get_shop_items(
-        self, 
-        db: AsyncSession, 
-        guild_id: int, 
-        tier: str, 
+        self,
+        db: AsyncSession,
+        guild_id: int,
+        tier: str,
         item_type: Optional[str] = None
     ) -> List[GuildShop]:
         """Get all items in a specific guild shop tier, optionally filtered by type."""
@@ -107,10 +108,10 @@ class ShopRepository(IRepository[GuildShop]):
                     GuildShop.tier == tier
                 )
             )
-            
+
             if item_type:
                 query = query.where(GuildShop.item_type == item_type)
-                
+
             query = query.order_by(GuildShop.item_type, GuildShop.item_name)
             result = await db.execute(query)
             return list(result.scalars().all())
@@ -119,10 +120,10 @@ class ShopRepository(IRepository[GuildShop]):
             raise
 
     async def get_shop_item_by_name(
-        self, 
-        db: AsyncSession, 
-        guild_id: int, 
-        tier: str, 
+        self,
+        db: AsyncSession,
+        guild_id: int,
+        tier: str,
         item_name: str
     ) -> Optional[GuildShop]:
         """Get a specific item from a guild shop."""
@@ -146,14 +147,14 @@ class ShopRepository(IRepository[GuildShop]):
         try:
             if new_quantity < 0:
                 raise ValueError("Quantity cannot be negative")
-                
+
             await db.execute(
                 update(GuildShop)
                 .where(GuildShop.id == shop_item_id)
                 .values(quantity=new_quantity)
             )
             await db.commit()
-            
+
             item = await self.get_by_id(db, shop_item_id)
             flogger.debug(f"Updated shop item {shop_item_id} quantity: {new_quantity}")
             return item
@@ -200,7 +201,7 @@ class ShopRepository(IRepository[GuildShop]):
                 select(GuildShop).where(GuildShop.guild_id == guild_id)
             )
             items = result.scalars().all()
-            
+
             summary = {
                 "guild_id": guild_id,
                 "total_items": len(items),
@@ -211,22 +212,22 @@ class ShopRepository(IRepository[GuildShop]):
                     "Platinum": {"items": 0, "total_quantity": 0}
                 }
             }
-            
+
             for item in items:
                 if item.tier in summary["shops"]:
                     summary["shops"][item.tier]["items"] += 1
                     summary["shops"][item.tier]["total_quantity"] += item.quantity
-                    
+
             return summary
         except Exception as e:
             flogger.error(f"Error getting shops summary for guild {guild_id}: {e}")
             raise
 
     async def get_items_by_tech_level(
-        self, 
-        db: AsyncSession, 
-        guild_id: int, 
-        tier: str, 
+        self,
+        db: AsyncSession,
+        guild_id: int,
+        tier: str,
         tech_level: int
     ) -> List[GuildShop]:
         """Get all items of a specific tech level from a shop."""
@@ -250,14 +251,14 @@ class ShopRepository(IRepository[GuildShop]):
         try:
             if price_multiplier <= 0:
                 raise ValueError("Price multiplier must be positive")
-                
+
             result = await db.execute(
                 update(GuildShop)
                 .where(GuildShop.guild_id == guild_id)
                 .values(price=GuildShop.price * price_multiplier)
             )
             await db.commit()
-            
+
             updated_count = result.rowcount
             flogger.info(f"Updated {updated_count} shop item prices for guild {guild_id}")
             return updated_count
@@ -273,10 +274,10 @@ class ShopRepository(IRepository[GuildShop]):
                 select(GuildShop).where(GuildShop.guild_id == guild_id)
             )
             items = result.scalars().all()
-            
+
             # Filter items that are due for refresh
             due_items = [item for item in items if item.is_refresh_due()]
-            
+
             flogger.debug(f"Found {len(due_items)} items due for refresh in guild {guild_id}")
             return due_items
         except Exception as e:
@@ -287,7 +288,7 @@ class ShopRepository(IRepository[GuildShop]):
         """Get detailed statistics for a specific shop."""
         try:
             items = await self.get_shop_items(db, guild_id, tier)
-            
+
             stats = {
                 "guild_id": guild_id,
                 "tier": tier,
@@ -297,19 +298,19 @@ class ShopRepository(IRepository[GuildShop]):
                 "tech_levels": {},
                 "price_range": {"min": 0, "max": 0, "average": 0}
             }
-            
+
             if items:
                 # Calculate statistics
                 prices = [item.price for item in items]
                 stats["price_range"]["min"] = min(prices)
                 stats["price_range"]["max"] = max(prices)
                 stats["price_range"]["average"] = sum(prices) / len(prices)
-                
+
                 # Count by item type
                 for item in items:
                     stats["item_types"][item.item_type] = stats["item_types"].get(item.item_type, 0) + 1
                     stats["tech_levels"][item.tech_level] = stats["tech_levels"].get(item.tech_level, 0) + 1
-                    
+
             return stats
         except Exception as e:
             flogger.error(f"Error getting statistics for {tier} shop in guild {guild_id}: {e}")

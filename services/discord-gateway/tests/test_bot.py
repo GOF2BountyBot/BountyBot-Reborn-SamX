@@ -52,7 +52,7 @@ def create_mock_cog_file(cog_name):
     cog_content = f"""
 import discord
 from discord.ext import commands
-import shared.bblogger as bblogger
+from shared import bblogger
 
 flogger = bblogger.get_logger('test-cog-{cog_name}')
 
@@ -137,7 +137,7 @@ class TestGatewayBotInitialization:
     def test_bot_initialization(self, mock_gateway_bot):
         """GatewayBot should initialize with correct intents and properties."""
         from bot import GatewayBot
-        
+
         bot = GatewayBot()
         assert bot.command_prefix == "!"
         assert bot.intents.message_content is True
@@ -150,7 +150,7 @@ class TestGatewayBotInitialization:
     def test_bot_application_id(self, mock_getenv, mock_gateway_bot):
         """GatewayBot should use BOTAPPID from environment."""
         mock_getenv.return_value = "987654321"
-        
+
         from bot import GatewayBot
         bot = GatewayBot()
         assert bot.application_id == 987654321
@@ -160,7 +160,7 @@ class TestGatewayBotInitialization:
         """GatewayBot should default to 0 if BOTAPPID not set."""
         # Simulate os.getenv returning the default value (env var not set)
         mock_getenv.side_effect = lambda key, default=None: default
-        
+
         from bot import GatewayBot
         bot = GatewayBot()
         assert bot.application_id == 0
@@ -175,22 +175,22 @@ class TestSetupHook:
         """setup_hook should load all cog files except template and disabled ones."""
         mock_listdir.return_value = ['aboutCog.py', 'adminCog.py', 'templateCog.py', 'disabledCog.py']
         mock_join.return_value = 'src/cogs/aboutCog.py'
-        
+
         bot = mock_gateway_bot
         bot.flogger = MagicMock()
-        
+
         # Mock load_extension
         bot.load_extension = AsyncMock()
-        
+
         # Call setup_hook
         asyncio.run(bot.setup_hook())
-        
+
         # Should load aboutCog and adminCog, skip templateCog and disabledCog
         bot.load_extension.assert_any_call('cogs.aboutCog')
         bot.load_extension.assert_any_call('cogs.adminCog')
         assert call('cogs.templateCog') not in bot.load_extension.call_args_list
         assert call('cogs.disabledCog') not in bot.load_extension.call_args_list
-        
+
         bot.flogger.info.assert_called_with('=== SETUP HOOK COMPLETED (2 cogs) ===')
 
     @patch('os.listdir')
@@ -199,17 +199,17 @@ class TestSetupHook:
         """setup_hook should handle cog loading errors gracefully."""
         mock_listdir.return_value = ['errorCog.py']
         mock_join.return_value = 'src/cogs/errorCog.py'
-        
+
         bot = mock_gateway_bot
         bot.flogger = MagicMock()
-        
+
         # Mock load_extension to raise exception
         bot.load_extension = AsyncMock(side_effect=Exception('Test error'))
-        
+
         # Call setup_hook
         with pytest.raises(Exception):
             asyncio.run(bot.setup_hook())
-        
+
         bot.flogger.error.assert_called_with('✗ Cog load failed errorCog.py: Test error')
 
 
@@ -224,9 +224,9 @@ class TestOnReadyEvent:
         bot.user.name = 'TestBot'
         bot.user.id = 123456789
         bot.user.__str__ = MagicMock(return_value='TestBot')
-        
+
         asyncio.run(bot.on_ready())
-        
+
         bot.flogger.info.assert_any_call('Bot logged in as TestBot (123456789)')
 
     def test_on_ready_syncs_commands_once(self, mock_gateway_bot):
@@ -238,9 +238,9 @@ class TestOnReadyEvent:
         bot.user.id = 123456789
         bot.startup_complete = False
         bot.sync_commands = AsyncMock()
-        
+
         asyncio.run(bot.on_ready())
-        
+
         bot.sync_commands.assert_called_once()
         assert bot.startup_complete is True
         bot.flogger.info.assert_called_with('Commands synced')
@@ -254,9 +254,9 @@ class TestOnReadyEvent:
         bot.user.id = 123456789
         bot.startup_complete = True
         bot.sync_commands = AsyncMock()
-        
+
         asyncio.run(bot.on_ready())
-        
+
         bot.sync_commands.assert_not_called()
         assert call('Commands synced') not in bot.flogger.info.call_args_list
 
@@ -270,9 +270,9 @@ class TestSyncCommands:
         bot = mock_gateway_bot
         bot.guilds = []
         bot.tree.sync = AsyncMock()
-        
+
         asyncio.run(bot.sync_commands())
-        
+
         bot.tree.sync.assert_called_once_with()
         bot.tree.copy_global_to.assert_not_called()
 
@@ -285,9 +285,9 @@ class TestSyncCommands:
         bot.guilds = [guild]
         bot.tree.sync = AsyncMock()
         bot.tree.copy_global_to = MagicMock()
-        
+
         asyncio.run(bot.sync_commands())
-        
+
         bot.tree.copy_global_to.assert_called_once_with(guild=guild)
         bot.tree.sync.assert_called_once_with(guild=mock_object.return_value)
         mock_object.assert_called_once_with(id=987654321)
@@ -302,13 +302,13 @@ class TestCogManagement:
         """Should be able to load all cog files dynamically."""
         mock_listdir.return_value = ['testCog.py']
         mock_join.return_value = 'src/cogs/testCog.py'
-        
+
         bot = mock_gateway_bot
         bot.load_extension = AsyncMock()
         bot.flogger = MagicMock()
-        
+
         asyncio.run(bot.setup_hook())
-        
+
         # Verify cog was loaded
         bot.load_extension.assert_called_once_with('cogs.testCog')
 
@@ -321,13 +321,13 @@ class TestErrorHandling:
         bot = mock_gateway_bot
         bot.flogger = MagicMock()
         bot.load_extension = AsyncMock(side_effect=Exception('Extension not found'))
-        
+
         # Mock listdir to include invalid file
         with patch('os.listdir', return_value=['invalidCog.py']):
             with patch('os.path.join', return_value='src/cogs/invalidCog.py'):
                 with pytest.raises(Exception):
                     asyncio.run(bot.setup_hook())
-        
+
         bot.flogger.error.assert_called()
 
 

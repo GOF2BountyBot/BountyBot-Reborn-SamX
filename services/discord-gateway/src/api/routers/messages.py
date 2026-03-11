@@ -5,17 +5,18 @@ This module provides REST endpoints for managing Discord messages
 with simplified URIs that don't require channel/guild context.
 """
 
-from typing import Optional
 import asyncio
+from typing import Optional
 
-from fastapi import APIRouter, HTTPException, Request, status
 import discord
-import shared.bblogger as bblogger
-from api.schemas.message_schemas import MessageResponse, MessageUpdateRequest
+from shared import bblogger
 from api.schemas.base_schemas import DeleteResponse
-from utils.discord_helpers import resolve_bot, handle_discord_exception
-from utils.embed_converter import EmbedConverter
+from api.schemas.message_schemas import MessageResponse, MessageUpdateRequest
+from fastapi import APIRouter, HTTPException, Request, status
+
 from utils.discord_converters import MessageConverter
+from utils.discord_helpers import handle_discord_exception, resolve_bot
+from utils.embed_converter import EmbedConverter
 
 flogger = bblogger.get_logger("gateway-message-router")
 
@@ -56,7 +57,7 @@ async def _find_message(bot: discord.Client, message_id: int, logger) -> Optiona
                         if getattr(m, "id", None) == message_id:
                             logger.trace(f"Found message {message_id} in bot.{attr}")
                             return m
-            except Exception:
+            except Exception:  # pylint: disable=broad-exception-caught
                 # don't fail on unexpected cache shapes
                 pass
 
@@ -78,11 +79,17 @@ async def _find_message(bot: discord.Client, message_id: int, logger) -> Optiona
                 # no access to this channel — skip
                 continue
             except asyncio.TimeoutError:
-                logger.debug(f"fetch_message timeout for channel {getattr(channel, 'id', None)} while searching for {message_id}")
+                logger.debug(
+                    f"fetch_message timeout for channel {getattr(channel, 'id', None)} "
+                    f"while searching for {message_id}"
+                )
                 continue
-            except Exception as exc:
+            except Exception as exc:  # pylint: disable=broad-exception-caught
                 # best-effort: log and continue searching other channels
-                logger.debug(f"Unexpected error fetching message {message_id} from channel {getattr(channel,'id', None)}: {exc}")
+                logger.debug(
+                    f"Unexpected error fetching message {message_id} "
+                    f"from channel {getattr(channel, 'id', None)}: {exc}"
+                )
                 continue
 
     return None
@@ -126,7 +133,7 @@ async def get_message(request: Request, message_id: int) -> MessageResponse:
         )
     except HTTPException:
         raise
-    except Exception as exc:
+    except Exception as exc:  # pylint: disable=broad-exception-caught
         flogger.error(f"Unexpected error in get_message: {exc}")
         await handle_discord_exception("get message", exc)
 
@@ -189,7 +196,7 @@ async def update_message(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Discord API error: {exc}"
         ) from exc
-    except Exception as exc:
+    except Exception as exc:  # pylint: disable=broad-exception-caught
         flogger.exception("Unexpected error during update_message")
         await handle_discord_exception("update message", exc)
 
@@ -254,6 +261,6 @@ async def delete_message(request: Request, message_id: int) -> DeleteResponse:
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Discord API error: {exc}"
         ) from exc
-    except Exception as exc:
+    except Exception as exc:  # pylint: disable=broad-exception-caught
         flogger.exception("Unexpected error during delete_message")
         await handle_discord_exception("delete message", exc)

@@ -1,18 +1,16 @@
-import sys
+# pylint: disable=no-member  # alembic.context uses dynamic attributes
 import os
+import sys
 from logging.config import fileConfig
 
-from sqlalchemy import pool
 from alembic import context
+from persist.database.manager import db_manager
+from persist.models import *  # noqa: F401, F403  # pylint: disable=wildcard-import,unused-wildcard-import
+from persist.models.base import Base
+from shared import bblogger
 
 # Add project root (bot-core/src) to sys.path for imports
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', '..')))
-
-from persist.database.manager import db_manager
-# from persist.models.base import Base
-from persist.models import *
-
-import shared.bblogger as bblogger
 
 flogger = bblogger.get_logger("bot-alembic-env")
 
@@ -46,7 +44,7 @@ def run_migrations_online():
     try:
         flogger.info("🗄️ Initializing database connection...")
         db_manager.initialize()
-        
+
     except Exception as e:
         flogger.error(f"❌ Database initialization failed: {e}")
         flogger.error("🛑 Application startup aborted due to database issues")

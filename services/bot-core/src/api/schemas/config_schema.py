@@ -1,5 +1,7 @@
-from typing import List, Optional, Dict, Any
+from typing import Any, Dict, List, Optional
+
 from pydantic import BaseModel, Field
+
 
 # Response Models
 class GuildConfigResponse(BaseModel):
@@ -35,6 +37,6 @@ class UpdateShopConfigRequest(BaseModel):
 class UpdateXPThresholdsRequest(BaseModel):
     guild_id: int
     thresholds: Dict[str, int] = Field(
-        ..., 
+        ...,
         description="XP thresholds for Silver, Gold, and Platinum tiers"
     )

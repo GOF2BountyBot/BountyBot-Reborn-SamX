@@ -5,10 +5,11 @@ This module defines request/response models for Discord role operations
 including role creation, updates, and member management.
 """
 
-from typing import Optional, List, Dict, Any
-from pydantic import BaseModel, Field
+from typing import Any, Dict, List, Optional
 from uuid import uuid4
-from api.schemas.base_schemas import BaseResponse, PaginatedResponse, BaseCreateRequest, BaseUpdateRequest
+
+from api.schemas.base_schemas import BaseCreateRequest, BaseResponse, BaseUpdateRequest, PaginatedResponse
+from pydantic import BaseModel, Field
 
 
 def _generate_role_name() -> str:

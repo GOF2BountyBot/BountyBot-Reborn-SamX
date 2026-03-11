@@ -1,0 +1,484 @@
+"""Tests for shipsCog — boosting coverage from 0% to 60%+."""
+
+import pytest
+from unittest.mock import MagicMock, AsyncMock
+import sys
+import os
+import types
+import asyncio
+
+# Import discord_mock_utils for consistent mock patterns
+from tests.mocks.discord_mock_utils import DiscordMockUtils
+
+# ---------------------------------------------------------------------------
+# Module-level mock setup — must run before any src imports
+# ---------------------------------------------------------------------------
+
+_mock_utils = DiscordMockUtils()
+
+_mock_shared = types.ModuleType("shared")
+_mock_shared.__path__ = []
+
+_mock_bblogger = types.ModuleType("shared.bblogger")
+
+_module_logger = None
+
+
+def _make_mock_logger(*_args, **_kwargs):
+    """Return a MagicMock with common log-level methods."""
+    global _module_logger
+    logger = MagicMock()
+    logger.info = MagicMock()
+    logger.debug = MagicMock()
+    logger.warning = MagicMock()
+    logger.error = MagicMock()
+    logger.trace = MagicMock()
+    logger.critical = MagicMock()
+    logger.exception = MagicMock()
+    _module_logger = logger
+    return logger
+
+
+_mock_bblogger.get_logger = MagicMock(side_effect=_make_mock_logger)
+
+sys.modules["shared"] = _mock_shared
+sys.modules["shared.bblogger"] = _mock_bblogger
+
+for _mod in ["discord", "discord.ext", "discord.ext.commands", "discord.app_commands"]:
+    sys.modules.pop(_mod, None)
+
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "src"))
+
+import discord
+from discord.ext import commands
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+
+def _evict_discord_modules():
+    """Remove cached discord/source modules so they re-import with real discord."""
+    to_evict = [
+        k for k in sys.modules
+        if k == "discord" or k.startswith("discord.")
+        or k in ("api", "bot", "utils") or k.startswith("api.")
+        or k.startswith("utils.") or k.startswith("cogs.")
+    ]
+    for k in to_evict:
+        sys.modules.pop(k, None)
+
+
+def _create_mock_interaction(user_id=111111111, guild_id=987654321):
+    """Build a mock interaction with all needed attributes."""
+    interaction = DiscordMockUtils.create_mock_interaction(
+        user_id=user_id,
+        guild_id=guild_id,
+    )
+    interaction.guild_id = guild_id
+    interaction.user.display_name = "TestUser"
+    interaction.user.display_avatar = MagicMock()
+    interaction.user.display_avatar.url = "https://example.com/avatar.jpg"
+    interaction.user.__str__ = MagicMock(return_value="TestUser#0001")
+    return interaction
+
+
+def _make_ship(ship_id=1, ship_name="Eagle", is_active=True, nickname=None,
+               weapons=None, modules=None, turrets=None, created_at="2024-01-01T00:00:00"):
+    """Return a minimal ship dict."""
+    return {
+        "id": ship_id,
+        "ship_name": ship_name,
+        "is_active": is_active,
+        "nickname": nickname,
+        "weapons": weapons or ["Laser"],
+        "modules": modules or [],
+        "turrets": turrets or [],
+        "created_at": created_at,
+        "player_id": 1,
+    }
+
+
+def _make_loadout(weapons=None, modules=None, turrets=None):
+    """Return a minimal loadout dict."""
+    weapons = weapons or ["Laser", "Plasma"]
+    modules = modules or ["Shield"]
+    turrets = turrets or []
+    return {
+        "weapons": weapons,
+        "weapons_count": len(weapons),
+        "modules": modules,
+        "modules_count": len(modules),
+        "turrets": turrets,
+        "turrets_count": len(turrets),
+    }
+
+
+# ---------------------------------------------------------------------------
+# Fixtures
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def mock_bot():
+    """Mock Discord bot for shipsCog testing."""
+    bot = DiscordMockUtils.create_mock_bot(user_id=123456789, username="TestBot")
+    bot.add_cog = AsyncMock()
+    bot.tree = MagicMock()
+    bot.fetch_user = AsyncMock(return_value=MagicMock(display_name="TestUser"))
+    return bot
+
+
+@pytest.fixture
+def mock_ships_cog(mock_bot):
+    """Create a ShipsCog instance with mocked bot and http_client."""
+    sys.modules["shared"] = _mock_shared
+    sys.modules["shared.bblogger"] = _mock_bblogger
+    _evict_discord_modules()
+
+    from cogs.shipsCog import ShipsCog
+
+    cog = ShipsCog(mock_bot)
+    cog.http_client = MagicMock()
+    cog.http_client.aclose = AsyncMock()
+    return cog
+
+
+# ---------------------------------------------------------------------------
+# Initialization
+# ---------------------------------------------------------------------------
+
+
+class TestShipsCogInitialization:
+    """Tests for ShipsCog initialization."""
+
+    def test_initialization(self, mock_ships_cog, mock_bot):
+        """ShipsCog should store bot reference and create http_client."""
+        assert mock_ships_cog.bot is mock_bot
+        assert mock_ships_cog.http_client is not None
+
+    def test_initialization_logs_debug(self, mock_ships_cog):
+        """ShipsCog __init__ should log a debug message."""
+        global _module_logger
+        assert _module_logger is not None
+        _module_logger.debug.assert_called_with("ShipsCog initialized")
+
+
+# ---------------------------------------------------------------------------
+# cog_unload lifecycle
+# ---------------------------------------------------------------------------
+
+
+class TestCogUnload:
+    """Tests for ShipsCog.cog_unload."""
+
+    def test_cog_unload_closes_http_client(self, mock_ships_cog):
+        """cog_unload should close the http client."""
+        asyncio.run(mock_ships_cog.cog_unload())
+        mock_ships_cog.http_client.aclose.assert_awaited_once()
+
+
+# ---------------------------------------------------------------------------
+# _get_player_id helper
+# ---------------------------------------------------------------------------
+
+
+class TestGetPlayerIdHelper:
+    """Tests for the _get_player_id helper method."""
+
+    def test_get_player_id_success(self, mock_ships_cog):
+        """_get_player_id should return player ID on success."""
+        resp = MagicMock()
+        resp.raise_for_status = MagicMock()
+        resp.json.return_value = {"id": 7}
+        mock_ships_cog.http_client.post = AsyncMock(return_value=resp)
+
+        result = asyncio.run(mock_ships_cog._get_player_id(111111111, 987654321))
+        assert result == 7
+
+    def test_get_player_id_api_error_returns_none(self, mock_ships_cog):
+        """_get_player_id should return None on API error."""
+        import httpx
+        mock_ships_cog.http_client.post = AsyncMock(
+            side_effect=httpx.HTTPError("connection error")
+        )
+
+        result = asyncio.run(mock_ships_cog._get_player_id(111111111, 987654321))
+        assert result is None
+
+
+# ---------------------------------------------------------------------------
+# ships command
+# ---------------------------------------------------------------------------
+
+
+class TestShipsCommand:
+    """Tests for the /ships slash command."""
+
+    def test_ships_display_own_ships(self, mock_ships_cog):
+        """ships should display embed with user's ships."""
+        interaction = _create_mock_interaction()
+
+        player_resp = MagicMock()
+        player_resp.raise_for_status = MagicMock()
+        player_resp.json.return_value = {"id": 1}
+
+        ships_resp = MagicMock()
+        ships_resp.raise_for_status = MagicMock()
+        ships_resp.json.return_value = [
+            _make_ship(1, "Eagle", is_active=True),
+            _make_ship(2, "Hawk", is_active=False),
+        ]
+
+        mock_ships_cog.http_client.post = AsyncMock(return_value=player_resp)
+        mock_ships_cog.http_client.get = AsyncMock(return_value=ships_resp)
+
+        asyncio.run(mock_ships_cog.ships.callback(mock_ships_cog, interaction))
+
+        interaction.response.defer.assert_awaited_once_with(thinking=True)
+        interaction.followup.send.assert_awaited_once()
+        call_kwargs = interaction.followup.send.call_args[1]
+        assert "embed" in call_kwargs
+
+    def test_ships_no_ships_found(self, mock_ships_cog):
+        """ships should send ephemeral message when player has no ships."""
+        interaction = _create_mock_interaction()
+
+        player_resp = MagicMock()
+        player_resp.raise_for_status = MagicMock()
+        player_resp.json.return_value = {"id": 1}
+
+        ships_resp = MagicMock()
+        ships_resp.raise_for_status = MagicMock()
+        ships_resp.json.return_value = []
+
+        mock_ships_cog.http_client.post = AsyncMock(return_value=player_resp)
+        mock_ships_cog.http_client.get = AsyncMock(return_value=ships_resp)
+
+        asyncio.run(mock_ships_cog.ships.callback(mock_ships_cog, interaction))
+
+        interaction.followup.send.assert_awaited_once()
+        call_kwargs = interaction.followup.send.call_args
+        assert call_kwargs[1].get("ephemeral", False)
+        assert "no ships" in call_kwargs[0][0].lower()
+
+    def test_ships_player_not_found(self, mock_ships_cog):
+        """ships should send ephemeral error when player not found."""
+        interaction = _create_mock_interaction()
+
+        # _get_player_id will return None
+        mock_ships_cog.http_client.post = AsyncMock(
+            side_effect=RuntimeError("player error")
+        )
+
+        asyncio.run(mock_ships_cog.ships.callback(mock_ships_cog, interaction))
+
+        interaction.followup.send.assert_awaited_once()
+        call_kwargs = interaction.followup.send.call_args
+        assert call_kwargs[1].get("ephemeral", False)
+
+    def test_ships_viewing_other_user(self, mock_ships_cog):
+        """ships should display ships for another user when provided."""
+        interaction = _create_mock_interaction(user_id=111111111)
+        other_user = DiscordMockUtils.create_mock_user(user_id=222222222, username="OtherUser")
+        other_user.display_name = "OtherUser"
+        other_user.display_avatar = MagicMock()
+        other_user.display_avatar.url = "https://example.com/other-avatar.jpg"
+
+        player_resp = MagicMock()
+        player_resp.raise_for_status = MagicMock()
+        player_resp.json.return_value = {"id": 2}
+
+        ships_resp = MagicMock()
+        ships_resp.raise_for_status = MagicMock()
+        ships_resp.json.return_value = [_make_ship(3, "Falcon", is_active=True)]
+
+        mock_ships_cog.http_client.post = AsyncMock(return_value=player_resp)
+        mock_ships_cog.http_client.get = AsyncMock(return_value=ships_resp)
+
+        asyncio.run(mock_ships_cog.ships.callback(
+            mock_ships_cog, interaction, user=other_user
+        ))
+
+        interaction.followup.send.assert_awaited_once()
+        call_kwargs = interaction.followup.send.call_args[1]
+        assert "embed" in call_kwargs
+
+    def test_ships_more_than_10_shows_footer_with_count(self, mock_ships_cog):
+        """ships with >10 ships should show truncation footer."""
+        interaction = _create_mock_interaction()
+
+        player_resp = MagicMock()
+        player_resp.raise_for_status = MagicMock()
+        player_resp.json.return_value = {"id": 1}
+
+        many_ships = [
+            _make_ship(i, f"Ship{i}", is_active=(i == 1))
+            for i in range(1, 13)
+        ]
+        ships_resp = MagicMock()
+        ships_resp.raise_for_status = MagicMock()
+        ships_resp.json.return_value = many_ships
+
+        mock_ships_cog.http_client.post = AsyncMock(return_value=player_resp)
+        mock_ships_cog.http_client.get = AsyncMock(return_value=ships_resp)
+
+        asyncio.run(mock_ships_cog.ships.callback(mock_ships_cog, interaction))
+
+        interaction.followup.send.assert_awaited_once()
+
+    def test_ships_http_status_error(self, mock_ships_cog):
+        """ships should handle HTTPStatusError gracefully."""
+        import httpx
+        interaction = _create_mock_interaction()
+
+        player_resp = MagicMock()
+        player_resp.raise_for_status = MagicMock()
+        player_resp.json.return_value = {"id": 1}
+
+        error_response = MagicMock()
+        error_response.status_code = 500
+        http_error = httpx.HTTPStatusError(
+            "500 Error",
+            request=MagicMock(),
+            response=error_response,
+        )
+
+        mock_ships_cog.http_client.post = AsyncMock(return_value=player_resp)
+        mock_ships_cog.http_client.get = AsyncMock(side_effect=http_error)
+
+        asyncio.run(mock_ships_cog.ships.callback(mock_ships_cog, interaction))
+
+        interaction.followup.send.assert_awaited_once()
+        call_kwargs = interaction.followup.send.call_args
+        assert call_kwargs[1].get("ephemeral", False)
+
+    def test_ships_generic_exception(self, mock_ships_cog):
+        """ships should handle generic exceptions gracefully."""
+        interaction = _create_mock_interaction()
+
+        player_resp = MagicMock()
+        player_resp.raise_for_status = MagicMock()
+        player_resp.json.return_value = {"id": 1}
+
+        mock_ships_cog.http_client.post = AsyncMock(return_value=player_resp)
+        mock_ships_cog.http_client.get = AsyncMock(
+            side_effect=RuntimeError("network error")
+        )
+
+        asyncio.run(mock_ships_cog.ships.callback(mock_ships_cog, interaction))
+
+        interaction.followup.send.assert_awaited_once()
+        call_kwargs = interaction.followup.send.call_args
+        assert call_kwargs[1].get("ephemeral", False)
+
+    def test_ships_with_nickname(self, mock_ships_cog):
+        """ships should display ship nickname when set."""
+        interaction = _create_mock_interaction()
+
+        player_resp = MagicMock()
+        player_resp.raise_for_status = MagicMock()
+        player_resp.json.return_value = {"id": 1}
+
+        ships_resp = MagicMock()
+        ships_resp.raise_for_status = MagicMock()
+        ships_resp.json.return_value = [
+            _make_ship(1, "Eagle", is_active=True, nickname="StarHunter"),
+        ]
+
+        mock_ships_cog.http_client.post = AsyncMock(return_value=player_resp)
+        mock_ships_cog.http_client.get = AsyncMock(return_value=ships_resp)
+
+        asyncio.run(mock_ships_cog.ships.callback(mock_ships_cog, interaction))
+
+        interaction.followup.send.assert_awaited_once()
+
+
+# ---------------------------------------------------------------------------
+# Error handler callbacks
+# ---------------------------------------------------------------------------
+
+
+class TestErrorHandlers:
+    """Tests for the error handler callbacks."""
+
+    def test_ships_error_handler_response_not_done(self, mock_ships_cog):
+        """ships_error should send message when response is not done."""
+        interaction = _create_mock_interaction()
+        interaction.response.is_done = MagicMock(return_value=False)
+        error = MagicMock()
+
+        asyncio.run(mock_ships_cog.ships_error(interaction, error))
+
+        interaction.response.send_message.assert_awaited_once()
+        call_kwargs = interaction.response.send_message.call_args[1]
+        assert call_kwargs.get("ephemeral", False)
+
+    def test_ships_error_handler_response_already_done(self, mock_ships_cog):
+        """ships_error should NOT send message if response already done."""
+        interaction = _create_mock_interaction()
+        interaction.response.is_done = MagicMock(return_value=True)
+        error = MagicMock()
+
+        asyncio.run(mock_ships_cog.ships_error(interaction, error))
+
+        interaction.response.send_message.assert_not_awaited()
+
+    def test_ship_error_handler_response_not_done(self, mock_ships_cog):
+        """ship_error should send message when response is not done."""
+        interaction = _create_mock_interaction()
+        interaction.response.is_done = MagicMock(return_value=False)
+        error = MagicMock()
+
+        asyncio.run(mock_ships_cog.ship_error(interaction, error))
+
+        interaction.response.send_message.assert_awaited_once()
+
+    def test_setactive_error_handler_response_not_done(self, mock_ships_cog):
+        """setactive_error should send message when response is not done."""
+        interaction = _create_mock_interaction()
+        interaction.response.is_done = MagicMock(return_value=False)
+        error = MagicMock()
+
+        asyncio.run(mock_ships_cog.setactive_error(interaction, error))
+
+        interaction.response.send_message.assert_awaited_once()
+
+    def test_nickname_error_handler_response_not_done(self, mock_ships_cog):
+        """nickname_error should send message when response is not done."""
+        interaction = _create_mock_interaction()
+        interaction.response.is_done = MagicMock(return_value=False)
+        error = MagicMock()
+
+        asyncio.run(mock_ships_cog.nickname_error(interaction, error))
+
+        interaction.response.send_message.assert_awaited_once()
+
+
+# ---------------------------------------------------------------------------
+# setup() function
+# ---------------------------------------------------------------------------
+
+
+class TestCogSetup:
+    """Tests for the module-level setup function."""
+
+    def test_setup_adds_cog_to_bot(self, mock_bot):
+        """setup() should add ShipsCog to the bot."""
+        sys.modules["shared"] = _mock_shared
+        sys.modules["shared.bblogger"] = _mock_bblogger
+        _evict_discord_modules()
+
+        from cogs.shipsCog import setup
+
+        asyncio.run(setup(mock_bot))
+
+        mock_bot.add_cog.assert_called_once()
+        added_arg = mock_bot.add_cog.call_args[0][0]
+        from cogs.shipsCog import ShipsCog
+        assert isinstance(added_arg, ShipsCog)
+
+
+if __name__ == "__main__":
+    pytest.main([__file__, "-v"])

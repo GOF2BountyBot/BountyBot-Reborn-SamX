@@ -15,15 +15,14 @@ Key Features:
 
 import os
 import time
-from typing import Optional, Dict, Any
 from contextlib import asynccontextmanager
+from typing import Any, Dict, Optional
 
-from sqlalchemy import text, MetaData, inspect
-from sqlalchemy.exc import SQLAlchemyError, OperationalError
-from sqlalchemy.ext.asyncio import create_async_engine, AsyncEngine, AsyncSession
+from shared import bblogger
+from sqlalchemy import MetaData, inspect, text
+from sqlalchemy.exc import OperationalError, SQLAlchemyError
+from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, create_async_engine
 from sqlalchemy.orm import sessionmaker
-
-import shared.bblogger as bblogger
 
 flogger = bblogger.get_logger("bot-database-manager")
 
@@ -225,7 +224,7 @@ class DatabaseManager:
                 "status": pool.status()
             }
             health_info["status"] = "healthy"
-        except Exception as e:
+        except Exception as e:  # pylint: disable=broad-exception-caught
             health_info.update(status="unhealthy", error=str(e))
             flogger.error(f"Database health check failed: {e}")
 

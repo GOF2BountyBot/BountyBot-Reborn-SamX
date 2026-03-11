@@ -6,12 +6,12 @@ following the repository pattern with embed payload support.
 """
 
 from typing import Optional, List
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, and_, desc
-import json
 from datetime import datetime, timezone
 
-import shared.bblogger as bblogger
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select, and_, desc
+
+from shared import bblogger
 from persist.models.discord_message import DiscordMessage
 from persist.repositories.generic_repository import GenericRepository
 
@@ -19,7 +19,7 @@ flogger = bblogger.get_logger("bot-discord-message-repository")
 
 class DiscordMessageRepository(GenericRepository[DiscordMessage]):
     """Repository for Discord message operations with embed support."""
-    
+
     def __init__(self):
         super().__init__(DiscordMessage)
 
@@ -30,42 +30,42 @@ class DiscordMessageRepository(GenericRepository[DiscordMessage]):
     ) -> DiscordMessage:
         """
         Create or update a Discord message record.
-        
+
         Args:
             db: Database session
             raw: Dictionary with message data including embed_payload
-            
+
         Returns:
             DiscordMessage object
         """
         flogger.trace(f"Creating or updating Discord message from {raw}")
-        
+
         guild_id = raw["guild_id"]
         channel_id = raw["channel_id"]
         message_id = raw["message_id"]
-        
+
         existing = await self.get_by_composite_key(db, guild_id, channel_id, message_id)
-        
+
         if existing:
             existing.embed_payload = raw["embed_payload"]
             existing.message_type = raw.get("message_type", "general")
             existing.updated_at = datetime.now(timezone.utc)
             flogger.debug(f"Updated existing Discord message: {existing.id}")
             return existing
-        else:
-            message = DiscordMessage(
-                guild_id=guild_id,
-                channel_id=channel_id,
-                message_id=message_id,
-                embed_payload=raw["embed_payload"],
-                message_type=raw.get("message_type", "general")
-            )
-            db.add(message)
-            await db.commit()
-            await db.refresh(message)
-            flogger.debug("Created new Discord message record")
-            return message
-    
+
+        message = DiscordMessage(
+            guild_id=guild_id,
+            channel_id=channel_id,
+            message_id=message_id,
+            embed_payload=raw["embed_payload"],
+            message_type=raw.get("message_type", "general")
+        )
+        db.add(message)
+        await db.commit()
+        await db.refresh(message)
+        flogger.debug("Created new Discord message record")
+        return message
+
     async def get_by_composite_key(
         self,
         db: AsyncSession,
@@ -86,7 +86,7 @@ class DiscordMessageRepository(GenericRepository[DiscordMessage]):
             )
         )
         return result.scalars().one_or_none()
-    
+
     async def get_by_type(
         self,
         db: AsyncSession,
@@ -103,14 +103,14 @@ class DiscordMessageRepository(GenericRepository[DiscordMessage]):
             conditions.append(self._model.guild_id == guild_id)
         if channel_id is not None:
             conditions.append(self._model.channel_id == channel_id)
-        
+
         result = await db.execute(
             select(self._model)
             .where(and_(*conditions))
             .order_by(desc(self._model.created_at))
         )
         return list(result.scalars().all())
-    
+
     async def list_by_guild(self, db: AsyncSession, guild_id: int) -> List[DiscordMessage]:
         """
         List all messages for a guild ordered by creation date.
@@ -121,7 +121,7 @@ class DiscordMessageRepository(GenericRepository[DiscordMessage]):
             .order_by(desc(self._model.created_at))
         )
         return list(result.scalars().all())
-    
+
     async def list_by_channel(self, db: AsyncSession, guild_id: int, channel_id: int) -> List[DiscordMessage]:
         """
         List all messages for a channel ordered by creation date.
@@ -176,7 +176,7 @@ class DiscordMessageRepository(GenericRepository[DiscordMessage]):
             message_type,
             guild_id=guild_id
         )
-    
+
     async def delete_by_composite_key(
         self,
         db: AsyncSession,

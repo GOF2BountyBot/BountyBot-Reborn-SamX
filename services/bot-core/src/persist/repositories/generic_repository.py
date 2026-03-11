@@ -1,7 +1,8 @@
-from typing import TypeVar, Generic, Optional, Type
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from typing import Generic, Optional, Type, TypeVar
+
 from persist.interfaces.repository_interface import IRepository
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 T = TypeVar('T')
 

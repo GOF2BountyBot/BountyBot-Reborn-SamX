@@ -1,10 +1,11 @@
 import os
+
 import discord
+import httpx
+from shared import bblogger
+from cogs.adminCog import is_admin
 from discord import app_commands
 from discord.ext import commands
-import shared.bblogger as bblogger
-import httpx
-from cogs.adminCog import is_admin
 
 flogger = bblogger.get_logger("discord-gateway-HealthCog")
 api_base = os.environ.get("BOT_API_BASE_URL", "http://bot-core:8000/api/v1")
@@ -40,7 +41,7 @@ class HealthCog(commands.Cog):
                     await interaction.response.send_message("⚠️ An error occurred.", ephemeral=True)
                 else:
                     await interaction.followup.send("⚠️ An error occurred.", ephemeral=True)
-            except Exception:
+            except Exception:  # pylint: disable=broad-exception-caught
                 # ensure we don't raise while handling errors
                 pass
 
@@ -149,12 +150,12 @@ class HealthCog(commands.Cog):
             embed.set_footer(text=f"Checked via {api_base}/health")
             try:
                 await interaction.followup.send(content=emoji, embed=embed, ephemeral=True)
-            except Exception:
+            except Exception:  # pylint: disable=broad-exception-caught
                 # swallow any followup/send errors to avoid raising during error handling
                 pass
         flogger.trace("/health command end")
 
 async def setup(bot: commands.Bot):
-    flogger.debug(f"Setting up HealthCog...")
+    flogger.debug("Setting up HealthCog...")
     await bot.add_cog(HealthCog(bot))
     flogger.info("HealthCog loaded")

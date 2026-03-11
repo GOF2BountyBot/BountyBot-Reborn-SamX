@@ -1,5 +1,7 @@
-from typing import List, Optional, Dict, Any
+from typing import Any, Dict, Optional
+
 from pydantic import BaseModel, Field
+
 
 # Response Models
 class InventoryItemResponse(BaseModel):

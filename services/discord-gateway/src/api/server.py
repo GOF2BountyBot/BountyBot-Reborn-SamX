@@ -5,22 +5,20 @@ This module provides functions to create and run the FastAPI application
 that can be imported and used within other applications like Discord bots.
 """
 
-import os
 import importlib
-import pkgutil
-import asyncio
-from pathlib import Path
-from fastapi import FastAPI, Request
-from fastapi.middleware.cors import CORSMiddleware
-from contextlib import asynccontextmanager
-import threading
-import uvicorn
 import logging as pyLogging
-
-import shared.bblogger as bblogger
+import os
+import pkgutil
+import threading
+from contextlib import asynccontextmanager
+from pathlib import Path
 
 # Import the routers package
-import api.routers as routers
+from api import routers
+from shared import bblogger
+import uvicorn
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
 flogger = bblogger.get_logger("discord-gateway-api-server")
 
@@ -30,30 +28,30 @@ GATEWAY_PORT = int(os.getenv("GATEWAY_PORT", os.getenv("PORT", "8000")))
 ACCESS_LOG = os.getenv("ACCESS_LOG", "true").lower() == "true"
 
 @asynccontextmanager
-async def lifespan(app: FastAPI):
+async def lifespan(_app: FastAPI):
     """
     Startup / shutdown logic for FastAPI application.
     """
     flogger.info("🚀 Discord Gateway API starting up...")
     flogger.info("📚 API Documentation available at: /docs")
     flogger.info("📖 ReDoc Documentation available at: /redoc")
-    
+
     yield  # Application runs here
-    
+
     # Shutdown logic
     flogger.info("🛑 Discord Gateway API shutting down...")
 
 def create_app() -> FastAPI:
     """Create and configure the FastAPI application."""
     flogger.trace("Initializing FastAPI...")
-    
+
     app = FastAPI(
         title="Discord Gateway API",
         description="""
-Discord Gateway API provides endpoints for bot-initiated interactions with the Discord platform. 
+Discord Gateway API provides endpoints for bot-initiated interactions with the Discord platform.
 This is useful for integrating bot mechanics that require the ability to execute Discord actions
 (e.g. new posts, update existing posts, etc.) that are not initiated by an end-user via Discord
-command. 
+command.
 
 ## Documentation
 
@@ -77,7 +75,7 @@ command.
         openapi_url="/openapi.json",
         lifespan=lifespan
     )
-    
+
     # Add CORS middleware
     app.add_middleware(
         CORSMiddleware,
@@ -86,10 +84,10 @@ command.
         allow_methods=["*"],
         allow_headers=["*"],
     )
-    
+
     # Auto-discover and include routers
     include_routers(app)
-    
+
     # Root endpoint
     @app.get("/", tags=["root"])
     async def root():
@@ -100,17 +98,17 @@ command.
             "docs": "/docs",
             "redoc": "/redoc"
         }
-    
+
     return app
 
 def include_routers(app: FastAPI) -> None:
     """
     Automatically discover and include all routers from the routers package.
     """
-    routers_path = Path(__file__).parent / "routers"
-    
+    Path(__file__).parent / "routers"
+
     # Iterate through all modules in the routers package
-    for importer, modname, ispkg in pkgutil.iter_modules(routers.__path__):
+    for _importer, modname, ispkg in pkgutil.iter_modules(routers.__path__):
         if not ispkg:  # Only process modules, not packages
             try:
                 # Import the module
@@ -140,7 +138,7 @@ class HealthFilter(pyLogging.Filter):
             return False
         return True
 
-async def start_fastapi_server(host: str = None, port: int = None, 
+async def start_fastapi_server(host: str = None, port: int = None,
                               access_log: bool = None) -> None:
     """
     Start the FastAPI server in the background.
@@ -162,12 +160,12 @@ async def start_fastapi_server(host: str = None, port: int = None,
         """Run the FastAPI server in this thread"""
         try:
             flogger.info(f"🌐 FastAPI server thread starting on {host}:{port}")
-            
+
             app = create_app()
-            
+
             # Attach filter to uvicorn.access to filter health check API requests
             pyLogging.getLogger("uvicorn.access").addFilter(HealthFilter())
-            
+
             # Run the server (this will block in this thread)
             uvicorn.run(
                 app,
@@ -176,12 +174,12 @@ async def start_fastapi_server(host: str = None, port: int = None,
                 access_log=access_log,
                 log_config=None  # Use existing logging configuration
             )
-            
-        except Exception as e:
+
+        except Exception:  # pylint: disable=broad-exception-caught
             flogger.critical("💥 FastAPI failed to start, aborting entire service", exc_info=True)
             # os._exit kills the whole process immediately
             os._exit(1)
-    
+
     # Create and start the thread
     server_thread = threading.Thread(
         target=run_server,
@@ -190,26 +188,26 @@ async def start_fastapi_server(host: str = None, port: int = None,
     )
 
     server_thread.start()
-    flogger.info(f"✅ FastAPI server thread started successfully")
+    flogger.info("✅ FastAPI server thread started successfully")
     flogger.info(f"📚 API Documentation will be available at: http://{host}:{port}/docs")
     flogger.info(f"📖 ReDoc Documentation will be available at: http://{host}:{port}/redoc")
-    
+
     return server_thread
 
 
-def run_standalone(host: str = "0.0.0.0", port: int = 8080):
+def run_standalone(_host: str = "0.0.0.0", _port: int = 8080):
     """
     Run FastAPI as a standalone application (for development/testing).
     """
-    app = create_app()
-    
+    create_app()
+
     # Attach filter to uvicorn.access
     pyLogging.getLogger("uvicorn.access").addFilter(HealthFilter())
-    
+
     flogger.info("Starting uvicorn...")
-    uvicorn.run("main:app", 
-                host="0.0.0.0", 
-                port=8000, 
+    uvicorn.run("main:app",
+                host="0.0.0.0",
+                port=8000,
                 # access_log shows API requests in log output, can get a bit noisy tho
                 access_log=True,
                 # reload is useful for development but should be turned off for production
@@ -220,9 +218,9 @@ def run_standalone(host: str = "0.0.0.0", port: int = 8080):
 if __name__ == "__main__":
     # Log configuration being used
     flogger.info("=== FastAPI Configuration ===")
-    flogger.info(f"Host: {HOST}")
-    flogger.info(f"Port: {PORT}")
+    flogger.info(f"Host: {GATEWAY_HOST}")
+    flogger.info(f"Port: {GATEWAY_PORT}")
     flogger.info(f"Access Log: {ACCESS_LOG}")
     flogger.info("===============================")
-    
+
     run_standalone()

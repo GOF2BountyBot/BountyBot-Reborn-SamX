@@ -1,7 +1,8 @@
-from sqlalchemy.orm import Mapped, mapped_column
-from sqlalchemy import String, Integer, Boolean, Float, ARRAY, JSON
-from persist.models.base import Base
 from persist.database.tablenames import TableNames
+from persist.models.base import Base
+from sqlalchemy import ARRAY, JSON, Boolean, Float, Integer, String
+from sqlalchemy.orm import Mapped, mapped_column
+
 
 class Ship(Base):
     __tablename__ = TableNames.Ship.value

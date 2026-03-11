@@ -5,23 +5,24 @@ Handles database operations for User entities including creation,
 retrieval, and user management operations.
 """
 
-from typing import Optional, List
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, and_
-import shared.bblogger as bblogger
+from typing import List, Optional
+
+from shared import bblogger
 from persist.interfaces.repository_interface import IRepository
 from persist.models.user import User
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 flogger = bblogger.get_logger("user-repository")
 
 class UserRepository(IRepository[User]):
-    
-    async def get_by_id(self, db: AsyncSession, user_id: int) -> Optional[User]:
+
+    async def get_by_id(self, db: AsyncSession, obj_id: int) -> Optional[User]:
         """Get user by Discord ID."""
         try:
-            return await db.get(User, user_id)
+            return await db.get(User, obj_id)
         except Exception as e:
-            flogger.error(f"Error getting user by ID {user_id}: {e}")
+            flogger.error(f"Error getting user by ID {obj_id}: {e}")
             raise
 
     async def get_by_name(self, db: AsyncSession, name: str) -> Optional[User]:
@@ -44,16 +45,16 @@ class UserRepository(IRepository[User]):
             flogger.error(f"Error listing all users: {e}")
             raise
 
-    async def add(self, db: AsyncSession, user: User) -> User:
+    async def add(self, db: AsyncSession, obj: User) -> User:
         """Add new user to database."""
         try:
-            db.add(user)
+            db.add(obj)
             await db.commit()
-            await db.refresh(user)
-            flogger.info(f"Added new user: {user.id}")
-            return user
+            await db.refresh(obj)
+            flogger.info(f"Added new user: {obj.id}")
+            return obj
         except Exception as e:
-            flogger.error(f"Error adding user {user.id}: {e}")
+            flogger.error(f"Error adding user {obj.id}: {e}")
             await db.rollback()
             raise
 
@@ -63,10 +64,10 @@ class UserRepository(IRepository[User]):
             user_id = raw.get("id")
             if not user_id:
                 raise ValueError("User ID is required")
-                
+
             # Try to get existing user
             user = await self.get_by_id(db, user_id)
-            
+
             if user:
                 # Update existing user
                 if "discord_username" in raw:
@@ -82,20 +83,20 @@ class UserRepository(IRepository[User]):
                 )
                 user = await self.add(db, user)
                 flogger.info(f"Created new user: {user_id}")
-                
+
             return user
         except Exception as e:
             flogger.error(f"Error creating/updating user: {e}")
             raise
 
-    async def remove(self, db: AsyncSession, user: User) -> None:
+    async def remove(self, db: AsyncSession, obj: User) -> None:
         """Remove user from database."""
         try:
-            await db.delete(user)
+            await db.delete(obj)
             await db.commit()
-            flogger.info(f"Removed user: {user.id}")
+            flogger.info(f"Removed user: {obj.id}")
         except Exception as e:
-            flogger.error(f"Error removing user {user.id}: {e}")
+            flogger.error(f"Error removing user {obj.id}: {e}")
             await db.rollback()
             raise
 
@@ -113,7 +114,7 @@ class UserRepository(IRepository[User]):
                 await db.commit()
                 await db.refresh(user)
                 flogger.debug(f"Updated username for user {discord_id}")
-                
+
             return user
         except Exception as e:
             flogger.error(f"Error getting/creating user {discord_id}: {e}")

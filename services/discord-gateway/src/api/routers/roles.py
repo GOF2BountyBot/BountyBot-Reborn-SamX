@@ -5,17 +5,17 @@ This module provides REST endpoints for managing Discord roles
 with simplified URIs that don't require guild context.
 """
 
-from fastapi import APIRouter, HTTPException, Request, status, Query
 import discord
-import shared.bblogger as bblogger
+from shared import bblogger
+from api.schemas.base_schemas import DeleteResponse, SuccessResponse
+from api.schemas.permission_schemas import PermissionCheckResponse
 from api.schemas.role_schemas import RoleResponse, RoleUpdateRequest
 from api.schemas.user_schemas import MemberListResponse
-from api.schemas.base_schemas import SuccessResponse, DeleteResponse
-from api.schemas.permission_schemas import PermissionCheckResponse
-from utils.discord_converters import RoleConverter, UserConverter
-from utils.discord_helpers import resolve_bot, handle_discord_exception
-from utils.permission_utils import PERMISSION_FLAGS, check_permission
+from fastapi import APIRouter, HTTPException, Query, Request, status
 
+from utils.discord_converters import RoleConverter, UserConverter
+from utils.discord_helpers import handle_discord_exception, resolve_bot
+from utils.permission_utils import PERMISSION_FLAGS, check_permission
 
 flogger = bblogger.get_logger("gateway-role-router")
 
@@ -41,31 +41,31 @@ async def get_role(request: Request, role_id: int) -> RoleResponse:
     flogger.info(f"get_role endpoint called for role_id: {role_id}")
     try:
         bot = await resolve_bot(request)
-        
+
         # Search for the role across all guilds
         role = None
         for guild in bot.guilds:
             role = guild.get_role(role_id)
             if role:
                 break
-        
+
         if not role:
             flogger.error(f"Role {role_id} not found")
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"Role {role_id} not found"
             )
-        
+
         role_data = RoleConverter.role_to_payload(role)
         flogger.info(f"Successfully retrieved role details for {role.name}")
-        
+
         return RoleResponse(
             status="success",
             data=role_data
         )
     except HTTPException:
         raise
-    except Exception as exc:
+    except Exception as exc:  # pylint: disable=broad-exception-caught
         flogger.error(f"Unexpected error in get_role for role {role_id}: {exc}")
         await handle_discord_exception("get role details", exc)
 
@@ -83,21 +83,21 @@ async def update_role(
     flogger.info(f"update_role endpoint called for role_id: {role_id}")
     try:
         bot = await resolve_bot(request)
-        
+
         # Search for the role across all guilds
         role = None
         for guild in bot.guilds:
             role = guild.get_role(role_id)
             if role:
                 break
-        
+
         if not role:
             flogger.error(f"Role {role_id} not found")
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"Role {role_id} not found"
             )
-        
+
         # Update role with provided parameters
         update_kwargs = {}
         if role_data.name is not None:
@@ -123,20 +123,20 @@ async def update_role(
             update_kwargs["position"] = role_data.position
         if role_data.mentionable is not None:
             update_kwargs["mentionable"] = role_data.mentionable
-        
+
         if update_kwargs:
             await role.edit(**update_kwargs)
-        
+
         updated_role_data = RoleConverter.role_to_payload(role)
         flogger.info(f"Successfully updated role {role.name}")
-        
+
         return RoleResponse(
             status="updated",
             data=updated_role_data
         )
     except HTTPException:
         raise
-    except Exception as exc:
+    except Exception as exc:  # pylint: disable=broad-exception-caught
         flogger.error(f"Unexpected error in update_role for role {role_id}: {exc}")
         await handle_discord_exception("update role", exc)
 
@@ -152,27 +152,27 @@ async def delete_role(request: Request, role_id: int) -> DeleteResponse:
     flogger.info(f"delete_role endpoint called for role_id: {role_id}")
     try:
         bot = await resolve_bot(request)
-        
+
         # Search for the role across all guilds
         role = None
         for guild in bot.guilds:
             role = guild.get_role(role_id)
             if role:
                 break
-        
+
         if not role:
             flogger.error(f"Role {role_id} not found")
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"Role {role_id} not found"
             )
-        
+
         role_name = role.name
         await role.delete()
-        
+
         message = f"Role {role_name} deleted"
         flogger.info(message)
-        
+
         return DeleteResponse(
             status="deleted",
             deleted=True,
@@ -180,7 +180,7 @@ async def delete_role(request: Request, role_id: int) -> DeleteResponse:
         )
     except HTTPException:
         raise
-    except Exception as exc:
+    except Exception as exc:  # pylint: disable=broad-exception-caught
         flogger.error(f"Unexpected error in delete_role for role {role_id}: {exc}")
         await handle_discord_exception("delete role", exc)
 
@@ -196,26 +196,26 @@ async def list_role_members(request: Request, role_id: int) -> MemberListRespons
     flogger.info(f"list_role_members endpoint called for role_id: {role_id}")
     try:
         bot = await resolve_bot(request)
-        
+
         # Search for the role across all guilds
         role = None
         for guild in bot.guilds:
             role = guild.get_role(role_id)
             if role:
                 break
-        
+
         if not role:
             flogger.error(f"Role {role_id} not found")
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"Role {role_id} not found"
             )
-        
+
         members = []
         for member in role.members:
             member_data = UserConverter.member_to_payload(member)
             members.append(member_data)
-        
+
         flogger.info(f"Successfully retrieved {len(members)} members with role {role.name}")
         return MemberListResponse(
             status="success",
@@ -223,7 +223,7 @@ async def list_role_members(request: Request, role_id: int) -> MemberListRespons
         )
     except HTTPException:
         raise
-    except Exception as exc:
+    except Exception as exc:  # pylint: disable=broad-exception-caught
         flogger.error(f"Unexpected error in list_role_members for role {role_id}: {exc}")
         await handle_discord_exception("list role members", exc)
 
@@ -241,7 +241,7 @@ async def assign_role_to_user(
     flogger.info(f"assign_role_to_user endpoint called for role_id: {role_id}, user_id: {user_id}")
     try:
         bot = await resolve_bot(request)
-        
+
         # Search for the role across all guilds
         role = None
         guild = None
@@ -250,28 +250,28 @@ async def assign_role_to_user(
             if role:
                 guild = g
                 break
-        
+
         if not role:
             flogger.error(f"Role {role_id} not found")
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"Role {role_id} not found"
             )
-        
+
         # Get the member
         member = guild.get_member(user_id)
         if not member:
             try:
                 member = await guild.fetch_member(user_id)
-            except discord.NotFound:
+            except discord.NotFound as exc:
                 flogger.error(f"Member {user_id} not found in guild {guild.id}")
                 raise HTTPException(
                     status_code=status.HTTP_404_NOT_FOUND,
                     detail=f"Member {user_id} not found in guild {guild.id}"
-                )
-        
+                ) from exc
+
         await member.add_roles(role)
-        
+
         message = f"Role {role.name} assigned to {member.display_name}"
         flogger.info(message)
         return SuccessResponse(
@@ -280,7 +280,7 @@ async def assign_role_to_user(
         )
     except HTTPException:
         raise
-    except Exception as exc:
+    except Exception as exc:  # pylint: disable=broad-exception-caught
         flogger.error(f"Unexpected error in assign_role_to_user: {exc}")
         await handle_discord_exception("assign role to user", exc)
 
@@ -298,7 +298,7 @@ async def remove_role_from_user(
     flogger.info(f"remove_role_from_user endpoint called for role_id: {role_id}, user_id: {user_id}")
     try:
         bot = await resolve_bot(request)
-        
+
         # Search for the role across all guilds
         role = None
         guild = None
@@ -307,28 +307,28 @@ async def remove_role_from_user(
             if role:
                 guild = g
                 break
-        
+
         if not role:
             flogger.error(f"Role {role_id} not found")
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"Role {role_id} not found"
             )
-        
+
         # Get the member
         member = guild.get_member(user_id)
         if not member:
             try:
                 member = await guild.fetch_member(user_id)
-            except discord.NotFound:
+            except discord.NotFound as exc:
                 flogger.error(f"Member {user_id} not found in guild {guild.id}")
                 raise HTTPException(
                     status_code=status.HTTP_404_NOT_FOUND,
                     detail=f"Member {user_id} not found in guild {guild.id}"
-                )
-        
+                ) from exc
+
         await member.remove_roles(role)
-        
+
         message = f"Role {role.name} removed from {member.display_name}"
         flogger.info(message)
         return SuccessResponse(
@@ -337,7 +337,7 @@ async def remove_role_from_user(
         )
     except HTTPException:
         raise
-    except Exception as exc:
+    except Exception as exc:  # pylint: disable=broad-exception-caught
         flogger.error(f"Unexpected error in remove_role_from_user: {exc}")
         await handle_discord_exception("remove role from user", exc)
 
@@ -346,10 +346,14 @@ async def remove_role_from_user(
     response_model=PermissionCheckResponse,
     status_code=status.HTTP_200_OK,
     summary="Check Role Guild Permission",
-    description="Check whether a role (by id) has a specific guild-level permission.  Superceded by /permissions/check.", 
+    description="Check whether a role (by id) has a specific guild-level permission. Superceded by /permissions/check.",
     deprecated=True
 )
-async def check_role_permission(request: Request, role_id: int, permission: str = Query(..., description="Permission name (uppercase, e.g. MANAGE_GUILD)")) -> PermissionCheckResponse:
+async def check_role_permission(
+    request: Request,
+    role_id: int,
+    permission: str = Query(..., description="Permission name (uppercase, e.g. MANAGE_GUILD)")
+) -> PermissionCheckResponse:
     """Check whether a role has the named guild-level permission."""
     flogger.info(f"check_role_permission endpoint called for role_id={role_id}, permission={permission}")
     # Validate permission name
@@ -388,7 +392,7 @@ async def check_role_permission(request: Request, role_id: int, permission: str 
         )
     except HTTPException:
         raise
-    except Exception as exc:
+    except Exception as exc:  # pylint: disable=broad-exception-caught
         flogger.error(f"Unexpected error in check_role_permission for role {role_id}: {exc}")
         await handle_discord_exception("check role permission", exc)
 
@@ -424,12 +428,12 @@ async def check_user_has_role(request: Request, role_id: int, user_id: int) -> P
         if not member:
             try:
                 member = await guild.fetch_member(user_id)
-            except discord.NotFound:
+            except discord.NotFound as exc:
                 flogger.error(f"Member {user_id} not found in guild {guild.id}")
                 raise HTTPException(
                     status_code=status.HTTP_404_NOT_FOUND,
                     detail=f"Member {user_id} not found in guild {guild.id}"
-                )
+                ) from exc
         has_role = any(r.id == role_id for r in member.roles)
         flogger.info(f"User {user_id} has role {role_id}: {has_role}")
         return PermissionCheckResponse(
@@ -438,6 +442,6 @@ async def check_user_has_role(request: Request, role_id: int, user_id: int) -> P
         )
     except HTTPException:
         raise
-    except Exception as exc:
+    except Exception as exc:  # pylint: disable=broad-exception-caught
         flogger.error(f"Unexpected error in check_user_has_role for role {role_id}, user {user_id}: {exc}")
         await handle_discord_exception("check user role membership", exc)

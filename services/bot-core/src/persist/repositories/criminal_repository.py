@@ -1,11 +1,10 @@
 from typing import Any
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
 
-import shared.bblogger as bblogger
-
+from shared import bblogger
 from persist.models.criminal import Criminal
 from persist.repositories.generic_repository import GenericRepository
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 flogger = bblogger.get_logger("bot-criminal-repository")
 

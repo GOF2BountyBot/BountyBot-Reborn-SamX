@@ -13,7 +13,7 @@ from pathlib import Path
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
-import shared.bblogger as bblogger
+from shared import bblogger
 import logging as pyLogging
 
 # Import the routers package
@@ -30,12 +30,12 @@ async def lifespan(app: FastAPI):
     flogger.info("🚀 Blender API starting up...")
     flogger.info("📚 API Documentation available at: /docs")
     flogger.info("📖 ReDoc Documentation available at: /redoc")
-    
+
     yield  # Application runs here
-    
+
     # Shutdown logic
     flogger.info("🛑 Blender API shutting down...")
-    
+
     flogger.info("👋 Goodbye!")
 
 
@@ -93,7 +93,7 @@ def include_routers(app: FastAPI) -> None:
     This function iterates through all modules in the routers package
     and includes any APIRouter instances found.
     """
-    routers_path = Path(__file__).parent / "routers"
+    Path(__file__).parent / "routers"
 
     # Iterate through all modules in the routers package
     for importer, modname, ispkg in pkgutil.iter_modules(routers.__path__):
@@ -145,12 +145,12 @@ class HealthFilter(pyLogging.Filter):
 if __name__ == "__main__":
     import uvicorn
     flogger.info("Starting uvicorn...")
-    # attach filter to uvicorn.access to filter health check API requests 
+    # attach filter to uvicorn.access to filter health check API requests
     # from being logged as they are particularly noisy
     pyLogging.getLogger("uvicorn.access").addFilter(HealthFilter())
-    uvicorn.run("main:app", 
-                host=os.getenv("BLENDER_HOST", "0.0.0.0"), 
-                port=int(os.getenv("BLENDER_PORT", os.getenv("PORT", "8001"))), 
+    uvicorn.run("main:app",
+                host=os.getenv("BLENDER_HOST", "0.0.0.0"),
+                port=int(os.getenv("BLENDER_PORT", os.getenv("PORT", "8001"))),
                 # access_log shows API requests in log output, can get a bit noisy tho
                 access_log=os.getenv("ACCESS_LOG", "true").lower() == "true",
                 # reload is useful for development but should be turned off for production

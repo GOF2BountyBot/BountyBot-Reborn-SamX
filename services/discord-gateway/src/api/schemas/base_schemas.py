@@ -6,9 +6,11 @@ all Discord API endpoints. These provide consistent structure and typing
 for all API operations.
 """
 
-from typing import Optional, List, Dict, Any
+from datetime import UTC, datetime
+from typing import List, Optional
+
 from pydantic import BaseModel, Field
-from datetime import datetime, UTC
+
 
 class BaseResponse(BaseModel):
     """Base response model for all API endpoints."""
@@ -34,11 +36,9 @@ class DeleteResponse(BaseResponse):
 
 class BaseCreateRequest(BaseModel):
     """Base request model for create operations."""
-    pass
 
 class BaseUpdateRequest(BaseModel):
     """Base request model for update operations."""
-    pass
 
 # Generic response patterns
 def create_resource_response(resource_name: str, resource_model):
@@ -55,7 +55,7 @@ def create_resource_response(resource_name: str, resource_model):
 def create_resource_list_response(resource_name: str, resource_model):
     """Factory function to create standardized resource list responses."""
     return type(
-        f"{resource_name.title()}ListResponse", 
+        f"{resource_name.title()}ListResponse",
         (PaginatedResponse,),
         {
             "data": (List[resource_model], Field(..., description=f"List of {resource_name} items")),

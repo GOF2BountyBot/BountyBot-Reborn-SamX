@@ -6,22 +6,27 @@ including listing guilds, getting guild details, managing members,
 and creating resources within guilds.
 """
 
-from typing import List
-from fastapi import APIRouter, HTTPException, Request, status, Query
-import shared.bblogger as bblogger
-from api.schemas.guild_schemas import GuildResponse, GuildListResponse
-from api.schemas.user_schemas import MemberListResponse
-from api.schemas.channel_schemas import (
-    ChannelListResponse, ChannelCreateRequest, ChannelResponse,
-    CategoryListResponse, CategoryCreateRequest, CategoryResponse
-)
-from api.schemas.role_schemas import RoleListResponse, RoleCreateRequest, RoleResponse
-from utils.discord_converters import GuildConverter, UserConverter, ChannelConverter, RoleConverter
-from utils.discord_helpers import resolve_bot, get_entity_or_404, handle_discord_exception
-import discord
 import asyncio
 import random
 import time
+
+import discord
+from shared import bblogger
+from api.schemas.channel_schemas import (
+    CategoryCreateRequest,
+    CategoryListResponse,
+    CategoryResponse,
+    ChannelCreateRequest,
+    ChannelListResponse,
+    ChannelResponse,
+)
+from api.schemas.guild_schemas import GuildListResponse, GuildResponse
+from api.schemas.role_schemas import RoleCreateRequest, RoleListResponse, RoleResponse
+from api.schemas.user_schemas import MemberListResponse
+from fastapi import APIRouter, HTTPException, Query, Request, status
+
+from utils.discord_converters import ChannelConverter, GuildConverter, RoleConverter, UserConverter
+from utils.discord_helpers import get_entity_or_404, handle_discord_exception, resolve_bot
 
 flogger = bblogger.get_logger("gateway-guild-router")
 
@@ -48,12 +53,12 @@ async def list_guilds(request: Request) -> GuildListResponse:
     flogger.info("list_guilds endpoint called")
     try:
         bot = await resolve_bot(request)
-        
+
         guilds = []
         for guild in bot.guilds:
             guild_data = GuildConverter.guild_to_summary(guild)
             guilds.append(guild_data)
-        
+
         flogger.info(f"Successfully retrieved {len(guilds)} guilds")
         return GuildListResponse(
             status="success",
@@ -61,7 +66,7 @@ async def list_guilds(request: Request) -> GuildListResponse:
         )
     except HTTPException:
         raise
-    except Exception as exc:
+    except Exception as exc:  # pylint: disable=broad-exception-caught
         flogger.error(f"Unexpected error in list_guilds: {exc}")
         await handle_discord_exception("list guilds", exc)
 
@@ -83,17 +88,17 @@ async def get_guild(request: Request, guild_id: int) -> GuildResponse:
             guild_id,
             "Guild"
         )
-        
+
         guild_data = GuildConverter.guild_to_detail(guild)
         flogger.info(f"Successfully retrieved guild details for {guild.name}")
-        
+
         return GuildResponse(
             status="success",
             data=guild_data
         )
     except HTTPException:
         raise
-    except Exception as exc:
+    except Exception as exc:  # pylint: disable=broad-exception-caught
         flogger.error(f"Unexpected error in get_guild for guild {guild_id}: {exc}")
         await handle_discord_exception("get guild details", exc)
 
@@ -117,11 +122,11 @@ async def list_guild_members(
             guild_id,
             "Guild"
         )
-        
+
         # If guild members are not cached, fetch them
         if not guild.chunked:
             await guild.chunk(cache=True)
-        
+
         members = []
         member_count = 0
         for member in guild.members:
@@ -130,7 +135,7 @@ async def list_guild_members(
             member_data = UserConverter.member_to_payload(member)
             members.append(member_data)
             member_count += 1
-        
+
         flogger.info(f"Successfully retrieved {len(members)} members from guild {guild.name}")
         return MemberListResponse(
             status="success",
@@ -138,7 +143,7 @@ async def list_guild_members(
         )
     except HTTPException:
         raise
-    except Exception as exc:
+    except Exception as exc:  # pylint: disable=broad-exception-caught
         flogger.error(f"Unexpected error in list_guild_members for guild {guild_id}: {exc}")
         await handle_discord_exception("list guild members", exc)
 
@@ -160,14 +165,14 @@ async def list_guild_channels(request: Request, guild_id: int) -> ChannelListRes
             guild_id,
             "Guild"
         )
-        
+
         # Exclude categories and sort the remaining channels by their position
         channels = []
         non_cat = [ch for ch in guild.channels if not isinstance(ch, discord.CategoryChannel)]
         for channel in sorted(non_cat, key=lambda c: c.position):
             channel_data = ChannelConverter.channel_to_summary(channel)
             channels.append(channel_data)
-        
+
         flogger.info(f"Successfully retrieved {len(channels)} channels from guild {guild.name}")
         return ChannelListResponse(
             status="success",
@@ -175,7 +180,7 @@ async def list_guild_channels(request: Request, guild_id: int) -> ChannelListRes
         )
     except HTTPException:
         raise
-    except Exception as exc:
+    except Exception as exc:  # pylint: disable=broad-exception-caught
         flogger.error(f"Unexpected error in list_guild_channels for guild {guild_id}: {exc}")
         await handle_discord_exception("list guild channels", exc)
 
@@ -196,7 +201,7 @@ async def create_channel(
     try:
         bot = await resolve_bot(request)
         guild = await get_entity_or_404(bot.get_guild, bot.fetch_guild, guild_id, "Guild")
-        
+
         # Resolve optional category
         category = None
         if channel_data.category_id:
@@ -206,9 +211,9 @@ async def create_channel(
                     status_code=status.HTTP_404_NOT_FOUND,
                     detail=f"Category {channel_data.category_id} not found"
                 )
-        
+
         channel_type = channel_data.type.lower()
-        
+
         if channel_type == "voice":
             channel = await guild.create_voice_channel(
                 name=channel_data.name,
@@ -234,17 +239,17 @@ async def create_channel(
                 nsfw=channel_data.nsfw,
                 slowmode_delay=channel_data.slowmode_delay or 0
             )
-        
+
         channel_detail = ChannelConverter.channel_to_detail(channel)
         flogger.info(f"Successfully created channel {channel.name}")
-        
+
         return ChannelResponse(
             status="created",
             data=channel_detail
         )
     except HTTPException:
         raise
-    except Exception as exc:
+    except Exception as exc:  # pylint: disable=broad-exception-caught
         flogger.error(f"Unexpected error in create_channel: {exc}")
         await handle_discord_exception("create channel", exc)
 
@@ -266,14 +271,14 @@ async def list_categories(request: Request, guild_id: int) -> CategoryListRespon
             guild_id,
             "Guild"
         )
-        
+
         # Sort categories by their position
         categories = []
         sorted_cats = sorted(guild.categories, key=lambda c: c.position)
         for category in sorted_cats:
             category_data = ChannelConverter.category_to_detail(category)
             categories.append(category_data)
-        
+
         flogger.info(f"Successfully retrieved {len(categories)} categories from guild {guild.name}")
         return CategoryListResponse(
             status="success",
@@ -281,7 +286,7 @@ async def list_categories(request: Request, guild_id: int) -> CategoryListRespon
         )
     except HTTPException:
         raise
-    except Exception as exc:
+    except Exception as exc:  # pylint: disable=broad-exception-caught
         flogger.error(f"Unexpected error in list_categories for guild {guild_id}: {exc}")
         await handle_discord_exception("list categories", exc)
 
@@ -307,23 +312,23 @@ async def create_category(
             guild_id,
             "Guild"
         )
-        
+
         position_arg = category_data.position if category_data.position is not None else 1
         category = await guild.create_category_channel(
             name=category_data.name,
             position=position_arg
         )
-        
+
         category_detail = ChannelConverter.category_to_detail(category)
         flogger.info(f"Successfully created category {category.name}")
-        
+
         return CategoryResponse(
             status="created",
             data=category_detail
         )
     except HTTPException:
         raise
-    except Exception as exc:
+    except Exception as exc:  # pylint: disable=broad-exception-caught
         flogger.error(f"Unexpected error in create_category for guild {guild_id}: {exc}")
         await handle_discord_exception("create category", exc)
 
@@ -345,15 +350,15 @@ async def list_guild_roles(request: Request, guild_id: int) -> RoleListResponse:
             guild_id,
             "Guild"
         )
-        
+
         roles = []
         for role in guild.roles:
             role_data = RoleConverter.role_to_payload(role)
             roles.append(role_data)
-        
+
         # Ensure roles are returned in ascending position order
         roles.sort(key=lambda payload: payload.position)
-        
+
         flogger.info(f"Successfully retrieved {len(roles)} roles from guild {guild.name}")
         return RoleListResponse(
             status="success",
@@ -361,7 +366,7 @@ async def list_guild_roles(request: Request, guild_id: int) -> RoleListResponse:
         )
     except HTTPException:
         raise
-    except Exception as exc:
+    except Exception as exc:  # pylint: disable=broad-exception-caught
         flogger.error(f"Unexpected error in list_guild_roles for guild {guild_id}: {exc}")
         await handle_discord_exception("list guild roles", exc)
 
@@ -435,7 +440,7 @@ async def create_role(
                     raise HTTPException(
                         status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                         detail="Timeout creating role (transient error). Please retry."
-                    )
+                    ) from te
                 backoff = (2 ** attempt) + random.uniform(1, 3)
                 flogger.debug(f"Sleeping {backoff:.2f}s before retrying create_role")
                 await asyncio.sleep(backoff)
@@ -454,6 +459,6 @@ async def create_role(
         raise last_exc
     except HTTPException:
         raise
-    except Exception as exc:
+    except Exception as exc:  # pylint: disable=broad-exception-caught
         flogger.error(f"Unexpected error in create_role for guild {guild_id}: {exc}")
         await handle_discord_exception("create role", exc)

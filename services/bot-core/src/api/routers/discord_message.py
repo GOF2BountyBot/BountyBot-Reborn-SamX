@@ -10,16 +10,15 @@ import json
 import os
 from typing import List
 from uuid import UUID
-from fastapi import APIRouter, HTTPException, status, Request
-import httpx
 
-import shared.bblogger as bblogger
-from persist.repositories.discord_message_repository import DiscordMessageRepository
+import httpx
+from shared import bblogger
 from api.schemas.discord_message_schema import (
-    EmbedPayloadDict,
     DiscordMessageRequest,
     DiscordMessageResponse,
 )
+from fastapi import APIRouter, HTTPException, Request, status
+from persist.repositories.discord_message_repository import DiscordMessageRepository
 
 flogger = bblogger.get_logger("bot-discord-message-router")
 
@@ -100,12 +99,12 @@ async def create_discord_message(
             flogger.info(f"Discord message record created (db id={message.id})")
             return DiscordMessageResponse.from_orm(message)
 
-    except httpx.HTTPStatusError:
+    except httpx.HTTPStatusError as e:
         flogger.exception("Discord Gateway API error while creating message")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to send message to Discord"
-        )
+        ) from e
     except HTTPException:
         raise
     except Exception as e:
@@ -113,7 +112,7 @@ async def create_discord_message(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to create message: {str(e)}"
-        )
+        ) from e
 
 @router.put(
     "",
@@ -179,12 +178,12 @@ async def update_discord_message(
             flogger.info(f"Discord message updated (db id={msg.id})")
             return DiscordMessageResponse.from_orm(msg)
 
-    except httpx.HTTPStatusError:
+    except httpx.HTTPStatusError as e:
         flogger.exception("Discord Gateway API error while updating message")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to send update to Discord"
-        )
+        ) from e
     except HTTPException:
         raise
     except Exception as e:
@@ -192,7 +191,7 @@ async def update_discord_message(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to update message: {e}"
-        )
+        ) from e
 
 @router.get(
     "/{message_record_id}",
@@ -225,7 +224,7 @@ async def get_discord_message(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to get message record: {str(e)}"
-        )
+        ) from e
 
 @router.get(
     "/guild/{guild_id}",
@@ -306,4 +305,4 @@ async def delete_discord_message(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to delete message record: {str(e)}"
-        )
+        ) from e

@@ -105,7 +105,7 @@ def _restore_real_discord():
     import tests.mocks.discord_mock_utils as _dmu_mod
     importlib.reload(_dmu_mod)
     # Force the users router to re-bind its 'discord' global to real discord
-    import api.routers.users as _users_mod
+    from api.routers import users as _users_mod
     importlib.reload(_users_mod)
     yield
 

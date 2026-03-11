@@ -1,5 +1,7 @@
-from typing import List, Optional
+from typing import Optional
+
 from pydantic import BaseModel
+
 
 # Response Models
 class UserResponse(BaseModel):
@@ -7,7 +9,7 @@ class UserResponse(BaseModel):
     discord_username: Optional[str]
     created_at: str
     updated_at: str
-    
+
     class Config:
         from_attributes = True
 

@@ -6,14 +6,15 @@ including bot resolution and error handling.
 """
 
 import asyncio
-from typing import Optional, Union, Dict, Any, List
-from collections.abc import Mapping
 import re
+from collections.abc import Mapping
+from functools import lru_cache
+from typing import Any, Dict, List, Optional, Union
+
 import discord
+from shared import bblogger
 from discord.ext import commands
 from fastapi import HTTPException, Request, status
-
-import shared.bblogger as bblogger
 
 flogger = bblogger.get_logger("discord-helpers")
 
@@ -37,12 +38,12 @@ async def resolve_bot(request: Request) -> commands.Bot:
         flogger.info("Bot not ready, awaiting wait_until_ready()")
         try:
             await asyncio.wait_for(bot.wait_until_ready(), timeout=15)
-        except asyncio.TimeoutError:
+        except asyncio.TimeoutError as exc:
             flogger.error("Timed out waiting for Discord bot to become ready")
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail="Discord bot is not ready"
-            )
+            ) from exc
 
     flogger.debug("Bot instance resolved and ready")
     return bot
@@ -86,10 +87,10 @@ async def handle_discord_exception(operation: str, exc: Exception) -> None:
                 body = getattr(resp, "text", None) or getattr(resp, "body", None)
                 if body and not callable(body):
                     details["response_text_preview"] = str(body)[:1000]
-            except Exception:
+            except Exception:  # pylint: disable=broad-exception-caught
                 # Best-effort only — don't fail parsing diagnostic info
                 pass
-    except Exception:
+    except Exception:  # pylint: disable=broad-exception-caught
         # Non-fatal if attribute extraction fails
         pass
 
@@ -132,13 +133,13 @@ async def handle_discord_exception(operation: str, exc: Exception) -> None:
                     status_code=exc_status,
                     detail=f"Bad request during {operation}: {repr(exc)}"
                 )
-            else:
-                # Upstream Discord server or gateway errors -> surface as Bad Gateway
-                flogger.error(f"Discord upstream error {exc_status} during {operation}: {details}")
-                raise HTTPException(
-                    status_code=status.HTTP_502_BAD_GATEWAY,
-                    detail=f"Discord upstream error: {repr(exc)}"
-                )
+
+            # Upstream Discord server or gateway errors -> surface as Bad Gateway
+            flogger.error(f"Discord upstream error {exc_status} during {operation}: {details}")
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail=f"Discord upstream error: {repr(exc)}"
+            )
 
         # If we couldn't determine a numeric status, treat as a 502 (upstream error)
         flogger.error(f"Unhandled discord.HTTPException during {operation}: {details}")
@@ -160,7 +161,10 @@ async def get_entity_or_404(
     fetch_func,
     entity_id: int,
     entity_type: str
-) -> Union[discord.Guild, discord.TextChannel, discord.VoiceChannel, discord.CategoryChannel, discord.User, discord.Member, discord.Role]:
+) -> Union[
+    discord.Guild, discord.TextChannel, discord.VoiceChannel, discord.CategoryChannel,
+    discord.User, discord.Member, discord.Role
+]:
     """
     Generic function to get entity from cache or fetch from API.
 
@@ -204,10 +208,15 @@ def validate_guild_channel_relationship(channel, guild_id: int) -> None:
     Raises:
         HTTPException: If channel doesn't belong to guild
     """
-    flogger.debug(f"validate_guild_channel_relationship called for channel {channel.id} and guild {guild_id}")
+    flogger.debug(
+        f"validate_guild_channel_relationship called for channel {channel.id} and guild {guild_id}"
+    )
 
     if hasattr(channel, "guild") and getattr(channel.guild, "id", None) != guild_id:
-        flogger.error(f"Channel {channel.id} belongs to guild {getattr(channel.guild, 'id', None)}, expected {guild_id}")
+        flogger.error(
+            f"Channel {channel.id} belongs to guild {getattr(channel.guild, 'id', None)}, "
+            f"expected {guild_id}"
+        )
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Channel {channel.id} does not belong to guild {guild_id}"
@@ -277,7 +286,7 @@ def normalize_emoji(val: str) -> str:
         if len(parts) > 1:
             try:
                 return ''.join(chr(int(p, 16)) for p in parts)
-            except Exception:
+            except Exception:  # pylint: disable=broad-exception-caught
                 return val
 
         # Single concatenated hex string (no separators) — attempt to split into valid codepoints.
@@ -285,8 +294,6 @@ def normalize_emoji(val: str) -> str:
 
         # Backtracking splitter: try to partition hexstr into chunks of length 1..6
         # (unicode scalars fit in up to 6 hex digits), greedy longest-first to favor larger codepoints.
-        from functools import lru_cache
-
         @lru_cache(maxsize=None)
         def try_split(idx):
             if idx == len(hexstr):
@@ -301,7 +308,7 @@ def normalize_emoji(val: str) -> str:
                             rest = try_split(idx + L)
                             if rest is not None:
                                 return [part] + rest
-                    except Exception:
+                    except Exception:  # pylint: disable=broad-exception-caught
                         continue
             return None
 
@@ -309,7 +316,7 @@ def normalize_emoji(val: str) -> str:
         if split:
             try:
                 return ''.join(chr(int(p, 16)) for p in split)
-            except Exception:
+            except Exception:  # pylint: disable=broad-exception-caught
                 return val
 
     # Otherwise assume it's already a unicode emoji (or some other acceptable string)
@@ -354,20 +361,24 @@ def tag_to_dict(tag, channel_id: Optional[int] = None) -> dict:
             tid_val = tag.get("id") if "id" in tag else tag.get("tag_id") or tag.get("emoji_id")
             try:
                 tid = int(tid_val) if tid_val is not None else None
-            except Exception:
+            except Exception:  # pylint: disable=broad-exception-caught
                 tid = None
 
             # channel id
             if channel_id is not None:
                 try:
                     cid = int(channel_id)
-                except Exception:
+                except Exception:  # pylint: disable=broad-exception-caught
                     cid = None
             else:
-                cid_val = tag.get("channel_id") or (tag.get("channel") and (tag.get("channel").get("id") if isinstance(tag.get("channel"), Mapping) else None))
+                ch_obj = tag.get("channel")
+                cid_val = (
+                    tag.get("channel_id")
+                    or (ch_obj and (ch_obj.get("id") if isinstance(ch_obj, Mapping) else None))
+                )
                 try:
                     cid = int(cid_val) if cid_val is not None else None
-                except Exception:
+                except Exception:  # pylint: disable=broad-exception-caught
                     cid = None
 
             # name
@@ -384,11 +395,11 @@ def tag_to_dict(tag, channel_id: Optional[int] = None) -> dict:
                         else:
                             emoji = normalize_emoji(str(cand))
                         break
-                    except Exception:
+                    except Exception:  # pylint: disable=broad-exception-caught
                         try:
                             emoji = str(cand)
                             break
-                        except Exception:
+                        except Exception:  # pylint: disable=broad-exception-caught
                             emoji = None
             # final dict-to-str fallback
             if emoji is None:
@@ -396,11 +407,11 @@ def tag_to_dict(tag, channel_id: Optional[int] = None) -> dict:
                     s = str(tag)
                     if any(ord(c) > 127 for c in s):
                         emoji = normalize_emoji(s)
-                except Exception:
+                except Exception:  # pylint: disable=broad-exception-caught
                     emoji = None
 
             return {"id": tid, "channel_id": cid, "name": name, "emoji": emoji}
-    except Exception:
+    except Exception:  # pylint: disable=broad-exception-caught
         # non-fatal - fall back to attribute heuristics below
         pass
 
@@ -410,14 +421,14 @@ def tag_to_dict(tag, channel_id: Optional[int] = None) -> dict:
         tid_attr = getattr(tag, "id", None)
         try:
             tid = int(tid_attr) if tid_attr is not None else None
-        except Exception:
+        except Exception:  # pylint: disable=broad-exception-caught
             tid = None
 
         # channel id
         if channel_id is not None:
             try:
                 cid = int(channel_id)
-            except Exception:
+            except Exception:  # pylint: disable=broad-exception-caught
                 cid = None
         else:
             cid_attr = getattr(tag, "channel_id", None)
@@ -426,7 +437,7 @@ def tag_to_dict(tag, channel_id: Optional[int] = None) -> dict:
                 cid_attr = getattr(ch, "id", None) if ch is not None else None
             try:
                 cid = int(cid_attr) if cid_attr is not None else None
-            except Exception:
+            except Exception:  # pylint: disable=broad-exception-caught
                 cid = None
 
         # name
@@ -445,7 +456,7 @@ def tag_to_dict(tag, channel_id: Optional[int] = None) -> dict:
                     td = to_dict_fn()
                     if isinstance(td, Mapping) and "emoji" in td and td.get("emoji") is not None:
                         emoji_candidate = td.get("emoji")
-                except Exception:
+                except Exception:  # pylint: disable=broad-exception-caught
                     emoji_candidate = None
 
             # inspect __dict__ fields
@@ -456,7 +467,7 @@ def tag_to_dict(tag, channel_id: Optional[int] = None) -> dict:
                         if "emoji" in str(k).lower() and v is not None:
                             emoji_candidate = v
                             break
-                except Exception:
+                except Exception:  # pylint: disable=broad-exception-caught
                     emoji_candidate = None
 
             # check alternate attribute names
@@ -473,7 +484,7 @@ def tag_to_dict(tag, channel_id: Optional[int] = None) -> dict:
                     s = str(tag)
                     if any(ord(c) > 127 for c in s):
                         emoji_candidate = s
-                except Exception:
+                except Exception:  # pylint: disable=broad-exception-caught
                     emoji_candidate = None
 
         # normalize emoji_candidate to string via normalize_emoji when possible
@@ -492,13 +503,13 @@ def tag_to_dict(tag, channel_id: Optional[int] = None) -> dict:
                         emoji = None
                 else:
                     emoji = normalize_emoji(str(emoji_candidate))
-            except Exception:
+            except Exception:  # pylint: disable=broad-exception-caught
                 try:
                     emoji = str(emoji_candidate)
-                except Exception:
+                except Exception:  # pylint: disable=broad-exception-caught
                     emoji = None
 
-    except Exception:
+    except Exception:  # pylint: disable=broad-exception-caught
         # If everything fails, return best-effort structure with None fields
         return {"id": tid, "channel_id": cid, "name": name, "emoji": None}
 
@@ -539,13 +550,13 @@ def tags_to_edit_payload(tags_iterable, *, updates: Optional[dict] = None) -> li
         for k, v in updates.items():
             try:
                 kid = int(k)
-            except Exception:
+            except Exception:  # pylint: disable=broad-exception-caught
                 kid = k
             if kid not in seen_ids:
                 entry = {"name": v.get("name"), "emoji": v.get("emoji")}
                 try:
                     entry["id"] = int(k)
-                except Exception:
+                except Exception:  # pylint: disable=broad-exception-caught
                     # keep whatever the caller passed if it is not integer-like
                     entry["id"] = k
                 out.append(entry)

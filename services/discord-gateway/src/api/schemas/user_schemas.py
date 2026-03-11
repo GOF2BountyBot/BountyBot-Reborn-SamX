@@ -5,9 +5,11 @@ This module defines request/response models for Discord user and member
 operations including user details and member management.
 """
 
-from typing import Optional, List, Dict, Any
+from typing import List, Optional
+
+from api.schemas.base_schemas import BaseResponse, BaseUpdateRequest, PaginatedResponse
 from pydantic import BaseModel, Field
-from api.schemas.base_schemas import BaseResponse, PaginatedResponse, BaseUpdateRequest
+
 
 class User(BaseModel):
     """User information model."""

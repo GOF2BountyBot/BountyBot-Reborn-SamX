@@ -1,11 +1,10 @@
 from typing import Any
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
 
-import shared.bblogger as bblogger
-
+from shared import bblogger
 from persist.models.secondary_weapon import SecondaryWeapon
 from persist.repositories.generic_repository import GenericRepository
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 flogger = bblogger.get_logger("bot-secondary-weapon-repository")
 
@@ -54,9 +53,9 @@ class SecondaryWeaponRepository(GenericRepository[SecondaryWeapon]):
 
         # anything else → JSON blob
         extra = {
-            k: v
-            for k, v in raw.items()
-            if k not in (*item_fields.keys(), *weapon_fields.keys(), *secondary_fields.keys())
+             k: v
+             for k, v in raw.items()
+             if k not in (*item_fields, *weapon_fields, *secondary_fields)
         }
 
         obj = await self.get_by_name(db, item_fields["name"])
@@ -78,7 +77,7 @@ class SecondaryWeaponRepository(GenericRepository[SecondaryWeapon]):
                 extra_atts=extra,
             )
             db.add(obj)
-            
+
         await db.commit()
         await db.refresh(obj)
         return obj

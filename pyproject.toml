@@ -1,6 +1,14 @@
 [tool.pylint]
 rcfile = "utils/pylintrc"
 
+[tool.isort]
+profile = "black"
+line_length = 120
+include_trailing_comma = true
+use_parentheses = true
+ensure_newline_before_comments = false
+skip_glob = ["**/lib/AEPi/**"]
+
 [tool.pytest.ini_options]
 testpaths = ["services"]
 python_files = "test_*.py"

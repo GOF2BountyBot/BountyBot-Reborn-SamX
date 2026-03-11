@@ -1,11 +1,10 @@
 from typing import Any
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
 
-import shared.bblogger as bblogger
-
+from shared import bblogger
 from persist.models.module import Module
 from persist.repositories.generic_repository import GenericRepository
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 flogger = bblogger.get_logger("bot-module-repository")
 
@@ -46,9 +45,9 @@ class ModuleRepository(GenericRepository[Module]):
             "max_equipped": raw.get("maxEquipped"),
         }
         extra = {
-            k: v
-            for k, v in raw.items()
-            if k not in (*item_fields.keys(), "techLevel", "maxEquipped")
+             k: v
+             for k, v in raw.items()
+             if k not in (*item_fields, "techLevel", "maxEquipped")
         }
 
         obj = await self.get_by_name(db, item_fields["name"])

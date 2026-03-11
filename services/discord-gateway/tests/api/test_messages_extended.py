@@ -677,5 +677,533 @@ class TestFindMessageHelper:
         assert result is found_msg
 
 
+# ---------------------------------------------------------------------------
+# Additional tests for missing coverage lines
+# Lines 60-62: Exception in cache iteration (broad except / pass)
+# Lines 77, 80: continue in NotFound/Forbidden branches (direct unit coverage)
+# Lines 136-138: except Exception in get_message handler
+# Lines 193-201: except discord.HTTPException + except Exception in update_message
+# Lines 258-266: except discord.HTTPException + except Exception in delete_message
+# ---------------------------------------------------------------------------
+
+
+class TestFindMessageCacheException:
+    """Tests covering lines 60-62: exception raised during cache iteration."""
+
+    def test_find_message_cache_raises_exception_falls_through_to_guild_scan(self):
+        """Lines 60-62: When iterating a cache attr raises an exception, it is silently
+        swallowed and the function falls through to guild scanning."""
+        import asyncio
+
+        _evict_discord_modules()
+        sys.modules["shared"] = _mock_shared
+        sys.modules["shared.bblogger"] = _mock_bblogger
+
+        from api.routers.messages import _find_message
+
+        # Build a bad cache that raises on iteration
+        class _BadIterable:
+            def __iter__(self):
+                raise RuntimeError("bad cache – boom")
+
+        bot = MagicMock()
+        bot.guilds = []
+        # cached_messages is set but iteration raises
+        bot.cached_messages = _BadIterable()
+        bot.messages_cache = None
+        bot._message_cache = None
+        logger = _make_mock_logger()
+
+        # Should not raise; just returns None (no guilds to scan)
+        result = asyncio.run(_find_message(bot, 1234567890, logger))
+        assert result is None
+
+    def test_find_message_dict_cache_raises_exception_falls_through(self):
+        """Lines 60-62: When iterating a dict cache's values raises, it is silently
+        swallowed and the function continues."""
+        import asyncio
+
+        _evict_discord_modules()
+        sys.modules["shared"] = _mock_shared
+        sys.modules["shared.bblogger"] = _mock_bblogger
+
+        from api.routers.messages import _find_message
+
+        # A dict-like object whose .values() raises
+        class _BadDict(dict):
+            def values(self):
+                raise RuntimeError("bad dict values – boom")
+
+        bot = MagicMock()
+        bot.guilds = []
+        bot.cached_messages = _BadDict()
+        bot.messages_cache = None
+        bot._message_cache = None
+        logger = _make_mock_logger()
+
+        result = asyncio.run(_find_message(bot, 1234567890, logger))
+        assert result is None
+
+
+class TestFindMessageNotFoundForbiddenContinue:
+    """Tests explicitly covering lines 77 and 80 (the bare `continue` statements)."""
+
+    def test_find_message_not_found_continues_and_returns_none(self):
+        """Line 77: discord.NotFound → continue.  With only one channel that raises
+        NotFound the function should return None rather than propagating."""
+        import asyncio
+
+        _evict_discord_modules()
+        sys.modules["shared"] = _mock_shared
+        sys.modules["shared.bblogger"] = _mock_bblogger
+
+        from api.routers.messages import _find_message
+
+        channel = MagicMock()
+        channel.id = 777
+        channel.fetch_message = AsyncMock(
+            side_effect=DiscordMockUtils.create_discord_not_found("not found")
+        )
+
+        guild = MagicMock()
+        guild.channels = [channel]
+
+        bot = MagicMock()
+        bot.guilds = [guild]
+        bot.cached_messages = None
+        bot.messages_cache = None
+        bot._message_cache = None
+        logger = _make_mock_logger()
+
+        result = asyncio.run(_find_message(bot, 9999, logger))
+        assert result is None
+
+    def test_find_message_forbidden_continues_and_returns_none(self):
+        """Line 80: discord.Forbidden → continue.  With only one channel that raises
+        Forbidden the function should return None rather than propagating."""
+        import asyncio
+
+        _evict_discord_modules()
+        sys.modules["shared"] = _mock_shared
+        sys.modules["shared.bblogger"] = _mock_bblogger
+
+        from api.routers.messages import _find_message
+
+        channel = MagicMock()
+        channel.id = 888
+        channel.fetch_message = AsyncMock(
+            side_effect=DiscordMockUtils.create_discord_forbidden("forbidden")
+        )
+
+        guild = MagicMock()
+        guild.channels = [channel]
+
+        bot = MagicMock()
+        bot.guilds = [guild]
+        bot.cached_messages = None
+        bot.messages_cache = None
+        bot._message_cache = None
+        logger = _make_mock_logger()
+
+        result = asyncio.run(_find_message(bot, 9999, logger))
+        assert result is None
+
+    def test_find_message_not_found_then_found_in_next_channel(self):
+        """Line 77: After NotFound on first channel the loop continues and finds
+        the message in the second channel."""
+        import asyncio
+
+        _evict_discord_modules()
+        sys.modules["shared"] = _mock_shared
+        sys.modules["shared.bblogger"] = _mock_bblogger
+
+        from api.routers.messages import _find_message
+
+        not_found_channel = MagicMock()
+        not_found_channel.id = 777
+        not_found_channel.fetch_message = AsyncMock(
+            side_effect=DiscordMockUtils.create_discord_not_found("not found")
+        )
+
+        found_msg = MagicMock()
+        found_msg.id = 555
+
+        found_channel = MagicMock()
+        found_channel.id = 888
+        found_channel.fetch_message = AsyncMock(return_value=found_msg)
+
+        guild = MagicMock()
+        guild.channels = [not_found_channel, found_channel]
+
+        bot = MagicMock()
+        bot.guilds = [guild]
+        bot.cached_messages = None
+        bot.messages_cache = None
+        bot._message_cache = None
+        logger = _make_mock_logger()
+
+        result = asyncio.run(_find_message(bot, 555, logger))
+        assert result is found_msg
+
+    def test_find_message_forbidden_then_found_in_next_channel(self):
+        """Line 80: After Forbidden on first channel the loop continues and finds
+        the message in the second channel."""
+        import asyncio
+
+        _evict_discord_modules()
+        sys.modules["shared"] = _mock_shared
+        sys.modules["shared.bblogger"] = _mock_bblogger
+
+        from api.routers.messages import _find_message
+
+        forbidden_channel = MagicMock()
+        forbidden_channel.id = 111
+        forbidden_channel.fetch_message = AsyncMock(
+            side_effect=DiscordMockUtils.create_discord_forbidden("forbidden")
+        )
+
+        found_msg = MagicMock()
+        found_msg.id = 666
+
+        good_channel = MagicMock()
+        good_channel.id = 222
+        good_channel.fetch_message = AsyncMock(return_value=found_msg)
+
+        guild = MagicMock()
+        guild.channels = [forbidden_channel, good_channel]
+
+        bot = MagicMock()
+        bot.guilds = [guild]
+        bot.cached_messages = None
+        bot.messages_cache = None
+        bot._message_cache = None
+        logger = _make_mock_logger()
+
+        result = asyncio.run(_find_message(bot, 666, logger))
+        assert result is found_msg
+
+
+class TestGetMessageExceptionHandlers:
+    """Tests covering lines 136-138: except Exception in get_message endpoint."""
+
+    def test_get_message_unexpected_exception_calls_handle_discord_exception(self, mock_bot):
+        """Lines 136-138: When an unexpected (non-HTTP) exception is raised inside
+        get_message's try block, handle_discord_exception is called and raises HTTP 500."""
+        from fastapi import HTTPException as _HTTPException
+
+        _evict_discord_modules()
+        app = FastAPI()
+        app.state.bot = mock_bot
+
+        captured_calls = []
+
+        with patch("api.routers.messages._find_message", new_callable=AsyncMock) as mock_find, \
+             patch("api.routers.messages.resolve_bot", new_callable=AsyncMock) as mock_resolve, \
+             patch("api.routers.messages.handle_discord_exception", new_callable=AsyncMock) as mock_handle, \
+             patch("api.routers.messages.MessageConverter"):
+
+            async def _resolve(req):
+                return mock_bot
+
+            # Raising a generic RuntimeError triggers the except Exception branch
+            async def _find(bot, mid, logger):
+                raise RuntimeError("unexpected failure")
+
+            async def _handle(operation, exc):
+                captured_calls.append((operation, exc))
+                raise _HTTPException(status_code=500, detail=f"Failed: {exc}")
+
+            mock_resolve.side_effect = _resolve
+            mock_find.side_effect = _find
+            mock_handle.side_effect = _handle
+
+            from api.routers.messages import router
+            app.include_router(router, prefix="/api/v1")
+
+            client = TestClient(app, raise_server_exceptions=False)
+            resp = client.get("/api/v1/messages/1234567890")
+            assert resp.status_code == 500
+            assert len(captured_calls) == 1
+            assert captured_calls[0][0] == "get message"
+            assert isinstance(captured_calls[0][1], RuntimeError)
+
+    def test_get_message_resolve_bot_raises_generic_exception(self, mock_bot):
+        """Lines 136-138: When resolve_bot raises a non-HTTP exception,
+        the except Exception handler is invoked and returns HTTP 500."""
+        from fastapi import HTTPException as _HTTPException
+
+        _evict_discord_modules()
+        app = FastAPI()
+        app.state.bot = mock_bot
+
+        captured_calls = []
+
+        with patch("api.routers.messages.resolve_bot", new_callable=AsyncMock) as mock_resolve, \
+             patch("api.routers.messages.handle_discord_exception", new_callable=AsyncMock) as mock_handle, \
+             patch("api.routers.messages._find_message", new_callable=AsyncMock), \
+             patch("api.routers.messages.MessageConverter"):
+
+            async def _resolve(req):
+                raise ConnectionError("network error")
+
+            async def _handle(operation, exc):
+                captured_calls.append((operation, exc))
+                raise _HTTPException(status_code=500, detail=f"Failed: {exc}")
+
+            mock_resolve.side_effect = _resolve
+            mock_handle.side_effect = _handle
+
+            from api.routers.messages import router
+            app.include_router(router, prefix="/api/v1")
+
+            client = TestClient(app, raise_server_exceptions=False)
+            resp = client.get("/api/v1/messages/1234567890")
+            assert resp.status_code == 500
+            assert len(captured_calls) == 1
+            assert captured_calls[0][0] == "get message"
+            assert isinstance(captured_calls[0][1], ConnectionError)
+
+
+class TestUpdateMessageExceptionHandlers:
+    """Tests covering lines 193-201: discord.HTTPException and except Exception in update_message."""
+
+    def test_update_message_discord_http_exception_returns_500(self, mock_bot):
+        """Lines 193-198: discord.HTTPException during message.edit → HTTP 500."""
+        _evict_discord_modules()
+        app = FastAPI()
+        app.state.bot = mock_bot
+
+        bot_msg = _make_mock_message(message_id=1234567890, author_id=mock_bot.user.id)
+        # Make message.edit raise a real discord.HTTPException
+        discord_exc = DiscordMockUtils.create_discord_http_exception(500, "Discord API error")
+        bot_msg.edit = AsyncMock(side_effect=discord_exc)
+
+        with patch("api.routers.messages._find_message", new_callable=AsyncMock) as mock_find, \
+             patch("api.routers.messages.resolve_bot", new_callable=AsyncMock) as mock_resolve, \
+             patch("api.routers.messages.MessageConverter"), \
+             patch("api.routers.messages.EmbedConverter") as mock_ec:
+
+            async def _find(bot, mid, logger):
+                return bot_msg if mid == 1234567890 else None
+
+            async def _resolve(req):
+                return mock_bot
+
+            mock_find.side_effect = _find
+            mock_resolve.side_effect = _resolve
+            mock_ec.payload_to_embed.return_value = MagicMock()
+
+            from api.routers.messages import router
+            app.include_router(router, prefix="/api/v1")
+
+            # The router's except discord.HTTPException block raises HTTPException(500) directly
+            client = TestClient(app)
+            payload = {"content": {"title": "Updated"}}
+            resp = client.put("/api/v1/messages/1234567890", json=payload)
+            assert resp.status_code == 500
+            assert "Discord API error" in resp.json()["detail"]
+
+    def test_update_message_unexpected_exception_calls_handle_discord_exception(self, mock_bot):
+        """Lines 199-201: Generic exception during update_message calls handle_discord_exception."""
+        from fastapi import HTTPException as _HTTPException
+
+        _evict_discord_modules()
+        app = FastAPI()
+        app.state.bot = mock_bot
+
+        bot_msg = _make_mock_message(message_id=1234567890, author_id=mock_bot.user.id)
+        bot_msg.edit = AsyncMock(side_effect=RuntimeError("unexpected edit error"))
+
+        captured_calls = []
+
+        with patch("api.routers.messages._find_message", new_callable=AsyncMock) as mock_find, \
+             patch("api.routers.messages.resolve_bot", new_callable=AsyncMock) as mock_resolve, \
+             patch("api.routers.messages.handle_discord_exception", new_callable=AsyncMock) as mock_handle, \
+             patch("api.routers.messages.MessageConverter"), \
+             patch("api.routers.messages.EmbedConverter") as mock_ec:
+
+            async def _find(bot, mid, logger):
+                return bot_msg if mid == 1234567890 else None
+
+            async def _resolve(req):
+                return mock_bot
+
+            async def _handle(operation, exc):
+                captured_calls.append((operation, exc))
+                raise _HTTPException(status_code=500, detail=f"Failed: {exc}")
+
+            mock_find.side_effect = _find
+            mock_resolve.side_effect = _resolve
+            mock_handle.side_effect = _handle
+            mock_ec.payload_to_embed.return_value = MagicMock()
+
+            from api.routers.messages import router
+            app.include_router(router, prefix="/api/v1")
+
+            client = TestClient(app, raise_server_exceptions=False)
+            payload = {"content": {"title": "Updated"}}
+            resp = client.put("/api/v1/messages/1234567890", json=payload)
+            assert resp.status_code == 500
+            assert len(captured_calls) == 1
+            assert captured_calls[0][0] == "update message"
+            assert isinstance(captured_calls[0][1], RuntimeError)
+
+    def test_update_message_resolve_bot_raises_generic_exception(self, mock_bot):
+        """Lines 199-201: resolve_bot raising a non-discord exception in update_message
+        triggers the except Exception handler."""
+        from fastapi import HTTPException as _HTTPException
+
+        _evict_discord_modules()
+        app = FastAPI()
+        app.state.bot = mock_bot
+
+        captured_calls = []
+
+        with patch("api.routers.messages.resolve_bot", new_callable=AsyncMock) as mock_resolve, \
+             patch("api.routers.messages.handle_discord_exception", new_callable=AsyncMock) as mock_handle, \
+             patch("api.routers.messages._find_message", new_callable=AsyncMock), \
+             patch("api.routers.messages.MessageConverter"), \
+             patch("api.routers.messages.EmbedConverter"):
+
+            async def _resolve(req):
+                raise ValueError("unexpected resolve error")
+
+            async def _handle(operation, exc):
+                captured_calls.append((operation, exc))
+                raise _HTTPException(status_code=500, detail=f"Failed: {exc}")
+
+            mock_resolve.side_effect = _resolve
+            mock_handle.side_effect = _handle
+
+            from api.routers.messages import router
+            app.include_router(router, prefix="/api/v1")
+
+            client = TestClient(app, raise_server_exceptions=False)
+            payload = {"content": {"title": "test"}}
+            resp = client.put("/api/v1/messages/1234567890", json=payload)
+            assert resp.status_code == 500
+            assert len(captured_calls) == 1
+            assert captured_calls[0][0] == "update message"
+            assert isinstance(captured_calls[0][1], ValueError)
+
+
+class TestDeleteMessageExceptionHandlers:
+    """Tests covering lines 258-266: discord.HTTPException and except Exception in delete_message."""
+
+    def test_delete_message_discord_http_exception_returns_500(self, mock_bot):
+        """Lines 258-263: discord.HTTPException during message.delete → HTTP 500."""
+        _evict_discord_modules()
+        app = FastAPI()
+        app.state.bot = mock_bot
+
+        bot_msg = _make_mock_message(message_id=1234567890, author_id=mock_bot.user.id)
+        # Make message.delete raise a real discord.HTTPException
+        discord_exc = DiscordMockUtils.create_discord_http_exception(500, "Discord API error")
+        bot_msg.delete = AsyncMock(side_effect=discord_exc)
+
+        with patch("api.routers.messages._find_message", new_callable=AsyncMock) as mock_find, \
+             patch("api.routers.messages.resolve_bot", new_callable=AsyncMock) as mock_resolve, \
+             patch("api.routers.messages.MessageConverter"), \
+             patch("api.routers.messages.EmbedConverter"):
+
+            async def _find(bot, mid, logger):
+                return bot_msg if mid == 1234567890 else None
+
+            async def _resolve(req):
+                return mock_bot
+
+            mock_find.side_effect = _find
+            mock_resolve.side_effect = _resolve
+
+            from api.routers.messages import router
+            app.include_router(router, prefix="/api/v1")
+
+            # The router's except discord.HTTPException block raises HTTPException(500) directly
+            client = TestClient(app)
+            resp = client.delete("/api/v1/messages/1234567890")
+            assert resp.status_code == 500
+            assert "Discord API error" in resp.json()["detail"]
+
+    def test_delete_message_unexpected_exception_calls_handle_discord_exception(self, mock_bot):
+        """Lines 264-266: Generic exception during delete_message calls handle_discord_exception."""
+        from fastapi import HTTPException as _HTTPException
+
+        _evict_discord_modules()
+        app = FastAPI()
+        app.state.bot = mock_bot
+
+        bot_msg = _make_mock_message(message_id=1234567890, author_id=mock_bot.user.id)
+        bot_msg.delete = AsyncMock(side_effect=RuntimeError("unexpected delete error"))
+
+        captured_calls = []
+
+        with patch("api.routers.messages._find_message", new_callable=AsyncMock) as mock_find, \
+             patch("api.routers.messages.resolve_bot", new_callable=AsyncMock) as mock_resolve, \
+             patch("api.routers.messages.handle_discord_exception", new_callable=AsyncMock) as mock_handle, \
+             patch("api.routers.messages.MessageConverter"), \
+             patch("api.routers.messages.EmbedConverter"):
+
+            async def _find(bot, mid, logger):
+                return bot_msg if mid == 1234567890 else None
+
+            async def _resolve(req):
+                return mock_bot
+
+            async def _handle(operation, exc):
+                captured_calls.append((operation, exc))
+                raise _HTTPException(status_code=500, detail=f"Failed: {exc}")
+
+            mock_find.side_effect = _find
+            mock_resolve.side_effect = _resolve
+            mock_handle.side_effect = _handle
+
+            from api.routers.messages import router
+            app.include_router(router, prefix="/api/v1")
+
+            client = TestClient(app, raise_server_exceptions=False)
+            resp = client.delete("/api/v1/messages/1234567890")
+            assert resp.status_code == 500
+            assert len(captured_calls) == 1
+            assert captured_calls[0][0] == "delete message"
+            assert isinstance(captured_calls[0][1], RuntimeError)
+
+    def test_delete_message_resolve_bot_raises_generic_exception(self, mock_bot):
+        """Lines 264-266: resolve_bot raising a non-discord exception in delete_message
+        triggers the except Exception handler."""
+        from fastapi import HTTPException as _HTTPException
+
+        _evict_discord_modules()
+        app = FastAPI()
+        app.state.bot = mock_bot
+
+        captured_calls = []
+
+        with patch("api.routers.messages.resolve_bot", new_callable=AsyncMock) as mock_resolve, \
+             patch("api.routers.messages.handle_discord_exception", new_callable=AsyncMock) as mock_handle, \
+             patch("api.routers.messages._find_message", new_callable=AsyncMock), \
+             patch("api.routers.messages.MessageConverter"), \
+             patch("api.routers.messages.EmbedConverter"):
+
+            async def _resolve(req):
+                raise OSError("network failure")
+
+            async def _handle(operation, exc):
+                captured_calls.append((operation, exc))
+                raise _HTTPException(status_code=500, detail=f"Failed: {exc}")
+
+            mock_resolve.side_effect = _resolve
+            mock_handle.side_effect = _handle
+
+            from api.routers.messages import router
+            app.include_router(router, prefix="/api/v1")
+
+            client = TestClient(app, raise_server_exceptions=False)
+            resp = client.delete("/api/v1/messages/1234567890")
+            assert resp.status_code == 500
+            assert len(captured_calls) == 1
+            assert captured_calls[0][0] == "delete message"
+            assert isinstance(captured_calls[0][1], OSError)
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

@@ -490,3 +490,157 @@ class TestEmbedConverter:
 
         grid_embed = EmbedConverter.payload_to_grid_embed(mock_embed_payload, fields_per_row=2)
         assert grid_embed is not None
+
+    # ------------------------------------------------------------------
+    # Tests covering previously-missing lines
+    # ------------------------------------------------------------------
+
+    # Lines 52-54: _coerce_to_embed_payload — model_dump() path raises
+    def test_coerce_to_embed_payload_model_dump_raises_reraises(self):
+        """When model_dump() raises, _coerce_to_embed_payload should log and re-raise (lines 52-54)."""
+        from utils.embed_converter import EmbedConverter
+
+        class BadModelDump:
+            def model_dump(self):
+                raise ValueError("model_dump exploded")
+
+        with pytest.raises(ValueError, match="model_dump exploded"):
+            EmbedConverter._coerce_to_embed_payload(BadModelDump())
+
+    # Lines 58-62: _coerce_to_embed_payload — .dict() path (happy path)
+    def test_coerce_to_embed_payload_uses_dict_method_on_pydantic_v1_model(self, mock_embed_payload):
+        """_coerce_to_embed_payload should call .dict() on pydantic v1-style objects (lines 58-62)."""
+        from utils.embed_converter import EmbedConverter
+
+        class PydanticV1Style:
+            """Mimics a pydantic-v1 model (has .dict() but NOT .model_dump())."""
+            def dict(self):
+                return mock_embed_payload.model_dump()
+            # deliberately no model_dump attribute
+
+        obj = PydanticV1Style()
+        result = EmbedConverter._coerce_to_embed_payload(obj)
+        assert result.title == mock_embed_payload.title
+        assert result.description == mock_embed_payload.description
+
+    # Lines 58-62: _coerce_to_embed_payload — .dict() path raises
+    def test_coerce_to_embed_payload_dict_method_raises_reraises(self):
+        """When .dict() raises, _coerce_to_embed_payload should log and re-raise (lines 60-62)."""
+        from utils.embed_converter import EmbedConverter
+
+        class BadDictMethod:
+            def dict(self):
+                raise RuntimeError("dict() exploded")
+
+        with pytest.raises(RuntimeError, match="dict\\(\\) exploded"):
+            EmbedConverter._coerce_to_embed_payload(BadDictMethod())
+
+    # Lines 70-74: _coerce_to_embed_payload — iterable mapping succeeds as dict but
+    # EmbedPayload validation fails → re-raises from inner try/except
+    def test_coerce_to_embed_payload_iterable_mapping_invalid_fields_reraises(self):
+        """dict(payload) succeeds but EmbedPayload(**dict) fails → lines 70-74 are executed."""
+        from utils.embed_converter import EmbedConverter
+
+        # An iterable of key-value pairs that becomes a valid dict but contains
+        # fields that fail EmbedPayload validation (e.g. extra unknown required field
+        # that triggers a pydantic error).
+        # The simplest way: pass an object that is convertible via dict() but
+        # whose resulting dict causes a validation error in EmbedPayload.
+        class IterableMapping:
+            """Supports dict() via __iter__ returning (k, v) pairs."""
+            def __iter__(self):
+                # Return an invalid field type that will fail EmbedPayload validation
+                return iter([("fields", "not-a-list")])
+
+        with pytest.raises(Exception):
+            EmbedConverter._coerce_to_embed_payload(IterableMapping())
+
+    # Line 134-135: payload_to_embed — non-datetime timestamp raises TypeError
+    def test_payload_to_embed_non_datetime_timestamp_raises_type_error(self, mock_embed_payload):
+        """payload_to_embed should raise TypeError when timestamp is not a datetime (lines 134-135)."""
+        from utils.embed_converter import EmbedConverter
+
+        mock_embed_payload.timestamp = "2024-01-01T00:00:00Z"  # string, not datetime
+        with pytest.raises(TypeError, match="timestamp must be a datetime instance"):
+            EmbedConverter.payload_to_embed(mock_embed_payload)
+
+    # Lines 209-211: embed_to_payload — color.value is None → fallback to int(embed.color)
+    def test_embed_to_payload_color_fallback_to_int_when_value_is_none(self):
+        """embed_to_payload should fall back to int(embed.color) when .value is None (lines 209-211)."""
+        from utils.embed_converter import EmbedConverter
+
+        class ColorWithNoValue:
+            """Simulates a color object where .value returns None but int() works."""
+            value = None
+
+            def __int__(self):
+                return 0xFF0000
+
+        embed = _MockEmbed()
+        embed.color = ColorWithNoValue()
+        result = EmbedConverter.embed_to_payload(embed)
+        assert result.color == 0xFF0000
+
+    # Lines 209-211 (except branch): embed_to_payload — int(embed.color) also raises
+    def test_embed_to_payload_color_fallback_int_raises_sets_none(self):
+        """embed_to_payload should set color=None when both .value and int() fail (line 211)."""
+        from utils.embed_converter import EmbedConverter
+
+        class BadColor:
+            value = None
+
+            def __int__(self):
+                raise ValueError("cannot convert")
+
+        embed = _MockEmbed()
+        embed.color = BadColor()
+        result = EmbedConverter.embed_to_payload(embed)
+        assert result.color is None
+
+    # Lines 235-238: embed_to_payload — footer access raises → swallowed
+    def test_embed_to_payload_footer_access_raises_is_swallowed(self):
+        """embed_to_payload should swallow exceptions when accessing footer (lines 235-238)."""
+        from utils.embed_converter import EmbedConverter
+
+        class ExplodingFooter:
+            """Accessing any attribute raises."""
+            def __getattr__(self, item):
+                raise RuntimeError("footer exploded")
+
+        embed = _MockEmbed()
+        # Make embed.footer a truthy object so the `if` branch is entered,
+        # but then accessing footer.text raises.
+        object.__setattr__(embed, "footer", ExplodingFooter())
+        result = EmbedConverter.embed_to_payload(embed)
+        assert result.footer_text is None
+        assert result.footer_icon_url is None
+
+    # Lines 246-247: embed_to_payload — thumbnail access raises → swallowed
+    def test_embed_to_payload_thumbnail_access_raises_is_swallowed(self):
+        """embed_to_payload should swallow exceptions when accessing thumbnail (lines 246-247)."""
+        from utils.embed_converter import EmbedConverter
+
+        class ExplodingThumbnail:
+            @property
+            def url(self):
+                raise RuntimeError("thumbnail exploded")
+
+        embed = _MockEmbed()
+        embed.thumbnail = ExplodingThumbnail()
+        result = EmbedConverter.embed_to_payload(embed)
+        assert result.thumbnail_url is None
+
+    # Lines 253-254: embed_to_payload — image access raises → swallowed
+    def test_embed_to_payload_image_access_raises_is_swallowed(self):
+        """embed_to_payload should swallow exceptions when accessing image (lines 253-254)."""
+        from utils.embed_converter import EmbedConverter
+
+        class ExplodingImage:
+            @property
+            def url(self):
+                raise RuntimeError("image exploded")
+
+        embed = _MockEmbed()
+        embed.image = ExplodingImage()
+        result = EmbedConverter.embed_to_payload(embed)
+        assert result.image_url is None

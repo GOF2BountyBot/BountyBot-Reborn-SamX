@@ -1031,5 +1031,320 @@ class TestIsAdminPredicate:
             assert interaction.user.guild_permissions.administrator is False
 
 
+# ---------------------------------------------------------------------------
+# TestIsAdminPredicateDirect — actually invoke the predicate to cover lines 24-46
+# ---------------------------------------------------------------------------
+
+def _extract_is_admin_predicate():
+    """
+    Import is_admin(), call it to obtain the decorator produced by
+    app_commands.check(predicate), then walk the decorator's closure
+    cells to find and return the async *predicate* function itself.
+    """
+    sys.modules["shared"] = _mock_shared
+    sys.modules["shared.bblogger"] = _mock_bblogger
+    _evict_discord_modules()
+    from cogs.adminCog import is_admin as _is_admin_fn
+
+    decorator = _is_admin_fn()
+    # app_commands.check wraps the predicate in a decorator whose closure
+    # contains the original coroutine function.
+    for cell in (decorator.__closure__ or []):
+        try:
+            obj = cell.cell_contents
+            if callable(obj) and asyncio.iscoroutinefunction(obj):
+                return obj
+        except ValueError:
+            continue
+    raise RuntimeError("Could not extract predicate from is_admin()")
+
+
+class TestIsAdminPredicateDirect:
+    """Tests that actually invoke the is_admin() predicate (covers lines 24-46)."""
+
+    def test_predicate_returns_true_for_developer(self):
+        """Predicate returns True when user.id is in DEVELOPERS env var (lines 24-26)."""
+        predicate = _extract_is_admin_predicate()
+        interaction = _create_mock_interaction()
+        interaction.user = MagicMock()
+        interaction.user.id = 999000111
+        interaction.user.guild_permissions = MagicMock()
+        interaction.user.guild_permissions.administrator = False
+        interaction.user.roles = []
+
+        with patch.dict(os.environ, {"DEVELOPERS": "999000111,888000222"}):
+            result = asyncio.run(predicate(interaction))
+        assert result is True
+
+    def test_predicate_returns_true_for_discord_admin(self):
+        """Predicate returns True when user has Discord administrator perm (lines 28-30)."""
+        predicate = _extract_is_admin_predicate()
+        interaction = _create_mock_interaction()
+        interaction.user = MagicMock()
+        interaction.user.id = 123999
+        interaction.user.guild_permissions = MagicMock()
+        interaction.user.guild_permissions.administrator = True
+        interaction.user.roles = []
+
+        with patch.dict(os.environ, {"DEVELOPERS": ""}):
+            result = asyncio.run(predicate(interaction))
+        assert result is True
+
+    @patch("cogs.adminCog.httpx.AsyncClient")
+    def test_predicate_returns_true_for_api_admin_role(self, mock_httpx_cls):
+        """Predicate returns True when user has the configured admin role (lines 33-42)."""
+        predicate = _extract_is_admin_predicate()
+
+        # Mock the async context manager returned by AsyncClient()
+        mock_client = MagicMock()
+        mock_response = MagicMock()
+        mock_response.raise_for_status = MagicMock()
+        mock_response.json.return_value = {"admin_role_id": 444555666}
+        mock_client.get = AsyncMock(return_value=mock_response)
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=None)
+        mock_httpx_cls.return_value = mock_client
+
+        role = MagicMock()
+        role.id = 444555666
+
+        interaction = _create_mock_interaction()
+        interaction.user = MagicMock()
+        interaction.user.id = 123999
+        interaction.user.guild_permissions = MagicMock()
+        interaction.user.guild_permissions.administrator = False
+        interaction.user.roles = [role]
+        interaction.guild_id = 987654321
+
+        with patch.dict(os.environ, {"DEVELOPERS": ""}):
+            result = asyncio.run(predicate(interaction))
+        assert result is True
+
+    @patch("cogs.adminCog.httpx.AsyncClient")
+    def test_predicate_returns_false_when_no_admin_rights(self, mock_httpx_cls):
+        """Predicate returns False when user has no admin rights (line 46)."""
+        predicate = _extract_is_admin_predicate()
+
+        mock_client = MagicMock()
+        mock_response = MagicMock()
+        mock_response.raise_for_status = MagicMock()
+        mock_response.json.return_value = {"admin_role_id": None}
+        mock_client.get = AsyncMock(return_value=mock_response)
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=None)
+        mock_httpx_cls.return_value = mock_client
+
+        interaction = _create_mock_interaction()
+        interaction.user = MagicMock()
+        interaction.user.id = 123999
+        interaction.user.guild_permissions = MagicMock()
+        interaction.user.guild_permissions.administrator = False
+        interaction.user.roles = []
+        interaction.guild_id = 987654321
+
+        with patch.dict(os.environ, {"DEVELOPERS": ""}):
+            result = asyncio.run(predicate(interaction))
+        assert result is False
+
+    @patch("cogs.adminCog.httpx.AsyncClient")
+    def test_predicate_returns_false_on_api_exception(self, mock_httpx_cls):
+        """Predicate returns False when API call raises exception (lines 43-44, 46)."""
+        predicate = _extract_is_admin_predicate()
+
+        mock_client = MagicMock()
+        mock_client.get = AsyncMock(side_effect=Exception("Connection refused"))
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=None)
+        mock_httpx_cls.return_value = mock_client
+
+        interaction = _create_mock_interaction()
+        interaction.user = MagicMock()
+        interaction.user.id = 123999
+        interaction.user.guild_permissions = MagicMock()
+        interaction.user.guild_permissions.administrator = False
+        interaction.user.roles = []
+        interaction.guild_id = 987654321
+
+        with patch.dict(os.environ, {"DEVELOPERS": ""}):
+            result = asyncio.run(predicate(interaction))
+        assert result is False
+
+    @patch("cogs.adminCog.httpx.AsyncClient")
+    def test_predicate_returns_false_when_role_does_not_match(self, mock_httpx_cls):
+        """Predicate returns False when user has roles but none match admin_role_id (line 41-42, 46)."""
+        predicate = _extract_is_admin_predicate()
+
+        mock_client = MagicMock()
+        mock_response = MagicMock()
+        mock_response.raise_for_status = MagicMock()
+        mock_response.json.return_value = {"admin_role_id": 444555666}
+        mock_client.get = AsyncMock(return_value=mock_response)
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=None)
+        mock_httpx_cls.return_value = mock_client
+
+        # User has roles, but none match the admin_role_id
+        other_role = MagicMock()
+        other_role.id = 999888777
+
+        interaction = _create_mock_interaction()
+        interaction.user = MagicMock()
+        interaction.user.id = 123999
+        interaction.user.guild_permissions = MagicMock()
+        interaction.user.guild_permissions.administrator = False
+        interaction.user.roles = [other_role]
+        interaction.guild_id = 987654321
+
+        with patch.dict(os.environ, {"DEVELOPERS": ""}):
+            result = asyncio.run(predicate(interaction))
+        assert result is False
+
+
+# ---------------------------------------------------------------------------
+# TestAdminPlayerViewStatsProper — covers lines 254-274 with proper mocking
+# ---------------------------------------------------------------------------
+
+class TestAdminPlayerViewStatsProper:
+    """Tests for admin_player view_stats with proper http_client mocking (covers lines 254-274)."""
+
+    def test_view_stats_builds_embed_correctly(self, mock_admin_cog):
+        """view_stats should build a full embed with all player fields (lines 254-274)."""
+        interaction = _create_mock_interaction()
+        user = _create_mock_user(user_id=111111111, name="StatsPlayer")
+
+        player_resp = MagicMock()
+        player_resp.status_code = 200
+        player_resp.json.return_value = {
+            "id": 42,
+            "discord_id": 111111111,
+            "guild_id": 987654321,
+            "tier": "Silver",
+            "xp": 2500,
+            "credits": 1200,
+            "lifetime_credits": 3000,
+            "prestige_count": 1,
+            "created_at": "2024-06-15T12:00:00"
+        }
+
+        stats_resp = MagicMock()
+        stats_resp.status_code = 200
+        stats_resp.json.return_value = {
+            "total_games": 10,
+            "total_victory": 7,
+            "total_defeat": 3
+        }
+
+        mock_admin_cog.http_client.post = AsyncMock(return_value=player_resp)
+        mock_admin_cog.http_client.get = AsyncMock(return_value=stats_resp)
+
+        asyncio.run(mock_admin_cog.admin_player.callback(
+            mock_admin_cog, interaction, user, "view_stats", None, None
+        ))
+
+        interaction.response.defer.assert_called_once_with(thinking=True, ephemeral=True)
+        interaction.followup.send.assert_called_once()
+
+        # Verify embed was passed
+        call_kwargs = interaction.followup.send.call_args[1]
+        assert "embed" in call_kwargs
+        assert call_kwargs["ephemeral"] is True
+
+
+# ---------------------------------------------------------------------------
+# TestAdminPlayerSetCreditsProper — covers lines 281-299 with proper mocking
+# ---------------------------------------------------------------------------
+
+class TestAdminPlayerSetCreditsProper:
+    """Tests for admin_player set_credits with proper http_client mocking (covers lines 281-299)."""
+
+    def test_set_credits_builds_embed_correctly(self, mock_admin_cog):
+        """set_credits should PUT to API and build a credits-updated embed (lines 281-299)."""
+        interaction = _create_mock_interaction()
+        user = _create_mock_user(user_id=222222222, name="CreditPlayer")
+
+        player_resp = MagicMock()
+        player_resp.status_code = 200
+        player_resp.json.return_value = {
+            "id": 7,
+            "discord_id": 222222222,
+            "guild_id": 987654321,
+            "tier": "Bronze",
+            "xp": 50,
+            "credits": 300,
+            "lifetime_credits": 300,
+            "prestige_count": 0,
+            "created_at": "2024-01-01T00:00:00"
+        }
+
+        update_resp = MagicMock()
+        update_resp.status_code = 200
+        update_resp.json.return_value = {
+            "old_credits": 300,
+            "new_credits": 5000
+        }
+
+        mock_admin_cog.http_client.post = AsyncMock(return_value=player_resp)
+        mock_admin_cog.http_client.put = AsyncMock(return_value=update_resp)
+
+        asyncio.run(mock_admin_cog.admin_player.callback(
+            mock_admin_cog, interaction, user, "set_credits", 5000, None
+        ))
+
+        interaction.response.defer.assert_called_once_with(thinking=True, ephemeral=True)
+        interaction.followup.send.assert_called_once()
+
+        # Verify embed was passed with correct data
+        call_kwargs = interaction.followup.send.call_args[1]
+        assert "embed" in call_kwargs
+        assert call_kwargs["ephemeral"] is True
+
+        # Verify the PUT was called with the correct payload
+        put_call = mock_admin_cog.http_client.put.call_args
+        put_json = put_call[1]["json"] if "json" in put_call[1] else put_call.kwargs["json"]
+        assert put_json["player_id"] == 7
+        assert put_json["credits"] == 5000
+        assert put_json["update_lifetime"] is False
+
+    def test_set_credits_clamps_negative_to_zero(self, mock_admin_cog):
+        """set_credits should clamp negative credits to 0 (line 285: max(0, credit_amount))."""
+        interaction = _create_mock_interaction()
+        user = _create_mock_user(user_id=333333333, name="NegPlayer")
+
+        player_resp = MagicMock()
+        player_resp.status_code = 200
+        player_resp.json.return_value = {
+            "id": 8,
+            "discord_id": 333333333,
+            "guild_id": 987654321,
+            "tier": "Bronze",
+            "xp": 0,
+            "credits": 100,
+            "lifetime_credits": 100,
+            "prestige_count": 0,
+            "created_at": "2024-01-01T00:00:00"
+        }
+
+        update_resp = MagicMock()
+        update_resp.status_code = 200
+        update_resp.json.return_value = {
+            "old_credits": 100,
+            "new_credits": 0
+        }
+
+        mock_admin_cog.http_client.post = AsyncMock(return_value=player_resp)
+        mock_admin_cog.http_client.put = AsyncMock(return_value=update_resp)
+
+        asyncio.run(mock_admin_cog.admin_player.callback(
+            mock_admin_cog, interaction, user, "set_credits", -500, None
+        ))
+
+        interaction.followup.send.assert_called_once()
+
+        # Verify credits were clamped to 0
+        put_call = mock_admin_cog.http_client.put.call_args
+        put_json = put_call[1]["json"] if "json" in put_call[1] else put_call.kwargs["json"]
+        assert put_json["credits"] == 0
+
+
 if __name__ == '__main__':
     pytest.main([__file__, "-v"])

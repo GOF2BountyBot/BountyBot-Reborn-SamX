@@ -924,3 +924,1048 @@ class TestFindThreadById:
             from api.routers.threads import find_thread_by_id
             result = find_thread_by_id(bot, 1234567890)
             assert result is thread
+
+
+# ---------------------------------------------------------------------------
+# Tests: find_thread_by_id — ForumChannel parent branch (lines 54-56)
+# ---------------------------------------------------------------------------
+
+class TestFindThreadByIdForumParent:
+    """Cover the branch where ch.parent is a ForumChannel (lines 54-56)."""
+
+    def test_find_thread_by_id_via_forum_parent(self):
+        """find_thread_by_id returns channel when parent is ForumChannel."""
+        bot = MagicMock()
+
+        parent = MagicMock(spec=_MockForumChannel)
+        parent.__class__ = _MockForumChannel
+
+        channel = MagicMock()
+        channel.parent = parent
+        # Not a discord.Thread instance, no 'archived' attr initially
+        # Remove 'archived' so we test the ForumChannel parent path specifically
+        if hasattr(channel, "archived"):
+            del channel.archived
+
+        bot.get_channel = MagicMock(return_value=channel)
+        bot.guilds = []
+
+        with patch("api.routers.threads.discord") as mock_disc:
+            mock_disc.Thread = type("Thread", (), {})  # channel is NOT this type
+            mock_disc.ForumChannel = _MockForumChannel
+
+            from api.routers.threads import find_thread_by_id
+            result = find_thread_by_id(bot, 1234567890)
+            assert result is channel
+
+
+# ---------------------------------------------------------------------------
+# Tests: find_thread_by_id — get_channel exception (lines 60-62)
+# ---------------------------------------------------------------------------
+
+class TestFindThreadByIdGetChannelException:
+    """Cover the except branch in get_channel lookup (lines 60-62)."""
+
+    def test_find_thread_by_id_get_channel_raises_exception(self):
+        """find_thread_by_id handles get_channel exception gracefully."""
+        bot = MagicMock()
+        bot.get_channel = MagicMock(side_effect=RuntimeError("cache broken"))
+        bot.guilds = []
+
+        from api.routers.threads import find_thread_by_id
+        result = find_thread_by_id(bot, 1234567890)
+        assert result is None
+
+    def test_find_thread_by_id_get_channel_exception_falls_to_guild_scan(self):
+        """find_thread_by_id falls through to guild scan when get_channel raises."""
+        bot = MagicMock()
+        bot.get_channel = MagicMock(side_effect=RuntimeError("cache broken"))
+
+        thread = MagicMock()
+        thread.id = 42
+
+        forum_ch = MagicMock(spec=_MockForumChannel)
+        forum_ch.__class__ = _MockForumChannel
+        forum_ch.threads = [thread]
+        forum_ch.get_thread = None
+
+        guild = MagicMock()
+        guild.channels = [forum_ch]
+        bot.guilds = [guild]
+
+        with patch("api.routers.threads.discord") as mock_disc:
+            mock_disc.Thread = None
+            mock_disc.ForumChannel = _MockForumChannel
+
+            from api.routers.threads import find_thread_by_id
+            result = find_thread_by_id(bot, 42)
+            assert result is thread
+
+
+# ---------------------------------------------------------------------------
+# Tests: find_thread_by_id — get_thread on forum channel (lines 72-78)
+# ---------------------------------------------------------------------------
+
+class TestFindThreadByIdGetThreadMethod:
+    """Cover the get_thread() method path on forum channels (lines 72-78)."""
+
+    def test_find_thread_by_id_via_get_thread_method(self):
+        """find_thread_by_id uses forum channel's get_thread() method."""
+        bot = MagicMock()
+        bot.get_channel = MagicMock(return_value=None)
+
+        thread = MagicMock()
+        thread.id = 1234567890
+
+        forum_ch = MagicMock(spec=_MockForumChannel)
+        forum_ch.__class__ = _MockForumChannel
+        forum_ch.get_thread = MagicMock(return_value=thread)
+        forum_ch.threads = []
+
+        guild = MagicMock()
+        guild.channels = [forum_ch]
+        bot.guilds = [guild]
+
+        with patch("api.routers.threads.discord") as mock_disc:
+            mock_disc.Thread = None
+            mock_disc.ForumChannel = _MockForumChannel
+
+            from api.routers.threads import find_thread_by_id
+            result = find_thread_by_id(bot, 1234567890)
+            assert result is thread
+
+    def test_find_thread_by_id_get_thread_returns_none(self):
+        """find_thread_by_id continues when get_thread() returns None."""
+        bot = MagicMock()
+        bot.get_channel = MagicMock(return_value=None)
+
+        forum_ch = MagicMock(spec=_MockForumChannel)
+        forum_ch.__class__ = _MockForumChannel
+        forum_ch.get_thread = MagicMock(return_value=None)
+        forum_ch.threads = []
+
+        guild = MagicMock()
+        guild.channels = [forum_ch]
+        bot.guilds = [guild]
+
+        with patch("api.routers.threads.discord") as mock_disc:
+            mock_disc.Thread = None
+            mock_disc.ForumChannel = _MockForumChannel
+
+            from api.routers.threads import find_thread_by_id
+            result = find_thread_by_id(bot, 9999)
+            assert result is None
+
+    def test_find_thread_by_id_get_thread_raises_exception(self):
+        """find_thread_by_id handles get_thread() exception (lines 76-78)."""
+        bot = MagicMock()
+        bot.get_channel = MagicMock(return_value=None)
+
+        forum_ch = MagicMock(spec=_MockForumChannel)
+        forum_ch.__class__ = _MockForumChannel
+        forum_ch.get_thread = MagicMock(side_effect=RuntimeError("broken"))
+        forum_ch.threads = []
+
+        guild = MagicMock()
+        guild.channels = [forum_ch]
+        bot.guilds = [guild]
+
+        with patch("api.routers.threads.discord") as mock_disc:
+            mock_disc.Thread = None
+            mock_disc.ForumChannel = _MockForumChannel
+
+            from api.routers.threads import find_thread_by_id
+            result = find_thread_by_id(bot, 1234567890)
+            assert result is None
+
+
+# ---------------------------------------------------------------------------
+# Tests: find_thread_by_id — thread.id exception in scan (lines 84-85)
+# ---------------------------------------------------------------------------
+
+class TestFindThreadByIdThreadIdException:
+    """Cover the except branch when checking thread.id (lines 84-85)."""
+
+    def test_find_thread_by_id_thread_id_raises_exception(self):
+        """find_thread_by_id continues when getattr(t, 'id') raises."""
+        bot = MagicMock()
+        bot.get_channel = MagicMock(return_value=None)
+
+        # A broken thread object whose .id property raises
+        broken_thread = MagicMock()
+        type(broken_thread).id = property(lambda self: (_ for _ in ()).throw(RuntimeError("broken")))
+
+        good_thread = MagicMock()
+        good_thread.id = 42
+
+        forum_ch = MagicMock(spec=_MockForumChannel)
+        forum_ch.__class__ = _MockForumChannel
+        forum_ch.get_thread = None
+        forum_ch.threads = [broken_thread, good_thread]
+
+        guild = MagicMock()
+        guild.channels = [forum_ch]
+        bot.guilds = [guild]
+
+        with patch("api.routers.threads.discord") as mock_disc:
+            mock_disc.Thread = None
+            mock_disc.ForumChannel = _MockForumChannel
+
+            from api.routers.threads import find_thread_by_id
+            result = find_thread_by_id(bot, 42)
+            assert result is good_thread
+
+
+# ---------------------------------------------------------------------------
+# Helper: build app WITHOUT patching find_thread_by_id
+# (so the real lookup fallback logic in endpoints is exercised)
+# ---------------------------------------------------------------------------
+
+def _make_fallback_app(mock_bot):
+    """
+    Build a FastAPI test app that does NOT mock find_thread_by_id,
+    allowing the real get_channel/fetch_channel fallback logic to run.
+    """
+    app = FastAPI()
+    app.state.bot = mock_bot
+
+    _thread_data = _thread_schema()
+    _msg_data = _message_schema()
+
+    with patch("api.routers.threads.resolve_bot", new_callable=AsyncMock) as mock_resolve, \
+         patch("api.routers.threads.handle_discord_exception", new_callable=AsyncMock) as mock_handle, \
+         patch("api.routers.threads.ChannelConverter") as mock_cc, \
+         patch("api.routers.threads.MessageConverter") as mock_mc, \
+         patch("api.routers.threads.EmbedConverter") as mock_ec:
+
+        async def resolve(req):
+            return mock_bot
+
+        mock_resolve.side_effect = resolve
+        mock_handle.side_effect = HTTPException(status_code=500, detail="Internal server error")
+
+        mock_cc.thread_to_detail.return_value = _thread_data
+        mock_mc.message_to_payload.return_value = _msg_data
+        mock_ec.payload_to_embed.return_value = MagicMock()
+
+        from api.routers.threads import router
+        app.include_router(router, prefix="/api/v1")
+
+        yield app
+
+
+# ---------------------------------------------------------------------------
+# Tests: get_channel exception fallback (lines 115-116, 176-177, 246-247, 292-293)
+# ---------------------------------------------------------------------------
+
+class TestGetChannelExceptionFallback:
+    """Cover the get_channel exception fallback paths in various endpoints."""
+
+    def test_get_thread_get_channel_exception_then_fetch(self):
+        """get_thread: get_channel raises → falls to fetch_channel (lines 115-116)."""
+        bot = DiscordMockUtils.create_mock_bot(user_id=123456789, username="TestBot")
+        thread = create_mock_thread(1234567890)
+        # find_thread_by_id returns None, get_channel raises, fetch_channel returns thread
+        bot.get_channel = MagicMock(side_effect=RuntimeError("cache error"))
+        bot.fetch_channel = AsyncMock(return_value=thread)
+        bot.guilds = []
+
+        for app in _make_fallback_app(bot):
+            client = TestClient(app)
+            response = client.get("/api/v1/threads/1234567890")
+            assert response.status_code == 200
+
+    def test_update_thread_get_channel_exception_then_fetch(self):
+        """update_thread: get_channel raises → falls to fetch_channel (lines 176-177)."""
+        bot = DiscordMockUtils.create_mock_bot(user_id=123456789, username="TestBot")
+        thread = create_mock_thread(1234567890)
+        bot.get_channel = MagicMock(side_effect=RuntimeError("cache error"))
+        bot.fetch_channel = AsyncMock(return_value=thread)
+        bot.guilds = []
+
+        for app in _make_fallback_app(bot):
+            client = TestClient(app)
+            response = client.put(
+                "/api/v1/threads/1234567890",
+                json={"name": "Updated"}
+            )
+            assert response.status_code == 200
+
+    def test_close_thread_get_channel_exception_then_fetch(self):
+        """close_thread: get_channel raises → falls to fetch_channel (lines 246-247)."""
+        bot = DiscordMockUtils.create_mock_bot(user_id=123456789, username="TestBot")
+        thread = create_mock_thread(1234567890)
+        bot.get_channel = MagicMock(side_effect=RuntimeError("cache error"))
+        bot.fetch_channel = AsyncMock(return_value=thread)
+        bot.guilds = []
+
+        for app in _make_fallback_app(bot):
+            client = TestClient(app)
+            response = client.put("/api/v1/threads/1234567890/close")
+            assert response.status_code == 200
+
+    def test_open_thread_get_channel_exception_then_fetch(self):
+        """open_thread: get_channel raises → falls to fetch_channel (lines 292-293)."""
+        bot = DiscordMockUtils.create_mock_bot(user_id=123456789, username="TestBot")
+        thread = create_mock_thread(1234567890)
+        bot.get_channel = MagicMock(side_effect=RuntimeError("cache error"))
+        bot.fetch_channel = AsyncMock(return_value=thread)
+        bot.guilds = []
+
+        for app in _make_fallback_app(bot):
+            client = TestClient(app)
+            response = client.put("/api/v1/threads/1234567890/open")
+            assert response.status_code == 200
+
+
+# ---------------------------------------------------------------------------
+# Tests: fetch_channel NotFound/Forbidden fallbacks
+# (lines 122-126, 183-186, 252-256, 298-302)
+# ---------------------------------------------------------------------------
+
+class TestFetchChannelNotFoundForbidden:
+    """Cover fetch_channel raising NotFound or Forbidden → thread = None → 404."""
+
+    def _get_real_discord(self):
+        return sys.modules.get("tests.conftest")._REAL_DISCORD
+
+    def test_get_thread_fetch_channel_not_found(self):
+        """get_thread: fetch_channel raises NotFound → 404 (lines 122-123)."""
+        real_discord = self._get_real_discord()
+        bot = DiscordMockUtils.create_mock_bot(user_id=123456789, username="TestBot")
+        bot.get_channel = MagicMock(return_value=None)
+        bot.fetch_channel = AsyncMock(
+            side_effect=real_discord.errors.NotFound(MagicMock(status=404), "Not Found")
+        )
+        bot.guilds = []
+
+        for app in _make_fallback_app(bot):
+            client = TestClient(app)
+            response = client.get("/api/v1/threads/1234567890")
+            assert response.status_code == 404
+
+    def test_get_thread_fetch_channel_forbidden(self):
+        """get_thread: fetch_channel raises Forbidden → 404 (lines 124-126)."""
+        real_discord = self._get_real_discord()
+        bot = DiscordMockUtils.create_mock_bot(user_id=123456789, username="TestBot")
+        bot.get_channel = MagicMock(return_value=None)
+        bot.fetch_channel = AsyncMock(
+            side_effect=real_discord.errors.Forbidden(MagicMock(status=403), "Forbidden")
+        )
+        bot.guilds = []
+
+        for app in _make_fallback_app(bot):
+            client = TestClient(app)
+            response = client.get("/api/v1/threads/1234567890")
+            assert response.status_code == 404
+
+    def test_update_thread_fetch_channel_not_found(self):
+        """update_thread: fetch_channel raises NotFound → 404 (lines 183-184)."""
+        real_discord = self._get_real_discord()
+        bot = DiscordMockUtils.create_mock_bot(user_id=123456789, username="TestBot")
+        bot.get_channel = MagicMock(return_value=None)
+        bot.fetch_channel = AsyncMock(
+            side_effect=real_discord.errors.NotFound(MagicMock(status=404), "Not Found")
+        )
+        bot.guilds = []
+
+        for app in _make_fallback_app(bot):
+            client = TestClient(app)
+            response = client.put(
+                "/api/v1/threads/1234567890",
+                json={"name": "Updated"}
+            )
+            assert response.status_code == 404
+
+    def test_update_thread_fetch_channel_forbidden(self):
+        """update_thread: fetch_channel raises Forbidden → 404 (lines 185-186)."""
+        real_discord = self._get_real_discord()
+        bot = DiscordMockUtils.create_mock_bot(user_id=123456789, username="TestBot")
+        bot.get_channel = MagicMock(return_value=None)
+        bot.fetch_channel = AsyncMock(
+            side_effect=real_discord.errors.Forbidden(MagicMock(status=403), "Forbidden")
+        )
+        bot.guilds = []
+
+        for app in _make_fallback_app(bot):
+            client = TestClient(app)
+            response = client.put(
+                "/api/v1/threads/1234567890",
+                json={"name": "Updated"}
+            )
+            assert response.status_code == 404
+
+    def test_close_thread_fetch_channel_not_found(self):
+        """close_thread: fetch_channel raises NotFound → 404 (lines 252-253)."""
+        real_discord = self._get_real_discord()
+        bot = DiscordMockUtils.create_mock_bot(user_id=123456789, username="TestBot")
+        bot.get_channel = MagicMock(return_value=None)
+        bot.fetch_channel = AsyncMock(
+            side_effect=real_discord.errors.NotFound(MagicMock(status=404), "Not Found")
+        )
+        bot.guilds = []
+
+        for app in _make_fallback_app(bot):
+            client = TestClient(app)
+            response = client.put("/api/v1/threads/1234567890/close")
+            assert response.status_code == 404
+
+    def test_close_thread_fetch_channel_forbidden(self):
+        """close_thread: fetch_channel raises Forbidden → 404 (lines 254-256)."""
+        real_discord = self._get_real_discord()
+        bot = DiscordMockUtils.create_mock_bot(user_id=123456789, username="TestBot")
+        bot.get_channel = MagicMock(return_value=None)
+        bot.fetch_channel = AsyncMock(
+            side_effect=real_discord.errors.Forbidden(MagicMock(status=403), "Forbidden")
+        )
+        bot.guilds = []
+
+        for app in _make_fallback_app(bot):
+            client = TestClient(app)
+            response = client.put("/api/v1/threads/1234567890/close")
+            assert response.status_code == 404
+
+    def test_open_thread_fetch_channel_not_found(self):
+        """open_thread: fetch_channel raises NotFound → 404 (lines 298-299)."""
+        real_discord = self._get_real_discord()
+        bot = DiscordMockUtils.create_mock_bot(user_id=123456789, username="TestBot")
+        bot.get_channel = MagicMock(return_value=None)
+        bot.fetch_channel = AsyncMock(
+            side_effect=real_discord.errors.NotFound(MagicMock(status=404), "Not Found")
+        )
+        bot.guilds = []
+
+        for app in _make_fallback_app(bot):
+            client = TestClient(app)
+            response = client.put("/api/v1/threads/1234567890/open")
+            assert response.status_code == 404
+
+    def test_open_thread_fetch_channel_forbidden(self):
+        """open_thread: fetch_channel raises Forbidden → 404 (lines 300-302)."""
+        real_discord = self._get_real_discord()
+        bot = DiscordMockUtils.create_mock_bot(user_id=123456789, username="TestBot")
+        bot.get_channel = MagicMock(return_value=None)
+        bot.fetch_channel = AsyncMock(
+            side_effect=real_discord.errors.Forbidden(MagicMock(status=403), "Forbidden")
+        )
+        bot.guilds = []
+
+        for app in _make_fallback_app(bot):
+            client = TestClient(app)
+            response = client.put("/api/v1/threads/1234567890/open")
+            assert response.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# Tests: update_thread refresh failure (lines 211-213)
+# ---------------------------------------------------------------------------
+
+class TestUpdateThreadRefreshFailure:
+    """Cover the refresh-after-edit exception path (lines 211-213)."""
+
+    def test_update_thread_refresh_raises_exception(self):
+        """update_thread: refresh after edit raises → uses original thread (lines 211-213)."""
+        bot = DiscordMockUtils.create_mock_bot(user_id=123456789, username="TestBot")
+        thread = create_mock_thread(1234567890)
+        thread.edit = AsyncMock()
+        # Make get_channel return None and fetch_channel raise for the refresh attempt
+        # We need get_channel to return None (falsy) so `or` calls fetch_channel, which raises
+        call_count = [0]
+        def _get_channel_side_effect(tid):
+            call_count[0] += 1
+            # First call in the refresh: get_channel returns None → triggers fetch_channel
+            return None
+        bot.get_channel = MagicMock(side_effect=_get_channel_side_effect)
+        bot.fetch_channel = AsyncMock(side_effect=RuntimeError("refresh failed"))
+
+        app = FastAPI()
+        app.state.bot = bot
+
+        with patch("api.routers.threads.resolve_bot", new_callable=AsyncMock) as mock_resolve, \
+             patch("api.routers.threads.handle_discord_exception", new_callable=AsyncMock) as mock_handle, \
+             patch("api.routers.threads.find_thread_by_id") as mock_find, \
+             patch("api.routers.threads.ChannelConverter") as mock_cc, \
+             patch("api.routers.threads.MessageConverter") as mock_mc, \
+             patch("api.routers.threads.EmbedConverter") as mock_ec:
+
+            mock_resolve.side_effect = lambda req: bot
+            mock_handle.side_effect = HTTPException(status_code=500, detail="Internal server error")
+            mock_find.side_effect = lambda b, tid: thread if tid == 1234567890 else None
+            mock_cc.thread_to_detail.return_value = _thread_schema()
+            mock_mc.message_to_payload.return_value = _message_schema()
+            mock_ec.payload_to_embed.return_value = MagicMock()
+
+            from api.routers.threads import router
+            app.include_router(router, prefix="/api/v1")
+
+            client = TestClient(app)
+            response = client.put(
+                "/api/v1/threads/1234567890",
+                json={"name": "Updated Name"}
+            )
+            assert response.status_code == 200
+            assert response.json()["status"] == "updated"
+
+
+# ---------------------------------------------------------------------------
+# Tests: outer exception handlers for all endpoints
+# (lines 224-226, 269-271, 315-317, 420-422, 455-457, 494-496, 539-541,
+#  595-597, 654-656)
+# ---------------------------------------------------------------------------
+
+class TestOuterExceptionHandlers:
+    """Cover the outer except Exception → handle_discord_exception paths."""
+
+    def _make_error_app(self, resolve_side_effect):
+        """Build an app where resolve_bot raises to trigger outer exception handler."""
+        app = FastAPI()
+
+        with patch("api.routers.threads.resolve_bot", new_callable=AsyncMock) as mock_resolve, \
+             patch("api.routers.threads.handle_discord_exception", new_callable=AsyncMock) as mock_handle:
+
+            mock_resolve.side_effect = resolve_side_effect
+            mock_handle.side_effect = HTTPException(status_code=500, detail="Internal server error")
+
+            from api.routers.threads import router
+            app.include_router(router, prefix="/api/v1")
+
+            yield app
+
+    def test_update_thread_outer_exception(self):
+        """update_thread: outer exception calls handle_discord_exception (lines 224-226)."""
+        for app in self._make_error_app(RuntimeError("unexpected")):
+            client = TestClient(app)
+            response = client.put(
+                "/api/v1/threads/1234567890",
+                json={"name": "test"}
+            )
+            assert response.status_code == 500
+
+    def test_close_thread_outer_exception(self):
+        """close_thread: outer exception calls handle_discord_exception (lines 269-271)."""
+        for app in self._make_error_app(RuntimeError("unexpected")):
+            client = TestClient(app)
+            response = client.put("/api/v1/threads/1234567890/close")
+            assert response.status_code == 500
+
+    def test_open_thread_outer_exception(self):
+        """open_thread: outer exception calls handle_discord_exception (lines 315-317)."""
+        for app in self._make_error_app(RuntimeError("unexpected")):
+            client = TestClient(app)
+            response = client.put("/api/v1/threads/1234567890/open")
+            assert response.status_code == 500
+
+    def test_update_thread_tags_outer_exception(self):
+        """update_thread_tags: outer exception calls handle_discord_exception (lines 420-422)."""
+        for app in self._make_error_app(RuntimeError("unexpected")):
+            client = TestClient(app)
+            response = client.put(
+                "/api/v1/threads/1234567890/tags",
+                json={"tags": [111]}
+            )
+            assert response.status_code == 500
+
+    def test_list_thread_messages_outer_exception(self):
+        """list_thread_messages: outer exception (lines 455-457)."""
+        for app in self._make_error_app(RuntimeError("unexpected")):
+            client = TestClient(app)
+            response = client.get("/api/v1/threads/1234567890/messages")
+            assert response.status_code == 500
+
+    def test_create_thread_message_outer_exception(self):
+        """create_thread_message: outer exception (lines 494-496)."""
+        for app in self._make_error_app(RuntimeError("unexpected")):
+            client = TestClient(app)
+            response = client.post(
+                "/api/v1/threads/1234567890/messages",
+                json={"content": {"title": "test"}}
+            )
+            assert response.status_code == 500
+
+    def test_get_thread_message_outer_exception(self):
+        """get_thread_message: outer exception (lines 539-541)."""
+        for app in self._make_error_app(RuntimeError("unexpected")):
+            client = TestClient(app)
+            response = client.get("/api/v1/threads/1234567890/messages/999999999")
+            assert response.status_code == 500
+
+    def test_edit_thread_message_outer_exception(self):
+        """edit_thread_message: outer exception (lines 595-597)."""
+        for app in self._make_error_app(RuntimeError("unexpected")):
+            client = TestClient(app)
+            response = client.put(
+                "/api/v1/threads/1234567890/messages/999999999",
+                json={"content": {"title": "test"}}
+            )
+            assert response.status_code == 500
+
+    def test_delete_thread_message_outer_exception(self):
+        """delete_thread_message: outer exception (lines 654-656)."""
+        for app in self._make_error_app(RuntimeError("unexpected")):
+            client = TestClient(app)
+            response = client.delete("/api/v1/threads/1234567890/messages/999999999")
+            assert response.status_code == 500
+
+
+# ---------------------------------------------------------------------------
+# Tests: update_thread_tags — tag object id not found (line 375)
+# ---------------------------------------------------------------------------
+
+class TestUpdateThreadTagsObjectIdNotFound:
+    """Cover tag object with id field where id is not found (line 375)."""
+
+    def _make_tags_app_with_discord_mock(self, mock_bot, mock_thread, available_tags):
+        """Build app with tags endpoint, patching discord for ForumChannel isinstance."""
+        app = FastAPI()
+        app.state.bot = mock_bot
+
+        parent = MagicMock(spec=_MockForumChannel)
+        parent.__class__ = _MockForumChannel
+        parent.available_tags = available_tags
+        mock_thread.parent = parent
+
+        def _utils_get(iterable, **kwargs):
+            for item in (iterable or []):
+                if all(getattr(item, k, None) == v for k, v in kwargs.items()):
+                    return item
+            return None
+        _mock_discord.utils.get = _utils_get
+
+        with patch("api.routers.threads.resolve_bot", new_callable=AsyncMock) as mock_resolve, \
+             patch("api.routers.threads.handle_discord_exception", new_callable=AsyncMock) as mock_handle, \
+             patch("api.routers.threads.find_thread_by_id") as mock_find, \
+             patch("api.routers.threads.ChannelConverter") as mock_cc, \
+             patch("api.routers.threads.MessageConverter") as mock_mc, \
+             patch("api.routers.threads.EmbedConverter") as mock_ec, \
+             patch("api.routers.threads.discord", _mock_discord):
+
+            mock_resolve.side_effect = lambda req: mock_bot
+            mock_handle.side_effect = HTTPException(status_code=500, detail="Internal server error")
+            mock_find.side_effect = lambda b, tid: mock_thread if tid == 1234567890 else None
+            mock_cc.thread_to_detail.return_value = _thread_schema()
+            mock_mc.message_to_payload.return_value = _message_schema()
+            mock_ec.payload_to_embed.return_value = MagicMock()
+
+            from api.routers.threads import router
+            app.include_router(router, prefix="/api/v1")
+
+            yield app
+
+    def test_tag_object_with_id_not_found(self):
+        """Tag object dict with id that doesn't match any available tag → 404 (line 375)."""
+        from tests.mocks.discord_mock_utils import DiscordMockUtils as DMU
+        bot = DiscordMockUtils.create_mock_bot(user_id=123456789, username="TestBot")
+        thread = create_mock_thread(1234567890)
+        t1 = DMU.create_mock_forum_tag(tag_id=111, name="tag1", channel_id=555555555)
+        available = [t1]
+
+        for app in self._make_tags_app_with_discord_mock(bot, thread, available):
+            client = TestClient(app)
+            # Tag object with id=9999 that doesn't exist
+            response = client.put(
+                "/api/v1/threads/1234567890/tags",
+                json={"tags": [{"id": 9999, "name": "nonexistent", "channel_id": 555555555}]}
+            )
+            assert response.status_code == 404
+            assert "tag" in response.json()["detail"].lower()
+
+
+# ---------------------------------------------------------------------------
+# Tests: update_thread_tags — name/emoji matching (lines 383-411)
+# ---------------------------------------------------------------------------
+
+class TestUpdateThreadTagsNameEmojiMatching:
+    """Cover name and emoji matching paths in update_thread_tags (lines 383-411)."""
+
+    def _make_tags_app_with_discord_mock(self, mock_bot, mock_thread, available_tags,
+                                          normalize_side_effect=None):
+        """Build app with tags endpoint and optional normalize_emoji mock."""
+        app = FastAPI()
+        app.state.bot = mock_bot
+
+        parent = MagicMock(spec=_MockForumChannel)
+        parent.__class__ = _MockForumChannel
+        parent.available_tags = available_tags
+        mock_thread.parent = parent
+
+        def _utils_get(iterable, **kwargs):
+            for item in (iterable or []):
+                if all(getattr(item, k, None) == v for k, v in kwargs.items()):
+                    return item
+            return None
+        _mock_discord.utils.get = _utils_get
+
+        patches = [
+            patch("api.routers.threads.resolve_bot", new_callable=AsyncMock),
+            patch("api.routers.threads.handle_discord_exception", new_callable=AsyncMock),
+            patch("api.routers.threads.find_thread_by_id"),
+            patch("api.routers.threads.ChannelConverter"),
+            patch("api.routers.threads.MessageConverter"),
+            patch("api.routers.threads.EmbedConverter"),
+            patch("api.routers.threads.discord", _mock_discord),
+        ]
+        if normalize_side_effect is not None:
+            patches.append(patch("api.routers.threads.normalize_emoji", side_effect=normalize_side_effect))
+
+        import contextlib
+        with contextlib.ExitStack() as stack:
+            mocks = [stack.enter_context(p) for p in patches]
+            mock_resolve = mocks[0]
+            mock_handle = mocks[1]
+            mock_find = mocks[2]
+            mock_cc = mocks[3]
+            mock_mc = mocks[4]
+            mock_ec = mocks[5]
+
+            mock_resolve.side_effect = lambda req: mock_bot
+            mock_handle.side_effect = HTTPException(status_code=500, detail="Internal server error")
+            mock_find.side_effect = lambda b, tid: mock_thread if tid == 1234567890 else None
+            mock_cc.thread_to_detail.return_value = _thread_schema()
+            mock_mc.message_to_payload.return_value = _message_schema()
+            mock_ec.payload_to_embed.return_value = MagicMock()
+
+            from api.routers.threads import router
+            app.include_router(router, prefix="/api/v1")
+
+            yield app
+
+    async def test_tag_matched_by_name_direct_call(self):
+        """Tag with tid=None matched by name via direct function call (lines 383-385)."""
+        from tests.mocks.discord_mock_utils import DiscordMockUtils as DMU
+
+        bot = DiscordMockUtils.create_mock_bot(user_id=123456789, username="TestBot")
+        thread = create_mock_thread(1234567890)
+        t1 = DMU.create_mock_forum_tag(tag_id=111, name="tag1", channel_id=555555555)
+
+        parent = MagicMock(spec=_MockForumChannel)
+        parent.__class__ = _MockForumChannel
+        parent.available_tags = [t1]
+        thread.parent = parent
+
+        def _utils_get(iterable, **kwargs):
+            for item in (iterable or []):
+                if all(getattr(item, k, None) == v for k, v in kwargs.items()):
+                    return item
+            return None
+        _mock_discord.utils.get = _utils_get
+
+        # Tag-like object with tid=None and name that matches
+        tag_input = MagicMock()
+        tag_input.id = None
+        tag_input.name = "tag1"
+        tag_input.emoji = None
+
+        tags_data = MagicMock()
+        tags_data.tags = [tag_input]
+        mock_request = MagicMock()
+
+        with patch("api.routers.threads.resolve_bot", new_callable=AsyncMock) as mock_resolve, \
+             patch("api.routers.threads.find_thread_by_id") as mock_find, \
+             patch("api.routers.threads.discord", _mock_discord):
+
+            mock_resolve.return_value = bot
+            mock_find.return_value = thread
+
+            from api.routers.threads import update_thread_tags
+            result = await update_thread_tags(mock_request, 1234567890, tags_data)
+            assert result.status == "updated"
+
+    def test_tag_no_match_by_name_or_emoji_raises_404(self):
+        """Tag dict with id that matches nothing, falls through → 404 (lines 402-409)."""
+        from tests.mocks.discord_mock_utils import DiscordMockUtils as DMU
+        bot = DiscordMockUtils.create_mock_bot(user_id=123456789, username="TestBot")
+        thread = create_mock_thread(1234567890)
+        t1 = DMU.create_mock_forum_tag(tag_id=111, name="tag1", channel_id=555555555)
+        available = [t1]
+
+        for app in self._make_tags_app_with_discord_mock(bot, thread, available):
+            client = TestClient(app)
+            # id=9999 won't be found → 404 from line 375
+            response = client.put(
+                "/api/v1/threads/1234567890/tags",
+                json={"tags": [{"id": 9999, "name": "nonexistent", "channel_id": 555555555}]}
+            )
+            assert response.status_code == 404
+            assert "tag" in response.json()["detail"].lower()
+
+    async def test_tag_name_emoji_matching_direct_call(self):
+        """Directly test the name/emoji matching logic by calling update_thread_tags
+        with a tag object that has tid=None, name set, and emoji set (lines 383-411).
+        We bypass FastAPI validation and call the endpoint function directly."""
+        # This tests the code path that's hard to reach through FastAPI validation
+        # We'll call the endpoint function directly with a mock request
+        from tests.mocks.discord_mock_utils import DiscordMockUtils as DMU
+
+        bot = DiscordMockUtils.create_mock_bot(user_id=123456789, username="TestBot")
+        thread = create_mock_thread(1234567890)
+
+        t1 = DMU.create_mock_forum_tag(tag_id=111, name="bug", channel_id=555555555)
+        t1.emoji = MagicMock()
+        t1.emoji.name = "bug_emoji"
+
+        parent = MagicMock(spec=_MockForumChannel)
+        parent.__class__ = _MockForumChannel
+        parent.available_tags = [t1]
+        thread.parent = parent
+
+        def _utils_get(iterable, **kwargs):
+            for item in (iterable or []):
+                if all(getattr(item, k, None) == v for k, v in kwargs.items()):
+                    return item
+            return None
+        _mock_discord.utils.get = _utils_get
+
+        # Create a tag-like object that has tid=None but name and emoji
+        tag_input = MagicMock()
+        tag_input.id = None
+        tag_input.name = "bug"
+        tag_input.emoji = None
+
+        tags_data = MagicMock()
+        tags_data.tags = [tag_input]
+
+        mock_request = MagicMock()
+
+        with patch("api.routers.threads.resolve_bot", new_callable=AsyncMock) as mock_resolve, \
+             patch("api.routers.threads.find_thread_by_id") as mock_find, \
+             patch("api.routers.threads.discord", _mock_discord):
+
+            mock_resolve.return_value = bot
+            mock_find.return_value = thread
+
+            from api.routers.threads import update_thread_tags
+            result = await update_thread_tags(mock_request, 1234567890, tags_data)
+            assert result.status == "updated"
+
+    async def test_tag_emoji_matching_direct_call(self):
+        """Directly test emoji matching when name doesn't match (lines 387-400)."""
+        from tests.mocks.discord_mock_utils import DiscordMockUtils as DMU
+
+        bot = DiscordMockUtils.create_mock_bot(user_id=123456789, username="TestBot")
+        thread = create_mock_thread(1234567890)
+
+        t1 = DMU.create_mock_forum_tag(tag_id=111, name="bug", channel_id=555555555)
+        t1.emoji = MagicMock()
+        t1.emoji.name = "bug_emoji"
+
+        parent = MagicMock(spec=_MockForumChannel)
+        parent.__class__ = _MockForumChannel
+        parent.available_tags = [t1]
+        thread.parent = parent
+
+        def _utils_get(iterable, **kwargs):
+            for item in (iterable or []):
+                if all(getattr(item, k, None) == v for k, v in kwargs.items()):
+                    return item
+            return None
+        _mock_discord.utils.get = _utils_get
+
+        # Tag with tid=None, name that doesn't match, but emoji that does
+        tag_input = MagicMock()
+        tag_input.id = None
+        tag_input.name = "nonexistent"
+        tag_input.emoji = "bug_emoji"
+
+        tags_data = MagicMock()
+        tags_data.tags = [tag_input]
+
+        mock_request = MagicMock()
+
+        with patch("api.routers.threads.resolve_bot", new_callable=AsyncMock) as mock_resolve, \
+             patch("api.routers.threads.find_thread_by_id") as mock_find, \
+             patch("api.routers.threads.discord", _mock_discord), \
+             patch("api.routers.threads.normalize_emoji", return_value="bug_emoji"):
+
+            mock_resolve.return_value = bot
+            mock_find.return_value = thread
+
+            from api.routers.threads import update_thread_tags
+            result = await update_thread_tags(mock_request, 1234567890, tags_data)
+            assert result.status == "updated"
+
+    async def test_tag_emoji_matching_normalize_raises(self):
+        """normalize_emoji raises → falls back to raw emoji_val (lines 390-391)."""
+        from tests.mocks.discord_mock_utils import DiscordMockUtils as DMU
+
+        bot = DiscordMockUtils.create_mock_bot(user_id=123456789, username="TestBot")
+        thread = create_mock_thread(1234567890)
+
+        t1 = DMU.create_mock_forum_tag(tag_id=111, name="bug", channel_id=555555555)
+        t1.emoji = MagicMock()
+        t1.emoji.name = "raw_emoji"
+
+        parent = MagicMock(spec=_MockForumChannel)
+        parent.__class__ = _MockForumChannel
+        parent.available_tags = [t1]
+        thread.parent = parent
+
+        def _utils_get(iterable, **kwargs):
+            for item in (iterable or []):
+                if all(getattr(item, k, None) == v for k, v in kwargs.items()):
+                    return item
+            return None
+        _mock_discord.utils.get = _utils_get
+
+        tag_input = MagicMock()
+        tag_input.id = None
+        tag_input.name = "nonexistent"
+        tag_input.emoji = "raw_emoji"
+
+        tags_data = MagicMock()
+        tags_data.tags = [tag_input]
+
+        mock_request = MagicMock()
+
+        with patch("api.routers.threads.resolve_bot", new_callable=AsyncMock) as mock_resolve, \
+             patch("api.routers.threads.find_thread_by_id") as mock_find, \
+             patch("api.routers.threads.discord", _mock_discord), \
+             patch("api.routers.threads.normalize_emoji", side_effect=ValueError("bad emoji")):
+
+            mock_resolve.return_value = bot
+            mock_find.return_value = thread
+
+            from api.routers.threads import update_thread_tags
+            result = await update_thread_tags(mock_request, 1234567890, tags_data)
+            assert result.status == "updated"
+
+    async def test_tag_no_name_no_emoji_match_raises_404(self):
+        """Tag with no id, no name match, no emoji match → 404 (lines 402-409)."""
+        from tests.mocks.discord_mock_utils import DiscordMockUtils as DMU
+
+        bot = DiscordMockUtils.create_mock_bot(user_id=123456789, username="TestBot")
+        thread = create_mock_thread(1234567890)
+
+        t1 = DMU.create_mock_forum_tag(tag_id=111, name="bug", channel_id=555555555)
+        t1.emoji = None
+
+        parent = MagicMock(spec=_MockForumChannel)
+        parent.__class__ = _MockForumChannel
+        parent.available_tags = [t1]
+        thread.parent = parent
+
+        def _utils_get(iterable, **kwargs):
+            for item in (iterable or []):
+                if all(getattr(item, k, None) == v for k, v in kwargs.items()):
+                    return item
+            return None
+        _mock_discord.utils.get = _utils_get
+
+        tag_input = MagicMock()
+        tag_input.id = None
+        tag_input.name = "nonexistent"
+        tag_input.emoji = None
+
+        tags_data = MagicMock()
+        tags_data.tags = [tag_input]
+
+        mock_request = MagicMock()
+
+        with patch("api.routers.threads.resolve_bot", new_callable=AsyncMock) as mock_resolve, \
+             patch("api.routers.threads.find_thread_by_id") as mock_find, \
+             patch("api.routers.threads.discord", _mock_discord):
+
+            mock_resolve.return_value = bot
+            mock_find.return_value = thread
+
+            from api.routers.threads import update_thread_tags
+            with pytest.raises(HTTPException) as exc_info:
+                await update_thread_tags(mock_request, 1234567890, tags_data)
+            assert exc_info.value.status_code == 404
+            assert "tag not found" in exc_info.value.detail.lower()
+
+    async def test_tag_emoji_no_match_at_str(self):
+        """Emoji matching tries str(at_e) comparison (line 398)."""
+        from tests.mocks.discord_mock_utils import DiscordMockUtils as DMU
+
+        bot = DiscordMockUtils.create_mock_bot(user_id=123456789, username="TestBot")
+        thread = create_mock_thread(1234567890)
+
+        t1 = DMU.create_mock_forum_tag(tag_id=111, name="bug", channel_id=555555555)
+        # emoji with no .name but str representation matches
+        emoji_obj = MagicMock()
+        emoji_obj.name = None
+        emoji_obj.__str__ = MagicMock(return_value="fire_emoji")
+        t1.emoji = emoji_obj
+
+        parent = MagicMock(spec=_MockForumChannel)
+        parent.__class__ = _MockForumChannel
+        parent.available_tags = [t1]
+        thread.parent = parent
+
+        def _utils_get(iterable, **kwargs):
+            for item in (iterable or []):
+                if all(getattr(item, k, None) == v for k, v in kwargs.items()):
+                    return item
+            return None
+        _mock_discord.utils.get = _utils_get
+
+        tag_input = MagicMock()
+        tag_input.id = None
+        tag_input.name = "nonexistent"
+        tag_input.emoji = "fire_emoji"
+
+        tags_data = MagicMock()
+        tags_data.tags = [tag_input]
+
+        mock_request = MagicMock()
+
+        with patch("api.routers.threads.resolve_bot", new_callable=AsyncMock) as mock_resolve, \
+             patch("api.routers.threads.find_thread_by_id") as mock_find, \
+             patch("api.routers.threads.discord", _mock_discord), \
+             patch("api.routers.threads.normalize_emoji", return_value="fire_emoji"):
+
+            mock_resolve.return_value = bot
+            mock_find.return_value = thread
+
+            from api.routers.threads import update_thread_tags
+            result = await update_thread_tags(mock_request, 1234567890, tags_data)
+            assert result.status == "updated"
+
+    async def test_tag_available_tag_emoji_is_none_skipped(self):
+        """Available tag with emoji=None is skipped in emoji scan (line 395-396)."""
+        from tests.mocks.discord_mock_utils import DiscordMockUtils as DMU
+
+        bot = DiscordMockUtils.create_mock_bot(user_id=123456789, username="TestBot")
+        thread = create_mock_thread(1234567890)
+
+        # First tag has no emoji, second has matching emoji
+        t1 = DMU.create_mock_forum_tag(tag_id=111, name="no-emoji", channel_id=555555555)
+        t1.emoji = None
+
+        t2 = DMU.create_mock_forum_tag(tag_id=222, name="has-emoji", channel_id=555555555)
+        t2.emoji = MagicMock()
+        t2.emoji.name = "target_emoji"
+
+        parent = MagicMock(spec=_MockForumChannel)
+        parent.__class__ = _MockForumChannel
+        parent.available_tags = [t1, t2]
+        thread.parent = parent
+
+        def _utils_get(iterable, **kwargs):
+            for item in (iterable or []):
+                if all(getattr(item, k, None) == v for k, v in kwargs.items()):
+                    return item
+            return None
+        _mock_discord.utils.get = _utils_get
+
+        tag_input = MagicMock()
+        tag_input.id = None
+        tag_input.name = "nonexistent"
+        tag_input.emoji = "target_emoji"
+
+        tags_data = MagicMock()
+        tags_data.tags = [tag_input]
+
+        mock_request = MagicMock()
+
+        with patch("api.routers.threads.resolve_bot", new_callable=AsyncMock) as mock_resolve, \
+             patch("api.routers.threads.find_thread_by_id") as mock_find, \
+             patch("api.routers.threads.discord", _mock_discord), \
+             patch("api.routers.threads.normalize_emoji", return_value="target_emoji"):
+
+            mock_resolve.return_value = bot
+            mock_find.return_value = thread
+
+            from api.routers.threads import update_thread_tags
+            result = await update_thread_tags(mock_request, 1234567890, tags_data)
+            assert result.status == "updated"

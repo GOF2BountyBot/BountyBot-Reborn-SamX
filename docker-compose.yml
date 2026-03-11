@@ -1,6 +1,6 @@
 services:
   db:
-    image: postgres:latest
+    image: postgres:16
     container_name: bounty_db
     restart: unless-stopped
     networks:

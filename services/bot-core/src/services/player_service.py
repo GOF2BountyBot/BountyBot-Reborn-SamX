@@ -121,7 +121,7 @@ class PlayerService:
         new_credits: int,
         update_lifetime: bool = True
     ) -> Player:
-        """Update player new_credits and optionally lifetime new_credits."""
+        """Update player credits and optionally lifetime credits."""
         try:
             player = await self.player_repo.get_by_id(db, player_id)
             if not player:
@@ -130,16 +130,16 @@ class PlayerService:
             if new_credits < 0:
                 raise ValueError("Credits cannot be negative")
 
-            # Update lifetime new_credits if this is an increase
-            if update_lifetime and new_credits > player.new_credits:
-                credit_increase = new_credits - player.new_credits
+            # Update lifetime credits if this is an increase
+            if update_lifetime and new_credits > player.credits:
+                credit_increase = new_credits - player.credits
                 player.lifetime_credits += credit_increase
 
-            player.new_credits = new_credits
+            player.credits = new_credits
             await db.commit()
             await db.refresh(player)
 
-            flogger.debug(f"Updated new_credits for player {player_id}: {new_credits}")
+            flogger.debug(f"Updated credits for player {player_id}: {new_credits}")
             return player
 
         except Exception as e:

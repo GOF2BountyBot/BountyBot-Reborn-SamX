@@ -52,10 +52,9 @@ jobs:
           cache-dependency-path: services/discord-gateway/requirements.txt
 
       # ruff is not in requirements.txt (it's a dev/CI-only tool), so we
-      # install it separately.  Pin to a specific minor version for
-      # reproducible CI; bump intentionally.
+      # install it separately.  Pin to a specific version for reproducible CI.
       - name: Install ruff
-        run: pip install "ruff>=0.4,<1"
+        run: pip install "ruff==0.15.0"
 
       # --output-format=github annotates PRs with inline lint warnings.
       # Exit code 1 if any violations are found → build fails.

@@ -9,16 +9,14 @@ Uncovered lines:
   161       (get_bot — request.app.state.bot accessor)
 """
 
-import pytest
 import asyncio
 import importlib
-import sys
 import os
+import sys
 import types
-from contextlib import asynccontextmanager
-from unittest.mock import MagicMock, AsyncMock, patch, call
+from unittest.mock import AsyncMock, MagicMock, patch
 
-from tests.mocks.discord_mock_utils import DiscordMockUtils
+import pytest
 
 # ── Mock shared.bblogger ─────────────────────────────────────────────────────
 _mock_shared = types.ModuleType("shared")
@@ -150,7 +148,7 @@ class TestLifespan:
 
     def test_lifespan_startup_creates_bot_task(self, bot_module):
         """lifespan startup should create bot task and set app.state.bot."""
-        from bot import lifespan, GatewayBot
+        from bot import GatewayBot, lifespan
         from fastapi import FastAPI
 
         app = FastAPI()
@@ -176,7 +174,7 @@ class TestLifespan:
 
     def test_lifespan_shutdown_closes_bot(self, bot_module):
         """lifespan shutdown should close bot and cancel task."""
-        from bot import lifespan, GatewayBot
+        from bot import GatewayBot, lifespan
         from fastapi import FastAPI
 
         app = FastAPI()
@@ -201,7 +199,7 @@ class TestLifespan:
 
     def test_lifespan_shutdown_handles_cancelled_error(self, bot_module):
         """lifespan shutdown should handle CancelledError from awaiting task."""
-        from bot import lifespan, GatewayBot
+        from bot import GatewayBot, lifespan
         from fastapi import FastAPI
 
         app = FastAPI()
@@ -236,7 +234,7 @@ class TestCreateApp:
         """create_app should return a FastAPI application."""
         from fastapi import FastAPI
 
-        with patch("bot.lifespan") as mock_lifespan, \
+        with patch("bot.lifespan"), \
              patch("importlib.import_module") as mock_import, \
              patch("pkgutil.iter_modules", return_value=[]):
             mock_import.return_value = MagicMock(__path__=[])
@@ -247,7 +245,7 @@ class TestCreateApp:
         """create_app should add CORS middleware."""
         from fastapi.middleware.cors import CORSMiddleware
 
-        with patch("bot.lifespan") as mock_lifespan, \
+        with patch("bot.lifespan"), \
              patch("importlib.import_module") as mock_import, \
              patch("pkgutil.iter_modules", return_value=[]):
             mock_import.return_value = MagicMock(__path__=[])
@@ -283,7 +281,7 @@ class TestCreateApp:
             app.router.lifespan_context = None
 
             client = TestClient(app, raise_server_exceptions=False)
-            response = client.get("/")
+            _response = client.get("/")
             # Either 200 or startup error — we just verify the route exists
             route_paths = [r.path for r in app.routes]
             assert "/" in route_paths

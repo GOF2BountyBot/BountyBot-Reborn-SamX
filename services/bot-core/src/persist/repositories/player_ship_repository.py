@@ -8,10 +8,11 @@ ship ownership, loadout management, and active ship tracking.
 from typing import Any, Dict, List, Optional
 
 from shared import bblogger
-from persist.interfaces.repository_interface import IRepository
-from persist.models.player_ship import PlayerShip
 from sqlalchemy import and_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
+
+from persist.interfaces.repository_interface import IRepository
+from persist.models.player_ship import PlayerShip
 
 flogger = bblogger.get_logger("ship-repository")
 

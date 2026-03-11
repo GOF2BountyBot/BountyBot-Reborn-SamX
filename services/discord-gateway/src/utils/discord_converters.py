@@ -9,13 +9,13 @@ All converters are completely generic and contain no business logic.
 from typing import Any, Dict, Optional, Union
 
 import discord
-from shared import bblogger
 from api.schemas.channel_schemas import Category, Channel, Thread
 from api.schemas.guild_schemas import Guild
 from api.schemas.message_schemas import Message, MessageSummary
 from api.schemas.permission_schemas import PermissionOverwrite
 from api.schemas.role_schemas import Role
 from api.schemas.user_schemas import Member, User
+from shared import bblogger
 
 from utils.discord_helpers import tag_to_dict
 from utils.embed_converter import EmbedConverter

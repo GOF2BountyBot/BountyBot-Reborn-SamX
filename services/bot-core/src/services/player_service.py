@@ -5,15 +5,15 @@ Handles business logic for player management including creation,
 progression, and guild-isolated operations.
 """
 
-from typing import List, Dict, Any
-from sqlalchemy.ext.asyncio import AsyncSession
+from typing import Any, Dict, List
 
-from shared import bblogger
-from persist.repositories.user_repository import UserRepository
-from persist.repositories.player_repository import PlayerRepository
-from persist.repositories.config_repository import ConfigRepository
 from persist.models.player import Player
 from persist.models.user import User
+from persist.repositories.config_repository import ConfigRepository
+from persist.repositories.player_repository import PlayerRepository
+from persist.repositories.user_repository import UserRepository
+from shared import bblogger
+from sqlalchemy.ext.asyncio import AsyncSession
 
 flogger = bblogger.get_logger("player-service")
 
@@ -87,8 +87,8 @@ class PlayerService:
     async def _create_starter_loadout(self, db: AsyncSession, player: Player) -> None:
         """Create the starter ship and equipment for a new player."""
         try:
-            from persist.repositories.ship_repository import ShipRepository
             from persist.repositories.inventory_repository import InventoryRepository
+            from persist.repositories.ship_repository import ShipRepository
 
             ship_repo = ShipRepository()
             _inventory_repo = InventoryRepository()

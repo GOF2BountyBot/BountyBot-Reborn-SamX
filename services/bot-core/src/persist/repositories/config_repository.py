@@ -8,10 +8,11 @@ guild configuration management, settings persistence, and defaults.
 from typing import Any, Dict, List, Optional
 
 from shared import bblogger
-from persist.interfaces.repository_interface import IRepository
-from persist.models.guild_config import GuildConfig
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+
+from persist.interfaces.repository_interface import IRepository
+from persist.models.guild_config import GuildConfig
 
 flogger = bblogger.get_logger("config-repository")
 

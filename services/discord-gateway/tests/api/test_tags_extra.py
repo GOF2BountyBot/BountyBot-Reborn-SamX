@@ -20,15 +20,15 @@ Targets remaining uncovered lines after test_tags_extended.py:
   432-434 - outer exception in delete_tag
 """
 
-import pytest
 import importlib
-from unittest.mock import MagicMock, AsyncMock, patch
+import os
+import sys
+import types
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
 from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
-import sys
-import os
-import types
-from datetime import datetime
 
 from tests.mocks.discord_mock_utils import DiscordMockUtils
 
@@ -267,7 +267,7 @@ class TestCreateForumTagPayloadPaths:
              patch("api.routers.tags.ChannelConverter") as mock_converter, \
              patch("api.routers.tags.get_entity_or_404", new_callable=AsyncMock) as mock_get_entity, \
              patch("api.routers.tags.discord", _mock_discord), \
-             patch("api.routers.tags.normalize_emoji", return_value="🎯") as mock_norm:
+             patch("api.routers.tags.normalize_emoji", return_value="🎯"):
 
             async def resolve(req):
                 return bot

@@ -45,14 +45,13 @@ evaluates to ``False`` when empty (``len == 0``).  Tests should assert
 ``bool(proxy)`` rather than ``proxy is None``.
 """
 
-import asyncio
 from datetime import datetime
-from unittest.mock import MagicMock, AsyncMock, patch
-from typing import Any, Dict, List, Optional, Union, Type, Callable
+from typing import Any, Dict, List, Optional, Type, Union
+from unittest.mock import AsyncMock, MagicMock, patch
+
 import discord
 from discord.embeds import EmbedProxy
 from discord.ext import commands
-
 
 # ---------------------------------------------------------------------------
 # Internal helpers

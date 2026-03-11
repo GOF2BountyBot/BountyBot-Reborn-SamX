@@ -7,7 +7,11 @@ purchasing, selling, and shop refresh operations.
 
 from typing import Any, Dict, List, Optional
 
+from fastapi import APIRouter, Depends, HTTPException, Query, status
+from persist.database.manager import get_db_session
+from services.shop_service import ShopService
 from shared import bblogger
+
 from api.schemas.shops_schema import (
     PurchaseRequest,
     RefreshShopRequest,
@@ -16,9 +20,6 @@ from api.schemas.shops_schema import (
     ShopSummaryResponse,
     TransactionResponse,
 )
-from fastapi import APIRouter, Depends, HTTPException, Query, status
-from persist.database.manager import get_db_session
-from services.shop_service import ShopService
 
 flogger = bblogger.get_logger("shops-api-router")
 

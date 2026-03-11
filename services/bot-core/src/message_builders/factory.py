@@ -8,6 +8,7 @@ of message-specific payload builders.
 from typing import Dict, List, Type
 
 from shared import bblogger
+
 from message_builders.base import MessagePayloadBuilder
 from message_builders.builders.time_announcement import TimeAnnouncementBuilder
 

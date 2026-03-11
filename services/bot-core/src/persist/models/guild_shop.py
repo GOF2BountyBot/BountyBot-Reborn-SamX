@@ -7,10 +7,11 @@ Each guild has four shops (one per tier) with separate inventories and refresh s
 
 from datetime import UTC, datetime
 
-from persist.database.tablenames import TableNames
-from persist.models.base import Base
 from sqlalchemy import BigInteger, DateTime, ForeignKey, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
+
+from persist.database.tablenames import TableNames
+from persist.models.base import Base
 
 
 class GuildShop(Base):

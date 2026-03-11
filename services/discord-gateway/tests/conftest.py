@@ -1,10 +1,9 @@
 """Service-specific fixtures for discord-gateway tests with comprehensive test isolation."""
-import sys
 import os
+import sys
 import types
-from unittest.mock import MagicMock, patch
-from contextlib import asynccontextmanager
 from typing import Any, Generator
+from unittest.mock import MagicMock, patch
 
 # ---------------------------------------------------------------------------
 # Mock shared.bblogger BEFORE any application imports.
@@ -40,12 +39,12 @@ sys.modules["shared.bblogger"] = _mock_bblogger
 # Now it is safe to add the src directory and import application code.
 # ---------------------------------------------------------------------------
 
+from unittest.mock import AsyncMock
+
+import discord
 import pytest
-from unittest.mock import AsyncMock, patch
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-import discord
-import httpx
 
 # ---------------------------------------------------------------------------
 # Save references to the *real* discord packages here, before any test file
@@ -58,8 +57,10 @@ import httpx
 # ---------------------------------------------------------------------------
 _REAL_DISCORD = discord
 import discord.ext as _real_discord_ext
+
 _REAL_DISCORD_EXT = _real_discord_ext
 import discord.ext.commands as _real_discord_ext_commands
+
 _REAL_DISCORD_EXT_COMMANDS = _real_discord_ext_commands
 
 # Add the src directory to the path so imports work
@@ -136,10 +137,10 @@ def test_app() -> Generator[FastAPI, None, None]:
     app = FastAPI(title="Discord Gateway API Test")
 
     # Import and register all routers
-    from api.routers.health import router as health_router
     from api.routers.categories import router as categories_router
     from api.routers.channels import router as channels_router
     from api.routers.guilds import router as guilds_router
+    from api.routers.health import router as health_router
     from api.routers.messages import router as messages_router
     from api.routers.permissions import router as permissions_router
     from api.routers.roles import router as roles_router

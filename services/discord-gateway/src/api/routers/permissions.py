@@ -7,27 +7,8 @@ with simplified URIs and consolidated permission operations.
 
 from typing import Any, List, Tuple
 
-from shared import bblogger
-from api.schemas.base_schemas import DeleteResponse
-from api.schemas.permission_schemas import (
-    BotPermissionSummaryResponse,
-    CalculatePermissionsRequest,
-    CalculatePermissionsResponse,
-    ComprehensivePermissionCheckData,
-    ComprehensivePermissionCheckRequest,
-    ComprehensivePermissionCheckResponse,
-    NamesToValueRequest,
-    NamesToValueResponse,
-    PermissionFlagListResponse,
-    PermissionGrant,
-    PermissionGrantSource,
-    PermissionOverwriteRequest,
-    PermissionOverwriteResponse,
-    ValueToNamesRequest,
-    ValueToNamesResponse,
-)
 from fastapi import APIRouter, HTTPException, Request, status
-
+from shared import bblogger
 from utils.discord_converters import PermissionConverter
 from utils.discord_helpers import handle_discord_exception, resolve_bot
 from utils.permission_utils import (
@@ -45,6 +26,25 @@ from utils.permission_utils import (
     get_permission_names_by_value,
     get_role_permissions,
     get_user_permissions,
+)
+
+from api.schemas.base_schemas import DeleteResponse
+from api.schemas.permission_schemas import (
+    BotPermissionSummaryResponse,
+    CalculatePermissionsRequest,
+    CalculatePermissionsResponse,
+    ComprehensivePermissionCheckData,
+    ComprehensivePermissionCheckRequest,
+    ComprehensivePermissionCheckResponse,
+    NamesToValueRequest,
+    NamesToValueResponse,
+    PermissionFlagListResponse,
+    PermissionGrant,
+    PermissionGrantSource,
+    PermissionOverwriteRequest,
+    PermissionOverwriteResponse,
+    ValueToNamesRequest,
+    ValueToNamesResponse,
 )
 
 flogger = bblogger.get_logger("gateway-permission-router")

@@ -21,15 +21,16 @@ Uncovered lines targeted:
   threads.py 610-656  - delete_thread_message: whole endpoint
 """
 
-import pytest
 import importlib
-from unittest.mock import MagicMock, AsyncMock, patch
-from fastapi import FastAPI, HTTPException
-from fastapi.testclient import TestClient
-import sys
 import os
+import sys
 import types
 from datetime import datetime
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
+from fastapi import FastAPI, HTTPException
+from fastapi.testclient import TestClient
 
 from tests.mocks.discord_mock_utils import DiscordMockUtils
 
@@ -720,7 +721,7 @@ class TestThreadLookupFallbacks:
 
         with patch("api.routers.threads.resolve_bot", new_callable=AsyncMock) as mock_resolve, \
              patch("api.routers.threads.handle_discord_exception", new_callable=AsyncMock), \
-             patch("api.routers.threads.find_thread_by_id", return_value=None) as mock_find, \
+             patch("api.routers.threads.find_thread_by_id", return_value=None), \
              patch("api.routers.threads.ChannelConverter") as mock_cc, \
              patch("api.routers.threads.MessageConverter") as mock_mc, \
              patch("api.routers.threads.EmbedConverter") as mock_ec:

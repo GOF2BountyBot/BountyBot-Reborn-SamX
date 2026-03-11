@@ -6,16 +6,16 @@ with simplified URIs that don't require guild context.
 """
 
 import discord
+from fastapi import APIRouter, HTTPException, Query, Request, status
 from shared import bblogger
+from utils.discord_converters import RoleConverter, UserConverter
+from utils.discord_helpers import handle_discord_exception, resolve_bot
+from utils.permission_utils import PERMISSION_FLAGS, check_permission
+
 from api.schemas.base_schemas import DeleteResponse, SuccessResponse
 from api.schemas.permission_schemas import PermissionCheckResponse
 from api.schemas.role_schemas import RoleResponse, RoleUpdateRequest
 from api.schemas.user_schemas import MemberListResponse
-from fastapi import APIRouter, HTTPException, Query, Request, status
-
-from utils.discord_converters import RoleConverter, UserConverter
-from utils.discord_helpers import handle_discord_exception, resolve_bot
-from utils.permission_utils import PERMISSION_FLAGS, check_permission
 
 flogger = bblogger.get_logger("gateway-role-router")
 

@@ -1,13 +1,14 @@
 """Extended tests for the channels API endpoints — boosting coverage from 26% to 70%+."""
 
-import pytest
-from unittest.mock import MagicMock, AsyncMock, patch
-from fastapi import FastAPI, HTTPException
-from fastapi.testclient import TestClient
-import sys
 import os
+import sys
 import types
 from datetime import datetime
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
+from fastapi import FastAPI, HTTPException
+from fastapi.testclient import TestClient
 
 # Import discord_mock_utils for consistent mock patterns
 from tests.mocks.discord_mock_utils import DiscordMockUtils
@@ -333,8 +334,6 @@ class TestGetChannelCategoryRejection:
         isinstance(channel, discord.CategoryChannel) evaluates to True for our
         mock category channel.
         """
-        import importlib
-        import api.routers.channels as channels_module
 
         # Create a category channel mock
         category_ch = create_mock_category(1111111111)
@@ -1085,7 +1084,7 @@ class TestListForumTags:
         with patch("api.routers.channels.get_entity_or_404", new_callable=AsyncMock) as mock_gea, \
              patch("api.routers.channels.resolve_bot", new_callable=AsyncMock) as mock_rb, \
              patch("api.routers.channels.handle_discord_exception", new_callable=AsyncMock), \
-             patch("api.routers.channels.ChannelConverter") as mock_cc, \
+             patch("api.routers.channels.ChannelConverter"), \
              patch("api.routers.channels.PermissionConverter"), \
              patch("api.routers.channels.validate_channel_type"), \
              patch("api.routers.channels.EmbedConverter"), \

@@ -1,9 +1,7 @@
 import pytest
+from api.schemas.user_schemas import Member, MemberListResponse, MemberResponse, MemberUpdateRequest, User, UserResponse
 from pydantic import ValidationError
-from api.schemas.user_schemas import (
-    User, Member, MemberUpdateRequest,
-    UserResponse, MemberResponse, MemberListResponse
-)
+
 
 class TestUser:
     def test_valid_instantiation(self):

@@ -1,5 +1,6 @@
 
 from shared import bblogger
+
 from persist.models.weapon import Weapon
 from persist.repositories.generic_repository import GenericRepository
 

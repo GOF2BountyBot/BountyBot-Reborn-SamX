@@ -1,6 +1,7 @@
 """Root-level pytest fixtures shared across all services."""
-import pytest
 import asyncio
+
+import pytest
 
 
 @pytest.fixture(scope="session")

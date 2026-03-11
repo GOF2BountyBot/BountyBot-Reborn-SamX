@@ -1,11 +1,18 @@
-import pytest
 from datetime import datetime
-from pydantic import ValidationError
+
+import pytest
 from api.schemas.message_schemas import (
-    EmbedField, EmbedPayload, Message, MessageSummary,
-    MessageCreateRequest, MessageUpdateRequest,
-    MessageResponse, MessageListResponse
+    EmbedField,
+    EmbedPayload,
+    Message,
+    MessageCreateRequest,
+    MessageListResponse,
+    MessageResponse,
+    MessageSummary,
+    MessageUpdateRequest,
 )
+from pydantic import ValidationError
+
 
 class TestEmbedField:
     def test_required_fields(self):

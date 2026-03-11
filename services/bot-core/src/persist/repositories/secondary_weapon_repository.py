@@ -1,10 +1,11 @@
 from typing import Any
 
 from shared import bblogger
-from persist.models.secondary_weapon import SecondaryWeapon
-from persist.repositories.generic_repository import GenericRepository
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+
+from persist.models.secondary_weapon import SecondaryWeapon
+from persist.repositories.generic_repository import GenericRepository
 
 flogger = bblogger.get_logger("bot-secondary-weapon-repository")
 

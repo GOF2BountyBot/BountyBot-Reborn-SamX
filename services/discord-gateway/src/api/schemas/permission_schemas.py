@@ -8,8 +8,9 @@ and comprehensive permission evaluation schemas.
 
 from typing import Dict, List, Optional
 
-from api.schemas.base_schemas import BaseResponse, BaseUpdateRequest, PaginatedResponse
 from pydantic import BaseModel, Field, field_validator, model_validator
+
+from api.schemas.base_schemas import BaseResponse, BaseUpdateRequest, PaginatedResponse
 
 
 # -----------------------------------------------------------------------------

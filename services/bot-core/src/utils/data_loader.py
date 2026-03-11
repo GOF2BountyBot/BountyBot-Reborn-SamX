@@ -2,8 +2,8 @@ import json
 from importlib import import_module
 from pathlib import Path
 
-from shared import bblogger
 from persist.database.manager import db_manager
+from shared import bblogger
 
 from utils.emoji_service import EmojiService
 

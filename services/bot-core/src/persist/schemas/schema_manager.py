@@ -14,9 +14,10 @@ Key Features:
 """
 
 from shared import bblogger
+from sqlalchemy import select
+
 from persist.models.base import Base
 from persist.models.schema_version import SchemaVersion
-from sqlalchemy import select
 
 flogger = bblogger.get_logger("bot-schema-manager")
 

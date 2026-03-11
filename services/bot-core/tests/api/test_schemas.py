@@ -1,5 +1,5 @@
 """Tests for health check Pydantic schemas."""
-from datetime import datetime, UTC
+from datetime import UTC, datetime
 
 from api.schemas.health_schema import HealthResponse, SimpleHealthResponse
 

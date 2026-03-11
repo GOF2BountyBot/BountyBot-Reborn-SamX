@@ -5,15 +5,15 @@ This module provides comprehensive tests for the messages router endpoints,
 including message creation, retrieval, updating, and deletion.
 """
 
-import pytest
-import importlib
-from unittest.mock import MagicMock, AsyncMock, patch
-from fastapi import FastAPI, Request
-from fastapi.testclient import TestClient
-import sys
 import os
+import sys
 import types
 from datetime import datetime
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
 
 # Import discord_mock_utils for consistent mock patterns
 from tests.mocks.discord_mock_utils import DiscordMockUtils
@@ -49,8 +49,6 @@ for _mod in ["discord", "discord.ext", "discord.ext.commands", "discord.app_comm
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
-import discord
-from discord.ext import commands
 
 
 def create_mock_message(

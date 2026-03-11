@@ -20,15 +20,17 @@ from contextlib import asynccontextmanager
 
 # Import the routers package
 from api import routers
-from shared import bblogger
 from apscheduler.jobstores.sqlalchemy import SQLAlchemyJobStore
+
 # Scheduler
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+
 # Database management
 from persist.database.manager import db_manager
 from persist.schemas.schema_manager import initialize_schema
+from shared import bblogger
 from sqlalchemy import create_engine
 from sqlalchemy.ext.asyncio import create_async_engine
 

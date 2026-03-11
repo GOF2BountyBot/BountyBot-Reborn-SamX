@@ -3,8 +3,8 @@ import time
 from typing import Any, Callable, Dict, Optional
 
 import discord
-from shared import bblogger
 from discord.ext import commands
+from shared import bblogger
 
 
 class CommandValidator:

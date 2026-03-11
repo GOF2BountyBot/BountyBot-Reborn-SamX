@@ -18,14 +18,15 @@ Uncovered lines after test_tags_extended.py + test_tags_extra.py (65%):
   421-422 - delete: deleted=False → 500 (unreachable in practice, guarded)
 """
 
-import pytest
 import importlib
-from unittest.mock import MagicMock, AsyncMock, patch
+import os
+import sys
+import types
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
 from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
-import sys
-import os
-import types
 
 from tests.mocks.discord_mock_utils import DiscordMockUtils
 
@@ -747,7 +748,7 @@ class TestUpdateTagDeep:
 
         # First normalize call is for the request emoji (in update_kwargs) → succeed
         # Second call is for the best-effort reflect → raise
-        side_effects = [MagicMock(return_value="🚀"), ValueError("bad")]
+        _side_effects = [MagicMock(return_value="🚀"), ValueError("bad")]
         call_seq = [0]
 
         def _norm(emoji):

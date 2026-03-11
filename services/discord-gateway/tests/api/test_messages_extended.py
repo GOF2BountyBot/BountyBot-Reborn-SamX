@@ -1,13 +1,13 @@
 """Extended tests for the messages API endpoints — boosting coverage from 50% to 85%+."""
 
-import pytest
-from unittest.mock import MagicMock, AsyncMock, patch
-from fastapi import FastAPI, HTTPException
-from fastapi.testclient import TestClient
-import sys
 import os
+import sys
 import types
-from datetime import datetime
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
 
 # Import discord_mock_utils for consistent mock patterns
 from tests.mocks.discord_mock_utils import DiscordMockUtils
@@ -44,8 +44,6 @@ for _mod in ["discord", "discord.ext", "discord.ext.commands", "discord.app_comm
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "src"))
 
-import discord
-from discord.ext import commands
 
 
 def _evict_discord_modules():
@@ -499,7 +497,6 @@ class TestFindMessageHelper:
         sys.modules["shared.bblogger"] = _mock_bblogger
 
         # Re-import discord to get real NotFound
-        import discord as real_discord
 
         from api.routers.messages import _find_message
 

@@ -13,12 +13,13 @@ import threading
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-# Import the routers package
-from api import routers
-from shared import bblogger
 import uvicorn
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from shared import bblogger
+
+# Import the routers package
+from api import routers
 
 flogger = bblogger.get_logger("discord-gateway-api-server")
 

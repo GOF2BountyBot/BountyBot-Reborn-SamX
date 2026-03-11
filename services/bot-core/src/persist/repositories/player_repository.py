@@ -8,10 +8,11 @@ player management, progression tracking, and statistics.
 from typing import List, Optional
 
 from shared import bblogger
-from persist.interfaces.repository_interface import IRepository
-from persist.models.player import Player
 from sqlalchemy import and_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
+
+from persist.interfaces.repository_interface import IRepository
+from persist.models.player import Player
 
 flogger = bblogger.get_logger("player-repository")
 

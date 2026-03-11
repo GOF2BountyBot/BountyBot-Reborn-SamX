@@ -1,6 +1,17 @@
 from typing import Any, AsyncGenerator, Dict, List
 
+from fastapi import APIRouter, Depends, HTTPException
+from persist.database.manager import db_manager
+from persist.repositories.criminal_repository import CriminalRepository
+from persist.repositories.module_repository import ModuleRepository
+from persist.repositories.primary_weapon_repository import PrimaryWeaponRepository
+from persist.repositories.secondary_weapon_repository import SecondaryWeaponRepository
+from persist.repositories.ship_repository import ShipRepository
+from persist.repositories.system_repository import SystemRepository
+from persist.repositories.turret_weapon_repository import TurretWeaponRepository
 from shared import bblogger
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from api.routers.data import DataCategory
 from api.schemas.about_schema import (
     CriminalResponse,
@@ -11,16 +22,6 @@ from api.schemas.about_schema import (
     SystemResponse,
     TurretWeaponResponse,
 )
-from fastapi import APIRouter, Depends, HTTPException
-from persist.database.manager import db_manager
-from persist.repositories.criminal_repository import CriminalRepository
-from persist.repositories.module_repository import ModuleRepository
-from persist.repositories.primary_weapon_repository import PrimaryWeaponRepository
-from persist.repositories.secondary_weapon_repository import SecondaryWeaponRepository
-from persist.repositories.ship_repository import ShipRepository
-from persist.repositories.system_repository import SystemRepository
-from persist.repositories.turret_weapon_repository import TurretWeaponRepository
-from sqlalchemy.ext.asyncio import AsyncSession
 
 flogger = bblogger.get_logger("bot-about-router")
 

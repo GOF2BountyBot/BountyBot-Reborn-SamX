@@ -14,15 +14,15 @@ Uncovered lines:
   241-285  (update_category_permissions — all paths)
 """
 
-import pytest
 import importlib
-from unittest.mock import MagicMock, AsyncMock, patch
-from fastapi import FastAPI, HTTPException, status
-from fastapi.testclient import TestClient
-import sys
 import os
+import sys
 import types
-from datetime import datetime
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
+from fastapi import FastAPI, HTTPException
+from fastapi.testclient import TestClient
 
 from tests.mocks.discord_mock_utils import DiscordMockUtils
 

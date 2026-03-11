@@ -1,14 +1,11 @@
 """Tests for command utility functions and classes."""
-import pytest
-from unittest.mock import MagicMock, AsyncMock, patch
 import os
 import time
+from unittest.mock import AsyncMock, MagicMock, patch
 
-from utils.command_utils import (
-    CommandValidator,
-    CommandHandler,
-    get_command_handler
-)
+import pytest
+from utils.command_utils import CommandHandler, CommandValidator, get_command_handler
+
 from tests.mocks.discord_mock_utils import DiscordMockUtils
 
 # Setup mock modules

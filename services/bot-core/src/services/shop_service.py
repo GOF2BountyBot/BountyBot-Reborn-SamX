@@ -8,16 +8,17 @@ Handles business logic for multi-tier shop management including:
 - Item pricing and availability
 """
 
-from typing import List, Dict, Any, Optional
-from datetime import datetime, UTC
-from sqlalchemy.ext.asyncio import AsyncSession
+import random
+from datetime import UTC, datetime
+from typing import Any, Dict, List, Optional
 
-from shared import bblogger
-from persist.repositories.shop_repository import ShopRepository
-from persist.repositories.config_repository import ConfigRepository
-from persist.repositories.player_repository import PlayerRepository
-from persist.repositories.inventory_repository import InventoryRepository
 from persist.models.guild_shop import GuildShop
+from persist.repositories.config_repository import ConfigRepository
+from persist.repositories.inventory_repository import InventoryRepository
+from persist.repositories.player_repository import PlayerRepository
+from persist.repositories.shop_repository import ShopRepository
+from shared import bblogger
+from sqlalchemy.ext.asyncio import AsyncSession
 
 flogger = bblogger.get_logger("shop-service")
 

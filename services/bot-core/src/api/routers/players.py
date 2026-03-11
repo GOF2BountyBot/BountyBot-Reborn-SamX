@@ -8,7 +8,11 @@ must be done via REST API.
 
 from typing import List, Optional
 
+from fastapi import APIRouter, Depends, HTTPException, status
+from persist.database.manager import get_db_session
+from services.player_service import PlayerService
 from shared import bblogger
+
 from api.schemas.players_schema import (
     CreatePlayerRequest,
     PlayerResponse,
@@ -16,9 +20,6 @@ from api.schemas.players_schema import (
     UpdateCreditsRequest,
     UpdateXPRequest,
 )
-from fastapi import APIRouter, Depends, HTTPException, status
-from persist.database.manager import get_db_session
-from services.player_service import PlayerService
 
 flogger = bblogger.get_logger("players-api-router")
 

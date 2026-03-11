@@ -1,7 +1,8 @@
 """Tests for guild Pydantic schemas."""
 import pytest
+from api.schemas.guild_schemas import Guild, GuildListResponse, GuildResponse, GuildSummary
 from pydantic import ValidationError
-from api.schemas.guild_schemas import Guild, GuildResponse, GuildListResponse, GuildSummary
+
 
 class TestGuild:
     def test_valid_instantiation(self):

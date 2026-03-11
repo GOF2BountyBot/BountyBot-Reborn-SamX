@@ -7,8 +7,9 @@ including guild listings, details, and member management.
 
 from typing import List, Optional
 
-from api.schemas.base_schemas import BaseResponse, PaginatedResponse
 from pydantic import BaseModel, Field
+
+from api.schemas.base_schemas import BaseResponse, PaginatedResponse
 
 
 class Guild(BaseModel):

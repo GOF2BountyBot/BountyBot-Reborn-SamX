@@ -6,18 +6,18 @@ router discovery and comprehensive API documentation.
 
 """
 
-import os
 import importlib
-import pkgutil
-from pathlib import Path
-from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
-from contextlib import asynccontextmanager
-from shared import bblogger
 import logging as pyLogging
+import os
+import pkgutil
+from contextlib import asynccontextmanager
+from pathlib import Path
 
 # Import the routers package
 import routers
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+from shared import bblogger
 
 flogger = bblogger.get_logger("blender-main-script")
 

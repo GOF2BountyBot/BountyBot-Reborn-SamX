@@ -1,9 +1,10 @@
 from typing import Any
 
-from persist.database.tablenames import TableNames
-from persist.models.item import Item
 from sqlalchemy import JSON, ForeignKey, Integer
 from sqlalchemy.orm import Mapped, mapped_column
+
+from persist.database.tablenames import TableNames
+from persist.models.item import Item
 
 
 class Weapon(Item):

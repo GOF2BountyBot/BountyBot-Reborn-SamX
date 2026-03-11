@@ -5,17 +5,15 @@ This module provides comprehensive test coverage for the Embed conversion utilit
 including bidirectional conversion between JSON payloads and Discord embeds.
 """
 
-import pytest
-from unittest.mock import MagicMock, AsyncMock, patch
-from fastapi import HTTPException
-import sys
 import os
+import sys
 import types
 from datetime import datetime, timezone
-from unittest.mock import PropertyMock
+from unittest.mock import MagicMock
+
+import pytest
 
 from tests.mocks.discord_mock_utils import DiscordMockUtils
-
 
 _mock_shared = types.ModuleType("shared")
 _mock_shared.__path__ = []
@@ -163,7 +161,7 @@ class TestEmbedConverter:
     @pytest.fixture
     def mock_embed_payload(self):
         """Create a mock EmbedPayload."""
-        from api.schemas.message_schemas import EmbedPayload, EmbedField
+        from api.schemas.message_schemas import EmbedField, EmbedPayload
         return EmbedPayload(
             title="Test Title",
             description="Test Description",
@@ -482,9 +480,9 @@ class TestEmbedConverter:
 
     def test_payload_to_grid_embed_with_fields(self, mock_embed_payload):
         """Test that payload_to_grid_embed properly formats embed for grid layout."""
-        from utils.embed_converter import EmbedConverter
         # Add some fields to the payload
         from api.schemas.message_schemas import EmbedField
+        from utils.embed_converter import EmbedConverter
         field1 = EmbedField(name="Field 1", value="Value 1", inline=True)
         field2 = EmbedField(name="Field 2", value="Value 2", inline=True)
         mock_embed_payload.fields = [field1, field2]

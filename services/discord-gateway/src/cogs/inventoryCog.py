@@ -3,9 +3,9 @@ from typing import Optional
 
 import discord
 import httpx
-from shared import bblogger
 from discord import app_commands
 from discord.ext import commands
+from shared import bblogger
 
 # Set up logger
 flogger = bblogger.get_logger("discord-gateway-InventoryCog")

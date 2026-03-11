@@ -12,13 +12,14 @@ from typing import List
 from uuid import UUID
 
 import httpx
+from fastapi import APIRouter, HTTPException, Request, status
+from persist.repositories.discord_message_repository import DiscordMessageRepository
 from shared import bblogger
+
 from api.schemas.discord_message_schema import (
     DiscordMessageRequest,
     DiscordMessageResponse,
 )
-from fastapi import APIRouter, HTTPException, Request, status
-from persist.repositories.discord_message_repository import DiscordMessageRepository
 
 flogger = bblogger.get_logger("bot-discord-message-router")
 

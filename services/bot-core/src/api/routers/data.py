@@ -2,7 +2,6 @@ from enum import Enum
 from typing import List
 
 from fastapi import APIRouter, HTTPException
-
 from utils.data_loader import load_data
 
 

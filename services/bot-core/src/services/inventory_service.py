@@ -7,9 +7,9 @@ item storage, quantity tracking, and inventory operations.
 
 from typing import Any, Dict, List, Optional
 
-from shared import bblogger
 from persist.repositories.inventory_repository import InventoryRepository
 from persist.repositories.player_repository import PlayerRepository
+from shared import bblogger
 from sqlalchemy.ext.asyncio import AsyncSession
 
 flogger = bblogger.get_logger("inventory-service")

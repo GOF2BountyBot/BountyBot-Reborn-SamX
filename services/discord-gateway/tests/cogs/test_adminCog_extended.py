@@ -4,12 +4,13 @@ Covers uncovered paths: add_credits, set_xp, reset, admin_config,
 admin_guild_stats, admin_refresh_shop, error handlers, cog_unload, tier_autocomplete.
 """
 
-import pytest
-from unittest.mock import MagicMock, AsyncMock, patch, PropertyMock
-import sys
-import os
-import types
 import asyncio
+import os
+import sys
+import types
+from unittest.mock import AsyncMock, MagicMock, PropertyMock, patch
+
+import pytest
 
 # Import discord_mock_utils for consistent mock patterns
 from tests.mocks.discord_mock_utils import DiscordMockUtils
@@ -51,8 +52,6 @@ for _mod in ["discord", "discord.ext", "discord.ext.commands", "discord.app_comm
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "src"))
 
-import discord
-from discord.ext import commands
 
 
 @pytest.fixture
@@ -972,6 +971,7 @@ class TestIsAdminPredicate:
 
         # Import the module and directly test the predicate
         import importlib
+
         import cogs.adminCog as _adm
         importlib.reload(_adm)
 

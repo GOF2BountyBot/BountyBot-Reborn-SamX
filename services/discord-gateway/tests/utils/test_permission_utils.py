@@ -1,35 +1,34 @@
 """Tests for permission utility functions."""
-import pytest
 from unittest.mock import MagicMock
+
+import pytest
 from utils.permission_utils import (
     PERMISSION_FLAGS,
     PermissionSource,
+    _find_admin_source,
+    _find_channel_permission_source,
+    _find_permission_source,
+    calculate_effective_permissions,
     check_permission,
     check_permissions,
-    has_administrator,
-    calculate_effective_permissions,
-    permissions_to_dict,
-    get_permission_names_by_value,
     combine_permissions,
+    create_permission_overwrite,
+    evaluate_role_channel_permissions,
+    evaluate_role_guild_permissions,
+    evaluate_user_channel_permissions,
+    evaluate_user_guild_permissions,
     get_all_permissions,
+    get_category_permissions,
+    get_channel_permissions,
+    get_permission_names_by_value,
     get_role_permissions,
     get_user_permissions,
-    get_channel_permissions,
-    get_category_permissions,
-    create_permission_overwrite,
-    overwrite_to_dict,
+    has_administrator,
     has_channel_permission,
     has_guild_permission,
-    evaluate_user_guild_permissions,
-    evaluate_user_channel_permissions,
-    evaluate_role_guild_permissions,
-    evaluate_role_channel_permissions,
-    _find_admin_source,
-    _find_permission_source,
-    _find_channel_permission_source,
+    overwrite_to_dict,
+    permissions_to_dict,
 )
-from tests.mocks.discord_mock_utils import DiscordMockUtils
-
 
 # ---------------------------------------------------------------------------
 # check_permission

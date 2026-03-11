@@ -5,22 +5,23 @@ This module provides comprehensive test coverage for the Discord helper utilitie
 including bot resolution, error handling, entity retrieval, validation, and emoji normalization.
 """
 
-import pytest
-from unittest.mock import MagicMock, AsyncMock, patch
-from fastapi import HTTPException, status
-import sys
-import os
-import types
 import asyncio
-from unittest.mock import PropertyMock
-
-from tests.mocks.discord_mock_utils import DiscordMockUtils
+import os
+import sys
 
 # conftest.py imports real discord BEFORE any test file runs and saves it as
 # _REAL_DISCORD.  The sys.modules key for conftest varies by how pytest is
 # invoked ("conftest" for full-suite, "tests.conftest" for subset runs), so
 # we try both.
 import sys as _sys
+import types
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
+from fastapi import HTTPException, status
+
+from tests.mocks.discord_mock_utils import DiscordMockUtils
+
 _conftest_mod = _sys.modules.get("tests.conftest") or _sys.modules.get("conftest")
 _real_discord = _conftest_mod._REAL_DISCORD
 
@@ -1158,7 +1159,6 @@ class TestTagToDictExceptionPaths:
 
     def test_tag_to_dict_non_mapping_emoji_normalize_exception_uses_str_fallback(self):
         """tag_to_dict should use str(emoji) when normalize_emoji raises."""
-        from unittest.mock import patch
 
         class TagWithEmojiStr:
             id = 30

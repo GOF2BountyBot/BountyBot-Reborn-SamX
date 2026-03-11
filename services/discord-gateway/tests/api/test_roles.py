@@ -5,15 +5,16 @@ This module provides comprehensive test coverage for the roles router,
 including role management, member assignment, and permission checking.
 """
 
-import pytest
 import importlib
-from unittest.mock import MagicMock, AsyncMock, patch
-from fastapi import FastAPI, Request, HTTPException
-from fastapi.testclient import TestClient
-import sys
 import os
+import sys
 import types
 from datetime import datetime
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
 
 # Import discord_mock_utils for consistent mock patterns
 from tests.mocks.discord_mock_utils import DiscordMockUtils
@@ -131,7 +132,9 @@ def mock_bot():
             guild = MagicMock()
             guild.id = guild_id
             guild.get_role = MagicMock(side_effect=lambda x: create_mock_role(x, guild_id) if x == 123456789 else None)
-            guild.get_member = MagicMock(side_effect=lambda x: create_mock_member(x, guild_id) if x == 111111111 else None)
+            guild.get_member = MagicMock(
+                side_effect=lambda x: create_mock_member(x, guild_id) if x == 111111111 else None
+            )
             guild.fetch_member = AsyncMock(side_effect=lambda x: create_mock_member(x, guild_id))
             guild.members = []
             return guild

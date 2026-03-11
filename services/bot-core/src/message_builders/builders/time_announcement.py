@@ -10,6 +10,7 @@ from datetime import UTC, datetime
 from typing import Any, Dict, Optional
 
 from shared import bblogger
+
 from message_builders.base import MessagePayloadBuilder
 
 logger = bblogger.get_logger("time-announcement-builder")

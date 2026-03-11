@@ -1,17 +1,16 @@
 """Tests for the channels API endpoints."""
 
-import pytest
-from unittest.mock import MagicMock, AsyncMock, patch
-from fastapi import FastAPI, Request
-from fastapi.testclient import TestClient
-import sys
 import os
+import sys
 import types
-from datetime import datetime
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
 
 # Import discord_mock_utils for consistent mock patterns
 from tests.mocks.discord_mock_utils import DiscordMockUtils
-
 
 _mock_shared = types.ModuleType("shared")
 _mock_shared.__path__ = []

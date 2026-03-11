@@ -1,9 +1,7 @@
 import pytest
+from api.schemas.role_schemas import Role, RoleCreateRequest, RoleListResponse, RoleResponse, RoleUpdateRequest
 from pydantic import ValidationError
-from api.schemas.role_schemas import (
-    Role, RoleCreateRequest, RoleUpdateRequest,
-    RoleResponse, RoleListResponse
-)
+
 
 class TestRole:
     def test_valid(self):

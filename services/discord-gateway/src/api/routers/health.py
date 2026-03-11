@@ -10,9 +10,10 @@ import sys
 from datetime import UTC, datetime
 from typing import Any, Dict
 
-from shared import bblogger
-from api.schemas.base_schemas import BaseResponse
 from fastapi import APIRouter, Request, status
+from shared import bblogger
+
+from api.schemas.base_schemas import BaseResponse
 
 flogger = bblogger.get_logger("gateway-healthcheck-api-router")
 

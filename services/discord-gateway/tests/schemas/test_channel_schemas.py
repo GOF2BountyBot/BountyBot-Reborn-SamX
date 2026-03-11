@@ -1,11 +1,12 @@
 """Tests for channel Pydantic schemas."""
 import pytest
-from pydantic import ValidationError
 from api.schemas.channel_schemas import (
     ChannelCreateRequest,
-    ChannelUpdateRequest,
     ChannelResponse,
+    ChannelUpdateRequest,
 )
+from pydantic import ValidationError
+
 
 class TestChannelCreateRequest:
     def test_valid_instantiation(self):

@@ -24,3 +24,18 @@ filterwarnings = [
     "ignore:.*HTTP_422_UNPROCESSABLE_ENTITY.*:DeprecationWarning",
     "ignore:Pydantic serializer warnings.*:UserWarning",
 ]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 120
+exclude = [
+    "services/blender-service/src/lib/AEPi/**",
+    "api-test.py",
+]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I"]
+ignore = ["E712", "E402"]
+
+[tool.ruff.lint.per-file-ignores]
+"services/bot-core/src/persist/models/*.py" = ["F821"]

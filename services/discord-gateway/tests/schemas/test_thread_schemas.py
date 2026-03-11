@@ -1,13 +1,13 @@
 """Tests for thread Pydantic schemas."""
 import pytest
-from pydantic import ValidationError
 from api.schemas.channel_schemas import (
     Thread,
     ThreadCreateRequest,
-    ThreadUpdateRequest,
-    ThreadResponse,
     ThreadListResponse,
+    ThreadResponse,
+    ThreadUpdateRequest,
 )
+from pydantic import ValidationError
 
 VALID_THREAD = {
     "id": 1,

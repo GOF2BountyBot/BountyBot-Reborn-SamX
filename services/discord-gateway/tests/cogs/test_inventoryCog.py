@@ -1,11 +1,12 @@
 """Tests for inventoryCog — boosting coverage from 0% to 60%+."""
 
-import pytest
-from unittest.mock import MagicMock, AsyncMock
-import sys
-import os
-import types
 import asyncio
+import os
+import sys
+import types
+from unittest.mock import AsyncMock, MagicMock
+
+import pytest
 
 # Import discord_mock_utils for consistent mock patterns
 from tests.mocks.discord_mock_utils import DiscordMockUtils
@@ -51,8 +52,6 @@ for _mod in ["discord", "discord.ext", "discord.ext.commands", "discord.app_comm
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "src"))
 
-import discord
-from discord.ext import commands
 
 
 # ---------------------------------------------------------------------------
@@ -539,6 +538,528 @@ class TestCogSetup:
         added_arg = mock_bot.add_cog.call_args[0][0]
         from cogs.inventoryCog import InventoryCog
         assert isinstance(added_arg, InventoryCog)
+
+
+# ---------------------------------------------------------------------------
+# /search command
+# ---------------------------------------------------------------------------
+
+
+class TestSearchCommand:
+    """Tests for the /search slash command."""
+
+    def test_search_happy_path_single_type(self, mock_inventory_cog):
+        """search should display embed with matching items."""
+        interaction = _create_mock_interaction()
+
+        player_resp = MagicMock()
+        player_resp.raise_for_status = MagicMock()
+        player_resp.json.return_value = {"id": 1}
+
+        search_resp = MagicMock()
+        search_resp.raise_for_status = MagicMock()
+        search_resp.json.return_value = [
+            _make_inventory_item("LaserCannon", "weapon", 1),
+            _make_inventory_item("LaserRifle", "weapon", 3),
+        ]
+
+        mock_inventory_cog.http_client.post = AsyncMock(return_value=player_resp)
+        mock_inventory_cog.http_client.get = AsyncMock(return_value=search_resp)
+
+        asyncio.run(mock_inventory_cog.search.callback(
+            mock_inventory_cog, interaction, query="Laser"
+        ))
+
+        interaction.response.defer.assert_awaited_once_with(thinking=True)
+        interaction.followup.send.assert_awaited_once()
+        call_kwargs = interaction.followup.send.call_args[1]
+        assert "embed" in call_kwargs
+
+    def test_search_happy_path_multiple_types(self, mock_inventory_cog):
+        """search should group results by item type."""
+        interaction = _create_mock_interaction()
+
+        player_resp = MagicMock()
+        player_resp.raise_for_status = MagicMock()
+        player_resp.json.return_value = {"id": 1}
+
+        search_resp = MagicMock()
+        search_resp.raise_for_status = MagicMock()
+        search_resp.json.return_value = [
+            _make_inventory_item("LaserCannon", "weapon", 1),
+            _make_inventory_item("LaserShield", "module", 2),
+            _make_inventory_item("LaserTurret", "turret", 1),
+        ]
+
+        mock_inventory_cog.http_client.post = AsyncMock(return_value=player_resp)
+        mock_inventory_cog.http_client.get = AsyncMock(return_value=search_resp)
+
+        asyncio.run(mock_inventory_cog.search.callback(
+            mock_inventory_cog, interaction, query="Laser"
+        ))
+
+        interaction.followup.send.assert_awaited_once()
+        call_kwargs = interaction.followup.send.call_args[1]
+        assert "embed" in call_kwargs
+
+    def test_search_no_results(self, mock_inventory_cog):
+        """search should send ephemeral message when no items match."""
+        interaction = _create_mock_interaction()
+
+        player_resp = MagicMock()
+        player_resp.raise_for_status = MagicMock()
+        player_resp.json.return_value = {"id": 1}
+
+        empty_resp = MagicMock()
+        empty_resp.raise_for_status = MagicMock()
+        empty_resp.json.return_value = []
+
+        mock_inventory_cog.http_client.post = AsyncMock(return_value=player_resp)
+        mock_inventory_cog.http_client.get = AsyncMock(return_value=empty_resp)
+
+        asyncio.run(mock_inventory_cog.search.callback(
+            mock_inventory_cog, interaction, query="nonexistent"
+        ))
+
+        interaction.followup.send.assert_awaited_once()
+        call_args = interaction.followup.send.call_args
+        assert call_args[1].get("ephemeral", False)
+        assert "nonexistent" in call_args[0][0]
+
+    def test_search_player_not_found(self, mock_inventory_cog):
+        """search should send ephemeral error when player not found."""
+        interaction = _create_mock_interaction()
+
+        mock_inventory_cog.http_client.post = AsyncMock(
+            side_effect=RuntimeError("not found")
+        )
+
+        asyncio.run(mock_inventory_cog.search.callback(
+            mock_inventory_cog, interaction, query="Laser"
+        ))
+
+        interaction.followup.send.assert_awaited_once()
+        call_args = interaction.followup.send.call_args
+        assert call_args[1].get("ephemeral", False)
+        assert "Player not found" in call_args[0][0]
+
+    def test_search_more_than_10_items_truncated(self, mock_inventory_cog):
+        """search should truncate results to 10 per type with a 'more' note."""
+        interaction = _create_mock_interaction()
+
+        player_resp = MagicMock()
+        player_resp.raise_for_status = MagicMock()
+        player_resp.json.return_value = {"id": 1}
+
+        many_items = [
+            _make_inventory_item(f"Weapon{i}", "weapon", 1)
+            for i in range(15)
+        ]
+        search_resp = MagicMock()
+        search_resp.raise_for_status = MagicMock()
+        search_resp.json.return_value = many_items
+
+        mock_inventory_cog.http_client.post = AsyncMock(return_value=player_resp)
+        mock_inventory_cog.http_client.get = AsyncMock(return_value=search_resp)
+
+        asyncio.run(mock_inventory_cog.search.callback(
+            mock_inventory_cog, interaction, query="Weapon"
+        ))
+
+        interaction.followup.send.assert_awaited_once()
+        call_kwargs = interaction.followup.send.call_args[1]
+        assert "embed" in call_kwargs
+
+    def test_search_quantity_greater_than_one(self, mock_inventory_cog):
+        """search should display quantity text when quantity > 1."""
+        interaction = _create_mock_interaction()
+
+        player_resp = MagicMock()
+        player_resp.raise_for_status = MagicMock()
+        player_resp.json.return_value = {"id": 1}
+
+        search_resp = MagicMock()
+        search_resp.raise_for_status = MagicMock()
+        search_resp.json.return_value = [
+            _make_inventory_item("LaserCannon", "weapon", 5),
+        ]
+
+        mock_inventory_cog.http_client.post = AsyncMock(return_value=player_resp)
+        mock_inventory_cog.http_client.get = AsyncMock(return_value=search_resp)
+
+        asyncio.run(mock_inventory_cog.search.callback(
+            mock_inventory_cog, interaction, query="Laser"
+        ))
+
+        interaction.followup.send.assert_awaited_once()
+
+    def test_search_quantity_equal_one(self, mock_inventory_cog):
+        """search should not display quantity text when quantity == 1."""
+        interaction = _create_mock_interaction()
+
+        player_resp = MagicMock()
+        player_resp.raise_for_status = MagicMock()
+        player_resp.json.return_value = {"id": 1}
+
+        search_resp = MagicMock()
+        search_resp.raise_for_status = MagicMock()
+        search_resp.json.return_value = [
+            _make_inventory_item("LaserCannon", "weapon", 1),
+        ]
+
+        mock_inventory_cog.http_client.post = AsyncMock(return_value=player_resp)
+        mock_inventory_cog.http_client.get = AsyncMock(return_value=search_resp)
+
+        asyncio.run(mock_inventory_cog.search.callback(
+            mock_inventory_cog, interaction, query="Laser"
+        ))
+
+        interaction.followup.send.assert_awaited_once()
+
+    def test_search_http_status_error(self, mock_inventory_cog):
+        """search should handle HTTPStatusError gracefully."""
+        import httpx
+        interaction = _create_mock_interaction()
+
+        player_resp = MagicMock()
+        player_resp.raise_for_status = MagicMock()
+        player_resp.json.return_value = {"id": 1}
+
+        error_response = MagicMock()
+        error_response.status_code = 500
+        http_error = httpx.HTTPStatusError(
+            "500 Internal Server Error",
+            request=MagicMock(),
+            response=error_response,
+        )
+
+        mock_inventory_cog.http_client.post = AsyncMock(return_value=player_resp)
+        mock_inventory_cog.http_client.get = AsyncMock(side_effect=http_error)
+
+        asyncio.run(mock_inventory_cog.search.callback(
+            mock_inventory_cog, interaction, query="Laser"
+        ))
+
+        interaction.followup.send.assert_awaited_once()
+        call_args = interaction.followup.send.call_args
+        assert call_args[1].get("ephemeral", False)
+        assert "API Error" in call_args[0][0]
+
+    def test_search_generic_exception(self, mock_inventory_cog):
+        """search should handle generic exception gracefully."""
+        interaction = _create_mock_interaction()
+
+        player_resp = MagicMock()
+        player_resp.raise_for_status = MagicMock()
+        player_resp.json.return_value = {"id": 1}
+
+        mock_inventory_cog.http_client.post = AsyncMock(return_value=player_resp)
+        mock_inventory_cog.http_client.get = AsyncMock(
+            side_effect=RuntimeError("unexpected error")
+        )
+
+        asyncio.run(mock_inventory_cog.search.callback(
+            mock_inventory_cog, interaction, query="Laser"
+        ))
+
+        interaction.followup.send.assert_awaited_once()
+        call_args = interaction.followup.send.call_args
+        assert call_args[1].get("ephemeral", False)
+        assert "error occurred" in call_args[0][0].lower()
+
+
+# ---------------------------------------------------------------------------
+# /item command
+# ---------------------------------------------------------------------------
+
+
+class TestItemCommand:
+    """Tests for the /item slash command."""
+
+    def test_item_owned_quantity_positive(self, mock_inventory_cog):
+        """item should display 'Owned' status when quantity > 0."""
+        interaction = _create_mock_interaction()
+
+        player_resp = MagicMock()
+        player_resp.raise_for_status = MagicMock()
+        player_resp.json.return_value = {"id": 1}
+
+        count_resp = MagicMock()
+        count_resp.raise_for_status = MagicMock()
+        count_resp.json.return_value = {"quantity": 3}
+
+        mock_inventory_cog.http_client.post = AsyncMock(return_value=player_resp)
+        mock_inventory_cog.http_client.get = AsyncMock(return_value=count_resp)
+
+        asyncio.run(mock_inventory_cog.item.callback(
+            mock_inventory_cog, interaction, item_name="LaserCannon", item_type="weapon"
+        ))
+
+        interaction.response.defer.assert_awaited_once_with(thinking=True)
+        interaction.followup.send.assert_awaited_once()
+        call_kwargs = interaction.followup.send.call_args[1]
+        assert "embed" in call_kwargs
+
+    def test_item_not_owned_quantity_zero(self, mock_inventory_cog):
+        """item should display 'Not Owned' status when quantity == 0."""
+        interaction = _create_mock_interaction()
+
+        player_resp = MagicMock()
+        player_resp.raise_for_status = MagicMock()
+        player_resp.json.return_value = {"id": 1}
+
+        count_resp = MagicMock()
+        count_resp.raise_for_status = MagicMock()
+        count_resp.json.return_value = {"quantity": 0}
+
+        mock_inventory_cog.http_client.post = AsyncMock(return_value=player_resp)
+        mock_inventory_cog.http_client.get = AsyncMock(return_value=count_resp)
+
+        asyncio.run(mock_inventory_cog.item.callback(
+            mock_inventory_cog, interaction, item_name="RareSword", item_type="weapon"
+        ))
+
+        interaction.followup.send.assert_awaited_once()
+        call_kwargs = interaction.followup.send.call_args[1]
+        assert "embed" in call_kwargs
+
+    def test_item_player_not_found(self, mock_inventory_cog):
+        """item should send ephemeral error when player not found."""
+        interaction = _create_mock_interaction()
+
+        mock_inventory_cog.http_client.post = AsyncMock(
+            side_effect=RuntimeError("not found")
+        )
+
+        asyncio.run(mock_inventory_cog.item.callback(
+            mock_inventory_cog, interaction, item_name="LaserCannon", item_type="weapon"
+        ))
+
+        interaction.followup.send.assert_awaited_once()
+        call_args = interaction.followup.send.call_args
+        assert call_args[1].get("ephemeral", False)
+        assert "Player not found" in call_args[0][0]
+
+    def test_item_http_status_error_404(self, mock_inventory_cog):
+        """item should show 'not found' on 404 HTTPStatusError."""
+        import httpx
+        interaction = _create_mock_interaction()
+
+        player_resp = MagicMock()
+        player_resp.raise_for_status = MagicMock()
+        player_resp.json.return_value = {"id": 1}
+
+        error_response = MagicMock()
+        error_response.status_code = 404
+        http_error = httpx.HTTPStatusError(
+            "404 Not Found",
+            request=MagicMock(),
+            response=error_response,
+        )
+
+        mock_inventory_cog.http_client.post = AsyncMock(return_value=player_resp)
+        mock_inventory_cog.http_client.get = AsyncMock(side_effect=http_error)
+
+        asyncio.run(mock_inventory_cog.item.callback(
+            mock_inventory_cog, interaction, item_name="Nonexistent", item_type="weapon"
+        ))
+
+        interaction.followup.send.assert_awaited_once()
+        call_args = interaction.followup.send.call_args
+        assert call_args[1].get("ephemeral", False)
+        assert "not found" in call_args[0][0].lower()
+
+    def test_item_http_status_error_500(self, mock_inventory_cog):
+        """item should show API error on non-404 HTTPStatusError."""
+        import httpx
+        interaction = _create_mock_interaction()
+
+        player_resp = MagicMock()
+        player_resp.raise_for_status = MagicMock()
+        player_resp.json.return_value = {"id": 1}
+
+        error_response = MagicMock()
+        error_response.status_code = 500
+        http_error = httpx.HTTPStatusError(
+            "500 Server Error",
+            request=MagicMock(),
+            response=error_response,
+        )
+
+        mock_inventory_cog.http_client.post = AsyncMock(return_value=player_resp)
+        mock_inventory_cog.http_client.get = AsyncMock(side_effect=http_error)
+
+        asyncio.run(mock_inventory_cog.item.callback(
+            mock_inventory_cog, interaction, item_name="LaserCannon", item_type="weapon"
+        ))
+
+        interaction.followup.send.assert_awaited_once()
+        call_args = interaction.followup.send.call_args
+        assert call_args[1].get("ephemeral", False)
+        assert "API Error" in call_args[0][0]
+
+    def test_item_generic_exception(self, mock_inventory_cog):
+        """item should handle generic exception gracefully."""
+        interaction = _create_mock_interaction()
+
+        player_resp = MagicMock()
+        player_resp.raise_for_status = MagicMock()
+        player_resp.json.return_value = {"id": 1}
+
+        mock_inventory_cog.http_client.post = AsyncMock(return_value=player_resp)
+        mock_inventory_cog.http_client.get = AsyncMock(
+            side_effect=RuntimeError("unexpected error")
+        )
+
+        asyncio.run(mock_inventory_cog.item.callback(
+            mock_inventory_cog, interaction, item_name="LaserCannon", item_type="weapon"
+        ))
+
+        interaction.followup.send.assert_awaited_once()
+        call_args = interaction.followup.send.call_args
+        assert call_args[1].get("ephemeral", False)
+        assert "error occurred" in call_args[0][0].lower()
+
+    def test_item_with_ship_type(self, mock_inventory_cog):
+        """item with ship type should use green color from _get_item_type_color."""
+        interaction = _create_mock_interaction()
+
+        player_resp = MagicMock()
+        player_resp.raise_for_status = MagicMock()
+        player_resp.json.return_value = {"id": 1}
+
+        count_resp = MagicMock()
+        count_resp.raise_for_status = MagicMock()
+        count_resp.json.return_value = {"quantity": 1}
+
+        mock_inventory_cog.http_client.post = AsyncMock(return_value=player_resp)
+        mock_inventory_cog.http_client.get = AsyncMock(return_value=count_resp)
+
+        asyncio.run(mock_inventory_cog.item.callback(
+            mock_inventory_cog, interaction, item_name="Eagle", item_type="ship"
+        ))
+
+        interaction.followup.send.assert_awaited_once()
+        call_kwargs = interaction.followup.send.call_args[1]
+        assert "embed" in call_kwargs
+
+    def test_item_with_module_type(self, mock_inventory_cog):
+        """item with module type should use blue color from _get_item_type_color."""
+        interaction = _create_mock_interaction()
+
+        player_resp = MagicMock()
+        player_resp.raise_for_status = MagicMock()
+        player_resp.json.return_value = {"id": 1}
+
+        count_resp = MagicMock()
+        count_resp.raise_for_status = MagicMock()
+        count_resp.json.return_value = {"quantity": 2}
+
+        mock_inventory_cog.http_client.post = AsyncMock(return_value=player_resp)
+        mock_inventory_cog.http_client.get = AsyncMock(return_value=count_resp)
+
+        asyncio.run(mock_inventory_cog.item.callback(
+            mock_inventory_cog, interaction, item_name="ShieldGen", item_type="module"
+        ))
+
+        interaction.followup.send.assert_awaited_once()
+        call_kwargs = interaction.followup.send.call_args[1]
+        assert "embed" in call_kwargs
+
+
+# ---------------------------------------------------------------------------
+# Error handler branches — response already done
+# ---------------------------------------------------------------------------
+
+
+class TestErrorHandlersAlreadyDone:
+    """Tests for error handler callbacks when response is already done."""
+
+    def test_search_error_handler_response_already_done(self, mock_inventory_cog):
+        """search_error should NOT send message if response already done."""
+        interaction = _create_mock_interaction()
+        interaction.response.is_done = MagicMock(return_value=True)
+        error = MagicMock()
+
+        asyncio.run(mock_inventory_cog.search_error(interaction, error))
+
+        interaction.response.send_message.assert_not_awaited()
+
+    def test_item_error_handler_response_already_done(self, mock_inventory_cog):
+        """item_error should NOT send message if response already done."""
+        interaction = _create_mock_interaction()
+        interaction.response.is_done = MagicMock(return_value=True)
+        error = MagicMock()
+
+        asyncio.run(mock_inventory_cog.item_error(interaction, error))
+
+        interaction.response.send_message.assert_not_awaited()
+
+
+# ---------------------------------------------------------------------------
+# Additional inventory command branch coverage
+# ---------------------------------------------------------------------------
+
+
+class TestInventoryCommandAdditionalBranches:
+    """Additional tests for /inventory covering remaining branches."""
+
+    def test_inventory_empty_with_item_type_filter(self, mock_inventory_cog):
+        """Empty inventory with item_type should include type in message."""
+        interaction = _create_mock_interaction()
+
+        player_resp = MagicMock()
+        player_resp.raise_for_status = MagicMock()
+        player_resp.json.return_value = {"id": 1}
+
+        empty_resp = MagicMock()
+        empty_resp.raise_for_status = MagicMock()
+        empty_resp.json.return_value = []
+
+        mock_inventory_cog.http_client.post = AsyncMock(return_value=player_resp)
+        mock_inventory_cog.http_client.get = AsyncMock(return_value=empty_resp)
+
+        asyncio.run(mock_inventory_cog.inventory.callback(
+            mock_inventory_cog, interaction, item_type="ship"
+        ))
+
+        interaction.followup.send.assert_awaited_once()
+        call_args = interaction.followup.send.call_args
+        assert call_args[1].get("ephemeral", False)
+        assert "ship" in call_args[0][0].lower()
+
+    def test_inventory_self_user_same_as_interaction_user(self, mock_inventory_cog):
+        """inventory with user=self should use interaction user (no admin check)."""
+        interaction = _create_mock_interaction(user_id=111111111)
+
+        # Pass the same user object as the 'user' parameter
+        player_resp = MagicMock()
+        player_resp.raise_for_status = MagicMock()
+        player_resp.json.return_value = {"id": 1}
+
+        items_resp = MagicMock()
+        items_resp.raise_for_status = MagicMock()
+        items_resp.json.return_value = [
+            _make_inventory_item("Eagle", "ship", 1),
+        ]
+
+        summary_resp = MagicMock()
+        summary_resp.raise_for_status = MagicMock()
+        summary_resp.json.return_value = _make_summary(total_items=1, ship=1)
+
+        mock_inventory_cog.http_client.post = AsyncMock(return_value=player_resp)
+        mock_inventory_cog.http_client.get = AsyncMock(
+            side_effect=[items_resp, summary_resp]
+        )
+
+        # Pass user=interaction.user (same user)
+        asyncio.run(mock_inventory_cog.inventory.callback(
+            mock_inventory_cog, interaction, user=interaction.user
+        ))
+
+        interaction.followup.send.assert_awaited_once()
+        call_kwargs = interaction.followup.send.call_args[1]
+        assert "embed" in call_kwargs
 
 
 if __name__ == "__main__":

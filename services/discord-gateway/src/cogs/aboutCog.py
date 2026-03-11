@@ -3,10 +3,9 @@ from typing import Dict, List
 
 import discord
 import httpx
-from shared import bblogger
 from discord import app_commands
 from discord.ext import commands
-
+from shared import bblogger
 from utils.embed_converter import EmbedConverter  # ← grid‐builder for 2-col layout
 
 # Set up logger

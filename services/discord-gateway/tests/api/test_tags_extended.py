@@ -23,15 +23,15 @@ Uncovered lines targeted:
   tags.py 432-434       - delete: outer exception handler
 """
 
-import pytest
 import importlib
-from unittest.mock import MagicMock, AsyncMock, patch, PropertyMock
+import os
+import sys
+import types
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
 from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
-import sys
-import os
-import types
-from datetime import datetime
 
 # Import discord_mock_utils for consistent mock patterns
 from tests.mocks.discord_mock_utils import DiscordMockUtils
@@ -248,7 +248,7 @@ class TestGetTagEmojiHandling:
              patch("api.routers.tags.ChannelConverter") as mock_converter, \
              patch("api.routers.tags.get_entity_or_404", new_callable=AsyncMock), \
              patch("api.routers.tags.discord", _mock_discord), \
-             patch("api.routers.tags.normalize_emoji", return_value="🎯") as mock_norm:
+             patch("api.routers.tags.normalize_emoji", return_value="🎯"):
 
             async def resolve(req):
                 return mock_bot
@@ -310,7 +310,7 @@ class TestGetTagEmojiHandling:
 
         with patch("api.routers.tags.resolve_bot", new_callable=AsyncMock) as mock_resolve, \
              patch("api.routers.tags.handle_discord_exception", new_callable=AsyncMock), \
-             patch("api.routers.tags.ChannelConverter") as mock_converter, \
+             patch("api.routers.tags.ChannelConverter"), \
              patch("api.routers.tags.get_entity_or_404", new_callable=AsyncMock), \
              patch("api.routers.tags.discord", _mock_discord):
 

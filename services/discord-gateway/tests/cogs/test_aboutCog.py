@@ -1,11 +1,12 @@
 """Tests for aboutCog — boosting coverage from 0% to 60%+."""
 
-import pytest
-from unittest.mock import MagicMock, AsyncMock, patch
-import sys
-import os
-import types
 import asyncio
+import os
+import sys
+import types
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
 
 # Import discord_mock_utils for consistent mock patterns
 from tests.mocks.discord_mock_utils import DiscordMockUtils
@@ -50,8 +51,6 @@ for _mod in ["discord", "discord.ext", "discord.ext.commands", "discord.app_comm
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "src"))
 
 import discord
-from discord.ext import commands
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -602,6 +601,536 @@ class TestCogSetup:
         added_arg = mock_bot.add_cog.call_args[0][0]
         from cogs.aboutCog import AboutCog
         assert isinstance(added_arg, AboutCog)
+
+
+# ---------------------------------------------------------------------------
+# is_developer() module-level function
+# ---------------------------------------------------------------------------
+
+
+class TestIsDeveloper:
+    """Tests for the is_developer helper."""
+
+    def test_is_developer_returns_true(self):
+        """is_developer should return True (current stub implementation)."""
+        sys.modules["shared"] = _mock_shared
+        sys.modules["shared.bblogger"] = _mock_bblogger
+        _evict_discord_modules()
+
+        from cogs.aboutCog import is_developer
+
+        assert is_developer() is True
+
+
+# ---------------------------------------------------------------------------
+# _create_object_embed — category-specific branches
+# ---------------------------------------------------------------------------
+
+
+class TestCreateObjectEmbed:
+    """Tests for _create_object_embed exercising every category branch."""
+
+    def test_embed_module_category_max_equipped(self, mock_about_cog):
+        """_create_object_embed for 'module' should add Max Equipped field."""
+        obj_data = {
+            **_make_object_data("Shield Booster", "module", 10),
+            "max_equipped": 3,
+        }
+        with patch("cogs.aboutCog.EmbedConverter") as mc:
+            mc.embed_to_payload.return_value = MagicMock()
+            mc.payload_to_grid_embed.return_value = MagicMock(spec=discord.Embed)
+            result = asyncio.run(mock_about_cog._create_object_embed(obj_data))
+
+        # Grid embed is used for module category
+        mc.embed_to_payload.assert_called_once()
+        mc.payload_to_grid_embed.assert_called_once()
+        assert result is not None
+
+    def test_embed_module_category_no_max_equipped(self, mock_about_cog):
+        """_create_object_embed for 'module' without max_equipped should skip field."""
+        obj_data = _make_object_data("Shield Booster", "module", 10)
+        # max_equipped not present
+        with patch("cogs.aboutCog.EmbedConverter") as mc:
+            mc.embed_to_payload.return_value = MagicMock()
+            mc.payload_to_grid_embed.return_value = MagicMock(spec=discord.Embed)
+            result = asyncio.run(mock_about_cog._create_object_embed(obj_data))
+
+        assert result is not None
+
+    def test_embed_primary_weapon_category_dps(self, mock_about_cog):
+        """_create_object_embed for 'primary_weapon' should add DPS field."""
+        obj_data = {
+            **_make_object_data("Pulse Laser", "primary_weapon", 20),
+            "dps": 42.5,
+        }
+        with patch("cogs.aboutCog.EmbedConverter") as mc:
+            mc.embed_to_payload.return_value = MagicMock()
+            mc.payload_to_grid_embed.return_value = MagicMock(spec=discord.Embed)
+            result = asyncio.run(mock_about_cog._create_object_embed(obj_data))
+
+        mc.embed_to_payload.assert_called_once()
+        assert result is not None
+
+    def test_embed_primary_weapon_no_dps(self, mock_about_cog):
+        """_create_object_embed for 'primary_weapon' without dps should skip field."""
+        obj_data = _make_object_data("Pulse Laser", "primary_weapon", 20)
+        with patch("cogs.aboutCog.EmbedConverter") as mc:
+            mc.embed_to_payload.return_value = MagicMock()
+            mc.payload_to_grid_embed.return_value = MagicMock(spec=discord.Embed)
+            result = asyncio.run(mock_about_cog._create_object_embed(obj_data))
+
+        assert result is not None
+
+    def test_embed_ship_compatible_skins_even(self, mock_about_cog):
+        """_create_object_embed for 'ship' with compatible_skins (even count)."""
+        obj_data = {
+            **_make_object_data("Hawk", "ship", 30),
+            "armour": 800,
+            "cargo": 200,
+            "handling": 60,
+            "shop_spawn_rate": 0.25,
+            "max_modules": 3,
+            "max_primaries": 2,
+            "max_secondaries": 1,
+            "max_turrets": 1,
+            "manufacturer": "StarForge",
+            "skinnable": True,
+            "compatible_skins": {
+                "Red Fury": 1,
+                "Blue Ice": 2,
+                "Gold Rush": 3,
+                "Silver Wind": 4,
+            },
+        }
+        with patch("cogs.aboutCog.EmbedConverter") as mc:
+            mc.embed_to_payload.return_value = MagicMock()
+            mc.payload_to_grid_embed.return_value = MagicMock(spec=discord.Embed)
+            result = asyncio.run(mock_about_cog._create_object_embed(obj_data))
+
+        assert result is not None
+        mc.embed_to_payload.assert_called_once()
+
+    def test_embed_ship_compatible_skins_odd(self, mock_about_cog):
+        """_create_object_embed for 'ship' with odd number of compatible_skins."""
+        obj_data = {
+            **_make_object_data("Falcon", "ship", 31),
+            "armour": 600,
+            "cargo": 150,
+            "handling": 70,
+            "shop_spawn_rate": 0.30,
+            "max_modules": 2,
+            "max_primaries": 2,
+            "max_secondaries": 1,
+            "max_turrets": 0,
+            "manufacturer": None,
+            "skinnable": False,
+            "compatible_skins": {
+                "Red Fury": 1,
+                "Blue Ice": 2,
+                "Gold Rush": 3,
+            },
+        }
+        with patch("cogs.aboutCog.EmbedConverter") as mc:
+            mc.embed_to_payload.return_value = MagicMock()
+            mc.payload_to_grid_embed.return_value = MagicMock(spec=discord.Embed)
+            result = asyncio.run(mock_about_cog._create_object_embed(obj_data))
+
+        assert result is not None
+
+    def test_embed_ship_no_optional_fields(self, mock_about_cog):
+        """_create_object_embed for 'ship' with no optional ship fields."""
+        obj_data = {
+            **_make_object_data("Bare Ship", "ship", 32),
+            # no armour, cargo, handling, shop_spawn_rate, manufacturer, skinnable, compatible_skins
+        }
+        with patch("cogs.aboutCog.EmbedConverter") as mc:
+            mc.embed_to_payload.return_value = MagicMock()
+            mc.payload_to_grid_embed.return_value = MagicMock(spec=discord.Embed)
+            result = asyncio.run(mock_about_cog._create_object_embed(obj_data))
+
+        assert result is not None
+
+    def test_embed_system_category(self, mock_about_cog):
+        """_create_object_embed for 'system' should add Coordinates and Faction."""
+        obj_data = {
+            **_make_object_data("Sol", "system", 40),
+            "coordinates": [10, 20, 30],
+            "faction": "Federation",
+        }
+        # 'system' is NOT in the grid layout categories, so no EmbedConverter call
+        result = asyncio.run(mock_about_cog._create_object_embed(obj_data))
+
+        assert result is not None
+        assert type(result).__name__ == "Embed"
+
+    def test_embed_system_no_coords_no_faction(self, mock_about_cog):
+        """_create_object_embed for 'system' without optional fields."""
+        obj_data = _make_object_data("Empty System", "system", 41)
+        result = asyncio.run(mock_about_cog._create_object_embed(obj_data))
+        assert result is not None
+        assert type(result).__name__ == "Embed"
+
+    def test_embed_criminal_category(self, mock_about_cog):
+        """_create_object_embed for 'criminal' should add Faction field."""
+        obj_data = {
+            **_make_object_data("Pirate Lord", "criminal", 50),
+            "faction": "Outlaw",
+        }
+        result = asyncio.run(mock_about_cog._create_object_embed(obj_data))
+        assert result is not None
+        assert type(result).__name__ == "Embed"
+
+    def test_embed_criminal_no_faction(self, mock_about_cog):
+        """_create_object_embed for 'criminal' without faction."""
+        obj_data = _make_object_data("Pirate", "criminal", 51)
+        result = asyncio.run(mock_about_cog._create_object_embed(obj_data))
+        assert result is not None
+        assert type(result).__name__ == "Embed"
+
+    def test_embed_unknown_category_default_color(self, mock_about_cog):
+        """_create_object_embed for unknown category uses default color."""
+        obj_data = _make_object_data("Mystery", "unknown_thing", 60)
+        result = asyncio.run(mock_about_cog._create_object_embed(obj_data))
+        assert result is not None
+        assert type(result).__name__ == "Embed"
+
+    def test_embed_icon_url_success(self, mock_about_cog):
+        """_create_object_embed should set thumbnail when icon HEAD returns 200."""
+        obj_data = {
+            **_make_object_data("Eagle", "criminal", 70),
+            "icon": "https://example.com/icon.png",
+        }
+        head_resp = MagicMock()
+        head_resp.status_code = 200
+        mock_about_cog.http_client.head = AsyncMock(return_value=head_resp)
+
+        result = asyncio.run(mock_about_cog._create_object_embed(obj_data))
+        assert result is not None
+        assert type(result).__name__ == "Embed"
+        mock_about_cog.http_client.head.assert_awaited_once()
+
+    def test_embed_icon_url_non_200(self, mock_about_cog):
+        """_create_object_embed should skip thumbnail when icon HEAD returns non-200."""
+        obj_data = {
+            **_make_object_data("Eagle", "criminal", 71),
+            "icon": "https://example.com/broken.png",
+        }
+        head_resp = MagicMock()
+        head_resp.status_code = 404
+        mock_about_cog.http_client.head = AsyncMock(return_value=head_resp)
+
+        result = asyncio.run(mock_about_cog._create_object_embed(obj_data))
+        assert result is not None
+        assert type(result).__name__ == "Embed"
+
+    def test_embed_icon_url_exception(self, mock_about_cog):
+        """_create_object_embed should handle icon HEAD request exception."""
+        obj_data = {
+            **_make_object_data("Eagle", "criminal", 72),
+            "icon": "https://example.com/timeout.png",
+        }
+        mock_about_cog.http_client.head = AsyncMock(
+            side_effect=RuntimeError("connection timeout")
+        )
+
+        result = asyncio.run(mock_about_cog._create_object_embed(obj_data))
+        assert result is not None
+        assert type(result).__name__ == "Embed"
+
+    def test_embed_with_aliases(self, mock_about_cog):
+        """_create_object_embed should add aliases field."""
+        obj_data = {
+            **_make_object_data("Eagle", "criminal", 80),
+            "aliases": ["Big Bird", "Sky King"],
+        }
+        result = asyncio.run(mock_about_cog._create_object_embed(obj_data))
+        assert result is not None
+        assert type(result).__name__ == "Embed"
+
+    def test_embed_with_long_aliases_truncation(self, mock_about_cog):
+        """_create_object_embed should truncate very long aliases text."""
+        # Create aliases that total > 1024 chars
+        long_aliases = [f"LongAliasName_{i:04d}_padding" for i in range(60)]
+        obj_data = {
+            **_make_object_data("Eagle", "criminal", 81),
+            "aliases": long_aliases,
+        }
+        result = asyncio.run(mock_about_cog._create_object_embed(obj_data))
+        assert result is not None
+        assert type(result).__name__ == "Embed"
+
+    def test_embed_with_built_in(self, mock_about_cog):
+        """_create_object_embed should add Built-in field when True."""
+        obj_data = {
+            **_make_object_data("Default Gun", "criminal", 82),
+            "built_in": True,
+        }
+        result = asyncio.run(mock_about_cog._create_object_embed(obj_data))
+        assert result is not None
+        assert type(result).__name__ == "Embed"
+
+    def test_embed_with_wiki_link(self, mock_about_cog):
+        """_create_object_embed should add Wiki field when present."""
+        obj_data = {
+            **_make_object_data("Eagle", "criminal", 83),
+            "wiki": "https://wiki.example.com/eagle",
+        }
+        result = asyncio.run(mock_about_cog._create_object_embed(obj_data))
+        assert result is not None
+        assert type(result).__name__ == "Embed"
+
+    def test_embed_with_extra_atts(self, mock_about_cog):
+        """_create_object_embed should add extra attributes when present."""
+        obj_data = {
+            **_make_object_data("Eagle", "criminal", 84),
+            "extra_atts": {
+                "speed": 100,
+                "range": 500.5,
+                "has_boost": True,
+                "label": "Fast Ship",
+            },
+        }
+        result = asyncio.run(mock_about_cog._create_object_embed(obj_data))
+        assert result is not None
+        assert type(result).__name__ == "Embed"
+
+    def test_embed_with_extra_atts_long_truncation(self, mock_about_cog):
+        """_create_object_embed should truncate long extra attributes."""
+        # Create extra_atts that produce > 1024 chars
+        extra = {f"attribute_{i:04d}": f"{'x' * 50}" for i in range(30)}
+        obj_data = {
+            **_make_object_data("Eagle", "criminal", 85),
+            "extra_atts": extra,
+        }
+        result = asyncio.run(mock_about_cog._create_object_embed(obj_data))
+        assert result is not None
+        assert type(result).__name__ == "Embed"
+
+    def test_embed_with_extra_atts_non_scalar_values_skipped(self, mock_about_cog):
+        """_create_object_embed should skip non-scalar extra attribute values."""
+        obj_data = {
+            **_make_object_data("Eagle", "criminal", 86),
+            "extra_atts": {
+                "nested": {"a": 1},
+                "list_val": [1, 2, 3],
+                "scalar": 42,
+            },
+        }
+        result = asyncio.run(mock_about_cog._create_object_embed(obj_data))
+        assert result is not None
+        assert type(result).__name__ == "Embed"
+
+    def test_embed_no_emoji_in_title(self, mock_about_cog):
+        """_create_object_embed with no emoji should use plain name as title."""
+        obj_data = {
+            **_make_object_data("Plain Object", "criminal", 87),
+            "emoji": None,
+        }
+        result = asyncio.run(mock_about_cog._create_object_embed(obj_data))
+        assert result is not None
+        assert type(result).__name__ == "Embed"
+
+    def test_embed_no_type_no_tech_no_value(self, mock_about_cog):
+        """_create_object_embed with missing basic info fields."""
+        obj_data = {
+            "id": 88,
+            "name": "Minimal",
+            "category": "criminal",
+            # no type, tech_level, value, emoji, icon, aliases, built_in, wiki, extra_atts
+        }
+        result = asyncio.run(mock_about_cog._create_object_embed(obj_data))
+        assert result is not None
+        assert type(result).__name__ == "Embed"
+
+    def test_embed_secondary_weapon_grid_layout(self, mock_about_cog):
+        """_create_object_embed for 'secondary_weapon' uses grid layout."""
+        obj_data = _make_object_data("Missile", "secondary_weapon", 90)
+        with patch("cogs.aboutCog.EmbedConverter") as mc:
+            mc.embed_to_payload.return_value = MagicMock()
+            mc.payload_to_grid_embed.return_value = MagicMock(spec=discord.Embed)
+            result = asyncio.run(mock_about_cog._create_object_embed(obj_data))
+
+        mc.embed_to_payload.assert_called_once()
+        mc.payload_to_grid_embed.assert_called_once()
+        assert result is not None
+
+    def test_embed_turret_weapon_grid_layout(self, mock_about_cog):
+        """_create_object_embed for 'turret_weapon' uses grid layout."""
+        obj_data = _make_object_data("Turret", "turret_weapon", 91)
+        with patch("cogs.aboutCog.EmbedConverter") as mc:
+            mc.embed_to_payload.return_value = MagicMock()
+            mc.payload_to_grid_embed.return_value = MagicMock(spec=discord.Embed)
+            result = asyncio.run(mock_about_cog._create_object_embed(obj_data))
+
+        mc.embed_to_payload.assert_called_once()
+        assert result is not None
+
+
+# ---------------------------------------------------------------------------
+# object_autocomplete — additional branch coverage
+# ---------------------------------------------------------------------------
+
+
+class TestObjectAutocompleteExtraBranches:
+    """Extra tests for object_autocomplete edge cases."""
+
+    def test_object_autocomplete_invalid_category(self, mock_about_cog):
+        """object_autocomplete with category not in cache returns empty."""
+        mock_about_cog._objects_by_category = {
+            "ship": [{"name": "Eagle"}]
+        }
+        interaction = _create_mock_interaction()
+        interaction.namespace = MagicMock()
+        interaction.namespace.category = "nonexistent"
+
+        result = asyncio.run(mock_about_cog.object_autocomplete(interaction, ""))
+        assert result == []
+
+    def test_object_autocomplete_limits_to_25(self, mock_about_cog):
+        """object_autocomplete should return at most 25 results."""
+        mock_about_cog._objects_by_category = {
+            "ship": [{"name": f"Ship_{i}"} for i in range(30)]
+        }
+        interaction = _create_mock_interaction()
+        interaction.namespace = MagicMock()
+        interaction.namespace.category = "ship"
+
+        result = asyncio.run(mock_about_cog.object_autocomplete(interaction, ""))
+        assert len(result) <= 25
+
+
+# ---------------------------------------------------------------------------
+# list_category — additional branch coverage
+# ---------------------------------------------------------------------------
+
+
+class TestListCategoryExtraBranches:
+    """Extra tests for list_category edge cases."""
+
+    def test_list_category_field_overflow(self, mock_about_cog):
+        """list_category should split objects into multiple fields when text exceeds 1024."""
+        interaction = _create_mock_interaction()
+
+        # Create objects with long names that will exceed the 1024-char limit
+        objects = [{"name": f"VeryLongObjectName_{'x' * 80}_{i:03d}", "emoji": None}
+                   for i in range(20)]
+        mock_about_cog._objects_by_category = {"ship": objects}
+
+        asyncio.run(mock_about_cog.list_category.callback(
+            mock_about_cog, interaction, "ship"
+        ))
+
+        interaction.followup.send.assert_awaited_once()
+        call_kwargs = interaction.followup.send.call_args[1]
+        assert "embed" in call_kwargs
+
+    def test_list_category_more_than_100_objects(self, mock_about_cog):
+        """list_category with >100 objects should add footer note."""
+        interaction = _create_mock_interaction()
+
+        # Create 101 objects
+        objects = [{"name": f"Obj{i}", "emoji": None} for i in range(101)]
+        mock_about_cog._objects_by_category = {"ship": objects}
+
+        asyncio.run(mock_about_cog.list_category.callback(
+            mock_about_cog, interaction, "ship"
+        ))
+
+        interaction.followup.send.assert_awaited_once()
+        call_kwargs = interaction.followup.send.call_args[1]
+        assert "embed" in call_kwargs
+
+    def test_list_category_with_emoji_objects(self, mock_about_cog):
+        """list_category should include emoji prefix for objects that have one."""
+        interaction = _create_mock_interaction()
+
+        objects = [
+            {"name": "Eagle", "emoji": "🚀"},
+            {"name": "Hawk", "emoji": "🦅"},
+            {"name": "Plain", "emoji": ""},
+        ]
+        mock_about_cog._objects_by_category = {"ship": objects}
+
+        asyncio.run(mock_about_cog.list_category.callback(
+            mock_about_cog, interaction, "ship"
+        ))
+
+        interaction.followup.send.assert_awaited_once()
+
+    def test_list_category_generic_exception(self, mock_about_cog):
+        """list_category should handle unexpected exceptions gracefully."""
+        interaction = _create_mock_interaction()
+
+        # Make _objects_by_category raise when accessed via __contains__
+        mock_about_cog._objects_by_category = MagicMock()
+        mock_about_cog._objects_by_category.__contains__ = MagicMock(
+            side_effect=RuntimeError("unexpected error")
+        )
+
+        asyncio.run(mock_about_cog.list_category.callback(
+            mock_about_cog, interaction, "ship"
+        ))
+
+        interaction.followup.send.assert_awaited_once()
+        call_kwargs = interaction.followup.send.call_args
+        assert call_kwargs[1].get("ephemeral", False)
+        assert "error" in call_kwargs[0][0].lower()
+
+
+# ---------------------------------------------------------------------------
+# about command — additional branch coverage
+# ---------------------------------------------------------------------------
+
+
+class TestAboutCommandExtraBranches:
+    """Extra tests for the /about command edge cases."""
+
+    def test_about_category_not_in_cache(self, mock_about_cog):
+        """about with category not in _objects_by_category should still call API."""
+        interaction = _create_mock_interaction()
+
+        mock_about_cog._categories = ["ship"]
+        mock_about_cog._objects_by_category = {}  # category not cached
+
+        obj_resp = MagicMock()
+        obj_resp.raise_for_status = MagicMock()
+        obj_resp.json.return_value = _make_object_data("Eagle", "ship")
+        mock_about_cog.http_client.get = AsyncMock(return_value=obj_resp)
+
+        with patch("cogs.aboutCog.EmbedConverter") as mc:
+            mc.embed_to_payload.return_value = MagicMock()
+            mc.payload_to_grid_embed.return_value = MagicMock(spec=discord.Embed)
+
+            asyncio.run(mock_about_cog.about.callback(
+                mock_about_cog, interaction, "ship", "Eagle"
+            ))
+
+        interaction.followup.send.assert_awaited_once()
+
+    def test_about_name_matches_exact_name_not_alias(self, mock_about_cog):
+        """about should use exact name match before checking aliases."""
+        interaction = _create_mock_interaction()
+
+        mock_about_cog._categories = ["ship"]
+        mock_about_cog._objects_by_category = {
+            "ship": [{"name": "Eagle", "aliases": ["Hawk"]}]
+        }
+
+        obj_resp = MagicMock()
+        obj_resp.raise_for_status = MagicMock()
+        obj_resp.json.return_value = _make_object_data("Eagle", "ship")
+        mock_about_cog.http_client.get = AsyncMock(return_value=obj_resp)
+
+        with patch("cogs.aboutCog.EmbedConverter") as mc:
+            mc.embed_to_payload.return_value = MagicMock()
+            mc.payload_to_grid_embed.return_value = MagicMock(spec=discord.Embed)
+
+            asyncio.run(mock_about_cog.about.callback(
+                mock_about_cog, interaction, "ship", "Eagle"
+            ))
+
+        call_args = mock_about_cog.http_client.get.call_args
+        assert "Eagle" in call_args[0][0]
 
 
 if __name__ == "__main__":

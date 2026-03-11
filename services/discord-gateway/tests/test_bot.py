@@ -1,14 +1,13 @@
-import pytest
-from unittest.mock import MagicMock, AsyncMock, patch, call
-import sys
-import os
-import types
 import asyncio
-from datetime import datetime
+import os
+import sys
+import types
+from unittest.mock import AsyncMock, MagicMock, call, patch
+
+import pytest
 
 # Import discord_mock_utils for consistent mock patterns
 from tests.mocks.discord_mock_utils import DiscordMockUtils
-
 
 # Create module-level mock utilities
 _mock_utils = DiscordMockUtils()

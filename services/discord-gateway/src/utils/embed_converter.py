@@ -10,8 +10,8 @@ from datetime import datetime
 from typing import Any, Dict, List, Union
 
 import discord
-from shared import bblogger
 from api.schemas.message_schemas import EmbedField, EmbedPayload
+from shared import bblogger
 
 flogger = bblogger.get_logger("discord-embed-converter")
 

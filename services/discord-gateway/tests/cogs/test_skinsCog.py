@@ -5,17 +5,16 @@ This module provides comprehensive test coverage for the skinsCog commands,
 ship skin management, and skin compatibility operations.
 """
 
-import pytest
-from unittest.mock import MagicMock, AsyncMock, patch
-import sys
-import os
-import types
 import asyncio
-from datetime import datetime
+import os
+import sys
+import types
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
 
 # Import discord_mock_utils for consistent mock patterns
 from tests.mocks.discord_mock_utils import DiscordMockUtils
-
 
 _mock_shared = types.ModuleType("shared")
 _mock_shared.__path__ = []
@@ -46,8 +45,6 @@ for _mod in ["discord", "discord.ext", "discord.ext.commands", "discord.app_comm
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "src"))
 
-import discord
-from discord.ext import commands
 
 
 @pytest.fixture
@@ -304,7 +301,9 @@ class TestShipSkinCommand:
         interaction.followup.send = AsyncMock()
 
         # Call command - we don't care about the specific exception handling here
-        asyncio.run(mock_skins_cog.ship_skin.callback(mock_skins_cog, interaction=interaction, ship="Test Ship", skin="Premium Skin"))
+        asyncio.run(mock_skins_cog.ship_skin.callback(
+            mock_skins_cog, interaction=interaction, ship="Test Ship", skin="Premium Skin"
+        ))
 
         # Verify behavior - we don't care about the specific response here
         interaction.response.defer.assert_called_once_with(thinking=True)
@@ -340,7 +339,9 @@ class TestShipSkinCommand:
         interaction.followup.send = AsyncMock()
 
         # Call command - we don't care about the specific exception handling here
-        asyncio.run(mock_skins_cog.ship_skin.callback(mock_skins_cog, interaction=interaction, ship="Test Ship", skin="Invalid Skin"))
+        asyncio.run(mock_skins_cog.ship_skin.callback(
+            mock_skins_cog, interaction=interaction, ship="Test Ship", skin="Invalid Skin"
+        ))
 
         # Verify behavior - should report skin not found
         interaction.response.defer.assert_called_once_with(thinking=True)
@@ -482,7 +483,9 @@ class TestShipSkinCommandErrors:
         interaction.followup.send = AsyncMock()
 
         # Call command
-        asyncio.run(mock_skins_cog.ship_skin.callback(mock_skins_cog, interaction=interaction, ship="Test Ship", skin="Default"))
+        asyncio.run(mock_skins_cog.ship_skin.callback(
+            mock_skins_cog, interaction=interaction, ship="Test Ship", skin="Default"
+        ))
 
         # Verify 404 handling
         interaction.response.defer.assert_called_once_with(thinking=True)
@@ -520,7 +523,9 @@ class TestShipSkinCommandErrors:
         interaction.followup.send = AsyncMock()
 
         # Call command with Default skin
-        asyncio.run(mock_skins_cog.ship_skin.callback(mock_skins_cog, interaction=interaction, ship="Test Ship", skin="Default"))
+        asyncio.run(mock_skins_cog.ship_skin.callback(
+            mock_skins_cog, interaction=interaction, ship="Test Ship", skin="Default"
+        ))
 
         # Verify error handling
         interaction.response.defer.assert_called_once_with(thinking=True)

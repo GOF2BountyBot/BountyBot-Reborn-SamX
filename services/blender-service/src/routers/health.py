@@ -2,12 +2,13 @@
 Health check router for the Blender service API.
 """
 
-from fastapi import APIRouter, status, Request, HTTPException
-from pydantic import BaseModel
-from datetime import datetime, UTC
-from typing import Dict, Any, Optional
-import sys
 import platform
+import sys
+from datetime import UTC, datetime
+from typing import Any, Dict
+
+from fastapi import APIRouter, Request, status
+from pydantic import BaseModel
 from shared import bblogger
 
 flogger = bblogger.get_logger("blender-healthcheck-api-router")

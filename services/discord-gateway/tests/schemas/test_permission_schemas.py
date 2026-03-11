@@ -1,8 +1,7 @@
 import pytest
+from api.schemas.permission_schemas import PermissionFlag, PermissionOverwrite, PermissionOverwriteRequest
 from pydantic import ValidationError
-from api.schemas.permission_schemas import (
-    PermissionOverwrite, PermissionFlag, PermissionOverwriteRequest
-)
+
 
 class TestPermissionOverwrite:
     def test_non_negative_defaults(self):

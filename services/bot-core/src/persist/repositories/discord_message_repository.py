@@ -5,13 +5,13 @@ This module provides data access methods for Discord message persistence
 following the repository pattern with embed payload support.
 """
 
-from typing import Optional, List
 from datetime import datetime, timezone
-
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, and_, desc
+from typing import List, Optional
 
 from shared import bblogger
+from sqlalchemy import and_, desc, select
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from persist.models.discord_message import DiscordMessage
 from persist.repositories.generic_repository import GenericRepository
 

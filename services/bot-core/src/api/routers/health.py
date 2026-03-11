@@ -11,9 +11,10 @@ import sys
 from datetime import UTC, datetime
 from typing import Any, Dict
 
-from shared import bblogger
-from api.schemas.health_schema import HealthResponse, SimpleHealthResponse
 from fastapi import APIRouter, HTTPException, Request, status
+from shared import bblogger
+
+from api.schemas.health_schema import HealthResponse, SimpleHealthResponse
 
 flogger = bblogger.get_logger("bot-healthcheck-api-router")
 

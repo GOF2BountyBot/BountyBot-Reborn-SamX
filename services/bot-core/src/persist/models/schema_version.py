@@ -1,9 +1,10 @@
 from datetime import UTC, datetime
 
-from persist.database.tablenames import TableNames
-from persist.models.base import Base
 from sqlalchemy import DateTime, String
 from sqlalchemy.orm import Mapped, mapped_column
+
+from persist.database.tablenames import TableNames
+from persist.models.base import Base
 
 
 class SchemaVersion(Base):

@@ -8,8 +8,9 @@ including create, update, and delete with proper embed payload structures.
 from datetime import datetime
 from typing import List, Optional, Union
 
-from api.schemas.base_schemas import BaseResponse, PaginatedResponse
 from pydantic import BaseModel, Field
+
+from api.schemas.base_schemas import BaseResponse, PaginatedResponse
 
 
 class EmbedField(BaseModel):

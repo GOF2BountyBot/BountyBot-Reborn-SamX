@@ -7,10 +7,10 @@ settings persistence, validation, and default configurations.
 
 from typing import Any, Dict, List
 
-from shared import bblogger
 from persist.repositories.config_repository import ConfigRepository
 from persist.repositories.player_repository import PlayerRepository
 from persist.repositories.shop_repository import ShopRepository
+from shared import bblogger
 from sqlalchemy.ext.asyncio import AsyncSession
 
 flogger = bblogger.get_logger("config-service")

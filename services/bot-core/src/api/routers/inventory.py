@@ -8,7 +8,11 @@ must be done via REST API.
 
 from typing import Any, Dict, List, Optional
 
+from fastapi import APIRouter, Depends, HTTPException, status
+from persist.database.manager import get_db_session
+from services.inventory_service import InventoryService
 from shared import bblogger
+
 from api.schemas.inventory_schema import (
     AddItemRequest,
     InventoryItemResponse,
@@ -17,9 +21,6 @@ from api.schemas.inventory_schema import (
     RemoveItemRequest,
     TransferItemRequest,
 )
-from fastapi import APIRouter, Depends, HTTPException, status
-from persist.database.manager import get_db_session
-from services.inventory_service import InventoryService
 
 flogger = bblogger.get_logger("inventory-api-router")
 

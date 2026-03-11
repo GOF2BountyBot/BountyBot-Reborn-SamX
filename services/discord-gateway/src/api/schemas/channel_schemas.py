@@ -7,9 +7,10 @@ forum-tag and forum-thread operations.
 
 from typing import List, Optional, Union
 
+from pydantic import BaseModel, Field
+
 from api.schemas.base_schemas import BaseCreateRequest, BaseResponse, BaseUpdateRequest, PaginatedResponse
 from api.schemas.message_schemas import EmbedPayload
-from pydantic import BaseModel, Field
 
 # -------------------------------------------------------------------
 # Channel / Category core schemas

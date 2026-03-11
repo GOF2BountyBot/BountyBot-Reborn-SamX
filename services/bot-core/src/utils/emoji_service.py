@@ -4,7 +4,6 @@ import unicodedata
 from typing import Dict, Optional
 
 import httpx
-
 from shared import bblogger
 
 flogger = bblogger.get_logger("bot-emoji-service")

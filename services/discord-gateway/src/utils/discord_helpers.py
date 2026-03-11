@@ -12,9 +12,9 @@ from functools import lru_cache
 from typing import Any, Dict, List, Optional, Union
 
 import discord
-from shared import bblogger
 from discord.ext import commands
 from fastapi import HTTPException, Request, status
+from shared import bblogger
 
 flogger = bblogger.get_logger("discord-helpers")
 

@@ -3,9 +3,9 @@ from typing import Dict, List
 
 import discord
 import httpx
-from shared import bblogger
 from discord import app_commands
 from discord.ext import commands
+from shared import bblogger
 
 flogger = bblogger.get_logger("discord-gateway-SkinsCog")
 api_base = os.environ.get("BOT_API_BASE_URL", "http://bot-core:8000/api/v1")

@@ -18,14 +18,15 @@ Uncovered lines targeted:
   guilds.py 386-464   - create_role: main path + retry logic
 """
 
-import pytest
-from unittest.mock import MagicMock, AsyncMock, patch
-from fastapi import FastAPI, HTTPException
-from fastapi.testclient import TestClient
-import sys
 import os
+import sys
 import types
 from datetime import datetime
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
+from fastapi import FastAPI, HTTPException
+from fastapi.testclient import TestClient
 
 from tests.mocks.discord_mock_utils import DiscordMockUtils
 
@@ -52,8 +53,6 @@ for _mod in ["discord", "discord.ext", "discord.ext.commands", "discord.app_comm
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 import discord
-from discord.ext import commands
-
 
 # ---------------------------------------------------------------------------
 # Helper factories
@@ -105,7 +104,8 @@ def _make_member(user_id=111111111):
 
 
 def _member_schema(user_id=111111111):
-    from api.schemas.user_schemas import User as UserSchema, Member as MemberSchema
+    from api.schemas.user_schemas import Member as MemberSchema
+    from api.schemas.user_schemas import User as UserSchema
     user = UserSchema(
         id=user_id,
         username="TestUser",

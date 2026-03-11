@@ -8,10 +8,11 @@ retrieval, and user management operations.
 from typing import List, Optional
 
 from shared import bblogger
-from persist.interfaces.repository_interface import IRepository
-from persist.models.user import User
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+
+from persist.interfaces.repository_interface import IRepository
+from persist.models.user import User
 
 flogger = bblogger.get_logger("user-repository")
 

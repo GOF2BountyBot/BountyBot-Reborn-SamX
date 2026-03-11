@@ -9,7 +9,13 @@ Handles administrative operations including:
 - System health and statistics
 """
 
+from fastapi import APIRouter, Depends, HTTPException, status
+from persist.database.manager import get_db_session
+from services.config_service import ConfigService
+from services.player_service import PlayerService
+from services.shop_service import ShopService
 from shared import bblogger
+
 from api.schemas.admin_schema import (
     AddInventoryItemRequest,
     GuildInitializationResponse,
@@ -20,11 +26,6 @@ from api.schemas.admin_schema import (
     UpdatePlayerXPRequest,
     UpdateShopConfigRequest,
 )
-from fastapi import APIRouter, Depends, HTTPException, status
-from persist.database.manager import get_db_session
-from services.config_service import ConfigService
-from services.player_service import PlayerService
-from services.shop_service import ShopService
 
 flogger = bblogger.get_logger("admin-api-router")
 

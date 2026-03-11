@@ -3,9 +3,9 @@ from typing import Optional
 
 import discord
 import httpx
-from shared import bblogger
 from discord import app_commands
 from discord.ext import commands
+from shared import bblogger
 
 # Set up logger
 flogger = bblogger.get_logger("discord-gateway-ShipsCog")
@@ -295,7 +295,11 @@ class ShipsCog(commands.Cog):
             )
 
             embed.add_field(name="Ship ID", value=str(ship_id), inline=True)
-            embed.add_field(name="Status", value="🟢 Active" if updated_ship['is_active'] else "⚪ Inactive", inline=True)
+            embed.add_field(
+                name="Status",
+                value="🟢 Active" if updated_ship['is_active'] else "⚪ Inactive",
+                inline=True
+            )
 
             await interaction.followup.send(embed=embed)
             flogger.debug(f"/nickname {ship_id} '{nickname}' by {interaction.user} in guild {interaction.guild_id}")

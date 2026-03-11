@@ -7,11 +7,12 @@ All operations are performed via this API by the discord-gateway service.
 
 from typing import List, Optional
 
-from shared import bblogger
-from api.schemas.users_schema import CreateUserRequest, UpdateUserRequest, UserResponse
 from fastapi import APIRouter, Depends, HTTPException, status
 from persist.database.manager import get_db_session
 from persist.repositories.user_repository import UserRepository
+from shared import bblogger
+
+from api.schemas.users_schema import CreateUserRequest, UpdateUserRequest, UserResponse
 
 flogger = bblogger.get_logger("users-api-router")
 

@@ -1,9 +1,10 @@
 """Tests for templateCog cog."""
-import pytest
-from unittest.mock import MagicMock, AsyncMock, patch
-import sys
 import os
+import sys
 import types
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
 
 # Setup mock shared.bblogger module
 _mock_shared = types.ModuleType("shared")
@@ -35,7 +36,6 @@ for _mod in ["discord", "discord.ext", "discord.ext.commands", "discord.app_comm
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "src"))
 
 import discord
-from discord.ext import commands
 
 
 @pytest.fixture

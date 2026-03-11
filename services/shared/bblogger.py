@@ -9,9 +9,9 @@ LOG_FILE    : Absolute/relative path for the log file       (default: app.log)
 LOG_TO_FILE : true/false or 1/0 or yes/no                  (default: true)
 """
 
+import logging
 import os
 import sys
-import logging
 from logging.handlers import RotatingFileHandler
 
 # ────────────────────────────────────────────────────────────────

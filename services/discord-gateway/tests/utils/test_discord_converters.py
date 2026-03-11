@@ -5,17 +5,15 @@ This module provides comprehensive test coverage for the Discord object conversi
 including all converter classes and their bidirectional conversion methods.
 """
 
-import pytest
-from unittest.mock import MagicMock, AsyncMock, patch
-from fastapi import HTTPException
-import sys
 import os
+import sys
 import types
 from datetime import datetime
-from unittest.mock import PropertyMock
+from unittest.mock import MagicMock, patch
+
+import pytest
 
 from tests.mocks.discord_mock_utils import DiscordMockUtils
-
 
 _mock_shared = types.ModuleType("shared")
 _mock_shared.__path__ = []
@@ -63,6 +61,7 @@ _MockMessage = type("Message", (), {})
 # Use real discord exception classes so that isinstance checks in production
 # code always work regardless of test execution order.
 import discord as _real_discord
+
 _MockForbidden = _real_discord.Forbidden
 _MockNotFound = _real_discord.NotFound
 _MockHTTPException = _real_discord.HTTPException

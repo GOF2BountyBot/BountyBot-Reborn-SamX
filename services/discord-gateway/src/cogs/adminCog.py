@@ -3,9 +3,9 @@ from typing import List, Optional
 
 import discord
 import httpx
-from shared import bblogger
 from discord import app_commands
 from discord.ext import commands
+from shared import bblogger
 
 # Set up logger
 flogger = bblogger.get_logger("discord-gateway-AdminCog")
@@ -507,7 +507,11 @@ class AdminCog(commands.Cog):
                 )
                 embed.add_field(name="Guild ID", value=str(cfg['guild_id']), inline=True)
                 embed.add_field(name="Configured", value="✅" if cfg['configured'] else "❌", inline=True)
-                embed.add_field(name="Admin Role Set", value="✅" if cfg['admin_role_configured'] else "❌", inline=True)
+                embed.add_field(
+                    name="Admin Role Set",
+                    value="✅" if cfg['admin_role_configured'] else "❌",
+                    inline=True
+                )
                 embed.add_field(name="Starting Credits", value=f"{cfg['starting_credits']:,}", inline=True)
                 embed.add_field(name="Sale Price Factor", value=f"{cfg['sale_price_factor']:.1%}", inline=True)
 

@@ -11,7 +11,6 @@ import uvicorn
 from discord.ext import commands
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-
 from shared import bblogger
 
 # Add the current directory to path for relative imports

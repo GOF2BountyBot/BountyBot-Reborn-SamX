@@ -1,16 +1,16 @@
+import importlib
+import os
+import sys
+import types
+from datetime import datetime
+from unittest.mock import AsyncMock, MagicMock, patch
+
 import pytest
-from unittest.mock import MagicMock, AsyncMock, patch
 from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
-import sys
-import os
-import types
-import importlib
-from datetime import datetime
 
 # Import discord_mock_utils for consistent mock patterns
 from tests.mocks.discord_mock_utils import DiscordMockUtils
-
 
 # Create module-level mock utilities
 _mock_utils = DiscordMockUtils()
@@ -44,7 +44,8 @@ sys.modules["shared.bblogger"] = _mock_bblogger
 # (NotFound, Forbidden, HTTPException) so except clauses work correctly.
 _mock_discord = _mock_utils.create_mock_discord_module_with_factories()
 
-# Mock CategoryChannel, TextChannel, VoiceChannel, ForumChannel, ThreadChannel, Thread, Embed, PermissionOverwrite, Guild, User, Member, Role, Message
+# Mock CategoryChannel, TextChannel, VoiceChannel, ForumChannel, ThreadChannel,
+# Thread, Embed, PermissionOverwrite, Guild, User, Member, Role, Message
 _mock_discord.CategoryChannel = MagicMock()
 _mock_discord.TextChannel = MagicMock()
 _mock_discord.VoiceChannel = MagicMock()
@@ -160,7 +161,9 @@ def mock_bot():
         side_effect=lambda x: mock_member if x == 111111111 else None
     )
     mock_guild.fetch_member = AsyncMock(
-        side_effect=lambda x: mock_member if x == 111111111 else (_ for _ in ()).throw(DiscordMockUtils.create_discord_not_found())
+        side_effect=lambda x: mock_member if x == 111111111 else (
+            _ for _ in ()
+        ).throw(DiscordMockUtils.create_discord_not_found())
     )
 
     bot.guilds = [mock_guild]

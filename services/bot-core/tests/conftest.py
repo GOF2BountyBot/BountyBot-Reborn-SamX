@@ -1,9 +1,10 @@
 """Service-specific fixtures for bot-core tests."""
-import sys
 import os
+import sys
 import types
+from unittest.mock import AsyncMock, MagicMock
+
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 

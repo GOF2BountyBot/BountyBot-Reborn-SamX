@@ -1,6 +1,6 @@
 services:
   db:
-    image: postgres:latest
+    image: postgres:18
     container_name: bounty_db
     restart: unless-stopped
     networks:
@@ -14,7 +14,7 @@ services:
     volumes:
       - /etc/localtime:/etc/localtime:ro
       - /etc/timezone:/etc/timezone:ro
-      - ./mappings/postgres-data:/var/lib/postgresql/data
+      - ./mappings/postgres-data:/var/lib/postgresql
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -d bountydb -U bounty"]
       interval: 5s

@@ -48,7 +48,7 @@ class Player(Base):
     # Active ship reference
     active_ship_id: Mapped[int | None] = mapped_column(
         Integer,
-        ForeignKey(f"{TableNames.PlayerShips.value}.id"),
+        ForeignKey(f"{TableNames.PlayerShips.value}.id", use_alter=True),
         nullable=True
     )
 

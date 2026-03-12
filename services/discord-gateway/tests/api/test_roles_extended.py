@@ -245,7 +245,7 @@ class TestAssignRoleExtended:
 
     def test_assign_role_member_not_found_discord_not_found(self, roles_ext_app):
         """assign_role_to_user should return 404 when discord.NotFound raised on fetch."""
-        app, *_ = roles_ext_app
+        app, mock_bot, *_ = roles_ext_app
 
         # Member not in cache; fetch raises discord.NotFound
         mock_bot.guilds[0].get_member = MagicMock(return_value=None)
@@ -274,7 +274,7 @@ class TestRemoveRoleExtended:
 
     def test_remove_role_member_not_found_discord_not_found(self, roles_ext_app):
         """remove_role_from_user should return 404 when discord.NotFound raised on fetch."""
-        app, *_ = roles_ext_app
+        app, mock_bot, *_ = roles_ext_app
 
         mock_bot.guilds[0].get_member = MagicMock(return_value=None)
         mock_bot.guilds[0].fetch_member = AsyncMock(side_effect=DiscordMockUtils.create_discord_not_found())
@@ -319,7 +319,7 @@ class TestCheckUserHasRoleExtended:
 
     def test_check_user_has_role_member_not_found_discord_not_found(self, roles_ext_app):
         """check_user_has_role should return 404 when discord.NotFound raised on fetch."""
-        app, *_ = roles_ext_app
+        app, mock_bot, *_ = roles_ext_app
 
         mock_bot.guilds[0].get_member = MagicMock(return_value=None)
         mock_bot.guilds[0].fetch_member = AsyncMock(side_effect=DiscordMockUtils.create_discord_not_found())

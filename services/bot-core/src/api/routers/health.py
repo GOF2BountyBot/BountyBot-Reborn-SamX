@@ -198,9 +198,10 @@ async def database_health_check(request: Request) -> dict[str, Any]:
 
         # Enforce connectivity
         if not health_info["database"].get("connectivity", False):
+            from fastapi.encoders import jsonable_encoder
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail=health_info
+                detail=jsonable_encoder(health_info)
             )
 
         return health_info

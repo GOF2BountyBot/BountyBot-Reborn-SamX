@@ -54,13 +54,13 @@ async def create_discord_message(
         f"Create request received: guild={message_request.guild_id}, "
         f"channel={message_request.channel_id}, type={message_request.message_type}"
     )
-    flogger.debug(f"Payload: {message_request.dict()}")
+    flogger.debug(f"Payload: {message_request.model_dump()}")
     try:
         # Send to Discord Gateway first
         gateway_request = {
             "guild_id": message_request.guild_id,
             "channel_id": message_request.channel_id,
-            "content": message_request.embed_payload.dict()
+            "content": message_request.embed_payload.model_dump()
         }
         flogger.debug(f"Forwarding to gateway: {gateway_request}")
         async with httpx.AsyncClient() as client:
@@ -89,7 +89,7 @@ async def create_discord_message(
                 "guild_id": gateway_data['guild_id'],
                 "channel_id": gateway_data['channel_id'],
                 "message_id": gateway_data['message_id'],
-                "embed_payload": json.dumps(message_request.embed_payload.dict()),
+                "embed_payload": json.dumps(message_request.embed_payload.model_dump()),
                 "message_type": message_request.message_type
             }
             flogger.debug(f"Persisting record: {record}")
@@ -135,14 +135,14 @@ async def update_discord_message(
         f"message={message_request.message_id}, "
         f"type={message_request.message_type}"
     )
-    flogger.debug(f"Payload: {message_request.dict()}")
+    flogger.debug(f"Payload: {message_request.model_dump()}")
     try:
         # Send update to Discord Gateway
         gateway_request = {
             "guild_id": message_request.guild_id,
             "channel_id": message_request.channel_id,
             "message_id": message_request.message_id,
-            "content": message_request.embed_payload.dict()
+            "content": message_request.embed_payload.model_dump()
         }
         flogger.debug(f"Forwarding update to gateway: {gateway_request}")
         async with httpx.AsyncClient() as client:
@@ -169,7 +169,7 @@ async def update_discord_message(
                 "guild_id": gateway_data["guild_id"],
                 "channel_id": gateway_data["channel_id"],
                 "message_id": gateway_data["message_id"],
-                "embed_payload": json.dumps(message_request.embed_payload.dict()),
+                "embed_payload": json.dumps(message_request.embed_payload.model_dump()),
                 "message_type": message_request.message_type
             }
             msg = await discord_message_repo.create_or_update(db, record)

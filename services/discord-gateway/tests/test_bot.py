@@ -333,10 +333,8 @@ class TestErrorHandling:
 
         # Mock listdir to include invalid file
         with (
-            (
-                patch("os.listdir", return_value=["invalidCog.py"]),
-                patch("os.path.join", return_value="src/cogs/invalidCog.py"),
-            ),
+            patch("os.listdir", return_value=["invalidCog.py"]),
+            patch("os.path.join", return_value="src/cogs/invalidCog.py"),
             pytest.raises(Exception),  # noqa: B017
         ):
             asyncio.run(bot.setup_hook())

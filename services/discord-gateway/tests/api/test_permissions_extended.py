@@ -317,7 +317,7 @@ class TestUpdatePermissionOverwriteExtended:
 
     def test_update_overwrite_target_not_found_404(self, perm_ext_app):
         """update_permission_overwrite should return 404 when target not found."""
-        app, _mock_bot, _mock_resolve, _mock_handle, *_ = perm_ext_app
+        app, mock_bot, _mock_resolve, _mock_handle, *_ = perm_ext_app
 
         channel = create_mock_channel(1234567890)
         channel.guild.get_role = MagicMock(return_value=None)

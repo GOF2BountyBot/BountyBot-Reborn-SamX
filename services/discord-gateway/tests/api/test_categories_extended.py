@@ -221,7 +221,7 @@ class TestDeleteCategoryWithCascade:
 
         cat = create_mock_category()
         cat.channels = [child1, child2]
-        mock_bot.get_channel = MagicMock(side_effect=lambda x: cat if x == 1111111111 else None)
+        _mock_bot.get_channel = MagicMock(side_effect=lambda x: cat if x == 1111111111 else None)
 
         client = TestClient(app)
         response = client.delete("/api/v1/categories/1111111111?cascade=true")

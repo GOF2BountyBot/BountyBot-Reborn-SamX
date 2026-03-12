@@ -56,7 +56,7 @@ async def create_time_announcement(
         f"Creating time announcement: guild={announcement_request.guild_id}, "
         f"channel={announcement_request.channel_id}, time={announcement_request.current_time}"
     )
-    flogger.debug(f"Request body: {announcement_request.dict()}")
+    flogger.debug(f"Request body: {announcement_request.model_dump()}")
     try:
         builder = MessageBuilderFactory.create_builder("time_announcement")
         payload_data = builder.build_payload({"current_time": announcement_request.current_time})
@@ -66,7 +66,7 @@ async def create_time_announcement(
         gateway_request = {
             "guild_id": announcement_request.guild_id,
             "channel_id": announcement_request.channel_id,
-            "content": embed_payload.dict()
+            "content": embed_payload.model_dump()
         }
         flogger.debug(f"Forwarding to gateway: {gateway_request}")
         async with httpx.AsyncClient() as client:
@@ -92,7 +92,7 @@ async def create_time_announcement(
                 "guild_id": gateway_data["guild_id"],
                 "channel_id": gateway_data["channel_id"],
                 "message_id": gateway_data["message_id"],
-                "embed_payload": json.dumps(embed_payload.dict()),
+                "embed_payload": json.dumps(embed_payload.model_dump()),
                 "message_type": "time_announcement"
             }
             message = await discord_message_repo.create_or_update(db, record)
@@ -128,7 +128,7 @@ async def update_time_announcement(
         f"Updating time announcement: guild={announcement_request.guild_id}, "
         f"channel={announcement_request.channel_id}, time={announcement_request.current_time}"
     )
-    flogger.debug(f"Request body: {announcement_request.dict()}")
+    flogger.debug(f"Request body: {announcement_request.model_dump()}")
     try:
         if announcement_request.message_id is None:
             raise HTTPException(
@@ -161,7 +161,7 @@ async def update_time_announcement(
                 "guild_id": existing.guild_id,
                 "channel_id": existing.channel_id,
                 "message_id": existing.message_id,
-                "content": embed_payload.dict()
+                "content": embed_payload.model_dump()
             }
             flogger.debug(f"Forwarding update to gateway: {gateway_request}")
             async with httpx.AsyncClient() as client:
@@ -185,7 +185,7 @@ async def update_time_announcement(
                 "guild_id": gateway_data["guild_id"],
                 "channel_id": gateway_data["channel_id"],
                 "message_id": gateway_data["message_id"],
-                "embed_payload": json.dumps(embed_payload.dict()),
+                "embed_payload": json.dumps(embed_payload.model_dump()),
                 "message_type": "time_announcement"
             }
             updated = await discord_message_repo.create_or_update(db, record)

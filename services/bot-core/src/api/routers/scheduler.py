@@ -41,7 +41,7 @@ async def get_job(req: Request, job_id: str):
         trigger=str(job.trigger),
         args=job.args,
     )
-    flogger.info(f"Retrieved job '{id}': next_run_time={info.next_run_time}")
+    flogger.info(f"Retrieved job '{job_id}': next_run_time={info.next_run_time}")
     return info
 
 @router.post("/jobs")
@@ -98,18 +98,18 @@ async def update_job(req: Request, job_id: str, update: UpdateJob):
     sched = req.app.state.scheduler
     job = sched.get_job(job_id)
     if not job:
-        flogger.warning(f"Cannot update job '{id}': not found")
+        flogger.warning(f"Cannot update job '{job_id}': not found")
         raise HTTPException(404, "Job not found")
 
     new_args = [job_id, update.payload]
     try:
         sched.modify_job(job_id, args=new_args)
-        flogger.info(f"Updated job '{id}' args successfully")
+        flogger.info(f"Updated job '{job_id}' args successfully")
     except Exception as e:
-        flogger.error(f"Failed to update job '{id}': {e}", exc_info=True)
+        flogger.error(f"Failed to update job '{job_id}': {e}", exc_info=True)
         raise HTTPException(400, f"Could not update job: {e}") from e
 
-    return {"status": "updated", "job_id": id}
+    return {"status": "updated", "job_id": job_id}
 
 @router.delete("/jobs/all")
 async def delete_all_jobs(req: Request):
@@ -119,13 +119,13 @@ async def delete_all_jobs(req: Request):
     return {"status": "all_jobs_deleted"}
 
 
-@router.delete("/jobs/{id}")
+@router.delete("/jobs/{job_id}")
 async def delete_job(req: Request, job_id: str):
-    flogger.debug(f"Deleting job '{id}'")
+    flogger.debug(f"Deleting job '{job_id}'")
     sched = req.app.state.scheduler
     if not sched.get_job(job_id):
-        flogger.warning(f"Cannot delete job '{id}': not found")
+        flogger.warning(f"Cannot delete job '{job_id}': not found")
         raise HTTPException(404, "Job not found")
     sched.remove_job(job_id)
-    flogger.info(f"Deleted job '{id}'")
-    return {"status": "deleted", "job_id": id}
+    flogger.info(f"Deleted job '{job_id}'")
+    return {"status": "deleted", "job_id": job_id}

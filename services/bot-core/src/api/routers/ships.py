@@ -132,7 +132,7 @@ async def create_ship(
                 )
 
             # Create ship
-            ship_data = request.dict()
+            ship_data = request.model_dump()
             ship = await ship_repo.create_or_update(db, ship_data)
 
             return ShipResponse(

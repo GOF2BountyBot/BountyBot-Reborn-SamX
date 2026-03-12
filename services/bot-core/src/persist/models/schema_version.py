@@ -11,5 +11,5 @@ class SchemaVersion(Base):
     __tablename__ = TableNames.SchemaVersion.value  # Using the Enum to get the name of the table
 
     version: Mapped[str] = mapped_column(String(50), primary_key=True)
-    applied_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(UTC))
+    applied_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(UTC))
     description: Mapped[str] = mapped_column(String, nullable=True)

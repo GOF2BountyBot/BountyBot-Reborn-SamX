@@ -52,7 +52,7 @@ async def create_user(
                 )
 
             # Create new user
-            user_data = request.dict()
+            user_data = request.model_dump()
             user = await user_repo.create_or_update(db, user_data)
 
             flogger.info(f"Successfully created user: {user.id}")

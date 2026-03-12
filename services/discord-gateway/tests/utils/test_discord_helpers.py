@@ -208,7 +208,7 @@ class TestResolveBot:
     def test_resolve_bot_times_out_when_bot_not_ready(self, mock_request):
         """resolve_bot should raise HTTPException when bot doesn't become ready."""
         mock_bot = self._make_mock_bot(is_ready=False)
-        mock_bot.wait_until_ready = AsyncMock(side_effect=asyncio.TimeoutError())
+        mock_bot.wait_until_ready = AsyncMock(side_effect=TimeoutError())
         mock_request.app.state.bot = mock_bot
 
         from utils.discord_helpers import resolve_bot

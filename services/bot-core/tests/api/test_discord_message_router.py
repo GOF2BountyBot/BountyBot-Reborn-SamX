@@ -11,12 +11,11 @@ Discord Gateway. Tests mock both of these dependencies.
 import json
 from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock, patch
-from uuid import UUID, uuid4
+from uuid import uuid4
 
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -98,8 +97,8 @@ def mock_message_repo():
 
 @pytest.fixture
 def test_app(mock_db_manager, mock_message_repo):
-    from api.routers.discord_message import router as discord_message_router
     import api.routers.discord_message as dm_module
+    from api.routers.discord_message import router as discord_message_router
 
     app = FastAPI()
     app.include_router(discord_message_router, prefix="/api/v1")
@@ -145,7 +144,7 @@ class TestCreateDiscordMessage:
         mock_httpx_class.return_value.__aexit__ = AsyncMock(return_value=False)
         mock_http.post = AsyncMock(return_value=make_mock_http_response())
 
-        mock_msg = make_mock_message()
+        _mock_msg = make_mock_message()
         mock_db_session.refresh = AsyncMock()
         # DiscordMessageResponse.from_orm needs the object
         with patch(

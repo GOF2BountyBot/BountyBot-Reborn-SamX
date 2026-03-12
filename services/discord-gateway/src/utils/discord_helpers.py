@@ -8,8 +8,8 @@ including bot resolution and error handling.
 import asyncio
 import re
 from collections.abc import Mapping
-from functools import lru_cache
-from typing import Any, Dict, List, Optional, Union
+from functools import cache
+from typing import Any
 
 import discord
 from discord.ext import commands
@@ -29,20 +29,16 @@ async def resolve_bot(request: Request) -> commands.Bot:
 
     if not isinstance(bot, commands.Bot):
         flogger.error("app.state.bot is not a commands.Bot instance")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Bot instance invalid"
-        )
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Bot instance invalid")
 
     if not bot.is_ready():
         flogger.info("Bot not ready, awaiting wait_until_ready()")
         try:
             await asyncio.wait_for(bot.wait_until_ready(), timeout=15)
-        except asyncio.TimeoutError as exc:
+        except TimeoutError as exc:
             flogger.error("Timed out waiting for Discord bot to become ready")
             raise HTTPException(
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail="Discord bot is not ready"
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Discord bot is not ready"
             ) from exc
 
     flogger.debug("Bot instance resolved and ready")
@@ -63,14 +59,14 @@ async def handle_discord_exception(operation: str, exc: Exception) -> None:
     flogger.debug(f"handle_discord_exception called for operation: {operation}")
 
     # Gather diagnostic details to improve logging
-    details: Dict[str, Any] = {
+    details: dict[str, Any] = {
         "exc_type": exc.__class__.__name__,
         "exc_repr": repr(exc),
     }
 
     # try to extract common discord.HTTPException attributes safely
-    exc_status: Optional[int] = None
-    exc_code: Optional[int] = None
+    exc_status: int | None = None
+    exc_code: int | None = None
     try:
         exc_status = getattr(exc, "status", None) or getattr(exc, "status_code", None)
         exc_code = getattr(exc, "code", None)
@@ -99,17 +95,11 @@ async def handle_discord_exception(operation: str, exc: Exception) -> None:
     # Map well-known discord exceptions to proper HTTP responses
     if isinstance(exc, discord.NotFound):
         flogger.error(f"Resource not found during {operation}")
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Resource not found during {operation}"
-        )
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Resource not found during {operation}")
 
     if isinstance(exc, discord.Forbidden):
         flogger.error(f"Insufficient permissions for {operation}")
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail=f"Insufficient permissions for {operation}"
-        )
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=f"Insufficient permissions for {operation}")
 
     if isinstance(exc, discord.HTTPException):
         # Prefer explicit status mapping from the discord exception, fall back to heuristics
@@ -120,51 +110,40 @@ async def handle_discord_exception(operation: str, exc: Exception) -> None:
                     flogger.error(f"Discord returned 403 for {operation}: {details}")
                     raise HTTPException(
                         status_code=status.HTTP_403_FORBIDDEN,
-                        detail=f"Insufficient permissions for {operation}: {exc_code or ''} {repr(exc)}"
+                        detail=f"Insufficient permissions for {operation}: {exc_code or ''} {exc!r}",
                     )
                 if exc_status == 404:
                     flogger.error(f"Discord returned 404 for {operation}: {details}")
                     raise HTTPException(
-                        status_code=status.HTTP_404_NOT_FOUND,
-                        detail=f"Resource not found during {operation}: {repr(exc)}"
+                        status_code=status.HTTP_404_NOT_FOUND, detail=f"Resource not found during {operation}: {exc!r}"
                     )
                 flogger.error(f"Discord returned {exc_status} for {operation}: {details}")
-                raise HTTPException(
-                    status_code=exc_status,
-                    detail=f"Bad request during {operation}: {repr(exc)}"
-                )
+                raise HTTPException(status_code=exc_status, detail=f"Bad request during {operation}: {exc!r}")
 
             # Upstream Discord server or gateway errors -> surface as Bad Gateway
             flogger.error(f"Discord upstream error {exc_status} during {operation}: {details}")
-            raise HTTPException(
-                status_code=status.HTTP_502_BAD_GATEWAY,
-                detail=f"Discord upstream error: {repr(exc)}"
-            )
+            raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=f"Discord upstream error: {exc!r}")
 
         # If we couldn't determine a numeric status, treat as a 502 (upstream error)
         flogger.error(f"Unhandled discord.HTTPException during {operation}: {details}")
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"Discord upstream error: {repr(exc)}"
-        )
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=f"Discord upstream error: {exc!r}")
 
     # Other exceptions: log full traceback then return 500
     flogger.exception(f"Unexpected error during {operation}: {exc}")
-    raise HTTPException(
-        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-        detail=f"Failed to {operation}: {exc}"
-    )
+    raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to {operation}: {exc}")
 
 
 async def get_entity_or_404(
-    get_func,
-    fetch_func,
-    entity_id: int,
-    entity_type: str
-) -> Union[
-    discord.Guild, discord.TextChannel, discord.VoiceChannel, discord.CategoryChannel,
-    discord.User, discord.Member, discord.Role
-]:
+    get_func, fetch_func, entity_id: int, entity_type: str
+) -> (
+    discord.Guild
+    | discord.TextChannel
+    | discord.VoiceChannel
+    | discord.CategoryChannel
+    | discord.User
+    | discord.Member
+    | discord.Role
+):
     """
     Generic function to get entity from cache or fetch from API.
 
@@ -208,23 +187,19 @@ def validate_guild_channel_relationship(channel, guild_id: int) -> None:
     Raises:
         HTTPException: If channel doesn't belong to guild
     """
-    flogger.debug(
-        f"validate_guild_channel_relationship called for channel {channel.id} and guild {guild_id}"
-    )
+    flogger.debug(f"validate_guild_channel_relationship called for channel {channel.id} and guild {guild_id}")
 
     if hasattr(channel, "guild") and getattr(channel.guild, "id", None) != guild_id:
         flogger.error(
-            f"Channel {channel.id} belongs to guild {getattr(channel.guild, 'id', None)}, "
-            f"expected {guild_id}"
+            f"Channel {channel.id} belongs to guild {getattr(channel.guild, 'id', None)}, expected {guild_id}"
         )
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Channel {channel.id} does not belong to guild {guild_id}"
+            status_code=status.HTTP_400_BAD_REQUEST, detail=f"Channel {channel.id} does not belong to guild {guild_id}"
         )
     flogger.trace(f"Channel {channel.id} belongs to correct guild {guild_id}")
 
 
-def validate_channel_type(channel, expected_types: List[str], channel_id: int) -> None:
+def validate_channel_type(channel, expected_types: list[str], channel_id: int) -> None:
     """
     Validate that a channel is one of the expected types.
 
@@ -243,9 +218,10 @@ def validate_channel_type(channel, expected_types: List[str], channel_id: int) -
         flogger.error(f"Channel {channel_id} is type {actual_type}, expected one of: {expected_types}")
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Channel {channel_id} is type {actual_type}, expected one of: {expected_types}"
+            detail=f"Channel {channel_id} is type {actual_type}, expected one of: {expected_types}",
         )
     flogger.trace(f"Channel {channel_id} type {actual_type} is valid")
+
 
 def normalize_emoji(val: str) -> str:
     """
@@ -267,25 +243,25 @@ def normalize_emoji(val: str) -> str:
         return s
 
     # If the value is a full custom emoji like <a:name:id> or <:name:id>, accept as-is.
-    m_full_custom = re.fullmatch(r'^<a?:([A-Za-z0-9_~]+):(\d+)>$', s)
+    m_full_custom = re.fullmatch(r"^<a?:([A-Za-z0-9_~]+):(\d+)>$", s)
     if m_full_custom:
         return s  # keep full custom emoji notation
 
     # If the value is a short form like :name:, normalize to "name" (no colons).
-    m_short = re.fullmatch(r'^:([A-Za-z0-9_~]+):$', s)
+    m_short = re.fullmatch(r"^:([A-Za-z0-9_~]+):$", s)
     if m_short:
         return m_short.group(1)
 
     # Remove common prefixes like "U+" or "0x" (single prefix)
-    cleaned = re.sub(r'(?i)^(?:u\+|0x)', '', s)
+    cleaned = re.sub(r"(?i)^(?:u\+|0x)", "", s)
 
     # If looks like hex codepoints separated by -, _, or whitespace, convert
-    if re.fullmatch(r'[0-9A-Fa-f]+(?:[-_\s][0-9A-Fa-f]+)*', cleaned):
-        parts = re.split(r'[-_\s]+', cleaned)
+    if re.fullmatch(r"[0-9A-Fa-f]+(?:[-_\s][0-9A-Fa-f]+)*", cleaned):
+        parts = re.split(r"[-_\s]+", cleaned)
         # If there are explicit separators, just decode each part
         if len(parts) > 1:
             try:
-                return ''.join(chr(int(p, 16)) for p in parts)
+                return "".join(chr(int(p, 16)) for p in parts)
             except Exception:  # pylint: disable=broad-exception-caught
                 return val
 
@@ -294,20 +270,20 @@ def normalize_emoji(val: str) -> str:
 
         # Backtracking splitter: try to partition hexstr into chunks of length 1..6
         # (unicode scalars fit in up to 6 hex digits), greedy longest-first to favor larger codepoints.
-        @lru_cache(maxsize=None)
+        @cache
         def try_split(idx):
             if idx == len(hexstr):
                 return []
             # try lengths 6..1
             for L in range(6, 0, -1):
                 if idx + L <= len(hexstr):
-                    part = hexstr[idx:idx + L]
+                    part = hexstr[idx : idx + L]
                     try:
                         cp = int(part, 16)
                         if cp <= 0x10FFFF:
                             rest = try_split(idx + L)
                             if rest is not None:
-                                return [part] + rest
+                                return [part, *rest]
                     except Exception:  # pylint: disable=broad-exception-caught
                         continue
             return None
@@ -315,12 +291,13 @@ def normalize_emoji(val: str) -> str:
         split = try_split(0)
         if split:
             try:
-                return ''.join(chr(int(p, 16)) for p in split)
+                return "".join(chr(int(p, 16)) for p in split)
             except Exception:  # pylint: disable=broad-exception-caught
                 return val
 
     # Otherwise assume it's already a unicode emoji (or some other acceptable string)
     return s
+
 
 # ---------------------------------------------------------------------
 # New helpers: tag <-> payload helpers to centralize emoji/tag normalization
@@ -337,7 +314,7 @@ def _is_mock_object(obj) -> bool:
     )
 
 
-def tag_to_dict(tag, channel_id: Optional[int] = None) -> dict:
+def tag_to_dict(tag, channel_id: int | None = None) -> dict:
     """
     Normalize a ForumTag-like object into a dict:
       { "id": int|None, "channel_id": int|None, "name": str|None, "emoji": str|None }
@@ -372,9 +349,8 @@ def tag_to_dict(tag, channel_id: Optional[int] = None) -> dict:
                     cid = None
             else:
                 ch_obj = tag.get("channel")
-                cid_val = (
-                    tag.get("channel_id")
-                    or (ch_obj and (ch_obj.get("id") if isinstance(ch_obj, Mapping) else None))
+                cid_val = tag.get("channel_id") or (
+                    ch_obj and (ch_obj.get("id") if isinstance(ch_obj, Mapping) else None)
                 )
                 try:
                     cid = int(cid_val) if cid_val is not None else None
@@ -515,7 +491,8 @@ def tag_to_dict(tag, channel_id: Optional[int] = None) -> dict:
 
     return {"id": tid, "channel_id": cid, "name": name, "emoji": emoji}
 
-def tags_to_edit_payload(tags_iterable, *, updates: Optional[dict] = None) -> list:
+
+def tags_to_edit_payload(tags_iterable, *, updates: dict | None = None) -> list:
     """
     Build a serializable available_tags payload suitable for ForumChannel.edit(...).
 
@@ -526,7 +503,7 @@ def tags_to_edit_payload(tags_iterable, *, updates: Optional[dict] = None) -> li
     """
     out = []
     seen_ids = set()
-    for t in (tags_iterable or []):
+    for t in tags_iterable or []:
         td = tag_to_dict(t)
         tid = td.get("id")
         if tid is not None:

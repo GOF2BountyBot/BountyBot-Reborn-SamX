@@ -3,10 +3,10 @@ from typing import Generic, TypeVar
 
 from sqlalchemy.ext.asyncio import AsyncSession  # switched
 
-T = TypeVar('T')
+T = TypeVar("T")
 
-class IRepository(ABC, Generic[T]):
 
+class IRepository(ABC, Generic[T]):  # noqa: UP046
     @abstractmethod
     async def get_by_id(self, db: AsyncSession, obj_id: int) -> T | None:
         pass

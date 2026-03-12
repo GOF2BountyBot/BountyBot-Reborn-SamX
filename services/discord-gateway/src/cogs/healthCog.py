@@ -1,4 +1,5 @@
 import os
+from contextlib import suppress
 
 import discord
 import httpx
@@ -10,6 +11,7 @@ from shared import bblogger
 flogger = bblogger.get_logger("discord-gateway-HealthCog")
 api_base = os.environ.get("BOT_API_BASE_URL", "http://bot-core:8000/api/v1")
 flogger.debug(f"HealthCog loading with api_base: {api_base}")
+
 
 class HealthCog(commands.Cog):
     def __init__(self, bot: commands.Bot):
@@ -25,8 +27,8 @@ class HealthCog(commands.Cog):
     async def ping(self, interaction: discord.Interaction):
         latency_ms = round(self.bot.latency * 1000)
         # ephemeral: visible only to the user who invoked the command
-        await interaction.response.send_message(f"Pong! Latency is {latency_ms} ms", ephemeral=True)
-        flogger.debug(f"/ping by {interaction.user} in guild {interaction.guild_id}: {latency_ms} ms")
+        await interaction.response.send_message(f"Pong! Latency is {latency_ms} ms", ephemeral=True)
+        flogger.debug(f"/ping by {interaction.user} in guild {interaction.guild_id}: {latency_ms} ms")
 
     @ping.error
     async def ping_error(self, interaction: discord.Interaction, error: app_commands.AppCommandError):
@@ -45,10 +47,7 @@ class HealthCog(commands.Cog):
                 # ensure we don't raise while handling errors
                 pass
 
-    @app_commands.command(
-        name="health",
-        description="Check the health of the BountyBot API service."
-    )
+    @app_commands.command(name="health", description="Check the health of the BountyBot API service.")
     @is_admin()
     async def health(self, interaction: discord.Interaction):
         """Calls the /health endpoint and reports status."""
@@ -85,7 +84,7 @@ class HealthCog(commands.Cog):
             embed = discord.Embed(
                 title=f"BountyBot API Health - {status}",
                 description=f"**Service:** {service}\n**Version:** {version}\n**Timestamp:** {timestamp}",
-                color=color
+                color=color,
             )
 
             # Add environment details to the embed
@@ -142,18 +141,12 @@ class HealthCog(commands.Cog):
             emoji = "❌"
             msg = f"Health check failed: `{e}`"
 
-            embed = discord.Embed(
-                title="BountyBot API Health",
-                description=msg,
-                color=discord.Colour.red()
-            )
+            embed = discord.Embed(title="BountyBot API Health", description=msg, color=discord.Colour.red())
             embed.set_footer(text=f"Checked via {api_base}/health")
-            try:
+            with suppress(Exception):
                 await interaction.followup.send(content=emoji, embed=embed, ephemeral=True)
-            except Exception:  # pylint: disable=broad-exception-caught
-                # swallow any followup/send errors to avoid raising during error handling
-                pass
         flogger.trace("/health command end")
+
 
 async def setup(bot: commands.Bot):
     flogger.debug("Setting up HealthCog...")

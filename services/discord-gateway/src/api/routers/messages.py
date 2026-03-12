@@ -6,7 +6,6 @@ with simplified URIs that don't require channel/guild context.
 """
 
 import asyncio
-from typing import Optional
 
 import discord
 from fastapi import APIRouter, HTTPException, Request, status
@@ -31,7 +30,7 @@ router = APIRouter(
 )
 
 
-async def _find_message(bot: discord.Client, message_id: int, logger) -> Optional[discord.Message]:
+async def _find_message(bot: discord.Client, message_id: int, logger) -> discord.Message | None:
     """
     Try to locate a message by id:
       1) fast-path: check common caches if present
@@ -78,7 +77,7 @@ async def _find_message(bot: discord.Client, message_id: int, logger) -> Optiona
             except discord.Forbidden:
                 # no access to this channel — skip
                 continue
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 logger.debug(
                     f"fetch_message timeout for channel {getattr(channel, 'id', None)} "
                     f"while searching for {message_id}"

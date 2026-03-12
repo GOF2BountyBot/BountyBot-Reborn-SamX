@@ -4,13 +4,11 @@ Import path setup and sqlalchemy_utils mocking are handled by
 tests/api/conftest.py which runs before this module is loaded.
 """
 
-from datetime import datetime
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-
 
 # ---------------------------------------------------------------------------
 # Fixtures

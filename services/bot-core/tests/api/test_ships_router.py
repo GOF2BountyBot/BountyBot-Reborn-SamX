@@ -83,7 +83,8 @@ def mock_player_repo():
 @pytest.fixture
 def test_app(mock_ship_repo, mock_player_repo):
     app = FastAPI()
-    from api.routers.ships import router as ships_router, get_ship_repository, get_player_repository
+    from api.routers.ships import get_player_repository, get_ship_repository
+    from api.routers.ships import router as ships_router
 
     app.include_router(ships_router, prefix="/api/v1")
     app.dependency_overrides[get_ship_repository] = lambda: mock_ship_repo

@@ -1,4 +1,5 @@
 """Tests for permission utility functions."""
+
 from unittest.mock import MagicMock
 
 import pytest
@@ -34,6 +35,7 @@ from utils.permission_utils import (
 # check_permission
 # ---------------------------------------------------------------------------
 
+
 class TestCheckPermission:
     def test_check_permission_send_messages(self):
         """SEND_MESSAGES (0x800) should be detected when set."""
@@ -42,7 +44,7 @@ class TestCheckPermission:
 
     def test_check_permission_not_set(self):
         """Permission not present in the value should return False."""
-        # 0x800 is SEND_MESSAGES only – KICK_MEMBERS (0x2) is absent
+        # 0x800 is SEND_MESSAGES only - KICK_MEMBERS (0x2) is absent
         perms = 0x800
         assert check_permission(perms, "KICK_MEMBERS") is False
 
@@ -56,14 +58,13 @@ class TestCheckPermission:
 # check_permissions  (multiple at once)
 # ---------------------------------------------------------------------------
 
+
 class TestCheckPermissions:
     def test_check_permissions_multiple(self):
         """Check several permissions at once and verify mapping."""
         # SEND_MESSAGES (0x800) | ADMINISTRATOR (0x8) = 0x808
         perms = 0x808
-        result = check_permissions(
-            perms, ["SEND_MESSAGES", "ADMINISTRATOR", "BAN_MEMBERS"]
-        )
+        result = check_permissions(perms, ["SEND_MESSAGES", "ADMINISTRATOR", "BAN_MEMBERS"])
         assert result == {
             "SEND_MESSAGES": True,
             "ADMINISTRATOR": True,
@@ -74,6 +75,7 @@ class TestCheckPermissions:
 # ---------------------------------------------------------------------------
 # has_administrator
 # ---------------------------------------------------------------------------
+
 
 class TestHasAdministrator:
     def test_has_administrator_true(self):
@@ -92,27 +94,28 @@ class TestHasAdministrator:
 # calculate_effective_permissions
 # ---------------------------------------------------------------------------
 
+
 class TestCalculateEffectivePermissions:
     def test_calculate_effective_permissions_deny(self):
         """Deny overwrites should remove the denied bits."""
         base = 0x800 | 0x400  # SEND_MESSAGES + VIEW_CHANNEL
-        deny = 0x800          # deny SEND_MESSAGES
+        deny = 0x800  # deny SEND_MESSAGES
         result = calculate_effective_permissions(base, deny_overwrites=deny)
-        assert result & 0x800 == 0       # SEND_MESSAGES removed
-        assert result & 0x400 == 0x400   # VIEW_CHANNEL kept
+        assert result & 0x800 == 0  # SEND_MESSAGES removed
+        assert result & 0x400 == 0x400  # VIEW_CHANNEL kept
 
     def test_calculate_effective_permissions_allow(self):
         """Allow overwrites should add the allowed bits."""
-        base = 0x400           # VIEW_CHANNEL only
-        allow = 0x800          # allow SEND_MESSAGES
+        base = 0x400  # VIEW_CHANNEL only
+        allow = 0x800  # allow SEND_MESSAGES
         result = calculate_effective_permissions(base, allow_overwrites=allow)
-        assert result & 0x800 == 0x800   # SEND_MESSAGES added
-        assert result & 0x400 == 0x400   # VIEW_CHANNEL kept
+        assert result & 0x800 == 0x800  # SEND_MESSAGES added
+        assert result & 0x400 == 0x400  # VIEW_CHANNEL kept
 
     def test_calculate_effective_permissions_admin_bypass(self):
         """Administrator in base perms should bypass all overwrites."""
-        base = 0x8 | 0x800    # ADMINISTRATOR + SEND_MESSAGES
-        deny = 0x800          # try to deny SEND_MESSAGES
+        base = 0x8 | 0x800  # ADMINISTRATOR + SEND_MESSAGES
+        deny = 0x800  # try to deny SEND_MESSAGES
         result = calculate_effective_permissions(base, deny_overwrites=deny)
         # Admin bypasses: result must equal the original base
         assert result == base
@@ -121,6 +124,7 @@ class TestCalculateEffectivePermissions:
 # ---------------------------------------------------------------------------
 # permissions_to_dict
 # ---------------------------------------------------------------------------
+
 
 class TestPermissionsToDict:
     def test_permissions_to_dict(self):
@@ -143,6 +147,7 @@ class TestPermissionsToDict:
 # get_permission_names_by_value
 # ---------------------------------------------------------------------------
 
+
 class TestGetPermissionNamesByValue:
     def test_get_permission_names_by_value(self):
         """Should return list of uppercase permission names that are set."""
@@ -156,6 +161,7 @@ class TestGetPermissionNamesByValue:
 # ---------------------------------------------------------------------------
 # combine_permissions
 # ---------------------------------------------------------------------------
+
 
 class TestCombinePermissions:
     def test_combine_permissions(self):
@@ -171,6 +177,7 @@ class TestCombinePermissions:
 # ---------------------------------------------------------------------------
 # PermissionSource
 # ---------------------------------------------------------------------------
+
 
 class TestPermissionSource:
     def test_permission_source_direct(self):
@@ -197,6 +204,7 @@ class TestPermissionSource:
 # get_role_permissions
 # ---------------------------------------------------------------------------
 
+
 class TestGetRolePermissions:
     def test_get_role_permissions_returns_all(self):
         """Should return all permissions since all can be assigned to roles."""
@@ -209,6 +217,7 @@ class TestGetRolePermissions:
 # ---------------------------------------------------------------------------
 # get_user_permissions
 # ---------------------------------------------------------------------------
+
 
 class TestGetUserPermissions:
     def test_get_user_permissions_only_channel_perms(self):
@@ -232,6 +241,7 @@ class TestGetUserPermissions:
 # get_channel_permissions
 # ---------------------------------------------------------------------------
 
+
 class TestGetChannelPermissions:
     def test_get_channel_permissions_includes_text_voice(self):
         """Should return permissions applicable to text/voice channels."""
@@ -247,6 +257,7 @@ class TestGetChannelPermissions:
 # get_category_permissions
 # ---------------------------------------------------------------------------
 
+
 class TestGetCategoryPermissions:
     def test_get_category_permissions_same_as_channel(self):
         """Category permissions should be same as channel permissions."""
@@ -258,6 +269,7 @@ class TestGetCategoryPermissions:
 # ---------------------------------------------------------------------------
 # create_permission_overwrite
 # ---------------------------------------------------------------------------
+
 
 class TestCreatePermissionOverwrite:
     def test_create_permission_overwrite_allow_only(self):
@@ -288,7 +300,7 @@ class TestCreatePermissionOverwrite:
     def test_create_permission_overwrite_both_allow_and_deny(self):
         """Should handle both allow and deny in same overwrite."""
         allow = 0x400  # VIEW_CHANNEL
-        deny = 0x800    # SEND_MESSAGES
+        deny = 0x800  # SEND_MESSAGES
         result = create_permission_overwrite(allow=allow, deny=deny)
         if isinstance(result, dict):
             assert result.get("view_channel") is True
@@ -307,7 +319,7 @@ class TestCreatePermissionOverwrite:
         else:
             # PermissionOverwrite has attributes, check they are all None/default
             for attr in dir(result):
-                if not attr.startswith('_') and attr not in ('pair',):
+                if not attr.startswith("_") and attr not in ("pair",):
                     getattr(result, attr, None)
                     # All permission attributes should be None for empty overwrite
 
@@ -315,6 +327,7 @@ class TestCreatePermissionOverwrite:
 # ---------------------------------------------------------------------------
 # overwrite_to_dict
 # ---------------------------------------------------------------------------
+
 
 class TestOverwriteToDict:
     def test_overwrite_to_dict_from_dict(self):
@@ -344,6 +357,7 @@ class TestOverwriteToDict:
 # get_all_permissions
 # ---------------------------------------------------------------------------
 
+
 class TestGetAllPermissions:
     def test_get_all_permissions_returns_list(self):
         """Should return a non-empty list of dicts with required keys."""
@@ -361,6 +375,7 @@ class TestGetAllPermissions:
 # ---------------------------------------------------------------------------
 # has_channel_permission
 # ---------------------------------------------------------------------------
+
 
 class TestHasChannelPermission:
     def test_has_channel_permission_returns_true_when_granted(self):
@@ -398,9 +413,11 @@ class TestHasChannelPermission:
         """Should return False when permission attribute is absent."""
         mock_member = MagicMock()
         mock_channel = MagicMock()
+
         # Return a permissions object that does NOT have the attribute
         class MinimalPerms:
             pass
+
         mock_channel.permissions_for = MagicMock(return_value=MinimalPerms())
 
         result = has_channel_permission(mock_member, mock_channel, "SEND_MESSAGES")
@@ -410,6 +427,7 @@ class TestHasChannelPermission:
 # ---------------------------------------------------------------------------
 # has_guild_permission
 # ---------------------------------------------------------------------------
+
 
 class TestHasGuildPermission:
     def test_has_guild_permission_returns_true_when_granted(self):
@@ -431,9 +449,7 @@ class TestHasGuildPermission:
     def test_has_guild_permission_returns_false_on_exception(self):
         """Should return False when guild_permissions raises an exception."""
         mock_member = MagicMock()
-        type(mock_member).guild_permissions = property(
-            lambda self: (_ for _ in ()).throw(Exception("error"))
-        )
+        type(mock_member).guild_permissions = property(lambda self: (_ for _ in ()).throw(Exception("error")))
 
         result = has_guild_permission(mock_member, "BAN_MEMBERS")
         assert result is False
@@ -442,6 +458,7 @@ class TestHasGuildPermission:
 # ---------------------------------------------------------------------------
 # evaluate_user_guild_permissions
 # ---------------------------------------------------------------------------
+
 
 class TestEvaluateUserGuildPermissions:
     def _make_member(self, perms_value: int, roles=None):
@@ -481,15 +498,13 @@ class TestEvaluateUserGuildPermissions:
         """Unknown permission names should be added to denied set."""
         # Use 0x800 (SEND_MESSAGES) only — no ADMINISTRATOR, so unknown perms are denied
         member = self._make_member(0x800)
-        granted, denied = evaluate_user_guild_permissions(member, MagicMock(), ["TOTALLY_FAKE"])
+        _, denied = evaluate_user_guild_permissions(member, MagicMock(), ["TOTALLY_FAKE"])
         assert "TOTALLY_FAKE" in denied
 
     def test_evaluate_user_guild_permissions_denies_all_on_exception(self):
         """Should deny all permissions when exception occurs."""
         mock_member = MagicMock()
-        type(mock_member).guild_permissions = property(
-            lambda self: (_ for _ in ()).throw(Exception("error"))
-        )
+        type(mock_member).guild_permissions = property(lambda self: (_ for _ in ()).throw(Exception("error")))
         _, denied = evaluate_user_guild_permissions(mock_member, MagicMock(), ["SEND_MESSAGES"])
         assert "SEND_MESSAGES" in denied
 
@@ -521,6 +536,7 @@ class TestEvaluateUserGuildPermissions:
 # evaluate_user_channel_permissions
 # ---------------------------------------------------------------------------
 
+
 class TestEvaluateUserChannelPermissions:
     def _make_member_and_channel(self, perms_value: int, channel_type_name: str = "text"):
         mock_member = MagicMock()
@@ -544,7 +560,7 @@ class TestEvaluateUserChannelPermissions:
     def test_evaluate_user_channel_permissions_denies_missing(self):
         """Channel permissions absent from member's perms should be denied."""
         member, channel = self._make_member_and_channel(0x0)
-        granted, denied = evaluate_user_channel_permissions(member, channel, ["SEND_MESSAGES"])
+        _, denied = evaluate_user_channel_permissions(member, channel, ["SEND_MESSAGES"])
         assert "SEND_MESSAGES" in denied
 
     def test_evaluate_user_channel_permissions_admin_bypass(self):
@@ -558,14 +574,14 @@ class TestEvaluateUserChannelPermissions:
         """Unknown permission names should be denied."""
         # Use 0x800 only — no ADMINISTRATOR, so unknown perms are denied
         member, channel = self._make_member_and_channel(0x800)
-        granted, denied = evaluate_user_channel_permissions(member, channel, ["FAKE_PERM"])
+        _, denied = evaluate_user_channel_permissions(member, channel, ["FAKE_PERM"])
         assert "FAKE_PERM" in denied
 
     def test_evaluate_user_channel_permissions_denies_wrong_channel_type(self):
         """Permission not applicable to the channel type should be denied."""
         # PRIORITY_SPEAKER is voice-only; test with a text channel
         member, channel = self._make_member_and_channel(0x100, channel_type_name="text")  # PRIORITY_SPEAKER
-        granted, denied = evaluate_user_channel_permissions(member, channel, ["PRIORITY_SPEAKER"])
+        _, denied = evaluate_user_channel_permissions(member, channel, ["PRIORITY_SPEAKER"])
         assert "PRIORITY_SPEAKER" in denied
 
     def test_evaluate_user_channel_permissions_denies_all_on_exception(self):
@@ -580,24 +596,25 @@ class TestEvaluateUserChannelPermissions:
         """Voice channel type should allow voice-specific permissions."""
         member, channel = self._make_member_and_channel(
             0x100,  # PRIORITY_SPEAKER
-            channel_type_name="voice"
+            channel_type_name="voice",
         )
-        granted, denied = evaluate_user_channel_permissions(member, channel, ["PRIORITY_SPEAKER"])
+        granted, _ = evaluate_user_channel_permissions(member, channel, ["PRIORITY_SPEAKER"])
         assert "PRIORITY_SPEAKER" in granted
 
     def test_evaluate_user_channel_permissions_stage_channel_type(self):
         """Stage channel type is mapped correctly."""
         member, channel = self._make_member_and_channel(
             0x100000000,  # REQUEST_TO_SPEAK
-            channel_type_name="stage_voice"
+            channel_type_name="stage_voice",
         )
-        granted, denied = evaluate_user_channel_permissions(member, channel, ["REQUEST_TO_SPEAK"])
+        granted, _ = evaluate_user_channel_permissions(member, channel, ["REQUEST_TO_SPEAK"])
         assert "REQUEST_TO_SPEAK" in granted
 
 
 # ---------------------------------------------------------------------------
 # evaluate_role_guild_permissions
 # ---------------------------------------------------------------------------
+
 
 class TestEvaluateRoleGuildPermissions:
     def _make_role(self, perms_value: int, role_name: str = "TestRole", role_id: int = 123):
@@ -619,7 +636,7 @@ class TestEvaluateRoleGuildPermissions:
     def test_evaluate_role_guild_permissions_denies_missing(self):
         """Permissions absent from the role should be denied."""
         role = self._make_role(0x0)
-        granted, denied = evaluate_role_guild_permissions(role, MagicMock(), ["BAN_MEMBERS"])
+        _, denied = evaluate_role_guild_permissions(role, MagicMock(), ["BAN_MEMBERS"])
         assert "BAN_MEMBERS" in denied
 
     def test_evaluate_role_guild_permissions_admin_bypass(self):
@@ -642,15 +659,13 @@ class TestEvaluateRoleGuildPermissions:
         """Unknown permission names should be denied."""
         # Use 0x800 only — no ADMINISTRATOR, so unknown perms go through the per-perm loop
         role = self._make_role(0x800)
-        granted, denied = evaluate_role_guild_permissions(role, MagicMock(), ["UNKNOWN_PERM"])
+        _, denied = evaluate_role_guild_permissions(role, MagicMock(), ["UNKNOWN_PERM"])
         assert "UNKNOWN_PERM" in denied
 
     def test_evaluate_role_guild_permissions_denies_all_on_exception(self):
         """Should deny all permissions on exception."""
         mock_role = MagicMock()
-        type(mock_role).permissions = property(
-            lambda self: (_ for _ in ()).throw(Exception("error"))
-        )
+        type(mock_role).permissions = property(lambda self: (_ for _ in ()).throw(Exception("error")))
         _, denied = evaluate_role_guild_permissions(mock_role, MagicMock(), ["SEND_MESSAGES"])
         assert "SEND_MESSAGES" in denied
 
@@ -658,6 +673,7 @@ class TestEvaluateRoleGuildPermissions:
 # ---------------------------------------------------------------------------
 # evaluate_role_channel_permissions
 # ---------------------------------------------------------------------------
+
 
 class TestEvaluateRoleChannelPermissions:
     def _make_role_and_channel(
@@ -696,16 +712,16 @@ class TestEvaluateRoleChannelPermissions:
     def test_evaluate_role_channel_permissions_grants_base_perm(self):
         """Base role permission (no overwrite) should be granted on text channel."""
         role, channel = self._make_role_and_channel(0x800, has_overwrite=False)
-        granted, denied = evaluate_role_channel_permissions(role, channel, ["SEND_MESSAGES"])
+        granted, _ = evaluate_role_channel_permissions(role, channel, ["SEND_MESSAGES"])
         assert "SEND_MESSAGES" in granted
 
     def test_evaluate_role_channel_permissions_deny_overwrite_removes_perm(self):
         """Deny overwrite should remove permission even if in base role perms."""
         role, channel = self._make_role_and_channel(
             base_perms_value=0x800,  # SEND_MESSAGES granted at base
-            deny_val=0x800,          # but denied in overwrite
+            deny_val=0x800,  # but denied in overwrite
         )
-        granted, denied = evaluate_role_channel_permissions(role, channel, ["SEND_MESSAGES"])
+        _, denied = evaluate_role_channel_permissions(role, channel, ["SEND_MESSAGES"])
         assert "SEND_MESSAGES" in denied
 
     def test_evaluate_role_channel_permissions_allow_overwrite_adds_perm(self):
@@ -714,7 +730,7 @@ class TestEvaluateRoleChannelPermissions:
             base_perms_value=0x0,
             allow_val=0x800,  # SEND_MESSAGES allowed in overwrite
         )
-        granted, denied = evaluate_role_channel_permissions(role, channel, ["SEND_MESSAGES"])
+        granted, _ = evaluate_role_channel_permissions(role, channel, ["SEND_MESSAGES"])
         assert "SEND_MESSAGES" in granted
 
     def test_evaluate_role_channel_permissions_admin_bypass(self):
@@ -729,22 +745,20 @@ class TestEvaluateRoleChannelPermissions:
         """Permissions not applicable to the channel type should be denied."""
         # PRIORITY_SPEAKER is voice-only; text channel
         role, channel = self._make_role_and_channel(0x100, channel_type_name="text")
-        granted, denied = evaluate_role_channel_permissions(role, channel, ["PRIORITY_SPEAKER"])
+        _, denied = evaluate_role_channel_permissions(role, channel, ["PRIORITY_SPEAKER"])
         assert "PRIORITY_SPEAKER" in denied
 
     def test_evaluate_role_channel_permissions_denies_unknown_perm(self):
         """Unknown permission names should be denied."""
         # Use 0x800 only — no ADMINISTRATOR, so unknown perms go through the per-perm loop
         role, channel = self._make_role_and_channel(0x800)
-        granted, denied = evaluate_role_channel_permissions(role, channel, ["NOT_A_PERM"])
+        _, denied = evaluate_role_channel_permissions(role, channel, ["NOT_A_PERM"])
         assert "NOT_A_PERM" in denied
 
     def test_evaluate_role_channel_permissions_denies_all_on_exception(self):
         """Should deny all permissions on exception."""
         mock_role = MagicMock()
-        type(mock_role).permissions = property(
-            lambda self: (_ for _ in ()).throw(Exception("error"))
-        )
+        type(mock_role).permissions = property(lambda self: (_ for _ in ()).throw(Exception("error")))
         mock_channel = MagicMock()
         _, denied = evaluate_role_channel_permissions(mock_role, mock_channel, ["SEND_MESSAGES"])
         assert "SEND_MESSAGES" in denied
@@ -768,7 +782,7 @@ class TestEvaluateRoleChannelPermissions:
         mock_channel.type = mock_type
         mock_channel.overwrites = {mock_role: mock_overwrite}
 
-        granted, denied = evaluate_role_channel_permissions(mock_role, mock_channel, ["SEND_MESSAGES"])
+        granted, _ = evaluate_role_channel_permissions(mock_role, mock_channel, ["SEND_MESSAGES"])
         # Because the fallback reads direct attributes, SEND_MESSAGES should be allowed
         assert "SEND_MESSAGES" in granted
 
@@ -776,6 +790,7 @@ class TestEvaluateRoleChannelPermissions:
 # ---------------------------------------------------------------------------
 # _find_admin_source
 # ---------------------------------------------------------------------------
+
 
 class TestFindAdminSource:
     def test_find_admin_source_returns_everyone_for_everyone_role(self):
@@ -827,6 +842,7 @@ class TestFindAdminSource:
 # _find_permission_source
 # ---------------------------------------------------------------------------
 
+
 class TestFindPermissionSource:
     def test_find_permission_source_returns_everyone_for_everyone_role(self):
         """Should return 'everyone' when @everyone role has the permission."""
@@ -876,6 +892,7 @@ class TestFindPermissionSource:
 # ---------------------------------------------------------------------------
 # _find_channel_permission_source
 # ---------------------------------------------------------------------------
+
 
 class TestFindChannelPermissionSource:
     def test_find_channel_permission_source_returns_direct_for_member_overwrite(self):
@@ -979,6 +996,7 @@ class TestFindChannelPermissionSource:
 # overwrite_to_dict — discord.PermissionOverwrite path
 # ---------------------------------------------------------------------------
 
+
 class TestOverwriteToDictPermissionOverwrite:
     def test_overwrite_to_dict_from_permission_overwrite_with_pair(self):
         """Should handle a PermissionOverwrite object that has .pair() method."""
@@ -1019,6 +1037,7 @@ class TestOverwriteToDictPermissionOverwrite:
 # calculate_effective_permissions — additional edge cases
 # ---------------------------------------------------------------------------
 
+
 class TestCalculateEffectivePermissionsEdgeCases:
     def test_calculate_effective_permissions_no_overwrites(self):
         """With no overwrites, effective equals base."""
@@ -1029,8 +1048,8 @@ class TestCalculateEffectivePermissionsEdgeCases:
     def test_calculate_effective_permissions_deny_and_allow_together(self):
         """Deny applied first, then allow; allow takes precedence over deny."""
         base = 0x800 | 0x400  # SEND_MESSAGES + VIEW_CHANNEL
-        deny = 0x800            # deny SEND_MESSAGES
-        allow = 0x800           # but allow it back
+        deny = 0x800  # deny SEND_MESSAGES
+        allow = 0x800  # but allow it back
         result = calculate_effective_permissions(base, allow_overwrites=allow, deny_overwrites=deny)
         # deny removes 0x800, then allow adds it back
         assert result & 0x800 == 0x800

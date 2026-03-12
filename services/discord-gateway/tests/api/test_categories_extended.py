@@ -62,8 +62,10 @@ def _restore_real_discord():
     sys.modules["discord.ext"] = _cm._REAL_DISCORD_EXT
     sys.modules["discord.ext.commands"] = _cm._REAL_DISCORD_EXT_COMMANDS
     import tests.mocks.discord_mock_utils as _dmu_mod
+
     importlib.reload(_dmu_mod)
     from api.routers import categories as _categories_mod
+
     importlib.reload(_categories_mod)
     yield
 
@@ -106,13 +108,15 @@ def patched_categories_app(mock_bot):
     app = FastAPI(title="Test")
     app.state.bot = mock_bot
 
-    with patch("api.routers.categories.get_entity_or_404", new_callable=AsyncMock) as mock_get, \
-         patch("api.routers.categories.handle_discord_exception", new_callable=AsyncMock) as mock_handle, \
-         patch("api.routers.categories.validate_channel_type") as mock_validate, \
-         patch("api.routers.categories.resolve_bot", new_callable=AsyncMock) as mock_resolve, \
-         patch("api.routers.categories.ChannelConverter") as mock_converter, \
-         patch("api.routers.categories.PermissionConverter") as mock_perm_converter, \
-         patch("api.routers.categories.create_permission_overwrite") as mock_create_overwrite:
+    with (
+        patch("api.routers.categories.get_entity_or_404", new_callable=AsyncMock) as mock_get,
+        patch("api.routers.categories.handle_discord_exception", new_callable=AsyncMock) as mock_handle,
+        patch("api.routers.categories.validate_channel_type") as mock_validate,
+        patch("api.routers.categories.resolve_bot", new_callable=AsyncMock) as mock_resolve,
+        patch("api.routers.categories.ChannelConverter") as mock_converter,
+        patch("api.routers.categories.PermissionConverter") as mock_perm_converter,
+        patch("api.routers.categories.create_permission_overwrite") as mock_create_overwrite,
+    ):
 
         async def _resolve(request):
             return mock_bot
@@ -134,6 +138,7 @@ def patched_categories_app(mock_bot):
         mock_validate.return_value = None
 
         from api.schemas.channel_schemas import Category, Channel
+
         _mock_cat_detail = Category(
             id=1111111111,
             guild_id=987654321,
@@ -154,6 +159,7 @@ def patched_categories_app(mock_bot):
         mock_converter.channel_to_summary.return_value = _mock_channel
 
         from api.schemas.permission_schemas import PermissionOverwrite as PermSchema
+
         _mock_perm_payload = PermSchema(
             id="1111111111:222222222",
             channel_id=1111111111,
@@ -168,6 +174,7 @@ def patched_categories_app(mock_bot):
         mock_create_overwrite.return_value = overwrite_obj
 
         from api.routers.categories import router
+
         app.include_router(router, prefix="/api/v1")
 
         yield app, mock_bot, mock_get, mock_handle, mock_validate, mock_converter, mock_perm_converter
@@ -185,7 +192,7 @@ class TestUpdateCategoryErrors:
 
     def test_update_category_exception_raises_500(self, patched_categories_app):
         """update_category should return 500 when unexpected exception occurs."""
-        app, mock_bot, mock_get, mock_handle, *_ = patched_categories_app
+        app, _mock_bot, mock_get, _mock_handle, *_ = patched_categories_app
 
         async def _fail(get_fn, fetch_fn, entity_id, entity_type):
             raise RuntimeError("Unexpected")
@@ -202,7 +209,7 @@ class TestDeleteCategoryWithCascade:
 
     def test_delete_category_with_cascade_deletes_children(self, patched_categories_app):
         """DELETE /categories/{id}?cascade=true should delete child channels."""
-        app, mock_bot, *_ = patched_categories_app
+        app, _mock_bot, *_ = patched_categories_app
 
         # Create category with child channels
         child1 = MagicMock()
@@ -233,7 +240,7 @@ class TestDeleteCategoryWithCascade:
 
     def test_delete_category_exception_raises_500(self, patched_categories_app):
         """delete_category should return 500 when unexpected exception occurs."""
-        app, mock_bot, mock_get, mock_handle, *_ = patched_categories_app
+        app, _mock_bot, mock_get, _mock_handle, *_ = patched_categories_app
 
         async def _fail(get_fn, fetch_fn, entity_id, entity_type):
             raise RuntimeError("Unexpected error")
@@ -250,7 +257,7 @@ class TestListCategoryChannelsExtended:
 
     def test_list_category_channels_with_children(self, patched_categories_app):
         """list_category_channels should return channels sorted by position."""
-        app, mock_bot, mock_get, mock_handle, mock_validate, mock_converter, *_ = patched_categories_app
+        app, _mock_bot, mock_get, _mock_handle, _mock_validate, _mock_converter, *_ = patched_categories_app
 
         child1 = MagicMock()
         child1.position = 2
@@ -272,7 +279,7 @@ class TestListCategoryChannelsExtended:
 
     def test_list_category_channels_exception_raises_500(self, patched_categories_app):
         """list_category_channels should return 500 on unexpected exception."""
-        app, mock_bot, mock_get, mock_handle, *_ = patched_categories_app
+        app, _mock_bot, mock_get, _mock_handle, *_ = patched_categories_app
 
         async def _fail(get_fn, fetch_fn, entity_id, entity_type):
             raise RuntimeError("Unexpected error")
@@ -289,7 +296,7 @@ class TestGetCategoryPermissionsExtended:
 
     def test_get_category_permissions_with_overwrites(self, patched_categories_app):
         """get_category_permissions should return overwrites."""
-        app, mock_bot, mock_get, *_ = patched_categories_app
+        app, _mock_bot, mock_get, *_ = patched_categories_app
 
         target = MagicMock()
         overwrite = MagicMock()
@@ -309,7 +316,7 @@ class TestGetCategoryPermissionsExtended:
 
     def test_get_category_permissions_exception_raises_500(self, patched_categories_app):
         """get_category_permissions should return 500 on unexpected exception."""
-        app, mock_bot, mock_get, mock_handle, *_ = patched_categories_app
+        app, _mock_bot, mock_get, _mock_handle, *_ = patched_categories_app
 
         async def _fail(get_fn, fetch_fn, entity_id, entity_type):
             raise RuntimeError("Unexpected error")
@@ -326,7 +333,7 @@ class TestUpdateCategoryPermissions:
 
     def test_update_category_permissions_with_role(self, patched_categories_app):
         """update_category_permissions should update role permissions."""
-        app, mock_bot, mock_get, *_ = patched_categories_app
+        app, _mock_bot, mock_get, *_ = patched_categories_app
 
         role = MagicMock()
         role.id = 333333333
@@ -343,11 +350,7 @@ class TestUpdateCategoryPermissions:
         mock_get.side_effect = _get_entity
 
         client = TestClient(app)
-        payload = {
-            "overwrites": [
-                {"target_id": 333333333, "type": "role", "allow": 8, "deny": 0}
-            ]
-        }
+        payload = {"overwrites": [{"target_id": 333333333, "type": "role", "allow": 8, "deny": 0}]}
         response = client.put("/api/v1/categories/1111111111/permissions", json=payload)
         assert response.status_code == 200
         data = response.json()
@@ -355,7 +358,7 @@ class TestUpdateCategoryPermissions:
 
     def test_update_category_permissions_role_not_found_skipped(self, patched_categories_app):
         """update_category_permissions should skip missing roles."""
-        app, mock_bot, mock_get, *_ = patched_categories_app
+        app, _mock_bot, mock_get, *_ = patched_categories_app
 
         cat = create_mock_category()
         cat.overwrites = {}
@@ -368,17 +371,13 @@ class TestUpdateCategoryPermissions:
         mock_get.side_effect = _get_entity
 
         client = TestClient(app)
-        payload = {
-            "overwrites": [
-                {"target_id": 999888777, "type": "role", "allow": 8, "deny": 0}
-            ]
-        }
+        payload = {"overwrites": [{"target_id": 999888777, "type": "role", "allow": 8, "deny": 0}]}
         response = client.put("/api/v1/categories/1111111111/permissions", json=payload)
         assert response.status_code == 200  # Skips missing roles but succeeds
 
     def test_update_category_permissions_member_from_cache(self, patched_categories_app):
         """update_category_permissions should use cached member for member overwrites."""
-        app, mock_bot, mock_get, *_ = patched_categories_app
+        app, _mock_bot, mock_get, *_ = patched_categories_app
 
         member = MagicMock()
         member.id = 111222333
@@ -393,17 +392,13 @@ class TestUpdateCategoryPermissions:
         mock_get.side_effect = _get_entity
 
         client = TestClient(app)
-        payload = {
-            "overwrites": [
-                {"target_id": 111222333, "type": "member", "allow": 8, "deny": 0}
-            ]
-        }
+        payload = {"overwrites": [{"target_id": 111222333, "type": "member", "allow": 8, "deny": 0}]}
         response = client.put("/api/v1/categories/1111111111/permissions", json=payload)
         assert response.status_code == 200
 
     def test_update_category_permissions_member_fetch_fallback(self, patched_categories_app):
         """update_category_permissions should fetch member if not in cache."""
-        app, mock_bot, mock_get, *_ = patched_categories_app
+        app, _mock_bot, mock_get, *_ = patched_categories_app
 
         member = MagicMock()
         member.id = 111222333
@@ -419,17 +414,13 @@ class TestUpdateCategoryPermissions:
         mock_get.side_effect = _get_entity
 
         client = TestClient(app)
-        payload = {
-            "overwrites": [
-                {"target_id": 111222333, "type": "member", "allow": 8, "deny": 0}
-            ]
-        }
+        payload = {"overwrites": [{"target_id": 111222333, "type": "member", "allow": 8, "deny": 0}]}
         response = client.put("/api/v1/categories/1111111111/permissions", json=payload)
         assert response.status_code == 200
 
     def test_update_category_permissions_member_not_found_skipped(self, patched_categories_app):
         """update_category_permissions should skip if member not found."""
-        app, mock_bot, mock_get, *_ = patched_categories_app
+        app, _mock_bot, mock_get, *_ = patched_categories_app
 
         cat = create_mock_category()
         cat.overwrites = {}
@@ -443,17 +434,13 @@ class TestUpdateCategoryPermissions:
         mock_get.side_effect = _get_entity
 
         client = TestClient(app)
-        payload = {
-            "overwrites": [
-                {"target_id": 999999999, "type": "member", "allow": 8, "deny": 0}
-            ]
-        }
+        payload = {"overwrites": [{"target_id": 999999999, "type": "member", "allow": 8, "deny": 0}]}
         response = client.put("/api/v1/categories/1111111111/permissions", json=payload)
         assert response.status_code == 200  # Skips missing members but succeeds
 
     def test_update_category_permissions_exception_raises_500(self, patched_categories_app):
         """update_category_permissions should return 500 on unexpected exception."""
-        app, mock_bot, mock_get, mock_handle, *_ = patched_categories_app
+        app, _mock_bot, mock_get, _mock_handle, *_ = patched_categories_app
 
         async def _fail(get_fn, fetch_fn, entity_id, entity_type):
             raise RuntimeError("Unexpected error")

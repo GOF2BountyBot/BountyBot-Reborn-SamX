@@ -1,5 +1,4 @@
 import os
-from typing import Dict, List
 
 import discord
 import httpx
@@ -15,7 +14,7 @@ class SkinsCog(commands.Cog):
         self.bot = bot
         self.http_client = httpx.AsyncClient()
         # map ship name → list of skin names
-        self._ship_skins: Dict[str, List[str]] = {}
+        self._ship_skins: dict[str, list[str]] = {}
         bot.loop.create_task(self._preload_ship_skins())
 
     async def cog_unload(self):
@@ -49,7 +48,7 @@ class SkinsCog(commands.Cog):
         self,
         _interaction: discord.Interaction,
         current: str
-    ) -> List[app_commands.Choice[str]]:
+    ) -> list[app_commands.Choice[str]]:
         txt = current.lower()
         choices = [
             app_commands.Choice(name=name, value=name)
@@ -62,7 +61,7 @@ class SkinsCog(commands.Cog):
         self,
         interaction: discord.Interaction,
         current: str
-    ) -> List[app_commands.Choice[str]]:
+    ) -> list[app_commands.Choice[str]]:
         # read the already-selected ship from namespace
         ship = getattr(interaction.namespace, "ship", None)
         if not ship:

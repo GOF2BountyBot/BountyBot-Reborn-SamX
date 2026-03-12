@@ -64,14 +64,17 @@ def _restore_real_discord():
     sys.modules["discord.ext"] = _cm._REAL_DISCORD_EXT
     sys.modules["discord.ext.commands"] = _cm._REAL_DISCORD_EXT_COMMANDS
     import tests.mocks.discord_mock_utils as _dmu_mod
+
     importlib.reload(_dmu_mod)
     from api.routers import permissions as _perm_mod
+
     importlib.reload(_perm_mod)
     yield
 
 
 def _make_perm_payload():
     from api.schemas.permission_schemas import PermissionOverwrite as PermSchema
+
     return PermSchema(
         id="1234567890:111111111",
         channel_id=1234567890,
@@ -162,9 +165,11 @@ def perm_ext_app(mock_bot):
     app = FastAPI(title="Test")
     app.state.bot = mock_bot
 
-    with patch("api.routers.permissions.resolve_bot", new_callable=AsyncMock) as mock_resolve, \
-         patch("api.routers.permissions.handle_discord_exception", new_callable=AsyncMock) as mock_handle, \
-         patch("api.routers.permissions.PermissionConverter") as mock_converter:
+    with (
+        patch("api.routers.permissions.resolve_bot", new_callable=AsyncMock) as mock_resolve,
+        patch("api.routers.permissions.handle_discord_exception", new_callable=AsyncMock) as mock_handle,
+        patch("api.routers.permissions.PermissionConverter") as mock_converter,
+    ):
 
         async def _resolve(request):
             return mock_bot
@@ -179,6 +184,7 @@ def perm_ext_app(mock_bot):
         mock_converter.overwrite_to_payload.return_value = _make_perm_payload()
 
         from api.routers.permissions import router
+
         app.include_router(router, prefix="/api/v1")
 
         yield app, mock_bot, mock_resolve, mock_handle, mock_converter
@@ -196,7 +202,7 @@ class TestListPermissionsErrors:
 
     def test_list_all_permissions_exception(self, perm_ext_app):
         """list_all_permissions should return 500 on exception."""
-        app, mock_bot, mock_resolve, mock_handle, *_ = perm_ext_app
+        app, _mock_bot, _mock_resolve, _mock_handle, *_ = perm_ext_app
 
         with patch("api.routers.permissions.get_all_permissions", side_effect=RuntimeError("fail")):
             client = TestClient(app)
@@ -245,7 +251,7 @@ class TestGetPermissionOverwriteExtended:
 
     def test_get_overwrite_channel_from_fetch(self, perm_ext_app):
         """get_permission_overwrite should fetch channel when not in cache."""
-        app, mock_bot, mock_resolve, *_ = perm_ext_app
+        app, mock_bot, _mock_resolve, *_ = perm_ext_app
 
         _mock_target = MagicMock()
         _mock_target.id = 111111111
@@ -276,7 +282,7 @@ class TestGetPermissionOverwriteExtended:
 
     def test_get_overwrite_exception_path(self, perm_ext_app):
         """get_permission_overwrite should return 500 on unexpected exception."""
-        app, mock_bot, mock_resolve, mock_handle, *_ = perm_ext_app
+        app, _mock_bot, mock_resolve, _mock_handle, *_ = perm_ext_app
 
         async def _resolve_fail(request):
             raise RuntimeError("Unexpected")
@@ -293,7 +299,7 @@ class TestUpdatePermissionOverwriteExtended:
 
     def test_update_overwrite_target_from_fetch_member(self, perm_ext_app):
         """update_permission_overwrite should fetch member when role and member not cached."""
-        app, mock_bot, mock_resolve, mock_handle, *_ = perm_ext_app
+        app, _mock_bot, _mock_resolve, _mock_handle, *_ = perm_ext_app
 
         fetched_member = MagicMock()
         fetched_member.id = 222222222
@@ -311,7 +317,7 @@ class TestUpdatePermissionOverwriteExtended:
 
     def test_update_overwrite_target_not_found_404(self, perm_ext_app):
         """update_permission_overwrite should return 404 when target not found."""
-        app, mock_bot, mock_resolve, mock_handle, *_ = perm_ext_app
+        app, _mock_bot, _mock_resolve, _mock_handle, *_ = perm_ext_app
 
         channel = create_mock_channel(1234567890)
         channel.guild.get_role = MagicMock(return_value=None)
@@ -326,7 +332,7 @@ class TestUpdatePermissionOverwriteExtended:
 
     def test_update_overwrite_exception_path(self, perm_ext_app):
         """update_permission_overwrite should return 500 on unexpected exception."""
-        app, mock_bot, mock_resolve, mock_handle, *_ = perm_ext_app
+        app, _mock_bot, mock_resolve, _mock_handle, *_ = perm_ext_app
 
         async def _resolve_fail(request):
             raise RuntimeError("Unexpected")
@@ -363,7 +369,7 @@ class TestRemovePermissionOverwriteExtended:
 
     def test_remove_overwrite_exception_path(self, perm_ext_app):
         """remove_permission_overwrite should return 500 on unexpected exception."""
-        app, mock_bot, mock_resolve, mock_handle, *_ = perm_ext_app
+        app, _mock_bot, mock_resolve, _mock_handle, *_ = perm_ext_app
 
         async def _resolve_fail(request):
             raise RuntimeError("Unexpected")
@@ -383,7 +389,7 @@ class TestCheckComprehensivePermissionsExtended:
         body = {
             "subject": {"type": "role", "id": 123456789},
             "target": {"type": "guild", "id": 987654321},
-            "permissions": ["MANAGE_GUILD"]
+            "permissions": ["MANAGE_GUILD"],
         }
         response = ext_perm_client.post("/api/v1/permissions/check", json=body)
         assert response.status_code == 200
@@ -395,14 +401,14 @@ class TestCheckComprehensivePermissionsExtended:
         body = {
             "subject": {"type": "user", "id": 111111111},
             "target": {"type": "channel", "id": 1234567890},
-            "permissions": ["SEND_MESSAGES"]
+            "permissions": ["SEND_MESSAGES"],
         }
         response = ext_perm_client.post("/api/v1/permissions/check", json=body)
         assert response.status_code == 200
 
     def test_check_permissions_role_subject_channel_target(self, perm_ext_app):
         """check_comprehensive_permissions with role subject and channel target."""
-        app, mock_bot, mock_resolve, mock_handle, mock_converter = perm_ext_app
+        app, mock_bot, _mock_resolve, _mock_handle, _mock_converter = perm_ext_app
 
         # Build a guild with the role
         _mock_guild = MagicMock()
@@ -428,7 +434,7 @@ class TestCheckComprehensivePermissionsExtended:
         body = {
             "subject": {"type": "role", "id": 123456789},
             "target": {"type": "channel", "id": 1234567890},
-            "permissions": ["SEND_MESSAGES"]
+            "permissions": ["SEND_MESSAGES"],
         }
         response = client.post("/api/v1/permissions/check", json=body)
         assert response.status_code == 200
@@ -438,7 +444,7 @@ class TestCheckComprehensivePermissionsExtended:
         body = {
             "subject": {"type": "user", "id": 111111111},
             "target": {"type": "channel", "id": 1234567890},
-            "permissions": []
+            "permissions": [],
         }
         response = ext_perm_client.post("/api/v1/permissions/check", json=body)
         assert response.status_code == 200
@@ -447,7 +453,7 @@ class TestCheckComprehensivePermissionsExtended:
 
     def test_check_permissions_evaluate_mode_channel_role(self, perm_ext_app):
         """check_comprehensive_permissions evaluate mode for channel + role subject."""
-        app, mock_bot, mock_resolve, mock_handle, mock_converter = perm_ext_app
+        app, mock_bot, _mock_resolve, _mock_handle, _mock_converter = perm_ext_app
 
         # Build a guild with the role so _resolve_subject_entity finds it
         _mock_guild = MagicMock()
@@ -473,7 +479,7 @@ class TestCheckComprehensivePermissionsExtended:
         body = {
             "subject": {"type": "role", "id": 123456789},
             "target": {"type": "channel", "id": 1234567890},
-            "permissions": []
+            "permissions": [],
         }
         response = client.post("/api/v1/permissions/check", json=body)
         assert response.status_code == 200
@@ -482,7 +488,7 @@ class TestCheckComprehensivePermissionsExtended:
 
     def test_check_permissions_guild_not_found_404(self, perm_ext_app):
         """check_comprehensive_permissions should return 404 when guild not found."""
-        app, mock_bot, mock_resolve, *_ = perm_ext_app
+        app, mock_bot, _mock_resolve, *_ = perm_ext_app
 
         mock_bot.get_guild = MagicMock(return_value=None)
         mock_bot.fetch_guild = AsyncMock(side_effect=Exception("Guild not found"))
@@ -491,14 +497,14 @@ class TestCheckComprehensivePermissionsExtended:
         body = {
             "subject": {"type": "user", "id": 111111111},
             "target": {"type": "guild", "id": 999999999},
-            "permissions": []
+            "permissions": [],
         }
         response = client.post("/api/v1/permissions/check", json=body)
         assert response.status_code == 404
 
     def test_check_permissions_guild_from_fetch(self, perm_ext_app):
         """check_comprehensive_permissions should fetch guild when not cached."""
-        app, mock_bot, mock_resolve, *_ = perm_ext_app
+        app, mock_bot, _mock_resolve, *_ = perm_ext_app
 
         _mock_guild = MagicMock()
         _mock_guild.id = 987654321
@@ -515,7 +521,7 @@ class TestCheckComprehensivePermissionsExtended:
         body = {
             "subject": {"type": "user", "id": 111111111},
             "target": {"type": "guild", "id": 987654321},
-            "permissions": []
+            "permissions": [],
         }
         response = client.post("/api/v1/permissions/check", json=body)
         assert response.status_code == 200
@@ -531,7 +537,7 @@ class TestCheckComprehensivePermissionsExtended:
         body = {
             "subject": {"type": "user", "id": 111111111},
             "target": {"type": "channel", "id": 8888888888},
-            "permissions": []
+            "permissions": [],
         }
         response = client.post("/api/v1/permissions/check", json=body)
         assert response.status_code == 404
@@ -550,7 +556,7 @@ class TestCheckComprehensivePermissionsExtended:
         body = {
             "subject": {"type": "user", "id": 111111111},
             "target": {"type": "channel", "id": 7777777777},
-            "permissions": []
+            "permissions": [],
         }
         response = client.post("/api/v1/permissions/check", json=body)
         assert response.status_code == 400
@@ -560,7 +566,7 @@ class TestCheckComprehensivePermissionsExtended:
         body = {
             "subject": {"type": "user", "id": 111111111},
             "target": {"type": "unknown_type", "id": 987654321},
-            "permissions": []
+            "permissions": [],
         }
         response = ext_perm_client.post("/api/v1/permissions/check", json=body)
         assert response.status_code == 400
@@ -580,7 +586,7 @@ class TestCheckComprehensivePermissionsExtended:
         body = {
             "subject": {"type": "user", "id": 999999999},
             "target": {"type": "guild", "id": 987654321},
-            "permissions": []
+            "permissions": [],
         }
         response = client.post("/api/v1/permissions/check", json=body)
         assert response.status_code == 404
@@ -599,17 +605,17 @@ class TestCheckComprehensivePermissionsExtended:
         body = {
             "subject": {"type": "role", "id": 999999999},
             "target": {"type": "guild", "id": 987654321},
-            "permissions": []
+            "permissions": [],
         }
         response = client.post("/api/v1/permissions/check", json=body)
         assert response.status_code == 404
 
     def test_check_permissions_exception_path(self, perm_ext_app):
         """check_comprehensive_permissions should handle generic exceptions."""
-        app, mock_bot, mock_resolve, mock_handle, *_ = perm_ext_app
+        app, _mock_bot, mock_resolve, _mock_handle, *_ = perm_ext_app
 
         async def _resolve_fail(request):
-            raise RuntimeError("Unexpected error")
+            raise RuntimeError("Unexpected")
 
         mock_resolve.side_effect = _resolve_fail
 
@@ -617,7 +623,7 @@ class TestCheckComprehensivePermissionsExtended:
         body = {
             "subject": {"type": "user", "id": 111111111},
             "target": {"type": "guild", "id": 987654321},
-            "permissions": []
+            "permissions": [],
         }
         response = client.post("/api/v1/permissions/check", json=body)
         assert response.status_code == 500

@@ -7,7 +7,6 @@ for all API operations.
 """
 
 from datetime import UTC, datetime
-from typing import List, Optional
 
 from pydantic import BaseModel, Field
 
@@ -16,14 +15,14 @@ class BaseResponse(BaseModel):
     """Base response model for all API endpoints."""
     status: str = Field(..., description="Operation status")
     timestamp: datetime = Field(default_factory=lambda: datetime.now(UTC), description="Response timestamp")
-    message: Optional[str] = Field(None, description="Optional response message")
+    message: str | None = Field(None, description="Optional response message")
 
 class PaginatedResponse(BaseResponse):
     """Base response model for paginated endpoints."""
-    total_count: Optional[int] = Field(None, description="Total number of items")
-    page: Optional[int] = Field(None, description="Current page number")
-    page_size: Optional[int] = Field(None, description="Items per page")
-    has_more: Optional[bool] = Field(None, description="Whether there are more items")
+    total_count: int | None = Field(None, description="Total number of items")
+    page: int | None = Field(None, description="Current page number")
+    page_size: int | None = Field(None, description="Items per page")
+    has_more: bool | None = Field(None, description="Whether there are more items")
 
 class SuccessResponse(BaseResponse):
     """Generic success response for operations without specific return data."""
@@ -58,7 +57,7 @@ def create_resource_list_response(resource_name: str, resource_model):
         f"{resource_name.title()}ListResponse",
         (PaginatedResponse,),
         {
-            "data": (List[resource_model], Field(..., description=f"List of {resource_name} items")),
-            "__annotations__": {"data": List[resource_model]}
+            "data": (list[resource_model], Field(..., description=f"List of {resource_name} items")),
+            "__annotations__": {"data": list[resource_model]}
         }
     )

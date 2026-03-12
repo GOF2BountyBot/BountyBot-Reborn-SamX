@@ -4,17 +4,18 @@ Import path setup and sqlalchemy_utils mocking are handled by
 tests/api/conftest.py which runs before this module is loaded.
 """
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
-from fastapi import FastAPI
-from fastapi.testclient import TestClient
+from api.routers.players import get_player_service as _get_player_service
 
 # Import router at module load time so @patch decorators can resolve the module.
-from api.routers.players import router as _players_router, get_player_service as _get_player_service  # noqa: E402
+from api.routers.players import router as _players_router
 
 # Import the conftest helper
 from conftest import make_mock_player
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
 
 
 @pytest.fixture

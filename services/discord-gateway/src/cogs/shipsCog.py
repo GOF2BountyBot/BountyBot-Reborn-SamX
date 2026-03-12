@@ -1,5 +1,4 @@
 import os
-from typing import Optional
 
 import discord
 import httpx
@@ -23,7 +22,7 @@ class ShipsCog(commands.Cog):
     async def cog_unload(self):
         await self.http_client.aclose()
 
-    async def _get_player_id(self, user_id: int, guild_id: int) -> Optional[int]:
+    async def _get_player_id(self, user_id: int, guild_id: int) -> int | None:
         """Helper to get player ID from Discord user ID."""
         try:
             user_data = {
@@ -40,7 +39,7 @@ class ShipsCog(commands.Cog):
 
     @app_commands.command(name="ships", description="View your ships and their loadouts")
     @app_commands.describe(user="View another user's ships (admin only)")
-    async def ships(self, interaction: discord.Interaction, user: Optional[discord.User] = None):
+    async def ships(self, interaction: discord.Interaction, user: discord.User | None = None):
         """Display player ships."""
         await interaction.response.defer(thinking=True)
 

@@ -1,6 +1,7 @@
 import os
 import time
-from typing import Any, Callable, Dict, Optional
+from collections.abc import Callable
+from typing import Any
 
 import discord
 from discord.ext import commands
@@ -12,11 +13,11 @@ class CommandValidator:
 
     def __init__(self):
         self.logger = bblogger.get_logger("discord-gateway-CommandValidator")
-        self.command_permissions: Dict[str, Dict[str, Any]] = {}
-        self.cooldown_cache: Dict[str, Dict[str, float]] = {}
-        self.command_registry: Dict[str, Dict[str, Any]] = {}
+        self.command_permissions: dict[str, dict[str, Any]] = {}
+        self.cooldown_cache: dict[str, dict[str, float]] = {}
+        self.command_registry: dict[str, dict[str, Any]] = {}
 
-    def register_command(self, name: str, description: str, permissions: Dict[str, Any] = None):
+    def register_command(self, name: str, description: str, permissions: dict[str, Any] | None = None):
         """Register a command with its permissions and metadata"""
         if permissions is None:
             permissions = {}
@@ -24,13 +25,11 @@ class CommandValidator:
         self.command_registry[name] = {
             "description": description,
             "permissions": permissions,
-            "registered_at": time.time()
+            "registered_at": time.time(),
         }
         self.logger.debug(f"Registered command: {name}")
 
-    def validate_permissions(
-        self, command_name: str, user: discord.User, guild: Optional[discord.Guild] = None
-    ) -> bool:
+    def validate_permissions(self, command_name: str, user: discord.User, guild: discord.Guild | None = None) -> bool:
         """Check if user has permissions to execute command"""
         if command_name not in self.command_registry:
             self.logger.warning(f"Command {command_name} not registered")
@@ -48,17 +47,14 @@ class CommandValidator:
                         self.logger.debug(f"User {user.id} missing required role: {required_role}")
                         return False
 
-        # Check admin permissions
-        if "admin_only" in permissions and permissions["admin_only"]:
-            if not self.is_admin(user, guild):
-                self.logger.debug(f"User {user.id} not admin for admin-only command")
-                return False
+        if permissions.get("admin_only") and not self.is_admin(user, guild):
+            self.logger.debug(f"User {user.id} not admin for admin-only command")
+            return False
 
         # Check developer permissions
-        if "dev_only" in permissions and permissions["dev_only"]:
-            if not self.is_developer(user):
-                self.logger.debug(f"User {user.id} not developer for dev-only command")
-                return False
+        if permissions.get("dev_only") and not self.is_developer(user):
+            self.logger.debug(f"User {user.id} not developer for dev-only command")
+            return False
 
         return True
 
@@ -76,7 +72,7 @@ class CommandValidator:
         self.cooldown_cache[key] = current_time
         return True
 
-    def is_admin(self, user: discord.User, guild: Optional[discord.Guild] = None) -> bool:
+    def is_admin(self, user: discord.User, guild: discord.Guild | None = None) -> bool:
         """Check if user is an admin in the guild"""
         if not guild:
             return False
@@ -87,11 +83,7 @@ class CommandValidator:
 
         # Check for admin role or specific admin permissions
         admin_roles = ["Admin", "Moderator", "Administrator"]
-        for role in member.roles:
-            if role.name in admin_roles or role.permissions.administrator:
-                return True
-
-        return False
+        return any(role.name in admin_roles or role.permissions.administrator for role in member.roles)
 
     def is_developer(self, user: discord.User) -> bool:
         """Check if user is a developer"""
@@ -99,9 +91,10 @@ class CommandValidator:
         developer_ids = os.getenv("DEVELOPER_IDS", "").split(",")
         return str(user.id) in [d.strip() for d in developer_ids if d.strip()]
 
-    def get_command_info(self, command_name: str) -> Optional[Dict[str, Any]]:
+    def get_command_info(self, command_name: str) -> dict[str, Any] | None:
         """Get information about a registered command"""
         return self.command_registry.get(command_name)
+
 
 class CommandHandler:
     """Handles command execution with validation and error handling"""
@@ -116,19 +109,15 @@ class CommandHandler:
         ctx: commands.Context,
         command_name: str,
         handler: Callable[[commands.Context], Any],
-        permissions: Dict[str, Any] = None,
-        cooldown_seconds: int = 5
+        permissions: dict[str, Any] | None = None,
+        cooldown_seconds: int = 5,
     ) -> bool:
         """Execute a command with validation and error handling"""
         user = ctx.author
         guild = ctx.guild
 
         # Register the command
-        self.validator.register_command(
-            command_name,
-            ctx.command.description if ctx.command else "",
-            permissions
-        )
+        self.validator.register_command(command_name, ctx.command.description if ctx.command else "", permissions)
 
         # Check permissions
         if not self.validator.validate_permissions(command_name, user, guild):
@@ -157,7 +146,7 @@ class CommandHandler:
         embed = discord.Embed(
             title="🔒 Permission Denied",
             description="You don't have permission to use this command.",
-            color=discord.Color.red()
+            color=discord.Color.red(),
         )
         await ctx.respond(embed=embed, ephemeral=True)
 
@@ -166,16 +155,14 @@ class CommandHandler:
         embed = discord.Embed(
             title="⏰ Command Cooldown",
             description=f"Please wait {cooldown_seconds} seconds before using this command again.",
-            color=discord.Color.orange()
+            color=discord.Color.orange(),
         )
         await ctx.respond(embed=embed, ephemeral=True)
 
     async def _send_command_error(self, ctx: commands.Context, error_message: str):
         """Send command-specific error"""
         embed = discord.Embed(
-            title="❌ Command Error",
-            description=f"An error occurred: {error_message}",
-            color=discord.Color.red()
+            title="❌ Command Error", description=f"An error occurred: {error_message}", color=discord.Color.red()
         )
         await ctx.respond(embed=embed, ephemeral=True)
 
@@ -184,12 +171,14 @@ class CommandHandler:
         embed = discord.Embed(
             title="⚠️  An error occurred",
             description="Something went wrong while processing your command.",
-            color=discord.Color.red()
+            color=discord.Color.red(),
         )
         await ctx.respond(embed=embed, ephemeral=True)
 
+
 # Global command handler instance
 _command_handler = None
+
 
 def get_command_handler(bot: commands.Bot) -> CommandHandler:
     """Get or create the global command handler"""

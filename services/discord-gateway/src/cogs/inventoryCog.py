@@ -1,5 +1,4 @@
 import os
-from typing import Optional
 
 import discord
 import httpx
@@ -23,7 +22,7 @@ class InventoryCog(commands.Cog):
     async def cog_unload(self):
         await self.http_client.aclose()
 
-    async def _get_player_id(self, user_id: int, guild_id: int) -> Optional[int]:
+    async def _get_player_id(self, user_id: int, guild_id: int) -> int | None:
         """Helper to get player ID from Discord user ID."""
         try:
             user_data = {
@@ -46,8 +45,8 @@ class InventoryCog(commands.Cog):
     async def inventory(
         self,
         interaction: discord.Interaction,
-        item_type: Optional[str] = None,
-        user: Optional[discord.User] = None
+        item_type: str | None = None,
+        user: discord.User | None = None
     ):
         """Display player inventory."""
         await interaction.response.defer(thinking=True)

@@ -87,6 +87,7 @@ _mock_discord.TextChannel = _MockTextChannel
 # Per-test isolation fixture (same pattern as test_tags.py)
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture(autouse=True)
 def _restore_real_discord():
     """Re-assert real discord before each test and reload tags router."""
@@ -95,8 +96,10 @@ def _restore_real_discord():
     sys.modules["discord.ext"] = _cm._REAL_DISCORD_EXT
     sys.modules["discord.ext.commands"] = _cm._REAL_DISCORD_EXT_COMMANDS
     import tests.mocks.discord_mock_utils as _dmu_mod
+
     importlib.reload(_dmu_mod)
     from api.routers import tags as _tags_mod
+
     importlib.reload(_tags_mod)
     yield
 
@@ -105,10 +108,9 @@ def _restore_real_discord():
 # Helper factories
 # ---------------------------------------------------------------------------
 
+
 def create_mock_tag(tag_id=1234567890, channel_id=555555555, name="Test Tag", emoji=None):
-    tag = DiscordMockUtils.create_mock_forum_tag(
-        tag_id=tag_id, name=name, emoji=emoji, channel_id=channel_id
-    )
+    tag = DiscordMockUtils.create_mock_forum_tag(tag_id=tag_id, name=name, emoji=emoji, channel_id=channel_id)
     tag.moderated = False
     tag.edit = AsyncMock()
     tag.delete = AsyncMock()
@@ -144,14 +146,17 @@ def create_mock_text_channel(channel_id=666666666, guild_id=987654321):
 # Shared tag/ForumTag payload factory
 # ---------------------------------------------------------------------------
 
+
 def _forum_tag_payload(tag_id=1234567890, channel_id=555555555, name="Test Tag", emoji=None):
     from api.schemas.channel_schemas import ForumTag
+
     return ForumTag(id=tag_id, channel_id=channel_id, name=name, emoji=emoji)
 
 
 # ---------------------------------------------------------------------------
 # Fixture builder helper
 # ---------------------------------------------------------------------------
+
 
 def _build_app(mock_bot, get_entity_side_effect, utils_get_fn=None, emoji_in_payload=None):
     """
@@ -169,11 +174,13 @@ def _build_app(mock_bot, get_entity_side_effect, utils_get_fn=None, emoji_in_pay
 
     _tag_payload = _forum_tag_payload(emoji=emoji_in_payload)
 
-    with patch("api.routers.tags.resolve_bot", new_callable=AsyncMock) as mock_resolve, \
-         patch("api.routers.tags.handle_discord_exception", new_callable=AsyncMock) as mock_handle, \
-         patch("api.routers.tags.ChannelConverter") as mock_converter, \
-         patch("api.routers.tags.get_entity_or_404", new_callable=AsyncMock) as mock_get_entity, \
-         patch("api.routers.tags.discord", _mock_discord):
+    with (
+        patch("api.routers.tags.resolve_bot", new_callable=AsyncMock) as mock_resolve,
+        patch("api.routers.tags.handle_discord_exception", new_callable=AsyncMock) as mock_handle,
+        patch("api.routers.tags.ChannelConverter") as mock_converter,
+        patch("api.routers.tags.get_entity_or_404", new_callable=AsyncMock) as mock_get_entity,
+        patch("api.routers.tags.discord", _mock_discord),
+    ):
 
         async def mock_resolve_bot(request):
             return mock_bot
@@ -185,8 +192,9 @@ def _build_app(mock_bot, get_entity_side_effect, utils_get_fn=None, emoji_in_pay
 
         # Default discord.utils.get implementation
         if utils_get_fn is None:
+
             def _utils_get(iterable, **kwargs):
-                for item in (iterable or []):
+                for item in iterable or []:
                     match = True
                     for k, v in kwargs.items():
                         if getattr(item, k, None) != v:
@@ -195,11 +203,13 @@ def _build_app(mock_bot, get_entity_side_effect, utils_get_fn=None, emoji_in_pay
                     if match:
                         return item
                 return None
+
             _mock_discord.utils.get = _utils_get
         else:
             _mock_discord.utils.get = utils_get_fn
 
         from api.routers.tags import router
+
         app.include_router(router, prefix="/api/v1")
 
         yield app
@@ -208,6 +218,7 @@ def _build_app(mock_bot, get_entity_side_effect, utils_get_fn=None, emoji_in_pay
 # ---------------------------------------------------------------------------
 # Tests: GET /tags/{tag_id} — emoji normalisation paths (lines 76-93)
 # ---------------------------------------------------------------------------
+
 
 class TestGetTagEmojiHandling:
     """Cover get_tag emoji normalisation in dict and non-dict payload paths."""
@@ -224,7 +235,7 @@ class TestGetTagEmojiHandling:
         app.state.bot = mock_bot
 
         def _utils_get(iterable, **kwargs):
-            for item in (iterable or []):
+            for item in iterable or []:
                 match = True
                 for k, v in kwargs.items():
                     if getattr(item, k, None) != v:
@@ -233,6 +244,7 @@ class TestGetTagEmojiHandling:
                 if match:
                     return item
             return None
+
         _mock_discord.utils.get = _utils_get
 
         # Return a dict from forum_tag_to_payload (not a schema object)
@@ -243,12 +255,14 @@ class TestGetTagEmojiHandling:
             "emoji": "🎯",
         }
 
-        with patch("api.routers.tags.resolve_bot", new_callable=AsyncMock) as mock_resolve, \
-             patch("api.routers.tags.handle_discord_exception", new_callable=AsyncMock), \
-             patch("api.routers.tags.ChannelConverter") as mock_converter, \
-             patch("api.routers.tags.get_entity_or_404", new_callable=AsyncMock), \
-             patch("api.routers.tags.discord", _mock_discord), \
-             patch("api.routers.tags.normalize_emoji", return_value="🎯"):
+        with (
+            patch("api.routers.tags.resolve_bot", new_callable=AsyncMock) as mock_resolve,
+            patch("api.routers.tags.handle_discord_exception", new_callable=AsyncMock),
+            patch("api.routers.tags.ChannelConverter") as mock_converter,
+            patch("api.routers.tags.get_entity_or_404", new_callable=AsyncMock),
+            patch("api.routers.tags.discord", _mock_discord),
+            patch("api.routers.tags.normalize_emoji", return_value="🎯"),
+        ):
 
             async def resolve(req):
                 return mock_bot
@@ -257,6 +271,7 @@ class TestGetTagEmojiHandling:
             mock_converter.forum_tag_to_payload.return_value = _dict_payload
 
             from api.routers.tags import router
+
             app.include_router(router, prefix="/api/v1")
 
             client = TestClient(app)
@@ -280,11 +295,13 @@ class TestGetTagEmojiHandling:
         app = FastAPI()
         app.state.bot = mock_bot
 
-        with patch("api.routers.tags.resolve_bot", new_callable=AsyncMock) as mock_resolve, \
-             patch("api.routers.tags.handle_discord_exception", new_callable=AsyncMock), \
-             patch("api.routers.tags.ChannelConverter") as mock_converter, \
-             patch("api.routers.tags.get_entity_or_404", new_callable=AsyncMock), \
-             patch("api.routers.tags.discord", _mock_discord):
+        with (
+            patch("api.routers.tags.resolve_bot", new_callable=AsyncMock) as mock_resolve,
+            patch("api.routers.tags.handle_discord_exception", new_callable=AsyncMock),
+            patch("api.routers.tags.ChannelConverter") as mock_converter,
+            patch("api.routers.tags.get_entity_or_404", new_callable=AsyncMock),
+            patch("api.routers.tags.discord", _mock_discord),
+        ):
 
             async def resolve(req):
                 return mock_bot
@@ -293,6 +310,7 @@ class TestGetTagEmojiHandling:
             mock_converter.forum_tag_to_payload.return_value = _forum_tag_payload()
 
             from api.routers.tags import router
+
             app.include_router(router, prefix="/api/v1")
 
             client = TestClient(app)
@@ -308,11 +326,13 @@ class TestGetTagEmojiHandling:
         app = FastAPI()
         app.state.bot = mock_bot
 
-        with patch("api.routers.tags.resolve_bot", new_callable=AsyncMock) as mock_resolve, \
-             patch("api.routers.tags.handle_discord_exception", new_callable=AsyncMock), \
-             patch("api.routers.tags.ChannelConverter"), \
-             patch("api.routers.tags.get_entity_or_404", new_callable=AsyncMock), \
-             patch("api.routers.tags.discord", _mock_discord):
+        with (
+            patch("api.routers.tags.resolve_bot", new_callable=AsyncMock) as mock_resolve,
+            patch("api.routers.tags.handle_discord_exception", new_callable=AsyncMock),
+            patch("api.routers.tags.ChannelConverter"),
+            patch("api.routers.tags.get_entity_or_404", new_callable=AsyncMock),
+            patch("api.routers.tags.discord", _mock_discord),
+        ):
 
             async def resolve(req):
                 return mock_bot
@@ -320,6 +340,7 @@ class TestGetTagEmojiHandling:
             mock_resolve.side_effect = resolve
 
             from api.routers.tags import router
+
             app.include_router(router, prefix="/api/v1")
 
             client = TestClient(app)
@@ -330,6 +351,7 @@ class TestGetTagEmojiHandling:
 # ---------------------------------------------------------------------------
 # Tests: POST /channels/{channel_id}/tags — new creation paths
 # ---------------------------------------------------------------------------
+
 
 class TestCreateForumTagExtended:
     """Cover creation edge cases: non-forum, invalid emoji, AttributeError fallback."""
@@ -361,7 +383,7 @@ class TestCreateForumTagExtended:
             return ch
 
         def _utils_get(iterable, **kwargs):
-            for item in (iterable or []):
+            for item in iterable or []:
                 match = True
                 for k, v in kwargs.items():
                     if getattr(item, k, None) != v:
@@ -370,13 +392,16 @@ class TestCreateForumTagExtended:
                 if match:
                     return item
             return None
+
         _mock_discord.utils.get = _utils_get
 
-        with patch("api.routers.tags.resolve_bot", new_callable=AsyncMock) as mock_resolve, \
-             patch("api.routers.tags.handle_discord_exception", new_callable=AsyncMock) as mock_handle, \
-             patch("api.routers.tags.ChannelConverter") as mock_converter, \
-             patch("api.routers.tags.get_entity_or_404", new_callable=AsyncMock) as mock_get_entity, \
-             patch("api.routers.tags.discord", _mock_discord):
+        with (
+            patch("api.routers.tags.resolve_bot", new_callable=AsyncMock) as mock_resolve,
+            patch("api.routers.tags.handle_discord_exception", new_callable=AsyncMock) as mock_handle,
+            patch("api.routers.tags.ChannelConverter") as mock_converter,
+            patch("api.routers.tags.get_entity_or_404", new_callable=AsyncMock) as mock_get_entity,
+            patch("api.routers.tags.discord", _mock_discord),
+        ):
 
             async def resolve(req):
                 return mock_bot
@@ -387,6 +412,7 @@ class TestCreateForumTagExtended:
             mock_get_entity.side_effect = _get_entity
 
             from api.routers.tags import router
+
             app.include_router(router, prefix="/api/v1")
 
             yield app
@@ -403,20 +429,14 @@ class TestCreateForumTagExtended:
         """POST /channels/{channel_id}/tags with emoji string works."""
         for app in self._make_app(mock_bot_with_forum):
             client = TestClient(app)
-            response = client.post(
-                "/api/v1/channels/555555555/tags",
-                json={"name": "Emoji Tag", "emoji": "🚀"}
-            )
+            response = client.post("/api/v1/channels/555555555/tags", json={"name": "Emoji Tag", "emoji": "🚀"})
             assert response.status_code == 201
 
     def test_create_tag_without_emoji(self, mock_bot_with_forum):
         """POST /channels/{channel_id}/tags without emoji succeeds."""
         for app in self._make_app(mock_bot_with_forum):
             client = TestClient(app)
-            response = client.post(
-                "/api/v1/channels/555555555/tags",
-                json={"name": "No Emoji Tag"}
-            )
+            response = client.post("/api/v1/channels/555555555/tags", json={"name": "No Emoji Tag"})
             assert response.status_code == 201
 
     def test_create_tag_attributeerror_fallback(self):
@@ -441,7 +461,7 @@ class TestCreateForumTagExtended:
             return ch
 
         def _utils_get(iterable, **kwargs):
-            for item in (iterable or []):
+            for item in iterable or []:
                 match = True
                 for k, v in kwargs.items():
                     if getattr(item, k, None) != v:
@@ -450,14 +470,17 @@ class TestCreateForumTagExtended:
                 if match:
                     return item
             return None
+
         _mock_discord.utils.get = _utils_get
 
-        with patch("api.routers.tags.resolve_bot", new_callable=AsyncMock) as mock_resolve, \
-             patch("api.routers.tags.handle_discord_exception", new_callable=AsyncMock), \
-             patch("api.routers.tags.ChannelConverter") as mock_converter, \
-             patch("api.routers.tags.get_entity_or_404", new_callable=AsyncMock) as mock_get_entity, \
-             patch("api.routers.tags.discord", _mock_discord), \
-             patch("api.routers.tags.tags_to_edit_payload", return_value=[]):
+        with (
+            patch("api.routers.tags.resolve_bot", new_callable=AsyncMock) as mock_resolve,
+            patch("api.routers.tags.handle_discord_exception", new_callable=AsyncMock),
+            patch("api.routers.tags.ChannelConverter") as mock_converter,
+            patch("api.routers.tags.get_entity_or_404", new_callable=AsyncMock) as mock_get_entity,
+            patch("api.routers.tags.discord", _mock_discord),
+            patch("api.routers.tags.tags_to_edit_payload", return_value=[]),
+        ):
 
             async def resolve(req):
                 return bot
@@ -467,19 +490,18 @@ class TestCreateForumTagExtended:
             mock_get_entity.side_effect = _get_entity
 
             from api.routers.tags import router
+
             app.include_router(router, prefix="/api/v1")
 
             client = TestClient(app)
-            response = client.post(
-                "/api/v1/channels/555555555/tags",
-                json={"name": "Fallback Tag"}
-            )
+            response = client.post("/api/v1/channels/555555555/tags", json={"name": "Fallback Tag"})
             assert response.status_code == 201
 
 
 # ---------------------------------------------------------------------------
 # Tests: PUT /tags/{tag_id} — update edge cases
 # ---------------------------------------------------------------------------
+
 
 class TestUpdateTagExtended:
     """Cover update paths including emoji, fallback edit, re-fetch by name."""
@@ -509,7 +531,7 @@ class TestUpdateTagExtended:
         app.state.bot = mock_bot
 
         def _utils_get(iterable, **kwargs):
-            for item in (iterable or []):
+            for item in iterable or []:
                 match = True
                 for k, v in kwargs.items():
                     if getattr(item, k, None) != v:
@@ -518,13 +540,16 @@ class TestUpdateTagExtended:
                 if match:
                     return item
             return None
+
         _mock_discord.utils.get = _utils_get
 
-        with patch("api.routers.tags.resolve_bot", new_callable=AsyncMock) as mock_resolve, \
-             patch("api.routers.tags.handle_discord_exception", new_callable=AsyncMock), \
-             patch("api.routers.tags.ChannelConverter") as mock_converter, \
-             patch("api.routers.tags.get_entity_or_404", new_callable=AsyncMock), \
-             patch("api.routers.tags.discord", _mock_discord):
+        with (
+            patch("api.routers.tags.resolve_bot", new_callable=AsyncMock) as mock_resolve,
+            patch("api.routers.tags.handle_discord_exception", new_callable=AsyncMock),
+            patch("api.routers.tags.ChannelConverter") as mock_converter,
+            patch("api.routers.tags.get_entity_or_404", new_callable=AsyncMock),
+            patch("api.routers.tags.discord", _mock_discord),
+        ):
 
             async def resolve(req):
                 return mock_bot
@@ -533,13 +558,14 @@ class TestUpdateTagExtended:
             mock_converter.forum_tag_to_payload.return_value = _forum_tag_payload()
 
             from api.routers.tags import router
+
             app.include_router(router, prefix="/api/v1")
 
             yield app
 
     def test_update_tag_with_emoji(self):
         """PUT /tags/{tag_id} with emoji field triggers normalize_emoji."""
-        mock_bot, forum_ch, tag = self._setup_bot_with_tag()
+        mock_bot, _forum_ch, _tag = self._setup_bot_with_tag()
         for app in self._make_update_app(mock_bot):
             client = TestClient(app)
             response = client.put("/api/v1/tags/1234567890", json={"emoji": "🎯"})
@@ -551,10 +577,7 @@ class TestUpdateTagExtended:
         mock_bot, _, _ = self._setup_bot_with_tag()
         for app in self._make_update_app(mock_bot):
             client = TestClient(app)
-            response = client.put(
-                "/api/v1/tags/1234567890",
-                json={"name": "New Name", "emoji": "🚀"}
-            )
+            response = client.put("/api/v1/tags/1234567890", json={"name": "New Name", "emoji": "🚀"})
             assert response.status_code == 200
 
     def test_update_tag_not_found_in_any_channel(self):
@@ -576,7 +599,7 @@ class TestUpdateTagExtended:
 
     def test_update_tag_with_edit_tag_on_channel(self):
         """PUT /tags/{tag_id} calls channel.edit_tag when available on channel."""
-        mock_bot, forum_ch, tag = self._setup_bot_with_tag(has_edit_tag=True)
+        mock_bot, _forum_ch, _tag = self._setup_bot_with_tag(has_edit_tag=True)
         # tag.edit is the preferred path, so leave it intact so no errors occur.
         # edit_tag is on the channel; the router checks tag.edit first (hasattr),
         # finds it, and uses it — which is fine. This test ensures the endpoint
@@ -591,6 +614,7 @@ class TestUpdateTagExtended:
 # Tests: DELETE /tags/{tag_id} — deletion paths
 # ---------------------------------------------------------------------------
 
+
 class TestDeleteTagExtended:
     """Cover deletion via delete_tag on channel, tag.delete, and fallback edit."""
 
@@ -599,7 +623,7 @@ class TestDeleteTagExtended:
         app.state.bot = mock_bot
 
         def _utils_get(iterable, **kwargs):
-            for item in (iterable or []):
+            for item in iterable or []:
                 match = True
                 for k, v in kwargs.items():
                     if getattr(item, k, None) != v:
@@ -608,13 +632,16 @@ class TestDeleteTagExtended:
                 if match:
                     return item
             return None
+
         _mock_discord.utils.get = _utils_get
 
-        with patch("api.routers.tags.resolve_bot", new_callable=AsyncMock) as mock_resolve, \
-             patch("api.routers.tags.handle_discord_exception", new_callable=AsyncMock), \
-             patch("api.routers.tags.ChannelConverter") as mock_converter, \
-             patch("api.routers.tags.get_entity_or_404", new_callable=AsyncMock), \
-             patch("api.routers.tags.discord", _mock_discord):
+        with (
+            patch("api.routers.tags.resolve_bot", new_callable=AsyncMock) as mock_resolve,
+            patch("api.routers.tags.handle_discord_exception", new_callable=AsyncMock),
+            patch("api.routers.tags.ChannelConverter") as mock_converter,
+            patch("api.routers.tags.get_entity_or_404", new_callable=AsyncMock),
+            patch("api.routers.tags.discord", _mock_discord),
+        ):
 
             async def resolve(req):
                 return mock_bot
@@ -623,6 +650,7 @@ class TestDeleteTagExtended:
             mock_converter.forum_tag_to_payload.return_value = _forum_tag_payload()
 
             from api.routers.tags import router
+
             app.include_router(router, prefix="/api/v1")
 
             yield app
@@ -705,6 +733,7 @@ class TestDeleteTagExtended:
 # Tests: Bulk tag retrieval — multiple tags across guilds
 # ---------------------------------------------------------------------------
 
+
 class TestGetTagAcrossGuilds:
     """Cover cross-guild tag search code paths."""
 
@@ -726,7 +755,7 @@ class TestGetTagAcrossGuilds:
         app.state.bot = bot
 
         def _utils_get(iterable, **kwargs):
-            for item in (iterable or []):
+            for item in iterable or []:
                 match = True
                 for k, v in kwargs.items():
                     if getattr(item, k, None) != v:
@@ -735,13 +764,16 @@ class TestGetTagAcrossGuilds:
                 if match:
                     return item
             return None
+
         _mock_discord.utils.get = _utils_get
 
-        with patch("api.routers.tags.resolve_bot", new_callable=AsyncMock) as mock_resolve, \
-             patch("api.routers.tags.handle_discord_exception", new_callable=AsyncMock), \
-             patch("api.routers.tags.ChannelConverter") as mock_converter, \
-             patch("api.routers.tags.get_entity_or_404", new_callable=AsyncMock), \
-             patch("api.routers.tags.discord", _mock_discord):
+        with (
+            patch("api.routers.tags.resolve_bot", new_callable=AsyncMock) as mock_resolve,
+            patch("api.routers.tags.handle_discord_exception", new_callable=AsyncMock),
+            patch("api.routers.tags.ChannelConverter") as mock_converter,
+            patch("api.routers.tags.get_entity_or_404", new_callable=AsyncMock),
+            patch("api.routers.tags.discord", _mock_discord),
+        ):
 
             async def resolve(req):
                 return bot
@@ -750,6 +782,7 @@ class TestGetTagAcrossGuilds:
             mock_converter.forum_tag_to_payload.return_value = _forum_tag_payload()
 
             from api.routers.tags import router
+
             app.include_router(router, prefix="/api/v1")
 
             client = TestClient(app)
@@ -774,7 +807,7 @@ class TestGetTagAcrossGuilds:
         app.state.bot = bot
 
         def _utils_get(iterable, **kwargs):
-            for item in (iterable or []):
+            for item in iterable or []:
                 match = True
                 for k, v in kwargs.items():
                     if getattr(item, k, None) != v:
@@ -783,13 +816,16 @@ class TestGetTagAcrossGuilds:
                 if match:
                     return item
             return None
+
         _mock_discord.utils.get = _utils_get
 
-        with patch("api.routers.tags.resolve_bot", new_callable=AsyncMock) as mock_resolve, \
-             patch("api.routers.tags.handle_discord_exception", new_callable=AsyncMock), \
-             patch("api.routers.tags.ChannelConverter") as mock_converter, \
-             patch("api.routers.tags.get_entity_or_404", new_callable=AsyncMock), \
-             patch("api.routers.tags.discord", _mock_discord):
+        with (
+            patch("api.routers.tags.resolve_bot", new_callable=AsyncMock) as mock_resolve,
+            patch("api.routers.tags.handle_discord_exception", new_callable=AsyncMock),
+            patch("api.routers.tags.ChannelConverter") as mock_converter,
+            patch("api.routers.tags.get_entity_or_404", new_callable=AsyncMock),
+            patch("api.routers.tags.discord", _mock_discord),
+        ):
 
             async def resolve(req):
                 return bot
@@ -798,6 +834,7 @@ class TestGetTagAcrossGuilds:
             mock_converter.forum_tag_to_payload.return_value = _forum_tag_payload()
 
             from api.routers.tags import router
+
             app.include_router(router, prefix="/api/v1")
 
             client = TestClient(app)
@@ -808,6 +845,7 @@ class TestGetTagAcrossGuilds:
 # ---------------------------------------------------------------------------
 # Tests: request validation
 # ---------------------------------------------------------------------------
+
 
 class TestTagRequestValidation:
     """Validate request schema enforcement."""
@@ -825,6 +863,7 @@ class TestTagRequestValidation:
 
         def _utils_get(iterable, **kwargs):
             return None
+
         _mock_discord.utils.get = _utils_get
 
         async def _get_entity(get_fn, fetch_fn, entity_id, entity_type):
@@ -833,11 +872,13 @@ class TestTagRequestValidation:
                 raise HTTPException(status_code=404, detail=f"{entity_type} not found")
             return ch
 
-        with patch("api.routers.tags.resolve_bot", new_callable=AsyncMock) as mock_resolve, \
-             patch("api.routers.tags.handle_discord_exception", new_callable=AsyncMock), \
-             patch("api.routers.tags.ChannelConverter") as mock_converter, \
-             patch("api.routers.tags.get_entity_or_404", new_callable=AsyncMock) as mock_get_entity, \
-             patch("api.routers.tags.discord", _mock_discord):
+        with (
+            patch("api.routers.tags.resolve_bot", new_callable=AsyncMock) as mock_resolve,
+            patch("api.routers.tags.handle_discord_exception", new_callable=AsyncMock),
+            patch("api.routers.tags.ChannelConverter") as mock_converter,
+            patch("api.routers.tags.get_entity_or_404", new_callable=AsyncMock) as mock_get_entity,
+            patch("api.routers.tags.discord", _mock_discord),
+        ):
 
             async def resolve(req):
                 return bot
@@ -847,6 +888,7 @@ class TestTagRequestValidation:
             mock_get_entity.side_effect = _get_entity
 
             from api.routers.tags import router
+
             app.include_router(router, prefix="/api/v1")
 
             yield TestClient(app)

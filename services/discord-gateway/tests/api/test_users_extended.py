@@ -59,14 +59,17 @@ def _restore_real_discord():
     sys.modules["discord.ext"] = _cm._REAL_DISCORD_EXT
     sys.modules["discord.ext.commands"] = _cm._REAL_DISCORD_EXT_COMMANDS
     import tests.mocks.discord_mock_utils as _dmu_mod
+
     importlib.reload(_dmu_mod)
     from api.routers import users as _users_mod
+
     importlib.reload(_users_mod)
     yield
 
 
 def _make_user_payload():
     from api.schemas.user_schemas import User as UserSchema
+
     return UserSchema(
         id=111111111,
         username="test-user",
@@ -81,6 +84,7 @@ def _make_user_payload():
 
 def _make_member_payload():
     from api.schemas.user_schemas import Member as MemberSchema
+
     return MemberSchema(
         user=_make_user_payload(),
         guild_id=987654321,
@@ -129,9 +133,11 @@ def users_ext_app(mock_bot_with_user):
     app = FastAPI(title="Test")
     app.state.bot = mock_bot_with_user
 
-    with patch("api.routers.users.resolve_bot", new_callable=AsyncMock) as mock_resolve, \
-         patch("api.routers.users.handle_discord_exception", new_callable=AsyncMock) as mock_handle, \
-         patch("api.routers.users.UserConverter") as mock_user_converter:
+    with (
+        patch("api.routers.users.resolve_bot", new_callable=AsyncMock) as mock_resolve,
+        patch("api.routers.users.handle_discord_exception", new_callable=AsyncMock) as mock_handle,
+        patch("api.routers.users.UserConverter") as mock_user_converter,
+    ):
 
         async def _resolve(request):
             return mock_bot_with_user
@@ -150,6 +156,7 @@ def users_ext_app(mock_bot_with_user):
         mock_user_converter.member_to_payload.return_value = _mock_member_payload
 
         from api.routers.users import router
+
         app.include_router(router, prefix="/api/v1")
 
         yield app, mock_bot_with_user, mock_resolve, mock_handle, mock_user_converter
@@ -175,7 +182,7 @@ class TestGetBotIdentityExtended:
 
     def test_get_bot_identity_generic_exception_returns_500(self, users_ext_app):
         """GET /users/@me should handle generic exceptions."""
-        app, mock_bot, mock_resolve, mock_handle, mock_user_converter = users_ext_app
+        app, _mock_bot, mock_resolve, _mock_handle, _mock_user_converter = users_ext_app
 
         async def _resolve_fail(request):
             raise RuntimeError("Unexpected error")
@@ -199,7 +206,7 @@ class TestGetUserExtended:
 
     def test_get_user_generic_exception_returns_500(self, users_ext_app):
         """GET /users/{user_id} should handle generic exceptions."""
-        app, mock_bot, mock_resolve, mock_handle, mock_user_converter = users_ext_app
+        app, _mock_bot, mock_resolve, _mock_handle, _mock_user_converter = users_ext_app
 
         async def _resolve_fail(request):
             raise RuntimeError("Unexpected error")
@@ -223,14 +230,12 @@ class TestGetMemberExtended:
 
     def test_get_member_not_found_across_guilds(self, users_ext_app):
         """GET /members/{member_id} should return 404 when not found in any guild."""
-        app, mock_bot, mock_resolve, *_ = users_ext_app
+        app, mock_bot, *_ = users_ext_app
 
         # Make member not found in any guild
         mock_guild = MagicMock()
         mock_guild.get_member = MagicMock(return_value=None)
-        mock_guild.fetch_member = AsyncMock(
-            side_effect=DiscordMockUtils.create_discord_not_found()
-        )
+        mock_guild.fetch_member = AsyncMock(side_effect=DiscordMockUtils.create_discord_not_found())
         mock_bot.guilds = [mock_guild]
 
         client = TestClient(app)
@@ -239,7 +244,7 @@ class TestGetMemberExtended:
 
     def test_get_member_generic_exception_returns_500(self, users_ext_app):
         """GET /members/{member_id} should handle generic exceptions."""
-        app, mock_bot, mock_resolve, mock_handle, *_ = users_ext_app
+        app, _mock_bot, mock_resolve, _mock_handle, *_ = users_ext_app
 
         async def _resolve_fail(request):
             raise RuntimeError("Unexpected error")
@@ -268,7 +273,7 @@ class TestUpdateMemberExtended:
 
     def test_update_member_with_roles(self, users_ext_app):
         """PUT /members/{member_id} should update member roles."""
-        app, mock_bot, mock_resolve, *_ = users_ext_app
+        app, mock_bot, *_ = users_ext_app
 
         role = MagicMock()
         role.id = 555555555
@@ -292,7 +297,7 @@ class TestUpdateMemberExtended:
 
     def test_update_member_with_roles_not_found(self, users_ext_app):
         """PUT /members/{member_id} should return 404 when role not found."""
-        app, mock_bot, mock_resolve, *_ = users_ext_app
+        app, mock_bot, *_ = users_ext_app
 
         mock_member = MagicMock()
         mock_member.id = 111111111
@@ -315,7 +320,7 @@ class TestUpdateMemberExtended:
 
     def test_update_member_voice_channel_disconnect(self, users_ext_app):
         """PUT /members/{member_id} with channel_id=0 should disconnect from voice."""
-        app, mock_bot, mock_resolve, *_ = users_ext_app
+        app, mock_bot, *_ = users_ext_app
 
         mock_member = MagicMock()
         mock_member.id = 111111111
@@ -337,7 +342,7 @@ class TestUpdateMemberExtended:
 
     def test_update_member_voice_channel_not_found(self, users_ext_app):
         """PUT /members/{member_id} with invalid channel_id should return 404."""
-        app, mock_bot, mock_resolve, *_ = users_ext_app
+        app, mock_bot, *_ = users_ext_app
 
         mock_member = MagicMock()
         mock_member.id = 111111111
@@ -360,7 +365,7 @@ class TestUpdateMemberExtended:
 
     def test_update_member_voice_channel_valid(self, users_ext_app):
         """PUT /members/{member_id} with valid channel_id should update voice channel."""
-        app, mock_bot, mock_resolve, *_ = users_ext_app
+        app, mock_bot, *_ = users_ext_app
 
         voice_channel = MagicMock()
         voice_channel.id = 123456789
@@ -386,7 +391,8 @@ class TestUpdateMemberExtended:
     def test_update_member_voice_error_40032(self, users_ext_app):
         """PUT /members/{member_id} should handle error code 40032 (not in voice)."""
         import discord as _discord
-        app, mock_bot, mock_resolve, *_ = users_ext_app
+
+        app, mock_bot, *_ = users_ext_app
 
         # Build a real discord.HTTPException with code 40032
         class FakeResponse:
@@ -416,7 +422,7 @@ class TestUpdateMemberExtended:
 
     def test_update_member_generic_exception_returns_500(self, users_ext_app):
         """PUT /members/{member_id} should handle generic exceptions."""
-        app, mock_bot, mock_resolve, mock_handle, *_ = users_ext_app
+        app, _mock_bot, mock_resolve, _mock_handle, *_ = users_ext_app
 
         async def _resolve_fail(request):
             raise RuntimeError("Unexpected error")
@@ -433,7 +439,7 @@ class TestCheckMemberPermissionExtended:
 
     def test_check_member_permission_member_from_fetch(self, users_ext_app):
         """check_member_permission should fetch member if not in cache."""
-        app, mock_bot, mock_resolve, *_ = users_ext_app
+        app, mock_bot, *_ = users_ext_app
 
         mock_member = MagicMock()
         mock_member.id = 111111111
@@ -451,13 +457,11 @@ class TestCheckMemberPermissionExtended:
 
     def test_check_member_permission_member_not_found(self, users_ext_app):
         """check_member_permission should return 404 when member not found."""
-        app, mock_bot, mock_resolve, *_ = users_ext_app
+        app, mock_bot, *_ = users_ext_app
 
         mock_guild = MagicMock()
         mock_guild.get_member = MagicMock(return_value=None)
-        mock_guild.fetch_member = AsyncMock(
-            side_effect=DiscordMockUtils.create_discord_not_found()
-        )
+        mock_guild.fetch_member = AsyncMock(side_effect=DiscordMockUtils.create_discord_not_found())
         mock_bot.guilds = [mock_guild]
 
         client = TestClient(app)
@@ -475,7 +479,7 @@ class TestCheckMemberPermissionExtended:
 
     def test_check_member_permission_generic_exception_returns_500(self, users_ext_app):
         """check_member_permission should handle generic exceptions."""
-        app, mock_bot, mock_resolve, mock_handle, *_ = users_ext_app
+        app, _mock_bot, mock_resolve, _mock_handle, *_ = users_ext_app
 
         async def _resolve_fail(request):
             raise RuntimeError("Unexpected error")

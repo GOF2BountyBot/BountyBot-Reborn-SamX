@@ -13,8 +13,8 @@ module before importing the router.
 
 import sys
 import types
-from datetime import datetime, timezone
-from unittest.mock import AsyncMock, MagicMock, patch
+from datetime import UTC, datetime
+from unittest.mock import MagicMock
 
 import pytest
 from fastapi import FastAPI
@@ -53,7 +53,7 @@ if "apscheduler" not in sys.modules:
 def make_mock_job(**overrides):
     defaults = dict(
         job_id="test-job-id-1234",
-        next_run_time=datetime(2026, 6, 1, 12, 0, 0, tzinfo=timezone.utc),
+        next_run_time=datetime(2026, 6, 1, 12, 0, 0, tzinfo=UTC),
         trigger="date[2026-06-01 12:00:00 UTC]",
         args=["test-job-id-1234", {}],
     )

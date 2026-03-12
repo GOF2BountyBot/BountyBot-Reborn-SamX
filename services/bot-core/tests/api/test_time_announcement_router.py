@@ -16,8 +16,15 @@ importing time_announcement. The patch is applied once at module load time
 below.
 """
 
-import sys
+# ---------------------------------------------------------------------------
+# Bug workaround: inject EmbedPayloadDict into routers.discord_message so
+# that the `from routers.discord_message import ... EmbedPayloadDict` inside
+# time_announcement.py succeeds. This is safe to do here because conftest.py
+# has already inserted src/ at position 0 on sys.path.
+# ---------------------------------------------------------------------------
+import importlib as _importlib
 import json
+import sys
 from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
@@ -26,14 +33,6 @@ import httpx
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-
-# ---------------------------------------------------------------------------
-# Bug workaround: inject EmbedPayloadDict into routers.discord_message so
-# that the `from routers.discord_message import ... EmbedPayloadDict` inside
-# time_announcement.py succeeds. This is safe to do here because conftest.py
-# has already inserted src/ at position 0 on sys.path.
-# ---------------------------------------------------------------------------
-import importlib as _importlib
 
 # Ensure both api.routers.discord_message and its routers.* alias are loaded
 _rdm = _importlib.import_module("api.routers.discord_message")
@@ -46,7 +45,7 @@ if "routers" not in sys.modules:
     sys.modules["routers"] = _ar
 
 # Import the real EmbedPayloadDict and patch it into the alias
-from api.schemas.discord_message_schema import EmbedPayloadDict as _EmbedPayloadDict  # noqa: E402
+from api.schemas.discord_message_schema import EmbedPayloadDict as _EmbedPayloadDict
 
 if not hasattr(_rdm, "EmbedPayloadDict"):
     _rdm.EmbedPayloadDict = _EmbedPayloadDict
@@ -186,8 +185,8 @@ def test_app(mock_db_manager, mock_message_repo):
     The router has prefix="/time" and in production is mounted at "/api/v1".
     So routes are accessible at "/api/v1/time/...".
     """
-    from api.routers.announcements.time_announcement import router as time_router
     import api.routers.announcements.time_announcement as ta_module
+    from api.routers.announcements.time_announcement import router as time_router
 
     app = FastAPI()
     app.include_router(time_router, prefix="/api/v1")

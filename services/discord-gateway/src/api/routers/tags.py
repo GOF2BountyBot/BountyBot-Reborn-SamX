@@ -5,7 +5,8 @@ This module provides REST endpoints for managing Discord forum tags
 with simplified URIs that don't require channel context.
 """
 
-from typing import Any, Dict, Optional
+from contextlib import suppress
+from typing import Any
 
 import discord
 from fastapi import APIRouter, HTTPException, Request, status
@@ -75,22 +76,17 @@ async def get_tag(request: Request, tag_id: int) -> ForumTagResponse:
         if isinstance(tag_payload, dict):
             tag_payload["channel_id"] = parent_channel.id
             if tag_payload.get("emoji") is not None:
-                try:
+                with suppress(Exception):
                     tag_payload["emoji"] = normalize_emoji(tag_payload["emoji"])
-                except Exception:  # pylint: disable=broad-exception-caught
-                    # best-effort: leave original if normalization fails
-                    pass
         else:
             try:
-                setattr(tag_payload, "channel_id", parent_channel.id)
+                tag_payload.channel_id = parent_channel.id
             except Exception:  # pylint: disable=broad-exception-caught
                 tag_payload = dict(getattr(tag_payload, "__dict__", {}) or {})
                 tag_payload["channel_id"] = parent_channel.id
                 if tag_payload.get("emoji") is not None:
-                    try:
+                    with suppress(Exception):
                         tag_payload["emoji"] = normalize_emoji(tag_payload["emoji"])
-                    except Exception:  # pylint: disable=broad-exception-caught
-                        pass
 
         flogger.info(f"Successfully retrieved tag {getattr(tag, 'name', tag_id)}")
         return ForumTagResponse(status="success", data=tag_payload)
@@ -116,9 +112,7 @@ async def create_forum_tag(request: Request, channel_id: int, tag: ForumTagCreat
         channel = await get_entity_or_404(bot.get_channel, bot.fetch_channel, channel_id, "Channel")
 
         if not isinstance(channel, discord.ForumChannel):
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST, detail="Not a forum channel"
-            )
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Not a forum channel")
 
         emoji_value = None
         if tag.emoji:
@@ -146,7 +140,7 @@ async def create_forum_tag(request: Request, channel_id: int, tag: ForumTagCreat
             except AttributeError:
                 # Fallback: wrap dicts in proxy objects exposing to_dict()
                 class _TagProxy:
-                    def __init__(self, d: Dict[str, Any]):
+                    def __init__(self, d: dict[str, Any]):
                         self._d = d
 
                     def to_dict(self):
@@ -169,21 +163,17 @@ async def create_forum_tag(request: Request, channel_id: int, tag: ForumTagCreat
         if isinstance(tag_data, dict):
             tag_data["channel_id"] = channel_id
             if tag_data.get("emoji") is not None:
-                try:
+                with suppress(Exception):
                     tag_data["emoji"] = normalize_emoji(tag_data["emoji"])
-                except Exception:  # pylint: disable=broad-exception-caught
-                    pass
         else:
             try:
-                setattr(tag_data, "channel_id", channel_id)
+                tag_data.channel_id = channel_id
             except Exception:  # pylint: disable=broad-exception-caught
                 tag_data = dict(getattr(tag_data, "__dict__", {}) or {})
                 tag_data["channel_id"] = channel_id
                 if tag_data.get("emoji") is not None:
-                    try:
+                    with suppress(Exception):
                         tag_data["emoji"] = normalize_emoji(tag_data["emoji"])
-                    except Exception:  # pylint: disable=broad-exception-caught
-                        pass
 
         flogger.info(f"Successfully created tag {getattr(new_tag, 'name', tag.name)}")
         return ForumTagResponse(status="created", data=tag_data)
@@ -220,12 +210,10 @@ async def update_tag(request: Request, tag_id: int, tag_data: ForumTagUpdateRequ
                 break
         if not tag or not parent_channel:
             flogger.error(f"Tag {tag_id} not found")
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND, detail=f"Tag {tag_id} not found"
-            )
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Tag {tag_id} not found")
 
         # Prepare update parameters
-        update_kwargs: Dict[str, Any] = {}
+        update_kwargs: dict[str, Any] = {}
         if tag_data.name is not None:
             update_kwargs["name"] = tag_data.name
         if tag_data.emoji is not None:
@@ -251,7 +239,7 @@ async def update_tag(request: Request, tag_id: int, tag_data: ForumTagUpdateRequ
                     await parent_channel.edit_tag(tag, **update_kwargs)
                 else:
                     # Build updates map keyed by id -> {"name": ..., "emoji": ...}
-                    upd_map: Dict[Any, Dict[str, Optional[str]]] = {}
+                    upd_map: dict[Any, dict[str, str | None]] = {}
                     try:
                         upd_map[int(tag_id)] = {"name": update_kwargs.get("name"), "emoji": update_kwargs.get("emoji")}
                     except Exception:  # pylint: disable=broad-exception-caught
@@ -264,7 +252,7 @@ async def update_tag(request: Request, tag_id: int, tag_data: ForumTagUpdateRequ
                     except AttributeError:
                         # Wrap dicts in proxy objects that implement to_dict()
                         class _TagProxy:
-                            def __init__(self, d: Dict[str, Any]):
+                            def __init__(self, d: dict[str, Any]):
                                 self._d = d
 
                             def to_dict(self):
@@ -284,10 +272,8 @@ async def update_tag(request: Request, tag_id: int, tag_data: ForumTagUpdateRequ
 
         # Re-fetch the tag to get updated data
         updated_tag = discord.utils.get(parent_channel.available_tags, id=tag_id)
-        if not updated_tag:
-            # Fallback - the tag might have changed ID, search by name
-            if tag_data.name:
-                updated_tag = discord.utils.get(parent_channel.available_tags, name=tag_data.name)
+        if not updated_tag and tag_data.name:
+            updated_tag = discord.utils.get(parent_channel.available_tags, name=tag_data.name)
         if not updated_tag:
             updated_tag = tag  # Use original if we can't find updated
 
@@ -296,10 +282,8 @@ async def update_tag(request: Request, tag_id: int, tag_data: ForumTagUpdateRequ
         if isinstance(updated_tag_data, dict):
             updated_tag_data["channel_id"] = parent_channel.id
             if updated_tag_data.get("emoji") is not None:
-                try:
+                with suppress(Exception):
                     updated_tag_data["emoji"] = normalize_emoji(updated_tag_data["emoji"])
-                except Exception:  # pylint: disable=broad-exception-caught
-                    pass
             elif tag_data.emoji is not None:
                 # best-effort: reflect requested emoji when runtime didn't expose it
                 try:
@@ -308,15 +292,13 @@ async def update_tag(request: Request, tag_id: int, tag_data: ForumTagUpdateRequ
                     updated_tag_data["emoji"] = tag_data.emoji
         else:
             try:
-                setattr(updated_tag_data, "channel_id", parent_channel.id)
+                updated_tag_data.channel_id = parent_channel.id
             except Exception:  # pylint: disable=broad-exception-caught
                 updated_tag_data = dict(getattr(updated_tag_data, "__dict__", {}) or {})
                 updated_tag_data["channel_id"] = parent_channel.id
                 if updated_tag_data.get("emoji") is not None:
-                    try:
+                    with suppress(Exception):
                         updated_tag_data["emoji"] = normalize_emoji(updated_tag_data["emoji"])
-                    except Exception:  # pylint: disable=broad-exception-caught
-                        pass
                 elif tag_data.emoji is not None:
                     try:
                         updated_tag_data["emoji"] = normalize_emoji(tag_data.emoji)
@@ -358,9 +340,7 @@ async def delete_tag(request: Request, tag_id: int) -> DeleteResponse:
                 break
         if not tag or not parent_channel:
             flogger.error(f"Tag {tag_id} not found")
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND, detail=f"Tag {tag_id} not found"
-            )
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Tag {tag_id} not found")
 
         tag_name = getattr(tag, "name", str(tag_id))
         # Defensive deletion: support multiple discord.py/library variants.
@@ -386,18 +366,15 @@ async def delete_tag(request: Request, tag_id: int) -> DeleteResponse:
                     # Other variants expect a serializable payload (dicts). Build minimal payloads.
                     payloads = []
                     for t in remaining:
-                        try:
+                        with suppress(Exception):
                             payloads.append({"name": t.name, "emoji": getattr(t, "emoji", None)})
-                        except Exception:  # pylint: disable=broad-exception-caught
-                            # best-effort: skip malformed tag objects
-                            continue
                     try:
                         await parent_channel.edit(available_tags=payloads)
                         deleted = True
                     except AttributeError:
                         # Wrap dicts in proxy objects implementing to_dict()
                         class _TagProxy:
-                            def __init__(self, d: Dict[str, Any]):
+                            def __init__(self, d: dict[str, Any]):
                                 self._d = d
 
                             def to_dict(self):

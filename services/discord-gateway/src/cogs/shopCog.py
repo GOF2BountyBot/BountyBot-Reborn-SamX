@@ -1,5 +1,4 @@
 import os
-from typing import Dict, List, Optional
 
 import discord
 import httpx
@@ -25,7 +24,7 @@ class ShopCog(commands.Cog):
     async def cog_unload(self):
         await self.http_client.aclose()
 
-    async def _get_player_data(self, user_id: int, guild_id: int) -> Optional[Dict]:
+    async def _get_player_data(self, user_id: int, guild_id: int) -> dict | None:
         """Helper to get player data from Discord user ID."""
         try:
             user_data = {
@@ -44,7 +43,7 @@ class ShopCog(commands.Cog):
         self,
         _interaction: discord.Interaction,
         current: str
-    ) -> List[app_commands.Choice[str]]:
+    ) -> list[app_commands.Choice[str]]:
         """Autocomplete for tier selection."""
         return [
             app_commands.Choice(name=tier, value=tier)
@@ -56,7 +55,7 @@ class ShopCog(commands.Cog):
         self,
         _interaction: discord.Interaction,
         current: str
-    ) -> List[app_commands.Choice[str]]:
+    ) -> list[app_commands.Choice[str]]:
         """Autocomplete for item type selection."""
         return [
             app_commands.Choice(name=item_type.title(), value=item_type)
@@ -74,7 +73,7 @@ class ShopCog(commands.Cog):
         self,
         interaction: discord.Interaction,
         tier: str,
-        item_type: Optional[str] = None
+        item_type: str | None = None
     ):
         """Browse guild shop by tier."""
         await interaction.response.defer(thinking=True)

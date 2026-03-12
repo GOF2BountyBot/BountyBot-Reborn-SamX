@@ -82,6 +82,7 @@ _mock_discord.Thread = _MockThread
 # Per-test isolation fixture
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture(autouse=True)
 def _restore_real_discord():
     """Re-assert real discord and reload threads router for each test."""
@@ -90,8 +91,10 @@ def _restore_real_discord():
     sys.modules["discord.ext"] = _cm._REAL_DISCORD_EXT
     sys.modules["discord.ext.commands"] = _cm._REAL_DISCORD_EXT_COMMANDS
     import tests.mocks.discord_mock_utils as _dmu_mod
+
     importlib.reload(_dmu_mod)
     from api.routers import threads as _threads_mod
+
     importlib.reload(_threads_mod)
     yield
 
@@ -100,16 +103,17 @@ def _restore_real_discord():
 # Helper factories
 # ---------------------------------------------------------------------------
 
+
 def create_mock_thread(thread_id=1234567890, name="Test Thread", archived=False, locked=False):
-    thread = DiscordMockUtils.create_mock_thread(
-        thread_id=thread_id, name=name, archived=archived, locked=locked
-    )
+    thread = DiscordMockUtils.create_mock_thread(thread_id=thread_id, name=name, archived=archived, locked=locked)
     thread.edit = AsyncMock()
     thread.send = AsyncMock()
     thread.fetch_message = AsyncMock()
+
     async def _empty_history(limit=100):
         return
         yield
+
     thread.history = MagicMock(return_value=_empty_history())
     thread.guild = MagicMock()
     thread.guild.get_member = MagicMock()
@@ -118,9 +122,7 @@ def create_mock_thread(thread_id=1234567890, name="Test Thread", archived=False,
 
 
 def create_mock_message(message_id=999999999, author_id=123456789):
-    msg = DiscordMockUtils.create_mock_message(
-        message_id=message_id, content="test", author_id=author_id
-    )
+    msg = DiscordMockUtils.create_mock_message(message_id=message_id, content="test", author_id=author_id)
     msg.embeds = []
     msg.edit = AsyncMock()
     msg.delete = AsyncMock()
@@ -129,6 +131,7 @@ def create_mock_message(message_id=999999999, author_id=123456789):
 
 def _thread_schema(thread_id=1234567890):
     from api.schemas.channel_schemas import Thread as ThreadSchema
+
     return ThreadSchema(
         id=thread_id,
         name="Test Thread",
@@ -145,6 +148,7 @@ def _thread_schema(thread_id=1234567890):
 
 def _message_schema(message_id=999999999):
     from api.schemas.message_schemas import Message as MessageSchema
+
     return MessageSchema(
         id=message_id,
         channel_id=1234567890,
@@ -158,6 +162,7 @@ def _message_schema(message_id=999999999):
 # ---------------------------------------------------------------------------
 # Base app builder
 # ---------------------------------------------------------------------------
+
 
 def _make_app(mock_bot, find_thread_fn=None, extra_patches=None):
     """
@@ -175,12 +180,14 @@ def _make_app(mock_bot, find_thread_fn=None, extra_patches=None):
     mock_thread.fetch_message = AsyncMock(return_value=mock_message)
     mock_thread.send = AsyncMock(return_value=mock_message)
 
-    with patch("api.routers.threads.resolve_bot", new_callable=AsyncMock) as mock_resolve, \
-         patch("api.routers.threads.handle_discord_exception", new_callable=AsyncMock) as mock_handle, \
-         patch("api.routers.threads.find_thread_by_id") as mock_find, \
-         patch("api.routers.threads.ChannelConverter") as mock_channel_converter, \
-         patch("api.routers.threads.MessageConverter") as mock_message_converter, \
-         patch("api.routers.threads.EmbedConverter") as mock_embed_converter:
+    with (
+        patch("api.routers.threads.resolve_bot", new_callable=AsyncMock) as mock_resolve,
+        patch("api.routers.threads.handle_discord_exception", new_callable=AsyncMock) as mock_handle,
+        patch("api.routers.threads.find_thread_by_id") as mock_find,
+        patch("api.routers.threads.ChannelConverter") as mock_channel_converter,
+        patch("api.routers.threads.MessageConverter") as mock_message_converter,
+        patch("api.routers.threads.EmbedConverter") as mock_embed_converter,
+    ):
 
         async def resolve(req):
             return mock_bot
@@ -189,8 +196,10 @@ def _make_app(mock_bot, find_thread_fn=None, extra_patches=None):
         mock_handle.side_effect = HTTPException(status_code=500, detail="Internal server error")
 
         if find_thread_fn is None:
+
             def _default_find(bot, tid):
                 return mock_thread if tid == 1234567890 else None
+
             mock_find.side_effect = _default_find
         else:
             mock_find.side_effect = find_thread_fn
@@ -200,6 +209,7 @@ def _make_app(mock_bot, find_thread_fn=None, extra_patches=None):
         mock_embed_converter.payload_to_embed.return_value = MagicMock()
 
         from api.routers.threads import router
+
         app.include_router(router, prefix="/api/v1")
 
         yield app, mock_thread, mock_message
@@ -208,6 +218,7 @@ def _make_app(mock_bot, find_thread_fn=None, extra_patches=None):
 # ---------------------------------------------------------------------------
 # Tests: update_thread_tags endpoint (lines 330-422)
 # ---------------------------------------------------------------------------
+
 
 class TestUpdateThreadTags:
     """Cover the PUT /threads/{thread_id}/tags endpoint."""
@@ -224,6 +235,7 @@ class TestUpdateThreadTags:
         parent.__class__ = _MockFC
         if available_tags is None:
             from tests.mocks.discord_mock_utils import DiscordMockUtils as DMU
+
             t1 = DMU.create_mock_forum_tag(tag_id=111, name="tag1", channel_id=555555555)
             t2 = DMU.create_mock_forum_tag(tag_id=222, name="tag2", channel_id=555555555)
             available_tags = [t1, t2]
@@ -231,22 +243,25 @@ class TestUpdateThreadTags:
         mock_thread.parent = parent
 
         def _utils_get(iterable, **kwargs):
-            for item in (iterable or []):
+            for item in iterable or []:
                 match = all(getattr(item, k, None) == v for k, v in kwargs.items())
                 if match:
                     return item
             return None
+
         _mock_discord.utils.get = _utils_get
 
         _thread_data = _thread_schema()
 
-        with patch("api.routers.threads.resolve_bot", new_callable=AsyncMock) as mock_resolve, \
-             patch("api.routers.threads.handle_discord_exception", new_callable=AsyncMock) as mock_handle, \
-             patch("api.routers.threads.find_thread_by_id") as mock_find, \
-             patch("api.routers.threads.ChannelConverter") as mock_channel_converter, \
-             patch("api.routers.threads.MessageConverter") as mock_message_converter, \
-             patch("api.routers.threads.EmbedConverter") as mock_embed_converter, \
-             patch("api.routers.threads.discord", _mock_discord):
+        with (
+            patch("api.routers.threads.resolve_bot", new_callable=AsyncMock) as mock_resolve,
+            patch("api.routers.threads.handle_discord_exception", new_callable=AsyncMock) as mock_handle,
+            patch("api.routers.threads.find_thread_by_id") as mock_find,
+            patch("api.routers.threads.ChannelConverter") as mock_channel_converter,
+            patch("api.routers.threads.MessageConverter") as mock_message_converter,
+            patch("api.routers.threads.EmbedConverter") as mock_embed_converter,
+            patch("api.routers.threads.discord", _mock_discord),
+        ):
 
             async def resolve(req):
                 return mock_bot
@@ -256,6 +271,7 @@ class TestUpdateThreadTags:
 
             def _find(bot, tid):
                 return mock_thread if tid == 1234567890 else None
+
             mock_find.side_effect = _find
 
             mock_channel_converter.thread_to_detail.return_value = _thread_data
@@ -263,6 +279,7 @@ class TestUpdateThreadTags:
             mock_embed_converter.payload_to_embed.return_value = MagicMock()
 
             from api.routers.threads import router
+
             app.include_router(router, prefix="/api/v1")
 
             yield app
@@ -273,10 +290,7 @@ class TestUpdateThreadTags:
         thread = create_mock_thread(1234567890)
         for app in self._make_tags_app(bot, thread):
             client = TestClient(app)
-            response = client.put(
-                "/api/v1/threads/1234567890/tags",
-                json={"tags": [111, 222]}
-            )
+            response = client.put("/api/v1/threads/1234567890/tags", json={"tags": [111, 222]})
             assert response.status_code == 200
             assert response.json()["status"] == "updated"
 
@@ -286,10 +300,7 @@ class TestUpdateThreadTags:
         thread = create_mock_thread(1234567890)
         for app in self._make_tags_app(bot, thread):
             client = TestClient(app)
-            response = client.put(
-                "/api/v1/threads/9999999999/tags",
-                json={"tags": [111]}
-            )
+            response = client.put("/api/v1/threads/9999999999/tags", json={"tags": [111]})
             assert response.status_code == 404
             assert "thread" in response.json()["detail"].lower()
 
@@ -306,22 +317,25 @@ class TestUpdateThreadTags:
         app.state.bot = bot
 
         def _utils_get(iterable, **kwargs):
-            for item in (iterable or []):
+            for item in iterable or []:
                 match = all(getattr(item, k, None) == v for k, v in kwargs.items())
                 if match:
                     return item
             return None
+
         _mock_discord.utils.get = _utils_get
 
         _thread_data = _thread_schema()
 
-        with patch("api.routers.threads.resolve_bot", new_callable=AsyncMock) as mock_resolve, \
-             patch("api.routers.threads.handle_discord_exception", new_callable=AsyncMock), \
-             patch("api.routers.threads.find_thread_by_id") as mock_find, \
-             patch("api.routers.threads.ChannelConverter") as mock_cc, \
-             patch("api.routers.threads.MessageConverter") as mock_mc, \
-             patch("api.routers.threads.EmbedConverter") as mock_ec, \
-             patch("api.routers.threads.discord", _mock_discord):
+        with (
+            patch("api.routers.threads.resolve_bot", new_callable=AsyncMock) as mock_resolve,
+            patch("api.routers.threads.handle_discord_exception", new_callable=AsyncMock),
+            patch("api.routers.threads.find_thread_by_id") as mock_find,
+            patch("api.routers.threads.ChannelConverter") as mock_cc,
+            patch("api.routers.threads.MessageConverter") as mock_mc,
+            patch("api.routers.threads.EmbedConverter") as mock_ec,
+            patch("api.routers.threads.discord", _mock_discord),
+        ):
 
             async def resolve(req):
                 return bot
@@ -330,6 +344,7 @@ class TestUpdateThreadTags:
 
             def _find(b, tid):
                 return thread if tid == 1234567890 else None
+
             mock_find.side_effect = _find
 
             mock_cc.thread_to_detail.return_value = _thread_data
@@ -337,6 +352,7 @@ class TestUpdateThreadTags:
             mock_ec.payload_to_embed.return_value = MagicMock()
 
             from api.routers.threads import router
+
             app.include_router(router, prefix="/api/v1")
 
             # NOW override parent with a non-forum channel (plain MagicMock)
@@ -344,10 +360,7 @@ class TestUpdateThreadTags:
             thread.parent = MagicMock()  # not a _MockForumChannel
 
             client = TestClient(app)
-            response = client.put(
-                "/api/v1/threads/1234567890/tags",
-                json={"tags": [111]}
-            )
+            response = client.put("/api/v1/threads/1234567890/tags", json={"tags": [111]})
             assert response.status_code == 400
             assert "forum" in response.json()["detail"].lower()
 
@@ -359,7 +372,7 @@ class TestUpdateThreadTags:
             client = TestClient(app)
             response = client.put(
                 "/api/v1/threads/1234567890/tags",
-                json={"tags": [9999]}  # tag 9999 doesn't exist
+                json={"tags": [9999]},  # tag 9999 doesn't exist
             )
             assert response.status_code == 404
             assert "tag" in response.json()["detail"].lower()
@@ -372,8 +385,7 @@ class TestUpdateThreadTags:
             client = TestClient(app)
             # ForumTag object serialized as dict with id field
             response = client.put(
-                "/api/v1/threads/1234567890/tags",
-                json={"tags": [{"id": 111, "name": "tag1", "channel_id": 555555555}]}
+                "/api/v1/threads/1234567890/tags", json={"tags": [{"id": 111, "name": "tag1", "channel_id": 555555555}]}
             )
             assert response.status_code == 200
 
@@ -387,8 +399,7 @@ class TestUpdateThreadTags:
             # The router checks: if tid is not None → use id resolution; else use name
             # With id=0 and a valid name, the id-based lookup returns None, fallback to name
             response = client.put(
-                "/api/v1/threads/1234567890/tags",
-                json={"tags": [{"id": 111, "name": "tag1", "channel_id": 555555555}]}
+                "/api/v1/threads/1234567890/tags", json={"tags": [{"id": 111, "name": "tag1", "channel_id": 555555555}]}
             )
             assert response.status_code == 200
 
@@ -399,10 +410,7 @@ class TestUpdateThreadTags:
         for app in self._make_tags_app(bot, thread):
             client = TestClient(app)
             # Use an integer tag ID that doesn't exist in available_tags
-            response = client.put(
-                "/api/v1/threads/1234567890/tags",
-                json={"tags": [9999]}
-            )
+            response = client.put("/api/v1/threads/1234567890/tags", json={"tags": [9999]})
             assert response.status_code == 404
             assert "tag" in response.json()["detail"].lower()
 
@@ -412,16 +420,14 @@ class TestUpdateThreadTags:
         thread = create_mock_thread(1234567890)
         for app in self._make_tags_app(bot, thread):
             client = TestClient(app)
-            response = client.put(
-                "/api/v1/threads/1234567890/tags",
-                json={"tags": []}
-            )
+            response = client.put("/api/v1/threads/1234567890/tags", json={"tags": []})
             assert response.status_code == 200
 
 
 # ---------------------------------------------------------------------------
 # Tests: edit_thread_message endpoint (lines 554-597)
 # ---------------------------------------------------------------------------
+
 
 class TestEditThreadMessage:
     """Cover PUT /threads/{thread_id}/messages/{message_id}."""
@@ -437,7 +443,7 @@ class TestEditThreadMessage:
             client = TestClient(app)
             response = client.put(
                 "/api/v1/threads/1234567890/messages/999999999",
-                json={"content": {"title": "Edited", "description": "new content"}}
+                json={"content": {"title": "Edited", "description": "new content"}},
             )
             assert response.status_code == 200
             assert response.json()["status"] == "updated"
@@ -453,12 +459,14 @@ class TestEditThreadMessage:
         app = FastAPI()
         app.state.bot = bot
 
-        with patch("api.routers.threads.resolve_bot", new_callable=AsyncMock) as mock_resolve, \
-             patch("api.routers.threads.handle_discord_exception", new_callable=AsyncMock), \
-             patch("api.routers.threads.find_thread_by_id") as mock_find, \
-             patch("api.routers.threads.ChannelConverter") as mock_cc, \
-             patch("api.routers.threads.MessageConverter") as mock_mc, \
-             patch("api.routers.threads.EmbedConverter") as mock_ec:
+        with (
+            patch("api.routers.threads.resolve_bot", new_callable=AsyncMock) as mock_resolve,
+            patch("api.routers.threads.handle_discord_exception", new_callable=AsyncMock),
+            patch("api.routers.threads.find_thread_by_id") as mock_find,
+            patch("api.routers.threads.ChannelConverter") as mock_cc,
+            patch("api.routers.threads.MessageConverter") as mock_mc,
+            patch("api.routers.threads.EmbedConverter") as mock_ec,
+        ):
 
             async def resolve(req):
                 return bot
@@ -467,6 +475,7 @@ class TestEditThreadMessage:
 
             def _find(b, tid):
                 return thread if tid == 1234567890 else None
+
             mock_find.side_effect = _find
 
             mock_cc.thread_to_detail.return_value = _thread_schema()
@@ -474,12 +483,12 @@ class TestEditThreadMessage:
             mock_ec.payload_to_embed.return_value = MagicMock()
 
             from api.routers.threads import router
+
             app.include_router(router, prefix="/api/v1")
 
             client = TestClient(app)
             response = client.put(
-                "/api/v1/threads/1234567890/messages/999999999",
-                json={"content": {"title": "Edited"}}
+                "/api/v1/threads/1234567890/messages/999999999", json={"content": {"title": "Edited"}}
             )
             assert response.status_code == 403
             assert "edit" in response.json()["detail"].lower()
@@ -491,8 +500,7 @@ class TestEditThreadMessage:
         for app, _, _ in _make_app(bot):
             client = TestClient(app)
             response = client.put(
-                "/api/v1/threads/9999999999/messages/999999999",
-                json={"content": {"title": "Edited"}}
+                "/api/v1/threads/9999999999/messages/999999999", json={"content": {"title": "Edited"}}
             )
             assert response.status_code == 404
             assert "thread" in response.json()["detail"].lower()
@@ -503,21 +511,19 @@ class TestEditThreadMessage:
         thread = create_mock_thread(1234567890)
         # fetch_message raises NotFound
         real_discord = sys.modules.get("tests.conftest")._REAL_DISCORD
-        thread.fetch_message = AsyncMock(
-            side_effect=real_discord.errors.NotFound(
-                MagicMock(status=404), "Not Found"
-            )
-        )
+        thread.fetch_message = AsyncMock(side_effect=real_discord.errors.NotFound(MagicMock(status=404), "Not Found"))
 
         app = FastAPI()
         app.state.bot = bot
 
-        with patch("api.routers.threads.resolve_bot", new_callable=AsyncMock) as mock_resolve, \
-             patch("api.routers.threads.handle_discord_exception", new_callable=AsyncMock), \
-             patch("api.routers.threads.find_thread_by_id") as mock_find, \
-             patch("api.routers.threads.ChannelConverter") as mock_cc, \
-             patch("api.routers.threads.MessageConverter") as mock_mc, \
-             patch("api.routers.threads.EmbedConverter") as mock_ec:
+        with (
+            patch("api.routers.threads.resolve_bot", new_callable=AsyncMock) as mock_resolve,
+            patch("api.routers.threads.handle_discord_exception", new_callable=AsyncMock),
+            patch("api.routers.threads.find_thread_by_id") as mock_find,
+            patch("api.routers.threads.ChannelConverter") as mock_cc,
+            patch("api.routers.threads.MessageConverter") as mock_mc,
+            patch("api.routers.threads.EmbedConverter") as mock_ec,
+        ):
 
             async def resolve(req):
                 return bot
@@ -526,6 +532,7 @@ class TestEditThreadMessage:
 
             def _find(b, tid):
                 return thread if tid == 1234567890 else None
+
             mock_find.side_effect = _find
 
             mock_cc.thread_to_detail.return_value = _thread_schema()
@@ -533,12 +540,12 @@ class TestEditThreadMessage:
             mock_ec.payload_to_embed.return_value = MagicMock()
 
             from api.routers.threads import router
+
             app.include_router(router, prefix="/api/v1")
 
             client = TestClient(app)
             response = client.put(
-                "/api/v1/threads/1234567890/messages/999999999",
-                json={"content": {"title": "Edited"}}
+                "/api/v1/threads/1234567890/messages/999999999", json={"content": {"title": "Edited"}}
             )
             assert response.status_code == 404
             assert "message" in response.json()["detail"].lower()
@@ -548,6 +555,7 @@ class TestEditThreadMessage:
 # Tests: delete_thread_message endpoint (lines 610-656)
 # ---------------------------------------------------------------------------
 
+
 class TestDeleteThreadMessage:
     """Cover DELETE /threads/{thread_id}/messages/{message_id}."""
 
@@ -555,12 +563,14 @@ class TestDeleteThreadMessage:
         app = FastAPI()
         app.state.bot = bot
 
-        with patch("api.routers.threads.resolve_bot", new_callable=AsyncMock) as mock_resolve, \
-             patch("api.routers.threads.handle_discord_exception", new_callable=AsyncMock), \
-             patch("api.routers.threads.find_thread_by_id") as mock_find, \
-             patch("api.routers.threads.ChannelConverter") as mock_cc, \
-             patch("api.routers.threads.MessageConverter") as mock_mc, \
-             patch("api.routers.threads.EmbedConverter") as mock_ec:
+        with (
+            patch("api.routers.threads.resolve_bot", new_callable=AsyncMock) as mock_resolve,
+            patch("api.routers.threads.handle_discord_exception", new_callable=AsyncMock),
+            patch("api.routers.threads.find_thread_by_id") as mock_find,
+            patch("api.routers.threads.ChannelConverter") as mock_cc,
+            patch("api.routers.threads.MessageConverter") as mock_mc,
+            patch("api.routers.threads.EmbedConverter") as mock_ec,
+        ):
 
             async def resolve(req):
                 return bot
@@ -568,8 +578,10 @@ class TestDeleteThreadMessage:
             mock_resolve.side_effect = resolve
 
             if mock_find_fn is None:
+
                 def _default_find(b, tid):
                     return thread if tid == 1234567890 else None
+
                 mock_find.side_effect = _default_find
             else:
                 mock_find.side_effect = mock_find_fn
@@ -579,6 +591,7 @@ class TestDeleteThreadMessage:
             mock_ec.payload_to_embed.return_value = MagicMock()
 
             from api.routers.threads import router
+
             app.include_router(router, prefix="/api/v1")
 
             yield app
@@ -650,11 +663,7 @@ class TestDeleteThreadMessage:
         bot = DiscordMockUtils.create_mock_bot(user_id=123456789, username="TestBot")
         thread = create_mock_thread(1234567890)
         real_discord = sys.modules.get("tests.conftest")._REAL_DISCORD
-        thread.fetch_message = AsyncMock(
-            side_effect=real_discord.errors.NotFound(
-                MagicMock(status=404), "Not Found"
-            )
-        )
+        thread.fetch_message = AsyncMock(side_effect=real_discord.errors.NotFound(MagicMock(status=404), "Not Found"))
 
         for app in self._make_delete_app(bot, thread):
             client = TestClient(app)
@@ -680,6 +689,7 @@ class TestDeleteThreadMessage:
 # Tests: get_thread message NotFound (lines 523-525)
 # ---------------------------------------------------------------------------
 
+
 class TestGetThreadMessageNotFound:
     """Cover discord.NotFound in get_thread_message."""
 
@@ -688,11 +698,7 @@ class TestGetThreadMessageNotFound:
         bot = DiscordMockUtils.create_mock_bot(user_id=123456789, username="TestBot")
         thread = create_mock_thread(1234567890)
         real_discord = sys.modules.get("tests.conftest")._REAL_DISCORD
-        thread.fetch_message = AsyncMock(
-            side_effect=real_discord.errors.NotFound(
-                MagicMock(status=404), "Not Found"
-            )
-        )
+        thread.fetch_message = AsyncMock(side_effect=real_discord.errors.NotFound(MagicMock(status=404), "Not Found"))
 
         for app, _, _ in _make_app(bot, find_thread_fn=lambda b, tid: thread if tid == 1234567890 else None):
             client = TestClient(app)
@@ -704,6 +710,7 @@ class TestGetThreadMessageNotFound:
 # ---------------------------------------------------------------------------
 # Tests: thread lookup via get_channel / fetch_channel fallbacks
 # ---------------------------------------------------------------------------
+
 
 class TestThreadLookupFallbacks:
     """Cover get_channel and fetch_channel fallback paths in thread endpoints."""
@@ -719,12 +726,14 @@ class TestThreadLookupFallbacks:
         app = FastAPI()
         app.state.bot = bot
 
-        with patch("api.routers.threads.resolve_bot", new_callable=AsyncMock) as mock_resolve, \
-             patch("api.routers.threads.handle_discord_exception", new_callable=AsyncMock), \
-             patch("api.routers.threads.find_thread_by_id", return_value=None), \
-             patch("api.routers.threads.ChannelConverter") as mock_cc, \
-             patch("api.routers.threads.MessageConverter") as mock_mc, \
-             patch("api.routers.threads.EmbedConverter") as mock_ec:
+        with (
+            patch("api.routers.threads.resolve_bot", new_callable=AsyncMock) as mock_resolve,
+            patch("api.routers.threads.handle_discord_exception", new_callable=AsyncMock),
+            patch("api.routers.threads.find_thread_by_id", return_value=None),
+            patch("api.routers.threads.ChannelConverter") as mock_cc,
+            patch("api.routers.threads.MessageConverter") as mock_mc,
+            patch("api.routers.threads.EmbedConverter") as mock_ec,
+        ):
 
             async def resolve(req):
                 return bot
@@ -735,6 +744,7 @@ class TestThreadLookupFallbacks:
             mock_ec.payload_to_embed.return_value = MagicMock()
 
             from api.routers.threads import router
+
             app.include_router(router, prefix="/api/v1")
 
             client = TestClient(app)
@@ -751,12 +761,14 @@ class TestThreadLookupFallbacks:
         app = FastAPI()
         app.state.bot = bot
 
-        with patch("api.routers.threads.resolve_bot", new_callable=AsyncMock) as mock_resolve, \
-             patch("api.routers.threads.handle_discord_exception", new_callable=AsyncMock), \
-             patch("api.routers.threads.find_thread_by_id", return_value=None), \
-             patch("api.routers.threads.ChannelConverter") as mock_cc, \
-             patch("api.routers.threads.MessageConverter") as mock_mc, \
-             patch("api.routers.threads.EmbedConverter") as mock_ec:
+        with (
+            patch("api.routers.threads.resolve_bot", new_callable=AsyncMock) as mock_resolve,
+            patch("api.routers.threads.handle_discord_exception", new_callable=AsyncMock),
+            patch("api.routers.threads.find_thread_by_id", return_value=None),
+            patch("api.routers.threads.ChannelConverter") as mock_cc,
+            patch("api.routers.threads.MessageConverter") as mock_mc,
+            patch("api.routers.threads.EmbedConverter") as mock_ec,
+        ):
 
             async def resolve(req):
                 return bot
@@ -767,6 +779,7 @@ class TestThreadLookupFallbacks:
             mock_ec.payload_to_embed.return_value = MagicMock()
 
             from api.routers.threads import router
+
             app.include_router(router, prefix="/api/v1")
 
             client = TestClient(app)
@@ -777,12 +790,9 @@ class TestThreadLookupFallbacks:
         """PUT /threads/{id} with archived and locked fields triggers edit call."""
         bot = DiscordMockUtils.create_mock_bot(user_id=123456789, username="TestBot")
 
-        for app, thread, _ in _make_app(bot):
+        for app, _thread, _ in _make_app(bot):
             client = TestClient(app)
-            response = client.put(
-                "/api/v1/threads/1234567890",
-                json={"archived": True, "locked": True}
-            )
+            response = client.put("/api/v1/threads/1234567890", json={"archived": True, "locked": True})
             assert response.status_code == 200
             assert response.json()["status"] == "updated"
 
@@ -796,12 +806,14 @@ class TestThreadLookupFallbacks:
         app = FastAPI()
         app.state.bot = bot
 
-        with patch("api.routers.threads.resolve_bot", new_callable=AsyncMock) as mock_resolve, \
-             patch("api.routers.threads.handle_discord_exception", new_callable=AsyncMock), \
-             patch("api.routers.threads.find_thread_by_id", return_value=None), \
-             patch("api.routers.threads.ChannelConverter") as mock_cc, \
-             patch("api.routers.threads.MessageConverter") as mock_mc, \
-             patch("api.routers.threads.EmbedConverter") as mock_ec:
+        with (
+            patch("api.routers.threads.resolve_bot", new_callable=AsyncMock) as mock_resolve,
+            patch("api.routers.threads.handle_discord_exception", new_callable=AsyncMock),
+            patch("api.routers.threads.find_thread_by_id", return_value=None),
+            patch("api.routers.threads.ChannelConverter") as mock_cc,
+            patch("api.routers.threads.MessageConverter") as mock_mc,
+            patch("api.routers.threads.EmbedConverter") as mock_ec,
+        ):
 
             async def resolve(req):
                 return bot
@@ -812,6 +824,7 @@ class TestThreadLookupFallbacks:
             mock_ec.payload_to_embed.return_value = MagicMock()
 
             from api.routers.threads import router
+
             app.include_router(router, prefix="/api/v1")
 
             client = TestClient(app)
@@ -829,12 +842,14 @@ class TestThreadLookupFallbacks:
         app = FastAPI()
         app.state.bot = bot
 
-        with patch("api.routers.threads.resolve_bot", new_callable=AsyncMock) as mock_resolve, \
-             patch("api.routers.threads.handle_discord_exception", new_callable=AsyncMock), \
-             patch("api.routers.threads.find_thread_by_id", return_value=None), \
-             patch("api.routers.threads.ChannelConverter") as mock_cc, \
-             patch("api.routers.threads.MessageConverter") as mock_mc, \
-             patch("api.routers.threads.EmbedConverter") as mock_ec:
+        with (
+            patch("api.routers.threads.resolve_bot", new_callable=AsyncMock) as mock_resolve,
+            patch("api.routers.threads.handle_discord_exception", new_callable=AsyncMock),
+            patch("api.routers.threads.find_thread_by_id", return_value=None),
+            patch("api.routers.threads.ChannelConverter") as mock_cc,
+            patch("api.routers.threads.MessageConverter") as mock_mc,
+            patch("api.routers.threads.EmbedConverter") as mock_ec,
+        ):
 
             async def resolve(req):
                 return bot
@@ -845,6 +860,7 @@ class TestThreadLookupFallbacks:
             mock_ec.payload_to_embed.return_value = MagicMock()
 
             from api.routers.threads import router
+
             app.include_router(router, prefix="/api/v1")
 
             client = TestClient(app)
@@ -856,6 +872,7 @@ class TestThreadLookupFallbacks:
 # ---------------------------------------------------------------------------
 # Tests: find_thread_by_id function (lines 44-86)
 # ---------------------------------------------------------------------------
+
 
 class TestFindThreadById:
     """Directly test find_thread_by_id() helper function."""
@@ -869,6 +886,7 @@ class TestFindThreadById:
         bot.guilds = []
 
         from api.routers.threads import find_thread_by_id
+
         result = find_thread_by_id(bot, 1234567890)
         assert result is thread
 
@@ -887,6 +905,7 @@ class TestFindThreadById:
             mock_disc.ForumChannel = _MockForumChannel
 
             from api.routers.threads import find_thread_by_id
+
             result = find_thread_by_id(bot, 1234567890)
             assert result is channel
 
@@ -897,6 +916,7 @@ class TestFindThreadById:
         bot.guilds = []
 
         from api.routers.threads import find_thread_by_id
+
         result = find_thread_by_id(bot, 9999999999)
         assert result is None
 
@@ -922,6 +942,7 @@ class TestFindThreadById:
             mock_disc.ForumChannel = _MockForumChannel
 
             from api.routers.threads import find_thread_by_id
+
             result = find_thread_by_id(bot, 1234567890)
             assert result is thread
 
@@ -929,6 +950,7 @@ class TestFindThreadById:
 # ---------------------------------------------------------------------------
 # Tests: find_thread_by_id — ForumChannel parent branch (lines 54-56)
 # ---------------------------------------------------------------------------
+
 
 class TestFindThreadByIdForumParent:
     """Cover the branch where ch.parent is a ForumChannel (lines 54-56)."""
@@ -955,6 +977,7 @@ class TestFindThreadByIdForumParent:
             mock_disc.ForumChannel = _MockForumChannel
 
             from api.routers.threads import find_thread_by_id
+
             result = find_thread_by_id(bot, 1234567890)
             assert result is channel
 
@@ -962,6 +985,7 @@ class TestFindThreadByIdForumParent:
 # ---------------------------------------------------------------------------
 # Tests: find_thread_by_id — get_channel exception (lines 60-62)
 # ---------------------------------------------------------------------------
+
 
 class TestFindThreadByIdGetChannelException:
     """Cover the except branch in get_channel lookup (lines 60-62)."""
@@ -973,6 +997,7 @@ class TestFindThreadByIdGetChannelException:
         bot.guilds = []
 
         from api.routers.threads import find_thread_by_id
+
         result = find_thread_by_id(bot, 1234567890)
         assert result is None
 
@@ -998,6 +1023,7 @@ class TestFindThreadByIdGetChannelException:
             mock_disc.ForumChannel = _MockForumChannel
 
             from api.routers.threads import find_thread_by_id
+
             result = find_thread_by_id(bot, 42)
             assert result is thread
 
@@ -1005,6 +1031,7 @@ class TestFindThreadByIdGetChannelException:
 # ---------------------------------------------------------------------------
 # Tests: find_thread_by_id — get_thread on forum channel (lines 72-78)
 # ---------------------------------------------------------------------------
+
 
 class TestFindThreadByIdGetThreadMethod:
     """Cover the get_thread() method path on forum channels (lines 72-78)."""
@@ -1031,6 +1058,7 @@ class TestFindThreadByIdGetThreadMethod:
             mock_disc.ForumChannel = _MockForumChannel
 
             from api.routers.threads import find_thread_by_id
+
             result = find_thread_by_id(bot, 1234567890)
             assert result is thread
 
@@ -1053,6 +1081,7 @@ class TestFindThreadByIdGetThreadMethod:
             mock_disc.ForumChannel = _MockForumChannel
 
             from api.routers.threads import find_thread_by_id
+
             result = find_thread_by_id(bot, 9999)
             assert result is None
 
@@ -1075,6 +1104,7 @@ class TestFindThreadByIdGetThreadMethod:
             mock_disc.ForumChannel = _MockForumChannel
 
             from api.routers.threads import find_thread_by_id
+
             result = find_thread_by_id(bot, 1234567890)
             assert result is None
 
@@ -1082,6 +1112,7 @@ class TestFindThreadByIdGetThreadMethod:
 # ---------------------------------------------------------------------------
 # Tests: find_thread_by_id — thread.id exception in scan (lines 84-85)
 # ---------------------------------------------------------------------------
+
 
 class TestFindThreadByIdThreadIdException:
     """Cover the except branch when checking thread.id (lines 84-85)."""
@@ -1112,6 +1143,7 @@ class TestFindThreadByIdThreadIdException:
             mock_disc.ForumChannel = _MockForumChannel
 
             from api.routers.threads import find_thread_by_id
+
             result = find_thread_by_id(bot, 42)
             assert result is good_thread
 
@@ -1120,6 +1152,7 @@ class TestFindThreadByIdThreadIdException:
 # Helper: build app WITHOUT patching find_thread_by_id
 # (so the real lookup fallback logic in endpoints is exercised)
 # ---------------------------------------------------------------------------
+
 
 def _make_fallback_app(mock_bot):
     """
@@ -1132,11 +1165,13 @@ def _make_fallback_app(mock_bot):
     _thread_data = _thread_schema()
     _msg_data = _message_schema()
 
-    with patch("api.routers.threads.resolve_bot", new_callable=AsyncMock) as mock_resolve, \
-         patch("api.routers.threads.handle_discord_exception", new_callable=AsyncMock) as mock_handle, \
-         patch("api.routers.threads.ChannelConverter") as mock_cc, \
-         patch("api.routers.threads.MessageConverter") as mock_mc, \
-         patch("api.routers.threads.EmbedConverter") as mock_ec:
+    with (
+        patch("api.routers.threads.resolve_bot", new_callable=AsyncMock) as mock_resolve,
+        patch("api.routers.threads.handle_discord_exception", new_callable=AsyncMock) as mock_handle,
+        patch("api.routers.threads.ChannelConverter") as mock_cc,
+        patch("api.routers.threads.MessageConverter") as mock_mc,
+        patch("api.routers.threads.EmbedConverter") as mock_ec,
+    ):
 
         async def resolve(req):
             return mock_bot
@@ -1149,6 +1184,7 @@ def _make_fallback_app(mock_bot):
         mock_ec.payload_to_embed.return_value = MagicMock()
 
         from api.routers.threads import router
+
         app.include_router(router, prefix="/api/v1")
 
         yield app
@@ -1157,6 +1193,7 @@ def _make_fallback_app(mock_bot):
 # ---------------------------------------------------------------------------
 # Tests: get_channel exception fallback (lines 115-116, 176-177, 246-247, 292-293)
 # ---------------------------------------------------------------------------
+
 
 class TestGetChannelExceptionFallback:
     """Cover the get_channel exception fallback paths in various endpoints."""
@@ -1185,10 +1222,7 @@ class TestGetChannelExceptionFallback:
 
         for app in _make_fallback_app(bot):
             client = TestClient(app)
-            response = client.put(
-                "/api/v1/threads/1234567890",
-                json={"name": "Updated"}
-            )
+            response = client.put("/api/v1/threads/1234567890", json={"name": "Updated"})
             assert response.status_code == 200
 
     def test_close_thread_get_channel_exception_then_fetch(self):
@@ -1223,6 +1257,7 @@ class TestGetChannelExceptionFallback:
 # (lines 122-126, 183-186, 252-256, 298-302)
 # ---------------------------------------------------------------------------
 
+
 class TestFetchChannelNotFoundForbidden:
     """Cover fetch_channel raising NotFound or Forbidden → thread = None → 404."""
 
@@ -1234,9 +1269,7 @@ class TestFetchChannelNotFoundForbidden:
         real_discord = self._get_real_discord()
         bot = DiscordMockUtils.create_mock_bot(user_id=123456789, username="TestBot")
         bot.get_channel = MagicMock(return_value=None)
-        bot.fetch_channel = AsyncMock(
-            side_effect=real_discord.errors.NotFound(MagicMock(status=404), "Not Found")
-        )
+        bot.fetch_channel = AsyncMock(side_effect=real_discord.errors.NotFound(MagicMock(status=404), "Not Found"))
         bot.guilds = []
 
         for app in _make_fallback_app(bot):
@@ -1249,9 +1282,7 @@ class TestFetchChannelNotFoundForbidden:
         real_discord = self._get_real_discord()
         bot = DiscordMockUtils.create_mock_bot(user_id=123456789, username="TestBot")
         bot.get_channel = MagicMock(return_value=None)
-        bot.fetch_channel = AsyncMock(
-            side_effect=real_discord.errors.Forbidden(MagicMock(status=403), "Forbidden")
-        )
+        bot.fetch_channel = AsyncMock(side_effect=real_discord.errors.Forbidden(MagicMock(status=403), "Forbidden"))
         bot.guilds = []
 
         for app in _make_fallback_app(bot):
@@ -1264,17 +1295,12 @@ class TestFetchChannelNotFoundForbidden:
         real_discord = self._get_real_discord()
         bot = DiscordMockUtils.create_mock_bot(user_id=123456789, username="TestBot")
         bot.get_channel = MagicMock(return_value=None)
-        bot.fetch_channel = AsyncMock(
-            side_effect=real_discord.errors.NotFound(MagicMock(status=404), "Not Found")
-        )
+        bot.fetch_channel = AsyncMock(side_effect=real_discord.errors.NotFound(MagicMock(status=404), "Not Found"))
         bot.guilds = []
 
         for app in _make_fallback_app(bot):
             client = TestClient(app)
-            response = client.put(
-                "/api/v1/threads/1234567890",
-                json={"name": "Updated"}
-            )
+            response = client.put("/api/v1/threads/1234567890", json={"name": "Updated"})
             assert response.status_code == 404
 
     def test_update_thread_fetch_channel_forbidden(self):
@@ -1282,17 +1308,12 @@ class TestFetchChannelNotFoundForbidden:
         real_discord = self._get_real_discord()
         bot = DiscordMockUtils.create_mock_bot(user_id=123456789, username="TestBot")
         bot.get_channel = MagicMock(return_value=None)
-        bot.fetch_channel = AsyncMock(
-            side_effect=real_discord.errors.Forbidden(MagicMock(status=403), "Forbidden")
-        )
+        bot.fetch_channel = AsyncMock(side_effect=real_discord.errors.Forbidden(MagicMock(status=403), "Forbidden"))
         bot.guilds = []
 
         for app in _make_fallback_app(bot):
             client = TestClient(app)
-            response = client.put(
-                "/api/v1/threads/1234567890",
-                json={"name": "Updated"}
-            )
+            response = client.put("/api/v1/threads/1234567890", json={"name": "Updated"})
             assert response.status_code == 404
 
     def test_close_thread_fetch_channel_not_found(self):
@@ -1300,9 +1321,7 @@ class TestFetchChannelNotFoundForbidden:
         real_discord = self._get_real_discord()
         bot = DiscordMockUtils.create_mock_bot(user_id=123456789, username="TestBot")
         bot.get_channel = MagicMock(return_value=None)
-        bot.fetch_channel = AsyncMock(
-            side_effect=real_discord.errors.NotFound(MagicMock(status=404), "Not Found")
-        )
+        bot.fetch_channel = AsyncMock(side_effect=real_discord.errors.NotFound(MagicMock(status=404), "Not Found"))
         bot.guilds = []
 
         for app in _make_fallback_app(bot):
@@ -1315,9 +1334,7 @@ class TestFetchChannelNotFoundForbidden:
         real_discord = self._get_real_discord()
         bot = DiscordMockUtils.create_mock_bot(user_id=123456789, username="TestBot")
         bot.get_channel = MagicMock(return_value=None)
-        bot.fetch_channel = AsyncMock(
-            side_effect=real_discord.errors.Forbidden(MagicMock(status=403), "Forbidden")
-        )
+        bot.fetch_channel = AsyncMock(side_effect=real_discord.errors.Forbidden(MagicMock(status=403), "Forbidden"))
         bot.guilds = []
 
         for app in _make_fallback_app(bot):
@@ -1330,9 +1347,7 @@ class TestFetchChannelNotFoundForbidden:
         real_discord = self._get_real_discord()
         bot = DiscordMockUtils.create_mock_bot(user_id=123456789, username="TestBot")
         bot.get_channel = MagicMock(return_value=None)
-        bot.fetch_channel = AsyncMock(
-            side_effect=real_discord.errors.NotFound(MagicMock(status=404), "Not Found")
-        )
+        bot.fetch_channel = AsyncMock(side_effect=real_discord.errors.NotFound(MagicMock(status=404), "Not Found"))
         bot.guilds = []
 
         for app in _make_fallback_app(bot):
@@ -1345,9 +1360,7 @@ class TestFetchChannelNotFoundForbidden:
         real_discord = self._get_real_discord()
         bot = DiscordMockUtils.create_mock_bot(user_id=123456789, username="TestBot")
         bot.get_channel = MagicMock(return_value=None)
-        bot.fetch_channel = AsyncMock(
-            side_effect=real_discord.errors.Forbidden(MagicMock(status=403), "Forbidden")
-        )
+        bot.fetch_channel = AsyncMock(side_effect=real_discord.errors.Forbidden(MagicMock(status=403), "Forbidden"))
         bot.guilds = []
 
         for app in _make_fallback_app(bot):
@@ -1360,6 +1373,7 @@ class TestFetchChannelNotFoundForbidden:
 # Tests: update_thread refresh failure (lines 211-213)
 # ---------------------------------------------------------------------------
 
+
 class TestUpdateThreadRefreshFailure:
     """Cover the refresh-after-edit exception path (lines 211-213)."""
 
@@ -1371,23 +1385,26 @@ class TestUpdateThreadRefreshFailure:
         # Make get_channel return None and fetch_channel raise for the refresh attempt
         # We need get_channel to return None (falsy) so `or` calls fetch_channel, which raises
         call_count = [0]
+
         def _get_channel_side_effect(tid):
             call_count[0] += 1
             # First call in the refresh: get_channel returns None → triggers fetch_channel
             return None
+
         bot.get_channel = MagicMock(side_effect=_get_channel_side_effect)
         bot.fetch_channel = AsyncMock(side_effect=RuntimeError("refresh failed"))
 
         app = FastAPI()
         app.state.bot = bot
 
-        with patch("api.routers.threads.resolve_bot", new_callable=AsyncMock) as mock_resolve, \
-             patch("api.routers.threads.handle_discord_exception", new_callable=AsyncMock) as mock_handle, \
-             patch("api.routers.threads.find_thread_by_id") as mock_find, \
-             patch("api.routers.threads.ChannelConverter") as mock_cc, \
-             patch("api.routers.threads.MessageConverter") as mock_mc, \
-             patch("api.routers.threads.EmbedConverter") as mock_ec:
-
+        with (
+            patch("api.routers.threads.resolve_bot", new_callable=AsyncMock) as mock_resolve,
+            patch("api.routers.threads.handle_discord_exception", new_callable=AsyncMock) as mock_handle,
+            patch("api.routers.threads.find_thread_by_id") as mock_find,
+            patch("api.routers.threads.ChannelConverter") as mock_cc,
+            patch("api.routers.threads.MessageConverter") as mock_mc,
+            patch("api.routers.threads.EmbedConverter") as mock_ec,
+        ):
             mock_resolve.side_effect = lambda req: bot
             mock_handle.side_effect = HTTPException(status_code=500, detail="Internal server error")
             mock_find.side_effect = lambda b, tid: thread if tid == 1234567890 else None
@@ -1396,13 +1413,11 @@ class TestUpdateThreadRefreshFailure:
             mock_ec.payload_to_embed.return_value = MagicMock()
 
             from api.routers.threads import router
+
             app.include_router(router, prefix="/api/v1")
 
             client = TestClient(app)
-            response = client.put(
-                "/api/v1/threads/1234567890",
-                json={"name": "Updated Name"}
-            )
+            response = client.put("/api/v1/threads/1234567890", json={"name": "Updated Name"})
             assert response.status_code == 200
             assert response.json()["status"] == "updated"
 
@@ -1413,6 +1428,7 @@ class TestUpdateThreadRefreshFailure:
 #  595-597, 654-656)
 # ---------------------------------------------------------------------------
 
+
 class TestOuterExceptionHandlers:
     """Cover the outer except Exception → handle_discord_exception paths."""
 
@@ -1420,13 +1436,15 @@ class TestOuterExceptionHandlers:
         """Build an app where resolve_bot raises to trigger outer exception handler."""
         app = FastAPI()
 
-        with patch("api.routers.threads.resolve_bot", new_callable=AsyncMock) as mock_resolve, \
-             patch("api.routers.threads.handle_discord_exception", new_callable=AsyncMock) as mock_handle:
-
+        with (
+            patch("api.routers.threads.resolve_bot", new_callable=AsyncMock) as mock_resolve,
+            patch("api.routers.threads.handle_discord_exception", new_callable=AsyncMock) as mock_handle,
+        ):
             mock_resolve.side_effect = resolve_side_effect
             mock_handle.side_effect = HTTPException(status_code=500, detail="Internal server error")
 
             from api.routers.threads import router
+
             app.include_router(router, prefix="/api/v1")
 
             yield app
@@ -1435,10 +1453,7 @@ class TestOuterExceptionHandlers:
         """update_thread: outer exception calls handle_discord_exception (lines 224-226)."""
         for app in self._make_error_app(RuntimeError("unexpected")):
             client = TestClient(app)
-            response = client.put(
-                "/api/v1/threads/1234567890",
-                json={"name": "test"}
-            )
+            response = client.put("/api/v1/threads/1234567890", json={"name": "test"})
             assert response.status_code == 500
 
     def test_close_thread_outer_exception(self):
@@ -1459,10 +1474,7 @@ class TestOuterExceptionHandlers:
         """update_thread_tags: outer exception calls handle_discord_exception (lines 420-422)."""
         for app in self._make_error_app(RuntimeError("unexpected")):
             client = TestClient(app)
-            response = client.put(
-                "/api/v1/threads/1234567890/tags",
-                json={"tags": [111]}
-            )
+            response = client.put("/api/v1/threads/1234567890/tags", json={"tags": [111]})
             assert response.status_code == 500
 
     def test_list_thread_messages_outer_exception(self):
@@ -1476,10 +1488,7 @@ class TestOuterExceptionHandlers:
         """create_thread_message: outer exception (lines 494-496)."""
         for app in self._make_error_app(RuntimeError("unexpected")):
             client = TestClient(app)
-            response = client.post(
-                "/api/v1/threads/1234567890/messages",
-                json={"content": {"title": "test"}}
-            )
+            response = client.post("/api/v1/threads/1234567890/messages", json={"content": {"title": "test"}})
             assert response.status_code == 500
 
     def test_get_thread_message_outer_exception(self):
@@ -1493,10 +1502,7 @@ class TestOuterExceptionHandlers:
         """edit_thread_message: outer exception (lines 595-597)."""
         for app in self._make_error_app(RuntimeError("unexpected")):
             client = TestClient(app)
-            response = client.put(
-                "/api/v1/threads/1234567890/messages/999999999",
-                json={"content": {"title": "test"}}
-            )
+            response = client.put("/api/v1/threads/1234567890/messages/999999999", json={"content": {"title": "test"}})
             assert response.status_code == 500
 
     def test_delete_thread_message_outer_exception(self):
@@ -1510,6 +1516,7 @@ class TestOuterExceptionHandlers:
 # ---------------------------------------------------------------------------
 # Tests: update_thread_tags — tag object id not found (line 375)
 # ---------------------------------------------------------------------------
+
 
 class TestUpdateThreadTagsObjectIdNotFound:
     """Cover tag object with id field where id is not found (line 375)."""
@@ -1525,20 +1532,22 @@ class TestUpdateThreadTagsObjectIdNotFound:
         mock_thread.parent = parent
 
         def _utils_get(iterable, **kwargs):
-            for item in (iterable or []):
+            for item in iterable or []:
                 if all(getattr(item, k, None) == v for k, v in kwargs.items()):
                     return item
             return None
+
         _mock_discord.utils.get = _utils_get
 
-        with patch("api.routers.threads.resolve_bot", new_callable=AsyncMock) as mock_resolve, \
-             patch("api.routers.threads.handle_discord_exception", new_callable=AsyncMock) as mock_handle, \
-             patch("api.routers.threads.find_thread_by_id") as mock_find, \
-             patch("api.routers.threads.ChannelConverter") as mock_cc, \
-             patch("api.routers.threads.MessageConverter") as mock_mc, \
-             patch("api.routers.threads.EmbedConverter") as mock_ec, \
-             patch("api.routers.threads.discord", _mock_discord):
-
+        with (
+            patch("api.routers.threads.resolve_bot", new_callable=AsyncMock) as mock_resolve,
+            patch("api.routers.threads.handle_discord_exception", new_callable=AsyncMock) as mock_handle,
+            patch("api.routers.threads.find_thread_by_id") as mock_find,
+            patch("api.routers.threads.ChannelConverter") as mock_cc,
+            patch("api.routers.threads.MessageConverter") as mock_mc,
+            patch("api.routers.threads.EmbedConverter") as mock_ec,
+            patch("api.routers.threads.discord", _mock_discord),
+        ):
             mock_resolve.side_effect = lambda req: mock_bot
             mock_handle.side_effect = HTTPException(status_code=500, detail="Internal server error")
             mock_find.side_effect = lambda b, tid: mock_thread if tid == 1234567890 else None
@@ -1547,6 +1556,7 @@ class TestUpdateThreadTagsObjectIdNotFound:
             mock_ec.payload_to_embed.return_value = MagicMock()
 
             from api.routers.threads import router
+
             app.include_router(router, prefix="/api/v1")
 
             yield app
@@ -1554,6 +1564,7 @@ class TestUpdateThreadTagsObjectIdNotFound:
     def test_tag_object_with_id_not_found(self):
         """Tag object dict with id that doesn't match any available tag → 404 (line 375)."""
         from tests.mocks.discord_mock_utils import DiscordMockUtils as DMU
+
         bot = DiscordMockUtils.create_mock_bot(user_id=123456789, username="TestBot")
         thread = create_mock_thread(1234567890)
         t1 = DMU.create_mock_forum_tag(tag_id=111, name="tag1", channel_id=555555555)
@@ -1564,7 +1575,7 @@ class TestUpdateThreadTagsObjectIdNotFound:
             # Tag object with id=9999 that doesn't exist
             response = client.put(
                 "/api/v1/threads/1234567890/tags",
-                json={"tags": [{"id": 9999, "name": "nonexistent", "channel_id": 555555555}]}
+                json={"tags": [{"id": 9999, "name": "nonexistent", "channel_id": 555555555}]},
             )
             assert response.status_code == 404
             assert "tag" in response.json()["detail"].lower()
@@ -1574,11 +1585,11 @@ class TestUpdateThreadTagsObjectIdNotFound:
 # Tests: update_thread_tags — name/emoji matching (lines 383-411)
 # ---------------------------------------------------------------------------
 
+
 class TestUpdateThreadTagsNameEmojiMatching:
     """Cover name and emoji matching paths in update_thread_tags (lines 383-411)."""
 
-    def _make_tags_app_with_discord_mock(self, mock_bot, mock_thread, available_tags,
-                                          normalize_side_effect=None):
+    def _make_tags_app_with_discord_mock(self, mock_bot, mock_thread, available_tags, normalize_side_effect=None):
         """Build app with tags endpoint and optional normalize_emoji mock."""
         app = FastAPI()
         app.state.bot = mock_bot
@@ -1589,10 +1600,11 @@ class TestUpdateThreadTagsNameEmojiMatching:
         mock_thread.parent = parent
 
         def _utils_get(iterable, **kwargs):
-            for item in (iterable or []):
+            for item in iterable or []:
                 if all(getattr(item, k, None) == v for k, v in kwargs.items()):
                     return item
             return None
+
         _mock_discord.utils.get = _utils_get
 
         patches = [
@@ -1608,6 +1620,7 @@ class TestUpdateThreadTagsNameEmojiMatching:
             patches.append(patch("api.routers.threads.normalize_emoji", side_effect=normalize_side_effect))
 
         import contextlib
+
         with contextlib.ExitStack() as stack:
             mocks = [stack.enter_context(p) for p in patches]
             mock_resolve = mocks[0]
@@ -1625,6 +1638,7 @@ class TestUpdateThreadTagsNameEmojiMatching:
             mock_ec.payload_to_embed.return_value = MagicMock()
 
             from api.routers.threads import router
+
             app.include_router(router, prefix="/api/v1")
 
             yield app
@@ -1643,10 +1657,11 @@ class TestUpdateThreadTagsNameEmojiMatching:
         thread.parent = parent
 
         def _utils_get(iterable, **kwargs):
-            for item in (iterable or []):
+            for item in iterable or []:
                 if all(getattr(item, k, None) == v for k, v in kwargs.items()):
                     return item
             return None
+
         _mock_discord.utils.get = _utils_get
 
         # Tag-like object with tid=None and name that matches
@@ -1659,20 +1674,23 @@ class TestUpdateThreadTagsNameEmojiMatching:
         tags_data.tags = [tag_input]
         mock_request = MagicMock()
 
-        with patch("api.routers.threads.resolve_bot", new_callable=AsyncMock) as mock_resolve, \
-             patch("api.routers.threads.find_thread_by_id") as mock_find, \
-             patch("api.routers.threads.discord", _mock_discord):
-
+        with (
+            patch("api.routers.threads.resolve_bot", new_callable=AsyncMock) as mock_resolve,
+            patch("api.routers.threads.find_thread_by_id") as mock_find,
+            patch("api.routers.threads.discord", _mock_discord),
+        ):
             mock_resolve.return_value = bot
             mock_find.return_value = thread
 
             from api.routers.threads import update_thread_tags
+
             result = await update_thread_tags(mock_request, 1234567890, tags_data)
             assert result.status == "updated"
 
     def test_tag_no_match_by_name_or_emoji_raises_404(self):
         """Tag dict with id that matches nothing, falls through → 404 (lines 402-409)."""
         from tests.mocks.discord_mock_utils import DiscordMockUtils as DMU
+
         bot = DiscordMockUtils.create_mock_bot(user_id=123456789, username="TestBot")
         thread = create_mock_thread(1234567890)
         t1 = DMU.create_mock_forum_tag(tag_id=111, name="tag1", channel_id=555555555)
@@ -1683,7 +1701,7 @@ class TestUpdateThreadTagsNameEmojiMatching:
             # id=9999 won't be found → 404 from line 375
             response = client.put(
                 "/api/v1/threads/1234567890/tags",
-                json={"tags": [{"id": 9999, "name": "nonexistent", "channel_id": 555555555}]}
+                json={"tags": [{"id": 9999, "name": "nonexistent", "channel_id": 555555555}]},
             )
             assert response.status_code == 404
             assert "tag" in response.json()["detail"].lower()
@@ -1709,10 +1727,11 @@ class TestUpdateThreadTagsNameEmojiMatching:
         thread.parent = parent
 
         def _utils_get(iterable, **kwargs):
-            for item in (iterable or []):
+            for item in iterable or []:
                 if all(getattr(item, k, None) == v for k, v in kwargs.items()):
                     return item
             return None
+
         _mock_discord.utils.get = _utils_get
 
         # Create a tag-like object that has tid=None but name and emoji
@@ -1726,14 +1745,16 @@ class TestUpdateThreadTagsNameEmojiMatching:
 
         mock_request = MagicMock()
 
-        with patch("api.routers.threads.resolve_bot", new_callable=AsyncMock) as mock_resolve, \
-             patch("api.routers.threads.find_thread_by_id") as mock_find, \
-             patch("api.routers.threads.discord", _mock_discord):
-
+        with (
+            patch("api.routers.threads.resolve_bot", new_callable=AsyncMock) as mock_resolve,
+            patch("api.routers.threads.find_thread_by_id") as mock_find,
+            patch("api.routers.threads.discord", _mock_discord),
+        ):
             mock_resolve.return_value = bot
             mock_find.return_value = thread
 
             from api.routers.threads import update_thread_tags
+
             result = await update_thread_tags(mock_request, 1234567890, tags_data)
             assert result.status == "updated"
 
@@ -1754,10 +1775,11 @@ class TestUpdateThreadTagsNameEmojiMatching:
         thread.parent = parent
 
         def _utils_get(iterable, **kwargs):
-            for item in (iterable or []):
+            for item in iterable or []:
                 if all(getattr(item, k, None) == v for k, v in kwargs.items()):
                     return item
             return None
+
         _mock_discord.utils.get = _utils_get
 
         # Tag with tid=None, name that doesn't match, but emoji that does
@@ -1771,15 +1793,17 @@ class TestUpdateThreadTagsNameEmojiMatching:
 
         mock_request = MagicMock()
 
-        with patch("api.routers.threads.resolve_bot", new_callable=AsyncMock) as mock_resolve, \
-             patch("api.routers.threads.find_thread_by_id") as mock_find, \
-             patch("api.routers.threads.discord", _mock_discord), \
-             patch("api.routers.threads.normalize_emoji", return_value="bug_emoji"):
-
+        with (
+            patch("api.routers.threads.resolve_bot", new_callable=AsyncMock) as mock_resolve,
+            patch("api.routers.threads.find_thread_by_id") as mock_find,
+            patch("api.routers.threads.discord", _mock_discord),
+            patch("api.routers.threads.normalize_emoji", return_value="bug_emoji"),
+        ):
             mock_resolve.return_value = bot
             mock_find.return_value = thread
 
             from api.routers.threads import update_thread_tags
+
             result = await update_thread_tags(mock_request, 1234567890, tags_data)
             assert result.status == "updated"
 
@@ -1800,10 +1824,11 @@ class TestUpdateThreadTagsNameEmojiMatching:
         thread.parent = parent
 
         def _utils_get(iterable, **kwargs):
-            for item in (iterable or []):
+            for item in iterable or []:
                 if all(getattr(item, k, None) == v for k, v in kwargs.items()):
                     return item
             return None
+
         _mock_discord.utils.get = _utils_get
 
         tag_input = MagicMock()
@@ -1816,15 +1841,17 @@ class TestUpdateThreadTagsNameEmojiMatching:
 
         mock_request = MagicMock()
 
-        with patch("api.routers.threads.resolve_bot", new_callable=AsyncMock) as mock_resolve, \
-             patch("api.routers.threads.find_thread_by_id") as mock_find, \
-             patch("api.routers.threads.discord", _mock_discord), \
-             patch("api.routers.threads.normalize_emoji", side_effect=ValueError("bad emoji")):
-
+        with (
+            patch("api.routers.threads.resolve_bot", new_callable=AsyncMock) as mock_resolve,
+            patch("api.routers.threads.find_thread_by_id") as mock_find,
+            patch("api.routers.threads.discord", _mock_discord),
+            patch("api.routers.threads.normalize_emoji", side_effect=ValueError("bad emoji")),
+        ):
             mock_resolve.return_value = bot
             mock_find.return_value = thread
 
             from api.routers.threads import update_thread_tags
+
             result = await update_thread_tags(mock_request, 1234567890, tags_data)
             assert result.status == "updated"
 
@@ -1844,10 +1871,11 @@ class TestUpdateThreadTagsNameEmojiMatching:
         thread.parent = parent
 
         def _utils_get(iterable, **kwargs):
-            for item in (iterable or []):
+            for item in iterable or []:
                 if all(getattr(item, k, None) == v for k, v in kwargs.items()):
                     return item
             return None
+
         _mock_discord.utils.get = _utils_get
 
         tag_input = MagicMock()
@@ -1860,14 +1888,16 @@ class TestUpdateThreadTagsNameEmojiMatching:
 
         mock_request = MagicMock()
 
-        with patch("api.routers.threads.resolve_bot", new_callable=AsyncMock) as mock_resolve, \
-             patch("api.routers.threads.find_thread_by_id") as mock_find, \
-             patch("api.routers.threads.discord", _mock_discord):
-
+        with (
+            patch("api.routers.threads.resolve_bot", new_callable=AsyncMock) as mock_resolve,
+            patch("api.routers.threads.find_thread_by_id") as mock_find,
+            patch("api.routers.threads.discord", _mock_discord),
+        ):
             mock_resolve.return_value = bot
             mock_find.return_value = thread
 
             from api.routers.threads import update_thread_tags
+
             with pytest.raises(HTTPException) as exc_info:
                 await update_thread_tags(mock_request, 1234567890, tags_data)
             assert exc_info.value.status_code == 404
@@ -1893,10 +1923,11 @@ class TestUpdateThreadTagsNameEmojiMatching:
         thread.parent = parent
 
         def _utils_get(iterable, **kwargs):
-            for item in (iterable or []):
+            for item in iterable or []:
                 if all(getattr(item, k, None) == v for k, v in kwargs.items()):
                     return item
             return None
+
         _mock_discord.utils.get = _utils_get
 
         tag_input = MagicMock()
@@ -1909,15 +1940,17 @@ class TestUpdateThreadTagsNameEmojiMatching:
 
         mock_request = MagicMock()
 
-        with patch("api.routers.threads.resolve_bot", new_callable=AsyncMock) as mock_resolve, \
-             patch("api.routers.threads.find_thread_by_id") as mock_find, \
-             patch("api.routers.threads.discord", _mock_discord), \
-             patch("api.routers.threads.normalize_emoji", return_value="fire_emoji"):
-
+        with (
+            patch("api.routers.threads.resolve_bot", new_callable=AsyncMock) as mock_resolve,
+            patch("api.routers.threads.find_thread_by_id") as mock_find,
+            patch("api.routers.threads.discord", _mock_discord),
+            patch("api.routers.threads.normalize_emoji", return_value="fire_emoji"),
+        ):
             mock_resolve.return_value = bot
             mock_find.return_value = thread
 
             from api.routers.threads import update_thread_tags
+
             result = await update_thread_tags(mock_request, 1234567890, tags_data)
             assert result.status == "updated"
 
@@ -1942,10 +1975,11 @@ class TestUpdateThreadTagsNameEmojiMatching:
         thread.parent = parent
 
         def _utils_get(iterable, **kwargs):
-            for item in (iterable or []):
+            for item in iterable or []:
                 if all(getattr(item, k, None) == v for k, v in kwargs.items()):
                     return item
             return None
+
         _mock_discord.utils.get = _utils_get
 
         tag_input = MagicMock()
@@ -1958,14 +1992,16 @@ class TestUpdateThreadTagsNameEmojiMatching:
 
         mock_request = MagicMock()
 
-        with patch("api.routers.threads.resolve_bot", new_callable=AsyncMock) as mock_resolve, \
-             patch("api.routers.threads.find_thread_by_id") as mock_find, \
-             patch("api.routers.threads.discord", _mock_discord), \
-             patch("api.routers.threads.normalize_emoji", return_value="target_emoji"):
-
+        with (
+            patch("api.routers.threads.resolve_bot", new_callable=AsyncMock) as mock_resolve,
+            patch("api.routers.threads.find_thread_by_id") as mock_find,
+            patch("api.routers.threads.discord", _mock_discord),
+            patch("api.routers.threads.normalize_emoji", return_value="target_emoji"),
+        ):
             mock_resolve.return_value = bot
             mock_find.return_value = thread
 
             from api.routers.threads import update_thread_tags
+
             result = await update_thread_tags(mock_request, 1234567890, tags_data)
             assert result.status == "updated"

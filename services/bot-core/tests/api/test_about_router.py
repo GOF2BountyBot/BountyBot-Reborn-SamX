@@ -7,13 +7,11 @@ The about router uses a get_db dependency (which uses db_manager.get_session),
 not get_db_session. Tests override the get_db dependency directly.
 """
 
-from datetime import datetime
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -115,10 +113,10 @@ def mock_repos(mock_db_session):
 
 @pytest.fixture
 def test_app(mock_db_session, mock_repos):
+    import api.routers.about as about_module
     from api.routers.about import get_db
     from api.routers.about import router as about_router
     from api.routers.data import DataCategory
-    import api.routers.about as about_module
 
     # Override all repository instances on the module attributes
     about_module.module_repo = mock_repos["module"]

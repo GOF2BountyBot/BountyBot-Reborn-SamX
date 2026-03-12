@@ -27,7 +27,7 @@ MagicMock objects).  Using real instances is the only way to:
 1. Pass ``isinstance(exc, discord.NotFound)`` checks used by
    ``handle_discord_exception`` and ``get_entity_or_404``.
 2. Be catchable via ``except discord.NotFound`` / ``except
-   discord.Forbidden`` / ``except discord.HTTPException`` – Python's
+   discord.Forbidden`` / ``except discord.HTTPException`` - Python's # noqa: RUF002
    ``raise``/``except`` mechanism requires that the raised object is an
    actual subclass of ``BaseException``.
 
@@ -40,13 +40,13 @@ EmbedProxy
 ``create_mock_embed_proxy`` returns a real ``discord.embeds.EmbedProxy``
 instance.  Discord never returns ``None`` for ``Embed.footer``,
 ``Embed.thumbnail``, ``Embed.image``, ``Embed.video``, ``Embed.author``
-or ``Embed.provider`` – it returns an ``EmbedProxy`` object that
+or ``Embed.provider`` - it returns an ``EmbedProxy`` object that # noqa: RUF002
 evaluates to ``False`` when empty (``len == 0``).  Tests should assert
 ``bool(proxy)`` rather than ``proxy is None``.
 """
 
 from datetime import datetime
-from typing import Any, Dict, List, Optional, Type, Union
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import discord
@@ -57,6 +57,7 @@ from discord.ext import commands
 # Internal helpers
 # ---------------------------------------------------------------------------
 
+
 class _FakeHTTPResponse:
     """
     Minimal stand-in for an aiohttp.ClientResponse used when constructing
@@ -66,7 +67,7 @@ class _FakeHTTPResponse:
         self.status = response.status
         self.response = response
 
-    We don't need a full aiohttp response – just these two fields plus a
+    We don't need a full aiohttp response - just these two fields plus a # noqa: RUF002
     ``reason`` attribute for the str() representation.
     """
 
@@ -78,6 +79,7 @@ class _FakeHTTPResponse:
 # ---------------------------------------------------------------------------
 # Exception factories (return REAL discord exception instances)
 # ---------------------------------------------------------------------------
+
 
 def create_discord_not_found(
     text: str = "Not found",
@@ -140,6 +142,7 @@ def create_discord_http_exception(
 # EmbedProxy factory
 # ---------------------------------------------------------------------------
 
+
 def create_mock_embed_proxy(
     **fields: Any,
 ) -> EmbedProxy:
@@ -155,7 +158,7 @@ def create_mock_embed_proxy(
 
     Tests that check embed sub-objects should NOT do::
 
-        assert embed.footer is None   # WRONG – will always fail
+        assert embed.footer is None   # WRONG - will always fail # noqa: RUF002
 
     Instead do::
 
@@ -183,6 +186,7 @@ def create_mock_embed_proxy(
 # Main utility class
 # ---------------------------------------------------------------------------
 
+
 class DiscordMockUtils:
     """Comprehensive Discord mock utilities for testing."""
 
@@ -191,17 +195,17 @@ class DiscordMockUtils:
         user_id: int = 1,
         username: str = "test_user",
         discriminator: str = "0001",
-        avatar: Optional[str] = None,
+        avatar: str | None = None,
         bot: bool = False,
         system: bool = False,
         mfa_enabled: bool = False,
         locale: str = "en-US",
         verified: bool = True,
-        email: Optional[str] = None,
+        email: str | None = None,
         flags: int = 0,
         premium_type: int = 0,
         public_flags: int = 0,
-        **kwargs
+        **kwargs,
     ) -> MagicMock:
         """Create a mock Discord User object."""
         mock_user = MagicMock()
@@ -234,14 +238,14 @@ class DiscordMockUtils:
         guild_id: int = 1,
         username: str = "test_user",
         discriminator: str = "0001",
-        nickname: Optional[str] = None,
-        roles: Optional[List[MagicMock]] = None,
-        joined_at: Optional[datetime] = None,
-        premium_since: Optional[datetime] = None,
+        nickname: str | None = None,
+        roles: list[MagicMock] | None = None,
+        joined_at: datetime | None = None,
+        premium_since: datetime | None = None,
         pending: bool = False,
-        permissions: Optional[MagicMock] = None,
-        guild: Optional[MagicMock] = None,
-        **kwargs
+        permissions: MagicMock | None = None,
+        guild: MagicMock | None = None,
+        **kwargs,
     ) -> MagicMock:
         """Create a mock Discord Member object."""
         if roles is None:
@@ -285,22 +289,22 @@ class DiscordMockUtils:
     def create_mock_guild(
         guild_id: int = 1,
         name: str = "test_guild",
-        icon: Optional[str] = None,
-        icon_url: Optional[str] = None,
+        icon: str | None = None,
+        icon_url: str | None = None,
         member_count: int = 10,
         owner_id: int = 1,
-        description: Optional[str] = None,
-        created_at: Optional[datetime] = None,
-        features: Optional[List[str]] = None,
+        description: str | None = None,
+        created_at: datetime | None = None,
+        features: list[str] | None = None,
         verification_level: str = "none",
         default_notifications: str = "all_messages",
         explicit_content_filter: str = "none",
         mfa_level: str = "none",
         premium_tier: int = 0,
-        premium_subscription_count: Optional[int] = None,
+        premium_subscription_count: int | None = None,
         preferred_locale: str = "en-US",
-        nsfw_level: Optional[str] = None,
-        **kwargs
+        nsfw_level: str | None = None,
+        **kwargs,
     ) -> MagicMock:
         """Create a mock Discord Guild object."""
         if features is None:
@@ -362,8 +366,8 @@ class DiscordMockUtils:
         permissions: int = 0,
         managed: bool = False,
         mentionable: bool = False,
-        guild: Optional[MagicMock] = None,
-        **kwargs
+        guild: MagicMock | None = None,
+        **kwargs,
     ) -> MagicMock:
         """Create a mock Discord Role object."""
         if guild is None:
@@ -407,9 +411,9 @@ class DiscordMockUtils:
         channel_type: str = "text",
         position: int = 0,
         guild_id: int = 1,
-        guild: Optional[MagicMock] = None,
-        created_at: Optional[datetime] = None,
-        **kwargs
+        guild: MagicMock | None = None,
+        created_at: datetime | None = None,
+        **kwargs,
     ) -> MagicMock:
         """Create a mock Discord Channel object."""
         if guild is None:
@@ -448,9 +452,9 @@ class DiscordMockUtils:
         name: str = "test_text_channel",
         position: int = 0,
         guild_id: int = 1,
-        guild: Optional[MagicMock] = None,
-        created_at: Optional[datetime] = None,
-        **kwargs
+        guild: MagicMock | None = None,
+        created_at: datetime | None = None,
+        **kwargs,
     ) -> MagicMock:
         """Create a mock Discord TextChannel object."""
         return DiscordMockUtils.create_mock_channel(
@@ -461,7 +465,7 @@ class DiscordMockUtils:
             guild_id=guild_id,
             guild=guild,
             created_at=created_at,
-            **kwargs
+            **kwargs,
         )
 
     @staticmethod
@@ -470,11 +474,11 @@ class DiscordMockUtils:
         name: str = "test_voice_channel",
         position: int = 0,
         guild_id: int = 1,
-        guild: Optional[MagicMock] = None,
-        created_at: Optional[datetime] = None,
+        guild: MagicMock | None = None,
+        created_at: datetime | None = None,
         bitrate: int = 64000,
         user_limit: int = 0,
-        **kwargs
+        **kwargs,
     ) -> MagicMock:
         """Create a mock Discord VoiceChannel object."""
         mock_channel = DiscordMockUtils.create_mock_channel(
@@ -485,7 +489,7 @@ class DiscordMockUtils:
             guild_id=guild_id,
             guild=guild,
             created_at=created_at,
-            **kwargs
+            **kwargs,
         )
 
         mock_channel.bitrate = bitrate
@@ -499,9 +503,9 @@ class DiscordMockUtils:
         name: str = "test_category",
         position: int = 0,
         guild_id: int = 1,
-        guild: Optional[MagicMock] = None,
-        created_at: Optional[datetime] = None,
-        **kwargs
+        guild: MagicMock | None = None,
+        created_at: datetime | None = None,
+        **kwargs,
     ) -> MagicMock:
         """Create a mock Discord CategoryChannel object."""
         return DiscordMockUtils.create_mock_channel(
@@ -512,7 +516,7 @@ class DiscordMockUtils:
             guild_id=guild_id,
             guild=guild,
             created_at=created_at,
-            **kwargs
+            **kwargs,
         )
 
     @staticmethod
@@ -521,10 +525,10 @@ class DiscordMockUtils:
         name: str = "test_forum",
         position: int = 0,
         guild_id: int = 1,
-        guild: Optional[MagicMock] = None,
-        created_at: Optional[datetime] = None,
-        available_tags: Optional[List[MagicMock]] = None,
-        **kwargs
+        guild: MagicMock | None = None,
+        created_at: datetime | None = None,
+        available_tags: list[MagicMock] | None = None,
+        **kwargs,
     ) -> MagicMock:
         """Create a mock Discord ForumChannel object."""
         mock_channel = DiscordMockUtils.create_mock_channel(
@@ -535,7 +539,7 @@ class DiscordMockUtils:
             guild_id=guild_id,
             guild=guild,
             created_at=created_at,
-            **kwargs
+            **kwargs,
         )
         mock_channel.available_tags = available_tags or []
         return mock_channel
@@ -552,19 +556,17 @@ class DiscordMockUtils:
         message_count: int = 0,
         member_count: int = 0,
         auto_archive_duration: int = 1440,
-        guild: Optional[MagicMock] = None,
-        parent: Optional[MagicMock] = None,
-        applied_tags: Optional[List[MagicMock]] = None,
-        **kwargs
+        guild: MagicMock | None = None,
+        parent: MagicMock | None = None,
+        applied_tags: list[MagicMock] | None = None,
+        **kwargs,
     ) -> MagicMock:
         """Create a mock Discord Thread object."""
         if guild is None:
             guild = DiscordMockUtils.create_mock_guild(guild_id=guild_id)
 
         if parent is None:
-            parent = DiscordMockUtils.create_mock_forum_channel(
-                channel_id=parent_id, guild_id=guild_id, guild=guild
-            )
+            parent = DiscordMockUtils.create_mock_forum_channel(channel_id=parent_id, guild_id=guild_id, guild=guild)
 
         mock_thread = MagicMock()
         mock_thread.id = thread_id
@@ -595,11 +597,7 @@ class DiscordMockUtils:
 
     @staticmethod
     def create_mock_forum_tag(
-        tag_id: int = 1,
-        name: str = "test_tag",
-        emoji: Optional[str] = None,
-        channel_id: int = 1,
-        **kwargs
+        tag_id: int = 1, name: str = "test_tag", emoji: str | None = None, channel_id: int = 1, **kwargs
     ) -> MagicMock:
         """Create a mock Discord ForumTag object."""
         mock_tag = MagicMock()
@@ -619,26 +617,26 @@ class DiscordMockUtils:
         author_id: int = 1,
         content: str = "test message",
         guild_id: int = 1,
-        channel: Optional[MagicMock] = None,
-        author: Optional[MagicMock] = None,
-        guild: Optional[MagicMock] = None,
-        created_at: Optional[datetime] = None,
-        edited_at: Optional[datetime] = None,
+        channel: MagicMock | None = None,
+        author: MagicMock | None = None,
+        guild: MagicMock | None = None,
+        created_at: datetime | None = None,
+        edited_at: datetime | None = None,
         tts: bool = False,
         mention_everyone: bool = False,
-        mentions: Optional[List[MagicMock]] = None,
-        mention_roles: Optional[List[MagicMock]] = None,
-        attachments: Optional[List[Dict[str, Any]]] = None,
-        embeds: Optional[List[Dict[str, Any]]] = None,
-        reactions: Optional[List[Dict[str, Any]]] = None,
+        mentions: list[MagicMock] | None = None,
+        mention_roles: list[MagicMock] | None = None,
+        attachments: list[dict[str, Any]] | None = None,
+        embeds: list[dict[str, Any]] | None = None,
+        reactions: list[dict[str, Any]] | None = None,
         pinned: bool = False,
         type: int = 0,
-        activity: Optional[Dict[str, Any]] = None,
-        application: Optional[Dict[str, Any]] = None,
-        message_reference: Optional[Dict[str, Any]] = None,
+        activity: dict[str, Any] | None = None,
+        application: dict[str, Any] | None = None,
+        message_reference: dict[str, Any] | None = None,
         flags: int = 0,
         sticky: bool = False,
-        **kwargs
+        **kwargs,
     ) -> MagicMock:
         """Create a mock Discord Message object."""
         if mentions is None:
@@ -659,11 +657,7 @@ class DiscordMockUtils:
             guild = DiscordMockUtils.create_mock_guild(guild_id)
 
         if channel is None:
-            channel = DiscordMockUtils.create_mock_text_channel(
-                channel_id=channel_id,
-                guild_id=guild_id,
-                guild=guild
-            )
+            channel = DiscordMockUtils.create_mock_text_channel(channel_id=channel_id, guild_id=guild_id, guild=guild)
 
         mock_message = MagicMock()
         mock_message.id = message_id
@@ -696,20 +690,20 @@ class DiscordMockUtils:
 
     @staticmethod
     def create_mock_embed(
-        title: Optional[str] = None,
-        description: Optional[str] = None,
-        url: Optional[str] = None,
-        timestamp: Optional[datetime] = None,
-        color: Optional[int] = None,
-        color_value: Optional[int] = None,
-        footer: Optional[Dict[str, Any]] = None,
-        image: Optional[Dict[str, Any]] = None,
-        thumbnail: Optional[Dict[str, Any]] = None,
-        video: Optional[Dict[str, Any]] = None,
-        provider: Optional[Dict[str, Any]] = None,
-        author: Optional[Dict[str, Any]] = None,
-        fields: Optional[List[Dict[str, Any]]] = None,
-        **kwargs
+        title: str | None = None,
+        description: str | None = None,
+        url: str | None = None,
+        timestamp: datetime | None = None,
+        color: int | None = None,
+        color_value: int | None = None,
+        footer: dict[str, Any] | None = None,
+        image: dict[str, Any] | None = None,
+        thumbnail: dict[str, Any] | None = None,
+        video: dict[str, Any] | None = None,
+        provider: dict[str, Any] | None = None,
+        author: dict[str, Any] | None = None,
+        fields: list[dict[str, Any]] | None = None,
+        **kwargs,
     ) -> MagicMock:
         """
         Create a mock Discord Embed object.
@@ -757,20 +751,22 @@ class DiscordMockUtils:
         mock_embed.author = EmbedProxy(author or {})
         mock_embed.fields = fields
 
-        mock_embed.to_dict = MagicMock(return_value={
-            'title': title,
-            'description': description,
-            'url': url,
-            'timestamp': timestamp.isoformat() if timestamp else None,
-            'color': mock_color.value,
-            'footer': footer,
-            'image': image,
-            'thumbnail': thumbnail,
-            'video': video,
-            'provider': provider,
-            'author': author,
-            'fields': fields
-        })
+        mock_embed.to_dict = MagicMock(
+            return_value={
+                "title": title,
+                "description": description,
+                "url": url,
+                "timestamp": timestamp.isoformat() if timestamp else None,
+                "color": mock_color.value,
+                "footer": footer,
+                "image": image,
+                "thumbnail": thumbnail,
+                "video": video,
+                "provider": provider,
+                "author": author,
+                "fields": fields,
+            }
+        )
 
         for key, value in kwargs.items():
             setattr(mock_embed, key, value)
@@ -781,9 +777,9 @@ class DiscordMockUtils:
     def create_mock_permission_overwrite(
         allow: int = 0,
         deny: int = 0,
-        target: Optional[Union[MagicMock, Type[MagicMock]]] = None,
+        target: MagicMock | type[MagicMock] | None = None,
         target_type: str = "role",
-        **kwargs
+        **kwargs,
     ) -> MagicMock:
         """Create a mock Discord PermissionOverwrite object."""
         if target is None:
@@ -815,8 +811,8 @@ class DiscordMockUtils:
         user_id: int = 1,
         username: str = "test_bot",
         is_ready: bool = True,
-        guilds: Optional[List[MagicMock]] = None,
-        **kwargs
+        guilds: list[MagicMock] | None = None,
+        **kwargs,
     ) -> MagicMock:
         """
         Create a mock Discord Bot object.
@@ -837,11 +833,7 @@ class DiscordMockUtils:
         ``wait_until_ready`` is configured as an ``AsyncMock`` that
         returns immediately.
         """
-        mock_user = DiscordMockUtils.create_mock_user(
-            user_id=user_id,
-            username=username,
-            bot=True
-        )
+        mock_user = DiscordMockUtils.create_mock_user(user_id=user_id, username=username, bot=True)
 
         # spec=commands.Bot makes isinstance(bot, commands.Bot) == True
         mock_bot = MagicMock(spec=commands.Bot)
@@ -870,13 +862,13 @@ class DiscordMockUtils:
 
     @staticmethod
     def create_mock_context(
-        message: Optional[MagicMock] = None,
-        channel: Optional[MagicMock] = None,
-        guild: Optional[MagicMock] = None,
-        author: Optional[MagicMock] = None,
-        bot: Optional[MagicMock] = None,
+        message: MagicMock | None = None,
+        channel: MagicMock | None = None,
+        guild: MagicMock | None = None,
+        author: MagicMock | None = None,
+        bot: MagicMock | None = None,
         prefix: str = "!",
-        **kwargs
+        **kwargs,
     ) -> MagicMock:
         """Create a mock Discord Context object."""
         if message is None:
@@ -922,12 +914,12 @@ class DiscordMockUtils:
         user_id: int = 1,
         token: str = "test_token",
         version: int = 1,
-        data: Optional[Dict[str, Any]] = None,
-        guild: Optional[MagicMock] = None,
-        channel: Optional[MagicMock] = None,
-        user: Optional[MagicMock] = None,
-        member: Optional[MagicMock] = None,
-        **kwargs
+        data: dict[str, Any] | None = None,
+        guild: MagicMock | None = None,
+        channel: MagicMock | None = None,
+        user: MagicMock | None = None,
+        member: MagicMock | None = None,
+        **kwargs,
     ) -> MagicMock:
         """Create a mock Discord Interaction object."""
         if data is None:
@@ -943,11 +935,7 @@ class DiscordMockUtils:
             user = DiscordMockUtils.create_mock_user(user_id)
 
         if member is None:
-            member = DiscordMockUtils.create_mock_member(
-                user_id=user_id,
-                guild_id=guild_id,
-                guild=guild
-            )
+            member = DiscordMockUtils.create_mock_member(user_id=user_id, guild_id=guild_id, guild=guild)
 
         mock_interaction = MagicMock()
         mock_interaction.id = interaction_id
@@ -1001,9 +989,7 @@ class DiscordMockUtils:
 
     @staticmethod
     def create_mock_discord_exception(
-        exc_type: Type[Exception],
-        message: str = "test exception",
-        **kwargs
+        exc_type: type[Exception], message: str = "test exception", **kwargs
     ) -> MagicMock:
         """
         .. deprecated::
@@ -1123,7 +1109,7 @@ class DiscordMockUtils:
         """
         mock_discord = DiscordMockUtils.create_mock_discord_module()
 
-        patcher = patch.dict('sys.modules', {'discord': mock_discord})
+        patcher = patch.dict("sys.modules", {"discord": mock_discord})
         patcher.start()
 
         return mock_discord, patcher  # type: ignore[return-value]
@@ -1143,60 +1129,56 @@ class DiscordMockUtils:
         mock_discord_ext.commands.app_commands = MagicMock()
         mock_discord_ext.commands.app_commands.Command = MagicMock()
 
-        patcher = patch.dict('sys.modules', {'discord.ext': mock_discord_ext})
+        patcher = patch.dict("sys.modules", {"discord.ext": mock_discord_ext})
         patcher.start()
 
         return mock_discord_ext, patcher  # type: ignore[return-value]
 
     @staticmethod
-    def create_mock_test_environment() -> Dict[str, Any]:
+    def create_mock_test_environment() -> dict[str, Any]:
         """Create a comprehensive test environment with all mock objects."""
-        test_env: Dict[str, Any] = {}
+        test_env: dict[str, Any] = {}
 
-        test_env['guild'] = DiscordMockUtils.create_mock_guild()
-        test_env['channel'] = DiscordMockUtils.create_mock_text_channel(
-            guild_id=test_env['guild'].id, guild=test_env['guild']
+        test_env["guild"] = DiscordMockUtils.create_mock_guild()
+        test_env["channel"] = DiscordMockUtils.create_mock_text_channel(
+            guild_id=test_env["guild"].id, guild=test_env["guild"]
         )
-        test_env['user'] = DiscordMockUtils.create_mock_user()
-        test_env['member'] = DiscordMockUtils.create_mock_member(
-            user_id=test_env['user'].id,
-            guild_id=test_env['guild'].id,
-            guild=test_env['guild']
+        test_env["user"] = DiscordMockUtils.create_mock_user()
+        test_env["member"] = DiscordMockUtils.create_mock_member(
+            user_id=test_env["user"].id, guild_id=test_env["guild"].id, guild=test_env["guild"]
         )
-        test_env['role'] = DiscordMockUtils.create_mock_role(
-            guild_id=test_env['guild'].id, guild=test_env['guild']
+        test_env["role"] = DiscordMockUtils.create_mock_role(guild_id=test_env["guild"].id, guild=test_env["guild"])
+        test_env["message"] = DiscordMockUtils.create_mock_message(
+            channel_id=test_env["channel"].id,
+            author_id=test_env["user"].id,
+            guild_id=test_env["guild"].id,
+            channel=test_env["channel"],
+            author=test_env["user"],
+            guild=test_env["guild"],
         )
-        test_env['message'] = DiscordMockUtils.create_mock_message(
-            channel_id=test_env['channel'].id,
-            author_id=test_env['user'].id,
-            guild_id=test_env['guild'].id,
-            channel=test_env['channel'],
-            author=test_env['user'],
-            guild=test_env['guild']
+        test_env["embed"] = DiscordMockUtils.create_mock_embed()
+        test_env["bot"] = DiscordMockUtils.create_mock_bot()
+        test_env["ctx"] = DiscordMockUtils.create_mock_context(
+            message=test_env["message"],
+            channel=test_env["channel"],
+            guild=test_env["guild"],
+            author=test_env["user"],
+            bot=test_env["bot"],
         )
-        test_env['embed'] = DiscordMockUtils.create_mock_embed()
-        test_env['bot'] = DiscordMockUtils.create_mock_bot()
-        test_env['ctx'] = DiscordMockUtils.create_mock_context(
-            message=test_env['message'],
-            channel=test_env['channel'],
-            guild=test_env['guild'],
-            author=test_env['user'],
-            bot=test_env['bot']
-        )
-        test_env['interaction'] = DiscordMockUtils.create_mock_interaction(
-            guild_id=test_env['guild'].id,
-            channel_id=test_env['channel'].id,
-            user_id=test_env['user'].id,
-            guild=test_env['guild'],
-            channel=test_env['channel'],
-            user=test_env['user'],
-            member=test_env['member']
+        test_env["interaction"] = DiscordMockUtils.create_mock_interaction(
+            guild_id=test_env["guild"].id,
+            channel_id=test_env["channel"].id,
+            user_id=test_env["user"].id,
+            guild=test_env["guild"],
+            channel=test_env["channel"],
+            user=test_env["user"],
+            member=test_env["member"],
         )
         # Convenience exception instances for common test scenarios
-        test_env['exc_not_found'] = create_discord_not_found()
-        test_env['exc_forbidden'] = create_discord_forbidden()
-        test_env['exc_http_400'] = create_discord_http_exception(400)
-        test_env['exc_http_502'] = create_discord_http_exception(503)
+        test_env["exc_not_found"] = create_discord_not_found()
+        test_env["exc_forbidden"] = create_discord_forbidden()
+        test_env["exc_http_400"] = create_discord_http_exception(400)
+        test_env["exc_http_502"] = create_discord_http_exception(503)
 
         return test_env
 

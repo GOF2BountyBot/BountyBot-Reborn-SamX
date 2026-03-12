@@ -3,8 +3,9 @@ import importlib
 import os
 import pkgutil
 import sys
+from collections.abc import Callable
 from contextlib import asynccontextmanager
-from typing import Any, Callable, Dict
+from typing import Any
 
 import discord
 import uvicorn
@@ -26,11 +27,7 @@ class GatewayBot(commands.Bot):
         intents.guilds = True
         intents.members = True
 
-        super().__init__(
-            command_prefix="!",
-            intents=intents,
-            application_id=int(os.getenv("BOTAPPID", "0"))
-        )
+        super().__init__(command_prefix="!", intents=intents, application_id=int(os.getenv("BOTAPPID", "0")))
 
         self.flogger = bblogger.get_logger("discord-gateway")
         self.startup_complete = False
@@ -57,17 +54,11 @@ class GatewayBot(commands.Bot):
         ctx: commands.Context,
         command_name: str,
         handler: Callable[[commands.Context], Any],
-        permissions: Dict[str, Any] = None,
-        cooldown_seconds: int = 5
+        permissions: dict[str, Any] | None = None,
+        cooldown_seconds: int = 5,
     ) -> bool:
         """Execute a command with validation and error handling"""
-        return await self.command_handler.execute_command(
-            ctx,
-            command_name,
-            handler,
-            permissions,
-            cooldown_seconds
-        )
+        return await self.command_handler.execute_command(ctx, command_name, handler, permissions, cooldown_seconds)
 
     async def on_ready(self):
         self.flogger.info(f"Bot logged in as {self.user} ({self.user.id})")
@@ -85,10 +76,12 @@ class GatewayBot(commands.Bot):
         else:
             await self.tree.sync()
 
+
 # ─── FastAPI + Lifespan ─────────────────────────────────────────────────────────
 GATEWAY_HOST = os.getenv("GATEWAY_HOST", "0.0.0.0")
 GATEWAY_PORT = int(os.getenv("GATEWAY_PORT", os.getenv("PORT", "8000")))
-ACCESS_LOG   = os.getenv("ACCESS_LOG", "true").lower() == "true"
+ACCESS_LOG = os.getenv("ACCESS_LOG", "true").lower() == "true"
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -118,6 +111,7 @@ async def lifespan(app: FastAPI):
     except asyncio.CancelledError:
         flogger.info("✅ Bot task cancelled")
 
+
 def create_app() -> FastAPI:
     flogger = bblogger.get_logger("discord-gateway-api-server")
     flogger.trace("Initializing FastAPI…")
@@ -128,7 +122,7 @@ def create_app() -> FastAPI:
         docs_url="/docs",
         redoc_url="/redoc",
         openapi_url="/openapi.json",
-        lifespan=lifespan
+        lifespan=lifespan,
     )
 
     # CORS
@@ -155,9 +149,11 @@ def create_app() -> FastAPI:
 
     return app
 
+
 # dependency for your routers
 def get_bot(request: Request) -> GatewayBot:
     return request.app.state.bot
+
 
 # ─── Launcher ───────────────────────────────────────────────────────────────────
 if __name__ == "__main__":

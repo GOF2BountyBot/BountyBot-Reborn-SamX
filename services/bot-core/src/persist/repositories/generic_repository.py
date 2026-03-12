@@ -5,9 +5,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from persist.interfaces.repository_interface import IRepository
 
-T = TypeVar('T')
+T = TypeVar("T")
 
-class GenericRepository(IRepository[T], Generic[T]):
+
+class GenericRepository(IRepository[T], Generic[T]):  # noqa: UP046
     def __init__(self, model: type[T]):
         self._model = model
 
@@ -24,15 +25,11 @@ class GenericRepository(IRepository[T], Generic[T]):
         return await db.get(self._model, obj_id)
 
     async def get_by_name(self, db: AsyncSession, name: str) -> T | None:
-        result = await db.execute(
-            select(self._model).filter_by(name=name)
-        )
+        result = await db.execute(select(self._model).filter_by(name=name))
         return result.scalars().one_or_none()
 
     async def get_by_alias(self, db: AsyncSession, alias: str) -> T | None:
-        result = await db.execute(
-            select(self._model).where(self._model.aliases.any(alias))
-        )
+        result = await db.execute(select(self._model).where(self._model.aliases.any(alias)))
         return result.scalars().one_or_none()
 
     async def list_all(self, db: AsyncSession) -> list[T]:

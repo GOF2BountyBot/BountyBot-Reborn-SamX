@@ -5,7 +5,7 @@ This module provides REST endpoints for managing Discord permissions
 with simplified URIs and consolidated permission operations.
 """
 
-from typing import Any, List, Tuple
+from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request, status
 from shared import bblogger
@@ -55,9 +55,10 @@ router = APIRouter(
         404: {"description": "Permission or target not found"},
         403: {"description": "Insufficient permissions"},
         500: {"description": "Internal server error"},
-        503: {"description": "Service unavailable - bot not ready"}
-    }
+        503: {"description": "Service unavailable - bot not ready"},
+    },
 )
+
 
 # -------------------------
 # Permission flag endpoints
@@ -67,7 +68,7 @@ router = APIRouter(
     response_model=PermissionFlagListResponse,
     status_code=status.HTTP_200_OK,
     summary="List All Discord Permissions",
-    description="Get a list of all Discord permissions with metadata"
+    description="Get a list of all Discord permissions with metadata",
 )
 async def list_all_permissions() -> PermissionFlagListResponse:
     """List all Discord permissions."""
@@ -75,21 +76,21 @@ async def list_all_permissions() -> PermissionFlagListResponse:
     try:
         data = get_all_permissions()
         perms = [
-            {"name": p["name"], "value": p["value"],
-             "description": p["description"], "channel_types": p["channel_types"]}
+            {
+                "name": p["name"],
+                "value": p["value"],
+                "description": p["description"],
+                "channel_types": p["channel_types"],
+            }
             for p in data
         ]
 
         flogger.info(f"Retrieved {len(perms)} permission flags")
-        return PermissionFlagListResponse(
-            status="success",
-            data=perms
-        )
+        return PermissionFlagListResponse(status="success", data=perms)
     except Exception as exc:  # pylint: disable=broad-exception-caught
         flogger.exception("Error in list_all_permissions")
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to list permissions: {exc}"
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to list permissions: {exc}"
         ) from exc
 
 
@@ -98,7 +99,7 @@ async def list_all_permissions() -> PermissionFlagListResponse:
     response_model=PermissionFlagListResponse,
     status_code=status.HTTP_200_OK,
     summary="List Role Permissions",
-    description="Get permissions that can be assigned to roles"
+    description="Get permissions that can be assigned to roles",
 )
 async def list_role_permissions() -> PermissionFlagListResponse:
     """List permissions that can be assigned to roles."""
@@ -106,21 +107,21 @@ async def list_role_permissions() -> PermissionFlagListResponse:
     try:
         data = get_role_permissions()
         perms = [
-            {"name": p["name"], "value": p["value"],
-             "description": p["description"], "channel_types": p["channel_types"]}
+            {
+                "name": p["name"],
+                "value": p["value"],
+                "description": p["description"],
+                "channel_types": p["channel_types"],
+            }
             for p in data
         ]
 
         flogger.info(f"Retrieved {len(perms)} role permissions")
-        return PermissionFlagListResponse(
-            status="success",
-            data=perms
-        )
+        return PermissionFlagListResponse(status="success", data=perms)
     except Exception as exc:  # pylint: disable=broad-exception-caught
         flogger.exception("Error in list_role_permissions")
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to list role permissions: {exc}"
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to list role permissions: {exc}"
         ) from exc
 
 
@@ -129,7 +130,7 @@ async def list_role_permissions() -> PermissionFlagListResponse:
     response_model=PermissionFlagListResponse,
     status_code=status.HTTP_200_OK,
     summary="List User Permissions",
-    description="Get permissions usable in overwrites for users"
+    description="Get permissions usable in overwrites for users",
 )
 async def list_user_permissions() -> PermissionFlagListResponse:
     """List permissions usable in overwrites for users."""
@@ -137,21 +138,21 @@ async def list_user_permissions() -> PermissionFlagListResponse:
     try:
         data = get_user_permissions()
         perms = [
-            {"name": p["name"], "value": p["value"],
-             "description": p["description"], "channel_types": p["channel_types"]}
+            {
+                "name": p["name"],
+                "value": p["value"],
+                "description": p["description"],
+                "channel_types": p["channel_types"],
+            }
             for p in data
         ]
 
         flogger.info(f"Retrieved {len(perms)} user permissions")
-        return PermissionFlagListResponse(
-            status="success",
-            data=perms
-        )
+        return PermissionFlagListResponse(status="success", data=perms)
     except Exception as exc:  # pylint: disable=broad-exception-caught
         flogger.exception("Error in list_user_permissions")
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to list user permissions: {exc}"
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to list user permissions: {exc}"
         ) from exc
 
 
@@ -160,7 +161,7 @@ async def list_user_permissions() -> PermissionFlagListResponse:
     response_model=PermissionFlagListResponse,
     status_code=status.HTTP_200_OK,
     summary="List Channel Permissions",
-    description="Get permissions applicable to channels"
+    description="Get permissions applicable to channels",
 )
 async def list_channel_permissions() -> PermissionFlagListResponse:
     """List permissions applicable to channels."""
@@ -168,21 +169,21 @@ async def list_channel_permissions() -> PermissionFlagListResponse:
     try:
         data = get_channel_permissions()
         perms = [
-            {"name": p["name"], "value": p["value"],
-             "description": p["description"], "channel_types": p["channel_types"]}
+            {
+                "name": p["name"],
+                "value": p["value"],
+                "description": p["description"],
+                "channel_types": p["channel_types"],
+            }
             for p in data
         ]
 
         flogger.info(f"Retrieved {len(perms)} channel permissions")
-        return PermissionFlagListResponse(
-            status="success",
-            data=perms
-        )
+        return PermissionFlagListResponse(status="success", data=perms)
     except Exception as exc:  # pylint: disable=broad-exception-caught
         flogger.exception("Error in list_channel_permissions")
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to list channel permissions: {exc}"
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to list channel permissions: {exc}"
         ) from exc
 
 
@@ -191,7 +192,7 @@ async def list_channel_permissions() -> PermissionFlagListResponse:
     response_model=PermissionFlagListResponse,
     status_code=status.HTTP_200_OK,
     summary="List Category Permissions",
-    description="Get permissions applicable to categories"
+    description="Get permissions applicable to categories",
 )
 async def list_category_permissions() -> PermissionFlagListResponse:
     """List permissions applicable to categories."""
@@ -199,21 +200,21 @@ async def list_category_permissions() -> PermissionFlagListResponse:
     try:
         data = get_category_permissions()
         perms = [
-            {"name": p["name"], "value": p["value"],
-             "description": p["description"], "channel_types": p["channel_types"]}
+            {
+                "name": p["name"],
+                "value": p["value"],
+                "description": p["description"],
+                "channel_types": p["channel_types"],
+            }
             for p in data
         ]
 
         flogger.info(f"Retrieved {len(perms)} category permissions")
-        return PermissionFlagListResponse(
-            status="success",
-            data=perms
-        )
+        return PermissionFlagListResponse(status="success", data=perms)
     except Exception as exc:  # pylint: disable=broad-exception-caught
         flogger.exception("Error in list_category_permissions")
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to list category permissions: {exc}"
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to list category permissions: {exc}"
         ) from exc
 
 
@@ -225,7 +226,7 @@ async def list_category_permissions() -> PermissionFlagListResponse:
     response_model=PermissionOverwriteResponse,
     status_code=status.HTTP_200_OK,
     summary="Get Permission Overwrite",
-    description="Get a specific permission overwrite"
+    description="Get a specific permission overwrite",
 )
 async def get_permission_overwrite(request: Request, permission_id: str) -> PermissionOverwriteResponse:
     """Get a specific permission overwrite by composite ID."""
@@ -237,8 +238,7 @@ async def get_permission_overwrite(request: Request, permission_id: str) -> Perm
             channel_id, target_id = int(channel_id), int(target_id)
         except ValueError as exc:
             raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="permission_id must be in format 'channel_id:target_id'"
+                status_code=status.HTTP_400_BAD_REQUEST, detail="permission_id must be in format 'channel_id:target_id'"
             ) from exc
 
         bot = await resolve_bot(request)
@@ -250,8 +250,7 @@ async def get_permission_overwrite(request: Request, permission_id: str) -> Perm
                 channel = await bot.fetch_channel(channel_id)
             except Exception as exc:
                 raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND,
-                    detail=f"Channel {channel_id} not found"
+                    status_code=status.HTTP_404_NOT_FOUND, detail=f"Channel {channel_id} not found"
                 ) from exc
 
         # Find the specific overwrite
@@ -265,17 +264,14 @@ async def get_permission_overwrite(request: Request, permission_id: str) -> Perm
         if not target:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Permission overwrite for {target_id} not found in channel {channel_id}"
+                detail=f"Permission overwrite for {target_id} not found in channel {channel_id}",
             )
 
         overwrite_data = PermissionConverter.overwrite_to_payload(target, overwrite, channel_id)
         overwrite_data.id = permission_id
 
         flogger.info(f"Retrieved permission overwrite {permission_id}")
-        return PermissionOverwriteResponse(
-            status="success",
-            data=overwrite_data
-        )
+        return PermissionOverwriteResponse(status="success", data=overwrite_data)
     except HTTPException:
         raise
     except Exception as exc:  # pylint: disable=broad-exception-caught
@@ -288,7 +284,7 @@ async def get_permission_overwrite(request: Request, permission_id: str) -> Perm
     response_model=PermissionOverwriteResponse,
     status_code=status.HTTP_200_OK,
     summary="Update Permission Overwrite",
-    description="Update a specific permission overwrite"
+    description="Update a specific permission overwrite",
 )
 async def update_permission_overwrite(
     request: Request, permission_id: str, permissions_data: PermissionOverwriteRequest
@@ -302,8 +298,7 @@ async def update_permission_overwrite(
             channel_id, target_id = int(channel_id), int(target_id)
         except ValueError as exc:
             raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="permission_id must be in format 'channel_id:target_id'"
+                status_code=status.HTTP_400_BAD_REQUEST, detail="permission_id must be in format 'channel_id:target_id'"
             ) from exc
 
         bot = await resolve_bot(request)
@@ -315,8 +310,7 @@ async def update_permission_overwrite(
                 channel = await bot.fetch_channel(channel_id)
             except Exception as exc:
                 raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND,
-                    detail=f"Channel {channel_id} not found"
+                    status_code=status.HTTP_404_NOT_FOUND, detail=f"Channel {channel_id} not found"
                 ) from exc
 
         guild = channel.guild
@@ -330,8 +324,7 @@ async def update_permission_overwrite(
                     target = await guild.fetch_member(target_id)
                 except Exception as exc:
                     raise HTTPException(
-                        status_code=status.HTTP_404_NOT_FOUND,
-                        detail=f"Role or member {target_id} not found"
+                        status_code=status.HTTP_404_NOT_FOUND, detail=f"Role or member {target_id} not found"
                     ) from exc
 
         # Create and set overwrite
@@ -345,10 +338,7 @@ async def update_permission_overwrite(
         updated_overwrite_data.id = permission_id
 
         flogger.info(f"Updated permission overwrite {permission_id}")
-        return PermissionOverwriteResponse(
-            status="updated",
-            data=updated_overwrite_data
-        )
+        return PermissionOverwriteResponse(status="updated", data=updated_overwrite_data)
     except HTTPException:
         raise
     except Exception as exc:  # pylint: disable=broad-exception-caught
@@ -361,7 +351,7 @@ async def update_permission_overwrite(
     response_model=DeleteResponse,
     status_code=status.HTTP_200_OK,
     summary="Remove Permission Overwrite",
-    description="Remove a permission overwrite"
+    description="Remove a permission overwrite",
 )
 async def remove_permission_overwrite(request: Request, permission_id: str) -> DeleteResponse:
     """Remove a permission overwrite by composite ID."""
@@ -373,8 +363,7 @@ async def remove_permission_overwrite(request: Request, permission_id: str) -> D
             channel_id, target_id = int(channel_id), int(target_id)
         except ValueError as exc:
             raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="permission_id must be in format 'channel_id:target_id'"
+                status_code=status.HTTP_400_BAD_REQUEST, detail="permission_id must be in format 'channel_id:target_id'"
             ) from exc
 
         bot = await resolve_bot(request)
@@ -386,13 +375,12 @@ async def remove_permission_overwrite(request: Request, permission_id: str) -> D
                 channel = await bot.fetch_channel(channel_id)
             except Exception as exc:
                 raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND,
-                    detail=f"Channel {channel_id} not found"
+                    status_code=status.HTTP_404_NOT_FOUND, detail=f"Channel {channel_id} not found"
                 ) from exc
 
         # Find target in existing overwrites
         target = None
-        for ow_target in channel.overwrites.keys():
+        for ow_target in channel.overwrites:
             if ow_target.id == target_id:
                 target = ow_target
                 break
@@ -400,20 +388,16 @@ async def remove_permission_overwrite(request: Request, permission_id: str) -> D
         if not target:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Permission overwrite for {target_id} not found in channel {channel_id}"
+                detail=f"Permission overwrite for {target_id} not found in channel {channel_id}",
             )
 
-        target_type = "role" if hasattr(target, 'permissions') else "member"
+        target_type = "role" if hasattr(target, "permissions") else "member"
         await channel.set_permissions(target, overwrite=None)
 
         message = f"Permission overwrite removed for {target_type} {target.name} from channel {channel.name}"
         flogger.info(message)
 
-        return DeleteResponse(
-            status="deleted",
-            deleted=True,
-            message=message
-        )
+        return DeleteResponse(status="deleted", deleted=True, message=message)
     except HTTPException:
         raise
     except Exception as exc:  # pylint: disable=broad-exception-caught
@@ -429,7 +413,7 @@ async def remove_permission_overwrite(request: Request, permission_id: str) -> D
     response_model=NamesToValueResponse,
     status_code=status.HTTP_200_OK,
     summary="Convert Permission Names to Bitfield",
-    description="Combine a list of permission names into a single bitfield"
+    description="Combine a list of permission names into a single bitfield",
 )
 async def convert_names_to_value(body: NamesToValueRequest) -> NamesToValueResponse:
     """Convert a list of permission names to a bitfield value."""
@@ -437,27 +421,20 @@ async def convert_names_to_value(body: NamesToValueRequest) -> NamesToValueRespo
 
     if not body.names:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-            detail="names list must contain at least one permission"
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="names list must contain at least one permission"
         )
 
     # Validate each permission name
     for name in body.names:
         if name not in PERMISSION_FLAGS:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Unknown permission: {name}"
-            )
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Unknown permission: {name}")
 
     # Combine bit values
     bit_values = [PERMISSION_FLAGS[name]["value"] for name in body.names]
     value = combine_permissions(*bit_values)
 
     flogger.info(f"convert_names_to_value: combined value=0x{value:x}")
-    return NamesToValueResponse(
-        status="success",
-        data={"value": value}
-    )
+    return NamesToValueResponse(status="success", data={"value": value})
 
 
 @router.post(
@@ -465,16 +442,13 @@ async def convert_names_to_value(body: NamesToValueRequest) -> NamesToValueRespo
     response_model=ValueToNamesResponse,
     status_code=status.HTTP_200_OK,
     summary="Convert Bitfield to Permission Names",
-    description="Expand a bitfield into the list of granted permission names"
+    description="Expand a bitfield into the list of granted permission names",
 )
 async def convert_value_to_names(body: ValueToNamesRequest) -> ValueToNamesResponse:
     """Convert a bitfield to permission names."""
     flogger.info(f"convert_value_to_names called with value={body.value}")
     names = get_permission_names_by_value(body.value)
-    return ValueToNamesResponse(
-        status="success",
-        data={"names": names}
-    )
+    return ValueToNamesResponse(status="success", data={"names": names})
 
 
 @router.post(
@@ -482,16 +456,13 @@ async def convert_value_to_names(body: ValueToNamesRequest) -> ValueToNamesRespo
     response_model=CalculatePermissionsResponse,
     status_code=status.HTTP_200_OK,
     summary="Calculate Effective Permissions",
-    description="Apply allow/deny overwrites to a base permissions bitfield"
+    description="Apply allow/deny overwrites to a base permissions bitfield",
 )
 async def calculate_permissions(body: CalculatePermissionsRequest) -> CalculatePermissionsResponse:
     """Calculate effective permissions."""
     flogger.info(f"calculate_permissions called: base={body.base}, allow={body.allow}, deny={body.deny}")
     effective = calculate_effective_permissions(body.base, body.allow or 0, body.deny or 0)
-    return CalculatePermissionsResponse(
-        status="success",
-        data={"effective": effective}
-    )
+    return CalculatePermissionsResponse(status="success", data={"effective": effective})
 
 
 # -------------------------
@@ -504,17 +475,13 @@ async def calculate_permissions(body: CalculatePermissionsRequest) -> CalculateP
     description=(
         "Single canonical endpoint: if 'permissions' is empty -> returns evaluate-style summary; "
         "otherwise returns detailed per-permission grants with sources."
-    )
+    ),
 )
-async def check_comprehensive_permissions(
-    request: Request,
-    check_request: ComprehensivePermissionCheckRequest
-):
+async def check_comprehensive_permissions(request: Request, check_request: ComprehensivePermissionCheckRequest):
     """Check comprehensive permissions with detailed source tracking or return evaluate-style summary
     when permissions list is empty."""
     flogger.info(
-        f"check_comprehensive_permissions called: subject={check_request.subject}, "
-        f"target={check_request.target}"
+        f"check_comprehensive_permissions called: subject={check_request.subject}, target={check_request.target}"
     )
 
     # Validate permission names if provided
@@ -522,8 +489,7 @@ async def check_comprehensive_permissions(
     invalid_perms = [p for p in provided_perms if p not in PERMISSION_FLAGS]
     if invalid_perms:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-            detail=f"Unknown permission(s): {invalid_perms}"
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=f"Unknown permission(s): {invalid_perms}"
         )
 
     try:
@@ -604,7 +570,7 @@ async def check_comprehensive_permissions(
             flogger.info(f"/permissions/check (evaluate mode) result: effective=0x{effective_val:x}")
             return BotPermissionSummaryResponse(
                 status="success",
-                data={"base": effective_val, "allowed_names": allowed_names, "denied_names": denied_names}
+                data={"base": effective_val, "allowed_names": allowed_names, "denied_names": denied_names},
             )
 
         # Otherwise, perform the detailed per-permission evaluation and source tracking
@@ -630,13 +596,9 @@ async def check_comprehensive_permissions(
                 )
 
         # Convert to response models
-        granted_list: List[PermissionGrant] = []
+        granted_list: list[PermissionGrant] = []
         for perm, source in granted_dict.items():
-            grant_source = PermissionGrantSource(
-                type=source.type,
-                role_name=source.role_name,
-                role_id=source.role_id
-            )
+            grant_source = PermissionGrantSource(type=source.type, role_name=source.role_name, role_id=source.role_id)
             granted_list.append(PermissionGrant(permission=perm, source=grant_source))
 
         denied_list = list(denied_set)
@@ -648,11 +610,7 @@ async def check_comprehensive_permissions(
         )
         return ComprehensivePermissionCheckResponse(
             status="success",
-            data=ComprehensivePermissionCheckData(
-                allowed=all_allowed,
-                denied=denied_list,
-                granted=granted_list
-            )
+            data=ComprehensivePermissionCheckData(allowed=all_allowed, denied=denied_list, granted=granted_list),
         )
 
     except HTTPException:
@@ -665,7 +623,7 @@ async def check_comprehensive_permissions(
 # -------------------------
 # Helper resolvers
 # -------------------------
-async def _resolve_target_entity(bot: Any, target: Any) -> Tuple[Any, Any]:
+async def _resolve_target_entity(bot: Any, target: Any) -> tuple[Any, Any]:
     """Resolve target entity and return (entity, guild)."""
     target_type = target.type.lower()
     target_id = target.id
@@ -677,8 +635,7 @@ async def _resolve_target_entity(bot: Any, target: Any) -> Tuple[Any, Any]:
                 guild = await bot.fetch_guild(target_id)
             except Exception as exc:  # pylint: disable=broad-exception-caught
                 raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND,
-                    detail=f"Guild {target_id} not found"
+                    status_code=status.HTTP_404_NOT_FOUND, detail=f"Guild {target_id} not found"
                 ) from exc
         return guild, guild
 
@@ -689,23 +646,18 @@ async def _resolve_target_entity(bot: Any, target: Any) -> Tuple[Any, Any]:
                 channel = await bot.fetch_channel(target_id)
             except Exception as exc:  # pylint: disable=broad-exception-caught
                 raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND,
-                    detail=f"Channel {target_id} not found"
+                    status_code=status.HTTP_404_NOT_FOUND, detail=f"Channel {target_id} not found"
                 ) from exc
 
         guild = getattr(channel, "guild", None)
         if not guild:
             raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Channel {target_id} is not in a guild"
+                status_code=status.HTTP_400_BAD_REQUEST, detail=f"Channel {target_id} is not in a guild"
             )
 
         return channel, guild
 
-    raise HTTPException(
-        status_code=status.HTTP_400_BAD_REQUEST,
-        detail=f"Unknown target type: {target.type}"
-    )
+    raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Unknown target type: {target.type}")
 
 
 async def _resolve_subject_entity(_bot: Any, guild: Any, subject: Any) -> Any:
@@ -720,8 +672,7 @@ async def _resolve_subject_entity(_bot: Any, guild: Any, subject: Any) -> Any:
                 member = await guild.fetch_member(subject_id)
             except Exception as exc:  # pylint: disable=broad-exception-caught
                 raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND,
-                    detail=f"Member {subject_id} not found in guild {guild.id}"
+                    status_code=status.HTTP_404_NOT_FOUND, detail=f"Member {subject_id} not found in guild {guild.id}"
                 ) from exc
         return member
 
@@ -729,12 +680,8 @@ async def _resolve_subject_entity(_bot: Any, guild: Any, subject: Any) -> Any:
         role = guild.get_role(subject_id)
         if not role:
             raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Role {subject_id} not found in guild {guild.id}"
+                status_code=status.HTTP_404_NOT_FOUND, detail=f"Role {subject_id} not found in guild {guild.id}"
             )
         return role
 
-    raise HTTPException(
-        status_code=status.HTTP_400_BAD_REQUEST,
-        detail=f"Unknown subject type: {subject.type}"
-    )
+    raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Unknown subject type: {subject.type}")

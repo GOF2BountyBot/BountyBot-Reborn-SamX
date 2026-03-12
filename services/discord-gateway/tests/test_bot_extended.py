@@ -14,6 +14,7 @@ import importlib
 import os
 import sys
 import types
+from contextlib import suppress
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -40,13 +41,13 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 def _evict_and_reload_bot():
     """Evict cached bot and related modules and reimport."""
-    to_evict = [k for k in sys.modules
-                if k in ("bot",) or k.startswith("utils.") or k.startswith("api.")]
+    to_evict = [k for k in sys.modules if k in ("bot",) or k.startswith("utils.") or k.startswith("api.")]
     for k in to_evict:
         sys.modules.pop(k, None)
 
 
 # ── Fixtures ─────────────────────────────────────────────────────────────────
+
 
 @pytest.fixture
 def real_discord():
@@ -63,11 +64,13 @@ def bot_module(real_discord):
     """Reload bot module so it picks up fresh mocks."""
     _evict_and_reload_bot()
     import bot
+
     importlib.reload(bot)
     return bot
 
 
 # ── Tests: execute_command_with_validation ────────────────────────────────────
+
 
 class TestExecuteCommandWithValidation:
     """Tests for GatewayBot.execute_command_with_validation (line 65)."""
@@ -84,15 +87,9 @@ class TestExecuteCommandWithValidation:
         ctx = MagicMock(spec=commands.Context)
         handler = AsyncMock(return_value=None)
 
-        result = asyncio.run(
-            GatewayBot.execute_command_with_validation(
-                bot, ctx, "test_command", handler
-            )
-        )
+        result = asyncio.run(GatewayBot.execute_command_with_validation(bot, ctx, "test_command", handler))
 
-        bot.command_handler.execute_command.assert_called_once_with(
-            ctx, "test_command", handler, None, 5
-        )
+        bot.command_handler.execute_command.assert_called_once_with(ctx, "test_command", handler, None, 5)
         assert result is True
 
     def test_execute_command_passes_permissions_and_cooldown(self, bot_module):
@@ -108,19 +105,14 @@ class TestExecuteCommandWithValidation:
         handler = AsyncMock()
         perms = {"manage_guild": True}
 
-        result = asyncio.run(
-            GatewayBot.execute_command_with_validation(
-                bot, ctx, "admin_cmd", handler, perms, 10
-            )
-        )
+        result = asyncio.run(GatewayBot.execute_command_with_validation(bot, ctx, "admin_cmd", handler, perms, 10))
 
-        bot.command_handler.execute_command.assert_called_once_with(
-            ctx, "admin_cmd", handler, perms, 10
-        )
+        bot.command_handler.execute_command.assert_called_once_with(ctx, "admin_cmd", handler, perms, 10)
         assert result is False
 
 
 # ── Tests: lifespan ───────────────────────────────────────────────────────────
+
 
 class TestLifespan:
     """Tests for the lifespan async context manager (lines 96-120)."""
@@ -135,14 +127,13 @@ class TestLifespan:
         with patch.dict(os.environ, {}, clear=True):
             os.environ.pop("BOTTOKEN", None)
             with patch("os._exit") as mock_exit:
+
                 async def _run():
                     async with lifespan(app):
                         pass
 
-                try:
+                with suppress(Exception):
                     asyncio.run(_run())
-                except Exception:
-                    pass
 
                 mock_exit.assert_called_once_with(1)
 
@@ -161,11 +152,14 @@ class TestLifespan:
             # Create task inside the running loop
             async def _noop():
                 pass
+
             mock_task = asyncio.get_event_loop().create_task(_noop())
 
-            with patch("bot.GatewayBot", return_value=mock_bot), \
-                 patch("asyncio.create_task", return_value=mock_task), \
-                 patch.dict(os.environ, {"BOTTOKEN": "fake-token"}):
+            with (
+                patch("bot.GatewayBot", return_value=mock_bot),
+                patch("asyncio.create_task", return_value=mock_task),
+                patch.dict(os.environ, {"BOTTOKEN": "fake-token"}),
+            ):
                 async with lifespan(app):
                     assert app.state.bot is mock_bot
                     assert app.state.bot_task is mock_task
@@ -186,11 +180,14 @@ class TestLifespan:
         async def _run():
             async def _noop():
                 pass
+
             mock_task = asyncio.get_event_loop().create_task(_noop())
 
-            with patch("bot.GatewayBot", return_value=mock_bot), \
-                 patch("asyncio.create_task", return_value=mock_task), \
-                 patch.dict(os.environ, {"BOTTOKEN": "fake-token"}):
+            with (
+                patch("bot.GatewayBot", return_value=mock_bot),
+                patch("asyncio.create_task", return_value=mock_task),
+                patch.dict(os.environ, {"BOTTOKEN": "fake-token"}),
+            ):
                 async with lifespan(app):
                     pass  # yield point
 
@@ -215,9 +212,11 @@ class TestLifespan:
             mock_task = asyncio.get_event_loop().create_task(_cancellable())
             mock_task.cancel()  # pre-cancel so awaiting it raises CancelledError
 
-            with patch("bot.GatewayBot", return_value=mock_bot), \
-                 patch("asyncio.create_task", return_value=mock_task), \
-                 patch.dict(os.environ, {"BOTTOKEN": "fake-token"}):
+            with (
+                patch("bot.GatewayBot", return_value=mock_bot),
+                patch("asyncio.create_task", return_value=mock_task),
+                patch.dict(os.environ, {"BOTTOKEN": "fake-token"}),
+            ):
                 async with lifespan(app):
                     pass  # trigger shutdown
 
@@ -227,6 +226,7 @@ class TestLifespan:
 
 # ── Tests: create_app ─────────────────────────────────────────────────────────
 
+
 class TestCreateApp:
     """Tests for create_app function (lines 123-157)."""
 
@@ -234,9 +234,11 @@ class TestCreateApp:
         """create_app should return a FastAPI application."""
         from fastapi import FastAPI
 
-        with patch("bot.lifespan"), \
-             patch("importlib.import_module") as mock_import, \
-             patch("pkgutil.iter_modules", return_value=[]):
+        with (
+            patch("bot.lifespan"),
+            patch("importlib.import_module") as mock_import,
+            patch("pkgutil.iter_modules", return_value=[]),
+        ):
             mock_import.return_value = MagicMock(__path__=[])
             app = bot_module.create_app()
             assert isinstance(app, FastAPI)
@@ -245,9 +247,11 @@ class TestCreateApp:
         """create_app should add CORS middleware."""
         from fastapi.middleware.cors import CORSMiddleware
 
-        with patch("bot.lifespan"), \
-             patch("importlib.import_module") as mock_import, \
-             patch("pkgutil.iter_modules", return_value=[]):
+        with (
+            patch("bot.lifespan"),
+            patch("importlib.import_module") as mock_import,
+            patch("pkgutil.iter_modules", return_value=[]),
+        ):
             mock_import.return_value = MagicMock(__path__=[])
             app = bot_module.create_app()
 
@@ -258,9 +262,11 @@ class TestCreateApp:
         """create_app should produce FastAPI app with correct title and version."""
         from fastapi import FastAPI
 
-        with patch("bot.lifespan"), \
-             patch("importlib.import_module") as mock_import, \
-             patch("pkgutil.iter_modules", return_value=[]):
+        with (
+            patch("bot.lifespan"),
+            patch("importlib.import_module") as mock_import,
+            patch("pkgutil.iter_modules", return_value=[]),
+        ):
             mock_import.return_value = MagicMock(__path__=[])
             app = bot_module.create_app()
             assert isinstance(app, FastAPI)
@@ -271,9 +277,11 @@ class TestCreateApp:
         """create_app should include a root GET / endpoint."""
         from fastapi.testclient import TestClient
 
-        with patch("bot.lifespan"), \
-             patch("importlib.import_module") as mock_import, \
-             patch("pkgutil.iter_modules", return_value=[]):
+        with (
+            patch("bot.lifespan"),
+            patch("importlib.import_module") as mock_import,
+            patch("pkgutil.iter_modules", return_value=[]),
+        ):
             mock_import.return_value = MagicMock(__path__=[])
             app = bot_module.create_app()
 
@@ -288,6 +296,7 @@ class TestCreateApp:
 
 
 # ── Tests: get_bot ────────────────────────────────────────────────────────────
+
 
 class TestGetBot:
     """Tests for get_bot dependency function (line 161)."""

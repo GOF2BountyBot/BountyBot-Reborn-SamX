@@ -5,7 +5,6 @@ This module defines request/response models for Discord channel, category,
 forum-tag and forum-thread operations.
 """
 
-from typing import List, Optional, Union
 
 from pydantic import BaseModel, Field
 
@@ -21,15 +20,15 @@ class Channel(BaseModel):
     name: str = Field(..., description="Channel name")
     type: str = Field(..., description="Channel type")
     position: int = Field(..., description="Channel position")
-    guild_id: Optional[int] = Field(None, description="Guild ID")
-    category_id: Optional[int] = Field(None, description="Parent category ID")
+    guild_id: int | None = Field(None, description="Guild ID")
+    category_id: int | None = Field(None, description="Parent category ID")
     created_at: str = Field(..., description="Channel creation timestamp")
-    topic: Optional[str] = Field(None, description="Channel topic")
-    nsfw: Optional[bool] = Field(None, description="Whether channel is NSFW")
-    slowmode_delay: Optional[int] = Field(None, description="Slowmode delay in seconds")
-    bitrate: Optional[int] = Field(None, description="Voice channel bitrate")
-    user_limit: Optional[int] = Field(None, description="Voice channel user limit")
-    default_auto_archive_duration: Optional[int] = Field(
+    topic: str | None = Field(None, description="Channel topic")
+    nsfw: bool | None = Field(None, description="Whether channel is NSFW")
+    slowmode_delay: int | None = Field(None, description="Slowmode delay in seconds")
+    bitrate: int | None = Field(None, description="Voice channel bitrate")
+    user_limit: int | None = Field(None, description="Voice channel user limit")
+    default_auto_archive_duration: int | None = Field(
         None, description="Forum auto-archive duration in minutes"
     )
 
@@ -47,7 +46,7 @@ class ChannelResponse(BaseResponse):
 
 class ChannelListResponse(PaginatedResponse):
     """Response model for channel list endpoint."""
-    data: List[Channel] = Field(..., description="List of channels")
+    data: list[Channel] = Field(..., description="List of channels")
 
 class CategoryResponse(BaseResponse):
     """Response model for single category endpoint."""
@@ -55,17 +54,17 @@ class CategoryResponse(BaseResponse):
 
 class CategoryListResponse(PaginatedResponse):
     """Response model for category list endpoint."""
-    data: List[Category] = Field(..., description="List of categories")
+    data: list[Category] = Field(..., description="List of categories")
 
 class CategoryCreateRequest(BaseCreateRequest):
     """Request model for creating a category."""
     name: str = Field(..., description="Category name")
-    position: Optional[int] = Field(None, ge=0, description="Category position (≥0)")
+    position: int | None = Field(None, ge=0, description="Category position (≥0)")
 
 class CategoryUpdateRequest(BaseUpdateRequest):
     """Request model for updating a category."""
-    name: Optional[str] = Field(None, description="Category name")
-    position: Optional[int] = Field(None, ge=0, description="Category position (≥0)")
+    name: str | None = Field(None, description="Category name")
+    position: int | None = Field(None, ge=0, description="Category position (≥0)")
 
 # -------------------------------------------------------------------
 # Create / Update requests for Guild Channels (text/voice/forum)
@@ -74,29 +73,29 @@ class ChannelCreateRequest(BaseCreateRequest):
     """Request model for creating a channel."""
     name: str = Field(..., description="Channel name")
     type: str = Field("text", description="Channel type (text, voice, forum)")
-    topic: Optional[str] = Field(None, description="Channel topic")
-    bitrate: Optional[int] = Field(None, ge=0, description="Voice channel bitrate (≥0)")
-    user_limit: Optional[int] = Field(None, ge=0, description="Voice channel user limit (≥0)")
-    position: Optional[int] = Field(None, ge=0, description="Channel position (≥0)")
-    category_id: Optional[int] = Field(None, description="Parent category ID")
-    nsfw: Optional[bool] = Field(False, description="Whether channel is NSFW")
-    slowmode_delay: Optional[int] = Field(None, ge=0, description="Slowmode delay in seconds (≥0)")
-    default_auto_archive_duration: Optional[int] = Field(
+    topic: str | None = Field(None, description="Channel topic")
+    bitrate: int | None = Field(None, ge=0, description="Voice channel bitrate (≥0)")
+    user_limit: int | None = Field(None, ge=0, description="Voice channel user limit (≥0)")
+    position: int | None = Field(None, ge=0, description="Channel position (≥0)")
+    category_id: int | None = Field(None, description="Parent category ID")
+    nsfw: bool | None = Field(False, description="Whether channel is NSFW")
+    slowmode_delay: int | None = Field(None, ge=0, description="Slowmode delay in seconds (≥0)")
+    default_auto_archive_duration: int | None = Field(
         None, ge=0, description="Forum auto-archive duration in minutes (≥0)"
     )
 
 
 class ChannelUpdateRequest(BaseUpdateRequest):
     """Request model for updating a channel."""
-    name: Optional[str] = Field(None, description="Channel name")
-    topic: Optional[str] = Field(None, description="Channel topic")
-    bitrate: Optional[int] = Field(None, ge=0, description="Voice channel bitrate (≥0)")
-    user_limit: Optional[int] = Field(None, ge=0, description="Voice channel user limit (≥0)")
-    position: Optional[int] = Field(None, ge=0, description="Channel position (≥0)")
-    category_id: Optional[int] = Field(None, description="Parent category ID")
-    nsfw: Optional[bool] = Field(None, description="Whether channel is NSFW")
-    slowmode_delay: Optional[int] = Field(None, ge=0, description="Slowmode delay in seconds (≥0)")
-    default_auto_archive_duration: Optional[int] = Field(
+    name: str | None = Field(None, description="Channel name")
+    topic: str | None = Field(None, description="Channel topic")
+    bitrate: int | None = Field(None, ge=0, description="Voice channel bitrate (≥0)")
+    user_limit: int | None = Field(None, ge=0, description="Voice channel user limit (≥0)")
+    position: int | None = Field(None, ge=0, description="Channel position (≥0)")
+    category_id: int | None = Field(None, description="Parent category ID")
+    nsfw: bool | None = Field(None, description="Whether channel is NSFW")
+    slowmode_delay: int | None = Field(None, ge=0, description="Slowmode delay in seconds (≥0)")
+    default_auto_archive_duration: int | None = Field(
         None, ge=0, description="Forum auto-archive duration in minutes (≥0)"
     )
 
@@ -109,17 +108,17 @@ class ForumTag(BaseModel):
     id: int = Field(..., description="Tag ID")
     channel_id: int = Field(..., description="Channel ID")
     name: str = Field(..., description="Tag name")
-    emoji: Optional[str] = Field(None, description="Emoji identifier for tag")
+    emoji: str | None = Field(None, description="Emoji identifier for tag")
 
 class ForumTagCreateRequest(BaseModel):
     """Request to create a forum tag."""
     name: str = Field(..., description="Tag name")
-    emoji: Optional[str] = Field(None, description="Emoji identifier for tag")
+    emoji: str | None = Field(None, description="Emoji identifier for tag")
 
 class ForumTagUpdateRequest(BaseModel):
     """Request to update a forum tag."""
-    name: Optional[str] = Field(None, description="New tag name")
-    emoji: Optional[str] = Field(None, description="New emoji for tag")
+    name: str | None = Field(None, description="New tag name")
+    emoji: str | None = Field(None, description="New emoji for tag")
 
 class ForumTagResponse(BaseResponse):
     """Single-tag response model."""
@@ -127,11 +126,11 @@ class ForumTagResponse(BaseResponse):
 
 class ForumTagListResponse(PaginatedResponse):
     """List-tags response model."""
-    data: List[ForumTag] = Field(..., description="List of forum tags")
+    data: list[ForumTag] = Field(..., description="List of forum tags")
 
 class ForumTagListRequest(BaseModel):
     """Request model for updating tags on a thread/channel."""
-    tags: List[Union[int, ForumTag]] = Field(
+    tags: list[int | ForumTag] = Field(
         ..., description="List of forum tag IDs or tag objects"
     )
 
@@ -143,46 +142,46 @@ class Thread(BaseModel):
     id: int = Field(..., description="Thread channel ID")
     name: str = Field(..., description="Thread name/title")
     channel_id: int = Field(..., description="Parent channel ID")
-    guild_id: Optional[int] = Field(None, description="Guild ID")
+    guild_id: int | None = Field(None, description="Guild ID")
     owner_id: int = Field(..., description="User ID of thread creator")
     archived: bool = Field(..., description="Whether the thread is archived")
     locked: bool = Field(..., description="Whether the thread is locked")
-    message_count: Optional[int] = Field(None, description="Number of messages in the thread")
-    member_count: Optional[int] = Field(None, description="Number of members in the thread")
-    default_auto_archive_duration: Optional[int] = Field(
+    message_count: int | None = Field(None, description="Number of messages in the thread")
+    member_count: int | None = Field(None, description="Number of members in the thread")
+    default_auto_archive_duration: int | None = Field(
         None, description="Auto-archive duration in minutes"
     )
     created_at: str = Field(..., description="Thread creation timestamp")
-    last_message_id: Optional[int] = Field(None, description="Last message ID in the thread")
+    last_message_id: int | None = Field(None, description="Last message ID in the thread")
 
     # Newly added fields to surface forum tag information on thread detail responses
-    applied_tag_ids: Optional[List[int]] = Field(
+    applied_tag_ids: list[int] | None = Field(
         None, description="List of applied forum tag IDs on this thread"
     )
-    applied_tags: Optional[List[ForumTag]] = Field(
+    applied_tags: list[ForumTag] | None = Field(
         None, description="List of applied forum tag objects (when available)"
     )
 
 class ThreadCreateRequest(BaseModel):
     """Request model for creating a forum thread."""
     name: str = Field(..., description="Thread name/title")
-    auto_archive_duration: Optional[int] = Field(
+    auto_archive_duration: int | None = Field(
         None,
         description=(
             "Auto-archive duration in minutes. Allowed values: "
             "60, 1440, 4320, or 10080"
         ),
     )
-    type: Optional[str] = Field("public_thread", description="Thread type (public_thread, private_thread)")
-    initial_message: Optional[EmbedPayload] = Field(
+    type: str | None = Field("public_thread", description="Thread type (public_thread, private_thread)")
+    initial_message: EmbedPayload | None = Field(
         None, description="Initial message embed payload posted when thread is created"
     )
 
 class ThreadUpdateRequest(BaseModel):
     """Request model for updating a forum thread."""
-    name: Optional[str] = Field(None, description="New thread name/title")
-    archived: Optional[bool] = Field(None, description="Archive (close) the thread if True")
-    locked: Optional[bool] = Field(None, description="Lock/unlock the thread")
+    name: str | None = Field(None, description="New thread name/title")
+    archived: bool | None = Field(None, description="Archive (close) the thread if True")
+    locked: bool | None = Field(None, description="Lock/unlock the thread")
 
 class ThreadResponse(BaseResponse):
     """Response model for single thread endpoint."""
@@ -190,4 +189,4 @@ class ThreadResponse(BaseResponse):
 
 class ThreadListResponse(PaginatedResponse):
     """Response model for listing threads."""
-    data: List[Thread] = Field(..., description="List of forum threads")
+    data: list[Thread] = Field(..., description="List of forum threads")

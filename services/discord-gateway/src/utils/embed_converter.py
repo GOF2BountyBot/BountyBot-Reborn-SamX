@@ -7,7 +7,7 @@ The converter is completely generic and contains no business logic.
 """
 
 from datetime import datetime
-from typing import Any, Dict, List, Union
+from typing import Any
 
 import discord
 from api.schemas.message_schemas import EmbedField, EmbedPayload
@@ -26,7 +26,7 @@ class EmbedConverter:
     """
 
     @staticmethod
-    def _coerce_to_embed_payload(payload: Union[EmbedPayload, Dict[str, Any], Any]) -> EmbedPayload:
+    def _coerce_to_embed_payload(payload: EmbedPayload | dict[str, Any] | Any) -> EmbedPayload:
         """
         Coerce various input shapes into an EmbedPayload instance.
 
@@ -46,7 +46,7 @@ class EmbedConverter:
             return EmbedPayload(**payload)
 
         # pydantic v2 model or mapping-like with model_dump()
-        if hasattr(payload, "model_dump") and callable(getattr(payload, "model_dump")):
+        if hasattr(payload, "model_dump") and callable(payload.model_dump):
             try:
                 return EmbedPayload(**payload.model_dump())
             except Exception as e:  # pylint: disable=broad-exception-caught
@@ -54,7 +54,7 @@ class EmbedConverter:
                 raise
 
         # pydantic v1 / legacy model with dict()
-        if hasattr(payload, "dict") and callable(getattr(payload, "dict")):
+        if hasattr(payload, "dict") and callable(payload.dict):
             try:
                 return EmbedPayload(**payload.dict())
             except Exception as e:  # pylint: disable=broad-exception-caught
@@ -74,7 +74,7 @@ class EmbedConverter:
             raise
 
     @staticmethod
-    def payload_to_embed(payload: Union[EmbedPayload, Dict[str, Any], Any]) -> discord.Embed:
+    def payload_to_embed(payload: EmbedPayload | dict[str, Any] | Any) -> discord.Embed:
         """
         Convert a JSON payload (or EmbedPayload model) to a Discord embed.
 
@@ -152,13 +152,13 @@ class EmbedConverter:
             raise
 
     @staticmethod
-    def _inject_spacers(fields: List[EmbedField], per_row: int) -> List[EmbedField]:
+    def _inject_spacers(fields: list[EmbedField], per_row: int) -> list[EmbedField]:
         """
         After every `per_row` real fields (except the last group) insert
         a zero-width spacer so Discord will wrap exactly at per_row.
         """
         flogger.debug(f"_inject_spacers called: {len(fields)} fields, {per_row}/row")
-        out: List[EmbedField] = []
+        out: list[EmbedField] = []
         for idx, f in enumerate(fields):
             out.append(f)
             if (idx + 1) % per_row == 0 and (idx + 1) < len(fields):
@@ -169,7 +169,7 @@ class EmbedConverter:
 
     @staticmethod
     def payload_to_grid_embed(
-        payload: Union[EmbedPayload, Dict[str, Any], Any],
+        payload: EmbedPayload | dict[str, Any] | Any,
         fields_per_row: int
     ) -> discord.Embed:
         """
@@ -210,7 +210,7 @@ class EmbedConverter:
                 except Exception:  # pylint: disable=broad-exception-caught
                     color = None
 
-            fields: List[EmbedField] = []
+            fields: list[EmbedField] = []
             try:
                 for f in getattr(embed, "fields", []) or []:
                     # discord embed fields expose name/value/inline
@@ -228,7 +228,7 @@ class EmbedConverter:
             footer_icon_url = None
             try:
                 if getattr(embed, "footer", None) is not None:
-                    footer = getattr(embed, "footer")
+                    footer = embed.footer
                     footer_text = getattr(footer, "text", None) or None
                     footer_icon_url = getattr(footer, "icon_url", None) or None
                     flogger.debug(f"  extracted footer: text={footer_text!r}, icon_url={footer_icon_url!r}")
@@ -242,14 +242,14 @@ class EmbedConverter:
             thumbnail_url = None
             try:
                 if getattr(embed, "thumbnail", None) is not None:
-                    thumbnail_url = getattr(getattr(embed, "thumbnail"), "url", None)
+                    thumbnail_url = getattr(embed.thumbnail, "url", None)
             except Exception:  # pylint: disable=broad-exception-caught
                 thumbnail_url = None
 
             image_url = None
             try:
                 if getattr(embed, "image", None) is not None:
-                    image_url = getattr(getattr(embed, "image"), "url", None)
+                    image_url = getattr(embed.image, "url", None)
             except Exception:  # pylint: disable=broad-exception-caught
                 image_url = None
 
@@ -272,7 +272,7 @@ class EmbedConverter:
             raise
 
     @staticmethod
-    def test_round_trip_consistency(payload: Union[EmbedPayload, Dict[str, Any], Any]) -> bool:
+    def test_round_trip_consistency(payload: EmbedPayload | dict[str, Any] | Any) -> bool:
         """
         Test that payload -> embed -> payload maintains consistency.
 

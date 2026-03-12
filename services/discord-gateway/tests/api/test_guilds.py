@@ -57,11 +57,17 @@ def create_mock_guild(
     features=(),
     emojis=(),
     stickers=(),
-    roles=[],
-    channels=[],
-    members=[]
+    roles=None,
+    channels=None,
+    members=None,
 ):
     """Create a mock Discord guild using DiscordMockUtils."""
+    if roles is None:
+        roles = []
+    if channels is None:
+        channels = []
+    if members is None:
+        members = []
     guild = DiscordMockUtils.create_mock_guild(
         guild_id=guild_id,
         name=name,
@@ -91,14 +97,16 @@ def create_mock_member(
     username="TestUser",
     discriminator="1234",
     guild_id=987654321,
-    roles=[],
+    roles=None,
     nick=None,
     joined_at=None,
     premium_since=None,
     pending=False,
-    communication_disabled_until=None
+    communication_disabled_until=None,
 ):
     """Create a mock Discord member using DiscordMockUtils."""
+    if roles is None:
+        roles = []
     member = DiscordMockUtils.create_mock_member(
         user_id=user_id,
         guild_id=guild_id,
@@ -132,7 +140,7 @@ def create_mock_role(
     permissions=None,
     managed=False,
     mentionable=False,
-    is_integration=False
+    is_integration=False,
 ):
     """Create a mock Discord role using DiscordMockUtils."""
     role = DiscordMockUtils.create_mock_role(
@@ -171,9 +179,16 @@ def mock_bot():
 
 def _evict_discord_modules():
     """Remove any cached discord or source modules so they re-import with real discord."""
-    to_evict = [k for k in sys.modules if k == "discord" or k.startswith("discord.")
-                or k in ("api", "bot", "utils") or k.startswith("api.") or k.startswith("utils.")
-                or k.startswith("cogs.")]
+    to_evict = [
+        k
+        for k in sys.modules
+        if k == "discord"
+        or k.startswith("discord.")
+        or k in ("api", "bot", "utils")
+        or k.startswith("api.")
+        or k.startswith("utils.")
+        or k.startswith("cogs.")
+    ]
     for k in to_evict:
         sys.modules.pop(k, None)
 
@@ -187,18 +202,21 @@ def guilds_test_app(mock_bot):
 
     app.state.bot = mock_bot
 
-    with patch("api.routers.guilds.get_entity_or_404", new_callable=AsyncMock) as mock_get_entity, \
-         patch("api.routers.guilds.handle_discord_exception", new_callable=AsyncMock) as mock_handle, \
-         patch("api.routers.guilds.resolve_bot", new_callable=AsyncMock) as mock_resolve, \
-         patch("api.routers.guilds.GuildConverter") as mock_converter, \
-         patch("api.routers.guilds.ChannelConverter") as mock_ch_converter, \
-         patch("api.routers.guilds.RoleConverter") as mock_role_converter, \
-         patch("api.routers.guilds.UserConverter") as mock_user_converter:
+    with (
+        patch("api.routers.guilds.get_entity_or_404", new_callable=AsyncMock) as mock_get_entity,
+        patch("api.routers.guilds.handle_discord_exception", new_callable=AsyncMock) as mock_handle,
+        patch("api.routers.guilds.resolve_bot", new_callable=AsyncMock) as mock_resolve,
+        patch("api.routers.guilds.GuildConverter") as mock_converter,
+        patch("api.routers.guilds.ChannelConverter") as mock_ch_converter,
+        patch("api.routers.guilds.RoleConverter") as mock_role_converter,
+        patch("api.routers.guilds.UserConverter") as mock_user_converter,
+    ):
 
         async def mock_get_entity_or_404(get_fn, fetch_fn, entity_id, entity_type):
             guild = mock_bot.get_guild(entity_id)
             if guild is None:
                 from fastapi import HTTPException
+
                 raise HTTPException(status_code=404, detail=f"{entity_type} {entity_id} not found")
             return guild
 
@@ -212,6 +230,7 @@ def guilds_test_app(mock_bot):
         # guild_to_summary is called for each guild in bot.guilds
         # GuildListResponse.data is List[Guild], so we return a Guild-compatible object
         from api.schemas.guild_schemas import Guild
+
         _guild_data = Guild(
             id=987654321,
             name="Test Guild",

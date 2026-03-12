@@ -58,6 +58,7 @@ import discord
 # Helper factories
 # ---------------------------------------------------------------------------
 
+
 def _make_guild(
     guild_id=987654321,
     name="Test Guild",
@@ -67,9 +68,7 @@ def _make_guild(
     categories=None,
     roles=None,
 ):
-    guild = DiscordMockUtils.create_mock_guild(
-        guild_id=guild_id, name=name, description="Test"
-    )
+    guild = DiscordMockUtils.create_mock_guild(guild_id=guild_id, name=name, description="Test")
     guild.chunked = chunked
     guild.chunk = AsyncMock()
     guild.members = members or []
@@ -106,6 +105,7 @@ def _make_member(user_id=111111111):
 def _member_schema(user_id=111111111):
     from api.schemas.user_schemas import Member as MemberSchema
     from api.schemas.user_schemas import User as UserSchema
+
     user = UserSchema(
         id=user_id,
         username="TestUser",
@@ -131,14 +131,13 @@ def _member_schema(user_id=111111111):
 
 
 def _make_role(role_id=222222222, name="Test Role", position=1):
-    role = DiscordMockUtils.create_mock_role(
-        role_id=role_id, name=name, position=position, color_value=0x00FF00
-    )
+    role = DiscordMockUtils.create_mock_role(role_id=role_id, name=name, position=position, color_value=0x00FF00)
     return role
 
 
 def _guild_schema(guild_id=987654321):
     from api.schemas.guild_schemas import Guild
+
     return Guild(
         id=guild_id,
         name="Test Guild",
@@ -161,6 +160,7 @@ def _guild_schema(guild_id=987654321):
 
 def _role_schema(role_id=222222222, position=1):
     from api.schemas.role_schemas import Role
+
     return Role(
         id=role_id,
         guild_id=987654321,
@@ -177,6 +177,7 @@ def _role_schema(role_id=222222222, position=1):
 
 def _channel_detail():
     from api.schemas.channel_schemas import Channel
+
     return Channel(
         id=1234567890,
         name="test-channel",
@@ -189,6 +190,7 @@ def _channel_detail():
 
 def _category_detail():
     from api.schemas.channel_schemas import Category
+
     return Category(
         id=1111111111,
         name="Test Category",
@@ -200,9 +202,14 @@ def _category_detail():
 
 def _evict_discord_modules():
     to_evict = [
-        k for k in sys.modules
-        if k in ("api", "bot", "utils") or k.startswith("api.") or k.startswith("utils.")
-        or k.startswith("cogs.") or k == "discord" or k.startswith("discord.")
+        k
+        for k in sys.modules
+        if k in ("api", "bot", "utils")
+        or k.startswith("api.")
+        or k.startswith("utils.")
+        or k.startswith("cogs.")
+        or k == "discord"
+        or k.startswith("discord.")
     ]
     for k in to_evict:
         sys.modules.pop(k, None)
@@ -211,6 +218,7 @@ def _evict_discord_modules():
 # ---------------------------------------------------------------------------
 # App builder fixture
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture
 def mock_bot():
@@ -233,13 +241,15 @@ def guilds_test_app(mock_bot):
     app = FastAPI()
     app.state.bot = mock_bot
 
-    with patch("api.routers.guilds.get_entity_or_404", new_callable=AsyncMock) as mock_get_entity, \
-         patch("api.routers.guilds.handle_discord_exception", new_callable=AsyncMock) as mock_handle, \
-         patch("api.routers.guilds.resolve_bot", new_callable=AsyncMock) as mock_resolve, \
-         patch("api.routers.guilds.GuildConverter") as mock_gc, \
-         patch("api.routers.guilds.ChannelConverter") as mock_cc, \
-         patch("api.routers.guilds.RoleConverter") as mock_rc, \
-         patch("api.routers.guilds.UserConverter") as mock_uc:
+    with (
+        patch("api.routers.guilds.get_entity_or_404", new_callable=AsyncMock) as mock_get_entity,
+        patch("api.routers.guilds.handle_discord_exception", new_callable=AsyncMock) as mock_handle,
+        patch("api.routers.guilds.resolve_bot", new_callable=AsyncMock) as mock_resolve,
+        patch("api.routers.guilds.GuildConverter") as mock_gc,
+        patch("api.routers.guilds.ChannelConverter") as mock_cc,
+        patch("api.routers.guilds.RoleConverter") as mock_rc,
+        patch("api.routers.guilds.UserConverter") as mock_uc,
+    ):
 
         async def _resolve(req):
             return mock_bot
@@ -263,6 +273,7 @@ def guilds_test_app(mock_bot):
         mock_uc.member_to_payload.return_value = _member_schema()
 
         from api.routers.guilds import router
+
         app.include_router(router, prefix="/api/v1")
 
         yield app
@@ -276,6 +287,7 @@ def guilds_client(guilds_test_app):
 # ---------------------------------------------------------------------------
 # Tests: list_guild_members — limit and chunked paths
 # ---------------------------------------------------------------------------
+
 
 class TestListGuildMembersExtended:
     """Cover member listing with limit, chunked=False, and exception paths."""
@@ -294,13 +306,15 @@ class TestListGuildMembersExtended:
         app = FastAPI()
         app.state.bot = bot
 
-        with patch("api.routers.guilds.get_entity_or_404", new_callable=AsyncMock) as mock_get_entity, \
-             patch("api.routers.guilds.handle_discord_exception", new_callable=AsyncMock) as mock_handle, \
-             patch("api.routers.guilds.resolve_bot", new_callable=AsyncMock) as mock_resolve, \
-             patch("api.routers.guilds.GuildConverter") as mock_gc, \
-             patch("api.routers.guilds.ChannelConverter") as mock_cc, \
-             patch("api.routers.guilds.RoleConverter") as mock_rc, \
-             patch("api.routers.guilds.UserConverter") as mock_uc:
+        with (
+            patch("api.routers.guilds.get_entity_or_404", new_callable=AsyncMock) as mock_get_entity,
+            patch("api.routers.guilds.handle_discord_exception", new_callable=AsyncMock) as mock_handle,
+            patch("api.routers.guilds.resolve_bot", new_callable=AsyncMock) as mock_resolve,
+            patch("api.routers.guilds.GuildConverter") as mock_gc,
+            patch("api.routers.guilds.ChannelConverter") as mock_cc,
+            patch("api.routers.guilds.RoleConverter") as mock_rc,
+            patch("api.routers.guilds.UserConverter") as mock_uc,
+        ):
 
             async def _resolve(req):
                 return bot
@@ -323,6 +337,7 @@ class TestListGuildMembersExtended:
             mock_uc.member_to_payload.return_value = _member_schema()
 
             from api.routers.guilds import router
+
             app.include_router(router, prefix="/api/v1")
 
             yield TestClient(app)
@@ -360,6 +375,7 @@ class TestListGuildMembersExtended:
 # Tests: create_channel endpoint (lines 200-254)
 # ---------------------------------------------------------------------------
 
+
 class TestCreateChannel:
     """Cover POST /guilds/{guild_id}/channels."""
 
@@ -377,13 +393,15 @@ class TestCreateChannel:
         app = FastAPI()
         app.state.bot = bot
 
-        with patch("api.routers.guilds.get_entity_or_404", new_callable=AsyncMock) as mock_get_entity, \
-             patch("api.routers.guilds.handle_discord_exception", new_callable=AsyncMock), \
-             patch("api.routers.guilds.resolve_bot", new_callable=AsyncMock) as mock_resolve, \
-             patch("api.routers.guilds.GuildConverter") as mock_gc, \
-             patch("api.routers.guilds.ChannelConverter") as mock_cc, \
-             patch("api.routers.guilds.RoleConverter") as mock_rc, \
-             patch("api.routers.guilds.UserConverter") as mock_uc:
+        with (
+            patch("api.routers.guilds.get_entity_or_404", new_callable=AsyncMock) as mock_get_entity,
+            patch("api.routers.guilds.handle_discord_exception", new_callable=AsyncMock),
+            patch("api.routers.guilds.resolve_bot", new_callable=AsyncMock) as mock_resolve,
+            patch("api.routers.guilds.GuildConverter") as mock_gc,
+            patch("api.routers.guilds.ChannelConverter") as mock_cc,
+            patch("api.routers.guilds.RoleConverter") as mock_rc,
+            patch("api.routers.guilds.UserConverter") as mock_uc,
+        ):
 
             async def _resolve(req):
                 return bot
@@ -405,6 +423,7 @@ class TestCreateChannel:
             mock_uc.member_to_payload.return_value = {}
 
             from api.routers.guilds import router
+
             app.include_router(router, prefix="/api/v1")
 
             yield TestClient(app)
@@ -418,8 +437,7 @@ class TestCreateChannel:
 
         for client in self._build_app_with_guild(guild):
             response = client.post(
-                "/api/v1/guilds/987654321/channels",
-                json={"name": "new-text-channel", "type": "text"}
+                "/api/v1/guilds/987654321/channels", json={"name": "new-text-channel", "type": "text"}
             )
             assert response.status_code == 201
             assert response.json()["status"] == "created"
@@ -432,10 +450,7 @@ class TestCreateChannel:
         guild.create_voice_channel = AsyncMock(return_value=mock_channel)
 
         for client in self._build_app_with_guild(guild):
-            response = client.post(
-                "/api/v1/guilds/987654321/channels",
-                json={"name": "voice-channel", "type": "voice"}
-            )
+            response = client.post("/api/v1/guilds/987654321/channels", json={"name": "voice-channel", "type": "voice"})
             assert response.status_code == 201
             assert response.json()["status"] == "created"
 
@@ -447,10 +462,7 @@ class TestCreateChannel:
         guild.create_forum = AsyncMock(return_value=mock_channel)
 
         for client in self._build_app_with_guild(guild):
-            response = client.post(
-                "/api/v1/guilds/987654321/channels",
-                json={"name": "forum-channel", "type": "forum"}
-            )
+            response = client.post("/api/v1/guilds/987654321/channels", json={"name": "forum-channel", "type": "forum"})
             assert response.status_code == 201
 
     def test_create_channel_guild_not_found(self):
@@ -458,10 +470,7 @@ class TestCreateChannel:
         guild = _make_guild()
 
         for client in self._build_app_with_guild(guild):
-            response = client.post(
-                "/api/v1/guilds/9999999999/channels",
-                json={"name": "test", "type": "text"}
-            )
+            response = client.post("/api/v1/guilds/9999999999/channels", json={"name": "test", "type": "text"})
             assert response.status_code == 404
 
     def test_create_channel_missing_name_returns_422(self):
@@ -469,10 +478,7 @@ class TestCreateChannel:
         guild = _make_guild()
 
         for client in self._build_app_with_guild(guild):
-            response = client.post(
-                "/api/v1/guilds/987654321/channels",
-                json={"type": "text"}
-            )
+            response = client.post("/api/v1/guilds/987654321/channels", json={"type": "text"})
             assert response.status_code == 422
 
     def test_create_channel_with_invalid_category(self):
@@ -482,8 +488,7 @@ class TestCreateChannel:
 
         for client in self._build_app_with_guild(guild):
             response = client.post(
-                "/api/v1/guilds/987654321/channels",
-                json={"name": "test", "type": "text", "category_id": 9999999}
+                "/api/v1/guilds/987654321/channels", json={"name": "test", "type": "text", "category_id": 9999999}
             )
             assert response.status_code == 404
 
@@ -491,6 +496,7 @@ class TestCreateChannel:
 # ---------------------------------------------------------------------------
 # Tests: create_category endpoint (lines 306-333)
 # ---------------------------------------------------------------------------
+
 
 class TestCreateCategory:
     """Cover POST /guilds/{guild_id}/categories."""
@@ -509,13 +515,15 @@ class TestCreateCategory:
         app = FastAPI()
         app.state.bot = bot
 
-        with patch("api.routers.guilds.get_entity_or_404", new_callable=AsyncMock) as mock_get_entity, \
-             patch("api.routers.guilds.handle_discord_exception", new_callable=AsyncMock), \
-             patch("api.routers.guilds.resolve_bot", new_callable=AsyncMock) as mock_resolve, \
-             patch("api.routers.guilds.GuildConverter") as mock_gc, \
-             patch("api.routers.guilds.ChannelConverter") as mock_cc, \
-             patch("api.routers.guilds.RoleConverter") as mock_rc, \
-             patch("api.routers.guilds.UserConverter") as mock_uc:
+        with (
+            patch("api.routers.guilds.get_entity_or_404", new_callable=AsyncMock) as mock_get_entity,
+            patch("api.routers.guilds.handle_discord_exception", new_callable=AsyncMock),
+            patch("api.routers.guilds.resolve_bot", new_callable=AsyncMock) as mock_resolve,
+            patch("api.routers.guilds.GuildConverter") as mock_gc,
+            patch("api.routers.guilds.ChannelConverter") as mock_cc,
+            patch("api.routers.guilds.RoleConverter") as mock_rc,
+            patch("api.routers.guilds.UserConverter") as mock_uc,
+        ):
 
             async def _resolve(req):
                 return bot
@@ -537,6 +545,7 @@ class TestCreateCategory:
             mock_uc.member_to_payload.return_value = {}
 
             from api.routers.guilds import router
+
             app.include_router(router, prefix="/api/v1")
 
             yield TestClient(app)
@@ -549,10 +558,7 @@ class TestCreateCategory:
         guild.create_category_channel = AsyncMock(return_value=mock_category)
 
         for client in self._build_app_with_guild(guild):
-            response = client.post(
-                "/api/v1/guilds/987654321/categories",
-                json={"name": "New Category"}
-            )
+            response = client.post("/api/v1/guilds/987654321/categories", json={"name": "New Category"})
             assert response.status_code == 201
             assert response.json()["status"] == "created"
 
@@ -564,10 +570,7 @@ class TestCreateCategory:
         guild.create_category_channel = AsyncMock(return_value=mock_category)
 
         for client in self._build_app_with_guild(guild):
-            response = client.post(
-                "/api/v1/guilds/987654321/categories",
-                json={"name": "Positioned", "position": 5}
-            )
+            response = client.post("/api/v1/guilds/987654321/categories", json={"name": "Positioned", "position": 5})
             assert response.status_code == 201
 
     def test_create_category_guild_not_found(self):
@@ -575,10 +578,7 @@ class TestCreateCategory:
         guild = _make_guild()
 
         for client in self._build_app_with_guild(guild):
-            response = client.post(
-                "/api/v1/guilds/9999999999/categories",
-                json={"name": "Test Cat"}
-            )
+            response = client.post("/api/v1/guilds/9999999999/categories", json={"name": "Test Cat"})
             assert response.status_code == 404
 
     def test_create_category_missing_name_returns_422(self):
@@ -593,6 +593,7 @@ class TestCreateCategory:
 # ---------------------------------------------------------------------------
 # Tests: create_role endpoint (lines 386-464)
 # ---------------------------------------------------------------------------
+
 
 class TestCreateRole:
     """Cover POST /guilds/{guild_id}/roles."""
@@ -611,13 +612,15 @@ class TestCreateRole:
         app = FastAPI()
         app.state.bot = bot
 
-        with patch("api.routers.guilds.get_entity_or_404", new_callable=AsyncMock) as mock_get_entity, \
-             patch("api.routers.guilds.handle_discord_exception", new_callable=AsyncMock), \
-             patch("api.routers.guilds.resolve_bot", new_callable=AsyncMock) as mock_resolve, \
-             patch("api.routers.guilds.GuildConverter") as mock_gc, \
-             patch("api.routers.guilds.ChannelConverter") as mock_cc, \
-             patch("api.routers.guilds.RoleConverter") as mock_rc, \
-             patch("api.routers.guilds.UserConverter") as mock_uc:
+        with (
+            patch("api.routers.guilds.get_entity_or_404", new_callable=AsyncMock) as mock_get_entity,
+            patch("api.routers.guilds.handle_discord_exception", new_callable=AsyncMock),
+            patch("api.routers.guilds.resolve_bot", new_callable=AsyncMock) as mock_resolve,
+            patch("api.routers.guilds.GuildConverter") as mock_gc,
+            patch("api.routers.guilds.ChannelConverter") as mock_cc,
+            patch("api.routers.guilds.RoleConverter") as mock_rc,
+            patch("api.routers.guilds.UserConverter") as mock_uc,
+        ):
 
             async def _resolve(req):
                 return bot
@@ -639,6 +642,7 @@ class TestCreateRole:
             mock_uc.member_to_payload.return_value = {}
 
             from api.routers.guilds import router
+
             app.include_router(router, prefix="/api/v1")
 
             yield TestClient(app)
@@ -651,10 +655,7 @@ class TestCreateRole:
         guild.create_role = AsyncMock(return_value=mock_role)
 
         for client in self._build_app_with_guild(guild):
-            response = client.post(
-                "/api/v1/guilds/987654321/roles",
-                json={"name": "new-role"}
-            )
+            response = client.post("/api/v1/guilds/987654321/roles", json={"name": "new-role"})
             assert response.status_code == 201
             assert response.json()["status"] == "created"
 
@@ -668,7 +669,7 @@ class TestCreateRole:
         for client in self._build_app_with_guild(guild):
             response = client.post(
                 "/api/v1/guilds/987654321/roles",
-                json={"name": "perms-role", "permissions": 8}  # 8 = Administrator
+                json={"name": "perms-role", "permissions": 8},  # 8 = Administrator
             )
             assert response.status_code == 201
 
@@ -680,10 +681,7 @@ class TestCreateRole:
         guild.create_role = AsyncMock(return_value=mock_role)
 
         for client in self._build_app_with_guild(guild):
-            response = client.post(
-                "/api/v1/guilds/987654321/roles",
-                json={"name": "colored-role", "color": 0xFF5733}
-            )
+            response = client.post("/api/v1/guilds/987654321/roles", json={"name": "colored-role", "color": 0xFF5733})
             assert response.status_code == 201
 
     def test_create_role_negative_permissions_returns_error(self):
@@ -700,13 +698,15 @@ class TestCreateRole:
         app = FastAPI()
         app.state.bot = bot
 
-        with patch("api.routers.guilds.get_entity_or_404", new_callable=AsyncMock) as mock_get_entity, \
-             patch("api.routers.guilds.handle_discord_exception", new_callable=AsyncMock) as mock_handle, \
-             patch("api.routers.guilds.resolve_bot", new_callable=AsyncMock) as mock_resolve, \
-             patch("api.routers.guilds.GuildConverter") as mock_gc, \
-             patch("api.routers.guilds.ChannelConverter") as mock_cc, \
-             patch("api.routers.guilds.RoleConverter") as mock_rc, \
-             patch("api.routers.guilds.UserConverter") as mock_uc:
+        with (
+            patch("api.routers.guilds.get_entity_or_404", new_callable=AsyncMock) as mock_get_entity,
+            patch("api.routers.guilds.handle_discord_exception", new_callable=AsyncMock) as mock_handle,
+            patch("api.routers.guilds.resolve_bot", new_callable=AsyncMock) as mock_resolve,
+            patch("api.routers.guilds.GuildConverter") as mock_gc,
+            patch("api.routers.guilds.ChannelConverter") as mock_cc,
+            patch("api.routers.guilds.RoleConverter") as mock_rc,
+            patch("api.routers.guilds.UserConverter") as mock_uc,
+        ):
 
             async def _resolve(req):
                 return bot
@@ -730,13 +730,11 @@ class TestCreateRole:
             mock_uc.member_to_payload.return_value = _member_schema()
 
             from api.routers.guilds import router
+
             app.include_router(router, prefix="/api/v1")
 
             client = TestClient(app)
-            response = client.post(
-                "/api/v1/guilds/987654321/roles",
-                json={"name": "bad-role", "permissions": -1}
-            )
+            response = client.post("/api/v1/guilds/987654321/roles", json={"name": "bad-role", "permissions": -1})
             # Negative permissions triggers an AttributeError (status.HTTP_422 is not defined)
             # which is caught by outer except and routed to handle_discord_exception → 500
             assert response.status_code in (422, 500, 503)
@@ -746,10 +744,7 @@ class TestCreateRole:
         guild = _make_guild()
 
         for client in self._build_app_with_guild(guild):
-            response = client.post(
-                "/api/v1/guilds/9999999999/roles",
-                json={"name": "Test Role"}
-            )
+            response = client.post("/api/v1/guilds/9999999999/roles", json={"name": "Test Role"})
             assert response.status_code == 404
 
     def test_create_role_with_hoist_and_mentionable(self):
@@ -761,8 +756,7 @@ class TestCreateRole:
 
         for client in self._build_app_with_guild(guild):
             response = client.post(
-                "/api/v1/guilds/987654321/roles",
-                json={"name": "hoisted", "hoist": True, "mentionable": True}
+                "/api/v1/guilds/987654321/roles", json={"name": "hoisted", "hoist": True, "mentionable": True}
             )
             assert response.status_code == 201
 
@@ -770,6 +764,7 @@ class TestCreateRole:
 # ---------------------------------------------------------------------------
 # Tests: list_guild_roles with sorted output (lines 356-357)
 # ---------------------------------------------------------------------------
+
 
 class TestListGuildRolesExtended:
     """Cover role listing with sorted output."""
@@ -793,6 +788,7 @@ class TestListGuildRolesExtended:
 # Tests: list_guild_channels with CategoryChannel filtering
 # ---------------------------------------------------------------------------
 
+
 class TestListGuildChannelsExtended:
     """Cover channel listing with category filtering."""
 
@@ -813,6 +809,7 @@ class TestListGuildChannelsExtended:
 # ---------------------------------------------------------------------------
 # Tests: list_categories extended
 # ---------------------------------------------------------------------------
+
 
 class TestListCategoriesExtended:
     """Cover category listing."""
@@ -837,13 +834,15 @@ class TestListCategoriesExtended:
         app = FastAPI()
         app.state.bot = bot
 
-        with patch("api.routers.guilds.get_entity_or_404", new_callable=AsyncMock) as mock_get_entity, \
-             patch("api.routers.guilds.handle_discord_exception", new_callable=AsyncMock), \
-             patch("api.routers.guilds.resolve_bot", new_callable=AsyncMock) as mock_resolve, \
-             patch("api.routers.guilds.GuildConverter") as mock_gc, \
-             patch("api.routers.guilds.ChannelConverter") as mock_cc, \
-             patch("api.routers.guilds.RoleConverter") as mock_rc, \
-             patch("api.routers.guilds.UserConverter") as mock_uc:
+        with (
+            patch("api.routers.guilds.get_entity_or_404", new_callable=AsyncMock) as mock_get_entity,
+            patch("api.routers.guilds.handle_discord_exception", new_callable=AsyncMock),
+            patch("api.routers.guilds.resolve_bot", new_callable=AsyncMock) as mock_resolve,
+            patch("api.routers.guilds.GuildConverter") as mock_gc,
+            patch("api.routers.guilds.ChannelConverter") as mock_cc,
+            patch("api.routers.guilds.RoleConverter") as mock_rc,
+            patch("api.routers.guilds.UserConverter") as mock_uc,
+        ):
 
             async def _resolve(req):
                 return bot
@@ -865,6 +864,7 @@ class TestListCategoriesExtended:
             mock_uc.member_to_payload.return_value = {}
 
             from api.routers.guilds import router
+
             app.include_router(router, prefix="/api/v1")
 
             client = TestClient(app)
@@ -886,6 +886,7 @@ class TestListCategoriesExtended:
 # or where handle_discord_exception raises HTTPException(500).
 # Used to cover ALL the broad-except handlers.
 # ---------------------------------------------------------------------------
+
 
 def _build_exception_app(
     *,
@@ -915,14 +916,15 @@ def _build_exception_app(
     app = FastAPI()
     app.state.bot = bot
 
-    with patch("api.routers.guilds.get_entity_or_404", new_callable=AsyncMock) as mock_get_entity, \
-         patch("api.routers.guilds.handle_discord_exception", new_callable=AsyncMock) as mock_handle, \
-         patch("api.routers.guilds.resolve_bot", new_callable=AsyncMock) as mock_resolve, \
-         patch("api.routers.guilds.GuildConverter") as mock_gc, \
-         patch("api.routers.guilds.ChannelConverter") as mock_cc, \
-         patch("api.routers.guilds.RoleConverter") as mock_rc, \
-         patch("api.routers.guilds.UserConverter") as mock_uc:
-
+    with (
+        patch("api.routers.guilds.get_entity_or_404", new_callable=AsyncMock) as mock_get_entity,
+        patch("api.routers.guilds.handle_discord_exception", new_callable=AsyncMock) as mock_handle,
+        patch("api.routers.guilds.resolve_bot", new_callable=AsyncMock) as mock_resolve,
+        patch("api.routers.guilds.GuildConverter") as mock_gc,
+        patch("api.routers.guilds.ChannelConverter") as mock_cc,
+        patch("api.routers.guilds.RoleConverter") as mock_rc,
+        patch("api.routers.guilds.UserConverter") as mock_uc,
+    ):
         if resolve_raises:
             mock_resolve.side_effect = resolve_raises
         else:
@@ -931,11 +933,13 @@ def _build_exception_app(
         if get_entity_raises:
             mock_get_entity.side_effect = get_entity_raises
         else:
+
             async def _get_entity_or_404(get_fn, fetch_fn, entity_id, entity_type):
                 g = bot.get_guild(entity_id)
                 if g is None:
                     raise HTTPException(status_code=404, detail=f"{entity_type} {entity_id} not found")
                 return g
+
             mock_get_entity.side_effect = _get_entity_or_404
 
         # Make handle_discord_exception raise 500 so we get a proper HTTP response
@@ -950,6 +954,7 @@ def _build_exception_app(
         mock_uc.member_to_payload.return_value = _member_schema()
 
         from api.routers.guilds import router
+
         app.include_router(router, prefix="/api/v1")
 
         yield TestClient(app), mock_handle
@@ -959,6 +964,7 @@ def _build_exception_app(
 # Tests: Exception handler coverage for every endpoint
 # Lines 67-71, 101-103, 146-148, 183-185, 252-254, 289-291, 331-333, 369-371
 # ---------------------------------------------------------------------------
+
 
 class TestExceptionHandlers:
     """Cover the broad except Exception handlers on every endpoint."""
@@ -1056,6 +1062,7 @@ class TestExceptionHandlers:
 # Tests: list_guild_channels with real channel objects (lines 173-174)
 # ---------------------------------------------------------------------------
 
+
 class TestListChannelsWithData:
     """Cover the channel filtering loop body (lines 173-174)."""
 
@@ -1089,14 +1096,15 @@ class TestListChannelsWithData:
         app = FastAPI()
         app.state.bot = bot
 
-        with patch("api.routers.guilds.get_entity_or_404", new_callable=AsyncMock) as mock_get_entity, \
-             patch("api.routers.guilds.handle_discord_exception", new_callable=AsyncMock), \
-             patch("api.routers.guilds.resolve_bot", new_callable=AsyncMock) as mock_resolve, \
-             patch("api.routers.guilds.GuildConverter"), \
-             patch("api.routers.guilds.ChannelConverter") as mock_cc, \
-             patch("api.routers.guilds.RoleConverter"), \
-             patch("api.routers.guilds.UserConverter"):
-
+        with (
+            patch("api.routers.guilds.get_entity_or_404", new_callable=AsyncMock) as mock_get_entity,
+            patch("api.routers.guilds.handle_discord_exception", new_callable=AsyncMock),
+            patch("api.routers.guilds.resolve_bot", new_callable=AsyncMock) as mock_resolve,
+            patch("api.routers.guilds.GuildConverter"),
+            patch("api.routers.guilds.ChannelConverter") as mock_cc,
+            patch("api.routers.guilds.RoleConverter"),
+            patch("api.routers.guilds.UserConverter"),
+        ):
             mock_resolve.side_effect = lambda req: bot
 
             async def _get(get_fn, fetch_fn, eid, etype):
@@ -1109,6 +1117,7 @@ class TestListChannelsWithData:
             mock_cc.channel_to_summary.return_value = _channel_detail()
 
             from api.routers.guilds import router
+
             app.include_router(router, prefix="/api/v1")
 
             client = TestClient(app)
@@ -1124,6 +1133,7 @@ class TestListChannelsWithData:
 # ---------------------------------------------------------------------------
 # Tests: list_guild_roles with actual role objects (lines 356-357)
 # ---------------------------------------------------------------------------
+
 
 class TestListRolesWithData:
     """Cover the role iteration loop body (lines 356-357)."""
@@ -1149,14 +1159,15 @@ class TestListRolesWithData:
         # Track call order to verify each role is converted
         call_positions = []
 
-        with patch("api.routers.guilds.get_entity_or_404", new_callable=AsyncMock) as mock_get_entity, \
-             patch("api.routers.guilds.handle_discord_exception", new_callable=AsyncMock), \
-             patch("api.routers.guilds.resolve_bot", new_callable=AsyncMock) as mock_resolve, \
-             patch("api.routers.guilds.GuildConverter"), \
-             patch("api.routers.guilds.ChannelConverter"), \
-             patch("api.routers.guilds.RoleConverter") as mock_rc, \
-             patch("api.routers.guilds.UserConverter"):
-
+        with (
+            patch("api.routers.guilds.get_entity_or_404", new_callable=AsyncMock) as mock_get_entity,
+            patch("api.routers.guilds.handle_discord_exception", new_callable=AsyncMock),
+            patch("api.routers.guilds.resolve_bot", new_callable=AsyncMock) as mock_resolve,
+            patch("api.routers.guilds.GuildConverter"),
+            patch("api.routers.guilds.ChannelConverter"),
+            patch("api.routers.guilds.RoleConverter") as mock_rc,
+            patch("api.routers.guilds.UserConverter"),
+        ):
             mock_resolve.side_effect = lambda req: bot
 
             async def _get(get_fn, fetch_fn, eid, etype):
@@ -1176,6 +1187,7 @@ class TestListRolesWithData:
             mock_rc.role_to_payload.side_effect = _role_payload_side_effect
 
             from api.routers.guilds import router
+
             app.include_router(router, prefix="/api/v1")
 
             client = TestClient(app)
@@ -1194,6 +1206,7 @@ class TestListRolesWithData:
 # Tests: create_role permissions bitmask mismatch (line 409)
 # ---------------------------------------------------------------------------
 
+
 class TestCreateRolePermsBitmask:
     """Cover the perms.value != role_data.permissions branch (line 409)."""
 
@@ -1210,14 +1223,15 @@ class TestCreateRolePermsBitmask:
         app = FastAPI()
         app.state.bot = bot
 
-        with patch("api.routers.guilds.get_entity_or_404", new_callable=AsyncMock) as mock_get_entity, \
-             patch("api.routers.guilds.handle_discord_exception", new_callable=AsyncMock) as mock_handle, \
-             patch("api.routers.guilds.resolve_bot", new_callable=AsyncMock) as mock_resolve, \
-             patch("api.routers.guilds.GuildConverter"), \
-             patch("api.routers.guilds.ChannelConverter") as mock_cc, \
-             patch("api.routers.guilds.RoleConverter") as mock_rc, \
-             patch("api.routers.guilds.UserConverter"):
-
+        with (
+            patch("api.routers.guilds.get_entity_or_404", new_callable=AsyncMock) as mock_get_entity,
+            patch("api.routers.guilds.handle_discord_exception", new_callable=AsyncMock) as mock_handle,
+            patch("api.routers.guilds.resolve_bot", new_callable=AsyncMock) as mock_resolve,
+            patch("api.routers.guilds.GuildConverter"),
+            patch("api.routers.guilds.ChannelConverter") as mock_cc,
+            patch("api.routers.guilds.RoleConverter") as mock_rc,
+            patch("api.routers.guilds.UserConverter"),
+        ):
             mock_resolve.side_effect = lambda req: bot
 
             async def _get(get_fn, fetch_fn, eid, etype):
@@ -1238,6 +1252,7 @@ class TestCreateRolePermsBitmask:
 
             with patch("api.routers.guilds.discord.Permissions", return_value=mock_perms):
                 from api.routers.guilds import router
+
                 app.include_router(router, prefix="/api/v1")
 
                 client = TestClient(app)
@@ -1254,6 +1269,7 @@ class TestCreateRolePermsBitmask:
 # ---------------------------------------------------------------------------
 # Tests: create_role timeout/retry logic (lines 435-459)
 # ---------------------------------------------------------------------------
+
 
 class TestCreateRoleRetryLogic:
     """Cover the timeout/retry paths in create_role (lines 435-459)."""
@@ -1280,17 +1296,18 @@ class TestCreateRoleRetryLogic:
             """Transparent wrapper: just await the coroutine."""
             return await coro
 
-        with patch("api.routers.guilds.get_entity_or_404", new_callable=AsyncMock) as mock_get_entity, \
-             patch("api.routers.guilds.handle_discord_exception", new_callable=AsyncMock) as mock_handle, \
-             patch("api.routers.guilds.resolve_bot", new_callable=AsyncMock) as mock_resolve, \
-             patch("api.routers.guilds.GuildConverter"), \
-             patch("api.routers.guilds.ChannelConverter") as mock_cc, \
-             patch("api.routers.guilds.RoleConverter") as mock_rc, \
-             patch("api.routers.guilds.UserConverter"), \
-             patch("api.routers.guilds.asyncio.sleep", new_callable=AsyncMock) as mock_sleep, \
-             patch("api.routers.guilds.random.uniform", return_value=0.0), \
-             patch("api.routers.guilds.asyncio.wait_for", side_effect=_passthrough_wf) as mock_wf:
-
+        with (
+            patch("api.routers.guilds.get_entity_or_404", new_callable=AsyncMock) as mock_get_entity,
+            patch("api.routers.guilds.handle_discord_exception", new_callable=AsyncMock) as mock_handle,
+            patch("api.routers.guilds.resolve_bot", new_callable=AsyncMock) as mock_resolve,
+            patch("api.routers.guilds.GuildConverter"),
+            patch("api.routers.guilds.ChannelConverter") as mock_cc,
+            patch("api.routers.guilds.RoleConverter") as mock_rc,
+            patch("api.routers.guilds.UserConverter"),
+            patch("api.routers.guilds.asyncio.sleep", new_callable=AsyncMock) as mock_sleep,
+            patch("api.routers.guilds.random.uniform", return_value=0.0),
+            patch("api.routers.guilds.asyncio.wait_for", side_effect=_passthrough_wf) as mock_wf,
+        ):
             mock_resolve.side_effect = lambda req: bot
 
             async def _get(get_fn, fetch_fn, eid, etype):
@@ -1307,6 +1324,7 @@ class TestCreateRoleRetryLogic:
             mock_rc.role_to_payload.return_value = _role_schema()
 
             from api.routers.guilds import router
+
             app.include_router(router, prefix="/api/v1")
 
             # Expose guild, mock_sleep, and mock_wait_for for tests to configure
@@ -1314,13 +1332,12 @@ class TestCreateRoleRetryLogic:
 
     def test_create_role_timeout_all_retries_exhausted(self):
         """All 3 attempts timeout → 503 (lines 435-446)."""
-        import asyncio as _aio
 
         guild = _make_guild()
 
-        for client, guild_ref, mock_sleep, mock_wf in self._build_retry_app(guild):
+        for client, _guild_ref, mock_sleep, mock_wf in self._build_retry_app(guild):
             # Override wait_for to raise TimeoutError
-            mock_wf.side_effect = _aio.TimeoutError("timed out")
+            mock_wf.side_effect = TimeoutError("timed out")
 
             response = client.post(
                 "/api/v1/guilds/987654321/roles",
@@ -1335,15 +1352,14 @@ class TestCreateRoleRetryLogic:
 
     def test_create_role_timeout_then_success(self):
         """First attempt times out, second succeeds (lines 435-446 partial)."""
-        import asyncio as _aio
 
         mock_role = MagicMock()
         mock_role.name = "retry-role"
         guild = _make_guild()
 
-        for client, guild_ref, mock_sleep, mock_wf in self._build_retry_app(guild):
+        for client, _guild_ref, mock_sleep, mock_wf in self._build_retry_app(guild):
             # First call raises TimeoutError, second returns mock role
-            mock_wf.side_effect = [_aio.TimeoutError("timed out"), mock_role]
+            mock_wf.side_effect = [TimeoutError("timed out"), mock_role]
 
             response = client.post(
                 "/api/v1/guilds/987654321/roles",
@@ -1380,17 +1396,18 @@ class TestCreateRoleRetryLogic:
         async def _passthrough(coro, *, timeout=None):
             return await coro
 
-        with patch("api.routers.guilds.get_entity_or_404", new_callable=AsyncMock) as m_get, \
-             patch("api.routers.guilds.handle_discord_exception", new_callable=AsyncMock) as m_handle, \
-             patch("api.routers.guilds.resolve_bot", new_callable=AsyncMock) as m_resolve, \
-             patch("api.routers.guilds.GuildConverter"), \
-             patch("api.routers.guilds.ChannelConverter"), \
-             patch("api.routers.guilds.RoleConverter") as m_rc, \
-             patch("api.routers.guilds.UserConverter"), \
-             patch("api.routers.guilds.asyncio.sleep", new_callable=AsyncMock) as mock_sleep, \
-             patch("api.routers.guilds.random.uniform", return_value=0.0), \
-             patch("api.routers.guilds.asyncio.wait_for", side_effect=_passthrough):
-
+        with (
+            patch("api.routers.guilds.get_entity_or_404", new_callable=AsyncMock) as m_get,
+            patch("api.routers.guilds.handle_discord_exception", new_callable=AsyncMock) as m_handle,
+            patch("api.routers.guilds.resolve_bot", new_callable=AsyncMock) as m_resolve,
+            patch("api.routers.guilds.GuildConverter"),
+            patch("api.routers.guilds.ChannelConverter"),
+            patch("api.routers.guilds.RoleConverter") as m_rc,
+            patch("api.routers.guilds.UserConverter"),
+            patch("api.routers.guilds.asyncio.sleep", new_callable=AsyncMock) as mock_sleep,
+            patch("api.routers.guilds.random.uniform", return_value=0.0),
+            patch("api.routers.guilds.asyncio.wait_for", side_effect=_passthrough),
+        ):
             m_resolve.side_effect = lambda req: bot
 
             async def _get(gf, ff, eid, etype):
@@ -1404,6 +1421,7 @@ class TestCreateRoleRetryLogic:
             m_rc.role_to_payload.return_value = _role_schema()
 
             from api.routers.guilds import router
+
             app.include_router(router, prefix="/api/v1")
 
             client = TestClient(app, raise_server_exceptions=False)
@@ -1438,17 +1456,18 @@ class TestCreateRoleRetryLogic:
         async def _passthrough(coro, *, timeout=None):
             return await coro
 
-        with patch("api.routers.guilds.get_entity_or_404", new_callable=AsyncMock) as m_get, \
-             patch("api.routers.guilds.handle_discord_exception", new_callable=AsyncMock) as m_handle, \
-             patch("api.routers.guilds.resolve_bot", new_callable=AsyncMock) as m_resolve, \
-             patch("api.routers.guilds.GuildConverter"), \
-             patch("api.routers.guilds.ChannelConverter"), \
-             patch("api.routers.guilds.RoleConverter") as m_rc, \
-             patch("api.routers.guilds.UserConverter"), \
-             patch("api.routers.guilds.asyncio.sleep", new_callable=AsyncMock) as mock_sleep, \
-             patch("api.routers.guilds.random.uniform", return_value=0.0), \
-             patch("api.routers.guilds.asyncio.wait_for", side_effect=_passthrough):
-
+        with (
+            patch("api.routers.guilds.get_entity_or_404", new_callable=AsyncMock) as m_get,
+            patch("api.routers.guilds.handle_discord_exception", new_callable=AsyncMock) as m_handle,
+            patch("api.routers.guilds.resolve_bot", new_callable=AsyncMock) as m_resolve,
+            patch("api.routers.guilds.GuildConverter"),
+            patch("api.routers.guilds.ChannelConverter"),
+            patch("api.routers.guilds.RoleConverter") as m_rc,
+            patch("api.routers.guilds.UserConverter"),
+            patch("api.routers.guilds.asyncio.sleep", new_callable=AsyncMock) as mock_sleep,
+            patch("api.routers.guilds.random.uniform", return_value=0.0),
+            patch("api.routers.guilds.asyncio.wait_for", side_effect=_passthrough),
+        ):
             m_resolve.side_effect = lambda req: bot
 
             async def _get(gf, ff, eid, etype):
@@ -1462,6 +1481,7 @@ class TestCreateRoleRetryLogic:
             m_rc.role_to_payload.return_value = _role_schema()
 
             from api.routers.guilds import router
+
             app.include_router(router, prefix="/api/v1")
 
             client = TestClient(app, raise_server_exceptions=False)
@@ -1498,17 +1518,18 @@ class TestCreateRoleRetryLogic:
         async def _passthrough(coro, *, timeout=None):
             return await coro
 
-        with patch("api.routers.guilds.get_entity_or_404", new_callable=AsyncMock) as m_get, \
-             patch("api.routers.guilds.handle_discord_exception", new_callable=AsyncMock) as m_handle, \
-             patch("api.routers.guilds.resolve_bot", new_callable=AsyncMock) as m_resolve, \
-             patch("api.routers.guilds.GuildConverter"), \
-             patch("api.routers.guilds.ChannelConverter"), \
-             patch("api.routers.guilds.RoleConverter") as m_rc, \
-             patch("api.routers.guilds.UserConverter"), \
-             patch("api.routers.guilds.asyncio.sleep", new_callable=AsyncMock) as mock_sleep, \
-             patch("api.routers.guilds.random.uniform", return_value=0.0), \
-             patch("api.routers.guilds.asyncio.wait_for", side_effect=_passthrough):
-
+        with (
+            patch("api.routers.guilds.get_entity_or_404", new_callable=AsyncMock) as m_get,
+            patch("api.routers.guilds.handle_discord_exception", new_callable=AsyncMock) as m_handle,
+            patch("api.routers.guilds.resolve_bot", new_callable=AsyncMock) as m_resolve,
+            patch("api.routers.guilds.GuildConverter"),
+            patch("api.routers.guilds.ChannelConverter"),
+            patch("api.routers.guilds.RoleConverter") as m_rc,
+            patch("api.routers.guilds.UserConverter"),
+            patch("api.routers.guilds.asyncio.sleep", new_callable=AsyncMock) as mock_sleep,
+            patch("api.routers.guilds.random.uniform", return_value=0.0),
+            patch("api.routers.guilds.asyncio.wait_for", side_effect=_passthrough),
+        ):
             m_resolve.side_effect = lambda req: bot
 
             async def _get(gf, ff, eid, etype):
@@ -1522,6 +1543,7 @@ class TestCreateRoleRetryLogic:
             m_rc.role_to_payload.return_value = _role_schema()
 
             from api.routers.guilds import router
+
             app.include_router(router, prefix="/api/v1")
 
             client = TestClient(app, raise_server_exceptions=False)

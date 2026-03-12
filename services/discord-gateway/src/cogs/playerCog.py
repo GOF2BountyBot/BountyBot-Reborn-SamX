@@ -1,5 +1,4 @@
 import os
-from typing import Optional
 
 import discord
 import httpx
@@ -110,7 +109,7 @@ class PlayerCog(commands.Cog):
 
     @app_commands.command(name="leaderboard", description="View the guild leaderboard")
     @app_commands.describe(tier="Filter by specific tier")
-    async def leaderboard(self, interaction: discord.Interaction, tier: Optional[str] = None):
+    async def leaderboard(self, interaction: discord.Interaction, tier: str | None = None):
         """Display guild leaderboard."""
         await interaction.response.defer(thinking=True)
 

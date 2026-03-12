@@ -48,7 +48,6 @@ for _mod in ["discord", "discord.ext", "discord.ext.commands", "discord.app_comm
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "src"))
 
 
-
 @pytest.fixture
 def mock_bot():
     """Create a mock Discord bot for devCog testing."""
@@ -69,9 +68,16 @@ def mock_bot():
 
 def _evict_discord_modules():
     """Remove cached discord/source modules so they re-import with real discord."""
-    to_evict = [k for k in sys.modules if k == "discord" or k.startswith("discord.")
-                or k in ("api", "bot", "utils") or k.startswith("api.") or k.startswith("utils.")
-                or k.startswith("cogs.")]
+    to_evict = [
+        k
+        for k in sys.modules
+        if k == "discord"
+        or k.startswith("discord.")
+        or k in ("api", "bot", "utils")
+        or k.startswith("api.")
+        or k.startswith("utils.")
+        or k.startswith("cogs.")
+    ]
     for k in to_evict:
         sys.modules.pop(k, None)
 
@@ -81,6 +87,7 @@ def mock_dev_cog(mock_bot):
     """Create a mock devCog instance."""
     _evict_discord_modules()
     from cogs.devCog import DevCog
+
     cog = DevCog(mock_bot)
     return cog
 
@@ -179,9 +186,7 @@ class TestLoadDataCommand:
 
         # Verify behavior
         interaction.response.defer.assert_called_once_with(thinking=True)
-        interaction.followup.send.assert_called_once_with(
-            "✅ Data load complete for **ships**: 2 files processed."
-        )
+        interaction.followup.send.assert_called_once_with("✅ Data load complete for **ships**: 2 files processed.")
 
     @patch("cogs.devCog.httpx")
     def test_load_data_all_categories_success(self, mock_httpx, mock_dev_cog):
@@ -368,7 +373,7 @@ class TestLoadDataAllCategoriesWithErrors:
 
         # Mock responses with long data
         responses = []
-        for i in range(50):
+        for _ in range(50):
             resp = MagicMock()
             resp.status_code = 200
             resp.json.return_value = [f"file_{j}" for j in range(10)]
@@ -413,8 +418,6 @@ class TestLoadDataSingleCategoryErrors:
         # Verify error handling
         interaction.response.defer.assert_called_once_with(thinking=True)
         interaction.followup.send.assert_called_once()
-
-
 
 
 class TestReloadAutocompleteEdgeCases:
@@ -477,5 +480,5 @@ class TestCogSetup:
         mock_bot.add_cog.assert_called_once()
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     pytest.main([__file__])

@@ -58,14 +58,17 @@ def _restore_real_discord():
     sys.modules["discord.ext"] = _cm._REAL_DISCORD_EXT
     sys.modules["discord.ext.commands"] = _cm._REAL_DISCORD_EXT_COMMANDS
     import tests.mocks.discord_mock_utils as _dmu_mod
+
     importlib.reload(_dmu_mod)
     from api.routers import roles as _roles_mod
+
     importlib.reload(_roles_mod)
     yield
 
 
 def _make_role_schema():
     from api.schemas.role_schemas import Role as RoleSchema
+
     return RoleSchema(
         id=123456789,
         guild_id=987654321,
@@ -126,10 +129,12 @@ def roles_ext_app(mock_bot):
     app = FastAPI(title="Test")
     app.state.bot = mock_bot
 
-    with patch("api.routers.roles.resolve_bot", new_callable=AsyncMock) as mock_resolve, \
-         patch("api.routers.roles.handle_discord_exception", new_callable=AsyncMock) as mock_handle, \
-         patch("api.routers.roles.RoleConverter") as mock_converter, \
-         patch("api.routers.roles.UserConverter") as mock_user_converter:
+    with (
+        patch("api.routers.roles.resolve_bot", new_callable=AsyncMock) as mock_resolve,
+        patch("api.routers.roles.handle_discord_exception", new_callable=AsyncMock) as mock_handle,
+        patch("api.routers.roles.RoleConverter") as mock_converter,
+        patch("api.routers.roles.UserConverter") as mock_user_converter,
+    ):
 
         async def _resolve(request):
             return mock_bot
@@ -144,6 +149,7 @@ def roles_ext_app(mock_bot):
         mock_user_converter.member_to_payload.return_value = MagicMock()
 
         from api.routers.roles import router
+
         app.include_router(router, prefix="/api/v1")
 
         yield app, mock_bot, mock_resolve, mock_handle, mock_converter
@@ -160,11 +166,12 @@ class TestUpdateRoleExtended:
 
     def test_update_role_invalid_permissions_bitmask(self, roles_ext_app):
         """update_role should return 422 when permissions bitmask doesn't round-trip."""
-        app, mock_bot, *_ = roles_ext_app
+        app, *_ = roles_ext_app
 
         # Patch discord.Permissions to return an object with a different .value
         # (simulating a bitmask that loses bits)
         import discord as real_discord
+
         bad_perms = MagicMock()
         bad_perms.value = 999  # different from input
 
@@ -175,13 +182,13 @@ class TestUpdateRoleExtended:
             client = TestClient(app)
             response = client.put(
                 "/api/v1/roles/123456789",
-                json={"permissions": 7}  # 7 != 999, triggers the mismatch check
+                json={"permissions": 7},  # 7 != 999, triggers the mismatch check
             )
             assert response.status_code == 422
 
     def test_update_role_exception_path(self, roles_ext_app):
         """update_role should return 500 on unexpected exception."""
-        app, mock_bot, mock_resolve, mock_handle, *_ = roles_ext_app
+        app, _, mock_resolve, _, *_ = roles_ext_app
 
         async def _fail(request):
             raise RuntimeError("Unexpected error")
@@ -198,7 +205,7 @@ class TestDeleteRoleExtended:
 
     def test_delete_role_exception_path(self, roles_ext_app):
         """delete_role should return 500 on unexpected exception."""
-        app, mock_bot, mock_resolve, mock_handle, *_ = roles_ext_app
+        app, _, mock_resolve, _, *_ = roles_ext_app
 
         async def _fail(request):
             raise RuntimeError("Unexpected error")
@@ -215,7 +222,7 @@ class TestListRoleMembersExtended:
 
     def test_list_role_members_exception_path(self, roles_ext_app):
         """list_role_members should return 500 on unexpected exception."""
-        app, mock_bot, mock_resolve, mock_handle, *_ = roles_ext_app
+        app, _, mock_resolve, _, *_ = roles_ext_app
 
         async def _fail(request):
             raise RuntimeError("Unexpected error")
@@ -225,6 +232,7 @@ class TestListRoleMembersExtended:
         client = TestClient(app)
         response = client.get("/api/v1/roles/123456789/members")
         assert response.status_code == 500
+
 
 def _make_role_with_members(members):
     role = _create_mock_role()
@@ -237,13 +245,11 @@ class TestAssignRoleExtended:
 
     def test_assign_role_member_not_found_discord_not_found(self, roles_ext_app):
         """assign_role_to_user should return 404 when discord.NotFound raised on fetch."""
-        app, mock_bot, *_ = roles_ext_app
+        app, *_ = roles_ext_app
 
         # Member not in cache; fetch raises discord.NotFound
         mock_bot.guilds[0].get_member = MagicMock(return_value=None)
-        mock_bot.guilds[0].fetch_member = AsyncMock(
-            side_effect=DiscordMockUtils.create_discord_not_found()
-        )
+        mock_bot.guilds[0].fetch_member = AsyncMock(side_effect=DiscordMockUtils.create_discord_not_found())
 
         client = TestClient(app)
         response = client.put("/api/v1/roles/123456789/members/999999999")
@@ -251,7 +257,7 @@ class TestAssignRoleExtended:
 
     def test_assign_role_exception_path(self, roles_ext_app):
         """assign_role_to_user should return 500 on unexpected exception."""
-        app, mock_bot, mock_resolve, mock_handle, *_ = roles_ext_app
+        app, _, mock_resolve, _, *_ = roles_ext_app
 
         async def _fail(request):
             raise RuntimeError("Unexpected error")
@@ -268,12 +274,10 @@ class TestRemoveRoleExtended:
 
     def test_remove_role_member_not_found_discord_not_found(self, roles_ext_app):
         """remove_role_from_user should return 404 when discord.NotFound raised on fetch."""
-        app, mock_bot, *_ = roles_ext_app
+        app, *_ = roles_ext_app
 
         mock_bot.guilds[0].get_member = MagicMock(return_value=None)
-        mock_bot.guilds[0].fetch_member = AsyncMock(
-            side_effect=DiscordMockUtils.create_discord_not_found()
-        )
+        mock_bot.guilds[0].fetch_member = AsyncMock(side_effect=DiscordMockUtils.create_discord_not_found())
 
         client = TestClient(app)
         response = client.delete("/api/v1/roles/123456789/members/999999999")
@@ -281,7 +285,7 @@ class TestRemoveRoleExtended:
 
     def test_remove_role_exception_path(self, roles_ext_app):
         """remove_role_from_user should return 500 on unexpected exception."""
-        app, mock_bot, mock_resolve, mock_handle, *_ = roles_ext_app
+        app, _, mock_resolve, _, *_ = roles_ext_app
 
         async def _fail(request):
             raise RuntimeError("Unexpected error")
@@ -298,7 +302,7 @@ class TestCheckRolePermissionExtended:
 
     def test_check_role_permission_exception_path(self, roles_ext_app):
         """check_role_permission should return 500 on unexpected exception."""
-        app, mock_bot, mock_resolve, mock_handle, *_ = roles_ext_app
+        app, _, mock_resolve, _, *_ = roles_ext_app
 
         async def _fail(request):
             raise RuntimeError("Unexpected error")
@@ -315,12 +319,10 @@ class TestCheckUserHasRoleExtended:
 
     def test_check_user_has_role_member_not_found_discord_not_found(self, roles_ext_app):
         """check_user_has_role should return 404 when discord.NotFound raised on fetch."""
-        app, mock_bot, *_ = roles_ext_app
+        app, *_ = roles_ext_app
 
         mock_bot.guilds[0].get_member = MagicMock(return_value=None)
-        mock_bot.guilds[0].fetch_member = AsyncMock(
-            side_effect=DiscordMockUtils.create_discord_not_found()
-        )
+        mock_bot.guilds[0].fetch_member = AsyncMock(side_effect=DiscordMockUtils.create_discord_not_found())
 
         client = TestClient(app)
         response = client.get("/api/v1/roles/123456789/members/999999999/check")
@@ -328,7 +330,7 @@ class TestCheckUserHasRoleExtended:
 
     def test_check_user_has_role_exception_path(self, roles_ext_app):
         """check_user_has_role should return 500 on unexpected exception."""
-        app, mock_bot, mock_resolve, mock_handle, *_ = roles_ext_app
+        app, _, mock_resolve, _, *_ = roles_ext_app
 
         async def _fail(request):
             raise RuntimeError("Unexpected error")

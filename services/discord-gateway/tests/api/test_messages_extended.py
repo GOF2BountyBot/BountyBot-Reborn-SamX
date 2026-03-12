@@ -45,14 +45,17 @@ for _mod in ["discord", "discord.ext", "discord.ext.commands", "discord.app_comm
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "src"))
 
 
-
 def _evict_discord_modules():
     """Remove any cached discord or source modules so they re-import with real discord."""
     to_evict = [
-        k for k in sys.modules
-        if k == "discord" or k.startswith("discord.")
-        or k in ("api", "bot", "utils") or k.startswith("api.")
-        or k.startswith("utils.") or k.startswith("cogs.")
+        k
+        for k in sys.modules
+        if k == "discord"
+        or k.startswith("discord.")
+        or k in ("api", "bot", "utils")
+        or k.startswith("api.")
+        or k.startswith("utils.")
+        or k.startswith("cogs.")
     ]
     for k in to_evict:
         sys.modules.pop(k, None)
@@ -62,9 +65,11 @@ def _evict_discord_modules():
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _make_mock_message_payload():
     """Return a minimal MessageSummary-compatible MagicMock."""
     from api.schemas.message_schemas import MessageSummary
+
     return MessageSummary(
         id=1234567890,
         author_id=123456789,
@@ -82,9 +87,7 @@ def _make_mock_message(message_id=1234567890, author_id=123456789):
     msg.channel = MagicMock()
     msg.channel.guild = MagicMock()
     msg.channel.guild.get_member = MagicMock(return_value=MagicMock())
-    msg.channel.permissions_for = MagicMock(
-        return_value=MagicMock(manage_messages=True)
-    )
+    msg.channel.permissions_for = MagicMock(return_value=MagicMock(manage_messages=True))
     msg.edit = AsyncMock()
     msg.delete = AsyncMock()
     return msg
@@ -111,11 +114,12 @@ def messages_test_app(mock_bot):
     app = FastAPI(title="Messages Test")
     app.state.bot = mock_bot
 
-    with patch("api.routers.messages._find_message", new_callable=AsyncMock) as mock_find, \
-         patch("api.routers.messages.resolve_bot", new_callable=AsyncMock) as mock_resolve, \
-         patch("api.routers.messages.handle_discord_exception", new_callable=AsyncMock) as mock_handle, \
-         patch("api.routers.messages.MessageConverter") as mock_converter:
-
+    with (
+        patch("api.routers.messages._find_message", new_callable=AsyncMock) as mock_find,
+        patch("api.routers.messages.resolve_bot", new_callable=AsyncMock) as mock_resolve,
+        patch("api.routers.messages.handle_discord_exception", new_callable=AsyncMock) as mock_handle,
+        patch("api.routers.messages.MessageConverter") as mock_converter,
+    ):
         from api.schemas.message_schemas import MessageSummary
 
         _payload = MessageSummary(
@@ -139,14 +143,18 @@ def messages_test_app(mock_bot):
         mock_converter.message_to_payload.return_value = _payload
 
         from api.routers.messages import router
+
         app.include_router(router, prefix="/api/v1")
 
-        yield app, {
-            "find_message": mock_find,
-            "resolve_bot": mock_resolve,
-            "handle_exception": mock_handle,
-            "converter": mock_converter,
-        }
+        yield (
+            app,
+            {
+                "find_message": mock_find,
+                "resolve_bot": mock_resolve,
+                "handle_exception": mock_handle,
+                "converter": mock_converter,
+            },
+        )
 
 
 @pytest.fixture
@@ -218,16 +226,17 @@ class TestUpdateMessageExtended:
 
         bot_msg = _make_mock_message(message_id=1234567890, author_id=mock_bot.user.id)
 
-        with patch("api.routers.messages._find_message", new_callable=AsyncMock) as mock_find, \
-             patch("api.routers.messages.resolve_bot", new_callable=AsyncMock) as mock_resolve, \
-             patch("api.routers.messages.handle_discord_exception", new_callable=AsyncMock), \
-             patch("api.routers.messages.MessageConverter") as mock_conv, \
-             patch("api.routers.messages.EmbedConverter") as mock_ec:
-
+        with (
+            patch("api.routers.messages._find_message", new_callable=AsyncMock) as mock_find,
+            patch("api.routers.messages.resolve_bot", new_callable=AsyncMock) as mock_resolve,
+            patch("api.routers.messages.handle_discord_exception", new_callable=AsyncMock),
+            patch("api.routers.messages.MessageConverter") as mock_conv,
+            patch("api.routers.messages.EmbedConverter") as mock_ec,
+        ):
             from api.schemas.message_schemas import MessageSummary
+
             _payload = MessageSummary(
-                id=1234567890, author_id=mock_bot.user.id,
-                content=None, timestamp="2024-01-01T00:00:00"
+                id=1234567890, author_id=mock_bot.user.id, content=None, timestamp="2024-01-01T00:00:00"
             )
 
             async def _find(bot, mid, logger):
@@ -242,6 +251,7 @@ class TestUpdateMessageExtended:
             mock_ec.payload_to_embed.return_value = MagicMock()
 
             from api.routers.messages import router
+
             app.include_router(router, prefix="/api/v1")
 
             client = TestClient(app)
@@ -272,11 +282,13 @@ class TestUpdateMessageExtended:
         # Message authored by different user
         other_msg = _make_mock_message(message_id=1234567890, author_id=999999999)
 
-        with patch("api.routers.messages._find_message", new_callable=AsyncMock) as mock_find, \
-             patch("api.routers.messages.resolve_bot", new_callable=AsyncMock) as mock_resolve, \
-             patch("api.routers.messages.handle_discord_exception", new_callable=AsyncMock), \
-             patch("api.routers.messages.MessageConverter"), \
-             patch("api.routers.messages.EmbedConverter"):
+        with (
+            patch("api.routers.messages._find_message", new_callable=AsyncMock) as mock_find,
+            patch("api.routers.messages.resolve_bot", new_callable=AsyncMock) as mock_resolve,
+            patch("api.routers.messages.handle_discord_exception", new_callable=AsyncMock),
+            patch("api.routers.messages.MessageConverter"),
+            patch("api.routers.messages.EmbedConverter"),
+        ):
 
             async def _find(bot, mid, logger):
                 return other_msg if mid == 1234567890 else None
@@ -288,6 +300,7 @@ class TestUpdateMessageExtended:
             mock_resolve.side_effect = _resolve
 
             from api.routers.messages import router
+
             app.include_router(router, prefix="/api/v1")
 
             client = TestClient(app)
@@ -344,16 +357,16 @@ class TestDeleteMessageExtended:
         other_msg.channel.guild = MagicMock()
         bot_member = MagicMock()
         other_msg.channel.guild.get_member = MagicMock(return_value=bot_member)
-        other_msg.channel.permissions_for = MagicMock(
-            return_value=MagicMock(manage_messages=False)
-        )
+        other_msg.channel.permissions_for = MagicMock(return_value=MagicMock(manage_messages=False))
         other_msg.delete = AsyncMock()
 
-        with patch("api.routers.messages._find_message", new_callable=AsyncMock) as mock_find, \
-             patch("api.routers.messages.resolve_bot", new_callable=AsyncMock) as mock_resolve, \
-             patch("api.routers.messages.handle_discord_exception", new_callable=AsyncMock), \
-             patch("api.routers.messages.MessageConverter"), \
-             patch("api.routers.messages.EmbedConverter"):
+        with (
+            patch("api.routers.messages._find_message", new_callable=AsyncMock) as mock_find,
+            patch("api.routers.messages.resolve_bot", new_callable=AsyncMock) as mock_resolve,
+            patch("api.routers.messages.handle_discord_exception", new_callable=AsyncMock),
+            patch("api.routers.messages.MessageConverter"),
+            patch("api.routers.messages.EmbedConverter"),
+        ):
 
             async def _find(bot, mid, logger):
                 return other_msg if mid == 1234567890 else None
@@ -365,6 +378,7 @@ class TestDeleteMessageExtended:
             mock_resolve.side_effect = _resolve
 
             from api.routers.messages import router
+
             app.include_router(router, prefix="/api/v1")
 
             client = TestClient(app)
@@ -386,16 +400,16 @@ class TestDeleteMessageExtended:
         other_msg.channel.guild = MagicMock()
         # get_member returns None → bot_member is None → 403
         other_msg.channel.guild.get_member = MagicMock(return_value=None)
-        other_msg.channel.permissions_for = MagicMock(
-            return_value=MagicMock(manage_messages=True)
-        )
+        other_msg.channel.permissions_for = MagicMock(return_value=MagicMock(manage_messages=True))
         other_msg.delete = AsyncMock()
 
-        with patch("api.routers.messages._find_message", new_callable=AsyncMock) as mock_find, \
-             patch("api.routers.messages.resolve_bot", new_callable=AsyncMock) as mock_resolve, \
-             patch("api.routers.messages.handle_discord_exception", new_callable=AsyncMock), \
-             patch("api.routers.messages.MessageConverter"), \
-             patch("api.routers.messages.EmbedConverter"):
+        with (
+            patch("api.routers.messages._find_message", new_callable=AsyncMock) as mock_find,
+            patch("api.routers.messages.resolve_bot", new_callable=AsyncMock) as mock_resolve,
+            patch("api.routers.messages.handle_discord_exception", new_callable=AsyncMock),
+            patch("api.routers.messages.MessageConverter"),
+            patch("api.routers.messages.EmbedConverter"),
+        ):
 
             async def _find(bot, mid, logger):
                 return other_msg if mid == 1234567890 else None
@@ -407,6 +421,7 @@ class TestDeleteMessageExtended:
             mock_resolve.side_effect = _resolve
 
             from api.routers.messages import router
+
             app.include_router(router, prefix="/api/v1")
 
             client = TestClient(app)
@@ -502,9 +517,7 @@ class TestFindMessageHelper:
 
         channel = MagicMock()
         channel.id = 999
-        channel.fetch_message = AsyncMock(
-            side_effect=DiscordMockUtils.create_discord_not_found("not found")
-        )
+        channel.fetch_message = AsyncMock(side_effect=DiscordMockUtils.create_discord_not_found("not found"))
 
         guild = MagicMock()
         guild.channels = [channel]
@@ -531,9 +544,7 @@ class TestFindMessageHelper:
 
         channel = MagicMock()
         channel.id = 999
-        channel.fetch_message = AsyncMock(
-            side_effect=DiscordMockUtils.create_discord_forbidden("forbidden")
-        )
+        channel.fetch_message = AsyncMock(side_effect=DiscordMockUtils.create_discord_forbidden("forbidden"))
 
         guild = MagicMock()
         guild.channels = [channel]
@@ -616,9 +627,7 @@ class TestFindMessageHelper:
 
         slow_channel = MagicMock()
         slow_channel.id = 111
-        slow_channel.fetch_message = AsyncMock(
-            side_effect=asyncio.TimeoutError()
-        )
+        slow_channel.fetch_message = AsyncMock(side_effect=TimeoutError())
 
         found_msg = MagicMock()
         found_msg.id = 1234567890
@@ -652,9 +661,7 @@ class TestFindMessageHelper:
 
         error_channel = MagicMock()
         error_channel.id = 111
-        error_channel.fetch_message = AsyncMock(
-            side_effect=RuntimeError("unexpected")
-        )
+        error_channel.fetch_message = AsyncMock(side_effect=RuntimeError("unexpected"))
 
         found_msg = MagicMock()
         found_msg.id = 1234567890
@@ -704,7 +711,7 @@ class TestFindMessageCacheException:
         # Build a bad cache that raises on iteration
         class _BadIterable:
             def __iter__(self):
-                raise RuntimeError("bad cache – boom")
+                raise RuntimeError("bad cache - boom")
 
         bot = MagicMock()
         bot.guilds = []
@@ -732,7 +739,7 @@ class TestFindMessageCacheException:
         # A dict-like object whose .values() raises
         class _BadDict(dict):
             def values(self):
-                raise RuntimeError("bad dict values – boom")
+                raise RuntimeError("bad dict values - boom")
 
         bot = MagicMock()
         bot.guilds = []
@@ -761,9 +768,7 @@ class TestFindMessageNotFoundForbiddenContinue:
 
         channel = MagicMock()
         channel.id = 777
-        channel.fetch_message = AsyncMock(
-            side_effect=DiscordMockUtils.create_discord_not_found("not found")
-        )
+        channel.fetch_message = AsyncMock(side_effect=DiscordMockUtils.create_discord_not_found("not found"))
 
         guild = MagicMock()
         guild.channels = [channel]
@@ -791,9 +796,7 @@ class TestFindMessageNotFoundForbiddenContinue:
 
         channel = MagicMock()
         channel.id = 888
-        channel.fetch_message = AsyncMock(
-            side_effect=DiscordMockUtils.create_discord_forbidden("forbidden")
-        )
+        channel.fetch_message = AsyncMock(side_effect=DiscordMockUtils.create_discord_forbidden("forbidden"))
 
         guild = MagicMock()
         guild.channels = [channel]
@@ -821,9 +824,7 @@ class TestFindMessageNotFoundForbiddenContinue:
 
         not_found_channel = MagicMock()
         not_found_channel.id = 777
-        not_found_channel.fetch_message = AsyncMock(
-            side_effect=DiscordMockUtils.create_discord_not_found("not found")
-        )
+        not_found_channel.fetch_message = AsyncMock(side_effect=DiscordMockUtils.create_discord_not_found("not found"))
 
         found_msg = MagicMock()
         found_msg.id = 555
@@ -858,9 +859,7 @@ class TestFindMessageNotFoundForbiddenContinue:
 
         forbidden_channel = MagicMock()
         forbidden_channel.id = 111
-        forbidden_channel.fetch_message = AsyncMock(
-            side_effect=DiscordMockUtils.create_discord_forbidden("forbidden")
-        )
+        forbidden_channel.fetch_message = AsyncMock(side_effect=DiscordMockUtils.create_discord_forbidden("forbidden"))
 
         found_msg = MagicMock()
         found_msg.id = 666
@@ -897,10 +896,12 @@ class TestGetMessageExceptionHandlers:
 
         captured_calls = []
 
-        with patch("api.routers.messages._find_message", new_callable=AsyncMock) as mock_find, \
-             patch("api.routers.messages.resolve_bot", new_callable=AsyncMock) as mock_resolve, \
-             patch("api.routers.messages.handle_discord_exception", new_callable=AsyncMock) as mock_handle, \
-             patch("api.routers.messages.MessageConverter"):
+        with (
+            patch("api.routers.messages._find_message", new_callable=AsyncMock) as mock_find,
+            patch("api.routers.messages.resolve_bot", new_callable=AsyncMock) as mock_resolve,
+            patch("api.routers.messages.handle_discord_exception", new_callable=AsyncMock) as mock_handle,
+            patch("api.routers.messages.MessageConverter"),
+        ):
 
             async def _resolve(req):
                 return mock_bot
@@ -918,6 +919,7 @@ class TestGetMessageExceptionHandlers:
             mock_handle.side_effect = _handle
 
             from api.routers.messages import router
+
             app.include_router(router, prefix="/api/v1")
 
             client = TestClient(app, raise_server_exceptions=False)
@@ -938,10 +940,12 @@ class TestGetMessageExceptionHandlers:
 
         captured_calls = []
 
-        with patch("api.routers.messages.resolve_bot", new_callable=AsyncMock) as mock_resolve, \
-             patch("api.routers.messages.handle_discord_exception", new_callable=AsyncMock) as mock_handle, \
-             patch("api.routers.messages._find_message", new_callable=AsyncMock), \
-             patch("api.routers.messages.MessageConverter"):
+        with (
+            patch("api.routers.messages.resolve_bot", new_callable=AsyncMock) as mock_resolve,
+            patch("api.routers.messages.handle_discord_exception", new_callable=AsyncMock) as mock_handle,
+            patch("api.routers.messages._find_message", new_callable=AsyncMock),
+            patch("api.routers.messages.MessageConverter"),
+        ):
 
             async def _resolve(req):
                 raise ConnectionError("network error")
@@ -954,6 +958,7 @@ class TestGetMessageExceptionHandlers:
             mock_handle.side_effect = _handle
 
             from api.routers.messages import router
+
             app.include_router(router, prefix="/api/v1")
 
             client = TestClient(app, raise_server_exceptions=False)
@@ -978,10 +983,12 @@ class TestUpdateMessageExceptionHandlers:
         discord_exc = DiscordMockUtils.create_discord_http_exception(500, "Discord API error")
         bot_msg.edit = AsyncMock(side_effect=discord_exc)
 
-        with patch("api.routers.messages._find_message", new_callable=AsyncMock) as mock_find, \
-             patch("api.routers.messages.resolve_bot", new_callable=AsyncMock) as mock_resolve, \
-             patch("api.routers.messages.MessageConverter"), \
-             patch("api.routers.messages.EmbedConverter") as mock_ec:
+        with (
+            patch("api.routers.messages._find_message", new_callable=AsyncMock) as mock_find,
+            patch("api.routers.messages.resolve_bot", new_callable=AsyncMock) as mock_resolve,
+            patch("api.routers.messages.MessageConverter"),
+            patch("api.routers.messages.EmbedConverter") as mock_ec,
+        ):
 
             async def _find(bot, mid, logger):
                 return bot_msg if mid == 1234567890 else None
@@ -994,6 +1001,7 @@ class TestUpdateMessageExceptionHandlers:
             mock_ec.payload_to_embed.return_value = MagicMock()
 
             from api.routers.messages import router
+
             app.include_router(router, prefix="/api/v1")
 
             # The router's except discord.HTTPException block raises HTTPException(500) directly
@@ -1016,11 +1024,13 @@ class TestUpdateMessageExceptionHandlers:
 
         captured_calls = []
 
-        with patch("api.routers.messages._find_message", new_callable=AsyncMock) as mock_find, \
-             patch("api.routers.messages.resolve_bot", new_callable=AsyncMock) as mock_resolve, \
-             patch("api.routers.messages.handle_discord_exception", new_callable=AsyncMock) as mock_handle, \
-             patch("api.routers.messages.MessageConverter"), \
-             patch("api.routers.messages.EmbedConverter") as mock_ec:
+        with (
+            patch("api.routers.messages._find_message", new_callable=AsyncMock) as mock_find,
+            patch("api.routers.messages.resolve_bot", new_callable=AsyncMock) as mock_resolve,
+            patch("api.routers.messages.handle_discord_exception", new_callable=AsyncMock) as mock_handle,
+            patch("api.routers.messages.MessageConverter"),
+            patch("api.routers.messages.EmbedConverter") as mock_ec,
+        ):
 
             async def _find(bot, mid, logger):
                 return bot_msg if mid == 1234567890 else None
@@ -1038,6 +1048,7 @@ class TestUpdateMessageExceptionHandlers:
             mock_ec.payload_to_embed.return_value = MagicMock()
 
             from api.routers.messages import router
+
             app.include_router(router, prefix="/api/v1")
 
             client = TestClient(app, raise_server_exceptions=False)
@@ -1059,11 +1070,13 @@ class TestUpdateMessageExceptionHandlers:
 
         captured_calls = []
 
-        with patch("api.routers.messages.resolve_bot", new_callable=AsyncMock) as mock_resolve, \
-             patch("api.routers.messages.handle_discord_exception", new_callable=AsyncMock) as mock_handle, \
-             patch("api.routers.messages._find_message", new_callable=AsyncMock), \
-             patch("api.routers.messages.MessageConverter"), \
-             patch("api.routers.messages.EmbedConverter"):
+        with (
+            patch("api.routers.messages.resolve_bot", new_callable=AsyncMock) as mock_resolve,
+            patch("api.routers.messages.handle_discord_exception", new_callable=AsyncMock) as mock_handle,
+            patch("api.routers.messages._find_message", new_callable=AsyncMock),
+            patch("api.routers.messages.MessageConverter"),
+            patch("api.routers.messages.EmbedConverter"),
+        ):
 
             async def _resolve(req):
                 raise ValueError("unexpected resolve error")
@@ -1076,6 +1089,7 @@ class TestUpdateMessageExceptionHandlers:
             mock_handle.side_effect = _handle
 
             from api.routers.messages import router
+
             app.include_router(router, prefix="/api/v1")
 
             client = TestClient(app, raise_server_exceptions=False)
@@ -1101,10 +1115,12 @@ class TestDeleteMessageExceptionHandlers:
         discord_exc = DiscordMockUtils.create_discord_http_exception(500, "Discord API error")
         bot_msg.delete = AsyncMock(side_effect=discord_exc)
 
-        with patch("api.routers.messages._find_message", new_callable=AsyncMock) as mock_find, \
-             patch("api.routers.messages.resolve_bot", new_callable=AsyncMock) as mock_resolve, \
-             patch("api.routers.messages.MessageConverter"), \
-             patch("api.routers.messages.EmbedConverter"):
+        with (
+            patch("api.routers.messages._find_message", new_callable=AsyncMock) as mock_find,
+            patch("api.routers.messages.resolve_bot", new_callable=AsyncMock) as mock_resolve,
+            patch("api.routers.messages.MessageConverter"),
+            patch("api.routers.messages.EmbedConverter"),
+        ):
 
             async def _find(bot, mid, logger):
                 return bot_msg if mid == 1234567890 else None
@@ -1116,6 +1132,7 @@ class TestDeleteMessageExceptionHandlers:
             mock_resolve.side_effect = _resolve
 
             from api.routers.messages import router
+
             app.include_router(router, prefix="/api/v1")
 
             # The router's except discord.HTTPException block raises HTTPException(500) directly
@@ -1137,11 +1154,13 @@ class TestDeleteMessageExceptionHandlers:
 
         captured_calls = []
 
-        with patch("api.routers.messages._find_message", new_callable=AsyncMock) as mock_find, \
-             patch("api.routers.messages.resolve_bot", new_callable=AsyncMock) as mock_resolve, \
-             patch("api.routers.messages.handle_discord_exception", new_callable=AsyncMock) as mock_handle, \
-             patch("api.routers.messages.MessageConverter"), \
-             patch("api.routers.messages.EmbedConverter"):
+        with (
+            patch("api.routers.messages._find_message", new_callable=AsyncMock) as mock_find,
+            patch("api.routers.messages.resolve_bot", new_callable=AsyncMock) as mock_resolve,
+            patch("api.routers.messages.handle_discord_exception", new_callable=AsyncMock) as mock_handle,
+            patch("api.routers.messages.MessageConverter"),
+            patch("api.routers.messages.EmbedConverter"),
+        ):
 
             async def _find(bot, mid, logger):
                 return bot_msg if mid == 1234567890 else None
@@ -1158,6 +1177,7 @@ class TestDeleteMessageExceptionHandlers:
             mock_handle.side_effect = _handle
 
             from api.routers.messages import router
+
             app.include_router(router, prefix="/api/v1")
 
             client = TestClient(app, raise_server_exceptions=False)
@@ -1178,11 +1198,13 @@ class TestDeleteMessageExceptionHandlers:
 
         captured_calls = []
 
-        with patch("api.routers.messages.resolve_bot", new_callable=AsyncMock) as mock_resolve, \
-             patch("api.routers.messages.handle_discord_exception", new_callable=AsyncMock) as mock_handle, \
-             patch("api.routers.messages._find_message", new_callable=AsyncMock), \
-             patch("api.routers.messages.MessageConverter"), \
-             patch("api.routers.messages.EmbedConverter"):
+        with (
+            patch("api.routers.messages.resolve_bot", new_callable=AsyncMock) as mock_resolve,
+            patch("api.routers.messages.handle_discord_exception", new_callable=AsyncMock) as mock_handle,
+            patch("api.routers.messages._find_message", new_callable=AsyncMock),
+            patch("api.routers.messages.MessageConverter"),
+            patch("api.routers.messages.EmbedConverter"),
+        ):
 
             async def _resolve(req):
                 raise OSError("network failure")
@@ -1195,6 +1217,7 @@ class TestDeleteMessageExceptionHandlers:
             mock_handle.side_effect = _handle
 
             from api.routers.messages import router
+
             app.include_router(router, prefix="/api/v1")
 
             client = TestClient(app, raise_server_exceptions=False)

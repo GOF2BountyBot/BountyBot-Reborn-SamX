@@ -28,6 +28,7 @@ GATEWAY_HOST = os.getenv("GATEWAY_HOST", "0.0.0.0")
 GATEWAY_PORT = int(os.getenv("GATEWAY_PORT", os.getenv("PORT", "8000")))
 ACCESS_LOG = os.getenv("ACCESS_LOG", "true").lower() == "true"
 
+
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     """
@@ -41,6 +42,7 @@ async def lifespan(_app: FastAPI):
 
     # Shutdown logic
     flogger.info("🛑 Discord Gateway API shutting down...")
+
 
 def create_app() -> FastAPI:
     """Create and configure the FastAPI application."""
@@ -65,16 +67,13 @@ command.
         contact={
             "name": "BountyBot Team",
             "url": "https://github.com/GOF2BountyBot/BountyBot-Reborn-SamX",
-            "email": "support@bountybot.com"
+            "email": "support@bountybot.com",
         },
-        license_info={
-            "name": "MIT",
-            "url": "https://opensource.org/licenses/MIT"
-        },
+        license_info={"name": "MIT", "url": "https://opensource.org/licenses/MIT"},
         docs_url="/docs",
         redoc_url="/redoc",
         openapi_url="/openapi.json",
-        lifespan=lifespan
+        lifespan=lifespan,
     )
 
     # Add CORS middleware
@@ -93,14 +92,10 @@ command.
     @app.get("/", tags=["root"])
     async def root():
         """Root endpoint with API information."""
-        return {
-            "message": "Discord Gateway API is running",
-            "version": "1.0.0",
-            "docs": "/docs",
-            "redoc": "/redoc"
-        }
+        return {"message": "Discord Gateway API is running", "version": "1.0.0", "docs": "/docs", "redoc": "/redoc"}
 
     return app
+
 
 def include_routers(app: FastAPI) -> None:
     """
@@ -116,13 +111,13 @@ def include_routers(app: FastAPI) -> None:
                 module = importlib.import_module(f"api.routers.{modname}")
 
                 # Look for router attribute in the module
-                if hasattr(module, 'router'):
-                    router = getattr(module, 'router')
+                if hasattr(module, "router"):
+                    router = module.router
                     # Include the router with appropriate prefix
                     app.include_router(
                         router,
                         prefix="/api/v1",  # Global API version prefix
-                        tags=[modname]  # Add module name as tag
+                        tags=[modname],  # Add module name as tag
                     )
                     flogger.info(f"✓ Included router from routers.{modname}")
                 else:
@@ -130,17 +125,18 @@ def include_routers(app: FastAPI) -> None:
             except ImportError as e:
                 flogger.error(f"✗ Failed to import routers.{modname}: {e}")
 
+
 class HealthFilter(pyLogging.Filter):
     """Filter to reduce noise from health check requests in logs."""
+
     def filter(self, record: pyLogging.LogRecord) -> bool:
         msg = record.getMessage()
-        # Drop lines that mention the health path
-        if "/api/v1/health/" in msg:
-            return False
-        return True
+        return "/api/v1/health/" not in msg
 
-async def start_fastapi_server(host: str = None, port: int = None,
-                              access_log: bool = None) -> None:
+
+async def start_fastapi_server(
+    host: str | None = None, port: int | None = None, access_log: bool | None = None
+) -> None:
     """
     Start the FastAPI server in the background.
     This function is designed to be called from within an existing event loop.
@@ -173,7 +169,7 @@ async def start_fastapi_server(host: str = None, port: int = None,
                 host=host,
                 port=port,
                 access_log=access_log,
-                log_config=None  # Use existing logging configuration
+                log_config=None,  # Use existing logging configuration
             )
 
         except Exception:  # pylint: disable=broad-exception-caught
@@ -185,7 +181,7 @@ async def start_fastapi_server(host: str = None, port: int = None,
     server_thread = threading.Thread(
         target=run_server,
         daemon=True,  # Dies when main thread dies
-        name="FastAPI-Server"
+        name="FastAPI-Server",
     )
 
     server_thread.start()
@@ -206,14 +202,17 @@ def run_standalone(_host: str = "0.0.0.0", _port: int = 8080):
     pyLogging.getLogger("uvicorn.access").addFilter(HealthFilter())
 
     flogger.info("Starting uvicorn...")
-    uvicorn.run("main:app",
-                host="0.0.0.0",
-                port=8000,
-                # access_log shows API requests in log output, can get a bit noisy tho
-                access_log=True,
-                # reload is useful for development but should be turned off for production
-                # It will monitor the filesystem and restart the server when changes are detected.
-                reload=True)
+    uvicorn.run(
+        "main:app",
+        host="0.0.0.0",
+        port=8000,
+        # access_log shows API requests in log output, can get a bit noisy tho
+        access_log=True,
+        # reload is useful for development but should be turned off for production
+        # It will monitor the filesystem and restart the server when changes are detected.
+        reload=True,
+    )
+
 
 # Allow running as standalone script for development
 if __name__ == "__main__":

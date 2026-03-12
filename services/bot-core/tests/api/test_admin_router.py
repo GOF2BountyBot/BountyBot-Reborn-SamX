@@ -4,7 +4,6 @@ Import path setup and sqlalchemy_utils mocking are handled by
 tests/api/conftest.py which runs before this module is loaded.
 """
 
-from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -874,7 +873,7 @@ class TestGetSystemHealth:
     @patch("api.routers.admin.get_db_session")
     def test_get_system_health_server_error_returns_500(self, mock_get_db, client):
         """Returns 500 when get_db_session raises an unexpected exception."""
-        mock_session = AsyncMock()
+        _mock_session = AsyncMock()
         mock_get_db.return_value.__aenter__ = AsyncMock(side_effect=RuntimeError("DB unavailable"))
         mock_get_db.return_value.__aexit__ = AsyncMock(return_value=False)
 

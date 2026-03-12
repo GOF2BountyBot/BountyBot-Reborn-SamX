@@ -6,7 +6,7 @@ including permission flags reference data and permission checking functions.
 Contains NO direct Discord interactions.
 """
 
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Set, Tuple
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     pass  # type: ignore
@@ -14,7 +14,7 @@ if TYPE_CHECKING:
 class PermissionSource:
     """Represents how a permission was granted."""
 
-    def __init__(self, source_type: str, role_name: Optional[str] = None, role_id: Optional[int] = None):
+    def __init__(self, source_type: str, role_name: str | None = None, role_id: int | None = None):
         self.type = source_type  # "direct", "role", "everyone"
         self.role_name = role_name
         self.role_id = role_id
@@ -285,7 +285,7 @@ PERMISSION_FLAGS = {
     }
 }
 
-def get_all_permissions() -> List[Dict[str, Any]]:
+def get_all_permissions() -> list[dict[str, Any]]:
     """Get all Discord permissions with metadata."""
     return [
         {
@@ -297,12 +297,12 @@ def get_all_permissions() -> List[Dict[str, Any]]:
         for name, data in PERMISSION_FLAGS.items()
     ]
 
-def get_role_permissions() -> List[Dict[str, Any]]:
+def get_role_permissions() -> list[dict[str, Any]]:
     """Get permissions that can be assigned to roles."""
     # All permissions can be assigned to roles
     return get_all_permissions()
 
-def get_user_permissions() -> List[Dict[str, Any]]:
+def get_user_permissions() -> list[dict[str, Any]]:
     """Get permissions that can be used in user overwrites."""
     # Channel-level permissions that can be overwritten for users
     return [
@@ -310,19 +310,19 @@ def get_user_permissions() -> List[Dict[str, Any]]:
         if perm["channel_types"]  # Only permissions that apply to channels
     ]
 
-def get_channel_permissions() -> List[Dict[str, Any]]:
+def get_channel_permissions() -> list[dict[str, Any]]:
     """Get permissions applicable to text/voice channels."""
     return [
         perm for perm in get_all_permissions()
         if "text" in perm["channel_types"] or "voice" in perm["channel_types"]
     ]
 
-def get_category_permissions() -> List[Dict[str, Any]]:
+def get_category_permissions() -> list[dict[str, Any]]:
     """Get permissions applicable to category channels."""
     # Category channels inherit most channel permissions
     return get_channel_permissions()
 
-def create_permission_overwrite(allow: Optional[int] = None, deny: Optional[int] = None) -> "Any":
+def create_permission_overwrite(allow: int | None = None, deny: int | None = None) -> "Any":
     """
     Create a Discord permission overwrite from allow/deny bit values.
 
@@ -373,7 +373,7 @@ def check_permission(permissions_value: int, permission_name: str) -> bool:
     permission_bit = PERMISSION_FLAGS[permission_name]["value"]
     return bool(permissions_value & permission_bit)
 
-def check_permissions(permissions_value: int, permission_names: List[str]) -> Dict[str, bool]:
+def check_permissions(permissions_value: int, permission_names: list[str]) -> dict[str, bool]:
     """
     Check multiple permissions against a permission value.
 
@@ -403,8 +403,8 @@ def has_administrator(permissions_value: int) -> bool:
 
 def calculate_effective_permissions(
     base_permissions: int,
-    allow_overwrites: Optional[int] = None,
-    deny_overwrites: Optional[int] = None
+    allow_overwrites: int | None = None,
+    deny_overwrites: int | None = None
 ) -> int:
     """
     Calculate effective permissions after applying overwrites.
@@ -433,14 +433,14 @@ def calculate_effective_permissions(
 
     return effective
 
-def permissions_to_dict(permissions_value: int) -> Dict[str, bool]:
+def permissions_to_dict(permissions_value: int) -> dict[str, bool]:
     """Convert integer permissions value to dictionary of permission flags."""
     return {
         name.lower(): check_permission(permissions_value, name)
         for name in PERMISSION_FLAGS
     }
 
-def overwrite_to_dict(overwrite: "Any") -> Dict[str, Any]:
+def overwrite_to_dict(overwrite: "Any") -> dict[str, Any]:
     """Convert permission overwrite to dictionary with allow/deny values."""
     # overwrite may be a discord.PermissionOverwrite or a dict (from the fallback above)
     if isinstance(overwrite, dict):
@@ -477,7 +477,7 @@ def overwrite_to_dict(overwrite: "Any") -> Dict[str, Any]:
                 continue
         return {"allow": 0, "deny": 0, "permissions": result}
 
-def get_permission_names_by_value(permissions_value: int) -> List[str]:
+def get_permission_names_by_value(permissions_value: int) -> list[str]:
     """
     Get list of permission names that are granted in a permissions value.
 
@@ -541,8 +541,8 @@ def has_guild_permission(
 def evaluate_user_guild_permissions(
     member: "Any",
     _guild: "Any",
-    requested_permissions: List[str]
-) -> Tuple[Dict[str, PermissionSource], Set[str]]:
+    requested_permissions: list[str]
+) -> tuple[dict[str, PermissionSource], set[str]]:
     """
     Evaluate guild-level permissions for a user.
 
@@ -588,8 +588,8 @@ def evaluate_user_guild_permissions(
 def evaluate_user_channel_permissions(
     member: "Any",
     channel: "Any",
-    requested_permissions: List[str]
-) -> Tuple[Dict[str, PermissionSource], Set[str]]:
+    requested_permissions: list[str]
+) -> tuple[dict[str, PermissionSource], set[str]]:
     """
     Evaluate channel-level permissions for a user.
 
@@ -653,8 +653,8 @@ def evaluate_user_channel_permissions(
 def evaluate_role_guild_permissions(
     role: "Any",
     _guild: "Any",
-    requested_permissions: List[str]
-) -> Tuple[Dict[str, PermissionSource], Set[str]]:
+    requested_permissions: list[str]
+) -> tuple[dict[str, PermissionSource], set[str]]:
     """
     Evaluate guild-level permissions for a role.
 
@@ -697,8 +697,8 @@ def evaluate_role_guild_permissions(
 def evaluate_role_channel_permissions(
     role: "Any",
     channel: "Any",
-    requested_permissions: List[str]
-) -> Tuple[Dict[str, PermissionSource], Set[str]]:
+    requested_permissions: list[str]
+) -> tuple[dict[str, PermissionSource], set[str]]:
     """
     Evaluate channel-level permissions for a role.
 

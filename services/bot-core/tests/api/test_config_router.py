@@ -4,13 +4,11 @@ Import path setup and sqlalchemy_utils mocking are handled by
 tests/api/conftest.py which runs before this module is loaded.
 """
 
-from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -612,10 +610,8 @@ class TestUpdateStartingCreditsFixedRoute:
     @pytest.fixture
     def fixed_app(self, mock_config_service):
         """A test app that mounts update_starting_credits under the CORRECT URL pattern."""
-        from fastapi import FastAPI, APIRouter, Path, Depends, status
         from api.routers.config import get_config_service
-        from api.schemas.config_schema import GuildConfigResponse
-        from persist.database.manager import get_db_session
+        from fastapi import APIRouter, Depends, FastAPI, Path
         from services.config_service import ConfigService
 
         # We re-expose the handler under a fixed URL so path param binding works.
@@ -628,12 +624,10 @@ class TestUpdateStartingCreditsFixedRoute:
             config_service: ConfigService = Depends(get_config_service),
         ):
             """Wrapper that calls the original handler logic."""
+            # Re-invoke the business logic directly
             from api.routers.config import update_starting_credits
 
-            # Re-invoke the business logic directly
-            import fastapi
-
-            mock_req = MagicMock()  # not used by the function but kept for signature compat
+            _mock_req = MagicMock()  # not used by the function but kept for signature compat
             return await update_starting_credits(
                 guild_id=guild_id,
                 starting_credits=starting_credits,

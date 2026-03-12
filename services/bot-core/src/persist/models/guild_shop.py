@@ -29,7 +29,7 @@ class GuildShop(Base):
     item_name: Mapped[str] = mapped_column(String(100), nullable=False)  # References static item data
     quantity: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
     price: Mapped[int] = mapped_column(Integer, nullable=False)  # Cost in credits
-    last_restocked: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(UTC))
+    last_restocked: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(UTC))
     refresh_interval_hours: Mapped[int] = mapped_column(Integer, default=12)  # Hours between refreshes
 
     # Relationships

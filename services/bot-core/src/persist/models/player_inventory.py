@@ -25,7 +25,7 @@ class PlayerInventory(Base):
     item_type: Mapped[str] = mapped_column(String(50), nullable=False)  # 'ship', 'weapon', 'module', 'turret'
     item_name: Mapped[str] = mapped_column(String(100), nullable=False)  # References static item data
     quantity: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
-    acquired_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(UTC))
+    acquired_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(UTC))
 
     # Relationships
     player: Mapped["Player"] = relationship("Player", back_populates="inventory")

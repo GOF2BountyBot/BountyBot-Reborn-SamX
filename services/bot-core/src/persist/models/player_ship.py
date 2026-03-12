@@ -32,7 +32,7 @@ class PlayerShip(Base):
     modules: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)  # Array of equipped module names
     turrets: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)  # Array of equipped turret names
 
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(UTC))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(UTC))
 
     # Relationships
     player: Mapped["Player"] = relationship("Player", back_populates="ships", foreign_keys=[player_id])

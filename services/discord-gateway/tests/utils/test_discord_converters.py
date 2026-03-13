@@ -94,11 +94,6 @@ _MockColor = type("Color", (), {"value": 0})
 _mock_discord.Color = _MockColor
 
 
-sys.modules["discord"] = _mock_discord
-sys.modules["discord.ext"] = _mock_discord_ext
-sys.modules["discord.ext.commands"] = _mock_discord_ext.commands
-
-
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 
@@ -119,6 +114,10 @@ def _restore_converter_discord():
     reference it captured when first imported (typically the API-test fake
     that has ``discord.Role = MagicMock()``, which causes ``isinstance`` to
     return incorrect results or raise TypeError).
+
+    After each test, restore the real discord module so that tests in other
+    files (e.g. test_embed_converter.py, test_command_utils.py) are not
+    affected by this file's sys.modules patch.
     """
     import importlib
 
@@ -129,6 +128,13 @@ def _restore_converter_discord():
 
     importlib.reload(_dc_mod)
     yield
+
+    # Restore real discord after each test to avoid polluting other test files.
+    # Use conftest's saved references (captured before any test file ran).
+    _cm = sys.modules.get("tests.conftest") or sys.modules.get("conftest")
+    sys.modules["discord"] = _cm._REAL_DISCORD
+    sys.modules["discord.ext"] = _cm._REAL_DISCORD_EXT
+    sys.modules["discord.ext.commands"] = _cm._REAL_DISCORD_EXT_COMMANDS
 
 
 class TestGuildConverter:

@@ -156,12 +156,35 @@ _mock_discord.Permissions = _MockPermissions
 _mock_discord.Color = _MockColor
 
 
-sys.modules["discord"] = _mock_discord
-sys.modules["discord.ext"] = _mock_discord_ext
-sys.modules["discord.ext.commands"] = _mock_discord_ext.commands
-
-
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
+
+
+@pytest.fixture(autouse=True)
+def _ensure_embed_converter_uses_mock_discord():
+    """
+    Reload utils.embed_converter before each test so that its module-level
+    ``discord`` reference is bound to this file's mock (which has a proper
+    _MockEmbed and _MockColor).  Without this, if test_discord_converters.py
+    runs first and reloads embed_converter with its own stripped-down discord
+    fake, the embed tests pick up the wrong discord types.
+    """
+    import importlib
+
+    sys.modules["discord"] = _mock_discord
+    sys.modules["discord.ext"] = _mock_discord_ext
+    sys.modules["discord.ext.commands"] = _mock_discord_ext.commands
+
+    import utils.embed_converter as _ec_mod
+
+    importlib.reload(_ec_mod)
+    yield
+
+    # Restore real discord after each test to avoid polluting subsequent files.
+    # Use conftest's saved references (captured before any test file ran).
+    _cm = sys.modules.get("tests.conftest") or sys.modules.get("conftest")
+    sys.modules["discord"] = _cm._REAL_DISCORD
+    sys.modules["discord.ext"] = _cm._REAL_DISCORD_EXT
+    sys.modules["discord.ext.commands"] = _cm._REAL_DISCORD_EXT_COMMANDS
 
 
 class TestEmbedConverter:

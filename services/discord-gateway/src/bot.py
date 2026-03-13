@@ -102,7 +102,7 @@ async def lifespan(app: FastAPI):
         try:
             await bot.start(token, reconnect=True)
         except Exception as e:
-            flogger.critical(f"Discord bot task failed: {str(e)}", exc_info=True)
+            flogger.critical(f"Discord bot task failed: {e!s}", exc_info=True)
             raise
 
     app.state.bot_task = asyncio.create_task(bot_task_wrapper())

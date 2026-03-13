@@ -1,15 +1,39 @@
 """Tests for command utility functions and classes."""
+import importlib
 import os
+import sys
 import time
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from utils.command_utils import CommandHandler, CommandValidator, get_command_handler
+from utils.command_utils import CommandValidator
 
 from tests.mocks.discord_mock_utils import DiscordMockUtils
 
 # Setup mock modules
 _mock_discord = DiscordMockUtils.create_mock_discord_module()
+
+
+@pytest.fixture(autouse=True)
+def _ensure_real_discord_for_command_utils():
+    """
+    Ensure the real discord module is in sys.modules and reload
+    utils.command_utils before each test so that its module-level
+    ``commands`` reference (from ``from discord.ext import commands``) points
+    to the real discord.ext.commands, not a test-file fake left over from
+    test_discord_converters.py.
+    Uses conftest's saved references which are captured before any test file
+    can pollute sys.modules.
+    """
+    _cm = sys.modules.get("tests.conftest") or sys.modules.get("conftest")
+    sys.modules["discord"] = _cm._REAL_DISCORD
+    sys.modules["discord.ext"] = _cm._REAL_DISCORD_EXT
+    sys.modules["discord.ext.commands"] = _cm._REAL_DISCORD_EXT_COMMANDS
+
+    import utils.command_utils as _cu_mod
+
+    importlib.reload(_cu_mod)
+    yield
 
 
 class TestCommandValidator:
@@ -258,8 +282,12 @@ class TestCommandHandler:
 
     def setup_method(self):
         """Set up test fixtures."""
+        # Re-import from the (potentially reloaded) module so that the handler
+        # uses the current discord.ext.commands reference, not a stale one from
+        # when the module was first imported during test collection.
+        import utils.command_utils as _cu
         self.mock_bot = MagicMock()
-        self.handler = CommandHandler(self.mock_bot)
+        self.handler = _cu.CommandHandler(self.mock_bot)
 
     @pytest.mark.asyncio
     async def test_execute_command_success(self):
@@ -419,14 +447,14 @@ class TestGetCommandHandler:
 
     def test_get_command_handler_creates_instance(self):
         """Test that get_command_handler creates an instance on first call."""
-        # Reset global state
+        # Reset global state and use the reloaded module to avoid stale class references.
         import utils.command_utils
         utils.command_utils._command_handler = None
 
         mock_bot = MagicMock()
-        handler = get_command_handler(mock_bot)
+        handler = utils.command_utils.get_command_handler(mock_bot)
 
-        assert isinstance(handler, CommandHandler)
+        assert isinstance(handler, utils.command_utils.CommandHandler)
         assert handler.bot == mock_bot
 
     def test_get_command_handler_returns_same_instance(self):
@@ -435,10 +463,10 @@ class TestGetCommandHandler:
         utils.command_utils._command_handler = None
 
         mock_bot1 = MagicMock()
-        handler1 = get_command_handler(mock_bot1)
+        handler1 = utils.command_utils.get_command_handler(mock_bot1)
 
         mock_bot2 = MagicMock()
-        handler2 = get_command_handler(mock_bot2)
+        handler2 = utils.command_utils.get_command_handler(mock_bot2)
 
         # Should be the same instance
         assert handler1 is handler2

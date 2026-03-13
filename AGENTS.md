@@ -121,22 +121,14 @@ The `services/shared/` directory contains `bblogger.py`, a dependency-free loggi
 3. Create service in `services/bot-core/src/services/`
 4. Run Alembic migration
 
----
+### New Services Added (Phase 1)
 
-## Submodules
-
-- `services/blender-service/src/lib/AEPi` - External Python library (https://github.com/Trimatix/AEPi.git)
-
-Initialize with: `git submodule update --init --recursive`
-
----
-
-## Environment Variables
-
-See `.env.example` for required variables. Key variables:
-- `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB`
-- Discord bot token
-- API keys
+The following services were added in Phase 1:
+- `services/bot-core/src/services/game_constants.py` — Centralized game constants with env var overrides
+- `services/bot-core/src/services/game_maths.py` — Tech level probability, reward formulas, level calculation
+- `services/bot-core/src/services/system_graph_service.py` — Star system adjacency graph with caching
+- `services/bot-core/src/services/pathfinding_service.py` — A* shortest path algorithm
+- `services/bot-core/src/persist/repositories/item_repository.py` — Unified item lookup across all model types
 
 ---
 
@@ -148,4 +140,4 @@ See `.env.example` for required variables. Key variables:
 
 ---
 
-*Last updated: 2026-03-07*
+*Last updated: 2026-03-13*

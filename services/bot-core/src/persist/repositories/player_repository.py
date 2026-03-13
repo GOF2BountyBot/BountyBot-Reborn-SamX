@@ -138,20 +138,20 @@ class PlayerRepository(IRepository[Player]):
             raise
 
     async def update_credits(self, db: AsyncSession, player_id: int, new_credits: int) -> Player:
-        """Update player new_credits."""
+        """Update player credits."""
         try:
             await db.execute(
                 update(Player)
                 .where(Player.id == player_id)
-                .values(new_credits=new_credits)
+                .values(credits=new_credits)
             )
             await db.commit()
 
             player = await self.get_by_id(db, player_id)
-            flogger.debug(f"Updated new_credits for player {player_id}: {new_credits}")
+            flogger.debug(f"Updated credits for player {player_id}: {new_credits}")
             return player
         except Exception as e:
-            flogger.error(f"Error updating new_credits for player {player_id}: {e}")
+            flogger.error(f"Error updating credits for player {player_id}: {e}")
             await db.rollback()
             raise
 

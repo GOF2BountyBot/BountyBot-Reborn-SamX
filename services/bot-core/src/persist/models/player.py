@@ -8,7 +8,7 @@ multiple players (one per guild) with completely isolated game state.
 from datetime import UTC, datetime
 from typing import Optional
 
-from sqlalchemy import BigInteger, DateTime, ForeignKey, Integer, String
+from sqlalchemy import BigInteger, Boolean, DateTime, ForeignKey, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from persist.database.tablenames import TableNames
@@ -44,6 +44,12 @@ class Player(Base):
     duel_losses: Mapped[int] = mapped_column(Integer, default=0)
     duel_credits_won: Mapped[int] = mapped_column(Integer, default=0)
     duel_credits_lost: Mapped[int] = mapped_column(Integer, default=0)
+
+    # Extended progression fields
+    xp_surplus: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    guild_transfer_cooldown: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    classic_mode: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    bounty_cooldown_end: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     # Active ship reference
     active_ship_id: Mapped[int | None] = mapped_column(

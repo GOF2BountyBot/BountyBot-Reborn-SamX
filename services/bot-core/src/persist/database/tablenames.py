@@ -2,6 +2,7 @@ from enum import Enum
 
 
 class TableNames(Enum):
+    Bounty              = "bounty"
     Criminal            = "criminal"
     DiscordMessage      = "discord_message"
     GuildConfigs        = "guild_configs"

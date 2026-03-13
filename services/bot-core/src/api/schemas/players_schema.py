@@ -1,3 +1,4 @@
+from datetime import datetime
 from typing import Any
 
 from pydantic import BaseModel, Field
@@ -20,6 +21,10 @@ class PlayerResponse(BaseModel):
     duel_credits_won: int
     duel_credits_lost: int
     active_ship_id: int | None
+    xp_surplus: int = 0
+    guild_transfer_cooldown: datetime | None = None
+    classic_mode: bool = False
+    bounty_cooldown_end: datetime | None = None
     created_at: str
     updated_at: str
 
@@ -34,6 +39,7 @@ class PlayerStatisticsResponse(BaseModel):
     prestige_count: int
     credits: int
     lifetime_credits: int
+    classic_mode: bool = False
     bounty_stats: dict[str, int]
     duel_stats: dict[str, Any]
     created_at: str

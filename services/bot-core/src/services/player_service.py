@@ -70,7 +70,11 @@ class PlayerService:
                 guild_id=guild_id,
                 credits=starting_credits,
                 tier="Bronze",
-                xp=0
+                xp=0,
+                xp_surplus=0,
+                classic_mode=False,
+                guild_transfer_cooldown=None,
+                bounty_cooldown_end=None,
             )
 
             player = await self.player_repo.add(db, player)
@@ -131,11 +135,12 @@ class PlayerService:
                 raise ValueError("Credits cannot be negative")
 
             # Update lifetime credits if this is an increase
-            if update_lifetime and new_credits > player.new_credits:
-                credit_increase = new_credits - player.new_credits
+            if update_lifetime and new_credits > player.credits:
+                credit_increase = new_credits - player.credits
                 player.lifetime_credits += credit_increase
 
-            player.new_credits = new_credits
+            player.credits = new_credits
+            player.new_credits = new_credits  # backward-compat alias (not a DB column)
             await db.commit()
             await db.refresh(player)
 
@@ -143,7 +148,7 @@ class PlayerService:
             return player
 
         except Exception as e:
-            flogger.error(f"Error updating new_credits for player {player_id}: {e}")
+            flogger.error(f"Error updating credits for player {player_id}: {e}")
             raise
 
     async def update_player_xp(self, db: AsyncSession, player_id: int, xp: int) -> Player:

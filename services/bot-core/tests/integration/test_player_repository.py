@@ -4,7 +4,6 @@ import pytest
 from persist.models.player import Player
 from persist.models.user import User
 from persist.repositories.player_repository import PlayerRepository
-from sqlalchemy.exc import CompileError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 
@@ -198,18 +197,14 @@ async def test_get_players_by_user(db_session: AsyncSession, repo: PlayerReposit
 
 
 async def test_update_credits(db_session: AsyncSession, repo: PlayerRepository):
-    """update_credits uses .values(new_credits=...) but the column is named
-    'credits'. This is a bug in the source repository code - the update
-    silently sets nothing because SQLAlchemy maps the kwarg to a column name.
-    The test documents this behaviour: the credits value remains unchanged."""
+    """update_credits should correctly update the player's credits value."""
     await _create_user(db_session, 50)
     player = await _create_player(db_session, repo, user_id=50, guild_id=9000, credits=100)
 
-    # The repository method has a bug: `.values(new_credits=new_credits)` should be
-    # `.values(credits=new_credits)`. SQLAlchemy will raise a CompileError for
-    # an unknown column name on execution.
-    with pytest.raises(CompileError, match="Unconsumed column names"):
-        await repo.update_credits(db_session, player.id, 500)
+    result = await repo.update_credits(db_session, player.id, 500)
+
+    assert result is not None
+    assert result.credits == 500
 
 
 # -- update_xp ----------------------------------------------------------------

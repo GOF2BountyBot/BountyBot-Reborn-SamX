@@ -7,7 +7,7 @@ tier-based shop management, item queries, and inventory operations.
 
 
 from shared import bblogger
-from sqlalchemy import and_, delete, select, update
+from sqlalchemy import and_, delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from persist.interfaces.repository_interface import IRepository
@@ -28,6 +28,15 @@ class ShopRepository(IRepository[GuildShop]):
     async def get_by_name(self, db: AsyncSession, name: str) -> GuildShop | None:
         """Not applicable for shop items."""
         raise NotImplementedError("Shop items don't have searchable names without context")
+
+    async def count(self, db: AsyncSession) -> int:
+        """Return total number of shop items."""
+        try:
+            result = await db.execute(select(func.count()).select_from(GuildShop))
+            return result.scalar_one()
+        except Exception as e:
+            flogger.error(f"Error counting shop items: {e}")
+            raise
 
     async def list_all(self, db: AsyncSession) -> list[GuildShop]:
         """Get all shop items."""

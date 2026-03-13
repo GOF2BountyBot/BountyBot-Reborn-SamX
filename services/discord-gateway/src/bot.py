@@ -39,7 +39,7 @@ class GatewayBot(commands.Bot):
         # Load cogs
         count = 0
         for fn in os.listdir("src/cogs"):
-            if fn.endswith(".py") and not any(x in fn for x in ("template", "disabled")):
+            if fn.endswith(".py") and not any(x in fn for x in ("template", "disabled", "test")):
                 try:
                     await self.load_extension(f"cogs.{fn[:-3]}")
                     count += 1
@@ -96,8 +96,16 @@ async def lifespan(app: FastAPI):
 
     bot = GatewayBot()
     app.state.bot = bot
-    # .start() is a coroutine that never returns until bot closes
-    app.state.bot_task = asyncio.create_task(bot.start(token, reconnect=True))
+
+    # Wrapper coroutine to catch and log exceptions from bot.start()
+    async def bot_task_wrapper():
+        try:
+            await bot.start(token, reconnect=True)
+        except Exception as e:
+            flogger.critical(f"Discord bot task failed: {str(e)}", exc_info=True)
+            raise
+
+    app.state.bot_task = asyncio.create_task(bot_task_wrapper())
     flogger.info("✅ Discord bot task launched")
 
     yield  # ←── your routes run here

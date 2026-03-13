@@ -1,3 +1,12 @@
+# =============================================================================
+# TEMPLATE / BOILERPLATE COG — DO NOT LOAD IN PRODUCTION
+#
+# This file is a starter template for new Discord cogs.
+# It is intentionally excluded from automatic cog loading (the loader skips
+# any file whose name contains "template").  Copy this file, rename it, and
+# implement your commands before registering it with the bot.
+# =============================================================================
+
 import os
 
 import discord

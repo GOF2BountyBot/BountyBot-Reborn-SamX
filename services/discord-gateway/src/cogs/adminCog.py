@@ -290,6 +290,33 @@ class AdminCog(commands.Cog):
                     embed.add_field(name="Tier Change", value="✅ Tier Updated!", inline=True)
                 await interaction.followup.send(embed=embed, ephemeral=True)
 
+            # Reset player stats
+            elif action == "reset":
+                resp = await self.http_client.post(
+                    f"{api_base}/admin/players/{player['id']}/reset",
+                    timeout=10,
+                )
+                if resp.status_code == 404:
+                    await interaction.followup.send(
+                        f"❌ Player not found for {user.display_name}.", ephemeral=True
+                    )
+                    return
+                resp.raise_for_status()
+                result = resp.json()
+                embed = discord.Embed(
+                    title="✅ Player Reset",
+                    description=f"Reset {user.display_name}'s stats to defaults",
+                    color=discord.Color.orange(),
+                )
+                embed.add_field(name="Credits", value=f"{result['credits']:,}", inline=True)
+                embed.add_field(name="XP", value=f"{result['xp']:,}", inline=True)
+                embed.add_field(name="Tier", value=result["tier"], inline=True)
+                embed.add_field(name="Bounty Wins", value=str(result["bounty_wins"]), inline=True)
+                embed.add_field(name="Duel Wins", value=str(result["duel_wins"]), inline=True)
+                embed.add_field(name="Duel Losses", value=str(result["duel_losses"]), inline=True)
+                embed.add_field(name="Prestige Count", value=str(result["prestige_count"]), inline=True)
+                await interaction.followup.send(embed=embed, ephemeral=True)
+
             flogger.info(
                 f"Admin {interaction.user} performed {action} on player {user} in guild {interaction.guild_id}"
             )

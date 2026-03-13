@@ -418,6 +418,109 @@ class TestAdminPlayerCommand:
         interaction.response.defer.assert_called_once_with(thinking=True, ephemeral=True)
         interaction.followup.send.assert_called_once()
 
+    def test_admin_player_reset_success(self, mock_admin_cog):
+        """admin_player reset should reset player stats and send confirmation embed."""
+        # Mock interaction
+        interaction = _create_mock_interaction()
+        interaction.guild_id = 987654321
+
+        # Mock user
+        user = _create_mock_user(user_id=111111111, name="Test User")
+
+        # First POST: player get-or-create
+        player_create_resp = MagicMock()
+        player_create_resp.status_code = 200
+        player_create_resp.json.return_value = {"id": 1}
+
+        # Second POST: reset endpoint
+        reset_resp = MagicMock()
+        reset_resp.status_code = 200
+        reset_resp.json.return_value = {
+            "player_id": 1,
+            "credits": 1000,
+            "xp": 0,
+            "tier": "Bronze",
+            "bounty_wins": 0,
+            "duel_wins": 0,
+            "duel_losses": 0,
+            "prestige_count": 0,
+            "message": "Player 1 stats reset to defaults",
+        }
+
+        # Directly mock the http_client on the cog instance
+        mock_admin_cog.http_client = MagicMock()
+        mock_admin_cog.http_client.post = AsyncMock(side_effect=[player_create_resp, reset_resp])
+
+        asyncio.run(mock_admin_cog.admin_player.callback(
+            mock_admin_cog, interaction, user, "reset", None, None
+        ))
+
+        # Verify behavior
+        interaction.response.defer.assert_called_once_with(thinking=True, ephemeral=True)
+        interaction.followup.send.assert_called_once()
+        # Verify an embed was sent (not a plain string error)
+        call_kwargs = interaction.followup.send.call_args[1]
+        assert "embed" in call_kwargs
+
+    def test_admin_player_reset_player_not_found(self, mock_admin_cog):
+        """admin_player reset should handle player-not-found (404) gracefully."""
+        # Mock interaction
+        interaction = _create_mock_interaction()
+        interaction.guild_id = 987654321
+
+        # Mock user
+        user = _create_mock_user(user_id=111111111, name="Test User")
+
+        # First POST: player get-or-create succeeds
+        player_create_resp = MagicMock()
+        player_create_resp.status_code = 200
+        player_create_resp.json.return_value = {"id": 9999}
+
+        # Second POST: reset returns 404
+        reset_resp = MagicMock()
+        reset_resp.status_code = 404
+
+        # Directly mock the http_client on the cog instance
+        mock_admin_cog.http_client = MagicMock()
+        mock_admin_cog.http_client.post = AsyncMock(side_effect=[player_create_resp, reset_resp])
+
+        asyncio.run(mock_admin_cog.admin_player.callback(
+            mock_admin_cog, interaction, user, "reset", None, None
+        ))
+
+        # Verify an error message was sent
+        interaction.response.defer.assert_called_once_with(thinking=True, ephemeral=True)
+        interaction.followup.send.assert_called_once()
+        call_args = interaction.followup.send.call_args
+        # Should send a plain string error (not embed)
+        assert call_args[1].get("ephemeral") is True
+
+    def test_admin_player_reset_api_error(self, mock_admin_cog):
+        """admin_player reset should handle API errors gracefully."""
+        # Mock interaction
+        interaction = _create_mock_interaction()
+        interaction.guild_id = 987654321
+
+        # Mock user
+        user = _create_mock_user(user_id=111111111, name="Test User")
+
+        # First POST: player get-or-create succeeds
+        player_create_resp = MagicMock()
+        player_create_resp.status_code = 200
+        player_create_resp.json.return_value = {"id": 1}
+
+        # Directly mock the http_client on the cog instance
+        mock_admin_cog.http_client = MagicMock()
+        mock_admin_cog.http_client.post = AsyncMock(side_effect=[player_create_resp, Exception("Connection error")])
+
+        asyncio.run(mock_admin_cog.admin_player.callback(
+            mock_admin_cog, interaction, user, "reset", None, None
+        ))
+
+        # Verify error handling
+        interaction.response.defer.assert_called_once_with(thinking=True, ephemeral=True)
+        interaction.followup.send.assert_called_once()
+
 
 class TestErrorHandling:
     """Tests for error handling in adminCog."""

@@ -9,6 +9,9 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+# Expose the fixtures/ package so game_data helpers are importable everywhere.
+sys.path.insert(0, os.path.dirname(__file__))
+
 # Add the src directory to the path so imports work
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 # Add the tests directory to the path so test helpers (e.g. conftest) are importable
@@ -146,3 +149,65 @@ def make_mock_player(**overrides):
     for k, v in defaults.items():
         setattr(player, k, v)
     return player
+
+
+# ---------------------------------------------------------------------------
+# Game-data fixtures — sourced from real import_data/ JSON files.
+# Each fixture returns a list of SimpleNamespace objects whose attributes
+# mirror the corresponding SQLAlchemy model columns.
+# ---------------------------------------------------------------------------
+
+@pytest.fixture
+def seed_ships():
+    """Return 5 Ship-like SimpleNamespace objects from real import_data."""
+    from fixtures.game_data import get_seed_ships
+
+    return get_seed_ships()
+
+
+@pytest.fixture
+def seed_primary_weapons():
+    """Return 5 PrimaryWeapon-like SimpleNamespace objects from real import_data."""
+    from fixtures.game_data import get_seed_primary_weapons
+
+    return get_seed_primary_weapons()
+
+
+@pytest.fixture
+def seed_secondary_weapons():
+    """Return 4 SecondaryWeapon-like SimpleNamespace objects from real import_data."""
+    from fixtures.game_data import get_seed_secondary_weapons
+
+    return get_seed_secondary_weapons()
+
+
+@pytest.fixture
+def seed_turret_weapons():
+    """Return 4 TurretWeapon-like SimpleNamespace objects from real import_data."""
+    from fixtures.game_data import get_seed_turret_weapons
+
+    return get_seed_turret_weapons()
+
+
+@pytest.fixture
+def seed_modules():
+    """Return 6 Module-like SimpleNamespace objects from real import_data."""
+    from fixtures.game_data import get_seed_modules
+
+    return get_seed_modules()
+
+
+@pytest.fixture
+def seed_criminals():
+    """Return 5 Criminal-like SimpleNamespace objects from real import_data."""
+    from fixtures.game_data import get_seed_criminals
+
+    return get_seed_criminals()
+
+
+@pytest.fixture
+def seed_systems():
+    """Return 5 System-like SimpleNamespace objects from real import_data."""
+    from fixtures.game_data import get_seed_systems
+
+    return get_seed_systems()

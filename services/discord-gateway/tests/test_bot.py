@@ -181,8 +181,8 @@ class TestSetupHook:
     @patch("os.listdir")
     @patch("os.path.join")
     def test_setup_hook_loads_cogs(self, mock_join, mock_listdir, mock_gateway_bot):
-        """setup_hook should load all cog files except template and disabled ones."""
-        mock_listdir.return_value = ["aboutCog.py", "adminCog.py", "templateCog.py", "disabledCog.py"]
+        """setup_hook should load all cog files except template, disabled, and test ones."""
+        mock_listdir.return_value = ["aboutCog.py", "adminCog.py", "templateCog.py", "disabledCog.py", "testCog.py"]
         mock_join.return_value = "src/cogs/aboutCog.py"
 
         bot = mock_gateway_bot
@@ -194,11 +194,12 @@ class TestSetupHook:
         # Call setup_hook
         asyncio.run(bot.setup_hook())
 
-        # Should load aboutCog and adminCog, skip templateCog and disabledCog
+        # Should load aboutCog and adminCog, skip templateCog, disabledCog, and testCog
         bot.load_extension.assert_any_call("cogs.aboutCog")
         bot.load_extension.assert_any_call("cogs.adminCog")
         assert call("cogs.templateCog") not in bot.load_extension.call_args_list
         assert call("cogs.disabledCog") not in bot.load_extension.call_args_list
+        assert call("cogs.testCog") not in bot.load_extension.call_args_list
 
         bot.flogger.info.assert_called_with("=== SETUP HOOK COMPLETED (2 cogs) ===")
 
@@ -308,9 +309,9 @@ class TestCogManagement:
     @patch("os.listdir")
     @patch("os.path.join")
     def test_load_all_cogs(self, mock_join, mock_listdir, mock_gateway_bot):
-        """Should be able to load all cog files dynamically."""
-        mock_listdir.return_value = ["testCog.py"]
-        mock_join.return_value = "src/cogs/testCog.py"
+        """Should be able to load all cog files dynamically, skipping template/disabled/test cogs."""
+        mock_listdir.return_value = ["healthCog.py", "testCog.py", "templateCog.py"]
+        mock_join.return_value = "src/cogs/healthCog.py"
 
         bot = mock_gateway_bot
         bot.load_extension = AsyncMock()
@@ -318,8 +319,10 @@ class TestCogManagement:
 
         asyncio.run(bot.setup_hook())
 
-        # Verify cog was loaded
-        bot.load_extension.assert_called_once_with("cogs.testCog")
+        # healthCog should be loaded; testCog and templateCog must be skipped
+        bot.load_extension.assert_called_once_with("cogs.healthCog")
+        assert call("cogs.testCog") not in bot.load_extension.call_args_list
+        assert call("cogs.templateCog") not in bot.load_extension.call_args_list
 
 
 class TestErrorHandling:

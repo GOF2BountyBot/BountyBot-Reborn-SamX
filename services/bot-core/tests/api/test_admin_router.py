@@ -47,6 +47,11 @@ def mock_player_service():
             make_mock_player(id=2, credits=200, xp=150, tier="Silver"),
         ]
     )
+    service.player_repo.count = AsyncMock(return_value=2)
+    service.user_repo = AsyncMock()
+    service.user_repo.count = AsyncMock(return_value=3)
+    service.config_repo = AsyncMock()
+    service.config_repo.count = AsyncMock(return_value=1)
     service.update_player_credits = AsyncMock(return_value=make_mock_player(credits=500, lifetime_credits=500))
     service.update_player_xp = AsyncMock(return_value=make_mock_player(xp=100, tier="Bronze"))
     return service
@@ -55,6 +60,8 @@ def mock_player_service():
 @pytest.fixture
 def mock_shop_service():
     service = AsyncMock()
+    service.shop_repo = AsyncMock()
+    service.shop_repo.count = AsyncMock(return_value=5)
     service.refresh_shop = AsyncMock(return_value={"refreshed": True, "items_count": 10})
     return service
 
@@ -70,16 +77,43 @@ def mock_config_service():
     return service
 
 
+def _make_transaction_details(player_id=1, item_type="weapon", item_name="Pulse Laser", quantity=2):
+    """Return a dict matching InventoryService.add_item_to_inventory() output."""
+    return {
+        "player_id": player_id,
+        "item_type": item_type,
+        "item_name": item_name,
+        "quantity_added": quantity,
+        "new_total_quantity": quantity,
+        "transaction_time": "2026-01-01T00:00:00",
+    }
+
+
 @pytest.fixture
-def test_app(mock_player_service, mock_shop_service, mock_config_service):
+def mock_inventory_service():
+    service = AsyncMock()
+    service.add_item_to_inventory = AsyncMock(
+        return_value=_make_transaction_details()
+    )
+    return service
+
+
+@pytest.fixture
+def test_app(mock_player_service, mock_shop_service, mock_config_service, mock_inventory_service):
     app = FastAPI()
-    from api.routers.admin import get_config_service, get_player_service, get_shop_service
+    from api.routers.admin import (
+        get_config_service,
+        get_inventory_service,
+        get_player_service,
+        get_shop_service,
+    )
     from api.routers.admin import router as admin_router
 
     app.include_router(admin_router, prefix="/api/v1")
     app.dependency_overrides[get_player_service] = lambda: mock_player_service
     app.dependency_overrides[get_shop_service] = lambda: mock_shop_service
     app.dependency_overrides[get_config_service] = lambda: mock_config_service
+    app.dependency_overrides[get_inventory_service] = lambda: mock_inventory_service
     yield app
     app.dependency_overrides.clear()
 
@@ -198,7 +232,7 @@ class TestResetGuild:
         """Does not clear player data when preserve_players=true."""
         _configure_db_mock(mock_get_db)
 
-        response = client.post("/api/v1/admin/guilds/67890/reset?preserve_players=true")
+        response = client.post("/api/v1/admin/guilds/67890/reset?user_id=67890&preserve_players=true")
 
         assert response.status_code == 200
         data = response.json()
@@ -214,7 +248,7 @@ class TestResetGuild:
         """Calls clear_guild_players when preserve_players=false."""
         _configure_db_mock(mock_get_db)
 
-        response = client.post("/api/v1/admin/guilds/67890/reset?preserve_players=false")
+        response = client.post("/api/v1/admin/guilds/67890/reset?user_id=67890&preserve_players=false")
 
         assert response.status_code == 200
         data = response.json()
@@ -227,7 +261,7 @@ class TestResetGuild:
         """Defaults preserve_players to True when not provided."""
         _configure_db_mock(mock_get_db)
 
-        response = client.post("/api/v1/admin/guilds/67890/reset")
+        response = client.post("/api/v1/admin/guilds/67890/reset?user_id=67890")
 
         assert response.status_code == 200
         data = response.json()
@@ -239,7 +273,7 @@ class TestResetGuild:
         """Calls refresh_shop for all 4 tiers."""
         _configure_db_mock(mock_get_db)
 
-        client.post("/api/v1/admin/guilds/67890/reset?preserve_players=true")
+        client.post("/api/v1/admin/guilds/67890/reset?user_id=67890&preserve_players=true")
 
         assert mock_shop_service.refresh_shop.await_count == 4
         tiers_called = [call.args[2] for call in mock_shop_service.refresh_shop.call_args_list]
@@ -251,10 +285,56 @@ class TestResetGuild:
         _configure_db_mock(mock_get_db)
         mock_config_service.reset_to_defaults.side_effect = RuntimeError("Reset failed")
 
-        response = client.post("/api/v1/admin/guilds/67890/reset")
+        response = client.post("/api/v1/admin/guilds/67890/reset?user_id=67890")
 
         assert response.status_code == 500
         assert "Failed to reset guild" in response.json()["detail"]
+
+    @patch("api.routers.admin.get_db_session")
+    def test_reset_guild_missing_user_id_returns_422(self, mock_get_db, client):
+        """Returns 422 when required user_id query parameter is missing."""
+        _configure_db_mock(mock_get_db)
+
+        response = client.post("/api/v1/admin/guilds/67890/reset")
+
+        assert response.status_code == 422
+
+    @patch.dict("os.environ", {"ADMIN_USER_IDS": "123,456"})
+    @patch("api.routers.admin.get_db_session")
+    def test_reset_guild_admin_user_allowed(self, mock_get_db, client, mock_config_service, mock_shop_service):
+        """Admin user (in ADMIN_USER_IDS) can reset the guild."""
+        _configure_db_mock(mock_get_db)
+
+        response = client.post("/api/v1/admin/guilds/67890/reset?user_id=123")
+
+        assert response.status_code == 200
+
+    @patch.dict("os.environ", {"ADMIN_USER_IDS": "123,456"})
+    @patch("api.routers.admin.get_db_session")
+    def test_reset_guild_non_admin_user_returns_403(self, mock_get_db, client):
+        """Non-admin user (not in ADMIN_USER_IDS) receives 403 Forbidden."""
+        _configure_db_mock(mock_get_db)
+
+        response = client.post("/api/v1/admin/guilds/67890/reset?user_id=999")
+
+        assert response.status_code == 403
+        assert "Insufficient permissions" in response.json()["detail"]
+
+    @patch("api.routers.admin.get_db_session")
+    def test_reset_guild_dev_mode_no_admin_ids_allows_access(
+        self, mock_get_db, client, mock_config_service, mock_shop_service
+    ):
+        """When ADMIN_USER_IDS is not set, any user is allowed (dev mode)."""
+        _configure_db_mock(mock_get_db)
+        # Ensure ADMIN_USER_IDS is not set
+        import os
+        env_backup = os.environ.pop("ADMIN_USER_IDS", None)
+        try:
+            response = client.post("/api/v1/admin/guilds/67890/reset?user_id=999")
+            assert response.status_code == 200
+        finally:
+            if env_backup is not None:
+                os.environ["ADMIN_USER_IDS"] = env_backup
 
 
 # ===========================================================================
@@ -270,7 +350,7 @@ class TestUninstallBot:
         """Returns 200 with removed counts on successful uninstall."""
         _configure_db_mock(mock_get_db)
 
-        response = client.delete("/api/v1/admin/guilds/67890/uninstall")
+        response = client.delete("/api/v1/admin/guilds/67890/uninstall?user_id=67890")
 
         assert response.status_code == 200
         data = response.json()
@@ -285,7 +365,7 @@ class TestUninstallBot:
         """Passes the correct guild_id to config_service.uninstall_guild."""
         _configure_db_mock(mock_get_db)
 
-        client.delete("/api/v1/admin/guilds/99999/uninstall")
+        client.delete("/api/v1/admin/guilds/99999/uninstall?user_id=99999")
 
         call_args = mock_config_service.uninstall_guild.call_args
         assert 99999 in call_args.args or call_args.kwargs.get("guild_id") == 99999
@@ -296,10 +376,53 @@ class TestUninstallBot:
         _configure_db_mock(mock_get_db)
         mock_config_service.uninstall_guild.side_effect = RuntimeError("Uninstall failed")
 
-        response = client.delete("/api/v1/admin/guilds/67890/uninstall")
+        response = client.delete("/api/v1/admin/guilds/67890/uninstall?user_id=67890")
 
         assert response.status_code == 500
         assert "Failed to uninstall bot" in response.json()["detail"]
+
+    @patch("api.routers.admin.get_db_session")
+    def test_uninstall_bot_missing_user_id_returns_422(self, mock_get_db, client):
+        """Returns 422 when required user_id query parameter is missing."""
+        _configure_db_mock(mock_get_db)
+
+        response = client.delete("/api/v1/admin/guilds/67890/uninstall")
+
+        assert response.status_code == 422
+
+    @patch.dict("os.environ", {"ADMIN_USER_IDS": "123,456"})
+    @patch("api.routers.admin.get_db_session")
+    def test_uninstall_bot_admin_user_allowed(self, mock_get_db, client, mock_config_service):
+        """Admin user (in ADMIN_USER_IDS) can uninstall the bot."""
+        _configure_db_mock(mock_get_db)
+
+        response = client.delete("/api/v1/admin/guilds/67890/uninstall?user_id=456")
+
+        assert response.status_code == 200
+
+    @patch.dict("os.environ", {"ADMIN_USER_IDS": "123,456"})
+    @patch("api.routers.admin.get_db_session")
+    def test_uninstall_bot_non_admin_user_returns_403(self, mock_get_db, client):
+        """Non-admin user (not in ADMIN_USER_IDS) receives 403 Forbidden."""
+        _configure_db_mock(mock_get_db)
+
+        response = client.delete("/api/v1/admin/guilds/67890/uninstall?user_id=999")
+
+        assert response.status_code == 403
+        assert "Insufficient permissions" in response.json()["detail"]
+
+    @patch("api.routers.admin.get_db_session")
+    def test_uninstall_bot_dev_mode_no_admin_ids_allows_access(self, mock_get_db, client, mock_config_service):
+        """When ADMIN_USER_IDS is not set, any user is allowed (dev mode)."""
+        _configure_db_mock(mock_get_db)
+        import os
+        env_backup = os.environ.pop("ADMIN_USER_IDS", None)
+        try:
+            response = client.delete("/api/v1/admin/guilds/67890/uninstall?user_id=999")
+            assert response.status_code == 200
+        finally:
+            if env_backup is not None:
+                os.environ["ADMIN_USER_IDS"] = env_backup
 
 
 # ===========================================================================
@@ -520,9 +643,14 @@ class TestAddInventoryItem:
     """Tests for POST /api/v1/admin/players/inventory/add."""
 
     @patch("api.routers.admin.get_db_session")
-    def test_add_inventory_item_happy_path(self, mock_get_db, client, mock_player_service):
+    def test_add_inventory_item_happy_path(self, mock_get_db, client, mock_inventory_service):
         """Returns 200 with item details when player exists."""
         _configure_db_mock(mock_get_db)
+        mock_inventory_service.add_item_to_inventory = AsyncMock(
+            return_value=_make_transaction_details(
+                player_id=1, item_type="weapon", item_name="Pulse Laser", quantity=2
+            )
+        )
         payload = {
             "player_id": 1,
             "item_type": "weapon",
@@ -537,50 +665,61 @@ class TestAddInventoryItem:
         assert data["player_id"] == 1
         assert data["item_type"] == "weapon"
         assert data["item_name"] == "Pulse Laser"
-        assert data["quantity"] == 2
+        assert data["quantity_added"] == 2
         assert "message" in data
 
     @patch("api.routers.admin.get_db_session")
-    def test_add_inventory_item_default_quantity_one(self, mock_get_db, client, mock_player_service):
-        """Defaults quantity to 1 when not provided."""
+    def test_add_inventory_item_default_quantity_one(self, mock_get_db, client, mock_inventory_service):
+        """Defaults quantity to 1 when not provided; quantity_added reflects the added amount."""
         _configure_db_mock(mock_get_db)
+        mock_inventory_service.add_item_to_inventory = AsyncMock(
+            return_value=_make_transaction_details(
+                player_id=1, item_type="ship", item_name="Raptor", quantity=1
+            )
+        )
         payload = {"player_id": 1, "item_type": "ship", "item_name": "Raptor"}
 
         response = client.post("/api/v1/admin/players/inventory/add", json=payload)
 
         assert response.status_code == 200
         data = response.json()
-        assert data["quantity"] == 1
+        assert data["quantity_added"] == 1
 
     @patch("api.routers.admin.get_db_session")
-    def test_add_inventory_item_all_valid_item_types(self, mock_get_db, client, mock_player_service):
+    def test_add_inventory_item_all_valid_item_types(self, mock_get_db, client, mock_inventory_service):
         """Accepts all valid item types: ship, weapon, module, turret."""
         _configure_db_mock(mock_get_db)
         valid_types = ["ship", "weapon", "module", "turret"]
 
         for item_type in valid_types:
-            mock_player_service.player_repo.get_by_id = AsyncMock(return_value=make_mock_player())
+            mock_inventory_service.add_item_to_inventory = AsyncMock(
+                return_value=_make_transaction_details(item_type=item_type, item_name="Test Item")
+            )
             payload = {"player_id": 1, "item_type": item_type, "item_name": "Test Item"}
             response = client.post("/api/v1/admin/players/inventory/add", json=payload)
             assert response.status_code == 200, f"Expected 200 for item_type={item_type}"
 
     @patch("api.routers.admin.get_db_session")
-    def test_add_inventory_item_player_not_found_returns_404(self, mock_get_db, client, mock_player_service):
-        """Returns 404 when player does not exist (repo returns None)."""
+    def test_add_inventory_item_player_not_found_returns_404(self, mock_get_db, client, mock_inventory_service):
+        """Returns 404 when player does not exist (service raises ValueError)."""
         _configure_db_mock(mock_get_db)
-        mock_player_service.player_repo.get_by_id = AsyncMock(return_value=None)
+        mock_inventory_service.add_item_to_inventory = AsyncMock(
+            side_effect=ValueError("Player 9999 not found")
+        )
         payload = {"player_id": 9999, "item_type": "weapon", "item_name": "Pulse Laser"}
 
         response = client.post("/api/v1/admin/players/inventory/add", json=payload)
 
         assert response.status_code == 404
-        assert "Player not found" in response.json()["detail"]
+        assert "not found" in response.json()["detail"].lower()
 
     @patch("api.routers.admin.get_db_session")
-    def test_add_inventory_item_server_error_returns_500(self, mock_get_db, client, mock_player_service):
+    def test_add_inventory_item_server_error_returns_500(self, mock_get_db, client, mock_inventory_service):
         """Returns 500 when an unexpected exception is raised."""
         _configure_db_mock(mock_get_db)
-        mock_player_service.player_repo.get_by_id = AsyncMock(side_effect=RuntimeError("DB connection lost"))
+        mock_inventory_service.add_item_to_inventory = AsyncMock(
+            side_effect=RuntimeError("DB connection lost")
+        )
         payload = {"player_id": 1, "item_type": "weapon", "item_name": "Pulse Laser"}
 
         response = client.post("/api/v1/admin/players/inventory/add", json=payload)
@@ -623,6 +762,33 @@ class TestAddInventoryItem:
         response = client.post("/api/v1/admin/players/inventory/add", json=payload)
 
         assert response.status_code == 422
+
+    @patch("api.routers.admin.get_db_session")
+    def test_add_inventory_item_calls_inventory_service(self, mock_get_db, client, mock_inventory_service):
+        """Verifies that add_item_to_inventory is called with correct arguments."""
+        _configure_db_mock(mock_get_db)
+        mock_inventory_service.add_item_to_inventory = AsyncMock(
+            return_value=_make_transaction_details(
+                player_id=42, item_type="module", item_name="Shield Booster", quantity=3
+            )
+        )
+        payload = {
+            "player_id": 42,
+            "item_type": "module",
+            "item_name": "Shield Booster",
+            "quantity": 3,
+        }
+
+        response = client.post("/api/v1/admin/players/inventory/add", json=payload)
+
+        assert response.status_code == 200
+        mock_inventory_service.add_item_to_inventory.assert_called_once()
+        call_args = mock_inventory_service.add_item_to_inventory.call_args
+        # call_args[0] is positional args: (db, player_id, item_type, item_name, quantity)
+        assert call_args[0][1] == 42           # player_id
+        assert call_args[0][2] == "module"     # item_type
+        assert call_args[0][3] == "Shield Booster"  # item_name
+        assert call_args[0][4] == 3            # quantity
 
 
 # ===========================================================================
@@ -835,8 +1001,8 @@ class TestGetSystemHealth:
     """Tests for GET /api/v1/admin/system/health."""
 
     @patch("api.routers.admin.get_db_session")
-    def test_get_system_health_happy_path(self, mock_get_db, client):
-        """Returns 200 with SystemHealthResponse."""
+    def test_get_system_health_happy_path(self, mock_get_db, client, mock_player_service, mock_shop_service):
+        """Returns 200 with SystemHealthResponse containing real counts from repositories."""
         _configure_db_mock(mock_get_db)
 
         response = client.get("/api/v1/admin/system/health")
@@ -844,10 +1010,10 @@ class TestGetSystemHealth:
         assert response.status_code == 200
         data = response.json()
         assert data["database_status"] == "healthy"
-        assert isinstance(data["total_users"], int)
-        assert isinstance(data["total_players"], int)
-        assert isinstance(data["total_guilds"], int)
-        assert isinstance(data["shop_items_count"], int)
+        assert data["total_users"] == 3
+        assert data["total_players"] == 2
+        assert data["total_guilds"] == 1
+        assert data["shop_items_count"] == 5
         assert data["system_status"] == "operational"
 
     @patch("api.routers.admin.get_db_session")
@@ -881,6 +1047,27 @@ class TestGetSystemHealth:
 
         assert response.status_code == 500
         assert "Failed to get system health" in response.json()["detail"]
+
+    @patch("api.routers.admin.get_db_session")
+    def test_get_system_health_counts_match_seeded_values(
+        self, mock_get_db, client, mock_player_service, mock_shop_service
+    ):
+        """Counts returned by health endpoint match values seeded into repository mocks."""
+        _configure_db_mock(mock_get_db)
+        # Override mock count returns with specific "seeded" values
+        mock_player_service.user_repo.count = AsyncMock(return_value=10)
+        mock_player_service.player_repo.count = AsyncMock(return_value=25)
+        mock_player_service.config_repo.count = AsyncMock(return_value=4)
+        mock_shop_service.shop_repo.count = AsyncMock(return_value=40)
+
+        response = client.get("/api/v1/admin/system/health")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["total_users"] == 10
+        assert data["total_players"] == 25
+        assert data["total_guilds"] == 4
+        assert data["shop_items_count"] == 40
 
 
 # ===========================================================================
@@ -994,3 +1181,123 @@ class TestGetGuildStatistics:
         data = response.json()
         assert data["average_credits"] == pytest.approx(200.0)
         assert data["average_xp"] == pytest.approx(100.0)
+
+
+# ===========================================================================
+# 10. POST /admin/players/{player_id}/reset
+# ===========================================================================
+
+
+class TestResetPlayer:
+    """Tests for POST /api/v1/admin/players/{player_id}/reset."""
+
+    def _make_reset_player(self, **overrides):
+        """Create a mock player with post-reset defaults."""
+        defaults = dict(
+            id=1,
+            guild_id=67890,
+            credits=1000,
+            xp=0,
+            tier="Bronze",
+            bounty_wins=0,
+            duel_wins=0,
+            duel_losses=0,
+            prestige_count=0,
+        )
+        defaults.update(overrides)
+        player = MagicMock()
+        for k, v in defaults.items():
+            setattr(player, k, v)
+        return player
+
+    @patch("api.routers.admin.get_db_session")
+    def test_reset_player_happy_path(self, mock_get_db, client, mock_player_service):
+        """Returns 200 with reset player stats on success."""
+        _configure_db_mock(mock_get_db)
+        reset_player = self._make_reset_player()
+        mock_player_service.player_repo.get_by_id = AsyncMock(return_value=reset_player)
+        mock_player_service.config_repo = AsyncMock()
+        mock_config = MagicMock()
+        mock_config.starting_credits = 1000
+        mock_player_service.config_repo.get_by_guild_id = AsyncMock(return_value=mock_config)
+
+        response = client.post("/api/v1/admin/players/1/reset")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["player_id"] == 1
+        assert data["xp"] == 0
+        assert data["tier"] == "Bronze"
+        assert data["bounty_wins"] == 0
+        assert data["duel_wins"] == 0
+        assert data["duel_losses"] == 0
+        assert data["prestige_count"] == 0
+        assert "message" in data
+
+    @patch("api.routers.admin.get_db_session")
+    def test_reset_player_not_found_returns_404(self, mock_get_db, client, mock_player_service):
+        """Returns 404 when player does not exist."""
+        _configure_db_mock(mock_get_db)
+        mock_player_service.player_repo.get_by_id = AsyncMock(return_value=None)
+
+        response = client.post("/api/v1/admin/players/9999/reset")
+
+        assert response.status_code == 404
+        assert "Player not found" in response.json()["detail"]
+
+    @patch("api.routers.admin.get_db_session")
+    def test_reset_player_uses_starting_credits_from_config(self, mock_get_db, client, mock_player_service):
+        """Uses guild config starting_credits when resetting credits."""
+        _configure_db_mock(mock_get_db)
+        reset_player = self._make_reset_player(credits=500)
+        mock_player_service.player_repo.get_by_id = AsyncMock(return_value=reset_player)
+        mock_player_service.config_repo = AsyncMock()
+        mock_config = MagicMock()
+        mock_config.starting_credits = 500
+        mock_player_service.config_repo.get_by_guild_id = AsyncMock(return_value=mock_config)
+
+        response = client.post("/api/v1/admin/players/1/reset")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["credits"] == 500
+
+    @patch("api.routers.admin.get_db_session")
+    def test_reset_player_no_config_defaults_credits_to_zero(self, mock_get_db, client, mock_player_service):
+        """Defaults credits to 0 when no guild config exists."""
+        _configure_db_mock(mock_get_db)
+        reset_player = self._make_reset_player(credits=0)
+        mock_player_service.player_repo.get_by_id = AsyncMock(return_value=reset_player)
+        mock_player_service.config_repo = AsyncMock()
+        mock_player_service.config_repo.get_by_guild_id = AsyncMock(return_value=None)
+
+        response = client.post("/api/v1/admin/players/1/reset")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["credits"] == 0
+
+    @patch("api.routers.admin.get_db_session")
+    def test_reset_player_server_error_returns_500(self, mock_get_db, client, mock_player_service):
+        """Returns 500 when an unexpected exception occurs."""
+        _configure_db_mock(mock_get_db)
+        mock_player_service.player_repo.get_by_id = AsyncMock(side_effect=RuntimeError("DB failure"))
+
+        response = client.post("/api/v1/admin/players/1/reset")
+
+        assert response.status_code == 500
+        assert "Failed to reset player" in response.json()["detail"]
+
+    @patch("api.routers.admin.get_db_session")
+    def test_reset_player_message_contains_player_id(self, mock_get_db, client, mock_player_service):
+        """Response message references the player_id."""
+        _configure_db_mock(mock_get_db)
+        reset_player = self._make_reset_player()
+        mock_player_service.player_repo.get_by_id = AsyncMock(return_value=reset_player)
+        mock_player_service.config_repo = AsyncMock()
+        mock_player_service.config_repo.get_by_guild_id = AsyncMock(return_value=None)
+
+        response = client.post("/api/v1/admin/players/1/reset")
+
+        assert response.status_code == 200
+        assert "1" in response.json()["message"]

@@ -82,7 +82,10 @@ def mock_inventory_repo() -> AsyncMock:
     repo.get_player_item = AsyncMock(return_value=None)
     repo.add_item = AsyncMock()
     repo.remove_item = AsyncMock()
+    repo.remove = AsyncMock()
+    repo.update_quantity = AsyncMock()
     repo.get_inventory_summary = AsyncMock(return_value={"total_items": 0})
+    repo.get_item_count_by_type = AsyncMock(return_value=0)
     return repo
 
 
@@ -94,10 +97,63 @@ def mock_player_repo() -> AsyncMock:
 
 
 @pytest.fixture
-def service(mock_inventory_repo, mock_player_repo) -> InventoryService:
+def mock_ship_repo() -> AsyncMock:
+    repo = AsyncMock()
+    # Default: item not found (returns None)
+    repo.get_by_name = AsyncMock(return_value=None)
+    return repo
+
+
+@pytest.fixture
+def mock_primary_weapon_repo() -> AsyncMock:
+    repo = AsyncMock()
+    repo.get_by_name = AsyncMock(return_value=None)
+    return repo
+
+
+@pytest.fixture
+def mock_secondary_weapon_repo() -> AsyncMock:
+    repo = AsyncMock()
+    repo.get_by_name = AsyncMock(return_value=None)
+    return repo
+
+
+@pytest.fixture
+def mock_turret_weapon_repo() -> AsyncMock:
+    repo = AsyncMock()
+    repo.get_by_name = AsyncMock(return_value=None)
+    return repo
+
+
+@pytest.fixture
+def mock_module_repo() -> AsyncMock:
+    repo = AsyncMock()
+    repo.get_by_name = AsyncMock(return_value=None)
+    return repo
+
+
+@pytest.fixture
+def service(
+    mock_inventory_repo,
+    mock_player_repo,
+    mock_ship_repo,
+    mock_primary_weapon_repo,
+    mock_secondary_weapon_repo,
+    mock_turret_weapon_repo,
+    mock_module_repo,
+) -> InventoryService:
     svc = InventoryService()
     svc.inventory_repo = mock_inventory_repo
     svc.player_repo = mock_player_repo
+    svc.ship_repo = mock_ship_repo
+    svc.primary_weapon_repo = mock_primary_weapon_repo
+    svc.secondary_weapon_repo = mock_secondary_weapon_repo
+    svc.turret_weapon_repo = mock_turret_weapon_repo
+    svc.module_repo = mock_module_repo
+    # By default make item validation pass (first repo returns a truthy hit)
+    mock_primary_weapon_repo.get_by_name.return_value = MagicMock(
+        name="DefaultItem", tech_level=1, value=100
+    )
     return svc
 
 
@@ -556,8 +612,17 @@ class TestValidateItemCompatibility:
     """Tests for InventoryService.validate_item_compatibility."""
 
     @pytest.mark.asyncio
-    async def test_returns_compatible_true_for_known_ship(self, service, mock_db):
+    async def test_returns_compatible_true_for_known_ship(self, service, mock_db, mock_ship_repo):
         """Returns compatible=True when ship details are found."""
+        mock_ship = MagicMock()
+        mock_ship.name = "Betty"
+        mock_ship.max_primaries = 4
+        mock_ship.max_modules = 6
+        mock_ship.max_secondaries = 2
+        mock_ship.max_turrets = 1
+        mock_ship.value = 5000
+        mock_ship_repo.get_by_name.return_value = mock_ship
+
         result = await service.validate_item_compatibility(
             mock_db, player_id=1, ship_name="Betty", item_type="weapon", item_name="Micro Gun MK I"
         )
@@ -714,3 +779,283 @@ class TestConsolidateInventoryExtra:
         # implementation (the body has no calls that can fail) and document it.
         # This test verifies that if something were to raise, it propagates.
         inv_svc_module.flogger = original_flogger
+
+
+# ===========================================================================
+# Tests: _validate_item_exists
+# ===========================================================================
+
+
+class TestValidateItemExists:
+    """Tests for InventoryService._validate_item_exists."""
+
+    @pytest.mark.asyncio
+    async def test_returns_true_when_item_found_in_repo(
+        self,
+        service,
+        mock_db,
+        mock_primary_weapon_repo,
+        mock_ship_repo,
+        mock_secondary_weapon_repo,
+        mock_turret_weapon_repo,
+        mock_module_repo,
+    ):
+        """Returns True when the item exists in at least one repository."""
+        found_item = MagicMock()
+        found_item.name = "Laser Mk I"
+        # All repos return None except primary_weapon_repo
+        mock_ship_repo.get_by_name.return_value = None
+        mock_primary_weapon_repo.get_by_name.return_value = found_item
+        mock_secondary_weapon_repo.get_by_name.return_value = None
+        mock_turret_weapon_repo.get_by_name.return_value = None
+        mock_module_repo.get_by_name.return_value = None
+
+        result = await service._validate_item_exists(mock_db, "Laser Mk I", "weapon")
+
+        assert result is True
+
+    @pytest.mark.asyncio
+    async def test_returns_false_when_item_not_found_in_any_repo(
+        self,
+        service,
+        mock_db,
+        mock_primary_weapon_repo,
+        mock_ship_repo,
+        mock_secondary_weapon_repo,
+        mock_turret_weapon_repo,
+        mock_module_repo,
+    ):
+        """Returns False when the item does not exist in any repository."""
+        mock_ship_repo.get_by_name.return_value = None
+        mock_primary_weapon_repo.get_by_name.return_value = None
+        mock_secondary_weapon_repo.get_by_name.return_value = None
+        mock_turret_weapon_repo.get_by_name.return_value = None
+        mock_module_repo.get_by_name.return_value = None
+
+        result = await service._validate_item_exists(mock_db, "NonExistentItem", "weapon")
+
+        assert result is False
+
+
+# ===========================================================================
+# Tests: _get_ship_details
+# ===========================================================================
+
+
+class TestGetShipDetails:
+    """Tests for InventoryService._get_ship_details."""
+
+    @pytest.mark.asyncio
+    async def test_returns_ship_data_from_repo(self, service, mock_db, mock_ship_repo):
+        """Returns a dict with real ship slot data when ship is found."""
+        mock_ship = MagicMock()
+        mock_ship.name = "Betty"
+        mock_ship.max_primaries = 4
+        mock_ship.max_modules = 6
+        mock_ship.max_secondaries = 2
+        mock_ship.max_turrets = 1
+        mock_ship.value = 5000
+        mock_ship_repo.get_by_name.return_value = mock_ship
+
+        result = await service._get_ship_details(mock_db, "Betty")
+
+        assert result is not None
+        assert result["name"] == "Betty"
+        assert result["max_primaries"] == 4
+        assert result["max_modules"] == 6
+        assert result["max_secondaries"] == 2
+        assert result["max_turrets"] == 1
+        assert result["value"] == 5000
+
+    @pytest.mark.asyncio
+    async def test_returns_none_when_ship_not_found(self, service, mock_db, mock_ship_repo):
+        """Returns None when the ship does not exist in the database."""
+        mock_ship_repo.get_by_name.return_value = None
+
+        result = await service._get_ship_details(mock_db, "UnknownShip")
+
+        assert result is None
+
+
+# ===========================================================================
+# Tests: validate_item_compatibility — slot-limit enforcement
+# ===========================================================================
+
+
+class TestValidateItemCompatibilitySlots:
+    """Tests that validate_item_compatibility checks slot counts."""
+
+    def _make_ship(self, max_primaries=4, max_secondaries=2, max_turrets=1, max_modules=6):
+        ship = MagicMock()
+        ship.name = "Betty"
+        ship.max_primaries = max_primaries
+        ship.max_modules = max_modules
+        ship.max_secondaries = max_secondaries
+        ship.max_turrets = max_turrets
+        ship.value = 5000
+        return ship
+
+    @pytest.mark.asyncio
+    async def test_full_weapon_slots_returns_incompatible(
+        self, service, mock_db, mock_ship_repo, mock_inventory_repo
+    ):
+        """weapon item_type on a ship with all primary slots full → compatible=False."""
+        mock_ship_repo.get_by_name.return_value = self._make_ship(max_primaries=2)
+        # Player already has 2 primary weapons (slots full)
+        mock_inventory_repo.get_item_count_by_type = AsyncMock(return_value=2)
+
+        result = await service.validate_item_compatibility(
+            mock_db, player_id=1, ship_name="Betty", item_type="weapon", item_name="Micro Gun MK I"
+        )
+
+        assert result["compatible"] is False
+        assert result["reason"] is not None
+        assert "slot" in result["reason"].lower() or "No available" in result["reason"]
+
+    @pytest.mark.asyncio
+    async def test_available_weapon_slots_returns_compatible(
+        self, service, mock_db, mock_ship_repo, mock_inventory_repo
+    ):
+        """weapon item_type on a ship with free primary slots → compatible=True."""
+        mock_ship_repo.get_by_name.return_value = self._make_ship(max_primaries=4)
+        # Player has only 1 primary weapon (3 slots free)
+        mock_inventory_repo.get_item_count_by_type = AsyncMock(return_value=1)
+
+        result = await service.validate_item_compatibility(
+            mock_db, player_id=1, ship_name="Betty", item_type="weapon", item_name="Micro Gun MK I"
+        )
+
+        assert result["compatible"] is True
+        assert result["reason"] is None
+
+    @pytest.mark.asyncio
+    async def test_primary_weapon_type_alias_uses_max_primaries(
+        self, service, mock_db, mock_ship_repo, mock_inventory_repo
+    ):
+        """item_type='primary_weapon' maps to max_primaries slot limit."""
+        mock_ship_repo.get_by_name.return_value = self._make_ship(max_primaries=1)
+        mock_inventory_repo.get_item_count_by_type = AsyncMock(return_value=1)
+
+        result = await service.validate_item_compatibility(
+            mock_db, player_id=1, ship_name="Betty", item_type="primary_weapon", item_name="Gun"
+        )
+
+        assert result["compatible"] is False
+
+    @pytest.mark.asyncio
+    async def test_secondary_weapon_type_uses_max_secondaries(
+        self, service, mock_db, mock_ship_repo, mock_inventory_repo
+    ):
+        """item_type='secondary_weapon' maps to max_secondaries slot limit."""
+        mock_ship_repo.get_by_name.return_value = self._make_ship(max_secondaries=2)
+        mock_inventory_repo.get_item_count_by_type = AsyncMock(return_value=2)
+
+        result = await service.validate_item_compatibility(
+            mock_db, player_id=1, ship_name="Betty", item_type="secondary_weapon", item_name="Missile"
+        )
+
+        assert result["compatible"] is False
+
+    @pytest.mark.asyncio
+    async def test_module_type_uses_max_modules(
+        self, service, mock_db, mock_ship_repo, mock_inventory_repo
+    ):
+        """item_type='module' maps to max_modules slot limit."""
+        mock_ship_repo.get_by_name.return_value = self._make_ship(max_modules=3)
+        mock_inventory_repo.get_item_count_by_type = AsyncMock(return_value=2)
+
+        result = await service.validate_item_compatibility(
+            mock_db, player_id=1, ship_name="Betty", item_type="module", item_name="Shield MK I"
+        )
+
+        assert result["compatible"] is True
+
+    @pytest.mark.asyncio
+    async def test_unknown_item_type_returns_compatible(
+        self, service, mock_db, mock_ship_repo
+    ):
+        """Unknown item_type is allowed (no slot restriction applies)."""
+        mock_ship_repo.get_by_name.return_value = self._make_ship()
+
+        result = await service.validate_item_compatibility(
+            mock_db, player_id=1, ship_name="Betty", item_type="unknown_gadget", item_name="Widget"
+        )
+
+        assert result["compatible"] is True
+
+
+# ===========================================================================
+# Tests: consolidate_inventory — real merge logic
+# ===========================================================================
+
+
+class TestConsolidateInventoryMerge:
+    """Tests for consolidate_inventory duplicate-merging logic."""
+
+    @pytest.mark.asyncio
+    async def test_no_duplicates_returns_zero_consolidated(
+        self, service, mock_db, mock_inventory_repo
+    ):
+        """When each item is unique, nothing is merged."""
+        item_a = _make_inventory_item(item_id=1, item_type="weapon", item_name="Gun A", quantity=2)
+        item_b = _make_inventory_item(item_id=2, item_type="module", item_name="Shield", quantity=1)
+        mock_inventory_repo.get_player_items = AsyncMock(return_value=[item_a, item_b])
+
+        result = await service.consolidate_inventory(mock_db, player_id=1)
+
+        assert result["player_id"] == 1
+        assert result["items_consolidated"] == 0
+        assert "already consolidated" in result["message"].lower()
+        mock_inventory_repo.remove.assert_not_called()
+        mock_inventory_repo.update_quantity.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_duplicates_are_merged_and_quantities_summed(
+        self, service, mock_db, mock_inventory_repo
+    ):
+        """Two entries for the same (item_type, item_name) are merged into one."""
+        primary = _make_inventory_item(item_id=10, item_type="weapon", item_name="Gun A", quantity=3)
+        duplicate = _make_inventory_item(item_id=11, item_type="weapon", item_name="Gun A", quantity=5)
+        mock_inventory_repo.get_player_items = AsyncMock(return_value=[primary, duplicate])
+
+        result = await service.consolidate_inventory(mock_db, player_id=1)
+
+        assert result["player_id"] == 1
+        assert result["items_consolidated"] == 1
+        assert "1" in result["message"]
+
+        # The duplicate should be removed and primary updated with summed quantity (3+5=8)
+        mock_inventory_repo.remove.assert_awaited_once_with(mock_db, duplicate)
+        mock_inventory_repo.update_quantity.assert_awaited_once_with(mock_db, primary.id, 8)
+
+    @pytest.mark.asyncio
+    async def test_multiple_duplicate_groups(
+        self, service, mock_db, mock_inventory_repo
+    ):
+        """Multiple groups of duplicates are all merged."""
+        gun_a1 = _make_inventory_item(item_id=1, item_type="weapon", item_name="Gun A", quantity=1)
+        gun_a2 = _make_inventory_item(item_id=2, item_type="weapon", item_name="Gun A", quantity=2)
+        gun_a3 = _make_inventory_item(item_id=3, item_type="weapon", item_name="Gun A", quantity=3)
+        shield1 = _make_inventory_item(item_id=4, item_type="module", item_name="Shield", quantity=10)
+        shield2 = _make_inventory_item(item_id=5, item_type="module", item_name="Shield", quantity=5)
+        mock_inventory_repo.get_player_items = AsyncMock(
+            return_value=[gun_a1, gun_a2, gun_a3, shield1, shield2]
+        )
+
+        result = await service.consolidate_inventory(mock_db, player_id=1)
+
+        # 2 duplicates for Gun A + 1 duplicate for Shield = 3 merged
+        assert result["items_consolidated"] == 3
+        assert mock_inventory_repo.remove.await_count == 3
+
+    @pytest.mark.asyncio
+    async def test_empty_inventory_returns_zero(
+        self, service, mock_db, mock_inventory_repo
+    ):
+        """Empty inventory returns 0 consolidated."""
+        mock_inventory_repo.get_player_items = AsyncMock(return_value=[])
+
+        result = await service.consolidate_inventory(mock_db, player_id=42)
+
+        assert result["player_id"] == 42
+        assert result["items_consolidated"] == 0

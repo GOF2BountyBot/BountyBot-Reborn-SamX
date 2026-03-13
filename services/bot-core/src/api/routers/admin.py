@@ -9,9 +9,12 @@ Handles administrative operations including:
 - System health and statistics
 """
 
+import os
+
 from fastapi import APIRouter, Depends, HTTPException, status
 from persist.database.manager import get_db_session
 from services.config_service import ConfigService
+from services.inventory_service import InventoryService
 from services.player_service import PlayerService
 from services.shop_service import ShopService
 from shared import bblogger
@@ -49,17 +52,33 @@ async def get_shop_service():
 async def get_config_service():
     return ConfigService()
 
+async def get_inventory_service():
+    return InventoryService()
+
 async def verify_admin_permissions(guild_id: int, user_id: int) -> bool:
     """
     Verify that the user has admin permissions for the guild.
 
-    TODO: Integrate with Discord role checking via discord-gateway
-    For now, this is a placeholder that should be implemented.
+    Checks if the user_id is in the ADMIN_USER_IDS environment variable
+    (comma-separated list of Discord user IDs).
+
+    If ADMIN_USER_IDS is not set or empty, falls back to allowing all access
+    (development mode) with a warning log.
     """
-    # This should make a call to discord-gateway to verify role membership
-    # For development, return True - MUST be implemented for production
-    flogger.warning(f"Admin permission check bypassed for user {user_id} in guild {guild_id}")
-    return True
+    admin_ids_raw = os.environ.get("ADMIN_USER_IDS", "").strip()
+    if not admin_ids_raw:
+        flogger.warning(
+            f"ADMIN_USER_IDS not configured - allowing access for user {user_id} "
+            f"in guild {guild_id} (dev mode)"
+        )
+        return True
+    admin_ids = {int(uid.strip()) for uid in admin_ids_raw.split(",") if uid.strip()}
+    if user_id in admin_ids:
+        return True
+    flogger.warning(
+        f"Permission denied: user {user_id} is not in ADMIN_USER_IDS for guild {guild_id}"
+    )
+    return False
 
 @router.post("/guilds/initialize", response_model=GuildInitializationResponse)
 async def initialize_guild(
@@ -116,6 +135,7 @@ async def initialize_guild(
 @router.post("/guilds/{guild_id}/reset")
 async def reset_guild(
     guild_id: int,
+    user_id: int,
     preserve_players: bool = True,
     config_service: ConfigService = Depends(get_config_service),
     shop_service: ShopService = Depends(get_shop_service)
@@ -124,12 +144,12 @@ async def reset_guild(
     Reset guild configuration to defaults.
 
     Optionally preserve or clear all player data.
+    Requires admin permissions (user_id must be in ADMIN_USER_IDS).
     """
     flogger.info(f"Resetting guild {guild_id}, preserve_players={preserve_players}")
 
-    # TODO: Add admin permission check
-    # if not await verify_admin_permissions(guild_id, user_id):
-    #     raise HTTPException(status_code=403, detail="Insufficient permissions")
+    if not await verify_admin_permissions(guild_id, user_id):
+        raise HTTPException(status_code=403, detail="Insufficient permissions")
 
     try:
         async with get_db_session() as db:
@@ -164,16 +184,19 @@ async def reset_guild(
 @router.delete("/guilds/{guild_id}/uninstall")
 async def uninstall_bot(
     guild_id: int,
+    user_id: int,
     config_service: ConfigService = Depends(get_config_service)
 ):
     """
     Completely remove all bot data for a guild.
 
     WARNING: This is irreversible and removes all player data, configurations, and shops.
+    Requires admin permissions (user_id must be in ADMIN_USER_IDS).
     """
     flogger.warning(f"Uninstalling bot from guild {guild_id} - ALL DATA WILL BE LOST")
 
-    # TODO: Add admin permission check with extra confirmation
+    if not await verify_admin_permissions(guild_id, user_id):
+        raise HTTPException(status_code=403, detail="Insufficient permissions")
 
     try:
         async with get_db_session() as db:
@@ -269,31 +292,90 @@ async def update_player_xp(
             detail="Failed to update XP"
         ) from e
 
+@router.post("/players/{player_id}/reset")
+async def reset_player(
+    player_id: int,
+    player_service: PlayerService = Depends(get_player_service)
+):
+    """Reset a player's stats back to defaults."""
+    flogger.info(f"Admin resetting player {player_id} stats to defaults")
+
+    try:
+        async with get_db_session() as db:
+            player = await player_service.player_repo.get_by_id(db, player_id)
+            if not player:
+                raise HTTPException(status_code=404, detail="Player not found")
+
+            # Get guild config for starting credits
+            config = await player_service.config_repo.get_by_guild_id(db, player.guild_id)
+            starting_credits = config.starting_credits if config else 0
+
+            # Reset stats to defaults
+            player.credits = starting_credits
+            player.xp = 0
+            player.tier = "Bronze"
+            player.bounty_wins = 0
+            player.duel_wins = 0
+            player.duel_losses = 0
+            player.prestige_count = 0
+
+            await db.commit()
+            await db.refresh(player)
+
+            flogger.info(f"Reset player {player_id} stats to defaults")
+
+            return {
+                "player_id": player_id,
+                "credits": player.credits,
+                "xp": player.xp,
+                "tier": player.tier,
+                "bounty_wins": player.bounty_wins,
+                "duel_wins": player.duel_wins,
+                "duel_losses": player.duel_losses,
+                "prestige_count": player.prestige_count,
+                "message": f"Player {player_id} stats reset to defaults"
+            }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        flogger.error(f"Error resetting player {player_id}: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to reset player"
+        ) from e
+
 @router.post("/players/inventory/add")
 async def add_inventory_item(
     request: AddInventoryItemRequest,
-    player_service: PlayerService = Depends(get_player_service)
+    inventory_service: InventoryService = Depends(get_inventory_service)
 ):
     """Add items to a player's inventory."""
     flogger.info(f"Admin adding {request.quantity}x {request.item_name} to player {request.player_id}")
 
     try:
         async with get_db_session() as db:
-            # Verify player exists
-            player = await player_service.player_repo.get_by_id(db, request.player_id)
-            if not player:
-                raise HTTPException(status_code=404, detail="Player not found")
+            transaction_details = await inventory_service.add_item_to_inventory(
+                db,
+                request.player_id,
+                request.item_type,
+                request.item_name,
+                request.quantity,
+            )
 
-            # Add item to inventory (this would need InventoryService implementation)
-            # For now, return success message
             return {
-                "player_id": request.player_id,
-                "item_type": request.item_type,
-                "item_name": request.item_name,
-                "quantity": request.quantity,
-                "message": f"Added {request.quantity}x {request.item_name} to player {request.player_id} inventory"
+                **transaction_details,
+                "message": (
+                    f"Added {request.quantity}x {request.item_name} "
+                    f"to player {request.player_id} inventory"
+                ),
             }
 
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(e)
+        ) from e
     except HTTPException:
         raise
     except Exception as e:
@@ -360,20 +442,26 @@ async def update_shop_config(
         ) from e
 
 @router.get("/system/health", response_model=SystemHealthResponse)
-async def get_system_health():
+async def get_system_health(
+    player_service: PlayerService = Depends(get_player_service),
+    shop_service: ShopService = Depends(get_shop_service),
+):
     """Get comprehensive system health information."""
     flogger.debug("Admin requesting system health information")
 
     try:
-        async with get_db_session():
-            # Get system statistics
-            # This would need implementation in respective services
+        async with get_db_session() as db:
+            total_users = await player_service.user_repo.count(db)
+            total_players = await player_service.player_repo.count(db)
+            total_guilds = await player_service.config_repo.count(db)
+            shop_items_count = await shop_service.shop_repo.count(db)
+
             health_info = {
                 "database_status": "healthy",
-                "total_users": 0,  # TODO: Implement
-                "total_players": 0,  # TODO: Implement
-                "total_guilds": 0,  # TODO: Implement
-                "shop_items_count": 0,  # TODO: Implement
+                "total_users": total_users,
+                "total_players": total_players,
+                "total_guilds": total_guilds,
+                "shop_items_count": shop_items_count,
                 "system_status": "operational"
             }
 

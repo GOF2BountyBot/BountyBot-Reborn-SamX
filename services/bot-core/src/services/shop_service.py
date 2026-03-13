@@ -15,8 +15,13 @@ from typing import Any
 from persist.models.guild_shop import GuildShop
 from persist.repositories.config_repository import ConfigRepository
 from persist.repositories.inventory_repository import InventoryRepository
+from persist.repositories.module_repository import ModuleRepository
 from persist.repositories.player_repository import PlayerRepository
+from persist.repositories.primary_weapon_repository import PrimaryWeaponRepository
+from persist.repositories.secondary_weapon_repository import SecondaryWeaponRepository
+from persist.repositories.ship_repository import ShipRepository
 from persist.repositories.shop_repository import ShopRepository
+from persist.repositories.turret_weapon_repository import TurretWeaponRepository
 from shared import bblogger
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -28,6 +33,11 @@ class ShopService:
         self.config_repo = ConfigRepository()
         self.player_repo = PlayerRepository()
         self.inventory_repo = InventoryRepository()
+        self.ship_repo = ShipRepository()
+        self.primary_weapon_repo = PrimaryWeaponRepository()
+        self.secondary_weapon_repo = SecondaryWeaponRepository()
+        self.turret_weapon_repo = TurretWeaponRepository()
+        self.module_repo = ModuleRepository()
 
     # Valid tiers and item types
     VALID_TIERS = ["Bronze", "Silver", "Gold", "Platinum"]
@@ -178,9 +188,8 @@ class ShopService:
             config = await self.config_repo.get_by_guild_id(db, player.guild_id)
             sale_price_factor = config.sale_price_factor if config else 0.8
 
-            # Calculate item price (we need to get this from static data)
-            # For now, using a base price - this should be integrated with static item data
-            base_price = await self._get_item_base_price(item_name)
+            # Calculate item price from static item data
+            base_price = await self._get_item_base_price(db, item_name)
             unit_sell_price = int(base_price * sale_price_factor)
             total_sell_value = unit_sell_price * quantity
 
@@ -261,12 +270,12 @@ class ShopService:
                     item_quantity = random.randint(quantity_range["min"], quantity_range["max"])
 
                     # Get random item of the selected tech level
-                    item_name = await self._get_random_item_by_tech_level(item_type, item_tech_level)
+                    item_name = await self._get_random_item_by_tech_level(db, item_type, item_tech_level)
                     if not item_name:
                         continue  # Skip if no items available at this tech level
 
                     # Calculate price
-                    base_price = await self._get_item_base_price(item_name)
+                    base_price = await self._get_item_base_price(db, item_name)
 
                     # Create shop item
                     shop_item_data = {
@@ -341,29 +350,53 @@ class ShopService:
             return max(1, shop_tech_level - 1)
         return max(1, shop_tech_level - 2)
 
-    async def _get_random_item_by_tech_level(self, item_type: str, tech_level: int) -> str | None:
-        """Get a random item name by type and tech level from static data."""
-        # TODO: Integrate with existing static data loading system
-        # For now, return placeholder items
-        placeholder_items = {
-            "ship": [f"Ship_{tech_level}_{i}" for i in range(1, 6)],
-            "weapon": [f"Weapon_{tech_level}_{i}" for i in range(1, 6)],
-            "module": [f"Module_{tech_level}_{i}" for i in range(1, 6)],
-            "turret": [f"Turret_{tech_level}_{i}" for i in range(1, 6)]
-        }
+    async def _get_random_item_by_tech_level(
+        self, db: AsyncSession, item_type: str, tech_level: int
+    ) -> str | None:
+        """Get a random item name by type and tech level from the database."""
+        if item_type == "ship":
+            # Ships have no tech_level column; select from all ships weighted by shop_spawn_rate
+            all_ships = await self.ship_repo.list_all(db)
+            if not all_ships:
+                return None
+            weights = [
+                (s.shop_spawn_rate if s.shop_spawn_rate is not None else 1.0)
+                for s in all_ships
+            ]
+            chosen = random.choices(all_ships, weights=weights, k=1)[0]
+            return chosen.name
 
-        items = placeholder_items.get(item_type, [])
-        return random.choice(items) if items else None
+        if item_type == "weapon":
+            all_weapons = await self.primary_weapon_repo.list_all(db)
+            items = [w for w in all_weapons if w.tech_level == tech_level]
+            return random.choice(items).name if items else None
 
-    async def _get_item_base_price(self, item_name: str) -> int:
-        """Get base price for an item from static data."""
-        # TODO: Integrate with existing static data system
-        # For now, return placeholder prices based on item name patterns
-        if "1" in item_name:
-            return random.randint(100, 500)
-        if "2" in item_name:
-            return random.randint(500, 1000)
-        return random.randint(1000, 5000)
+        if item_type == "module":
+            all_modules = await self.module_repo.list_all(db)
+            items = [m for m in all_modules if m.tech_level == tech_level]
+            return random.choice(items).name if items else None
+
+        if item_type == "turret":
+            all_turrets = await self.turret_weapon_repo.list_all(db)
+            items = [t for t in all_turrets if t.tech_level == tech_level]
+            return random.choice(items).name if items else None
+
+        return None
+
+    async def _get_item_base_price(self, db: AsyncSession, item_name: str) -> int:
+        """Look up the item's value field from its repository. Returns 0 if not found."""
+        # Try each repository in turn until we find the item
+        for repo in (
+            self.ship_repo,
+            self.primary_weapon_repo,
+            self.secondary_weapon_repo,
+            self.turret_weapon_repo,
+            self.module_repo,
+        ):
+            item = await repo.get_by_name(db, item_name)
+            if item is not None:
+                return item.value
+        return 0
 
     async def _add_item_to_shop(
         self,

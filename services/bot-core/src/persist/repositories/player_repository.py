@@ -7,7 +7,7 @@ player management, progression tracking, and statistics.
 
 
 from shared import bblogger
-from sqlalchemy import and_, select, update
+from sqlalchemy import and_, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from persist.interfaces.repository_interface import IRepository
@@ -28,6 +28,15 @@ class PlayerRepository(IRepository[Player]):
     async def get_by_name(self, db: AsyncSession, name: str) -> Player | None:
         """Not applicable for players - they don't have names."""
         raise NotImplementedError("Players don't have searchable names")
+
+    async def count(self, db: AsyncSession) -> int:
+        """Return total number of players."""
+        try:
+            result = await db.execute(select(func.count()).select_from(Player))
+            return result.scalar_one()
+        except Exception as e:
+            flogger.error(f"Error counting players: {e}")
+            raise
 
     async def list_all(self, db: AsyncSession) -> list[Player]:
         """Get all players."""

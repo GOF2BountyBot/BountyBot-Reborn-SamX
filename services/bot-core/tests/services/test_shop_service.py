@@ -156,12 +156,62 @@ def mock_inventory_repo() -> AsyncMock:
 
 
 @pytest.fixture
-def service(mock_shop_repo, mock_config_repo, mock_player_repo, mock_inventory_repo) -> ShopService:
+def mock_ship_repo() -> AsyncMock:
+    repo = AsyncMock()
+    repo.get_by_name = AsyncMock(return_value=None)
+    return repo
+
+
+@pytest.fixture
+def mock_primary_weapon_repo() -> AsyncMock:
+    repo = AsyncMock()
+    repo.get_by_name = AsyncMock(return_value=None)
+    return repo
+
+
+@pytest.fixture
+def mock_secondary_weapon_repo() -> AsyncMock:
+    repo = AsyncMock()
+    repo.get_by_name = AsyncMock(return_value=None)
+    return repo
+
+
+@pytest.fixture
+def mock_turret_weapon_repo() -> AsyncMock:
+    repo = AsyncMock()
+    repo.get_by_name = AsyncMock(return_value=None)
+    return repo
+
+
+@pytest.fixture
+def mock_module_repo() -> AsyncMock:
+    repo = AsyncMock()
+    repo.get_by_name = AsyncMock(return_value=None)
+    return repo
+
+
+@pytest.fixture
+def service(
+    mock_shop_repo,
+    mock_config_repo,
+    mock_player_repo,
+    mock_inventory_repo,
+    mock_ship_repo,
+    mock_primary_weapon_repo,
+    mock_secondary_weapon_repo,
+    mock_turret_weapon_repo,
+    mock_module_repo,
+) -> ShopService:
     svc = ShopService()
     svc.shop_repo = mock_shop_repo
     svc.config_repo = mock_config_repo
     svc.player_repo = mock_player_repo
     svc.inventory_repo = mock_inventory_repo
+    svc.ship_repo = mock_ship_repo
+    svc.primary_weapon_repo = mock_primary_weapon_repo
+    svc.secondary_weapon_repo = mock_secondary_weapon_repo
+    svc.turret_weapon_repo = mock_turret_weapon_repo
+    svc.module_repo = mock_module_repo
     return svc
 
 
@@ -673,29 +723,94 @@ class TestCheckAndRefreshShop:
 # ===========================================================================
 
 
+def _make_db_item(name: str, tech_level: int = 3, shop_spawn_rate: float | None = None) -> MagicMock:
+    """Create a mock DB item with name and optional tech_level / shop_spawn_rate."""
+    item = MagicMock()
+    item.name = name
+    item.tech_level = tech_level
+    item.shop_spawn_rate = shop_spawn_rate
+    return item
+
+
 class TestGetRandomItemByTechLevel:
-    """Tests for ShopService._get_random_item_by_tech_level."""
+    """Tests for ShopService._get_random_item_by_tech_level (DB-backed)."""
 
     @pytest.mark.asyncio
-    async def test_returns_item_name_for_valid_type(self, service):
-        """Returns a non-None string for a recognised item type."""
-        result = await service._get_random_item_by_tech_level("weapon", 3)
+    async def test_returns_weapon_name_from_repo(
+        self, service, mock_db, mock_primary_weapon_repo
+    ):
+        """Returns the name of a weapon fetched from the primary_weapon_repo."""
+        weapon = _make_db_item("Micro Gun MK I", tech_level=3)
+        mock_primary_weapon_repo.list_all = AsyncMock(return_value=[weapon])
 
-        assert result is not None
-        assert isinstance(result, str)
-        assert "3" in result  # Placeholder format: Weapon_3_N
+        result = await service._get_random_item_by_tech_level(mock_db, "weapon", 3)
 
-    @pytest.mark.asyncio
-    async def test_returns_item_for_all_valid_types(self, service):
-        """Returns a non-None item for each valid item type."""
-        for item_type in ShopService.VALID_ITEM_TYPES:
-            result = await service._get_random_item_by_tech_level(item_type, 5)
-            assert result is not None
+        assert result == "Micro Gun MK I"
 
     @pytest.mark.asyncio
-    async def test_returns_none_for_unknown_type(self, service):
-        """Returns None when item type is not in placeholder_items dict."""
-        result = await service._get_random_item_by_tech_level("banana", 1)
+    async def test_returns_module_name_from_repo(
+        self, service, mock_db, mock_module_repo
+    ):
+        """Returns the name of a module fetched from the module_repo."""
+        module = _make_db_item("Shield Generator", tech_level=2)
+        mock_module_repo.list_all = AsyncMock(return_value=[module])
+
+        result = await service._get_random_item_by_tech_level(mock_db, "module", 2)
+
+        assert result == "Shield Generator"
+
+    @pytest.mark.asyncio
+    async def test_returns_turret_name_from_repo(
+        self, service, mock_db, mock_turret_weapon_repo
+    ):
+        """Returns the name of a turret fetched from the turret_weapon_repo."""
+        turret = _make_db_item("Dual Turret", tech_level=5)
+        mock_turret_weapon_repo.list_all = AsyncMock(return_value=[turret])
+
+        result = await service._get_random_item_by_tech_level(mock_db, "turret", 5)
+
+        assert result == "Dual Turret"
+
+    @pytest.mark.asyncio
+    async def test_returns_ship_name_weighted_by_spawn_rate(
+        self, service, mock_db, mock_ship_repo
+    ):
+        """Returns a ship name; ships are selected by shop_spawn_rate weight."""
+        ship = _make_db_item("Viper", shop_spawn_rate=2.5)
+        mock_ship_repo.list_all = AsyncMock(return_value=[ship])
+
+        result = await service._get_random_item_by_tech_level(mock_db, "ship", 1)
+
+        assert result == "Viper"
+
+    @pytest.mark.asyncio
+    async def test_returns_none_when_no_items_at_tech_level(
+        self, service, mock_db, mock_primary_weapon_repo
+    ):
+        """Returns None when the DB contains no items at the requested tech level."""
+        # Return a weapon at tech_level=1, but we request tech_level=9 → no match
+        weapon = _make_db_item("Micro Gun MK I", tech_level=1)
+        mock_primary_weapon_repo.list_all = AsyncMock(return_value=[weapon])
+
+        result = await service._get_random_item_by_tech_level(mock_db, "weapon", 9)
+
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_returns_none_when_repo_empty(
+        self, service, mock_db, mock_ship_repo
+    ):
+        """Returns None when the ship repository is empty."""
+        mock_ship_repo.list_all = AsyncMock(return_value=[])
+
+        result = await service._get_random_item_by_tech_level(mock_db, "ship", 1)
+
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_returns_none_for_unknown_type(self, service, mock_db):
+        """Returns None when item type is not recognised."""
+        result = await service._get_random_item_by_tech_level(mock_db, "banana", 1)
 
         assert result is None
 
@@ -706,29 +821,39 @@ class TestGetRandomItemByTechLevel:
 
 
 class TestGetItemBasePrice:
-    """Tests for ShopService._get_item_base_price."""
+    """Tests for ShopService._get_item_base_price (DB-backed)."""
 
     @pytest.mark.asyncio
-    async def test_returns_price_range_for_level_1(self, service):
-        """Item name containing '1' returns a price in [100, 500]."""
-        price = await service._get_item_base_price("Weapon_1_3")
+    async def test_returns_item_value_from_repo(self, service, mock_db, mock_primary_weapon_repo):
+        """Returns the value field from the item found in a repository."""
+        weapon = MagicMock()
+        weapon.value = 750
+        mock_primary_weapon_repo.get_by_name = AsyncMock(return_value=weapon)
+        # Ensure ship_repo returns None so search continues to primary_weapon_repo
+        service.ship_repo.get_by_name = AsyncMock(return_value=None)
 
-        assert 100 <= price <= 500
+        price = await service._get_item_base_price(mock_db, "Micro Gun MK I")
+
+        assert price == 750
 
     @pytest.mark.asyncio
-    async def test_returns_price_range_for_level_2(self, service):
-        """Item name containing '2' (but not '1') returns a price in [500, 1000]."""
-        price = await service._get_item_base_price("Ship_2_4")
+    async def test_returns_ship_value_when_found_first(self, service, mock_db, mock_ship_repo):
+        """Returns the ship's value when the item is found in ship_repo first."""
+        ship = MagicMock()
+        ship.value = 5000
+        mock_ship_repo.get_by_name = AsyncMock(return_value=ship)
 
-        assert 500 <= price <= 1000
+        price = await service._get_item_base_price(mock_db, "Viper")
+
+        assert price == 5000
 
     @pytest.mark.asyncio
-    async def test_returns_price_range_for_high_level(self, service):
-        """Item name without '1' or '2' returns a price in [1000, 5000]."""
-        # Use a name with no '1' or '2' digits
-        price = await service._get_item_base_price("Module_5_3")
+    async def test_returns_zero_when_item_not_found(self, service, mock_db):
+        """Returns 0 when the item is not found in any repository."""
+        # All repos return None (default fixture setup)
+        price = await service._get_item_base_price(mock_db, "NonExistentItem")
 
-        assert 1000 <= price <= 5000
+        assert price == 0
 
 
 # ===========================================================================

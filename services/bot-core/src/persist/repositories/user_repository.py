@@ -7,7 +7,7 @@ retrieval, and user management operations.
 
 
 from shared import bblogger
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from persist.interfaces.repository_interface import IRepository
@@ -34,6 +34,15 @@ class UserRepository(IRepository[User]):
             return result.scalars().first()
         except Exception as e:
             flogger.error(f"Error getting user by name {name}: {e}")
+            raise
+
+    async def count(self, db: AsyncSession) -> int:
+        """Return total number of users."""
+        try:
+            result = await db.execute(select(func.count()).select_from(User))
+            return result.scalar_one()
+        except Exception as e:
+            flogger.error(f"Error counting users: {e}")
             raise
 
     async def list_all(self, db: AsyncSession) -> list[User]:

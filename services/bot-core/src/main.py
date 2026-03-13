@@ -33,6 +33,7 @@ from persist.schemas.schema_manager import initialize_schema
 from shared import bblogger
 from sqlalchemy import create_engine
 from sqlalchemy.ext.asyncio import create_async_engine
+from utils.auto_seeder import auto_seed_data
 
 flogger = bblogger.get_logger("bot-main-script")
 
@@ -59,6 +60,12 @@ async def lifespan(fastapi_app: FastAPI):
         flogger.error(f"❌ Database initialization failed: {e}")
         flogger.error("🛑 Application startup aborted due to database issues")
         raise
+
+    # Auto-seed game data tables if they are empty
+    try:
+        await auto_seed_data()
+    except Exception as e:  # pylint: disable=broad-exception-caught
+        flogger.error(f"⚠️ Auto-seed encountered an unexpected error (continuing): {e}")
 
     # Initialize scheduler with a true sync_engine for APScheduler
     try:

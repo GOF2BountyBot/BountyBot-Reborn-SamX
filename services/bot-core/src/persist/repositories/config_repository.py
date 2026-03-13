@@ -8,7 +8,7 @@ guild configuration management, settings persistence, and defaults.
 from typing import Any
 
 from shared import bblogger
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from persist.interfaces.repository_interface import IRepository
@@ -29,6 +29,15 @@ class ConfigRepository(IRepository[GuildConfig]):
     async def get_by_name(self, db: AsyncSession, name: str) -> GuildConfig | None:
         """Not applicable for configs."""
         raise NotImplementedError("Configs don't have searchable names")
+
+    async def count(self, db: AsyncSession) -> int:
+        """Return total number of guild configs."""
+        try:
+            result = await db.execute(select(func.count()).select_from(GuildConfig))
+            return result.scalar_one()
+        except Exception as e:
+            flogger.error(f"Error counting guild configs: {e}")
+            raise
 
     async def list_all(self, db: AsyncSession) -> list[GuildConfig]:
         """Get all guild configs."""

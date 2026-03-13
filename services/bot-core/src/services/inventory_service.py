@@ -8,7 +8,12 @@ item storage, quantity tracking, and inventory operations.
 from typing import Any
 
 from persist.repositories.inventory_repository import InventoryRepository
+from persist.repositories.module_repository import ModuleRepository
 from persist.repositories.player_repository import PlayerRepository
+from persist.repositories.primary_weapon_repository import PrimaryWeaponRepository
+from persist.repositories.secondary_weapon_repository import SecondaryWeaponRepository
+from persist.repositories.ship_repository import ShipRepository
+from persist.repositories.turret_weapon_repository import TurretWeaponRepository
 from shared import bblogger
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -18,6 +23,11 @@ class InventoryService:
     def __init__(self):
         self.inventory_repo = InventoryRepository()
         self.player_repo = PlayerRepository()
+        self.ship_repo = ShipRepository()
+        self.primary_weapon_repo = PrimaryWeaponRepository()
+        self.secondary_weapon_repo = SecondaryWeaponRepository()
+        self.turret_weapon_repo = TurretWeaponRepository()
+        self.module_repo = ModuleRepository()
 
     # Valid item types
     VALID_ITEM_TYPES = ["ship", "weapon", "module", "turret"]
@@ -53,8 +63,7 @@ class InventoryService:
                     "item_name": item.item_name,
                     "quantity": item.quantity,
                     "acquired_at": item.acquired_at.isoformat(),
-                    # TODO: Add static item data integration
-                    "item_details": await self._get_item_details(item.item_name)
+                    "item_details": await self._get_item_details(db, item.item_name)
                 }
                 formatted_items.append(formatted_item)
 
@@ -90,8 +99,8 @@ class InventoryService:
             if not player:
                 raise ValueError(f"Player {player_id} not found")
 
-            # TODO: Validate item exists in static data
-            if not await self._validate_item_exists(item_name, item_type):
+            # Validate item exists in static data
+            if not await self._validate_item_exists(db, item_name, item_type):
                 raise ValueError(f"Item {item_name} does not exist or is not of type {item_type}")
 
             # Add item to inventory
@@ -281,33 +290,61 @@ class InventoryService:
 
     async def validate_item_compatibility(
         self,
-        db: AsyncSession,  # pylint: disable=unused-argument
-        player_id: int,  # pylint: disable=unused-argument
+        db: AsyncSession,
+        player_id: int,
         ship_name: str,
         item_type: str,
         item_name: str
     ) -> dict[str, Any]:
         """
         Validate if an item can be equipped on a specific ship.
-        Returns compatibility information.
+        Returns compatibility information including slot availability.
         """
         try:
-            # TODO: Integrate with static ship/item data for compatibility checking
-            # For now, return basic validation
-
             compatibility = {
-                "compatible": True,  # Placeholder
+                "compatible": True,
                 "ship_name": ship_name,
                 "item_type": item_type,
                 "item_name": item_name,
                 "reason": None
             }
 
-            # Basic validation - items must match ship's accepted types
-            ship_details = await self._get_ship_details(ship_name)
+            # Look up ship slot limits
+            ship_details = await self._get_ship_details(db, ship_name)
             if not ship_details:
                 compatibility["compatible"] = False
                 compatibility["reason"] = f"Ship {ship_name} not found in database"
+                return compatibility
+
+            # Map item_type to the ship's slot limit and the canonical inventory type
+            item_type_lower = item_type.lower()
+            if item_type_lower in ("weapon", "primary_weapon"):
+                max_slots = ship_details["max_primaries"]
+                inventory_type = "primary_weapon"
+            elif item_type_lower == "secondary_weapon":
+                max_slots = ship_details["max_secondaries"]
+                inventory_type = "secondary_weapon"
+            elif item_type_lower in ("turret", "turret_weapon"):
+                max_slots = ship_details["max_turrets"]
+                inventory_type = "turret_weapon"
+            elif item_type_lower == "module":
+                max_slots = ship_details["max_modules"]
+                inventory_type = "module"
+            else:
+                # Unknown type — no slot restriction, allow it
+                return compatibility
+
+            # Count how many items of this type the player already has
+            current_count = await self.inventory_repo.get_item_count_by_type(
+                db, player_id, inventory_type
+            )
+
+            if current_count >= max_slots:
+                compatibility["compatible"] = False
+                compatibility["reason"] = (
+                    f"No available {item_type} slots on {ship_name} "
+                    f"({current_count}/{max_slots} used)"
+                )
 
             return compatibility
 
@@ -315,35 +352,92 @@ class InventoryService:
             flogger.error(f"Error validating item compatibility: {e}")
             raise
 
-    async def _get_item_details(self, item_name: str) -> dict[str, Any]:
-        """Get item details from static data (placeholder for integration)."""
-        # TODO: Integrate with existing static data system
-        return {
-            "name": item_name,
-            "description": f"Details for {item_name}",
-            "tech_level": 1,  # Placeholder
-            "value": 100      # Placeholder
-        }
+    async def _get_item_details(self, db: AsyncSession, item_name: str) -> dict[str, Any] | None:
+        """Get item details by searching all item repositories."""
+        # Search primary weapons
+        item = await self.primary_weapon_repo.get_by_name(db, item_name)
+        if item:
+            return {
+                "name": item.name,
+                "tech_level": getattr(item, "tech_level", None),
+                "value": getattr(item, "value", None),
+                "type": "primary_weapon",
+            }
 
-    async def _get_ship_details(self, ship_name: str) -> dict[str, Any] | None:
-        """Get ship details from static data (placeholder for integration)."""
-        # TODO: Integrate with existing static data system
+        # Search secondary weapons
+        item = await self.secondary_weapon_repo.get_by_name(db, item_name)
+        if item:
+            return {
+                "name": item.name,
+                "tech_level": getattr(item, "tech_level", None),
+                "value": getattr(item, "value", None),
+                "type": "secondary_weapon",
+            }
+
+        # Search turret weapons
+        item = await self.turret_weapon_repo.get_by_name(db, item_name)
+        if item:
+            return {
+                "name": item.name,
+                "tech_level": getattr(item, "tech_level", None),
+                "value": getattr(item, "value", None),
+                "type": "turret_weapon",
+            }
+
+        # Search modules
+        item = await self.module_repo.get_by_name(db, item_name)
+        if item:
+            return {
+                "name": item.name,
+                "tech_level": getattr(item, "tech_level", None),
+                "value": getattr(item, "value", None),
+                "type": "module",
+            }
+
+        # Search ships
+        item = await self.ship_repo.get_by_name(db, item_name)
+        if item:
+            return {
+                "name": item.name,
+                "tech_level": None,
+                "value": getattr(item, "value", None),
+                "type": "ship",
+            }
+
+        return None
+
+    async def _get_ship_details(self, db: AsyncSession, ship_name: str) -> dict[str, Any] | None:
+        """Get ship details from the database."""
+        ship = await self.ship_repo.get_by_name(db, ship_name)
+        if not ship:
+            return None
         return {
-            "name": ship_name,
-            "max_weapons": 2,
-            "max_modules": 3,
-            "max_turrets": 1
+            "name": ship.name,
+            "max_primaries": ship.max_primaries,
+            "max_modules": ship.max_modules,
+            "max_secondaries": ship.max_secondaries,
+            "max_turrets": ship.max_turrets,
+            "value": getattr(ship, "value", None),
         }
 
     async def _validate_item_exists(
         self,
-        item_name: str,  # pylint: disable=unused-argument
-        item_type: str  # pylint: disable=unused-argument
+        db: AsyncSession,
+        item_name: str,
+        item_type: str,  # pylint: disable=unused-argument
     ) -> bool:
-        """Validate that an item exists in static data."""
-        # TODO: Integrate with existing static data validation
-        # For now, accept all items
-        return True
+        """Validate that an item exists in the database across all item repositories."""
+        repos = [
+            self.ship_repo,
+            self.primary_weapon_repo,
+            self.secondary_weapon_repo,
+            self.turret_weapon_repo,
+            self.module_repo,
+        ]
+        for repo in repos:
+            if await repo.get_by_name(db, item_name):
+                return True
+        return False
 
     async def get_player_item_count(
         self,
@@ -360,19 +454,51 @@ class InventoryService:
             flogger.error(f"Error getting item count for player {player_id}: {e}")
             raise
 
-    async def consolidate_inventory(self, _db: AsyncSession, player_id: int) -> dict[str, Any]:
+    async def consolidate_inventory(self, db: AsyncSession, player_id: int) -> dict[str, Any]:
         """
         Consolidate duplicate inventory entries (maintenance function).
+
+        Groups items by (item_type, item_name), keeps one entry per group with
+        the summed quantity, and deletes the rest.
+
         Returns consolidation results.
         """
         try:
-            # This would be used if there are ever duplicate entries that need merging
-            # For now, return success since our system prevents duplicates
+            all_items = await self.inventory_repo.get_player_items(db, player_id)
+
+            # Group items by (item_type, item_name)
+            groups: dict[tuple[str, str], list] = {}
+            for item in all_items:
+                key = (item.item_type, item.item_name)
+                groups.setdefault(key, []).append(item)
+
+            items_consolidated = 0
+            for (_itype, _iname), group in groups.items():
+                if len(group) <= 1:
+                    continue
+
+                # Keep the first entry, merge all others into it
+                primary = group[0]
+                total_quantity = sum(i.quantity for i in group)
+
+                # Delete all duplicate entries (all but the primary)
+                for duplicate in group[1:]:
+                    await self.inventory_repo.remove(db, duplicate)
+                    items_consolidated += 1
+
+                # Update the primary with the summed quantity
+                await self.inventory_repo.update_quantity(db, primary.id, total_quantity)
+
+            message = (
+                f"Consolidated {items_consolidated} duplicate item(s)"
+                if items_consolidated > 0
+                else "Inventory is already consolidated"
+            )
 
             return {
                 "player_id": player_id,
-                "items_consolidated": 0,
-                "message": "Inventory is already consolidated"
+                "items_consolidated": items_consolidated,
+                "message": message,
             }
 
         except Exception as e:

@@ -53,6 +53,14 @@ class EmbedConverter:
                 flogger.debug("Failed to coerce payload via .model_dump(): %s", e)
                 raise
 
+        # pydantic v1 model with .dict() method
+        if hasattr(payload, "dict") and callable(payload.dict):
+            try:
+                return EmbedPayload(**payload.dict())
+            except Exception as e:  # pylint: disable=broad-exception-caught
+                flogger.debug("Failed to coerce payload via .dict(): %s", e)
+                raise
+
         # last-ditch: try to cast to dict()
         try:
             maybe_dict = dict(payload)

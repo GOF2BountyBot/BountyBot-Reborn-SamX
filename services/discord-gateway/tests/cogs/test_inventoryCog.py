@@ -950,5 +950,209 @@ class TestInventoryCommandAdditionalBranches:
         assert "embed" in call_kwargs
 
 
+# ---------------------------------------------------------------------------
+# /equip command
+# ---------------------------------------------------------------------------
+
+
+def _make_ship_data(ship_id=10, ship_name="Eagle", is_active=True, weapons=None, modules=None, turrets=None):
+    """Return a minimal ship data dict."""
+    return {
+        "id": ship_id,
+        "player_id": 1,
+        "ship_name": ship_name,
+        "nickname": None,
+        "is_active": is_active,
+        "weapons": weapons or [],
+        "modules": modules or [],
+        "turrets": turrets or [],
+        "created_at": "2024-01-01T00:00:00",
+    }
+
+
+class TestEquipCommand:
+    """Tests for the /equip slash command."""
+
+    def test_equip_success_shows_updated_loadout(self, mock_inventory_cog, make_mock_response):
+        """/equip succeeds and shows updated ship loadout embed."""
+        interaction = _create_mock_interaction()
+
+        player_resp = make_mock_response({"id": 1})
+        ships_resp = make_mock_response([_make_ship_data(weapons=["OldLaser"])])
+        equip_resp = make_mock_response(_make_ship_data(weapons=["OldLaser", "NewCannon"]))
+
+        mock_inventory_cog.http_client.post = AsyncMock(
+            side_effect=[player_resp, equip_resp]
+        )
+        mock_inventory_cog.http_client.get = AsyncMock(return_value=ships_resp)
+
+        asyncio.run(mock_inventory_cog.equip.callback(
+            mock_inventory_cog, interaction, item_name="NewCannon", equipment_type="weapon"
+        ))
+
+        interaction.response.defer.assert_awaited_once_with(thinking=True)
+        interaction.followup.send.assert_awaited_once()
+        call_kwargs = interaction.followup.send.call_args[1]
+        assert "embed" in call_kwargs
+
+    def test_equip_no_active_ship_returns_error(self, mock_inventory_cog, make_mock_response):
+        """/equip with no active ship sends ephemeral error."""
+        interaction = _create_mock_interaction()
+
+        player_resp = make_mock_response({"id": 1})
+        # No active ships — list of ships with is_active=False
+        ships_resp = make_mock_response([_make_ship_data(is_active=False)])
+
+        mock_inventory_cog.http_client.post = AsyncMock(return_value=player_resp)
+        mock_inventory_cog.http_client.get = AsyncMock(return_value=ships_resp)
+
+        asyncio.run(mock_inventory_cog.equip.callback(
+            mock_inventory_cog, interaction, item_name="NewCannon", equipment_type="weapon"
+        ))
+
+        interaction.followup.send.assert_awaited_once()
+        call_kwargs = interaction.followup.send.call_args
+        assert call_kwargs[1].get("ephemeral", False)
+        assert "ship" in call_kwargs[0][0].lower()
+
+    def test_equip_slot_full_400_returns_error(self, mock_inventory_cog, make_mock_response):
+        """/equip returns error message when API returns 400 (slot full)."""
+        import httpx
+
+        interaction = _create_mock_interaction()
+
+        player_resp = make_mock_response({"id": 1})
+        ships_resp = make_mock_response([_make_ship_data()])
+
+        error_response = MagicMock()
+        error_response.status_code = 400
+        error_response.json.return_value = {"detail": "No weapon slots available."}
+        http_error = httpx.HTTPStatusError(
+            "400 Bad Request", request=MagicMock(), response=error_response
+        )
+
+        mock_inventory_cog.http_client.post = AsyncMock(
+            side_effect=[player_resp, http_error]
+        )
+        mock_inventory_cog.http_client.get = AsyncMock(return_value=ships_resp)
+
+        asyncio.run(mock_inventory_cog.equip.callback(
+            mock_inventory_cog, interaction, item_name="NewCannon", equipment_type="weapon"
+        ))
+
+        interaction.followup.send.assert_awaited_once()
+        call_kwargs = interaction.followup.send.call_args
+        assert call_kwargs[1].get("ephemeral", False)
+
+    def test_equip_item_not_found_404_returns_error(self, mock_inventory_cog, make_mock_response):
+        """/equip returns error message when API returns 404."""
+        import httpx
+
+        interaction = _create_mock_interaction()
+
+        player_resp = make_mock_response({"id": 1})
+        ships_resp = make_mock_response([_make_ship_data()])
+
+        error_response = MagicMock()
+        error_response.status_code = 404
+        http_error = httpx.HTTPStatusError(
+            "404 Not Found", request=MagicMock(), response=error_response
+        )
+
+        mock_inventory_cog.http_client.post = AsyncMock(
+            side_effect=[player_resp, http_error]
+        )
+        mock_inventory_cog.http_client.get = AsyncMock(return_value=ships_resp)
+
+        asyncio.run(mock_inventory_cog.equip.callback(
+            mock_inventory_cog, interaction, item_name="GhostItem", equipment_type="weapon"
+        ))
+
+        interaction.followup.send.assert_awaited_once()
+        call_kwargs = interaction.followup.send.call_args
+        assert call_kwargs[1].get("ephemeral", False)
+        assert "not found" in call_kwargs[0][0].lower()
+
+
+# ---------------------------------------------------------------------------
+# /unequip command
+# ---------------------------------------------------------------------------
+
+
+class TestUnequipCommand:
+    """Tests for the /unequip slash command."""
+
+    def test_unequip_success_shows_confirmation(self, mock_inventory_cog, make_mock_response):
+        """/unequip succeeds and shows confirmation embed."""
+        interaction = _create_mock_interaction()
+
+        player_resp = make_mock_response({"id": 1})
+        ships_resp = make_mock_response([_make_ship_data(weapons=["OldLaser"])])
+        unequip_resp = make_mock_response(_make_ship_data(weapons=[]))
+
+        mock_inventory_cog.http_client.post = AsyncMock(
+            side_effect=[player_resp, unequip_resp]
+        )
+        mock_inventory_cog.http_client.get = AsyncMock(return_value=ships_resp)
+
+        asyncio.run(mock_inventory_cog.unequip.callback(
+            mock_inventory_cog, interaction, item_name="OldLaser", equipment_type="weapon"
+        ))
+
+        interaction.response.defer.assert_awaited_once_with(thinking=True)
+        interaction.followup.send.assert_awaited_once()
+        call_kwargs = interaction.followup.send.call_args[1]
+        assert "embed" in call_kwargs
+
+    def test_unequip_item_not_on_ship_400_returns_error(self, mock_inventory_cog, make_mock_response):
+        """/unequip returns error when item is not equipped (400)."""
+        import httpx
+
+        interaction = _create_mock_interaction()
+
+        player_resp = make_mock_response({"id": 1})
+        ships_resp = make_mock_response([_make_ship_data()])
+
+        error_response = MagicMock()
+        error_response.status_code = 400
+        error_response.json.return_value = {"detail": "Item not equipped on this ship."}
+        http_error = httpx.HTTPStatusError(
+            "400 Bad Request", request=MagicMock(), response=error_response
+        )
+
+        mock_inventory_cog.http_client.post = AsyncMock(
+            side_effect=[player_resp, http_error]
+        )
+        mock_inventory_cog.http_client.get = AsyncMock(return_value=ships_resp)
+
+        asyncio.run(mock_inventory_cog.unequip.callback(
+            mock_inventory_cog, interaction, item_name="GhostItem", equipment_type="weapon"
+        ))
+
+        interaction.followup.send.assert_awaited_once()
+        call_kwargs = interaction.followup.send.call_args
+        assert call_kwargs[1].get("ephemeral", False)
+
+    def test_unequip_api_error_handled(self, mock_inventory_cog, make_mock_response):
+        """/unequip handles generic API errors gracefully."""
+        interaction = _create_mock_interaction()
+
+        player_resp = make_mock_response({"id": 1})
+        ships_resp = make_mock_response([_make_ship_data()])
+
+        mock_inventory_cog.http_client.post = AsyncMock(
+            side_effect=[player_resp, RuntimeError("connection error")]
+        )
+        mock_inventory_cog.http_client.get = AsyncMock(return_value=ships_resp)
+
+        asyncio.run(mock_inventory_cog.unequip.callback(
+            mock_inventory_cog, interaction, item_name="OldLaser", equipment_type="weapon"
+        ))
+
+        interaction.followup.send.assert_awaited_once()
+        call_kwargs = interaction.followup.send.call_args
+        assert call_kwargs[1].get("ephemeral", False)
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

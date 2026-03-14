@@ -5,6 +5,7 @@ Handles duel (PvP challenge) lifecycle operations including:
 - Creating a new duel challenge
 - Accepting a pending duel (resolves combat, transfers credits)
 - Rejecting a pending duel
+- Listing pending duels for a user (for autocomplete)
 """
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -26,6 +27,23 @@ router = APIRouter(
     tags=["duels"],
     responses={404: {"description": "Duel not found"}},
 )
+
+
+# ---------------------------------------------------------------------------
+# GET /duels/pending
+# ---------------------------------------------------------------------------
+
+
+@router.get("/pending", response_model=list[DuelRequestResponse])
+async def get_pending_duels(
+    user_id: int,
+    guild_id: int,
+    service: DuelService = Depends(get_duel_service),
+):
+    """Get pending duel requests where the user is the target (for autocomplete)."""
+    async with get_db_session() as db:
+        duels = await service.get_pending_for_target(db, user_id, guild_id)
+        return [DuelRequestResponse.model_validate(d) for d in duels]
 
 
 # ---------------------------------------------------------------------------

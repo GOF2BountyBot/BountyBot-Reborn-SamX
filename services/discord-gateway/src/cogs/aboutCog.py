@@ -80,6 +80,18 @@ class AboutCog(commands.Cog):
         ]
         return choices[:25]
 
+    async def system_autocomplete(
+        self, _interaction: discord.Interaction, current: str
+    ) -> list[app_commands.Choice[str]]:
+        """Autocomplete for system name selection using preloaded data."""
+        systems = self._objects_by_category.get("system", [])
+        choices = [
+            app_commands.Choice(name=obj["name"], value=obj["name"])
+            for obj in systems
+            if current.lower() in obj.get("name", "").lower()
+        ]
+        return choices[:25]
+
     async def object_autocomplete(
         self, interaction: discord.Interaction, current: str
     ) -> list[app_commands.Choice[str]]:
@@ -281,10 +293,20 @@ class AboutCog(commands.Cog):
         return embed
 
     @app_commands.command(name="list_category", description="List all objects in a specific category")
-    @app_commands.describe(category="Select the category to list")
+    @app_commands.describe(
+        category="Select the category to list",
+        tech_level="Filter by tech level (1-5)",
+        manufacturer="Filter by manufacturer name",
+    )
     @app_commands.autocomplete(category=category_autocomplete)
-    async def list_category(self, interaction: discord.Interaction, category: str):
-        """List all objects in a specific category"""
+    async def list_category(
+        self,
+        interaction: discord.Interaction,
+        category: str,
+        tech_level: int | None = None,
+        manufacturer: str | None = None,
+    ):
+        """List all objects in a specific category, with optional filters"""
         await interaction.response.defer(thinking=True)
 
         try:
@@ -297,16 +319,51 @@ class AboutCog(commands.Cog):
                 await interaction.followup.send(f"📭 No objects found in category '{category}'.", ephemeral=True)
                 return
 
+            # Apply optional client-side filters
+            filtered = objects
+            if tech_level is not None:
+                filtered = [o for o in filtered if o.get("tech_level") == tech_level]
+            if manufacturer is not None:
+                manufacturer_lower = manufacturer.lower()
+                filtered = [
+                    o for o in filtered
+                    if manufacturer_lower in str(o.get("manufacturer", "")).lower()
+                ]
+
+            if not filtered:
+                filter_desc = []
+                if tech_level is not None:
+                    filter_desc.append(f"tech level {tech_level}")
+                if manufacturer is not None:
+                    filter_desc.append(f"manufacturer '{manufacturer}'")
+                await interaction.followup.send(
+                    f"📭 No objects found in category '{category}' matching {' and '.join(filter_desc)}.",
+                    ephemeral=True,
+                )
+                return
+
+            # Build description with filter summary
+            description = f"Found {len(filtered)} object(s)"
+            if len(filtered) < len(objects):
+                description += f" (filtered from {len(objects)})"
+            filter_parts = []
+            if tech_level is not None:
+                filter_parts.append(f"Tech Level: {tech_level}")
+            if manufacturer is not None:
+                filter_parts.append(f"Manufacturer: {manufacturer}")
+            if filter_parts:
+                description += "\n🔍 " + " | ".join(filter_parts)
+
             # Create embed with list of objects
             embed = discord.Embed(
                 title=f"{category.replace('_', ' ').title()} Objects",
-                description=f"Found {len(objects)} objects",
+                description=description,
                 color=discord.Color.blue(),
             )
 
             # Group objects into fields to avoid hitting embed limits
             objects_text = ""
-            for obj in objects[:50]:
+            for obj in filtered[:50]:
                 name = obj.get("name", "Unknown")
                 emoji = obj.get("emoji", "")
                 line = f"{emoji} {name}\n" if emoji else f"{name}\n"
@@ -318,14 +375,70 @@ class AboutCog(commands.Cog):
 
             if objects_text:
                 embed.add_field(name="Objects", value=objects_text, inline=False)
-            if len(objects) > 100:
-                embed.set_footer(text=f"Showing first 100 of {len(objects)} objects")
+            if len(filtered) > 100:
+                embed.set_footer(text=f"Showing first 100 of {len(filtered)} objects")
 
             await interaction.followup.send(embed=embed)
 
         except Exception as e:  # pylint: disable=broad-exception-caught
             flogger.error(f"Error in list_category command: {e}")
             await interaction.followup.send("⚠️ An error occurred while listing objects.", ephemeral=True)
+
+    @app_commands.command(
+        name="make-route", description="Find the shortest route between two star systems"
+    )
+    @app_commands.describe(
+        start="Starting star system",
+        end="Destination star system",
+    )
+    @app_commands.autocomplete(start=system_autocomplete, end=system_autocomplete)
+    async def make_route(self, interaction: discord.Interaction, start: str, end: str):
+        """Display the shortest hop-by-hop route between two star systems."""
+        await interaction.response.defer(thinking=True)
+
+        try:
+            resp = await self.http_client.get(
+                f"{api_base}/systems/route",
+                params={"start": start, "end": end},
+                timeout=10,
+            )
+            resp.raise_for_status()
+            data = resp.json()
+
+            route: list[str] = data.get("route", [])
+            hops: int = data.get("hops", 0)
+
+            # Build numbered route list
+            route_lines = "\n".join(f"{i + 1}. {system}" for i, system in enumerate(route))
+
+            embed = discord.Embed(
+                title=f"Route: {start} → {end}",
+                description=route_lines or "No route data",
+                color=discord.Color.gold(),
+            )
+            embed.add_field(name="Total Hops", value=str(hops), inline=True)
+            embed.set_footer(text=f"Shortest path via A* ({len(route)} system(s))")
+
+            await interaction.followup.send(embed=embed)
+
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code == 404:
+                await interaction.followup.send(
+                    f"❌ No route found between **{start}** and **{end}**.",
+                    ephemeral=True,
+                )
+            elif e.response.status_code == 400:
+                await interaction.followup.send(
+                    f"❌ Route from **{start}** to **{end}** exceeds the maximum length (50 hops).",
+                    ephemeral=True,
+                )
+            else:
+                await interaction.followup.send(f"❌ API Error: {e}", ephemeral=True)
+        except Exception as e:  # pylint: disable=broad-exception-caught
+            flogger.error(f"Error in make_route command: {e}")
+            await interaction.followup.send(
+                "⚠️ An error occurred while finding the route.", ephemeral=True
+            )
 
 
 async def setup(bot: commands.Bot):

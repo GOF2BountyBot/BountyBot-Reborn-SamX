@@ -1,0 +1,221 @@
+"""Tests for the systems API router — GET /api/v1/systems/route.
+
+Import path setup and sqlalchemy_utils mocking are handled by
+tests/api/conftest.py which runs before this module is loaded.
+"""
+
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
+from services.pathfinding_service import PathfindingError
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+
+def _make_graph_service(systems: dict):
+    """Return a mock SystemGraphService pre-populated with the given nodes."""
+
+    svc = MagicMock()
+    svc.is_loaded = MagicMock(return_value=True)
+    svc.load_graph = AsyncMock()
+
+    def _get_system(name):
+        return systems.get(name)
+
+    def _get_neighbours(name):
+        node = systems.get(name)
+        return node.neighbours if node else []
+
+    svc.get_system = MagicMock(side_effect=_get_system)
+    svc.get_neighbours = MagicMock(side_effect=_get_neighbours)
+    return svc
+
+
+def _make_node(name: str, x: int, y: int, neighbours: list[str]):
+    from services.system_graph_service import SystemNode
+
+    return SystemNode(
+        name=name,
+        coordinates=(x, y),
+        neighbours=neighbours,
+        faction="Neutral",
+        security=1,
+    )
+
+
+# Shared graph: A(0,0) - B(10,0) - C(20,0)
+_SYSTEMS = {
+    "A": _make_node("A", 0, 0, ["B"]),
+    "B": _make_node("B", 10, 0, ["A", "C"]),
+    "C": _make_node("C", 20, 0, ["B"]),
+}
+
+
+# ---------------------------------------------------------------------------
+# Fixtures
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def mock_db_session():
+    return AsyncMock()
+
+
+@pytest.fixture
+def test_app(mock_db_session):
+    """Build a minimal FastAPI app with the systems router and db override."""
+    from api.routers.systems import get_db
+    from api.routers.systems import router as systems_router
+
+    app = FastAPI()
+    app.include_router(systems_router, prefix="/api/v1")
+
+    async def override_get_db():
+        yield mock_db_session
+
+    app.dependency_overrides[get_db] = override_get_db
+    yield app
+    app.dependency_overrides.clear()
+
+
+@pytest.fixture
+def client(test_app):
+    return TestClient(test_app)
+
+
+# ---------------------------------------------------------------------------
+# Tests
+# ---------------------------------------------------------------------------
+
+
+class TestFindRoute:
+    """Tests for GET /api/v1/systems/route."""
+
+    def test_route_found_between_two_systems(self, client):
+        """Returns 200 with route list and hop count when a path exists."""
+        with (
+            patch("api.routers.systems.SystemGraphService") as mock_sgs_cls,
+            patch("api.routers.systems.PathfindingService") as mock_pf_cls,
+        ):
+            mock_graph = _make_graph_service(_SYSTEMS)
+            mock_sgs_cls.return_value = mock_graph
+
+            mock_pf = MagicMock()
+            mock_pf.make_route = MagicMock(return_value=["A", "B", "C"])
+            mock_pf_cls.return_value = mock_pf
+
+            response = client.get("/api/v1/systems/route?start=A&end=C")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["route"] == ["A", "B", "C"]
+        assert data["hops"] == 2
+
+    def test_same_start_and_end_returns_single_system(self, client):
+        """Returns 200 with single-element route when start == end."""
+        with (
+            patch("api.routers.systems.SystemGraphService") as mock_sgs_cls,
+            patch("api.routers.systems.PathfindingService") as mock_pf_cls,
+        ):
+            mock_graph = _make_graph_service(_SYSTEMS)
+            mock_sgs_cls.return_value = mock_graph
+
+            mock_pf = MagicMock()
+            mock_pf.make_route = MagicMock(return_value=["A"])
+            mock_pf_cls.return_value = mock_pf
+
+            response = client.get("/api/v1/systems/route?start=A&end=A")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["route"] == ["A"]
+        assert data["hops"] == 0
+
+    def test_no_route_found_returns_404(self, client):
+        """Returns 404 when pathfinding returns NO_ROUTE_FOUND."""
+        with (
+            patch("api.routers.systems.SystemGraphService") as mock_sgs_cls,
+            patch("api.routers.systems.PathfindingService") as mock_pf_cls,
+        ):
+            mock_graph = _make_graph_service(_SYSTEMS)
+            mock_sgs_cls.return_value = mock_graph
+
+            mock_pf = MagicMock()
+            mock_pf.make_route = MagicMock(return_value=PathfindingError.NO_ROUTE_FOUND)
+            mock_pf_cls.return_value = mock_pf
+
+            response = client.get("/api/v1/systems/route?start=A&end=Isolated")
+
+        assert response.status_code == 404
+        assert "no route found" in response.json()["detail"].lower()
+
+    def test_invalid_system_name_returns_404(self, client):
+        """Returns 404 when one or both system names do not exist in the graph."""
+        with (
+            patch("api.routers.systems.SystemGraphService") as mock_sgs_cls,
+            patch("api.routers.systems.PathfindingService") as mock_pf_cls,
+        ):
+            mock_graph = _make_graph_service(_SYSTEMS)
+            mock_sgs_cls.return_value = mock_graph
+
+            mock_pf = MagicMock()
+            # PathfindingService returns NO_ROUTE_FOUND for unknown systems
+            mock_pf.make_route = MagicMock(return_value=PathfindingError.NO_ROUTE_FOUND)
+            mock_pf_cls.return_value = mock_pf
+
+            response = client.get("/api/v1/systems/route?start=DoesNotExist&end=C")
+
+        assert response.status_code == 404
+
+    def test_max_length_reached_returns_400(self, client):
+        """Returns 400 when pathfinding returns MAX_LENGTH_REACHED."""
+        with (
+            patch("api.routers.systems.SystemGraphService") as mock_sgs_cls,
+            patch("api.routers.systems.PathfindingService") as mock_pf_cls,
+        ):
+            mock_graph = _make_graph_service(_SYSTEMS)
+            mock_sgs_cls.return_value = mock_graph
+
+            mock_pf = MagicMock()
+            mock_pf.make_route = MagicMock(return_value=PathfindingError.MAX_LENGTH_REACHED)
+            mock_pf_cls.return_value = mock_pf
+
+            response = client.get("/api/v1/systems/route?start=A&end=Z")
+
+        assert response.status_code == 400
+        assert "maximum length" in response.json()["detail"].lower()
+
+    def test_missing_start_parameter_returns_422(self, client):
+        """Returns 422 when required 'start' query parameter is missing."""
+        response = client.get("/api/v1/systems/route?end=B")
+        assert response.status_code == 422
+
+    def test_missing_end_parameter_returns_422(self, client):
+        """Returns 422 when required 'end' query parameter is missing."""
+        response = client.get("/api/v1/systems/route?start=A")
+        assert response.status_code == 422
+
+    def test_route_response_has_correct_hop_count(self, client):
+        """Hop count equals len(route) - 1."""
+        with (
+            patch("api.routers.systems.SystemGraphService") as mock_sgs_cls,
+            patch("api.routers.systems.PathfindingService") as mock_pf_cls,
+        ):
+            mock_graph = _make_graph_service(_SYSTEMS)
+            mock_sgs_cls.return_value = mock_graph
+
+            route = ["Sol", "Alpha", "Beta", "Gamma", "Delta"]
+            mock_pf = MagicMock()
+            mock_pf.make_route = MagicMock(return_value=route)
+            mock_pf_cls.return_value = mock_pf
+
+            response = client.get("/api/v1/systems/route?start=Sol&end=Delta")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["hops"] == len(route) - 1
+        assert data["hops"] == 4

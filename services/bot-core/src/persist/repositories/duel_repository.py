@@ -168,3 +168,27 @@ class DuelRepository(IRepository[DuelRequest]):
                 f"Error getting active duel requests for guild {guild_id}: {e}"
             )
             raise
+
+    async def get_pending_by_target(
+        self, db: AsyncSession, target_id: int, guild_id: int
+    ) -> list[DuelRequest]:
+        """Get all pending duel requests where the given player is the target in a guild.
+
+        Used for autocomplete: shows challenges the user needs to accept/reject.
+        """
+        try:
+            result = await db.execute(
+                select(DuelRequest).where(
+                    and_(
+                        DuelRequest.target_id == target_id,
+                        DuelRequest.guild_id == guild_id,
+                        DuelRequest.status == "pending",
+                    )
+                )
+            )
+            return list(result.scalars().all())
+        except Exception as e:
+            flogger.error(
+                f"Error getting pending duels for target={target_id} guild={guild_id}: {e}"
+            )
+            raise

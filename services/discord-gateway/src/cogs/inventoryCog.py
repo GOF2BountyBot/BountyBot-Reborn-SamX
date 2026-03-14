@@ -270,6 +270,203 @@ class InventoryCog(commands.Cog):
             flogger.error(f"Error in /item: {e}")
             await interaction.followup.send("⚠️ An error occurred while fetching item information.", ephemeral=True)
 
+    # Mapping from user-facing equipment type to API equipment_type field
+    _EQUIPMENT_TYPE_MAP = {
+        "weapon": "weapons",
+        "module": "modules",
+        "turret": "turrets",
+    }
+
+    async def _get_active_ship(self, player_id: int) -> dict | None:
+        """Helper to fetch the player's active ship. Returns ship dict or None."""
+        try:
+            resp = await self.http_client.get(
+                f"{api_base}/ships/player/{player_id}",
+                timeout=10
+            )
+            resp.raise_for_status()
+            ships = resp.json()
+            for ship in ships:
+                if ship.get("is_active"):
+                    return ship
+            return None
+        except Exception:  # pylint: disable=broad-exception-caught
+            return None
+
+    @app_commands.command(name="equip", description="Equip an item from your inventory onto your active ship")
+    @app_commands.describe(
+        item_name="Name of the item to equip",
+        equipment_type="Type of equipment slot"
+    )
+    @app_commands.choices(equipment_type=[
+        app_commands.Choice(name="Weapon", value="weapon"),
+        app_commands.Choice(name="Module", value="module"),
+        app_commands.Choice(name="Turret", value="turret"),
+    ])
+    async def equip(
+        self,
+        interaction: discord.Interaction,
+        item_name: str,
+        equipment_type: str,
+    ):
+        """Equip an item onto the player's active ship."""
+        await interaction.response.defer(thinking=True)
+
+        try:
+            player_id = await self._get_player_id(interaction.user.id, interaction.guild_id)
+            if not player_id:
+                await interaction.followup.send("❌ Player not found.", ephemeral=True)
+                return
+
+            active_ship = await self._get_active_ship(player_id)
+            if not active_ship:
+                await interaction.followup.send(
+                    "❌ No active ship found. Use `/ships` to set an active ship.",
+                    ephemeral=True
+                )
+                return
+
+            ship_id = active_ship["id"]
+            api_equipment_type = self._EQUIPMENT_TYPE_MAP.get(equipment_type, equipment_type)
+
+            resp = await self.http_client.post(
+                f"{api_base}/ships/{ship_id}/equip",
+                json={
+                    "player_id": player_id,
+                    "equipment_type": api_equipment_type,
+                    "item_name": item_name,
+                },
+                timeout=10
+            )
+            resp.raise_for_status()
+            ship_data = resp.json()
+
+            embed = discord.Embed(
+                title="⚙️ Item Equipped",
+                description=f"**{item_name}** has been equipped to your ship!",
+                color=discord.Color.green()
+            )
+            embed.add_field(
+                name="Ship",
+                value=ship_data.get("nickname") or ship_data.get("ship_name", "Unknown"),
+                inline=True
+            )
+            embed.add_field(name="Slot", value=equipment_type.title(), inline=True)
+
+            weapons = ship_data.get("weapons") or []
+            modules = ship_data.get("modules") or []
+            turrets = ship_data.get("turrets") or []
+            loadout_text = (
+                f"Weapons: {', '.join(weapons) or 'None'}\n"
+                f"Modules: {', '.join(modules) or 'None'}\n"
+                f"Turrets: {', '.join(turrets) or 'None'}"
+            )
+            embed.add_field(name="Current Loadout", value=loadout_text, inline=False)
+
+            await interaction.followup.send(embed=embed)
+            flogger.debug(
+                f"/equip {item_name} ({equipment_type}) by {interaction.user} in guild {interaction.guild_id}"
+            )
+
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code == 400:
+                try:
+                    detail = e.response.json().get("detail", "Cannot equip item.")
+                except Exception:  # pylint: disable=broad-exception-caught
+                    detail = "Cannot equip item."
+                await interaction.followup.send(f"❌ {detail}", ephemeral=True)
+            elif e.response.status_code == 404:
+                await interaction.followup.send(
+                    f"❌ Ship or item '{item_name}' not found.", ephemeral=True
+                )
+            else:
+                await interaction.followup.send(f"❌ API Error: {e}", ephemeral=True)
+        except Exception as e:  # pylint: disable=broad-exception-caught
+            flogger.error(f"Error in /equip: {e}")
+            await interaction.followup.send("⚠️ An error occurred while equipping the item.", ephemeral=True)
+
+    @app_commands.command(name="unequip", description="Unequip an item from your active ship to inventory")
+    @app_commands.describe(
+        item_name="Name of the item to unequip",
+        equipment_type="Type of equipment slot"
+    )
+    @app_commands.choices(equipment_type=[
+        app_commands.Choice(name="Weapon", value="weapon"),
+        app_commands.Choice(name="Module", value="module"),
+        app_commands.Choice(name="Turret", value="turret"),
+    ])
+    async def unequip(
+        self,
+        interaction: discord.Interaction,
+        item_name: str,
+        equipment_type: str,
+    ):
+        """Unequip an item from the player's active ship."""
+        await interaction.response.defer(thinking=True)
+
+        try:
+            player_id = await self._get_player_id(interaction.user.id, interaction.guild_id)
+            if not player_id:
+                await interaction.followup.send("❌ Player not found.", ephemeral=True)
+                return
+
+            active_ship = await self._get_active_ship(player_id)
+            if not active_ship:
+                await interaction.followup.send(
+                    "❌ No active ship found. Use `/ships` to set an active ship.",
+                    ephemeral=True
+                )
+                return
+
+            ship_id = active_ship["id"]
+            api_equipment_type = self._EQUIPMENT_TYPE_MAP.get(equipment_type, equipment_type)
+
+            resp = await self.http_client.post(
+                f"{api_base}/ships/{ship_id}/unequip",
+                json={
+                    "player_id": player_id,
+                    "equipment_type": api_equipment_type,
+                    "item_name": item_name,
+                },
+                timeout=10
+            )
+            resp.raise_for_status()
+            ship_data = resp.json()
+
+            embed = discord.Embed(
+                title="📦 Item Unequipped",
+                description=f"**{item_name}** has been moved back to your inventory.",
+                color=discord.Color.blue()
+            )
+            embed.add_field(
+                name="Ship",
+                value=ship_data.get("nickname") or ship_data.get("ship_name", "Unknown"),
+                inline=True
+            )
+            embed.add_field(name="Slot", value=equipment_type.title(), inline=True)
+
+            await interaction.followup.send(embed=embed)
+            flogger.debug(
+                f"/unequip {item_name} ({equipment_type}) by {interaction.user} in guild {interaction.guild_id}"
+            )
+
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code == 400:
+                try:
+                    detail = e.response.json().get("detail", "Cannot unequip item.")
+                except Exception:  # pylint: disable=broad-exception-caught
+                    detail = "Cannot unequip item."
+                await interaction.followup.send(f"❌ {detail}", ephemeral=True)
+            elif e.response.status_code == 404:
+                await interaction.followup.send(
+                    f"❌ Ship or item '{item_name}' not found.", ephemeral=True
+                )
+            else:
+                await interaction.followup.send(f"❌ API Error: {e}", ephemeral=True)
+        except Exception as e:  # pylint: disable=broad-exception-caught
+            flogger.error(f"Error in /unequip: {e}")
+            await interaction.followup.send("⚠️ An error occurred while unequipping the item.", ephemeral=True)
+
     def _get_item_type_color(self, item_type: str) -> discord.Color:
         """Get Discord color based on item type."""
         type_colors = {
@@ -295,6 +492,18 @@ class InventoryCog(commands.Cog):
     @item.error
     async def item_error(self, interaction: discord.Interaction, error: app_commands.AppCommandError):
         flogger.exception("Error in /item", exc_info=error)
+        if not interaction.response.is_done():
+            await interaction.response.send_message("⚠️ An error occurred.", ephemeral=True)
+
+    @equip.error
+    async def equip_error(self, interaction: discord.Interaction, error: app_commands.AppCommandError):
+        flogger.exception("Error in /equip", exc_info=error)
+        if not interaction.response.is_done():
+            await interaction.response.send_message("⚠️ An error occurred.", ephemeral=True)
+
+    @unequip.error
+    async def unequip_error(self, interaction: discord.Interaction, error: app_commands.AppCommandError):
+        flogger.exception("Error in /unequip", exc_info=error)
         if not interaction.response.is_done():
             await interaction.response.send_message("⚠️ An error occurred.", ephemeral=True)
 

@@ -485,6 +485,223 @@ class AdminCog(commands.Cog):
             flogger.error(f"Error in /admin_config: {e}")
             await interaction.followup.send("⚠️ An error occurred while managing configuration.", ephemeral=True)
 
+    @app_commands.command(name="admin_uninstall", description="[ADMIN] Completely remove all bot data from this guild")
+    @app_commands.describe(
+        confirm="Type CONFIRM-DELETE to confirm (this is IRREVERSIBLE)"
+    )
+    @is_admin()
+    async def admin_uninstall(
+        self,
+        interaction: discord.Interaction,
+        confirm: str | None = None,
+    ):
+        """Destructively remove all bot data for this guild."""
+        await interaction.response.defer(thinking=True, ephemeral=True)
+
+        # 2-step confirmation: show warning if no/wrong confirmation string
+        if confirm != "CONFIRM-DELETE":
+            embed = discord.Embed(
+                title="⚠️ WARNING: Destructive Operation",
+                description=(
+                    "This will **permanently delete** all bot data for this guild including:\n"
+                    "• All player records and statistics\n"
+                    "• All shop configurations\n"
+                    "• All guild settings\n\n"
+                    "**This action cannot be undone.**\n\n"
+                    "To confirm, run:\n"
+                    "`/admin_uninstall confirm:CONFIRM-DELETE`"
+                ),
+                color=discord.Color.red(),
+            )
+            embed.set_footer(text="Bot data will NOT be deleted until you confirm.")
+            await interaction.followup.send(embed=embed, ephemeral=True)
+            return
+
+        try:
+            resp = await self.http_client.delete(
+                f"{api_base}/admin/guilds/{interaction.guild_id}/uninstall",
+                params={"user_id": interaction.user.id},
+                timeout=30,
+            )
+            resp.raise_for_status()
+            result = resp.json()
+
+            embed = discord.Embed(
+                title="✅ Bot Uninstalled",
+                description=result.get("message", "Bot data has been removed from this guild."),
+                color=discord.Color.orange(),
+            )
+            removed = result.get("removed_counts", {})
+            if removed:
+                removed_text = "\n".join(f"{k}: {v}" for k, v in removed.items())
+                embed.add_field(name="Records Removed", value=removed_text, inline=False)
+            embed.add_field(name="Warning", value=result.get("warning", "All data has been deleted."), inline=False)
+
+            await interaction.followup.send(embed=embed, ephemeral=True)
+            flogger.warning(f"Guild {interaction.guild_id} uninstalled by {interaction.user}")
+
+        except httpx.HTTPStatusError as e:
+            await interaction.followup.send(f"❌ API Error: {e}", ephemeral=True)
+        except Exception as e:  # pylint: disable=broad-exception-caught
+            flogger.error(f"Error in /admin_uninstall: {e}")
+            await interaction.followup.send("⚠️ An error occurred during uninstall.", ephemeral=True)
+
+    @app_commands.command(name="admin_config_shop", description="[ADMIN] Update shop configuration")
+    @app_commands.describe(
+        ship_count_min="Minimum number of ship types in shop",
+        ship_count_max="Maximum number of ship types in shop",
+        weapon_count_min="Minimum number of weapon types in shop",
+        weapon_count_max="Maximum number of weapon types in shop",
+        module_count_min="Minimum number of module types in shop",
+        module_count_max="Maximum number of module types in shop",
+        turret_count_min="Minimum number of turret types in shop",
+        turret_count_max="Maximum number of turret types in shop",
+        sale_factor="Sale price factor (0.0 - 1.0, e.g. 0.8 = 80% of base price)",
+    )
+    @is_admin()
+    async def admin_config_shop(
+        self,
+        interaction: discord.Interaction,
+        ship_count_min: int | None = None,
+        ship_count_max: int | None = None,
+        weapon_count_min: int | None = None,
+        weapon_count_max: int | None = None,
+        module_count_min: int | None = None,
+        module_count_max: int | None = None,
+        turret_count_min: int | None = None,
+        turret_count_max: int | None = None,
+        sale_factor: float | None = None,
+    ):
+        """Update shop-specific configuration for this guild."""
+        await interaction.response.defer(thinking=True, ephemeral=True)
+
+        # Build payload — only include provided fields
+        payload: dict = {"guild_id": interaction.guild_id}
+        if ship_count_min is not None:
+            payload["ship_count_min"] = ship_count_min
+        if ship_count_max is not None:
+            payload["ship_count_max"] = ship_count_max
+        if weapon_count_min is not None:
+            payload["weapon_count_min"] = weapon_count_min
+        if weapon_count_max is not None:
+            payload["weapon_count_max"] = weapon_count_max
+        if module_count_min is not None:
+            payload["module_count_min"] = module_count_min
+        if module_count_max is not None:
+            payload["module_count_max"] = module_count_max
+        if turret_count_min is not None:
+            payload["turret_count_min"] = turret_count_min
+        if turret_count_max is not None:
+            payload["turret_count_max"] = turret_count_max
+        if sale_factor is not None:
+            payload["sale_factor"] = sale_factor
+
+        try:
+            resp = await self.http_client.put(
+                f"{api_base}/config/guild/{interaction.guild_id}/shop",
+                json=payload,
+                timeout=10,
+            )
+            resp.raise_for_status()
+            cfg = resp.json()
+
+            # Display updated config
+            shop_cfg = cfg.get("shop_config", {})
+            embed = discord.Embed(
+                title="✅ Shop Configuration Updated",
+                description="Current shop configuration for this guild:",
+                color=discord.Color.green(),
+            )
+            embed.add_field(
+                name="Ships",
+                value=f"Min: {shop_cfg.get('ship_count_min', '?')} / Max: {shop_cfg.get('ship_count_max', '?')}",
+                inline=True,
+            )
+            embed.add_field(
+                name="Weapons",
+                value=f"Min: {shop_cfg.get('weapon_count_min', '?')} / Max: {shop_cfg.get('weapon_count_max', '?')}",
+                inline=True,
+            )
+            embed.add_field(
+                name="Modules",
+                value=f"Min: {shop_cfg.get('module_count_min', '?')} / Max: {shop_cfg.get('module_count_max', '?')}",
+                inline=True,
+            )
+            embed.add_field(
+                name="Turrets",
+                value=f"Min: {shop_cfg.get('turret_count_min', '?')} / Max: {shop_cfg.get('turret_count_max', '?')}",
+                inline=True,
+            )
+            embed.add_field(
+                name="Sale Price Factor",
+                value=f"{cfg.get('sale_price_factor', shop_cfg.get('sale_factor', '?')):.0%}"
+                if isinstance(cfg.get("sale_price_factor", shop_cfg.get("sale_factor")), float)
+                else str(cfg.get("sale_price_factor", shop_cfg.get("sale_factor", "?"))),
+                inline=True,
+            )
+
+            await interaction.followup.send(embed=embed, ephemeral=True)
+            flogger.info(f"Admin {interaction.user} updated shop config for guild {interaction.guild_id}")
+
+        except httpx.HTTPStatusError as e:
+            await interaction.followup.send(f"❌ API Error: {e}", ephemeral=True)
+        except Exception as e:  # pylint: disable=broad-exception-caught
+            flogger.error(f"Error in /admin_config_shop: {e}")
+            await interaction.followup.send("⚠️ An error occurred while updating shop configuration.", ephemeral=True)
+
+    @app_commands.command(name="admin_config_validate", description="[ADMIN] Validate guild configuration")
+    @is_admin()
+    async def admin_config_validate(self, interaction: discord.Interaction):
+        """Validate the current guild configuration."""
+        await interaction.response.defer(thinking=True, ephemeral=True)
+
+        try:
+            resp = await self.http_client.get(
+                f"{api_base}/config/guild/{interaction.guild_id}/validate",
+                timeout=10,
+            )
+            resp.raise_for_status()
+            result = resp.json()
+
+            valid = result.get("valid", False)
+            errors = result.get("errors", [])
+            warnings = result.get("warnings", [])
+
+            embed = discord.Embed(
+                title=f"{'✅ Configuration Valid' if valid else '❌ Configuration Invalid'}",
+                description=f"Validation results for guild **{interaction.guild.name}**",
+                color=discord.Color.green() if valid else discord.Color.red(),
+            )
+
+            if errors:
+                embed.add_field(
+                    name="❌ Errors",
+                    value="\n".join(f"• {e}" for e in errors) or "None",
+                    inline=False,
+                )
+            else:
+                embed.add_field(name="❌ Errors", value="None", inline=False)
+
+            if warnings:
+                embed.add_field(
+                    name="⚠️ Warnings",
+                    value="\n".join(f"• {w}" for w in warnings) or "None",
+                    inline=False,
+                )
+            else:
+                embed.add_field(name="⚠️ Warnings", value="None", inline=False)
+
+            embed.set_footer(text=f"Guild ID: {result.get('guild_id', interaction.guild_id)}")
+
+            await interaction.followup.send(embed=embed, ephemeral=True)
+            flogger.debug(f"Admin {interaction.user} validated config for guild {interaction.guild_id}")
+
+        except httpx.HTTPStatusError as e:
+            await interaction.followup.send(f"❌ API Error: {e}", ephemeral=True)
+        except Exception as e:  # pylint: disable=broad-exception-caught
+            flogger.error(f"Error in /admin_config_validate: {e}")
+            await interaction.followup.send("⚠️ An error occurred while validating configuration.", ephemeral=True)
+
     # Error handlers
     @admin_setup.error
     async def admin_setup_error(self, interaction: discord.Interaction, error: app_commands.AppCommandError):

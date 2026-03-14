@@ -494,6 +494,135 @@ class TestPrestigeCommand:
 
 
 # ---------------------------------------------------------------------------
+# prestige command — new confirm-flow tests
+# ---------------------------------------------------------------------------
+
+
+class TestPrestigeConfirmFlow:
+    """Tests for the /prestige confirm flow (wired API)."""
+
+    def test_prestige_no_confirm_shows_warning_embed(self, mock_player_cog):
+        """/prestige without confirm shows warning embed (ephemeral)."""
+        interaction = _create_mock_interaction()
+
+        player_data = _make_player_data(tier="Platinum", prestige_count=0)
+        resp = MagicMock()
+        resp.raise_for_status = MagicMock()
+        resp.json.return_value = player_data
+        mock_player_cog.http_client.post = AsyncMock(return_value=resp)
+
+        asyncio.run(mock_player_cog.prestige.callback(mock_player_cog, interaction, confirm=None))
+
+        interaction.followup.send.assert_awaited_once()
+        call_kwargs = interaction.followup.send.call_args[1]
+        assert "embed" in call_kwargs
+        assert call_kwargs.get("ephemeral", False)
+        # Embed description should mention CONFIRM
+        embed = call_kwargs["embed"]
+        assert "CONFIRM" in (embed.description or "")
+
+    def test_prestige_wrong_confirm_shows_warning(self, mock_player_cog):
+        """/prestige with wrong confirm value shows warning embed."""
+        interaction = _create_mock_interaction()
+
+        player_data = _make_player_data(tier="Platinum", prestige_count=1)
+        resp = MagicMock()
+        resp.raise_for_status = MagicMock()
+        resp.json.return_value = player_data
+        mock_player_cog.http_client.post = AsyncMock(return_value=resp)
+
+        asyncio.run(mock_player_cog.prestige.callback(mock_player_cog, interaction, confirm="yes"))
+
+        interaction.followup.send.assert_awaited_once()
+        call_kwargs = interaction.followup.send.call_args[1]
+        assert "embed" in call_kwargs
+        assert call_kwargs.get("ephemeral", False)
+
+    def test_prestige_with_confirm_calls_api_and_shows_success(self, mock_player_cog):
+        """/prestige with confirm=CONFIRM calls the prestige API and shows success."""
+        interaction = _create_mock_interaction()
+
+        player_data = _make_player_data(tier="Platinum", prestige_count=0)
+        player_resp = MagicMock()
+        player_resp.raise_for_status = MagicMock()
+        player_resp.json.return_value = player_data
+
+        prestige_data = {
+            "player_id": 1,
+            "prestige_count": 1,
+            "level_before": 10,
+            "division_before": "Platinum",
+        }
+        prestige_resp = MagicMock()
+        prestige_resp.raise_for_status = MagicMock()
+        prestige_resp.json.return_value = prestige_data
+
+        mock_player_cog.http_client.post = AsyncMock(
+            side_effect=[player_resp, prestige_resp]
+        )
+
+        asyncio.run(mock_player_cog.prestige.callback(mock_player_cog, interaction, confirm="CONFIRM"))
+
+        # followup.send called once with embed (success)
+        interaction.followup.send.assert_awaited_once()
+        call_kwargs = interaction.followup.send.call_args[1]
+        assert "embed" in call_kwargs
+        embed = call_kwargs["embed"]
+        assert "1" in (embed.description or "")  # prestige_count shown
+
+    def test_prestige_api_400_level_too_low(self, mock_player_cog):
+        """/prestige with confirm=CONFIRM shows error on API 400."""
+        import httpx
+
+        interaction = _create_mock_interaction()
+
+        player_data = _make_player_data(tier="Platinum", prestige_count=0)
+        player_resp = MagicMock()
+        player_resp.raise_for_status = MagicMock()
+        player_resp.json.return_value = player_data
+
+        error_response = MagicMock()
+        error_response.status_code = 400
+        error_response.json.return_value = {"detail": "Player must be level 10 to prestige."}
+        http_error = httpx.HTTPStatusError(
+            "400 Bad Request",
+            request=MagicMock(),
+            response=error_response,
+        )
+
+        mock_player_cog.http_client.post = AsyncMock(
+            side_effect=[player_resp, http_error]
+        )
+
+        asyncio.run(mock_player_cog.prestige.callback(mock_player_cog, interaction, confirm="CONFIRM"))
+
+        interaction.followup.send.assert_awaited_once()
+        call_args = interaction.followup.send.call_args
+        assert call_args[1].get("ephemeral", False)
+        msg = call_args[0][0]
+        assert "level" in msg.lower() or "prestige" in msg.lower()
+
+    def test_prestige_api_failure_generic(self, mock_player_cog):
+        """/prestige with confirm=CONFIRM handles generic failure from prestige endpoint."""
+        interaction = _create_mock_interaction()
+
+        player_data = _make_player_data(tier="Platinum", prestige_count=0)
+        player_resp = MagicMock()
+        player_resp.raise_for_status = MagicMock()
+        player_resp.json.return_value = player_data
+
+        mock_player_cog.http_client.post = AsyncMock(
+            side_effect=[player_resp, RuntimeError("prestige service down")]
+        )
+
+        asyncio.run(mock_player_cog.prestige.callback(mock_player_cog, interaction, confirm="CONFIRM"))
+
+        interaction.followup.send.assert_awaited_once()
+        call_kwargs = interaction.followup.send.call_args
+        assert call_kwargs[1].get("ephemeral", False)
+
+
+# ---------------------------------------------------------------------------
 # _get_tier_color helper
 # ---------------------------------------------------------------------------
 

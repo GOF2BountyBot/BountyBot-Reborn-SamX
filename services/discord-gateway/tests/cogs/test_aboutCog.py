@@ -1133,5 +1133,351 @@ class TestAboutCommandExtraBranches:
         assert "Eagle" in call_args[0][0]
 
 
+# ---------------------------------------------------------------------------
+# system_autocomplete
+# ---------------------------------------------------------------------------
+
+
+class TestSystemAutocomplete:
+    """Tests for system_autocomplete method."""
+
+    def test_system_autocomplete_returns_systems(self, mock_about_cog):
+        """system_autocomplete should return system names from preloaded data."""
+        mock_about_cog._objects_by_category = {
+            "system": [
+                {"name": "Sol"},
+                {"name": "Alpha Centauri"},
+                {"name": "Beta Cygni"},
+            ]
+        }
+        interaction = _create_mock_interaction()
+
+        result = asyncio.run(mock_about_cog.system_autocomplete(interaction, ""))
+
+        assert len(result) == 3
+        values = [c.value for c in result]
+        assert "Sol" in values
+        assert "Alpha Centauri" in values
+
+    def test_system_autocomplete_filters_by_current(self, mock_about_cog):
+        """system_autocomplete should filter by partial match."""
+        mock_about_cog._objects_by_category = {
+            "system": [
+                {"name": "Sol"},
+                {"name": "Alpha Centauri"},
+                {"name": "Beta Cygni"},
+            ]
+        }
+        interaction = _create_mock_interaction()
+
+        result = asyncio.run(mock_about_cog.system_autocomplete(interaction, "al"))
+
+        assert len(result) == 1
+        assert result[0].value == "Alpha Centauri"
+
+    def test_system_autocomplete_empty_when_no_systems(self, mock_about_cog):
+        """system_autocomplete returns empty list when no systems are preloaded."""
+        mock_about_cog._objects_by_category = {}
+        interaction = _create_mock_interaction()
+
+        result = asyncio.run(mock_about_cog.system_autocomplete(interaction, ""))
+
+        assert result == []
+
+    def test_system_autocomplete_limits_to_25(self, mock_about_cog):
+        """system_autocomplete returns at most 25 results."""
+        mock_about_cog._objects_by_category = {
+            "system": [{"name": f"System_{i}"} for i in range(30)]
+        }
+        interaction = _create_mock_interaction()
+
+        result = asyncio.run(mock_about_cog.system_autocomplete(interaction, ""))
+
+        assert len(result) <= 25
+
+
+# ---------------------------------------------------------------------------
+# make_route command
+# ---------------------------------------------------------------------------
+
+
+class TestMakeRouteCommand:
+    """Tests for the /make-route slash command."""
+
+    def test_make_route_success(self, mock_about_cog):
+        """make_route should display a route embed on success."""
+        interaction = _create_mock_interaction()
+
+        route_resp = MagicMock()
+        route_resp.raise_for_status = MagicMock()
+        route_resp.json.return_value = {
+            "route": ["Sol", "Alpha", "Beta"],
+            "hops": 2,
+        }
+        mock_about_cog.http_client.get = AsyncMock(return_value=route_resp)
+
+        asyncio.run(mock_about_cog.make_route.callback(
+            mock_about_cog, interaction, "Sol", "Beta"
+        ))
+
+        interaction.response.defer.assert_awaited_once_with(thinking=True)
+        interaction.followup.send.assert_awaited_once()
+        call_kwargs = interaction.followup.send.call_args[1]
+        assert "embed" in call_kwargs
+
+    def test_make_route_embed_title_contains_start_and_end(self, mock_about_cog):
+        """make_route embed title should contain start and end system names."""
+        interaction = _create_mock_interaction()
+
+        route_resp = MagicMock()
+        route_resp.raise_for_status = MagicMock()
+        route_resp.json.return_value = {
+            "route": ["Sol", "Beta"],
+            "hops": 1,
+        }
+        mock_about_cog.http_client.get = AsyncMock(return_value=route_resp)
+
+        asyncio.run(mock_about_cog.make_route.callback(
+            mock_about_cog, interaction, "Sol", "Beta"
+        ))
+
+        call_kwargs = interaction.followup.send.call_args[1]
+        embed = call_kwargs["embed"]
+        assert "Sol" in embed.title
+        assert "Beta" in embed.title
+
+    def test_make_route_no_route_found_404(self, mock_about_cog):
+        """make_route should send ephemeral error when route is not found (404)."""
+        import httpx
+        interaction = _create_mock_interaction()
+
+        error_response = MagicMock()
+        error_response.status_code = 404
+        http_error = httpx.HTTPStatusError(
+            "404 Not Found", request=MagicMock(), response=error_response
+        )
+        mock_about_cog.http_client.get = AsyncMock(side_effect=http_error)
+
+        asyncio.run(mock_about_cog.make_route.callback(
+            mock_about_cog, interaction, "Sol", "Nowhere"
+        ))
+
+        interaction.followup.send.assert_awaited_once()
+        call_kwargs = interaction.followup.send.call_args
+        assert call_kwargs[1].get("ephemeral", False)
+        assert "no route" in call_kwargs[0][0].lower()
+
+    def test_make_route_too_long_400(self, mock_about_cog):
+        """make_route should send ephemeral error when route is too long (400)."""
+        import httpx
+        interaction = _create_mock_interaction()
+
+        error_response = MagicMock()
+        error_response.status_code = 400
+        http_error = httpx.HTTPStatusError(
+            "400 Bad Request", request=MagicMock(), response=error_response
+        )
+        mock_about_cog.http_client.get = AsyncMock(side_effect=http_error)
+
+        asyncio.run(mock_about_cog.make_route.callback(
+            mock_about_cog, interaction, "A", "Z"
+        ))
+
+        interaction.followup.send.assert_awaited_once()
+        call_kwargs = interaction.followup.send.call_args
+        assert call_kwargs[1].get("ephemeral", False)
+        assert "maximum length" in call_kwargs[0][0].lower()
+
+    def test_make_route_api_error_non_404_non_400(self, mock_about_cog):
+        """make_route should handle non-404/400 HTTP errors gracefully."""
+        import httpx
+        interaction = _create_mock_interaction()
+
+        error_response = MagicMock()
+        error_response.status_code = 500
+        http_error = httpx.HTTPStatusError(
+            "500 Server Error", request=MagicMock(), response=error_response
+        )
+        mock_about_cog.http_client.get = AsyncMock(side_effect=http_error)
+
+        asyncio.run(mock_about_cog.make_route.callback(
+            mock_about_cog, interaction, "A", "B"
+        ))
+
+        interaction.followup.send.assert_awaited_once()
+        call_kwargs = interaction.followup.send.call_args
+        assert call_kwargs[1].get("ephemeral", False)
+
+    def test_make_route_generic_exception(self, mock_about_cog):
+        """make_route should handle generic exceptions gracefully."""
+        interaction = _create_mock_interaction()
+
+        mock_about_cog.http_client.get = AsyncMock(
+            side_effect=RuntimeError("network failure")
+        )
+
+        asyncio.run(mock_about_cog.make_route.callback(
+            mock_about_cog, interaction, "A", "B"
+        ))
+
+        interaction.followup.send.assert_awaited_once()
+        call_kwargs = interaction.followup.send.call_args
+        assert call_kwargs[1].get("ephemeral", False)
+
+    def test_make_route_calls_correct_api_endpoint(self, mock_about_cog):
+        """make_route should call the /systems/route endpoint with correct params."""
+        interaction = _create_mock_interaction()
+
+        route_resp = MagicMock()
+        route_resp.raise_for_status = MagicMock()
+        route_resp.json.return_value = {"route": ["Sol", "Alpha"], "hops": 1}
+        mock_about_cog.http_client.get = AsyncMock(return_value=route_resp)
+
+        asyncio.run(mock_about_cog.make_route.callback(
+            mock_about_cog, interaction, "Sol", "Alpha"
+        ))
+
+        mock_about_cog.http_client.get.assert_awaited_once()
+        call_args = mock_about_cog.http_client.get.call_args
+        assert "systems/route" in call_args[0][0]
+        # Verify start and end were passed as params
+        assert call_args[1].get("params", {}).get("start") == "Sol"
+        assert call_args[1].get("params", {}).get("end") == "Alpha"
+
+
+# ---------------------------------------------------------------------------
+# list_category with filters
+# ---------------------------------------------------------------------------
+
+
+class TestListCategoryFilters:
+    """Tests for /list_category with optional tech_level and manufacturer filters."""
+
+    def test_list_category_tech_level_filter(self, mock_about_cog):
+        """list_category with tech_level filter shows only matching objects."""
+        interaction = _create_mock_interaction()
+
+        mock_about_cog._objects_by_category = {
+            "ship": [
+                {"name": "Eagle", "emoji": None, "tech_level": 1},
+                {"name": "Hawk", "emoji": None, "tech_level": 2},
+                {"name": "Falcon", "emoji": None, "tech_level": 1},
+            ]
+        }
+
+        asyncio.run(mock_about_cog.list_category.callback(
+            mock_about_cog, interaction, "ship", tech_level=1
+        ))
+
+        interaction.followup.send.assert_awaited_once()
+        call_kwargs = interaction.followup.send.call_args[1]
+        assert "embed" in call_kwargs
+        # Description should show filtered count
+        embed = call_kwargs["embed"]
+        assert "2" in embed.description  # 2 objects match tech level 1
+
+    def test_list_category_manufacturer_filter(self, mock_about_cog):
+        """list_category with manufacturer filter shows only matching objects."""
+        interaction = _create_mock_interaction()
+
+        mock_about_cog._objects_by_category = {
+            "ship": [
+                {"name": "Eagle", "emoji": None, "manufacturer": "AcmeCorp"},
+                {"name": "Hawk", "emoji": None, "manufacturer": "StarForge"},
+                {"name": "Falcon", "emoji": None, "manufacturer": "AcmeCorp"},
+            ]
+        }
+
+        asyncio.run(mock_about_cog.list_category.callback(
+            mock_about_cog, interaction, "ship", manufacturer="AcmeCorp"
+        ))
+
+        interaction.followup.send.assert_awaited_once()
+        call_kwargs = interaction.followup.send.call_args[1]
+        assert "embed" in call_kwargs
+        embed = call_kwargs["embed"]
+        assert "2" in embed.description  # 2 objects match manufacturer
+
+    def test_list_category_both_filters(self, mock_about_cog):
+        """list_category with both tech_level and manufacturer filters combined."""
+        interaction = _create_mock_interaction()
+
+        mock_about_cog._objects_by_category = {
+            "ship": [
+                {"name": "Eagle", "emoji": None, "tech_level": 1, "manufacturer": "AcmeCorp"},
+                {"name": "Hawk", "emoji": None, "tech_level": 2, "manufacturer": "AcmeCorp"},
+                {"name": "Falcon", "emoji": None, "tech_level": 1, "manufacturer": "StarForge"},
+            ]
+        }
+
+        asyncio.run(mock_about_cog.list_category.callback(
+            mock_about_cog, interaction, "ship", tech_level=1, manufacturer="AcmeCorp"
+        ))
+
+        interaction.followup.send.assert_awaited_once()
+        call_kwargs = interaction.followup.send.call_args[1]
+        assert "embed" in call_kwargs
+        embed = call_kwargs["embed"]
+        assert "1" in embed.description  # only Eagle matches both filters
+
+    def test_list_category_no_filter_shows_all(self, mock_about_cog):
+        """list_category without filters shows all objects (existing behavior)."""
+        interaction = _create_mock_interaction()
+
+        mock_about_cog._objects_by_category = {
+            "ship": [
+                {"name": "Eagle", "emoji": None},
+                {"name": "Hawk", "emoji": None},
+            ]
+        }
+
+        asyncio.run(mock_about_cog.list_category.callback(
+            mock_about_cog, interaction, "ship"
+        ))
+
+        interaction.followup.send.assert_awaited_once()
+        call_kwargs = interaction.followup.send.call_args[1]
+        assert "embed" in call_kwargs
+
+    def test_list_category_filter_no_match_sends_ephemeral(self, mock_about_cog):
+        """list_category should send ephemeral message when filters produce no matches."""
+        interaction = _create_mock_interaction()
+
+        mock_about_cog._objects_by_category = {
+            "ship": [
+                {"name": "Eagle", "emoji": None, "tech_level": 1},
+            ]
+        }
+
+        asyncio.run(mock_about_cog.list_category.callback(
+            mock_about_cog, interaction, "ship", tech_level=5
+        ))
+
+        interaction.followup.send.assert_awaited_once()
+        call_kwargs = interaction.followup.send.call_args
+        assert call_kwargs[1].get("ephemeral", False)
+
+    def test_list_category_manufacturer_filter_case_insensitive(self, mock_about_cog):
+        """list_category manufacturer filter should be case-insensitive."""
+        interaction = _create_mock_interaction()
+
+        mock_about_cog._objects_by_category = {
+            "ship": [
+                {"name": "Eagle", "emoji": None, "manufacturer": "AcmeCorp"},
+                {"name": "Hawk", "emoji": None, "manufacturer": "StarForge"},
+            ]
+        }
+
+        asyncio.run(mock_about_cog.list_category.callback(
+            mock_about_cog, interaction, "ship", manufacturer="acmecorp"
+        ))
+
+        interaction.followup.send.assert_awaited_once()
+        call_kwargs = interaction.followup.send.call_args[1]
+        assert "embed" in call_kwargs
+        embed = call_kwargs["embed"]
+        assert "1" in embed.description  # only Eagle matches
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

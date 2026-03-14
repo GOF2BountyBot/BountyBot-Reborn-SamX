@@ -172,7 +172,8 @@ class PlayerCog(commands.Cog):
             await interaction.followup.send("⚠️ An error occurred while fetching the leaderboard.", ephemeral=True)
 
     @app_commands.command(name="prestige", description="Prestige your character (Platinum tier only)")
-    async def prestige(self, interaction: discord.Interaction):
+    @app_commands.describe(confirm="Type CONFIRM to execute the prestige")
+    async def prestige(self, interaction: discord.Interaction, confirm: str | None = None):
         """Prestige player character."""
         await interaction.response.defer(thinking=True)
 
@@ -199,22 +200,53 @@ class PlayerCog(commands.Cog):
                 )
                 return
 
-            # Confirm prestige
-            embed = discord.Embed(
-                title="⚠️ Prestige Confirmation",
-                description=(
-                    "Prestiging will reset you to **Bronze tier** with **0 XP**, "
-                    "but you'll keep your ships, credits, and gain a prestige star!\n\n"
-                    "Are you sure you want to prestige?"
-                ),
-                color=discord.Color.orange()
+            # If confirmation not provided or incorrect, show warning embed
+            if confirm != "CONFIRM":
+                embed = discord.Embed(
+                    title="⚠️ Prestige Confirmation",
+                    description=(
+                        "Prestiging will reset you to **Bronze tier** with **0 XP**, "
+                        "but you'll keep your ships, credits, and gain a prestige star!\n\n"
+                        "To confirm, run: `/prestige confirm:CONFIRM`"
+                    ),
+                    color=discord.Color.orange()
+                )
+                await interaction.followup.send(embed=embed, ephemeral=True)
+                flogger.debug(f"/prestige (no confirm) by {interaction.user} in guild {interaction.guild_id}")
+                return
+
+            # Execute the prestige via API
+            prestige_resp = await self.http_client.post(
+                f"{api_base}/players/{player_data['id']}/prestige",
+                timeout=10
             )
+            prestige_resp.raise_for_status()
+            prestige_data = prestige_resp.json()
 
-            # Note: In a real implementation, you'd want to add confirmation buttons
-            # For now, we'll just show the warning
-            await interaction.followup.send(embed=embed, ephemeral=True)
-            flogger.debug(f"/prestige by {interaction.user} in guild {interaction.guild_id}")
+            embed = discord.Embed(
+                title="⭐ Prestige Complete!",
+                description=(
+                    f"Congratulations! You have prestiged successfully.\n\n"
+                    f"You are now back at **Bronze tier** with **0 XP**.\n"
+                    f"Your prestige count is now **{prestige_data['prestige_count']}** ⭐"
+                ),
+                color=discord.Color.gold()
+            )
+            embed.add_field(name="Previous Level", value=str(prestige_data['level_before']), inline=True)
+            embed.add_field(name="Prestige Stars", value=str(prestige_data['prestige_count']), inline=True)
 
+            await interaction.followup.send(embed=embed)
+            flogger.debug(f"/prestige CONFIRMED by {interaction.user} in guild {interaction.guild_id}")
+
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code == 400:
+                try:
+                    detail = e.response.json().get("detail", "Level too low to prestige.")
+                except Exception:  # pylint: disable=broad-exception-caught
+                    detail = "Level too low to prestige."
+                await interaction.followup.send(f"❌ {detail}", ephemeral=True)
+            else:
+                await interaction.followup.send(f"❌ API Error: {e}", ephemeral=True)
         except Exception as e:  # pylint: disable=broad-exception-caught
             flogger.error(f"Error in /prestige: {e}")
             await interaction.followup.send("⚠️ An error occurred.", ephemeral=True)

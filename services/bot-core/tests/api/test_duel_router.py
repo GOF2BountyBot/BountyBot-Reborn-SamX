@@ -382,3 +382,42 @@ class TestRejectDuel:
 
         assert response.status_code == 400
         assert "cannot be rejected" in response.json()["detail"].lower()
+
+
+# ===========================================================================
+# 4. GET /duels/pending
+# ===========================================================================
+
+
+class TestGetPendingDuels:
+    """Tests for GET /api/v1/duels/pending."""
+
+    @patch("api.routers.duels.get_db_session")
+    def test_get_pending_duels_returns_list(self, mock_get_db, client, mock_duel_service):
+        """Returns list of pending duels where the user is the target."""
+        _configure_db_mock(mock_get_db)
+        mock_duel_service.get_pending_for_target = AsyncMock(
+            return_value=[
+                make_mock_duel(id=1, target_id=200, challenger_id=100, status="pending"),
+                make_mock_duel(id=2, target_id=200, challenger_id=300, status="pending"),
+            ]
+        )
+
+        response = client.get("/api/v1/duels/pending", params={"user_id": 200, "guild_id": 67890})
+
+        assert response.status_code == 200
+        data = response.json()
+        assert len(data) == 2
+        assert data[0]["id"] == 1
+        assert data[1]["id"] == 2
+
+    @patch("api.routers.duels.get_db_session")
+    def test_get_pending_duels_empty_list(self, mock_get_db, client, mock_duel_service):
+        """Returns empty list when no pending duels exist for the user."""
+        _configure_db_mock(mock_get_db)
+        mock_duel_service.get_pending_for_target = AsyncMock(return_value=[])
+
+        response = client.get("/api/v1/duels/pending", params={"user_id": 999, "guild_id": 67890})
+
+        assert response.status_code == 200
+        assert response.json() == []

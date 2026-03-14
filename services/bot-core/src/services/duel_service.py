@@ -244,6 +244,27 @@ class DuelService:
         return updated
 
     # ------------------------------------------------------------------
+    # Query helpers
+    # ------------------------------------------------------------------
+
+    async def get_pending_for_target(
+        self, db, target_id: int, guild_id: int
+    ) -> list[DuelRequest]:
+        """Return all pending duels where *target_id* is the target in the given guild.
+
+        Used by the Discord gateway for autocomplete on /duel-accept and /duel-reject.
+
+        Args:
+            db: SQLAlchemy async session.
+            target_id: Player ID of the potential acceptor.
+            guild_id: Guild the duels are scoped to.
+
+        Returns:
+            List of pending DuelRequest objects.
+        """
+        return await self.duel_repo.get_pending_by_target(db, target_id, guild_id)
+
+    # ------------------------------------------------------------------
     # Expire
     # ------------------------------------------------------------------
 

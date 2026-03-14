@@ -8,7 +8,7 @@ Handles duel (PvP challenge) lifecycle operations including:
 - Listing pending duels for a user (for autocomplete)
 """
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from persist.database.manager import get_db_session
 from services.duel_service import DuelService
 from shared import bblogger
@@ -79,10 +79,26 @@ async def create_challenge(
 @router.post("/{duel_id}/accept")
 async def accept_duel(
     duel_id: int,
+    user_id: int = Query(..., description="ID of the user accepting the duel"),
     service: DuelService = Depends(get_duel_service),
 ):
-    """Accept a pending duel and resolve combat."""
+    """Accept a pending duel and resolve combat.
+
+    Only the challenged player (target) may accept.
+    """
     async with get_db_session() as db:
+        # Authorization: verify caller is the duel target
+        try:
+            duel = await service.get_duel(db, duel_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+        if user_id != duel.target_id:
+            raise HTTPException(
+                status_code=403,
+                detail="Only the challenged player can accept/reject this duel.",
+            )
+
         try:
             result = await service.accept_duel(db, duel_id)
         except ValueError as exc:
@@ -116,13 +132,29 @@ async def accept_duel(
 @router.post("/{duel_id}/reject", response_model=DuelRequestResponse)
 async def reject_duel(
     duel_id: int,
+    user_id: int = Query(..., description="ID of the user rejecting the duel"),
     service: DuelService = Depends(get_duel_service),
 ):
-    """Reject a pending duel challenge."""
+    """Reject a pending duel challenge.
+
+    Only the challenged player (target) may reject.
+    """
     async with get_db_session() as db:
+        # Authorization: verify caller is the duel target
         try:
-            duel = await service.reject_duel(db, duel_id)
-            return DuelRequestResponse.model_validate(duel)
+            duel = await service.get_duel(db, duel_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+        if user_id != duel.target_id:
+            raise HTTPException(
+                status_code=403,
+                detail="Only the challenged player can accept/reject this duel.",
+            )
+
+        try:
+            updated = await service.reject_duel(db, duel_id)
+            return DuelRequestResponse.model_validate(updated)
         except ValueError as exc:
             msg = str(exc)
             status_code = 404 if "not found" in msg.lower() else 400

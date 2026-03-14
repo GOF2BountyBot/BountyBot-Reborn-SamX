@@ -166,6 +166,7 @@ class DuelCog(commands.Cog):
         try:
             resp = await self.http_client.post(
                 f"{api_base}/duels/{duel_id}/accept",
+                params={"user_id": interaction.user.id},
                 timeout=10,
             )
             resp.raise_for_status()
@@ -178,6 +179,10 @@ class DuelCog(commands.Cog):
         except httpx.HTTPStatusError as e:
             if e.response.status_code == 404:
                 await interaction.followup.send("❌ Duel not found.", ephemeral=True)
+            elif e.response.status_code == 403:
+                await interaction.followup.send(
+                    "❌ You can only accept duels that were issued to you.", ephemeral=True
+                )
             elif e.response.status_code == 400:
                 try:
                     detail = e.response.json().get("detail", str(e))
@@ -269,6 +274,7 @@ class DuelCog(commands.Cog):
         try:
             resp = await self.http_client.post(
                 f"{api_base}/duels/{duel_id}/reject",
+                params={"user_id": interaction.user.id},
                 timeout=10,
             )
             resp.raise_for_status()
@@ -294,6 +300,10 @@ class DuelCog(commands.Cog):
         except httpx.HTTPStatusError as e:
             if e.response.status_code == 404:
                 await interaction.followup.send("❌ Duel not found.", ephemeral=True)
+            elif e.response.status_code == 403:
+                await interaction.followup.send(
+                    "❌ You can only reject duels that were issued to you.", ephemeral=True
+                )
             elif e.response.status_code == 400:
                 try:
                     detail = e.response.json().get("detail", str(e))

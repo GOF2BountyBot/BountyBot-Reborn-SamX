@@ -15,6 +15,9 @@ flogger = bblogger.get_logger("bot-systems-router")
 
 router = APIRouter(prefix="/systems", tags=["systems"])
 
+# Module-level singleton — graph is loaded once and cached across requests.
+_graph_service = SystemGraphService()
+
 
 async def get_db() -> AsyncGenerator[AsyncSession, None]:
     async with db_manager.get_session() as session:
@@ -35,10 +38,10 @@ async def find_route(
     - **start**: Name of the starting star system
     - **end**: Name of the destination star system
     """
-    graph_service = SystemGraphService()
-    await graph_service.load_graph(db)
+    if not _graph_service.is_loaded():
+        await _graph_service.load_graph(db)
 
-    pf_service = PathfindingService(graph_service)
+    pf_service = PathfindingService(_graph_service)
     result = pf_service.make_route(start, end)
 
     if isinstance(result, PathfindingError):

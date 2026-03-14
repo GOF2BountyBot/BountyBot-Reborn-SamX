@@ -98,12 +98,9 @@ class TestFindRoute:
     def test_route_found_between_two_systems(self, client):
         """Returns 200 with route list and hop count when a path exists."""
         with (
-            patch("api.routers.systems.SystemGraphService") as mock_sgs_cls,
+            patch("api.routers.systems._graph_service", _make_graph_service(_SYSTEMS)),
             patch("api.routers.systems.PathfindingService") as mock_pf_cls,
         ):
-            mock_graph = _make_graph_service(_SYSTEMS)
-            mock_sgs_cls.return_value = mock_graph
-
             mock_pf = MagicMock()
             mock_pf.make_route = MagicMock(return_value=["A", "B", "C"])
             mock_pf_cls.return_value = mock_pf
@@ -118,12 +115,9 @@ class TestFindRoute:
     def test_same_start_and_end_returns_single_system(self, client):
         """Returns 200 with single-element route when start == end."""
         with (
-            patch("api.routers.systems.SystemGraphService") as mock_sgs_cls,
+            patch("api.routers.systems._graph_service", _make_graph_service(_SYSTEMS)),
             patch("api.routers.systems.PathfindingService") as mock_pf_cls,
         ):
-            mock_graph = _make_graph_service(_SYSTEMS)
-            mock_sgs_cls.return_value = mock_graph
-
             mock_pf = MagicMock()
             mock_pf.make_route = MagicMock(return_value=["A"])
             mock_pf_cls.return_value = mock_pf
@@ -138,12 +132,9 @@ class TestFindRoute:
     def test_no_route_found_returns_404(self, client):
         """Returns 404 when pathfinding returns NO_ROUTE_FOUND."""
         with (
-            patch("api.routers.systems.SystemGraphService") as mock_sgs_cls,
+            patch("api.routers.systems._graph_service", _make_graph_service(_SYSTEMS)),
             patch("api.routers.systems.PathfindingService") as mock_pf_cls,
         ):
-            mock_graph = _make_graph_service(_SYSTEMS)
-            mock_sgs_cls.return_value = mock_graph
-
             mock_pf = MagicMock()
             mock_pf.make_route = MagicMock(return_value=PathfindingError.NO_ROUTE_FOUND)
             mock_pf_cls.return_value = mock_pf
@@ -156,12 +147,9 @@ class TestFindRoute:
     def test_invalid_system_name_returns_404(self, client):
         """Returns 404 when one or both system names do not exist in the graph."""
         with (
-            patch("api.routers.systems.SystemGraphService") as mock_sgs_cls,
+            patch("api.routers.systems._graph_service", _make_graph_service(_SYSTEMS)),
             patch("api.routers.systems.PathfindingService") as mock_pf_cls,
         ):
-            mock_graph = _make_graph_service(_SYSTEMS)
-            mock_sgs_cls.return_value = mock_graph
-
             mock_pf = MagicMock()
             # PathfindingService returns NO_ROUTE_FOUND for unknown systems
             mock_pf.make_route = MagicMock(return_value=PathfindingError.NO_ROUTE_FOUND)
@@ -174,12 +162,9 @@ class TestFindRoute:
     def test_max_length_reached_returns_400(self, client):
         """Returns 400 when pathfinding returns MAX_LENGTH_REACHED."""
         with (
-            patch("api.routers.systems.SystemGraphService") as mock_sgs_cls,
+            patch("api.routers.systems._graph_service", _make_graph_service(_SYSTEMS)),
             patch("api.routers.systems.PathfindingService") as mock_pf_cls,
         ):
-            mock_graph = _make_graph_service(_SYSTEMS)
-            mock_sgs_cls.return_value = mock_graph
-
             mock_pf = MagicMock()
             mock_pf.make_route = MagicMock(return_value=PathfindingError.MAX_LENGTH_REACHED)
             mock_pf_cls.return_value = mock_pf
@@ -202,12 +187,9 @@ class TestFindRoute:
     def test_route_response_has_correct_hop_count(self, client):
         """Hop count equals len(route) - 1."""
         with (
-            patch("api.routers.systems.SystemGraphService") as mock_sgs_cls,
+            patch("api.routers.systems._graph_service", _make_graph_service(_SYSTEMS)),
             patch("api.routers.systems.PathfindingService") as mock_pf_cls,
         ):
-            mock_graph = _make_graph_service(_SYSTEMS)
-            mock_sgs_cls.return_value = mock_graph
-
             route = ["Sol", "Alpha", "Beta", "Gamma", "Delta"]
             mock_pf = MagicMock()
             mock_pf.make_route = MagicMock(return_value=route)

@@ -244,6 +244,28 @@ class DuelService:
         return updated
 
     # ------------------------------------------------------------------
+    # Lookup
+    # ------------------------------------------------------------------
+
+    async def get_duel(self, db, duel_id: int) -> DuelRequest:
+        """Return a DuelRequest by ID, or raise ValueError if not found.
+
+        Args:
+            db: SQLAlchemy async session.
+            duel_id: Primary key of the DuelRequest.
+
+        Returns:
+            The DuelRequest instance.
+
+        Raises:
+            ValueError: If the duel does not exist.
+        """
+        duel = await self.duel_repo.get_by_id(db, duel_id)
+        if duel is None:
+            raise ValueError(f"Duel request with ID {duel_id} not found.")
+        return duel
+
+    # ------------------------------------------------------------------
     # Query helpers
     # ------------------------------------------------------------------
 

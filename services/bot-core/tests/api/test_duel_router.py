@@ -99,6 +99,8 @@ def mock_duel_service():
     service.create_challenge = AsyncMock(return_value=make_mock_duel())
     service.accept_duel = AsyncMock(return_value=make_mock_accept_result())
     service.reject_duel = AsyncMock(return_value=make_mock_duel(status="rejected"))
+    # get_duel returns a duel with target_id=200 by default
+    service.get_duel = AsyncMock(return_value=make_mock_duel(target_id=200))
     return service
 
 
@@ -250,6 +252,9 @@ class TestAcceptDuel:
     def test_accept_duel_winner_result(self, mock_get_db, client, mock_duel_service):
         """Returns fight result with winner/loser and credit transfer on decisive outcome."""
         _configure_db_mock(mock_get_db)
+        mock_duel_service.get_duel = AsyncMock(
+            return_value=make_mock_duel(id=1, target_id=200)
+        )
         mock_duel_service.accept_duel = AsyncMock(
             return_value=make_mock_accept_result(
                 duel_id=1,
@@ -265,7 +270,7 @@ class TestAcceptDuel:
             )
         )
 
-        response = client.post("/api/v1/duels/1/accept")
+        response = client.post("/api/v1/duels/1/accept?user_id=200")
 
         assert response.status_code == 200
         data = response.json()
@@ -281,6 +286,9 @@ class TestAcceptDuel:
     def test_accept_duel_stalemate(self, mock_get_db, client, mock_duel_service):
         """Returns stalemate result with zero credits transferred."""
         _configure_db_mock(mock_get_db)
+        mock_duel_service.get_duel = AsyncMock(
+            return_value=make_mock_duel(id=1, target_id=200)
+        )
         mock_duel_service.accept_duel = AsyncMock(
             return_value=make_mock_accept_result(
                 is_stalemate=True,
@@ -293,7 +301,7 @@ class TestAcceptDuel:
             )
         )
 
-        response = client.post("/api/v1/duels/1/accept")
+        response = client.post("/api/v1/duels/1/accept?user_id=200")
 
         assert response.status_code == 200
         data = response.json()
@@ -304,11 +312,11 @@ class TestAcceptDuel:
     def test_accept_duel_not_found(self, mock_get_db, client, mock_duel_service):
         """Returns 404 when the duel does not exist."""
         _configure_db_mock(mock_get_db)
-        mock_duel_service.accept_duel = AsyncMock(
+        mock_duel_service.get_duel = AsyncMock(
             side_effect=ValueError("Duel request with ID 999 not found.")
         )
 
-        response = client.post("/api/v1/duels/999/accept")
+        response = client.post("/api/v1/duels/999/accept?user_id=200")
 
         assert response.status_code == 404
         assert "not found" in response.json()["detail"].lower()
@@ -317,16 +325,33 @@ class TestAcceptDuel:
     def test_accept_duel_already_resolved(self, mock_get_db, client, mock_duel_service):
         """Returns 400 when the duel is not in pending status."""
         _configure_db_mock(mock_get_db)
+        mock_duel_service.get_duel = AsyncMock(
+            return_value=make_mock_duel(id=1, target_id=200)
+        )
         mock_duel_service.accept_duel = AsyncMock(
             side_effect=ValueError(
                 "Duel 1 cannot be accepted — current status is 'completed'."
             )
         )
 
-        response = client.post("/api/v1/duels/1/accept")
+        response = client.post("/api/v1/duels/1/accept?user_id=200")
 
         assert response.status_code == 400
         assert "cannot be accepted" in response.json()["detail"].lower()
+
+    @patch("api.routers.duels.get_db_session")
+    def test_accept_duel_wrong_user_returns_403(self, mock_get_db, client, mock_duel_service):
+        """Returns 403 when user_id does not match duel target_id."""
+        _configure_db_mock(mock_get_db)
+        mock_duel_service.get_duel = AsyncMock(
+            return_value=make_mock_duel(id=1, target_id=200)
+        )
+
+        # user_id=999 is NOT the target (200)
+        response = client.post("/api/v1/duels/1/accept?user_id=999")
+
+        assert response.status_code == 403
+        assert "only the challenged player" in response.json()["detail"].lower()
 
 
 # ===========================================================================
@@ -341,6 +366,9 @@ class TestRejectDuel:
     def test_reject_duel_success(self, mock_get_db, client, mock_duel_service):
         """Returns the updated duel with rejected status."""
         _configure_db_mock(mock_get_db)
+        mock_duel_service.get_duel = AsyncMock(
+            return_value=make_mock_duel(id=1, target_id=200)
+        )
         mock_duel_service.reject_duel = AsyncMock(
             return_value=make_mock_duel(
                 id=1,
@@ -348,7 +376,7 @@ class TestRejectDuel:
             )
         )
 
-        response = client.post("/api/v1/duels/1/reject")
+        response = client.post("/api/v1/duels/1/reject?user_id=200")
 
         assert response.status_code == 200
         data = response.json()
@@ -359,11 +387,11 @@ class TestRejectDuel:
     def test_reject_duel_not_found(self, mock_get_db, client, mock_duel_service):
         """Returns 404 when the duel does not exist."""
         _configure_db_mock(mock_get_db)
-        mock_duel_service.reject_duel = AsyncMock(
+        mock_duel_service.get_duel = AsyncMock(
             side_effect=ValueError("Duel request with ID 999 not found.")
         )
 
-        response = client.post("/api/v1/duels/999/reject")
+        response = client.post("/api/v1/duels/999/reject?user_id=200")
 
         assert response.status_code == 404
         assert "not found" in response.json()["detail"].lower()
@@ -372,16 +400,33 @@ class TestRejectDuel:
     def test_reject_duel_already_resolved(self, mock_get_db, client, mock_duel_service):
         """Returns 400 when duel cannot be rejected (not in pending status)."""
         _configure_db_mock(mock_get_db)
+        mock_duel_service.get_duel = AsyncMock(
+            return_value=make_mock_duel(id=1, target_id=200)
+        )
         mock_duel_service.reject_duel = AsyncMock(
             side_effect=ValueError(
                 "Duel 1 cannot be rejected — current status is 'completed'."
             )
         )
 
-        response = client.post("/api/v1/duels/1/reject")
+        response = client.post("/api/v1/duels/1/reject?user_id=200")
 
         assert response.status_code == 400
         assert "cannot be rejected" in response.json()["detail"].lower()
+
+    @patch("api.routers.duels.get_db_session")
+    def test_reject_duel_wrong_user_returns_403(self, mock_get_db, client, mock_duel_service):
+        """Returns 403 when user_id does not match duel target_id."""
+        _configure_db_mock(mock_get_db)
+        mock_duel_service.get_duel = AsyncMock(
+            return_value=make_mock_duel(id=1, target_id=200)
+        )
+
+        # user_id=999 is NOT the target (200)
+        response = client.post("/api/v1/duels/1/reject?user_id=999")
+
+        assert response.status_code == 403
+        assert "only the challenged player" in response.json()["detail"].lower()
 
 
 # ===========================================================================

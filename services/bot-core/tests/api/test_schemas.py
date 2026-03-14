@@ -1380,16 +1380,20 @@ class TestEquipItemRequestSchema:
 
     @pytest.mark.parametrize("eq_type", ["weapons", "modules", "turrets"])
     def test_valid_equipment_types(self, eq_type):
-        req = EquipItemRequest(equipment_type=eq_type, item_name="X")
+        req = EquipItemRequest(player_id=1, equipment_type=eq_type, item_name="X")
         assert req.equipment_type == eq_type
 
     def test_invalid_equipment_type_raises(self):
         with pytest.raises(ValidationError):
-            EquipItemRequest(equipment_type="armor", item_name="X")
+            EquipItemRequest(player_id=1, equipment_type="armor", item_name="X")
 
     def test_missing_item_name_raises(self):
         with pytest.raises(ValidationError):
-            EquipItemRequest(equipment_type="weapons")
+            EquipItemRequest(player_id=1, equipment_type="weapons")
+
+    def test_missing_player_id_raises(self):
+        with pytest.raises(ValidationError):
+            EquipItemRequest(equipment_type="weapons", item_name="X")
 
 
 class TestUnequipItemRequestSchema:
@@ -1397,16 +1401,20 @@ class TestUnequipItemRequestSchema:
 
     @pytest.mark.parametrize("eq_type", ["weapons", "modules", "turrets"])
     def test_valid_equipment_types(self, eq_type):
-        req = UnequipItemRequest(equipment_type=eq_type, item_name="Y")
+        req = UnequipItemRequest(player_id=1, equipment_type=eq_type, item_name="Y")
         assert req.equipment_type == eq_type
 
     def test_invalid_equipment_type_raises(self):
         with pytest.raises(ValidationError):
-            UnequipItemRequest(equipment_type="shield", item_name="Y")
+            UnequipItemRequest(player_id=1, equipment_type="shield", item_name="Y")
 
     def test_missing_required_raises(self):
         with pytest.raises(ValidationError):
-            UnequipItemRequest(equipment_type="modules")
+            UnequipItemRequest(player_id=1, equipment_type="modules")
+
+    def test_missing_player_id_raises(self):
+        with pytest.raises(ValidationError):
+            UnequipItemRequest(equipment_type="modules", item_name="Y")
 
 
 # ===========================================================================

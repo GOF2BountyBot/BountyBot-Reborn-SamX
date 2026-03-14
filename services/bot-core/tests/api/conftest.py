@@ -15,7 +15,9 @@ This runs before any test in this directory, ensuring consistent imports.
 import os
 import sys
 import types
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
+
+import pytest
 
 # ---------------------------------------------------------------------------
 # 1. Ensure src/ is first on sys.path
@@ -45,3 +47,22 @@ if "sqlalchemy_utils" not in sys.modules:
     _mock_sqla_utils = types.ModuleType("sqlalchemy_utils")
     _mock_sqla_utils.UUIDType = MagicMock  # type: ignore[attr-defined]
     sys.modules["sqlalchemy_utils"] = _mock_sqla_utils
+
+
+# ---------------------------------------------------------------------------
+# 4. Shared db-session fixture for router tests
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def mock_db_session():
+    """Pre-configured mock for get_db_session async context manager.
+
+    Replaces per-test @patch("...get_db_session") decorators.
+    Returns (mock_session, mock_cm) tuple so tests can unpack as needed.
+    """
+    mock_session = AsyncMock()
+    mock_cm = MagicMock()
+    mock_cm.__aenter__ = AsyncMock(return_value=mock_session)
+    mock_cm.__aexit__ = AsyncMock(return_value=False)
+    return mock_session, mock_cm

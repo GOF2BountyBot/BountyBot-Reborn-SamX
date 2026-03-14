@@ -16,6 +16,9 @@ from api.schemas.players_schema import (
     CreatePlayerRequest,
     PlayerResponse,
     PlayerStatisticsResponse,
+    PrestigeResponse,
+    TransferCreditsRequest,
+    TransferCreditsResponse,
     UpdateCreditsRequest,
     UpdateXPRequest,
 )
@@ -273,37 +276,23 @@ async def update_player_xp(
             detail="Failed to update XP"
         ) from e
 
-@router.post("/{player_id}/prestige", response_model=PlayerResponse)
+@router.post("/{player_id}/prestige", response_model=PrestigeResponse)
 async def prestige_player(
     player_id: int,
     player_service: PlayerService = Depends(get_player_service)
 ):
-    """Reset player to Bronze tier but increment prestige count."""
+    """Prestige a player — reset progress, increment prestige counter.
+
+    Player must be level 10 to prestige. Resets XP, xp_surplus, credits,
+    tier, and inventory. Preserves lifetime_credits, ships, duel stats,
+    and bounty stats.
+    """
     flogger.info(f"Prestiging player {player_id}")
 
     try:
         async with get_db_session() as db:
-            player = await player_service.prestige_player(db, player_id)
-
-            return PlayerResponse(
-                id=player.id,
-                user_id=player.user_id,
-                guild_id=player.guild_id,
-                credits=player.credits,
-                lifetime_credits=player.lifetime_credits,
-                systems_checked=player.systems_checked,
-                bounty_wins=player.bounty_wins,
-                xp=player.xp,
-                tier=player.tier,
-                prestige_count=player.prestige_count,
-                duel_wins=player.duel_wins,
-                duel_losses=player.duel_losses,
-                duel_credits_won=player.duel_credits_won,
-                duel_credits_lost=player.duel_credits_lost,
-                active_ship_id=player.active_ship_id,
-                created_at=player.created_at.isoformat(),
-                updated_at=player.updated_at.isoformat()
-            )
+            result = await player_service.prestige_player(db, player_id)
+            return PrestigeResponse(**result)
 
     except ValueError as e:
         raise HTTPException(
@@ -340,4 +329,38 @@ async def get_player_statistics(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to get player statistics"
+        ) from e
+
+
+@router.post("/transfer", response_model=TransferCreditsResponse)
+async def transfer_credits(
+    request: TransferCreditsRequest,
+    player_service: PlayerService = Depends(get_player_service),
+):
+    """Transfer credits between players."""
+    flogger.info(
+        f"Transferring {request.amount} credits from player "
+        f"{request.source_player_id} to player {request.target_player_id}"
+    )
+
+    try:
+        async with get_db_session() as db:
+            result = await player_service.transfer_credits(
+                db,
+                request.source_player_id,
+                request.target_player_id,
+                request.amount,
+            )
+            return TransferCreditsResponse(**result)
+
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e)
+        ) from e
+    except Exception as e:
+        flogger.error(f"Error transferring credits: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to transfer credits"
         ) from e

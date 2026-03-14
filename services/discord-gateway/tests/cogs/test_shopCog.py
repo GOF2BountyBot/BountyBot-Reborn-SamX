@@ -202,11 +202,9 @@ class TestCogUnload:
 class TestGetPlayerDataHelper:
     """Tests for the _get_player_data helper method."""
 
-    def test_get_player_data_success(self, mock_shop_cog):
+    def test_get_player_data_success(self, mock_shop_cog, make_mock_response):
         """_get_player_data should return player dict on success."""
-        resp = MagicMock()
-        resp.raise_for_status = MagicMock()
-        resp.json.return_value = _make_player_data()
+        resp = make_mock_response(_make_player_data())
         mock_shop_cog.http_client.post = AsyncMock(return_value=resp)
 
         result = asyncio.run(mock_shop_cog._get_player_data(111111111, 987654321))
@@ -279,20 +277,15 @@ class TestTierAutocomplete:
 class TestShopCommand:
     """Tests for the /shop slash command."""
 
-    def test_shop_happy_path_with_items(self, mock_shop_cog):
+    def test_shop_happy_path_with_items(self, mock_shop_cog, make_mock_response):
         """shop should display embed when items are available."""
         interaction = _create_mock_interaction()
 
-        player_resp = MagicMock()
-        player_resp.raise_for_status = MagicMock()
-        player_resp.json.return_value = _make_player_data(tier="Bronze", credits=2000)
-
-        items_resp = MagicMock()
-        items_resp.raise_for_status = MagicMock()
-        items_resp.json.return_value = [
+        player_resp = make_mock_response(_make_player_data(tier="Bronze", credits=2000))
+        items_resp = make_mock_response([
             _make_shop_item(1, "LaserCannon", "weapon", "Bronze", 500),
             _make_shop_item(2, "ShieldModule", "module", "Bronze", 300),
-        ]
+        ])
 
         mock_shop_cog.http_client.post = AsyncMock(return_value=player_resp)
         mock_shop_cog.http_client.get = AsyncMock(return_value=items_resp)
@@ -304,17 +297,12 @@ class TestShopCommand:
         call_kwargs = interaction.followup.send.call_args[1]
         assert "embed" in call_kwargs
 
-    def test_shop_empty_shop(self, mock_shop_cog):
+    def test_shop_empty_shop(self, mock_shop_cog, make_mock_response):
         """shop should send ephemeral message when shop is empty."""
         interaction = _create_mock_interaction()
 
-        player_resp = MagicMock()
-        player_resp.raise_for_status = MagicMock()
-        player_resp.json.return_value = _make_player_data(tier="Bronze")
-
-        items_resp = MagicMock()
-        items_resp.raise_for_status = MagicMock()
-        items_resp.json.return_value = []
+        player_resp = make_mock_response(_make_player_data(tier="Bronze"))
+        items_resp = make_mock_response([])
 
         mock_shop_cog.http_client.post = AsyncMock(return_value=player_resp)
         mock_shop_cog.http_client.get = AsyncMock(return_value=items_resp)
@@ -353,13 +341,11 @@ class TestShopCommand:
         call_kwargs = interaction.followup.send.call_args
         assert call_kwargs[1].get("ephemeral", False)
 
-    def test_shop_tier_access_locked(self, mock_shop_cog):
+    def test_shop_tier_access_locked(self, mock_shop_cog, make_mock_response):
         """shop should deny access to higher tier than player's."""
         interaction = _create_mock_interaction()
 
-        player_resp = MagicMock()
-        player_resp.raise_for_status = MagicMock()
-        player_resp.json.return_value = _make_player_data(tier="Bronze")
+        player_resp = make_mock_response(_make_player_data(tier="Bronze"))
 
         mock_shop_cog.http_client.post = AsyncMock(return_value=player_resp)
 
@@ -370,14 +356,12 @@ class TestShopCommand:
         assert call_kwargs[1].get("ephemeral", False)
         assert "Gold" in call_kwargs[0][0]
 
-    def test_shop_http_status_error(self, mock_shop_cog):
+    def test_shop_http_status_error(self, mock_shop_cog, make_mock_response):
         """shop should handle HTTPStatusError gracefully."""
         import httpx
         interaction = _create_mock_interaction()
 
-        player_resp = MagicMock()
-        player_resp.raise_for_status = MagicMock()
-        player_resp.json.return_value = _make_player_data(tier="Bronze")
+        player_resp = make_mock_response(_make_player_data(tier="Bronze"))
 
         error_response = MagicMock()
         error_response.status_code = 500
@@ -394,13 +378,11 @@ class TestShopCommand:
         call_kwargs = interaction.followup.send.call_args
         assert call_kwargs[1].get("ephemeral", False)
 
-    def test_shop_generic_exception(self, mock_shop_cog):
+    def test_shop_generic_exception(self, mock_shop_cog, make_mock_response):
         """shop should handle generic exception gracefully."""
         interaction = _create_mock_interaction()
 
-        player_resp = MagicMock()
-        player_resp.raise_for_status = MagicMock()
-        player_resp.json.return_value = _make_player_data(tier="Bronze")
+        player_resp = make_mock_response(_make_player_data(tier="Bronze"))
 
         mock_shop_cog.http_client.post = AsyncMock(return_value=player_resp)
         mock_shop_cog.http_client.get = AsyncMock(side_effect=RuntimeError("boom"))
@@ -420,21 +402,13 @@ class TestShopCommand:
 class TestBuyCommand:
     """Tests for the /buy slash command."""
 
-    def test_buy_successful_purchase(self, mock_shop_cog):
+    def test_buy_successful_purchase(self, mock_shop_cog, make_mock_response):
         """buy should display success embed on valid purchase."""
         interaction = _create_mock_interaction()
 
-        player_resp = MagicMock()
-        player_resp.raise_for_status = MagicMock()
-        player_resp.json.return_value = _make_player_data(tier="Bronze", credits=2000)
-
-        item_resp = MagicMock()
-        item_resp.raise_for_status = MagicMock()
-        item_resp.json.return_value = _make_shop_item(1, "LaserCannon", "weapon", "Bronze", 500, 10)
-
-        purchase_resp = MagicMock()
-        purchase_resp.raise_for_status = MagicMock()
-        purchase_resp.json.return_value = _make_transaction("LaserCannon", "weapon", 500, 1500)
+        player_resp = make_mock_response(_make_player_data(tier="Bronze", credits=2000))
+        item_resp = make_mock_response(_make_shop_item(1, "LaserCannon", "weapon", "Bronze", 500, 10))
+        purchase_resp = make_mock_response(_make_transaction("LaserCannon", "weapon", 500, 1500))
 
         mock_shop_cog.http_client.post = AsyncMock(
             side_effect=[player_resp, purchase_resp]
@@ -448,18 +422,13 @@ class TestBuyCommand:
         call_kwargs = interaction.followup.send.call_args[1]
         assert "embed" in call_kwargs
 
-    def test_buy_insufficient_credits(self, mock_shop_cog):
+    def test_buy_insufficient_credits(self, mock_shop_cog, make_mock_response):
         """buy should send error when player has insufficient credits."""
         interaction = _create_mock_interaction()
 
-        player_resp = MagicMock()
-        player_resp.raise_for_status = MagicMock()
         # Player only has 100 credits but item costs 500
-        player_resp.json.return_value = _make_player_data(tier="Bronze", credits=100)
-
-        item_resp = MagicMock()
-        item_resp.raise_for_status = MagicMock()
-        item_resp.json.return_value = _make_shop_item(1, "LaserCannon", "weapon", "Bronze", 500, 10)
+        player_resp = make_mock_response(_make_player_data(tier="Bronze", credits=100))
+        item_resp = make_mock_response(_make_shop_item(1, "LaserCannon", "weapon", "Bronze", 500, 10))
 
         mock_shop_cog.http_client.post = AsyncMock(return_value=player_resp)
         mock_shop_cog.http_client.get = AsyncMock(return_value=item_resp)
@@ -471,14 +440,12 @@ class TestBuyCommand:
         assert call_kwargs[1].get("ephemeral", False)
         assert "Insufficient credits" in call_kwargs[0][0]
 
-    def test_buy_item_not_found_404(self, mock_shop_cog):
+    def test_buy_item_not_found_404(self, mock_shop_cog, make_mock_response):
         """buy should handle 404 for missing shop item."""
         import httpx
         interaction = _create_mock_interaction()
 
-        player_resp = MagicMock()
-        player_resp.raise_for_status = MagicMock()
-        player_resp.json.return_value = _make_player_data(tier="Bronze", credits=2000)
+        player_resp = make_mock_response(_make_player_data(tier="Bronze", credits=2000))
 
         error_response = MagicMock()
         error_response.status_code = 404
@@ -521,18 +488,13 @@ class TestBuyCommand:
         call_kwargs = interaction.followup.send.call_args
         assert call_kwargs[1].get("ephemeral", False)
 
-    def test_buy_insufficient_stock(self, mock_shop_cog):
+    def test_buy_insufficient_stock(self, mock_shop_cog, make_mock_response):
         """buy should reject purchase when stock is insufficient."""
         interaction = _create_mock_interaction()
 
-        player_resp = MagicMock()
-        player_resp.raise_for_status = MagicMock()
-        player_resp.json.return_value = _make_player_data(tier="Bronze", credits=5000)
-
+        player_resp = make_mock_response(_make_player_data(tier="Bronze", credits=5000))
         # Item only has 2 in stock but user wants 5
-        item_resp = MagicMock()
-        item_resp.raise_for_status = MagicMock()
-        item_resp.json.return_value = _make_shop_item(1, "RareCannon", "weapon", "Bronze", 100, 2)
+        item_resp = make_mock_response(_make_shop_item(1, "RareCannon", "weapon", "Bronze", 100, 2))
 
         mock_shop_cog.http_client.post = AsyncMock(return_value=player_resp)
         mock_shop_cog.http_client.get = AsyncMock(return_value=item_resp)
@@ -544,18 +506,13 @@ class TestBuyCommand:
         assert call_kwargs[1].get("ephemeral", False)
         assert "stock" in call_kwargs[0][0].lower()
 
-    def test_buy_tier_access_locked(self, mock_shop_cog):
+    def test_buy_tier_access_locked(self, mock_shop_cog, make_mock_response):
         """buy should reject purchase of item from higher tier."""
         interaction = _create_mock_interaction()
 
-        player_resp = MagicMock()
-        player_resp.raise_for_status = MagicMock()
         # Bronze player trying to buy a Gold item
-        player_resp.json.return_value = _make_player_data(tier="Bronze", credits=5000)
-
-        item_resp = MagicMock()
-        item_resp.raise_for_status = MagicMock()
-        item_resp.json.return_value = _make_shop_item(1, "GoldLaser", "weapon", "Gold", 1000, 5)
+        player_resp = make_mock_response(_make_player_data(tier="Bronze", credits=5000))
+        item_resp = make_mock_response(_make_shop_item(1, "GoldLaser", "weapon", "Gold", 1000, 5))
 
         mock_shop_cog.http_client.post = AsyncMock(return_value=player_resp)
         mock_shop_cog.http_client.get = AsyncMock(return_value=item_resp)
@@ -566,18 +523,13 @@ class TestBuyCommand:
         call_kwargs = interaction.followup.send.call_args
         assert call_kwargs[1].get("ephemeral", False)
 
-    def test_buy_api_400_error_with_detail(self, mock_shop_cog):
+    def test_buy_api_400_error_with_detail(self, mock_shop_cog, make_mock_response):
         """buy should display error detail from 400 response."""
         import httpx
         interaction = _create_mock_interaction()
 
-        player_resp = MagicMock()
-        player_resp.raise_for_status = MagicMock()
-        player_resp.json.return_value = _make_player_data(tier="Bronze", credits=2000)
-
-        item_resp = MagicMock()
-        item_resp.raise_for_status = MagicMock()
-        item_resp.json.return_value = _make_shop_item(1, "LaserCannon", "weapon", "Bronze", 500, 10)
+        player_resp = make_mock_response(_make_player_data(tier="Bronze", credits=2000))
+        item_resp = make_mock_response(_make_shop_item(1, "LaserCannon", "weapon", "Bronze", 500, 10))
 
         error_response = MagicMock()
         error_response.status_code = 400
@@ -704,19 +656,14 @@ class TestErrorHandlers:
 class TestShopCommandBranches:
     """Additional tests for /shop covering uncovered branches."""
 
-    def test_shop_with_item_type_filter(self, mock_shop_cog):
+    def test_shop_with_item_type_filter(self, mock_shop_cog, make_mock_response):
         """shop with item_type should pass params and show filtered title."""
         interaction = _create_mock_interaction()
 
-        player_resp = MagicMock()
-        player_resp.raise_for_status = MagicMock()
-        player_resp.json.return_value = _make_player_data(tier="Silver", credits=3000)
-
-        items_resp = MagicMock()
-        items_resp.raise_for_status = MagicMock()
-        items_resp.json.return_value = [
+        player_resp = make_mock_response(_make_player_data(tier="Silver", credits=3000))
+        items_resp = make_mock_response([
             _make_shop_item(1, "LaserCannon", "weapon", "Bronze", 500, 5, 2),
-        ]
+        ])
 
         mock_shop_cog.http_client.post = AsyncMock(return_value=player_resp)
         mock_shop_cog.http_client.get = AsyncMock(return_value=items_resp)
@@ -733,17 +680,12 @@ class TestShopCommandBranches:
         send_kwargs = interaction.followup.send.call_args[1]
         assert "embed" in send_kwargs
 
-    def test_shop_empty_with_item_type_filter(self, mock_shop_cog):
+    def test_shop_empty_with_item_type_filter(self, mock_shop_cog, make_mock_response):
         """shop empty message should include item_type filter text."""
         interaction = _create_mock_interaction()
 
-        player_resp = MagicMock()
-        player_resp.raise_for_status = MagicMock()
-        player_resp.json.return_value = _make_player_data(tier="Bronze", credits=1000)
-
-        items_resp = MagicMock()
-        items_resp.raise_for_status = MagicMock()
-        items_resp.json.return_value = []
+        player_resp = make_mock_response(_make_player_data(tier="Bronze", credits=1000))
+        items_resp = make_mock_response([])
 
         mock_shop_cog.http_client.post = AsyncMock(return_value=player_resp)
         mock_shop_cog.http_client.get = AsyncMock(return_value=items_resp)
@@ -757,19 +699,14 @@ class TestShopCommandBranches:
         assert "ship" in msg.lower()
         assert "empty" in msg.lower()
 
-    def test_shop_item_quantity_greater_than_one(self, mock_shop_cog):
+    def test_shop_item_quantity_greater_than_one(self, mock_shop_cog, make_mock_response):
         """Items with quantity > 1 should show 'xN' in display."""
         interaction = _create_mock_interaction()
 
-        player_resp = MagicMock()
-        player_resp.raise_for_status = MagicMock()
-        player_resp.json.return_value = _make_player_data(tier="Bronze", credits=5000)
-
-        items_resp = MagicMock()
-        items_resp.raise_for_status = MagicMock()
-        items_resp.json.return_value = [
+        player_resp = make_mock_response(_make_player_data(tier="Bronze", credits=5000))
+        items_resp = make_mock_response([
             _make_shop_item(1, "BulkLaser", "weapon", "Bronze", 100, 5, 2),
-        ]
+        ])
 
         mock_shop_cog.http_client.post = AsyncMock(return_value=player_resp)
         mock_shop_cog.http_client.get = AsyncMock(return_value=items_resp)
@@ -780,19 +717,14 @@ class TestShopCommandBranches:
         send_kwargs = interaction.followup.send.call_args[1]
         assert "embed" in send_kwargs
 
-    def test_shop_item_quantity_one_no_suffix(self, mock_shop_cog):
+    def test_shop_item_quantity_one_no_suffix(self, mock_shop_cog, make_mock_response):
         """Items with quantity == 1 should not show 'x1'."""
         interaction = _create_mock_interaction()
 
-        player_resp = MagicMock()
-        player_resp.raise_for_status = MagicMock()
-        player_resp.json.return_value = _make_player_data(tier="Bronze", credits=5000)
-
-        items_resp = MagicMock()
-        items_resp.raise_for_status = MagicMock()
-        items_resp.json.return_value = [
+        player_resp = make_mock_response(_make_player_data(tier="Bronze", credits=5000))
+        items_resp = make_mock_response([
             _make_shop_item(1, "SingleItem", "weapon", "Bronze", 100, 1, 3),
-        ]
+        ])
 
         mock_shop_cog.http_client.post = AsyncMock(return_value=player_resp)
         mock_shop_cog.http_client.get = AsyncMock(return_value=items_resp)
@@ -801,20 +733,16 @@ class TestShopCommandBranches:
 
         interaction.followup.send.assert_awaited_once()
 
-    def test_shop_item_no_tech_level(self, mock_shop_cog):
+    def test_shop_item_no_tech_level(self, mock_shop_cog, make_mock_response):
         """Items with tech_level=None should display empty tech string."""
         interaction = _create_mock_interaction()
 
-        player_resp = MagicMock()
-        player_resp.raise_for_status = MagicMock()
-        player_resp.json.return_value = _make_player_data(tier="Bronze", credits=5000)
+        player_resp = make_mock_response(_make_player_data(tier="Bronze", credits=5000))
 
         item_no_tech = _make_shop_item(1, "BasicShip", "ship", "Bronze", 200, 3)
         item_no_tech["tech_level"] = None
 
-        items_resp = MagicMock()
-        items_resp.raise_for_status = MagicMock()
-        items_resp.json.return_value = [item_no_tech]
+        items_resp = make_mock_response([item_no_tech])
 
         mock_shop_cog.http_client.post = AsyncMock(return_value=player_resp)
         mock_shop_cog.http_client.get = AsyncMock(return_value=items_resp)
@@ -823,19 +751,14 @@ class TestShopCommandBranches:
 
         interaction.followup.send.assert_awaited_once()
 
-    def test_shop_item_unaffordable_strikethrough(self, mock_shop_cog):
+    def test_shop_item_unaffordable_strikethrough(self, mock_shop_cog, make_mock_response):
         """Items the player can't afford should get strikethrough price."""
         interaction = _create_mock_interaction()
 
-        player_resp = MagicMock()
-        player_resp.raise_for_status = MagicMock()
-        player_resp.json.return_value = _make_player_data(tier="Bronze", credits=50)
-
-        items_resp = MagicMock()
-        items_resp.raise_for_status = MagicMock()
-        items_resp.json.return_value = [
+        player_resp = make_mock_response(_make_player_data(tier="Bronze", credits=50))
+        items_resp = make_mock_response([
             _make_shop_item(1, "ExpensiveLaser", "weapon", "Bronze", 9999, 3, 1),
-        ]
+        ])
 
         mock_shop_cog.http_client.post = AsyncMock(return_value=player_resp)
         mock_shop_cog.http_client.get = AsyncMock(return_value=items_resp)
@@ -846,13 +769,11 @@ class TestShopCommandBranches:
         send_kwargs = interaction.followup.send.call_args[1]
         assert "embed" in send_kwargs
 
-    def test_shop_more_than_10_items_truncated(self, mock_shop_cog):
+    def test_shop_more_than_10_items_truncated(self, mock_shop_cog, make_mock_response):
         """When a type has > 10 items, should show '... and N more items'."""
         interaction = _create_mock_interaction()
 
-        player_resp = MagicMock()
-        player_resp.raise_for_status = MagicMock()
-        player_resp.json.return_value = _make_player_data(tier="Bronze", credits=50000)
+        player_resp = make_mock_response(_make_player_data(tier="Bronze", credits=50000))
 
         # Create 15 items of same type
         many_items = [
@@ -860,9 +781,7 @@ class TestShopCommandBranches:
             for i in range(1, 16)
         ]
 
-        items_resp = MagicMock()
-        items_resp.raise_for_status = MagicMock()
-        items_resp.json.return_value = many_items
+        items_resp = make_mock_response(many_items)
 
         mock_shop_cog.http_client.post = AsyncMock(return_value=player_resp)
         mock_shop_cog.http_client.get = AsyncMock(return_value=items_resp)
@@ -873,21 +792,16 @@ class TestShopCommandBranches:
         send_kwargs = interaction.followup.send.call_args[1]
         assert "embed" in send_kwargs
 
-    def test_shop_multiple_item_types(self, mock_shop_cog):
+    def test_shop_multiple_item_types(self, mock_shop_cog, make_mock_response):
         """Shop with multiple item types should group them into separate fields."""
         interaction = _create_mock_interaction()
 
-        player_resp = MagicMock()
-        player_resp.raise_for_status = MagicMock()
-        player_resp.json.return_value = _make_player_data(tier="Gold", credits=10000)
-
-        items_resp = MagicMock()
-        items_resp.raise_for_status = MagicMock()
-        items_resp.json.return_value = [
+        player_resp = make_mock_response(_make_player_data(tier="Gold", credits=10000))
+        items_resp = make_mock_response([
             _make_shop_item(1, "LaserCannon", "weapon", "Bronze", 500, 5, 1),
             _make_shop_item(2, "ShieldModule", "module", "Bronze", 300, 3, 2),
             _make_shop_item(3, "Eagle", "ship", "Bronze", 1000, 2, 1),
-        ]
+        ])
 
         mock_shop_cog.http_client.post = AsyncMock(return_value=player_resp)
         mock_shop_cog.http_client.get = AsyncMock(return_value=items_resp)
@@ -918,21 +832,13 @@ class TestBuyCommandBranches:
         assert call_kwargs[1].get("ephemeral", False)
         assert "Quantity" in call_kwargs[0][0]
 
-    def test_buy_multi_quantity_success(self, mock_shop_cog):
+    def test_buy_multi_quantity_success(self, mock_shop_cog, make_mock_response):
         """buy with quantity > 1 should calculate total cost correctly."""
         interaction = _create_mock_interaction()
 
-        player_resp = MagicMock()
-        player_resp.raise_for_status = MagicMock()
-        player_resp.json.return_value = _make_player_data(tier="Bronze", credits=5000)
-
-        item_resp = MagicMock()
-        item_resp.raise_for_status = MagicMock()
-        item_resp.json.return_value = _make_shop_item(1, "Ammo", "weapon", "Bronze", 100, 50)
-
-        purchase_resp = MagicMock()
-        purchase_resp.raise_for_status = MagicMock()
-        purchase_resp.json.return_value = _make_transaction("Ammo", "weapon", 300, 4700)
+        player_resp = make_mock_response(_make_player_data(tier="Bronze", credits=5000))
+        item_resp = make_mock_response(_make_shop_item(1, "Ammo", "weapon", "Bronze", 100, 50))
+        purchase_resp = make_mock_response(_make_transaction("Ammo", "weapon", 300, 4700))
 
         mock_shop_cog.http_client.post = AsyncMock(
             side_effect=[player_resp, purchase_resp]
@@ -945,18 +851,13 @@ class TestBuyCommandBranches:
         send_kwargs = interaction.followup.send.call_args[1]
         assert "embed" in send_kwargs
 
-    def test_buy_400_error_json_parse_fails(self, mock_shop_cog):
+    def test_buy_400_error_json_parse_fails(self, mock_shop_cog, make_mock_response):
         """buy 400 error where response.json() fails should fallback message."""
         import httpx
         interaction = _create_mock_interaction()
 
-        player_resp = MagicMock()
-        player_resp.raise_for_status = MagicMock()
-        player_resp.json.return_value = _make_player_data(tier="Bronze", credits=5000)
-
-        item_resp = MagicMock()
-        item_resp.raise_for_status = MagicMock()
-        item_resp.json.return_value = _make_shop_item(1, "Laser", "weapon", "Bronze", 500, 10)
+        player_resp = make_mock_response(_make_player_data(tier="Bronze", credits=5000))
+        item_resp = make_mock_response(_make_shop_item(1, "Laser", "weapon", "Bronze", 500, 10))
 
         error_response = MagicMock()
         error_response.status_code = 400
@@ -975,18 +876,13 @@ class TestBuyCommandBranches:
         assert call_kwargs[1].get("ephemeral", False)
         assert "Invalid purchase request" in call_kwargs[0][0]
 
-    def test_buy_non_400_404_http_error(self, mock_shop_cog):
+    def test_buy_non_400_404_http_error(self, mock_shop_cog, make_mock_response):
         """buy with 500 HTTP error should show generic API error."""
         import httpx
         interaction = _create_mock_interaction()
 
-        player_resp = MagicMock()
-        player_resp.raise_for_status = MagicMock()
-        player_resp.json.return_value = _make_player_data(tier="Bronze", credits=5000)
-
-        item_resp = MagicMock()
-        item_resp.raise_for_status = MagicMock()
-        item_resp.json.return_value = _make_shop_item(1, "Laser", "weapon", "Bronze", 500, 10)
+        player_resp = make_mock_response(_make_player_data(tier="Bronze", credits=5000))
+        item_resp = make_mock_response(_make_shop_item(1, "Laser", "weapon", "Bronze", 500, 10))
 
         error_response = MagicMock()
         error_response.status_code = 500
@@ -1004,13 +900,11 @@ class TestBuyCommandBranches:
         assert call_kwargs[1].get("ephemeral", False)
         assert "API Error" in call_kwargs[0][0]
 
-    def test_buy_generic_exception(self, mock_shop_cog):
+    def test_buy_generic_exception(self, mock_shop_cog, make_mock_response):
         """buy should handle generic exception gracefully."""
         interaction = _create_mock_interaction()
 
-        player_resp = MagicMock()
-        player_resp.raise_for_status = MagicMock()
-        player_resp.json.return_value = _make_player_data(tier="Bronze", credits=5000)
+        player_resp = make_mock_response(_make_player_data(tier="Bronze", credits=5000))
 
         mock_shop_cog.http_client.post = AsyncMock(return_value=player_resp)
         mock_shop_cog.http_client.get = AsyncMock(side_effect=RuntimeError("unexpected"))
@@ -1039,17 +933,12 @@ def _make_sell_transaction(total_value=250, remaining_credits=1250):
 class TestSellCommand:
     """Tests for the /sell slash command."""
 
-    def test_sell_happy_path(self, mock_shop_cog):
+    def test_sell_happy_path(self, mock_shop_cog, make_mock_response):
         """sell should display success embed on valid sale."""
         interaction = _create_mock_interaction()
 
-        player_resp = MagicMock()
-        player_resp.raise_for_status = MagicMock()
-        player_resp.json.return_value = _make_player_data(tier="Bronze", credits=1000)
-
-        sell_resp = MagicMock()
-        sell_resp.raise_for_status = MagicMock()
-        sell_resp.json.return_value = _make_sell_transaction(250, 1250)
+        player_resp = make_mock_response(_make_player_data(tier="Bronze", credits=1000))
+        sell_resp = make_mock_response(_make_sell_transaction(250, 1250))
 
         mock_shop_cog.http_client.post = AsyncMock(
             side_effect=[player_resp, sell_resp]
@@ -1133,14 +1022,12 @@ class TestSellCommand:
         assert call_kwargs[1].get("ephemeral", False)
         assert "Player not found" in call_kwargs[0][0]
 
-    def test_sell_http_400_with_detail(self, mock_shop_cog):
+    def test_sell_http_400_with_detail(self, mock_shop_cog, make_mock_response):
         """sell 400 error should display error detail from response."""
         import httpx
         interaction = _create_mock_interaction()
 
-        player_resp = MagicMock()
-        player_resp.raise_for_status = MagicMock()
-        player_resp.json.return_value = _make_player_data(tier="Bronze", credits=1000)
+        player_resp = make_mock_response(_make_player_data(tier="Bronze", credits=1000))
 
         error_response = MagicMock()
         error_response.status_code = 400
@@ -1162,14 +1049,12 @@ class TestSellCommand:
         assert call_kwargs[1].get("ephemeral", False)
         assert "Item not in inventory" in call_kwargs[0][0]
 
-    def test_sell_http_400_json_parse_fails(self, mock_shop_cog):
+    def test_sell_http_400_json_parse_fails(self, mock_shop_cog, make_mock_response):
         """sell 400 error where response.json() fails should fallback."""
         import httpx
         interaction = _create_mock_interaction()
 
-        player_resp = MagicMock()
-        player_resp.raise_for_status = MagicMock()
-        player_resp.json.return_value = _make_player_data(tier="Bronze", credits=1000)
+        player_resp = make_mock_response(_make_player_data(tier="Bronze", credits=1000))
 
         error_response = MagicMock()
         error_response.status_code = 400
@@ -1191,14 +1076,12 @@ class TestSellCommand:
         assert call_kwargs[1].get("ephemeral", False)
         assert "Invalid sell request" in call_kwargs[0][0]
 
-    def test_sell_non_400_http_error(self, mock_shop_cog):
+    def test_sell_non_400_http_error(self, mock_shop_cog, make_mock_response):
         """sell with 500 HTTP error should show generic API error."""
         import httpx
         interaction = _create_mock_interaction()
 
-        player_resp = MagicMock()
-        player_resp.raise_for_status = MagicMock()
-        player_resp.json.return_value = _make_player_data(tier="Bronze", credits=1000)
+        player_resp = make_mock_response(_make_player_data(tier="Bronze", credits=1000))
 
         error_response = MagicMock()
         error_response.status_code = 500
@@ -1219,13 +1102,11 @@ class TestSellCommand:
         assert call_kwargs[1].get("ephemeral", False)
         assert "API Error" in call_kwargs[0][0]
 
-    def test_sell_generic_exception(self, mock_shop_cog):
+    def test_sell_generic_exception(self, mock_shop_cog, make_mock_response):
         """sell should handle generic exception gracefully."""
         interaction = _create_mock_interaction()
 
-        player_resp = MagicMock()
-        player_resp.raise_for_status = MagicMock()
-        player_resp.json.return_value = _make_player_data(tier="Bronze", credits=1000)
+        player_resp = make_mock_response(_make_player_data(tier="Bronze", credits=1000))
 
         mock_shop_cog.http_client.post = AsyncMock(
             side_effect=[player_resp, RuntimeError("boom")]
@@ -1240,17 +1121,12 @@ class TestSellCommand:
         assert call_kwargs[1].get("ephemeral", False)
         assert "error occurred" in call_kwargs[0][0].lower()
 
-    def test_sell_multi_quantity(self, mock_shop_cog):
+    def test_sell_multi_quantity(self, mock_shop_cog, make_mock_response):
         """sell with quantity > 1 should work correctly."""
         interaction = _create_mock_interaction()
 
-        player_resp = MagicMock()
-        player_resp.raise_for_status = MagicMock()
-        player_resp.json.return_value = _make_player_data(tier="Silver", credits=2000)
-
-        sell_resp = MagicMock()
-        sell_resp.raise_for_status = MagicMock()
-        sell_resp.json.return_value = _make_sell_transaction(750, 2750)
+        player_resp = make_mock_response(_make_player_data(tier="Silver", credits=2000))
+        sell_resp = make_mock_response(_make_sell_transaction(750, 2750))
 
         mock_shop_cog.http_client.post = AsyncMock(
             side_effect=[player_resp, sell_resp]
@@ -1284,17 +1160,12 @@ class TestShopsCommand:
             },
         }
 
-    def test_shops_happy_path_with_player(self, mock_shop_cog):
+    def test_shops_happy_path_with_player(self, mock_shop_cog, make_mock_response):
         """shops should display summary embed with player tier info."""
         interaction = _create_mock_interaction()
 
-        summary_resp = MagicMock()
-        summary_resp.raise_for_status = MagicMock()
-        summary_resp.json.return_value = self._make_shops_summary()
-
-        player_resp = MagicMock()
-        player_resp.raise_for_status = MagicMock()
-        player_resp.json.return_value = _make_player_data(tier="Silver", credits=3000)
+        summary_resp = make_mock_response(self._make_shops_summary())
+        player_resp = make_mock_response(_make_player_data(tier="Silver", credits=3000))
 
         mock_shop_cog.http_client.get = AsyncMock(return_value=summary_resp)
         mock_shop_cog.http_client.post = AsyncMock(return_value=player_resp)
@@ -1306,13 +1177,11 @@ class TestShopsCommand:
         send_kwargs = interaction.followup.send.call_args[1]
         assert "embed" in send_kwargs
 
-    def test_shops_without_player_data(self, mock_shop_cog):
+    def test_shops_without_player_data(self, mock_shop_cog, make_mock_response):
         """shops should still work when player data is not found."""
         interaction = _create_mock_interaction()
 
-        summary_resp = MagicMock()
-        summary_resp.raise_for_status = MagicMock()
-        summary_resp.json.return_value = self._make_shops_summary()
+        summary_resp = make_mock_response(self._make_shops_summary())
 
         mock_shop_cog.http_client.get = AsyncMock(return_value=summary_resp)
         mock_shop_cog.http_client.post = AsyncMock(
@@ -1325,23 +1194,18 @@ class TestShopsCommand:
         send_kwargs = interaction.followup.send.call_args[1]
         assert "embed" in send_kwargs
 
-    def test_shops_missing_tier_shows_empty(self, mock_shop_cog):
+    def test_shops_missing_tier_shows_empty(self, mock_shop_cog, make_mock_response):
         """Tiers not in summary should show 'Empty'."""
         interaction = _create_mock_interaction()
 
         # Summary only has Bronze, missing Silver/Gold/Platinum
-        summary_resp = MagicMock()
-        summary_resp.raise_for_status = MagicMock()
-        summary_resp.json.return_value = {
+        summary_resp = make_mock_response({
             "total_items": 5,
             "shops": {
                 "Bronze": {"items": 5, "total_quantity": 20},
             },
-        }
-
-        player_resp = MagicMock()
-        player_resp.raise_for_status = MagicMock()
-        player_resp.json.return_value = _make_player_data(tier="Bronze", credits=500)
+        })
+        player_resp = make_mock_response(_make_player_data(tier="Bronze", credits=500))
 
         mock_shop_cog.http_client.get = AsyncMock(return_value=summary_resp)
         mock_shop_cog.http_client.post = AsyncMock(return_value=player_resp)
@@ -1352,14 +1216,12 @@ class TestShopsCommand:
         send_kwargs = interaction.followup.send.call_args[1]
         assert "embed" in send_kwargs
 
-    def test_shops_player_tier_access_icons(self, mock_shop_cog):
+    def test_shops_player_tier_access_icons(self, mock_shop_cog, make_mock_response):
         """shops should show unlock/lock icons based on player tier."""
         interaction = _create_mock_interaction()
 
         # All tiers present
-        summary_resp = MagicMock()
-        summary_resp.raise_for_status = MagicMock()
-        summary_resp.json.return_value = {
+        summary_resp = make_mock_response({
             "total_items": 30,
             "shops": {
                 "Bronze": {"items": 10, "total_quantity": 50},
@@ -1367,12 +1229,10 @@ class TestShopsCommand:
                 "Gold": {"items": 7, "total_quantity": 25},
                 "Platinum": {"items": 5, "total_quantity": 10},
             },
-        }
+        })
 
         # Silver player — should unlock Bronze & Silver, lock Gold & Platinum
-        player_resp = MagicMock()
-        player_resp.raise_for_status = MagicMock()
-        player_resp.json.return_value = _make_player_data(tier="Silver", credits=3000)
+        player_resp = make_mock_response(_make_player_data(tier="Silver", credits=3000))
 
         mock_shop_cog.http_client.get = AsyncMock(return_value=summary_resp)
         mock_shop_cog.http_client.post = AsyncMock(return_value=player_resp)

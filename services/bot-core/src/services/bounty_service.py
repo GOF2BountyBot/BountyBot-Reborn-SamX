@@ -23,6 +23,8 @@ from persist.repositories.player_repository import PlayerRepository
 from shared import bblogger
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from services.combat_models import ShipLoadout, WeaponStats
+from services.combat_service import CombatService
 from services.game_constants import GameConstants
 from services.game_maths import (
     calculate_user_level,
@@ -55,6 +57,7 @@ class CheckResponse:
     message: str = ""
     proximity_hint: bool = False
     distance_to_answer: int | None = None
+    combat_won: bool | None = None  # None if no combat, True/False if combat occurred
 
 
 @dataclass
@@ -81,6 +84,7 @@ class BountyService:
         self.player_repo = PlayerRepository()
         self.graph_service = SystemGraphService()
         self.pathfinding_service = PathfindingService(self.graph_service)
+        self.combat_service = CombatService()
 
     # ------------------------------------------------------------------
     # Criminal Selection
@@ -397,6 +401,50 @@ class BountyService:
     # Private helpers
     # ------------------------------------------------------------------
 
+    def _build_criminal_loadout(self, criminal_ship: dict) -> ShipLoadout:
+        """Build a ShipLoadout from a bounty's criminal_ship JSONB data.
+
+        Args:
+            criminal_ship: Dict containing criminal ship data from bounty JSONB column.
+
+        Returns:
+            ShipLoadout ready for combat resolution.
+        """
+        weapons = [
+            WeaponStats(name=w["name"], dps=w.get("dps", 0))
+            for w in criminal_ship.get("weapons", [])
+        ]
+        turrets = [
+            WeaponStats(name=t["name"], dps=t.get("dps", 0))
+            for t in criminal_ship.get("turrets", [])
+        ]
+        return ShipLoadout(
+            ship_name=criminal_ship.get("ship_name", "Unknown"),
+            base_armour=criminal_ship.get("ship_armour", 100),
+            weapons=weapons,
+            turrets=turrets,
+        )
+
+    def _build_player_loadout(self, player) -> ShipLoadout:
+        """Build a minimal ShipLoadout from a player's active ship.
+
+        If the player has no active ship, a default unarmed loadout is used.
+
+        Args:
+            player: Player ORM instance.
+
+        Returns:
+            ShipLoadout with minimal fields populated.
+        """
+        if player.active_ship is not None:
+            ship = player.active_ship
+            ship_name = getattr(ship, "ship_name", None) or "Unknown"
+            base_armour = getattr(ship, "armour", 100)
+        else:
+            ship_name = "Unarmed"
+            base_armour = 100
+        return ShipLoadout(ship_name=ship_name, base_armour=base_armour)
+
     async def _find_typed_module(
         self, db: AsyncSession, module_keyword: str, item_tl: int
     ):
@@ -620,19 +668,58 @@ class BountyService:
 
             # Check if this is the answer
             if bounty.answer == system_name:
-                # CORRECT — found the criminal!
+                # CORRECT — found the criminal! Now resolve combat.
                 await self.bounty_repo.update(db, bounty)
-                await db.commit()
-                await db.refresh(player)
+
                 flogger.info(
                     f"Player {player_id} found {bounty.criminal_name} at {system_name} "
                     f"(bounty {bounty.id})"
                 )
-                return CheckResponse(
-                    result=CheckResult.CORRECT,
-                    bounty_id=bounty.id,
-                    message=f"Found {bounty.criminal_name}!",
-                )
+
+                # Determine if combat happens
+                duel_won = False
+                fight_results = None
+
+                if player.classic_mode or player.active_ship is None:
+                    # Classic mode or no ship → auto-win
+                    duel_won = True
+                else:
+                    # Build loadouts and fight
+                    player_loadout = self._build_player_loadout(player)
+                    criminal_loadout = self._build_criminal_loadout(
+                        bounty.criminal_ship or {}
+                    )
+                    fight_results = self.combat_service.fight_ships(
+                        player_loadout, criminal_loadout
+                    )
+                    # Stalemate counts as player win (legacy behavior)
+                    duel_won = (
+                        fight_results.winner_name == player_loadout.ship_name
+                    ) or fight_results.is_stalemate
+
+                if duel_won:
+                    # Player wins → distribute rewards
+                    rewards = await self.calc_rewards(db, bounty)
+                    await self.distribute_rewards(db, bounty, rewards)
+                    await db.commit()
+                    await db.refresh(player)
+                    return CheckResponse(
+                        result=CheckResult.CORRECT,
+                        bounty_id=bounty.id,
+                        message=f"Defeated {bounty.criminal_name}! Bounty completed.",
+                        combat_won=True,
+                    )
+                else:
+                    # Player loses → bounty escapes
+                    await self.escape_bounty(db, bounty.id)
+                    await db.commit()
+                    await db.refresh(player)
+                    return CheckResponse(
+                        result=CheckResult.CORRECT,
+                        bounty_id=bounty.id,
+                        message=f"{bounty.criminal_name} escaped! They will respawn shortly.",
+                        combat_won=False,
+                    )
 
             # INCORRECT — system was in the route but not the answer
             # Check for proximity hint

@@ -646,7 +646,8 @@ class TestTableNames:
     def test_enum_membership(self):
         """All expected names must exist as enum members."""
         expected_names = {
-            "Bounty", "Criminal", "DiscordMessage", "GuildConfigs", "GuildShops",
+            "Bounty", "Criminal", "DiscordMessage", "DuelRequest",
+            "GuildConfigs", "GuildShops",
             "Item", "Module", "PlayerInventories", "PlayerShips", "Players",
             "PrimaryWeapon", "SecondaryWeapon", "SchemaVersion", "Ship",
             "System", "TurretWeapon", "Users", "Weapon",

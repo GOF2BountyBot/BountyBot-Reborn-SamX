@@ -7,7 +7,7 @@ item management, quantity tracking, and inventory queries.
 
 
 from shared import bblogger
-from sqlalchemy import and_, select, update
+from sqlalchemy import and_, delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from persist.interfaces.repository_interface import IRepository
@@ -240,6 +240,23 @@ class InventoryRepository(IRepository[PlayerInventory]):
             return sum(item.quantity for item in items)
         except Exception as e:
             flogger.error(f"Error getting item count for player {player_id}, type {item_type}: {e}")
+            raise
+
+    async def clear_player_inventory(self, db: AsyncSession, player_id: int) -> int:
+        """Delete all inventory items for a player (used during prestige reset).
+
+        Returns the number of rows deleted.
+        """
+        try:
+            result = await db.execute(
+                delete(PlayerInventory).where(PlayerInventory.player_id == player_id)
+            )
+            await db.flush()
+            deleted_count = result.rowcount
+            flogger.info(f"Cleared {deleted_count} inventory items for player {player_id}")
+            return deleted_count
+        except Exception as e:
+            flogger.error(f"Error clearing inventory for player {player_id}: {e}")
             raise
 
     async def get_inventory_summary(self, db: AsyncSession, player_id: int) -> dict:

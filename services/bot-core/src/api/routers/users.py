@@ -128,7 +128,7 @@ async def update_user(
                 )
 
             # Update user data
-            update_data = request.dict(exclude_unset=True)
+            update_data = request.model_dump(exclude_unset=True)
             update_data["id"] = user_id
 
             user = await user_repo.create_or_update(db, update_data)

@@ -1,9 +1,11 @@
 from datetime import datetime
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 
 class BountyResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     id: int
     guild_id: int
     division: str
@@ -22,9 +24,6 @@ class BountyResponse(BaseModel):
     escape_count: int = 0
     win_user_id: int | None = None
 
-    class Config:
-        from_attributes = True
-
 
 class BountyCreateRequest(BaseModel):
     guild_id: int
@@ -36,6 +35,8 @@ class BountyCreateRequest(BaseModel):
 
 class BountyPublicResponse(BaseModel):
     """Player-facing bounty info — hides the answer."""
+
+    model_config = ConfigDict(from_attributes=True)
 
     id: int
     guild_id: int
@@ -50,9 +51,6 @@ class BountyPublicResponse(BaseModel):
     end_time: datetime | None = None
     tech_level: int
     status: str
-
-    class Config:
-        from_attributes = True
 
 
 class BountyCheckRequest(BaseModel):

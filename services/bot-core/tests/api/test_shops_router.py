@@ -71,6 +71,22 @@ def mock_shop_service():
     service.shop_repo.get_items_due_for_refresh = AsyncMock(return_value=[])
     service.shop_repo.get_by_id = AsyncMock(return_value=make_mock_shop_item())
     service.shop_repo.update_prices = AsyncMock(return_value=10)
+    service.purchase_ship = AsyncMock(
+        return_value={
+            "player_id": 1,
+            "item_type": "ship",
+            "item_name": "Hammerhead",
+            "quantity": 1,
+            "unit_price": 5000,
+            "total_cost": 5000,
+            "trade_in_value": 0,
+            "net_cost": 5000,
+            "remaining_credits": 5000,
+            "items_transferred": 2,
+            "items_unequipped_to_inventory": 0,
+            "remaining_shop_quantity": 2,
+        }
+    )
     return service
 
 
@@ -747,3 +763,66 @@ class TestUpdateShopPrices:
         response = client.put("/api/v1/shops/guild/67890/prices?price_multiplier=-0.5")
 
         assert response.status_code == 422
+
+
+# ===========================================================================
+# 9. POST /shops/purchase-ship
+# ===========================================================================
+
+
+class TestPurchaseShip:
+    """Tests for POST /api/v1/shops/purchase-ship."""
+
+    @patch("api.routers.shops.get_db_session")
+    def test_purchase_ship_happy_path(self, mock_get_db, client, mock_shop_service):
+        """Returns 200 with transaction details for a valid ship purchase."""
+        _configure_db_mock(mock_get_db)
+
+        response = client.post(
+            "/api/v1/shops/purchase-ship",
+            json={"player_id": 1, "shop_item_id": 10, "sell_old_ship": False},
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["player_id"] == 1
+        assert data["item_type"] == "ship"
+        assert data["item_name"] == "Hammerhead"
+        assert data["transaction_type"] == "ship_purchase"
+        assert data["remaining_credits"] == 5000
+
+    @patch("api.routers.shops.get_db_session")
+    def test_purchase_ship_insufficient_credits_returns_400(
+        self, mock_get_db, client, mock_shop_service
+    ):
+        """Returns 400 when player cannot afford the ship."""
+        _configure_db_mock(mock_get_db)
+        mock_shop_service.purchase_ship.side_effect = ValueError(
+            "Insufficient credits. Cost: 5000, Available: 100"
+        )
+
+        response = client.post(
+            "/api/v1/shops/purchase-ship",
+            json={"player_id": 1, "shop_item_id": 10, "sell_old_ship": False},
+        )
+
+        assert response.status_code == 400
+        assert "Insufficient credits" in response.json()["detail"]
+
+    @patch("api.routers.shops.get_db_session")
+    def test_purchase_ship_not_a_ship_returns_400(
+        self, mock_get_db, client, mock_shop_service
+    ):
+        """Returns 400 when shop item is not a ship."""
+        _configure_db_mock(mock_get_db)
+        mock_shop_service.purchase_ship.side_effect = ValueError(
+            "Shop item 10 is not a ship (type=weapon)"
+        )
+
+        response = client.post(
+            "/api/v1/shops/purchase-ship",
+            json={"player_id": 1, "shop_item_id": 10, "sell_old_ship": False},
+        )
+
+        assert response.status_code == 400
+        assert "not a ship" in response.json()["detail"]

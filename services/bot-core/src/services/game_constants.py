@@ -202,6 +202,32 @@ class GameConstants:
     }
 
     # ------------------------------------------------------------------
+    # Combat System — Future Mechanics (placeholders, currently unused)
+    # ------------------------------------------------------------------
+
+    # Accuracy: fraction of shots that hit (1.0 = 100% accuracy)
+    DEFAULT_ACCURACY: float = 1.0
+    DEFAULT_EVASION: float = 0.0
+
+    # Equipment effect placeholders (all neutral/zero = no effect)
+    CLOAK_ACCURACY_PENALTY: float = 0.0
+    SCANNER_ACCURACY_BONUS: float = 0.0
+    THRUSTER_EVASION_BONUS: float = 0.0
+
+    # Shield/repair mechanics (0.0 = disabled)
+    SHIELD_RECHARGE_RATE: float = 0.0
+    REPAIR_BOT_HEAL_RATE: float = 0.0
+
+    # Booster (1.0 = neutral, no boost)
+    BOOSTER_DPS_MULTIPLIER: float = 1.0
+
+    # Tick-based simulation (for future combat resolver)
+    COMBAT_TICK_RATE: float = 1.0
+
+    # Persistent damage (0.0 = instant full heal between fights)
+    PERSISTENT_DAMAGE_DECAY_RATE: float = 0.0
+
+    # ------------------------------------------------------------------
     # Environment variable overrides (operational constants only)
     # ------------------------------------------------------------------
 

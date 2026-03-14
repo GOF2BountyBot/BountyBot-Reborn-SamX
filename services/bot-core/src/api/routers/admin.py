@@ -426,7 +426,7 @@ async def update_shop_config(
 
     try:
         async with get_db_session() as db:
-            config = await config_service.update_shop_config(db, request.dict(exclude_unset=True))
+            config = await config_service.update_shop_config(db, request.model_dump(exclude_unset=True))
 
             return {
                 "guild_id": request.guild_id,

@@ -80,7 +80,7 @@ async def update_guild_config(
         request.guild_id = guild_id
 
         async with get_db_session() as db:
-            config = await config_service.create_or_update_config(db, request.dict(exclude_unset=True))
+            config = await config_service.create_or_update_config(db, request.model_dump(exclude_unset=True))
 
             return GuildConfigResponse(
                 guild_id=config["guild_id"],
@@ -120,7 +120,7 @@ async def update_shop_config(
         request.guild_id = guild_id
 
         async with get_db_session() as db:
-            config = await config_service.update_shop_config(db, request.dict(exclude_unset=True))
+            config = await config_service.update_shop_config(db, request.model_dump(exclude_unset=True))
 
             return GuildConfigResponse(
                 guild_id=config["guild_id"],

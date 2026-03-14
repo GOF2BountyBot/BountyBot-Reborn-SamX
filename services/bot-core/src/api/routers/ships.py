@@ -10,6 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from persist.database.manager import get_db_session
 from persist.repositories.player_repository import PlayerRepository
 from persist.repositories.ship_repository import ShipRepository
+from services.equipment_service import EquipmentService
 from shared import bblogger
 
 from api.schemas.ships_schema import (
@@ -39,6 +40,9 @@ async def get_ship_repository():
 
 async def get_player_repository():
     return PlayerRepository()
+
+async def get_equipment_service():
+    return EquipmentService()
 
 @router.get("/player/{player_id}", response_model=list[ShipResponse])
 async def get_player_ships(
@@ -318,17 +322,28 @@ async def update_ship_nickname(
 async def equip_item(
     ship_id: int,
     request: EquipItemRequest,
-    ship_repo: ShipRepository = Depends(get_ship_repository)
+    equipment_service: EquipmentService = Depends(get_equipment_service),
 ):
-    """Equip an item to a ship."""
-    flogger.info(f"Equipping {request.item_name} to {request.equipment_type} on ship {ship_id}")
+    """Equip an item from the player's inventory onto a ship.
+
+    Requires ``player_id`` in the request body.  Validates ownership, slot
+    availability, and inventory possession before moving the item.
+    """
+    flogger.info(
+        f"Equipping '{request.item_name}' ({request.equipment_type}) "
+        f"for player {request.player_id} on ship {ship_id}"
+    )
 
     try:
         async with get_db_session() as db:
-            ship = await ship_repo.add_equipment(
-                db, ship_id, request.equipment_type, request.item_name
+            result = await equipment_service.equip_item(
+                db,
+                player_id=request.player_id,
+                ship_id=ship_id,
+                equipment_type=request.equipment_type,
+                item_name=request.item_name,
             )
-
+            ship = result["ship"]
             return ShipResponse(
                 id=ship.id,
                 player_id=ship.player_id,
@@ -338,36 +353,48 @@ async def equip_item(
                 weapons=ship.weapons,
                 modules=ship.modules,
                 turrets=ship.turrets,
-                created_at=ship.created_at.isoformat()
+                created_at=ship.created_at.isoformat(),
             )
 
     except ValueError as e:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(e)
+            detail=str(e),
         ) from e
     except Exception as e:
         flogger.error(f"Error equipping item: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to equip item"
+            detail="Failed to equip item",
         ) from e
+
 
 @router.post("/{ship_id}/unequip", response_model=ShipResponse)
 async def unequip_item(
     ship_id: int,
     request: UnequipItemRequest,
-    ship_repo: ShipRepository = Depends(get_ship_repository)
+    equipment_service: EquipmentService = Depends(get_equipment_service),
 ):
-    """Unequip an item from a ship."""
-    flogger.info(f"Unequipping {request.item_name} from {request.equipment_type} on ship {ship_id}")
+    """Unequip an item from a ship back to the player's inventory.
+
+    Requires ``player_id`` in the request body.  Validates ownership and that
+    the item is currently equipped before returning it to inventory.
+    """
+    flogger.info(
+        f"Unequipping '{request.item_name}' ({request.equipment_type}) "
+        f"for player {request.player_id} from ship {ship_id}"
+    )
 
     try:
         async with get_db_session() as db:
-            ship = await ship_repo.remove_equipment(
-                db, ship_id, request.equipment_type, request.item_name
+            result = await equipment_service.unequip_item(
+                db,
+                player_id=request.player_id,
+                ship_id=ship_id,
+                equipment_type=request.equipment_type,
+                item_name=request.item_name,
             )
-
+            ship = result["ship"]
             return ShipResponse(
                 id=ship.id,
                 player_id=ship.player_id,
@@ -377,19 +404,19 @@ async def unequip_item(
                 weapons=ship.weapons,
                 modules=ship.modules,
                 turrets=ship.turrets,
-                created_at=ship.created_at.isoformat()
+                created_at=ship.created_at.isoformat(),
             )
 
     except ValueError as e:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(e)
+            detail=str(e),
         ) from e
     except Exception as e:
         flogger.error(f"Error unequipping item: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to unequip item"
+            detail="Failed to unequip item",
         ) from e
 
 @router.get("/{ship_id}/loadout", response_model=ShipLoadoutSummaryResponse)

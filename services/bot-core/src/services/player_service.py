@@ -15,6 +15,10 @@ from persist.repositories.user_repository import UserRepository
 from shared import bblogger
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from services.division_service import DivisionService
+from services.game_constants import GameConstants
+from services.game_maths import calculate_user_level
+
 flogger = bblogger.get_logger("player-service")
 
 class PlayerService:
@@ -194,27 +198,63 @@ class PlayerService:
             return "Silver"
         return "Bronze"
 
-    async def prestige_player(self, db: AsyncSession, player_id: int) -> Player:
-        """Reset player to Bronze tier but increment prestige count."""
+    async def prestige_player(self, db: AsyncSession, player_id: int) -> dict:
+        """Prestige a player — reset progress, increment prestige counter.
+
+        Requirements:
+        - Player must be level 10 (max level) to prestige
+        - Resets: xp, xp_surplus, credits, tier, inventory
+        - Preserves: lifetime_credits, ships, prestige_count, duel stats, bounty stats
+        - Kaamo storage preservation: not yet implemented (future feature)
+
+        Returns dict with:
+        - player_id: int
+        - prestige_count: int (new count after increment)
+        - level_before: int
+        - division_before: str
+        """
         try:
             player = await self.player_repo.get_by_id(db, player_id)
             if not player:
                 raise ValueError(f"Player {player_id} not found")
 
-            if player.tier != "Platinum":
-                raise ValueError("Player must be Platinum tier to prestige")
+            # Check level, not tier
+            current_level = calculate_user_level(player.xp)
+            if current_level < 10:
+                raise ValueError(
+                    f"Player must be level 10 to prestige (current level: {current_level})"
+                )
 
-            # Reset to Bronze but keep some benefits
-            player.tier = "Bronze"
+            # Record state before prestige
+            level_before = current_level
+            division_before = DivisionService.get_division_for_level(level_before)
+
+            # Reset progression
             player.xp = 0
+            player.xp_surplus = 0
+            player.credits = 0  # Reset credits (legacy gives 0 starting credits on prestige)
+            player.tier = "Bronze"
             player.prestige_count += 1
-            # Note: lifetime_credits and ships are kept as prestige benefits
+            # Note: lifetime_credits, ships, duel stats, bounty stats are preserved
+
+            # Clear inventory (preserving Kaamo storage in future)
+            # For now: clear all non-ship inventory items
+            # TODO: When Kaamo storage is implemented, preserve those items
+            from persist.repositories.inventory_repository import InventoryRepository
+            inventory_repo = InventoryRepository()
+            await inventory_repo.clear_player_inventory(db, player_id)
 
             await db.commit()
             await db.refresh(player)
 
             flogger.info(f"Player {player_id} prestiged (count: {player.prestige_count})")
-            return player
+
+            return {
+                "player_id": player_id,
+                "prestige_count": player.prestige_count,
+                "level_before": level_before,
+                "division_before": division_before,
+            }
 
         except Exception as e:
             flogger.error(f"Error prestiging player {player_id}: {e}")
@@ -268,3 +308,165 @@ class PlayerService:
         except Exception as e:
             flogger.error(f"Error getting players by tier {tier} in guild {guild_id}: {e}")
             raise
+
+    async def transfer_credits(
+        self,
+        db: AsyncSession,
+        source_player_id: int,
+        target_player_id: int,
+        amount: int,
+    ) -> dict[str, Any]:
+        """Transfer credits from one player to another.
+
+        Args:
+            db: Database session
+            source_player_id: Player sending credits
+            target_player_id: Player receiving credits
+            amount: Number of credits to transfer (must be >= 1)
+
+        Returns:
+            Dict with transfer details
+
+        Raises:
+            ValueError: If validation fails
+        """
+        # Validate amount >= 1
+        if amount < 1:
+            raise ValueError("Transfer amount must be at least 1 credit")
+
+        # Validate source != target
+        if source_player_id == target_player_id:
+            raise ValueError("Cannot transfer credits to yourself")
+
+        # Get both players
+        source = await self.player_repo.get_by_id(db, source_player_id)
+        if not source:
+            raise ValueError(f"Source player {source_player_id} not found")
+
+        target = await self.player_repo.get_by_id(db, target_player_id)
+        if not target:
+            raise ValueError(f"Target player {target_player_id} not found")
+
+        # Check source has enough credits
+        if source.credits < amount:
+            raise ValueError(f"Insufficient credits: have {source.credits}, need {amount}")
+
+        # Atomic transfer
+        await self.player_repo.update_credits(db, source_player_id, source.credits - amount)
+        await self.player_repo.update_credits(db, target_player_id, target.credits + amount)
+
+        flogger.info(
+            f"Transferred {amount} credits from player {source_player_id} to player {target_player_id}"
+        )
+
+        return {
+            "source_player_id": source_player_id,
+            "target_player_id": target_player_id,
+            "amount": amount,
+            "source_remaining_credits": source.credits - amount,
+            "target_new_credits": target.credits + amount,
+        }
+
+    async def add_xp(self, db: AsyncSession, player_id: int, xp_amount: int) -> dict:
+        """Add XP to a player and handle level-up detection.
+
+        Returns dict with:
+        - player_id: int
+        - xp_added: int
+        - xp_total: int
+        - level_before: int
+        - level_after: int
+        - leveled_up: bool
+        - division_before: str
+        - division_after: str
+        - division_changed: bool
+        """
+        try:
+            player = await self.player_repo.get_by_id(db, player_id)
+            if not player:
+                raise ValueError(f"Player {player_id} not found")
+
+            level_before = calculate_user_level(player.xp)
+            division_before = DivisionService.get_division_for_level(level_before)
+
+            player.xp += xp_amount
+
+            level_after = calculate_user_level(player.xp)
+            leveled_up = level_after > level_before
+
+            if leveled_up:
+                boundaries = GameConstants.XP_LEVEL_BOUNDARIES
+                # Clamp level_after index to valid range
+                idx = min(level_after, len(boundaries) - 1)
+                player.xp_surplus = player.xp - boundaries[idx]
+                flogger.info(
+                    f"Player {player_id} leveled up: {level_before} -> {level_after} "
+                    f"(surplus: {player.xp_surplus})"
+                )
+
+            division_after = DivisionService.get_division_for_level(level_after)
+            division_changed = division_after != division_before
+
+            await db.commit()
+            await db.refresh(player)
+
+            flogger.debug(
+                f"Added {xp_amount} XP to player {player_id}: total={player.xp}, "
+                f"level={level_before}->{level_after}"
+            )
+
+            return {
+                "player_id": player_id,
+                "xp_added": xp_amount,
+                "xp_total": player.xp,
+                "level_before": level_before,
+                "level_after": level_after,
+                "leveled_up": leveled_up,
+                "division_before": division_before,
+                "division_after": division_after,
+                "division_changed": division_changed,
+            }
+
+        except Exception as e:
+            flogger.error(f"Error adding XP for player {player_id}: {e}")
+            raise
+
+    @staticmethod
+    def get_level(xp: int) -> int:
+        """Return player level (0-10) from XP.
+
+        Thin wrapper around :func:`~services.game_maths.calculate_user_level`.
+
+        Args:
+            xp: Player's accumulated XP.
+
+        Returns:
+            Level in the range [0, 10].
+        """
+        return calculate_user_level(xp)
+
+    @staticmethod
+    def check_level_up(xp_before: int, xp_after: int) -> dict:
+        """Check if an XP change caused a level-up.
+
+        Returns dict with:
+        - level_before: int
+        - level_after: int
+        - leveled_up: bool
+        - division_before: str
+        - division_after: str
+        - division_changed: bool
+        """
+        level_before = calculate_user_level(xp_before)
+        level_after = calculate_user_level(xp_after)
+        division_before = DivisionService.get_division_for_level(level_before)
+        division_after = DivisionService.get_division_for_level(level_after)
+
+        return {
+            "level_before": level_before,
+            "level_after": level_after,
+            "leveled_up": level_after > level_before,
+            "division_before": division_before,
+            "division_after": division_after,
+            "division_changed": division_after != division_before,
+        }

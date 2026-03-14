@@ -16,6 +16,8 @@ from api.schemas.shops_schema import (
     PurchaseRequest,
     RefreshShopRequest,
     SellRequest,
+    ShipPurchaseRequest,
+    ShipSellRequest,
     ShopItemResponse,
     ShopSummaryResponse,
     TransactionResponse,
@@ -139,6 +141,46 @@ async def purchase_item(
             detail="Failed to process purchase"
         ) from e
 
+@router.post("/purchase-ship", response_model=TransactionResponse)
+async def purchase_ship(
+    request: ShipPurchaseRequest,
+    shop_service: ShopService = Depends(get_shop_service)
+):
+    """Purchase a ship from a shop with optional trade-in of current active ship."""
+    flogger.info(
+        f"Player {request.player_id} purchasing ship from shop item {request.shop_item_id}"
+        f" (sell_old={request.sell_old_ship})"
+    )
+
+    try:
+        async with get_db_session() as db:
+            transaction = await shop_service.purchase_ship(
+                db, request.player_id, request.shop_item_id, request.sell_old_ship
+            )
+
+            return TransactionResponse(
+                player_id=transaction["player_id"],
+                item_type=transaction["item_type"],
+                item_name=transaction["item_name"],
+                quantity=transaction["quantity"],
+                total_cost=transaction["net_cost"],
+                remaining_credits=transaction["remaining_credits"],
+                transaction_type="ship_purchase"
+            )
+
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e)
+        ) from e
+    except Exception as e:
+        flogger.error(f"Error processing ship purchase: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to process ship purchase"
+        ) from e
+
+
 @router.post("/sell", response_model=TransactionResponse)
 async def sell_item(
     request: SellRequest,
@@ -178,6 +220,50 @@ async def sell_item(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to process sale"
         ) from e
+
+@router.post("/sell-ship", response_model=TransactionResponse)
+async def sell_ship(
+    request: ShipSellRequest,
+    shop_service: ShopService = Depends(get_shop_service)
+):
+    """Sell a player's inactive ship back to the shop at full value."""
+    flogger.info(
+        f"Player {request.player_id} selling ship id={request.ship_id} "
+        f"(clear_equipment={request.clear_equipment}) to {request.target_tier} shop"
+    )
+
+    try:
+        async with get_db_session() as db:
+            transaction = await shop_service.sell_ship(
+                db,
+                request.player_id,
+                request.ship_id,
+                request.clear_equipment,
+                request.target_tier,
+            )
+
+            return TransactionResponse(
+                player_id=transaction["player_id"],
+                item_type=transaction["item_type"],
+                item_name=transaction["item_name"],
+                quantity=transaction["quantity"],
+                total_value=transaction["sell_value"],
+                remaining_credits=transaction["new_credits"],
+                transaction_type="ship_sale",
+            )
+
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e)
+        ) from e
+    except Exception as e:
+        flogger.error(f"Error processing ship sale: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to process ship sale"
+        ) from e
+
 
 @router.post("/refresh", response_model=dict[str, Any])
 async def refresh_shop(

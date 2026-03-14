@@ -294,11 +294,19 @@ class InventoryService:
         player_id: int,
         ship_name: str,
         item_type: str,
-        item_name: str
+        item_name: str,
+        player_ship: Any | None = None,
     ) -> dict[str, Any]:
         """
         Validate if an item can be equipped on a specific ship.
         Returns compatibility information including slot availability.
+
+        If *player_ship* (a PlayerShip ORM object) is supplied, the current
+        equipped count is read from ``player_ship.get_equipped_count()``
+        (which counts items actually equipped on the ship).  When it is not
+        supplied the method falls back to the legacy behaviour of querying
+        the global inventory count — kept for backward compatibility but
+        deprecated for slot checking.
         """
         try:
             compatibility = {
@@ -316,28 +324,43 @@ class InventoryService:
                 compatibility["reason"] = f"Ship {ship_name} not found in database"
                 return compatibility
 
-            # Map item_type to the ship's slot limit and the canonical inventory type
+            # Map item_type to the ship's slot limit and the equipment_type key
+            # used by PlayerShip.get_equipped_count()
             item_type_lower = item_type.lower()
             if item_type_lower in ("weapon", "primary_weapon"):
                 max_slots = ship_details["max_primaries"]
-                inventory_type = "primary_weapon"
+                equipment_type_key = "weapons"
             elif item_type_lower == "secondary_weapon":
                 max_slots = ship_details["max_secondaries"]
-                inventory_type = "secondary_weapon"
+                equipment_type_key = "weapons"  # secondary weapons share the weapons slot key
             elif item_type_lower in ("turret", "turret_weapon"):
                 max_slots = ship_details["max_turrets"]
-                inventory_type = "turret_weapon"
+                equipment_type_key = "turrets"
             elif item_type_lower == "module":
                 max_slots = ship_details["max_modules"]
-                inventory_type = "module"
+                equipment_type_key = "modules"
             else:
                 # Unknown type — no slot restriction, allow it
                 return compatibility
 
-            # Count how many items of this type the player already has
-            current_count = await self.inventory_repo.get_item_count_by_type(
-                db, player_id, inventory_type
-            )
+            # Use actual equipped count from the PlayerShip object when available;
+            # otherwise fall back to global inventory count (deprecated path).
+            if player_ship is not None:
+                current_count = player_ship.get_equipped_count(equipment_type_key)
+            else:
+                # Fallback: query global inventory count (inaccurate for slot checks)
+                inventory_type_map = {
+                    "weapon": "primary_weapon",
+                    "primary_weapon": "primary_weapon",
+                    "secondary_weapon": "secondary_weapon",
+                    "turret": "turret_weapon",
+                    "turret_weapon": "turret_weapon",
+                    "module": "module",
+                }
+                inventory_type = inventory_type_map.get(item_type_lower, item_type_lower)
+                current_count = await self.inventory_repo.get_item_count_by_type(
+                    db, player_id, inventory_type
+                )
 
             if current_count >= max_slots:
                 compatibility["compatible"] = False

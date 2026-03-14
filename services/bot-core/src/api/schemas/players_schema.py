@@ -1,11 +1,13 @@
 from datetime import datetime
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 # Response Models
 class PlayerResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     id: int
     user_id: int
     guild_id: int
@@ -27,9 +29,6 @@ class PlayerResponse(BaseModel):
     bounty_cooldown_end: datetime | None = None
     created_at: str
     updated_at: str
-
-    class Config:
-        from_attributes = True
 
 class PlayerStatisticsResponse(BaseModel):
     player_id: int
@@ -62,3 +61,25 @@ class UpdateTierRequest(BaseModel):
         pattern="^(Bronze|Silver|Gold|Platinum)$",
         description="Must be Bronze, Silver, Gold, or Platinum"
     )
+
+
+class TransferCreditsRequest(BaseModel):
+    source_player_id: int
+    target_player_id: int
+    amount: int = Field(gt=0)
+
+
+class TransferCreditsResponse(BaseModel):
+    source_player_id: int
+    target_player_id: int
+    amount: int
+    source_remaining_credits: int
+    target_new_credits: int
+
+
+class PrestigeResponse(BaseModel):
+    """Response returned after a successful prestige operation."""
+    player_id: int
+    prestige_count: int
+    level_before: int
+    division_before: str

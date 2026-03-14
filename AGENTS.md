@@ -130,6 +130,21 @@ The following services were added in Phase 1:
 - `services/bot-core/src/services/pathfinding_service.py` — A* shortest path algorithm
 - `services/bot-core/src/persist/repositories/item_repository.py` — Unified item lookup across all model types
 
+### New Services Added (Phase 3)
+
+- `services/bot-core/src/services/combat_models.py` — Combat dataclasses, CombatResolver Protocol
+- `services/bot-core/src/services/combat_service.py` — Ship stat calculation, SimpleTTKResolver, fight_ships()
+- `services/bot-core/src/services/duel_service.py` — Duel lifecycle (challenge, accept, reject, expire)
+- `services/bot-core/src/persist/models/duel_request.py` — DuelRequest ORM model
+- `services/bot-core/src/persist/repositories/duel_repository.py` — Duel CRUD repository
+- `services/bot-core/src/api/routers/duels.py` — Duel API endpoints (auto-discovered)
+- `services/bot-core/src/api/schemas/duel_schema.py` — Duel request/response Pydantic schemas
+
+### Code Standards
+
+- **Pydantic schemas**: Use `model_config = ConfigDict(from_attributes=True)` (NOT deprecated `class Config`). Use `.model_dump()` (NOT deprecated `.dict()`).
+- **Tests**: Max 2 mocks per test. Prefer real objects with deterministic inputs. See `test_combat_service.py` as reference pattern.
+
 ---
 
 ## Health Check Endpoints
@@ -140,4 +155,4 @@ The following services were added in Phase 1:
 
 ---
 
-*Last updated: 2026-03-13*
+*Last updated: 2026-03-14*

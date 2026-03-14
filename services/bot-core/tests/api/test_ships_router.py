@@ -5,7 +5,7 @@ tests/api/conftest.py which runs before this module is loaded.
 """
 
 from datetime import datetime
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from fastapi import FastAPI
@@ -81,14 +81,28 @@ def mock_player_repo():
 
 
 @pytest.fixture
-def test_app(mock_ship_repo, mock_player_repo):
+def mock_equipment_service():
+    """Mock EquipmentService for router-level tests."""
+    svc = AsyncMock()
+    svc.equip_item = AsyncMock(
+        return_value={"success": True, "ship": make_mock_ship(), "message": "equipped"}
+    )
+    svc.unequip_item = AsyncMock(
+        return_value={"success": True, "ship": make_mock_ship(), "message": "unequipped"}
+    )
+    return svc
+
+
+@pytest.fixture
+def test_app(mock_ship_repo, mock_player_repo, mock_equipment_service):
     app = FastAPI()
-    from api.routers.ships import get_player_repository, get_ship_repository
+    from api.routers.ships import get_equipment_service, get_player_repository, get_ship_repository
     from api.routers.ships import router as ships_router
 
     app.include_router(ships_router, prefix="/api/v1")
     app.dependency_overrides[get_ship_repository] = lambda: mock_ship_repo
     app.dependency_overrides[get_player_repository] = lambda: mock_player_repo
+    app.dependency_overrides[get_equipment_service] = lambda: mock_equipment_service
     yield app
     app.dependency_overrides.clear()
 
@@ -98,16 +112,18 @@ def client(test_app):
     return TestClient(test_app)
 
 
+@pytest.fixture(autouse=True)
+def _patch_ships_db(mock_db_session, monkeypatch):
+    """Patch get_db_session for all ships router tests automatically."""
+    _, mock_cm = mock_db_session
+    monkeypatch.setattr("api.routers.ships.get_db_session", lambda: mock_cm)
+
+
 class TestGetPlayerShips:
     """Tests for GET /ships/player/{player_id}."""
 
-    @patch("api.routers.ships.get_db_session")
-    def test_get_player_ships_happy_path(self, mock_get_db, client, mock_ship_repo):
+    def test_get_player_ships_happy_path(self, client, mock_ship_repo):
         """Returns list of ships for a player with 200 status."""
-        mock_session = AsyncMock()
-        mock_get_db.return_value.__aenter__ = AsyncMock(return_value=mock_session)
-        mock_get_db.return_value.__aexit__ = AsyncMock(return_value=False)
-
         response = client.get("/api/v1/ships/player/1")
 
         assert response.status_code == 200
@@ -123,12 +139,8 @@ class TestGetPlayerShips:
         assert data[0]["turrets"] == []
         mock_ship_repo.get_player_ships.assert_called_once()
 
-    @patch("api.routers.ships.get_db_session")
-    def test_get_player_ships_empty_list(self, mock_get_db, client, mock_ship_repo):
+    def test_get_player_ships_empty_list(self, client, mock_ship_repo):
         """Returns empty list when player has no ships."""
-        mock_session = AsyncMock()
-        mock_get_db.return_value.__aenter__ = AsyncMock(return_value=mock_session)
-        mock_get_db.return_value.__aexit__ = AsyncMock(return_value=False)
         mock_ship_repo.get_player_ships = AsyncMock(return_value=[])
 
         response = client.get("/api/v1/ships/player/99")
@@ -137,12 +149,8 @@ class TestGetPlayerShips:
         data = response.json()
         assert data == []
 
-    @patch("api.routers.ships.get_db_session")
-    def test_get_player_ships_server_error(self, mock_get_db, client, mock_ship_repo):
+    def test_get_player_ships_server_error(self, client, mock_ship_repo):
         """Returns 500 when repository raises an unexpected exception."""
-        mock_session = AsyncMock()
-        mock_get_db.return_value.__aenter__ = AsyncMock(return_value=mock_session)
-        mock_get_db.return_value.__aexit__ = AsyncMock(return_value=False)
         mock_ship_repo.get_player_ships = AsyncMock(side_effect=Exception("DB failure"))
 
         response = client.get("/api/v1/ships/player/1")
@@ -155,13 +163,8 @@ class TestGetPlayerShips:
 class TestGetShip:
     """Tests for GET /ships/{ship_id}."""
 
-    @patch("api.routers.ships.get_db_session")
-    def test_get_ship_happy_path(self, mock_get_db, client, mock_ship_repo):
+    def test_get_ship_happy_path(self, client, mock_ship_repo):
         """Returns ship data with 200 status when ship exists."""
-        mock_session = AsyncMock()
-        mock_get_db.return_value.__aenter__ = AsyncMock(return_value=mock_session)
-        mock_get_db.return_value.__aexit__ = AsyncMock(return_value=False)
-
         response = client.get("/api/v1/ships/1")
 
         assert response.status_code == 200
@@ -172,12 +175,8 @@ class TestGetShip:
         assert "created_at" in data
         mock_ship_repo.get_by_id.assert_called_once()
 
-    @patch("api.routers.ships.get_db_session")
-    def test_get_ship_not_found(self, mock_get_db, client, mock_ship_repo):
+    def test_get_ship_not_found(self, client, mock_ship_repo):
         """Returns 404 when ship does not exist."""
-        mock_session = AsyncMock()
-        mock_get_db.return_value.__aenter__ = AsyncMock(return_value=mock_session)
-        mock_get_db.return_value.__aexit__ = AsyncMock(return_value=False)
         mock_ship_repo.get_by_id = AsyncMock(return_value=None)
 
         response = client.get("/api/v1/ships/999")
@@ -187,12 +186,8 @@ class TestGetShip:
         assert "detail" in data
         assert "999" in data["detail"]
 
-    @patch("api.routers.ships.get_db_session")
-    def test_get_ship_server_error(self, mock_get_db, client, mock_ship_repo):
+    def test_get_ship_server_error(self, client, mock_ship_repo):
         """Returns 500 when repository raises an unexpected exception."""
-        mock_session = AsyncMock()
-        mock_get_db.return_value.__aenter__ = AsyncMock(return_value=mock_session)
-        mock_get_db.return_value.__aexit__ = AsyncMock(return_value=False)
         mock_ship_repo.get_by_id = AsyncMock(side_effect=Exception("DB error"))
 
         response = client.get("/api/v1/ships/1")
@@ -205,13 +200,8 @@ class TestGetShip:
 class TestCreateShip:
     """Tests for POST /ships/."""
 
-    @patch("api.routers.ships.get_db_session")
-    def test_create_ship_happy_path(self, mock_get_db, client, mock_ship_repo, mock_player_repo):
+    def test_create_ship_happy_path(self, client, mock_ship_repo, mock_player_repo):
         """Creates ship and returns 201 with ship data."""
-        mock_session = AsyncMock()
-        mock_get_db.return_value.__aenter__ = AsyncMock(return_value=mock_session)
-        mock_get_db.return_value.__aexit__ = AsyncMock(return_value=False)
-
         payload = {
             "player_id": 1,
             "ship_name": "Sidewinder",
@@ -230,12 +220,8 @@ class TestCreateShip:
         mock_player_repo.get_by_id.assert_called_once()
         mock_ship_repo.create_or_update.assert_called_once()
 
-    @patch("api.routers.ships.get_db_session")
-    def test_create_ship_player_not_found(self, mock_get_db, client, mock_ship_repo, mock_player_repo):
+    def test_create_ship_player_not_found(self, client, mock_ship_repo, mock_player_repo):
         """Returns 404 when specified player does not exist."""
-        mock_session = AsyncMock()
-        mock_get_db.return_value.__aenter__ = AsyncMock(return_value=mock_session)
-        mock_get_db.return_value.__aexit__ = AsyncMock(return_value=False)
         mock_player_repo.get_by_id = AsyncMock(return_value=None)
 
         payload = {
@@ -254,12 +240,8 @@ class TestCreateShip:
         assert "999" in data["detail"]
         mock_ship_repo.create_or_update.assert_not_called()
 
-    @patch("api.routers.ships.get_db_session")
-    def test_create_ship_server_error(self, mock_get_db, client, mock_ship_repo, mock_player_repo):
+    def test_create_ship_server_error(self, client, mock_ship_repo, mock_player_repo):
         """Returns 500 when repository raises an unexpected exception."""
-        mock_session = AsyncMock()
-        mock_get_db.return_value.__aenter__ = AsyncMock(return_value=mock_session)
-        mock_get_db.return_value.__aexit__ = AsyncMock(return_value=False)
         mock_ship_repo.create_or_update = AsyncMock(side_effect=Exception("DB error"))
 
         payload = {
@@ -291,13 +273,8 @@ class TestCreateShip:
 
         assert response.status_code == 422
 
-    @patch("api.routers.ships.get_db_session")
-    def test_create_ship_with_minimal_fields(self, mock_get_db, client, mock_ship_repo, mock_player_repo):
+    def test_create_ship_with_minimal_fields(self, client, mock_ship_repo, mock_player_repo):
         """Creates ship with only required fields; optional fields default correctly."""
-        mock_session = AsyncMock()
-        mock_get_db.return_value.__aenter__ = AsyncMock(return_value=mock_session)
-        mock_get_db.return_value.__aexit__ = AsyncMock(return_value=False)
-
         payload = {"player_id": 1, "ship_name": "Cobra"}
         response = client.post("/api/v1/ships/", json=payload)
 
@@ -307,13 +284,8 @@ class TestCreateShip:
 class TestGetActiveShip:
     """Tests for GET /ships/player/{player_id}/active."""
 
-    @patch("api.routers.ships.get_db_session")
-    def test_get_active_ship_has_active(self, mock_get_db, client, mock_ship_repo):
+    def test_get_active_ship_has_active(self, client, mock_ship_repo):
         """Returns the active ship for a player when one exists."""
-        mock_session = AsyncMock()
-        mock_get_db.return_value.__aenter__ = AsyncMock(return_value=mock_session)
-        mock_get_db.return_value.__aexit__ = AsyncMock(return_value=False)
-
         response = client.get("/api/v1/ships/player/1/active")
 
         assert response.status_code == 200
@@ -322,12 +294,8 @@ class TestGetActiveShip:
         assert data["id"] == 1
         mock_ship_repo.get_active_ship.assert_called_once()
 
-    @patch("api.routers.ships.get_db_session")
-    def test_get_active_ship_no_active(self, mock_get_db, client, mock_ship_repo):
+    def test_get_active_ship_no_active(self, client, mock_ship_repo):
         """Returns null/None when player has no active ship."""
-        mock_session = AsyncMock()
-        mock_get_db.return_value.__aenter__ = AsyncMock(return_value=mock_session)
-        mock_get_db.return_value.__aexit__ = AsyncMock(return_value=False)
         mock_ship_repo.get_active_ship = AsyncMock(return_value=None)
 
         response = client.get("/api/v1/ships/player/1/active")
@@ -335,12 +303,8 @@ class TestGetActiveShip:
         assert response.status_code == 200
         assert response.json() is None
 
-    @patch("api.routers.ships.get_db_session")
-    def test_get_active_ship_server_error(self, mock_get_db, client, mock_ship_repo):
+    def test_get_active_ship_server_error(self, client, mock_ship_repo):
         """Returns 500 when repository raises an unexpected exception."""
-        mock_session = AsyncMock()
-        mock_get_db.return_value.__aenter__ = AsyncMock(return_value=mock_session)
-        mock_get_db.return_value.__aexit__ = AsyncMock(return_value=False)
         mock_ship_repo.get_active_ship = AsyncMock(side_effect=Exception("DB error"))
 
         response = client.get("/api/v1/ships/player/1/active")
@@ -353,13 +317,8 @@ class TestGetActiveShip:
 class TestSetActiveShip:
     """Tests for PUT /ships/{ship_id}/set-active?player_id=X."""
 
-    @patch("api.routers.ships.get_db_session")
-    def test_set_active_ship_happy_path(self, mock_get_db, client, mock_ship_repo, mock_player_repo):
+    def test_set_active_ship_happy_path(self, client, mock_ship_repo, mock_player_repo):
         """Sets a ship as active and returns updated ship with 200 status."""
-        mock_session = AsyncMock()
-        mock_get_db.return_value.__aenter__ = AsyncMock(return_value=mock_session)
-        mock_get_db.return_value.__aexit__ = AsyncMock(return_value=False)
-
         response = client.put("/api/v1/ships/1/set-active?player_id=1")
 
         assert response.status_code == 200
@@ -369,12 +328,8 @@ class TestSetActiveShip:
         mock_ship_repo.set_active_ship.assert_called_once()
         mock_player_repo.update_active_ship.assert_called_once()
 
-    @patch("api.routers.ships.get_db_session")
-    def test_set_active_ship_value_error_returns_400(self, mock_get_db, client, mock_ship_repo, mock_player_repo):
+    def test_set_active_ship_value_error_returns_400(self, client, mock_ship_repo, mock_player_repo):
         """Returns 400 when repository raises a ValueError."""
-        mock_session = AsyncMock()
-        mock_get_db.return_value.__aenter__ = AsyncMock(return_value=mock_session)
-        mock_get_db.return_value.__aexit__ = AsyncMock(return_value=False)
         mock_ship_repo.set_active_ship = AsyncMock(side_effect=ValueError("Ship does not belong to player"))
 
         response = client.put("/api/v1/ships/1/set-active?player_id=1")
@@ -384,12 +339,8 @@ class TestSetActiveShip:
         assert "detail" in data
         assert "Ship does not belong to player" in data["detail"]
 
-    @patch("api.routers.ships.get_db_session")
-    def test_set_active_ship_server_error(self, mock_get_db, client, mock_ship_repo, mock_player_repo):
+    def test_set_active_ship_server_error(self, client, mock_ship_repo, mock_player_repo):
         """Returns 500 when repository raises an unexpected exception."""
-        mock_session = AsyncMock()
-        mock_get_db.return_value.__aenter__ = AsyncMock(return_value=mock_session)
-        mock_get_db.return_value.__aexit__ = AsyncMock(return_value=False)
         mock_ship_repo.set_active_ship = AsyncMock(side_effect=Exception("DB failure"))
 
         response = client.put("/api/v1/ships/1/set-active?player_id=1")
@@ -408,13 +359,8 @@ class TestSetActiveShip:
 class TestUpdateShipLoadout:
     """Tests for PUT /ships/{ship_id}/loadout."""
 
-    @patch("api.routers.ships.get_db_session")
-    def test_update_ship_loadout_happy_path(self, mock_get_db, client, mock_ship_repo):
+    def test_update_ship_loadout_happy_path(self, client, mock_ship_repo):
         """Updates ship loadout and returns updated ship with 200 status."""
-        mock_session = AsyncMock()
-        mock_get_db.return_value.__aenter__ = AsyncMock(return_value=mock_session)
-        mock_get_db.return_value.__aexit__ = AsyncMock(return_value=False)
-
         payload = {
             "weapons": ["Burst Laser", "Multi-cannon"],
             "modules": ["Shield Booster"],
@@ -433,13 +379,8 @@ class TestUpdateShipLoadout:
         assert loadout_updates["modules"] == ["Shield Booster"]
         assert loadout_updates["turrets"] == ["Turreted Beam"]
 
-    @patch("api.routers.ships.get_db_session")
-    def test_update_ship_loadout_partial_update(self, mock_get_db, client, mock_ship_repo):
+    def test_update_ship_loadout_partial_update(self, client, mock_ship_repo):
         """Partial updates only include provided fields in the update dict."""
-        mock_session = AsyncMock()
-        mock_get_db.return_value.__aenter__ = AsyncMock(return_value=mock_session)
-        mock_get_db.return_value.__aexit__ = AsyncMock(return_value=False)
-
         # Only update weapons, leave modules and turrets as None
         payload = {"weapons": ["Pulse Laser"]}
         response = client.put("/api/v1/ships/1/loadout", json=payload)
@@ -451,12 +392,8 @@ class TestUpdateShipLoadout:
         assert "modules" not in loadout_updates
         assert "turrets" not in loadout_updates
 
-    @patch("api.routers.ships.get_db_session")
-    def test_update_ship_loadout_value_error_returns_400(self, mock_get_db, client, mock_ship_repo):
+    def test_update_ship_loadout_value_error_returns_400(self, client, mock_ship_repo):
         """Returns 400 when repository raises a ValueError."""
-        mock_session = AsyncMock()
-        mock_get_db.return_value.__aenter__ = AsyncMock(return_value=mock_session)
-        mock_get_db.return_value.__aexit__ = AsyncMock(return_value=False)
         mock_ship_repo.update_loadout = AsyncMock(side_effect=ValueError("Invalid loadout configuration"))
 
         payload = {"weapons": ["Invalid Weapon"]}
@@ -467,12 +404,8 @@ class TestUpdateShipLoadout:
         assert "detail" in data
         assert "Invalid loadout configuration" in data["detail"]
 
-    @patch("api.routers.ships.get_db_session")
-    def test_update_ship_loadout_server_error(self, mock_get_db, client, mock_ship_repo):
+    def test_update_ship_loadout_server_error(self, client, mock_ship_repo):
         """Returns 500 when repository raises an unexpected exception."""
-        mock_session = AsyncMock()
-        mock_get_db.return_value.__aenter__ = AsyncMock(return_value=mock_session)
-        mock_get_db.return_value.__aexit__ = AsyncMock(return_value=False)
         mock_ship_repo.update_loadout = AsyncMock(side_effect=Exception("DB crash"))
 
         payload = {"weapons": ["Pulse Laser"]}
@@ -486,13 +419,8 @@ class TestUpdateShipLoadout:
 class TestUpdateShipNickname:
     """Tests for PUT /ships/{ship_id}/nickname."""
 
-    @patch("api.routers.ships.get_db_session")
-    def test_update_ship_nickname_happy_path(self, mock_get_db, client, mock_ship_repo):
+    def test_update_ship_nickname_happy_path(self, client, mock_ship_repo):
         """Updates ship nickname and returns updated ship with 200 status."""
-        mock_session = AsyncMock()
-        mock_get_db.return_value.__aenter__ = AsyncMock(return_value=mock_session)
-        mock_get_db.return_value.__aexit__ = AsyncMock(return_value=False)
-
         payload = {"nickname": "MyShip"}
         response = client.put("/api/v1/ships/1/nickname", json=payload)
 
@@ -504,12 +432,8 @@ class TestUpdateShipNickname:
         call_args = mock_ship_repo.update_nickname.call_args
         assert call_args[0][2] == "MyShip"
 
-    @patch("api.routers.ships.get_db_session")
-    def test_update_ship_nickname_value_error_returns_400(self, mock_get_db, client, mock_ship_repo):
+    def test_update_ship_nickname_value_error_returns_400(self, client, mock_ship_repo):
         """Returns 400 when repository raises a ValueError."""
-        mock_session = AsyncMock()
-        mock_get_db.return_value.__aenter__ = AsyncMock(return_value=mock_session)
-        mock_get_db.return_value.__aexit__ = AsyncMock(return_value=False)
         mock_ship_repo.update_nickname = AsyncMock(side_effect=ValueError("Ship not found"))
 
         payload = {"nickname": "GhostShip"}
@@ -530,57 +454,39 @@ class TestUpdateShipNickname:
 class TestEquipItem:
     """Tests for POST /ships/{ship_id}/equip."""
 
-    @patch("api.routers.ships.get_db_session")
-    def test_equip_item_happy_path(self, mock_get_db, client, mock_ship_repo):
+    def test_equip_item_happy_path(self, client, mock_equipment_service):
         """Equips item to ship and returns updated ship with 200 status."""
-        mock_session = AsyncMock()
-        mock_get_db.return_value.__aenter__ = AsyncMock(return_value=mock_session)
-        mock_get_db.return_value.__aexit__ = AsyncMock(return_value=False)
-
-        payload = {"equipment_type": "weapons", "item_name": "Burst Laser"}
+        payload = {"player_id": 1, "equipment_type": "weapons", "item_name": "Burst Laser"}
         response = client.post("/api/v1/ships/1/equip", json=payload)
 
         assert response.status_code == 200
         data = response.json()
         assert data["id"] == 1
-        mock_ship_repo.add_equipment.assert_called_once()
-        call_args = mock_ship_repo.add_equipment.call_args
-        assert call_args[0][2] == "weapons"
-        assert call_args[0][3] == "Burst Laser"
+        mock_equipment_service.equip_item.assert_called_once()
+        call_kwargs = mock_equipment_service.equip_item.call_args[1]
+        assert call_kwargs["equipment_type"] == "weapons"
+        assert call_kwargs["item_name"] == "Burst Laser"
+        assert call_kwargs["player_id"] == 1
 
-    @patch("api.routers.ships.get_db_session")
-    def test_equip_item_modules_type(self, mock_get_db, client, mock_ship_repo):
+    def test_equip_item_modules_type(self, client, mock_equipment_service):
         """Equips a module type item successfully."""
-        mock_session = AsyncMock()
-        mock_get_db.return_value.__aenter__ = AsyncMock(return_value=mock_session)
-        mock_get_db.return_value.__aexit__ = AsyncMock(return_value=False)
-
-        payload = {"equipment_type": "modules", "item_name": "Shield Booster"}
+        payload = {"player_id": 1, "equipment_type": "modules", "item_name": "Shield Booster"}
         response = client.post("/api/v1/ships/1/equip", json=payload)
 
         assert response.status_code == 200
 
-    @patch("api.routers.ships.get_db_session")
-    def test_equip_item_turrets_type(self, mock_get_db, client, mock_ship_repo):
+    def test_equip_item_turrets_type(self, client, mock_equipment_service):
         """Equips a turret type item successfully."""
-        mock_session = AsyncMock()
-        mock_get_db.return_value.__aenter__ = AsyncMock(return_value=mock_session)
-        mock_get_db.return_value.__aexit__ = AsyncMock(return_value=False)
-
-        payload = {"equipment_type": "turrets", "item_name": "Turreted Beam Laser"}
+        payload = {"player_id": 1, "equipment_type": "turrets", "item_name": "Turreted Beam Laser"}
         response = client.post("/api/v1/ships/1/equip", json=payload)
 
         assert response.status_code == 200
 
-    @patch("api.routers.ships.get_db_session")
-    def test_equip_item_value_error_returns_400(self, mock_get_db, client, mock_ship_repo):
-        """Returns 400 when repository raises a ValueError."""
-        mock_session = AsyncMock()
-        mock_get_db.return_value.__aenter__ = AsyncMock(return_value=mock_session)
-        mock_get_db.return_value.__aexit__ = AsyncMock(return_value=False)
-        mock_ship_repo.add_equipment = AsyncMock(side_effect=ValueError("Item already equipped"))
+    def test_equip_item_value_error_returns_400(self, client, mock_equipment_service):
+        """Returns 400 when equipment service raises a ValueError."""
+        mock_equipment_service.equip_item = AsyncMock(side_effect=ValueError("Item already equipped"))
 
-        payload = {"equipment_type": "weapons", "item_name": "Pulse Laser"}
+        payload = {"player_id": 1, "equipment_type": "weapons", "item_name": "Pulse Laser"}
         response = client.post("/api/v1/ships/1/equip", json=payload)
 
         assert response.status_code == 400
@@ -590,21 +496,21 @@ class TestEquipItem:
 
     def test_equip_item_invalid_equipment_type_returns_422(self, client):
         """Returns 422 when equipment_type does not match the allowed pattern."""
-        payload = {"equipment_type": "invalid_type", "item_name": "Some Item"}
+        payload = {"player_id": 1, "equipment_type": "invalid_type", "item_name": "Some Item"}
         response = client.post("/api/v1/ships/1/equip", json=payload)
 
         assert response.status_code == 422
 
     def test_equip_item_missing_item_name_returns_422(self, client):
         """Returns 422 when item_name is missing."""
-        payload = {"equipment_type": "weapons"}
+        payload = {"player_id": 1, "equipment_type": "weapons"}
         response = client.post("/api/v1/ships/1/equip", json=payload)
 
         assert response.status_code == 422
 
     def test_equip_item_missing_equipment_type_returns_422(self, client):
         """Returns 422 when equipment_type is missing."""
-        payload = {"item_name": "Pulse Laser"}
+        payload = {"player_id": 1, "item_name": "Pulse Laser"}
         response = client.post("/api/v1/ships/1/equip", json=payload)
 
         assert response.status_code == 422
@@ -613,33 +519,24 @@ class TestEquipItem:
 class TestUnequipItem:
     """Tests for POST /ships/{ship_id}/unequip."""
 
-    @patch("api.routers.ships.get_db_session")
-    def test_unequip_item_happy_path(self, mock_get_db, client, mock_ship_repo):
+    def test_unequip_item_happy_path(self, client, mock_equipment_service):
         """Unequips item from ship and returns updated ship with 200 status."""
-        mock_session = AsyncMock()
-        mock_get_db.return_value.__aenter__ = AsyncMock(return_value=mock_session)
-        mock_get_db.return_value.__aexit__ = AsyncMock(return_value=False)
-
-        payload = {"equipment_type": "weapons", "item_name": "Pulse Laser"}
+        payload = {"player_id": 1, "equipment_type": "weapons", "item_name": "Pulse Laser"}
         response = client.post("/api/v1/ships/1/unequip", json=payload)
 
         assert response.status_code == 200
         data = response.json()
         assert data["id"] == 1
-        mock_ship_repo.remove_equipment.assert_called_once()
-        call_args = mock_ship_repo.remove_equipment.call_args
-        assert call_args[0][2] == "weapons"
-        assert call_args[0][3] == "Pulse Laser"
+        mock_equipment_service.unequip_item.assert_called_once()
+        call_kwargs = mock_equipment_service.unequip_item.call_args[1]
+        assert call_kwargs["equipment_type"] == "weapons"
+        assert call_kwargs["item_name"] == "Pulse Laser"
 
-    @patch("api.routers.ships.get_db_session")
-    def test_unequip_item_value_error_returns_400(self, mock_get_db, client, mock_ship_repo):
-        """Returns 400 when repository raises a ValueError."""
-        mock_session = AsyncMock()
-        mock_get_db.return_value.__aenter__ = AsyncMock(return_value=mock_session)
-        mock_get_db.return_value.__aexit__ = AsyncMock(return_value=False)
-        mock_ship_repo.remove_equipment = AsyncMock(side_effect=ValueError("Item not equipped on ship"))
+    def test_unequip_item_value_error_returns_400(self, client, mock_equipment_service):
+        """Returns 400 when equipment service raises a ValueError."""
+        mock_equipment_service.unequip_item = AsyncMock(side_effect=ValueError("Item not equipped on ship"))
 
-        payload = {"equipment_type": "weapons", "item_name": "Nonexistent Weapon"}
+        payload = {"player_id": 1, "equipment_type": "weapons", "item_name": "Nonexistent Weapon"}
         response = client.post("/api/v1/ships/1/unequip", json=payload)
 
         assert response.status_code == 400
@@ -649,19 +546,14 @@ class TestUnequipItem:
 
     def test_unequip_item_invalid_equipment_type_returns_422(self, client):
         """Returns 422 when equipment_type does not match the allowed pattern."""
-        payload = {"equipment_type": "armour", "item_name": "Reactive Armour"}
+        payload = {"player_id": 1, "equipment_type": "armour", "item_name": "Reactive Armour"}
         response = client.post("/api/v1/ships/1/unequip", json=payload)
 
         assert response.status_code == 422
 
-    @patch("api.routers.ships.get_db_session")
-    def test_unequip_item_modules_type(self, mock_get_db, client, mock_ship_repo):
+    def test_unequip_item_modules_type(self, client, mock_equipment_service):
         """Unequips a module type item successfully."""
-        mock_session = AsyncMock()
-        mock_get_db.return_value.__aenter__ = AsyncMock(return_value=mock_session)
-        mock_get_db.return_value.__aexit__ = AsyncMock(return_value=False)
-
-        payload = {"equipment_type": "modules", "item_name": "Shield Generator"}
+        payload = {"player_id": 1, "equipment_type": "modules", "item_name": "Shield Generator"}
         response = client.post("/api/v1/ships/1/unequip", json=payload)
 
         assert response.status_code == 200
@@ -670,13 +562,8 @@ class TestUnequipItem:
 class TestGetShipLoadout:
     """Tests for GET /ships/{ship_id}/loadout."""
 
-    @patch("api.routers.ships.get_db_session")
-    def test_get_ship_loadout_happy_path(self, mock_get_db, client, mock_ship_repo):
+    def test_get_ship_loadout_happy_path(self, client, mock_ship_repo):
         """Returns loadout summary with 200 status."""
-        mock_session = AsyncMock()
-        mock_get_db.return_value.__aenter__ = AsyncMock(return_value=mock_session)
-        mock_get_db.return_value.__aexit__ = AsyncMock(return_value=False)
-
         response = client.get("/api/v1/ships/1/loadout")
 
         assert response.status_code == 200
@@ -693,12 +580,8 @@ class TestGetShipLoadout:
         assert data["turrets_count"] == 0
         mock_ship_repo.get_ship_loadout_summary.assert_called_once()
 
-    @patch("api.routers.ships.get_db_session")
-    def test_get_ship_loadout_not_found_returns_404(self, mock_get_db, client, mock_ship_repo):
+    def test_get_ship_loadout_not_found_returns_404(self, client, mock_ship_repo):
         """Returns 404 when repository raises a ValueError (ship not found)."""
-        mock_session = AsyncMock()
-        mock_get_db.return_value.__aenter__ = AsyncMock(return_value=mock_session)
-        mock_get_db.return_value.__aexit__ = AsyncMock(return_value=False)
         mock_ship_repo.get_ship_loadout_summary = AsyncMock(side_effect=ValueError("Ship 999 not found"))
 
         response = client.get("/api/v1/ships/999/loadout")
@@ -708,12 +591,8 @@ class TestGetShipLoadout:
         assert "detail" in data
         assert "Ship 999 not found" in data["detail"]
 
-    @patch("api.routers.ships.get_db_session")
-    def test_get_ship_loadout_with_nickname(self, mock_get_db, client, mock_ship_repo):
+    def test_get_ship_loadout_with_nickname(self, client, mock_ship_repo):
         """Returns loadout summary including nickname when ship has one."""
-        mock_session = AsyncMock()
-        mock_get_db.return_value.__aenter__ = AsyncMock(return_value=mock_session)
-        mock_get_db.return_value.__aexit__ = AsyncMock(return_value=False)
         mock_ship_repo.get_ship_loadout_summary = AsyncMock(
             return_value={
                 "ship_id": 2,
@@ -742,12 +621,8 @@ class TestGetShipLoadout:
 class TestDeleteShip:
     """Tests for DELETE /ships/{ship_id}."""
 
-    @patch("api.routers.ships.get_db_session")
-    def test_delete_ship_happy_path(self, mock_get_db, client, mock_ship_repo):
+    def test_delete_ship_happy_path(self, client, mock_ship_repo):
         """Deletes an inactive ship and returns success message with 200 status."""
-        mock_session = AsyncMock()
-        mock_get_db.return_value.__aenter__ = AsyncMock(return_value=mock_session)
-        mock_get_db.return_value.__aexit__ = AsyncMock(return_value=False)
         # Ensure the ship is not active
         mock_ship_repo.get_by_id = AsyncMock(return_value=make_mock_ship(is_active=False))
 
@@ -760,12 +635,8 @@ class TestDeleteShip:
         mock_ship_repo.get_by_id.assert_called_once()
         mock_ship_repo.remove.assert_called_once()
 
-    @patch("api.routers.ships.get_db_session")
-    def test_delete_ship_not_found_returns_404(self, mock_get_db, client, mock_ship_repo):
+    def test_delete_ship_not_found_returns_404(self, client, mock_ship_repo):
         """Returns 404 when ship does not exist."""
-        mock_session = AsyncMock()
-        mock_get_db.return_value.__aenter__ = AsyncMock(return_value=mock_session)
-        mock_get_db.return_value.__aexit__ = AsyncMock(return_value=False)
         mock_ship_repo.get_by_id = AsyncMock(return_value=None)
 
         response = client.delete("/api/v1/ships/999")
@@ -776,12 +647,8 @@ class TestDeleteShip:
         assert "999" in data["detail"]
         mock_ship_repo.remove.assert_not_called()
 
-    @patch("api.routers.ships.get_db_session")
-    def test_delete_active_ship_returns_400(self, mock_get_db, client, mock_ship_repo):
+    def test_delete_active_ship_returns_400(self, client, mock_ship_repo):
         """Returns 400 when attempting to delete an active ship."""
-        mock_session = AsyncMock()
-        mock_get_db.return_value.__aenter__ = AsyncMock(return_value=mock_session)
-        mock_get_db.return_value.__aexit__ = AsyncMock(return_value=False)
         # Ship is active
         mock_ship_repo.get_by_id = AsyncMock(return_value=make_mock_ship(is_active=True))
 
@@ -793,12 +660,8 @@ class TestDeleteShip:
         assert "active" in data["detail"].lower()
         mock_ship_repo.remove.assert_not_called()
 
-    @patch("api.routers.ships.get_db_session")
-    def test_delete_ship_server_error(self, mock_get_db, client, mock_ship_repo):
+    def test_delete_ship_server_error(self, client, mock_ship_repo):
         """Returns 500 when repository raises an unexpected exception during removal."""
-        mock_session = AsyncMock()
-        mock_get_db.return_value.__aenter__ = AsyncMock(return_value=mock_session)
-        mock_get_db.return_value.__aexit__ = AsyncMock(return_value=False)
         mock_ship_repo.get_by_id = AsyncMock(return_value=make_mock_ship(is_active=False))
         mock_ship_repo.remove = AsyncMock(side_effect=Exception("DB crash"))
 
@@ -808,12 +671,8 @@ class TestDeleteShip:
         data = response.json()
         assert "detail" in data
 
-    @patch("api.routers.ships.get_db_session")
-    def test_delete_ship_calls_remove_with_ship_object(self, mock_get_db, client, mock_ship_repo):
+    def test_delete_ship_calls_remove_with_ship_object(self, client, mock_ship_repo):
         """Verifies that remove is called with the ship object returned by get_by_id."""
-        mock_session = AsyncMock()
-        mock_get_db.return_value.__aenter__ = AsyncMock(return_value=mock_session)
-        mock_get_db.return_value.__aexit__ = AsyncMock(return_value=False)
         ship_obj = make_mock_ship(id=42, is_active=False)
         mock_ship_repo.get_by_id = AsyncMock(return_value=ship_obj)
 
@@ -833,15 +692,11 @@ class TestDeleteShip:
 class TestUpdateShipNicknameServerError:
     """Tests for the generic exception branch in update_ship_nickname (lines 310-315)."""
 
-    @patch("api.routers.ships.get_db_session")
-    def test_update_ship_nickname_server_error_returns_500(self, mock_get_db, client, mock_ship_repo):
+    def test_update_ship_nickname_server_error_returns_500(self, client, mock_ship_repo):
         """Returns 500 when the repo raises an unexpected (non-ValueError) exception.
 
         Covers lines 310-315: the generic except block in update_ship_nickname.
         """
-        mock_session = AsyncMock()
-        mock_get_db.return_value.__aenter__ = AsyncMock(return_value=mock_session)
-        mock_get_db.return_value.__aexit__ = AsyncMock(return_value=False)
         mock_ship_repo.update_nickname = AsyncMock(side_effect=RuntimeError("Unexpected DB crash"))
 
         payload = {"nickname": "GhostShip"}
@@ -854,20 +709,13 @@ class TestUpdateShipNicknameServerError:
 
 
 class TestEquipItemServerError:
-    """Tests for the generic exception branch in equip_item (lines 349-354)."""
+    """Tests for the generic exception branch in equip_item."""
 
-    @patch("api.routers.ships.get_db_session")
-    def test_equip_item_server_error_returns_500(self, mock_get_db, client, mock_ship_repo):
-        """Returns 500 when the repo raises an unexpected (non-ValueError) exception.
+    def test_equip_item_server_error_returns_500(self, client, mock_equipment_service):
+        """Returns 500 when the equipment service raises an unexpected (non-ValueError) exception."""
+        mock_equipment_service.equip_item = AsyncMock(side_effect=RuntimeError("Unexpected equip crash"))
 
-        Covers lines 349-354: the generic except block in equip_item.
-        """
-        mock_session = AsyncMock()
-        mock_get_db.return_value.__aenter__ = AsyncMock(return_value=mock_session)
-        mock_get_db.return_value.__aexit__ = AsyncMock(return_value=False)
-        mock_ship_repo.add_equipment = AsyncMock(side_effect=RuntimeError("Unexpected equip crash"))
-
-        payload = {"equipment_type": "weapons", "item_name": "Burst Laser"}
+        payload = {"player_id": 1, "equipment_type": "weapons", "item_name": "Burst Laser"}
         response = client.post("/api/v1/ships/1/equip", json=payload)
 
         assert response.status_code == 500
@@ -877,20 +725,13 @@ class TestEquipItemServerError:
 
 
 class TestUnequipItemServerError:
-    """Tests for the generic exception branch in unequip_item (lines 388-393)."""
+    """Tests for the generic exception branch in unequip_item."""
 
-    @patch("api.routers.ships.get_db_session")
-    def test_unequip_item_server_error_returns_500(self, mock_get_db, client, mock_ship_repo):
-        """Returns 500 when the repo raises an unexpected (non-ValueError) exception.
+    def test_unequip_item_server_error_returns_500(self, client, mock_equipment_service):
+        """Returns 500 when the equipment service raises an unexpected (non-ValueError) exception."""
+        mock_equipment_service.unequip_item = AsyncMock(side_effect=RuntimeError("Unexpected unequip crash"))
 
-        Covers lines 388-393: the generic except block in unequip_item.
-        """
-        mock_session = AsyncMock()
-        mock_get_db.return_value.__aenter__ = AsyncMock(return_value=mock_session)
-        mock_get_db.return_value.__aexit__ = AsyncMock(return_value=False)
-        mock_ship_repo.remove_equipment = AsyncMock(side_effect=RuntimeError("Unexpected unequip crash"))
-
-        payload = {"equipment_type": "weapons", "item_name": "Pulse Laser"}
+        payload = {"player_id": 1, "equipment_type": "weapons", "item_name": "Pulse Laser"}
         response = client.post("/api/v1/ships/1/unequip", json=payload)
 
         assert response.status_code == 500
@@ -902,15 +743,11 @@ class TestUnequipItemServerError:
 class TestGetShipLoadoutServerError:
     """Tests for the generic exception branch in get_ship_loadout (lines 425-430)."""
 
-    @patch("api.routers.ships.get_db_session")
-    def test_get_ship_loadout_server_error_returns_500(self, mock_get_db, client, mock_ship_repo):
+    def test_get_ship_loadout_server_error_returns_500(self, client, mock_ship_repo):
         """Returns 500 when the repo raises an unexpected (non-ValueError) exception.
 
         Covers lines 425-430: the generic except block in get_ship_loadout.
         """
-        mock_session = AsyncMock()
-        mock_get_db.return_value.__aenter__ = AsyncMock(return_value=mock_session)
-        mock_get_db.return_value.__aexit__ = AsyncMock(return_value=False)
         mock_ship_repo.get_ship_loadout_summary = AsyncMock(side_effect=RuntimeError("Unexpected loadout crash"))
 
         response = client.get("/api/v1/ships/1/loadout")

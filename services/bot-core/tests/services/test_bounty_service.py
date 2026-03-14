@@ -84,6 +84,16 @@ def _make_module(
     return SimpleNamespace(name=name, value=value, tech_level=tech_level)
 
 
+def _setup_mock_db_query(mock_db, return_value):
+    """Configure mock_db.execute() to return a value via .scalars().all()."""
+    scalars = MagicMock()
+    scalars.all.return_value = return_value
+    result = MagicMock()
+    result.scalars.return_value = scalars
+    mock_db.execute = AsyncMock(return_value=result)
+    return mock_db
+
+
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
@@ -102,8 +112,11 @@ def service() -> BountyService:
 
 @pytest.fixture
 def mock_db() -> AsyncMock:
-    """Return a mock async database session."""
-    return AsyncMock()
+    """Return a mock async database session with commit/refresh pre-configured."""
+    db = AsyncMock()
+    db.commit = AsyncMock()
+    db.refresh = AsyncMock()
+    return db
 
 
 # ===========================================================================
@@ -304,13 +317,7 @@ async def test_generate_loadout_returns_valid_dict(service, mock_db):
         patch.object(service, "find_item_tl", new=AsyncMock(return_value=1)),
         patch.object(service, "_find_typed_module", new=AsyncMock(return_value=module)),
     ):
-        # Patch the DB execute to return the ship
-        mock_scalars = MagicMock()
-        mock_scalars.all.return_value = [ship]
-        mock_result = MagicMock()
-        mock_result.scalars.return_value = mock_scalars
-        mock_db.execute = AsyncMock(return_value=mock_result)
-
+        _setup_mock_db_query(mock_db, [ship])
         result = await service.generate_loadout(mock_db, tech_level=2)
 
     expected_keys = {
@@ -337,13 +344,7 @@ async def test_generate_loadout_equips_weapons(service, mock_db):
         patch.object(service, "find_item_tl", new=AsyncMock(return_value=1)),
         patch.object(service, "_find_typed_module", new=AsyncMock(return_value=None)),
     ):
-        # Patch DB execute to return ship list
-        mock_scalars = MagicMock()
-        mock_scalars.all.return_value = [ship]
-        mock_result = MagicMock()
-        mock_result.scalars.return_value = mock_scalars
-        mock_db.execute = AsyncMock(return_value=mock_result)
-
+        _setup_mock_db_query(mock_db, [ship])
         # Weapons and modules both come from get_all_by_tech_level
         service.item_repo.get_all_by_tech_level = AsyncMock(return_value=[weapon])
 
@@ -360,11 +361,7 @@ async def test_generate_loadout_armour_at_tl_gt_1(service, mock_db):
     armour_mod = _make_module("E2 Exoclad Armour", value=1070, tech_level=1)
 
     with patch.object(service, "find_item_tl", new=AsyncMock(return_value=1)):
-        mock_scalars = MagicMock()
-        mock_scalars.all.return_value = [ship]
-        mock_result = MagicMock()
-        mock_result.scalars.return_value = mock_scalars
-        mock_db.execute = AsyncMock(return_value=mock_result)
+        _setup_mock_db_query(mock_db, [ship])
 
         # generic modules list (for filling remaining slots)
         generic_mod = _make_module("Generic Module", value=500, tech_level=1)
@@ -397,11 +394,7 @@ async def test_generate_loadout_shield_at_tl_gt_3(service, mock_db):
         return None
 
     with patch.object(service, "find_item_tl", new=AsyncMock(return_value=3)):
-        mock_scalars = MagicMock()
-        mock_scalars.all.return_value = [ship]
-        mock_result = MagicMock()
-        mock_result.scalars.return_value = mock_scalars
-        mock_db.execute = AsyncMock(return_value=mock_result)
+        _setup_mock_db_query(mock_db, [ship])
 
         generic_mod = _make_module("Generic", value=500, tech_level=3)
         service.item_repo.get_all_by_tech_level = AsyncMock(return_value=[generic_mod])
@@ -430,12 +423,7 @@ async def test_generate_loadout_calculates_total_value(service, mock_db):
         return []
 
     with patch.object(service, "find_item_tl", new=AsyncMock(return_value=1)):
-        mock_scalars = MagicMock()
-        mock_scalars.all.return_value = [ship]
-        mock_result = MagicMock()
-        mock_result.scalars.return_value = mock_scalars
-        mock_db.execute = AsyncMock(return_value=mock_result)
-
+        _setup_mock_db_query(mock_db, [ship])
         service.item_repo.get_all_by_tech_level = _get_all_by_tl
 
         with patch.object(
@@ -496,16 +484,22 @@ def _make_created_bounty(**kwargs) -> SimpleNamespace:
 
 
 @pytest.fixture
-def spawn_service(service) -> BountyService:
+def spawn_service_minimal(service) -> BountyService:
+    """Return a BountyService with just repos (no graph/pathfinding) for early-exit tests."""
+    return service
+
+
+@pytest.fixture
+def spawn_service(spawn_service_minimal) -> BountyService:
     """Return a BountyService with graph/pathfinding mocks pre-attached."""
-    service.graph_service = MagicMock()
-    service.graph_service.load_graph = AsyncMock()
-    service.graph_service.get_systems_with_jump_gates = MagicMock(
+    spawn_service_minimal.graph_service = MagicMock()
+    spawn_service_minimal.graph_service.load_graph = AsyncMock()
+    spawn_service_minimal.graph_service.get_systems_with_jump_gates = MagicMock(
         return_value=["Alpha", "Beta", "Gamma", "Delta", "Epsilon"]
     )
-    service.pathfinding_service = MagicMock()
-    service.pathfinding_service.make_route = MagicMock(return_value=SAMPLE_ROUTE)
-    return service
+    spawn_service_minimal.pathfinding_service = MagicMock()
+    spawn_service_minimal.pathfinding_service.make_route = MagicMock(return_value=SAMPLE_ROUTE)
+    return spawn_service_minimal
 
 
 @pytest.mark.asyncio
@@ -529,15 +523,15 @@ async def test_spawn_bounty_success(spawn_service, mock_db):
 
 
 @pytest.mark.asyncio
-async def test_spawn_bounty_no_criminal_available(spawn_service, mock_db):
+async def test_spawn_bounty_no_criminal_available(spawn_service_minimal, mock_db):
     """spawn_bounty returns None when no criminal is available."""
-    spawn_service.criminal_repo.list_all = AsyncMock(return_value=[])
-    spawn_service.bounty_repo.get_active_by_guild_and_division = AsyncMock(return_value=[])
+    spawn_service_minimal.criminal_repo.list_all = AsyncMock(return_value=[])
+    spawn_service_minimal.bounty_repo.get_active_by_guild_and_division = AsyncMock(return_value=[])
 
-    result = await spawn_service.spawn_bounty(mock_db, guild_id=1, division="bronze", tech_level=3)
+    result = await spawn_service_minimal.spawn_bounty(mock_db, guild_id=1, division="bronze", tech_level=3)
 
     assert result is None
-    spawn_service.bounty_repo.create.assert_not_called()
+    spawn_service_minimal.bounty_repo.create.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -750,11 +744,25 @@ async def test_spawn_bounty_auto_selects_tech_level(spawn_service, mock_db):
 # ===========================================================================
 
 
+@pytest.fixture
+def check_bounty_setup(service, mock_db):
+    """Pre-configure common mocks for core check_bounty tests.
+
+    Returns (service, mock_db) with player_repo, bounty_repo.get_active_by_guild_and_division,
+    and bounty_repo.update pre-configured as AsyncMocks. Tests set .return_value on each.
+    """
+    service.player_repo.get_by_id = AsyncMock()
+    service.bounty_repo.get_active_by_guild_and_division = AsyncMock()
+    service.bounty_repo.update = AsyncMock()
+    return service, mock_db
+
+
 def _make_player(
     player_id: int = 1,
     tier: str = "Bronze",
     classic_mode: bool = False,
     bounty_cooldown_end=None,
+    active_ship=None,
 ) -> SimpleNamespace:
     """Return a Player-like SimpleNamespace."""
     return SimpleNamespace(
@@ -762,6 +770,7 @@ def _make_player(
         tier=tier,
         classic_mode=classic_mode,
         bounty_cooldown_end=bounty_cooldown_end,
+        active_ship=active_ship,
     )
 
 
@@ -813,18 +822,17 @@ async def test_check_bounty_on_cooldown(service, mock_db):
 
 
 @pytest.mark.asyncio
-async def test_check_bounty_cooldown_expired(service, mock_db):
+async def test_check_bounty_cooldown_expired(check_bounty_setup):
     """Proceeds normally when player cooldown has expired."""
     from datetime import UTC, datetime, timedelta
 
+    service, mock_db = check_bounty_setup
     past = datetime.now(UTC) - timedelta(seconds=10)
     player = _make_player(bounty_cooldown_end=past)
     bounty = _make_active_bounty()
-    service.player_repo.get_by_id = AsyncMock(return_value=player)
-    service.bounty_repo.get_active_by_guild_and_division = AsyncMock(return_value=[bounty])
-    service.bounty_repo.update = AsyncMock(return_value=bounty)
-    mock_db.commit = AsyncMock()
-    mock_db.refresh = AsyncMock()
+    service.player_repo.get_by_id.return_value = player
+    service.bounty_repo.get_active_by_guild_and_division.return_value = [bounty]
+    service.bounty_repo.update.return_value = bounty
 
     result = await service.check_bounty(mock_db, player_id=1, system_name="Beta", guild_id=1)
 
@@ -833,12 +841,13 @@ async def test_check_bounty_cooldown_expired(service, mock_db):
 
 
 @pytest.mark.asyncio
-async def test_check_bounty_not_found(service, mock_db):
+async def test_check_bounty_not_found(check_bounty_setup):
     """Returns NOT_FOUND when system is not in any active bounty route."""
+    service, mock_db = check_bounty_setup
     player = _make_player()
     bounty = _make_active_bounty()
-    service.player_repo.get_by_id = AsyncMock(return_value=player)
-    service.bounty_repo.get_active_by_guild_and_division = AsyncMock(return_value=[bounty])
+    service.player_repo.get_by_id.return_value = player
+    service.bounty_repo.get_active_by_guild_and_division.return_value = [bounty]
 
     result = await service.check_bounty(
         mock_db, player_id=1, system_name="Nonexistent", guild_id=1
@@ -849,13 +858,14 @@ async def test_check_bounty_not_found(service, mock_db):
 
 
 @pytest.mark.asyncio
-async def test_check_bounty_already_checked(service, mock_db):
+async def test_check_bounty_already_checked(check_bounty_setup):
     """Returns ALREADY_CHECKED when system was already checked by another player."""
+    service, mock_db = check_bounty_setup
     player = _make_player(player_id=1)
     # Beta already checked by player 42
     bounty = _make_active_bounty(checked={"Alpha": -1, "Beta": 42, "Gamma": -1, "Sol": -1, "Omega": -1})
-    service.player_repo.get_by_id = AsyncMock(return_value=player)
-    service.bounty_repo.get_active_by_guild_and_division = AsyncMock(return_value=[bounty])
+    service.player_repo.get_by_id.return_value = player
+    service.bounty_repo.get_active_by_guild_and_division.return_value = [bounty]
 
     result = await service.check_bounty(mock_db, player_id=1, system_name="Beta", guild_id=1)
 
@@ -865,15 +875,14 @@ async def test_check_bounty_already_checked(service, mock_db):
 
 
 @pytest.mark.asyncio
-async def test_check_bounty_incorrect(service, mock_db):
+async def test_check_bounty_incorrect(check_bounty_setup):
     """Returns INCORRECT when system is in route but not the answer."""
+    service, mock_db = check_bounty_setup
     player = _make_player()
     bounty = _make_active_bounty(route=["Alpha", "Beta", "Gamma", "Sol", "Omega"], answer="Sol")
-    service.player_repo.get_by_id = AsyncMock(return_value=player)
-    service.bounty_repo.get_active_by_guild_and_division = AsyncMock(return_value=[bounty])
-    service.bounty_repo.update = AsyncMock(return_value=bounty)
-    mock_db.commit = AsyncMock()
-    mock_db.refresh = AsyncMock()
+    service.player_repo.get_by_id.return_value = player
+    service.bounty_repo.get_active_by_guild_and_division.return_value = [bounty]
+    service.bounty_repo.update.return_value = bounty
 
     result = await service.check_bounty(mock_db, player_id=1, system_name="Alpha", guild_id=1)
 
@@ -883,36 +892,41 @@ async def test_check_bounty_incorrect(service, mock_db):
 
 
 @pytest.mark.asyncio
-async def test_check_bounty_correct(service, mock_db):
-    """Returns CORRECT when system matches the bounty answer."""
-    player = _make_player()
+async def test_check_bounty_correct(check_bounty_setup):
+    """Returns CORRECT when system matches the bounty answer (classic mode → auto-win)."""
+    from services.bounty_service import RewardInfo
+
+    service, mock_db = check_bounty_setup
+    player = _make_player(classic_mode=True)  # auto-win, no combat
     bounty = _make_active_bounty(answer="Sol")
-    service.player_repo.get_by_id = AsyncMock(return_value=player)
-    service.bounty_repo.get_active_by_guild_and_division = AsyncMock(return_value=[bounty])
-    service.bounty_repo.update = AsyncMock(return_value=bounty)
-    mock_db.commit = AsyncMock()
-    mock_db.refresh = AsyncMock()
+    bounty.criminal_ship = {}
+    service.player_repo.get_by_id.return_value = player
+    service.bounty_repo.get_active_by_guild_and_division.return_value = [bounty]
+    service.bounty_repo.update.return_value = bounty
+    service.calc_rewards = AsyncMock(
+        return_value=[RewardInfo(player_id=1, credits_earned=1000, xp_earned=50, is_winner=True)]
+    )
+    service.distribute_rewards = AsyncMock(return_value=[])
 
     result = await service.check_bounty(mock_db, player_id=1, system_name="Sol", guild_id=1)
 
     assert result.result == CheckResult.CORRECT
     assert result.bounty_id == bounty.id
-    assert "Found" in result.message
     assert bounty.criminal_name in result.message
+    assert result.combat_won is True
 
 
 @pytest.mark.asyncio
-async def test_check_bounty_applies_cooldown(service, mock_db):
+async def test_check_bounty_applies_cooldown(check_bounty_setup):
     """After a valid check, player.bounty_cooldown_end is set to a future time."""
     from datetime import UTC, datetime
 
+    service, mock_db = check_bounty_setup
     player = _make_player()
     bounty = _make_active_bounty()
-    service.player_repo.get_by_id = AsyncMock(return_value=player)
-    service.bounty_repo.get_active_by_guild_and_division = AsyncMock(return_value=[bounty])
-    service.bounty_repo.update = AsyncMock(return_value=bounty)
-    mock_db.commit = AsyncMock()
-    mock_db.refresh = AsyncMock()
+    service.player_repo.get_by_id.return_value = player
+    service.bounty_repo.get_active_by_guild_and_division.return_value = [bounty]
+    service.bounty_repo.update.return_value = bounty
 
     before = datetime.now(UTC)
     await service.check_bounty(mock_db, player_id=1, system_name="Alpha", guild_id=1)
@@ -922,15 +936,14 @@ async def test_check_bounty_applies_cooldown(service, mock_db):
 
 
 @pytest.mark.asyncio
-async def test_check_bounty_updates_checked_dict(service, mock_db):
+async def test_check_bounty_updates_checked_dict(check_bounty_setup):
     """After a valid check, bounty.checked is updated with the player's ID."""
+    service, mock_db = check_bounty_setup
     player = _make_player(player_id=7)
     bounty = _make_active_bounty()
-    service.player_repo.get_by_id = AsyncMock(return_value=player)
-    service.bounty_repo.get_active_by_guild_and_division = AsyncMock(return_value=[bounty])
-    service.bounty_repo.update = AsyncMock(return_value=bounty)
-    mock_db.commit = AsyncMock()
-    mock_db.refresh = AsyncMock()
+    service.player_repo.get_by_id.return_value = player
+    service.bounty_repo.get_active_by_guild_and_division.return_value = [bounty]
+    service.bounty_repo.update.return_value = bounty
 
     await service.check_bounty(mock_db, player_id=7, system_name="Alpha", guild_id=1)
 
@@ -938,8 +951,9 @@ async def test_check_bounty_updates_checked_dict(service, mock_db):
 
 
 @pytest.mark.asyncio
-async def test_check_bounty_proximity_hint(service, mock_db):
+async def test_check_bounty_proximity_hint(check_bounty_setup):
     """Returns proximity_hint=True when player checks within CLOSE_BOUNTY_THRESHOLD."""
+    service, mock_db = check_bounty_setup
     player = _make_player()
     # route: Alpha(0) Beta(1) Gamma(2) Sol(3) Omega(4)
     # answer = Sol (idx 3); check Gamma (idx 2) → distance = 3 - 2 = 1 → hint
@@ -947,11 +961,9 @@ async def test_check_bounty_proximity_hint(service, mock_db):
         route=["Alpha", "Beta", "Gamma", "Sol", "Omega"],
         answer="Sol",
     )
-    service.player_repo.get_by_id = AsyncMock(return_value=player)
-    service.bounty_repo.get_active_by_guild_and_division = AsyncMock(return_value=[bounty])
-    service.bounty_repo.update = AsyncMock(return_value=bounty)
-    mock_db.commit = AsyncMock()
-    mock_db.refresh = AsyncMock()
+    service.player_repo.get_by_id.return_value = player
+    service.bounty_repo.get_active_by_guild_and_division.return_value = [bounty]
+    service.bounty_repo.update.return_value = bounty
 
     result = await service.check_bounty(mock_db, player_id=1, system_name="Gamma", guild_id=1)
 
@@ -976,8 +988,6 @@ async def test_check_bounty_no_proximity_hint_far(service, mock_db):
     service.player_repo.get_by_id = AsyncMock(return_value=player)
     service.bounty_repo.get_active_by_guild_and_division = AsyncMock(return_value=[bounty])
     service.bounty_repo.update = AsyncMock(return_value=bounty)
-    mock_db.commit = AsyncMock()
-    mock_db.refresh = AsyncMock()
 
     result = await service.check_bounty(mock_db, player_id=1, system_name="A", guild_id=1)
 
@@ -994,8 +1004,6 @@ async def test_check_bounty_classic_mode_uses_bronze(service, mock_db):
     service.player_repo.get_by_id = AsyncMock(return_value=player)
     service.bounty_repo.get_active_by_guild_and_division = AsyncMock(return_value=[bounty])
     service.bounty_repo.update = AsyncMock(return_value=bounty)
-    mock_db.commit = AsyncMock()
-    mock_db.refresh = AsyncMock()
 
     await service.check_bounty(mock_db, player_id=1, system_name="Alpha", guild_id=1)
 
@@ -1003,6 +1011,244 @@ async def test_check_bounty_classic_mode_uses_bronze(service, mock_db):
     service.bounty_repo.get_active_by_guild_and_division.assert_called_once_with(
         mock_db, 1, "bronze"
     )
+
+
+# ===========================================================================
+# Tests: check_bounty — combat integration
+# ===========================================================================
+
+
+@pytest.fixture
+def combat_integration_setup(service, mock_db):
+    """Pre-configure common mocks for check_bounty combat integration tests.
+
+    Returns (service, mock_db) with player_repo, bounty_repo methods, and
+    combat_service pre-configured. Tests set .return_value on each.
+    """
+    service.player_repo.get_by_id = AsyncMock()
+    service.bounty_repo.get_active_by_guild_and_division = AsyncMock()
+    service.bounty_repo.update = AsyncMock()
+    service.combat_service = MagicMock()
+    return service, mock_db
+
+
+@pytest.mark.asyncio
+async def test_check_bounty_correct_classic_mode_auto_win(combat_integration_setup):
+    """Classic mode players auto-win without combat; rewards are distributed."""
+    from services.bounty_service import RewardInfo
+
+    service, mock_db = combat_integration_setup
+    player = _make_player(classic_mode=True)
+    bounty = _make_active_bounty(answer="Sol")
+    bounty.criminal_ship = {}
+    service.player_repo.get_by_id.return_value = player
+    service.bounty_repo.get_active_by_guild_and_division.return_value = [bounty]
+    service.bounty_repo.update.return_value = bounty
+    service.calc_rewards = AsyncMock(
+        return_value=[RewardInfo(player_id=1, credits_earned=500, xp_earned=25, is_winner=True)]
+    )
+    service.distribute_rewards = AsyncMock(return_value=[])
+
+    result = await service.check_bounty(mock_db, player_id=1, system_name="Sol", guild_id=1)
+
+    assert result.result == CheckResult.CORRECT
+    assert result.combat_won is True
+    assert "Defeated" in result.message
+    service.calc_rewards.assert_called_once()
+    service.distribute_rewards.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_check_bounty_correct_no_ship_auto_win(combat_integration_setup):
+    """Player with no active ship auto-wins without combat."""
+    from services.bounty_service import RewardInfo
+
+    service, mock_db = combat_integration_setup
+    player = _make_player(active_ship=None, classic_mode=False)
+    bounty = _make_active_bounty(answer="Sol")
+    bounty.criminal_ship = {}
+    service.player_repo.get_by_id.return_value = player
+    service.bounty_repo.get_active_by_guild_and_division.return_value = [bounty]
+    service.bounty_repo.update.return_value = bounty
+    service.calc_rewards = AsyncMock(
+        return_value=[RewardInfo(player_id=1, credits_earned=500, xp_earned=25, is_winner=True)]
+    )
+    service.distribute_rewards = AsyncMock(return_value=[])
+
+    result = await service.check_bounty(mock_db, player_id=1, system_name="Sol", guild_id=1)
+
+    assert result.result == CheckResult.CORRECT
+    assert result.combat_won is True
+    assert "Defeated" in result.message
+    service.calc_rewards.assert_called_once()
+    service.distribute_rewards.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_check_bounty_correct_player_wins_combat(combat_integration_setup):
+    """Player with ship wins combat → rewards distributed."""
+    from services.bounty_service import RewardInfo
+
+    service, mock_db = combat_integration_setup
+    active_ship = SimpleNamespace(ship_name="Betty", armour=100)
+    player = _make_player(active_ship=active_ship, classic_mode=False)
+    bounty = _make_active_bounty(answer="Sol")
+    bounty.criminal_ship = {"ship_name": "Raider", "ship_armour": 80, "weapons": [], "turrets": []}
+
+    mock_fight = SimpleNamespace(winner_name="Betty", loser_name="Raider", is_stalemate=False)
+    service.combat_service.fight_ships.return_value = mock_fight
+
+    service.player_repo.get_by_id.return_value = player
+    service.bounty_repo.get_active_by_guild_and_division.return_value = [bounty]
+    service.bounty_repo.update.return_value = bounty
+    service.calc_rewards = AsyncMock(
+        return_value=[RewardInfo(player_id=1, credits_earned=800, xp_earned=40, is_winner=True)]
+    )
+    service.distribute_rewards = AsyncMock(return_value=[])
+
+    result = await service.check_bounty(mock_db, player_id=1, system_name="Sol", guild_id=1)
+
+    assert result.result == CheckResult.CORRECT
+    assert result.combat_won is True
+    assert "Defeated" in result.message
+    service.calc_rewards.assert_called_once()
+    service.distribute_rewards.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_check_bounty_correct_player_loses_combat(combat_integration_setup):
+    """Player loses combat → bounty escapes, escape_bounty called."""
+    service, mock_db = combat_integration_setup
+    active_ship = SimpleNamespace(ship_name="Betty", armour=50)
+    player = _make_player(active_ship=active_ship, classic_mode=False)
+    bounty = _make_active_bounty(answer="Sol")
+    bounty.criminal_ship = {
+        "ship_name": "Dreadnought",
+        "ship_armour": 500,
+        "weapons": [{"name": "Cannon", "dps": 99}],
+        "turrets": [],
+    }
+
+    mock_fight = SimpleNamespace(winner_name="Dreadnought", loser_name="Betty", is_stalemate=False)
+    service.combat_service.fight_ships.return_value = mock_fight
+
+    service.player_repo.get_by_id.return_value = player
+    service.bounty_repo.get_active_by_guild_and_division.return_value = [bounty]
+    service.bounty_repo.update.return_value = bounty
+    service.escape_bounty = AsyncMock(return_value=(bounty, 5))
+
+    result = await service.check_bounty(mock_db, player_id=1, system_name="Sol", guild_id=1)
+
+    assert result.result == CheckResult.CORRECT
+    assert result.combat_won is False
+    assert "escaped" in result.message
+    service.escape_bounty.assert_called_once_with(mock_db, bounty.id)
+
+
+@pytest.mark.asyncio
+async def test_check_bounty_correct_stalemate_counts_as_win(combat_integration_setup):
+    """Stalemate result counts as player win (legacy behavior)."""
+    from services.bounty_service import RewardInfo
+
+    service, mock_db = combat_integration_setup
+    active_ship = SimpleNamespace(ship_name="Betty", armour=100)
+    player = _make_player(active_ship=active_ship, classic_mode=False)
+    bounty = _make_active_bounty(answer="Sol")
+    bounty.criminal_ship = {"ship_name": "Raider", "ship_armour": 100, "weapons": [], "turrets": []}
+
+    mock_fight = SimpleNamespace(winner_name=None, loser_name=None, is_stalemate=True)
+    service.combat_service.fight_ships.return_value = mock_fight
+
+    service.player_repo.get_by_id.return_value = player
+    service.bounty_repo.get_active_by_guild_and_division.return_value = [bounty]
+    service.bounty_repo.update.return_value = bounty
+    service.calc_rewards = AsyncMock(
+        return_value=[RewardInfo(player_id=1, credits_earned=600, xp_earned=30, is_winner=True)]
+    )
+    service.distribute_rewards = AsyncMock(return_value=[])
+
+    result = await service.check_bounty(mock_db, player_id=1, system_name="Sol", guild_id=1)
+
+    assert result.result == CheckResult.CORRECT
+    assert result.combat_won is True
+    assert "Defeated" in result.message
+
+
+@pytest.mark.asyncio
+async def test_check_bounty_correct_no_criminal_ship_data(combat_integration_setup):
+    """Graceful handling when criminal_ship is None (empty loadout used)."""
+    from services.bounty_service import RewardInfo
+
+    service, mock_db = combat_integration_setup
+    active_ship = SimpleNamespace(ship_name="Betty", armour=100)
+    player = _make_player(active_ship=active_ship, classic_mode=False)
+    bounty = _make_active_bounty(answer="Sol")
+    bounty.criminal_ship = None  # no ship data
+
+    # With both sides having 0 DPS, result is a stalemate → player wins
+    service.player_repo.get_by_id.return_value = player
+    service.bounty_repo.get_active_by_guild_and_division.return_value = [bounty]
+    service.bounty_repo.update.return_value = bounty
+    service.calc_rewards = AsyncMock(
+        return_value=[RewardInfo(player_id=1, credits_earned=500, xp_earned=25, is_winner=True)]
+    )
+    service.distribute_rewards = AsyncMock(return_value=[])
+    service.escape_bounty = AsyncMock(return_value=(bounty, 5))
+
+    # Should not raise — graceful handling of None criminal_ship
+    result = await service.check_bounty(mock_db, player_id=1, system_name="Sol", guild_id=1)
+
+    assert result.result == CheckResult.CORRECT
+    # Either wins or loses — no crash is the key test
+    assert result.combat_won in (True, False)
+
+
+@pytest.mark.asyncio
+async def test_check_bounty_correct_combat_with_full_criminal_loadout(combat_integration_setup):
+    """Criminal with weapons and turrets builds a correct loadout for combat."""
+    from services.bounty_service import RewardInfo
+
+    service, mock_db = combat_integration_setup
+    active_ship = SimpleNamespace(ship_name="Falcon", armour=200)
+    player = _make_player(active_ship=active_ship, classic_mode=False)
+    bounty = _make_active_bounty(answer="Sol")
+    bounty.criminal_ship = {
+        "ship_name": "Bandit",
+        "ship_armour": 150,
+        "weapons": [{"name": "Blaster MK I", "dps": 15.0}, {"name": "Laser MK I", "dps": 10.0}],
+        "turrets": [{"name": "Turret MK I", "dps": 5.0}],
+    }
+
+    # Capture loadouts passed to fight_ships
+    captured_loadouts = {}
+
+    def capture_fight(p_loadout, c_loadout, **kwargs):
+        captured_loadouts["player"] = p_loadout
+        captured_loadouts["criminal"] = c_loadout
+        return SimpleNamespace(winner_name="Falcon", loser_name="Bandit", is_stalemate=False)
+
+    service.combat_service.fight_ships.side_effect = capture_fight
+
+    service.player_repo.get_by_id.return_value = player
+    service.bounty_repo.get_active_by_guild_and_division.return_value = [bounty]
+    service.bounty_repo.update.return_value = bounty
+    service.calc_rewards = AsyncMock(
+        return_value=[RewardInfo(player_id=1, credits_earned=1200, xp_earned=60, is_winner=True)]
+    )
+    service.distribute_rewards = AsyncMock(return_value=[])
+
+    result = await service.check_bounty(mock_db, player_id=1, system_name="Sol", guild_id=1)
+
+    assert result.result == CheckResult.CORRECT
+    assert result.combat_won is True
+    # Verify criminal loadout was built correctly from JSONB data
+    criminal_lo = captured_loadouts["criminal"]
+    assert criminal_lo.ship_name == "Bandit"
+    assert criminal_lo.base_armour == 150
+    assert len(criminal_lo.weapons) == 2
+    assert len(criminal_lo.turrets) == 1
+    assert criminal_lo.weapons[0].dps == 15.0
+    assert criminal_lo.turrets[0].name == "Turret MK I"
 
 
 # ===========================================================================
@@ -1194,8 +1440,6 @@ async def test_distribute_rewards_updates_credits(service, mock_db):
 
     service.player_repo.get_by_id = AsyncMock(return_value=player)
     service.bounty_repo.update = AsyncMock()
-    mock_db.commit = AsyncMock()
-    mock_db.refresh = AsyncMock()
 
     await service.distribute_rewards(mock_db, bounty, [reward])
 
@@ -1215,8 +1459,6 @@ async def test_distribute_rewards_updates_xp(service, mock_db):
 
     service.player_repo.get_by_id = AsyncMock(return_value=player)
     service.bounty_repo.update = AsyncMock()
-    mock_db.commit = AsyncMock()
-    mock_db.refresh = AsyncMock()
 
     await service.distribute_rewards(mock_db, bounty, [reward])
 
@@ -1235,8 +1477,6 @@ async def test_distribute_rewards_classic_mode_no_xp(service, mock_db):
 
     service.player_repo.get_by_id = AsyncMock(return_value=player)
     service.bounty_repo.update = AsyncMock()
-    mock_db.commit = AsyncMock()
-    mock_db.refresh = AsyncMock()
 
     await service.distribute_rewards(mock_db, bounty, [reward])
 
@@ -1256,8 +1496,6 @@ async def test_distribute_rewards_increments_bounty_wins(service, mock_db):
 
     service.player_repo.get_by_id = AsyncMock(return_value=player)
     service.bounty_repo.update = AsyncMock()
-    mock_db.commit = AsyncMock()
-    mock_db.refresh = AsyncMock()
 
     await service.distribute_rewards(mock_db, bounty, [reward])
 
@@ -1293,8 +1531,6 @@ async def test_distribute_rewards_increments_systems_checked(service, mock_db):
 
     service.player_repo.get_by_id = AsyncMock(side_effect=[player1, player2])
     service.bounty_repo.update = AsyncMock()
-    mock_db.commit = AsyncMock()
-    mock_db.refresh = AsyncMock()
 
     await service.distribute_rewards(mock_db, bounty, rewards)
 
@@ -1320,8 +1556,6 @@ async def test_distribute_rewards_detects_level_up(service, mock_db):
 
     service.player_repo.get_by_id = AsyncMock(return_value=player)
     service.bounty_repo.update = AsyncMock()
-    mock_db.commit = AsyncMock()
-    mock_db.refresh = AsyncMock()
 
     updated = await service.distribute_rewards(mock_db, bounty, [reward])
 
@@ -1342,8 +1576,6 @@ async def test_distribute_rewards_marks_bounty_completed(service, mock_db):
 
     service.player_repo.get_by_id = AsyncMock(return_value=player)
     service.bounty_repo.update = AsyncMock()
-    mock_db.commit = AsyncMock()
-    mock_db.refresh = AsyncMock()
 
     await service.distribute_rewards(mock_db, bounty, [reward])
 
@@ -1368,8 +1600,6 @@ async def test_distribute_rewards_sets_win_user_id(service, mock_db):
 
     service.player_repo.get_by_id = AsyncMock(side_effect=[player1, player2])
     service.bounty_repo.update = AsyncMock()
-    mock_db.commit = AsyncMock()
-    mock_db.refresh = AsyncMock()
 
     await service.distribute_rewards(mock_db, bounty, rewards)
 

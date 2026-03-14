@@ -511,21 +511,34 @@ class TestPrestigePlayer:
     """Tests for PlayerService.prestige_player."""
 
     @pytest.mark.asyncio
-    async def test_prestige_resets_tier_and_xp(self, service, mock_db, mock_player_repo):
-        """Platinum player is reset to Bronze tier with XP 0 and prestige_count incremented."""
-        player = _make_player(tier="Platinum", xp=20000, prestige_count=0)
-        player.tier = "Platinum"
-        player.xp = 20000
+    async def test_prestige_resets_tier_xp_surplus_and_credits(self, service, mock_db, mock_player_repo):
+        """Level-10 player is fully reset: tier=Bronze, xp=0, xp_surplus=0, credits=0, prestige_count incremented."""
+        player = _make_player(xp=1_000_000, credits=5000, prestige_count=0)
+        player.xp = 1_000_000
+        player.xp_surplus = 500
+        player.credits = 5000
         player.prestige_count = 0
         mock_player_repo.get_by_id.return_value = player
 
-        await service.prestige_player(mock_db, player_id=1)
+        with patch(
+            "persist.repositories.inventory_repository.InventoryRepository.clear_player_inventory",
+            new_callable=AsyncMock,
+            return_value=0,
+        ):
+            result = await service.prestige_player(mock_db, player_id=1)
 
         assert player.tier == "Bronze"
         assert player.xp == 0
+        assert player.xp_surplus == 0
+        assert player.credits == 0
         assert player.prestige_count == 1
         mock_db.commit.assert_awaited_once()
         mock_db.refresh.assert_awaited_once_with(player)
+        # Verify return dict structure
+        assert result["player_id"] == 1
+        assert result["prestige_count"] == 1
+        assert result["level_before"] == 10
+        assert isinstance(result["division_before"], str)
 
     @pytest.mark.asyncio
     async def test_raises_when_player_not_found(self, service, mock_db, mock_player_repo):
@@ -536,26 +549,86 @@ class TestPrestigePlayer:
             await service.prestige_player(mock_db, player_id=5)
 
     @pytest.mark.asyncio
-    async def test_raises_when_player_not_platinum(self, service, mock_db, mock_player_repo):
-        """ValueError raised when player is not Platinum tier."""
-        player = _make_player(tier="Gold")
-        player.tier = "Gold"
+    async def test_raises_when_player_below_level_10(self, service, mock_db, mock_player_repo):
+        """ValueError raised when player is below level 10."""
+        player = _make_player(xp=500)  # level 0
+        player.xp = 500
         mock_player_repo.get_by_id.return_value = player
 
-        with pytest.raises(ValueError, match="must be Platinum"):
+        with pytest.raises(ValueError, match="must be level 10"):
+            await service.prestige_player(mock_db, player_id=1)
+
+    @pytest.mark.asyncio
+    async def test_error_message_includes_current_level(self, service, mock_db, mock_player_repo):
+        """ValueError message includes the player's current level."""
+        player = _make_player(xp=18000)  # level 6
+        player.xp = 18000
+        mock_player_repo.get_by_id.return_value = player
+
+        with pytest.raises(ValueError, match="current level: 6"):
             await service.prestige_player(mock_db, player_id=1)
 
     @pytest.mark.asyncio
     async def test_increments_prestige_count_correctly(self, service, mock_db, mock_player_repo):
         """prestige_count increments from existing value."""
-        player = _make_player(tier="Platinum", prestige_count=3)
-        player.tier = "Platinum"
+        player = _make_player(xp=1_000_000, prestige_count=3)
+        player.xp = 1_000_000
+        player.xp_surplus = 0
+        player.credits = 100
         player.prestige_count = 3
         mock_player_repo.get_by_id.return_value = player
 
-        await service.prestige_player(mock_db, player_id=1)
+        with patch(
+            "persist.repositories.inventory_repository.InventoryRepository.clear_player_inventory",
+            new_callable=AsyncMock,
+            return_value=0,
+        ):
+            result = await service.prestige_player(mock_db, player_id=1)
 
         assert player.prestige_count == 4
+        assert result["prestige_count"] == 4
+
+    @pytest.mark.asyncio
+    async def test_prestige_preserves_lifetime_credits(self, service, mock_db, mock_player_repo):
+        """lifetime_credits is NOT reset during prestige."""
+        player = _make_player(xp=1_000_000, credits=1000, lifetime_credits=99999)
+        player.xp = 1_000_000
+        player.xp_surplus = 0
+        player.credits = 1000
+        player.lifetime_credits = 99999
+        player.prestige_count = 0
+        mock_player_repo.get_by_id.return_value = player
+
+        with patch(
+            "persist.repositories.inventory_repository.InventoryRepository.clear_player_inventory",
+            new_callable=AsyncMock,
+            return_value=0,
+        ):
+            await service.prestige_player(mock_db, player_id=1)
+
+        # lifetime_credits must NOT be reset
+        assert player.lifetime_credits == 99999
+
+    @pytest.mark.asyncio
+    async def test_prestige_returns_level_and_division_before(self, service, mock_db, mock_player_repo):
+        """Return dict contains level_before and division_before reflecting pre-prestige state."""
+        player = _make_player(xp=1_000_000)
+        player.xp = 1_000_000
+        player.xp_surplus = 0
+        player.credits = 0
+        player.prestige_count = 0
+        mock_player_repo.get_by_id.return_value = player
+
+        with patch(
+            "persist.repositories.inventory_repository.InventoryRepository.clear_player_inventory",
+            new_callable=AsyncMock,
+            return_value=0,
+        ):
+            result = await service.prestige_player(mock_db, player_id=1)
+
+        assert result["level_before"] == 10
+        assert "division_before" in result
+        assert isinstance(result["division_before"], str)
 
 
 # ===========================================================================
@@ -771,3 +844,279 @@ class TestCreateStarterLoadout:
             "persist.repositories.inventory_repository": inv_mod,
         }), pytest.raises(RuntimeError, match="ship create failed"):
             await service._create_starter_loadout(mock_db, player)
+
+
+# ---------------------------------------------------------------------------
+# TestTransferCredits
+# ---------------------------------------------------------------------------
+
+
+class TestTransferCredits:
+    """Tests for PlayerService.transfer_credits()."""
+
+    @pytest.mark.asyncio
+    async def test_valid_transfer_returns_correct_dict(self, service, mock_db):
+        """Happy path: transfers credits and returns correct result dict."""
+        source = _make_player(player_id=1, credits=500)
+        target = _make_player(player_id=2, credits=100)
+
+        service.player_repo.get_by_id = AsyncMock(side_effect=[source, target])
+        service.player_repo.update_credits = AsyncMock()
+
+        result = await service.transfer_credits(mock_db, 1, 2, 200)
+
+        assert result["source_player_id"] == 1
+        assert result["target_player_id"] == 2
+        assert result["amount"] == 200
+        assert result["source_remaining_credits"] == 300
+        assert result["target_new_credits"] == 300
+
+    @pytest.mark.asyncio
+    async def test_valid_transfer_calls_update_credits_twice(self, service, mock_db):
+        """Verify update_credits is called for both source and target."""
+        source = _make_player(player_id=1, credits=500)
+        target = _make_player(player_id=2, credits=100)
+
+        service.player_repo.get_by_id = AsyncMock(side_effect=[source, target])
+        service.player_repo.update_credits = AsyncMock()
+
+        await service.transfer_credits(mock_db, 1, 2, 200)
+
+        assert service.player_repo.update_credits.call_count == 2
+        service.player_repo.update_credits.assert_any_call(mock_db, 1, 300)
+        service.player_repo.update_credits.assert_any_call(mock_db, 2, 300)
+
+    @pytest.mark.asyncio
+    async def test_minimum_amount_one_credit_succeeds(self, service, mock_db):
+        """Edge case: amount=1 is the minimum valid transfer."""
+        source = _make_player(player_id=1, credits=50)
+        target = _make_player(player_id=2, credits=10)
+
+        service.player_repo.get_by_id = AsyncMock(side_effect=[source, target])
+        service.player_repo.update_credits = AsyncMock()
+
+        result = await service.transfer_credits(mock_db, 1, 2, 1)
+
+        assert result["amount"] == 1
+        assert result["source_remaining_credits"] == 49
+        assert result["target_new_credits"] == 11
+
+    @pytest.mark.asyncio
+    async def test_zero_amount_raises_value_error(self, service, mock_db):
+        """Validation: amount=0 must raise ValueError."""
+        with pytest.raises(ValueError, match="at least 1 credit"):
+            await service.transfer_credits(mock_db, 1, 2, 0)
+
+    @pytest.mark.asyncio
+    async def test_negative_amount_raises_value_error(self, service, mock_db):
+        """Validation: negative amount must raise ValueError."""
+        with pytest.raises(ValueError, match="at least 1 credit"):
+            await service.transfer_credits(mock_db, 1, 2, -10)
+
+    @pytest.mark.asyncio
+    async def test_self_transfer_raises_value_error(self, service, mock_db):
+        """Validation: source == target must raise ValueError."""
+        with pytest.raises(ValueError, match="Cannot transfer credits to yourself"):
+            await service.transfer_credits(mock_db, 5, 5, 100)
+
+    @pytest.mark.asyncio
+    async def test_insufficient_credits_raises_value_error(self, service, mock_db):
+        """Validation: source has fewer credits than amount raises ValueError."""
+        source = _make_player(player_id=1, credits=50)
+        target = _make_player(player_id=2, credits=100)
+
+        service.player_repo.get_by_id = AsyncMock(side_effect=[source, target])
+
+        with pytest.raises(ValueError, match="Insufficient credits"):
+            await service.transfer_credits(mock_db, 1, 2, 100)
+
+    @pytest.mark.asyncio
+    async def test_source_not_found_raises_value_error(self, service, mock_db):
+        """Validation: source player does not exist raises ValueError."""
+        service.player_repo.get_by_id = AsyncMock(return_value=None)
+
+        with pytest.raises(ValueError, match="Source player 99 not found"):
+            await service.transfer_credits(mock_db, 99, 2, 50)
+
+    @pytest.mark.asyncio
+    async def test_target_not_found_raises_value_error(self, service, mock_db):
+        """Validation: target player does not exist raises ValueError."""
+        source = _make_player(player_id=1, credits=200)
+
+        service.player_repo.get_by_id = AsyncMock(side_effect=[source, None])
+
+        with pytest.raises(ValueError, match="Target player 88 not found"):
+            await service.transfer_credits(mock_db, 1, 88, 50)
+
+
+# ===========================================================================
+# Tests: get_level (pure logic, 0 mocks)
+# ===========================================================================
+
+
+class TestGetLevel:
+    """Tests for PlayerService.get_level — pure static logic, no mocks required."""
+
+    def test_xp_zero_is_level_1(self):
+        """XP = 0 should map to level 1."""
+        assert PlayerService.get_level(0) == 1
+
+    def test_xp_1050_is_level_2(self):
+        """XP = 1050 is exactly at the level-2 boundary."""
+        assert PlayerService.get_level(1050) == 2
+
+    def test_xp_3499_is_level_3(self):
+        """XP = 3499 is just below the level-4 boundary (3500)."""
+        assert PlayerService.get_level(3499) == 3
+
+    def test_xp_3500_is_level_4(self):
+        """XP = 3500 is exactly at the level-4 boundary."""
+        assert PlayerService.get_level(3500) == 4
+
+    def test_xp_90000_is_level_9_or_10(self):
+        """XP = 90000 is exactly at the level-9 boundary so returns level 9."""
+        level = PlayerService.get_level(90000)
+        assert level in (9, 10)
+
+    def test_xp_negative_is_level_0(self):
+        """Negative XP (-5) should yield level 0."""
+        assert PlayerService.get_level(-5) == 0
+
+    def test_xp_max_is_level_10(self):
+        """XP = 1_000_000 (top boundary) should yield level 10."""
+        assert PlayerService.get_level(1_000_000) == 10
+
+
+# ===========================================================================
+# Tests: check_level_up (pure logic, 0 mocks)
+# ===========================================================================
+
+
+class TestCheckLevelUp:
+    """Tests for PlayerService.check_level_up — pure static logic, no mocks required."""
+
+    def test_xp_500_to_1500_level_1_to_2_no_division_change(self):
+        """XP 500 → 1500: level 1 → 2, both in bronze — no division change."""
+        result = PlayerService.check_level_up(500, 1500)
+
+        assert result["level_before"] == 1
+        assert result["level_after"] == 2
+        assert result["leveled_up"] is True
+        assert result["division_before"] == "bronze"
+        assert result["division_after"] == "bronze"
+        assert result["division_changed"] is False
+
+    def test_xp_3000_to_4000_level_3_to_4_bronze_to_silver(self):
+        """XP 3000 → 4000: level 3 → 4, bronze → silver — division changes."""
+        result = PlayerService.check_level_up(3000, 4000)
+
+        assert result["level_before"] == 3
+        assert result["level_after"] == 4
+        assert result["leveled_up"] is True
+        assert result["division_before"] == "bronze"
+        assert result["division_after"] == "silver"
+        assert result["division_changed"] is True
+
+    def test_xp_3000_to_3200_no_level_change(self):
+        """XP 3000 → 3200: same level — no level-up, no division change."""
+        result = PlayerService.check_level_up(3000, 3200)
+
+        assert result["level_before"] == 3
+        assert result["level_after"] == 3
+        assert result["leveled_up"] is False
+        assert result["division_before"] == "bronze"
+        assert result["division_after"] == "bronze"
+        assert result["division_changed"] is False
+
+    def test_xp_70000_to_91000_silver_to_gold(self):
+        """XP 70000 → 91000: level 7 → 9, silver → gold — division changes.
+
+        DIVISION_BOUNDARIES = [(0,3),(4,7),(8,10)] so level 7 is silver,
+        level 9 is gold (boundary 90000 at index 9, first > 91000 is 1000000 at i=10,
+        returns level 9).
+        """
+        result = PlayerService.check_level_up(70000, 91000)
+
+        # XP 70000 → level 7 (first boundary > 70000 is 71000 at index 8, so i-1=7)
+        assert result["level_before"] == 7
+        # XP 91000 → level 9 (first boundary > 91000 is 1000000 at index 10, so i-1=9)
+        assert result["level_after"] == 9
+        assert result["leveled_up"] is True
+        # Level 7 is silver (4-7), level 9 is gold (8-10)
+        assert result["division_before"] == "silver"
+        assert result["division_after"] == "gold"
+        assert result["division_changed"] is True
+
+
+# ===========================================================================
+# Tests: add_xp (async, ≤2 mocks)
+# ===========================================================================
+
+
+class TestAddXp:
+    """Tests for PlayerService.add_xp — async, uses mock for player_repo."""
+
+    @pytest.mark.asyncio
+    async def test_add_xp_no_level_up(self, service, mock_db):
+        """Adding XP that does not cross a level boundary — no level-up."""
+        player = _make_player(player_id=1, xp=500)
+        player.xp_surplus = 0
+        service.player_repo.get_by_id = AsyncMock(return_value=player)
+
+        result = await service.add_xp(mock_db, player_id=1, xp_amount=200)
+
+        assert result["player_id"] == 1
+        assert result["xp_added"] == 200
+        assert result["level_before"] == 1
+        assert result["level_after"] == 1
+        assert result["leveled_up"] is False
+        assert result["division_before"] == "bronze"
+        assert result["division_after"] == "bronze"
+        assert result["division_changed"] is False
+        mock_db.commit.assert_awaited_once()
+        mock_db.refresh.assert_awaited_once_with(player)
+
+    @pytest.mark.asyncio
+    async def test_add_xp_causes_level_up_and_sets_surplus(self, service, mock_db):
+        """Adding XP that crosses a level boundary sets xp_surplus correctly."""
+        # Player starts at 900 XP (level 1), adding 200 pushes to 1100 (level 2)
+        # Level 2 boundary = 1050, so surplus = 1100 - 1050 = 50
+        player = _make_player(player_id=2, xp=900)
+        player.xp_surplus = 0
+        service.player_repo.get_by_id = AsyncMock(return_value=player)
+
+        result = await service.add_xp(mock_db, player_id=2, xp_amount=200)
+
+        assert result["level_before"] == 1
+        assert result["level_after"] == 2
+        assert result["leveled_up"] is True
+        # xp_surplus should have been set to 1100 - 1050 = 50
+        assert player.xp_surplus == 50
+        mock_db.commit.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_add_xp_causes_division_change(self, service, mock_db):
+        """Adding XP that crosses the bronze/silver boundary (level 3→4) triggers division_changed."""
+        # Player at 3400 XP (level 3, bronze), adding 200 → 3600 XP (level 4, silver)
+        player = _make_player(player_id=3, xp=3400)
+        player.xp_surplus = 0
+        service.player_repo.get_by_id = AsyncMock(return_value=player)
+
+        result = await service.add_xp(mock_db, player_id=3, xp_amount=200)
+
+        assert result["level_before"] == 3
+        assert result["level_after"] == 4
+        assert result["leveled_up"] is True
+        assert result["division_before"] == "bronze"
+        assert result["division_after"] == "silver"
+        assert result["division_changed"] is True
+        # xp_surplus = 3600 - 3500 = 100
+        assert player.xp_surplus == 100
+
+    @pytest.mark.asyncio
+    async def test_add_xp_player_not_found_raises(self, service, mock_db):
+        """Raises ValueError when the player does not exist."""
+        service.player_repo.get_by_id = AsyncMock(return_value=None)
+
+        with pytest.raises(ValueError, match="Player 99 not found"):
+            await service.add_xp(mock_db, player_id=99, xp_amount=100)

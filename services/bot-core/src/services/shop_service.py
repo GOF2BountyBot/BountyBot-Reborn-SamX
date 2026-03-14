@@ -13,10 +13,12 @@ from datetime import UTC, datetime
 from typing import Any
 
 from persist.models.guild_shop import GuildShop
+from persist.models.player_ship import PlayerShip
 from persist.repositories.config_repository import ConfigRepository
 from persist.repositories.inventory_repository import InventoryRepository
 from persist.repositories.module_repository import ModuleRepository
 from persist.repositories.player_repository import PlayerRepository
+from persist.repositories.player_ship_repository import PlayerShipRepository
 from persist.repositories.primary_weapon_repository import PrimaryWeaponRepository
 from persist.repositories.secondary_weapon_repository import SecondaryWeaponRepository
 from persist.repositories.ship_repository import ShipRepository
@@ -34,6 +36,7 @@ class ShopService:
         self.player_repo = PlayerRepository()
         self.inventory_repo = InventoryRepository()
         self.ship_repo = ShipRepository()
+        self.player_ship_repo = PlayerShipRepository()
         self.primary_weapon_repo = PrimaryWeaponRepository()
         self.secondary_weapon_repo = SecondaryWeaponRepository()
         self.turret_weapon_repo = TurretWeaponRepository()
@@ -149,6 +152,210 @@ class ShopService:
             flogger.error(f"Error purchasing item {shop_item_id} for player {player_id}: {e}")
             raise
 
+    async def purchase_ship(
+        self,
+        db: AsyncSession,
+        player_id: int,
+        shop_item_id: int,
+        sell_old_ship: bool = False,
+    ) -> dict[str, Any]:
+        """Purchase a ship from the shop with optional trade-in.
+
+        Args:
+            player_id: The purchasing player
+            shop_item_id: The shop item to buy (must be a ship)
+            sell_old_ship: If True, sell old active ship for credit toward purchase
+
+        Returns:
+            Transaction details dict
+        """
+        try:
+            # Validate player exists
+            player = await self.player_repo.get_by_id(db, player_id)
+            if not player:
+                raise ValueError(f"Player {player_id} not found")
+
+            # Validate shop item exists
+            shop_item = await self.shop_repo.get_by_id(db, shop_item_id)
+            if not shop_item:
+                raise ValueError(f"Shop item {shop_item_id} not found")
+
+            # Validate item is a ship
+            if shop_item.item_type != "ship":
+                raise ValueError(
+                    f"Shop item {shop_item_id} is not a ship (type={shop_item.item_type})"
+                )
+
+            # Get static ship data for the new ship (slot limits)
+            new_ship_static = await self.ship_repo.get_by_name(db, shop_item.item_name)
+            if not new_ship_static:
+                raise ValueError(f"Static ship data not found for '{shop_item.item_name}'")
+
+            new_ship_price = shop_item.price
+
+            # Get player's current active ship
+            old_player_ship = await self.player_ship_repo.get_active_ship(db, player_id)
+            old_ship_value = 0
+            old_ship_static = None
+
+            if old_player_ship:
+                old_ship_static = await self.ship_repo.get_by_name(db, old_player_ship.ship_name)
+                if old_ship_static:
+                    old_ship_value = old_ship_static.value
+
+            # Credit check
+            if sell_old_ship and old_player_ship:
+                effective_cost = new_ship_price - old_ship_value
+                if player.credits < effective_cost:
+                    raise ValueError(
+                        f"Insufficient credits. Cost: {new_ship_price}, "
+                        f"Trade-in value: {old_ship_value}, "
+                        f"Net cost: {effective_cost}, "
+                        f"Available: {player.credits}"
+                    )
+            else:
+                if player.credits < new_ship_price:
+                    raise ValueError(
+                        f"Insufficient credits. Cost: {new_ship_price}, "
+                        f"Available: {player.credits}"
+                    )
+
+            # Perform transaction atomically
+            async with db.begin():
+                # a. Create new PlayerShip record for the player (inactive for now)
+                new_player_ship = PlayerShip(
+                    player_id=player_id,
+                    ship_name=shop_item.item_name,
+                    is_active=False,
+                    weapons=[],
+                    modules=[],
+                    turrets=[],
+                )
+                db.add(new_player_ship)
+                await db.flush()  # Get the new ship's ID
+
+                # b. Transfer equipped items from old ship to new ship
+                items_transferred: dict[str, list[str]] = {
+                    "weapons": [],
+                    "modules": [],
+                    "turrets": [],
+                }
+                items_unequipped: dict[str, list[str]] = {
+                    "weapons": [],
+                    "modules": [],
+                    "turrets": [],
+                }
+
+                if old_player_ship:
+                    # Determine slot limits on new ship
+                    slot_limits = {
+                        "weapons": new_ship_static.max_primaries,
+                        "modules": new_ship_static.max_modules,
+                        "turrets": new_ship_static.max_turrets,
+                    }
+                    inventory_type_map = {
+                        "weapons": "weapon",
+                        "modules": "module",
+                        "turrets": "turret",
+                    }
+
+                    for equip_type in ("weapons", "modules", "turrets"):
+                        old_items: list[str] = list(
+                            getattr(old_player_ship, equip_type) or []
+                        )
+                        max_slots = slot_limits[equip_type]
+                        inv_type = inventory_type_map[equip_type]
+
+                        # Items that fit on new ship
+                        fitting = old_items[:max_slots]
+                        overflow = old_items[max_slots:]
+
+                        items_transferred[equip_type] = fitting
+                        items_unequipped[equip_type] = overflow
+
+                        # Unequip overflow items to inventory
+                        for item_name in overflow:
+                            await self.inventory_repo.add_item(
+                                db, player_id, inv_type, item_name, 1
+                            )
+
+                    # Apply transferred loadout to new ship
+                    new_player_ship.weapons = items_transferred["weapons"]
+                    new_player_ship.modules = items_transferred["modules"]
+                    new_player_ship.turrets = items_transferred["turrets"]
+
+                # c. Handle old ship trade-in
+                if sell_old_ship and old_player_ship:
+                    # Add old ship's value to player credits
+                    await self.player_repo.update_credits(
+                        db, player_id, player.credits + old_ship_value
+                    )
+                    # Add old ship to shop stock
+                    await self._add_item_to_shop(
+                        db,
+                        player.guild_id,
+                        shop_item.tier,
+                        "ship",
+                        old_player_ship.ship_name,
+                        1,
+                        old_ship_value,
+                    )
+                    # Delete old PlayerShip record
+                    await db.delete(old_player_ship)
+                    await db.flush()
+
+                # d. Set new ship as active (deactivate all others first)
+                from sqlalchemy import update as sa_update
+                await db.execute(
+                    sa_update(PlayerShip)
+                    .where(PlayerShip.player_id == player_id)
+                    .values(is_active=False)
+                )
+                new_player_ship.is_active = True
+
+                # e. Deduct new_ship_price from player credits
+                # (If we already added trade-in credits above, deduct from the updated balance)
+                if sell_old_ship and old_player_ship:
+                    updated_credits = player.credits + old_ship_value - new_ship_price
+                else:
+                    updated_credits = player.credits - new_ship_price
+                await self.player_repo.update_credits(db, player_id, updated_credits)
+
+                # f. Remove new ship from shop stock
+                new_shop_quantity = shop_item.quantity - 1
+                if new_shop_quantity <= 0:
+                    await self.shop_repo.remove(db, shop_item)
+                else:
+                    await self.shop_repo.update_quantity(db, shop_item_id, new_shop_quantity)
+
+            total_overflow = sum(len(v) for v in items_unequipped.values())
+            total_transferred = sum(len(v) for v in items_transferred.values())
+
+            transaction_details = {
+                "player_id": player_id,
+                "item_type": "ship",
+                "item_name": shop_item.item_name,
+                "quantity": 1,
+                "unit_price": new_ship_price,
+                "total_cost": new_ship_price,
+                "trade_in_value": old_ship_value if sell_old_ship and old_player_ship else 0,
+                "net_cost": new_ship_price - (old_ship_value if sell_old_ship and old_player_ship else 0),
+                "remaining_credits": updated_credits,
+                "items_transferred": total_transferred,
+                "items_unequipped_to_inventory": total_overflow,
+                "remaining_shop_quantity": new_shop_quantity,
+            }
+
+            flogger.info(
+                f"Player {player_id} purchased ship '{shop_item.item_name}' for {new_ship_price} credits"
+                + (f" (trade-in: {old_ship_value})" if sell_old_ship and old_player_ship else "")
+            )
+            return transaction_details
+
+        except Exception as e:
+            flogger.error(f"Error purchasing ship {shop_item_id} for player {player_id}: {e}")
+            raise
+
     async def sell_item(
         self,
         db: AsyncSession,
@@ -184,13 +391,9 @@ class ShopService:
                 available = inventory_item.quantity if inventory_item else 0
                 raise ValueError(f"Insufficient item quantity. Available: {available}, Requested: {quantity}")
 
-            # Get guild config for sale price calculation
-            config = await self.config_repo.get_by_guild_id(db, player.guild_id)
-            sale_price_factor = config.sale_price_factor if config else 0.8
-
-            # Calculate item price from static item data
+            # Calculate item price from static item data (full value, no sell tax)
             base_price = await self._get_item_base_price(db, item_name)
-            unit_sell_price = int(base_price * sale_price_factor)
+            unit_sell_price = base_price
             total_sell_value = unit_sell_price * quantity
 
             # Perform transaction atomically
@@ -222,6 +425,118 @@ class ShopService:
 
         except Exception as e:
             flogger.error(f"Error selling item {item_name} for player {player_id}: {e}")
+            raise
+
+    async def sell_ship(
+        self,
+        db: AsyncSession,
+        player_id: int,
+        ship_id: int,
+        clear_equipment: bool = False,
+        target_tier: str = "Bronze",
+    ) -> dict[str, Any]:
+        """Sell a player's ship to the shop.
+
+        Args:
+            player_id: The selling player
+            ship_id: The PlayerShip ID to sell
+            clear_equipment: If True, unequip all items to inventory before selling
+            target_tier: Which shop tier to add the ship to
+
+        Raises:
+            ValueError: If ship is the active ship, doesn't belong to player, etc.
+        """
+        try:
+            if target_tier not in self.VALID_TIERS:
+                raise ValueError(f"Invalid target tier: {target_tier}")
+
+            # Validate player exists
+            player = await self.player_repo.get_by_id(db, player_id)
+            if not player:
+                raise ValueError(f"Player {player_id} not found")
+
+            # Get the PlayerShip by ID
+            player_ship = await self.player_ship_repo.get_by_id(db, ship_id)
+            if not player_ship:
+                raise ValueError(f"Ship {ship_id} not found")
+
+            # Validate ownership
+            if player_ship.player_id != player_id:
+                raise ValueError(f"Ship {ship_id} does not belong to player {player_id}")
+
+            # Reject selling the active ship
+            if player_ship.is_active:
+                raise ValueError("Cannot sell active ship")
+
+            # Get static ship data to find base value
+            ship_static = await self.ship_repo.get_by_name(db, player_ship.ship_name)
+            ship_value = ship_static.value if ship_static else 0
+
+            # Track items moved to inventory (for response)
+            items_unequipped: dict[str, list[str]] = {
+                "weapons": [],
+                "modules": [],
+                "turrets": [],
+            }
+            inventory_type_map = {
+                "weapons": "weapon",
+                "modules": "module",
+                "turrets": "turret",
+            }
+
+            async with db.begin():
+                if clear_equipment:
+                    # Unequip all items to player inventory before selling ship
+                    for equip_type in ("weapons", "modules", "turrets"):
+                        equipped: list[str] = list(getattr(player_ship, equip_type) or [])
+                        inv_type = inventory_type_map[equip_type]
+                        for item_name in equipped:
+                            await self.inventory_repo.add_item(
+                                db, player_id, inv_type, item_name, 1
+                            )
+                            items_unequipped[equip_type].append(item_name)
+
+                # Credit player with ship's full value (no tax)
+                await self.player_repo.update_credits(db, player_id, player.credits + ship_value)
+
+                # Remove the PlayerShip from database
+                await db.delete(player_ship)
+                await db.flush()
+
+                # Add the ship to shop stock
+                await self._add_item_to_shop(
+                    db,
+                    player.guild_id,
+                    target_tier,
+                    "ship",
+                    player_ship.ship_name,
+                    1,
+                    ship_value,
+                )
+
+            total_unequipped = sum(len(v) for v in items_unequipped.values())
+            transaction_details = {
+                "player_id": player_id,
+                "item_type": "ship",
+                "item_name": player_ship.ship_name,
+                "ship_id": ship_id,
+                "quantity": 1,
+                "sell_value": ship_value,
+                "new_credits": player.credits + ship_value,
+                "target_shop_tier": target_tier,
+                "items_unequipped_to_inventory": total_unequipped,
+                "items_unequipped_detail": items_unequipped,
+            }
+
+            flogger.info(
+                f"Player {player_id} sold ship '{player_ship.ship_name}' (id={ship_id}) "
+                f"for {ship_value} credits"
+                + (f", unequipped {total_unequipped} items" if total_unequipped else "")
+            )
+            return transaction_details
+
+        except Exception as e:
+            flogger.error(f"Error selling ship {ship_id} for player {player_id}: {e}")
             raise
 
     async def refresh_shop(

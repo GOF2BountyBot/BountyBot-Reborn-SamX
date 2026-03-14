@@ -4,6 +4,7 @@ from datetime import UTC, datetime
 from shared.bblogger import get_logger
 
 # dispatch job-type specific executor module
+from utils.executors.shop_refresh_executor import execute_shop_refresh_job
 from utils.executors.time_announcement_executor import execute_time_announcement_job
 
 flogger = get_logger("bot-job-executor")
@@ -32,7 +33,12 @@ class JobExecutor:
                 flogger.debug(f"Dispatching time_announcement for job {job_id}")
                 return await execute_time_announcement_job(job_id, payload)
 
-            # 2) fallback for other payloads
+            # 2) shop-refresh jobs
+            if payload.get("job_type") == "shop_refresh":
+                flogger.debug(f"Dispatching shop_refresh for job {job_id}")
+                return await execute_shop_refresh_job(job_id, payload)
+
+            # 3) fallback for other payloads
             flogger.debug(f"Job '{job_id}': executing generic payload handler")
             # … your existing task/logic here …
 

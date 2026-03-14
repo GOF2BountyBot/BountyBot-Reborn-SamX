@@ -186,11 +186,9 @@ class TestCogUnload:
 class TestGetPlayerIdHelper:
     """Tests for the _get_player_id helper method."""
 
-    def test_get_player_id_success(self, mock_ships_cog):
+    def test_get_player_id_success(self, mock_ships_cog, make_mock_response):
         """_get_player_id should return player ID on success."""
-        resp = MagicMock()
-        resp.raise_for_status = MagicMock()
-        resp.json.return_value = {"id": 7}
+        resp = make_mock_response({"id": 7})
         mock_ships_cog.http_client.post = AsyncMock(return_value=resp)
 
         result = asyncio.run(mock_ships_cog._get_player_id(111111111, 987654321))
@@ -215,20 +213,15 @@ class TestGetPlayerIdHelper:
 class TestShipsCommand:
     """Tests for the /ships slash command."""
 
-    def test_ships_display_own_ships(self, mock_ships_cog):
+    def test_ships_display_own_ships(self, mock_ships_cog, make_mock_response):
         """ships should display embed with user's ships."""
         interaction = _create_mock_interaction()
 
-        player_resp = MagicMock()
-        player_resp.raise_for_status = MagicMock()
-        player_resp.json.return_value = {"id": 1}
-
-        ships_resp = MagicMock()
-        ships_resp.raise_for_status = MagicMock()
-        ships_resp.json.return_value = [
+        player_resp = make_mock_response({"id": 1})
+        ships_resp = make_mock_response([
             _make_ship(1, "Eagle", is_active=True),
             _make_ship(2, "Hawk", is_active=False),
-        ]
+        ])
 
         mock_ships_cog.http_client.post = AsyncMock(return_value=player_resp)
         mock_ships_cog.http_client.get = AsyncMock(return_value=ships_resp)
@@ -240,17 +233,12 @@ class TestShipsCommand:
         call_kwargs = interaction.followup.send.call_args[1]
         assert "embed" in call_kwargs
 
-    def test_ships_no_ships_found(self, mock_ships_cog):
+    def test_ships_no_ships_found(self, mock_ships_cog, make_mock_response):
         """ships should send ephemeral message when player has no ships."""
         interaction = _create_mock_interaction()
 
-        player_resp = MagicMock()
-        player_resp.raise_for_status = MagicMock()
-        player_resp.json.return_value = {"id": 1}
-
-        ships_resp = MagicMock()
-        ships_resp.raise_for_status = MagicMock()
-        ships_resp.json.return_value = []
+        player_resp = make_mock_response({"id": 1})
+        ships_resp = make_mock_response([])
 
         mock_ships_cog.http_client.post = AsyncMock(return_value=player_resp)
         mock_ships_cog.http_client.get = AsyncMock(return_value=ships_resp)
@@ -277,7 +265,7 @@ class TestShipsCommand:
         call_kwargs = interaction.followup.send.call_args
         assert call_kwargs[1].get("ephemeral", False)
 
-    def test_ships_viewing_other_user(self, mock_ships_cog):
+    def test_ships_viewing_other_user(self, mock_ships_cog, make_mock_response):
         """ships should display ships for another user when provided."""
         interaction = _create_mock_interaction(user_id=111111111)
         other_user = DiscordMockUtils.create_mock_user(user_id=222222222, username="OtherUser")
@@ -285,13 +273,8 @@ class TestShipsCommand:
         other_user.display_avatar = MagicMock()
         other_user.display_avatar.url = "https://example.com/other-avatar.jpg"
 
-        player_resp = MagicMock()
-        player_resp.raise_for_status = MagicMock()
-        player_resp.json.return_value = {"id": 2}
-
-        ships_resp = MagicMock()
-        ships_resp.raise_for_status = MagicMock()
-        ships_resp.json.return_value = [_make_ship(3, "Falcon", is_active=True)]
+        player_resp = make_mock_response({"id": 2})
+        ships_resp = make_mock_response([_make_ship(3, "Falcon", is_active=True)])
 
         mock_ships_cog.http_client.post = AsyncMock(return_value=player_resp)
         mock_ships_cog.http_client.get = AsyncMock(return_value=ships_resp)
@@ -304,21 +287,17 @@ class TestShipsCommand:
         call_kwargs = interaction.followup.send.call_args[1]
         assert "embed" in call_kwargs
 
-    def test_ships_more_than_10_shows_footer_with_count(self, mock_ships_cog):
+    def test_ships_more_than_10_shows_footer_with_count(self, mock_ships_cog, make_mock_response):
         """ships with >10 ships should show truncation footer."""
         interaction = _create_mock_interaction()
 
-        player_resp = MagicMock()
-        player_resp.raise_for_status = MagicMock()
-        player_resp.json.return_value = {"id": 1}
+        player_resp = make_mock_response({"id": 1})
 
         many_ships = [
             _make_ship(i, f"Ship{i}", is_active=(i == 1))
             for i in range(1, 13)
         ]
-        ships_resp = MagicMock()
-        ships_resp.raise_for_status = MagicMock()
-        ships_resp.json.return_value = many_ships
+        ships_resp = make_mock_response(many_ships)
 
         mock_ships_cog.http_client.post = AsyncMock(return_value=player_resp)
         mock_ships_cog.http_client.get = AsyncMock(return_value=ships_resp)
@@ -327,14 +306,12 @@ class TestShipsCommand:
 
         interaction.followup.send.assert_awaited_once()
 
-    def test_ships_http_status_error(self, mock_ships_cog):
+    def test_ships_http_status_error(self, mock_ships_cog, make_mock_response):
         """ships should handle HTTPStatusError gracefully."""
         import httpx
         interaction = _create_mock_interaction()
 
-        player_resp = MagicMock()
-        player_resp.raise_for_status = MagicMock()
-        player_resp.json.return_value = {"id": 1}
+        player_resp = make_mock_response({"id": 1})
 
         error_response = MagicMock()
         error_response.status_code = 500
@@ -353,13 +330,11 @@ class TestShipsCommand:
         call_kwargs = interaction.followup.send.call_args
         assert call_kwargs[1].get("ephemeral", False)
 
-    def test_ships_generic_exception(self, mock_ships_cog):
+    def test_ships_generic_exception(self, mock_ships_cog, make_mock_response):
         """ships should handle generic exceptions gracefully."""
         interaction = _create_mock_interaction()
 
-        player_resp = MagicMock()
-        player_resp.raise_for_status = MagicMock()
-        player_resp.json.return_value = {"id": 1}
+        player_resp = make_mock_response({"id": 1})
 
         mock_ships_cog.http_client.post = AsyncMock(return_value=player_resp)
         mock_ships_cog.http_client.get = AsyncMock(
@@ -372,19 +347,14 @@ class TestShipsCommand:
         call_kwargs = interaction.followup.send.call_args
         assert call_kwargs[1].get("ephemeral", False)
 
-    def test_ships_with_nickname(self, mock_ships_cog):
+    def test_ships_with_nickname(self, mock_ships_cog, make_mock_response):
         """ships should display ship nickname when set."""
         interaction = _create_mock_interaction()
 
-        player_resp = MagicMock()
-        player_resp.raise_for_status = MagicMock()
-        player_resp.json.return_value = {"id": 1}
-
-        ships_resp = MagicMock()
-        ships_resp.raise_for_status = MagicMock()
-        ships_resp.json.return_value = [
+        player_resp = make_mock_response({"id": 1})
+        ships_resp = make_mock_response([
             _make_ship(1, "Eagle", is_active=True, nickname="StarHunter"),
-        ]
+        ])
 
         mock_ships_cog.http_client.post = AsyncMock(return_value=player_resp)
         mock_ships_cog.http_client.get = AsyncMock(return_value=ships_resp)
@@ -487,31 +457,25 @@ class TestCogSetup:
 class TestShipCommand:
     """Tests for the /ship slash command."""
 
-    def test_ship_success_active_with_nickname(self, mock_ships_cog):
+    def test_ship_success_active_with_nickname(self, mock_ships_cog, make_mock_response):
         """ship should display detailed embed for an active ship with nickname."""
         interaction = _create_mock_interaction()
 
         # Ship detail response
-        ship_resp = MagicMock()
-        ship_resp.raise_for_status = MagicMock()
-        ship_resp.json.return_value = _make_ship(
+        ship_resp = make_mock_response(_make_ship(
             ship_id=1, ship_name="Eagle", is_active=True,
             nickname="StarHunter",
-        )
+        ))
 
         # Player lookup
-        player_resp = MagicMock()
-        player_resp.raise_for_status = MagicMock()
-        player_resp.json.return_value = {"id": 1}
+        player_resp = make_mock_response({"id": 1})
 
         # Loadout response
-        loadout_resp = MagicMock()
-        loadout_resp.raise_for_status = MagicMock()
-        loadout_resp.json.return_value = _make_loadout(
+        loadout_resp = make_mock_response(_make_loadout(
             weapons=["Laser", "Plasma"],
             modules=["Shield"],
             turrets=["Flak"],
-        )
+        ))
 
         mock_ships_cog.http_client.get = AsyncMock(side_effect=[ship_resp, loadout_resp])
         mock_ships_cog.http_client.post = AsyncMock(return_value=player_resp)
@@ -523,25 +487,19 @@ class TestShipCommand:
         call_kwargs = interaction.followup.send.call_args[1]
         assert "embed" in call_kwargs
 
-    def test_ship_success_inactive_no_nickname(self, mock_ships_cog):
+    def test_ship_success_inactive_no_nickname(self, mock_ships_cog, make_mock_response):
         """ship should display correct embed for inactive ship without nickname."""
         interaction = _create_mock_interaction()
 
-        ship_resp = MagicMock()
-        ship_resp.raise_for_status = MagicMock()
-        ship_resp.json.return_value = _make_ship(
+        ship_resp = make_mock_response(_make_ship(
             ship_id=2, ship_name="Hawk", is_active=False, nickname=None,
-        )
+        ))
 
-        player_resp = MagicMock()
-        player_resp.raise_for_status = MagicMock()
-        player_resp.json.return_value = {"id": 1}
+        player_resp = make_mock_response({"id": 1})
 
-        loadout_resp = MagicMock()
-        loadout_resp.raise_for_status = MagicMock()
-        loadout_resp.json.return_value = _make_loadout(
+        loadout_resp = make_mock_response(_make_loadout(
             weapons=[], modules=[], turrets=[],
-        )
+        ))
 
         mock_ships_cog.http_client.get = AsyncMock(side_effect=[ship_resp, loadout_resp])
         mock_ships_cog.http_client.post = AsyncMock(return_value=player_resp)
@@ -552,19 +510,16 @@ class TestShipCommand:
         call_kwargs = interaction.followup.send.call_args[1]
         assert "embed" in call_kwargs
 
-    def test_ship_not_owned_by_user(self, mock_ships_cog):
+    def test_ship_not_owned_by_user(self, mock_ships_cog, make_mock_response):
         """ship should deny access when ship belongs to another player."""
         interaction = _create_mock_interaction()
 
-        ship_resp = MagicMock()
-        ship_resp.raise_for_status = MagicMock()
-        ship_resp.json.return_value = _make_ship(ship_id=1)
+        ship_data = _make_ship(ship_id=1)
         # Ship has player_id=1 but we'll return player_id=99 for the user
-        ship_resp.json.return_value["player_id"] = 99
+        ship_data["player_id"] = 99
+        ship_resp = make_mock_response(ship_data)
 
-        player_resp = MagicMock()
-        player_resp.raise_for_status = MagicMock()
-        player_resp.json.return_value = {"id": 1}
+        player_resp = make_mock_response({"id": 1})
 
         mock_ships_cog.http_client.get = AsyncMock(return_value=ship_resp)
         mock_ships_cog.http_client.post = AsyncMock(return_value=player_resp)
@@ -635,24 +590,17 @@ class TestShipCommand:
         assert "error occurred" in call_args[0][0].lower()
         assert call_args[1].get("ephemeral", False)
 
-    def test_ship_loadout_with_many_weapons(self, mock_ships_cog):
+    def test_ship_loadout_with_many_weapons(self, mock_ships_cog, make_mock_response):
         """ship should truncate weapons list when >10 items."""
         interaction = _create_mock_interaction()
 
-        ship_resp = MagicMock()
-        ship_resp.raise_for_status = MagicMock()
-        ship_resp.json.return_value = _make_ship(ship_id=1, is_active=True)
-
-        player_resp = MagicMock()
-        player_resp.raise_for_status = MagicMock()
-        player_resp.json.return_value = {"id": 1}
+        ship_resp = make_mock_response(_make_ship(ship_id=1, is_active=True))
+        player_resp = make_mock_response({"id": 1})
 
         many_weapons = [f"Weapon{i}" for i in range(15)]
-        loadout_resp = MagicMock()
-        loadout_resp.raise_for_status = MagicMock()
-        loadout_resp.json.return_value = _make_loadout(
+        loadout_resp = make_mock_response(_make_loadout(
             weapons=many_weapons, modules=[], turrets=[],
-        )
+        ))
 
         mock_ships_cog.http_client.get = AsyncMock(side_effect=[ship_resp, loadout_resp])
         mock_ships_cog.http_client.post = AsyncMock(return_value=player_resp)
@@ -663,24 +611,17 @@ class TestShipCommand:
         call_kwargs = interaction.followup.send.call_args[1]
         assert "embed" in call_kwargs
 
-    def test_ship_loadout_with_many_modules(self, mock_ships_cog):
+    def test_ship_loadout_with_many_modules(self, mock_ships_cog, make_mock_response):
         """ship should truncate modules list when >10 items."""
         interaction = _create_mock_interaction()
 
-        ship_resp = MagicMock()
-        ship_resp.raise_for_status = MagicMock()
-        ship_resp.json.return_value = _make_ship(ship_id=1, is_active=True)
-
-        player_resp = MagicMock()
-        player_resp.raise_for_status = MagicMock()
-        player_resp.json.return_value = {"id": 1}
+        ship_resp = make_mock_response(_make_ship(ship_id=1, is_active=True))
+        player_resp = make_mock_response({"id": 1})
 
         many_modules = [f"Module{i}" for i in range(12)]
-        loadout_resp = MagicMock()
-        loadout_resp.raise_for_status = MagicMock()
-        loadout_resp.json.return_value = _make_loadout(
+        loadout_resp = make_mock_response(_make_loadout(
             weapons=["Laser"], modules=many_modules, turrets=[],
-        )
+        ))
 
         mock_ships_cog.http_client.get = AsyncMock(side_effect=[ship_resp, loadout_resp])
         mock_ships_cog.http_client.post = AsyncMock(return_value=player_resp)
@@ -689,24 +630,17 @@ class TestShipCommand:
 
         interaction.followup.send.assert_awaited_once()
 
-    def test_ship_loadout_with_many_turrets(self, mock_ships_cog):
+    def test_ship_loadout_with_many_turrets(self, mock_ships_cog, make_mock_response):
         """ship should truncate turrets list when >10 items."""
         interaction = _create_mock_interaction()
 
-        ship_resp = MagicMock()
-        ship_resp.raise_for_status = MagicMock()
-        ship_resp.json.return_value = _make_ship(ship_id=1, is_active=True)
-
-        player_resp = MagicMock()
-        player_resp.raise_for_status = MagicMock()
-        player_resp.json.return_value = {"id": 1}
+        ship_resp = make_mock_response(_make_ship(ship_id=1, is_active=True))
+        player_resp = make_mock_response({"id": 1})
 
         many_turrets = [f"Turret{i}" for i in range(11)]
-        loadout_resp = MagicMock()
-        loadout_resp.raise_for_status = MagicMock()
-        loadout_resp.json.return_value = _make_loadout(
+        loadout_resp = make_mock_response(_make_loadout(
             weapons=[], modules=[], turrets=many_turrets,
-        )
+        ))
 
         mock_ships_cog.http_client.get = AsyncMock(side_effect=[ship_resp, loadout_resp])
         mock_ships_cog.http_client.post = AsyncMock(return_value=player_resp)
@@ -724,22 +658,17 @@ class TestShipCommand:
 class TestSetActiveCommand:
     """Tests for the /setactive slash command."""
 
-    def test_setactive_success(self, mock_ships_cog):
+    def test_setactive_success(self, mock_ships_cog, make_mock_response):
         """setactive should set ship as active and send success embed."""
         interaction = _create_mock_interaction()
 
-        player_resp = MagicMock()
-        player_resp.raise_for_status = MagicMock()
-        player_resp.json.return_value = {"id": 1}
-
-        set_resp = MagicMock()
-        set_resp.raise_for_status = MagicMock()
-        set_resp.json.return_value = {
+        player_resp = make_mock_response({"id": 1})
+        set_resp = make_mock_response({
             "id": 5,
             "ship_name": "Eagle",
             "nickname": None,
             "is_active": True,
-        }
+        })
 
         mock_ships_cog.http_client.post = AsyncMock(return_value=player_resp)
         mock_ships_cog.http_client.put = AsyncMock(return_value=set_resp)
@@ -751,22 +680,17 @@ class TestSetActiveCommand:
         call_kwargs = interaction.followup.send.call_args[1]
         assert "embed" in call_kwargs
 
-    def test_setactive_success_with_nickname(self, mock_ships_cog):
+    def test_setactive_success_with_nickname(self, mock_ships_cog, make_mock_response):
         """setactive should include nickname in success message when ship has one."""
         interaction = _create_mock_interaction()
 
-        player_resp = MagicMock()
-        player_resp.raise_for_status = MagicMock()
-        player_resp.json.return_value = {"id": 1}
-
-        set_resp = MagicMock()
-        set_resp.raise_for_status = MagicMock()
-        set_resp.json.return_value = {
+        player_resp = make_mock_response({"id": 1})
+        set_resp = make_mock_response({
             "id": 5,
             "ship_name": "Eagle",
             "nickname": "StarHunter",
             "is_active": True,
-        }
+        })
 
         mock_ships_cog.http_client.post = AsyncMock(return_value=player_resp)
         mock_ships_cog.http_client.put = AsyncMock(return_value=set_resp)
@@ -792,14 +716,12 @@ class TestSetActiveCommand:
         assert "Player not found" in call_args[0][0]
         assert call_args[1].get("ephemeral", False)
 
-    def test_setactive_http_status_error_400(self, mock_ships_cog):
+    def test_setactive_http_status_error_400(self, mock_ships_cog, make_mock_response):
         """setactive should show invalid ship on 400 HTTPStatusError."""
         import httpx
         interaction = _create_mock_interaction()
 
-        player_resp = MagicMock()
-        player_resp.raise_for_status = MagicMock()
-        player_resp.json.return_value = {"id": 1}
+        player_resp = make_mock_response({"id": 1})
 
         error_response = MagicMock()
         error_response.status_code = 400
@@ -819,14 +741,12 @@ class TestSetActiveCommand:
         assert "Invalid ship" in call_args[0][0] or "don't own" in call_args[0][0]
         assert call_args[1].get("ephemeral", False)
 
-    def test_setactive_http_status_error_404(self, mock_ships_cog):
+    def test_setactive_http_status_error_404(self, mock_ships_cog, make_mock_response):
         """setactive should show 'not found' on 404 HTTPStatusError."""
         import httpx
         interaction = _create_mock_interaction()
 
-        player_resp = MagicMock()
-        player_resp.raise_for_status = MagicMock()
-        player_resp.json.return_value = {"id": 1}
+        player_resp = make_mock_response({"id": 1})
 
         error_response = MagicMock()
         error_response.status_code = 404
@@ -846,14 +766,12 @@ class TestSetActiveCommand:
         assert "not found" in call_args[0][0].lower()
         assert call_args[1].get("ephemeral", False)
 
-    def test_setactive_http_status_error_500(self, mock_ships_cog):
+    def test_setactive_http_status_error_500(self, mock_ships_cog, make_mock_response):
         """setactive should show API error on non-400/404 HTTPStatusError."""
         import httpx
         interaction = _create_mock_interaction()
 
-        player_resp = MagicMock()
-        player_resp.raise_for_status = MagicMock()
-        player_resp.json.return_value = {"id": 1}
+        player_resp = make_mock_response({"id": 1})
 
         error_response = MagicMock()
         error_response.status_code = 500
@@ -873,13 +791,11 @@ class TestSetActiveCommand:
         assert "API Error" in call_args[0][0]
         assert call_args[1].get("ephemeral", False)
 
-    def test_setactive_generic_exception(self, mock_ships_cog):
+    def test_setactive_generic_exception(self, mock_ships_cog, make_mock_response):
         """setactive should handle generic exceptions gracefully."""
         interaction = _create_mock_interaction()
 
-        player_resp = MagicMock()
-        player_resp.raise_for_status = MagicMock()
-        player_resp.json.return_value = {"id": 1}
+        player_resp = make_mock_response({"id": 1})
 
         mock_ships_cog.http_client.post = AsyncMock(return_value=player_resp)
         mock_ships_cog.http_client.put = AsyncMock(
@@ -902,29 +818,23 @@ class TestSetActiveCommand:
 class TestNicknameCommand:
     """Tests for the /nickname slash command."""
 
-    def test_nickname_success(self, mock_ships_cog):
+    def test_nickname_success(self, mock_ships_cog, make_mock_response):
         """nickname should update ship nickname and send success embed."""
         interaction = _create_mock_interaction()
 
         # Ship ownership check
-        ship_resp = MagicMock()
-        ship_resp.raise_for_status = MagicMock()
-        ship_resp.json.return_value = _make_ship(ship_id=1, is_active=True)
+        ship_resp = make_mock_response(_make_ship(ship_id=1, is_active=True))
 
         # Player lookup
-        player_resp = MagicMock()
-        player_resp.raise_for_status = MagicMock()
-        player_resp.json.return_value = {"id": 1}
+        player_resp = make_mock_response({"id": 1})
 
         # Nickname update
-        nick_resp = MagicMock()
-        nick_resp.raise_for_status = MagicMock()
-        nick_resp.json.return_value = {
+        nick_resp = make_mock_response({
             "id": 1,
             "ship_name": "Eagle",
             "nickname": "NewName",
             "is_active": True,
-        }
+        })
 
         mock_ships_cog.http_client.get = AsyncMock(return_value=ship_resp)
         mock_ships_cog.http_client.post = AsyncMock(return_value=player_resp)
@@ -939,26 +849,18 @@ class TestNicknameCommand:
         call_kwargs = interaction.followup.send.call_args[1]
         assert "embed" in call_kwargs
 
-    def test_nickname_success_inactive_ship(self, mock_ships_cog):
+    def test_nickname_success_inactive_ship(self, mock_ships_cog, make_mock_response):
         """nickname should show inactive status for inactive ships."""
         interaction = _create_mock_interaction()
 
-        ship_resp = MagicMock()
-        ship_resp.raise_for_status = MagicMock()
-        ship_resp.json.return_value = _make_ship(ship_id=1, is_active=False)
-
-        player_resp = MagicMock()
-        player_resp.raise_for_status = MagicMock()
-        player_resp.json.return_value = {"id": 1}
-
-        nick_resp = MagicMock()
-        nick_resp.raise_for_status = MagicMock()
-        nick_resp.json.return_value = {
+        ship_resp = make_mock_response(_make_ship(ship_id=1, is_active=False))
+        player_resp = make_mock_response({"id": 1})
+        nick_resp = make_mock_response({
             "id": 1,
             "ship_name": "Eagle",
             "nickname": "MyShip",
             "is_active": False,
-        }
+        })
 
         mock_ships_cog.http_client.get = AsyncMock(return_value=ship_resp)
         mock_ships_cog.http_client.post = AsyncMock(return_value=player_resp)
@@ -987,19 +889,15 @@ class TestNicknameCommand:
         assert "50 characters" in call_args[0][0]
         assert call_args[1].get("ephemeral", False)
 
-    def test_nickname_not_owned(self, mock_ships_cog):
+    def test_nickname_not_owned(self, mock_ships_cog, make_mock_response):
         """nickname should deny access when ship belongs to another player."""
         interaction = _create_mock_interaction()
 
-        ship_resp = MagicMock()
-        ship_resp.raise_for_status = MagicMock()
         ship_data = _make_ship(ship_id=1)
         ship_data["player_id"] = 99  # different from logged-in player
-        ship_resp.json.return_value = ship_data
+        ship_resp = make_mock_response(ship_data)
 
-        player_resp = MagicMock()
-        player_resp.raise_for_status = MagicMock()
-        player_resp.json.return_value = {"id": 1}
+        player_resp = make_mock_response({"id": 1})
 
         mock_ships_cog.http_client.get = AsyncMock(return_value=ship_resp)
         mock_ships_cog.http_client.post = AsyncMock(return_value=player_resp)
@@ -1126,17 +1024,12 @@ class TestErrorHandlersAlreadyDone:
 class TestShipsCommandAdditionalBranches:
     """Additional tests for /ships covering remaining branches."""
 
-    def test_ships_with_null_weapons_modules_turrets(self, mock_ships_cog):
+    def test_ships_with_null_weapons_modules_turrets(self, mock_ships_cog, make_mock_response):
         """ships should handle None weapons/modules/turrets gracefully."""
         interaction = _create_mock_interaction()
 
-        player_resp = MagicMock()
-        player_resp.raise_for_status = MagicMock()
-        player_resp.json.return_value = {"id": 1}
-
-        ships_resp = MagicMock()
-        ships_resp.raise_for_status = MagicMock()
-        ships_resp.json.return_value = [
+        player_resp = make_mock_response({"id": 1})
+        ships_resp = make_mock_response([
             {
                 "id": 1,
                 "ship_name": "Eagle",
@@ -1148,7 +1041,7 @@ class TestShipsCommandAdditionalBranches:
                 "created_at": "2024-01-01T00:00:00",
                 "player_id": 1,
             }
-        ]
+        ])
 
         mock_ships_cog.http_client.post = AsyncMock(return_value=player_resp)
         mock_ships_cog.http_client.get = AsyncMock(return_value=ships_resp)
@@ -1159,21 +1052,17 @@ class TestShipsCommandAdditionalBranches:
         call_kwargs = interaction.followup.send.call_args[1]
         assert "embed" in call_kwargs
 
-    def test_ships_exactly_10_shows_standard_footer(self, mock_ships_cog):
+    def test_ships_exactly_10_shows_standard_footer(self, mock_ships_cog, make_mock_response):
         """ships with exactly 10 ships should show standard footer (not truncation)."""
         interaction = _create_mock_interaction()
 
-        player_resp = MagicMock()
-        player_resp.raise_for_status = MagicMock()
-        player_resp.json.return_value = {"id": 1}
+        player_resp = make_mock_response({"id": 1})
 
         ten_ships = [
             _make_ship(i, f"Ship{i}", is_active=(i == 1))
             for i in range(1, 11)
         ]
-        ships_resp = MagicMock()
-        ships_resp.raise_for_status = MagicMock()
-        ships_resp.json.return_value = ten_ships
+        ships_resp = make_mock_response(ten_ships)
 
         mock_ships_cog.http_client.post = AsyncMock(return_value=player_resp)
         mock_ships_cog.http_client.get = AsyncMock(return_value=ships_resp)

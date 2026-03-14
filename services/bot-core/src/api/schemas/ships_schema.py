@@ -1,9 +1,11 @@
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 # Response Models
 class ShipResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     id: int
     player_id: int
     ship_name: str
@@ -13,9 +15,6 @@ class ShipResponse(BaseModel):
     modules: list[str] | None
     turrets: list[str] | None
     created_at: str
-
-    class Config:
-        from_attributes = True
 
 class ShipLoadoutSummaryResponse(BaseModel):
     ship_id: int
@@ -46,9 +45,11 @@ class UpdateNicknameRequest(BaseModel):
     nickname: str
 
 class EquipItemRequest(BaseModel):
+    player_id: int
     equipment_type: str = Field(pattern="^(weapons|modules|turrets)$")
     item_name: str
 
 class UnequipItemRequest(BaseModel):
+    player_id: int
     equipment_type: str = Field(pattern="^(weapons|modules|turrets)$")
     item_name: str

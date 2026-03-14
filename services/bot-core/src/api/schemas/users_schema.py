@@ -1,16 +1,15 @@
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 
 # Response Models
 class UserResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     id: int
     discord_username: str | None
     created_at: str
     updated_at: str
-
-    class Config:
-        from_attributes = True
 
 class CreateUserRequest(BaseModel):
     id: int  # Discord user ID

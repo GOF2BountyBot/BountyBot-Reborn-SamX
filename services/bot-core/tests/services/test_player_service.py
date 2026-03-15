@@ -7,6 +7,7 @@ module is imported (see conftest.py at the tests/ root which handles this).
 
 import sys
 import types
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -102,6 +103,12 @@ def mock_db() -> AsyncMock:
     db = AsyncMock()
     db.commit = AsyncMock()
     db.refresh = AsyncMock()
+
+    @asynccontextmanager
+    async def _mock_begin():
+        yield
+
+    db.begin = _mock_begin
     return db
 
 
@@ -117,6 +124,7 @@ def mock_player_repo() -> AsyncMock:
     repo = AsyncMock()
     repo.get_by_user_and_guild = AsyncMock()
     repo.get_by_id = AsyncMock()
+    repo.get_by_id_for_update = AsyncMock()
     repo.add = AsyncMock()
     repo.update_active_ship = AsyncMock()
     repo.get_players_by_guild = AsyncMock()
@@ -860,7 +868,9 @@ class TestTransferCredits:
         source = _make_player(player_id=1, credits=500)
         target = _make_player(player_id=2, credits=100)
 
-        service.player_repo.get_by_id = AsyncMock(side_effect=[source, target])
+        # transfer_credits uses get_by_id_for_update inside the transaction,
+        # locking in sorted ID order: player 1 then player 2.
+        service.player_repo.get_by_id_for_update = AsyncMock(side_effect=[source, target])
         service.player_repo.update_credits = AsyncMock()
 
         result = await service.transfer_credits(mock_db, 1, 2, 200)
@@ -877,14 +887,14 @@ class TestTransferCredits:
         source = _make_player(player_id=1, credits=500)
         target = _make_player(player_id=2, credits=100)
 
-        service.player_repo.get_by_id = AsyncMock(side_effect=[source, target])
+        service.player_repo.get_by_id_for_update = AsyncMock(side_effect=[source, target])
         service.player_repo.update_credits = AsyncMock()
 
         await service.transfer_credits(mock_db, 1, 2, 200)
 
         assert service.player_repo.update_credits.call_count == 2
-        service.player_repo.update_credits.assert_any_call(mock_db, 1, 300)
-        service.player_repo.update_credits.assert_any_call(mock_db, 2, 300)
+        service.player_repo.update_credits.assert_any_call(mock_db, 1, 300, commit=False)
+        service.player_repo.update_credits.assert_any_call(mock_db, 2, 300, commit=False)
 
     @pytest.mark.asyncio
     async def test_minimum_amount_one_credit_succeeds(self, service, mock_db):
@@ -892,7 +902,7 @@ class TestTransferCredits:
         source = _make_player(player_id=1, credits=50)
         target = _make_player(player_id=2, credits=10)
 
-        service.player_repo.get_by_id = AsyncMock(side_effect=[source, target])
+        service.player_repo.get_by_id_for_update = AsyncMock(side_effect=[source, target])
         service.player_repo.update_credits = AsyncMock()
 
         result = await service.transfer_credits(mock_db, 1, 2, 1)
@@ -925,7 +935,8 @@ class TestTransferCredits:
         source = _make_player(player_id=1, credits=50)
         target = _make_player(player_id=2, credits=100)
 
-        service.player_repo.get_by_id = AsyncMock(side_effect=[source, target])
+        # IDs [1, 2] sorted → player 1 locked first, then player 2.
+        service.player_repo.get_by_id_for_update = AsyncMock(side_effect=[source, target])
 
         with pytest.raises(ValueError, match="Insufficient credits"):
             await service.transfer_credits(mock_db, 1, 2, 100)
@@ -933,9 +944,10 @@ class TestTransferCredits:
     @pytest.mark.asyncio
     async def test_source_not_found_raises_value_error(self, service, mock_db):
         """Validation: source player does not exist raises ValueError."""
-        service.player_repo.get_by_id = AsyncMock(return_value=None)
+        # IDs [2, 99] sorted → 2 locked first (returns None → raises)
+        service.player_repo.get_by_id_for_update = AsyncMock(return_value=None)
 
-        with pytest.raises(ValueError, match="Source player 99 not found"):
+        with pytest.raises(ValueError, match="not found"):
             await service.transfer_credits(mock_db, 99, 2, 50)
 
     @pytest.mark.asyncio
@@ -943,9 +955,10 @@ class TestTransferCredits:
         """Validation: target player does not exist raises ValueError."""
         source = _make_player(player_id=1, credits=200)
 
-        service.player_repo.get_by_id = AsyncMock(side_effect=[source, None])
+        # IDs [1, 88] sorted → player 1 locked first (returns source), then 88 (None).
+        service.player_repo.get_by_id_for_update = AsyncMock(side_effect=[source, None])
 
-        with pytest.raises(ValueError, match="Target player 88 not found"):
+        with pytest.raises(ValueError, match="not found"):
             await service.transfer_credits(mock_db, 1, 88, 50)
 
 

@@ -15,6 +15,10 @@ limits) remain hardcoded to maintain game balance integrity.
 
 import os
 
+from shared import bblogger
+
+_flogger = bblogger.get_logger(__name__)
+
 
 class GameConstants:
     """Centralized game constants. All values match the legacy system defaults.
@@ -239,55 +243,75 @@ class GameConstants:
         that govern game-balance (XP boundaries, division definitions, module
         equip limits) are intentionally excluded from runtime overrides.
         """
+        _flogger.info("GameConstants.load() — applying environment variable overrides")
+        _overrides: list[str] = []
+
+        def _track_int(key: str, default: int) -> int:
+            val = cls._env_int(key, default)
+            if os.environ.get(f"BOUNTYBOT_{key}") is not None:
+                _overrides.append(f"{key}={val}")
+            return val
+
+        def _track_float(key: str, default: float) -> float:
+            val = cls._env_float(key, default)
+            if os.environ.get(f"BOUNTYBOT_{key}") is not None:
+                _overrides.append(f"{key}={val}")
+            return val
+
         # Bounty system
-        cls.MAX_BOUNTIES_PER_DIVISION = cls._env_int("MAX_BOUNTIES_PER_DIVISION", 5)
-        cls.CLOSE_BOUNTY_THRESHOLD = cls._env_int("CLOSE_BOUNTY_THRESHOLD", 4)
-        cls.MAX_ROUTE_LENGTH = cls._env_int("MAX_ROUTE_LENGTH", 50)
-        cls.CRIMINAL_EQUIP_DAMAGELESS_WEAPON_CHANCE = cls._env_int(
+        cls.MAX_BOUNTIES_PER_DIVISION = _track_int("MAX_BOUNTIES_PER_DIVISION", 5)
+        cls.CLOSE_BOUNTY_THRESHOLD = _track_int("CLOSE_BOUNTY_THRESHOLD", 4)
+        cls.MAX_ROUTE_LENGTH = _track_int("MAX_ROUTE_LENGTH", 50)
+        cls.CRIMINAL_EQUIP_DAMAGELESS_WEAPON_CHANCE = _track_int(
             "CRIMINAL_EQUIP_DAMAGELESS_WEAPON_CHANCE", 20
         )
-        cls.CRIMINAL_MAX_GEAR_UPGRADE = cls._env_int("CRIMINAL_MAX_GEAR_UPGRADE", 1)
-        cls.SHIP_VALUE_REWARD_PERCENTAGE = cls._env_float(
+        cls.CRIMINAL_MAX_GEAR_UPGRADE = _track_int("CRIMINAL_MAX_GEAR_UPGRADE", 1)
+        cls.SHIP_VALUE_REWARD_PERCENTAGE = _track_float(
             "SHIP_VALUE_REWARD_PERCENTAGE", 0.01
         )
 
         # Activity
-        cls.MIN_GUILD_ACTIVITY = cls._env_float("MIN_GUILD_ACTIVITY", 1.0)
-        cls.ACTIVITY_TEMP_PER_PLAYER = cls._env_int("ACTIVITY_TEMP_PER_PLAYER", 1)
+        cls.MIN_GUILD_ACTIVITY = _track_float("MIN_GUILD_ACTIVITY", 1.0)
+        cls.ACTIVITY_TEMP_PER_PLAYER = _track_int("ACTIVITY_TEMP_PER_PLAYER", 1)
 
         # Bounty spawn delay
-        cls.BOUNTY_DELAY_RANDOM_MIN = cls._env_int("BOUNTY_DELAY_RANDOM_MIN", 5)
-        cls.BOUNTY_DELAY_RANDOM_MAX = cls._env_int("BOUNTY_DELAY_RANDOM_MAX", 7)
+        cls.BOUNTY_DELAY_RANDOM_MIN = _track_int("BOUNTY_DELAY_RANDOM_MIN", 5)
+        cls.BOUNTY_DELAY_RANDOM_MAX = _track_int("BOUNTY_DELAY_RANDOM_MAX", 7)
 
         # Timers
-        cls.GUILD_ACTIVITY_DECAY_INTERVAL = cls._env_int(
+        cls.GUILD_ACTIVITY_DECAY_INTERVAL = _track_int(
             "GUILD_ACTIVITY_DECAY_INTERVAL", 3600
         )
-        cls.SHOP_REFRESH_INTERVAL = cls._env_int("SHOP_REFRESH_INTERVAL", 21600)
-        cls.CHECK_COOLDOWN = cls._env_int("CHECK_COOLDOWN", 180)
-        cls.DUEL_REQUEST_EXPIRY = cls._env_int("DUEL_REQUEST_EXPIRY", 86400)
+        cls.SHOP_REFRESH_INTERVAL = _track_int("SHOP_REFRESH_INTERVAL", 21600)
+        cls.CHECK_COOLDOWN = _track_int("CHECK_COOLDOWN", 180)
+        cls.DUEL_REQUEST_EXPIRY = _track_int("DUEL_REQUEST_EXPIRY", 86400)
 
         # Shop stock generation
-        cls.SHOP_DEFAULT_SHIPS_NUM = cls._env_int("SHOP_DEFAULT_SHIPS_NUM", 5)
-        cls.SHOP_DEFAULT_WEAPONS_NUM = cls._env_int("SHOP_DEFAULT_WEAPONS_NUM", 5)
-        cls.SHOP_DEFAULT_MODULES_NUM = cls._env_int("SHOP_DEFAULT_MODULES_NUM", 5)
-        cls.SHOP_DEFAULT_TURRETS_NUM = cls._env_int("SHOP_DEFAULT_TURRETS_NUM", 2)
-        cls.SHOP_DEFAULT_TOOLS_NUM = cls._env_int("SHOP_DEFAULT_TOOLS_NUM", 0)
-        cls.TURRET_SPAWN_PROBABILITY = cls._env_int("TURRET_SPAWN_PROBABILITY", 45)
+        cls.SHOP_DEFAULT_SHIPS_NUM = _track_int("SHOP_DEFAULT_SHIPS_NUM", 5)
+        cls.SHOP_DEFAULT_WEAPONS_NUM = _track_int("SHOP_DEFAULT_WEAPONS_NUM", 5)
+        cls.SHOP_DEFAULT_MODULES_NUM = _track_int("SHOP_DEFAULT_MODULES_NUM", 5)
+        cls.SHOP_DEFAULT_TURRETS_NUM = _track_int("SHOP_DEFAULT_TURRETS_NUM", 2)
+        cls.SHOP_DEFAULT_TOOLS_NUM = _track_int("SHOP_DEFAULT_TOOLS_NUM", 0)
+        cls.TURRET_SPAWN_PROBABILITY = _track_int("TURRET_SPAWN_PROBABILITY", 45)
 
         # Duels
-        cls.DUEL_VARIANCE_PERCENT = cls._env_float("DUEL_VARIANCE_PERCENT", 0.05)
-        cls.DUEL_LOG_MAX_LENGTH = cls._env_int("DUEL_LOG_MAX_LENGTH", 10)
-        cls.DUEL_CLOAK_CHANCE = cls._env_int("DUEL_CLOAK_CHANCE", 20)
+        cls.DUEL_VARIANCE_PERCENT = _track_float("DUEL_VARIANCE_PERCENT", 0.05)
+        cls.DUEL_LOG_MAX_LENGTH = _track_int("DUEL_LOG_MAX_LENGTH", 10)
+        cls.DUEL_CLOAK_CHANCE = _track_int("DUEL_CLOAK_CHANCE", 20)
 
         # Inventory
-        cls.MAX_SHIP_NICKNAME_LENGTH = cls._env_int("MAX_SHIP_NICKNAME_LENGTH", 30)
-        cls.KAAMO_MAX_CAPACITY = cls._env_int("KAAMO_MAX_CAPACITY", 70)
+        cls.MAX_SHIP_NICKNAME_LENGTH = _track_int("MAX_SHIP_NICKNAME_LENGTH", 30)
+        cls.KAAMO_MAX_CAPACITY = _track_int("KAAMO_MAX_CAPACITY", 70)
 
         # Classic mode
-        cls.CLASSIC_CREDITS_PER_CHECK = cls._env_int("CLASSIC_CREDITS_PER_CHECK", 1000)
+        cls.CLASSIC_CREDITS_PER_CHECK = _track_int("CLASSIC_CREDITS_PER_CHECK", 1000)
 
         # XP multiplier
-        cls.BOUNTY_REWARD_TO_XP_GAIN_MULT = cls._env_float(
+        cls.BOUNTY_REWARD_TO_XP_GAIN_MULT = _track_float(
             "BOUNTY_REWARD_TO_XP_GAIN_MULT", 0.1
         )
+
+        if _overrides:
+            _flogger.info(f"GameConstants env overrides detected: {', '.join(_overrides)}")
+        else:
+            _flogger.info("GameConstants.load() — no env overrides, using defaults")

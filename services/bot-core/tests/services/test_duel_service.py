@@ -369,7 +369,8 @@ class TestAcceptDuel:
         duel_repo.update_status.return_value = duel
 
         player_repo = AsyncMock()
-        player_repo.get_by_id.side_effect = lambda db, pid: {
+        # accept_duel uses get_by_id_for_update (locking in sorted ID order: 1 then 2)
+        player_repo.get_by_id_for_update.side_effect = lambda db, pid: {
             1: challenger, 2: target,
         }.get(pid)
 
@@ -405,7 +406,8 @@ class TestAcceptDuel:
         duel_repo.update_status.return_value = duel
 
         player_repo = AsyncMock()
-        player_repo.get_by_id.side_effect = lambda db, pid: {
+        # accept_duel uses get_by_id_for_update (locking in sorted ID order: 1 then 2)
+        player_repo.get_by_id_for_update.side_effect = lambda db, pid: {
             1: challenger, 2: target,
         }.get(pid)
 
@@ -440,7 +442,8 @@ class TestAcceptDuel:
         duel_repo.update_status.return_value = duel
 
         player_repo = AsyncMock()
-        player_repo.get_by_id.side_effect = lambda db, pid: {
+        # accept_duel uses get_by_id_for_update (locking in sorted ID order: 1 then 2)
+        player_repo.get_by_id_for_update.side_effect = lambda db, pid: {
             1: challenger, 2: target,
         }.get(pid)
 
@@ -500,7 +503,8 @@ class TestAcceptDuel:
         duel_repo.get_by_id.return_value = duel
 
         player_repo = AsyncMock()
-        player_repo.get_by_id.side_effect = lambda db, pid: {
+        # accept_duel uses get_by_id_for_update (locking in sorted ID order: 1 then 2)
+        player_repo.get_by_id_for_update.side_effect = lambda db, pid: {
             1: challenger, 2: target,
         }.get(pid)
 
@@ -520,7 +524,8 @@ class TestAcceptDuel:
         duel_repo.get_by_id.return_value = duel
 
         player_repo = AsyncMock()
-        player_repo.get_by_id.side_effect = lambda db, pid: {
+        # accept_duel uses get_by_id_for_update (locking in sorted ID order: 1 then 2)
+        player_repo.get_by_id_for_update.side_effect = lambda db, pid: {
             1: challenger, 2: target,
         }.get(pid)
 
@@ -542,7 +547,8 @@ class TestAcceptDuel:
         duel_repo.update_status.return_value = duel
 
         player_repo = AsyncMock()
-        player_repo.get_by_id.side_effect = lambda db, pid: {
+        # accept_duel uses get_by_id_for_update (locking in sorted ID order: 1 then 2)
+        player_repo.get_by_id_for_update.side_effect = lambda db, pid: {
             1: challenger, 2: target,
         }.get(pid)
 

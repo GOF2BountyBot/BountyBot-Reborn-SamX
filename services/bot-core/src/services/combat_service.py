@@ -15,6 +15,8 @@ TTK comparison from the legacy system.
 
 import random
 
+from shared import bblogger
+
 from services.combat_models import (
     CombatResolver,
     CombatStats,
@@ -23,6 +25,8 @@ from services.combat_models import (
     ShipLoadout,
 )
 from services.game_constants import GameConstants
+
+flogger = bblogger.get_logger(__name__)
 
 # ---------------------------------------------------------------------------
 # SimpleTTKResolver — Legacy-compatible combat resolution
@@ -64,6 +68,13 @@ class SimpleTTKResolver:
         # 2. Apply variance to DPS (2 rolls)
         ship1_dps_varied = _apply_variance_float(ship1_stats.dps, variance_percent)
         ship2_dps_varied = _apply_variance_float(ship2_stats.dps, variance_percent)
+
+        flogger.debug(
+            f"Variance applied: {ship1_stats.ship_name} hp={ship1_stats.total_hp}→{ship1_hp_varied}"
+            f" dps={ship1_stats.dps:.1f}→{ship1_dps_varied:.1f};"
+            f" {ship2_stats.ship_name} hp={ship2_stats.total_hp}→{ship2_hp_varied}"
+            f" dps={ship2_stats.dps:.1f}→{ship2_dps_varied:.1f}"
+        )
 
         # 3. Handle zero-DPS edge cases
         ship1_ttk: float | None = None
@@ -128,6 +139,19 @@ class SimpleTTKResolver:
         else:
             # Exact tie
             is_stalemate = True
+
+        ttk1_str = f"{ship1_ttk:.2f}" if ship1_ttk is not None else "∞"
+        ttk2_str = f"{ship2_ttk:.2f}" if ship2_ttk is not None else "∞"
+        if is_stalemate:
+            flogger.info(
+                f"Fight result: STALEMATE between {ship1_stats.ship_name} and {ship2_stats.ship_name}"
+                f" (ttk1={ttk1_str}, ttk2={ttk2_str})"
+            )
+        else:
+            flogger.info(
+                f"Fight result: winner={winner_name} loser={loser_name}"
+                f" ttk1={ttk1_str} ttk2={ttk2_str}"
+            )
 
         return FightResults(
             winner_name=winner_name,
@@ -333,6 +357,11 @@ class CombatService:
         dps = self.get_dps(loadout)
         armour = self.get_armour(loadout)
         shield = self.get_shield(loadout)
+
+        flogger.debug(
+            f"Ship stats: {loadout.ship_name} dps={dps:.1f} armour={armour}"
+            f" shield={shield} total_hp={armour + shield}"
+        )
 
         return CombatStats(
             ship_name=loadout.ship_name,

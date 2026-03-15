@@ -14,7 +14,6 @@ Coverage:
 import pytest
 from src.services.division_service import DivisionService
 
-
 # ---------------------------------------------------------------------------
 # TestGetDivisionForLevel
 # ---------------------------------------------------------------------------

@@ -68,8 +68,12 @@ class InventoryRepository(IRepository[PlayerInventory]):
             if existing_item:
                 # Update existing item quantity
                 existing_item.quantity += quantity
-                await db.commit()
-                await db.refresh(existing_item)
+                try:
+                    await db.commit()
+                    await db.refresh(existing_item)
+                except Exception:
+                    await db.rollback()
+                    raise
                 flogger.debug(f"Updated inventory item quantity: {item_name} for player {player_id}")
                 return existing_item
 
@@ -215,14 +219,17 @@ class InventoryRepository(IRepository[PlayerInventory]):
                 .where(PlayerInventory.id == inventory_id)
                 .values(quantity=new_quantity)
             )
-            await db.commit()
+            try:
+                await db.commit()
+            except Exception:
+                await db.rollback()
+                raise
 
             item = await self.get_by_id(db, inventory_id)
             flogger.debug(f"Updated inventory item {inventory_id} quantity: {new_quantity}")
             return item
         except Exception as e:
             flogger.error(f"Error updating quantity for inventory item {inventory_id}: {e}")
-            await db.rollback()
             raise
 
     async def get_item_count_by_type(self, db: AsyncSession, player_id: int, item_type: str) -> int:

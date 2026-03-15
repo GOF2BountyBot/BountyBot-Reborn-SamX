@@ -18,6 +18,7 @@ httpx
 # Scheduling library
 apscheduler
 python-dotenv
+Pillow
 
 # Testing & QC
 pylint>=3.0.0

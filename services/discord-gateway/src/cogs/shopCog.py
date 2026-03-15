@@ -16,7 +16,7 @@ flogger.debug(f"shopCog loading with API_BASE_URL: {api_base}")
 class ShopCog(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
-        self.http_client = httpx.AsyncClient()
+        self.http_client = httpx.AsyncClient(timeout=httpx.Timeout(10.0))
         self._valid_tiers = ["Bronze", "Silver", "Gold", "Platinum"]
         self._valid_item_types = ["ship", "weapon", "module", "turret"]
         flogger.debug("ShopCog initialized")

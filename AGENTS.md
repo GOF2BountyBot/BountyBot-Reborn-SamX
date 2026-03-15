@@ -140,6 +140,18 @@ The following services were added in Phase 1:
 - `services/bot-core/src/api/routers/duels.py` — Duel API endpoints (auto-discovered)
 - `services/bot-core/src/api/schemas/duel_schema.py` — Duel request/response Pydantic schemas
 
+### New Services Added (Phase 9)
+
+- `services/bot-core/src/persist/models/admin_audit_log.py` — AdminAuditLog ORM model for audit trail
+- `services/bot-core/src/services/audit_service.py` — Lightweight audit logging for admin operations
+
+### Phase 9 Improvements
+
+- **Error handling hardened**: All repositories use try/except/rollback, all cog HTTP clients have 10s timeout, retry logic on discord-gateway calls
+- **Comprehensive logging**: All Phase 1-8 services now have INFO/ERROR/DEBUG logging with entity IDs
+- **Admin security**: Audit logging on all mutations, input validation tightened, cog permission checks for viewing other users
+- **Performance**: A* uses heapq, SystemGraph pre-computes neighbours, distribute_rewards uses batched commits
+
 ### Code Standards
 
 - **Pydantic schemas**: Use `model_config = ConfigDict(from_attributes=True)` (NOT deprecated `class Config`). Use `.model_dump()` (NOT deprecated `.dict()`).

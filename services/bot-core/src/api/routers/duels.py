@@ -57,6 +57,10 @@ async def create_challenge(
     service: DuelService = Depends(get_duel_service),
 ):
     """Create a new duel challenge between two players."""
+    flogger.info(
+        f"Duel challenge request: challenger={request.challenger_id}"
+        f" target={request.target_id} stakes={request.stakes} guild_id={request.guild_id}"
+    )
     async with get_db_session() as db:
         try:
             duel = await service.create_challenge(
@@ -66,8 +70,17 @@ async def create_challenge(
                 request.stakes,
                 request.guild_id,
             )
+            flogger.info(
+                f"Duel challenge created: duel_id={duel.id}"
+                f" challenger={request.challenger_id} target={request.target_id}"
+                f" stakes={request.stakes}"
+            )
             return DuelRequestResponse.model_validate(duel)
         except ValueError as exc:
+            flogger.error(
+                f"Duel challenge failed: challenger={request.challenger_id}"
+                f" target={request.target_id}: {exc}"
+            )
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
@@ -99,16 +112,24 @@ async def accept_duel(
                 detail="Only the challenged player can accept/reject this duel.",
             )
 
+        flogger.info(f"Duel accept request: duel_id={duel_id} user_id={user_id}")
         try:
             result = await service.accept_duel(db, duel_id)
         except ValueError as exc:
             msg = str(exc)
+            flogger.error(f"Duel accept failed: duel_id={duel_id} user_id={user_id}: {msg}")
             status_code = 404 if "not found" in msg.lower() else 400
             raise HTTPException(status_code=status_code, detail=msg) from exc
 
         fight = result["fight_results"]
         challenger = result["challenger"]
         target = result["target"]
+
+        flogger.info(
+            f"Duel accepted and resolved: duel_id={duel_id}"
+            f" winner={fight.winner_name!r} stalemate={fight.is_stalemate}"
+            f" credits_transferred={result['credits_transferred']}"
+        )
 
         return {
             "duel_id": duel_id,
@@ -152,10 +173,13 @@ async def reject_duel(
                 detail="Only the challenged player can accept/reject this duel.",
             )
 
+        flogger.info(f"Duel reject request: duel_id={duel_id} user_id={user_id}")
         try:
             updated = await service.reject_duel(db, duel_id)
+            flogger.info(f"Duel rejected: duel_id={duel_id} user_id={user_id}")
             return DuelRequestResponse.model_validate(updated)
         except ValueError as exc:
             msg = str(exc)
+            flogger.error(f"Duel reject failed: duel_id={duel_id} user_id={user_id}: {msg}")
             status_code = 404 if "not found" in msg.lower() else 400
             raise HTTPException(status_code=status_code, detail=msg) from exc

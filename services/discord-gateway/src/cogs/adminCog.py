@@ -14,6 +14,38 @@ api_base = os.environ.get("BOT_API_BASE_URL", "http://bot-core:8000/api/v1")
 flogger.debug(f"adminCog loading with API_BASE_URL: {api_base}")
 
 
+async def _check_is_admin(interaction: discord.Interaction) -> bool:
+    """
+    Core admin permission check logic, callable directly.
+
+    Returns True if the interacting user has admin rights:
+    - Developer override via DEVELOPERS env var
+    - Built-in Discord Administrator permission
+    - Configured Bot Admin role from API
+    """
+    # 0) developer override via ENV var
+    devs = os.getenv("DEVELOPERS", "")
+    if str(interaction.user.id) in [d.strip() for d in devs.split(",") if d.strip()]:
+        return True
+
+    # 1) built-in Discord Administrator
+    if interaction.user.guild_permissions.administrator:
+        return True
+
+    # 2) configured Bot Admin role from API
+    try:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(10.0)) as client:
+            resp = await client.get(f"{api_base}/config/guild/{interaction.guild_id}", timeout=5)
+        resp.raise_for_status()
+        admin_role_id = resp.json().get("admin_role_id")
+        if admin_role_id and any(r.id == admin_role_id for r in interaction.user.roles):
+            return True
+    except Exception:  # pylint: disable=broad-exception-caught
+        pass
+
+    return False
+
+
 def is_admin():
     """
     Allow users with the built-in Administrator permission,
@@ -21,27 +53,7 @@ def is_admin():
     """
 
     async def predicate(interaction: discord.Interaction) -> bool:
-        # 0) developer override via ENV var
-        devs = os.getenv("DEVELOPERS", "")
-        if str(interaction.user.id) in [d.strip() for d in devs.split(",") if d.strip()]:
-            return True
-
-        # 1) built-in Discord Administrator
-        if interaction.user.guild_permissions.administrator:
-            return True
-
-        # 2) configured Bot Admin role from API
-        try:
-            async with httpx.AsyncClient() as client:
-                resp = await client.get(f"{api_base}/config/guild/{interaction.guild_id}", timeout=5)
-            resp.raise_for_status()
-            admin_role_id = resp.json().get("admin_role_id")
-            if admin_role_id and any(r.id == admin_role_id for r in interaction.user.roles):
-                return True
-        except Exception:  # pylint: disable=broad-exception-caught
-            pass
-
-        return False
+        return await _check_is_admin(interaction)
 
     return app_commands.check(predicate)
 
@@ -50,7 +62,7 @@ class AdminCog(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
         self._valid_tiers = ["Bronze", "Silver", "Gold", "Platinum"]
-        self.http_client = httpx.AsyncClient()
+        self.http_client = httpx.AsyncClient(timeout=httpx.Timeout(10.0))
         flogger.debug("AdminCog initialized")
 
     async def cog_unload(self):

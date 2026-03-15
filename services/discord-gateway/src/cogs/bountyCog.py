@@ -20,7 +20,7 @@ _VALID_DIVISIONS = ["bronze", "silver", "gold"]
 class BountyCog(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
-        self.http_client = httpx.AsyncClient()
+        self.http_client = httpx.AsyncClient(timeout=httpx.Timeout(10.0))
         self._systems: list[str] = []
 
         # Preload system data at startup
@@ -42,8 +42,17 @@ class BountyCog(commands.Cog):
             systems = resp.json()
             self._systems = [s.get("name", "") for s in systems if s.get("name")]
             flogger.info(f"BountyCog: Preloaded {len(self._systems)} system names")
+        except httpx.TimeoutException as e:
+            flogger.warning(f"BountyCog: Timeout preloading systems: {e}")
+            self._systems = []
+        except httpx.HTTPStatusError as e:
+            flogger.warning(f"BountyCog: HTTP error preloading systems: {e.response.status_code}")
+            self._systems = []
+        except httpx.RequestError as e:
+            flogger.warning(f"BountyCog: Request error preloading systems: {e}")
+            self._systems = []
         except Exception as e:  # pylint: disable=broad-exception-caught
-            flogger.warning(f"BountyCog: Failed to preload systems: {e}")
+            flogger.warning(f"BountyCog: Unexpected error preloading systems: {e}")
             self._systems = []
 
     # ------------------------------------------------------------------
@@ -108,6 +117,7 @@ class BountyCog(commands.Cog):
     async def check(self, interaction: discord.Interaction, system: str):
         """Check a system for bounties."""
         await interaction.response.defer(thinking=True)
+        flogger.info(f"/check invoked: guild={interaction.guild_id} user={interaction.user.id} system={system}")
 
         try:
             resp = await self.http_client.post(
@@ -131,7 +141,10 @@ class BountyCog(commands.Cog):
 
             embed = self._build_check_embed(result, system, message)
             await interaction.followup.send(embed=embed)
-            flogger.debug(f"/check {system} by {interaction.user} → {result}")
+            flogger.info(
+            f"/check success: guild={interaction.guild_id} user={interaction.user.id}"
+            f" system={system} result={result}"
+        )
 
         except httpx.HTTPStatusError as e:
             if e.response.status_code == 429:
@@ -140,9 +153,13 @@ class BountyCog(commands.Cog):
                     ephemeral=True,
                 )
             else:
+                flogger.error(
+                    f"/check API error: guild={interaction.guild_id} user={interaction.user.id}"
+                    f" status={e.response.status_code}"
+                )
                 await interaction.followup.send(f"❌ API Error: {e}", ephemeral=True)
         except Exception as e:  # pylint: disable=broad-exception-caught
-            flogger.error(f"Error in /check: {e}")
+            flogger.error(f"/check error: guild={interaction.guild_id} user={interaction.user.id} error={e}")
             await interaction.followup.send(
                 "⚠️ An error occurred while checking the system.", ephemeral=True
             )
@@ -203,6 +220,7 @@ class BountyCog(commands.Cog):
     ):
         """List active bounties."""
         await interaction.response.defer(thinking=True)
+        flogger.info(f"/bounties invoked: guild={interaction.guild_id} user={interaction.user.id} division={division}")
 
         try:
             params: dict = {"guild_id": interaction.guild_id}
@@ -274,12 +292,19 @@ class BountyCog(commands.Cog):
 
             embed.set_footer(text="Use /route <bounty_id> to see the route")
             await interaction.followup.send(embed=embed)
-            flogger.debug(f"/bounties by {interaction.user} in guild {interaction.guild_id}")
+            flogger.info(
+                f"/bounties success: guild={interaction.guild_id} user={interaction.user.id}"
+                f" count={len(bounty_list)}"
+            )
 
         except httpx.HTTPStatusError as e:
+            flogger.error(
+                f"/bounties API error: guild={interaction.guild_id} user={interaction.user.id}"
+                f" status={e.response.status_code}"
+            )
             await interaction.followup.send(f"❌ API Error: {e}", ephemeral=True)
         except Exception as e:  # pylint: disable=broad-exception-caught
-            flogger.error(f"Error in /bounties: {e}")
+            flogger.error(f"/bounties error: guild={interaction.guild_id} user={interaction.user.id} error={e}")
             await interaction.followup.send(
                 "⚠️ An error occurred while fetching bounties.", ephemeral=True
             )
@@ -300,6 +325,7 @@ class BountyCog(commands.Cog):
     async def route(self, interaction: discord.Interaction, bounty: str):
         """Show bounty route."""
         await interaction.response.defer(thinking=True)
+        flogger.info(f"/route invoked: guild={interaction.guild_id} user={interaction.user.id} bounty={bounty}")
 
         try:
             bounty_id = int(bounty)
@@ -350,15 +376,25 @@ class BountyCog(commands.Cog):
             )
 
             await interaction.followup.send(embed=embed)
-            flogger.debug(f"/route {bounty_id} by {interaction.user}")
+            flogger.info(
+                f"/route success: guild={interaction.guild_id} user={interaction.user.id}"
+                f" bounty_id={bounty_id} systems={len(route_systems)}"
+            )
 
         except httpx.HTTPStatusError as e:
             if e.response.status_code == 404:
                 await interaction.followup.send("❌ Bounty not found.", ephemeral=True)
             else:
+                flogger.error(
+                    f"/route API error: guild={interaction.guild_id} user={interaction.user.id}"
+                    f" bounty_id={bounty_id} status={e.response.status_code}"
+                )
                 await interaction.followup.send(f"❌ API Error: {e}", ephemeral=True)
         except Exception as e:  # pylint: disable=broad-exception-caught
-            flogger.error(f"Error in /route: {e}")
+            flogger.error(
+                f"/route error: guild={interaction.guild_id} user={interaction.user.id}"
+                f" bounty_id={bounty_id} error={e}"
+            )
             await interaction.followup.send(
                 "⚠️ An error occurred while fetching the route.", ephemeral=True
             )
@@ -379,6 +415,10 @@ class BountyCog(commands.Cog):
     async def criminal_loadout(self, interaction: discord.Interaction, bounty: str):
         """Show criminal loadout."""
         await interaction.response.defer(thinking=True)
+        flogger.info(
+            f"/criminal-loadout invoked: guild={interaction.guild_id} user={interaction.user.id}"
+            f" bounty={bounty}"
+        )
 
         try:
             bounty_id = int(bounty)
@@ -432,15 +472,25 @@ class BountyCog(commands.Cog):
                 embed.add_field(name="⚙️ Modules", value="None", inline=False)
 
             await interaction.followup.send(embed=embed)
-            flogger.debug(f"/criminal-loadout {bounty_id} by {interaction.user}")
+            flogger.info(
+                f"/criminal-loadout success: guild={interaction.guild_id} user={interaction.user.id}"
+                f" bounty_id={bounty_id} criminal={criminal_name}"
+            )
 
         except httpx.HTTPStatusError as e:
             if e.response.status_code == 404:
                 await interaction.followup.send("❌ Bounty not found.", ephemeral=True)
             else:
+                flogger.error(
+                    f"/criminal-loadout API error: guild={interaction.guild_id} user={interaction.user.id}"
+                    f" bounty_id={bounty_id} status={e.response.status_code}"
+                )
                 await interaction.followup.send(f"❌ API Error: {e}", ephemeral=True)
         except Exception as e:  # pylint: disable=broad-exception-caught
-            flogger.error(f"Error in /criminal-loadout: {e}")
+            flogger.error(
+                f"/criminal-loadout error: guild={interaction.guild_id} user={interaction.user.id}"
+                f" bounty_id={bounty_id} error={e}"
+            )
             await interaction.followup.send(
                 "⚠️ An error occurred while fetching the loadout.", ephemeral=True
             )

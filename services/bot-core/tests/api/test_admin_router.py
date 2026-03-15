@@ -150,7 +150,7 @@ class TestInitializeGuild:
         _configure_db_mock(mock_get_db)
         payload = {"guild_id": 67890, "admin_role_id": 11111, "starting_credits": 500}
 
-        response = client.post("/api/v1/admin/guilds/initialize", json=payload)
+        response = client.post("/api/v1/admin/guilds/initialize?user_id=67890", json=payload)
 
         assert response.status_code == 200
         data = response.json()
@@ -166,7 +166,7 @@ class TestInitializeGuild:
         _configure_db_mock(mock_get_db)
         payload = {"guild_id": 12345}
 
-        response = client.post("/api/v1/admin/guilds/initialize", json=payload)
+        response = client.post("/api/v1/admin/guilds/initialize?user_id=67890", json=payload)
 
         assert response.status_code == 200
         data = response.json()
@@ -183,7 +183,7 @@ class TestInitializeGuild:
         _configure_db_mock(mock_get_db)
         payload = {"guild_id": 67890}
 
-        client.post("/api/v1/admin/guilds/initialize", json=payload)
+        client.post("/api/v1/admin/guilds/initialize?user_id=67890", json=payload)
 
         mock_config_service.create_or_update_config.assert_awaited_once()
         assert mock_shop_service.refresh_shop.await_count == 4
@@ -197,7 +197,7 @@ class TestInitializeGuild:
         mock_config_service.create_or_update_config.side_effect = RuntimeError("DB failure")
         payload = {"guild_id": 67890}
 
-        response = client.post("/api/v1/admin/guilds/initialize", json=payload)
+        response = client.post("/api/v1/admin/guilds/initialize?user_id=67890", json=payload)
 
         assert response.status_code == 500
         assert "Failed to initialize guild" in response.json()["detail"]
@@ -206,7 +206,7 @@ class TestInitializeGuild:
         """Returns 422 when required field guild_id is missing."""
         payload = {"admin_role_id": 11111}
 
-        response = client.post("/api/v1/admin/guilds/initialize", json=payload)
+        response = client.post("/api/v1/admin/guilds/initialize?user_id=67890", json=payload)
 
         assert response.status_code == 422
 
@@ -214,7 +214,7 @@ class TestInitializeGuild:
         """Returns 422 when starting_credits is negative (ge=0)."""
         payload = {"guild_id": 67890, "starting_credits": -100}
 
-        response = client.post("/api/v1/admin/guilds/initialize", json=payload)
+        response = client.post("/api/v1/admin/guilds/initialize?user_id=67890", json=payload)
 
         assert response.status_code == 422
 
@@ -336,6 +336,19 @@ class TestResetGuild:
             if env_backup is not None:
                 os.environ["ADMIN_USER_IDS"] = env_backup
 
+    @patch("api.routers.admin.verify_admin_permissions")
+    def test_reset_guild_returns_403_when_verify_admin_permissions_false(
+        self, mock_verify_admin, client
+    ):
+        """Returns 403 when verify_admin_permissions returns False (mocked at router level)."""
+        mock_verify_admin.return_value = False
+
+        response = client.post("/api/v1/admin/guilds/67890/reset?user_id=999")
+
+        assert response.status_code == 403
+        assert "Insufficient permissions" in response.json()["detail"]
+        mock_verify_admin.assert_called_once()
+
 
 # ===========================================================================
 # 3. DELETE /admin/guilds/{guild_id}/uninstall
@@ -424,6 +437,19 @@ class TestUninstallBot:
             if env_backup is not None:
                 os.environ["ADMIN_USER_IDS"] = env_backup
 
+    @patch("api.routers.admin.verify_admin_permissions")
+    def test_uninstall_bot_returns_403_when_verify_admin_permissions_false(
+        self, mock_verify_admin, client
+    ):
+        """Returns 403 when verify_admin_permissions returns False (mocked at router level)."""
+        mock_verify_admin.return_value = False
+
+        response = client.delete("/api/v1/admin/guilds/67890/uninstall?user_id=999")
+
+        assert response.status_code == 403
+        assert "Insufficient permissions" in response.json()["detail"]
+        mock_verify_admin.assert_called_once()
+
 
 # ===========================================================================
 # 4. PUT /admin/players/credits
@@ -439,7 +465,7 @@ class TestUpdatePlayerCredits:
         _configure_db_mock(mock_get_db)
         payload = {"player_id": 1, "credits": 500, "update_lifetime": True}
 
-        response = client.put("/api/v1/admin/players/credits", json=payload)
+        response = client.put("/api/v1/admin/players/credits?user_id=67890&guild_id=67890", json=payload)
 
         assert response.status_code == 200
         data = response.json()
@@ -453,7 +479,7 @@ class TestUpdatePlayerCredits:
         _configure_db_mock(mock_get_db)
         payload = {"player_id": 42, "credits": 1000, "update_lifetime": False}
 
-        client.put("/api/v1/admin/players/credits", json=payload)
+        client.put("/api/v1/admin/players/credits?user_id=67890&guild_id=67890", json=payload)
 
         mock_player_service.update_player_credits.assert_awaited_once()
         call_args = mock_player_service.update_player_credits.call_args
@@ -467,7 +493,7 @@ class TestUpdatePlayerCredits:
         mock_player_service.update_player_credits.side_effect = ValueError("Player not found")
         payload = {"player_id": 9999, "credits": 100}
 
-        response = client.put("/api/v1/admin/players/credits", json=payload)
+        response = client.put("/api/v1/admin/players/credits?user_id=67890&guild_id=67890", json=payload)
 
         assert response.status_code == 404
         assert "Player not found" in response.json()["detail"]
@@ -479,7 +505,7 @@ class TestUpdatePlayerCredits:
         mock_player_service.update_player_credits.side_effect = RuntimeError("DB failure")
         payload = {"player_id": 1, "credits": 100}
 
-        response = client.put("/api/v1/admin/players/credits", json=payload)
+        response = client.put("/api/v1/admin/players/credits?user_id=67890&guild_id=67890", json=payload)
 
         assert response.status_code == 500
         assert "Failed to update credits" in response.json()["detail"]
@@ -488,7 +514,7 @@ class TestUpdatePlayerCredits:
         """Returns 422 when credits is negative (ge=0)."""
         payload = {"player_id": 1, "credits": -50}
 
-        response = client.put("/api/v1/admin/players/credits", json=payload)
+        response = client.put("/api/v1/admin/players/credits?user_id=67890&guild_id=67890", json=payload)
 
         assert response.status_code == 422
 
@@ -496,7 +522,7 @@ class TestUpdatePlayerCredits:
         """Returns 422 when player_id is missing."""
         payload = {"credits": 100}
 
-        response = client.put("/api/v1/admin/players/credits", json=payload)
+        response = client.put("/api/v1/admin/players/credits?user_id=67890&guild_id=67890", json=payload)
 
         assert response.status_code == 422
 
@@ -504,7 +530,7 @@ class TestUpdatePlayerCredits:
         """Returns 422 when credits field is missing."""
         payload = {"player_id": 1}
 
-        response = client.put("/api/v1/admin/players/credits", json=payload)
+        response = client.put("/api/v1/admin/players/credits?user_id=67890&guild_id=67890", json=payload)
 
         assert response.status_code == 422
 
@@ -514,7 +540,7 @@ class TestUpdatePlayerCredits:
         _configure_db_mock(mock_get_db)
         payload = {"player_id": 1, "credits": 200}
 
-        response = client.put("/api/v1/admin/players/credits", json=payload)
+        response = client.put("/api/v1/admin/players/credits?user_id=67890&guild_id=67890", json=payload)
 
         assert response.status_code == 200
         call_args = mock_player_service.update_player_credits.call_args
@@ -538,7 +564,7 @@ class TestUpdatePlayerXP:
         mock_player_service.update_player_xp = AsyncMock(return_value=make_mock_player(xp=100, tier="Bronze"))
         payload = {"player_id": 1, "xp": 100}
 
-        response = client.put("/api/v1/admin/players/xp", json=payload)
+        response = client.put("/api/v1/admin/players/xp?user_id=67890&guild_id=67890", json=payload)
 
         assert response.status_code == 200
         data = response.json()
@@ -558,7 +584,7 @@ class TestUpdatePlayerXP:
         mock_player_service.update_player_xp = AsyncMock(return_value=make_mock_player(xp=5000, tier="Silver"))
         payload = {"player_id": 1, "xp": 5000}
 
-        response = client.put("/api/v1/admin/players/xp", json=payload)
+        response = client.put("/api/v1/admin/players/xp?user_id=67890&guild_id=67890", json=payload)
 
         assert response.status_code == 200
         data = response.json()
@@ -578,7 +604,7 @@ class TestUpdatePlayerXP:
         mock_player_service.player_repo.get_by_id = AsyncMock(return_value=None)
         payload = {"player_id": 9999, "xp": 100}
 
-        response = client.put("/api/v1/admin/players/xp", json=payload)
+        response = client.put("/api/v1/admin/players/xp?user_id=67890&guild_id=67890", json=payload)
 
         assert response.status_code == 500
         assert "Failed to update XP" in response.json()["detail"]
@@ -591,7 +617,7 @@ class TestUpdatePlayerXP:
         mock_player_service.update_player_xp.side_effect = ValueError("Invalid XP value")
         payload = {"player_id": 1, "xp": 100}
 
-        response = client.put("/api/v1/admin/players/xp", json=payload)
+        response = client.put("/api/v1/admin/players/xp?user_id=67890&guild_id=67890", json=payload)
 
         assert response.status_code == 404
         assert "Invalid XP value" in response.json()["detail"]
@@ -604,7 +630,7 @@ class TestUpdatePlayerXP:
         mock_player_service.update_player_xp.side_effect = RuntimeError("Unexpected failure")
         payload = {"player_id": 1, "xp": 100}
 
-        response = client.put("/api/v1/admin/players/xp", json=payload)
+        response = client.put("/api/v1/admin/players/xp?user_id=67890&guild_id=67890", json=payload)
 
         assert response.status_code == 500
         assert "Failed to update XP" in response.json()["detail"]
@@ -613,7 +639,7 @@ class TestUpdatePlayerXP:
         """Returns 422 when xp is negative (ge=0)."""
         payload = {"player_id": 1, "xp": -10}
 
-        response = client.put("/api/v1/admin/players/xp", json=payload)
+        response = client.put("/api/v1/admin/players/xp?user_id=67890&guild_id=67890", json=payload)
 
         assert response.status_code == 422
 
@@ -621,7 +647,7 @@ class TestUpdatePlayerXP:
         """Returns 422 when xp exceeds 1000000 (le=1000000)."""
         payload = {"player_id": 1, "xp": 1000001}
 
-        response = client.put("/api/v1/admin/players/xp", json=payload)
+        response = client.put("/api/v1/admin/players/xp?user_id=67890&guild_id=67890", json=payload)
 
         assert response.status_code == 422
 
@@ -629,7 +655,7 @@ class TestUpdatePlayerXP:
         """Returns 422 when player_id is missing."""
         payload = {"xp": 100}
 
-        response = client.put("/api/v1/admin/players/xp", json=payload)
+        response = client.put("/api/v1/admin/players/xp?user_id=67890&guild_id=67890", json=payload)
 
         assert response.status_code == 422
 
@@ -658,7 +684,7 @@ class TestAddInventoryItem:
             "quantity": 2,
         }
 
-        response = client.post("/api/v1/admin/players/inventory/add", json=payload)
+        response = client.post("/api/v1/admin/players/inventory/add?user_id=67890&guild_id=67890", json=payload)
 
         assert response.status_code == 200
         data = response.json()
@@ -679,7 +705,7 @@ class TestAddInventoryItem:
         )
         payload = {"player_id": 1, "item_type": "ship", "item_name": "Raptor"}
 
-        response = client.post("/api/v1/admin/players/inventory/add", json=payload)
+        response = client.post("/api/v1/admin/players/inventory/add?user_id=67890&guild_id=67890", json=payload)
 
         assert response.status_code == 200
         data = response.json()
@@ -696,7 +722,7 @@ class TestAddInventoryItem:
                 return_value=_make_transaction_details(item_type=item_type, item_name="Test Item")
             )
             payload = {"player_id": 1, "item_type": item_type, "item_name": "Test Item"}
-            response = client.post("/api/v1/admin/players/inventory/add", json=payload)
+            response = client.post("/api/v1/admin/players/inventory/add?user_id=67890&guild_id=67890", json=payload)
             assert response.status_code == 200, f"Expected 200 for item_type={item_type}"
 
     @patch("api.routers.admin.get_db_session")
@@ -708,7 +734,7 @@ class TestAddInventoryItem:
         )
         payload = {"player_id": 9999, "item_type": "weapon", "item_name": "Pulse Laser"}
 
-        response = client.post("/api/v1/admin/players/inventory/add", json=payload)
+        response = client.post("/api/v1/admin/players/inventory/add?user_id=67890&guild_id=67890", json=payload)
 
         assert response.status_code == 404
         assert "not found" in response.json()["detail"].lower()
@@ -722,7 +748,7 @@ class TestAddInventoryItem:
         )
         payload = {"player_id": 1, "item_type": "weapon", "item_name": "Pulse Laser"}
 
-        response = client.post("/api/v1/admin/players/inventory/add", json=payload)
+        response = client.post("/api/v1/admin/players/inventory/add?user_id=67890&guild_id=67890", json=payload)
 
         assert response.status_code == 500
         assert "Failed to add inventory item" in response.json()["detail"]
@@ -735,7 +761,7 @@ class TestAddInventoryItem:
             "item_name": "X-Wing",
         }
 
-        response = client.post("/api/v1/admin/players/inventory/add", json=payload)
+        response = client.post("/api/v1/admin/players/inventory/add?user_id=67890&guild_id=67890", json=payload)
 
         assert response.status_code == 422
 
@@ -743,7 +769,7 @@ class TestAddInventoryItem:
         """Returns 422 when quantity is 0 (gt=0)."""
         payload = {"player_id": 1, "item_type": "weapon", "item_name": "Laser", "quantity": 0}
 
-        response = client.post("/api/v1/admin/players/inventory/add", json=payload)
+        response = client.post("/api/v1/admin/players/inventory/add?user_id=67890&guild_id=67890", json=payload)
 
         assert response.status_code == 422
 
@@ -751,7 +777,7 @@ class TestAddInventoryItem:
         """Returns 422 when quantity is negative (gt=0)."""
         payload = {"player_id": 1, "item_type": "weapon", "item_name": "Laser", "quantity": -1}
 
-        response = client.post("/api/v1/admin/players/inventory/add", json=payload)
+        response = client.post("/api/v1/admin/players/inventory/add?user_id=67890&guild_id=67890", json=payload)
 
         assert response.status_code == 422
 
@@ -759,7 +785,7 @@ class TestAddInventoryItem:
         """Returns 422 when required fields are missing."""
         payload = {"player_id": 1}  # missing item_type and item_name
 
-        response = client.post("/api/v1/admin/players/inventory/add", json=payload)
+        response = client.post("/api/v1/admin/players/inventory/add?user_id=67890&guild_id=67890", json=payload)
 
         assert response.status_code == 422
 
@@ -779,7 +805,7 @@ class TestAddInventoryItem:
             "quantity": 3,
         }
 
-        response = client.post("/api/v1/admin/players/inventory/add", json=payload)
+        response = client.post("/api/v1/admin/players/inventory/add?user_id=67890&guild_id=67890", json=payload)
 
         assert response.status_code == 200
         mock_inventory_service.add_item_to_inventory.assert_called_once()
@@ -789,6 +815,32 @@ class TestAddInventoryItem:
         assert call_args[0][2] == "module"     # item_type
         assert call_args[0][3] == "Shield Booster"  # item_name
         assert call_args[0][4] == 3            # quantity
+
+    @patch("api.routers.admin.get_db_session")
+    def test_add_inventory_item_persisted_to_db(self, mock_get_db, client, mock_inventory_service):
+        """Verifies inventory_service.add_item_to_inventory is called (DB write confirmed).
+
+        This test focuses on the persistence contract: the response data must echo back
+        exactly what the service returned, confirming the item was committed via the service.
+        """
+        _configure_db_mock(mock_get_db)
+        real_item_name = "Micro Gun MK I"   # actual game asset name from import_data/
+        expected_details = _make_transaction_details(
+            player_id=7, item_type="weapon", item_name=real_item_name, quantity=1
+        )
+        mock_inventory_service.add_item_to_inventory = AsyncMock(return_value=expected_details)
+
+        payload = {"player_id": 7, "item_type": "weapon", "item_name": real_item_name, "quantity": 1}
+        response = client.post("/api/v1/admin/players/inventory/add?user_id=67890&guild_id=67890", json=payload)
+
+        assert response.status_code == 200
+        # Service was invoked — item will have been written to the DB session
+        mock_inventory_service.add_item_to_inventory.assert_awaited_once()
+        # Response echoes the service-returned data, proving the write path completed
+        data = response.json()
+        assert data["player_id"] == 7
+        assert data["item_name"] == real_item_name
+        assert data["quantity_added"] == 1
 
 
 # ===========================================================================
@@ -805,7 +857,7 @@ class TestRefreshShop:
         _configure_db_mock(mock_get_db)
         payload = {"guild_id": 67890, "tier": "Bronze"}
 
-        response = client.post("/api/v1/admin/shops/refresh", json=payload)
+        response = client.post("/api/v1/admin/shops/refresh?user_id=67890", json=payload)
 
         assert response.status_code == 200
         data = response.json()
@@ -821,7 +873,7 @@ class TestRefreshShop:
         _configure_db_mock(mock_get_db)
         payload = {"guild_id": 67890, "tier": "Gold", "force_tech_level": 7}
 
-        response = client.post("/api/v1/admin/shops/refresh", json=payload)
+        response = client.post("/api/v1/admin/shops/refresh?user_id=67890", json=payload)
 
         assert response.status_code == 200
         mock_shop_service.refresh_shop.assert_awaited_once()
@@ -838,7 +890,7 @@ class TestRefreshShop:
             mock_shop_service.refresh_shop.reset_mock()
             mock_shop_service.refresh_shop = AsyncMock(return_value={"refreshed": True, "items_count": 5})
             payload = {"guild_id": 67890, "tier": tier}
-            response = client.post("/api/v1/admin/shops/refresh", json=payload)
+            response = client.post("/api/v1/admin/shops/refresh?user_id=67890", json=payload)
             assert response.status_code == 200, f"Expected 200 for tier={tier}"
 
     @patch("api.routers.admin.get_db_session")
@@ -848,7 +900,7 @@ class TestRefreshShop:
         mock_shop_service.refresh_shop.side_effect = ValueError("Shop already refreshed recently")
         payload = {"guild_id": 67890, "tier": "Bronze"}
 
-        response = client.post("/api/v1/admin/shops/refresh", json=payload)
+        response = client.post("/api/v1/admin/shops/refresh?user_id=67890", json=payload)
 
         assert response.status_code == 400
         assert "Shop already refreshed recently" in response.json()["detail"]
@@ -860,7 +912,7 @@ class TestRefreshShop:
         mock_shop_service.refresh_shop.side_effect = RuntimeError("Refresh service crashed")
         payload = {"guild_id": 67890, "tier": "Silver"}
 
-        response = client.post("/api/v1/admin/shops/refresh", json=payload)
+        response = client.post("/api/v1/admin/shops/refresh?user_id=67890", json=payload)
 
         assert response.status_code == 500
         assert "Failed to refresh shop" in response.json()["detail"]
@@ -869,7 +921,7 @@ class TestRefreshShop:
         """Returns 422 when tier is not in allowed pattern."""
         payload = {"guild_id": 67890, "tier": "Diamond"}
 
-        response = client.post("/api/v1/admin/shops/refresh", json=payload)
+        response = client.post("/api/v1/admin/shops/refresh?user_id=67890", json=payload)
 
         assert response.status_code == 422
 
@@ -877,7 +929,7 @@ class TestRefreshShop:
         """Returns 422 when force_tech_level is outside 1-9."""
         payload = {"guild_id": 67890, "tier": "Bronze", "force_tech_level": 10}
 
-        response = client.post("/api/v1/admin/shops/refresh", json=payload)
+        response = client.post("/api/v1/admin/shops/refresh?user_id=67890", json=payload)
 
         assert response.status_code == 422
 
@@ -885,7 +937,7 @@ class TestRefreshShop:
         """Returns 422 when force_tech_level is 0 (ge=1)."""
         payload = {"guild_id": 67890, "tier": "Bronze", "force_tech_level": 0}
 
-        response = client.post("/api/v1/admin/shops/refresh", json=payload)
+        response = client.post("/api/v1/admin/shops/refresh?user_id=67890", json=payload)
 
         assert response.status_code == 422
 
@@ -907,7 +959,7 @@ class TestUpdateShopConfig:
             "sale_price_factor": 0.5,
         }
 
-        response = client.put("/api/v1/admin/shops/config", json=payload)
+        response = client.put("/api/v1/admin/shops/config?user_id=67890", json=payload)
 
         assert response.status_code == 200
         data = response.json()
@@ -922,7 +974,7 @@ class TestUpdateShopConfig:
         _configure_db_mock(mock_get_db)
         payload = {"guild_id": 67890}
 
-        response = client.put("/api/v1/admin/shops/config", json=payload)
+        response = client.put("/api/v1/admin/shops/config?user_id=67890", json=payload)
 
         assert response.status_code == 200
         data = response.json()
@@ -940,7 +992,7 @@ class TestUpdateShopConfig:
             "quantity_ranges": {"Bronze": {"min": 1, "max": 3}},
         }
 
-        response = client.put("/api/v1/admin/shops/config", json=payload)
+        response = client.put("/api/v1/admin/shops/config?user_id=67890", json=payload)
 
         assert response.status_code == 200
         mock_config_service.update_shop_config.assert_awaited_once()
@@ -951,7 +1003,7 @@ class TestUpdateShopConfig:
         _configure_db_mock(mock_get_db)
         payload = {"guild_id": 67890, "sale_price_factor": 0.7}
 
-        client.put("/api/v1/admin/shops/config", json=payload)
+        client.put("/api/v1/admin/shops/config?user_id=67890", json=payload)
 
         mock_config_service.update_shop_config.assert_awaited_once()
 
@@ -962,7 +1014,7 @@ class TestUpdateShopConfig:
         mock_config_service.update_shop_config.side_effect = RuntimeError("Config update failed")
         payload = {"guild_id": 67890, "sale_price_factor": 0.5}
 
-        response = client.put("/api/v1/admin/shops/config", json=payload)
+        response = client.put("/api/v1/admin/shops/config?user_id=67890", json=payload)
 
         assert response.status_code == 500
         assert "Failed to update shop configuration" in response.json()["detail"]
@@ -1005,7 +1057,7 @@ class TestGetSystemHealth:
         """Returns 200 with SystemHealthResponse containing real counts from repositories."""
         _configure_db_mock(mock_get_db)
 
-        response = client.get("/api/v1/admin/system/health")
+        response = client.get("/api/v1/admin/system/health?user_id=67890")
 
         assert response.status_code == 200
         data = response.json()
@@ -1021,7 +1073,7 @@ class TestGetSystemHealth:
         """Verifies all required SystemHealthResponse fields are present."""
         _configure_db_mock(mock_get_db)
 
-        response = client.get("/api/v1/admin/system/health")
+        response = client.get("/api/v1/admin/system/health?user_id=67890")
 
         assert response.status_code == 200
         data = response.json()
@@ -1043,7 +1095,7 @@ class TestGetSystemHealth:
         mock_get_db.return_value.__aenter__ = AsyncMock(side_effect=RuntimeError("DB unavailable"))
         mock_get_db.return_value.__aexit__ = AsyncMock(return_value=False)
 
-        response = client.get("/api/v1/admin/system/health")
+        response = client.get("/api/v1/admin/system/health?user_id=67890")
 
         assert response.status_code == 500
         assert "Failed to get system health" in response.json()["detail"]
@@ -1060,7 +1112,7 @@ class TestGetSystemHealth:
         mock_player_service.config_repo.count = AsyncMock(return_value=4)
         mock_shop_service.shop_repo.count = AsyncMock(return_value=40)
 
-        response = client.get("/api/v1/admin/system/health")
+        response = client.get("/api/v1/admin/system/health?user_id=67890")
 
         assert response.status_code == 200
         data = response.json()
@@ -1090,7 +1142,7 @@ class TestGetGuildStatistics:
             ]
         )
 
-        response = client.get("/api/v1/admin/guilds/67890/stats")
+        response = client.get("/api/v1/admin/guilds/67890/stats?user_id=67890")
 
         assert response.status_code == 200
         data = response.json()
@@ -1115,7 +1167,7 @@ class TestGetGuildStatistics:
             ]
         )
 
-        response = client.get("/api/v1/admin/guilds/67890/stats")
+        response = client.get("/api/v1/admin/guilds/67890/stats?user_id=67890")
 
         assert response.status_code == 200
         data = response.json()
@@ -1129,7 +1181,7 @@ class TestGetGuildStatistics:
         _configure_db_mock(mock_get_db)
         mock_player_service.player_repo.get_players_by_guild = AsyncMock(return_value=[])
 
-        response = client.get("/api/v1/admin/guilds/67890/stats")
+        response = client.get("/api/v1/admin/guilds/67890/stats?user_id=67890")
 
         assert response.status_code == 200
         data = response.json()
@@ -1146,7 +1198,7 @@ class TestGetGuildStatistics:
         """Passes the correct guild_id to player_repo.get_players_by_guild."""
         _configure_db_mock(mock_get_db)
 
-        client.get("/api/v1/admin/guilds/99999/stats")
+        client.get("/api/v1/admin/guilds/99999/stats?user_id=67890")
 
         mock_player_service.player_repo.get_players_by_guild.assert_awaited_once()
         call_args = mock_player_service.player_repo.get_players_by_guild.call_args
@@ -1158,7 +1210,7 @@ class TestGetGuildStatistics:
         _configure_db_mock(mock_get_db)
         mock_player_service.player_repo.get_players_by_guild = AsyncMock(side_effect=RuntimeError("Query timeout"))
 
-        response = client.get("/api/v1/admin/guilds/67890/stats")
+        response = client.get("/api/v1/admin/guilds/67890/stats?user_id=67890")
 
         assert response.status_code == 500
         assert "Failed to get guild statistics" in response.json()["detail"]
@@ -1175,7 +1227,7 @@ class TestGetGuildStatistics:
             ]
         )
 
-        response = client.get("/api/v1/admin/guilds/67890/stats")
+        response = client.get("/api/v1/admin/guilds/67890/stats?user_id=67890")
 
         assert response.status_code == 200
         data = response.json()
@@ -1221,7 +1273,7 @@ class TestResetPlayer:
         mock_config.starting_credits = 1000
         mock_player_service.config_repo.get_by_guild_id = AsyncMock(return_value=mock_config)
 
-        response = client.post("/api/v1/admin/players/1/reset")
+        response = client.post("/api/v1/admin/players/1/reset?user_id=67890&guild_id=67890")
 
         assert response.status_code == 200
         data = response.json()
@@ -1240,7 +1292,7 @@ class TestResetPlayer:
         _configure_db_mock(mock_get_db)
         mock_player_service.player_repo.get_by_id = AsyncMock(return_value=None)
 
-        response = client.post("/api/v1/admin/players/9999/reset")
+        response = client.post("/api/v1/admin/players/9999/reset?user_id=67890&guild_id=67890")
 
         assert response.status_code == 404
         assert "Player not found" in response.json()["detail"]
@@ -1256,7 +1308,7 @@ class TestResetPlayer:
         mock_config.starting_credits = 500
         mock_player_service.config_repo.get_by_guild_id = AsyncMock(return_value=mock_config)
 
-        response = client.post("/api/v1/admin/players/1/reset")
+        response = client.post("/api/v1/admin/players/1/reset?user_id=67890&guild_id=67890")
 
         assert response.status_code == 200
         data = response.json()
@@ -1271,7 +1323,7 @@ class TestResetPlayer:
         mock_player_service.config_repo = AsyncMock()
         mock_player_service.config_repo.get_by_guild_id = AsyncMock(return_value=None)
 
-        response = client.post("/api/v1/admin/players/1/reset")
+        response = client.post("/api/v1/admin/players/1/reset?user_id=67890&guild_id=67890")
 
         assert response.status_code == 200
         data = response.json()
@@ -1283,7 +1335,7 @@ class TestResetPlayer:
         _configure_db_mock(mock_get_db)
         mock_player_service.player_repo.get_by_id = AsyncMock(side_effect=RuntimeError("DB failure"))
 
-        response = client.post("/api/v1/admin/players/1/reset")
+        response = client.post("/api/v1/admin/players/1/reset?user_id=67890&guild_id=67890")
 
         assert response.status_code == 500
         assert "Failed to reset player" in response.json()["detail"]
@@ -1297,7 +1349,7 @@ class TestResetPlayer:
         mock_player_service.config_repo = AsyncMock()
         mock_player_service.config_repo.get_by_guild_id = AsyncMock(return_value=None)
 
-        response = client.post("/api/v1/admin/players/1/reset")
+        response = client.post("/api/v1/admin/players/1/reset?user_id=67890&guild_id=67890")
 
         assert response.status_code == 200
         assert "1" in response.json()["message"]

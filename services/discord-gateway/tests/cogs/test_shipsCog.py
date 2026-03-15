@@ -1074,5 +1074,78 @@ class TestShipsCommandAdditionalBranches:
         assert "embed" in call_kwargs
 
 
+# ---------------------------------------------------------------------------
+# Permission check tests — /ships with user= parameter
+# ---------------------------------------------------------------------------
+
+
+class TestShipsPermissionChecks:
+    """Tests verifying admin permission enforcement when viewing another user's ships."""
+
+    def test_ships_own_user_no_admin_check_needed(self, mock_ships_cog, make_mock_response):
+        """Viewing own ships requires no admin permission — always succeeds."""
+        interaction = _create_mock_interaction(user_id=111111111)
+
+        player_resp = make_mock_response({"id": 1})
+        ships_resp = make_mock_response([_make_ship(1, "Eagle", is_active=True)])
+
+        mock_ships_cog.http_client.post = AsyncMock(return_value=player_resp)
+        mock_ships_cog.http_client.get = AsyncMock(return_value=ships_resp)
+
+        # No user= argument: viewing own ships — no admin check performed
+        asyncio.run(mock_ships_cog.ships.callback(mock_ships_cog, interaction))
+
+        interaction.followup.send.assert_awaited_once()
+        call_kwargs = interaction.followup.send.call_args[1]
+        assert "embed" in call_kwargs
+
+    def test_ships_other_user_admin_allowed(self, mock_ships_cog, make_mock_response):
+        """Admin users can view another user's ships without error."""
+        from unittest.mock import patch
+
+        interaction = _create_mock_interaction(user_id=111111111)
+        other_user = DiscordMockUtils.create_mock_user(user_id=222222222, username="OtherUser")
+        other_user.display_name = "OtherUser"
+        other_user.display_avatar = MagicMock()
+        other_user.display_avatar.url = "https://example.com/other.jpg"
+
+        player_resp = make_mock_response({"id": 2})
+        ships_resp = make_mock_response([_make_ship(3, "Falcon", is_active=True)])
+
+        mock_ships_cog.http_client.post = AsyncMock(return_value=player_resp)
+        mock_ships_cog.http_client.get = AsyncMock(return_value=ships_resp)
+
+        # Patch _check_is_admin to return True (user is admin)
+        with patch("cogs.adminCog._check_is_admin", new=AsyncMock(return_value=True)):
+            asyncio.run(mock_ships_cog.ships.callback(
+                mock_ships_cog, interaction, user=other_user
+            ))
+
+        interaction.followup.send.assert_awaited_once()
+        call_kwargs = interaction.followup.send.call_args[1]
+        assert "embed" in call_kwargs
+
+    def test_ships_other_user_non_admin_denied(self, mock_ships_cog):
+        """Non-admin users cannot view another user's ships — get ephemeral error."""
+        from unittest.mock import patch
+
+        interaction = _create_mock_interaction(user_id=111111111)
+        other_user = DiscordMockUtils.create_mock_user(user_id=222222222, username="OtherUser")
+        other_user.display_name = "OtherUser"
+        other_user.display_avatar = MagicMock()
+        other_user.display_avatar.url = "https://example.com/other.jpg"
+
+        # Patch _check_is_admin to return False (user is NOT admin)
+        with patch("cogs.adminCog._check_is_admin", new=AsyncMock(return_value=False)):
+            asyncio.run(mock_ships_cog.ships.callback(
+                mock_ships_cog, interaction, user=other_user
+            ))
+
+        interaction.followup.send.assert_awaited_once()
+        call_args = interaction.followup.send.call_args
+        assert call_args[1].get("ephemeral", False)
+        assert "admin" in call_args[0][0].lower()
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

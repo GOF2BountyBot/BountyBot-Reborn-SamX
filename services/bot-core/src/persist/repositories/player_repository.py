@@ -25,6 +25,22 @@ class PlayerRepository(IRepository[Player]):
             flogger.error(f"Error getting player by ID {obj_id}: {e}")
             raise
 
+    async def get_by_id_for_update(self, db: AsyncSession, obj_id: int) -> Player | None:
+        """Get player by ID with SELECT ... FOR UPDATE row-level lock.
+
+        Use this inside a transaction when you need to read-then-modify
+        credit balances (or any field) to prevent TOCTOU race conditions.
+        The lock is held until the enclosing transaction commits or rolls back.
+        """
+        try:
+            result = await db.execute(
+                select(Player).where(Player.id == obj_id).with_for_update()
+            )
+            return result.scalars().first()
+        except Exception as e:
+            flogger.error(f"Error getting player (FOR UPDATE) by ID {obj_id}: {e}")
+            raise
+
     async def get_by_name(self, db: AsyncSession, name: str) -> Player | None:
         """Not applicable for players - they don't have names."""
         raise NotImplementedError("Players don't have searchable names")
@@ -137,22 +153,37 @@ class PlayerRepository(IRepository[Player]):
             flogger.error(f"Error getting players for user {user_id}: {e}")
             raise
 
-    async def update_credits(self, db: AsyncSession, player_id: int, new_credits: int) -> Player:
-        """Update player credits."""
+    async def update_credits(
+        self, db: AsyncSession, player_id: int, new_credits: int, *, commit: bool = True
+    ) -> Player:
+        """Update player credits.
+
+        Args:
+            db: Database session.
+            player_id: Player whose credits to update.
+            new_credits: The new absolute credit balance.
+            commit: If True (default), commit immediately.  Pass ``False``
+                when this call is part of a larger transaction managed by the
+                caller (e.g. inside ``async with db.begin()``).
+        """
         try:
             await db.execute(
                 update(Player)
                 .where(Player.id == player_id)
                 .values(credits=new_credits)
             )
-            await db.commit()
+            if commit:
+                await db.commit()
+            else:
+                await db.flush()
 
             player = await self.get_by_id(db, player_id)
             flogger.debug(f"Updated credits for player {player_id}: {new_credits}")
             return player
         except Exception as e:
             flogger.error(f"Error updating credits for player {player_id}: {e}")
-            await db.rollback()
+            if commit:
+                await db.rollback()
             raise
 
     async def update_xp(self, db: AsyncSession, player_id: int, xp: int) -> Player:

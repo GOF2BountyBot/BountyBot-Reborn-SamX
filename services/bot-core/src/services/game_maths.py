@@ -8,7 +8,10 @@ calculation, and ship/player classification helpers.
 
 import random
 
+from shared import bblogger
 from src.services.game_constants import GameConstants
+
+flogger = bblogger.get_logger(__name__)
 
 # ---------------------------------------------------------------------------
 # Internal helpers
@@ -69,9 +72,12 @@ def pick_random_item_tl(shop_tl: int) -> int:
     for i, p in enumerate(probs):
         cumulative += p
         if rand_val <= cumulative:
-            return i + GameConstants.MIN_TECH_LEVEL
+            selected = i + GameConstants.MIN_TECH_LEVEL
+            flogger.debug(f"pick_random_item_tl: shop_tl={shop_tl} → selected TL={selected}")
+            return selected
 
     # Floating-point safety fallback
+    flogger.debug(f"pick_random_item_tl: shop_tl={shop_tl} → selected TL={GameConstants.MAX_TECH_LEVEL} (fallback)")
     return GameConstants.MAX_TECH_LEVEL
 
 
@@ -90,13 +96,17 @@ def reward_per_sys_check(tech_level: int, loadout_value: int) -> int:
     """
     multiplier = 1.3 if tech_level == 1 else 1
     divisor_offset = 1 if tech_level == 1 else 2
-    return max(
+    reward = max(
         GameConstants.CLASSIC_CREDITS_PER_CHECK,
         int(
             (loadout_value * multiplier)
             / (2 * (tech_level + divisor_offset) * 10)
         ),
     )
+    flogger.debug(
+        f"reward_per_sys_check: tl={tech_level} loadout_value={loadout_value} → {reward} credits"
+    )
+    return reward
 
 
 def ship_tech_level_for_value(value: int) -> int:

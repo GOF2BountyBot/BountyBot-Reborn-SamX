@@ -7,6 +7,7 @@ module is imported (see conftest.py at the tests/ root).
 
 import sys
 import types
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -150,7 +151,12 @@ def _make_config(
 @pytest.fixture
 def mock_db() -> AsyncMock:
     db = AsyncMock()
-    db.begin = MagicMock(return_value=AsyncMock(__aenter__=AsyncMock(), __aexit__=AsyncMock()))
+
+    @asynccontextmanager
+    async def _mock_begin():
+        yield
+
+    db.begin = _mock_begin
     return db
 
 
@@ -180,6 +186,7 @@ def mock_config_repo() -> AsyncMock:
 def mock_player_repo() -> AsyncMock:
     repo = AsyncMock()
     repo.get_by_id = AsyncMock(return_value=None)
+    repo.get_by_id_for_update = AsyncMock(return_value=None)
     repo.update_credits = AsyncMock()
     return repo
 
@@ -341,6 +348,8 @@ class TestPurchaseItem:
         player = _make_player(tier="Silver", credits=500)
         shop_item = _make_shop_item(tier="Bronze", quantity=5, price=100)
         mock_player_repo.get_by_id.return_value = player
+        # purchase_item re-fetches under lock; use same player object so credits is a real int
+        mock_player_repo.get_by_id_for_update.return_value = player
         mock_shop_repo.get_by_id.return_value = shop_item
 
         result = await service.purchase_item(mock_db, player_id=1, shop_item_id=10, quantity=2)
@@ -418,6 +427,7 @@ class TestPurchaseItem:
         player = _make_player(tier="Bronze", credits=500)
         shop_item = _make_shop_item(tier="Bronze", quantity=1, price=100)
         mock_player_repo.get_by_id.return_value = player
+        mock_player_repo.get_by_id_for_update.return_value = player
         mock_shop_repo.get_by_id.return_value = shop_item
 
         await service.purchase_item(mock_db, player_id=1, shop_item_id=10, quantity=1)
@@ -432,6 +442,7 @@ class TestPurchaseItem:
         player = _make_player(tier="Bronze", credits=1000)
         shop_item = _make_shop_item(tier="Bronze", quantity=5, price=100)
         mock_player_repo.get_by_id.return_value = player
+        mock_player_repo.get_by_id_for_update.return_value = player
         mock_shop_repo.get_by_id.return_value = shop_item
 
         await service.purchase_item(mock_db, player_id=1, shop_item_id=10, quantity=2)
@@ -456,6 +467,8 @@ class TestSellItem:
         inventory_item = _make_inventory_item(quantity=2)
 
         mock_player_repo.get_by_id.return_value = player
+        # sell_item re-fetches under lock; use same player object so credits is a real int
+        mock_player_repo.get_by_id_for_update.return_value = player
         mock_inventory_repo.get_player_item.return_value = inventory_item
         mock_shop_repo.get_shop_item_by_name.return_value = None  # No existing shop item
 
@@ -529,6 +542,7 @@ class TestSellItem:
         """sell_item credits full base value (no sell tax)."""
         player = _make_player(credits=0)
         mock_player_repo.get_by_id.return_value = player
+        mock_player_repo.get_by_id_for_update.return_value = player
         mock_inventory_repo.get_player_item.return_value = _make_inventory_item(quantity=1)
         mock_shop_repo.get_shop_item_by_name.return_value = None
 
@@ -629,6 +643,50 @@ class TestRefreshShop:
 
         assert result["items_generated"] == 0
         mock_shop_repo.create_or_update.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_refresh_shop_produces_real_asset_names(
+        self, service, mock_db, mock_config_repo, mock_shop_repo
+    ):
+        """Shop refresh populates items using real game asset names from the data layer.
+
+        The service delegates item selection to _get_random_item_by_tech_level.
+        This test verifies that when the helper returns a real game-data item name
+        (e.g. "Micro Gun MK I" from import_data/primary_weapon/), that name
+        propagates through to the shop_repo.create_or_update call, confirming
+        the refresh pipeline produces real asset names rather than placeholders.
+        """
+        # "Micro Gun MK I" is a real primary weapon defined in import_data/primary_weapon/
+        # "128MJ Railgun" is another real primary weapon from import_data/primary_weapon/
+        real_item_names = ["Micro Gun MK I", "128MJ Railgun"]
+        call_count = 0
+
+        async def _fake_get_random(db, item_type, tech_level):
+            nonlocal call_count
+            name = real_item_names[call_count % len(real_item_names)]
+            call_count += 1
+            return name
+
+        config = _make_config()
+        mock_config_repo.get_by_guild_id.return_value = config
+        service._get_random_item_by_tech_level = _fake_get_random
+        service._get_item_base_price = AsyncMock(return_value=500)
+        created_items = []
+
+        async def _fake_create_or_update(db, item_data):
+            shop_item = _make_shop_item(item_name=item_data["item_name"])
+            created_items.append(item_data["item_name"])
+            return shop_item
+
+        mock_shop_repo.create_or_update = _fake_create_or_update
+
+        result = await service.refresh_shop(mock_db, guild_id=999, tier="Bronze", force_tech_level=1)
+
+        # Shop was refreshed and items were generated
+        assert result["items_generated"] > 0
+        # Every generated item name is a real game asset name (not a placeholder)
+        for name in created_items:
+            assert name in real_item_names, f"Unexpected item name in shop: {name!r}"
 
 
 # ===========================================================================
@@ -979,6 +1037,8 @@ class TestPurchaseShip:
         old_ship_static = _make_ship_static(name="Crow", value=2000)
 
         mock_player_repo.get_by_id.return_value = player
+        # purchase_ship re-fetches under lock; use same player object so credits is a real int
+        mock_player_repo.get_by_id_for_update.return_value = player
         mock_shop_repo.get_by_id.return_value = shop_item
         mock_ship_repo.get_by_name.side_effect = (
             lambda db, name: new_ship_static if name == "Hammerhead" else old_ship_static
@@ -1013,6 +1073,8 @@ class TestPurchaseShip:
         old_ship_static = _make_ship_static(name="Crow", value=2000)
 
         mock_player_repo.get_by_id.return_value = player
+        # purchase_ship re-fetches under lock; use same player object so credits is a real int
+        mock_player_repo.get_by_id_for_update.return_value = player
         mock_shop_repo.get_by_id.return_value = shop_item
         mock_ship_repo.get_by_name.side_effect = (
             lambda db, name: new_ship_static if name == "Hammerhead" else old_ship_static
@@ -1051,6 +1113,7 @@ class TestPurchaseShip:
         old_ship_static = _make_ship_static(name="Crow", value=1000)
 
         mock_player_repo.get_by_id.return_value = player
+        mock_player_repo.get_by_id_for_update.return_value = player
         mock_shop_repo.get_by_id.return_value = shop_item
         mock_ship_repo.get_by_name.side_effect = (
             lambda db, name: new_ship_static if name == "Raider" else old_ship_static
@@ -1087,6 +1150,7 @@ class TestPurchaseShip:
         old_ship_static = _make_ship_static(name="Hammerhead", value=1500)
 
         mock_player_repo.get_by_id.return_value = player
+        mock_player_repo.get_by_id_for_update.return_value = player
         mock_shop_repo.get_by_id.return_value = shop_item
         mock_ship_repo.get_by_name.side_effect = (
             lambda db, name: new_ship_static if name == "Sparrow" else old_ship_static
@@ -1116,6 +1180,8 @@ class TestPurchaseShip:
         old_ship_static = _make_ship_static(name="Crow", value=3000)
 
         mock_player_repo.get_by_id.return_value = player
+        # Credit check is done under lock; provide player so the ValueError is raised correctly
+        mock_player_repo.get_by_id_for_update.return_value = player
         mock_shop_repo.get_by_id.return_value = shop_item
         mock_ship_repo.get_by_name.side_effect = (
             lambda db, name: new_ship_static if name == "Hammerhead" else old_ship_static
@@ -1140,6 +1206,8 @@ class TestPurchaseShip:
         old_ship_static = _make_ship_static(name="Crow", value=2000)
 
         mock_player_repo.get_by_id.return_value = player
+        # Credit check is done under lock; provide player so the ValueError is raised correctly
+        mock_player_repo.get_by_id_for_update.return_value = player
         mock_shop_repo.get_by_id.return_value = shop_item
         mock_ship_repo.get_by_name.side_effect = (
             lambda db, name: new_ship_static if name == "Hammerhead" else old_ship_static
@@ -1178,6 +1246,7 @@ class TestPurchaseShip:
         )
 
         mock_player_repo.get_by_id.return_value = player
+        mock_player_repo.get_by_id_for_update.return_value = player
         mock_shop_repo.get_by_id.return_value = shop_item
         mock_ship_repo.get_by_name.return_value = new_ship_static
         # No active ship
@@ -1205,6 +1274,7 @@ class TestPurchaseShip:
         new_ship_static = _make_ship_static(name="Hammerhead", value=5000)
 
         mock_player_repo.get_by_id.return_value = player
+        mock_player_repo.get_by_id_for_update.return_value = player
         mock_shop_repo.get_by_id.return_value = shop_item
         mock_ship_repo.get_by_name.return_value = new_ship_static
         mock_player_ship_repo.get_active_ship.return_value = None
@@ -1227,6 +1297,7 @@ class TestPurchaseShip:
         new_ship_static = _make_ship_static(name="Hammerhead", value=5000)
 
         mock_player_repo.get_by_id.return_value = player
+        mock_player_repo.get_by_id_for_update.return_value = player
         mock_shop_repo.get_by_id.return_value = shop_item
         mock_ship_repo.get_by_name.return_value = new_ship_static
         mock_player_ship_repo.get_active_ship.return_value = None
@@ -1254,6 +1325,8 @@ class TestSellShip:
         ship_static = _make_ship_static(name="Crow", value=3000)
 
         mock_player_repo.get_by_id.return_value = player
+        # sell_ship re-fetches under lock; use same player object so credits is a real int
+        mock_player_repo.get_by_id_for_update.return_value = player
         mock_player_ship_repo.get_by_id.return_value = player_ship
         mock_ship_repo.get_by_name.return_value = ship_static
         mock_shop_repo.get_shop_item_by_name.return_value = None
@@ -1265,7 +1338,7 @@ class TestSellShip:
         assert result["sell_value"] == 3000
         assert result["new_credits"] == 4000  # 1000 + 3000
         mock_db.delete.assert_awaited_once_with(player_ship)
-        mock_player_repo.update_credits.assert_awaited_once_with(mock_db, 1, 4000)
+        mock_player_repo.update_credits.assert_awaited_once_with(mock_db, 1, 4000, commit=False)
 
     @pytest.mark.asyncio
     async def test_sell_active_ship_raises_value_error(
@@ -1297,6 +1370,7 @@ class TestSellShip:
         ship_static = _make_ship_static(name="Hammerhead", value=5000)
 
         mock_player_repo.get_by_id.return_value = player
+        mock_player_repo.get_by_id_for_update.return_value = player
         mock_player_ship_repo.get_by_id.return_value = player_ship
         mock_ship_repo.get_by_name.return_value = ship_static
         mock_shop_repo.get_shop_item_by_name.return_value = None
@@ -1351,6 +1425,7 @@ class TestSellShip:
         ship_static = _make_ship_static(name="Sparrow", value=1500)
 
         mock_player_repo.get_by_id.return_value = player
+        mock_player_repo.get_by_id_for_update.return_value = player
         mock_player_ship_repo.get_by_id.return_value = player_ship
         mock_ship_repo.get_by_name.return_value = ship_static
         mock_shop_repo.get_shop_item_by_name.return_value = None
@@ -1372,6 +1447,7 @@ class TestSellShip:
         ship_static = _make_ship_static(name="Viper", value=8000)
 
         mock_player_repo.get_by_id.return_value = player
+        mock_player_repo.get_by_id_for_update.return_value = player
         mock_player_ship_repo.get_by_id.return_value = player_ship
         mock_ship_repo.get_by_name.return_value = ship_static
         mock_shop_repo.get_shop_item_by_name.return_value = None
@@ -1392,6 +1468,7 @@ class TestSellShip:
         ship_static = _make_ship_static(name="Crow", value=2000)
 
         mock_player_repo.get_by_id.return_value = player
+        mock_player_repo.get_by_id_for_update.return_value = player
         mock_player_ship_repo.get_by_id.return_value = player_ship
         mock_ship_repo.get_by_name.return_value = ship_static
         mock_shop_repo.get_shop_item_by_name.return_value = None

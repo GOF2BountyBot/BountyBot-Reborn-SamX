@@ -6,6 +6,7 @@ Discord message information. Message-type specific logic is handled
 by dedicated routers in the announcements/ subdirectory.
 """
 
+import asyncio
 import json
 import os
 from uuid import UUID
@@ -36,8 +37,55 @@ DISCORD_GATEWAY_HOST = os.getenv("DISCORD_GATEWAY_HOST", "discord-gateway")
 DISCORD_GATEWAY_PORT = os.getenv("GATEWAY_PORT", "7999")
 DISCORD_GATEWAY_BASE_URL = f"http://{DISCORD_GATEWAY_HOST}:{DISCORD_GATEWAY_PORT}/api/v1"
 
+_MAX_RETRIES = 2
+_RETRY_DELAY = 1.0  # seconds
+
 # Initialize repository
 discord_message_repo = DiscordMessageRepository()
+
+
+async def _post_with_retry(url: str, payload: dict, timeout: float = 10.0) -> httpx.Response:
+    """POST to url with up to _MAX_RETRIES retries on transient errors."""
+    last_exc: Exception | None = None
+    for attempt in range(1 + _MAX_RETRIES):
+        try:
+            async with httpx.AsyncClient() as client:
+                response = await client.post(url, json=payload, timeout=timeout)
+            response.raise_for_status()
+            return response
+        except (httpx.TimeoutException, httpx.ConnectError) as exc:
+            last_exc = exc
+            if attempt < _MAX_RETRIES:
+                flogger.warning(
+                    f"Gateway POST attempt {attempt + 1} failed ({exc!r}), "
+                    f"retrying in {_RETRY_DELAY}s..."
+                )
+                await asyncio.sleep(_RETRY_DELAY)
+        except httpx.HTTPStatusError:
+            raise
+    raise last_exc  # type: ignore[misc]
+
+
+async def _put_with_retry(url: str, payload: dict, timeout: float = 10.0) -> httpx.Response:
+    """PUT to url with up to _MAX_RETRIES retries on transient errors."""
+    last_exc: Exception | None = None
+    for attempt in range(1 + _MAX_RETRIES):
+        try:
+            async with httpx.AsyncClient() as client:
+                response = await client.put(url, json=payload, timeout=timeout)
+            response.raise_for_status()
+            return response
+        except (httpx.TimeoutException, httpx.ConnectError) as exc:
+            last_exc = exc
+            if attempt < _MAX_RETRIES:
+                flogger.warning(
+                    f"Gateway PUT attempt {attempt + 1} failed ({exc!r}), "
+                    f"retrying in {_RETRY_DELAY}s..."
+                )
+                await asyncio.sleep(_RETRY_DELAY)
+        except httpx.HTTPStatusError:
+            raise
+    raise last_exc  # type: ignore[misc]
 
 @router.post(
     "",
@@ -63,14 +111,11 @@ async def create_discord_message(
             "content": message_request.embed_payload.model_dump()
         }
         flogger.debug(f"Forwarding to gateway: {gateway_request}")
-        async with httpx.AsyncClient() as client:
-            response = await client.post(
-                f"{DISCORD_GATEWAY_BASE_URL}/messages",
-                json=gateway_request,
-                timeout=10
-            )
+        response = await _post_with_retry(
+            f"{DISCORD_GATEWAY_BASE_URL}/messages",
+            gateway_request,
+        )
         flogger.debug(f"Gateway HTTP status: {response.status_code}")
-        response.raise_for_status()
         gateway_data = response.json()
         flogger.debug(f"Gateway response: {gateway_data}")
 
@@ -145,14 +190,11 @@ async def update_discord_message(
             "content": message_request.embed_payload.model_dump()
         }
         flogger.debug(f"Forwarding update to gateway: {gateway_request}")
-        async with httpx.AsyncClient() as client:
-            resp = await client.put(
-                f"{DISCORD_GATEWAY_BASE_URL}/messages",
-                json=gateway_request,
-                timeout=10
-            )
+        resp = await _put_with_retry(
+            f"{DISCORD_GATEWAY_BASE_URL}/messages",
+            gateway_request,
+        )
         flogger.debug(f"Gateway HTTP status: {resp.status_code}")
-        resp.raise_for_status()
         gateway_data = resp.json()
         flogger.debug(f"Gateway response: {gateway_data}")
 

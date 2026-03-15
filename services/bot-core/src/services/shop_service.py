@@ -42,9 +42,54 @@ class ShopService:
         self.turret_weapon_repo = TurretWeaponRepository()
         self.module_repo = ModuleRepository()
 
+        # In-memory cache for static game data, populated by
+        # preload_static_data() before bulk refresh operations.
+        # This avoids re-querying the same immutable item tables
+        # per guild x tier (from ~420K queries down to ~4 at 1000 guilds).
+        self._static_cache: dict[str, list] | None = None
+        # Price lookup cache: item_name → value
+        self._price_cache: dict[str, int] | None = None
+
     # Valid tiers and item types
     VALID_TIERS = ["Bronze", "Silver", "Gold", "Platinum"]
     VALID_ITEM_TYPES = ["ship", "weapon", "module", "turret"]
+
+    async def preload_static_data(self, db: AsyncSession) -> None:
+        """Pre-load all static game item data into memory.
+
+        Call this once before a bulk shop refresh cycle to avoid
+        re-querying the same immutable tables for every guild x tier
+        combination.  At 1000 guilds x 3 tiers this reduces ~420K
+        DB queries to 4 (one per item type).
+        """
+        self._static_cache = {
+            "ship": await self.ship_repo.list_all(db),
+            "weapon": await self.primary_weapon_repo.list_all(db),
+            "module": await self.module_repo.list_all(db),
+            "turret": await self.turret_weapon_repo.list_all(db),
+        }
+        # Build price lookup from all item types (includes secondary weapons)
+        self._price_cache = {}
+        secondary_weapons = await self.secondary_weapon_repo.list_all(db)
+        for items in self._static_cache.values():
+            for item in items:
+                self._price_cache[item.name] = item.value
+        for item in secondary_weapons:
+            self._price_cache[item.name] = item.value
+
+        flogger.info(
+            f"Preloaded static data: "
+            f"{len(self._static_cache['ship'])} ships, "
+            f"{len(self._static_cache['weapon'])} weapons, "
+            f"{len(self._static_cache['module'])} modules, "
+            f"{len(self._static_cache['turret'])} turrets, "
+            f"{len(self._price_cache)} prices cached"
+        )
+
+    def clear_static_cache(self) -> None:
+        """Clear the static data cache after a bulk refresh cycle."""
+        self._static_cache = None
+        self._price_cache = None
 
     async def get_shop_items(
         self,
@@ -117,8 +162,17 @@ class ShopService:
 
             # Perform transaction atomically
             async with db.begin():
+                # Lock player row and re-check credits under lock
+                player = await self.player_repo.get_by_id_for_update(db, player_id)
+                if not player:
+                    raise ValueError(f"Player {player_id} not found")
+                if player.credits < total_cost:
+                    raise ValueError(f"Insufficient credits. Cost: {total_cost}, Available: {player.credits}")
+
                 # Deduct credits from player
-                await self.player_repo.update_credits(db, player_id, player.credits - total_cost)
+                await self.player_repo.update_credits(
+                    db, player_id, player.credits - total_cost, commit=False
+                )
 
                 # Add item to player inventory
                 await self.inventory_repo.add_item(
@@ -203,25 +257,30 @@ class ShopService:
                 if old_ship_static:
                     old_ship_value = old_ship_static.value
 
-            # Credit check
-            if sell_old_ship and old_player_ship:
-                effective_cost = new_ship_price - old_ship_value
-                if player.credits < effective_cost:
-                    raise ValueError(
-                        f"Insufficient credits. Cost: {new_ship_price}, "
-                        f"Trade-in value: {old_ship_value}, "
-                        f"Net cost: {effective_cost}, "
-                        f"Available: {player.credits}"
-                    )
-            else:
-                if player.credits < new_ship_price:
-                    raise ValueError(
-                        f"Insufficient credits. Cost: {new_ship_price}, "
-                        f"Available: {player.credits}"
-                    )
-
-            # Perform transaction atomically
+            # Perform transaction atomically (credit check is done under lock below)
             async with db.begin():
+                # Lock the player row to prevent concurrent credit modifications
+                player = await self.player_repo.get_by_id_for_update(db, player_id)
+                if not player:
+                    raise ValueError(f"Player {player_id} not found")
+
+                # Re-check credits under lock (prevents TOCTOU race)
+                if sell_old_ship and old_player_ship:
+                    effective_cost = new_ship_price - old_ship_value
+                    if player.credits < effective_cost:
+                        raise ValueError(
+                            f"Insufficient credits. Cost: {new_ship_price}, "
+                            f"Trade-in value: {old_ship_value}, "
+                            f"Net cost: {effective_cost}, "
+                            f"Available: {player.credits}"
+                        )
+                else:
+                    if player.credits < new_ship_price:
+                        raise ValueError(
+                            f"Insufficient credits. Cost: {new_ship_price}, "
+                            f"Available: {player.credits}"
+                        )
+
                 # a. Create new PlayerShip record for the player (inactive for now)
                 new_player_ship = PlayerShip(
                     player_id=player_id,
@@ -286,10 +345,6 @@ class ShopService:
 
                 # c. Handle old ship trade-in
                 if sell_old_ship and old_player_ship:
-                    # Add old ship's value to player credits
-                    await self.player_repo.update_credits(
-                        db, player_id, player.credits + old_ship_value
-                    )
                     # Add old ship to shop stock
                     await self._add_item_to_shop(
                         db,
@@ -313,13 +368,12 @@ class ShopService:
                 )
                 new_player_ship.is_active = True
 
-                # e. Deduct new_ship_price from player credits
-                # (If we already added trade-in credits above, deduct from the updated balance)
+                # e. Calculate and set final credit balance in a single update
                 if sell_old_ship and old_player_ship:
                     updated_credits = player.credits + old_ship_value - new_ship_price
                 else:
                     updated_credits = player.credits - new_ship_price
-                await self.player_repo.update_credits(db, player_id, updated_credits)
+                await self.player_repo.update_credits(db, player_id, updated_credits, commit=False)
 
                 # f. Remove new ship from shop stock
                 new_shop_quantity = shop_item.quantity - 1
@@ -398,11 +452,18 @@ class ShopService:
 
             # Perform transaction atomically
             async with db.begin():
+                # Lock player row to prevent concurrent credit modifications
+                player = await self.player_repo.get_by_id_for_update(db, player_id)
+                if not player:
+                    raise ValueError(f"Player {player_id} not found")
+
                 # Remove item from player inventory
                 await self.inventory_repo.remove_item(db, player_id, item_type, item_name, quantity)
 
                 # Add credits to player
-                await self.player_repo.update_credits(db, player_id, player.credits + total_sell_value)
+                await self.player_repo.update_credits(
+                    db, player_id, player.credits + total_sell_value, commit=False
+                )
 
                 # Add item to target shop
                 await self._add_item_to_shop(
@@ -485,6 +546,11 @@ class ShopService:
             }
 
             async with db.begin():
+                # Lock the player row to prevent concurrent credit modifications
+                player = await self.player_repo.get_by_id_for_update(db, player_id)
+                if not player:
+                    raise ValueError(f"Player {player_id} not found")
+
                 if clear_equipment:
                     # Unequip all items to player inventory before selling ship
                     for equip_type in ("weapons", "modules", "turrets"):
@@ -497,7 +563,9 @@ class ShopService:
                             items_unequipped[equip_type].append(item_name)
 
                 # Credit player with ship's full value (no tax)
-                await self.player_repo.update_credits(db, player_id, player.credits + ship_value)
+                await self.player_repo.update_credits(
+                    db, player_id, player.credits + ship_value, commit=False
+                )
 
                 # Remove the PlayerShip from database
                 await db.delete(player_ship)
@@ -668,10 +736,18 @@ class ShopService:
     async def _get_random_item_by_tech_level(
         self, db: AsyncSession, item_type: str, tech_level: int
     ) -> str | None:
-        """Get a random item name by type and tech level from the database."""
+        """Get a random item name by type and tech level.
+
+        Uses the in-memory static cache if available (populated by
+        :meth:`preload_static_data`), otherwise falls back to direct
+        DB queries.
+        """
         if item_type == "ship":
-            # Ships have no tech_level column; select from all ships weighted by shop_spawn_rate
-            all_ships = await self.ship_repo.list_all(db)
+            all_ships = (
+                self._static_cache["ship"]
+                if self._static_cache is not None
+                else await self.ship_repo.list_all(db)
+            )
             if not all_ships:
                 return None
             weights = [
@@ -682,25 +758,46 @@ class ShopService:
             return chosen.name
 
         if item_type == "weapon":
-            all_weapons = await self.primary_weapon_repo.list_all(db)
+            all_weapons = (
+                self._static_cache["weapon"]
+                if self._static_cache is not None
+                else await self.primary_weapon_repo.list_all(db)
+            )
             items = [w for w in all_weapons if w.tech_level == tech_level]
             return random.choice(items).name if items else None
 
         if item_type == "module":
-            all_modules = await self.module_repo.list_all(db)
+            all_modules = (
+                self._static_cache["module"]
+                if self._static_cache is not None
+                else await self.module_repo.list_all(db)
+            )
             items = [m for m in all_modules if m.tech_level == tech_level]
             return random.choice(items).name if items else None
 
         if item_type == "turret":
-            all_turrets = await self.turret_weapon_repo.list_all(db)
+            all_turrets = (
+                self._static_cache["turret"]
+                if self._static_cache is not None
+                else await self.turret_weapon_repo.list_all(db)
+            )
             items = [t for t in all_turrets if t.tech_level == tech_level]
             return random.choice(items).name if items else None
 
         return None
 
     async def _get_item_base_price(self, db: AsyncSession, item_name: str) -> int:
-        """Look up the item's value field from its repository. Returns 0 if not found."""
-        # Try each repository in turn until we find the item
+        """Look up the item's value field. Returns 0 if not found.
+
+        Uses the in-memory price cache if available (populated by
+        :meth:`preload_static_data`), otherwise falls back to direct
+        DB queries.
+        """
+        # Fast path: use pre-built price cache
+        if self._price_cache is not None:
+            return self._price_cache.get(item_name, 0)
+
+        # Slow path: try each repository in turn until we find the item
         for repo in (
             self.ship_repo,
             self.primary_weapon_repo,

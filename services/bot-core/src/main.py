@@ -24,18 +24,75 @@ from apscheduler.jobstores.sqlalchemy import SQLAlchemyJobStore
 
 # Scheduler
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from apscheduler.triggers.cron import CronTrigger
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 # Database management
 from persist.database.manager import db_manager
 from persist.schemas.schema_manager import initialize_schema
+from services.game_constants import GameConstants
 from shared import bblogger
 from sqlalchemy import create_engine
 from sqlalchemy.ext.asyncio import create_async_engine
 from utils.auto_seeder import auto_seed_data
+from utils.job_executor import run_job
 
 flogger = bblogger.get_logger("bot-main-script")
+
+
+# ---------------------------------------------------------------------------
+# Default recurring job definitions
+# ---------------------------------------------------------------------------
+
+DEFAULT_SCHEDULER_JOBS: list[dict] = [
+    {
+        "job_id": "bounty_spawn_default",
+        "cron": f"*/{GameConstants.BOUNTY_DELAY_RANDOM_MIN} * * * *",
+        "payload": {"job_type": "bounty_spawn"},
+    },
+    {
+        "job_id": "shop_refresh_default",
+        "cron": "0 */6 * * *",
+        "payload": {"job_type": "shop_refresh"},
+    },
+    {
+        "job_id": "temperature_decay_default",
+        "cron": "0 * * * *",
+        "payload": {"job_type": "temperature_decay"},
+    },
+]
+
+
+def register_default_jobs(scheduler) -> None:
+    """Register default recurring scheduler jobs if they are not already present.
+
+    This function is idempotent: calling it on an already-configured scheduler
+    (e.g. after a service restart when APScheduler persists jobs in the DB)
+    will skip any job whose ``job_id`` already exists.
+
+    Args:
+        scheduler: An ``AsyncIOScheduler`` (or compatible) instance that has
+                   already been started.
+    """
+    existing_job_ids = {j.id for j in scheduler.get_jobs()}
+
+    for job_def in DEFAULT_SCHEDULER_JOBS:
+        jid = job_def["job_id"]
+        if jid in existing_job_ids:
+            flogger.info(f"⏭️ Default job '{jid}' already registered — skipping")
+            continue
+        trigger = CronTrigger.from_crontab(job_def["cron"], timezone="UTC")
+        scheduler.add_job(
+            run_job,
+            trigger=trigger,
+            args=[jid, job_def["payload"]],
+            id=jid,
+        )
+        flogger.info(
+            f"📅 Registered default job '{jid}' with cron '{job_def['cron']}'"
+        )
+
 
 @asynccontextmanager
 async def lifespan(fastapi_app: FastAPI):
@@ -98,6 +155,10 @@ async def lifespan(fastapi_app: FastAPI):
         fastapi_app.state.scheduler = scheduler
         scheduler.start()
         flogger.info("✅ Scheduler started")
+
+        # Register default recurring jobs (idempotent — skip if already present)
+        register_default_jobs(scheduler)
+
     except Exception as e:
         flogger.error(f"❌ Scheduler initialization failed: {e}")
         flogger.error("🛑 Application startup aborted due to scheduler issues")

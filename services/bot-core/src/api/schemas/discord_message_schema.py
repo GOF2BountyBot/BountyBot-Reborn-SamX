@@ -5,7 +5,7 @@ Pydantic schemas for Discord message operations.
 from datetime import datetime
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_serializer
 
 
 class EmbedPayloadDict(BaseModel):
@@ -32,9 +32,14 @@ class DiscordMessageRequest(BaseModel):
 
 class DiscordMessageResponse(BaseModel):
     """Response model for Discord message operations."""
-    model_config = ConfigDict(from_attributes=True, json_encoders={UUID: str})
+    model_config = ConfigDict(from_attributes=True)
 
     id: UUID
+
+    @field_serializer("id")
+    @classmethod
+    def serialize_uuid(cls, v: UUID) -> str:
+        return str(v)
     guild_id: int
     channel_id: int
     message_id: int

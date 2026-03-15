@@ -4,7 +4,12 @@ from datetime import UTC, datetime
 from shared.bblogger import get_logger
 
 # dispatch job-type specific executor module
+from utils.executors.bounty_expire_executor import execute_bounty_expire_job
+from utils.executors.bounty_respawn_executor import execute_bounty_respawn_job
+from utils.executors.bounty_spawn_executor import execute_bounty_spawn_job
+from utils.executors.duel_expire_executor import execute_duel_expire_job
 from utils.executors.shop_refresh_executor import execute_shop_refresh_job
+from utils.executors.temperature_decay_executor import execute_temperature_decay_job
 from utils.executors.time_announcement_executor import execute_time_announcement_job
 
 flogger = get_logger("bot-job-executor")
@@ -38,7 +43,32 @@ class JobExecutor:
                 flogger.debug(f"Dispatching shop_refresh for job {job_id}")
                 return await execute_shop_refresh_job(job_id, payload)
 
-            # 3) fallback for other payloads
+            # 3) bounty-spawn jobs
+            if payload.get("job_type") == "bounty_spawn":
+                flogger.debug(f"Dispatching bounty_spawn for job {job_id}")
+                return await execute_bounty_spawn_job(job_id, payload)
+
+            # 4) bounty-expire jobs
+            if payload.get("job_type") == "bounty_expire":
+                flogger.debug(f"Dispatching bounty_expire for job {job_id}")
+                return await execute_bounty_expire_job(job_id, payload)
+
+            # 5) bounty-respawn jobs
+            if payload.get("job_type") == "bounty_respawn":
+                flogger.debug(f"Dispatching bounty_respawn for job {job_id}")
+                return await execute_bounty_respawn_job(job_id, payload)
+
+            # 6) duel-expire jobs
+            if payload.get("job_type") == "duel_expire":
+                flogger.debug(f"Dispatching duel_expire for job {job_id}")
+                return await execute_duel_expire_job(job_id, payload)
+
+            # 7) temperature-decay jobs
+            if payload.get("job_type") == "temperature_decay":
+                flogger.debug(f"Dispatching temperature_decay for job {job_id}")
+                return await execute_temperature_decay_job(job_id, payload)
+
+            # 8) fallback for other payloads
             flogger.debug(f"Job '{job_id}': executing generic payload handler")
             # … your existing task/logic here …
 

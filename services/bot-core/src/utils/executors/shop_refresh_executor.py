@@ -93,15 +93,23 @@ async def execute_shop_refresh_job(job_id: str, payload: dict) -> dict:
                 flogger.info(f"ShopRefreshJob[{job_id}] no guilds configured, nothing to do")
                 return {"status": "success", "guilds_refreshed": 0, "results": {}}
 
+            # Pre-load all static game data once to avoid repeated DB
+            # queries per guild x tier.  At 1000 guilds this reduces
+            # ~420K item queries down to 4 (one per item type).
+            await shop_service.preload_static_data(db)
+
             bulk_results: dict = {}
-            for config in guild_configs:
-                gid = config.guild_id
-                tier_results: dict = {}
-                for t in _SHOP_TIERS:
-                    tier_results[t] = await shop_service.refresh_shop(
-                        db, gid, t, force_tech_level
-                    )
-                bulk_results[gid] = tier_results
+            try:
+                for config in guild_configs:
+                    gid = config.guild_id
+                    tier_results: dict = {}
+                    for t in _SHOP_TIERS:
+                        tier_results[t] = await shop_service.refresh_shop(
+                            db, gid, t, force_tech_level
+                        )
+                    bulk_results[gid] = tier_results
+            finally:
+                shop_service.clear_static_cache()
 
             end_ts = datetime.now(UTC)
             duration = (end_ts - start_ts).total_seconds()

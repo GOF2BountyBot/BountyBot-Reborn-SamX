@@ -13,6 +13,7 @@ import os
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from persist.database.manager import get_db_session
+from services.audit_service import AuditService
 from services.config_service import ConfigService
 from services.inventory_service import InventoryService
 from services.player_service import PlayerService
@@ -83,6 +84,7 @@ async def verify_admin_permissions(guild_id: int, user_id: int) -> bool:
 @router.post("/guilds/initialize", response_model=GuildInitializationResponse)
 async def initialize_guild(
     request: InitializeGuildRequest,
+    user_id: int,
     config_service: ConfigService = Depends(get_config_service),
     shop_service: ShopService = Depends(get_shop_service)
 ):
@@ -93,7 +95,12 @@ async def initialize_guild(
     - Guild configuration with default settings
     - Empty shops for all four tiers
     - Admin role configuration
+
+    Requires admin permissions (user_id must be in ADMIN_USER_IDS).
     """
+    if not await verify_admin_permissions(request.guild_id, user_id):
+        raise HTTPException(status_code=403, detail="Admin permissions required")
+
     flogger.info(f"Initializing guild {request.guild_id}")
 
     try:
@@ -116,6 +123,16 @@ async def initialize_guild(
                 shops_created += 1
 
             flogger.info(f"Successfully initialized guild {request.guild_id}")
+
+            await AuditService.log_action(
+                db,
+                user_id=user_id,
+                action="guild_initialize",
+                guild_id=request.guild_id,
+                resource_type="guild",
+                resource_id=str(request.guild_id),
+                details={"admin_role_id": request.admin_role_id, "shops_created": shops_created},
+            )
 
             return GuildInitializationResponse(
                 guild_id=request.guild_id,
@@ -167,6 +184,16 @@ async def reset_guild(
                 await shop_service.refresh_shop(db, guild_id, tier)
                 shops_refreshed += 1
 
+            await AuditService.log_action(
+                db,
+                user_id=user_id,
+                action="guild_reset",
+                guild_id=guild_id,
+                resource_type="guild",
+                resource_id=str(guild_id),
+                details={"preserve_players": preserve_players},
+            )
+
             return {
                 "guild_id": guild_id,
                 "players_preserved": preserve_players,
@@ -205,6 +232,16 @@ async def uninstall_bot(
 
             flogger.warning(f"Uninstalled bot from guild {guild_id}: {removed_counts}")
 
+            await AuditService.log_action(
+                db,
+                user_id=user_id,
+                action="guild_uninstall",
+                guild_id=guild_id,
+                resource_type="guild",
+                resource_id=str(guild_id),
+                details={"removed_counts": removed_counts},
+            )
+
             return {
                 "guild_id": guild_id,
                 "removed_counts": removed_counts,
@@ -222,15 +259,30 @@ async def uninstall_bot(
 @router.put("/players/credits")
 async def update_player_credits(
     request: UpdatePlayerCreditsRequest,
+    user_id: int,
+    guild_id: int,
     player_service: PlayerService = Depends(get_player_service)
 ):
-    """Update a player's credits."""
+    """Update a player's credits. Requires admin permissions."""
+    if not await verify_admin_permissions(guild_id, user_id):
+        raise HTTPException(status_code=403, detail="Admin permissions required")
+
     flogger.info(f"Admin updating credits for player {request.player_id}: {request.credits}")
 
     try:
         async with get_db_session() as db:
             player = await player_service.update_player_credits(
                 db, request.player_id, request.credits, request.update_lifetime
+            )
+
+            await AuditService.log_action(
+                db,
+                user_id=user_id,
+                action="credits_update",
+                guild_id=guild_id,
+                resource_type="player",
+                resource_id=str(request.player_id),
+                details={"player_id": request.player_id, "credits": request.credits},
             )
 
             return {
@@ -256,9 +308,14 @@ async def update_player_credits(
 @router.put("/players/xp")
 async def update_player_xp(
     request: UpdatePlayerXPRequest,
+    user_id: int,
+    guild_id: int,
     player_service: PlayerService = Depends(get_player_service)
 ):
-    """Update a player's XP and check for tier advancement."""
+    """Update a player's XP and check for tier advancement. Requires admin permissions."""
+    if not await verify_admin_permissions(guild_id, user_id):
+        raise HTTPException(status_code=403, detail="Admin permissions required")
+
     flogger.info(f"Admin updating XP for player {request.player_id}: {request.xp}")
 
     try:
@@ -269,6 +326,16 @@ async def update_player_xp(
 
             old_tier = old_player.tier
             player = await player_service.update_player_xp(db, request.player_id, request.xp)
+
+            await AuditService.log_action(
+                db,
+                user_id=user_id,
+                action="xp_update",
+                guild_id=guild_id,
+                resource_type="player",
+                resource_id=str(request.player_id),
+                details={"player_id": request.player_id, "xp": request.xp},
+            )
 
             return {
                 "player_id": request.player_id,
@@ -295,9 +362,14 @@ async def update_player_xp(
 @router.post("/players/{player_id}/reset")
 async def reset_player(
     player_id: int,
+    user_id: int,
+    guild_id: int,
     player_service: PlayerService = Depends(get_player_service)
 ):
-    """Reset a player's stats back to defaults."""
+    """Reset a player's stats back to defaults. Requires admin permissions."""
+    if not await verify_admin_permissions(guild_id, user_id):
+        raise HTTPException(status_code=403, detail="Admin permissions required")
+
     flogger.info(f"Admin resetting player {player_id} stats to defaults")
 
     try:
@@ -324,6 +396,15 @@ async def reset_player(
 
             flogger.info(f"Reset player {player_id} stats to defaults")
 
+            await AuditService.log_action(
+                db,
+                user_id=user_id,
+                action="player_reset",
+                guild_id=guild_id,
+                resource_type="player",
+                resource_id=str(player_id),
+            )
+
             return {
                 "player_id": player_id,
                 "credits": player.credits,
@@ -348,9 +429,14 @@ async def reset_player(
 @router.post("/players/inventory/add")
 async def add_inventory_item(
     request: AddInventoryItemRequest,
+    user_id: int,
+    guild_id: int,
     inventory_service: InventoryService = Depends(get_inventory_service)
 ):
-    """Add items to a player's inventory."""
+    """Add items to a player's inventory. Requires admin permissions."""
+    if not await verify_admin_permissions(guild_id, user_id):
+        raise HTTPException(status_code=403, detail="Admin permissions required")
+
     flogger.info(f"Admin adding {request.quantity}x {request.item_name} to player {request.player_id}")
 
     try:
@@ -361,6 +447,20 @@ async def add_inventory_item(
                 request.item_type,
                 request.item_name,
                 request.quantity,
+            )
+
+            await AuditService.log_action(
+                db,
+                user_id=user_id,
+                action="inventory_add",
+                guild_id=guild_id,
+                resource_type="inventory",
+                resource_id=str(request.player_id),
+                details={
+                    "player_id": request.player_id,
+                    "item_name": request.item_name,
+                    "quantity": request.quantity,
+                },
             )
 
             return {
@@ -388,15 +488,29 @@ async def add_inventory_item(
 @router.post("/shops/refresh")
 async def refresh_shop(
     request: RefreshShopRequest,
+    user_id: int,
     shop_service: ShopService = Depends(get_shop_service)
 ):
-    """Force refresh a shop's inventory."""
+    """Force refresh a shop's inventory. Requires admin permissions."""
+    if not await verify_admin_permissions(request.guild_id, user_id):
+        raise HTTPException(status_code=403, detail="Admin permissions required")
+
     flogger.info(f"Admin refreshing {request.tier} shop for guild {request.guild_id}")
 
     try:
         async with get_db_session() as db:
             refresh_details = await shop_service.refresh_shop(
                 db, request.guild_id, request.tier, request.force_tech_level
+            )
+
+            await AuditService.log_action(
+                db,
+                user_id=user_id,
+                action="shop_refresh",
+                guild_id=request.guild_id,
+                resource_type="shop",
+                resource_id=str(request.guild_id),
+                details={"tier": request.tier},
             )
 
             return {
@@ -419,14 +533,28 @@ async def refresh_shop(
 @router.put("/shops/config")
 async def update_shop_config(
     request: UpdateShopConfigRequest,
+    user_id: int,
     config_service: ConfigService = Depends(get_config_service)
 ):
-    """Update shop configuration parameters."""
+    """Update shop configuration parameters. Requires admin permissions."""
+    if not await verify_admin_permissions(request.guild_id, user_id):
+        raise HTTPException(status_code=403, detail="Admin permissions required")
+
     flogger.info(f"Admin updating shop config for guild {request.guild_id}")
 
     try:
         async with get_db_session() as db:
             config = await config_service.update_shop_config(db, request.model_dump(exclude_unset=True))
+
+            await AuditService.log_action(
+                db,
+                user_id=user_id,
+                action="shop_config_update",
+                guild_id=request.guild_id,
+                resource_type="shop",
+                resource_id=str(request.guild_id),
+                details=request.model_dump(exclude_unset=True),
+            )
 
             return {
                 "guild_id": request.guild_id,
@@ -443,10 +571,15 @@ async def update_shop_config(
 
 @router.get("/system/health", response_model=SystemHealthResponse)
 async def get_system_health(
+    user_id: int,
     player_service: PlayerService = Depends(get_player_service),
     shop_service: ShopService = Depends(get_shop_service),
 ):
-    """Get comprehensive system health information."""
+    """Get comprehensive system health information. Requires admin permissions."""
+    # Use guild_id=0 as sentinel for system-level checks (no specific guild context)
+    if not await verify_admin_permissions(0, user_id):
+        raise HTTPException(status_code=403, detail="Admin permissions required")
+
     flogger.debug("Admin requesting system health information")
 
     try:
@@ -477,9 +610,13 @@ async def get_system_health(
 @router.get("/guilds/{guild_id}/stats")
 async def get_guild_statistics(
     guild_id: int,
+    user_id: int,
     player_service: PlayerService = Depends(get_player_service)
 ):
-    """Get comprehensive statistics for a guild."""
+    """Get comprehensive statistics for a guild. Requires admin permissions."""
+    if not await verify_admin_permissions(guild_id, user_id):
+        raise HTTPException(status_code=403, detail="Admin permissions required")
+
     flogger.debug(f"Admin requesting statistics for guild {guild_id}")
 
     try:

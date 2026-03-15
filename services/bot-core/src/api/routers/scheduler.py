@@ -12,10 +12,22 @@ flogger = get_logger("bot-router-scheduler")
 router = APIRouter(tags=["job-scheduler"])
 
 
+def _get_scheduler(req: Request):
+    """Return the scheduler or raise 503 if unavailable."""
+    scheduler = getattr(req.app.state, "scheduler", None)
+    if scheduler is None:
+        flogger.warning("Scheduler requested but not available")
+        raise HTTPException(
+            status_code=503,
+            detail="Scheduler is not available. The service may still be starting up."
+        )
+    return scheduler
+
+
 @router.get("/jobs", response_model=list[JobInfo])
 async def list_jobs(req: Request):
     flogger.debug("Listing all scheduled jobs")
-    jobs = req.app.state.scheduler.get_jobs()
+    jobs = _get_scheduler(req).get_jobs()
     result = [
         JobInfo(
             id=j.job_id,
@@ -31,7 +43,7 @@ async def list_jobs(req: Request):
 @router.get("/jobs/{job_id}", response_model=JobInfo)
 async def get_job(req: Request, job_id: str):
     flogger.debug(f"Fetching job '{job_id}'")
-    job = req.app.state.scheduler.get_job(job_id)
+    job = _get_scheduler(req).get_job(job_id)
     if not job:
         flogger.warning(f"Job '{job_id}' not found")
         raise HTTPException(404, "Job not found")
@@ -54,7 +66,7 @@ async def schedule_job(req: Request, job: OneTimeJob):
     run_date = job.run_at or (datetime.now(UTC) + timedelta(seconds=job.delay_seconds))
 
     try:
-        req.app.state.scheduler.add_job(
+        _get_scheduler(req).add_job(
             run_job,
             trigger="date",
             run_date=run_date,
@@ -75,7 +87,7 @@ async def schedule_recurring(req: Request, job: RecurringJob):
     flogger.debug(f"Generated recurring job id={job_id} cron={job.cron}")
     try:
         trigger = CronTrigger.from_crontab(job.cron)
-        req.app.state.scheduler.add_job(
+        _get_scheduler(req).add_job(
             run_job,
             trigger=trigger,
             args=[job_id, job.payload],
@@ -95,7 +107,7 @@ async def update_job(req: Request, job_id: str, update: UpdateJob):
     This will replace the original payload passed at scheduling time.
     """
     flogger.debug(f"Updating job '{job_id}' with new payload: {update.payload}")
-    sched = req.app.state.scheduler
+    sched = _get_scheduler(req)
     job = sched.get_job(job_id)
     if not job:
         flogger.warning(f"Cannot update job '{job_id}': not found")
@@ -114,7 +126,7 @@ async def update_job(req: Request, job_id: str, update: UpdateJob):
 @router.delete("/jobs/all")
 async def delete_all_jobs(req: Request):
     flogger.debug("Deleting all jobs")
-    req.app.state.scheduler.remove_all_jobs()
+    _get_scheduler(req).remove_all_jobs()
     flogger.info("All jobs have been removed")
     return {"status": "all_jobs_deleted"}
 
@@ -122,7 +134,7 @@ async def delete_all_jobs(req: Request):
 @router.delete("/jobs/{job_id}")
 async def delete_job(req: Request, job_id: str):
     flogger.debug(f"Deleting job '{job_id}'")
-    sched = req.app.state.scheduler
+    sched = _get_scheduler(req)
     if not sched.get_job(job_id):
         flogger.warning(f"Cannot delete job '{job_id}': not found")
         raise HTTPException(404, "Job not found")

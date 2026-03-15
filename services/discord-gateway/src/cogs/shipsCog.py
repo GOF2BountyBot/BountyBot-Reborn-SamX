@@ -16,7 +16,7 @@ flogger.debug(f"shipsCog loading with API_BASE_URL: {api_base}")
 class ShipsCog(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
-        self.http_client = httpx.AsyncClient()
+        self.http_client = httpx.AsyncClient(timeout=httpx.Timeout(10.0))
         flogger.debug("ShipsCog initialized")
 
     async def cog_unload(self):
@@ -47,8 +47,14 @@ class ShipsCog(commands.Cog):
             # Determine target user
             target_user = user or interaction.user
             if user and user != interaction.user:
-                # TODO: Add admin permission check here
-                pass
+                # Require admin permission to view another user's ships
+                from cogs.adminCog import _check_is_admin
+                if not await _check_is_admin(interaction):
+                    await interaction.followup.send(
+                        "❌ You need admin permissions to view another user's ships.",
+                        ephemeral=True
+                    )
+                    return
 
             player_id = await self._get_player_id(target_user.id, interaction.guild_id)
             if not player_id:

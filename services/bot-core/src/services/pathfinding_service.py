@@ -7,8 +7,8 @@ with Euclidean distance as the heuristic. Edge weights are uniform (1 hop).
 
 from __future__ import annotations
 
-import bisect
 import enum
+import heapq
 from dataclasses import dataclass, field
 
 from shared import bblogger
@@ -69,19 +69,24 @@ class PathfindingService:
             Ordered list of system name strings (start → ... → end),
             or a PathfindingError enum value if no path could be found.
         """
+        flogger.debug(f"Route request: {start} → {end}")
+
         # Trivial case
         if start == end:
+            flogger.debug(f"Route trivial: start==end ({start}), returning single-system route")
             return [start]
 
         start_node = self.graph.get_system(start)
         end_node = self.graph.get_system(end)
 
         if start_node is None or end_node is None:
+            flogger.error(f"Route not found: system not in graph (start={start!r}, end={end!r})")
             return PathfindingError.NO_ROUTE_FOUND
 
         # --- A* search ---
-        # Open list: sorted ascending by f (bisect.insort keeps it ordered).
-        # Each element is an _AStarNode.
+        # Open set: min-heap ordered by f value (heapq).
+        # open_best tracks the best known f for each coordinate in the open
+        # set, enabling O(1) duplicate/dominance checks instead of scanning.
         root = _AStarNode(
             system_name=start_node.name,
             coordinates=start_node.coordinates,
@@ -89,16 +94,25 @@ class PathfindingService:
             g=0,
             h=self._heuristic(start_node, end_node),
         )
-        open_list: list[_AStarNode] = [root]
+        open_heap: list[_AStarNode] = [root]
+        # Best f-value seen in open set for each coordinate.
+        open_best: dict[tuple[int, int], float] = {root.coordinates: root.f}
 
         # Closed set: coordinates of expanded nodes.
         closed_coords: set[tuple[int, int]] = set()
 
         hop_counter = 0
 
-        while open_list:
-            # Pop the node with the lowest f value (front of sorted list).
-            q = open_list.pop(0)
+        while open_heap:
+            # Pop the node with the lowest f value — O(log N).
+            q = heapq.heappop(open_heap)
+
+            # Lazy deletion: skip if this node was superseded by a better
+            # entry for the same coordinates that was pushed later.
+            if q.coordinates in closed_coords:
+                continue
+            if q.coordinates in open_best and q.f > open_best[q.coordinates]:
+                continue
 
             hop_counter += 1
             if hop_counter >= MAX_ROUTE_LENGTH:
@@ -138,19 +152,15 @@ class PathfindingService:
                 new_f = new_g + new_h
                 n_coords = neighbour_sys.coordinates
 
-                # Skip if a better (or equal) node with the same coordinates
-                # already exists in open or closed lists.
+                # Skip if already expanded (closed).
                 if n_coords in closed_coords:
                     continue
 
-                existing_in_open = next(
-                    (node for node in open_list if node.coordinates == n_coords),
-                    None,
-                )
-                if existing_in_open is not None and existing_in_open.f <= new_f:
+                # Skip if a better (or equal) entry already exists in open.
+                if n_coords in open_best and open_best[n_coords] <= new_f:
                     continue
 
-                # Build the new candidate node.
+                # Build the new candidate node and push to heap — O(log N).
                 candidate = _AStarNode(
                     system_name=neighbour_name,
                     coordinates=n_coords,
@@ -158,16 +168,13 @@ class PathfindingService:
                     g=new_g,
                     h=new_h,
                 )
-
-                # Remove any stale entry for the same coordinates from open.
-                if existing_in_open is not None:
-                    open_list.remove(existing_in_open)
-
-                # Insert in sorted order by f.
-                bisect.insort(open_list, candidate)
+                heapq.heappush(open_heap, candidate)
+                open_best[n_coords] = new_f
 
             # Mark q as expanded.
             closed_coords.add(q.coordinates)
+            # Clean up open_best entry since it's now closed.
+            open_best.pop(q.coordinates, None)
 
         flogger.warning("No route found between %s and %s", start, end)
         return PathfindingError.NO_ROUTE_FOUND

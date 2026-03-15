@@ -851,6 +851,7 @@ class BountyService:
         Returns:
             Updated RewardInfo list with level information populated.
         """
+        modified_players = []
         for reward in rewards:
             player = await self.player_repo.get_by_id(db, reward.player_id)
             if player is None:
@@ -879,9 +880,7 @@ class BountyService:
             reward.level_after = calculate_user_level(player.xp)
             reward.leveled_up = reward.level_after > reward.level_before
 
-            # Persist player changes
-            await db.commit()
-            await db.refresh(player)
+            modified_players.append(player)
 
         # Update bounty status
         bounty.status = "completed"
@@ -889,6 +888,12 @@ class BountyService:
             (r.player_id for r in rewards if r.is_winner), None
         )
         await self.bounty_repo.update(db, bounty)
+
+        # Refresh all modified players for accurate state.
+        # Note: bounty_repo.update() already commits, so player changes
+        # are persisted. We just refresh to get the post-commit state.
+        for player in modified_players:
+            await db.refresh(player)
 
         return rewards
 

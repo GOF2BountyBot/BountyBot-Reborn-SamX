@@ -47,11 +47,17 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "src"))
 
 
 
+def _close_coro(coro):
+    """Close coroutine to prevent 'never awaited' warning."""
+    coro.close()
+    return MagicMock()
+
+
 @pytest.fixture
 def mock_bot():
     """Create a mock Discord bot for skinsCog testing."""
     loop = MagicMock()
-    loop.create_task = MagicMock(side_effect=lambda coro: coro.close())
+    loop.create_task = MagicMock(side_effect=_close_coro)
     bot = DiscordMockUtils.create_mock_bot(
         user_id=123456789,
         username="TestBot",

@@ -6,8 +6,12 @@ Maps player levels to game divisions (bronze / silver / gold) using
 database access and no async operations.
 """
 
+from shared import bblogger
+
 from services.game_constants import GameConstants
 from services.game_maths import calculate_user_level
+
+flogger = bblogger.get_logger(__name__)
 
 
 class DivisionService:
@@ -35,10 +39,14 @@ class DivisionService:
             # belonging to that division; anything below min of the first
             # division also falls in the first division.
             if level <= max_lvl:
-                return names[i]
+                division = names[i]
+                flogger.debug(f"Division assignment: level={level} → {division}")
+                return division
 
         # level exceeds all upper boundaries — return the last division
-        return names[-1]
+        division = names[-1]
+        flogger.debug(f"Division assignment: level={level} → {division} (clamped to max)")
+        return division
 
     @staticmethod
     def get_division_boundaries(division_name: str) -> tuple[int, int]:
@@ -59,12 +67,15 @@ class DivisionService:
         try:
             index = names.index(division_name)
         except ValueError:
+            flogger.debug(f"Division boundary query: unknown division {division_name!r}")
             raise ValueError(
                 f"Unknown division: {division_name!r}. "
                 f"Valid divisions are: {names}"
             ) from None
 
-        return boundaries[index]
+        result = boundaries[index]
+        flogger.debug(f"Division boundary query: {division_name} → min={result[0]} max={result[1]}")
+        return result
 
     @staticmethod
     def get_all_divisions() -> list[dict]:

@@ -16,7 +16,7 @@ flogger.debug(f"playerCog loading with API_BASE_URL: {api_base}")
 class PlayerCog(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
-        self.http_client = httpx.AsyncClient()
+        self.http_client = httpx.AsyncClient(timeout=httpx.Timeout(10.0))
         flogger.debug("PlayerCog initialized")
 
     async def cog_unload(self):

@@ -11,6 +11,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from persist.database.manager import get_db_session
 from services.player_service import PlayerService
 from shared import bblogger
+from sqlalchemy.exc import IntegrityError
 
 from api.schemas.players_schema import (
     CreatePlayerRequest,
@@ -80,6 +81,18 @@ async def create_or_get_player(
                 updated_at=player.updated_at.isoformat()
             )
 
+    except ValueError as e:
+        flogger.warning(f"Validation error creating/getting player: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e)
+        ) from e
+    except IntegrityError as e:
+        flogger.error(f"Integrity error creating/getting player: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Player record conflict"
+        ) from e
     except Exception as e:
         flogger.error(f"Error creating/getting player: {e}")
         raise HTTPException(

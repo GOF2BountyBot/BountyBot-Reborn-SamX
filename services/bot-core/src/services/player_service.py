@@ -318,6 +318,10 @@ class PlayerService:
     ) -> dict[str, Any]:
         """Transfer credits from one player to another.
 
+        Uses SELECT … FOR UPDATE to lock both player rows within a single
+        transaction, preventing TOCTOU race conditions where two concurrent
+        transfers could read the same balance.
+
         Args:
             db: Database session
             source_player_id: Player sending credits
@@ -338,22 +342,29 @@ class PlayerService:
         if source_player_id == target_player_id:
             raise ValueError("Cannot transfer credits to yourself")
 
-        # Get both players
-        source = await self.player_repo.get_by_id(db, source_player_id)
-        if not source:
-            raise ValueError(f"Source player {source_player_id} not found")
+        # Atomic transfer with row-level locking
+        async with db.begin():
+            # Lock both rows to prevent concurrent modifications.
+            # Always lock in consistent ID order to prevent deadlocks.
+            ids_ordered = sorted([source_player_id, target_player_id])
+            locked = {}
+            for pid in ids_ordered:
+                player = await self.player_repo.get_by_id_for_update(db, pid)
+                if not player:
+                    raise ValueError(f"Player {pid} not found")
+                locked[pid] = player
 
-        target = await self.player_repo.get_by_id(db, target_player_id)
-        if not target:
-            raise ValueError(f"Target player {target_player_id} not found")
+            source = locked[source_player_id]
+            target = locked[target_player_id]
 
-        # Check source has enough credits
-        if source.credits < amount:
-            raise ValueError(f"Insufficient credits: have {source.credits}, need {amount}")
+            # Check source has enough credits (under lock — no TOCTOU)
+            if source.credits < amount:
+                raise ValueError(f"Insufficient credits: have {source.credits}, need {amount}")
 
-        # Atomic transfer
-        await self.player_repo.update_credits(db, source_player_id, source.credits - amount)
-        await self.player_repo.update_credits(db, target_player_id, target.credits + amount)
+            source_new = source.credits - amount
+            target_new = target.credits + amount
+            await self.player_repo.update_credits(db, source_player_id, source_new, commit=False)
+            await self.player_repo.update_credits(db, target_player_id, target_new, commit=False)
 
         flogger.info(
             f"Transferred {amount} credits from player {source_player_id} to player {target_player_id}"
@@ -363,8 +374,8 @@ class PlayerService:
             "source_player_id": source_player_id,
             "target_player_id": target_player_id,
             "amount": amount,
-            "source_remaining_credits": source.credits - amount,
-            "target_new_credits": target.credits + amount,
+            "source_remaining_credits": source_new,
+            "target_new_credits": target_new,
         }
 
     async def add_xp(self, db: AsyncSession, player_id: int, xp_amount: int) -> dict:
@@ -394,11 +405,12 @@ class PlayerService:
             level_after = calculate_user_level(player.xp)
             leveled_up = level_after > level_before
 
+            # Always update xp_surplus so it stays fresh (not just on level-up)
+            boundaries = GameConstants.XP_LEVEL_BOUNDARIES
+            idx = min(level_after, len(boundaries) - 1)
+            player.xp_surplus = player.xp - boundaries[idx]
+
             if leveled_up:
-                boundaries = GameConstants.XP_LEVEL_BOUNDARIES
-                # Clamp level_after index to valid range
-                idx = min(level_after, len(boundaries) - 1)
-                player.xp_surplus = player.xp - boundaries[idx]
                 flogger.info(
                     f"Player {player_id} leveled up: {level_before} -> {level_after} "
                     f"(surplus: {player.xp_surplus})"

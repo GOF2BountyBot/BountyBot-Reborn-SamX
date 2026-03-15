@@ -38,19 +38,26 @@ async def find_route(
     - **start**: Name of the starting star system
     - **end**: Name of the destination star system
     """
-    if not _graph_service.is_loaded():
-        await _graph_service.load_graph(db)
+    flogger.debug(f"Route query: start={start!r} end={end!r}")
+    try:
+        if not _graph_service.is_loaded():
+            await _graph_service.load_graph(db)
 
-    pf_service = PathfindingService(_graph_service)
-    result = pf_service.make_route(start, end)
+        pf_service = PathfindingService(_graph_service)
+        result = pf_service.make_route(start, end)
+    except Exception as e:
+        flogger.error(f"Route query error: start={start!r} end={end!r}: {e}")
+        raise
 
     if isinstance(result, PathfindingError):
         if result == PathfindingError.NO_ROUTE_FOUND:
+            flogger.debug(f"Route not found: start={start!r} end={end!r}")
             raise HTTPException(
                 status_code=404,
                 detail=f"No route found between '{start}' and '{end}'",
             )
         if result == PathfindingError.MAX_LENGTH_REACHED:
+            flogger.debug(f"Route exceeds max length: start={start!r} end={end!r}")
             raise HTTPException(
                 status_code=400,
                 detail="Route exceeds maximum length (50 hops)",
@@ -58,4 +65,5 @@ async def find_route(
         # Generic fallback for any future error values
         raise HTTPException(status_code=400, detail=str(result))
 
+    flogger.debug(f"Route found: {start!r} → {end!r} hops={len(result) - 1}")
     return {"route": result, "hops": len(result) - 1}

@@ -170,6 +170,12 @@ def _make_loadout_response(
 # ---------------------------------------------------------------------------
 
 
+def _close_coro(coro):
+    """Close coroutine to prevent 'never awaited' warning."""
+    coro.close()
+    return MagicMock()
+
+
 @pytest.fixture
 def mock_bot():
     """Mock Discord bot for bountyCog testing."""
@@ -178,7 +184,7 @@ def mock_bot():
     bot.tree = MagicMock()
     # loop.create_task is required for the preload scheduling in __init__
     bot.loop = MagicMock()
-    bot.loop.create_task = MagicMock()
+    bot.loop.create_task = MagicMock(side_effect=_close_coro)
     return bot
 
 

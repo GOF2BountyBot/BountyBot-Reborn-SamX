@@ -154,7 +154,8 @@ class DatabaseManager:
         async with self._session_factory() as session:
             try:
                 yield session
-            except:
+            except Exception:
+                flogger.error("Session error — rolling back transaction")
                 await session.rollback()
                 raise
 

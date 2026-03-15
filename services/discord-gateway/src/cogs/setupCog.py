@@ -20,7 +20,7 @@ _GAME_CHANNELS = ["bounty-board", "shop", "general"]
 class SetupCog(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
-        self.http_client = httpx.AsyncClient()
+        self.http_client = httpx.AsyncClient(timeout=httpx.Timeout(10.0))
         flogger.debug("SetupCog initialized")
 
     async def cog_unload(self):

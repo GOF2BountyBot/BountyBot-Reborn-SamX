@@ -119,13 +119,16 @@ class DuelRepository(IRepository[DuelRequest]):
             if duel is None:
                 return None
             duel.status = new_status
-            await db.commit()
-            await db.refresh(duel)
+            try:
+                await db.commit()
+                await db.refresh(duel)
+            except Exception:
+                await db.rollback()
+                raise
             flogger.info(f"Updated duel request {duel_id} status to {new_status!r}")
             return duel
         except Exception as e:
             flogger.error(f"Error updating duel request {duel_id} status: {e}")
-            await db.rollback()
             raise
 
     async def delete_expired(self, db: AsyncSession, current_time: datetime) -> int:

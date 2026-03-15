@@ -17,7 +17,7 @@ flogger.debug(f"duelCog loading with API_BASE_URL: {api_base}")
 class DuelCog(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
-        self.http_client = httpx.AsyncClient()
+        self.http_client = httpx.AsyncClient(timeout=httpx.Timeout(10.0))
         flogger.debug("DuelCog initialized")
 
     async def cog_unload(self):
@@ -69,6 +69,10 @@ class DuelCog(commands.Cog):
     ):
         """Challenge a player to a duel."""
         await interaction.response.defer(thinking=True)
+        flogger.info(
+            f"/duel-challenge invoked: guild={interaction.guild_id} user={interaction.user.id}"
+            f" target={target.id} stakes={stakes}"
+        )
 
         try:
             resp = await self.http_client.post(
@@ -86,8 +90,10 @@ class DuelCog(commands.Cog):
 
             embed = self._build_challenge_embed(interaction.user, target, data, stakes)
             await interaction.followup.send(embed=embed)
-            flogger.debug(
-                f"/duel-challenge by {interaction.user} → {target} stakes={stakes}"
+            duel_id = data.get("id", "?")
+            flogger.info(
+                f"/duel-challenge success: guild={interaction.guild_id} user={interaction.user.id}"
+                f" target={target.id} stakes={stakes} duel_id={duel_id}"
             )
 
         except httpx.HTTPStatusError as e:
@@ -98,9 +104,16 @@ class DuelCog(commands.Cog):
                     detail = str(e)
                 await interaction.followup.send(f"❌ {detail}", ephemeral=True)
             else:
+                flogger.error(
+                    f"/duel-challenge API error: guild={interaction.guild_id} user={interaction.user.id}"
+                    f" target={target.id} status={e.response.status_code}"
+                )
                 await interaction.followup.send(f"❌ API Error: {e}", ephemeral=True)
         except Exception as e:  # pylint: disable=broad-exception-caught
-            flogger.error(f"Error in /duel-challenge: {e}")
+            flogger.error(
+                f"/duel-challenge error: guild={interaction.guild_id} user={interaction.user.id}"
+                f" target={target.id} error={e}"
+            )
             await interaction.followup.send(
                 "⚠️ An error occurred while creating the duel challenge.", ephemeral=True
             )
@@ -153,6 +166,7 @@ class DuelCog(commands.Cog):
     async def duel_accept(self, interaction: discord.Interaction, duel: str):
         """Accept a pending duel challenge and resolve combat."""
         await interaction.response.defer(thinking=True)
+        flogger.info(f"/duel-accept invoked: guild={interaction.guild_id} user={interaction.user.id} duel={duel}")
 
         try:
             duel_id = int(duel)
@@ -174,7 +188,11 @@ class DuelCog(commands.Cog):
 
             embed = self._build_accept_embed(duel_id, data)
             await interaction.followup.send(embed=embed)
-            flogger.debug(f"/duel-accept duel_id={duel_id} by {interaction.user}")
+            is_stalemate = data.get("is_stalemate", False)
+            flogger.info(
+                f"/duel-accept success: guild={interaction.guild_id} user={interaction.user.id}"
+                f" duel_id={duel_id} stalemate={is_stalemate}"
+            )
 
         except httpx.HTTPStatusError as e:
             if e.response.status_code == 404:
@@ -190,9 +208,16 @@ class DuelCog(commands.Cog):
                     detail = str(e)
                 await interaction.followup.send(f"❌ {detail}", ephemeral=True)
             else:
+                flogger.error(
+                    f"/duel-accept API error: guild={interaction.guild_id} user={interaction.user.id}"
+                    f" duel_id={duel_id} status={e.response.status_code}"
+                )
                 await interaction.followup.send(f"❌ API Error: {e}", ephemeral=True)
         except Exception as e:  # pylint: disable=broad-exception-caught
-            flogger.error(f"Error in /duel-accept: {e}")
+            flogger.error(
+                f"/duel-accept error: guild={interaction.guild_id} user={interaction.user.id}"
+                f" duel_id={duel_id} error={e}"
+            )
             await interaction.followup.send(
                 "⚠️ An error occurred while accepting the duel.", ephemeral=True
             )
@@ -261,6 +286,7 @@ class DuelCog(commands.Cog):
     async def duel_reject(self, interaction: discord.Interaction, duel: str):
         """Reject a pending duel challenge."""
         await interaction.response.defer(thinking=True)
+        flogger.info(f"/duel-reject invoked: guild={interaction.guild_id} user={interaction.user.id} duel={duel}")
 
         try:
             duel_id = int(duel)
@@ -295,7 +321,9 @@ class DuelCog(commands.Cog):
                     inline=False,
                 )
             await interaction.followup.send(embed=embed)
-            flogger.debug(f"/duel-reject duel_id={duel_id} by {interaction.user}")
+            flogger.info(
+                f"/duel-reject success: guild={interaction.guild_id} user={interaction.user.id} duel_id={duel_id}"
+            )
 
         except httpx.HTTPStatusError as e:
             if e.response.status_code == 404:
@@ -311,9 +339,16 @@ class DuelCog(commands.Cog):
                     detail = str(e)
                 await interaction.followup.send(f"❌ {detail}", ephemeral=True)
             else:
+                flogger.error(
+                    f"/duel-reject API error: guild={interaction.guild_id} user={interaction.user.id}"
+                    f" duel_id={duel_id} status={e.response.status_code}"
+                )
                 await interaction.followup.send(f"❌ API Error: {e}", ephemeral=True)
         except Exception as e:  # pylint: disable=broad-exception-caught
-            flogger.error(f"Error in /duel-reject: {e}")
+            flogger.error(
+                f"/duel-reject error: guild={interaction.guild_id} user={interaction.user.id}"
+                f" duel_id={duel_id} error={e}"
+            )
             await interaction.followup.send(
                 "⚠️ An error occurred while rejecting the duel.", ephemeral=True
             )

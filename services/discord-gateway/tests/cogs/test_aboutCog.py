@@ -101,14 +101,20 @@ def _make_object_data(name="Eagle", category="ship", obj_id=1):
     }
 
 
+def _close_coro(coro):
+    """Close coroutine to prevent 'never awaited' warning."""
+    coro.close()
+    return MagicMock()
+
+
 def _make_mock_bot_with_loop():
     """Create a mock bot that has a working loop.create_task."""
     bot = DiscordMockUtils.create_mock_bot(user_id=123456789, username="TestBot")
     bot.add_cog = AsyncMock()
     bot.tree = MagicMock()
-    # loop.create_task should accept a coroutine — use MagicMock
+    # loop.create_task should close the coroutine to prevent 'never awaited' warning
     bot.loop = MagicMock()
-    bot.loop.create_task = MagicMock()
+    bot.loop.create_task = MagicMock(side_effect=_close_coro)
     # wait_until_ready is already AsyncMock from create_mock_bot
     return bot
 

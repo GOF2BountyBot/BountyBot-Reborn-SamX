@@ -12,7 +12,11 @@ service — no database access, no async operations.
 
 import random
 
+from shared import bblogger
+
 from services.game_constants import GameConstants
+
+flogger = bblogger.get_logger(__name__)
 
 
 class TemperatureService:
@@ -39,7 +43,9 @@ class TemperatureService:
         """
         if amount is None:
             amount = GameConstants.ACTIVITY_TEMP_PER_PLAYER
-        return current_temp + amount
+        new_temp = current_temp + amount
+        flogger.info(f"Temperature raised: {current_temp} → {new_temp} (amount={amount})")
+        return new_temp
 
     @staticmethod
     def decay_temperature(current_temp: float) -> float:
@@ -55,7 +61,12 @@ class TemperatureService:
             New temperature after decay.
         """
         decayed = current_temp * GameConstants.GUILD_ACTIVITY_DECAY_RATE
-        return max(GameConstants.MIN_GUILD_ACTIVITY, round(decayed, 1))
+        new_temp = max(GameConstants.MIN_GUILD_ACTIVITY, round(decayed, 1))
+        flogger.info(
+            f"Temperature decayed: {current_temp} → {new_temp}"
+            f" (rate={GameConstants.GUILD_ACTIVITY_DECAY_RATE})"
+        )
+        return new_temp
 
     @staticmethod
     def get_max_bounties(temperature: float) -> int:
@@ -96,12 +107,22 @@ class TemperatureService:
         Returns:
             Spawn delay in minutes.
         """
+        # Guard against temperature ≤ 0 to avoid math domain errors in
+        # the exponentiation below.  Temperature should always be ≥ 1.0 via
+        # system invariants, but we clamp defensively.
+        temperature = max(GameConstants.MIN_GUILD_ACTIVITY, temperature)
+
         base_delay = random.uniform(
             GameConstants.BOUNTY_DELAY_RANDOM_MIN,
             GameConstants.BOUNTY_DELAY_RANDOM_MAX,
         )
         temp_factor = temperature**-0.1  # Higher temp → smaller factor → shorter delay
-        return base_delay * temp_factor * route_length
+        spawn_delay = base_delay * temp_factor * route_length
+        flogger.debug(
+            f"Spawn delay: base={base_delay:.2f} temp_factor={temp_factor:.4f}"
+            f" route_length={route_length} → {spawn_delay:.2f} min"
+        )
+        return spawn_delay
 
     @staticmethod
     def decay_temperature_n_hours(current_temp: float, hours: int) -> float:

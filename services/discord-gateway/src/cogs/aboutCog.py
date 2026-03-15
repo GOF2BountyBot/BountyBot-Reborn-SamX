@@ -26,7 +26,7 @@ class AboutCog(commands.Cog):
         self.bot = bot
         self._categories: list[str] = []
         self._objects_by_category: dict[str, list[dict]] = {}
-        self.http_client = httpx.AsyncClient()
+        self.http_client = httpx.AsyncClient(timeout=httpx.Timeout(10.0))
 
         # Schedule preload once bot is ready
         bot.loop.create_task(self._preload_data())
@@ -54,6 +54,15 @@ class AboutCog(commands.Cog):
                     objects = resp.json()
                     self._objects_by_category[category] = objects
                     flogger.debug(f"Preloaded {len(objects)} objects for category {category}")
+                except httpx.TimeoutException as e:
+                    flogger.warning(f"Timeout preloading objects for category {category}: {e}")
+                    self._objects_by_category[category] = []
+                except httpx.HTTPStatusError as e:
+                    flogger.warning(f"HTTP error preloading objects for category {category}: {e.response.status_code}")
+                    self._objects_by_category[category] = []
+                except httpx.RequestError as e:
+                    flogger.warning(f"Request error preloading objects for category {category}: {e}")
+                    self._objects_by_category[category] = []
                 except Exception as e:  # pylint: disable=broad-exception-caught
                     flogger.warning(f"Failed to preload objects for category {category}: {e}")
                     self._objects_by_category[category] = []
@@ -63,8 +72,20 @@ class AboutCog(commands.Cog):
                 f"{sum(len(objs) for objs in self._objects_by_category.values())} total objects"
             )
 
+        except httpx.TimeoutException as e:
+            flogger.warning(f"Timeout preloading about data: {e}")
+            self._categories = []
+            self._objects_by_category = {}
+        except httpx.HTTPStatusError as e:
+            flogger.warning(f"HTTP error preloading about data: {e.response.status_code}")
+            self._categories = []
+            self._objects_by_category = {}
+        except httpx.RequestError as e:
+            flogger.warning(f"Request error preloading about data: {e}")
+            self._categories = []
+            self._objects_by_category = {}
         except Exception as e:  # pylint: disable=broad-exception-caught
-            flogger.warning(f"Failed to preload about data: {e}")
+            flogger.warning(f"Unexpected error preloading about data: {e}")
             # Set defaults so the cog can still function
             self._categories = []
             self._objects_by_category = {}
@@ -117,6 +138,9 @@ class AboutCog(commands.Cog):
     async def about(self, interaction: discord.Interaction, category: str, name: str):
         """Main about command that displays detailed object information"""
         await interaction.response.defer(thinking=True)
+        flogger.debug(
+            f"/about invoked: guild={interaction.guild_id} user={interaction.user.id} category={category} name={name}"
+        )
 
         # ── Resolve alias to canonical name if needed ──────────────────────────────
         resolved_name = name
@@ -134,6 +158,10 @@ class AboutCog(commands.Cog):
             # Create rich embed with object information
             embed = await self._create_object_embed(obj_data)
             await interaction.followup.send(embed=embed)
+            flogger.info(
+                f"/about success: guild={interaction.guild_id} user={interaction.user.id}"
+                f" category={category} name={resolved_name}"
+            )
 
         except httpx.HTTPStatusError as e:
             if e.response.status_code == 404:
@@ -141,9 +169,16 @@ class AboutCog(commands.Cog):
                     f"❌ Object '{name}' not found in category '{category}'.", ephemeral=True
                 )
             else:
+                flogger.error(
+                    f"/about API error: guild={interaction.guild_id} user={interaction.user.id}"
+                    f" category={category} status={e.response.status_code}"
+                )
                 await interaction.followup.send(f"❌ API Error: {e}", ephemeral=True)
         except Exception as e:  # pylint: disable=broad-exception-caught
-            flogger.error(f"Error in about command: {e}")
+            flogger.error(
+                f"/about error: guild={interaction.guild_id} user={interaction.user.id}"
+                f" category={category} name={name} error={e}"
+            )
             await interaction.followup.send("⚠️ An error occurred while fetching object information.", ephemeral=True)
 
     async def _create_object_embed(self, obj_data: dict) -> discord.Embed:
@@ -308,6 +343,10 @@ class AboutCog(commands.Cog):
     ):
         """List all objects in a specific category, with optional filters"""
         await interaction.response.defer(thinking=True)
+        flogger.debug(
+            f"/list_category invoked: guild={interaction.guild_id} user={interaction.user.id}"
+            f" category={category} tech_level={tech_level} manufacturer={manufacturer}"
+        )
 
         try:
             if category not in self._objects_by_category:
@@ -379,9 +418,16 @@ class AboutCog(commands.Cog):
                 embed.set_footer(text=f"Showing first 100 of {len(filtered)} objects")
 
             await interaction.followup.send(embed=embed)
+            flogger.info(
+                f"/list_category success: guild={interaction.guild_id} user={interaction.user.id}"
+                f" category={category} count={len(filtered)}"
+            )
 
         except Exception as e:  # pylint: disable=broad-exception-caught
-            flogger.error(f"Error in list_category command: {e}")
+            flogger.error(
+                f"/list_category error: guild={interaction.guild_id} user={interaction.user.id}"
+                f" category={category} error={e}"
+            )
             await interaction.followup.send("⚠️ An error occurred while listing objects.", ephemeral=True)
 
     @app_commands.command(
@@ -395,6 +441,9 @@ class AboutCog(commands.Cog):
     async def make_route(self, interaction: discord.Interaction, start: str, end: str):
         """Display the shortest hop-by-hop route between two star systems."""
         await interaction.response.defer(thinking=True)
+        flogger.debug(
+            f"/make-route invoked: guild={interaction.guild_id} user={interaction.user.id} start={start} end={end}"
+        )
 
         try:
             resp = await self.http_client.get(
@@ -420,6 +469,10 @@ class AboutCog(commands.Cog):
             embed.set_footer(text=f"Shortest path via A* ({len(route)} system(s))")
 
             await interaction.followup.send(embed=embed)
+            flogger.info(
+                f"/make-route success: guild={interaction.guild_id} user={interaction.user.id}"
+                f" start={start} end={end} hops={hops}"
+            )
 
         except httpx.HTTPStatusError as e:
             if e.response.status_code == 404:
@@ -433,9 +486,16 @@ class AboutCog(commands.Cog):
                     ephemeral=True,
                 )
             else:
+                flogger.error(
+                    f"/make-route API error: guild={interaction.guild_id} user={interaction.user.id}"
+                    f" start={start} end={end} status={e.response.status_code}"
+                )
                 await interaction.followup.send(f"❌ API Error: {e}", ephemeral=True)
         except Exception as e:  # pylint: disable=broad-exception-caught
-            flogger.error(f"Error in make_route command: {e}")
+            flogger.error(
+                f"/make-route error: guild={interaction.guild_id} user={interaction.user.id}"
+                f" start={start} end={end} error={e}"
+            )
             await interaction.followup.send(
                 "⚠️ An error occurred while finding the route.", ephemeral=True
             )

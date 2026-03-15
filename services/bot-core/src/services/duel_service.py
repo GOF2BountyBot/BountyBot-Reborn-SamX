@@ -146,14 +146,18 @@ class DuelService:
 
         stakes = duel.stakes
 
-        # Re-validate credits at accept-time
-        challenger = await self.player_repo.get_by_id(db, duel.challenger_id)
-        target = await self.player_repo.get_by_id(db, duel.target_id)
+        # Re-validate credits at accept-time under row-level lock.
+        # Lock in consistent ID order to prevent deadlocks.
+        ids_ordered = sorted([duel.challenger_id, duel.target_id])
+        locked = {}
+        for pid in ids_ordered:
+            player = await self.player_repo.get_by_id_for_update(db, pid)
+            if player is None:
+                raise ValueError(f"Player {pid} not found.")
+            locked[pid] = player
 
-        if challenger is None:
-            raise ValueError(f"Challenger player {duel.challenger_id} not found.")
-        if target is None:
-            raise ValueError(f"Target player {duel.target_id} not found.")
+        challenger = locked[duel.challenger_id]
+        target = locked[duel.target_id]
 
         if challenger.credits < stakes:
             raise ValueError(

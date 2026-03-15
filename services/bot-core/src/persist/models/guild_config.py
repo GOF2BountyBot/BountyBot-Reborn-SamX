@@ -53,6 +53,14 @@ class GuildConfig(Base):
         "Platinum": 15000
     })
 
+    # Activity temperature per division (persisted for decay across restarts)
+    # Default: {"bronze": 1.0, "silver": 1.0, "gold": 1.0}
+    division_temperatures: Mapped[dict[str, float]] = mapped_column(
+        JSON,
+        default={"bronze": 1.0, "silver": 1.0, "gold": 1.0},
+        nullable=True,
+    )
+
     # Timestamps
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(UTC))
     updated_at: Mapped[datetime] = mapped_column(

@@ -16,7 +16,7 @@ flogger.debug(f"HealthCog loading with api_base: {api_base}")
 class HealthCog(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
-        self.http_client = httpx.AsyncClient()
+        self.http_client = httpx.AsyncClient(timeout=httpx.Timeout(10.0))
         flogger.debug("HealthCog initialized")
 
     async def cog_unload(self):

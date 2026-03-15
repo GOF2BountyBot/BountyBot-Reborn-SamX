@@ -594,6 +594,130 @@ class TestAdminUpdateShopConfigRequestSchema:
         assert req.tech_level_probabilities == {"1": 0.5}
 
 
+class TestAdminSchemaInputValidation:
+    """Tests for input validation constraints added to admin schemas (ge=1, max_length)."""
+
+    # ------------------------------------------------------------------
+    # guild_id ge=1 constraints
+    # ------------------------------------------------------------------
+
+    def test_initialize_guild_zero_guild_id_raises(self):
+        """guild_id=0 is rejected (ge=1)."""
+        with pytest.raises(ValidationError):
+            InitializeGuildRequest(guild_id=0)
+
+    def test_initialize_guild_negative_guild_id_raises(self):
+        """Negative guild_id is rejected (ge=1)."""
+        with pytest.raises(ValidationError):
+            InitializeGuildRequest(guild_id=-1)
+
+    def test_refresh_shop_zero_guild_id_raises(self):
+        """guild_id=0 is rejected on RefreshShopRequest (ge=1)."""
+        with pytest.raises(ValidationError):
+            RefreshShopRequest(guild_id=0, tier="Bronze")
+
+    def test_refresh_shop_negative_guild_id_raises(self):
+        """Negative guild_id is rejected on RefreshShopRequest (ge=1)."""
+        with pytest.raises(ValidationError):
+            RefreshShopRequest(guild_id=-5, tier="Silver")
+
+    def test_update_shop_config_zero_guild_id_raises(self):
+        """guild_id=0 is rejected on UpdateShopConfigRequest (ge=1)."""
+        with pytest.raises(ValidationError):
+            UpdateShopConfigRequest(guild_id=0)
+
+    def test_update_shop_config_negative_guild_id_raises(self):
+        """Negative guild_id is rejected on UpdateShopConfigRequest (ge=1)."""
+        with pytest.raises(ValidationError):
+            UpdateShopConfigRequest(guild_id=-100)
+
+    # ------------------------------------------------------------------
+    # player_id ge=1 constraints
+    # ------------------------------------------------------------------
+
+    def test_update_player_credits_zero_player_id_raises(self):
+        """player_id=0 is rejected on UpdatePlayerCreditsRequest (ge=1)."""
+        with pytest.raises(ValidationError):
+            UpdatePlayerCreditsRequest(player_id=0, credits=100)
+
+    def test_update_player_credits_negative_player_id_raises(self):
+        """Negative player_id is rejected on UpdatePlayerCreditsRequest (ge=1)."""
+        with pytest.raises(ValidationError):
+            UpdatePlayerCreditsRequest(player_id=-1, credits=100)
+
+    def test_update_player_xp_zero_player_id_raises(self):
+        """player_id=0 is rejected on UpdatePlayerXPRequest (ge=1)."""
+        with pytest.raises(ValidationError):
+            UpdatePlayerXPRequest(player_id=0, xp=100)
+
+    def test_update_player_xp_negative_player_id_raises(self):
+        """Negative player_id is rejected on UpdatePlayerXPRequest (ge=1)."""
+        with pytest.raises(ValidationError):
+            UpdatePlayerXPRequest(player_id=-99, xp=100)
+
+    def test_add_inventory_item_zero_player_id_raises(self):
+        """player_id=0 is rejected on AddInventoryItemRequest (ge=1)."""
+        with pytest.raises(ValidationError):
+            AddInventoryItemRequest(player_id=0, item_type="ship", item_name="Falcon")
+
+    def test_add_inventory_item_negative_player_id_raises(self):
+        """Negative player_id is rejected on AddInventoryItemRequest (ge=1)."""
+        with pytest.raises(ValidationError):
+            AddInventoryItemRequest(player_id=-1, item_type="ship", item_name="Falcon")
+
+    def test_remove_inventory_item_zero_player_id_raises(self):
+        """player_id=0 is rejected on RemoveInventoryItemRequest (ge=1)."""
+        with pytest.raises(ValidationError):
+            RemoveInventoryItemRequest(player_id=0, item_type="weapon", item_name="Laser")
+
+    def test_remove_inventory_item_negative_player_id_raises(self):
+        """Negative player_id is rejected on RemoveInventoryItemRequest (ge=1)."""
+        with pytest.raises(ValidationError):
+            RemoveInventoryItemRequest(player_id=-1, item_type="weapon", item_name="Laser")
+
+    # ------------------------------------------------------------------
+    # item_name max_length=256 constraints
+    # ------------------------------------------------------------------
+
+    def test_add_inventory_item_name_too_long_raises(self):
+        """item_name longer than 256 chars is rejected on AddInventoryItemRequest (max_length=256)."""
+        long_name = "A" * 257
+        with pytest.raises(ValidationError):
+            AddInventoryItemRequest(player_id=1, item_type="ship", item_name=long_name)
+
+    def test_add_inventory_item_name_at_max_length_valid(self):
+        """item_name of exactly 256 chars is accepted on AddInventoryItemRequest."""
+        max_name = "A" * 256
+        req = AddInventoryItemRequest(player_id=1, item_type="weapon", item_name=max_name)
+        assert len(req.item_name) == 256
+
+    def test_remove_inventory_item_name_too_long_raises(self):
+        """item_name longer than 256 chars is rejected on RemoveInventoryItemRequest (max_length=256)."""
+        long_name = "B" * 257
+        with pytest.raises(ValidationError):
+            RemoveInventoryItemRequest(player_id=1, item_type="module", item_name=long_name)
+
+    def test_remove_inventory_item_name_at_max_length_valid(self):
+        """item_name of exactly 256 chars is accepted on RemoveInventoryItemRequest."""
+        max_name = "B" * 256
+        req = RemoveInventoryItemRequest(player_id=1, item_type="turret", item_name=max_name)
+        assert len(req.item_name) == 256
+
+    # ------------------------------------------------------------------
+    # Positive boundary: valid Discord snowflake IDs still work
+    # ------------------------------------------------------------------
+
+    def test_initialize_guild_valid_snowflake_guild_id(self):
+        """A realistic Discord snowflake guild_id passes validation."""
+        req = InitializeGuildRequest(guild_id=123456789012345678)
+        assert req.guild_id == 123456789012345678
+
+    def test_add_inventory_item_valid_snowflake_player_id(self):
+        """A realistic Discord snowflake player_id passes validation."""
+        req = AddInventoryItemRequest(player_id=987654321098765432, item_type="ship", item_name="Falcon")
+        assert req.player_id == 987654321098765432
+
+
 class TestSystemHealthResponseSchema:
     """Tests for SystemHealthResponse."""
 

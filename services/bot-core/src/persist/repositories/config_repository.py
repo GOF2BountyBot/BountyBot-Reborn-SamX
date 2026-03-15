@@ -76,8 +76,12 @@ class ConfigRepository(IRepository[GuildConfig]):
                 for key, value in raw.items():
                     if hasattr(existing_config, key) and key not in ['id', 'guild_id', 'created_at']:
                         setattr(existing_config, key, value)
-                await db.commit()
-                await db.refresh(existing_config)
+                try:
+                    await db.commit()
+                    await db.refresh(existing_config)
+                except Exception:
+                    await db.rollback()
+                    raise
                 flogger.debug(f"Updated config for guild {guild_id}")
                 return existing_config
             # Create new config
@@ -168,15 +172,18 @@ class ConfigRepository(IRepository[GuildConfig]):
                 if field in config_updates:
                     setattr(config, field, config_updates[field])
 
-            await db.commit()
-            await db.refresh(config)
+            try:
+                await db.commit()
+                await db.refresh(config)
+            except Exception:
+                await db.rollback()
+                raise
 
             flogger.info(f"Updated shop config for guild {guild_id}")
             return config
 
         except Exception as e:
             flogger.error(f"Error updating shop config: {e}")
-            await db.rollback()
             raise
 
     async def reset_to_defaults(self, db: AsyncSession, guild_id: int) -> GuildConfig:
@@ -206,15 +213,18 @@ class ConfigRepository(IRepository[GuildConfig]):
                 config = await self.create_default_config(db, guild_id)
 
             config.admin_role_id = role_id
-            await db.commit()
-            await db.refresh(config)
+            try:
+                await db.commit()
+                await db.refresh(config)
+            except Exception:
+                await db.rollback()
+                raise
 
             flogger.info(f"Updated admin role for guild {guild_id}: {role_id}")
             return config
 
         except Exception as e:
             flogger.error(f"Error updating admin role for guild {guild_id}: {e}")
-            await db.rollback()
             raise
 
     async def update_starting_credits(self, db: AsyncSession, guild_id: int, new_credits: int) -> GuildConfig:
@@ -228,15 +238,18 @@ class ConfigRepository(IRepository[GuildConfig]):
                 config = await self.create_default_config(db, guild_id)
 
             config.starting_credits = new_credits
-            await db.commit()
-            await db.refresh(config)
+            try:
+                await db.commit()
+                await db.refresh(config)
+            except Exception:
+                await db.rollback()
+                raise
 
             flogger.info(f"Updated starting new_credits for guild {guild_id}: {new_credits}")
             return config
 
         except Exception as e:
             flogger.error(f"Error updating starting new_credits for guild {guild_id}: {e}")
-            await db.rollback()
             raise
 
     async def update_xp_thresholds(self, db: AsyncSession, guild_id: int, thresholds: dict[str, int]) -> GuildConfig:
@@ -257,15 +270,18 @@ class ConfigRepository(IRepository[GuildConfig]):
                 raise ValueError("XP thresholds must be in ascending order")
 
             config.xp_thresholds = thresholds
-            await db.commit()
-            await db.refresh(config)
+            try:
+                await db.commit()
+                await db.refresh(config)
+            except Exception:
+                await db.rollback()
+                raise
 
             flogger.info(f"Updated XP thresholds for guild {guild_id}")
             return config
 
         except Exception as e:
             flogger.error(f"Error updating XP thresholds for guild {guild_id}: {e}")
-            await db.rollback()
             raise
 
     async def get_config_summary(self, db: AsyncSession, guild_id: int) -> dict[str, Any]:
@@ -322,6 +338,49 @@ class ConfigRepository(IRepository[GuildConfig]):
 
         except Exception as e:
             flogger.error(f"Error getting all guild configs: {e}")
+            raise
+
+    async def update_division_temperatures(
+        self,
+        db: AsyncSession,
+        guild_id: int,
+        temperatures: dict[str, float],
+    ) -> GuildConfig:
+        """Persist *temperatures* for the given guild.
+
+        Creates a default config if one does not yet exist.
+
+        Args:
+            db: Async database session.
+            guild_id: Discord guild snowflake ID.
+            temperatures: Mapping of division name (lowercase) → temperature float.
+                Example: ``{"bronze": 3.3, "silver": 1.0, "gold": 2.0}``
+
+        Returns:
+            Updated :class:`GuildConfig` instance.
+        """
+        try:
+            config = await self.get_by_guild_id(db, guild_id)
+            if not config:
+                config = await self.create_default_config(db, guild_id)
+
+            config.division_temperatures = temperatures
+            try:
+                await db.commit()
+                await db.refresh(config)
+            except Exception:
+                await db.rollback()
+                raise
+
+            flogger.debug(
+                f"Updated division_temperatures for guild {guild_id}: {temperatures}"
+            )
+            return config
+
+        except Exception as e:
+            flogger.error(
+                f"Error updating division_temperatures for guild {guild_id}: {e}"
+            )
             raise
 
     async def delete_guild_config(self, db: AsyncSession, guild_id: int) -> bool:

@@ -1154,5 +1154,84 @@ class TestUnequipCommand:
         assert call_kwargs[1].get("ephemeral", False)
 
 
+# ---------------------------------------------------------------------------
+# Permission check tests — /inventory with user= parameter
+# ---------------------------------------------------------------------------
+
+
+class TestInventoryPermissionChecks:
+    """Tests verifying admin permission enforcement when viewing another user's inventory."""
+
+    def test_inventory_own_user_no_admin_check_needed(self, mock_inventory_cog, make_mock_response):
+        """Viewing own inventory requires no admin permission — always succeeds."""
+        interaction = _create_mock_interaction(user_id=111111111)
+
+        player_resp = make_mock_response({"id": 1})
+        items_resp = make_mock_response([_make_inventory_item("Eagle", "ship", 1)])
+        summary_resp = make_mock_response(_make_summary(total_items=1, ship=1))
+
+        mock_inventory_cog.http_client.post = AsyncMock(return_value=player_resp)
+        mock_inventory_cog.http_client.get = AsyncMock(
+            side_effect=[items_resp, summary_resp]
+        )
+
+        # No user= argument: viewing own inventory — no admin check performed
+        asyncio.run(mock_inventory_cog.inventory.callback(mock_inventory_cog, interaction))
+
+        interaction.followup.send.assert_awaited_once()
+        call_kwargs = interaction.followup.send.call_args[1]
+        assert "embed" in call_kwargs
+
+    def test_inventory_other_user_admin_allowed(self, mock_inventory_cog, make_mock_response):
+        """Admin users can view another user's inventory without error."""
+        from unittest.mock import patch
+
+        interaction = _create_mock_interaction(user_id=111111111)
+        other_user = DiscordMockUtils.create_mock_user(user_id=222222222, username="OtherUser")
+        other_user.display_name = "OtherUser"
+        other_user.display_avatar = MagicMock()
+        other_user.display_avatar.url = "https://example.com/other.jpg"
+
+        player_resp = make_mock_response({"id": 2})
+        items_resp = make_mock_response([_make_inventory_item("HeavyCannon", "weapon", 1)])
+        summary_resp = make_mock_response(_make_summary(total_items=1, weapon=1))
+
+        mock_inventory_cog.http_client.post = AsyncMock(return_value=player_resp)
+        mock_inventory_cog.http_client.get = AsyncMock(
+            side_effect=[items_resp, summary_resp]
+        )
+
+        # Patch _check_is_admin to return True (user is admin)
+        with patch("cogs.adminCog._check_is_admin", new=AsyncMock(return_value=True)):
+            asyncio.run(mock_inventory_cog.inventory.callback(
+                mock_inventory_cog, interaction, user=other_user
+            ))
+
+        interaction.followup.send.assert_awaited_once()
+        call_kwargs = interaction.followup.send.call_args[1]
+        assert "embed" in call_kwargs
+
+    def test_inventory_other_user_non_admin_denied(self, mock_inventory_cog):
+        """Non-admin users cannot view another user's inventory — get ephemeral error."""
+        from unittest.mock import patch
+
+        interaction = _create_mock_interaction(user_id=111111111)
+        other_user = DiscordMockUtils.create_mock_user(user_id=222222222, username="OtherUser")
+        other_user.display_name = "OtherUser"
+        other_user.display_avatar = MagicMock()
+        other_user.display_avatar.url = "https://example.com/other.jpg"
+
+        # Patch _check_is_admin to return False (user is NOT admin)
+        with patch("cogs.adminCog._check_is_admin", new=AsyncMock(return_value=False)):
+            asyncio.run(mock_inventory_cog.inventory.callback(
+                mock_inventory_cog, interaction, user=other_user
+            ))
+
+        interaction.followup.send.assert_awaited_once()
+        call_args = interaction.followup.send.call_args
+        assert call_args[1].get("ephemeral", False)
+        assert "admin" in call_args[0][0].lower()
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

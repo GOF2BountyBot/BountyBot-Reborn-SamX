@@ -836,6 +836,55 @@ class TestValidateItemExists:
 
         assert result is False
 
+    @pytest.mark.asyncio
+    async def test_returns_true_for_real_weapon_name(
+        self,
+        service,
+        mock_db,
+        mock_ship_repo,
+        mock_primary_weapon_repo,
+        mock_secondary_weapon_repo,
+        mock_turret_weapon_repo,
+        mock_module_repo,
+    ):
+        """Returns True when a real game weapon name (from import_data/) is found."""
+        # "Micro Gun MK I" is a real primary weapon from import_data/primary_weapon/
+        real_weapon = MagicMock()
+        real_weapon.name = "Micro Gun MK I"
+        real_weapon.tech_level = 1
+        mock_ship_repo.get_by_name.return_value = None
+        mock_primary_weapon_repo.get_by_name.return_value = real_weapon
+        mock_secondary_weapon_repo.get_by_name.return_value = None
+        mock_turret_weapon_repo.get_by_name.return_value = None
+        mock_module_repo.get_by_name.return_value = None
+
+        result = await service._validate_item_exists(mock_db, "Micro Gun MK I", "weapon")
+
+        assert result is True
+
+    @pytest.mark.asyncio
+    async def test_returns_false_for_invalid_item_name_not_in_game_data(
+        self,
+        service,
+        mock_db,
+        mock_ship_repo,
+        mock_primary_weapon_repo,
+        mock_secondary_weapon_repo,
+        mock_turret_weapon_repo,
+        mock_module_repo,
+    ):
+        """Returns False for an item name that does not exist in any game data repository."""
+        # This name does not correspond to any real game asset
+        mock_ship_repo.get_by_name.return_value = None
+        mock_primary_weapon_repo.get_by_name.return_value = None
+        mock_secondary_weapon_repo.get_by_name.return_value = None
+        mock_turret_weapon_repo.get_by_name.return_value = None
+        mock_module_repo.get_by_name.return_value = None
+
+        result = await service._validate_item_exists(mock_db, "NotARealShip9999", "ship")
+
+        assert result is False
+
 
 # ===========================================================================
 # Tests: _get_ship_details

@@ -4,6 +4,9 @@ import discord
 import httpx
 from discord import app_commands
 from discord.ext import commands
+from httpx import HTTPStatusError as HttpxHTTPStatusError
+from httpx import RequestError as HttpxRequestError
+from httpx import TimeoutException as HttpxTimeoutException
 from shared import bblogger
 
 flogger = bblogger.get_logger("discord-gateway-SkinsCog")
@@ -12,7 +15,7 @@ api_base = os.environ.get("BOT_API_BASE_URL", "http://bot-core:8000/api/v1")
 class SkinsCog(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
-        self.http_client = httpx.AsyncClient()
+        self.http_client = httpx.AsyncClient(timeout=httpx.Timeout(10.0))
         # map ship name → list of skin names
         self._ship_skins: dict[str, list[str]] = {}
         bot.loop.create_task(self._preload_ship_skins())
@@ -37,10 +40,25 @@ class SkinsCog(commands.Cog):
                     data = full.json()
                     skins = data.get("compatible_skins") or {}
                     self._ship_skins[name] = list(skins.keys())
+                except HttpxTimeoutException as e:
+                    flogger.warning(f"Timeout loading skins for {name}: {e}")
+                    self._ship_skins[name] = []
+                except HttpxHTTPStatusError as e:
+                    flogger.warning(f"HTTP error loading skins for {name}: {e.response.status_code}")
+                    self._ship_skins[name] = []
+                except HttpxRequestError as e:
+                    flogger.warning(f"Request error loading skins for {name}: {e}")
+                    self._ship_skins[name] = []
                 except Exception as e:  # pylint: disable=broad-exception-caught
-                    flogger.warning(f"Failed to load skins for {name}: {e}")
+                    flogger.warning(f"Unexpected error loading skins for {name}: {e}")
                     self._ship_skins[name] = []
             flogger.info(f"Finished preloading skins for {len(self._ship_skins)} ships")
+        except HttpxTimeoutException as e:
+            flogger.error(f"Timeout preloading ship list: {e}")
+        except HttpxHTTPStatusError as e:
+            flogger.error(f"HTTP error preloading ship list: {e.response.status_code}")
+        except HttpxRequestError as e:
+            flogger.error(f"Request error preloading ship list: {e}")
         except Exception as e:  # pylint: disable=broad-exception-caught
             flogger.error(f"Could not preload ship list: {e}")
 

@@ -5,6 +5,9 @@ import httpx
 from cogs.adminCog import is_admin
 from discord import app_commands
 from discord.ext import commands
+from httpx import HTTPStatusError as HttpxHTTPStatusError
+from httpx import RequestError as HttpxRequestError
+from httpx import TimeoutException as HttpxTimeoutException
 from shared import bblogger
 
 flogger = bblogger.get_logger("discord-gateway-DevCog")
@@ -17,7 +20,7 @@ class DevCog(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
         self._categories: list[str] = []
-        self.http_client = httpx.AsyncClient()
+        self.http_client = httpx.AsyncClient(timeout=httpx.Timeout(10.0))
         # schedule preload once
         bot.loop.create_task(self._preload_categories())
 
@@ -31,8 +34,14 @@ class DevCog(commands.Cog):
             resp.raise_for_status()
             self._categories = resp.json()
             flogger.debug(f"Preloaded data categories: {self._categories}")
+        except HttpxTimeoutException as e:
+            flogger.warning(f"Timeout preloading data categories: {e}")
+        except HttpxHTTPStatusError as e:
+            flogger.warning(f"HTTP error preloading data categories: {e.response.status_code}")
+        except HttpxRequestError as e:
+            flogger.warning(f"Request error preloading data categories: {e}")
         except Exception as e:  # pylint: disable=broad-exception-caught
-            flogger.warning(f"Failed to preload categories: {e}")
+            flogger.warning(f"Unexpected error preloading data categories: {e}")
 
     async def category_autocomplete(
         self, _interaction: discord.Interaction, current: str

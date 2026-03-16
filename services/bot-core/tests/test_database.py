@@ -661,3 +661,252 @@ class TestTableNames:
             assert member.value == member.value.lower(), (
                 f"{member.name}.value='{member.value}' is not lowercase"
             )
+
+
+# ===========================================================================
+# Additional DatabaseManager coverage tests
+# ===========================================================================
+
+from sqlalchemy.exc import OperationalError, SQLAlchemyError
+from persist.database.manager import (
+    get_db_connection,
+    get_db_session,
+    execute_sql as module_execute_sql,
+    table_exists as module_table_exists,
+)
+
+
+class TestDatabaseManagerInitialize:
+    """Tests for initialize() – uncovered paths."""
+
+    @pytest.mark.asyncio
+    async def test_initialize_already_initialized_returns_early(self):
+        """If _engine is already set, initialize() should return immediately."""
+        with patch("persist.database.manager.bblogger"):
+            mgr = DatabaseManager()
+        mgr._engine = MagicMock()  # pretend already initialized
+
+        # Should not raise, should not create a new engine
+        await mgr.initialize()
+        # Engine should still be the same mock
+        assert mgr._engine is not None
+
+    @pytest.mark.asyncio
+    async def test_initialize_failure_raises(self):
+        """If create_async_engine fails, initialize() should raise."""
+        with patch("persist.database.manager.bblogger"):
+            mgr = DatabaseManager()
+
+        with patch("persist.database.manager.create_async_engine", side_effect=Exception("engine fail")):
+            with pytest.raises(Exception, match="engine fail"):
+                await mgr.initialize()
+
+
+class TestDatabaseManagerTestConnection:
+    """Tests for _test_connection() retry logic – lines 104-128."""
+
+    @pytest.mark.asyncio
+    async def test_test_connection_success_first_attempt(self):
+        """Connection succeeds on first attempt."""
+        with patch("persist.database.manager.bblogger"):
+            mgr = DatabaseManager()
+
+        mock_conn = AsyncMock()
+        mock_result = MagicMock()
+        mock_result.scalar.return_value = 1
+        mock_conn.execute = AsyncMock(return_value=mock_result)
+        mock_conn.__aenter__ = AsyncMock(return_value=mock_conn)
+        mock_conn.__aexit__ = AsyncMock(return_value=False)
+
+        mock_engine = MagicMock()
+        mock_engine.connect = MagicMock(return_value=mock_conn)
+        mgr._engine = mock_engine
+
+        await mgr._test_connection()
+
+    @pytest.mark.asyncio
+    async def test_test_connection_retries_on_operational_error(self):
+        """On OperationalError, retries with backoff, then succeeds."""
+        with patch("persist.database.manager.bblogger"):
+            mgr = DatabaseManager()
+
+        mock_result = MagicMock()
+        mock_result.scalar.return_value = 1
+
+        call_count = 0
+
+        async def _mock_execute(*args, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            if call_count <= 2:
+                raise OperationalError("conn refused", {}, Exception())
+            return mock_result
+
+        mock_conn = AsyncMock()
+        mock_conn.execute = _mock_execute
+        mock_conn.__aenter__ = AsyncMock(return_value=mock_conn)
+        mock_conn.__aexit__ = AsyncMock(return_value=False)
+
+        mock_engine = MagicMock()
+        mock_engine.connect = MagicMock(return_value=mock_conn)
+        mgr._engine = mock_engine
+
+        with patch("persist.database.manager.time.sleep"):
+            await mgr._test_connection()
+
+        assert call_count == 3
+
+    @pytest.mark.asyncio
+    async def test_test_connection_fails_after_max_retries(self):
+        """After max_retries OperationalErrors, should raise."""
+        with patch("persist.database.manager.bblogger"):
+            mgr = DatabaseManager()
+
+        mock_conn = AsyncMock()
+        mock_conn.execute = AsyncMock(
+            side_effect=OperationalError("conn refused", {}, Exception())
+        )
+        mock_conn.__aenter__ = AsyncMock(return_value=mock_conn)
+        mock_conn.__aexit__ = AsyncMock(return_value=False)
+
+        mock_engine = MagicMock()
+        mock_engine.connect = MagicMock(return_value=mock_conn)
+        mgr._engine = mock_engine
+
+        with patch("persist.database.manager.time.sleep"):
+            with pytest.raises(OperationalError):
+                await mgr._test_connection()
+
+    @pytest.mark.asyncio
+    async def test_test_connection_unexpected_error_raises_immediately(self):
+        """Non-OperationalError raises immediately without retry."""
+        with patch("persist.database.manager.bblogger"):
+            mgr = DatabaseManager()
+
+        mock_conn = AsyncMock()
+        mock_conn.execute = AsyncMock(side_effect=RuntimeError("unexpected"))
+        mock_conn.__aenter__ = AsyncMock(return_value=mock_conn)
+        mock_conn.__aexit__ = AsyncMock(return_value=False)
+
+        mock_engine = MagicMock()
+        mock_engine.connect = MagicMock(return_value=mock_conn)
+        mgr._engine = mock_engine
+
+        with pytest.raises(RuntimeError, match="unexpected"):
+            await mgr._test_connection()
+
+
+class TestDatabaseManagerSessionErrorHandling:
+    """Tests for get_session() error rollback – lines 154-160."""
+
+    @pytest.mark.asyncio
+    async def test_get_session_rolls_back_on_error(self):
+        """If an exception occurs inside the session context, rollback is called."""
+        with patch("persist.database.manager.bblogger"):
+            mgr = DatabaseManager()
+
+        mock_session = AsyncMock()
+        mock_session.rollback = AsyncMock()
+        mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session.__aexit__ = AsyncMock(return_value=False)
+
+        mock_factory = MagicMock(return_value=mock_session)
+        mgr._session_factory = mock_factory
+
+        with pytest.raises(ValueError, match="test error"):
+            async with mgr.get_session() as session:
+                raise ValueError("test error")
+
+        mock_session.rollback.assert_awaited_once()
+
+
+class TestDatabaseManagerExecuteSql:
+    """Tests for execute_sql() error path – lines 171-178."""
+
+    @pytest.mark.asyncio
+    async def test_execute_sql_sqlalchemy_error(self):
+        """SQLAlchemyError is caught, logged, and re-raised."""
+        with patch("persist.database.manager.bblogger"):
+            mgr = DatabaseManager()
+
+        mock_conn = AsyncMock()
+        mock_conn.execute = AsyncMock(
+            side_effect=SQLAlchemyError("sql fail")
+        )
+
+        mock_begin = AsyncMock()
+        mock_begin.__aenter__ = AsyncMock(return_value=None)
+        mock_begin.__aexit__ = AsyncMock(return_value=False)
+        mock_conn.begin = MagicMock(return_value=mock_begin)
+
+        mock_conn.__aenter__ = AsyncMock(return_value=mock_conn)
+        mock_conn.__aexit__ = AsyncMock(return_value=False)
+
+        mock_engine = MagicMock()
+        mock_engine.connect = MagicMock(return_value=mock_conn)
+        mgr._engine = mock_engine
+
+        with pytest.raises(SQLAlchemyError):
+            await mgr.execute_sql("SELECT 1")
+
+
+class TestDatabaseManagerTableExists:
+    """Tests for table_exists() error path – lines 188-196."""
+
+    @pytest.mark.asyncio
+    async def test_table_exists_engine_none_returns_false(self):
+        """When engine is None, table_exists returns False."""
+        with patch("persist.database.manager.bblogger"):
+            mgr = DatabaseManager()
+
+        result = await mgr.table_exists("some_table")
+        assert result is False
+
+    @pytest.mark.asyncio
+    async def test_table_exists_sqlalchemy_error_returns_false(self):
+        """When inspector raises SQLAlchemyError, returns False."""
+        with patch("persist.database.manager.bblogger"):
+            mgr = DatabaseManager()
+
+        mock_engine = MagicMock()
+        mock_engine.sync_engine = MagicMock()
+        mgr._engine = mock_engine
+
+        with patch("persist.database.manager.inspect", side_effect=SQLAlchemyError("inspect fail")):
+            result = await mgr.table_exists("some_table")
+
+        assert result is False
+
+
+class TestModuleLevelConvenienceFunctions:
+    """Tests for module-level convenience functions – lines 264, 268, 272, 276."""
+
+    def test_get_db_connection_returns_context_manager(self):
+        """get_db_connection() should delegate to db_manager.get_connection()."""
+        with patch("persist.database.manager.db_manager") as mock_mgr:
+            mock_mgr.get_connection = MagicMock(return_value="conn_ctx")
+            result = get_db_connection()
+            assert result == "conn_ctx"
+
+    def test_get_db_session_returns_context_manager(self):
+        """get_db_session() should delegate to db_manager.get_session()."""
+        with patch("persist.database.manager.db_manager") as mock_mgr:
+            mock_mgr.get_session = MagicMock(return_value="session_ctx")
+            result = get_db_session()
+            assert result == "session_ctx"
+
+    @pytest.mark.asyncio
+    async def test_module_execute_sql_delegates(self):
+        """execute_sql() should delegate to db_manager.execute_sql()."""
+        with patch("persist.database.manager.db_manager") as mock_mgr:
+            mock_mgr.execute_sql = AsyncMock(return_value="result")
+            result = await module_execute_sql("SELECT 1")
+            assert result == "result"
+
+    @pytest.mark.asyncio
+    async def test_module_table_exists_delegates(self):
+        """table_exists() should delegate to db_manager.table_exists()."""
+        with patch("persist.database.manager.db_manager") as mock_mgr:
+            mock_mgr.table_exists = AsyncMock(return_value=True)
+            result = await module_table_exists("players")
+            assert result is True

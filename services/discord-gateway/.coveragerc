@@ -1,5 +1,5 @@
 [run]
-source = src
+source = services/discord-gateway/src
 omit =
     */tests/*
     */test_*

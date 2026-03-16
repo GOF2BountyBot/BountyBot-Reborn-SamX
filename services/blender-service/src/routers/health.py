@@ -5,7 +5,7 @@ Health check router for the Blender service API.
 import platform
 import sys
 from datetime import UTC, datetime
-from typing import Any, Dict
+from typing import Any
 
 from fastapi import APIRouter, Request, status
 from pydantic import BaseModel
@@ -28,8 +28,8 @@ class HealthResponse(BaseModel):
     timestamp: datetime
     version: str
     service: str
-    environment: Dict[str, Any]
-    checks: Dict[str, bool]
+    environment: dict[str, Any]
+    checks: dict[str, bool]
 
 class SimpleHealthResponse(BaseModel):
     """Simple health check response."""
@@ -103,7 +103,7 @@ async def simple_health_check() -> SimpleHealthResponse:
     summary="Liveness Check",
     description="Checks if the service is alive and responsive"
 )
-async def liveness_check() -> Dict[str, str]:
+async def liveness_check() -> dict[str, str]:
     """
     Liveness probe endpoint.
 

@@ -217,7 +217,7 @@ class TestSetupHook:
         bot.load_extension = AsyncMock(side_effect=Exception("Test error"))
 
         # Call setup_hook
-        with pytest.raises(Exception):  # noqa: B017
+        with pytest.raises(Exception):
             asyncio.run(bot.setup_hook())
 
         bot.flogger.error.assert_called_with("✗ Cog load failed errorCog.py: Test error")
@@ -338,7 +338,7 @@ class TestErrorHandling:
         with (
             patch("os.listdir", return_value=["invalidCog.py"]),
             patch("os.path.join", return_value="src/cogs/invalidCog.py"),
-            pytest.raises(Exception),  # noqa: B017
+            pytest.raises(Exception),
         ):
             asyncio.run(bot.setup_hook())
 

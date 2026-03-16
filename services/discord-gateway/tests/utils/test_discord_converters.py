@@ -1000,7 +1000,7 @@ class TestGuildConverterExceptionPath:
 
         from utils.discord_converters import GuildConverter
 
-        with pytest.raises(Exception):  # noqa: B017
+        with pytest.raises(Exception):
             GuildConverter.guild_to_summary(mock_guild)
 
 
@@ -1035,7 +1035,7 @@ class TestChannelConverterExceptionPaths:
 
         from utils.discord_converters import ChannelConverter
 
-        with pytest.raises(Exception):  # noqa: B017
+        with pytest.raises(Exception):
             ChannelConverter.channel_to_summary(mock_channel)
 
     def test_channel_to_detail_raises_on_missing_id(self):
@@ -1046,7 +1046,7 @@ class TestChannelConverterExceptionPaths:
 
         from utils.discord_converters import ChannelConverter
 
-        with pytest.raises(Exception):  # noqa: B017
+        with pytest.raises(Exception):
             ChannelConverter.channel_to_detail(mock_channel)
 
     def test_category_to_detail_raises_on_missing_id(self):
@@ -1057,7 +1057,7 @@ class TestChannelConverterExceptionPaths:
 
         from utils.discord_converters import ChannelConverter
 
-        with pytest.raises(Exception):  # noqa: B017
+        with pytest.raises(Exception):
             ChannelConverter.category_to_detail(mock_category)
 
 
@@ -1112,7 +1112,7 @@ class TestThreadToSummaryEdgeCases:
 
         from utils.discord_converters import ChannelConverter
 
-        with pytest.raises(Exception):  # noqa: B017
+        with pytest.raises(Exception):
             ChannelConverter.thread_to_summary(mock_thread)
 
     def test_forum_tag_to_payload_raises_on_tag_error(self):
@@ -1153,7 +1153,7 @@ class TestPermissionConverterExceptionPath:
 
         from utils.discord_converters import PermissionConverter
 
-        with pytest.raises(Exception):  # noqa: B017
+        with pytest.raises(Exception):
             PermissionConverter.overwrite_to_payload(mock_role, mock_overwrite, channel_id=1)
 
 
@@ -1171,7 +1171,7 @@ class TestRoleConverterExceptionPath:
 
         from utils.discord_converters import RoleConverter
 
-        with pytest.raises(Exception):  # noqa: B017
+        with pytest.raises(Exception):
             RoleConverter.role_to_payload(mock_role)
 
 
@@ -1190,7 +1190,7 @@ class TestUserConverterExceptionPaths:
 
         from utils.discord_converters import UserConverter
 
-        with pytest.raises(Exception):  # noqa: B017
+        with pytest.raises(Exception):
             UserConverter.user_to_payload(mock_user)
 
     def test_member_to_payload_raises_on_missing_id(self):
@@ -1202,7 +1202,7 @@ class TestUserConverterExceptionPaths:
 
         from utils.discord_converters import UserConverter
 
-        with pytest.raises(Exception):  # noqa: B017
+        with pytest.raises(Exception):
             UserConverter.member_to_payload(mock_member)
 
 
@@ -1235,7 +1235,7 @@ class TestMessageConverterAdditionalPaths:
 
         from utils.discord_converters import MessageConverter
 
-        with pytest.raises(Exception):  # noqa: B017
+        with pytest.raises(Exception):
             MessageConverter.message_to_payload(mock_message)
 
     def test_message_to_summary_uses_embed_title_when_no_description(self):
@@ -1332,5 +1332,5 @@ class TestMessageConverterAdditionalPaths:
 
         from utils.discord_converters import MessageConverter
 
-        with pytest.raises(Exception):  # noqa: B017
+        with pytest.raises(Exception):
             MessageConverter.message_to_summary(mock_message)

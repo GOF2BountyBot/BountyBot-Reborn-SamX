@@ -8,12 +8,12 @@ with simplified URIs that don't require guild context where possible.
 import discord
 from fastapi import APIRouter, HTTPException, Query, Request, status
 from shared import bblogger
-
-from api.schemas.permission_schemas import PermissionCheckResponse
-from api.schemas.user_schemas import MemberResponse, MemberUpdateRequest, UserResponse
 from utils.discord_converters import UserConverter
 from utils.discord_helpers import handle_discord_exception, resolve_bot
 from utils.permission_utils import PERMISSION_FLAGS, has_guild_permission
+
+from api.schemas.permission_schemas import PermissionCheckResponse
+from api.schemas.user_schemas import MemberResponse, MemberUpdateRequest, UserResponse
 
 flogger = bblogger.get_logger("gateway-user-router")
 

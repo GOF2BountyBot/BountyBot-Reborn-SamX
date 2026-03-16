@@ -13,6 +13,8 @@ import time
 import discord
 from fastapi import APIRouter, HTTPException, Query, Request, status
 from shared import bblogger
+from utils.discord_converters import ChannelConverter, GuildConverter, RoleConverter, UserConverter
+from utils.discord_helpers import get_entity_or_404, handle_discord_exception, resolve_bot
 
 from api.schemas.channel_schemas import (
     CategoryCreateRequest,
@@ -25,8 +27,6 @@ from api.schemas.channel_schemas import (
 from api.schemas.guild_schemas import GuildListResponse, GuildResponse
 from api.schemas.role_schemas import RoleCreateRequest, RoleListResponse, RoleResponse
 from api.schemas.user_schemas import MemberListResponse
-from utils.discord_converters import ChannelConverter, GuildConverter, RoleConverter, UserConverter
-from utils.discord_helpers import get_entity_or_404, handle_discord_exception, resolve_bot
 
 flogger = bblogger.get_logger("gateway-guild-router")
 

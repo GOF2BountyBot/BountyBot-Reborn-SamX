@@ -30,8 +30,7 @@ if "sqlalchemy_utils" not in sys.modules:
     _mock_sqla_utils.UUIDType = MagicMock()
     sys.modules["sqlalchemy_utils"] = _mock_sqla_utils
 
-from services.inventory_service import InventoryService  # noqa: I001
-
+from services.inventory_service import InventoryService
 
 # ---------------------------------------------------------------------------
 # Helpers

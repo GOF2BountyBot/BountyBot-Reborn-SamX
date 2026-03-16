@@ -7,9 +7,10 @@ must be done via REST API.
 """
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy.exc import IntegrityError
-
+from persist.database.manager import get_db_session
+from services.player_service import PlayerService
 from shared import bblogger
+from sqlalchemy.exc import IntegrityError
 
 from api.schemas.players_schema import (
     CreatePlayerRequest,
@@ -21,8 +22,6 @@ from api.schemas.players_schema import (
     UpdateCreditsRequest,
     UpdateXPRequest,
 )
-from persist.database.manager import get_db_session
-from services.player_service import PlayerService
 
 flogger = bblogger.get_logger("players-api-router")
 

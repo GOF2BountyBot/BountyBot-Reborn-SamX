@@ -8,7 +8,7 @@ import os
 import sys
 from contextlib import asynccontextmanager
 from types import ModuleType
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 # ---------------------------------------------------------------------------
 # Mock shared.bblogger BEFORE any src imports
@@ -162,7 +162,7 @@ class TestCreateTablesIfNotExist:
         @asynccontextmanager
         async def _begin():
             raise Exception("DDL failure")
-            yield  # noqa: unreachable  # pylint: disable=unreachable
+            yield  # pylint: disable=unreachable
 
         manager.db_manager.engine.begin = _begin
 

@@ -641,3 +641,135 @@ class TestGetObjectByIdErrorHandling:
         response = safe_client.get("/api/v1/about/object/ship/99")
 
         assert response.status_code == 500
+
+
+# ===========================================================================
+# 6. GET /about/ships/{ship_name}/render-info
+# ===========================================================================
+
+
+def make_mock_skinnable_ship(**overrides):
+    """Return a mock Ship with full render-info fields for a skinnable Phantom."""
+    defaults = dict(
+        id=10,
+        name="Phantom",
+        skinnable=True,
+        texture_regions=2,
+        model="/app/game-objects/Terran/Phantom.bbship/Phantom_Full.obj",
+        norm_spec="/app/game-objects/Terran/Phantom.bbship/ship_010_terran_normal_specular.bmp",
+        assets=[
+            "/app/game-objects/Terran/Phantom.bbship/Phantom_Full.mtl",
+            "/app/game-objects/Terran/Phantom.bbship/skinBase.png",
+            "/app/game-objects/Terran/Phantom.bbship/ship_010_terran_diffuse.bmp",
+            "/app/game-objects/Terran/Phantom.bbship/mask1.jpg",
+            "/app/game-objects/Terran/Phantom.bbship/mask2.jpg",
+        ],
+        compatible_skins={"urban-camo": "https://example.com/urban-camo.png"},
+    )
+    defaults.update(overrides)
+    obj = MagicMock()
+    for k, v in defaults.items():
+        setattr(obj, k, v)
+    return obj
+
+
+class TestGetShipRenderInfo:
+    """Tests for GET /api/v1/about/ships/{ship_name}/render-info."""
+
+    def test_render_info_skinnable_ship(self, client, mock_repos):
+        """Known skinnable ship returns 200 with all required fields."""
+        mock_ship = make_mock_skinnable_ship()
+        mock_repos["ship"].get_by_name = AsyncMock(return_value=mock_ship)
+
+        response = client.get("/api/v1/about/ships/Phantom/render-info")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["name"] == "Phantom"
+        assert data["skinnable"] is True
+        assert data["texture_regions"] == 2
+        assert data["model_path"].endswith("Phantom_Full.obj")
+        assert data["bbship_dir"] == "/app/game-objects/Terran/Phantom.bbship"
+        assert "mask_paths" in data
+        assert "compatible_skins" in data
+
+    def test_render_info_non_skinnable_ship(self, client, mock_repos):
+        """Non-skinnable ship returns 404 with 'not skinnable' message."""
+        mock_ship = make_mock_skinnable_ship(skinnable=False)
+        mock_repos["ship"].get_by_name = AsyncMock(return_value=mock_ship)
+
+        response = client.get("/api/v1/about/ships/Phantom/render-info")
+
+        assert response.status_code == 404
+        assert "not skinnable" in response.json()["detail"].lower()
+
+    def test_render_info_ship_not_found(self, client, mock_repos):
+        """Unknown ship name returns 404."""
+        mock_repos["ship"].get_by_name = AsyncMock(return_value=None)
+
+        response = client.get("/api/v1/about/ships/UnknownShip/render-info")
+
+        assert response.status_code == 404
+        assert "not found" in response.json()["detail"].lower()
+
+    def test_render_info_parses_masks(self, client, mock_repos):
+        """mask_paths is extracted and ordered numerically (mask1 before mask2)."""
+        mock_ship = make_mock_skinnable_ship(
+            assets=[
+                "/path/mask2.jpg",
+                "/path/mask1.jpg",
+                "/path/skinBase.png",
+                "/path/ship.mtl",
+            ]
+        )
+        mock_repos["ship"].get_by_name = AsyncMock(return_value=mock_ship)
+
+        response = client.get("/api/v1/about/ships/Phantom/render-info")
+
+        assert response.status_code == 200
+        masks = response.json()["mask_paths"]
+        assert masks == ["/path/mask1.jpg", "/path/mask2.jpg"]
+
+    def test_render_info_parses_mtl(self, client, mock_repos):
+        """mtl_path is extracted from assets list."""
+        mock_ship = make_mock_skinnable_ship(
+            assets=[
+                "/path/Phantom_Full.mtl",
+                "/path/skinBase.png",
+            ]
+        )
+        mock_repos["ship"].get_by_name = AsyncMock(return_value=mock_ship)
+
+        response = client.get("/api/v1/about/ships/Phantom/render-info")
+
+        assert response.status_code == 200
+        assert response.json()["mtl_path"] == "/path/Phantom_Full.mtl"
+
+    def test_render_info_parses_skin_base(self, client, mock_repos):
+        """skin_base_path is extracted from assets list."""
+        mock_ship = make_mock_skinnable_ship(
+            assets=[
+                "/path/Phantom_Full.mtl",
+                "/path/skinBase.png",
+            ]
+        )
+        mock_repos["ship"].get_by_name = AsyncMock(return_value=mock_ship)
+
+        response = client.get("/api/v1/about/ships/Phantom/render-info")
+
+        assert response.status_code == 200
+        assert response.json()["skin_base_path"] == "/path/skinBase.png"
+
+    def test_render_info_no_assets(self, client, mock_repos):
+        """Ship with None/empty assets returns empty mask_paths and None path fields."""
+        mock_ship = make_mock_skinnable_ship(assets=None)
+        mock_repos["ship"].get_by_name = AsyncMock(return_value=mock_ship)
+
+        response = client.get("/api/v1/about/ships/Phantom/render-info")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["mask_paths"] == []
+        assert data["mtl_path"] is None
+        assert data["skin_base_path"] is None
+        assert data["diffuse_path"] is None

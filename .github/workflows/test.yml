@@ -134,3 +134,71 @@ jobs:
           python -m coverage report --format=markdown >> "$GITHUB_STEP_SUMMARY" 2>/dev/null \
             || python -m coverage report >> "$GITHUB_STEP_SUMMARY" 2>/dev/null \
             || echo "Coverage summary not available." >> "$GITHUB_STEP_SUMMARY"
+
+  lint-blender-service:
+    name: Lint blender-service
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          submodules: false
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: services/blender-service/requirements.txt
+
+      - name: Install dependencies
+        run: pip install ruff
+
+      - name: Run ruff
+        run: ruff check services/blender-service/src/ --exclude="services/blender-service/src/lib/AEPi/**"
+
+  test-blender-service:
+    name: Test blender-service
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          submodules: false
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: services/blender-service/requirements.txt
+
+      - name: Install dependencies
+        run: |
+          pip install -r services/blender-service/requirements.txt
+          pip install pytest pytest-cov pytest-asyncio
+
+      - name: Run blender-service tests
+        run: |
+          python -m pytest tests/ \
+            -v --tb=short \
+            --cov=src \
+            --cov-report=term-missing \
+            --cov-report=xml:coverage.xml \
+            --ignore=src/lib/AEPi/
+        working-directory: services/blender-service
+        env:
+          PYTHONPATH: src
+
+      - name: Upload coverage
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: blender-service-coverage
+          path: services/blender-service/coverage.xml
+
+      - name: Write coverage summary
+        if: always()
+        working-directory: services/blender-service
+        run: |
+          python -m coverage report --format=markdown >> "$GITHUB_STEP_SUMMARY" 2>/dev/null \
+            || python -m coverage report >> "$GITHUB_STEP_SUMMARY" 2>/dev/null \
+            || echo "Coverage summary not available." >> "$GITHUB_STEP_SUMMARY"

@@ -9,6 +9,24 @@ from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request, status
 from shared import bblogger
+from utils.discord_converters import PermissionConverter
+from utils.discord_helpers import handle_discord_exception, resolve_bot
+from utils.permission_utils import (
+    PERMISSION_FLAGS,
+    calculate_effective_permissions,
+    combine_permissions,
+    create_permission_overwrite,
+    evaluate_role_channel_permissions,
+    evaluate_role_guild_permissions,
+    evaluate_user_channel_permissions,
+    evaluate_user_guild_permissions,
+    get_all_permissions,
+    get_category_permissions,
+    get_channel_permissions,
+    get_permission_names_by_value,
+    get_role_permissions,
+    get_user_permissions,
+)
 
 from api.schemas.base_schemas import DeleteResponse
 from api.schemas.permission_schemas import (
@@ -27,24 +45,6 @@ from api.schemas.permission_schemas import (
     PermissionOverwriteResponse,
     ValueToNamesRequest,
     ValueToNamesResponse,
-)
-from utils.discord_converters import PermissionConverter
-from utils.discord_helpers import handle_discord_exception, resolve_bot
-from utils.permission_utils import (
-    PERMISSION_FLAGS,
-    calculate_effective_permissions,
-    combine_permissions,
-    create_permission_overwrite,
-    evaluate_role_channel_permissions,
-    evaluate_role_guild_permissions,
-    evaluate_user_channel_permissions,
-    evaluate_user_guild_permissions,
-    get_all_permissions,
-    get_category_permissions,
-    get_channel_permissions,
-    get_permission_names_by_value,
-    get_role_permissions,
-    get_user_permissions,
 )
 
 flogger = bblogger.get_logger("gateway-permission-router")

@@ -1,7 +1,8 @@
 from collections.abc import AsyncGenerator
+from pathlib import PurePosixPath
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, status
 from persist.database.manager import db_manager
 from persist.repositories.criminal_repository import CriminalRepository
 from persist.repositories.module_repository import ModuleRepository
@@ -306,4 +307,88 @@ async def get_object_by_id(category: DataCategory, object_id: int, db: AsyncSess
         raise
     except Exception as e:
         flogger.error(f"Error retrieving object {object_id}: {e}")
+        raise HTTPException(status_code=500, detail="Internal server error") from e
+
+
+@router.get(
+    "/ships/{ship_name}/render-info",
+    summary="Get ship rendering metadata",
+    description=(
+        "Returns rendering metadata for a ship (model path, mask paths, skinBase, "
+        "texture regions). Used by blender-service for skin rendering."
+    ),
+    status_code=status.HTTP_200_OK,
+)
+async def get_ship_render_info(
+    ship_name: str,
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """GET /about/ships/{ship_name}/render-info
+
+    Returns structured rendering metadata for skinnable ships.
+    Raises 404 for unknown ships or non-skinnable ships.
+    """
+    try:
+        ship = await ship_repo.get_by_name(db, ship_name)
+        if not ship:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Ship '{ship_name}' not found",
+            )
+
+        if not ship.skinnable:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Ship is not skinnable",
+            )
+
+        assets: list[str] = ship.assets or []
+
+        # Extract file paths from the assets list
+        mtl_path: str | None = next(
+            (a for a in assets if a.endswith(".mtl")), None
+        )
+        skin_base_path: str | None = next(
+            (a for a in assets if "skinBase" in a), None
+        )
+        diffuse_path: str | None = next(
+            (a for a in assets if "_diffuse" in a), None
+        )
+
+        # Collect mask files (mask1.jpg, mask2.jpg …) ordered numerically
+        import re
+
+        def _mask_sort_key(path: str) -> int:
+            m = re.search(r"mask(\d+)", path)
+            return int(m.group(1)) if m else 0
+
+        mask_paths: list[str] = sorted(
+            [a for a in assets if re.search(r"mask\d+", a)],
+            key=_mask_sort_key,
+        )
+
+        # Derive the bbship directory from the model path (parent directory)
+        bbship_dir: str | None = None
+        if ship.model:
+            bbship_dir = str(PurePosixPath(ship.model).parent)
+
+        flogger.debug(f"Returning render info for ship '{ship_name}'")
+        return {
+            "name": ship.name,
+            "skinnable": ship.skinnable,
+            "texture_regions": ship.texture_regions,
+            "model_path": ship.model,
+            "mtl_path": mtl_path,
+            "skin_base_path": skin_base_path,
+            "norm_spec_path": ship.norm_spec,
+            "diffuse_path": diffuse_path,
+            "mask_paths": mask_paths,
+            "compatible_skins": ship.compatible_skins or {},
+            "bbship_dir": bbship_dir,
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        flogger.error(f"Error retrieving render info for ship '{ship_name}': {e}")
         raise HTTPException(status_code=500, detail="Internal server error") from e

@@ -1,0 +1,86 @@
+"""Centralized render configuration with runtime updates.
+
+Settings are stored in-memory with env var defaults.  Changes persist
+only for the lifetime of the process (no database).
+"""
+
+import os
+from dataclasses import dataclass
+
+from shared import bblogger
+
+flogger = bblogger.get_logger("blender-render-config-service")
+
+
+@dataclass
+class RenderConfig:
+    """Current render configuration. All fields are mutable at runtime."""
+
+    # Resolution limits
+    max_res_x: int = 3840
+    max_res_y: int = 2160
+    min_res_x: int = 352
+    min_res_y: int = 240
+
+    # Sample limits
+    max_samples: int = 128
+    min_samples: int = 1
+
+    # Defaults (used when user doesn't specify)
+    default_res_x: int = 1920
+    default_res_y: int = 1080
+    default_samples: int = 64
+
+    # Job queue
+    max_concurrent_renders: int = 2
+    job_ttl_hours: int = 1
+
+    def to_dict(self) -> dict:
+        """Serialize all settings."""
+        return {
+            "max_res_x": self.max_res_x,
+            "max_res_y": self.max_res_y,
+            "min_res_x": self.min_res_x,
+            "min_res_y": self.min_res_y,
+            "max_samples": self.max_samples,
+            "min_samples": self.min_samples,
+            "default_res_x": self.default_res_x,
+            "default_res_y": self.default_res_y,
+            "default_samples": self.default_samples,
+            "max_concurrent_renders": self.max_concurrent_renders,
+            "job_ttl_hours": self.job_ttl_hours,
+        }
+
+
+class RenderConfigService:
+    """Manages render configuration with env var defaults."""
+
+    def __init__(self) -> None:
+        self._config = RenderConfig(
+            max_res_x=int(os.getenv("RENDER_MAX_RES_X", "3840")),
+            max_res_y=int(os.getenv("RENDER_MAX_RES_Y", "2160")),
+            default_res_x=int(os.getenv("RENDER_DEFAULT_RES_X", "1920")),
+            default_res_y=int(os.getenv("RENDER_DEFAULT_RES_Y", "1080")),
+            default_samples=int(os.getenv("RENDER_DEFAULT_SAMPLES", "64")),
+            max_samples=int(os.getenv("RENDER_MAX_SAMPLES", "128")),
+            max_concurrent_renders=int(os.getenv("RENDER_MAX_CONCURRENT", "2")),
+        )
+        flogger.info(f"RenderConfig initialized: {self._config.to_dict()}")
+
+    @property
+    def config(self) -> RenderConfig:
+        """Return the current RenderConfig."""
+        return self._config
+
+    def update(self, updates: dict) -> RenderConfig:
+        """Update config fields. Only known fields are applied."""
+        for key, value in updates.items():
+            if hasattr(self._config, key):
+                setattr(self._config, key, value)
+                flogger.info(f"Config updated: {key} = {value}")
+        return self._config
+
+    def reset(self) -> RenderConfig:
+        """Reset to defaults (re-reads env vars)."""
+        self.__init__()
+        return self._config

@@ -1,4 +1,5 @@
 import os
+from typing import Literal
 
 import discord
 import httpx
@@ -713,6 +714,99 @@ class AdminCog(commands.Cog):
         except Exception as e:  # pylint: disable=broad-exception-caught
             flogger.error(f"Error in /admin_config_validate: {e}")
             await interaction.followup.send("⚠️ An error occurred while validating configuration.", ephemeral=True)
+
+    # ------------------------------------------------------------------
+    # Render configuration commands
+    # ------------------------------------------------------------------
+
+    @app_commands.command(name="render_config", description="[ADMIN] View/update blender render settings")
+    @app_commands.describe(
+        action="Action to perform: view current config, set a value, or reset to defaults",
+        setting="Setting name to update (required for 'set' action)",
+        value="New integer value (required for 'set' action)",
+    )
+    @is_admin()
+    async def render_config(
+        self,
+        interaction: discord.Interaction,
+        action: Literal["view", "set", "reset"] = "view",
+        setting: str | None = None,
+        value: int | None = None,
+    ) -> None:
+        """Admin command to view/update blender-service render configuration."""
+        blender_base = os.getenv("BLENDER_API_BASE_URL", "http://blender-service:8001/api/v1")
+
+        try:
+            if action == "view":
+                resp = await self.http_client.get(f"{blender_base}/config/render")
+                resp.raise_for_status()
+                config = resp.json()
+                embed = discord.Embed(title="🎨 Render Configuration", color=discord.Color.blue())
+                for key, val in config.items():
+                    embed.add_field(name=key, value=str(val), inline=True)
+                await interaction.response.send_message(embed=embed, ephemeral=True)
+
+            elif action == "set":
+                if not setting or value is None:
+                    await interaction.response.send_message(
+                        "⚠️ Usage: `/render_config set <setting> <value>`", ephemeral=True
+                    )
+                    return
+                resp = await self.http_client.put(
+                    f"{blender_base}/config/render",
+                    json={setting: value},
+                )
+                resp.raise_for_status()
+                await interaction.response.send_message(
+                    f"✅ Updated `{setting}` = `{value}`", ephemeral=True
+                )
+                flogger.info(f"Admin {interaction.user} updated render config: {setting}={value}")
+
+            elif action == "reset":
+                resp = await self.http_client.post(f"{blender_base}/config/render/reset")
+                resp.raise_for_status()
+                await interaction.response.send_message(
+                    "✅ Render config reset to defaults.", ephemeral=True
+                )
+                flogger.info(f"Admin {interaction.user} reset render config")
+
+        except httpx.HTTPStatusError as e:
+            await interaction.response.send_message(f"❌ API Error: {e}", ephemeral=True)
+        except Exception as e:  # pylint: disable=broad-exception-caught
+            flogger.error(f"Error in /render_config: {e}")
+            if not interaction.response.is_done():
+                await interaction.response.send_message("⚠️ An error occurred.", ephemeral=True)
+
+    @app_commands.command(name="render_cache_clear", description="[ADMIN] Clear blender render cache (/tmp)")
+    @is_admin()
+    async def render_cache_clear(self, interaction: discord.Interaction) -> None:
+        """Admin command to clear blender-service temp render files."""
+        blender_base = os.getenv("BLENDER_API_BASE_URL", "http://blender-service:8001/api/v1")
+
+        try:
+            resp = await self.http_client.post(f"{blender_base}/cache/clear")
+            resp.raise_for_status()
+            result = resp.json()
+
+            embed = discord.Embed(title="🗑️ Render Cache Cleared", color=discord.Color.green())
+            embed.add_field(
+                name="Directories Cleared", value=str(result["cleared_directories"]), inline=True
+            )
+            embed.add_field(
+                name="Space Freed", value=f"{result['freed_mb']} MB", inline=True
+            )
+            await interaction.response.send_message(embed=embed, ephemeral=True)
+            flogger.info(
+                f"Admin {interaction.user} cleared render cache: "
+                f"{result['cleared_directories']} dirs, {result['freed_mb']} MB"
+            )
+
+        except httpx.HTTPStatusError as e:
+            await interaction.response.send_message(f"❌ API Error: {e}", ephemeral=True)
+        except Exception as e:  # pylint: disable=broad-exception-caught
+            flogger.error(f"Error in /render_cache_clear: {e}")
+            if not interaction.response.is_done():
+                await interaction.response.send_message("⚠️ An error occurred.", ephemeral=True)
 
     # Error handlers
     @admin_setup.error

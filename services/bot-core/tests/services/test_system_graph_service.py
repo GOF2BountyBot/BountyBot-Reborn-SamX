@@ -48,8 +48,7 @@ if "sqlalchemy_utils" not in sys.modules:
     _mock_sqla_utils.UUIDType = MagicMock()
     sys.modules["sqlalchemy_utils"] = _mock_sqla_utils
 
-from services.system_graph_service import SystemGraphService, SystemNode  # noqa: I001
-
+from services.system_graph_service import SystemGraphService, SystemNode
 
 # ---------------------------------------------------------------------------
 # Helpers

@@ -81,44 +81,44 @@ services:
       - ./mappings/discord-gateway:/app/data
     restart: unless-stopped
 
-#  blender-service:
-#    build: 
-#      context: ./
-#      dockerfile: ./services/blender-service/Dockerfile
-#    container_name: bountybot-blender-service
-#    depends_on:
-#      bot-core:
-#        condition: service_healthy
-#        restart: true
-#    # Comment out/remove below if you don't have a NVidia GPU for use
-#    deploy:
-#      resources:
-#        reservations:
-#          devices:
-#            - driver: nvidia
-#              count: 1
-#              capabilities: [gpu]
-#    networks:
-#      - botnetv2
-#    ports:
-#      - 8001:8001
-#    env_file:
-#      - path: ./.env
-#        required: false 
-#    environment:
-#      - PUID=${PUID:-1000}
-#      - PGID=${PGID:-1000}
-#    volumes:
-#      - /etc/localtime:/etc/localtime:ro
-#      - /etc/timezone:/etc/timezone:ro
-#      - ./mappings/blender-renderer:/app/data
-#    healthcheck:
-#      test: curl -s -o /dev/null -f http://localhost:8001/api/v1/health/ || exit 1
-#      interval: 30s
-#      timeout: 5s
-#      retries: 3
-#      start_period: 360s
-#    restart: unless-stopped
+  blender-service:
+    build: 
+      context: ./
+      dockerfile: ./services/blender-service/Dockerfile
+    container_name: bountybot-blender-service
+    depends_on:
+      bot-core:
+        condition: service_healthy
+        restart: true
+    # Comment out/remove below if you don't have a NVidia GPU for use
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    networks:
+      - botnetv2
+    ports:
+      - 8001:8001
+    env_file:
+      - path: ./.env
+        required: false 
+    environment:
+      - PUID=${PUID:-1000}
+      - PGID=${PGID:-1000}
+    volumes:
+      - /etc/localtime:/etc/localtime:ro
+      - /etc/timezone:/etc/timezone:ro
+      - ./mappings/blender-renderer:/app/data
+    healthcheck:
+      test: curl -s -o /dev/null -f http://localhost:8001/api/v1/health/ || exit 1
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 360s
+    restart: unless-stopped
 
 networks:
   botnetv2:

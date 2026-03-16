@@ -3,11 +3,9 @@
 Targets uncovered lines: 98-192, 258-261, 282, 291-298.
 """
 
-import importlib
 import logging
 import os
 import sys
-from contextlib import asynccontextmanager
 from types import ModuleType
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -25,7 +23,6 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-
 
 # ===================================================================
 # root endpoint (line 282)
@@ -84,10 +81,10 @@ class TestIncludeRouters:
         # Create a fake module info that will fail on import
         fake_module_info = ("finder", "nonexistent_module_xyz", False)
 
-        with patch("main.pkgutil.iter_modules", return_value=[fake_module_info]):
-            with patch("main.importlib.import_module", side_effect=ImportError("no such module")):
-                # Should NOT raise – the exception is caught and logged
-                include_routers(test_app)
+        with patch("main.pkgutil.iter_modules", return_value=[fake_module_info]), \
+             patch("main.importlib.import_module", side_effect=ImportError("no such module")):
+            # Should NOT raise – the exception is caught and logged
+            include_routers(test_app)
 
     def test_module_without_router_is_skipped(self):
         from main import include_routers
@@ -98,10 +95,10 @@ class TestIncludeRouters:
         fake_module = ModuleType("fake")
         fake_module_info = ("finder", "fake_mod", False)
 
-        with patch("main.pkgutil.iter_modules", return_value=[fake_module_info]):
-            with patch("main.importlib.import_module", return_value=fake_module):
-                include_routers(test_app)
-                # No router included, no error raised
+        with patch("main.pkgutil.iter_modules", return_value=[fake_module_info]), \
+             patch("main.importlib.import_module", return_value=fake_module):
+            include_routers(test_app)
+            # No router included, no error raised
 
 
 # ===================================================================
@@ -299,7 +296,7 @@ class TestLifespan:
 class TestMainBlock:
     def test_main_block_calls_uvicorn(self):
         """Test the if __name__ == '__main__' block by simulating it."""
-        with patch("uvicorn.run") as mock_run:
+        with patch("uvicorn.run"):
             # Execute the block manually
             import main as main_module
 

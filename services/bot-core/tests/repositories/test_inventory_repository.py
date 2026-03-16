@@ -210,7 +210,7 @@ class TestUpdateQuantity:
     @pytest.mark.asyncio
     async def test_update_quantity_commit_fail_triggers_rollback(self, repo, mock_db):
         """When commit fails during update_quantity, rollback should be called."""
-        item = _make_inventory(id=1)
+        _make_inventory(id=1)
         # execute() succeeds (for the UPDATE statement), but commit() fails
         mock_db.execute = AsyncMock(return_value=MagicMock())
         mock_db.commit = AsyncMock(side_effect=Exception("commit fail"))

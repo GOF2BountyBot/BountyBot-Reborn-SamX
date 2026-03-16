@@ -226,7 +226,7 @@ class TestUpdateCredits:
     async def test_update_credits_commit_false_uses_flush(self, repo, mock_db):
         player = _make_player(id=1)
         mock_db.get = AsyncMock(return_value=player)
-        result = await repo.update_credits(mock_db, player_id=1, new_credits=500, commit=False)
+        await repo.update_credits(mock_db, player_id=1, new_credits=500, commit=False)
         mock_db.flush.assert_awaited_once()
         mock_db.commit.assert_not_awaited()
 

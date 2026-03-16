@@ -296,7 +296,7 @@ class TestEmbedConverter:
         mock_embed_payload.color = "invalid_color"
         from utils.embed_converter import EmbedConverter
 
-        with pytest.raises(Exception):  # noqa: B017
+        with pytest.raises(Exception):
             EmbedConverter.payload_to_embed(mock_embed_payload)
 
     def test_payload_to_embed_handles_none_color(self, mock_embed_payload):
@@ -517,7 +517,7 @@ class TestEmbedConverter:
         """Test that None input raises appropriate error."""
         from utils.embed_converter import EmbedConverter
 
-        with pytest.raises(Exception):  # noqa: B017
+        with pytest.raises(Exception):
             EmbedConverter._coerce_to_embed_payload(None)
 
     def test_payload_to_embed_with_all_fields(self, mock_embed_payload):
@@ -622,7 +622,7 @@ class TestEmbedConverter:
                 # Return an invalid field type that will fail EmbedPayload validation
                 return iter([("fields", "not-a-list")])
 
-        with pytest.raises(Exception):  # noqa: B017
+        with pytest.raises(Exception):
             EmbedConverter._coerce_to_embed_payload(IterableMapping())
 
     # Line 134-135: payload_to_embed — non-datetime timestamp raises TypeError

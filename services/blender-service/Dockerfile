@@ -129,5 +129,5 @@ USER botuser
 # To re-enable the startup script, uncomment the first line and comment
 # the second line below. 
 
-# ENTRYPOINT ["/bin/bash", "-c", "source /opt/venv/bin/activate  && /app/docker-entrypoint.sh & tail -f /dev/null"]
-ENTRYPOINT ["/bin/bash", "-c", "source /opt/venv/bin/activate && /opt/venv/bin/python /app/src/main.py & tail -f /dev/null"]
+ENTRYPOINT ["/bin/bash", "-c", "source /opt/venv/bin/activate  && /app/docker-entrypoint.sh & tail -f /dev/null"]
+#ENTRYPOINT ["/bin/bash", "-c", "source /opt/venv/bin/activate && /opt/venv/bin/python /app/src/main.py & tail -f /dev/null"]

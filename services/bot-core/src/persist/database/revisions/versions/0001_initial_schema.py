@@ -29,7 +29,6 @@ if _src not in sys.path:
 
 # Import all models at module level so Alembic's autogenerate can detect them
 # and so `Base.metadata.sorted_tables` is fully populated when upgrade() runs.
-import persist.models  # noqa: F401  # pylint: disable=unused-import
 from persist.models.base import Base
 
 

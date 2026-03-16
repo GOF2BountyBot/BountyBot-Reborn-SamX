@@ -133,8 +133,6 @@ _ensure_apscheduler_stubs()
 # We import it here just to ensure it is in sys.modules before main.py runs,
 # so that main.py's `from sqlalchemy import create_engine` resolves correctly.
 # ---------------------------------------------------------------------------
-import sqlalchemy as _sqla  # noqa: F401 (side effect: puts sqlalchemy in sys.modules)
-import sqlalchemy.ext.asyncio as _sqla_async  # noqa: F401
 
 # ---------------------------------------------------------------------------
 # Import main.DEFAULT_SCHEDULER_JOBS and main.register_default_jobs.

@@ -53,9 +53,8 @@ if "sqlalchemy_utils" not in sys.modules:
     _mock_sqla_utils.UUIDType = MagicMock()
     sys.modules["sqlalchemy_utils"] = _mock_sqla_utils
 
-from services.pathfinding_service import MAX_ROUTE_LENGTH, PathfindingError, PathfindingService  # noqa: I001
+from services.pathfinding_service import MAX_ROUTE_LENGTH, PathfindingError, PathfindingService
 from services.system_graph_service import SystemGraphService, SystemNode
-
 
 # ---------------------------------------------------------------------------
 # Helpers — build a mock SystemGraphService from a plain dict

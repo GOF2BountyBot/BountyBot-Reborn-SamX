@@ -3,3 +3,7 @@ fastapi-health
 uvicorn[standard]
 hypercorn[uvloop]
 python-dotenv
+Pillow>=10.0.0
+pytest
+pytest-cov
+pytest-asyncio

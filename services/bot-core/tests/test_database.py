@@ -667,13 +667,17 @@ class TestTableNames:
 # Additional DatabaseManager coverage tests
 # ===========================================================================
 
-from sqlalchemy.exc import OperationalError, SQLAlchemyError
+from persist.database.manager import (
+    execute_sql as module_execute_sql,
+)
 from persist.database.manager import (
     get_db_connection,
     get_db_session,
-    execute_sql as module_execute_sql,
+)
+from persist.database.manager import (
     table_exists as module_table_exists,
 )
+from sqlalchemy.exc import OperationalError, SQLAlchemyError
 
 
 class TestDatabaseManagerInitialize:
@@ -697,9 +701,9 @@ class TestDatabaseManagerInitialize:
         with patch("persist.database.manager.bblogger"):
             mgr = DatabaseManager()
 
-        with patch("persist.database.manager.create_async_engine", side_effect=Exception("engine fail")):
-            with pytest.raises(Exception, match="engine fail"):
-                await mgr.initialize()
+        with patch("persist.database.manager.create_async_engine", side_effect=Exception("engine fail")), \
+             pytest.raises(Exception, match="engine fail"):
+            await mgr.initialize()
 
 
 class TestDatabaseManagerTestConnection:
@@ -773,9 +777,8 @@ class TestDatabaseManagerTestConnection:
         mock_engine.connect = MagicMock(return_value=mock_conn)
         mgr._engine = mock_engine
 
-        with patch("persist.database.manager.time.sleep"):
-            with pytest.raises(OperationalError):
-                await mgr._test_connection()
+        with patch("persist.database.manager.time.sleep"), pytest.raises(OperationalError):
+            await mgr._test_connection()
 
     @pytest.mark.asyncio
     async def test_test_connection_unexpected_error_raises_immediately(self):
@@ -814,7 +817,7 @@ class TestDatabaseManagerSessionErrorHandling:
         mgr._session_factory = mock_factory
 
         with pytest.raises(ValueError, match="test error"):
-            async with mgr.get_session() as session:
+            async with mgr.get_session():
                 raise ValueError("test error")
 
         mock_session.rollback.assert_awaited_once()

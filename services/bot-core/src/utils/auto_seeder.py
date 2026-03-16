@@ -30,7 +30,7 @@ SEED_CATEGORIES: list[str] = [
 async def table_is_empty(repo) -> bool:
     """Return True when the repository's underlying table has zero rows."""
     async with db_manager.get_session() as session:
-        result = await session.execute(select(func.count()).select_from(repo._model))
+        result = await session.execute(select(func.count()).select_from(repo._model))  # pylint: disable=not-callable
         count = result.scalar()
         return (count or 0) == 0
 

@@ -18,17 +18,12 @@ import os
 import pkgutil
 from contextlib import asynccontextmanager
 
-# Import the routers package
 from api import routers
 from apscheduler.jobstores.sqlalchemy import SQLAlchemyJobStore
-
-# Scheduler
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-
-# Database management
 from persist.database.manager import db_manager
 from persist.schemas.schema_manager import initialize_schema
 from services.game_constants import GameConstants
@@ -107,7 +102,16 @@ async def lifespan(fastapi_app: FastAPI):
         flogger.info("🗄️ Initializing database connection...")
         await db_manager.initialize()
 
-        flogger.info("📋 Checking and updating database schema...")
+        # Run Alembic migrations (replaces the legacy create_all() approach)
+        flogger.info("📋 Running database migrations...")
+        from persist.database.migration_manager import MigrationManager
+
+        migration_mgr = MigrationManager.from_async_url(db_manager._connection_string)
+        migration_mgr.ensure_current()
+        flogger.info("✅ Database migrations applied successfully")
+
+        # Build a schema manager for health-check endpoints (skips create_all).
+        flogger.info("📋 Initialising schema manager (informational only)...")
         schema_manager = await initialize_schema(db_manager)
         fastapi_app.state.schema_manager = schema_manager
         fastapi_app.state.db_manager = db_manager

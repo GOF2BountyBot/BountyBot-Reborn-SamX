@@ -16,6 +16,7 @@ from shared import bblogger
 
 # Add the current directory to path for relative imports
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
 from utils.command_utils import get_command_handler
 
 

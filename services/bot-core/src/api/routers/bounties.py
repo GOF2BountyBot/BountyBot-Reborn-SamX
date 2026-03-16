@@ -12,10 +12,7 @@ Handles bounty-related operations including:
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import Response
-from persist.database.manager import get_db_session
-from services.bounty_service import BountyService
-from services.map_renderer import MapRenderer
-from services.system_graph_service import SystemGraphService
+
 from shared import bblogger
 
 from api.schemas.bounty_schema import (
@@ -25,6 +22,10 @@ from api.schemas.bounty_schema import (
     BountyPublicResponse,
     BountyResponse,
 )
+from persist.database.manager import get_db_session
+from services.bounty_service import BountyService
+from services.map_renderer import MapRenderer
+from services.system_graph_service import SystemGraphService
 
 flogger = bblogger.get_logger("bounty-router")
 

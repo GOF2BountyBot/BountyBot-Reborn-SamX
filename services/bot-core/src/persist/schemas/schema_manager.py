@@ -27,13 +27,31 @@ class SchemaManager:
     def __init__(self, db_manager):
         self.db_manager = db_manager
 
-    async def initialize_database(self):
+    async def initialize_database(self, run_create_all: bool = False):
+        """Initialise the database layer.
+
+        Args:
+            run_create_all: When ``True`` the legacy ``create_all()`` path is
+                used to create tables.  This should only be set for unit tests
+                that use an in-memory SQLite database.  In production the
+                Alembic migration runner (invoked from ``main.py``) is
+                responsible for DDL — passing ``False`` (the default) skips
+                the redundant ``create_all()`` call.
+        """
         flogger.info("Initializing database...")
-        await self.create_tables_if_not_exist()
+        if run_create_all:
+            await self.create_tables_if_not_exist()
         await self._verify_schema_version()
 
     async def create_tables_if_not_exist(self):
-        """Creates all tables if they don't already exist."""
+        """Creates all tables if they don't already exist.
+
+        .. deprecated::
+            Use Alembic migrations instead.  This method is retained for
+            backward-compatibility with integration tests that use an
+            in-memory SQLite database and cannot run Alembic migrations
+            against a real PostgreSQL instance.
+        """
         try:
             async with self.db_manager.engine.begin() as conn:
                 # run_sync wraps the sync create_all call

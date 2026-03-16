@@ -39,7 +39,7 @@ class UserRepository(IRepository[User]):
     async def count(self, db: AsyncSession) -> int:
         """Return total number of users."""
         try:
-            result = await db.execute(select(func.count()).select_from(User))
+            result = await db.execute(select(func.count()).select_from(User))  # pylint: disable=not-callable
             return result.scalar_one()
         except Exception as e:
             flogger.error(f"Error counting users: {e}")

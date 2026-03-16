@@ -11,6 +11,13 @@ from typing import Any
 import discord
 from fastapi import APIRouter, HTTPException, Request, status
 from shared import bblogger
+
+from api.schemas.base_schemas import DeleteResponse
+from api.schemas.channel_schemas import (
+    ForumTagCreateRequest,
+    ForumTagResponse,
+    ForumTagUpdateRequest,
+)
 from utils.discord_converters import ChannelConverter
 from utils.discord_helpers import (
     get_entity_or_404,
@@ -18,13 +25,6 @@ from utils.discord_helpers import (
     normalize_emoji,
     resolve_bot,
     tags_to_edit_payload,
-)
-
-from api.schemas.base_schemas import DeleteResponse
-from api.schemas.channel_schemas import (
-    ForumTagCreateRequest,
-    ForumTagResponse,
-    ForumTagUpdateRequest,
 )
 
 flogger = bblogger.get_logger("gateway-tag-router")

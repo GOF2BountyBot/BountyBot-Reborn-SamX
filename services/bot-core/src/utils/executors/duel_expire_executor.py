@@ -12,6 +12,7 @@ the module can be safely imported in test environments without a live database
 or all ORM dependencies being present.
 """
 
+import os as _os
 import traceback
 from datetime import UTC, datetime
 
@@ -23,7 +24,6 @@ flogger = get_logger("duel-expire-executor")
 # ---------------------------------------------------------------------------
 # Service endpoints (configurable via environment variables)
 # ---------------------------------------------------------------------------
-import os as _os
 
 _GATEWAY_HOST = _os.getenv("DISCORD_GATEWAY_HOST", "discord-gateway")
 _GATEWAY_PORT = _os.getenv("GATEWAY_PORT", "7999")

@@ -275,7 +275,7 @@ class ConfigService:
 
         # Validate starting credits
         if "starting_credits" in validated_config and validated_config["starting_credits"] < 0:
-                raise ValueError("Starting credits cannot be negative")
+            raise ValueError("Starting credits cannot be negative")
 
         # Validate sale price factor
         if "sale_price_factor" in validated_config:

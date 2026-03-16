@@ -33,7 +33,7 @@ class ConfigRepository(IRepository[GuildConfig]):
     async def count(self, db: AsyncSession) -> int:
         """Return total number of guild configs."""
         try:
-            result = await db.execute(select(func.count()).select_from(GuildConfig))
+            result = await db.execute(select(func.count()).select_from(GuildConfig))  # pylint: disable=not-callable
             return result.scalar_one()
         except Exception as e:
             flogger.error(f"Error counting guild configs: {e}")

@@ -10,12 +10,12 @@ import asyncio
 import discord
 from fastapi import APIRouter, HTTPException, Request, status
 from shared import bblogger
-from utils.discord_converters import MessageConverter
-from utils.discord_helpers import handle_discord_exception, resolve_bot
-from utils.embed_converter import EmbedConverter
 
 from api.schemas.base_schemas import DeleteResponse
 from api.schemas.message_schemas import MessageResponse, MessageUpdateRequest
+from utils.discord_converters import MessageConverter
+from utils.discord_helpers import handle_discord_exception, resolve_bot
+from utils.embed_converter import EmbedConverter
 
 flogger = bblogger.get_logger("gateway-message-router")
 

@@ -258,4 +258,4 @@ class CombatResolver(Protocol):
             FightResults with winner, loser, detailed stats, and
             stalemate flag.
         """
-        ...
+        ...  # pylint: disable=unnecessary-ellipsis

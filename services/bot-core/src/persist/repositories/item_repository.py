@@ -159,7 +159,7 @@ class ItemRepository(GenericRepository[Item]):
         total = 0
         for model in self._get_all_models():
             result = await db.execute(
-                select(func.count()).select_from(model)
+                select(func.count()).select_from(model)  # pylint: disable=not-callable
             )
             total += result.scalar() or 0
         return total

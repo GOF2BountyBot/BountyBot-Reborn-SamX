@@ -5,12 +5,8 @@ Handles REST API endpoints for ship management including ownership,
 loadout management, and active ship selection.
 """
 
-
 from fastapi import APIRouter, Depends, HTTPException, status
-from persist.database.manager import get_db_session
-from persist.repositories.player_repository import PlayerRepository
-from persist.repositories.ship_repository import ShipRepository
-from services.equipment_service import EquipmentService
+
 from shared import bblogger
 
 from api.schemas.ships_schema import (
@@ -22,6 +18,10 @@ from api.schemas.ships_schema import (
     UpdateLoadoutRequest,
     UpdateNicknameRequest,
 )
+from persist.database.manager import get_db_session
+from persist.repositories.player_repository import PlayerRepository
+from persist.repositories.ship_repository import ShipRepository
+from services.equipment_service import EquipmentService
 
 flogger = bblogger.get_logger("ships-api-router")
 

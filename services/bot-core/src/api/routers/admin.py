@@ -12,12 +12,7 @@ Handles administrative operations including:
 import os
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from persist.database.manager import get_db_session
-from services.audit_service import AuditService
-from services.config_service import ConfigService
-from services.inventory_service import InventoryService
-from services.player_service import PlayerService
-from services.shop_service import ShopService
+
 from shared import bblogger
 
 from api.schemas.admin_schema import (
@@ -30,6 +25,12 @@ from api.schemas.admin_schema import (
     UpdatePlayerXPRequest,
     UpdateShopConfigRequest,
 )
+from persist.database.manager import get_db_session
+from services.audit_service import AuditService
+from services.config_service import ConfigService
+from services.inventory_service import InventoryService
+from services.player_service import PlayerService
+from services.shop_service import ShopService
 
 flogger = bblogger.get_logger("admin-api-router")
 

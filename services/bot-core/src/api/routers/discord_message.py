@@ -61,7 +61,7 @@ async def _post_with_retry(url: str, payload: dict, timeout: float = 10.0) -> ht
                     f"retrying in {_RETRY_DELAY}s..."
                 )
                 await asyncio.sleep(_RETRY_DELAY)
-        except httpx.HTTPStatusError:
+        except httpx.HTTPStatusError:  # pylint: disable=try-except-raise
             raise
     raise last_exc  # type: ignore[misc]
 
@@ -83,7 +83,7 @@ async def _put_with_retry(url: str, payload: dict, timeout: float = 10.0) -> htt
                     f"retrying in {_RETRY_DELAY}s..."
                 )
                 await asyncio.sleep(_RETRY_DELAY)
-        except httpx.HTTPStatusError:
+        except httpx.HTTPStatusError:  # pylint: disable=try-except-raise
             raise
     raise last_exc  # type: ignore[misc]
 

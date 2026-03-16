@@ -116,7 +116,7 @@ class PlayerShipRepository(IRepository[PlayerShip]):
                 select(PlayerShip).where(
                     and_(
                         PlayerShip.player_id == player_id,
-                        PlayerShip.is_active == True
+                        PlayerShip.is_active == True  # pylint: disable=singleton-comparison
                     )
                 )
             )

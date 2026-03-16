@@ -101,7 +101,7 @@ def include_routers(app: FastAPI) -> None:
     """
     Automatically discover and include all routers from the routers package.
     """
-    Path(__file__).parent / "routers"
+    Path(__file__).parent / "routers"  # pylint: disable=expression-not-assigned
 
     # Iterate through all modules in the routers package
     for _importer, modname, ispkg in pkgutil.iter_modules(routers.__path__):

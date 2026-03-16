@@ -123,6 +123,6 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=45s --retries=3 \
 # This can be handy for being able to connect to the container CLI and check files/logs since it will still be running.
 # ENTRYPOINT ["/bin/bash", "-c", "source /opt/venv/bin/activate & tail -f /dev/null"]
 # ENTRYPOINT ["/bin/bash", "-c", "source /opt/venv/bin/activate && /opt/venv/bin/python /app/src/shared/logging.py & tail -f /dev/null"]
-ENTRYPOINT ["/bin/bash", "-c", "source /opt/venv/bin/activate && /opt/venv/bin/python /app/src/main.py & tail -f /dev/null"]
+ENTRYPOINT ["/bin/bash", "-c", "source /opt/venv/bin/activate && cd /app/src && /opt/venv/bin/python -m persist.database.run_migration upgrade && /opt/venv/bin/python /app/src/main.py & tail -f /dev/null"]
 # ENTRYPOINT ["/bin/bash", "-c", "source /opt/venv/bin/activate && /app/bountybot/docker-entrypoint.sh & tail -f /dev/null"]
 # ENTRYPOINT ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]

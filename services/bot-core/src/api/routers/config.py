@@ -8,8 +8,7 @@ settings persistence, validation, and default configurations.
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Path, status
-from persist.database.manager import get_db_session
-from services.config_service import ConfigService
+
 from shared import bblogger
 
 from api.schemas.config_schema import (
@@ -19,6 +18,8 @@ from api.schemas.config_schema import (
     UpdateShopConfigRequest,
     UpdateXPThresholdsRequest,
 )
+from persist.database.manager import get_db_session
+from services.config_service import ConfigService
 
 flogger = bblogger.get_logger("config-api-router")
 

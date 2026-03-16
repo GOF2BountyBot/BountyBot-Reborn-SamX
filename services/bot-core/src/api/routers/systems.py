@@ -5,11 +5,13 @@ Systems API router — star system pathfinding and queries.
 from collections.abc import AsyncGenerator
 
 from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from shared import bblogger
+
 from persist.database.manager import db_manager
 from services.pathfinding_service import PathfindingError, PathfindingService
 from services.system_graph_service import SystemGraphService
-from shared import bblogger
-from sqlalchemy.ext.asyncio import AsyncSession
 
 flogger = bblogger.get_logger("bot-systems-router")
 

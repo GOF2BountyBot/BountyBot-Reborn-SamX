@@ -9,11 +9,12 @@ Handles duel (PvP challenge) lifecycle operations including:
 """
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from persist.database.manager import get_db_session
-from services.duel_service import DuelService
+
 from shared import bblogger
 
 from api.schemas.duel_schema import DuelRequestCreate, DuelRequestResponse
+from persist.database.manager import get_db_session
+from services.duel_service import DuelService
 
 flogger = bblogger.get_logger("duel-router")
 

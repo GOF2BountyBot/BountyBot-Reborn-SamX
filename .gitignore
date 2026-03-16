@@ -207,3 +207,5 @@ opencode.json
 .opencode
 .claude
 old-refs
+.log
+*.log

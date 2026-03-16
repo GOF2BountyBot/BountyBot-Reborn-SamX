@@ -4,6 +4,7 @@ uvicorn[standard]
 hypercorn[uvloop]
 python-dotenv
 Pillow>=10.0.0
+numpy
 pytest
 pytest-cov
 pytest-asyncio

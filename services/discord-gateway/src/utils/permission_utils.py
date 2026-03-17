@@ -337,7 +337,9 @@ def create_permission_overwrite(allow: int | None = None, deny: int | None = Non
     Returns:
         discord.PermissionOverwrite-like object (constructed lazily)
     """
-    flogger.debug(f"Creating permission overwrite: allow={allow:#x if allow else None}, deny={deny:#x if deny else None}")
+    allow_dbg = f"{allow:#x}" if allow is not None else "None"
+    deny_dbg = f"{deny:#x}" if deny is not None else "None"
+    flogger.debug(f"Creating permission overwrite: allow={allow_dbg}, deny={deny_dbg}")
 
     kwargs = {}
 
@@ -386,9 +388,13 @@ def check_permission(permissions_value: int, permission_name: str) -> bool:
     has_perm = bool(permissions_value & permission_bit)
 
     if not has_perm:
-        flogger.debug(f"Permission check failed: {permission_name} not granted in permissions_value={permissions_value:#x}")
+        flogger.debug(
+            f"Permission check failed: {permission_name} not granted in permissions_value={permissions_value:#x}"
+        )
     else:
-        flogger.debug(f"Permission check passed: {permission_name} granted in permissions_value={permissions_value:#x}")
+        flogger.debug(
+            f"Permission check passed: {permission_name} granted in permissions_value={permissions_value:#x}"
+        )
 
     return has_perm
 
@@ -442,10 +448,12 @@ def calculate_effective_permissions(
     Returns:
         int: Effective permissions value
     """
+    allow_str = f"{allow_overwrites:#x}" if allow_overwrites is not None else "None"
+    deny_str = f"{deny_overwrites:#x}" if deny_overwrites is not None else "None"
     flogger.debug(
         f"Calculating effective permissions: base={base_permissions:#x}, "
-        f"allow={allow_overwrites:#x if allow_overwrites else None}, "
-        f"deny={deny_overwrites:#x if deny_overwrites else None}"
+        f"allow={allow_str}, "
+        f"deny={deny_str}"
     )
 
     # Administrator bypasses overwrites
@@ -488,7 +496,9 @@ def overwrite_to_dict(overwrite: "Any") -> dict[str, Any]:
             "deny": deny_val,
             "permissions": perms_map
         }
-        flogger.debug(f"Converted dict overwrite: allow={allow_val:#x}, deny={deny_val:#x}, perms_count={len(perms_map)}")
+        flogger.debug(
+            f"Converted dict overwrite: allow={allow_val:#x}, deny={deny_val:#x}, perms_count={len(perms_map)}"
+        )
         return result
 
     # Best-effort handling for discord.PermissionOverwrite
@@ -570,9 +580,13 @@ def has_channel_permission(
         perms = channel.permissions_for(member)
         has_perm = bool(getattr(perms, permission.lower(), False))
         if not has_perm:
-            flogger.debug(f"Channel permission denied: member {member_id}, channel {channel_id}, permission {permission}")
+            flogger.debug(
+                f"Channel permission denied: member {member_id}, channel {channel_id}, permission {permission}"
+            )
         else:
-            flogger.debug(f"Channel permission granted: member {member_id}, channel {channel_id}, permission {permission}")
+            flogger.debug(
+                f"Channel permission granted: member {member_id}, channel {channel_id}, permission {permission}"
+            )
         return has_perm
     except Exception as exc:  # pylint: disable=broad-exception-caught
         # If channel.permissions_for is not available or fails, conservative False

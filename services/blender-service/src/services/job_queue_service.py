@@ -6,7 +6,6 @@ stored in an in-memory dict (no persistence — jobs lost on restart).
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import uuid
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
@@ -184,7 +183,7 @@ class JobQueueService:
         while True:
             try:
                 await asyncio.sleep(interval_seconds)
-                flogger.trace(f"Cleanup cycle executing")
+                flogger.trace("Cleanup cycle executing")
                 self._cleanup_expired()
             except asyncio.CancelledError:
                 flogger.info("Cleanup loop cancelled, shutting down")
@@ -199,6 +198,6 @@ class JobQueueService:
             flogger.debug("Cleanup task cancelled")
         for task in self._active_tasks:
             task.cancel()
-            flogger.debug(f"Cancelled active render task")
+            flogger.debug("Cancelled active render task")
         self._active_tasks.clear()
         flogger.debug("Job queue shutdown complete")

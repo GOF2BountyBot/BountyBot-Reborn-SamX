@@ -1,8 +1,8 @@
 from enum import StrEnum
 
 from fastapi import APIRouter, HTTPException
-from utils.data_loader import load_data
 from shared import bblogger
+from utils.data_loader import load_data
 
 flogger = bblogger.get_logger("data-router")
 

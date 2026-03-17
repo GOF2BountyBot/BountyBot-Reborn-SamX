@@ -182,6 +182,10 @@ class TestCreateOrUpdate:
         class MockModule:
             def __init__(self, **kwargs):
                 captured_kwargs.update(kwargs)
+                object.__setattr__(self, "id", None)
+                object.__setattr__(self, "name", None)
+                object.__setattr__(self, "tech_level", None)
+                object.__setattr__(self, "max_equipped", None)
                 # Store attrs so setattr works on the returned mock
                 for k, v in kwargs.items():
                     object.__setattr__(self, k, v)

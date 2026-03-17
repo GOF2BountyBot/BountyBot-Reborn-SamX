@@ -3,7 +3,7 @@ Tests for the render skin commands and UI views added to skinsCog.
 
 Covers:
 - SquareCheckView (crop / stretch / cancel)
-- FormatDownloadView (etc1 / dxt5)
+- FormatDownloadView (png / etc1 / dxt5)
 - skinnable_ship_autocomplete (filtered list)
 - render_skin: ship not found, non-skinnable ship, defers interaction
 - make_skin_texture: success path (mocked blender calls)
@@ -234,6 +234,24 @@ class TestFormatDownloadView:
         call_kwargs = mock_cog.blender_client.post.call_args
         assert call_kwargs[1]["data"]["format"] == "dxt5"
         interaction.followup.send.assert_called_once()
+
+    def test_format_download_view_png(self, mock_cog):
+        """PNG button sends the raw texture bytes as a PNG file."""
+        texture_data = b"PNG_DATA"
+        view = self._make_view(mock_cog, texture_bytes=texture_data)
+
+        interaction = MagicMock()
+        interaction.response.defer = AsyncMock()
+        interaction.followup.send = AsyncMock()
+
+        asyncio.run(view.png_button.callback(interaction))
+
+        interaction.response.defer.assert_called_once()
+        interaction.followup.send.assert_called_once()
+        call_kwargs = interaction.followup.send.call_args
+        assert "TestShip" in call_kwargs[0][0]
+        sent_file = call_kwargs[1]["file"]
+        assert sent_file.filename == "TestShip_skin.png"
 
 
 # ---------------------------------------------------------------------------

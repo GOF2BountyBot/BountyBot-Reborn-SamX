@@ -1,10 +1,10 @@
 from typing import Generic, TypeVar
 
+from shared import bblogger
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from persist.interfaces.repository_interface import IRepository
-from shared import bblogger
 
 T = TypeVar("T")
 

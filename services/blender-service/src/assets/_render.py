@@ -14,8 +14,11 @@ Updated for blender-service:
     Line 4:  /path/to/texture.png
     Line 5:  64  (numSamples)
     Line 6:  /path/to/temp_copy.mtl  (temp MTL file — service pre-created this)
-- The script appends ``map_Kd <texture_path>`` to the temp MTL, renders, then
-  removes the appended line (same cleanup pattern as the legacy script).
+- render_service.py copies both the OBJ and MTL to a temp directory.
+  The script appends ``map_Kd <texture_path>`` to the temp MTL, then
+  imports the temp OBJ (whose ``mtllib`` resolves to the co-located temp
+  MTL).  As a fallback, the texture is also applied via Blender's node
+  system after import.
 """
 try:
     import bpy  # type: ignore[reportMissingImports]
@@ -112,7 +115,10 @@ print(f"args.mtl_path:          {args.mtl_path}")
 
 ##### CONFIGURE THE SCENE #####
 
-# Append the texture reference to the temp MTL file so Blender picks it up.
+# Append the texture reference to the temp MTL so Blender's OBJ importer
+# picks it up.  render_service.py copies both the OBJ and MTL into the
+# same temp directory, so the ``mtllib`` directive in the OBJ resolves to
+# this temp MTL (which now contains the ``map_Kd`` line).
 with open(args.mtl_path, "a") as _f:
     _f.write("map_Kd " + args.texture_path + "\n")
 
@@ -125,6 +131,30 @@ bpy.ops.wm.obj_import(
     up_axis="Y",
     filter_glob="*.obj;*.mtl",
 )
+
+# Belt-and-suspenders: also apply the texture via the node system in case
+# the MTL-based approach did not wire it up (e.g. missing material block,
+# different Blender version behaviour, etc.).
+texture_image = bpy.data.images.load(args.texture_path)
+for obj in bpy.data.objects:
+    if obj.type != "MESH":
+        continue
+    for slot in obj.material_slots:
+        mat = slot.material
+        if mat is None:
+            continue
+        mat.use_nodes = True
+        tree = mat.node_tree
+        # Find the Principled BSDF node (created by the OBJ importer).
+        bsdf = next((n for n in tree.nodes if n.type == "BSDF_PRINCIPLED"), None)
+        if bsdf is None:
+            continue
+        # Create an Image Texture node and connect it to Base Color.
+        tex_node = tree.nodes.new("ShaderNodeTexImage")
+        tex_node.image = texture_image
+        tree.links.new(tex_node.outputs["Color"], bsdf.inputs["Base Color"])
+
+print(f"✓ Texture applied to materials from: {args.texture_path}")
 
 # Deselect everything (the camera might be selected after import).
 bpy.ops.object.select_all(action="DESELECT")
@@ -191,6 +221,8 @@ bpy.ops.render.render(write_still=True)
 ##### CLEANUP #####
 
 # Remove the ``map_Kd`` line we appended to the temp MTL.
+# (The temp directory is cleaned up by render_service.py on success, but
+# keeping the file tidy aids debugging when the dir is preserved on failure.)
 with open(args.mtl_path) as _f:
     _lines = _f.readlines()
 with open(args.mtl_path, "w") as _f:

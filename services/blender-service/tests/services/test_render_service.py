@@ -228,7 +228,10 @@ async def test_render_ship_writes_render_vars(svc: RenderService, tmp_path: Path
     assert len(lines) == 6
     assert lines[0] == "1920x1080"
     assert lines[1] == out_file
-    assert lines[2] == str(obj_file)
+    # Line 3 is the temp OBJ copy (co-located with the temp MTL so
+    # Blender resolves ``mtllib`` correctly).
+    assert lines[2].endswith(obj_file.name)
+    assert "blender_render_" in lines[2]
     assert lines[3] == str(tex_file)
     assert lines[4] == "64"
     # Line 6 is the temp MTL path — just verify it exists as a string

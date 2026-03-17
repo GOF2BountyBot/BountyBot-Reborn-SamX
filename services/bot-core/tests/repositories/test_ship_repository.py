@@ -117,6 +117,7 @@ class TestShipRepositoryCreateOrUpdate:
         class MockShip:
             def __init__(self, **kwargs):
                 captured_kwargs.update(kwargs)
+                object.__setattr__(self, "id", None)
                 for k, v in kwargs.items():
                     object.__setattr__(self, k, v)
 
@@ -137,6 +138,7 @@ class TestShipRepositoryCreateOrUpdate:
         class MockShip:
             def __init__(self, **kwargs):
                 captured_kwargs.update(kwargs)
+                object.__setattr__(self, "id", None)
                 for k, v in kwargs.items():
                     object.__setattr__(self, k, v)
 
@@ -156,6 +158,7 @@ class TestShipRepositoryCreateOrUpdate:
         class MockShip:
             def __init__(self, **kwargs):
                 captured_kwargs.update(kwargs)
+                object.__setattr__(self, "id", None)
                 for k, v in kwargs.items():
                     object.__setattr__(self, k, v)
 
@@ -175,6 +178,7 @@ class TestShipRepositoryCreateOrUpdate:
         class MockShip:
             def __init__(self, **kwargs):
                 captured_kwargs.update(kwargs)
+                object.__setattr__(self, "id", None)
                 for k, v in kwargs.items():
                     object.__setattr__(self, k, v)
 
@@ -194,6 +198,7 @@ class TestShipRepositoryCreateOrUpdate:
         class MockShip:
             def __init__(self, **kwargs):
                 captured_kwargs.update(kwargs)
+                object.__setattr__(self, "id", None)
                 for k, v in kwargs.items():
                     object.__setattr__(self, k, v)
 

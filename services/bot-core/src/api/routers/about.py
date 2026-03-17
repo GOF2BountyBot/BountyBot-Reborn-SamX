@@ -252,7 +252,9 @@ async def get_object_by_id(category: DataCategory, object_id: int, db: AsyncSess
     GET /about/object/{category}/{object_id}
     Get detailed object information by ID.
     """
-    flogger.info(f"Request received: GET /object/{{category}}/{{object_id}}, category={category.value}, object_id={object_id}")
+    flogger.info(
+        f"Request received: GET /object/{{category}}/{{object_id}}, category={category.value}, object_id={object_id}"
+    )
     repo = CATEGORY_REPOS.get(category)
     if not repo:
         flogger.debug(f"Category not found: category={category.value}")
@@ -384,7 +386,10 @@ async def get_ship_render_info(
         if ship.model:
             bbship_dir = str(PurePosixPath(ship.model).parent)
 
-        flogger.debug(f"Render info retrieved: ship_name={ship_name}, texture_regions={ship.texture_regions}, masks={len(mask_paths)}")
+        flogger.debug(
+            f"Render info retrieved: ship_name={ship_name}, "
+            f"texture_regions={ship.texture_regions}, masks={len(mask_paths)}"
+        )
         return {
             "name": ship.name,
             "skinnable": ship.skinnable,

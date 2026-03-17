@@ -217,7 +217,7 @@ class EmbedConverter:
         try:
             title = embed.title if embed.title is not None else None
             description = embed.description if embed.description is not None else None
-            flogger.trace(f"Extracted title and description")
+            flogger.trace("Extracted title and description")
             color = None
             if getattr(embed, "color", None) is not None:
                 try:

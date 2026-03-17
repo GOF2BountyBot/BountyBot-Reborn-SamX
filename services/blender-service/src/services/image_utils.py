@@ -51,7 +51,7 @@ def crop_to_square(image: Image.Image) -> Image.Image:
     flogger.debug(f"crop_to_square() entry: width={width}, height={height}")
 
     if width == height:
-        flogger.debug(f"crop_to_square() exit: image already square, returning unchanged")
+        flogger.debug("crop_to_square() exit: image already square, returning unchanged")
         return image
 
     if width > height:
@@ -97,7 +97,7 @@ def stretch_to_square(image: Image.Image) -> Image.Image:
     flogger.debug(f"stretch_to_square() entry: width={width}, height={height}")
 
     if width == height:
-        flogger.debug(f"stretch_to_square() exit: image already square, returning unchanged")
+        flogger.debug("stretch_to_square() exit: image already square, returning unchanged")
         return image
 
     side = max(width, height)

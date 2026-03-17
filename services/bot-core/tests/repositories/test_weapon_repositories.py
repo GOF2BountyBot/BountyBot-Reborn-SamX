@@ -141,6 +141,10 @@ class TestPrimaryWeaponRepository:
         class MockPrimaryWeapon:
             def __init__(self, **kwargs):
                 captured_kwargs.update(kwargs)
+                object.__setattr__(self, "id", None)
+                object.__setattr__(self, "name", None)
+                object.__setattr__(self, "dps", None)
+                object.__setattr__(self, "tech_level", None)
                 for k, v in kwargs.items():
                     object.__setattr__(self, k, v)
 
@@ -226,6 +230,10 @@ class TestSecondaryWeaponRepository:
         class MockSecondaryWeapon:
             def __init__(self, **kwargs):
                 captured_kwargs.update(kwargs)
+                object.__setattr__(self, "id", None)
+                object.__setattr__(self, "name", None)
+                object.__setattr__(self, "damage", None)
+                object.__setattr__(self, "tech_level", None)
                 for k, v in kwargs.items():
                     object.__setattr__(self, k, v)
 
@@ -311,6 +319,10 @@ class TestTurretWeaponRepository:
         class MockTurretWeapon:
             def __init__(self, **kwargs):
                 captured_kwargs.update(kwargs)
+                object.__setattr__(self, "id", None)
+                object.__setattr__(self, "name", None)
+                object.__setattr__(self, "dps", None)
+                object.__setattr__(self, "tech_level", None)
                 for k, v in kwargs.items():
                     object.__setattr__(self, k, v)
 

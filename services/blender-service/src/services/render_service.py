@@ -167,8 +167,16 @@ class RenderService:
 
         render_vars_path = temp_dir / "render_vars"
 
-        # Locate and copy the MTL file to the temp dir (concurrent-safe).
+        # Copy the OBJ and MTL to the temp dir so that _render.py can
+        # append ``map_Kd`` to the temp MTL and have Blender resolve it
+        # correctly.  Blender's OBJ importer reads the ``mtllib`` directive
+        # relative to the OBJ file, so both files must be co-located.
         obj_path = Path(model_path)
+
+        temp_obj_path = temp_dir / obj_path.name
+        shutil.copy2(str(obj_path), str(temp_obj_path))
+        flogger.debug(f"[{render_id}] Copied OBJ {obj_path} → {temp_obj_path}")
+
         original_mtl = obj_path.with_suffix(".mtl")
         if not original_mtl.exists():
             # Fallback: look for material.mtl in the same directory
@@ -191,7 +199,7 @@ class RenderService:
         render_vars_content = (
             f"{resolution_str}\n"
             f"{output_path}\n"
-            f"{model_path}\n"
+            f"{temp_obj_path}\n"
             f"{texture_path}\n"
             f"{num_samples}\n"
             f"{temp_mtl_path}\n"

@@ -82,15 +82,22 @@ class SimpleTTKResolver:
             f" dps={ship2_stats.dps:.1f}→{ship2_dps_varied:.1f}"
         )
 
-        flogger.trace(f"Variance calculation step: ship1_hp_varied={ship1_hp_varied}, ship2_hp_varied={ship2_hp_varied}")
-        flogger.trace(f"Variance calculation step: ship1_dps_varied={ship1_dps_varied:.1f}, ship2_dps_varied={ship2_dps_varied:.1f}")
+        flogger.trace(
+            f"Variance calculation step: ship1_hp_varied={ship1_hp_varied}, ship2_hp_varied={ship2_hp_varied}"
+        )
+        flogger.trace(
+            f"Variance calculation step: ship1_dps_varied={ship1_dps_varied:.1f}, "
+            f"ship2_dps_varied={ship2_dps_varied:.1f}"
+        )
 
         # 3. Handle zero-DPS edge cases
         ship1_ttk: float | None = None
         ship2_ttk: float | None = None
 
         both_zero = ship1_stats.dps == 0 and ship2_stats.dps == 0
-        flogger.trace(f"Zero-DPS edge case check: ship1_dps={ship1_stats.dps}, ship2_dps={ship2_stats.dps}, both_zero={both_zero}")
+        flogger.trace(
+            f"Zero-DPS edge case check: ship1_dps={ship1_stats.dps}, ship2_dps={ship2_stats.dps}, both_zero={both_zero}"
+        )
 
         if both_zero:
             # Neither ship can deal damage — stalemate
@@ -222,7 +229,9 @@ def _apply_variance(value: int, variance_percent: float) -> int:
         return value
     delta = int(value * variance_percent)
     varied = random.randint(value - delta, value + delta)
-    flogger.trace(f"_apply_variance(int): value={value}, variance_percent={variance_percent}, delta={delta}, result={varied}")
+    flogger.trace(
+        f"_apply_variance(int): value={value}, variance_percent={variance_percent}, delta={delta}, result={varied}"
+    )
     return varied
 
 
@@ -327,7 +336,10 @@ class CombatService:
             )
 
         final_dps = total * multiplier
-        flogger.debug(f"DPS calculation complete for {loadout.ship_name}: base_total={total}, multiplier={multiplier}, final_dps={final_dps:.1f}")
+        flogger.debug(
+            f"DPS calculation complete for {loadout.ship_name}: "
+            f"base_total={total}, multiplier={multiplier}, final_dps={final_dps:.1f}"
+        )
         return final_dps
 
     @staticmethod
@@ -369,7 +381,10 @@ class CombatService:
             )
 
         final_armour = int(total * multiplier)
-        flogger.debug(f"Armour calculation complete for {loadout.ship_name}: base_total={total}, multiplier={multiplier}, final_armour={final_armour}")
+        flogger.debug(
+            f"Armour calculation complete for {loadout.ship_name}: "
+            f"base_total={total}, multiplier={multiplier}, final_armour={final_armour}"
+        )
         return final_armour
 
     @staticmethod
@@ -390,7 +405,7 @@ class CombatService:
         flogger.debug(f"Calculating shield for {loadout.ship_name}")
         total = 0
         multiplier = 1.0
-        flogger.trace(f"Shield calc: starting with total=0 (no base shield)")
+        flogger.trace("Shield calc: starting with total=0 (no base shield)")
 
         for module in loadout.modules:
             total += module.shield
@@ -401,7 +416,10 @@ class CombatService:
             )
 
         final_shield = int(total * multiplier)
-        flogger.debug(f"Shield calculation complete for {loadout.ship_name}: base_total={total}, multiplier={multiplier}, final_shield={final_shield}")
+        flogger.debug(
+            f"Shield calculation complete for {loadout.ship_name}: "
+            f"base_total={total}, multiplier={multiplier}, final_shield={final_shield}"
+        )
         return final_shield
 
     def collect_stats(self, loadout: ShipLoadout) -> CombatStats:
@@ -465,7 +483,9 @@ class CombatService:
         flogger.debug(f"fight_ships initiated: {loadout1.ship_name} vs {loadout2.ship_name}")
         if variance_percent is None:
             variance_percent = GameConstants.DUEL_VARIANCE_PERCENT
-            flogger.debug(f"Variance percent not specified, using GameConstants.DUEL_VARIANCE_PERCENT={variance_percent*100:.1f}%")
+            flogger.debug(
+                f"Variance percent not specified, using GameConstants.DUEL_VARIANCE_PERCENT={variance_percent*100:.1f}%"
+            )
 
         flogger.debug(f"Collecting combat stats for {loadout1.ship_name} (initiator)")
         stats1 = self.collect_stats(loadout1)
@@ -475,5 +495,8 @@ class CombatService:
 
         flogger.debug(f"Delegating to resolver: {self._resolver.__class__.__name__}")
         result = self._resolver.resolve(stats1, stats2, variance_percent)
-        flogger.debug(f"fight_ships completed: winner={result.winner_name}, loser={result.loser_name}, stalemate={result.is_stalemate}")
+        flogger.debug(
+            f"fight_ships completed: winner={result.winner_name}, "
+            f"loser={result.loser_name}, stalemate={result.is_stalemate}"
+        )
         return result

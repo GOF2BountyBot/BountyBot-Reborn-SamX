@@ -71,6 +71,21 @@ class FormatDownloadView(discord.ui.View):
         self._texture_bytes = texture_bytes
         self._ship_name = ship_name
 
+    @discord.ui.button(label="Download PNG", style=discord.ButtonStyle.secondary)
+    async def png_button(
+        self, interaction: discord.Interaction, button: discord.ui.Button
+    ):
+        _ = button
+        await interaction.response.defer()
+        file = discord.File(
+            BytesIO(self._texture_bytes),
+            filename=f"{self._ship_name}_skin.png",
+        )
+        await interaction.followup.send(
+            f"Here's your **{self._ship_name}** skin texture as PNG!",
+            file=file,
+        )
+
     @discord.ui.button(label="AEI (Android/ETC1)", style=discord.ButtonStyle.green)
     async def etc1_button(
         self, interaction: discord.Interaction, button: discord.ui.Button
@@ -416,6 +431,7 @@ class SkinsCog(commands.Cog):
     @app_commands.describe(
         ship="The ship to render",
         skin="Optional: select a pre-made skin to apply",
+        autoskin="Automatically apply the default skin without prompting",
     )
     @app_commands.autocomplete(ship=skinnable_ship_autocomplete, skin=skin_autocomplete)
     async def render_skin(
@@ -423,6 +439,7 @@ class SkinsCog(commands.Cog):
         interaction: discord.Interaction,
         ship: str,
         skin: str = "Default",
+        autoskin: bool = False,
     ):
         await interaction.response.defer()
 
@@ -523,28 +540,32 @@ class SkinsCog(commands.Cog):
         ship_path = render_info.get("bbship_dir", "")
         diffuse_path: str = render_info.get("diffuse_path", "")
 
+        # 2. Collect base texture: from disk path if available, otherwise prompt user upload
         if not diffuse_path:
-            flogger.error(f"No diffuse_path in render-info for {ship}")
-            await interaction.followup.send(
-                f"❌ No base texture found for **{ship}**.", ephemeral=True
+            flogger.info(f"No diffuse_path for {ship}; requesting user texture upload")
+            base_bytes, square_mode = await self._collect_base_texture(interaction, ship)
+            if base_bytes is None:
+                return  # user cancelled or timed out
+            composite_bytes = await self._composite_textures_with_upload(
+                interaction, ship, ship_path, base_bytes, square_mode
             )
-            return
+        else:
+            # 2a. Resolve the skin overlay image (if not Default)
+            skin_bytes: bytes | None = None
+            if skin != "Default":
+                skin_bytes = await self._download_skin_image(interaction, ship, skin, render_info)
+                if skin_bytes is None:
+                    return  # error already sent
 
-        # 2. Resolve the skin overlay image (if not Default)
-        skin_bytes: bytes | None = None
-        if skin != "Default":
-            skin_bytes = await self._download_skin_image(interaction, ship, skin, render_info)
-            if skin_bytes is None:
-                return  # error already sent
+            # 2b. Composite via blender-service (base texture loaded from disk)
+            composite_bytes = await self._composite_textures(
+                interaction, ship, ship_path, diffuse_path, skin_bytes
+            )
 
-        # 3. Composite via blender-service (base texture loaded from disk)
-        composite_bytes = await self._composite_textures(
-            interaction, ship, ship_path, diffuse_path, skin_bytes
-        )
         if composite_bytes is None:
             return
 
-        # 4. Return composited texture + format buttons
+        # 3. Return composited texture + format buttons
         file = discord.File(
             BytesIO(composite_bytes), filename=f"{ship}_texture.png"
         )
@@ -628,6 +649,60 @@ class SkinsCog(commands.Cog):
             flogger.error(f"Failed to download skin image for {ship}/{skin}: {e}")
             await interaction.followup.send(
                 f"❌ Failed to download skin image for **{skin}**.", ephemeral=True
+            )
+            return None
+
+    async def _composite_textures_with_upload(
+        self,
+        interaction: discord.Interaction,
+        ship: str,
+        ship_path: str,
+        base_bytes: bytes,
+        square_mode: str = "none",
+    ) -> bytes | None:
+        """Call blender-service composite endpoint with a user-uploaded base texture.
+
+        Used when no diffuse_path is available on disk.
+        Returns composited PNG bytes or None on error.
+        """
+        await interaction.followup.send("🔧 Compositing textures…")
+
+        files: list[tuple] = [
+            ("base_texture", ("base.png", base_bytes, "image/png")),
+        ]
+        data: dict[str, str] = {
+            "ship_path": ship_path,
+            "square_mode": square_mode,
+            "region_indices": "",
+            "disabled_regions": "",
+        }
+
+        try:
+            resp = await self.blender_client.post(
+                "/textures/composite",
+                files=files,
+                data=data,
+            )
+            resp.raise_for_status()
+            flogger.info(f"Composite (upload) successful for {ship}")
+            return resp.content
+        except HttpxHTTPStatusError as e:
+            flogger.error(f"Composite API error for {ship}: {e.response.status_code}")
+            await interaction.followup.send(
+                f"❌ Texture compositing failed: API error {e.response.status_code}",
+                ephemeral=True,
+            )
+            return None
+        except HttpxTimeoutException:
+            flogger.error(f"Composite timed out for {ship}")
+            await interaction.followup.send(
+                "❌ Compositing timed out. Please try again.", ephemeral=True
+            )
+            return None
+        except Exception as e:  # pylint: disable=broad-exception-caught
+            flogger.error(f"Composite error for {ship}: {e}")
+            await interaction.followup.send(
+                "❌ Texture compositing failed. Please try again later.", ephemeral=True
             )
             return None
 

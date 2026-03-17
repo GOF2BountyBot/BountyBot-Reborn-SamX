@@ -65,7 +65,9 @@ class PrimaryWeaponRepository(GenericRepository[PrimaryWeapon]):
             weapon_fields = {
                 "tech_level": raw.get("techLevel"),
             }
-            flogger.trace(f"create_or_update() parsed weapon_fields for {weapon_name}: tech_level={weapon_fields['tech_level']}")
+            flogger.trace(
+                f"create_or_update() parsed weapon_fields for {weapon_name}: tech_level={weapon_fields['tech_level']}"
+            )
 
             # primary-weapon specific fields
             primary_fields = {

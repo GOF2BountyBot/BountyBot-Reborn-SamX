@@ -25,9 +25,8 @@ from alembic import command
 from alembic.config import Config
 from alembic.runtime.migration import MigrationContext
 from alembic.script import ScriptDirectory
-from sqlalchemy import create_engine, pool
-
 from shared import bblogger
+from sqlalchemy import create_engine, pool
 
 flogger = bblogger.get_logger("migration-manager")
 
@@ -106,7 +105,7 @@ class MigrationManager:
         flogger.debug("from_env: Building MigrationManager from environment variables")
         sync_url = _build_sync_url_from_env()
         # Extract password from URL for masking
-        user = os.getenv("POSTGRES_USER", "bounty")
+        _user = os.getenv("POSTGRES_USER", "bounty")
         pw = os.getenv("POSTGRES_PASSWORD", "bounty")
         masked_url = sync_url.replace(pw, "***") if pw else sync_url
         flogger.debug(f"from_env: Connection URL: {masked_url}")
@@ -261,7 +260,8 @@ class MigrationManager:
             with engine.connect() as conn:
                 context = MigrationContext.configure(conn)
                 current = context.get_current_revision()
-                flogger.debug(f"get_current_revision: Current revision is {current if current else 'None (database not versioned)'}")
+                current_str = current if current else "None (database not versioned)"
+                flogger.debug(f"get_current_revision: Current revision is {current_str}")
                 return current
         except Exception as e:
             flogger.error(f"get_current_revision: Failed to query current revision: {e}", exc_info=True)

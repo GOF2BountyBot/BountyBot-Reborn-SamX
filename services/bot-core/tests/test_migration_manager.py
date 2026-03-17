@@ -174,11 +174,15 @@ class TestEnsureCurrent:
     def test_calls_alembic_upgrade_head(self) -> None:
         """ensure_current() must delegate to alembic.command.upgrade with 'head'."""
         mgr = MigrationManager(SYNC_URL)
-        with patch("src.persist.database.migration_manager.command") as mock_cmd:
+        with (
+            patch("src.persist.database.migration_manager.command") as mock_cmd,
+            patch.object(mgr, "get_current_revision", return_value="abc123"),
+            patch.object(mgr, "get_head_revision", return_value="def456"),
+        ):
             mgr.ensure_current()
-            mock_cmd.upgrade.assert_called_once()
-            _cfg, target = mock_cmd.upgrade.call_args[0]
-            assert target == "head"
+        mock_cmd.upgrade.assert_called_once()
+        _cfg, target = mock_cmd.upgrade.call_args[0]
+        assert target == "head"
 
 
 # ---------------------------------------------------------------------------

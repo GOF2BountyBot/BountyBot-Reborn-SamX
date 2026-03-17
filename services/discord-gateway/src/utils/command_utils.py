@@ -32,7 +32,9 @@ class CommandValidator:
 
     def validate_permissions(self, command_name: str, user: discord.User, guild: discord.Guild | None = None) -> bool:
         """Check if user has permissions to execute command"""
-        self.logger.debug(f"validate_permissions: command={command_name} user={user.id} guild={guild.id if guild else None}")
+        self.logger.debug(
+            f"validate_permissions: command={command_name} user={user.id} guild={guild.id if guild else None}"
+        )
         if command_name not in self.command_registry:
             self.logger.warning(f"Command {command_name} not registered")
             return False

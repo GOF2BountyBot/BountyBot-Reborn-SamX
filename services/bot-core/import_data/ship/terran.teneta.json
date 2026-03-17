@@ -36,7 +36,7 @@
   "maxPrimaries": 2,
   "maxSecondaries": 4,
   "maxTurrets": 1,
-  "model": "/app/game-objects/Terran/Teneta.bbship/Teneta_Full.obj",
+  "model": "/app/data/game-objects/items/ships/Terran/Teneta.bbship/Teneta_Full.obj",
   "name": "Teneta",
   "saveDue": false,
   "shopSpawnRate": 6.312,
@@ -45,13 +45,13 @@
   "value": 125400,
   "wiki": "https://galaxyonfire.fandom.com/wiki/Teneta",
   "assets": [
-    "/app/game-objects/Terran/Teneta.bbship/mask1.jpg",
-    "/app/game-objects/Terran/Teneta.bbship/mask2.jpg",
-    "/app/game-objects/Terran/Teneta.bbship/ship_001_terran_diffuse.bmp",
-    "/app/game-objects/Terran/Teneta.bbship/ship_001_terran_normal_specular.bmp",
-    "/app/game-objects/Terran/Teneta.bbship/skinBase.png",
-    "/app/game-objects/Terran/Teneta.bbship/Teneta_Full.mtl",
-    "/app/game-objects/Terran/Teneta.bbship/Teneta_Full.obj"
+    "/app/data/game-objects/items/ships/Terran/Teneta.bbship/mask1.jpg",
+    "/app/data/game-objects/items/ships/Terran/Teneta.bbship/mask2.jpg",
+    "/app/data/game-objects/items/ships/Terran/Teneta.bbship/ship_001_terran_diffuse.bmp",
+    "/app/data/game-objects/items/ships/Terran/Teneta.bbship/ship_001_terran_normal_specular.bmp",
+    "/app/data/game-objects/items/ships/Terran/Teneta.bbship/skinBase.png",
+    "/app/data/game-objects/items/ships/Terran/Teneta.bbship/Teneta_Full.mtl",
+    "/app/data/game-objects/items/ships/Terran/Teneta.bbship/Teneta_Full.obj"
   ],
-  "normSpec": "/app/game-objects/Terran/Teneta.bbship/ship_001_terran_normal_specular.bmp"
+  "normSpec": "/app/data/game-objects/items/ships/Terran/Teneta.bbship/ship_001_terran_normal_specular.bmp"
 }

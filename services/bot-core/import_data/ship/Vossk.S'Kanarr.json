@@ -38,7 +38,7 @@
   "maxPrimaries": 4,
   "maxSecondaries": 2,
   "maxTurrets": 1,
-  "model": "/app/game-objects/Vossk/S'Kanarr.bbship/S'Kanarr_Full.obj",
+  "model": "/app/data/game-objects/items/ships/Vossk/S'Kanarr.bbship/S'Kanarr_Full.obj",
   "name": "S'Kanarr",
   "saveDue": false,
   "shopSpawnRate": 8.416,
@@ -47,10 +47,10 @@
   "value": 7250000,
   "wiki": "https://galaxyonfire.fandom.com/wiki/S%27Kanarr",
   "assets": [
-    "/app/game-objects/Vossk/S'Kanarr.bbship/mask1.jpg",
-    "/app/game-objects/Vossk/S'Kanarr.bbship/S'Kanarr_Full.mtl",
-    "/app/game-objects/Vossk/S'Kanarr.bbship/S'Kanarr_Full.obj",
-    "/app/game-objects/Vossk/S'Kanarr.bbship/skinBase.png",
-    "/app/game-objects/Vossk/S'Kanarr.bbship/v_ship_039_vossk_diffuse.bmp"
+    "/app/data/game-objects/items/ships/Vossk/S'Kanarr.bbship/mask1.jpg",
+    "/app/data/game-objects/items/ships/Vossk/S'Kanarr.bbship/S'Kanarr_Full.mtl",
+    "/app/data/game-objects/items/ships/Vossk/S'Kanarr.bbship/S'Kanarr_Full.obj",
+    "/app/data/game-objects/items/ships/Vossk/S'Kanarr.bbship/skinBase.png",
+    "/app/data/game-objects/items/ships/Vossk/S'Kanarr.bbship/v_ship_039_vossk_diffuse.bmp"
   ]
 }

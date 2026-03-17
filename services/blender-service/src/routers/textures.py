@@ -50,8 +50,14 @@ _aei_service = AEIConversionService()
     status_code=status.HTTP_200_OK,
 )
 async def composite_textures(
-    base_texture: UploadFile = File(
-        ..., description="Region 0 underlayer image (RGBA PNG recommended)"
+    base_texture: UploadFile | None = File(
+        default=None, description="Region 0 underlayer image (RGBA PNG recommended). "
+        "If omitted, base_texture_path must be provided instead."
+    ),
+    base_texture_path: str = Form(
+        default="", description="Absolute path to the base texture file on disk (e.g. the ship's diffuse BMP). "
+        "Used when the base texture already exists on disk and does not need to be uploaded. "
+        "If base_texture (file upload) is also provided, the upload takes precedence."
     ),
     ship_path: str = Form(
         ..., description="Path to the .bbship directory containing skinBase.png and maskN.jpg files"
@@ -171,16 +177,44 @@ async def composite_textures(
             ),
         )
 
-    # --- Load base_texture ---
-    try:
-        base_data = await base_texture.read()
-        base_img = Image.open(BytesIO(base_data))
-    except Exception as exc:
-        flogger.error(f"Failed to read base_texture: {exc}")
+    # --- Load base_texture (from upload or disk path) ---
+    base_img: Image.Image
+    if base_texture is not None:
+        # Prefer uploaded file when provided
+        try:
+            base_data = await base_texture.read()
+            base_img = Image.open(BytesIO(base_data))
+            flogger.debug(f"Loaded base_texture from upload: size={base_img.size}")
+        except Exception as exc:
+            flogger.error(f"Failed to read base_texture upload: {exc}")
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Failed to read base_texture upload: {exc}",
+            ) from exc
+    elif base_texture_path:
+        # Fall back to loading from disk (e.g. the ship's diffuse BMP)
+        disk_path = Path(base_texture_path)
+        if not disk_path.exists():
+            flogger.error(f"base_texture_path not found: {base_texture_path}")
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Base texture file not found on disk: {base_texture_path}",
+            )
+        try:
+            base_img = Image.open(disk_path)
+            base_img.load()
+            flogger.debug(f"Loaded base_texture from disk: {base_texture_path}, size={base_img.size}")
+        except Exception as exc:
+            flogger.error(f"Failed to open base_texture from disk: {exc}")
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Failed to open base texture file: {exc}",
+            ) from exc
+    else:
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Failed to read base_texture upload: {exc}",
-        ) from exc
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Either base_texture (file upload) or base_texture_path (disk path) must be provided.",
+        )
 
     # --- Apply square_mode to base_texture ---
     if square_mode == "crop":

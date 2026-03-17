@@ -36,7 +36,7 @@
   "maxPrimaries": 2,
   "maxSecondaries": 2,
   "maxTurrets": 1,
-  "model": "/app/game-objects/Pirate/Azov.bbship/Azov_Full.obj",
+  "model": "/app/data/game-objects/items/ships/Pirate/Azov.bbship/Azov_Full.obj",
   "name": "Azov",
   "saveDue": false,
   "shopSpawnRate": 8.416,
@@ -45,13 +45,13 @@
   "value": 61900,
   "wiki": "https://galaxyonfire.fandom.com/wiki/Azov",
   "assets": [
-    "/app/game-objects/Pirate/Azov.bbship/Azov_Full.mtl",
-    "/app/game-objects/Pirate/Azov.bbship/Azov_Full.obj",
-    "/app/game-objects/Pirate/Azov.bbship/mask1.jpg",
-    "/app/game-objects/Pirate/Azov.bbship/mask2.jpg",
-    "/app/game-objects/Pirate/Azov.bbship/ship_023_pirates_diffuse.bmp",
-    "/app/game-objects/Pirate/Azov.bbship/ship_023_pirates_normal_specular.bmp",
-    "/app/game-objects/Pirate/Azov.bbship/skinBase.png"
+    "/app/data/game-objects/items/ships/Pirate/Azov.bbship/Azov_Full.mtl",
+    "/app/data/game-objects/items/ships/Pirate/Azov.bbship/Azov_Full.obj",
+    "/app/data/game-objects/items/ships/Pirate/Azov.bbship/mask1.jpg",
+    "/app/data/game-objects/items/ships/Pirate/Azov.bbship/mask2.jpg",
+    "/app/data/game-objects/items/ships/Pirate/Azov.bbship/ship_023_pirates_diffuse.bmp",
+    "/app/data/game-objects/items/ships/Pirate/Azov.bbship/ship_023_pirates_normal_specular.bmp",
+    "/app/data/game-objects/items/ships/Pirate/Azov.bbship/skinBase.png"
   ],
-  "normSpec": "/app/game-objects/Pirate/Azov.bbship/ship_023_pirates_normal_specular.bmp"
+  "normSpec": "/app/data/game-objects/items/ships/Pirate/Azov.bbship/ship_023_pirates_normal_specular.bmp"
 }

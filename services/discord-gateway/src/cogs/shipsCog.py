@@ -41,6 +41,7 @@ class ShipsCog(commands.Cog):
     @app_commands.describe(user="View another user's ships (admin only)")
     async def ships(self, interaction: discord.Interaction, user: discord.User | None = None):
         """Display player ships."""
+        flogger.info(f"/ships: guild={interaction.guild_id}, user={interaction.user.id}")
         await interaction.response.defer(thinking=True)
 
         try:
@@ -49,22 +50,28 @@ class ShipsCog(commands.Cog):
             if user and user != interaction.user:
                 # Require admin permission to view another user's ships
                 from cogs.adminCog import _check_is_admin
+                flogger.debug(f"/ships: checking admin permission for user={interaction.user.id}")
                 if not await _check_is_admin(interaction):
+                    flogger.debug(f"/ships: admin permission denied for user={interaction.user.id}")
                     await interaction.followup.send(
                         "❌ You need admin permissions to view another user's ships.",
                         ephemeral=True
                     )
                     return
+                flogger.debug(f"/ships: admin permission granted, viewing {target_user.id}'s ships")
 
             player_id = await self._get_player_id(target_user.id, interaction.guild_id)
             if not player_id:
+                flogger.debug(f"/ships: player not found for discord_id={target_user.id}")
                 await interaction.followup.send("❌ Player not found.", ephemeral=True)
                 return
 
             # Get player ships
+            flogger.debug(f"/ships: fetching ships for player_id={player_id}")
             resp = await self.http_client.get(f"{api_base}/ships/player/{player_id}", timeout=10)
             resp.raise_for_status()
             ships = resp.json()
+            flogger.debug(f"/ships: retrieved {len(ships)} ships for player_id={player_id}")
 
             if not ships:
                 await interaction.followup.send(
@@ -115,36 +122,46 @@ class ShipsCog(commands.Cog):
             embed.set_thumbnail(url=target_user.display_avatar.url)
 
             await interaction.followup.send(embed=embed)
-            flogger.debug(f"/ships by {interaction.user} for {target_user} in guild {interaction.guild_id}")
+            flogger.info(f"/ships success: guild={interaction.guild_id}, user={interaction.user.id}, "
+                         f"target_user={target_user.id}, ships_count={len(ships)}")
 
         except httpx.HTTPStatusError as e:
+            flogger.error(f"/ships API error: status={e.response.status_code}, guild={interaction.guild_id}, "
+                          f"user={interaction.user.id}, error={e}")
             await interaction.followup.send(f"❌ API Error: {e}", ephemeral=True)
         except Exception as e:  # pylint: disable=broad-exception-caught
-            flogger.error(f"Error in /ships: {e}")
+            flogger.error(f"/ships failed: guild={interaction.guild_id}, user={interaction.user.id}, error={e}")
             await interaction.followup.send("⚠️ An error occurred while fetching ships.", ephemeral=True)
 
     @app_commands.command(name="ship", description="View detailed information about a specific ship")
     @app_commands.describe(ship_id="ID of the ship to view")
     async def ship(self, interaction: discord.Interaction, ship_id: int):
         """Display detailed ship information."""
+        flogger.info(f"/ship: guild={interaction.guild_id}, user={interaction.user.id}, ship_id={ship_id}")
         await interaction.response.defer(thinking=True)
 
         try:
             # Get ship details
+            flogger.debug(f"/ship: fetching ship_id={ship_id}")
             resp = await self.http_client.get(f"{api_base}/ships/{ship_id}", timeout=10)
             resp.raise_for_status()
             ship = resp.json()
+            flogger.debug(f"/ship: retrieved ship_id={ship_id}, ship_name={ship.get('ship_name')}")
 
             # Verify ship belongs to user (basic security)
             player_id = await self._get_player_id(interaction.user.id, interaction.guild_id)
             if ship['player_id'] != player_id:
+                flogger.debug(f"/ship: ownership check failed for ship_id={ship_id}, user={interaction.user.id}")
                 await interaction.followup.send("❌ You don't own this ship.", ephemeral=True)
                 return
 
             # Get detailed loadout
+            flogger.debug(f"/ship: fetching loadout for ship_id={ship_id}")
             loadout_resp = await self.http_client.get(f"{api_base}/ships/{ship_id}/loadout", timeout=10)
             loadout_resp.raise_for_status()
             loadout = loadout_resp.json()
+            flogger.debug(f"/ship: loadout retrieved - weapons={loadout.get('weapons_count')}, "
+                          f"modules={loadout.get('modules_count')}, turrets={loadout.get('turrets_count')}")
 
             # Create detailed ship embed
             status_emoji = "🟢" if ship['is_active'] else "⚪"
@@ -199,30 +216,39 @@ class ShipsCog(commands.Cog):
             )
 
             await interaction.followup.send(embed=embed)
-            flogger.debug(f"/ship {ship_id} by {interaction.user} in guild {interaction.guild_id}")
+            flogger.info(f"/ship success: guild={interaction.guild_id}, user={interaction.user.id}, "
+                         f"ship_id={ship_id}, ship_name={ship.get('ship_name')}")
 
         except httpx.HTTPStatusError as e:
             if e.response.status_code == 404:
+                flogger.debug(f"/ship not found: ship_id={ship_id}, guild={interaction.guild_id}")
                 await interaction.followup.send("❌ Ship not found.", ephemeral=True)
             else:
+                flogger.error(f"/ship API error: status={e.response.status_code}, ship_id={ship_id}, "
+                              f"guild={interaction.guild_id}, user={interaction.user.id}, error={e}")
                 await interaction.followup.send(f"❌ API Error: {e}", ephemeral=True)
         except Exception as e:  # pylint: disable=broad-exception-caught
-            flogger.error(f"Error in /ship: {e}")
+            flogger.error(f"/ship failed: ship_id={ship_id}, guild={interaction.guild_id}, "
+                          f"user={interaction.user.id}, error={e}")
             await interaction.followup.send("⚠️ An error occurred while fetching ship details.", ephemeral=True)
 
     @app_commands.command(name="setactive", description="Set a ship as your active ship")
     @app_commands.describe(ship_id="ID of the ship to set as active")
     async def setactive(self, interaction: discord.Interaction, ship_id: int):
         """Set active ship."""
+        flogger.info(f"/setactive: guild={interaction.guild_id}, user={interaction.user.id}, ship_id={ship_id}")
         await interaction.response.defer(thinking=True)
 
         try:
+            flogger.debug(f"/setactive: resolving player for user={interaction.user.id}")
             player_id = await self._get_player_id(interaction.user.id, interaction.guild_id)
             if not player_id:
+                flogger.debug(f"/setactive: player not found for user={interaction.user.id}")
                 await interaction.followup.send("❌ Player not found.", ephemeral=True)
                 return
 
             # Set active ship
+            flogger.debug(f"/setactive: setting ship_id={ship_id} as active for player_id={player_id}")
             resp = await self.http_client.put(
                 f"{api_base}/ships/{ship_id}/set-active",
                 params={"player_id": player_id},
@@ -230,6 +256,7 @@ class ShipsCog(commands.Cog):
             )
             resp.raise_for_status()
             ship = resp.json()
+            flogger.debug(f"/setactive: ship set active - ship_id={ship_id}, ship_name={ship.get('ship_name')}")
 
             # Success message
             ship_name = ship['ship_name']
@@ -245,17 +272,23 @@ class ShipsCog(commands.Cog):
             embed.add_field(name="Status", value="🟢 Active", inline=True)
 
             await interaction.followup.send(embed=embed)
-            flogger.debug(f"/setactive {ship_id} by {interaction.user} in guild {interaction.guild_id}")
+            flogger.info(f"/setactive success: guild={interaction.guild_id}, user={interaction.user.id}, "
+                         f"ship_id={ship_id}, ship_name={ship.get('ship_name')}")
 
         except httpx.HTTPStatusError as e:
             if e.response.status_code == 400:
+                flogger.debug(f"/setactive validation failed: ship_id={ship_id}, guild={interaction.guild_id}")
                 await interaction.followup.send("❌ Invalid ship or you don't own this ship.", ephemeral=True)
             elif e.response.status_code == 404:
+                flogger.debug(f"/setactive not found: ship_id={ship_id}, guild={interaction.guild_id}")
                 await interaction.followup.send("❌ Ship not found.", ephemeral=True)
             else:
+                flogger.error(f"/setactive API error: status={e.response.status_code}, ship_id={ship_id}, "
+                              f"guild={interaction.guild_id}, user={interaction.user.id}, error={e}")
                 await interaction.followup.send(f"❌ API Error: {e}", ephemeral=True)
         except Exception as e:  # pylint: disable=broad-exception-caught
-            flogger.error(f"Error in /setactive: {e}")
+            flogger.error(f"/setactive failed: ship_id={ship_id}, guild={interaction.guild_id}, "
+                          f"user={interaction.user.id}, error={e}")
             await interaction.followup.send("⚠️ An error occurred while setting active ship.", ephemeral=True)
 
     @app_commands.command(name="nickname", description="Set a nickname for your ship")
@@ -265,25 +298,31 @@ class ShipsCog(commands.Cog):
     )
     async def nickname(self, interaction: discord.Interaction, ship_id: int, nickname: str):
         """Set ship nickname."""
+        flogger.info(f"/nickname: guild={interaction.guild_id}, user={interaction.user.id}, ship_id={ship_id}")
+        flogger.debug(f"/nickname params: nickname_length={len(nickname)}")
         await interaction.response.defer(thinking=True)
 
         try:
             # Validate nickname length
             if len(nickname) > 50:
+                flogger.debug(f"/nickname validation failed: nickname_length={len(nickname)} exceeds max 50")
                 await interaction.followup.send("❌ Nickname must be 50 characters or less.", ephemeral=True)
                 return
 
             # First check if user owns the ship
+            flogger.debug(f"/nickname: fetching ship_id={ship_id} for ownership check")
             resp = await self.http_client.get(f"{api_base}/ships/{ship_id}", timeout=10)
             resp.raise_for_status()
             ship = resp.json()
 
             player_id = await self._get_player_id(interaction.user.id, interaction.guild_id)
             if ship['player_id'] != player_id:
+                flogger.debug(f"/nickname: ownership check failed for ship_id={ship_id}, user={interaction.user.id}")
                 await interaction.followup.send("❌ You don't own this ship.", ephemeral=True)
                 return
 
             # Update nickname
+            flogger.debug(f"/nickname: updating ship_id={ship_id} with new nickname")
             nick_resp = await self.http_client.put(
                 f"{api_base}/ships/{ship_id}/nickname",
                 json={"nickname": nickname},
@@ -291,6 +330,7 @@ class ShipsCog(commands.Cog):
             )
             nick_resp.raise_for_status()
             updated_ship = nick_resp.json()
+            flogger.debug(f"/nickname: update successful - ship_id={ship_id}, new_nickname={nickname}")
 
             # Success message
             embed = discord.Embed(
@@ -307,15 +347,20 @@ class ShipsCog(commands.Cog):
             )
 
             await interaction.followup.send(embed=embed)
-            flogger.debug(f"/nickname {ship_id} '{nickname}' by {interaction.user} in guild {interaction.guild_id}")
+            flogger.info(f"/nickname success: guild={interaction.guild_id}, user={interaction.user.id}, "
+                         f"ship_id={ship_id}, new_nickname={nickname}")
 
         except httpx.HTTPStatusError as e:
             if e.response.status_code == 404:
+                flogger.debug(f"/nickname not found: ship_id={ship_id}, guild={interaction.guild_id}")
                 await interaction.followup.send("❌ Ship not found.", ephemeral=True)
             else:
+                flogger.error(f"/nickname API error: status={e.response.status_code}, ship_id={ship_id}, "
+                              f"guild={interaction.guild_id}, user={interaction.user.id}, error={e}")
                 await interaction.followup.send(f"❌ API Error: {e}", ephemeral=True)
         except Exception as e:  # pylint: disable=broad-exception-caught
-            flogger.error(f"Error in /nickname: {e}")
+            flogger.error(f"/nickname failed: ship_id={ship_id}, guild={interaction.guild_id}, "
+                          f"user={interaction.user.id}, error={e}")
             await interaction.followup.send("⚠️ An error occurred while setting ship nickname.", ephemeral=True)
 
     @ships.error

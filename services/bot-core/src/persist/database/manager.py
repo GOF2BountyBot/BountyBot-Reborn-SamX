@@ -57,6 +57,11 @@ class DatabaseManager:
         pool_recycle = int(os.getenv("DB_POOL_RECYCLE", "3600"))
         echo_flag = os.getenv("DB_ECHO", "false").lower() == "true"
 
+        flogger.debug(
+            f"Pool configuration: size={pool_size}, max_overflow={max_overflow}, "
+            f"timeout={pool_timeout}s, recycle={pool_recycle}s, echo={echo_flag}"
+        )
+
         # Use asyncpg dialect
         self._connection_string = (
             f"postgresql+asyncpg://{db_user}:{db_password}@"
@@ -83,16 +88,20 @@ class DatabaseManager:
 
         try:
             flogger.info("Initializing async database connection...")
+            flogger.debug("Creating AsyncEngine with asyncpg dialect and connection pool")
             self._engine = create_async_engine(
                 self._connection_string,
                 future=True,
                 **self._pool_config
             )
+            flogger.debug("AsyncEngine created successfully")
+            flogger.debug("Creating async_sessionmaker")
             self._session_factory = sessionmaker(
                 bind=self._engine,
                 class_=AsyncSession,
                 expire_on_commit=False
             )
+            flogger.debug("async_sessionmaker created successfully")
             await self._test_connection()
             flogger.info("Database manager initialized successfully")
         except Exception as e:
@@ -137,8 +146,13 @@ class DatabaseManager:
         """
         if self._engine is None:
             raise RuntimeError("Database manager not initialized. Call initialize() first.")
+        flogger.debug("Acquiring connection from pool")
         async with self._engine.connect() as conn:
-            yield conn
+            flogger.debug("Connection acquired from pool")
+            try:
+                yield conn
+            finally:
+                flogger.debug("Releasing connection back to pool")
 
     @asynccontextmanager
     async def get_session(self) -> AsyncSession:
@@ -151,13 +165,17 @@ class DatabaseManager:
         """
         if self._session_factory is None:
             raise RuntimeError("Database manager not initialized. Call initialize() first.")
+        flogger.debug("Creating new database session")
         async with self._session_factory() as session:
+            flogger.debug("Database session created")
             try:
                 yield session
-            except Exception:
-                flogger.error("Session error — rolling back transaction")
+            except Exception as e:
+                flogger.error(f"Session error — rolling back transaction: {type(e).__name__}")
                 await session.rollback()
                 raise
+            finally:
+                flogger.debug("Session released")
 
     async def execute_sql(
         self,
@@ -169,9 +187,12 @@ class DatabaseManager:
         Returns the Result object.
         """
         try:
+            flogger.debug(f"Executing SQL statement: {sql_statement[:100]}...")
             async with self.get_connection() as conn:
                 async with conn.begin():
+                    flogger.debug("SQL transaction started")
                     result = await conn.execute(text(sql_statement), parameters or {})
+                flogger.debug("SQL transaction committed successfully")
                 return result
         except SQLAlchemyError as e:
             flogger.error(f"SQL execution failed: {e}")
@@ -186,13 +207,17 @@ class DatabaseManager:
         Check if a table exists in the database.
         """
         if self._engine is None:
+            flogger.debug(f"Engine not initialized, cannot check if table '{table_name}' exists")
             return False
         try:
+            flogger.debug(f"Checking if table '{table_name}' exists in schema '{schema}'")
             # Use the underlying sync engine for inspection
             inspector = inspect(self._engine.sync_engine)
-            return inspector.has_table(table_name, schema=schema)
+            exists = inspector.has_table(table_name, schema=schema)
+            flogger.debug(f"Table '{table_name}' exists: {exists}")
+            return exists
         except SQLAlchemyError as e:
-            flogger.error(f"Error checking table existence: {e}")
+            flogger.error(f"Error checking table existence for '{table_name}': {e}")
             return False
 
     async def get_health_info(self) -> dict[str, Any]:
@@ -208,22 +233,31 @@ class DatabaseManager:
 
         try:
             if self._engine is None:
+                flogger.debug("Health check: engine not initialized")
                 health_info.update(status="not_initialized",
                                    error="Database manager not initialized")
                 return health_info
 
+            flogger.debug("Health check: testing connectivity")
             async with self.get_connection() as conn:
                 await conn.execute(text("SELECT 1"))
                 health_info["connectivity"] = True
+            flogger.debug("Health check: connectivity test passed")
 
             pool = self._engine.pool
-            health_info["connection_pool"] = {
+            pool_stats = {
                 "size": pool.size(),
                 "checked_in": pool.checkedin(),
                 "checked_out": pool.checkedout(),
                 "overflow": pool.overflow(),
                 "status": pool.status()
             }
+            health_info["connection_pool"] = pool_stats
+            flogger.debug(
+                f"Health check: pool stats — size={pool_stats['size']}, "
+                f"checked_in={pool_stats['checked_in']}, checked_out={pool_stats['checked_out']}, "
+                f"overflow={pool_stats['overflow']}"
+            )
             health_info["status"] = "healthy"
         except Exception as e:  # pylint: disable=broad-exception-caught
             health_info.update(status="unhealthy", error=str(e))
@@ -238,10 +272,13 @@ class DatabaseManager:
         """
         flogger.info("Shutting down database manager...")
         if self._engine:
+            flogger.debug("Disposing connection pool and underlying sync engine")
             # Dispose the underlying pool
             self._engine.sync_engine.dispose()
+            flogger.debug("Connection pool disposed")
             self._engine = None
         self._session_factory = None
+        flogger.debug("Session factory cleared")
         flogger.info("Database manager shutdown complete")
 
     @property

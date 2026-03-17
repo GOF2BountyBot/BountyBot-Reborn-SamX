@@ -41,9 +41,18 @@ async def get_pending_duels(
     service: DuelService = Depends(get_duel_service),
 ):
     """Get pending duel requests where the user is the target (for autocomplete)."""
+    flogger.info(f"Get pending duels request: user_id={user_id} guild_id={guild_id}")
     async with get_db_session() as db:
-        duels = await service.get_pending_for_target(db, user_id, guild_id)
-        return [DuelRequestResponse.model_validate(d) for d in duels]
+        try:
+            duels = await service.get_pending_for_target(db, user_id, guild_id)
+            flogger.debug(f"Retrieved {len(duels)} pending duels for user_id={user_id} guild_id={guild_id}")
+            result = [DuelRequestResponse.model_validate(d) for d in duels]
+            return result
+        except Exception as exc:
+            flogger.error(
+                f"Get pending duels failed for user_id={user_id} guild_id={guild_id}: {exc}"
+            )
+            raise HTTPException(status_code=500, detail="Failed to retrieve pending duels") from exc
 
 
 # ---------------------------------------------------------------------------
@@ -61,6 +70,11 @@ async def create_challenge(
         f"Duel challenge request: challenger={request.challenger_id}"
         f" target={request.target_id} stakes={request.stakes} guild_id={request.guild_id}"
     )
+    flogger.debug(
+        f"Challenge payload: challenger_id={request.challenger_id}"
+        f" target_id={request.target_id} stakes={request.stakes}"
+        f" guild_id={request.guild_id}"
+    )
     async with get_db_session() as db:
         try:
             duel = await service.create_challenge(
@@ -69,6 +83,10 @@ async def create_challenge(
                 request.target_id,
                 request.stakes,
                 request.guild_id,
+            )
+            flogger.debug(
+                f"Challenge response: duel_id={duel.id} status={duel.status}"
+                f" created_at={duel.created_at} expires_at={duel.expires_at}"
             )
             flogger.info(
                 f"Duel challenge created: duel_id={duel.id}"
@@ -113,6 +131,7 @@ async def accept_duel(
             )
 
         flogger.info(f"Duel accept request: duel_id={duel_id} user_id={user_id}")
+        flogger.debug(f"User {user_id} is accepting duel {duel_id} (authorization check passed)")
         try:
             result = await service.accept_duel(db, duel_id)
         except ValueError as exc:
@@ -124,6 +143,12 @@ async def accept_duel(
         fight = result["fight_results"]
         challenger = result["challenger"]
         target = result["target"]
+
+        flogger.debug(
+            f"Duel resolution details: duel_id={duel_id}"
+            f" challenger_id={challenger.id} target_id={target.id}"
+            f" challenger_health={fight.challenger_health} target_health={fight.target_health}"
+        )
 
         flogger.info(
             f"Duel accepted and resolved: duel_id={duel_id}"
@@ -174,8 +199,13 @@ async def reject_duel(
             )
 
         flogger.info(f"Duel reject request: duel_id={duel_id} user_id={user_id}")
+        flogger.debug(f"User {user_id} is rejecting duel {duel_id} (authorization check passed)")
         try:
             updated = await service.reject_duel(db, duel_id)
+            flogger.debug(
+                f"Duel rejection payload: duel_id={duel_id} status={updated.status}"
+                f" challenger_id={updated.challenger_id} target_id={updated.target_id}"
+            )
             flogger.info(f"Duel rejected: duel_id={duel_id} user_id={user_id}")
             return DuelRequestResponse.model_validate(updated)
         except ValueError as exc:

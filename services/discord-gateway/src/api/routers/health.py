@@ -49,7 +49,7 @@ async def health_check(_request: Request) -> HealthCheckResponse:
     Returns detailed information about the service status,
     environment, and various system checks.
     """
-    flogger.debug("Inside health_check method...")
+    flogger.debug("Health check endpoint called: GET /health")
 
     # Basic system checks
     checks = {
@@ -60,9 +60,13 @@ async def health_check(_request: Request) -> HealthCheckResponse:
 
     # Determine overall status
     all_checks_passed = all(checks.values())
-    flogger.trace(f"All Checks Passed: {all_checks_passed}")
-
     service_status = "healthy" if all_checks_passed else "unhealthy"
+    flogger.debug(
+        f"Health check result: status={service_status}, "
+        f"python_check={checks['python_version']}, "
+        f"memory_check={checks['memory_available']}, "
+        f"disk_check={checks['disk_space']}"
+    )
 
     return HealthCheckResponse(
         status=service_status,
@@ -89,6 +93,8 @@ async def simple_health_check() -> SimpleHealthResponse:
     Simple health check endpoint for load balancers.
     Returns minimal response for quick health verification.
     """
+    flogger.debug("Simple health check endpoint called: GET /health/simple")
+    flogger.debug("Health check result: status=healthy")
     return SimpleHealthResponse(
         status="healthy",
         timestamp=datetime.now(UTC)
@@ -106,4 +112,6 @@ async def liveness_check() -> dict[str, str]:
     Used by orchestrators to determine if the service
     should be restarted.
     """
+    flogger.debug("Liveness check endpoint called: GET /health/liveness")
+    flogger.debug("Health check result: status=alive")
     return {"status": "alive"}

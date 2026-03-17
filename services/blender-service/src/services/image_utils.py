@@ -8,6 +8,9 @@ used by Discord cogs to validate and transform user-uploaded images.
 from __future__ import annotations
 
 from PIL import Image
+from shared import bblogger
+
+flogger = bblogger.get_logger("blender-image-utils")
 
 
 def is_square(image: Image.Image) -> bool:
@@ -18,7 +21,10 @@ def is_square(image: Image.Image) -> bool:
     :rtype: bool
     """
     width, height = image.size
-    return width == height
+    flogger.debug(f"is_square() entry: width={width}, height={height}")
+    result = width == height
+    flogger.debug(f"is_square() exit: result={result}")
+    return result
 
 
 def crop_to_square(image: Image.Image) -> Image.Image:
@@ -42,7 +48,10 @@ def crop_to_square(image: Image.Image) -> Image.Image:
     :rtype: Image.Image
     """
     width, height = image.size
+    flogger.debug(f"crop_to_square() entry: width={width}, height={height}")
+
     if width == height:
+        flogger.debug(f"crop_to_square() exit: image already square, returning unchanged")
         return image
 
     if width > height:
@@ -50,13 +59,19 @@ def crop_to_square(image: Image.Image) -> Image.Image:
         diff = width - height
         left = diff // 2
         right = width - (diff - left)  # extra pixel goes to the right
-        return image.crop((left, 0, right, height))
+        result = image.crop((left, 0, right, height))
+        flogger.debug(
+            f"crop_to_square() exit: landscape crop left={left} right={right} result_size={result.size}"
+        )
+        return result
     else:
         # Portrait: crop top and bottom, keep full width
         diff = height - width
         top = diff // 2
         bottom = height - (diff - top)  # extra pixel goes to the bottom
-        return image.crop((0, top, width, bottom))
+        result = image.crop((0, top, width, bottom))
+        flogger.debug(f"crop_to_square() exit: portrait crop top={top} bottom={bottom} result_size={result.size}")
+        return result
 
 
 def stretch_to_square(image: Image.Image) -> Image.Image:
@@ -79,11 +94,16 @@ def stretch_to_square(image: Image.Image) -> Image.Image:
     :rtype: Image.Image
     """
     width, height = image.size
+    flogger.debug(f"stretch_to_square() entry: width={width}, height={height}")
+
     if width == height:
+        flogger.debug(f"stretch_to_square() exit: image already square, returning unchanged")
         return image
 
     side = max(width, height)
-    return image.resize((side, side), Image.LANCZOS)
+    result = image.resize((side, side), Image.LANCZOS)
+    flogger.debug(f"stretch_to_square() exit: resized to {side}x{side} using LANCZOS resampling")
+    return result
 
 
 def check_and_report_square(image: Image.Image) -> dict:
@@ -104,6 +124,7 @@ def check_and_report_square(image: Image.Image) -> dict:
     :rtype: dict
     """
     width, height = image.size
+    flogger.debug(f"check_and_report_square() entry: width={width}, height={height}")
     difference = abs(width - height)
 
     if width > height:
@@ -113,10 +134,15 @@ def check_and_report_square(image: Image.Image) -> dict:
     else:
         longer_side = "equal"
 
-    return {
+    result = {
         "is_square": width == height,
         "width": width,
         "height": height,
         "difference": difference,
         "longer_side": longer_side,
     }
+    flogger.debug(
+        f"check_and_report_square() exit: is_square={result['is_square']} "
+        f"difference={result['difference']} longer_side={result['longer_side']}"
+    )
+    return result

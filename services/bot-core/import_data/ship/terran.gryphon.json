@@ -36,7 +36,7 @@
   "maxPrimaries": 4,
   "maxSecondaries": 2,
   "maxTurrets": 0,
-  "model": "/app/game-objects/Terran/Gryphon.bbship/Gryphon_Full.obj",
+  "model": "/app/data/game-objects/items/ships/Terran/Gryphon.bbship/Gryphon_Full.obj",
   "name": "Gryphon",
   "saveDue": false,
   "shopSpawnRate": 7.214,
@@ -45,13 +45,13 @@
   "value": 2100000,
   "wiki": "https://galaxyonfire.fandom.com/wiki/Gryphon",
   "assets": [
-    "/app/game-objects/Terran/Gryphon.bbship/Gryphon_Full.mtl",
-    "/app/game-objects/Terran/Gryphon.bbship/Gryphon_Full.obj",
-    "/app/game-objects/Terran/Gryphon.bbship/mask1.jpg",
-    "/app/game-objects/Terran/Gryphon.bbship/mask2.jpg",
-    "/app/game-objects/Terran/Gryphon.bbship/skinBase.png",
-    "/app/game-objects/Terran/Gryphon.bbship/sn_ship_052_retro_diffuse.bmp",
-    "/app/game-objects/Terran/Gryphon.bbship/sn_ship_052_retro_normal_specular.bmp"
+    "/app/data/game-objects/items/ships/Terran/Gryphon.bbship/Gryphon_Full.mtl",
+    "/app/data/game-objects/items/ships/Terran/Gryphon.bbship/Gryphon_Full.obj",
+    "/app/data/game-objects/items/ships/Terran/Gryphon.bbship/mask1.jpg",
+    "/app/data/game-objects/items/ships/Terran/Gryphon.bbship/mask2.jpg",
+    "/app/data/game-objects/items/ships/Terran/Gryphon.bbship/skinBase.png",
+    "/app/data/game-objects/items/ships/Terran/Gryphon.bbship/sn_ship_052_retro_diffuse.bmp",
+    "/app/data/game-objects/items/ships/Terran/Gryphon.bbship/sn_ship_052_retro_normal_specular.bmp"
   ],
-  "normSpec": "/app/game-objects/Terran/Gryphon.bbship/sn_ship_052_retro_normal_specular.bmp"
+  "normSpec": "/app/data/game-objects/items/ships/Terran/Gryphon.bbship/sn_ship_052_retro_normal_specular.bmp"
 }

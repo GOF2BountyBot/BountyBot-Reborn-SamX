@@ -22,40 +22,64 @@ class ShipRepository(GenericRepository[Ship]):
         raw is your parsed JSON.  We first look up by name,
         then insert or patch fields and commit.
         """
-        flogger.trace(f"Creating or updating ship from {raw}")
+        ship_name = raw.get("name", "UNKNOWN")
+        flogger.trace(f"create_or_update() entry: ship_name={ship_name}, raw_keys={list(raw.keys())}")
 
-        # look up existing
-        result = await db.execute(
-            select(self._model).filter_by(name=raw["name"])
-        )
-        obj = result.scalars().one_or_none()
+        try:
+            # look up existing
+            flogger.trace(f"Querying existing ship by name: {ship_name}")
+            result = await db.execute(
+                select(self._model).filter_by(name=raw["name"])
+            )
+            obj = result.scalars().one_or_none()
 
-        # Map JSON keys → model attributes
-        mapping = {
-            "builtIn":           "built_in",
-            "compatibleSkins":   "compatible_skins",
-            "shopSpawnRate":     "shop_spawn_rate",
-            "textureRegions":    "texture_regions",
-            "maxModules":        "max_modules",
-            "maxPrimaries":      "max_primaries",
-            "maxSecondaries":    "max_secondaries",
-            "maxTurrets":        "max_turrets",
-            "saveDue":           "save_due",
-            "normSpec":          "norm_spec",
-            # all others map 1:1 by lower-snake
-        }
+            if obj:
+                flogger.debug(
+                    f"Updating existing ship: id={obj.id}, name={ship_name}, "
+                    f"fields={list(raw.keys())}"
+                )
+            else:
+                flogger.debug(f"Creating new ship: name={ship_name}")
 
-        def to_attr(k: str) -> str:
-            return mapping.get(k, k.lower())
+            # Map JSON keys → model attributes
+            mapping = {
+                "builtIn":           "built_in",
+                "compatibleSkins":   "compatible_skins",
+                "shopSpawnRate":     "shop_spawn_rate",
+                "textureRegions":    "texture_regions",
+                "maxModules":        "max_modules",
+                "maxPrimaries":      "max_primaries",
+                "maxSecondaries":    "max_secondaries",
+                "maxTurrets":        "max_turrets",
+                "saveDue":           "save_due",
+                "normSpec":          "norm_spec",
+                # all others map 1:1 by lower-snake
+            }
 
-        if obj:
-            for k, v in raw.items():
-                setattr(obj, to_attr(k), v)
-        else:
-            attrs = { to_attr(k): v for k, v in raw.items() }
-            obj = Ship(**attrs)
-            db.add(obj)
+            def to_attr(k: str) -> str:
+                return mapping.get(k, k.lower())
 
-        await db.commit()
-        await db.refresh(obj)
-        return obj
+            if obj:
+                for k, v in raw.items():
+                    setattr(obj, to_attr(k), v)
+                flogger.trace(f"Updated ship attributes for id={obj.id}")
+            else:
+                attrs = { to_attr(k): v for k, v in raw.items() }
+                obj = Ship(**attrs)
+                db.add(obj)
+                flogger.trace(f"Added new Ship object to session: name={ship_name}")
+
+            await db.commit()
+            await db.refresh(obj)
+            flogger.debug(
+                f"Ship successfully persisted: id={obj.id}, name={ship_name}"
+            )
+            flogger.trace(f"create_or_update() exit: ship_id={obj.id}")
+            return obj
+
+        except Exception as e:
+            flogger.error(
+                f"Error in create_or_update for ship '{ship_name}': {type(e).__name__}: {e}"
+            )
+            await db.rollback()
+            raise

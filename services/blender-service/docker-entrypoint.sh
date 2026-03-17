@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Configuration variables
-TARGET_DIR="/app/game-objects"
+TARGET_DIR="/app/data/game-objects"
 TEMP_FILE="/tmp/downloaded_file.7z"
 GAME_OBJECTS_READY=false
 
@@ -37,6 +37,22 @@ download_and_extract() {
     if 7z x "$TEMP_FILE" -o"$TARGET_DIR/../" -y -aos > /dev/null; then
         echo "✓ Extraction completed successfully."
         rm -f "$TEMP_FILE"  # Clean up temporary file
+
+        # The archive contains a "game objects" folder (with a space).
+        # Rename it to the expected hyphenated "game-objects" directory.
+        EXTRACTED_DIR="$TARGET_DIR/../game objects"
+        if [ -d "$EXTRACTED_DIR" ] && [ ! -d "$TARGET_DIR" ]; then
+            echo "Renaming 'game objects' → 'game-objects'..."
+            mv "$EXTRACTED_DIR" "$TARGET_DIR"
+            echo "✓ Renamed successfully."
+        elif [ -d "$EXTRACTED_DIR" ] && [ -d "$TARGET_DIR" ]; then
+            # Target already exists; merge contents then remove the space-named dir
+            echo "Merging 'game objects' into existing 'game-objects'..."
+            cp -rn "$EXTRACTED_DIR"/* "$TARGET_DIR"/ 2>/dev/null || true
+            rm -rf "$EXTRACTED_DIR"
+            echo "✓ Merged and cleaned up."
+        fi
+
         return 0
     else
         echo "✗ Error: Failed to extract archive."
@@ -101,7 +117,7 @@ fi
 echo
 echo "=== Blender CUDA Setup ==="
 if command -v nvidia-smi >/dev/null 2>&1 && [ "$(nvidia-smi --list-gpus 2>/dev/null | wc -l)" -gt 0 ]; then
-    echo "🚀 GPU detected - running test render to pre-compile CUDA kernels (3-5 minutes, one-time only)..."
+    echo "🚀 GPU detected - running test render to pre-compile CUDA kernels (1-5 seconds, one-time only)..."
     
     cat > /tmp/warmup.py << 'EOF'
 import bpy
@@ -121,9 +137,17 @@ EOF
     # Comment below to disable blender warmup at container startup
 
     if [[ "$DO_WARMUP" == true ]]; then
-        blender -b -P /tmp/warmup.py --background >/dev/null 2>&1
+        WARMUP_LOG="/tmp/blender_warmup.log"
+        blender -b -P /tmp/warmup.py --background >"$WARMUP_LOG" 2>&1
+        WARMUP_EXIT=$?
         rm -f /tmp/warmup.py
-        echo "✅ CUDA kernels compiled - GPU renders will start instantly!"
+        if [[ $WARMUP_EXIT -eq 0 ]]; then
+            echo "✅ CUDA kernels compiled - GPU renders will start instantly!"
+        else
+            echo "⚠️  WARNING: CUDA warmup failed (exit code $WARMUP_EXIT) - first render may be slower."
+            echo "   Log tail (last 20 lines of $WARMUP_LOG):"
+            tail -n 20 "$WARMUP_LOG" | sed 's/^/   /'
+        fi
     else
         echo "✅ GPU Detected, but warmup option was disabled.  First render will take extra time to compile CUDA kernels."
     fi

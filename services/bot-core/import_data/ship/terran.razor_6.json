@@ -36,7 +36,7 @@
   "maxPrimaries": 4,
   "maxSecondaries": 1,
   "maxTurrets": 0,
-  "model": "/app/game-objects/Terran/Razor 6.bbship/Razor_Full.obj",
+  "model": "/app/data/game-objects/items/ships/Terran/Razor 6.bbship/Razor_Full.obj",
   "name": "Razor 6",
   "saveDue": false,
   "shopSpawnRate": 8.416,
@@ -45,13 +45,13 @@
   "value": 294900,
   "wiki": "https://galaxyonfire.fandom.com/wiki/Razor_6",
   "assets": [
-    "/app/game-objects/Terran/Razor 6.bbship/mask1.jpg",
-    "/app/game-objects/Terran/Razor 6.bbship/mask2.jpg",
-    "/app/game-objects/Terran/Razor 6.bbship/Razor_Full.mtl",
-    "/app/game-objects/Terran/Razor 6.bbship/Razor_Full.obj",
-    "/app/game-objects/Terran/Razor 6.bbship/ship_034_terran_diffuse.bmp",
-    "/app/game-objects/Terran/Razor 6.bbship/ship_034_terran_normal_specular.bmp",
-    "/app/game-objects/Terran/Razor 6.bbship/skinBase.png"
+    "/app/data/game-objects/items/ships/Terran/Razor 6.bbship/mask1.jpg",
+    "/app/data/game-objects/items/ships/Terran/Razor 6.bbship/mask2.jpg",
+    "/app/data/game-objects/items/ships/Terran/Razor 6.bbship/Razor_Full.mtl",
+    "/app/data/game-objects/items/ships/Terran/Razor 6.bbship/Razor_Full.obj",
+    "/app/data/game-objects/items/ships/Terran/Razor 6.bbship/ship_034_terran_diffuse.bmp",
+    "/app/data/game-objects/items/ships/Terran/Razor 6.bbship/ship_034_terran_normal_specular.bmp",
+    "/app/data/game-objects/items/ships/Terran/Razor 6.bbship/skinBase.png"
   ],
-  "normSpec": "/app/game-objects/Terran/Razor 6.bbship/ship_034_terran_normal_specular.bmp"
+  "normSpec": "/app/data/game-objects/items/ships/Terran/Razor 6.bbship/ship_034_terran_normal_specular.bmp"
 }

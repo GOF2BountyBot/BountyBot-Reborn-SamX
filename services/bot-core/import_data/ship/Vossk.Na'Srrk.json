@@ -38,7 +38,7 @@
   "maxPrimaries": 4,
   "maxSecondaries": 4,
   "maxTurrets": 0,
-  "model": "/app/game-objects/Vossk/Na'Srrk.bbship/Na'Srrk_Full.obj",
+  "model": "/app/data/game-objects/items/ships/Vossk/Na'Srrk.bbship/Na'Srrk_Full.obj",
   "name": "Na'Srrk",
   "saveDue": false,
   "shopSpawnRate": 8.416,
@@ -47,10 +47,10 @@
   "value": 5400000,
   "wiki": "https://galaxyonfire.fandom.com/wiki/Na%27srrk",
   "assets": [
-    "/app/game-objects/Vossk/Na'Srrk.bbship/mask1.jpg",
-    "/app/game-objects/Vossk/Na'Srrk.bbship/Na'Srrk_Full.mtl",
-    "/app/game-objects/Vossk/Na'Srrk.bbship/Na'Srrk_Full.obj",
-    "/app/game-objects/Vossk/Na'Srrk.bbship/skinBase.png",
-    "/app/game-objects/Vossk/Na'Srrk.bbship/sn_ship_054_vossk_diffuse.bmp"
+    "/app/data/game-objects/items/ships/Vossk/Na'Srrk.bbship/mask1.jpg",
+    "/app/data/game-objects/items/ships/Vossk/Na'Srrk.bbship/Na'Srrk_Full.mtl",
+    "/app/data/game-objects/items/ships/Vossk/Na'Srrk.bbship/Na'Srrk_Full.obj",
+    "/app/data/game-objects/items/ships/Vossk/Na'Srrk.bbship/skinBase.png",
+    "/app/data/game-objects/items/ships/Vossk/Na'Srrk.bbship/sn_ship_054_vossk_diffuse.bmp"
   ]
 }

@@ -236,6 +236,7 @@ def normalize_emoji(val: str) -> str:
 
     Returns the normalized unicode emoji (or the original input on parse failure).
     """
+    flogger.debug(f"normalize_emoji called with: {val!r}")
     if not isinstance(val, str):
         return val
     s = val.strip()
@@ -317,14 +318,15 @@ def _is_mock_object(obj) -> bool:
 def tag_to_dict(tag, channel_id: int | None = None) -> dict:
     """
     Normalize a ForumTag-like object into a dict:
-      { "id": int|None, "channel_id": int|None, "name": str|None, "emoji": str|None }
+       { "id": int|None, "channel_id": int|None, "name": str|None, "emoji": str|None }
 
     Behaviors:
-      - If `tag` is a Mapping (e.g. dict), prefer direct key lookups for id/channel_id/name/emoji.
-      - Otherwise, attempt common attribute access patterns (tag.emoji, tag.to_dict(), __dict__ fields).
-      - Use normalize_emoji(...) for final emoji normalization when a candidate is found.
-      - Always returns a dict and never raises on attribute access.
+       - If `tag` is a Mapping (e.g. dict), prefer direct key lookups for id/channel_id/name/emoji.
+       - Otherwise, attempt common attribute access patterns (tag.emoji, tag.to_dict(), __dict__ fields).
+       - Use normalize_emoji(...) for final emoji normalization when a candidate is found.
+       - Always returns a dict and never raises on attribute access.
     """
+    flogger.debug(f"tag_to_dict called with tag={tag!r}, channel_id={channel_id}")
     # 1) id / channel resolution (safe conversions)
     tid = None
     cid = None
@@ -487,9 +489,13 @@ def tag_to_dict(tag, channel_id: int | None = None) -> dict:
 
     except Exception:  # pylint: disable=broad-exception-caught
         # If everything fails, return best-effort structure with None fields
-        return {"id": tid, "channel_id": cid, "name": name, "emoji": None}
+        result = {"id": tid, "channel_id": cid, "name": name, "emoji": None}
+        flogger.debug(f"tag_to_dict returning (exception fallback): {result}")
+        return result
 
-    return {"id": tid, "channel_id": cid, "name": name, "emoji": emoji}
+    result = {"id": tid, "channel_id": cid, "name": name, "emoji": emoji}
+    flogger.debug(f"tag_to_dict returning: {result}")
+    return result
 
 
 def tags_to_edit_payload(tags_iterable, *, updates: dict | None = None) -> list:
@@ -501,6 +507,7 @@ def tags_to_edit_payload(tags_iterable, *, updates: dict | None = None) -> list:
       If a tag in updates is not present in tags_iterable, it will be appended.
     Returns a list of dict entries: [{"id": id?, "name": ..., "emoji": ...}, ...]
     """
+    flogger.debug(f"tags_to_edit_payload called with tags_iterable={tags_iterable!r}, updates={updates}")
     out = []
     seen_ids = set()
     for t in tags_iterable or []:
@@ -537,4 +544,5 @@ def tags_to_edit_payload(tags_iterable, *, updates: dict | None = None) -> list:
                     # keep whatever the caller passed if it is not integer-like
                     entry["id"] = k
                 out.append(entry)
+    flogger.debug(f"tags_to_edit_payload returning {len(out)} tag entries")
     return out

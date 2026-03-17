@@ -52,32 +52,41 @@ async def health_check(request: Request) -> HealthResponse:
     """
     flogger.debug("Inside health_check method...")
 
-    # Basic system checks (unchanged)
-    checks = {
-        "python_version": sys.version_info >= (3, 8),
-        "memory_available": True,  # Could implement actual memory check
-        "disk_space": True,  # Could implement actual disk check
-    }
+    try:
+        # Basic system checks (unchanged)
+        checks = {
+            "python_version": sys.version_info >= (3, 8),
+            "memory_available": True,  # Could implement actual memory check
+            "disk_space": True,  # Could implement actual disk check
+        }
 
-    # Determine overall status
-    all_checks_passed = all(checks.values())
-    flogger.trace("All Checks Passed: " + str(all_checks_passed))
+        # Determine overall status
+        all_checks_passed = all(checks.values())
+        flogger.debug(f"All checks passed: {all_checks_passed}, checks={checks}")
 
-    # UPDATED: Consider database and schema health in overall status
-    service_status = "healthy" if all_checks_passed else "unhealthy"
+        # UPDATED: Consider database and schema health in overall status
+        service_status = "healthy" if all_checks_passed else "unhealthy"
 
-    return HealthResponse(
-        status=service_status,
-        timestamp=datetime.now(UTC),
-        version="1.0.0",  # Should come from your app config
-        service="BountyBot API",
-        environment={
-            "python_version": platform.python_version(),
-            "platform": platform.platform(),
-            "architecture": platform.architecture()[0]
-        },
-        checks=checks
-    )
+        response = HealthResponse(
+            status=service_status,
+            timestamp=datetime.now(UTC),
+            version="1.0.0",  # Should come from your app config
+            service="BountyBot API",
+            environment={
+                "python_version": platform.python_version(),
+                "platform": platform.platform(),
+                "architecture": platform.architecture()[0]
+            },
+            checks=checks
+        )
+        flogger.debug(
+            f"Comprehensive health check response: status={response.status}, "
+            f"version={response.version}, checks={checks}"
+        )
+        return response
+    except Exception as exc:
+        flogger.error(f"Error in health_check: {exc}")
+        raise
 
 @router.get(
     "/simple",
@@ -92,10 +101,17 @@ async def simple_health_check() -> SimpleHealthResponse:
 
     Returns minimal response for quick health verification.
     """
-    return SimpleHealthResponse(
-        status="healthy",
-        timestamp=datetime.now(UTC)
-    )
+    flogger.debug("Inside simple_health_check method...")
+    try:
+        response = SimpleHealthResponse(
+            status="healthy",
+            timestamp=datetime.now(UTC)
+        )
+        flogger.debug(f"Simple health check response: status={response.status}")
+        return response
+    except Exception as exc:
+        flogger.error(f"Error in simple_health_check: {exc}")
+        raise
 
 @router.get(
     "/liveness",
@@ -110,4 +126,11 @@ async def liveness_check() -> dict[str, str]:
     Used by orchestrators to determine if the service
     should be restarted.
     """
-    return {"status": "alive"}
+    flogger.debug("Inside liveness_check method...")
+    try:
+        result = {"status": "alive"}
+        flogger.debug(f"Liveness check response: {result}")
+        return result
+    except Exception as exc:
+        flogger.error(f"Error in liveness_check: {exc}")
+        raise

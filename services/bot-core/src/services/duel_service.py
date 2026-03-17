@@ -60,28 +60,45 @@ class DuelService:
         Raises:
             ValueError: For any validation failure.
         """
+        flogger.debug(
+            f"create_challenge called: challenger_id={challenger_id} target_id={target_id} "
+            f"stakes={stakes} guild_id={guild_id}"
+        )
+
         if challenger_id == target_id:
+            flogger.warning(f"Self-duel attempt: player {challenger_id} tried to challenge themselves")
             raise ValueError("A player cannot challenge themselves to a duel.")
 
         if stakes < 0:
+            flogger.warning(f"Invalid stakes attempted: {stakes} (must be non-negative)")
             raise ValueError(f"Stakes must be non-negative, got {stakes}.")
 
         # Fetch players
         challenger = await self.player_repo.get_by_id(db, challenger_id)
         if challenger is None:
+            flogger.error(f"Challenger not found: player_id={challenger_id}")
             raise ValueError(f"Challenger player with ID {challenger_id} not found.")
 
         target = await self.player_repo.get_by_id(db, target_id)
         if target is None:
+            flogger.error(f"Target not found: player_id={target_id}")
             raise ValueError(f"Target player with ID {target_id} not found.")
 
         # Validate credits
         if challenger.credits < stakes:
+            flogger.warning(
+                f"Challenger insufficient stakes: player_id={challenger_id} "
+                f"has {challenger.credits} credits, needs {stakes}"
+            )
             raise ValueError(
                 f"Challenger has insufficient credits: "
                 f"has {challenger.credits}, needs {stakes}."
             )
         if target.credits < stakes:
+            flogger.warning(
+                f"Target insufficient stakes: player_id={target_id} "
+                f"has {target.credits} credits, needs {stakes}"
+            )
             raise ValueError(
                 f"Target has insufficient credits: "
                 f"has {target.credits}, needs {stakes}."
@@ -92,6 +109,10 @@ class DuelService:
             db, challenger_id, target_id, guild_id
         )
         if existing is not None:
+            flogger.warning(
+                f"Duplicate duel attempt: duel_id={existing.id} already pending between "
+                f"challenger_id={challenger_id} and target_id={target_id} in guild_id={guild_id}"
+            )
             raise ValueError(
                 f"A pending duel already exists between player {challenger_id} "
                 f"and player {target_id} in guild {guild_id}."
@@ -135,11 +156,18 @@ class DuelService:
         Raises:
             ValueError: If duel not found, not pending, or credits insufficient.
         """
+        flogger.debug(f"accept_duel called: duel_id={duel_id}")
+
         duel = await self.duel_repo.get_by_id(db, duel_id)
         if duel is None:
+            flogger.error(f"Duel not found for accept: duel_id={duel_id}")
             raise ValueError(f"Duel request with ID {duel_id} not found.")
 
         if duel.status != "pending":
+            flogger.error(
+                f"Invalid duel status for accept: duel_id={duel_id} status={duel.status} "
+                f"(expected 'pending')"
+            )
             raise ValueError(
                 f"Duel {duel_id} cannot be accepted — current status is {duel.status!r}."
             )
@@ -153,6 +181,7 @@ class DuelService:
         for pid in ids_ordered:
             player = await self.player_repo.get_by_id_for_update(db, pid)
             if player is None:
+                flogger.error(f"Player not found during duel accept: duel_id={duel_id} player_id={pid}")
                 raise ValueError(f"Player {pid} not found.")
             locked[pid] = player
 
@@ -160,11 +189,19 @@ class DuelService:
         target = locked[duel.target_id]
 
         if challenger.credits < stakes:
+            flogger.warning(
+                f"Challenger insufficient credits at accept-time: duel_id={duel_id} "
+                f"player_id={challenger.id} has {challenger.credits}, needs {stakes}"
+            )
             raise ValueError(
                 f"Challenger has insufficient credits at accept-time: "
                 f"has {challenger.credits}, needs {stakes}."
             )
         if target.credits < stakes:
+            flogger.warning(
+                f"Target insufficient credits at accept-time: duel_id={duel_id} "
+                f"player_id={target.id} has {target.credits}, needs {stakes}"
+            )
             raise ValueError(
                 f"Target has insufficient credits at accept-time: "
                 f"has {target.credits}, needs {stakes}."
@@ -234,11 +271,18 @@ class DuelService:
         Raises:
             ValueError: If duel not found or not in pending status.
         """
+        flogger.debug(f"reject_duel called: duel_id={duel_id}")
+
         duel = await self.duel_repo.get_by_id(db, duel_id)
         if duel is None:
+            flogger.error(f"Duel not found for reject: duel_id={duel_id}")
             raise ValueError(f"Duel request with ID {duel_id} not found.")
 
         if duel.status != "pending":
+            flogger.error(
+                f"Invalid duel status for reject: duel_id={duel_id} status={duel.status} "
+                f"(expected 'pending')"
+            )
             raise ValueError(
                 f"Duel {duel_id} cannot be rejected — current status is {duel.status!r}."
             )
@@ -307,11 +351,18 @@ class DuelService:
         Raises:
             ValueError: If duel not found or not in pending status.
         """
+        flogger.debug(f"expire_duel called: duel_id={duel_id}")
+
         duel = await self.duel_repo.get_by_id(db, duel_id)
         if duel is None:
+            flogger.error(f"Duel not found for expire: duel_id={duel_id}")
             raise ValueError(f"Duel request with ID {duel_id} not found.")
 
         if duel.status != "pending":
+            flogger.error(
+                f"Invalid duel status for expire: duel_id={duel_id} status={duel.status} "
+                f"(expected 'pending')"
+            )
             raise ValueError(
                 f"Duel {duel_id} cannot be expired — current status is {duel.status!r}."
             )

@@ -38,7 +38,7 @@
   "maxPrimaries": 4,
   "maxSecondaries": 2,
   "maxTurrets": 1,
-  "model": "/app/game-objects/Kaamo Club/Teneta R.E.D..bbship/RED_Full.obj",
+  "model": "/app/data/game-objects/items/ships/Kaamo Club/Teneta R.E.D..bbship/RED_Full.obj",
   "name": "Teneta R.E.D.",
   "saveDue": false,
   "shopSpawnRate": 9.585,
@@ -47,12 +47,12 @@
   "value": 7610000,
   "wiki": "https://galaxyonfire.fandom.com/wiki/Teneta_R.E.D.",
   "assets": [
-    "/app/game-objects/Kaamo Club/Teneta R.E.D..bbship/mask1.jpg",
-    "/app/game-objects/Kaamo Club/Teneta R.E.D..bbship/RED_Full.mtl",
-    "/app/game-objects/Kaamo Club/Teneta R.E.D..bbship/RED_Full.obj",
-    "/app/game-objects/Kaamo Club/Teneta R.E.D..bbship/skinBase.png",
-    "/app/game-objects/Kaamo Club/Teneta R.E.D..bbship/sn_ship_059_modified_diffuse.bmp",
-    "/app/game-objects/Kaamo Club/Teneta R.E.D..bbship/sn_ship_059_modified_normal_specular.bmp"
+    "/app/data/game-objects/items/ships/Kaamo Club/Teneta R.E.D..bbship/mask1.jpg",
+    "/app/data/game-objects/items/ships/Kaamo Club/Teneta R.E.D..bbship/RED_Full.mtl",
+    "/app/data/game-objects/items/ships/Kaamo Club/Teneta R.E.D..bbship/RED_Full.obj",
+    "/app/data/game-objects/items/ships/Kaamo Club/Teneta R.E.D..bbship/skinBase.png",
+    "/app/data/game-objects/items/ships/Kaamo Club/Teneta R.E.D..bbship/sn_ship_059_modified_diffuse.bmp",
+    "/app/data/game-objects/items/ships/Kaamo Club/Teneta R.E.D..bbship/sn_ship_059_modified_normal_specular.bmp"
   ],
-  "normSpec": "/app/game-objects/Kaamo Club/Teneta R.E.D..bbship/sn_ship_059_modified_normal_specular.bmp"
+  "normSpec": "/app/data/game-objects/items/ships/Kaamo Club/Teneta R.E.D..bbship/sn_ship_059_modified_normal_specular.bmp"
 }

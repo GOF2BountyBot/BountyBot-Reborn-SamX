@@ -66,10 +66,12 @@ class CircuitBreaker:
             CircuitBreakerOpenException: When circuit is open
             Original exception: When function fails
         """
+        flogger.trace(f"Circuit breaker call attempt, current state: {self.state.value}")
         async with self._lock:
             if self.state == CircuitState.OPEN:
                 if self._should_attempt_reset():
                     self.state = CircuitState.HALF_OPEN
+                    flogger.debug(f"Circuit breaker state transition: OPEN -> HALF_OPEN")
                     flogger.info("Circuit breaker entering HALF_OPEN state")
                 else:
                     raise CircuitBreakerOpenException("Circuit breaker is OPEN")
@@ -100,9 +102,11 @@ class CircuitBreaker:
 
             if self.state == CircuitState.HALF_OPEN:
                 self.success_count += 1
+                flogger.debug(f"Circuit breaker success count incremented to {self.success_count}")
                 if self.success_count >= self.config.success_threshold:
                     self.state = CircuitState.CLOSED
                     self.success_count = 0
+                    flogger.debug(f"Circuit breaker state transition: HALF_OPEN -> CLOSED")
                     flogger.info("Circuit breaker CLOSED after successful operations")
 
     async def _on_failure(self) -> None:
@@ -110,12 +114,15 @@ class CircuitBreaker:
         async with self._lock:
             self.failure_count += 1
             self.last_failure_time = time.time()
+            flogger.debug(f"Circuit breaker failure count incremented to {self.failure_count}")
 
             if self.state == CircuitState.HALF_OPEN:
                 self.state = CircuitState.OPEN
+                flogger.debug(f"Circuit breaker state transition: HALF_OPEN -> OPEN")
                 flogger.warning("Circuit breaker OPEN after failure in HALF_OPEN state")
             elif self.failure_count >= self.config.failure_threshold:
                 self.state = CircuitState.OPEN
+                flogger.debug(f"Circuit breaker state transition: CLOSED -> OPEN (threshold reached)")
                 flogger.warning(f"Circuit breaker OPEN after {self.failure_count} failures")
 
     def get_state(self) -> dict[str, Any]:

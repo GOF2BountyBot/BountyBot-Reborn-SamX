@@ -411,50 +411,52 @@ class SkinsCog(commands.Cog):
 
     @app_commands.command(
         name="render_skin",
-        description="Upload textures and render a 3D ship skin",
+        description="Render a 3D ship with its default skin (or a custom overlay)",
     )
     @app_commands.describe(
-        ship="The ship to render a skin for",
-        autoskin="Enable region-by-region skinning (default: Yes)",
+        ship="The ship to render",
+        skin="Optional: select a pre-made skin to apply",
     )
-    @app_commands.autocomplete(ship=skinnable_ship_autocomplete)
+    @app_commands.autocomplete(ship=skinnable_ship_autocomplete, skin=skin_autocomplete)
     async def render_skin(
         self,
         interaction: discord.Interaction,
         ship: str,
-        autoskin: bool = True,
+        skin: str = "Default",
     ):
         await interaction.response.defer()
 
-        # 1. Fetch render-info
+        # 1. Fetch render-info (provides all asset paths on disk)
         render_info = await self._fetch_render_info(interaction, ship)
         if render_info is None:
             return
 
-        ship_path = render_info.get("ship_path", "")
-        texture_regions: int = render_info.get("texture_regions", 0)
+        ship_path = render_info.get("bbship_dir", "")
+        diffuse_path: str = render_info.get("diffuse_path", "")
         model_path: str = render_info.get("model_path", "")
 
-        # 2. Collect base texture
-        img_bytes, square_mode = await self._collect_base_texture(interaction, ship)
-        if img_bytes is None:
+        if not diffuse_path:
+            flogger.error(f"No diffuse_path in render-info for {ship}")
+            await interaction.followup.send(
+                f"❌ No base texture found for **{ship}**.", ephemeral=True
+            )
             return
 
-        # 3. Optionally collect region textures
-        region_textures: dict[int, bytes] = {}
-        if autoskin and texture_regions > 0:
-            region_textures = await self._collect_region_textures(
-                interaction, texture_regions
-            )
+        # 2. Resolve the skin overlay image (if not Default)
+        skin_bytes: bytes | None = None
+        if skin != "Default":
+            skin_bytes = await self._download_skin_image(interaction, ship, skin, render_info)
+            if skin_bytes is None:
+                return  # error already sent
 
-        # 4. Composite via blender-service
+        # 3. Composite via blender-service (base texture loaded from disk)
         composite_bytes = await self._composite_textures(
-            interaction, ship, ship_path, img_bytes, square_mode, region_textures
+            interaction, ship, ship_path, diffuse_path, skin_bytes
         )
         if composite_bytes is None:
             return
 
-        # 5. Render via blender-service
+        # 4. Render via blender-service
         await interaction.followup.send("🎨 Rendering your ship… this may take a moment.")
         try:
             render_resp = await self.blender_client.post(
@@ -465,25 +467,25 @@ class SkinsCog(commands.Cog):
             render_resp.raise_for_status()
             rendered_bytes = render_resp.content
         except HttpxHTTPStatusError as e:
-            flogger.error(f"Render API error: {e.response.status_code}")
+            flogger.error(f"Render API error for {ship}: {e.response.status_code}")
             await interaction.followup.send(
                 f"❌ Render failed: API error {e.response.status_code}", ephemeral=True
             )
             return
         except HttpxTimeoutException:
-            flogger.error("Render timed out")
+            flogger.error(f"Render timed out for {ship}")
             await interaction.followup.send(
                 "❌ Render timed out. Please try again later.", ephemeral=True
             )
             return
         except Exception as e:  # pylint: disable=broad-exception-caught
-            flogger.error(f"Render error: {e}")
+            flogger.error(f"Render error for {ship}: {e}")
             await interaction.followup.send(
                 "❌ Render failed. Please try again later.", ephemeral=True
             )
             return
 
-        # 6. Send rendered image + format buttons
+        # 5. Send rendered image + format buttons
         file = discord.File(BytesIO(rendered_bytes), filename=f"{ship}_render.png")
         view = FormatDownloadView(self, composite_bytes, ship)
         await interaction.followup.send(
@@ -500,43 +502,49 @@ class SkinsCog(commands.Cog):
         name="make_skin_texture",
         description="Generate a composited ship skin texture (no 3D render)",
     )
-    @app_commands.describe(ship="The ship to create a skin texture for")
-    @app_commands.autocomplete(ship=skinnable_ship_autocomplete)
+    @app_commands.describe(
+        ship="The ship to create a skin texture for",
+        skin="Optional: select a pre-made skin to apply",
+    )
+    @app_commands.autocomplete(ship=skinnable_ship_autocomplete, skin=skin_autocomplete)
     async def make_skin_texture(
         self,
         interaction: discord.Interaction,
         ship: str,
+        skin: str = "Default",
     ):
         await interaction.response.defer()
 
-        # 1. Fetch render-info
+        # 1. Fetch render-info (provides all asset paths on disk)
         render_info = await self._fetch_render_info(interaction, ship)
         if render_info is None:
             return
 
-        ship_path = render_info.get("ship_path", "")
-        texture_regions: int = render_info.get("texture_regions", 0)
+        ship_path = render_info.get("bbship_dir", "")
+        diffuse_path: str = render_info.get("diffuse_path", "")
 
-        # 2. Collect base texture
-        img_bytes, square_mode = await self._collect_base_texture(interaction, ship)
-        if img_bytes is None:
+        if not diffuse_path:
+            flogger.error(f"No diffuse_path in render-info for {ship}")
+            await interaction.followup.send(
+                f"❌ No base texture found for **{ship}**.", ephemeral=True
+            )
             return
 
-        # 3. Collect region textures
-        region_textures: dict[int, bytes] = {}
-        if texture_regions > 0:
-            region_textures = await self._collect_region_textures(
-                interaction, texture_regions
-            )
+        # 2. Resolve the skin overlay image (if not Default)
+        skin_bytes: bytes | None = None
+        if skin != "Default":
+            skin_bytes = await self._download_skin_image(interaction, ship, skin, render_info)
+            if skin_bytes is None:
+                return  # error already sent
 
-        # 4. Composite via blender-service
+        # 3. Composite via blender-service (base texture loaded from disk)
         composite_bytes = await self._composite_textures(
-            interaction, ship, ship_path, img_bytes, square_mode, region_textures
+            interaction, ship, ship_path, diffuse_path, skin_bytes
         )
         if composite_bytes is None:
             return
 
-        # 5. Return composited texture + format buttons
+        # 4. Return composited texture + format buttons
         file = discord.File(
             BytesIO(composite_bytes), filename=f"{ship}_texture.png"
         )
@@ -595,45 +603,71 @@ class SkinsCog(commands.Cog):
         self._ship_render_info[ship] = data
         return data
 
+    async def _download_skin_image(
+        self,
+        interaction: discord.Interaction,
+        ship: str,
+        skin: str,
+        render_info: dict,
+    ) -> bytes | None:
+        """Download a pre-made skin image from its URL. Returns bytes or None on error."""
+        skins_map = render_info.get("compatible_skins") or {}
+        skin_url = skins_map.get(skin)
+        if not skin_url:
+            await interaction.followup.send(
+                f"❌ Skin **{skin}** not found for **{ship}**.", ephemeral=True
+            )
+            return None
+
+        try:
+            resp = await self.http_client.get(skin_url, timeout=30)
+            resp.raise_for_status()
+            flogger.debug(f"Downloaded skin image for {ship}/{skin}: {len(resp.content)} bytes")
+            return resp.content
+        except Exception as e:  # pylint: disable=broad-exception-caught
+            flogger.error(f"Failed to download skin image for {ship}/{skin}: {e}")
+            await interaction.followup.send(
+                f"❌ Failed to download skin image for **{skin}**.", ephemeral=True
+            )
+            return None
+
     async def _composite_textures(
         self,
         interaction: discord.Interaction,
         ship: str,
         ship_path: str,
-        base_bytes: bytes,
-        square_mode: str,
-        region_textures: dict[int, bytes],
+        diffuse_path: str,
+        skin_bytes: bytes | None = None,
     ) -> bytes | None:
-        """Call blender-service composite endpoint. Returns bytes or None on error."""
+        """Call blender-service composite endpoint.
+
+        Uses the ship's diffuse texture (on disk in blender-service) as the base.
+        Optionally applies a skin overlay as region texture 1.
+        Returns composited PNG bytes or None on error.
+        """
         await interaction.followup.send("🔧 Compositing textures…")
 
-        # Build files + data for multipart request
-        files: list[tuple] = [
-            ("base_texture", ("base.png", base_bytes, "image/png")),
-        ]
-        region_idx_list: list[str] = []
-        disabled_list: list[str] = []
-
-        for idx, tex_bytes in region_textures.items():
-            if tex_bytes == b"":  # disabled sentinel
-                disabled_list.append(str(idx))
-            else:
-                files.append(
-                    ("region_textures", (f"region{idx}.png", tex_bytes, "image/png"))
-                )
-                region_idx_list.append(str(idx))
-
-        data = {
+        # Build multipart request — base texture is loaded from disk by blender-service
+        files: list[tuple] = []
+        data: dict[str, str] = {
             "ship_path": ship_path,
-            "region_indices": ",".join(region_idx_list),
-            "disabled_regions": ",".join(disabled_list),
-            "square_mode": square_mode,
+            "base_texture_path": diffuse_path,
+            "square_mode": "none",
+            "region_indices": "",
+            "disabled_regions": "",
         }
+
+        # If a skin overlay was provided, send it as region texture 1
+        if skin_bytes is not None:
+            files.append(
+                ("region_textures", ("region1.png", skin_bytes, "image/png"))
+            )
+            data["region_indices"] = "1"
 
         try:
             resp = await self.blender_client.post(
                 "/textures/composite",
-                files=files,
+                files=files if files else None,
                 data=data,
             )
             resp.raise_for_status()
@@ -649,6 +683,7 @@ class SkinsCog(commands.Cog):
             )
             return None
         except HttpxTimeoutException:
+            flogger.error(f"Composite timed out for {ship}")
             await interaction.followup.send(
                 "❌ Compositing timed out. Please try again.", ephemeral=True
             )

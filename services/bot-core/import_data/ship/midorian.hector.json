@@ -36,7 +36,7 @@
   "maxPrimaries": 2,
   "maxSecondaries": 1,
   "maxTurrets": 0,
-  "model": "/app/game-objects/Midorian/Hector.bbship/Hector_Full.obj",
+  "model": "/app/data/game-objects/items/ships/Midorian/Hector.bbship/Hector_Full.obj",
   "name": "Hector",
   "saveDue": false,
   "shopSpawnRate": 9.585,
@@ -45,12 +45,12 @@
   "value": 38016,
   "wiki": "https://galaxyonfire.fandom.com/wiki/Hector",
   "assets": [
-    "/app/game-objects/Midorian/Hector.bbship/Hector_Full.mtl",
-    "/app/game-objects/Midorian/Hector.bbship/Hector_Full.obj",
-    "/app/game-objects/Midorian/Hector.bbship/mask1.jpg",
-    "/app/game-objects/Midorian/Hector.bbship/ship_006_midorian_diffuse.bmp",
-    "/app/game-objects/Midorian/Hector.bbship/ship_006_midorian_normal_specular.bmp",
-    "/app/game-objects/Midorian/Hector.bbship/skinBase.png"
+    "/app/data/game-objects/items/ships/Midorian/Hector.bbship/Hector_Full.mtl",
+    "/app/data/game-objects/items/ships/Midorian/Hector.bbship/Hector_Full.obj",
+    "/app/data/game-objects/items/ships/Midorian/Hector.bbship/mask1.jpg",
+    "/app/data/game-objects/items/ships/Midorian/Hector.bbship/ship_006_midorian_diffuse.bmp",
+    "/app/data/game-objects/items/ships/Midorian/Hector.bbship/ship_006_midorian_normal_specular.bmp",
+    "/app/data/game-objects/items/ships/Midorian/Hector.bbship/skinBase.png"
   ],
-  "normSpec": "/app/game-objects/Midorian/Hector.bbship/ship_006_midorian_normal_specular.bmp"
+  "normSpec": "/app/data/game-objects/items/ships/Midorian/Hector.bbship/ship_006_midorian_normal_specular.bmp"
 }

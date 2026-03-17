@@ -38,7 +38,7 @@
   "maxPrimaries": 2,
   "maxSecondaries": 2,
   "maxTurrets": 0,
-  "model": "/app/game-objects/Vossk/H'Soc.bbship/H'Soc_Full.obj",
+  "model": "/app/data/game-objects/items/ships/Vossk/H'Soc.bbship/H'Soc_Full.obj",
   "name": "H'Soc",
   "saveDue": false,
   "shopSpawnRate": 6.312,
@@ -47,12 +47,12 @@
   "value": 150000,
   "wiki": "https://galaxyonfire.fandom.com/wiki/H%27Soc",
   "assets": [
-    "/app/game-objects/Vossk/H'Soc.bbship/H'Soc_Full.mtl",
-    "/app/game-objects/Vossk/H'Soc.bbship/H'Soc_Full.obj",
-    "/app/game-objects/Vossk/H'Soc.bbship/mask1.jpg",
-    "/app/game-objects/Vossk/H'Soc.bbship/ship_009_vossk_diffuse.bmp",
-    "/app/game-objects/Vossk/H'Soc.bbship/ship_009_vossk_normal_specular.bmp",
-    "/app/game-objects/Vossk/H'Soc.bbship/skinBase.png"
+    "/app/data/game-objects/items/ships/Vossk/H'Soc.bbship/H'Soc_Full.mtl",
+    "/app/data/game-objects/items/ships/Vossk/H'Soc.bbship/H'Soc_Full.obj",
+    "/app/data/game-objects/items/ships/Vossk/H'Soc.bbship/mask1.jpg",
+    "/app/data/game-objects/items/ships/Vossk/H'Soc.bbship/ship_009_vossk_diffuse.bmp",
+    "/app/data/game-objects/items/ships/Vossk/H'Soc.bbship/ship_009_vossk_normal_specular.bmp",
+    "/app/data/game-objects/items/ships/Vossk/H'Soc.bbship/skinBase.png"
   ],
-  "normSpec": "/app/game-objects/Vossk/H'Soc.bbship/ship_009_vossk_normal_specular.bmp"
+  "normSpec": "/app/data/game-objects/items/ships/Vossk/H'Soc.bbship/ship_009_vossk_normal_specular.bmp"
 }

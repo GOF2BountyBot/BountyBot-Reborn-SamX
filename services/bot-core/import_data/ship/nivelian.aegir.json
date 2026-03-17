@@ -36,7 +36,7 @@
   "maxPrimaries": 4,
   "maxSecondaries": 4,
   "maxTurrets": 0,
-  "model": "/app/game-objects/Nivelian/Aegir.bbship/Aegir_Full.obj",
+  "model": "/app/data/game-objects/items/ships/Nivelian/Aegir.bbship/Aegir_Full.obj",
   "name": "Aegir",
   "saveDue": false,
   "shopSpawnRate": 7.214,
@@ -45,13 +45,13 @@
   "value": 2712900,
   "wiki": "https://galaxyonfire.fandom.com/wiki/Aegir",
   "assets": [
-    "/app/game-objects/Nivelian/Aegir.bbship/Aegir_Full.mtl",
-    "/app/game-objects/Nivelian/Aegir.bbship/Aegir_Full.obj",
-    "/app/game-objects/Nivelian/Aegir.bbship/mask1.jpg",
-    "/app/game-objects/Nivelian/Aegir.bbship/mask2.jpg",
-    "/app/game-objects/Nivelian/Aegir.bbship/ship_021_nivelian_diffuse.bmp",
-    "/app/game-objects/Nivelian/Aegir.bbship/ship_021_nivelian_normal_specular.bmp",
-    "/app/game-objects/Nivelian/Aegir.bbship/skinBase.png"
+    "/app/data/game-objects/items/ships/Nivelian/Aegir.bbship/Aegir_Full.mtl",
+    "/app/data/game-objects/items/ships/Nivelian/Aegir.bbship/Aegir_Full.obj",
+    "/app/data/game-objects/items/ships/Nivelian/Aegir.bbship/mask1.jpg",
+    "/app/data/game-objects/items/ships/Nivelian/Aegir.bbship/mask2.jpg",
+    "/app/data/game-objects/items/ships/Nivelian/Aegir.bbship/ship_021_nivelian_diffuse.bmp",
+    "/app/data/game-objects/items/ships/Nivelian/Aegir.bbship/ship_021_nivelian_normal_specular.bmp",
+    "/app/data/game-objects/items/ships/Nivelian/Aegir.bbship/skinBase.png"
   ],
-  "normSpec": "/app/game-objects/Nivelian/Aegir.bbship/ship_021_nivelian_normal_specular.bmp"
+  "normSpec": "/app/data/game-objects/items/ships/Nivelian/Aegir.bbship/ship_021_nivelian_normal_specular.bmp"
 }

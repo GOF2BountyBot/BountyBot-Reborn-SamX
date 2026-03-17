@@ -107,7 +107,7 @@ def mock_cog(mock_bot):
     cog._ship_render_info = {
         "Skinnable Ship": {
             "skinnable": True,
-            "ship_path": "/ships/skinnable",
+            "bbship_dir": "/ships/skinnable",
             "model_path": "/models/skinnable.blend",
             "texture_regions": 2,
         }
@@ -376,7 +376,7 @@ class TestMakeSkinTextureCommand:
         render_info_resp.status_code = 200
         render_info_resp.json.return_value = {
             "skinnable": True,
-            "ship_path": "/ships/test",
+            "bbship_dir": "/ships/test",
             "model_path": "/models/test.blend",
             "texture_regions": 0,
         }

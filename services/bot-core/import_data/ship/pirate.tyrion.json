@@ -36,7 +36,7 @@
   "maxPrimaries": 1,
   "maxSecondaries": 4,
   "maxTurrets": 0,
-  "model": "/app/game-objects/Pirate/Tyrion.bbship/Tyrion_Full.obj",
+  "model": "/app/data/game-objects/items/ships/Pirate/Tyrion.bbship/Tyrion_Full.obj",
   "name": "Tyrion",
   "saveDue": false,
   "shopSpawnRate": 8.416,
@@ -45,13 +45,13 @@
   "value": 316400,
   "wiki": "https://galaxyonfire.fandom.com/wiki/Tyrion",
   "assets": [
-    "/app/game-objects/Pirate/Tyrion.bbship/mask1.jpg",
-    "/app/game-objects/Pirate/Tyrion.bbship/mask2.jpg",
-    "/app/game-objects/Pirate/Tyrion.bbship/ship_025_pirates_diffuse.bmp",
-    "/app/game-objects/Pirate/Tyrion.bbship/ship_025_pirates_normal_specular.bmp",
-    "/app/game-objects/Pirate/Tyrion.bbship/skinBase.png",
-    "/app/game-objects/Pirate/Tyrion.bbship/Tyrion_Full.mtl",
-    "/app/game-objects/Pirate/Tyrion.bbship/Tyrion_Full.obj"
+    "/app/data/game-objects/items/ships/Pirate/Tyrion.bbship/mask1.jpg",
+    "/app/data/game-objects/items/ships/Pirate/Tyrion.bbship/mask2.jpg",
+    "/app/data/game-objects/items/ships/Pirate/Tyrion.bbship/ship_025_pirates_diffuse.bmp",
+    "/app/data/game-objects/items/ships/Pirate/Tyrion.bbship/ship_025_pirates_normal_specular.bmp",
+    "/app/data/game-objects/items/ships/Pirate/Tyrion.bbship/skinBase.png",
+    "/app/data/game-objects/items/ships/Pirate/Tyrion.bbship/Tyrion_Full.mtl",
+    "/app/data/game-objects/items/ships/Pirate/Tyrion.bbship/Tyrion_Full.obj"
   ],
-  "normSpec": "/app/game-objects/Pirate/Tyrion.bbship/ship_025_pirates_normal_specular.bmp"
+  "normSpec": "/app/data/game-objects/items/ships/Pirate/Tyrion.bbship/ship_025_pirates_normal_specular.bmp"
 }

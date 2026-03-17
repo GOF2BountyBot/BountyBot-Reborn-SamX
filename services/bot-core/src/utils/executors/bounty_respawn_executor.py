@@ -118,6 +118,10 @@ async def _announce_respawn(parent_job_id: str, bounty) -> None:
     }
 
     try:
+        flogger.debug(
+            f"BountyRespawnJob[{parent_job_id}] posting bounty respawn announcement "
+            f"to {_GATEWAY_BASE_URL}/messages (bounty_id={bounty.id})"
+        )
         async with httpx.AsyncClient() as client:
             resp = await client.post(
                 f"{_GATEWAY_BASE_URL}/messages",
@@ -125,6 +129,9 @@ async def _announce_respawn(parent_job_id: str, bounty) -> None:
                 timeout=10,
             )
         resp.raise_for_status()
+        flogger.debug(
+            f"BountyRespawnJob[{parent_job_id}] announcement response status={resp.status_code}"
+        )
         flogger.info(
             f"BountyRespawnJob[{parent_job_id}] announced respawn of bounty "
             f"id={bounty.id} to discord-gateway"

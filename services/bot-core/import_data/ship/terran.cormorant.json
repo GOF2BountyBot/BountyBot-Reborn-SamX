@@ -36,7 +36,7 @@
   "maxPrimaries": 0,
   "maxSecondaries": 4,
   "maxTurrets": 1,
-  "model": "/app/game-objects/Terran/Cormorant.bbship/Cor_Full.obj",
+  "model": "/app/data/game-objects/items/ships/Terran/Cormorant.bbship/Cor_Full.obj",
   "name": "Cormorant",
   "saveDue": false,
   "shopSpawnRate": 6.312,
@@ -45,13 +45,13 @@
   "value": 168900,
   "wiki": "https://galaxyonfire.fandom.com/wiki/Cormorant",
   "assets": [
-    "/app/game-objects/Terran/Cormorant.bbship/Cor_Full.mtl",
-    "/app/game-objects/Terran/Cormorant.bbship/Cor_Full.obj",
-    "/app/game-objects/Terran/Cormorant.bbship/mask1.jpg",
-    "/app/game-objects/Terran/Cormorant.bbship/mask2.jpg",
-    "/app/game-objects/Terran/Cormorant.bbship/ship_036_terran_diffuse.bmp",
-    "/app/game-objects/Terran/Cormorant.bbship/ship_036_terran_normal_specular.bmp",
-    "/app/game-objects/Terran/Cormorant.bbship/skinBase.png"
+    "/app/data/game-objects/items/ships/Terran/Cormorant.bbship/Cor_Full.mtl",
+    "/app/data/game-objects/items/ships/Terran/Cormorant.bbship/Cor_Full.obj",
+    "/app/data/game-objects/items/ships/Terran/Cormorant.bbship/mask1.jpg",
+    "/app/data/game-objects/items/ships/Terran/Cormorant.bbship/mask2.jpg",
+    "/app/data/game-objects/items/ships/Terran/Cormorant.bbship/ship_036_terran_diffuse.bmp",
+    "/app/data/game-objects/items/ships/Terran/Cormorant.bbship/ship_036_terran_normal_specular.bmp",
+    "/app/data/game-objects/items/ships/Terran/Cormorant.bbship/skinBase.png"
   ],
-  "normSpec": "/app/game-objects/Terran/Cormorant.bbship/ship_036_terran_normal_specular.bmp"
+  "normSpec": "/app/data/game-objects/items/ships/Terran/Cormorant.bbship/ship_036_terran_normal_specular.bmp"
 }

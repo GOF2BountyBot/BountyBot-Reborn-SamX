@@ -38,7 +38,7 @@
   "maxPrimaries": 3,
   "maxSecondaries": 2,
   "maxTurrets": 0,
-  "model": "/app/game-objects/Vossk/K'Suuk.bbship/K'Suuk_Full.obj",
+  "model": "/app/data/game-objects/items/ships/Vossk/K'Suuk.bbship/K'Suuk_Full.obj",
   "name": "K'Suukk",
   "saveDue": false,
   "shopSpawnRate": 12.625,
@@ -47,12 +47,12 @@
   "value": 1950000,
   "wiki": "https://galaxyonfire.fandom.com/wiki/K%27Suukk",
   "assets": [
-    "/app/game-objects/Vossk/K'Suuk.bbship/K'Suuk_Full.mtl",
-    "/app/game-objects/Vossk/K'Suuk.bbship/K'Suuk_Full.obj",
-    "/app/game-objects/Vossk/K'Suuk.bbship/mask1.jpg",
-    "/app/game-objects/Vossk/K'Suuk.bbship/skinBase.png",
-    "/app/game-objects/Vossk/K'Suuk.bbship/v_ship_041_vossk_diffuse.bmp",
-    "/app/game-objects/Vossk/K'Suuk.bbship/v_ship_041_vossk_normal_specular.bmp"
+    "/app/data/game-objects/items/ships/Vossk/K'Suuk.bbship/K'Suuk_Full.mtl",
+    "/app/data/game-objects/items/ships/Vossk/K'Suuk.bbship/K'Suuk_Full.obj",
+    "/app/data/game-objects/items/ships/Vossk/K'Suuk.bbship/mask1.jpg",
+    "/app/data/game-objects/items/ships/Vossk/K'Suuk.bbship/skinBase.png",
+    "/app/data/game-objects/items/ships/Vossk/K'Suuk.bbship/v_ship_041_vossk_diffuse.bmp",
+    "/app/data/game-objects/items/ships/Vossk/K'Suuk.bbship/v_ship_041_vossk_normal_specular.bmp"
   ],
-  "normSpec": "/app/game-objects/Vossk/K'Suuk.bbship/v_ship_041_vossk_normal_specular.bmp"
+  "normSpec": "/app/data/game-objects/items/ships/Vossk/K'Suuk.bbship/v_ship_041_vossk_normal_specular.bmp"
 }

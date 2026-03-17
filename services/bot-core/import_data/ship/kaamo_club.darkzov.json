@@ -36,7 +36,7 @@
   "maxPrimaries": 4,
   "maxSecondaries": 1,
   "maxTurrets": 1,
-  "model": "/app/game-objects/Kaamo Club/Darkzov.bbship/Darkzov_Full.obj",
+  "model": "/app/data/game-objects/items/ships/Kaamo Club/Darkzov.bbship/Darkzov_Full.obj",
   "name": "Darkzov",
   "saveDue": false,
   "shopSpawnRate": 8.416,
@@ -45,12 +45,12 @@
   "value": 7236000,
   "wiki": "https://galaxyonfire.fandom.com/wiki/Darkzov",
   "assets": [
-    "/app/game-objects/Kaamo Club/Darkzov.bbship/Darkzov_Full.mtl",
-    "/app/game-objects/Kaamo Club/Darkzov.bbship/Darkzov_Full.obj",
-    "/app/game-objects/Kaamo Club/Darkzov.bbship/mask1.jpg",
-    "/app/game-objects/Kaamo Club/Darkzov.bbship/skinBase.png",
-    "/app/game-objects/Kaamo Club/Darkzov.bbship/sn_ship_060_modified_diffuse.bmp",
-    "/app/game-objects/Kaamo Club/Darkzov.bbship/sn_ship_060_modified_normal_specular.bmp"
+    "/app/data/game-objects/items/ships/Kaamo Club/Darkzov.bbship/Darkzov_Full.mtl",
+    "/app/data/game-objects/items/ships/Kaamo Club/Darkzov.bbship/Darkzov_Full.obj",
+    "/app/data/game-objects/items/ships/Kaamo Club/Darkzov.bbship/mask1.jpg",
+    "/app/data/game-objects/items/ships/Kaamo Club/Darkzov.bbship/skinBase.png",
+    "/app/data/game-objects/items/ships/Kaamo Club/Darkzov.bbship/sn_ship_060_modified_diffuse.bmp",
+    "/app/data/game-objects/items/ships/Kaamo Club/Darkzov.bbship/sn_ship_060_modified_normal_specular.bmp"
   ],
-  "normSpec": "/app/game-objects/Kaamo Club/Darkzov.bbship/sn_ship_060_modified_normal_specular.bmp"
+  "normSpec": "/app/data/game-objects/items/ships/Kaamo Club/Darkzov.bbship/sn_ship_060_modified_normal_specular.bmp"
 }

@@ -39,7 +39,7 @@
   "maxPrimaries": 2,
   "maxSecondaries": 3,
   "maxTurrets": 0,
-  "model": "/app/game-objects/Nivelian/Type 43.bbship/43_Full.obj",
+  "model": "/app/data/game-objects/items/ships/Nivelian/Type 43.bbship/43_Full.obj",
   "name": "Type 43",
   "saveDue": false,
   "shopSpawnRate": 8.416,
@@ -48,13 +48,13 @@
   "value": 72500,
   "wiki": "https://galaxyonfire.fandom.com/wiki/Type_43",
   "assets": [
-    "/app/game-objects/Nivelian/Type 43.bbship/43_Full.mtl",
-    "/app/game-objects/Nivelian/Type 43.bbship/43_Full.obj",
-    "/app/game-objects/Nivelian/Type 43.bbship/mask1.jpg",
-    "/app/game-objects/Nivelian/Type 43.bbship/mask2.jpg",
-    "/app/game-objects/Nivelian/Type 43.bbship/ship_012_nivelian_diffuse.bmp",
-    "/app/game-objects/Nivelian/Type 43.bbship/ship_012_nivelian_normal_specular.bmp",
-    "/app/game-objects/Nivelian/Type 43.bbship/skinBase.png"
+    "/app/data/game-objects/items/ships/Nivelian/Type 43.bbship/43_Full.mtl",
+    "/app/data/game-objects/items/ships/Nivelian/Type 43.bbship/43_Full.obj",
+    "/app/data/game-objects/items/ships/Nivelian/Type 43.bbship/mask1.jpg",
+    "/app/data/game-objects/items/ships/Nivelian/Type 43.bbship/mask2.jpg",
+    "/app/data/game-objects/items/ships/Nivelian/Type 43.bbship/ship_012_nivelian_diffuse.bmp",
+    "/app/data/game-objects/items/ships/Nivelian/Type 43.bbship/ship_012_nivelian_normal_specular.bmp",
+    "/app/data/game-objects/items/ships/Nivelian/Type 43.bbship/skinBase.png"
   ],
-  "normSpec": "/app/game-objects/Nivelian/Type 43.bbship/ship_012_nivelian_normal_specular.bmp"
+  "normSpec": "/app/data/game-objects/items/ships/Nivelian/Type 43.bbship/ship_012_nivelian_normal_specular.bmp"
 }

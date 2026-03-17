@@ -48,9 +48,11 @@ class RenderJob:
             return now - self.completed_at > timedelta(hours=1)
         # Stuck-job detection: processing jobs that exceed 30 minutes are considered failed
         if self.status == JobStatus.PROCESSING and self.started_at and now - self.started_at > timedelta(minutes=30):
+            old_status = self.status
             self.status = JobStatus.FAILED
             self.error_message = "Job timed out (exceeded 30 minute processing limit)"
             self.completed_at = now
+            flogger.debug(f"Job {self.job_id} transitioned from {old_status} to FAILED (timeout)")
             return False  # Don't expire yet — mark failed and let next cycle clean up
         return False
 
@@ -81,6 +83,8 @@ class JobQueueService:
         self._max_queue_size = max_queue_size
         self._cleanup_task: asyncio.Task | None = None
         self._active_tasks: set[asyncio.Task] = set()
+        flogger.info(f"JobQueueService initialized (max_concurrent={max_concurrent}, "
+                     f"max_queue_size={max_queue_size})")
 
     def create_job(self, model_path: str, res_x: int, res_y: int, num_samples: int) -> RenderJob:
         """Create a new job and return it. Does NOT start processing.
@@ -104,38 +108,49 @@ class JobQueueService:
 
     def get_job(self, job_id: str) -> RenderJob | None:
         """Get job by ID. Returns None if not found or expired."""
+        flogger.trace(f"get_job() called for job_id={job_id}")
         job = self._jobs.get(job_id)
         if job and job.is_expired:
+            flogger.debug(f"Job {job_id} has expired, removing it")
             self._cleanup_job(job_id)
             return None
         return job
 
     def list_jobs(self) -> list[dict]:
         """List all non-expired jobs."""
+        flogger.trace(f"list_jobs() called, {len(self._jobs)} total jobs in queue")
         self._cleanup_expired()
-        return [job.to_dict() for job in self._jobs.values()]
+        jobs_list = [job.to_dict() for job in self._jobs.values()]
+        flogger.debug(f"Returning {len(jobs_list)} non-expired jobs")
+        return jobs_list
 
     async def submit_job(self, job: RenderJob, render_coro) -> None:
         """Submit a job for processing. Runs in background with semaphore control."""
+        flogger.debug(f"Submitting job {job.job_id} for async processing")
         task = asyncio.create_task(self._process_job(job, render_coro))
         # Store reference to prevent garbage collection of the background task.
         self._active_tasks.add(task)
         task.add_done_callback(self._active_tasks.discard)
+        flogger.debug(f"Job {job.job_id} submitted as background task, active tasks: {len(self._active_tasks)}")
 
     async def _process_job(self, job: RenderJob, render_coro) -> None:
         """Process a single render job with concurrency limiting."""
         async with self._semaphore:
+            old_status = job.status
             job.status = JobStatus.PROCESSING
             job.started_at = datetime.now(UTC)
+            flogger.debug(f"Job {job.job_id} transitioned from {old_status} to PROCESSING")
             flogger.info(f"Job {job.job_id} started processing")
             try:
                 result_path = await render_coro
                 job.status = JobStatus.COMPLETE
                 job.result_path = str(result_path)
-                flogger.info(f"Job {job.job_id} completed: {result_path}")
+                flogger.debug(f"Job {job.job_id} transitioned to COMPLETE")
+                flogger.info(f"Job {job.job_id} completed successfully: {result_path}")
             except Exception as e:
                 job.status = JobStatus.FAILED
                 job.error_message = str(e)
+                flogger.debug(f"Job {job.job_id} transitioned to FAILED")
                 flogger.error(f"Job {job.job_id} failed: {e}")
             finally:
                 job.completed_at = datetime.now(UTC)
@@ -143,26 +158,47 @@ class JobQueueService:
     def _cleanup_job(self, job_id: str) -> None:
         """Remove a job and its result file."""
         job = self._jobs.pop(job_id, None)
-        if job and job.result_path:
-            with contextlib.suppress(Exception):
-                Path(job.result_path).unlink(missing_ok=True)
+        if job:
+            if job.result_path:
+                try:
+                    Path(job.result_path).unlink(missing_ok=True)
+                    flogger.debug(f"Cleaned up result file for job {job_id}: {job.result_path}")
+                except Exception as e:
+                    flogger.error(f"Failed to delete result file for job {job_id}: {e}")
+            flogger.debug(f"Job {job_id} removed from queue (status was {job.status})")
 
     def _cleanup_expired(self) -> None:
         """Remove all expired jobs."""
+        flogger.trace(f"_cleanup_expired() called with {len(self._jobs)} jobs in queue")
         expired = [jid for jid, j in self._jobs.items() if j.is_expired]
-        for jid in expired:
-            self._cleanup_job(jid)
+        if expired:
+            flogger.debug(f"Cleaning up {len(expired)} expired jobs: {expired}")
+            for jid in expired:
+                self._cleanup_job(jid)
+        else:
+            flogger.trace("No expired jobs to clean up")
 
     async def start_cleanup_loop(self, interval_seconds: int = 300) -> None:
         """Start periodic cleanup of expired jobs."""
+        flogger.info(f"Cleanup loop started (interval: {interval_seconds} seconds)")
         while True:
-            await asyncio.sleep(interval_seconds)
-            self._cleanup_expired()
+            try:
+                await asyncio.sleep(interval_seconds)
+                flogger.trace(f"Cleanup cycle executing")
+                self._cleanup_expired()
+            except asyncio.CancelledError:
+                flogger.info("Cleanup loop cancelled, shutting down")
+                raise
 
     def shutdown(self) -> None:
         """Cancel cleanup task and all active render tasks."""
+        flogger.info(f"Shutting down job queue (cleanup_task set: {self._cleanup_task is not None}, "
+                     f"active tasks: {len(self._active_tasks)})")
         if self._cleanup_task:
             self._cleanup_task.cancel()
+            flogger.debug("Cleanup task cancelled")
         for task in self._active_tasks:
             task.cancel()
+            flogger.debug(f"Cancelled active render task")
         self._active_tasks.clear()
+        flogger.debug("Job queue shutdown complete")

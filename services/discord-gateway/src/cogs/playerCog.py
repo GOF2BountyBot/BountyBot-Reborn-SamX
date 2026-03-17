@@ -25,6 +25,7 @@ class PlayerCog(commands.Cog):
     @app_commands.command(name="profile", description="View your player profile and statistics")
     async def profile(self, interaction: discord.Interaction):
         """Display player profile with statistics."""
+        flogger.info(f"/profile: guild={interaction.guild_id}, user={interaction.user.id}")
         await interaction.response.defer(thinking=True)
 
         try:
@@ -96,21 +97,25 @@ class PlayerCog(commands.Cog):
             embed.set_footer(text=f"Player ID: {player_data['id']} | Joined: {player_data['created_at'][:10]}")
 
             await interaction.followup.send(embed=embed)
-            flogger.debug(f"/profile by {interaction.user} in guild {interaction.guild_id}")
+            flogger.debug(f"/profile success: guild={interaction.guild_id}, user={interaction.user.id}")
 
         except httpx.HTTPStatusError as e:
+            flogger.error(f"/profile HTTP error: guild={interaction.guild_id}, user={interaction.user.id}, "
+                          f"status={e.response.status_code}")
             if e.response.status_code == 404:
                 await interaction.followup.send("❌ Player profile not found.", ephemeral=True)
             else:
                 await interaction.followup.send(f"❌ API Error: {e}", ephemeral=True)
         except Exception as e:  # pylint: disable=broad-exception-caught
-            flogger.error(f"Error in /profile: {e}")
+            flogger.error(f"/profile error: guild={interaction.guild_id}, user={interaction.user.id}, error={e}")
             await interaction.followup.send("⚠️ An error occurred while fetching your profile.", ephemeral=True)
 
     @app_commands.command(name="leaderboard", description="View the guild leaderboard")
     @app_commands.describe(tier="Filter by specific tier")
     async def leaderboard(self, interaction: discord.Interaction, tier: str | None = None):
         """Display guild leaderboard."""
+        flogger.info(f"/leaderboard: guild={interaction.guild_id}, user={interaction.user.id}")
+        flogger.debug(f"/leaderboard params: guild={interaction.guild_id}, user={interaction.user.id}, tier={tier}")
         await interaction.response.defer(thinking=True)
 
         try:
@@ -163,18 +168,24 @@ class PlayerCog(commands.Cog):
             embed.set_footer(text=f"Showing top {min(10, len(players))} of {len(players)} players")
 
             await interaction.followup.send(embed=embed)
-            flogger.debug(f"/leaderboard by {interaction.user} in guild {interaction.guild_id}")
+            flogger.debug(f"/leaderboard success: guild={interaction.guild_id}, user={interaction.user.id}, "
+                          f"players={len(players)}")
 
         except httpx.HTTPStatusError as e:
+            flogger.error(f"/leaderboard HTTP error: guild={interaction.guild_id}, user={interaction.user.id}, "
+                          f"status={e.response.status_code}")
             await interaction.followup.send(f"❌ API Error: {e}", ephemeral=True)
         except Exception as e:  # pylint: disable=broad-exception-caught
-            flogger.error(f"Error in /leaderboard: {e}")
+            flogger.error(f"/leaderboard error: guild={interaction.guild_id}, user={interaction.user.id}, error={e}")
             await interaction.followup.send("⚠️ An error occurred while fetching the leaderboard.", ephemeral=True)
 
     @app_commands.command(name="prestige", description="Prestige your character (Platinum tier only)")
     @app_commands.describe(confirm="Type CONFIRM to execute the prestige")
     async def prestige(self, interaction: discord.Interaction, confirm: str | None = None):
         """Prestige player character."""
+        flogger.info(f"/prestige: guild={interaction.guild_id}, user={interaction.user.id}")
+        flogger.debug(f"/prestige params: guild={interaction.guild_id}, user={interaction.user.id}, "
+                      f"confirm={confirm}")
         await interaction.response.defer(thinking=True)
 
         try:
@@ -194,6 +205,8 @@ class PlayerCog(commands.Cog):
             player_data = resp.json()
 
             if player_data['tier'] != 'Platinum':
+                flogger.debug(f"/prestige rejected: guild={interaction.guild_id}, user={interaction.user.id}, "
+                              f"tier={player_data['tier']}")
                 await interaction.followup.send(
                     "❌ You must be Platinum tier to prestige!",
                     ephemeral=True
@@ -202,6 +215,8 @@ class PlayerCog(commands.Cog):
 
             # If confirmation not provided or incorrect, show warning embed
             if confirm != "CONFIRM":
+                flogger.debug(f"/prestige awaiting confirmation: guild={interaction.guild_id}, "
+                              f"user={interaction.user.id}")
                 embed = discord.Embed(
                     title="⚠️ Prestige Confirmation",
                     description=(
@@ -212,7 +227,6 @@ class PlayerCog(commands.Cog):
                     color=discord.Color.orange()
                 )
                 await interaction.followup.send(embed=embed, ephemeral=True)
-                flogger.debug(f"/prestige (no confirm) by {interaction.user} in guild {interaction.guild_id}")
                 return
 
             # Execute the prestige via API
@@ -236,9 +250,12 @@ class PlayerCog(commands.Cog):
             embed.add_field(name="Prestige Stars", value=str(prestige_data['prestige_count']), inline=True)
 
             await interaction.followup.send(embed=embed)
-            flogger.debug(f"/prestige CONFIRMED by {interaction.user} in guild {interaction.guild_id}")
+            flogger.info(f"/prestige success: guild={interaction.guild_id}, user={interaction.user.id}, "
+                         f"prestige_count={prestige_data['prestige_count']}")
 
         except httpx.HTTPStatusError as e:
+            flogger.error(f"/prestige HTTP error: guild={interaction.guild_id}, user={interaction.user.id}, "
+                          f"status={e.response.status_code}")
             if e.response.status_code == 400:
                 try:
                     detail = e.response.json().get("detail", "Level too low to prestige.")
@@ -248,7 +265,7 @@ class PlayerCog(commands.Cog):
             else:
                 await interaction.followup.send(f"❌ API Error: {e}", ephemeral=True)
         except Exception as e:  # pylint: disable=broad-exception-caught
-            flogger.error(f"Error in /prestige: {e}")
+            flogger.error(f"/prestige error: guild={interaction.guild_id}, user={interaction.user.id}, error={e}")
             await interaction.followup.send("⚠️ An error occurred.", ephemeral=True)
 
     def _get_tier_color(self, tier: str) -> discord.Color:

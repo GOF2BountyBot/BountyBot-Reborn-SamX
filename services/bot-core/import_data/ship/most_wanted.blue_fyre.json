@@ -32,7 +32,7 @@
   "maxPrimaries": 3,
   "maxSecondaries": 3,
   "maxTurrets": 0,
-  "model": "/app/game-objects/Most Wanted/Blue Fyre.bbship/Blue_Fyre_Full.obj",
+  "model": "/app/data/game-objects/items/ships/Most Wanted/Blue Fyre.bbship/Blue_Fyre_Full.obj",
   "name": "Blue Fyre",
   "saveDue": false,
   "shopSpawnRate": 7.214,
@@ -41,14 +41,14 @@
   "value": 4455000,
   "wiki": "https://galaxyonfire.fandom.com/wiki/Blue_Fyre",
   "assets": [
-    "/app/game-objects/Most Wanted/Blue Fyre.bbship/BF SKINS.xcf",
-    "/app/game-objects/Most Wanted/Blue Fyre.bbship/Blue_Fyre_Full.mtl",
-    "/app/game-objects/Most Wanted/Blue Fyre.bbship/Blue_Fyre_Full.obj",
-    "/app/game-objects/Most Wanted/Blue Fyre.bbship/mask1.jpg",
-    "/app/game-objects/Most Wanted/Blue Fyre.bbship/mask2.jpg",
-    "/app/game-objects/Most Wanted/Blue Fyre.bbship/skinBase.png",
-    "/app/game-objects/Most Wanted/Blue Fyre.bbship/sn_ship_046_most_wanted_diffuse.bmp",
-    "/app/game-objects/Most Wanted/Blue Fyre.bbship/sn_ship_046_most_wanted_normal_specular.bmp"
+    "/app/data/game-objects/items/ships/Most Wanted/Blue Fyre.bbship/BF SKINS.xcf",
+    "/app/data/game-objects/items/ships/Most Wanted/Blue Fyre.bbship/Blue_Fyre_Full.mtl",
+    "/app/data/game-objects/items/ships/Most Wanted/Blue Fyre.bbship/Blue_Fyre_Full.obj",
+    "/app/data/game-objects/items/ships/Most Wanted/Blue Fyre.bbship/mask1.jpg",
+    "/app/data/game-objects/items/ships/Most Wanted/Blue Fyre.bbship/mask2.jpg",
+    "/app/data/game-objects/items/ships/Most Wanted/Blue Fyre.bbship/skinBase.png",
+    "/app/data/game-objects/items/ships/Most Wanted/Blue Fyre.bbship/sn_ship_046_most_wanted_diffuse.bmp",
+    "/app/data/game-objects/items/ships/Most Wanted/Blue Fyre.bbship/sn_ship_046_most_wanted_normal_specular.bmp"
   ],
-  "normSpec": "/app/game-objects/Most Wanted/Blue Fyre.bbship/sn_ship_046_most_wanted_normal_specular.bmp"
+  "normSpec": "/app/data/game-objects/items/ships/Most Wanted/Blue Fyre.bbship/sn_ship_046_most_wanted_normal_specular.bmp"
 }

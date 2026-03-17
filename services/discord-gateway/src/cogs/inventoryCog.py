@@ -49,6 +49,8 @@ class InventoryCog(commands.Cog):
         user: discord.User | None = None
     ):
         """Display player inventory."""
+        flogger.info(f"/inventory: guild={interaction.guild_id}, user={interaction.user.id}")
+        flogger.debug(f"/inventory params: item_type={item_type}, user={user.id if user else None}")
         await interaction.response.defer(thinking=True)
 
         try:
@@ -160,6 +162,8 @@ class InventoryCog(commands.Cog):
     @app_commands.describe(query="Item name to search for")
     async def search(self, interaction: discord.Interaction, query: str):
         """Search player inventory for items."""
+        flogger.info(f"/search: guild={interaction.guild_id}, user={interaction.user.id}")
+        flogger.debug(f"/search params: query={query}")
         await interaction.response.defer(thinking=True)
 
         try:
@@ -230,6 +234,8 @@ class InventoryCog(commands.Cog):
     )
     async def item(self, interaction: discord.Interaction, item_name: str, item_type: str):
         """Get detailed item information including inventory count."""
+        flogger.info(f"/item: guild={interaction.guild_id}, user={interaction.user.id}")
+        flogger.debug(f"/item params: item_name={item_name}, item_type={item_type}")
         await interaction.response.defer(thinking=True)
 
         try:
@@ -316,6 +322,8 @@ class InventoryCog(commands.Cog):
         equipment_type: str,
     ):
         """Equip an item onto the player's active ship."""
+        flogger.info(f"/equip: guild={interaction.guild_id}, user={interaction.user.id}")
+        flogger.debug(f"/equip params: item_name={item_name}, equipment_type={equipment_type}")
         await interaction.response.defer(thinking=True)
 
         try:
@@ -408,6 +416,8 @@ class InventoryCog(commands.Cog):
         equipment_type: str,
     ):
         """Unequip an item from the player's active ship."""
+        flogger.info(f"/unequip: guild={interaction.guild_id}, user={interaction.user.id}")
+        flogger.debug(f"/unequip params: item_name={item_name}, equipment_type={equipment_type}")
         await interaction.response.defer(thinking=True)
 
         try:

@@ -63,19 +63,31 @@ class ItemRepository(GenericRepository[Item]):
         If *item_type* is given, query only that model's table.
         Otherwise, search across all models and return the first match.
         """
-        if item_type is not None:
-            model = self._get_model(item_type)
-            result = await db.execute(select(model).filter_by(name=name))
-            return result.scalars().one_or_none()
-
-        # Search all models
-        for model in self._get_all_models():
-            result = await db.execute(select(model).filter_by(name=name))
-            obj = result.scalars().one_or_none()
-            if obj is not None:
+        flogger.trace(f"get_by_name entry: name={name!r}, item_type={item_type!r}")
+        try:
+            if item_type is not None:
+                model = self._get_model(item_type)
+                result = await db.execute(select(model).filter_by(name=name))
+                obj = result.scalars().one_or_none()
+                if obj is not None:
+                    flogger.trace(f"get_by_name exit: found item id={obj.id} (type={item_type})")
+                else:
+                    flogger.trace(f"get_by_name exit: no item found for name={name!r} (type={item_type})")
                 return obj
 
-        return None
+            # Search all models
+            for model in self._get_all_models():
+                result = await db.execute(select(model).filter_by(name=name))
+                obj = result.scalars().one_or_none()
+                if obj is not None:
+                    flogger.trace(f"get_by_name exit: found item id={obj.id} across all models")
+                    return obj
+
+            flogger.trace(f"get_by_name exit: no item found for name={name!r} across all models")
+            return None
+        except Exception as e:
+            flogger.error(f"Error in get_by_name with name={name!r}, item_type={item_type!r}: {e}")
+            raise
 
     # ------------------------------------------------------------------
     # get_all_by_tech_level
@@ -92,25 +104,34 @@ class ItemRepository(GenericRepository[Item]):
         Ships do not have a tech_level column and are skipped when
         *item_type* is None.  If *item_type* is ``"ship"`` this returns [].
         """
-        if item_type is not None:
-            model = self._get_model(item_type)
-            if model is Ship:
-                flogger.trace("Ship model has no tech_level — returning []")
-                return []
-            result = await db.execute(
-                select(model).filter_by(tech_level=tech_level)
-            )
-            return list(result.scalars().all())
+        flogger.trace(f"get_all_by_tech_level entry: tech_level={tech_level}, item_type={item_type!r}")
+        try:
+            if item_type is not None:
+                model = self._get_model(item_type)
+                if model is Ship:
+                    flogger.trace("Ship model has no tech_level — returning []")
+                    return []
+                result = await db.execute(
+                    select(model).filter_by(tech_level=tech_level)
+                )
+                items = list(result.scalars().all())
+                flogger.trace(f"get_all_by_tech_level exit: found {len(items)} items (type={item_type})")
+                return items
 
-        # Aggregate across all models that have tech_level
-        items: list[Any] = []
-        for model in self._TECH_LEVEL_MODELS:
-            result = await db.execute(
-                select(model).filter_by(tech_level=tech_level)
-            )
-            items.extend(result.scalars().all())
+            # Aggregate across all models that have tech_level
+            items: list[Any] = []
+            for model in self._TECH_LEVEL_MODELS:
+                result = await db.execute(
+                    select(model).filter_by(tech_level=tech_level)
+                )
+                items.extend(result.scalars().all())
 
-        return items
+            flogger.trace(f"get_all_by_tech_level exit: found {len(items)} items across all models")
+            return items
+        except Exception as e:
+            flogger.error(f"Error in get_all_by_tech_level with tech_level={tech_level}, " \
+                          f"item_type={item_type!r}: {e}")
+            raise
 
     # ------------------------------------------------------------------
     # get_random_by_tech_level
@@ -128,27 +149,40 @@ class ItemRepository(GenericRepository[Item]):
         ship's ``shop_spawn_rate``.  For all other types a uniform random
         choice is used.  Returns None if no items exist at that tech level.
         """
-        # Special case: ships are selected by shop_spawn_rate weight but
-        # have no tech_level, so we fetch all ships and apply weighting.
-        if item_type == "ship":
-            result = await db.execute(select(Ship))
-            ships = list(result.scalars().all())
-            if not ships:
-                return None
-            weights = [
-                (s.shop_spawn_rate if s.shop_spawn_rate is not None else 0.0)
-                for s in ships
-            ]
-            # If all weights are 0, fall back to uniform selection
-            if all(w == 0.0 for w in weights):
-                return random.choice(ships)
-            chosen = random.choices(ships, weights=weights, k=1)
-            return chosen[0]
+        flogger.trace(f"get_random_by_tech_level entry: tech_level={tech_level}, item_type={item_type!r}")
+        try:
+            # Special case: ships are selected by shop_spawn_rate weight but
+            # have no tech_level, so we fetch all ships and apply weighting.
+            if item_type == "ship":
+                result = await db.execute(select(Ship))
+                ships = list(result.scalars().all())
+                if not ships:
+                    flogger.trace("get_random_by_tech_level exit: no ships found")
+                    return None
+                weights = [
+                    (s.shop_spawn_rate if s.shop_spawn_rate is not None else 0.0)
+                    for s in ships
+                ]
+                # If all weights are 0, fall back to uniform selection
+                if all(w == 0.0 for w in weights):
+                    chosen = random.choice(ships)
+                    flogger.trace(f"get_random_by_tech_level exit: selected ship id={chosen.id} (uniform)")
+                    return chosen
+                chosen = random.choices(ships, weights=weights, k=1)
+                flogger.trace(f"get_random_by_tech_level exit: selected ship id={chosen[0].id} (weighted)")
+                return chosen[0]
 
-        items = await self.get_all_by_tech_level(db, tech_level, item_type)
-        if not items:
-            return None
-        return random.choice(items)
+            items = await self.get_all_by_tech_level(db, tech_level, item_type)
+            if not items:
+                flogger.trace(f"get_random_by_tech_level exit: no items found (tech_level={tech_level})")
+                return None
+            chosen = random.choice(items)
+            flogger.trace(f"get_random_by_tech_level exit: selected item id={chosen.id}")
+            return chosen
+        except Exception as e:
+            flogger.error(f"Error in get_random_by_tech_level with tech_level={tech_level}, " \
+                          f"item_type={item_type!r}: {e}")
+            raise
 
     # ------------------------------------------------------------------
     # get_count
@@ -156,13 +190,19 @@ class ItemRepository(GenericRepository[Item]):
 
     async def get_count(self, db: AsyncSession) -> int:
         """Return the total item count across all item types."""
-        total = 0
-        for model in self._get_all_models():
-            result = await db.execute(
-                select(func.count()).select_from(model)  # pylint: disable=not-callable
-            )
-            total += result.scalar() or 0
-        return total
+        flogger.trace("get_count entry")
+        try:
+            total = 0
+            for model in self._get_all_models():
+                result = await db.execute(
+                    select(func.count()).select_from(model)  # pylint: disable=not-callable
+                )
+                total += result.scalar() or 0
+            flogger.trace(f"get_count exit: total={total}")
+            return total
+        except Exception as e:
+            flogger.error(f"Error in get_count: {e}")
+            raise
 
     # ------------------------------------------------------------------
     # create_or_update
@@ -178,31 +218,42 @@ class ItemRepository(GenericRepository[Item]):
         Looks up by name, updates if exists, creates if not.
         Maps the common Item fields; additional keys are ignored.
         """
-        flogger.trace(f"Creating or updating item from {raw}")
+        try:
+            item_name = raw.get("name", "unknown")
+            flogger.trace(f"create_or_update entry: creating or updating item name={item_name!r}")
+            flogger.debug(f"Item data: name={item_name!r}, type={raw.get('type')}, " \
+                          f"value={raw.get('value')}")
 
-        item_fields = {
-            "name":     raw["name"],
-            "aliases":  raw.get("aliases", []),
-            "built_in": raw.get("builtIn", False),
-            "emoji":    raw.get("emoji"),
-            "icon":     raw.get("icon"),
-            "value":    raw.get("value"),
-            "wiki":     raw.get("wiki"),
-            "type":     raw.get("type"),
-        }
+            item_fields = {
+                "name":     raw["name"],
+                "aliases":  raw.get("aliases", []),
+                "built_in": raw.get("builtIn", False),
+                "emoji":    raw.get("emoji"),
+                "icon":     raw.get("icon"),
+                "value":    raw.get("value"),
+                "wiki":     raw.get("wiki"),
+                "type":     raw.get("type"),
+            }
 
-        result = await db.execute(
-            select(self._model).filter_by(name=item_fields["name"])
-        )
-        obj = result.scalars().one_or_none()
+            result = await db.execute(
+                select(self._model).filter_by(name=item_fields["name"])
+            )
+            obj = result.scalars().one_or_none()
 
-        if obj:
-            for k, v in item_fields.items():
-                setattr(obj, k, v)
-        else:
-            obj = Item(**item_fields)
-            db.add(obj)
+            if obj:
+                flogger.debug(f"Updating existing item id={obj.id}, name={item_name!r}")
+                for k, v in item_fields.items():
+                    setattr(obj, k, v)
+            else:
+                obj = Item(**item_fields)
+                db.add(obj)
+                flogger.debug(f"Created new item name={item_name!r}")
 
-        await db.commit()
-        await db.refresh(obj)
-        return obj
+            await db.commit()
+            await db.refresh(obj)
+            flogger.trace(f"create_or_update exit: item id={obj.id}, name={item_name!r}")
+            return obj
+        except Exception as e:
+            flogger.error(f"Error in create_or_update with item name={raw.get('name', 'unknown')!r}: {e}")
+            await db.rollback()
+            raise

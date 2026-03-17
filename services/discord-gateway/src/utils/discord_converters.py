@@ -273,6 +273,7 @@ class ChannelConverter:
 
         Delegates to utils.discord_helpers.tag_to_dict(...) for consistent behavior.
         """
+        flogger.debug(f"forum_tag_to_payload called for tag: {getattr(tag, 'name', None)} on channel {channel_id}")
         try:
             payload = tag_to_dict(tag, channel_id=channel_id)
             # Ensure fields conform to expected types (id -> int or None, channel_id -> int or None)

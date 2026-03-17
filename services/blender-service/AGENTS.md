@@ -78,10 +78,10 @@ services/blender-service/
 ```
 docker-entrypoint.sh
   ├── check_dependencies()          — verify 7z and gdown are on PATH
-  ├── check_directory()             — look for .bmp/.jpg under /app/game-objects/
+  ├── check_directory()             — look for .bmp/.jpg under /app/data/game-objects/
   ├── (if missing) download_and_extract()
   │     ├── gdown $GAME_OBJS_FILEID → /tmp/downloaded_file.7z
-  │     └── 7z x → /app/game-objects/
+  │     └── 7z x → /app/data/game-objects/
   ├── GPU detection: nvidia-smi --list-gpus
   ├── (if GPU found) optional CUDA warmup: blender -b -P /tmp/warmup.py
   │     └── controlled by DO_WARMUP env var (true/false)
@@ -102,7 +102,7 @@ main.py → create_app()
         └── job_queue.shutdown()
 ```
 
-**Key startup invariant**: The app will not start if game-object assets are not present at `/app/game-objects/`. This is enforced by `docker-entrypoint.sh`, which exits with code 1 on asset failure.
+**Key startup invariant**: The app will not start if game-object assets are not present at `/app/data/game-objects/`. This is enforced by `docker-entrypoint.sh`, which exits with code 1 on asset failure. Since `/app/data` is bind-mounted to the host (`./mappings/blender-renderer`), game-objects persist across container rebuilds.
 
 ---
 
@@ -112,15 +112,15 @@ The entrypoint script runs before the Python app and manages Galaxy on Fire 2 3D
 
 | Step | Detail |
 |------|--------|
-| **Asset check** | Searches `/app/game-objects/` for any `.bmp` or `.jpg` file (case-insensitive) |
+| **Asset check** | Searches `/app/data/game-objects/` for any `.bmp` or `.jpg` file (case-insensitive) |
 | **Download** | Uses `gdown $GAME_OBJS_FILEID` to fetch a `.7z` archive from Google Drive |
-| **Extraction** | `7z x` extracts to `/app/` (so `game-objects/` lands at `/app/game-objects/`) |
+| **Extraction** | `7z x` extracts to `/app/data/` (so `game-objects/` lands at `/app/data/game-objects/`) |
 | **GPU detection** | `nvidia-smi --list-gpus` — detects NVIDIA GPU presence |
 | **CUDA warmup** | If GPU detected AND `DO_WARMUP=true`: runs a 1-sample 64×64 Blender render to pre-compile CUDA kernels (3–5 min, one-time) |
 | **CPU fallback** | If no GPU: Blender will use CPU rendering automatically |
 | **Launch gate** | App only starts if `GAME_OBJECTS_READY=true`; otherwise exits with code 1 |
 
-**Local dev shortcut**: Mount pre-downloaded assets: `./old-refs/items/ships/ → /app/game-objects/`
+**Local dev shortcut**: Mount pre-downloaded assets: `./old-refs/items/ships/ → /app/data/game-objects/items/ships/`
 
 ---
 

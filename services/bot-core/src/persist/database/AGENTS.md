@@ -285,6 +285,33 @@ python -m persist.database.run_migration revision -m "add new_field to player"
 
 ---
 
+## Migration Notes
+
+- **Revision 0001** creates all tables from current ORM metadata. This is a "moving target" revision — it reflects the current state of models at the time it was generated. This is intentional for fresh installs.
+- **Future schema changes** MUST use `run_migration revision -m "describe change"` to generate proper `op.add_column()` / `op.drop_column()` / etc. migrations. Do NOT modify revision 0001.
+- **NOT NULL columns** on existing tables require `server_default` in the migration for existing rows. Example:
+
+```python
+# Example migration adding a NOT NULL column to an existing table
+from alembic import op
+import sqlalchemy as sa
+
+def upgrade():
+    op.add_column('players', sa.Column(
+        'new_field',
+        sa.String(50),
+        nullable=False,
+        server_default='default_value'
+    ))
+
+def downgrade():
+    op.drop_column('players', 'new_field')
+```
+
+- `compare_server_default=True` is set in `env.py`, so Alembic will detect changes to server defaults during autogeneration.
+
+---
+
 ## Migration Anti-Patterns
 
 - **Never use `Base.metadata.create_all()`** — this was the legacy approach and bypasses Alembic's revision tracking

@@ -35,7 +35,7 @@
   "maxPrimaries": 2,
   "maxSecondaries": 2,
   "maxTurrets": 0,
-  "model": "/app/game-objects/Midorian/Badger.bbship/Badger_Full.obj",
+  "model": "/app/data/game-objects/items/ships/Midorian/Badger.bbship/Badger_Full.obj",
   "name": "Badger",
   "saveDue": false,
   "shopSpawnRate": 9.585,
@@ -44,13 +44,13 @@
   "value": 38709,
   "wiki": "https://galaxyonfire.fandom.com/wiki/Badger",
   "assets": [
-    "/app/game-objects/Midorian/Badger.bbship/Badger_Full.mtl",
-    "/app/game-objects/Midorian/Badger.bbship/Badger_Full.obj",
-    "/app/game-objects/Midorian/Badger.bbship/mask1.jpg",
-    "/app/game-objects/Midorian/Badger.bbship/mask2.jpg",
-    "/app/game-objects/Midorian/Badger.bbship/ship_003_midorian_diffuse.bmp",
-    "/app/game-objects/Midorian/Badger.bbship/ship_003_midorian_normal_specular.bmp",
-    "/app/game-objects/Midorian/Badger.bbship/skinBase.png"
+    "/app/data/game-objects/items/ships/Midorian/Badger.bbship/Badger_Full.mtl",
+    "/app/data/game-objects/items/ships/Midorian/Badger.bbship/Badger_Full.obj",
+    "/app/data/game-objects/items/ships/Midorian/Badger.bbship/mask1.jpg",
+    "/app/data/game-objects/items/ships/Midorian/Badger.bbship/mask2.jpg",
+    "/app/data/game-objects/items/ships/Midorian/Badger.bbship/ship_003_midorian_diffuse.bmp",
+    "/app/data/game-objects/items/ships/Midorian/Badger.bbship/ship_003_midorian_normal_specular.bmp",
+    "/app/data/game-objects/items/ships/Midorian/Badger.bbship/skinBase.png"
   ],
-  "normSpec": "/app/game-objects/Midorian/Badger.bbship/ship_003_midorian_normal_specular.bmp"
+  "normSpec": "/app/data/game-objects/items/ships/Midorian/Badger.bbship/ship_003_midorian_normal_specular.bmp"
 }

@@ -43,7 +43,7 @@
   "maxPrimaries": 2,
   "maxSecondaries": 2,
   "maxTurrets": 0,
-  "model": "/app/game-objects/Midorian/Berger CrossXT.bbship/Berger_CrossXT_Full.obj",
+  "model": "/app/data/game-objects/items/ships/Midorian/Berger CrossXT.bbship/Berger_CrossXT_Full.obj",
   "name": "Berger CrossXT",
   "saveDue": false,
   "shopSpawnRate": 8.416,
@@ -52,13 +52,13 @@
   "value": 87318,
   "wiki": "https://galaxyonfire.fandom.com/wiki/Berger_CrossXT",
   "assets": [
-    "/app/game-objects/Midorian/Berger CrossXT.bbship/Berger_CrossXT_Full.mtl",
-    "/app/game-objects/Midorian/Berger CrossXT.bbship/Berger_CrossXT_Full.obj",
-    "/app/game-objects/Midorian/Berger CrossXT.bbship/mask1.jpg",
-    "/app/game-objects/Midorian/Berger CrossXT.bbship/mask2.jpg",
-    "/app/game-objects/Midorian/Berger CrossXT.bbship/ship_030_midorian_diffuse.bmp",
-    "/app/game-objects/Midorian/Berger CrossXT.bbship/ship_030_midorian_normal_specular.bmp",
-    "/app/game-objects/Midorian/Berger CrossXT.bbship/skinBase.png"
+    "/app/data/game-objects/items/ships/Midorian/Berger CrossXT.bbship/Berger_CrossXT_Full.mtl",
+    "/app/data/game-objects/items/ships/Midorian/Berger CrossXT.bbship/Berger_CrossXT_Full.obj",
+    "/app/data/game-objects/items/ships/Midorian/Berger CrossXT.bbship/mask1.jpg",
+    "/app/data/game-objects/items/ships/Midorian/Berger CrossXT.bbship/mask2.jpg",
+    "/app/data/game-objects/items/ships/Midorian/Berger CrossXT.bbship/ship_030_midorian_diffuse.bmp",
+    "/app/data/game-objects/items/ships/Midorian/Berger CrossXT.bbship/ship_030_midorian_normal_specular.bmp",
+    "/app/data/game-objects/items/ships/Midorian/Berger CrossXT.bbship/skinBase.png"
   ],
-  "normSpec": "/app/game-objects/Midorian/Berger CrossXT.bbship/ship_030_midorian_normal_specular.bmp"
+  "normSpec": "/app/data/game-objects/items/ships/Midorian/Berger CrossXT.bbship/ship_030_midorian_normal_specular.bmp"
 }

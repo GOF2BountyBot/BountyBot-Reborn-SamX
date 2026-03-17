@@ -36,7 +36,7 @@
   "maxPrimaries": 4,
   "maxSecondaries": 1,
   "maxTurrets": 0,
-  "model": "/app/game-objects/Deep Science/Nemesis.bbship/Nemesis_Full.obj",
+  "model": "/app/data/game-objects/items/ships/Deep Science/Nemesis.bbship/Nemesis_Full.obj",
   "name": "Nemesis",
   "saveDue": false,
   "shopSpawnRate": 8.416,
@@ -45,13 +45,13 @@
   "value": 6800000,
   "wiki": "https://galaxyonfire.fandom.com/wiki/Nemesis_(ship)",
   "assets": [
-    "/app/game-objects/Deep Science/Nemesis.bbship/mask1.jpg",
-    "/app/game-objects/Deep Science/Nemesis.bbship/Nemesis_Full.mtl",
-    "/app/game-objects/Deep Science/Nemesis.bbship/Nemesis_Full.obj",
-    "/app/game-objects/Deep Science/Nemesis.bbship/skinBase.png",
-    "/app/game-objects/Deep Science/Nemesis.bbship/skinBase.xcf",
-    "/app/game-objects/Deep Science/Nemesis.bbship/v_ship_040_deep_science_diffuse.bmp",
-    "/app/game-objects/Deep Science/Nemesis.bbship/v_ship_040_deep_science_normal_specular.bmp"
+    "/app/data/game-objects/items/ships/Deep Science/Nemesis.bbship/mask1.jpg",
+    "/app/data/game-objects/items/ships/Deep Science/Nemesis.bbship/Nemesis_Full.mtl",
+    "/app/data/game-objects/items/ships/Deep Science/Nemesis.bbship/Nemesis_Full.obj",
+    "/app/data/game-objects/items/ships/Deep Science/Nemesis.bbship/skinBase.png",
+    "/app/data/game-objects/items/ships/Deep Science/Nemesis.bbship/skinBase.xcf",
+    "/app/data/game-objects/items/ships/Deep Science/Nemesis.bbship/v_ship_040_deep_science_diffuse.bmp",
+    "/app/data/game-objects/items/ships/Deep Science/Nemesis.bbship/v_ship_040_deep_science_normal_specular.bmp"
   ],
-  "normSpec": "/app/game-objects/Deep Science/Nemesis.bbship/v_ship_040_deep_science_normal_specular.bmp"
+  "normSpec": "/app/data/game-objects/items/ships/Deep Science/Nemesis.bbship/v_ship_040_deep_science_normal_specular.bmp"
 }

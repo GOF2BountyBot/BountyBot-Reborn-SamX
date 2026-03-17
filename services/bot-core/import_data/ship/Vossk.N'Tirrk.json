@@ -38,7 +38,7 @@
   "maxPrimaries": 2,
   "maxSecondaries": 4,
   "maxTurrets": 0,
-  "model": "/app/game-objects/Vossk/N'Tirrk.bbship/N_Full.obj",
+  "model": "/app/data/game-objects/items/ships/Vossk/N'Tirrk.bbship/N_Full.obj",
   "name": "N'Tirrk",
   "saveDue": false,
   "shopSpawnRate": 8.416,
@@ -47,12 +47,12 @@
   "value": 250000,
   "wiki": "https://galaxyonfire.fandom.com/wiki/N%27Tirrk",
   "assets": [
-    "/app/game-objects/Vossk/N'Tirrk.bbship/mask1.jpg",
-    "/app/game-objects/Vossk/N'Tirrk.bbship/N_Full.mtl",
-    "/app/game-objects/Vossk/N'Tirrk.bbship/N_Full.obj",
-    "/app/game-objects/Vossk/N'Tirrk.bbship/ship_063_vossk_prototype_diffuse.bmp",
-    "/app/game-objects/Vossk/N'Tirrk.bbship/ship_063_vossk_prototype_normal_specular.bmp",
-    "/app/game-objects/Vossk/N'Tirrk.bbship/skinBase.png"
+    "/app/data/game-objects/items/ships/Vossk/N'Tirrk.bbship/mask1.jpg",
+    "/app/data/game-objects/items/ships/Vossk/N'Tirrk.bbship/N_Full.mtl",
+    "/app/data/game-objects/items/ships/Vossk/N'Tirrk.bbship/N_Full.obj",
+    "/app/data/game-objects/items/ships/Vossk/N'Tirrk.bbship/ship_063_vossk_prototype_diffuse.bmp",
+    "/app/data/game-objects/items/ships/Vossk/N'Tirrk.bbship/ship_063_vossk_prototype_normal_specular.bmp",
+    "/app/data/game-objects/items/ships/Vossk/N'Tirrk.bbship/skinBase.png"
   ],
-  "normSpec": "/app/game-objects/Vossk/N'Tirrk.bbship/ship_063_vossk_prototype_normal_specular.bmp"
+  "normSpec": "/app/data/game-objects/items/ships/Vossk/N'Tirrk.bbship/ship_063_vossk_prototype_normal_specular.bmp"
 }

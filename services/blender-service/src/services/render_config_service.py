@@ -70,17 +70,40 @@ class RenderConfigService:
     @property
     def config(self) -> RenderConfig:
         """Return the current RenderConfig."""
+        flogger.debug("Config read: retrieving current RenderConfig")
         return self._config
 
     def update(self, updates: dict) -> RenderConfig:
         """Update config fields. Only known fields are applied."""
+        flogger.debug(f"Attempting to update config with {len(updates)} field(s)")
+        applied_updates = []
+        ignored_keys = []
         for key, value in updates.items():
             if hasattr(self._config, key):
+                old_value = getattr(self._config, key)
                 setattr(self._config, key, value)
-                flogger.info(f"Config updated: {key} = {value}")
+                flogger.info(f"Config updated: {key} = {value} (was {old_value})")
+                applied_updates.append(key)
+            else:
+                flogger.debug(f"Ignoring unknown config key: {key}")
+                ignored_keys.append(key)
+        if ignored_keys:
+            flogger.warning(f"Config update: {len(ignored_keys)} unknown key(s) ignored: {ignored_keys}")
+        if applied_updates:
+            flogger.info(f"Config update complete: {len(applied_updates)} field(s) applied: {applied_updates}")
+        else:
+            flogger.warning("Config update: no valid fields provided")
         return self._config
 
     def reset(self) -> RenderConfig:
         """Reset to defaults (re-reads env vars)."""
+        flogger.info("Resetting config to environment variable defaults")
+        old_config = self._config.to_dict()
         self.__init__()
+        new_config = self._config.to_dict()
+        changes = {k: (old_config[k], new_config[k]) for k in old_config if old_config[k] != new_config[k]}
+        if changes:
+            flogger.info(f"Config reset complete: {len(changes)} field(s) changed: {changes}")
+        else:
+            flogger.debug("Config reset complete: no changes from environment variables")
         return self._config

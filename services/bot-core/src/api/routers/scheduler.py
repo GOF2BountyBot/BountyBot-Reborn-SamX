@@ -8,7 +8,7 @@ from utils.job_executor import run_job  # ← external executor
 
 from api.schemas.scheduler_schema import JobInfo, OneTimeJob, RecurringJob, UpdateJob
 
-flogger = get_logger("bot-router-scheduler")
+flogger = get_logger("scheduler-router")
 router = APIRouter(tags=["job-scheduler"])
 
 
@@ -26,6 +26,7 @@ def _get_scheduler(req: Request):
 
 @router.get("/jobs", response_model=list[JobInfo])
 async def list_jobs(req: Request):
+    flogger.info("List scheduled jobs endpoint: starting")
     flogger.debug("Listing all scheduled jobs")
     jobs = _get_scheduler(req).get_jobs()
     result = [
@@ -42,6 +43,7 @@ async def list_jobs(req: Request):
 
 @router.get("/jobs/{job_id}", response_model=JobInfo)
 async def get_job(req: Request, job_id: str):
+    flogger.info(f"Get job endpoint: starting job_id={job_id}")
     flogger.debug(f"Fetching job '{job_id}'")
     job = _get_scheduler(req).get_job(job_id)
     if not job:
@@ -59,6 +61,7 @@ async def get_job(req: Request, job_id: str):
 @router.post("/jobs")
 async def schedule_job(req: Request, job: OneTimeJob):
     job_id = str(uuid.uuid4())
+    flogger.info(f"Schedule one-time job endpoint: starting job_id={job_id}")
     flogger.debug(f"Generated one-time job id={job_id} payload={job}")
     if not job.run_at and job.delay_seconds is None:
         flogger.warning("One-time job request missing both run_at and delay_seconds")
@@ -84,6 +87,7 @@ async def schedule_job(req: Request, job: OneTimeJob):
 @router.post("/jobs/recurring")
 async def schedule_recurring(req: Request, job: RecurringJob):
     job_id = str(uuid.uuid4())
+    flogger.info(f"Schedule recurring job endpoint: starting job_id={job_id}")
     flogger.debug(f"Generated recurring job id={job_id} cron={job.cron}")
     try:
         trigger = CronTrigger.from_crontab(job.cron)
@@ -106,6 +110,7 @@ async def update_job(req: Request, job_id: str, update: UpdateJob):
     Update the payload args for an existing job.
     This will replace the original payload passed at scheduling time.
     """
+    flogger.info(f"Update job endpoint: starting job_id={job_id}")
     flogger.debug(f"Updating job '{job_id}' with new payload: {update.payload}")
     sched = _get_scheduler(req)
     job = sched.get_job(job_id)
@@ -125,6 +130,7 @@ async def update_job(req: Request, job_id: str, update: UpdateJob):
 
 @router.delete("/jobs/all")
 async def delete_all_jobs(req: Request):
+    flogger.info("Delete all jobs endpoint: starting")
     flogger.debug("Deleting all jobs")
     _get_scheduler(req).remove_all_jobs()
     flogger.info("All jobs have been removed")
@@ -133,6 +139,7 @@ async def delete_all_jobs(req: Request):
 
 @router.delete("/jobs/{job_id}")
 async def delete_job(req: Request, job_id: str):
+    flogger.info(f"Delete job endpoint: starting job_id={job_id}")
     flogger.debug(f"Deleting job '{job_id}'")
     sched = _get_scheduler(req)
     if not sched.get_job(job_id):

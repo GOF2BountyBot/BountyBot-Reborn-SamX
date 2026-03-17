@@ -2,10 +2,23 @@
 ARG UBUNTU_RELEASE=24.04
 # Below should be a reasonably current Cuda version
 ARG CUDA_VERSION=13.0.0
+# Blender is installed from an official tarball (not apt) because:
+#   - Ubuntu 24.04 apt repos only ship Blender 4.0.2, which lacks support for newer GPU
+#     architectures (e.g. sm_120 / Blackwell / RTX 5090).
+#   - Snap is not an option inside Docker (requires systemd).
+# To update Blender, change the version string here.
+#   Browse available releases: https://download.blender.org/release/
+#   Prefer LTS releases for stability: https://www.blender.org/download/lts/
+# NOTE: If you bump to a new minor or major version (e.g. 4.5 → 5.0), also update
+#   the URL folder name in the tarball install RUN step below (e.g. Blender4.5 → Blender5.0).
+ARG BLENDER_VERSION=4.5.7
 
 # Might be able to change this to something a bit smaller (like runtime instead of devel) 
 # from https://hub.docker.com/r/nvidia/cuda/tags
 FROM nvidia/cuda:${CUDA_VERSION}-cudnn-devel-ubuntu${UBUNTU_RELEASE} AS base
+
+# Re-declare ARGs after FROM so they are available to RUN instructions in this stage
+ARG BLENDER_VERSION=4.5.7
 
 ENV DEBIAN_FRONTEND=noninteractive
 ENV LANG=C.UTF-8
@@ -51,19 +64,48 @@ RUN apt-get update && \
         libpython3-dev \
         openssl \
         # Extras for bountybot
-        blender \
         g++-14 \
         gcc-14 \
         # Temp install vim and sudo for debugging...
         vim \
         sudo \
+        # Blender runtime dependencies (X11, Wayland, OpenGL) — the official
+        # tarball dynamically links against these and will fail at startup without them.
+        libwayland-client0 \
+        libwayland-egl1 \
+        libx11-6 \
+        libxxf86vm1 \
+        libxcursor1 \
+        libxi6 \
+        libxrandr2 \
+        libxinerama1 \
+        libxkbcommon-dev \
+        libxkbcommon-x11-dev \
+        libsm6 \
+        libice6 \
+        libgl1 \
+        libglx0 \
+        libopengl0 \
+        libxt6t64 \
         # 7zip for extraction of assets on container startup...
         7zip && \
     apt-get autoremove -y && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
 
-
+# Install Blender from the official tarball.
+# We do NOT use apt (Ubuntu 24.04 ships only 4.0.2 which lacks sm_120/Blackwell support)
+# and NOT snap (requires systemd, unavailable in Docker).
+# The URL path component (Blender4.5) encodes the major.minor version — update it if you
+# bump BLENDER_VERSION to a new minor/major (e.g. 4.5 → 5.0 means Blender4.5 → Blender5.0).
+RUN BLENDER_MAJOR_MINOR=$(echo "$BLENDER_VERSION" | cut -d. -f1,2) && \
+    TARBALL="blender-${BLENDER_VERSION}-linux-x64.tar.xz" && \
+    wget -q "https://download.blender.org/release/Blender${BLENDER_MAJOR_MINOR}/${TARBALL}" -O "/tmp/${TARBALL}" && \
+    mkdir -p /opt/blender && \
+    tar -xf "/tmp/${TARBALL}" --strip-components=1 -C /opt/blender && \
+    ln -s /opt/blender/blender /usr/local/bin/blender && \
+    rm -f "/tmp/${TARBALL}" && \
+    blender --version
 
 RUN ln -s /usr/bin/python3 /usr/bin/python
 

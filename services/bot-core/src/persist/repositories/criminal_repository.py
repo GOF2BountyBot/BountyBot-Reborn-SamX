@@ -22,30 +22,38 @@ class CriminalRepository(GenericRepository[Criminal]):
         raw: the dict loaded from JSON file
         - maps known fields into model attrs
         """
-        flogger.trace(f"Creating or updating criminal from {raw}")
+        flogger.trace(f"create_or_update: entry with raw={raw}")
 
-        # look up existing
-        result = await db.execute(
-            select(self._model).filter_by(name=raw["name"])
-        )
-        obj = result.scalars().one_or_none()
+        try:
+            # look up existing
+            result = await db.execute(
+                select(self._model).filter_by(name=raw["name"])
+            )
+            obj = result.scalars().one_or_none()
 
-        # attribute name mapping
-        mapping = {
-            "builtIn":  "built_in",
-            "isPlayer": "is_player",
-        }
-        def to_attr(k: str) -> str:
-            return mapping.get(k, k.lower())
+            # attribute name mapping
+            mapping = {
+                "builtIn":  "built_in",
+                "isPlayer": "is_player",
+            }
+            def to_attr(k: str) -> str:
+                return mapping.get(k, k.lower())
 
-        if obj:
-            for k, v in raw.items():
-                setattr(obj, to_attr(k), v)
-        else:
-            attrs = { to_attr(k): v for k, v in raw.items() }
-            obj = Criminal(**attrs)
-            db.add(obj)
+            if obj:
+                flogger.debug(f"Updating existing criminal id={obj.id}, name={obj.name}")
+                for k, v in raw.items():
+                    setattr(obj, to_attr(k), v)
+            else:
+                flogger.debug(f"Creating new criminal from raw data: name={raw.get('name')}")
+                attrs = { to_attr(k): v for k, v in raw.items() }
+                obj = Criminal(**attrs)
+                db.add(obj)
 
-        await db.commit()
-        await db.refresh(obj)
-        return obj
+            await db.commit()
+            await db.refresh(obj)
+            flogger.trace(f"create_or_update: exit id={obj.id}, name={obj.name}")
+            return obj
+        except Exception as e:
+            flogger.error(f"Error in create_or_update for criminal name={raw.get('name')}: {e}")
+            await db.rollback()
+            raise

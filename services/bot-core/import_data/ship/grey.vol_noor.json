@@ -39,7 +39,7 @@
   "maxPrimaries": 2,
   "maxSecondaries": 2,
   "maxTurrets": 0,
-  "model": "/app/game-objects/Grey/Vol Noor.bbship/Vol_Full.obj",
+  "model": "/app/data/game-objects/items/ships/Grey/Vol Noor.bbship/Vol_Full.obj",
   "name": "Vol Noor",
   "saveDue": false,
   "shopSpawnRate": 6.312,
@@ -48,11 +48,11 @@
   "value": 105000,
   "wiki": "https://galaxyonfire.fandom.com/wiki/Vol_Noor",
   "assets": [
-    "/app/game-objects/Grey/Vol Noor.bbship/ship_042_retro_diffuse.bmp",
-    "/app/game-objects/Grey/Vol Noor.bbship/ship_042_retro_normal_specular.bmp",
-    "/app/game-objects/Grey/Vol Noor.bbship/skinBase.png",
-    "/app/game-objects/Grey/Vol Noor.bbship/Vol_Full.mtl",
-    "/app/game-objects/Grey/Vol Noor.bbship/Vol_Full.obj"
+    "/app/data/game-objects/items/ships/Grey/Vol Noor.bbship/ship_042_retro_diffuse.bmp",
+    "/app/data/game-objects/items/ships/Grey/Vol Noor.bbship/ship_042_retro_normal_specular.bmp",
+    "/app/data/game-objects/items/ships/Grey/Vol Noor.bbship/skinBase.png",
+    "/app/data/game-objects/items/ships/Grey/Vol Noor.bbship/Vol_Full.mtl",
+    "/app/data/game-objects/items/ships/Grey/Vol Noor.bbship/Vol_Full.obj"
   ],
-  "normSpec": "/app/game-objects/Grey/Vol Noor.bbship/ship_042_retro_normal_specular.bmp"
+  "normSpec": "/app/data/game-objects/items/ships/Grey/Vol Noor.bbship/ship_042_retro_normal_specular.bmp"
 }

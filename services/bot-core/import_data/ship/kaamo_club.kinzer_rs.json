@@ -37,7 +37,7 @@
   "maxPrimaries": 4,
   "maxSecondaries": 4,
   "maxTurrets": 0,
-  "model": "/app/game-objects/Kaamo Club/Kinzer RS.bbship/Kinzer_Full.obj",
+  "model": "/app/data/game-objects/items/ships/Kaamo Club/Kinzer RS.bbship/Kinzer_Full.obj",
   "name": "Kinzer RS",
   "saveDue": false,
   "shopSpawnRate": 9.585,
@@ -46,15 +46,15 @@
   "value": 8930000,
   "wiki": "https://galaxyonfire.fandom.com/wiki/Kinzer_RS",
   "assets": [
-    "/app/game-objects/Kaamo Club/Kinzer RS.bbship/Kinzer_Full.mtl",
-    "/app/game-objects/Kaamo Club/Kinzer RS.bbship/Kinzer_Full.obj",
-    "/app/game-objects/Kaamo Club/Kinzer RS.bbship/mask1.jpg",
-    "/app/game-objects/Kaamo Club/Kinzer RS.bbship/mask2.jpg",
-    "/app/game-objects/Kaamo Club/Kinzer RS.bbship/mask3.jpg",
-    "/app/game-objects/Kaamo Club/Kinzer RS.bbship/skinBase.png",
-    "/app/game-objects/Kaamo Club/Kinzer RS.bbship/sn_ship_057_modified_diffuse.bmp",
-    "/app/game-objects/Kaamo Club/Kinzer RS.bbship/sn_ship_057_modified_normal_specular.bmp",
-    "/app/game-objects/Kaamo Club/Kinzer RS.bbship/sn_ship_057_modified_normal_specular.png"
+    "/app/data/game-objects/items/ships/Kaamo Club/Kinzer RS.bbship/Kinzer_Full.mtl",
+    "/app/data/game-objects/items/ships/Kaamo Club/Kinzer RS.bbship/Kinzer_Full.obj",
+    "/app/data/game-objects/items/ships/Kaamo Club/Kinzer RS.bbship/mask1.jpg",
+    "/app/data/game-objects/items/ships/Kaamo Club/Kinzer RS.bbship/mask2.jpg",
+    "/app/data/game-objects/items/ships/Kaamo Club/Kinzer RS.bbship/mask3.jpg",
+    "/app/data/game-objects/items/ships/Kaamo Club/Kinzer RS.bbship/skinBase.png",
+    "/app/data/game-objects/items/ships/Kaamo Club/Kinzer RS.bbship/sn_ship_057_modified_diffuse.bmp",
+    "/app/data/game-objects/items/ships/Kaamo Club/Kinzer RS.bbship/sn_ship_057_modified_normal_specular.bmp",
+    "/app/data/game-objects/items/ships/Kaamo Club/Kinzer RS.bbship/sn_ship_057_modified_normal_specular.png"
   ],
-  "normSpec": "/app/game-objects/Kaamo Club/Kinzer RS.bbship/sn_ship_057_modified_normal_specular.bmp"
+  "normSpec": "/app/data/game-objects/items/ships/Kaamo Club/Kinzer RS.bbship/sn_ship_057_modified_normal_specular.bmp"
 }

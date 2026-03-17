@@ -38,7 +38,7 @@
   "maxPrimaries": 2,
   "maxSecondaries": 4,
   "maxTurrets": 7,
-  "model": "/app/game-objects/Terran/Battleship.bbship/Battleship_Full.obj",
+  "model": "/app/data/game-objects/items/ships/Terran/Battleship.bbship/Battleship_Full.obj",
   "name": "Terran Battlecruiser",
   "saveDue": false,
   "shopSpawnRate": 9.585,
@@ -47,15 +47,15 @@
   "value": 50000000,
   "wiki": "https://galaxyonfire.fandom.com/wiki/Terran_Battlecruiser",
   "assets": [
-    "/app/game-objects/Terran/Battleship.bbship/Battleship_Full.mtl",
-    "/app/game-objects/Terran/Battleship.bbship/Battleship_Full.obj",
-    "/app/game-objects/Terran/Battleship.bbship/battleship_terran_diffuse.bmp",
-    "/app/game-objects/Terran/Battleship.bbship/battleship_terran_normal_specular.bmp",
-    "/app/game-objects/Terran/Battleship.bbship/mask1.jpg",
-    "/app/game-objects/Terran/Battleship.bbship/mask2.jpg",
-    "/app/game-objects/Terran/Battleship.bbship/secondary_mask.jpg",
-    "/app/game-objects/Terran/Battleship.bbship/skinBase.png",
-    "/app/game-objects/Terran/Battleship.bbship/tertiary_mask.jpg"
+    "/app/data/game-objects/items/ships/Terran/Battleship.bbship/Battleship_Full.mtl",
+    "/app/data/game-objects/items/ships/Terran/Battleship.bbship/Battleship_Full.obj",
+    "/app/data/game-objects/items/ships/Terran/Battleship.bbship/battleship_terran_diffuse.bmp",
+    "/app/data/game-objects/items/ships/Terran/Battleship.bbship/battleship_terran_normal_specular.bmp",
+    "/app/data/game-objects/items/ships/Terran/Battleship.bbship/mask1.jpg",
+    "/app/data/game-objects/items/ships/Terran/Battleship.bbship/mask2.jpg",
+    "/app/data/game-objects/items/ships/Terran/Battleship.bbship/secondary_mask.jpg",
+    "/app/data/game-objects/items/ships/Terran/Battleship.bbship/skinBase.png",
+    "/app/data/game-objects/items/ships/Terran/Battleship.bbship/tertiary_mask.jpg"
   ],
-  "normSpec": "/app/game-objects/Terran/Battleship.bbship/battleship_terran_normal_specular.bmp"
+  "normSpec": "/app/data/game-objects/items/ships/Terran/Battleship.bbship/battleship_terran_normal_specular.bmp"
 }

@@ -36,7 +36,7 @@
   "maxPrimaries": 4,
   "maxSecondaries": 0,
   "maxTurrets": 0,
-  "model": "/app/game-objects/Deep Science/Typhon.bbship/Typhon_Full.obj",
+  "model": "/app/data/game-objects/items/ships/Deep Science/Typhon.bbship/Typhon_Full.obj",
   "name": "Typhon",
   "saveDue": false,
   "shopSpawnRate": 7.214,
@@ -45,13 +45,13 @@
   "value": 2500000,
   "wiki": "https://galaxyonfire.fandom.com/wiki/Typhon",
   "assets": [
-    "/app/game-objects/Deep Science/Typhon.bbship/mask1.jpg",
-    "/app/game-objects/Deep Science/Typhon.bbship/skinBase.png",
-    "/app/game-objects/Deep Science/Typhon.bbship/SkinBase.xcf",
-    "/app/game-objects/Deep Science/Typhon.bbship/Typhon_Full.mtl",
-    "/app/game-objects/Deep Science/Typhon.bbship/Typhon_Full.obj",
-    "/app/game-objects/Deep Science/Typhon.bbship/v_ship_038_deep_science_diffuse.bmp",
-    "/app/game-objects/Deep Science/Typhon.bbship/v_ship_038_deep_science_normal_specular.bmp"
+    "/app/data/game-objects/items/ships/Deep Science/Typhon.bbship/mask1.jpg",
+    "/app/data/game-objects/items/ships/Deep Science/Typhon.bbship/skinBase.png",
+    "/app/data/game-objects/items/ships/Deep Science/Typhon.bbship/SkinBase.xcf",
+    "/app/data/game-objects/items/ships/Deep Science/Typhon.bbship/Typhon_Full.mtl",
+    "/app/data/game-objects/items/ships/Deep Science/Typhon.bbship/Typhon_Full.obj",
+    "/app/data/game-objects/items/ships/Deep Science/Typhon.bbship/v_ship_038_deep_science_diffuse.bmp",
+    "/app/data/game-objects/items/ships/Deep Science/Typhon.bbship/v_ship_038_deep_science_normal_specular.bmp"
   ],
-  "normSpec": "/app/game-objects/Deep Science/Typhon.bbship/v_ship_038_deep_science_normal_specular.bmp"
+  "normSpec": "/app/data/game-objects/items/ships/Deep Science/Typhon.bbship/v_ship_038_deep_science_normal_specular.bmp"
 }

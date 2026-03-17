@@ -36,7 +36,7 @@
   "maxPrimaries": 1,
   "maxSecondaries": 1,
   "maxTurrets": 0,
-  "model": "/app/game-objects/Pirate/Wasp.bbship/Wasp_Full.obj",
+  "model": "/app/data/game-objects/items/ships/Pirate/Wasp.bbship/Wasp_Full.obj",
   "name": "Wasp",
   "saveDue": false,
   "shopSpawnRate": 9.585,
@@ -45,13 +45,13 @@
   "value": 19500,
   "wiki": "https://galaxyonfire.fandom.com/wiki/Wasp",
   "assets": [
-    "/app/game-objects/Pirate/Wasp.bbship/mask1.jpg",
-    "/app/game-objects/Pirate/Wasp.bbship/mask2.jpg",
-    "/app/game-objects/Pirate/Wasp.bbship/ship_032_pirates_diffuse.bmp",
-    "/app/game-objects/Pirate/Wasp.bbship/ship_032_pirates_normal_specular.bmp",
-    "/app/game-objects/Pirate/Wasp.bbship/skinBase.png",
-    "/app/game-objects/Pirate/Wasp.bbship/Wasp_Full.mtl",
-    "/app/game-objects/Pirate/Wasp.bbship/Wasp_Full.obj"
+    "/app/data/game-objects/items/ships/Pirate/Wasp.bbship/mask1.jpg",
+    "/app/data/game-objects/items/ships/Pirate/Wasp.bbship/mask2.jpg",
+    "/app/data/game-objects/items/ships/Pirate/Wasp.bbship/ship_032_pirates_diffuse.bmp",
+    "/app/data/game-objects/items/ships/Pirate/Wasp.bbship/ship_032_pirates_normal_specular.bmp",
+    "/app/data/game-objects/items/ships/Pirate/Wasp.bbship/skinBase.png",
+    "/app/data/game-objects/items/ships/Pirate/Wasp.bbship/Wasp_Full.mtl",
+    "/app/data/game-objects/items/ships/Pirate/Wasp.bbship/Wasp_Full.obj"
   ],
-  "normSpec": "/app/game-objects/Pirate/Wasp.bbship/ship_032_pirates_normal_specular.bmp"
+  "normSpec": "/app/data/game-objects/items/ships/Pirate/Wasp.bbship/ship_032_pirates_normal_specular.bmp"
 }

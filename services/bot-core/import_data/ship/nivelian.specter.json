@@ -36,7 +36,7 @@
   "maxPrimaries": 4,
   "maxSecondaries": 2,
   "maxTurrets": 0,
-  "model": "/app/game-objects/Nivelian/Specter.bbship/Specter_Full.obj",
+  "model": "/app/data/game-objects/items/ships/Nivelian/Specter.bbship/Specter_Full.obj",
   "builtin_modules": [
     "U'tool"
   ],
@@ -48,12 +48,12 @@
   "value": 30000000,
   "wiki": "https://galaxyonfire.fandom.com/wiki/Specter",
   "assets": [
-    "/app/game-objects/Nivelian/Specter.bbship/mask1.jpg",
-    "/app/game-objects/Nivelian/Specter.bbship/skinBase.png",
-    "/app/game-objects/Nivelian/Specter.bbship/sn_ship_044_elite_nivelian_diffuse.bmp",
-    "/app/game-objects/Nivelian/Specter.bbship/sn_ship_044_elite_nivelian_normal_specular.bmp",
-    "/app/game-objects/Nivelian/Specter.bbship/Specter_Full.mtl",
-    "/app/game-objects/Nivelian/Specter.bbship/Specter_Full.obj"
+    "/app/data/game-objects/items/ships/Nivelian/Specter.bbship/mask1.jpg",
+    "/app/data/game-objects/items/ships/Nivelian/Specter.bbship/skinBase.png",
+    "/app/data/game-objects/items/ships/Nivelian/Specter.bbship/sn_ship_044_elite_nivelian_diffuse.bmp",
+    "/app/data/game-objects/items/ships/Nivelian/Specter.bbship/sn_ship_044_elite_nivelian_normal_specular.bmp",
+    "/app/data/game-objects/items/ships/Nivelian/Specter.bbship/Specter_Full.mtl",
+    "/app/data/game-objects/items/ships/Nivelian/Specter.bbship/Specter_Full.obj"
   ],
-  "normSpec": "/app/game-objects/Nivelian/Specter.bbship/sn_ship_044_elite_nivelian_normal_specular.bmp"
+  "normSpec": "/app/data/game-objects/items/ships/Nivelian/Specter.bbship/sn_ship_044_elite_nivelian_normal_specular.bmp"
 }

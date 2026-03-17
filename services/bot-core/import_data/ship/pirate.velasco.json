@@ -36,7 +36,7 @@
   "maxPrimaries": 3,
   "maxSecondaries": 2,
   "maxTurrets": 1,
-  "model": "/app/game-objects/Pirate/Velasco.bbship/Velasco_Full.obj",
+  "model": "/app/data/game-objects/items/ships/Pirate/Velasco.bbship/Velasco_Full.obj",
   "name": "Velasco",
   "saveDue": false,
   "shopSpawnRate": 7.214,
@@ -45,13 +45,13 @@
   "value": 684300,
   "wiki": "https://galaxyonfire.fandom.com/wiki/Velasco",
   "assets": [
-    "/app/game-objects/Pirate/Velasco.bbship/mask1.jpg",
-    "/app/game-objects/Pirate/Velasco.bbship/mask2.jpg",
-    "/app/game-objects/Pirate/Velasco.bbship/ship_024_pirates_diffuse.bmp",
-    "/app/game-objects/Pirate/Velasco.bbship/ship_024_pirates_normal_specular.bmp",
-    "/app/game-objects/Pirate/Velasco.bbship/skinBase.png",
-    "/app/game-objects/Pirate/Velasco.bbship/Velasco_Full.mtl",
-    "/app/game-objects/Pirate/Velasco.bbship/Velasco_Full.obj"
+    "/app/data/game-objects/items/ships/Pirate/Velasco.bbship/mask1.jpg",
+    "/app/data/game-objects/items/ships/Pirate/Velasco.bbship/mask2.jpg",
+    "/app/data/game-objects/items/ships/Pirate/Velasco.bbship/ship_024_pirates_diffuse.bmp",
+    "/app/data/game-objects/items/ships/Pirate/Velasco.bbship/ship_024_pirates_normal_specular.bmp",
+    "/app/data/game-objects/items/ships/Pirate/Velasco.bbship/skinBase.png",
+    "/app/data/game-objects/items/ships/Pirate/Velasco.bbship/Velasco_Full.mtl",
+    "/app/data/game-objects/items/ships/Pirate/Velasco.bbship/Velasco_Full.obj"
   ],
-  "normSpec": "/app/game-objects/Pirate/Velasco.bbship/ship_024_pirates_normal_specular.bmp"
+  "normSpec": "/app/data/game-objects/items/ships/Pirate/Velasco.bbship/ship_024_pirates_normal_specular.bmp"
 }

@@ -109,3 +109,7 @@ async def execute_time_announcement_job(job_id: str, payload: dict):
         except Exception as e:  # pylint: disable=broad-exception-caught
             flogger.error(f"TimeJob[{job_id}] failed to update job args via API: {e}")
             flogger.trace(traceback.format_exc())
+
+    elapsed = (datetime.now(UTC) - start_ts).total_seconds()
+    flogger.info(f"TimeJob[{job_id}] SUCCESS in {elapsed:.2f}s")
+    return {"status": "success"}

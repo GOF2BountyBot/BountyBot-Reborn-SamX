@@ -655,14 +655,14 @@ def make_mock_skinnable_ship(**overrides):
         name="Phantom",
         skinnable=True,
         texture_regions=2,
-        model="/app/game-objects/Terran/Phantom.bbship/Phantom_Full.obj",
-        norm_spec="/app/game-objects/Terran/Phantom.bbship/ship_010_terran_normal_specular.bmp",
+        model="/app/data/game-objects/items/ships/Terran/Phantom.bbship/Phantom_Full.obj",
+        norm_spec="/app/data/game-objects/items/ships/Terran/Phantom.bbship/ship_010_terran_normal_specular.bmp",
         assets=[
-            "/app/game-objects/Terran/Phantom.bbship/Phantom_Full.mtl",
-            "/app/game-objects/Terran/Phantom.bbship/skinBase.png",
-            "/app/game-objects/Terran/Phantom.bbship/ship_010_terran_diffuse.bmp",
-            "/app/game-objects/Terran/Phantom.bbship/mask1.jpg",
-            "/app/game-objects/Terran/Phantom.bbship/mask2.jpg",
+            "/app/data/game-objects/items/ships/Terran/Phantom.bbship/Phantom_Full.mtl",
+            "/app/data/game-objects/items/ships/Terran/Phantom.bbship/skinBase.png",
+            "/app/data/game-objects/items/ships/Terran/Phantom.bbship/ship_010_terran_diffuse.bmp",
+            "/app/data/game-objects/items/ships/Terran/Phantom.bbship/mask1.jpg",
+            "/app/data/game-objects/items/ships/Terran/Phantom.bbship/mask2.jpg",
         ],
         compatible_skins={"urban-camo": "https://example.com/urban-camo.png"},
     )
@@ -689,7 +689,7 @@ class TestGetShipRenderInfo:
         assert data["skinnable"] is True
         assert data["texture_regions"] == 2
         assert data["model_path"].endswith("Phantom_Full.obj")
-        assert data["bbship_dir"] == "/app/game-objects/Terran/Phantom.bbship"
+        assert data["bbship_dir"] == "/app/data/game-objects/items/ships/Terran/Phantom.bbship"
         assert "mask_paths" in data
         assert "compatible_skins" in data
 

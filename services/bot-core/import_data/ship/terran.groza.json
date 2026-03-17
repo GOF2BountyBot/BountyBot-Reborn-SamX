@@ -36,7 +36,7 @@
   "maxPrimaries": 3,
   "maxSecondaries": 3,
   "maxTurrets": 0,
-  "model": "/app/game-objects/Terran/Groza.bbship/Groza_Full.obj",
+  "model": "/app/data/game-objects/items/ships/Terran/Groza.bbship/Groza_Full.obj",
   "name": "Groza",
   "saveDue": false,
   "shopSpawnRate": 8.416,
@@ -45,13 +45,13 @@
   "value": 251600,
   "wiki": "https://galaxyonfire.fandom.com/wiki/Groza",
   "assets": [
-    "/app/game-objects/Terran/Groza.bbship/Groza_Full.mtl",
-    "/app/game-objects/Terran/Groza.bbship/Groza_Full.obj",
-    "/app/game-objects/Terran/Groza.bbship/mask1.jpg",
-    "/app/game-objects/Terran/Groza.bbship/mask2.jpg",
-    "/app/game-objects/Terran/Groza.bbship/ship_022_terran_diffuse.bmp",
-    "/app/game-objects/Terran/Groza.bbship/ship_022_terran_normal_specular.bmp",
-    "/app/game-objects/Terran/Groza.bbship/skinBase.png"
+    "/app/data/game-objects/items/ships/Terran/Groza.bbship/Groza_Full.mtl",
+    "/app/data/game-objects/items/ships/Terran/Groza.bbship/Groza_Full.obj",
+    "/app/data/game-objects/items/ships/Terran/Groza.bbship/mask1.jpg",
+    "/app/data/game-objects/items/ships/Terran/Groza.bbship/mask2.jpg",
+    "/app/data/game-objects/items/ships/Terran/Groza.bbship/ship_022_terran_diffuse.bmp",
+    "/app/data/game-objects/items/ships/Terran/Groza.bbship/ship_022_terran_normal_specular.bmp",
+    "/app/data/game-objects/items/ships/Terran/Groza.bbship/skinBase.png"
   ],
-  "normSpec": "/app/game-objects/Terran/Groza.bbship/ship_022_terran_normal_specular.bmp"
+  "normSpec": "/app/data/game-objects/items/ships/Terran/Groza.bbship/ship_022_terran_normal_specular.bmp"
 }

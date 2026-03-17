@@ -70,12 +70,13 @@ async def list_categories():
     GET /about/categories
     Returns all valid object categories for menu population.
     """
+    flogger.info("Request received: GET /categories")
     try:
         categories = [category.value for category in DataCategory]
-        flogger.debug(f"Returning categories: {categories}")
+        flogger.debug(f"Categories retrieved: count={len(categories)}, values={categories}")
         return categories
     except Exception as e:
-        flogger.error(f"Error retrieving categories: {e}")
+        flogger.exception(f"Error retrieving categories: error={e}")
         raise HTTPException(status_code=500, detail="Internal server error") from e
 
 @router.get("/categories/{category}/objects", response_model=list[dict[str, Any]])
@@ -84,6 +85,7 @@ async def list_objects_for_category(category: DataCategory, db: AsyncSession = D
     GET /about/categories/{category}/objects
     Returns all objects for a specified category for menu population.
     """
+    flogger.info(f"Request received: GET /categories/{{category}}/objects, category={category.value}")
     try:
         if category not in CATEGORY_REPOS:
             raise HTTPException(status_code=404, detail=f"Category {category.value} not found")
@@ -101,12 +103,12 @@ async def list_objects_for_category(category: DataCategory, db: AsyncSession = D
                 "emoji": obj.emoji if hasattr(obj, 'emoji') else None
             })
 
-        flogger.debug(f"Returning {len(result)} objects for category {category.value}")
+        flogger.debug(f"Objects retrieved: count={len(result)}, category={category.value}")
         return result
     except HTTPException:
         raise
     except Exception as e:
-        flogger.error(f"Error retrieving objects for category {category.value}: {e}")
+        flogger.exception(f"Error retrieving objects: category={category.value}, error={e}")
         raise HTTPException(status_code=500, detail="Internal server error") from e
 
 @router.get("/object/name/{object_name}", response_model=dict[str, Any])
@@ -115,6 +117,7 @@ async def get_object_by_name(object_name: str, db: AsyncSession = Depends(get_db
     GET /about/object/name/{object_name}
     Get detailed object information by name.
     """
+    flogger.info(f"Request received: GET /object/name/{{object_name}}, object_name={object_name}")
     try:
         # Try each repository to find the object
         for category, repo in CATEGORY_REPOS.items():
@@ -165,15 +168,16 @@ async def get_object_by_name(object_name: str, db: AsyncSession = Depends(get_db
                     result["coordinates"] = obj.coordinates
                     result["faction"]     = obj.faction
 
-                flogger.debug(f"Found object '{object_name}' in category {category.value}")
+                flogger.debug(f"Object found: name={object_name}, category={category.value}, id={obj.id}")
                 return result
 
         # Object not found in any category
+        flogger.debug(f"Object not found: name={object_name}")
         raise HTTPException(status_code=404, detail=f"Object with name '{object_name}' not found")
     except HTTPException:
         raise
     except Exception as e:
-        flogger.error(f"Error retrieving object '{object_name}': {e}")
+        flogger.exception(f"Error retrieving object by name: object_name={object_name}, error={e}")
         raise HTTPException(status_code=500, detail="Internal server error") from e
 
 @router.get("/object/alias/{alias}", response_model=dict[str, Any])
@@ -182,6 +186,7 @@ async def get_object_by_alias(alias: str, db: AsyncSession = Depends(get_db)):
     GET /about/object/alias/{alias}
     Get detailed object information by any of its aliases.
     """
+    flogger.info(f"Request received: GET /object/alias/{{alias}}, alias={alias}")
     try:
         for category, repo in CATEGORY_REPOS.items():
             obj = await repo.get_by_alias(db, alias)
@@ -230,14 +235,15 @@ async def get_object_by_alias(alias: str, db: AsyncSession = Depends(get_db)):
                     result["coordinates"] = obj.coordinates
                     result["faction"]     = obj.faction
 
-                flogger.debug(f"Found object by alias '{alias}' in {category.value}")
+                flogger.debug(f"Object found by alias: alias={alias}, category={category.value}, id={obj.id}")
                 return result
 
+        flogger.debug(f"Object not found by alias: alias={alias}")
         raise HTTPException(404, detail=f"Object with alias '{alias}' not found")
     except HTTPException:
         raise
     except Exception as e:
-        flogger.error(f"Error retrieving object by alias '{alias}': {e}")
+        flogger.exception(f"Error retrieving object by alias: alias={alias}, error={e}")
         raise HTTPException(status_code=500, detail="Internal server error") from e
 
 @router.get("/object/{category}/{object_id}", response_model=dict[str, Any])
@@ -246,12 +252,15 @@ async def get_object_by_id(category: DataCategory, object_id: int, db: AsyncSess
     GET /about/object/{category}/{object_id}
     Get detailed object information by ID.
     """
+    flogger.info(f"Request received: GET /object/{{category}}/{{object_id}}, category={category.value}, object_id={object_id}")
     repo = CATEGORY_REPOS.get(category)
     if not repo:
+        flogger.debug(f"Category not found: category={category.value}")
         raise HTTPException(404, detail=f"Category {category.value} not found")
 
     obj = await repo.get_by_id(db, object_id)
     if not obj:
+        flogger.debug(f"Object not found: category={category.value}, object_id={object_id}")
         raise HTTPException(404, detail=f"{category.value.title()} with ID {object_id} not found")
     try:
         result: dict[str, Any] = {
@@ -300,13 +309,13 @@ async def get_object_by_id(category: DataCategory, object_id: int, db: AsyncSess
             result["neighbours"]  = getattr(obj, "neighbours", None)
             result["security"]    = getattr(obj, "security", None)
 
-        flogger.debug(f"Found {category.value} {object_id}")
+        flogger.debug(f"Object retrieved by ID: category={category.value}, object_id={object_id}")
         return result
 
     except HTTPException:
         raise
     except Exception as e:
-        flogger.error(f"Error retrieving object {object_id}: {e}")
+        flogger.exception(f"Error retrieving object: category={category.value}, object_id={object_id}, error={e}")
         raise HTTPException(status_code=500, detail="Internal server error") from e
 
 
@@ -328,15 +337,18 @@ async def get_ship_render_info(
     Returns structured rendering metadata for skinnable ships.
     Raises 404 for unknown ships or non-skinnable ships.
     """
+    flogger.info(f"Request received: GET /ships/{{ship_name}}/render-info, ship_name={ship_name}")
     try:
         ship = await ship_repo.get_by_name(db, ship_name)
         if not ship:
+            flogger.debug(f"Ship not found: ship_name={ship_name}")
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"Ship '{ship_name}' not found",
             )
 
         if not ship.skinnable:
+            flogger.debug(f"Ship is not skinnable: ship_name={ship_name}")
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Ship is not skinnable",
@@ -372,7 +384,7 @@ async def get_ship_render_info(
         if ship.model:
             bbship_dir = str(PurePosixPath(ship.model).parent)
 
-        flogger.debug(f"Returning render info for ship '{ship_name}'")
+        flogger.debug(f"Render info retrieved: ship_name={ship_name}, texture_regions={len(ship.texture_regions or {})}, masks={len(mask_paths)}")
         return {
             "name": ship.name,
             "skinnable": ship.skinnable,
@@ -390,5 +402,5 @@ async def get_ship_render_info(
     except HTTPException:
         raise
     except Exception as e:
-        flogger.error(f"Error retrieving render info for ship '{ship_name}': {e}")
+        flogger.exception(f"Error retrieving render info: ship_name={ship_name}, error={e}")
         raise HTTPException(status_code=500, detail="Internal server error") from e

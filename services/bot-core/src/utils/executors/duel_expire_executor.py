@@ -113,6 +113,10 @@ async def _notify_expiry(parent_job_id: str, duel) -> None:
     }
 
     try:
+        flogger.debug(
+            f"DuelExpireJob[{parent_job_id}] posting duel expiry notification "
+            f"to discord-gateway for duel id={duel.id}"
+        )
         async with httpx.AsyncClient() as client:
             resp = await client.post(
                 f"{_GATEWAY_BASE_URL}/messages",
@@ -120,6 +124,10 @@ async def _notify_expiry(parent_job_id: str, duel) -> None:
                 timeout=10,
             )
         resp.raise_for_status()
+        flogger.debug(
+            f"DuelExpireJob[{parent_job_id}] received HTTP {resp.status_code} "
+            f"from discord-gateway"
+        )
         flogger.info(
             f"DuelExpireJob[{parent_job_id}] notified discord-gateway of "
             f"duel id={duel.id} expiry (challenger={duel.challenger_id}, "

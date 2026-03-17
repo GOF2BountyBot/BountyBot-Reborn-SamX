@@ -92,7 +92,8 @@ def run_migrations_online() -> None:
         context.configure(
             connection=connection,
             target_metadata=target_metadata,
-            compare_type=True,  # detect column-type changes during autogenerate
+            compare_type=True,           # detect column-type changes during autogenerate
+            compare_server_default=True,  # detect server_default changes during autogenerate
         )
 
         with context.begin_transaction():

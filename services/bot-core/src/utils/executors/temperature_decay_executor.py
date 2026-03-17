@@ -129,6 +129,9 @@ async def execute_temperature_decay_job(job_id: str, payload: dict) -> dict:
             # ------------------------------------------------------------------
             for config in guild_configs:
                 gid: int = config.guild_id
+                flogger.debug(
+                    f"TemperatureDecayJob[{job_id}] processing guild={gid}"
+                )
 
                 # Read stored temperatures (default to 1.0 per division if None
                 # or missing).
@@ -151,6 +154,10 @@ async def execute_temperature_decay_job(job_id: str, payload: dict) -> dict:
                     )
 
                 # Persist decayed temperatures.
+                flogger.debug(
+                    f"TemperatureDecayJob[{job_id}] guild={gid} calling "
+                    "update_division_temperatures()"
+                )
                 await config_repo.update_division_temperatures(
                     db, gid, updated_temperatures
                 )

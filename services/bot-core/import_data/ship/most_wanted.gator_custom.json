@@ -39,7 +39,7 @@
   "maxPrimaries": 4,
   "maxSecondaries": 2,
   "maxTurrets": 0,
-  "model": "/app/game-objects/Most Wanted/Gator Custom.bbship/Gator_Full.obj",
+  "model": "/app/data/game-objects/items/ships/Most Wanted/Gator Custom.bbship/Gator_Full.obj",
   "name": "Gator Custom",
   "saveDue": false,
   "shopSpawnRate": 8.416,
@@ -48,12 +48,12 @@
   "value": 5148000,
   "wiki": "https://galaxyonfire.fandom.com/wiki/Gator_Custom",
   "assets": [
-    "/app/game-objects/Most Wanted/Gator Custom.bbship/Gator_Full.mtl",
-    "/app/game-objects/Most Wanted/Gator Custom.bbship/Gator_Full.obj",
-    "/app/game-objects/Most Wanted/Gator Custom.bbship/mask1.jpg",
-    "/app/game-objects/Most Wanted/Gator Custom.bbship/skinBase.png",
-    "/app/game-objects/Most Wanted/Gator Custom.bbship/sn_ship_047_most_wanted_diffuse.bmp",
-    "/app/game-objects/Most Wanted/Gator Custom.bbship/sn_ship_047_most_wanted_normal_specular.bmp"
+    "/app/data/game-objects/items/ships/Most Wanted/Gator Custom.bbship/Gator_Full.mtl",
+    "/app/data/game-objects/items/ships/Most Wanted/Gator Custom.bbship/Gator_Full.obj",
+    "/app/data/game-objects/items/ships/Most Wanted/Gator Custom.bbship/mask1.jpg",
+    "/app/data/game-objects/items/ships/Most Wanted/Gator Custom.bbship/skinBase.png",
+    "/app/data/game-objects/items/ships/Most Wanted/Gator Custom.bbship/sn_ship_047_most_wanted_diffuse.bmp",
+    "/app/data/game-objects/items/ships/Most Wanted/Gator Custom.bbship/sn_ship_047_most_wanted_normal_specular.bmp"
   ],
-  "normSpec": "/app/game-objects/Most Wanted/Gator Custom.bbship/sn_ship_047_most_wanted_normal_specular.bmp"
+  "normSpec": "/app/data/game-objects/items/ships/Most Wanted/Gator Custom.bbship/sn_ship_047_most_wanted_normal_specular.bmp"
 }

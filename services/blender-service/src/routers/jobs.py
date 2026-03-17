@@ -34,9 +34,10 @@ router = APIRouter(
 )
 async def list_jobs(request: Request) -> list[dict]:
     """List all active render jobs."""
+    flogger.info("list_jobs: endpoint called")
     job_queue = request.app.state.job_queue
     jobs = job_queue.list_jobs()
-    flogger.debug(f"list_jobs: returning {len(jobs)} jobs")
+    flogger.debug(f"list_jobs: returning {len(jobs)} active jobs")
     return jobs
 
 
@@ -47,10 +48,11 @@ async def list_jobs(request: Request) -> list[dict]:
 )
 async def get_job_status(job_id: str, request: Request) -> dict:
     """Get the status of a render job."""
+    flogger.info(f"get_job_status: endpoint called for job_id={job_id!r}")
     job_queue = request.app.state.job_queue
     job = job_queue.get_job(job_id)
     if job is None:
-        flogger.warning(f"get_job_status: job {job_id!r} not found")
+        flogger.warning(f"get_job_status: job {job_id!r} not found or expired")
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Job '{job_id}' not found or has expired.",
@@ -69,11 +71,12 @@ async def get_job_status(job_id: str, request: Request) -> dict:
 )
 async def download_result(job_id: str, request: Request) -> StreamingResponse:
     """Download the rendered image for a completed job."""
+    flogger.info(f"download_result: endpoint called for job_id={job_id!r}")
     job_queue = request.app.state.job_queue
     job = job_queue.get_job(job_id)
 
     if job is None:
-        flogger.warning(f"download_result: job {job_id!r} not found")
+        flogger.warning(f"download_result: job {job_id!r} not found or expired")
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Job '{job_id}' not found or has expired.",

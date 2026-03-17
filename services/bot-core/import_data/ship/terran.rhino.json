@@ -36,7 +36,7 @@
   "maxPrimaries": 0,
   "maxSecondaries": 2,
   "maxTurrets": 1,
-  "model": "/app/game-objects/Terran/Rhino.bbship/Rhino_Full.obj",
+  "model": "/app/data/game-objects/items/ships/Terran/Rhino.bbship/Rhino_Full.obj",
   "name": "Rhino",
   "saveDue": false,
   "shopSpawnRate": 7.214,
@@ -45,12 +45,12 @@
   "value": 700000,
   "wiki": "https://galaxyonfire.fandom.com/wiki/Rhino",
   "assets": [
-    "/app/game-objects/Terran/Rhino.bbship/mask1.jpg",
-    "/app/game-objects/Terran/Rhino.bbship/Rhino_Full.mtl",
-    "/app/game-objects/Terran/Rhino.bbship/Rhino_Full.obj",
-    "/app/game-objects/Terran/Rhino.bbship/skinBase.png",
-    "/app/game-objects/Terran/Rhino.bbship/sn_ship_051_dropship_terran_diffuse.bmp",
-    "/app/game-objects/Terran/Rhino.bbship/sn_ship_051_dropship_terran_normal_specular.bmp"
+    "/app/data/game-objects/items/ships/Terran/Rhino.bbship/mask1.jpg",
+    "/app/data/game-objects/items/ships/Terran/Rhino.bbship/Rhino_Full.mtl",
+    "/app/data/game-objects/items/ships/Terran/Rhino.bbship/Rhino_Full.obj",
+    "/app/data/game-objects/items/ships/Terran/Rhino.bbship/skinBase.png",
+    "/app/data/game-objects/items/ships/Terran/Rhino.bbship/sn_ship_051_dropship_terran_diffuse.bmp",
+    "/app/data/game-objects/items/ships/Terran/Rhino.bbship/sn_ship_051_dropship_terran_normal_specular.bmp"
   ],
-  "normSpec": "/app/game-objects/Terran/Rhino.bbship/sn_ship_051_dropship_terran_normal_specular.bmp"
+  "normSpec": "/app/data/game-objects/items/ships/Terran/Rhino.bbship/sn_ship_051_dropship_terran_normal_specular.bmp"
 }

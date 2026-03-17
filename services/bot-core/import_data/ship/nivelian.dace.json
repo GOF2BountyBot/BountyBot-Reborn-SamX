@@ -36,7 +36,7 @@
   "maxPrimaries": 4,
   "maxSecondaries": 1,
   "maxTurrets": 0,
-  "model": "/app/game-objects/Nivelian/Dace.bbship/Dace_Full.obj",
+  "model": "/app/data/game-objects/items/ships/Nivelian/Dace.bbship/Dace_Full.obj",
   "name": "Dace",
   "saveDue": false,
   "shopSpawnRate": 8.416,
@@ -45,12 +45,12 @@
   "value": 235600,
   "wiki": "https://galaxyonfire.fandom.com/wiki/Dace",
   "assets": [
-    "/app/game-objects/Nivelian/Dace.bbship/Dace_Full.mtl",
-    "/app/game-objects/Nivelian/Dace.bbship/Dace_Full.obj",
-    "/app/game-objects/Nivelian/Dace.bbship/mask1.jpg",
-    "/app/game-objects/Nivelian/Dace.bbship/ship_004_nivelian_diffuse.bmp",
-    "/app/game-objects/Nivelian/Dace.bbship/ship_004_nivelian_normal_specular.bmp",
-    "/app/game-objects/Nivelian/Dace.bbship/skinBase.png"
+    "/app/data/game-objects/items/ships/Nivelian/Dace.bbship/Dace_Full.mtl",
+    "/app/data/game-objects/items/ships/Nivelian/Dace.bbship/Dace_Full.obj",
+    "/app/data/game-objects/items/ships/Nivelian/Dace.bbship/mask1.jpg",
+    "/app/data/game-objects/items/ships/Nivelian/Dace.bbship/ship_004_nivelian_diffuse.bmp",
+    "/app/data/game-objects/items/ships/Nivelian/Dace.bbship/ship_004_nivelian_normal_specular.bmp",
+    "/app/data/game-objects/items/ships/Nivelian/Dace.bbship/skinBase.png"
   ],
-  "normSpec": "/app/game-objects/Nivelian/Dace.bbship/ship_004_nivelian_normal_specular.bmp"
+  "normSpec": "/app/data/game-objects/items/ships/Nivelian/Dace.bbship/ship_004_nivelian_normal_specular.bmp"
 }

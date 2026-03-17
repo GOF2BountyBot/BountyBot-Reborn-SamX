@@ -47,10 +47,9 @@ async def execute_bounty_expire_job(job_id: str, payload: dict) -> dict:
     from services.bounty_service import BountyService
 
     start_ts = datetime.now(UTC)
-    flogger.info(f"BountyExpireJob[{job_id}] START")
-    flogger.trace(f"BountyExpireJob[{job_id}] payload: {payload}")
-
     bounty_id: int | None = payload.get("bounty_id")
+    flogger.info(f"BountyExpireJob[{job_id}] START (bounty_id={bounty_id})")
+    flogger.trace(f"BountyExpireJob[{job_id}] payload: {payload}")
     if bounty_id is None:
         flogger.error(f"BountyExpireJob[{job_id}] missing bounty_id in payload")
         return {"status": "error", "reason": "missing bounty_id", "bounty_id": None}
@@ -113,6 +112,10 @@ async def _announce_expiry(parent_job_id: str, bounty) -> None:
     }
 
     try:
+        flogger.debug(
+            f"BountyExpireJob[{parent_job_id}] posting bounty expiry announcement "
+            f"to discord-gateway (bounty_id={bounty.id})"
+        )
         async with httpx.AsyncClient() as client:
             resp = await client.post(
                 f"{_GATEWAY_BASE_URL}/messages",
@@ -120,6 +123,10 @@ async def _announce_expiry(parent_job_id: str, bounty) -> None:
                 timeout=10,
             )
         resp.raise_for_status()
+        flogger.debug(
+            f"BountyExpireJob[{parent_job_id}] received HTTP {resp.status_code} "
+            f"from discord-gateway for bounty id={bounty.id}"
+        )
         flogger.info(
             f"BountyExpireJob[{parent_job_id}] announced expiry of bounty "
             f"id={bounty.id} to discord-gateway"

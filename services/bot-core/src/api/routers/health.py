@@ -94,7 +94,10 @@ async def health_check(request: Request) -> HealthResponse:
     if not database_accessible:
         flogger.warning("Marking service as unhealthy due to database connectivity issues")
 
-    flogger.debug("Exiting health_check method...")
+    flogger.debug(
+        f"health_check result: status={service_status}, all_checks_passed={all_checks_passed}, "
+        f"database_accessible={database_accessible}, schema_current={schema_current}"
+    )
     return HealthResponse(
         status=service_status,
         timestamp=datetime.now(UTC),
@@ -118,10 +121,13 @@ async def health_check(request: Request) -> HealthResponse:
     description="Returns basic health status for load balancer checks"
 )
 async def simple_health_check() -> SimpleHealthResponse:
-    return SimpleHealthResponse(
+    flogger.debug("Endpoint called: simple_health_check")
+    response = SimpleHealthResponse(
         status="healthy",
         timestamp=datetime.now(UTC)
     )
+    flogger.debug(f"simple_health_check returning status={response.status}")
+    return response
 
 @router.get(
     "/readiness",
@@ -130,6 +136,7 @@ async def simple_health_check() -> SimpleHealthResponse:
     description="Checks if the service is ready to accept requests (includes database connectivity)"
 )
 async def readiness_check(request: Request) -> dict[str, str]:
+    flogger.debug("Endpoint called: readiness_check")
     try:
         if hasattr(request.app.state, "db_manager"):
             db_manager = request.app.state.db_manager
@@ -140,6 +147,7 @@ async def readiness_check(request: Request) -> dict[str, str]:
                     status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                     detail="Database not accessible"
                 )
+        flogger.debug("readiness_check passed: service is ready")
         return {"status": "ready"}
     except HTTPException:
         raise
@@ -157,7 +165,10 @@ async def readiness_check(request: Request) -> dict[str, str]:
     description="Checks if the service is alive and responsive"
 )
 async def liveness_check() -> dict[str, str]:
-    return {"status": "alive"}
+    flogger.debug("Endpoint called: liveness_check")
+    response = {"status": "alive"}
+    flogger.debug("liveness_check returning status=alive")
+    return response
 
 @router.get(
     "/database",
@@ -169,6 +180,7 @@ async def database_health_check(request: Request) -> dict[str, Any]:
     """
     Database-specific health check endpoint.
     """
+    flogger.debug("Endpoint called: database_health_check")
     try:
         health_info = {
             "timestamp": datetime.now(UTC),
@@ -197,13 +209,23 @@ async def database_health_check(request: Request) -> dict[str, Any]:
             }
 
         # Enforce connectivity
-        if not health_info["database"].get("connectivity", False):
+        db_status = health_info["database"].get("status", "unknown")
+        db_connectivity = health_info["database"].get("connectivity", False)
+        if not db_connectivity:
+            flogger.debug(
+                f"database_health_check failed: db_status={db_status}, connectivity=False"
+            )
             from fastapi.encoders import jsonable_encoder
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail=jsonable_encoder(health_info)
             )
 
+        schema_status = health_info["schema"].get("status", "unknown")
+        flogger.debug(
+            f"database_health_check passed: db_status={db_status}, "
+            f"schema_status={schema_status}, connectivity=True"
+        )
         return health_info
 
     except HTTPException:

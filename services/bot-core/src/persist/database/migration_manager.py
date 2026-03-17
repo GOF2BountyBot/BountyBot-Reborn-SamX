@@ -27,6 +27,10 @@ from alembic.runtime.migration import MigrationContext
 from alembic.script import ScriptDirectory
 from sqlalchemy import create_engine, pool
 
+from shared import bblogger
+
+flogger = bblogger.get_logger("migration-manager")
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -77,12 +81,15 @@ class MigrationManager:
     """
 
     def __init__(self, sync_url: str) -> None:
+        flogger.trace("__init__: Initializing MigrationManager")
         if sync_url.startswith("postgresql+asyncpg://"):
+            flogger.error("__init__: Attempted to use asyncpg URL (postgresql+asyncpg://) instead of sync URL")
             raise ValueError(
                 "MigrationManager requires a synchronous URL (postgresql://…). "
                 "Use MigrationManager.from_async_url() to convert an asyncpg URL."
             )
         self._sync_url = sync_url
+        flogger.trace("__init__: MigrationManager initialized successfully")
 
     # ------------------------------------------------------------------
     # Constructors
@@ -96,7 +103,14 @@ class MigrationManager:
         ``POSTGRES_USER``, and ``POSTGRES_PASSWORD``.  Falls back to the
         same defaults used elsewhere in the codebase.
         """
-        return cls(_build_sync_url_from_env())
+        flogger.debug("from_env: Building MigrationManager from environment variables")
+        sync_url = _build_sync_url_from_env()
+        # Extract password from URL for masking
+        user = os.getenv("POSTGRES_USER", "bounty")
+        pw = os.getenv("POSTGRES_PASSWORD", "bounty")
+        masked_url = sync_url.replace(pw, "***") if pw else sync_url
+        flogger.debug(f"from_env: Connection URL: {masked_url}")
+        return cls(sync_url)
 
     @classmethod
     def from_async_url(cls, async_url: str) -> MigrationManager:
@@ -111,7 +125,25 @@ class MigrationManager:
             An asyncpg-flavoured URL such as
             ``postgresql+asyncpg://user:pw@host:5432/dbname``.
         """
-        return cls(_async_to_sync_url(async_url))
+        flogger.debug("from_async_url: Converting asyncpg URL to sync psycopg2 URL")
+        # Mask the password in the URL for logging
+        masked_async_url = async_url
+        if "@" in async_url:
+            # Extract and mask password
+            scheme_and_creds, host_part = async_url.rsplit("@", 1)
+            if ":" in scheme_and_creds:
+                scheme_and_user = scheme_and_creds.rsplit(":", 1)[0]
+                masked_async_url = f"{scheme_and_user}:***@{host_part}"
+        flogger.debug(f"from_async_url: Input URL: {masked_async_url}")
+        sync_url = _async_to_sync_url(async_url)
+        masked_sync_url = sync_url
+        if "@" in sync_url:
+            scheme_and_creds, host_part = sync_url.rsplit("@", 1)
+            if ":" in scheme_and_creds:
+                scheme_and_user = scheme_and_creds.rsplit(":", 1)[0]
+                masked_sync_url = f"{scheme_and_user}:***@{host_part}"
+        flogger.debug(f"from_async_url: Converted to sync URL: {masked_sync_url}")
+        return cls(sync_url)
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -123,14 +155,19 @@ class MigrationManager:
         The URL is injected via :meth:`~alembic.config.Config.set_main_option`
         so that ``env.py`` will see it through ``config.get_main_option``.
         """
+        flogger.trace("_get_alembic_config: Building Alembic configuration")
         cfg = Config(_INI_PATH)
         cfg.set_main_option("sqlalchemy.url", self._sync_url)
+        flogger.trace(f"_get_alembic_config: Alembic config built with INI path: {_INI_PATH}")
         return cfg
 
     def _get_script_directory(self) -> ScriptDirectory:
         """Return an Alembic :class:`~alembic.script.ScriptDirectory` instance."""
+        flogger.trace("_get_script_directory: Loading Alembic script directory")
         cfg = self._get_alembic_config()
-        return ScriptDirectory.from_config(cfg)
+        script_dir = ScriptDirectory.from_config(cfg)
+        flogger.trace("_get_script_directory: Script directory loaded successfully")
+        return script_dir
 
     # ------------------------------------------------------------------
     # Public API
@@ -142,8 +179,20 @@ class MigrationManager:
         Safe to call on every startup — if the database is already at the
         latest revision this is a no-op.
         """
-        cfg = self._get_alembic_config()
-        command.upgrade(cfg, "head")
+        flogger.info("ensure_current: Checking for pending migrations...")
+        try:
+            current_rev = self.get_current_revision()
+            head_rev = self.get_head_revision()
+            if current_rev == head_rev:
+                flogger.info(f"ensure_current: Database already at head revision: {head_rev}")
+            else:
+                flogger.info(f"ensure_current: Current revision: {current_rev}, head revision: {head_rev}")
+                cfg = self._get_alembic_config()
+                command.upgrade(cfg, "head")
+                flogger.info("ensure_current: All pending migrations applied successfully")
+        except Exception as e:
+            flogger.error(f"ensure_current: Migration failed with error: {e}", exc_info=True)
+            raise
 
     def auto_generate(self, message: str) -> None:
         """Generate a new auto-detected revision script.
@@ -158,8 +207,14 @@ class MigrationManager:
             A short human-readable description for the migration (e.g.
             ``"add player reputation field"``).
         """
-        cfg = self._get_alembic_config()
-        command.revision(cfg, message=message, autogenerate=True)
+        flogger.info(f"auto_generate: Generating new revision with message: '{message}'")
+        try:
+            cfg = self._get_alembic_config()
+            command.revision(cfg, message=message, autogenerate=True)
+            flogger.info(f"auto_generate: Revision script generated successfully for: '{message}'")
+        except Exception as e:
+            flogger.error(f"auto_generate: Failed to generate revision for '{message}': {e}", exc_info=True)
+            raise
 
     def detect_pending(self) -> list[str]:
         """Return the list of pending (unapplied) migration revision IDs.
@@ -174,16 +229,25 @@ class MigrationManager:
             Revision IDs that are pending.  An empty list means the database
             is already at *head*.
         """
-        current = self.get_current_revision()
-        script_dir = self._get_script_directory()
+        flogger.trace("detect_pending: Detecting pending migrations")
+        try:
+            current = self.get_current_revision()
+            flogger.debug(f"detect_pending: Current database revision: {current}")
+            script_dir = self._get_script_directory()
 
-        pending: list[str] = []
-        for rev in script_dir.walk_revisions():
-            if current is None or rev.revision != current:
-                pending.append(rev.revision)
-            else:
-                break  # Stop once we reach the current revision
-        return pending
+            pending: list[str] = []
+            for rev in script_dir.walk_revisions():
+                if current is None or rev.revision != current:
+                    pending.append(rev.revision)
+                else:
+                    break  # Stop once we reach the current revision
+            flogger.debug(f"detect_pending: Found {len(pending)} pending migration(s)")
+            if pending:
+                flogger.debug(f"detect_pending: Pending revisions: {pending}")
+            return pending
+        except Exception as e:
+            flogger.error(f"detect_pending: Failed to detect pending migrations: {e}", exc_info=True)
+            raise
 
     def get_current_revision(self) -> str | None:
         """Return the current database revision, or ``None`` if unversioned.
@@ -191,11 +255,17 @@ class MigrationManager:
         Queries the ``alembic_version`` table in the database to find the
         revision currently stamped there.
         """
+        flogger.trace("get_current_revision: Querying current database revision")
         engine = create_engine(self._sync_url, poolclass=pool.NullPool)
         try:
             with engine.connect() as conn:
                 context = MigrationContext.configure(conn)
-                return context.get_current_revision()
+                current = context.get_current_revision()
+                flogger.debug(f"get_current_revision: Current revision is {current if current else 'None (database not versioned)'}")
+                return current
+        except Exception as e:
+            flogger.error(f"get_current_revision: Failed to query current revision: {e}", exc_info=True)
+            raise
         finally:
             engine.dispose()
 
@@ -204,11 +274,19 @@ class MigrationManager:
 
         Returns ``None`` if there are no migration scripts at all.
         """
-        script_dir = self._get_script_directory()
-        heads = script_dir.get_heads()
-        if not heads:
-            return None
-        return heads[0]
+        flogger.trace("get_head_revision: Retrieving head revision from script directory")
+        try:
+            script_dir = self._get_script_directory()
+            heads = script_dir.get_heads()
+            if not heads:
+                flogger.debug("get_head_revision: No migration scripts found (no heads)")
+                return None
+            head = heads[0]
+            flogger.debug(f"get_head_revision: Head revision is {head}")
+            return head
+        except Exception as e:
+            flogger.error(f"get_head_revision: Failed to retrieve head revision: {e}", exc_info=True)
+            raise
 
     def downgrade(self, target: str = "-1") -> None:
         """Roll back one or more migrations.
@@ -220,8 +298,14 @@ class MigrationManager:
             one step, ``"base"`` to roll all the way back, or a specific
             revision ID.
         """
-        cfg = self._get_alembic_config()
-        command.downgrade(cfg, target)
+        flogger.warning(f"downgrade: Rolling back migrations to target: {target} (DOWNGRADE is risky!)")
+        try:
+            cfg = self._get_alembic_config()
+            command.downgrade(cfg, target)
+            flogger.info(f"downgrade: Successfully downgraded to target: {target}")
+        except Exception as e:
+            flogger.error(f"downgrade: Downgrade to '{target}' failed: {e}", exc_info=True)
+            raise
 
     def history(self) -> list[str]:
         """Return a human-readable list of migration history lines.
@@ -234,13 +318,21 @@ class MigrationManager:
         list[str]
             One entry per revision in the history (newest first).
         """
-        cfg = self._get_alembic_config()
-        buf = io.StringIO()
+        flogger.trace("history: Retrieving migration history")
+        try:
+            cfg = self._get_alembic_config()
+            buf = io.StringIO()
 
-        # Temporarily redirect Alembic output to our buffer.
-        cfg.stdout = buf
-        command.history(cfg)
-        output = buf.getvalue()
+            # Temporarily redirect Alembic output to our buffer.
+            cfg.stdout = buf
+            command.history(cfg)
+            output = buf.getvalue()
 
-        lines = [line for line in output.splitlines() if line.strip()]
-        return lines
+            lines = [line for line in output.splitlines() if line.strip()]
+            flogger.debug(f"history: Retrieved {len(lines)} history line(s)")
+            if lines:
+                flogger.debug(f"history: Most recent migration: {lines[0] if lines else 'None'}")
+            return lines
+        except Exception as e:
+            flogger.error(f"history: Failed to retrieve migration history: {e}", exc_info=True)
+            raise

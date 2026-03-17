@@ -36,7 +36,7 @@
   "maxPrimaries": 1,
   "maxSecondaries": 2,
   "maxTurrets": 0,
-  "model": "/app/game-objects/Pirate/Hiro.bbship/Hiro_Full.obj",
+  "model": "/app/data/game-objects/items/ships/Pirate/Hiro.bbship/Hiro_Full.obj",
   "name": "Hiro",
   "saveDue": false,
   "shopSpawnRate": 9.585,
@@ -45,11 +45,11 @@
   "value": 32600,
   "wiki": "https://galaxyonfire.fandom.com/wiki/Hiro",
   "assets": [
-    "/app/game-objects/Pirate/Hiro.bbship/Hiro_Full.mtl",
-    "/app/game-objects/Pirate/Hiro.bbship/Hiro_Full.obj",
-    "/app/game-objects/Pirate/Hiro.bbship/mask1.jpg",
-    "/app/game-objects/Pirate/Hiro.bbship/mask2.jpg",
-    "/app/game-objects/Pirate/Hiro.bbship/ship_002_pirates_diffuse.bmp",
-    "/app/game-objects/Pirate/Hiro.bbship/skinBase.png"
+    "/app/data/game-objects/items/ships/Pirate/Hiro.bbship/Hiro_Full.mtl",
+    "/app/data/game-objects/items/ships/Pirate/Hiro.bbship/Hiro_Full.obj",
+    "/app/data/game-objects/items/ships/Pirate/Hiro.bbship/mask1.jpg",
+    "/app/data/game-objects/items/ships/Pirate/Hiro.bbship/mask2.jpg",
+    "/app/data/game-objects/items/ships/Pirate/Hiro.bbship/ship_002_pirates_diffuse.bmp",
+    "/app/data/game-objects/items/ships/Pirate/Hiro.bbship/skinBase.png"
   ]
 }

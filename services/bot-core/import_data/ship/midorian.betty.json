@@ -36,7 +36,7 @@
   "maxPrimaries": 1,
   "maxSecondaries": 1,
   "maxTurrets": 0,
-  "model": "/app/game-objects/Midorian/Betty.bbship/Betty_Full.obj",
+  "model": "/app/data/game-objects/items/ships/Midorian/Betty.bbship/Betty_Full.obj",
   "name": "Betty",
   "saveDue": false,
   "shopSpawnRate": 9.585,
@@ -45,12 +45,12 @@
   "value": 16038,
   "wiki": "https://galaxyonfire.fandom.com/wiki/Betty",
   "assets": [
-    "/app/game-objects/Midorian/Betty.bbship/Betty_Full.mtl",
-    "/app/game-objects/Midorian/Betty.bbship/Betty_Full.obj",
-    "/app/game-objects/Midorian/Betty.bbship/mask1.jpg",
-    "/app/game-objects/Midorian/Betty.bbship/ship_000_midorian_diffuse.bmp",
-    "/app/game-objects/Midorian/Betty.bbship/ship_000_midorian_normal_specular.bmp",
-    "/app/game-objects/Midorian/Betty.bbship/skinBase.png"
+    "/app/data/game-objects/items/ships/Midorian/Betty.bbship/Betty_Full.mtl",
+    "/app/data/game-objects/items/ships/Midorian/Betty.bbship/Betty_Full.obj",
+    "/app/data/game-objects/items/ships/Midorian/Betty.bbship/mask1.jpg",
+    "/app/data/game-objects/items/ships/Midorian/Betty.bbship/ship_000_midorian_diffuse.bmp",
+    "/app/data/game-objects/items/ships/Midorian/Betty.bbship/ship_000_midorian_normal_specular.bmp",
+    "/app/data/game-objects/items/ships/Midorian/Betty.bbship/skinBase.png"
   ],
-  "normSpec": "/app/game-objects/Midorian/Betty.bbship/ship_000_midorian_normal_specular.bmp"
+  "normSpec": "/app/data/game-objects/items/ships/Midorian/Betty.bbship/ship_000_midorian_normal_specular.bmp"
 }

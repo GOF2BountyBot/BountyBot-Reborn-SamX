@@ -61,6 +61,12 @@ class SimpleTTKResolver:
         Returns:
             FightResults with winner determined by longest TTK.
         """
+        flogger.debug(
+            f"Combat resolution initiated: {ship1_stats.ship_name} (hp={ship1_stats.total_hp}, "
+            f"dps={ship1_stats.dps:.1f}) vs {ship2_stats.ship_name} (hp={ship2_stats.total_hp}, "
+            f"dps={ship2_stats.dps:.1f}), variance={variance_percent*100:.1f}%"
+        )
+
         # 1. Apply variance to HP (2 rolls)
         ship1_hp_varied = _apply_variance(ship1_stats.total_hp, variance_percent)
         ship2_hp_varied = _apply_variance(ship2_stats.total_hp, variance_percent)
@@ -76,14 +82,21 @@ class SimpleTTKResolver:
             f" dps={ship2_stats.dps:.1f}→{ship2_dps_varied:.1f}"
         )
 
+        flogger.trace(f"Variance calculation step: ship1_hp_varied={ship1_hp_varied}, ship2_hp_varied={ship2_hp_varied}")
+        flogger.trace(f"Variance calculation step: ship1_dps_varied={ship1_dps_varied:.1f}, ship2_dps_varied={ship2_dps_varied:.1f}")
+
         # 3. Handle zero-DPS edge cases
         ship1_ttk: float | None = None
         ship2_ttk: float | None = None
 
         both_zero = ship1_stats.dps == 0 and ship2_stats.dps == 0
+        flogger.trace(f"Zero-DPS edge case check: ship1_dps={ship1_stats.dps}, ship2_dps={ship2_stats.dps}, both_zero={both_zero}")
 
         if both_zero:
             # Neither ship can deal damage — stalemate
+            flogger.info(
+                f"Fight result: STALEMATE due to zero DPS for both {ship1_stats.ship_name} and {ship2_stats.ship_name}"
+            )
             return FightResults(
                 winner_name=None,
                 loser_name=None,
@@ -110,35 +123,45 @@ class SimpleTTKResolver:
         # Calculate TTK for each ship
         # ship1_ttk = how long ship1 survives ship2's fire
         ship1_ttk = ship1_hp_varied / ship2_dps_varied if ship2_dps_varied > 0 else None
+        flogger.trace(f"TTK calculation: ship1_ttk = {ship1_hp_varied} / {ship2_dps_varied} = {ship1_ttk}")
 
         # ship2_ttk = how long ship2 survives ship1's fire
         ship2_ttk = ship2_hp_varied / ship1_dps_varied if ship1_dps_varied > 0 else None
+        flogger.trace(f"TTK calculation: ship2_ttk = {ship2_hp_varied} / {ship1_dps_varied} = {ship2_ttk}")
 
         # 4. Determine winner (longest survivor wins)
         winner_name: str | None = None
         loser_name: str | None = None
         is_stalemate = False
 
+        flogger.trace(f"Winner determination: comparing TTKs — ship1_ttk={ship1_ttk}, ship2_ttk={ship2_ttk}")
+
         if ship1_ttk is None and ship2_ttk is None:
             # Both survive indefinitely (shouldn't happen if both_zero handled above)
             is_stalemate = True
+            flogger.debug("Both ships survive indefinitely — stalemate condition")
         elif ship1_ttk is None:
             # Ship1 survives indefinitely, ship2 doesn't → ship1 wins
             winner_name = ship1_stats.ship_name
             loser_name = ship2_stats.ship_name
+            flogger.debug(f"{ship1_stats.ship_name} survives indefinitely vs {ship2_stats.ship_name}")
         elif ship2_ttk is None:
             # Ship2 survives indefinitely → ship2 wins
             winner_name = ship2_stats.ship_name
             loser_name = ship1_stats.ship_name
+            flogger.debug(f"{ship2_stats.ship_name} survives indefinitely vs {ship1_stats.ship_name}")
         elif ship1_ttk > ship2_ttk:
             winner_name = ship1_stats.ship_name
             loser_name = ship2_stats.ship_name
+            flogger.debug(f"{ship1_stats.ship_name} TTK {ship1_ttk:.2f} > {ship2_stats.ship_name} TTK {ship2_ttk:.2f}")
         elif ship2_ttk > ship1_ttk:
             winner_name = ship2_stats.ship_name
             loser_name = ship1_stats.ship_name
+            flogger.debug(f"{ship2_stats.ship_name} TTK {ship2_ttk:.2f} > {ship1_stats.ship_name} TTK {ship1_ttk:.2f}")
         else:
             # Exact tie
             is_stalemate = True
+            flogger.debug(f"Exact tie: both ships have TTK {ship1_ttk:.2f}")
 
         ttk1_str = f"{ship1_ttk:.2f}" if ship1_ttk is not None else "∞"
         ttk2_str = f"{ship2_ttk:.2f}" if ship2_ttk is not None else "∞"
@@ -195,9 +218,12 @@ def _apply_variance(value: int, variance_percent: float) -> int:
         Varied value as int. Returns 0 if value is 0.
     """
     if value == 0 or variance_percent == 0.0:
+        flogger.trace(f"_apply_variance(int): value={value}, variance_percent={variance_percent}, no variance applied")
         return value
     delta = int(value * variance_percent)
-    return random.randint(value - delta, value + delta)
+    varied = random.randint(value - delta, value + delta)
+    flogger.trace(f"_apply_variance(int): value={value}, variance_percent={variance_percent}, delta={delta}, result={varied}")
+    return varied
 
 
 def _apply_variance_float(value: float, variance_percent: float) -> float:
@@ -214,14 +240,20 @@ def _apply_variance_float(value: float, variance_percent: float) -> float:
         Varied value as float. Returns 0.0 if value is 0.
     """
     if value == 0 or variance_percent == 0.0:
+        flogger.trace(f"_apply_variance_float: value={value}, variance_percent={variance_percent}, no variance applied")
         return value
     low = int(value - value * variance_percent)
     high = int(value + value * variance_percent)
+    flogger.trace(f"_apply_variance_float: value={value}, variance_percent={variance_percent}, low={low}, high={high}")
     if low > high:
         low, high = high, low
+        flogger.trace(f"_apply_variance_float: bounds swapped — low={low}, high={high}")
     if low == high:
+        flogger.trace(f"_apply_variance_float: low==high, returning {float(low)}")
         return float(low)
-    return float(random.randint(low, high))
+    varied = float(random.randint(low, high))
+    flogger.trace(f"_apply_variance_float: random selection in [{low}, {high}] = {varied}")
+    return varied
 
 
 # ---------------------------------------------------------------------------
@@ -251,6 +283,7 @@ class CombatService:
                       SimpleTTKResolver if not provided.
         """
         self._resolver: CombatResolver = resolver or SimpleTTKResolver()
+        flogger.debug(f"CombatService initialized with resolver: {self._resolver.__class__.__name__}")
 
     # ------------------------------------------------------------------
     # Stat Collection — Legacy-compatible formulas
@@ -273,20 +306,29 @@ class CombatService:
         Returns:
             Total effective DPS as float.
         """
+        flogger.debug(f"Calculating DPS for {loadout.ship_name}")
         total = 0.0
         multiplier = 1.0
 
         for weapon in loadout.weapons:
             total += weapon.dps
+            flogger.trace(f"DPS calc: added weapon {weapon.name} dps={weapon.dps}, cumulative_total={total}")
 
         for turret in loadout.turrets:
             total += turret.dps
+            flogger.trace(f"DPS calc: added turret {turret.name} dps={turret.dps}, cumulative_total={total}")
 
         for module in loadout.modules:
             total += module.dps
             multiplier *= module.dps_multiplier
+            flogger.trace(
+                f"DPS calc: added module {module.name} dps={module.dps}, dps_mult={module.dps_multiplier}, "
+                f"cumulative_total={total}, cumulative_multiplier={multiplier}"
+            )
 
-        return total * multiplier
+        final_dps = total * multiplier
+        flogger.debug(f"DPS calculation complete for {loadout.ship_name}: base_total={total}, multiplier={multiplier}, final_dps={final_dps:.1f}")
+        return final_dps
 
     @staticmethod
     def get_armour(loadout: ShipLoadout) -> int:
@@ -305,18 +347,30 @@ class CombatService:
         Returns:
             Total effective armour as int (truncated).
         """
+        flogger.debug(f"Calculating armour for {loadout.ship_name}")
         total = loadout.base_armour
         multiplier = 1.0
+        flogger.trace(f"Armour calc: base_armour={total}")
 
         for module in loadout.modules:
             total += module.armour
             multiplier *= module.armour_multiplier
+            flogger.trace(
+                f"Armour calc: added module {module.name} armour={module.armour}, "
+                f"armour_mult={module.armour_multiplier}, cumulative_total={total}, cumulative_multiplier={multiplier}"
+            )
 
         for upgrade in loadout.upgrades:
             total += upgrade.armour
             multiplier *= upgrade.armour_multiplier
+            flogger.trace(
+                f"Armour calc: added upgrade {upgrade.name} armour={upgrade.armour}, "
+                f"armour_mult={upgrade.armour_multiplier}, cumulative_total={total}, cumulative_multiplier={multiplier}"
+            )
 
-        return int(total * multiplier)
+        final_armour = int(total * multiplier)
+        flogger.debug(f"Armour calculation complete for {loadout.ship_name}: base_total={total}, multiplier={multiplier}, final_armour={final_armour}")
+        return final_armour
 
     @staticmethod
     def get_shield(loadout: ShipLoadout) -> int:
@@ -333,14 +387,22 @@ class CombatService:
         Returns:
             Total effective shield as int (truncated).
         """
+        flogger.debug(f"Calculating shield for {loadout.ship_name}")
         total = 0
         multiplier = 1.0
+        flogger.trace(f"Shield calc: starting with total=0 (no base shield)")
 
         for module in loadout.modules:
             total += module.shield
             multiplier *= module.shield_multiplier
+            flogger.trace(
+                f"Shield calc: added module {module.name} shield={module.shield}, "
+                f"shield_mult={module.shield_multiplier}, cumulative_total={total}, cumulative_multiplier={multiplier}"
+            )
 
-        return int(total * multiplier)
+        final_shield = int(total * multiplier)
+        flogger.debug(f"Shield calculation complete for {loadout.ship_name}: base_total={total}, multiplier={multiplier}, final_shield={final_shield}")
+        return final_shield
 
     def collect_stats(self, loadout: ShipLoadout) -> CombatStats:
         """Compute all combat statistics for a ship loadout.
@@ -354,21 +416,24 @@ class CombatService:
         Returns:
             CombatStats with all computed values.
         """
+        flogger.debug(f"Stat collection started for {loadout.ship_name}")
         dps = self.get_dps(loadout)
         armour = self.get_armour(loadout)
         shield = self.get_shield(loadout)
+        total_hp = armour + shield
 
         flogger.debug(
             f"Ship stats: {loadout.ship_name} dps={dps:.1f} armour={armour}"
-            f" shield={shield} total_hp={armour + shield}"
+            f" shield={shield} total_hp={total_hp}"
         )
+        flogger.trace(f"Accuracy: {loadout.base_accuracy}, Evasion: {loadout.base_evasion}")
 
         return CombatStats(
             ship_name=loadout.ship_name,
             dps=dps,
             armour=armour,
             shield=shield,
-            total_hp=armour + shield,
+            total_hp=total_hp,
             accuracy=loadout.base_accuracy,
             evasion=loadout.base_evasion,
         )
@@ -397,10 +462,18 @@ class CombatService:
         Returns:
             FightResults with winner, loser, stats, and stalemate flag.
         """
+        flogger.debug(f"fight_ships initiated: {loadout1.ship_name} vs {loadout2.ship_name}")
         if variance_percent is None:
             variance_percent = GameConstants.DUEL_VARIANCE_PERCENT
+            flogger.debug(f"Variance percent not specified, using GameConstants.DUEL_VARIANCE_PERCENT={variance_percent*100:.1f}%")
 
+        flogger.debug(f"Collecting combat stats for {loadout1.ship_name} (initiator)")
         stats1 = self.collect_stats(loadout1)
+
+        flogger.debug(f"Collecting combat stats for {loadout2.ship_name} (receiver)")
         stats2 = self.collect_stats(loadout2)
 
-        return self._resolver.resolve(stats1, stats2, variance_percent)
+        flogger.debug(f"Delegating to resolver: {self._resolver.__class__.__name__}")
+        result = self._resolver.resolve(stats1, stats2, variance_percent)
+        flogger.debug(f"fight_ships completed: winner={result.winner_name}, loser={result.loser_name}, stalemate={result.is_stalemate}")
+        return result

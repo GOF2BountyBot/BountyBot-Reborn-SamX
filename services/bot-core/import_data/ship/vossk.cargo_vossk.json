@@ -36,7 +36,7 @@
   "maxPrimaries": 0,
   "maxSecondaries": 0,
   "maxTurrets": 0,
-  "model": "/app/game-objects/Vossk/Cargo_Vossk.bbship/Cargo_Vossk_Full.obj",
+  "model": "/app/data/game-objects/items/ships/Vossk/Cargo_Vossk.bbship/Cargo_Vossk_Full.obj",
   "name": "Vossk Freighter",
   "saveDue": false,
   "shopSpawnRate": 7.214,
@@ -45,10 +45,10 @@
   "value": 700000,
   "wiki": "https://galaxyonfire.fandom.com/wiki/Freighter",
   "assets": [
-    "/app/game-objects/Vossk/Cargo_Vossk.bbship/cargo_vossk_diffuse.bmp",
-    "/app/game-objects/Vossk/Cargo_Vossk.bbship/Cargo_Vossk_Full.mtl",
-    "/app/game-objects/Vossk/Cargo_Vossk.bbship/Cargo_Vossk_Full.obj",
-    "/app/game-objects/Vossk/Cargo_Vossk.bbship/mask1.jpg",
-    "/app/game-objects/Vossk/Cargo_Vossk.bbship/skinBase.png"
+    "/app/data/game-objects/items/ships/Vossk/Cargo_Vossk.bbship/cargo_vossk_diffuse.bmp",
+    "/app/data/game-objects/items/ships/Vossk/Cargo_Vossk.bbship/Cargo_Vossk_Full.mtl",
+    "/app/data/game-objects/items/ships/Vossk/Cargo_Vossk.bbship/Cargo_Vossk_Full.obj",
+    "/app/data/game-objects/items/ships/Vossk/Cargo_Vossk.bbship/mask1.jpg",
+    "/app/data/game-objects/items/ships/Vossk/Cargo_Vossk.bbship/skinBase.png"
   ]
 }

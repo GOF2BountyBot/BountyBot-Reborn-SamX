@@ -9,7 +9,7 @@ calculation, and ship/player classification helpers.
 import random
 
 from shared import bblogger
-from src.services.game_constants import GameConstants
+from services.game_constants import GameConstants
 
 flogger = bblogger.get_logger(__name__)
 

@@ -39,7 +39,7 @@
   "maxPrimaries": 4,
   "maxSecondaries": 2,
   "maxTurrets": 1,
-  "model": "/app/game-objects/Terran/Dark Angel.bbship/Dark_Full.obj",
+  "model": "/app/data/game-objects/items/ships/Terran/Dark Angel.bbship/Dark_Full.obj",
   "name": "Dark Angel",
   "saveDue": false,
   "shopSpawnRate": 8.416,
@@ -48,11 +48,11 @@
   "value": 7227000,
   "wiki": "https://galaxyonfire.fandom.com/wiki/Dark_Angel",
   "assets": [
-    "/app/game-objects/Terran/Dark Angel.bbship/Dark_Full.mtl",
-    "/app/game-objects/Terran/Dark Angel.bbship/Dark_Full.obj",
-    "/app/game-objects/Terran/Dark Angel.bbship/ship_062_prototype_diffuse.bmp",
-    "/app/game-objects/Terran/Dark Angel.bbship/ship_062_prototype_normal_specular.bmp",
-    "/app/game-objects/Terran/Dark Angel.bbship/skinBase.png"
+    "/app/data/game-objects/items/ships/Terran/Dark Angel.bbship/Dark_Full.mtl",
+    "/app/data/game-objects/items/ships/Terran/Dark Angel.bbship/Dark_Full.obj",
+    "/app/data/game-objects/items/ships/Terran/Dark Angel.bbship/ship_062_prototype_diffuse.bmp",
+    "/app/data/game-objects/items/ships/Terran/Dark Angel.bbship/ship_062_prototype_normal_specular.bmp",
+    "/app/data/game-objects/items/ships/Terran/Dark Angel.bbship/skinBase.png"
   ],
-  "normSpec": "/app/game-objects/Terran/Dark Angel.bbship/ship_062_prototype_normal_specular.bmp"
+  "normSpec": "/app/data/game-objects/items/ships/Terran/Dark Angel.bbship/ship_062_prototype_normal_specular.bmp"
 }

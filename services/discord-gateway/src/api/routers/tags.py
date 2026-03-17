@@ -49,9 +49,10 @@ router = APIRouter(
 )
 async def get_tag(request: Request, tag_id: int) -> ForumTagResponse:
     """Get details for a single forum tag."""
-    flogger.info(f"get_tag called for tag_id={tag_id}")
+    flogger.info(f"get_tag: endpoint entry for tag_id={tag_id}")
     try:
         bot = await resolve_bot(request)
+        flogger.debug(f"get_tag: bot resolved, searching for tag {tag_id} across {len(bot.guilds)} guilds")
         # Search for the tag across all forum channels
         tag = None
         parent_channel = None
@@ -88,7 +89,9 @@ async def get_tag(request: Request, tag_id: int) -> ForumTagResponse:
                     with suppress(Exception):
                         tag_payload["emoji"] = normalize_emoji(tag_payload["emoji"])
 
-        flogger.info(f"Successfully retrieved tag {getattr(tag, 'name', tag_id)}")
+        tag_name = getattr(tag, 'name', tag_id)
+        flogger.debug(f"get_tag: response payload prepared, tag_name={tag_name}, channel_id={parent_channel.id}")
+        flogger.info(f"get_tag: successfully retrieved tag {tag_name}")
         return ForumTagResponse(status="success", data=tag_payload)
     except HTTPException:
         raise
@@ -106,10 +109,12 @@ async def get_tag(request: Request, tag_id: int) -> ForumTagResponse:
 )
 async def create_forum_tag(request: Request, channel_id: int, tag: ForumTagCreateRequest) -> ForumTagResponse:
     """Create a tag in a ForumChannel."""
-    flogger.info(f"create_forum_tag called for channel_id={channel_id}")
+    flogger.info(f"create_forum_tag: endpoint entry for channel_id={channel_id}, tag_name={tag.name}")
     try:
         bot = await resolve_bot(request)
+        flogger.debug(f"create_forum_tag: bot resolved, fetching channel {channel_id}")
         channel = await get_entity_or_404(bot.get_channel, bot.fetch_channel, channel_id, "Channel")
+        flogger.debug(f"create_forum_tag: channel {channel_id} found, type={type(channel).__name__}")
 
         if not isinstance(channel, discord.ForumChannel):
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Not a forum channel")
@@ -175,7 +180,9 @@ async def create_forum_tag(request: Request, channel_id: int, tag: ForumTagCreat
                     with suppress(Exception):
                         tag_data["emoji"] = normalize_emoji(tag_data["emoji"])
 
-        flogger.info(f"Successfully created tag {getattr(new_tag, 'name', tag.name)}")
+        new_tag_name = getattr(new_tag, 'name', tag.name)
+        flogger.debug(f"create_forum_tag: response prepared, new_tag_name={new_tag_name}, channel_id={channel_id}")
+        flogger.info(f"create_forum_tag: successfully created tag {new_tag_name}")
         return ForumTagResponse(status="created", data=tag_data)
     except HTTPException:
         raise
@@ -193,9 +200,10 @@ async def create_forum_tag(request: Request, channel_id: int, tag: ForumTagCreat
 )
 async def update_tag(request: Request, tag_id: int, tag_data: ForumTagUpdateRequest) -> ForumTagResponse:
     """Update a forum tag's properties."""
-    flogger.info(f"update_tag called for tag_id={tag_id}")
+    flogger.info(f"update_tag: endpoint entry for tag_id={tag_id}, name={tag_data.name}, emoji={tag_data.emoji}")
     try:
         bot = await resolve_bot(request)
+        flogger.debug(f"update_tag: bot resolved, searching for tag {tag_id}")
         # Search for the tag across all forum channels
         tag = None
         parent_channel = None
@@ -221,10 +229,12 @@ async def update_tag(request: Request, tag_id: int, tag_data: ForumTagUpdateRequ
                 emoji_value = normalize_emoji(tag_data.emoji)
                 update_kwargs["emoji"] = emoji_value
             except Exception as exc:  # pylint: disable=broad-exception-caught
+                flogger.debug(f"update_tag: emoji normalization failed for {tag_data.emoji}")
                 raise HTTPException(
                     status_code=status.HTTP_422,
                     detail=f"Invalid emoji: {tag_data.emoji}",
                 ) from exc
+        flogger.debug(f"update_tag: prepared update_kwargs={update_kwargs}")
 
         # Update the tag
         if update_kwargs:
@@ -305,7 +315,9 @@ async def update_tag(request: Request, tag_id: int, tag_data: ForumTagUpdateRequ
                     except Exception:  # pylint: disable=broad-exception-caught
                         updated_tag_data["emoji"] = tag_data.emoji
 
-        flogger.info(f"Successfully updated tag {getattr(updated_tag, 'name', tag_id)}")
+        updated_tag_name = getattr(updated_tag, 'name', tag_id)
+        flogger.debug(f"update_tag: response prepared, updated_tag_name={updated_tag_name}")
+        flogger.info(f"update_tag: successfully updated tag {updated_tag_name}")
         return ForumTagResponse(status="updated", data=updated_tag_data)
     except HTTPException:
         raise
@@ -323,9 +335,10 @@ async def update_tag(request: Request, tag_id: int, tag_data: ForumTagUpdateRequ
 )
 async def delete_tag(request: Request, tag_id: int) -> DeleteResponse:
     """Remove a tag from its forum channel."""
-    flogger.info(f"delete_tag called for tag_id={tag_id}")
+    flogger.info(f"delete_tag: endpoint entry for tag_id={tag_id}")
     try:
         bot = await resolve_bot(request)
+        flogger.debug(f"delete_tag: bot resolved, searching for tag {tag_id} to delete")
         # Search for the tag across all forum channels
         tag = None
         parent_channel = None
@@ -343,6 +356,7 @@ async def delete_tag(request: Request, tag_id: int) -> DeleteResponse:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Tag {tag_id} not found")
 
         tag_name = getattr(tag, "name", str(tag_id))
+        flogger.debug(f"delete_tag: found tag {tag_id} ({tag_name}) in channel {parent_channel.id}")
         # Defensive deletion: support multiple discord.py/library variants.
         # 1) Preferred API if present on ForumChannel
         # 2) Fallback to tag.delete() if tag object exposes it
@@ -350,12 +364,15 @@ async def delete_tag(request: Request, tag_id: int) -> DeleteResponse:
         deleted = False
         try:
             if hasattr(parent_channel, "delete_tag"):
+                flogger.debug(f"delete_tag: using parent_channel.delete_tag() for tag {tag_id}")
                 await parent_channel.delete_tag(tag)
                 deleted = True
             elif hasattr(tag, "delete"):
+                flogger.debug(f"delete_tag: using tag.delete() for tag {tag_id}")
                 await tag.delete()
                 deleted = True
             else:
+                flogger.debug(f"delete_tag: falling back to available_tags edit for tag {tag_id}")
                 # Attempt to remove the tag by editing the channel's available_tags
                 remaining = [t for t in parent_channel.available_tags if getattr(t, "id", None) != tag_id]
                 try:
@@ -395,14 +412,15 @@ async def delete_tag(request: Request, tag_id: int) -> DeleteResponse:
 
         if not deleted:
             # If none of the strategies worked, raise a server error
-            flogger.error(f"Unable to delete tag {tag_id} — unsupported library shape")
+            flogger.error(f"delete_tag: unable to delete tag {tag_id} ({tag_name}) — unsupported library shape")
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail=f"Unable to delete tag {tag_id}: unsupported runtime",
             )
 
         message = f"Tag {tag_name} deleted"
-        flogger.info(message)
+        flogger.debug(f"delete_tag: deletion successful, tag_id={tag_id}, tag_name={tag_name}")
+        flogger.info(f"delete_tag: {message}")
         return DeleteResponse(status="deleted", deleted=True, message=message)
     except HTTPException:
         raise

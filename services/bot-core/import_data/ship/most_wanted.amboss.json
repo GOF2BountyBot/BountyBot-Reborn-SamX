@@ -36,7 +36,7 @@
   "maxPrimaries": 4,
   "maxSecondaries": 4,
   "maxTurrets": 0,
-  "model": "/app/game-objects/Most Wanted/Amboss.bbship/Amboss_Full.obj",
+  "model": "/app/data/game-objects/items/ships/Most Wanted/Amboss.bbship/Amboss_Full.obj",
   "name": "Amboss",
   "saveDue": false,
   "shopSpawnRate": 8.416,
@@ -45,11 +45,11 @@
   "value": 6732000,
   "wiki": "https://galaxyonfire.fandom.com/wiki/Amboss",
   "assets": [
-    "/app/game-objects/Most Wanted/Amboss.bbship/Amboss_Full.mtl",
-    "/app/game-objects/Most Wanted/Amboss.bbship/Amboss_Full.obj",
-    "/app/game-objects/Most Wanted/Amboss.bbship/skinBase.png",
-    "/app/game-objects/Most Wanted/Amboss.bbship/sn_ship_045_most_wanted_normal_specular.bmp",
-    "/app/game-objects/Most Wanted/Amboss.bbship/sn_ship_048_most_wanted_diffuse.bmp"
+    "/app/data/game-objects/items/ships/Most Wanted/Amboss.bbship/Amboss_Full.mtl",
+    "/app/data/game-objects/items/ships/Most Wanted/Amboss.bbship/Amboss_Full.obj",
+    "/app/data/game-objects/items/ships/Most Wanted/Amboss.bbship/skinBase.png",
+    "/app/data/game-objects/items/ships/Most Wanted/Amboss.bbship/sn_ship_045_most_wanted_normal_specular.bmp",
+    "/app/data/game-objects/items/ships/Most Wanted/Amboss.bbship/sn_ship_048_most_wanted_diffuse.bmp"
   ],
-  "normSpec": "/app/game-objects/Most Wanted/Amboss.bbship/sn_ship_045_most_wanted_normal_specular.bmp"
+  "normSpec": "/app/data/game-objects/items/ships/Most Wanted/Amboss.bbship/sn_ship_045_most_wanted_normal_specular.bmp"
 }

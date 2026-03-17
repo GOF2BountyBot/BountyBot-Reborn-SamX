@@ -176,7 +176,7 @@ Located in `services/bot-core/import_data/`:
 
 For local development without re-downloading assets, mount the directory:
 ```
-old-refs/items/ships/  →  /app/game-objects/
+old-refs/items/ships/  →  /app/data/game-objects/items/ships/
 ```
 
 ---

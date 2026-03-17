@@ -257,7 +257,7 @@ The `blender-service` provides GPU-accelerated 3D rendering:
 For local development without re-downloading assets, mount your local game objects directory:
 
 ```
-old-refs/items/ships/  →  /app/game-objects/
+old-refs/items/ships/  →  /app/data/game-objects/items/ships/
 ```
 
 ---

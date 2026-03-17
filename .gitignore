@@ -209,3 +209,4 @@ opencode.json
 old-refs
 .log
 *.log
+**/*.log

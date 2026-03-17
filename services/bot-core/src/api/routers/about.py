@@ -384,7 +384,7 @@ async def get_ship_render_info(
         if ship.model:
             bbship_dir = str(PurePosixPath(ship.model).parent)
 
-        flogger.debug(f"Render info retrieved: ship_name={ship_name}, texture_regions={len(ship.texture_regions or {})}, masks={len(mask_paths)}")
+        flogger.debug(f"Render info retrieved: ship_name={ship_name}, texture_regions={ship.texture_regions}, masks={len(mask_paths)}")
         return {
             "name": ship.name,
             "skinnable": ship.skinnable,

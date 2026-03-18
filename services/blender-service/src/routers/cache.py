@@ -44,9 +44,7 @@ async def clear_cache() -> dict:
             flogger.warning(f"Failed to remove {path}: {exc}")
             errors += 1
 
-    flogger.info(
-        f"Cache clear complete: {cleared} dirs removed, {total_bytes} bytes freed, {errors} errors"
-    )
+    flogger.info(f"Cache clear complete: {cleared} dirs removed, {total_bytes} bytes freed, {errors} errors")
 
     return {
         "cleared_directories": cleared,

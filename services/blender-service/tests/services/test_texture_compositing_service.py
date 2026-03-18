@@ -333,3 +333,43 @@ class TestCompositeTextures:
 
         assert result.mode == "RGB"
         assert result.size == SIZE
+
+    def test_composite_resizes_mismatched_region_texture(self, svc: TextureCompositingService):
+        """Region texture smaller than base is resized to match; output keeps base size."""
+        base_size = (128, 128)
+        small_size = (32, 16)
+
+        base = Image.new("RGBA", base_size, (255, 0, 0, 255))
+        skin_base = Image.new("RGBA", base_size, (0, 0, 0, 0))
+        region_tex = Image.new("RGBA", small_size, (0, 255, 0, 255))
+        mask = Image.new("L", base_size, 255)  # all-white → inverted to black → new_tex applied
+
+        result = svc.composite_textures(
+            base_texture=base,
+            skin_base=skin_base,
+            region_textures={1: region_tex},
+            region_masks={1: mask},
+        )
+
+        assert result.mode == "RGB"
+        assert result.size == base_size, "Output must keep the base texture size"
+
+    def test_composite_resizes_mismatched_mask(self, svc: TextureCompositingService):
+        """Mask smaller than base is resized to match; compositing succeeds."""
+        base_size = (128, 128)
+        mask_size = (64, 64)
+
+        base = Image.new("RGBA", base_size, (255, 0, 0, 255))
+        skin_base = Image.new("RGBA", base_size, (0, 0, 0, 0))
+        region_tex = Image.new("RGBA", base_size, (0, 0, 255, 255))
+        mask = Image.new("L", mask_size, 255)
+
+        result = svc.composite_textures(
+            base_texture=base,
+            skin_base=skin_base,
+            region_textures={1: region_tex},
+            region_masks={1: mask},
+        )
+
+        assert result.mode == "RGB"
+        assert result.size == base_size

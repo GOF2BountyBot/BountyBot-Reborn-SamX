@@ -9,6 +9,7 @@ from persist.repositories.generic_repository import GenericRepository
 
 flogger = bblogger.get_logger("bot-primary-weapon-repository")
 
+
 class PrimaryWeaponRepository(GenericRepository[PrimaryWeapon]):
     def __init__(self):
         flogger.trace("Initializing PrimaryWeaponRepository")
@@ -18,9 +19,7 @@ class PrimaryWeaponRepository(GenericRepository[PrimaryWeapon]):
     async def get_by_name(self, db: AsyncSession, name: str) -> PrimaryWeapon | None:
         flogger.trace(f"get_by_name() called with name={name}")
         try:
-            result = await db.execute(
-                select(self._model).filter_by(name=name)
-            )
+            result = await db.execute(select(self._model).filter_by(name=name))
             weapon = result.scalars().one_or_none()
             if weapon:
                 flogger.trace(f"get_by_name() found weapon id={weapon.id}, name={weapon.name}")
@@ -47,14 +46,14 @@ class PrimaryWeaponRepository(GenericRepository[PrimaryWeapon]):
         try:
             # common item fields
             item_fields = {
-                "name":     raw["name"],
-                "aliases":  raw.get("aliases", []),
+                "name": raw["name"],
+                "aliases": raw.get("aliases", []),
                 "built_in": raw.get("builtIn", False),
-                "emoji":    raw.get("emoji"),
-                "icon":     raw.get("icon"),
-                "value":    raw.get("value"),
-                "wiki":     raw.get("wiki"),
-                "type":     raw.get("type"),
+                "emoji": raw.get("emoji"),
+                "icon": raw.get("icon"),
+                "value": raw.get("value"),
+                "wiki": raw.get("wiki"),
+                "type": raw.get("type"),
             }
             flogger.trace(
                 f"create_or_update() parsed item_fields for {weapon_name}: "
@@ -76,11 +75,7 @@ class PrimaryWeaponRepository(GenericRepository[PrimaryWeapon]):
             flogger.trace(f"create_or_update() parsed primary_fields for {weapon_name}: dps={primary_fields['dps']}")
 
             # anything else → JSON blob
-            extra = {
-                 k: v
-                 for k, v in raw.items()
-                 if k not in (*item_fields, *weapon_fields, *primary_fields)
-            }
+            extra = {k: v for k, v in raw.items() if k not in (*item_fields, *weapon_fields, *primary_fields)}
             flogger.trace(f"create_or_update() parsed extra_atts for {weapon_name}: {len(extra)} extra fields")
 
             obj = await self.get_by_name(db, item_fields["name"])
@@ -118,9 +113,7 @@ class PrimaryWeaponRepository(GenericRepository[PrimaryWeapon]):
             flogger.trace(f"create_or_update() exit: weapon_name={weapon_name}, id={obj.id}")
             return obj
         except Exception as e:
-            flogger.error(
-                f"create_or_update() failed for weapon_name={weapon_name}: {type(e).__name__}: {e}"
-            )
+            flogger.error(f"create_or_update() failed for weapon_name={weapon_name}: {type(e).__name__}: {e}")
             await db.rollback()
             flogger.trace(f"create_or_update() rollback executed for weapon_name={weapon_name}")
             raise

@@ -66,19 +66,14 @@ async def execute_bounty_expire_job(job_id: str, payload: dict) -> dict:
             )
             return {"status": "skipped", "bounty_id": bounty_id}
 
-        flogger.info(
-            f"BountyExpireJob[{job_id}] bounty id={bounty.id} "
-            f"({bounty.criminal_name}) expired"
-        )
+        flogger.info(f"BountyExpireJob[{job_id}] bounty id={bounty.id} ({bounty.criminal_name}) expired")
 
         # Announce expiry to discord-gateway (non-fatal if it fails).
         await _announce_expiry(job_id, bounty)
 
         end_ts = datetime.now(UTC)
         duration = (end_ts - start_ts).total_seconds()
-        flogger.info(
-            f"BountyExpireJob[{job_id}] completed in {duration:.2f}s"
-        )
+        flogger.info(f"BountyExpireJob[{job_id}] completed in {duration:.2f}s")
         return {"status": "success", "bounty_id": bounty.id}
 
     except Exception as e:  # pylint: disable=broad-exception-caught
@@ -90,6 +85,7 @@ async def execute_bounty_expire_job(job_id: str, payload: dict) -> dict:
 # ---------------------------------------------------------------------------
 # Helper: announce bounty expiry to discord-gateway
 # ---------------------------------------------------------------------------
+
 
 async def _announce_expiry(parent_job_id: str, bounty) -> None:
     """POST a bounty expiry announcement to the discord-gateway messages endpoint.
@@ -127,10 +123,7 @@ async def _announce_expiry(parent_job_id: str, bounty) -> None:
             f"BountyExpireJob[{parent_job_id}] received HTTP {resp.status_code} "
             f"from discord-gateway for bounty id={bounty.id}"
         )
-        flogger.info(
-            f"BountyExpireJob[{parent_job_id}] announced expiry of bounty "
-            f"id={bounty.id} to discord-gateway"
-        )
+        flogger.info(f"BountyExpireJob[{parent_job_id}] announced expiry of bounty id={bounty.id} to discord-gateway")
     except Exception as e:  # pylint: disable=broad-exception-caught
         flogger.error(
             f"BountyExpireJob[{parent_job_id}] failed to announce expiry of "

@@ -84,9 +84,7 @@ def register_default_jobs(scheduler) -> None:
             args=[jid, job_def["payload"]],
             id=jid,
         )
-        flogger.info(
-            f"📅 Registered default job '{jid}' with cron '{job_def['cron']}'"
-        )
+        flogger.info(f"📅 Registered default job '{jid}' with cron '{job_def['cron']}'")
 
 
 @asynccontextmanager
@@ -140,21 +138,14 @@ async def lifespan(fastapi_app: FastAPI):
         )
 
         # derive a sync URL and engine for APScheduler
-        sync_url = db_manager._connection_string.replace(
-            "postgresql+asyncpg", "postgresql"
-        )
+        sync_url = db_manager._connection_string.replace("postgresql+asyncpg", "postgresql")
         sync_engine = create_engine(
             sync_url,
             echo=False,
             future=True,
         )
 
-        jobstores = {
-            "default": SQLAlchemyJobStore(
-                engine=sync_engine,
-                tablename="apscheduler_jobs"
-            )
-        }
+        jobstores = {"default": SQLAlchemyJobStore(engine=sync_engine, tablename="apscheduler_jobs")}
         scheduler = AsyncIOScheduler(jobstores=jobstores, timezone="UTC")
         fastapi_app.state.scheduler = scheduler
         scheduler.start()
@@ -191,6 +182,7 @@ async def lifespan(fastapi_app: FastAPI):
 
     flogger.info("👋 Goodbye!")
 
+
 def create_app() -> FastAPI:
     """Create and configure the FastAPI application."""
     flogger.trace("Initializing FastAPI...")
@@ -219,16 +211,13 @@ def create_app() -> FastAPI:
         contact={
             "name": "BountyBot Team",
             "url": "https://github.com/GOF2BountyBot/BountyBot-Reborn-SamX",
-            "email": "support@bountybot.com"
+            "email": "support@bountybot.com",
         },
-        license_info={
-            "name": "MIT",
-            "url": "https://opensource.org/licenses/MIT"
-        },
+        license_info={"name": "MIT", "url": "https://opensource.org/licenses/MIT"},
         docs_url="/docs",
         redoc_url="/redoc",
         openapi_url="/openapi.json",
-        lifespan=lifespan
+        lifespan=lifespan,
     )
 
     # CORS middleware
@@ -242,6 +231,7 @@ def create_app() -> FastAPI:
 
     include_routers(fastapi_app)
     return fastapi_app
+
 
 def include_routers(fastapi_app: FastAPI) -> None:
     """
@@ -271,28 +261,26 @@ def include_routers(fastapi_app: FastAPI) -> None:
         flogger.info(f"✓ Included router '{tag}' from '{fullname}'")
         success += 1
 
-    flogger.info(
-        f"Router discovery complete: {success} included, {skipped} skipped, {failed} failed."
-    )
+    flogger.info(f"Router discovery complete: {success} included, {skipped} skipped, {failed} failed.")
+
 
 app = create_app()
 
+
 @app.get("/", tags=["root"])
 async def root():
-    return {
-        "message": "BountyBot API is running",
-        "version": "1.0.0",
-        "docs": "/docs",
-        "redoc": "/redoc"
-    }
+    return {"message": "BountyBot API is running", "version": "1.0.0", "docs": "/docs", "redoc": "/redoc"}
+
 
 class HealthFilter(pyLogging.Filter):
     def filter(self, record: pyLogging.LogRecord) -> bool:
         msg = record.getMessage()
         return "/api/v1/health/" not in msg
 
+
 if __name__ == "__main__":
     import uvicorn
+
     flogger.info("Starting uvicorn...")
     pyLogging.getLogger("uvicorn.access").addFilter(HealthFilter())
     uvicorn.run(
@@ -300,5 +288,5 @@ if __name__ == "__main__":
         host=os.getenv("BOT_HOST", "0.0.0.0"),
         port=int(os.getenv("BOT_PORT", os.getenv("PORT", "8000"))),
         access_log=os.getenv("ACCESS_LOG", "true").lower() == "true",
-        reload=True
+        reload=True,
     )

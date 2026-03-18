@@ -9,6 +9,7 @@ from persist.repositories.generic_repository import GenericRepository
 
 flogger = bblogger.get_logger("bot-secondary-weapon-repository")
 
+
 class SecondaryWeaponRepository(GenericRepository[SecondaryWeapon]):
     def __init__(self):
         super().__init__(SecondaryWeapon)
@@ -16,14 +17,10 @@ class SecondaryWeaponRepository(GenericRepository[SecondaryWeapon]):
     async def get_by_name(self, db: AsyncSession, name: str) -> SecondaryWeapon | None:
         flogger.trace(f"Querying SecondaryWeapon by name: {name}")
         try:
-            result = await db.execute(
-                select(self._model).filter_by(name=name)
-            )
+            result = await db.execute(select(self._model).filter_by(name=name))
             weapon = result.scalars().one_or_none()
             if weapon:
-                flogger.trace(
-                    f"Found SecondaryWeapon: id={weapon.id}, name={weapon.name}"
-                )
+                flogger.trace(f"Found SecondaryWeapon: id={weapon.id}, name={weapon.name}")
             else:
                 flogger.trace(f"No SecondaryWeapon found with name: {name}")
             return weapon
@@ -46,14 +43,14 @@ class SecondaryWeaponRepository(GenericRepository[SecondaryWeapon]):
         try:
             # common item fields
             item_fields = {
-                "name":        raw["name"],
-                "aliases":     raw.get("aliases", []),
-                "built_in":    raw.get("builtIn", False),
-                "emoji":       raw.get("emoji"),
-                "icon":        raw.get("icon"),
-                "value":       raw.get("value"),
-                "wiki":        raw.get("wiki"),
-                "type":        raw.get("type"),
+                "name": raw["name"],
+                "aliases": raw.get("aliases", []),
+                "built_in": raw.get("builtIn", False),
+                "emoji": raw.get("emoji"),
+                "icon": raw.get("icon"),
+                "value": raw.get("value"),
+                "wiki": raw.get("wiki"),
+                "type": raw.get("type"),
             }
             # weapon-level fields
             weapon_fields = {
@@ -61,28 +58,18 @@ class SecondaryWeaponRepository(GenericRepository[SecondaryWeapon]):
             }
             # secondary-weapon specific fields
             secondary_fields = {
-                "damage":        raw["damage"],
+                "damage": raw["damage"],
                 "loading_speed": raw.get("loadingSpeed"),
             }
 
             # anything else → JSON blob
-            extra = {
-                 k: v
-                 for k, v in raw.items()
-                 if k not in (*item_fields, *weapon_fields, *secondary_fields)
-            }
-            flogger.trace(
-                f"Parsed fields for {item_fields['name']}: "
-                f"extra_keys={list(extra.keys())}"
-            )
+            extra = {k: v for k, v in raw.items() if k not in (*item_fields, *weapon_fields, *secondary_fields)}
+            flogger.trace(f"Parsed fields for {item_fields['name']}: extra_keys={list(extra.keys())}")
 
             obj = await self.get_by_name(db, item_fields["name"])
             if obj:
                 # update existing
-                flogger.debug(
-                    f"Updating existing SecondaryWeapon: "
-                    f"id={obj.id}, name={item_fields['name']}"
-                )
+                flogger.debug(f"Updating existing SecondaryWeapon: id={obj.id}, name={item_fields['name']}")
                 for k, v in item_fields.items():
                     setattr(obj, k, v)
                 for k, v in weapon_fields.items():
@@ -107,15 +94,9 @@ class SecondaryWeaponRepository(GenericRepository[SecondaryWeapon]):
 
             await db.commit()
             await db.refresh(obj)
-            flogger.debug(
-                f"Successfully saved SecondaryWeapon: "
-                f"id={obj.id}, name={obj.name}"
-            )
+            flogger.debug(f"Successfully saved SecondaryWeapon: id={obj.id}, name={obj.name}")
             return obj
         except Exception as e:
-            flogger.error(
-                f"Error in create_or_update for secondary weapon "
-                f"'{raw.get('name', 'UNKNOWN')}': {e}"
-            )
+            flogger.error(f"Error in create_or_update for secondary weapon '{raw.get('name', 'UNKNOWN')}': {e}")
             await db.rollback()
             raise

@@ -63,16 +63,16 @@ class GameConstants:
     # ------------------------------------------------------------------
 
     XP_LEVEL_BOUNDARIES: list[int] = [
-        -1,       # level 0  (sentinel)
-        0,        # level 1
-        1050,     # level 2
-        2000,     # level 3
-        3500,     # level 4
-        10000,    # level 5
-        18000,    # level 6
-        61000,    # level 7
-        71000,    # level 8
-        90000,    # level 9
+        -1,  # level 0  (sentinel)
+        0,  # level 1
+        1050,  # level 2
+        2000,  # level 3
+        3500,  # level 4
+        10000,  # level 5
+        18000,  # level 6
+        61000,  # level 7
+        71000,  # level 8
+        90000,  # level 9
         1000000,  # level 10
     ]
 
@@ -104,11 +104,11 @@ class GameConstants:
     # ------------------------------------------------------------------
 
     MAX_BOUNTIES_PER_DIVISION: int = 5
-    CLOSE_BOUNTY_THRESHOLD: int = 4          # systems ahead for proximity hint
+    CLOSE_BOUNTY_THRESHOLD: int = 4  # systems ahead for proximity hint
     SHIP_VALUE_REWARD_PERCENTAGE: float = 0.01  # 1% of criminal's ship value
     CRIMINAL_EQUIP_DAMAGELESS_WEAPON_CHANCE: int = 20  # %
-    CRIMINAL_MAX_GEAR_UPGRADE: int = 1       # TL levels above criminal
-    MAX_ROUTE_LENGTH: int = 50               # A* pathfinding limit
+    CRIMINAL_MAX_GEAR_UPGRADE: int = 1  # TL levels above criminal
+    MAX_ROUTE_LENGTH: int = 50  # A* pathfinding limit
 
     # ------------------------------------------------------------------
     # Activity / Temperature
@@ -129,10 +129,10 @@ class GameConstants:
     # Timers (seconds)
     # ------------------------------------------------------------------
 
-    GUILD_ACTIVITY_DECAY_INTERVAL: int = 3600   # 1 hour
-    SHOP_REFRESH_INTERVAL: int = 21600           # 6 hours
-    CHECK_COOLDOWN: int = 180                    # 3 minutes
-    DUEL_REQUEST_EXPIRY: int = 86400             # 1 day
+    GUILD_ACTIVITY_DECAY_INTERVAL: int = 3600  # 1 hour
+    SHOP_REFRESH_INTERVAL: int = 21600  # 6 hours
+    CHECK_COOLDOWN: int = 180  # 3 minutes
+    DUEL_REQUEST_EXPIRY: int = 86400  # 1 day
 
     # ------------------------------------------------------------------
     # Shop Stock Generation
@@ -262,13 +262,9 @@ class GameConstants:
         cls.MAX_BOUNTIES_PER_DIVISION = _track_int("MAX_BOUNTIES_PER_DIVISION", 5)
         cls.CLOSE_BOUNTY_THRESHOLD = _track_int("CLOSE_BOUNTY_THRESHOLD", 4)
         cls.MAX_ROUTE_LENGTH = _track_int("MAX_ROUTE_LENGTH", 50)
-        cls.CRIMINAL_EQUIP_DAMAGELESS_WEAPON_CHANCE = _track_int(
-            "CRIMINAL_EQUIP_DAMAGELESS_WEAPON_CHANCE", 20
-        )
+        cls.CRIMINAL_EQUIP_DAMAGELESS_WEAPON_CHANCE = _track_int("CRIMINAL_EQUIP_DAMAGELESS_WEAPON_CHANCE", 20)
         cls.CRIMINAL_MAX_GEAR_UPGRADE = _track_int("CRIMINAL_MAX_GEAR_UPGRADE", 1)
-        cls.SHIP_VALUE_REWARD_PERCENTAGE = _track_float(
-            "SHIP_VALUE_REWARD_PERCENTAGE", 0.01
-        )
+        cls.SHIP_VALUE_REWARD_PERCENTAGE = _track_float("SHIP_VALUE_REWARD_PERCENTAGE", 0.01)
 
         # Activity
         cls.MIN_GUILD_ACTIVITY = _track_float("MIN_GUILD_ACTIVITY", 1.0)
@@ -279,9 +275,7 @@ class GameConstants:
         cls.BOUNTY_DELAY_RANDOM_MAX = _track_int("BOUNTY_DELAY_RANDOM_MAX", 7)
 
         # Timers
-        cls.GUILD_ACTIVITY_DECAY_INTERVAL = _track_int(
-            "GUILD_ACTIVITY_DECAY_INTERVAL", 3600
-        )
+        cls.GUILD_ACTIVITY_DECAY_INTERVAL = _track_int("GUILD_ACTIVITY_DECAY_INTERVAL", 3600)
         cls.SHOP_REFRESH_INTERVAL = _track_int("SHOP_REFRESH_INTERVAL", 21600)
         cls.CHECK_COOLDOWN = _track_int("CHECK_COOLDOWN", 180)
         cls.DUEL_REQUEST_EXPIRY = _track_int("DUEL_REQUEST_EXPIRY", 86400)
@@ -307,9 +301,7 @@ class GameConstants:
         cls.CLASSIC_CREDITS_PER_CHECK = _track_int("CLASSIC_CREDITS_PER_CHECK", 1000)
 
         # XP multiplier
-        cls.BOUNTY_REWARD_TO_XP_GAIN_MULT = _track_float(
-            "BOUNTY_REWARD_TO_XP_GAIN_MULT", 0.1
-        )
+        cls.BOUNTY_REWARD_TO_XP_GAIN_MULT = _track_float("BOUNTY_REWARD_TO_XP_GAIN_MULT", 0.1)
 
         if _overrides:
             _flogger.info(f"GameConstants env overrides detected: {', '.join(_overrides)}")

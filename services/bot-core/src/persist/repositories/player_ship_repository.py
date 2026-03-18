@@ -16,8 +16,8 @@ from persist.models.player_ship import PlayerShip
 
 flogger = bblogger.get_logger("ship-repository")
 
-class PlayerShipRepository(IRepository[PlayerShip]):
 
+class PlayerShipRepository(IRepository[PlayerShip]):
     async def get_by_id(self, db: AsyncSession, obj_id: int) -> PlayerShip | None:
         """Get ship by ID."""
         try:
@@ -70,7 +70,7 @@ class PlayerShipRepository(IRepository[PlayerShip]):
                 ship = await self.get_by_id(db, ship_id)
                 if ship:
                     for key, value in raw.items():
-                        if hasattr(ship, key) and key not in ['id', 'player_id', 'created_at']:
+                        if hasattr(ship, key) and key not in ["id", "player_id", "created_at"]:
                             setattr(ship, key, value)
                     await db.commit()
                     await db.refresh(ship)
@@ -116,7 +116,7 @@ class PlayerShipRepository(IRepository[PlayerShip]):
                 select(PlayerShip).where(
                     and_(
                         PlayerShip.player_id == player_id,
-                        PlayerShip.is_active == True  # pylint: disable=singleton-comparison
+                        PlayerShip.is_active == True,  # pylint: disable=singleton-comparison
                     )
                 )
             )
@@ -134,18 +134,10 @@ class PlayerShipRepository(IRepository[PlayerShip]):
                 raise ValueError(f"Ship {ship_id} not found or doesn't belong to player {player_id}")
 
             # Deactivate all other ships for this player
-            await db.execute(
-                update(PlayerShip)
-                .where(PlayerShip.player_id == player_id)
-                .values(is_active=False)
-            )
+            await db.execute(update(PlayerShip).where(PlayerShip.player_id == player_id).values(is_active=False))
 
             # Activate the target ship
-            await db.execute(
-                update(PlayerShip)
-                .where(PlayerShip.id == ship_id)
-                .values(is_active=True)
-            )
+            await db.execute(update(PlayerShip).where(PlayerShip.id == ship_id).values(is_active=True))
 
             await db.commit()
 
@@ -159,12 +151,7 @@ class PlayerShipRepository(IRepository[PlayerShip]):
             await db.rollback()
             raise
 
-    async def update_loadout(
-        self,
-        db: AsyncSession,
-        ship_id: int,
-        loadout: dict[str, list[str]]
-    ) -> PlayerShip:
+    async def update_loadout(self, db: AsyncSession, ship_id: int, loadout: dict[str, list[str]]) -> PlayerShip:
         """Update a ship's equipment loadout."""
         try:
             ship = await self.get_by_id(db, ship_id)
@@ -190,13 +177,7 @@ class PlayerShipRepository(IRepository[PlayerShip]):
             await db.rollback()
             raise
 
-    async def add_equipment(
-        self,
-        db: AsyncSession,
-        ship_id: int,
-        equipment_type: str,
-        item_name: str
-    ) -> PlayerShip:
+    async def add_equipment(self, db: AsyncSession, ship_id: int, equipment_type: str, item_name: str) -> PlayerShip:
         """Add a piece of equipment to a ship's loadout."""
         try:
             ship = await self.get_by_id(db, ship_id)
@@ -228,13 +209,7 @@ class PlayerShipRepository(IRepository[PlayerShip]):
             flogger.error(f"Error adding equipment to ship {ship_id}: {e}")
             raise
 
-    async def remove_equipment(
-        self,
-        db: AsyncSession,
-        ship_id: int,
-        equipment_type: str,
-        item_name: str
-    ) -> PlayerShip:
+    async def remove_equipment(self, db: AsyncSession, ship_id: int, equipment_type: str, item_name: str) -> PlayerShip:
         """Remove a piece of equipment from a ship's loadout."""
         try:
             ship = await self.get_by_id(db, ship_id)
@@ -292,12 +267,9 @@ class PlayerShipRepository(IRepository[PlayerShip]):
         """Get all ships of a specific type owned by a player."""
         try:
             result = await db.execute(
-                select(PlayerShip).where(
-                    and_(
-                        PlayerShip.player_id == player_id,
-                        PlayerShip.ship_name == ship_name
-                    )
-                ).order_by(PlayerShip.created_at)
+                select(PlayerShip)
+                .where(and_(PlayerShip.player_id == player_id, PlayerShip.ship_name == ship_name))
+                .order_by(PlayerShip.created_at)
             )
             return list(result.scalars().all())
         except Exception as e:
@@ -321,7 +293,7 @@ class PlayerShipRepository(IRepository[PlayerShip]):
                 "turrets": ship.turrets or [],
                 "weapons_count": len(ship.weapons) if ship.weapons else 0,
                 "modules_count": len(ship.modules) if ship.modules else 0,
-                "turrets_count": len(ship.turrets) if ship.turrets else 0
+                "turrets_count": len(ship.turrets) if ship.turrets else 0,
             }
 
         except Exception as e:

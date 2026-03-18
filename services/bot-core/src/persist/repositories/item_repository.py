@@ -111,9 +111,7 @@ class ItemRepository(GenericRepository[Item]):
                 if model is Ship:
                     flogger.trace("Ship model has no tech_level — returning []")
                     return []
-                result = await db.execute(
-                    select(model).filter_by(tech_level=tech_level)
-                )
+                result = await db.execute(select(model).filter_by(tech_level=tech_level))
                 items = list(result.scalars().all())
                 flogger.trace(f"get_all_by_tech_level exit: found {len(items)} items (type={item_type})")
                 return items
@@ -121,16 +119,13 @@ class ItemRepository(GenericRepository[Item]):
             # Aggregate across all models that have tech_level
             items: list[Any] = []
             for model in self._TECH_LEVEL_MODELS:
-                result = await db.execute(
-                    select(model).filter_by(tech_level=tech_level)
-                )
+                result = await db.execute(select(model).filter_by(tech_level=tech_level))
                 items.extend(result.scalars().all())
 
             flogger.trace(f"get_all_by_tech_level exit: found {len(items)} items across all models")
             return items
         except Exception as e:
-            flogger.error(f"Error in get_all_by_tech_level with tech_level={tech_level}, " \
-                          f"item_type={item_type!r}: {e}")
+            flogger.error(f"Error in get_all_by_tech_level with tech_level={tech_level}, item_type={item_type!r}: {e}")
             raise
 
     # ------------------------------------------------------------------
@@ -159,10 +154,7 @@ class ItemRepository(GenericRepository[Item]):
                 if not ships:
                     flogger.trace("get_random_by_tech_level exit: no ships found")
                     return None
-                weights = [
-                    (s.shop_spawn_rate if s.shop_spawn_rate is not None else 0.0)
-                    for s in ships
-                ]
+                weights = [(s.shop_spawn_rate if s.shop_spawn_rate is not None else 0.0) for s in ships]
                 # If all weights are 0, fall back to uniform selection
                 if all(w == 0.0 for w in weights):
                     chosen = random.choice(ships)
@@ -180,8 +172,9 @@ class ItemRepository(GenericRepository[Item]):
             flogger.trace(f"get_random_by_tech_level exit: selected item id={chosen.id}")
             return chosen
         except Exception as e:
-            flogger.error(f"Error in get_random_by_tech_level with tech_level={tech_level}, " \
-                          f"item_type={item_type!r}: {e}")
+            flogger.error(
+                f"Error in get_random_by_tech_level with tech_level={tech_level}, item_type={item_type!r}: {e}"
+            )
             raise
 
     # ------------------------------------------------------------------
@@ -221,23 +214,20 @@ class ItemRepository(GenericRepository[Item]):
         try:
             item_name = raw.get("name", "unknown")
             flogger.trace(f"create_or_update entry: creating or updating item name={item_name!r}")
-            flogger.debug(f"Item data: name={item_name!r}, type={raw.get('type')}, " \
-                          f"value={raw.get('value')}")
+            flogger.debug(f"Item data: name={item_name!r}, type={raw.get('type')}, value={raw.get('value')}")
 
             item_fields = {
-                "name":     raw["name"],
-                "aliases":  raw.get("aliases", []),
+                "name": raw["name"],
+                "aliases": raw.get("aliases", []),
                 "built_in": raw.get("builtIn", False),
-                "emoji":    raw.get("emoji"),
-                "icon":     raw.get("icon"),
-                "value":    raw.get("value"),
-                "wiki":     raw.get("wiki"),
-                "type":     raw.get("type"),
+                "emoji": raw.get("emoji"),
+                "icon": raw.get("icon"),
+                "value": raw.get("value"),
+                "wiki": raw.get("wiki"),
+                "type": raw.get("type"),
             }
 
-            result = await db.execute(
-                select(self._model).filter_by(name=item_fields["name"])
-            )
+            result = await db.execute(select(self._model).filter_by(name=item_fields["name"]))
             obj = result.scalars().one_or_none()
 
             if obj:

@@ -19,7 +19,7 @@ import sys
 # Ensure the src directory is on sys.path so that `persist.*` resolves correctly
 # when this module is invoked directly (e.g. `python run_migration.py`) rather
 # than as a package (e.g. `python -m persist.database.run_migration`).
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
 from alembic import command
 
@@ -28,6 +28,7 @@ from persist.database.migration_manager import MigrationManager
 # ---------------------------------------------------------------------------
 # Legacy compatibility shim
 # ---------------------------------------------------------------------------
+
 
 def get_alembic_config():
     """Return an Alembic Config built from environment variables.
@@ -56,7 +57,8 @@ if __name__ == "__main__":
         help="Alembic command to run",
     )
     parser.add_argument(
-        "--message", "-m",
+        "--message",
+        "-m",
         help="Migration message (used with 'revision')",
     )
     parser.add_argument(
@@ -69,9 +71,7 @@ if __name__ == "__main__":
     mgr = MigrationManager.from_env()
 
     if args.action == "upgrade":
-        mgr.ensure_current() if args.target == "head" else command.upgrade(
-            mgr._get_alembic_config(), args.target
-        )
+        mgr.ensure_current() if args.target == "head" else command.upgrade(mgr._get_alembic_config(), args.target)
     elif args.action == "downgrade":
         mgr.downgrade(args.target)
     elif args.action == "revision":

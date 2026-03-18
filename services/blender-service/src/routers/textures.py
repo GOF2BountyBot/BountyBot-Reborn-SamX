@@ -51,17 +51,17 @@ _aei_service = AEIConversionService()
 )
 async def composite_textures(
     base_texture: UploadFile | None = File(
-        default=None, description="Region 0 underlayer image (RGBA PNG recommended). "
-        "If omitted, base_texture_path must be provided instead."
+        default=None,
+        description="Region 0 underlayer image (RGBA PNG recommended). "
+        "If omitted, base_texture_path must be provided instead.",
     ),
     base_texture_path: str = Form(
-        default="", description="Absolute path to the base texture file on disk (e.g. the ship's diffuse BMP). "
+        default="",
+        description="Absolute path to the base texture file on disk (e.g. the ship's diffuse BMP). "
         "Used when the base texture already exists on disk and does not need to be uploaded. "
-        "If base_texture (file upload) is also provided, the upload takes precedence."
+        "If base_texture (file upload) is also provided, the upload takes precedence.",
     ),
-    ship_path: str = Form(
-        ..., description="Path to the .bbship directory containing skinBase.png and maskN.jpg files"
-    ),
+    ship_path: str = Form(..., description="Path to the .bbship directory containing skinBase.png and maskN.jpg files"),
     region_textures: list[UploadFile] = File(
         default=[], description="Optional region overlay images, indexed by region_indices"
     ),
@@ -171,10 +171,7 @@ async def composite_textures(
     if square_mode not in _valid_square_modes:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=(
-                f"Invalid square_mode {square_mode!r}. "
-                f"Accepted values: {list(_valid_square_modes)}"
-            ),
+            detail=(f"Invalid square_mode {square_mode!r}. Accepted values: {list(_valid_square_modes)}"),
         )
 
     # --- Load base_texture (from upload or disk path) ---
@@ -304,19 +301,13 @@ async def convert_to_aei(
 
     Returns the raw AEI binary as an octet-stream download.
     """
-    flogger.info(
-        f"convert_to_aei request: format={format!r}, quality={quality!r}, "
-        f"filename={image.filename!r}"
-    )
+    flogger.info(f"convert_to_aei request: format={format!r}, quality={quality!r}, filename={image.filename!r}")
 
     # --- Validate format ---
     if format.lower() not in SUPPORTED_FORMATS:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=(
-                f"Unsupported format {format!r}. "
-                f"Supported formats: {list(SUPPORTED_FORMATS)}"
-            ),
+            detail=(f"Unsupported format {format!r}. Supported formats: {list(SUPPORTED_FORMATS)}"),
         )
 
     # --- Validate quality ---

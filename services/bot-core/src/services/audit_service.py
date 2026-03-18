@@ -48,8 +48,7 @@ class AuditService:
             db.add(entry)
             await db.commit()
             flogger.info(
-                f"AUDIT: user={user_id} action={action} "
-                f"resource={resource_type}:{resource_id} status={status}"
+                f"AUDIT: user={user_id} action={action} resource={resource_type}:{resource_id} status={status}"
             )
         except Exception as exc:
             flogger.error(f"Failed to write audit log: {exc}")

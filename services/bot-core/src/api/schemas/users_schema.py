@@ -1,4 +1,3 @@
-
 from pydantic import BaseModel, ConfigDict
 
 
@@ -11,9 +10,11 @@ class UserResponse(BaseModel):
     created_at: str
     updated_at: str
 
+
 class CreateUserRequest(BaseModel):
     id: int  # Discord user ID
     discord_username: str | None = None
+
 
 class UpdateUserRequest(BaseModel):
     discord_username: str | None = None

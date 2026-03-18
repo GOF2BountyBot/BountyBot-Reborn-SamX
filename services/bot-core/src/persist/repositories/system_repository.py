@@ -9,6 +9,7 @@ from persist.repositories.generic_repository import GenericRepository
 
 flogger = bblogger.get_logger("bot-system-repository")
 
+
 class SystemRepository(GenericRepository[System]):
     def __init__(self):
         flogger.trace("Initializing SystemRepository")
@@ -33,9 +34,7 @@ class SystemRepository(GenericRepository[System]):
         try:
             # look up existing
             flogger.trace(f"Querying for existing system by name: {system_name}")
-            result = await db.execute(
-                select(self._model).filter_by(name=raw["name"])
-            )
+            result = await db.execute(select(self._model).filter_by(name=raw["name"]))
             obj = result.scalars().one_or_none()
 
             # no special JSON-to-attr mapping here
@@ -44,9 +43,7 @@ class SystemRepository(GenericRepository[System]):
 
             if obj:
                 obj_id = getattr(obj, "id", None)
-                flogger.debug(
-                    f"Found existing system: id={obj_id}, name={system_name}. Updating fields."
-                )
+                flogger.debug(f"Found existing system: id={obj_id}, name={system_name}. Updating fields.")
                 for k, v in raw.items():
                     setattr(obj, to_attr(k), v)
                 flogger.trace(f"Updated system attributes for id={obj_id}")
@@ -60,13 +57,9 @@ class SystemRepository(GenericRepository[System]):
             await db.commit()
             await db.refresh(obj)
             obj_id = getattr(obj, "id", None)
-            flogger.debug(
-                f"Successfully created or updated system: id={obj_id}, name={system_name}"
-            )
+            flogger.debug(f"Successfully created or updated system: id={obj_id}, name={system_name}")
             return obj
         except Exception as e:
-            flogger.error(
-                f"Error in create_or_update for system name={system_name}: {e}"
-            )
+            flogger.error(f"Error in create_or_update for system name={system_name}: {e}")
             await db.rollback()
             raise

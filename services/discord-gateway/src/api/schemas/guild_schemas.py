@@ -5,7 +5,6 @@ This module defines request/response models for Discord guild operations
 including guild listings, details, and member management.
 """
 
-
 from pydantic import BaseModel, Field
 
 from api.schemas.base_schemas import BaseResponse, PaginatedResponse
@@ -13,6 +12,7 @@ from api.schemas.base_schemas import BaseResponse, PaginatedResponse
 
 class Guild(BaseModel):
     """Consolidated guild information model."""
+
     id: int = Field(..., description="Guild ID")
     name: str = Field(..., description="Guild name")
     icon: str | None = Field(None, description="Guild icon URL")
@@ -30,16 +30,22 @@ class Guild(BaseModel):
     preferred_locale: str = Field(..., description="Preferred locale")
     nsfw_level: str | None = Field(None, description="NSFW level")
 
+
 class GuildResponse(BaseResponse):
     """Response model for single guild endpoint."""
+
     data: Guild = Field(..., description="Guild data")
+
 
 class GuildListResponse(PaginatedResponse):
     """Response model for guild list endpoint."""
+
     data: list[Guild] = Field(..., description="List of guilds")
+
 
 class GuildSummary(BaseModel):
     """A minimal guild representation."""
+
     id: int = Field(..., description="Guild ID")
     name: str = Field(..., description="Guild name")
     owner_id: int = Field(..., description="Guild owner ID")

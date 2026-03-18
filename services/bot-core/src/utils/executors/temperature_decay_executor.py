@@ -76,9 +76,7 @@ async def execute_temperature_decay_job(job_id: str, payload: dict) -> dict:
     flogger.trace(f"TemperatureDecayJob[{job_id}] payload: {payload}")
 
     guild_id: int | None = payload.get("guild_id")
-    division_filter: str | None = (
-        payload.get("division", "").lower() or None
-    )
+    division_filter: str | None = payload.get("division", "").lower() or None
 
     # Determine which divisions to process.
     divisions_to_decay = [division_filter] if division_filter else list(_BOUNTY_DIVISIONS)
@@ -98,10 +96,7 @@ async def execute_temperature_decay_job(job_id: str, payload: dict) -> dict:
                 # loop below works uniformly.
                 config = await config_repo.get_by_guild_id(db, guild_id)
                 if config is None:
-                    flogger.warning(
-                        f"TemperatureDecayJob[{job_id}] guild={guild_id} not found, "
-                        "nothing to do"
-                    )
+                    flogger.warning(f"TemperatureDecayJob[{job_id}] guild={guild_id} not found, nothing to do")
                     return {
                         "status": "success",
                         "guilds_processed": 0,
@@ -113,10 +108,7 @@ async def execute_temperature_decay_job(job_id: str, payload: dict) -> dict:
                 # Bulk mode — enumerate all configured guilds.
                 guild_configs = await config_repo.list_all(db)
                 if not guild_configs:
-                    flogger.info(
-                        f"TemperatureDecayJob[{job_id}] no guilds configured, "
-                        "nothing to do"
-                    )
+                    flogger.info(f"TemperatureDecayJob[{job_id}] no guilds configured, nothing to do")
                     return {
                         "status": "success",
                         "guilds_processed": 0,
@@ -129,9 +121,7 @@ async def execute_temperature_decay_job(job_id: str, payload: dict) -> dict:
             # ------------------------------------------------------------------
             for config in guild_configs:
                 gid: int = config.guild_id
-                flogger.debug(
-                    f"TemperatureDecayJob[{job_id}] processing guild={gid}"
-                )
+                flogger.debug(f"TemperatureDecayJob[{job_id}] processing guild={gid}")
 
                 # Read stored temperatures (default to 1.0 per division if None
                 # or missing).
@@ -148,23 +138,12 @@ async def execute_temperature_decay_job(job_id: str, payload: dict) -> dict:
                     division_decay_results[div] = {"before": before, "after": after}
                     total_decays += 1
 
-                    flogger.debug(
-                        f"TemperatureDecayJob[{job_id}] guild={gid} div={div}: "
-                        f"{before} → {after}"
-                    )
+                    flogger.debug(f"TemperatureDecayJob[{job_id}] guild={gid} div={div}: {before} → {after}")
 
                 # Persist decayed temperatures.
-                flogger.debug(
-                    f"TemperatureDecayJob[{job_id}] guild={gid} calling "
-                    "update_division_temperatures()"
-                )
-                await config_repo.update_division_temperatures(
-                    db, gid, updated_temperatures
-                )
-                flogger.info(
-                    f"TemperatureDecayJob[{job_id}] guild={gid}: "
-                    f"persisted decayed temperatures"
-                )
+                flogger.debug(f"TemperatureDecayJob[{job_id}] guild={gid} calling update_division_temperatures()")
+                await config_repo.update_division_temperatures(db, gid, updated_temperatures)
+                flogger.info(f"TemperatureDecayJob[{job_id}] guild={gid}: persisted decayed temperatures")
 
                 guild_results[gid] = division_decay_results
 

@@ -23,16 +23,17 @@ router = APIRouter(
         404: {"description": "User, member, or guild not found"},
         403: {"description": "Insufficient permissions"},
         500: {"description": "Internal server error"},
-        503: {"description": "Service unavailable - bot not ready"}
-    }
+        503: {"description": "Service unavailable - bot not ready"},
+    },
 )
+
 
 @router.get(
     "/users/@me",
     response_model=UserResponse,
     status_code=status.HTTP_200_OK,
     summary="Get Bot Identity",
-    description="Get information about the bot user"
+    description="Get information about the bot user",
 )
 async def get_bot_identity(request: Request) -> UserResponse:
     """Get information about the bot user."""
@@ -42,22 +43,20 @@ async def get_bot_identity(request: Request) -> UserResponse:
         user_data = UserConverter.user_to_payload(bot.user)
 
         flogger.info(f"Successfully retrieved bot identity: {bot.user.name}")
-        return UserResponse(
-            status="success",
-            data=user_data
-        )
+        return UserResponse(status="success", data=user_data)
     except HTTPException:
         raise
     except Exception as exc:  # pylint: disable=broad-exception-caught
         flogger.error(f"Unexpected error in get_bot_identity: {exc}")
         await handle_discord_exception("get bot identity", exc)
 
+
 @router.get(
     "/users/{user_id}",
     response_model=UserResponse,
     status_code=status.HTTP_200_OK,
     summary="Get User Details",
-    description="Get information about a specific user"
+    description="Get information about a specific user",
 )
 async def get_user(request: Request, user_id: int) -> UserResponse:
     """Get information about a specific user."""
@@ -72,30 +71,25 @@ async def get_user(request: Request, user_id: int) -> UserResponse:
                 user = await bot.fetch_user(user_id)
             except discord.NotFound as exc:
                 flogger.error(f"User {user_id} not found")
-                raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND,
-                    detail=f"User {user_id} not found"
-                ) from exc
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"User {user_id} not found") from exc
 
         user_data = UserConverter.user_to_payload(user)
         flogger.info(f"Successfully retrieved user details for {user.name}")
 
-        return UserResponse(
-            status="success",
-            data=user_data
-        )
+        return UserResponse(status="success", data=user_data)
     except HTTPException:
         raise
     except Exception as exc:  # pylint: disable=broad-exception-caught
         flogger.error(f"Unexpected error in get_user for user {user_id}: {exc}")
         await handle_discord_exception("get user details", exc)
 
+
 @router.get(
     "/members/{member_id}",
     response_model=MemberResponse,
     status_code=status.HTTP_200_OK,
     summary="Get Member Details",
-    description="Get information about a guild member"
+    description="Get information about a guild member",
 )
 async def get_member(request: Request, member_id: int) -> MemberResponse:
     """Get information about a guild member."""
@@ -121,34 +115,27 @@ async def get_member(request: Request, member_id: int) -> MemberResponse:
 
         if not member:
             flogger.error(f"Member {member_id} not found")
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Member {member_id} not found"
-            )
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Member {member_id} not found")
 
         member_data = UserConverter.member_to_payload(member)
         flogger.info(f"Successfully retrieved member details for {member.display_name}")
 
-        return MemberResponse(
-            status="success",
-            data=member_data
-        )
+        return MemberResponse(status="success", data=member_data)
     except HTTPException:
         raise
     except Exception as exc:  # pylint: disable=broad-exception-caught
         flogger.error(f"Unexpected error in get_member for member {member_id}: {exc}")
         await handle_discord_exception("get member details", exc)
 
+
 @router.put(
     "/members/{member_id}",
     response_model=MemberResponse,
     status_code=status.HTTP_200_OK,
     summary="Update Member",
-    description="Update a guild member's properties"
+    description="Update a guild member's properties",
 )
-async def update_member(
-    request: Request, member_id: int, member_data: MemberUpdateRequest
-) -> MemberResponse:
+async def update_member(request: Request, member_id: int, member_data: MemberUpdateRequest) -> MemberResponse:
     """Update a guild member's properties."""
     flogger.info(f"update_member endpoint called for member_id: {member_id}")
     try:
@@ -171,10 +158,7 @@ async def update_member(
 
         if not member:
             flogger.error(f"Member {member_id} not found")
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Member {member_id} not found"
-            )
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Member {member_id} not found")
 
         # Build update kwargs
         update_kwargs = {}
@@ -191,10 +175,7 @@ async def update_member(
                 role = member.guild.get_role(role_id)
                 if not role:
                     flogger.error(f"Role {role_id} not found in guild {member.guild.id}")
-                    raise HTTPException(
-                        status_code=status.HTTP_404_NOT_FOUND,
-                        detail=f"Role {role_id} not found"
-                    )
+                    raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Role {role_id} not found")
                 roles.append(role)
             update_kwargs["roles"] = roles
 
@@ -207,7 +188,7 @@ async def update_member(
                     flogger.error(f"Voice channel {member_data.channel_id} not found")
                     raise HTTPException(
                         status_code=status.HTTP_404_NOT_FOUND,
-                        detail=f"Voice channel {member_data.channel_id} not found"
+                        detail=f"Voice channel {member_data.channel_id} not found",
                     )
                 update_kwargs["voice_channel"] = voice_channel
 
@@ -219,23 +200,20 @@ async def update_member(
                 if getattr(exc, "code", None) == 40032:
                     flogger.error("Target user not connected to voice")
                     raise HTTPException(
-                        status_code=status.HTTP_400_BAD_REQUEST,
-                        detail="user not in a voice channel"
+                        status_code=status.HTTP_400_BAD_REQUEST, detail="user not in a voice channel"
                     ) from exc
                 raise
 
         updated_member_data = UserConverter.member_to_payload(member)
         flogger.info(f"Successfully updated member {member.display_name}")
 
-        return MemberResponse(
-            status="updated",
-            data=updated_member_data
-        )
+        return MemberResponse(status="updated", data=updated_member_data)
     except HTTPException:
         raise
     except Exception as exc:  # pylint: disable=broad-exception-caught
         flogger.error(f"Unexpected error in update_member for member {member_id}: {exc}")
         await handle_discord_exception("update member", exc)
+
 
 @router.get(
     "/members/{member_id}/permissions/check",
@@ -243,12 +221,12 @@ async def update_member(
     status_code=status.HTTP_200_OK,
     summary="Check Member Permission",
     description="Check if a member has a specific guild-level permission.  Superceded by /permissions/check.",
-    deprecated=True
+    deprecated=True,
 )
 async def check_member_permission(
     request: Request,
     member_id: int,
-    permission: str = Query(..., description="Permission name (uppercase, e.g. BAN_MEMBERS)")
+    permission: str = Query(..., description="Permission name (uppercase, e.g. BAN_MEMBERS)"),
 ) -> PermissionCheckResponse:
     """Check whether a member has the named guild-level permission."""
     flogger.info(f"check_member_permission called for member_id={member_id}, permission={permission}")
@@ -257,8 +235,7 @@ async def check_member_permission(
     if permission not in PERMISSION_FLAGS:
         flogger.error(f"check_member_permission: unknown permission '{permission}'")
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-            detail=f"Unknown permission: {permission}"
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=f"Unknown permission: {permission}"
         )
 
     try:
@@ -281,18 +258,12 @@ async def check_member_permission(
 
         if not member:
             flogger.error(f"Member {member_id} not found")
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Member {member_id} not found"
-            )
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Member {member_id} not found")
 
         allowed = has_guild_permission(member, permission)
         flogger.info(f"Guild permission '{permission}' for member '{member.display_name}': {allowed}")
 
-        return PermissionCheckResponse(
-            status="success",
-            data={"allowed": allowed}
-        )
+        return PermissionCheckResponse(status="success", data={"allowed": allowed})
     except HTTPException:
         raise
     except Exception as exc:  # pylint: disable=broad-exception-caught

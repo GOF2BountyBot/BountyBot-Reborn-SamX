@@ -3,6 +3,7 @@
 Converts PNG/RGBA images to AEI format using the AEPi library.
 Supports ETC1 (Android) and DXT5 (PC) compression formats.
 """
+
 from __future__ import annotations
 
 import io
@@ -78,27 +79,20 @@ class AEIConversionService:
         target_format_lower = target_format.lower()
         if target_format_lower not in SUPPORTED_FORMATS:
             raise AEIConversionError(
-                f"Unsupported format {target_format!r}. "
-                f"Supported formats: {list(SUPPORTED_FORMATS)}"
+                f"Unsupported format {target_format!r}. Supported formats: {list(SUPPORTED_FORMATS)}"
             )
 
         # --- Validate quality ---
         if quality not in _VALID_QUALITY_VALUES:
-            raise AEIConversionError(
-                f"Invalid quality {quality!r}. Must be one of {sorted(_VALID_QUALITY_VALUES)}."
-            )
+            raise AEIConversionError(f"Invalid quality {quality!r}. Must be one of {sorted(_VALID_QUALITY_VALUES)}.")
 
         # --- Check AEPi availability ---
         if AEI is None or CompressionFormat is None:
-            raise AEIConversionError(
-                "AEPi library is not available. Cannot perform AEI conversion."
-            )
+            raise AEIConversionError("AEPi library is not available. Cannot perform AEI conversion.")
 
         # --- Ensure RGBA mode ---
         if image.mode != "RGBA":
-            flogger.debug(
-                f"Converting image from {image.mode} to RGBA before AEI encoding"
-            )
+            flogger.debug(f"Converting image from {image.mode} to RGBA before AEI encoding")
             image = image.convert("RGBA")
 
         # --- Resolve CompressionFormat enum member ---
@@ -107,15 +101,11 @@ class AEIConversionService:
             compression_format = getattr(CompressionFormat, format_attr)
         except AttributeError as exc:
             raise AEIConversionError(
-                f"CompressionFormat.{format_attr} not found in AEPi — "
-                "library version mismatch?"
+                f"CompressionFormat.{format_attr} not found in AEPi — library version mismatch?"
             ) from exc
 
         # --- Build AEI and write ---
-        flogger.info(
-            f"Converting image size={image.size} to AEI "
-            f"format={target_format_lower!r} quality={quality}"
-        )
+        flogger.info(f"Converting image size={image.size} to AEI format={target_format_lower!r} quality={quality}")
         try:
             aei = AEI(image, format=compression_format, quality=quality)
             output = aei.write()
@@ -130,7 +120,5 @@ class AEIConversionService:
             output = io.BytesIO(data)
 
         output.seek(0)
-        flogger.info(
-            f"AEI conversion complete: output_size={output.getbuffer().nbytes} bytes"
-        )
+        flogger.info(f"AEI conversion complete: output_size={output.getbuffer().nbytes} bytes")
         return output

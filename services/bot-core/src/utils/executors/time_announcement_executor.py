@@ -13,6 +13,7 @@ API_HOST = os.getenv("EXECUTOR_HOST", "bot-core")
 API_PORT = os.getenv("EXECUTOR_PORT", "8000")
 BASE_TIME_URL = f"http://{API_HOST}:{API_PORT}/api/v1/time"
 
+
 async def execute_time_announcement_job(job_id: str, payload: dict):
     """
     Use the /time REST API to create or update a time announcement.
@@ -55,11 +56,7 @@ async def execute_time_announcement_job(job_id: str, payload: dict):
 
     # 2) Build request body
     now_iso = payload.get("current_time") or start_ts.isoformat()
-    body = {
-        "guild_id": guild,
-        "channel_id": channel,
-        "current_time": now_iso
-    }
+    body = {"guild_id": guild, "channel_id": channel, "current_time": now_iso}
     method = "PUT" if exists else "POST"
     if exists:
         body["message_id"] = msg_id
@@ -102,7 +99,7 @@ async def execute_time_announcement_job(job_id: str, payload: dict):
             async with httpx.AsyncClient() as client:
                 await client.put(
                     url,
-                    json={"payload": new_payload},   # <-- use "payload" instead of "args"
+                    json={"payload": new_payload},  # <-- use "payload" instead of "args"
                     timeout=10,
                 )
             flogger.debug(f"TimeJob[{job_id}] PUT {url} payload updated")

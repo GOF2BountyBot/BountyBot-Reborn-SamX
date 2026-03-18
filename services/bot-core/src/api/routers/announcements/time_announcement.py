@@ -21,10 +21,7 @@ flogger = bblogger.get_logger("bot-time-announcement-router")
 router = APIRouter(
     prefix="/time",
     tags=["time-announcements"],
-    responses={
-        404: {"description": "Time announcement not found"},
-        500: {"description": "Internal server error"}
-    }
+    responses={404: {"description": "Time announcement not found"}, 500: {"description": "Internal server error"}},
 )
 
 # Configuration
@@ -32,25 +29,28 @@ DISCORD_GATEWAY_HOST = os.getenv("DISCORD_GATEWAY_HOST", "discord-gateway")
 DISCORD_GATEWAY_PORT = os.getenv("GATEWAY_PORT", "7999")
 DISCORD_GATEWAY_BASE_URL = f"http://{DISCORD_GATEWAY_HOST}:{DISCORD_GATEWAY_PORT}/api/v1"
 
+
 class TimeAnnouncementRequest(BaseModel):
     """Request for time announcement creation/update."""
+
     guild_id: int = Field(..., description="Discord guild ID")
     channel_id: int = Field(..., description="Discord channel ID")
     message_id: int | None = Field(None, description="Discord message ID (use for update/get/delete operations)")
     current_time: str = Field(..., description="Current time to announce")
 
+
 discord_message_repo = DiscordMessageRepository()
+
 
 @router.post(
     "",
     response_model=DiscordMessageResponse,
     status_code=status.HTTP_201_CREATED,
     summary="Create Time Announcement",
-    description="Create a time announcement and send to Discord"
+    description="Create a time announcement and send to Discord",
 )
 async def create_time_announcement(
-    request: Request,
-    announcement_request: TimeAnnouncementRequest
+    request: Request, announcement_request: TimeAnnouncementRequest
 ) -> DiscordMessageResponse:
     flogger.info(
         f"Creating time announcement: guild={announcement_request.guild_id}, "
@@ -66,15 +66,11 @@ async def create_time_announcement(
         gateway_request = {
             "guild_id": announcement_request.guild_id,
             "channel_id": announcement_request.channel_id,
-            "content": embed_payload.model_dump()
+            "content": embed_payload.model_dump(),
         }
         flogger.debug(f"Forwarding to gateway: {gateway_request}")
         async with httpx.AsyncClient() as client:
-            resp = await client.post(
-                f"{DISCORD_GATEWAY_BASE_URL}/messages",
-                json=gateway_request,
-                timeout=10
-            )
+            resp = await client.post(f"{DISCORD_GATEWAY_BASE_URL}/messages", json=gateway_request, timeout=10)
         flogger.debug(f"Gateway HTTP status: {resp.status_code}")
         resp.raise_for_status()
         gateway_data = resp.json()
@@ -83,7 +79,7 @@ async def create_time_announcement(
         if not all(k in gateway_data for k in ("guild_id", "channel_id", "message_id")):
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Discord gateway did not return required message identifiers"
+                detail="Discord gateway did not return required message identifiers",
             )
 
         db_manager = request.app.state.db_manager
@@ -93,7 +89,7 @@ async def create_time_announcement(
                 "channel_id": gateway_data["channel_id"],
                 "message_id": gateway_data["message_id"],
                 "embed_payload": json.dumps(embed_payload.model_dump()),
-                "message_type": "time_announcement"
+                "message_type": "time_announcement",
             }
             message = await discord_message_repo.create_or_update(db, record)
             await db.commit()
@@ -104,25 +100,23 @@ async def create_time_announcement(
     except httpx.HTTPStatusError as e:
         flogger.exception("Discord Gateway API error while creating time announcement")
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to send message to Discord"
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to send message to Discord"
         ) from e
     except Exception as e:
         flogger.exception("Unexpected error creating time announcement")
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to create time announcement: {e}"
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to create time announcement: {e}"
         ) from e
+
 
 @router.put(
     "",
     response_model=DiscordMessageResponse,
     summary="Update Time Announcement",
-    description="Update existing time announcement message"
+    description="Update existing time announcement message",
 )
 async def update_time_announcement(
-    request: Request,
-    announcement_request: TimeAnnouncementRequest
+    request: Request, announcement_request: TimeAnnouncementRequest
 ) -> DiscordMessageResponse:
     flogger.info(
         f"Updating time announcement: guild={announcement_request.guild_id}, "
@@ -132,8 +126,7 @@ async def update_time_announcement(
     try:
         if announcement_request.message_id is None:
             raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="message_id is required for update operations"
+                status_code=status.HTTP_400_BAD_REQUEST, detail="message_id is required for update operations"
             )
         db_manager = request.app.state.db_manager
         async with db_manager.get_session() as db:
@@ -146,14 +139,11 @@ async def update_time_announcement(
             )
             if not existing:
                 raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND,
-                    detail="No existing time announcement found to update"
+                    status_code=status.HTTP_404_NOT_FOUND, detail="No existing time announcement found to update"
                 )
 
             builder = MessageBuilderFactory.create_builder("time_announcement")
-            payload_data = builder.build_payload({
-                "current_time": announcement_request.current_time
-            })
+            payload_data = builder.build_payload({"current_time": announcement_request.current_time})
             flogger.debug(f"Built embed payload for update: {payload_data}")
             embed_payload = EmbedPayloadDict(**payload_data)
 
@@ -161,15 +151,11 @@ async def update_time_announcement(
                 "guild_id": existing.guild_id,
                 "channel_id": existing.channel_id,
                 "message_id": existing.message_id,
-                "content": embed_payload.model_dump()
+                "content": embed_payload.model_dump(),
             }
             flogger.debug(f"Forwarding update to gateway: {gateway_request}")
             async with httpx.AsyncClient() as client:
-                resp = await client.put(
-                    f"{DISCORD_GATEWAY_BASE_URL}/messages",
-                    json=gateway_request,
-                    timeout=10
-                )
+                resp = await client.put(f"{DISCORD_GATEWAY_BASE_URL}/messages", json=gateway_request, timeout=10)
             flogger.debug(f"Gateway HTTP status: {resp.status_code}")
             resp.raise_for_status()
             gateway_data = resp.json()
@@ -178,7 +164,7 @@ async def update_time_announcement(
             if not all(k in gateway_data for k in ("guild_id", "channel_id", "message_id")):
                 raise HTTPException(
                     status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                    detail="Discord gateway did not return required message identifiers"
+                    detail="Discord gateway did not return required message identifiers",
                 )
 
             record = {
@@ -186,7 +172,7 @@ async def update_time_announcement(
                 "channel_id": gateway_data["channel_id"],
                 "message_id": gateway_data["message_id"],
                 "embed_payload": json.dumps(embed_payload.model_dump()),
-                "message_type": "time_announcement"
+                "message_type": "time_announcement",
             }
             updated = await discord_message_repo.create_or_update(db, record)
             await db.commit()
@@ -197,57 +183,39 @@ async def update_time_announcement(
     except httpx.HTTPStatusError as e:
         flogger.exception("Discord Gateway API error while updating time announcement")
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to update message in Discord"
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to update message in Discord"
         ) from e
     except HTTPException:
         raise
     except Exception as e:
         flogger.exception("Unexpected error updating time announcement")
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to update time announcement: {e}"
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to update time announcement: {e}"
         ) from e
 
-@router.delete(
-    "",
-    summary="Delete Time Announcement",
-    description="Delete existing time announcement message"
-)
+
+@router.delete("", summary="Delete Time Announcement", description="Delete existing time announcement message")
 async def delete_time_announcement(
     request: Request,
     guild_id: int = Query(..., description="Discord guild ID"),
     channel_id: int = Query(..., description="Discord channel ID"),
-    message_id: int = Query(..., description="Discord message ID")
+    message_id: int = Query(..., description="Discord message ID"),
 ) -> dict:
-    flogger.info(
-        f"Deleting time announcement: guild={guild_id}, channel={channel_id}, message={message_id}"
-    )
+    flogger.info(f"Deleting time announcement: guild={guild_id}, channel={channel_id}, message={message_id}")
     flogger.debug(f"Query params → guild={guild_id}, channel={channel_id}, message={message_id}")
     try:
         db_manager = request.app.state.db_manager
         async with db_manager.get_session() as db:
-            existing = await discord_message_repo.get_by_composite_key(
-                db, guild_id, channel_id, message_id
-            )
+            existing = await discord_message_repo.get_by_composite_key(db, guild_id, channel_id, message_id)
             if not existing:
                 raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND,
-                    detail="No time announcement found to delete"
+                    status_code=status.HTTP_404_NOT_FOUND, detail="No time announcement found to delete"
                 )
 
-            gateway_request = {
-                "guild_id": guild_id,
-                "channel_id": channel_id,
-                "message_id": message_id
-            }
+            gateway_request = {"guild_id": guild_id, "channel_id": channel_id, "message_id": message_id}
             flogger.debug(f"Forwarding delete to gateway: {gateway_request}")
             async with httpx.AsyncClient() as client:
-                resp = await client.delete(
-                    f"{DISCORD_GATEWAY_BASE_URL}/messages",
-                    json=gateway_request,
-                    timeout=10
-                )
+                resp = await client.delete(f"{DISCORD_GATEWAY_BASE_URL}/messages", json=gateway_request, timeout=10)
             flogger.debug(f"Gateway HTTP status: {resp.status_code}")
             resp.raise_for_status()
             gateway_data = resp.json()
@@ -256,70 +224,56 @@ async def delete_time_announcement(
             if not all(k in gateway_data for k in ("guild_id", "channel_id", "message_id")):
                 raise HTTPException(
                     status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                    detail="Discord gateway did not return required message identifiers"
+                    detail="Discord gateway did not return required message identifiers",
                 )
 
-            deleted = await discord_message_repo.delete_by_composite_key(
-                db, guild_id, channel_id, message_id
-            )
+            deleted = await discord_message_repo.delete_by_composite_key(db, guild_id, channel_id, message_id)
             await db.commit()
             if not deleted:
                 flogger.warning("Discord message deleted but database record not found")
 
-            flogger.info(
-                f"Time announcement deleted: guild={guild_id}, "
-                f"channel={channel_id}, message={message_id}"
-            )
+            flogger.info(f"Time announcement deleted: guild={guild_id}, channel={channel_id}, message={message_id}")
             return {
                 "status": "deleted",
                 "guild_id": gateway_data["guild_id"],
                 "channel_id": gateway_data["channel_id"],
-                "message_id": gateway_data["message_id"]
+                "message_id": gateway_data["message_id"],
             }
 
     except httpx.HTTPStatusError as e:
         flogger.exception("Discord Gateway API error while deleting time announcement")
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to delete message from Discord"
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to delete message from Discord"
         ) from e
     except HTTPException:
         raise
     except Exception as e:
         flogger.exception("Unexpected error deleting time announcement")
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to delete time announcement: {e}"
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to delete time announcement: {e}"
         ) from e
+
 
 @router.get(
     "",
     response_model=DiscordMessageResponse,
     summary="Get Time Announcement",
-    description="Get existing time announcement message"
+    description="Get existing time announcement message",
 )
 async def get_time_announcement(
     request: Request,
     guild_id: int = Query(..., description="Discord guild ID"),
     channel_id: int = Query(..., description="Discord channel ID"),
-    message_id: int = Query(..., description="Discord message ID")
+    message_id: int = Query(..., description="Discord message ID"),
 ) -> DiscordMessageResponse:
-    flogger.info(
-        f"Getting time announcement: guild={guild_id}, "
-        f"channel={channel_id}, message={message_id}"
-    )
+    flogger.info(f"Getting time announcement: guild={guild_id}, channel={channel_id}, message={message_id}")
     flogger.debug(f"Query params → guild={guild_id}, channel={channel_id}, message={message_id}")
     try:
         db_manager = request.app.state.db_manager
         async with db_manager.get_session() as db:
-            existing = await discord_message_repo.get_by_composite_key(
-                db, guild_id, channel_id, message_id
-            )
+            existing = await discord_message_repo.get_by_composite_key(db, guild_id, channel_id, message_id)
             if not existing:
-                raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND,
-                    detail="No time announcement found"
-                )
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No time announcement found")
             flogger.info(f"Time announcement found (db id={existing.id})")
             return DiscordMessageResponse.from_orm(existing)
 
@@ -328,20 +282,17 @@ async def get_time_announcement(
     except Exception as e:
         flogger.exception("Unexpected error getting time announcement")
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to get time announcement: {e}"
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to get time announcement: {e}"
         ) from e
+
 
 @router.get(
     "/guild/{guild_id}",
     response_model=list[DiscordMessageResponse],
     summary="List Time Announcements by Guild",
-    description="Returns all time-announcement messages for the given guild."
+    description="Returns all time-announcement messages for the given guild.",
 )
-async def list_time_announcements_by_guild(
-    request: Request,
-    guild_id: int
-) -> list[DiscordMessageResponse]:
+async def list_time_announcements_by_guild(request: Request, guild_id: int) -> list[DiscordMessageResponse]:
     """
     GET /time/guild/{guild_id}
     """
@@ -355,21 +306,17 @@ async def list_time_announcements_by_guild(
     "/guild/{guild_id}/channel/{channel_id}",
     response_model=list[DiscordMessageResponse],
     summary="List TimeAnanouncements by Channel",
-    description="Returns all time-announcement messages for the given guild and channel."
+    description="Returns all time-announcement messages for the given guild and channel.",
 )
 async def list_time_announcements_by_channel(
-    request: Request,
-    guild_id: int,
-    channel_id: int
+    request: Request, guild_id: int, channel_id: int
 ) -> list[DiscordMessageResponse]:
     """
     GET /time/guild/{guild_id}/channel/{channel_id}
     """
     db_manager = request.app.state.db_manager
     async with db_manager.get_session() as db:
-        records = await discord_message_repo.list_by_guild_and_channel(
-            db, guild_id, channel_id
-        )
+        records = await discord_message_repo.list_by_guild_and_channel(db, guild_id, channel_id)
     return [DiscordMessageResponse.from_orm(r) for r in records]
 
 
@@ -377,19 +324,15 @@ async def list_time_announcements_by_channel(
     "/guild/{guild_id}/type/{message_type}",
     response_model=list[DiscordMessageResponse],
     summary="List Time Announcements by Type",
-    description="Returns all time-announcement messages for the given guild and message type."
+    description="Returns all time-announcement messages for the given guild and message type.",
 )
 async def list_time_announcements_by_type(
-    request: Request,
-    guild_id: int,
-    message_type: str
+    request: Request, guild_id: int, message_type: str
 ) -> list[DiscordMessageResponse]:
     """
     GET /time/guild/{guild_id}/type/{message_type}
     """
     db_manager = request.app.state.db_manager
     async with db_manager.get_session() as db:
-        records = await discord_message_repo.list_by_guild_and_type(
-            db, guild_id, message_type
-        )
+        records = await discord_message_repo.list_by_guild_and_type(db, guild_id, message_type)
     return [DiscordMessageResponse.from_orm(r) for r in records]

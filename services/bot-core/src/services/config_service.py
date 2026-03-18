@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 flogger = bblogger.get_logger("config-service")
 
+
 class ConfigService:
     def __init__(self):
         self.config_repo = ConfigRepository()
@@ -119,12 +120,7 @@ class ConfigService:
             flogger.error(f"Error updating starting new_credits for guild {guild_id}: {e}")
             raise
 
-    async def update_xp_thresholds(
-        self,
-        db: AsyncSession,
-        guild_id: int,
-        thresholds: dict[str, int]
-    ) -> dict[str, Any]:
+    async def update_xp_thresholds(self, db: AsyncSession, guild_id: int, thresholds: dict[str, int]) -> dict[str, Any]:
         """Update XP thresholds for tier advancement."""
         try:
             # Validate thresholds
@@ -154,11 +150,7 @@ class ConfigService:
             # Get all players in the guild
             players = await self.player_repo.get_players_by_guild(db, guild_id)
 
-            cleared_counts = {
-                "players": 0,
-                "ships": 0,
-                "inventory_items": 0
-            }
+            cleared_counts = {"players": 0, "ships": 0, "inventory_items": 0}
 
             # Remove each player (cascade will handle ships and inventory)
             for player in players:
@@ -175,11 +167,7 @@ class ConfigService:
     async def uninstall_guild(self, db: AsyncSession, guild_id: int) -> dict[str, Any]:
         """Completely remove all data for a guild."""
         try:
-            removed_counts = {
-                "players": 0,
-                "shop_items": 0,
-                "config": 0
-            }
+            removed_counts = {"players": 0, "shop_items": 0, "config": 0}
 
             # Clear players (this will cascade to ships and inventory)
             player_counts = await self.clear_guild_players(db, guild_id)
@@ -213,11 +201,7 @@ class ConfigService:
             flogger.error(f"Error getting all guild configs: {e}")
             raise
 
-    async def validate_config_compatibility(
-        self,
-        db: AsyncSession,
-        guild_id: int
-    ) -> dict[str, Any]:
+    async def validate_config_compatibility(self, db: AsyncSession, guild_id: int) -> dict[str, Any]:
         """Validate that current configuration is compatible with system requirements."""
         try:
             config = await self.config_repo.get_by_guild_id(db, guild_id)
@@ -260,7 +244,7 @@ class ConfigService:
                 "valid": len(errors) == 0,
                 "errors": errors,
                 "warnings": warnings,
-                "guild_id": guild_id
+                "guild_id": guild_id,
             }
 
             return validation_result
@@ -320,8 +304,14 @@ class ConfigService:
 
         # Validate count ranges
         range_fields = [
-            "ship_count_range", "weapon_count_range", "module_count_range", "turret_count_range",
-            "ship_quantity_range", "weapon_quantity_range", "module_quantity_range", "turret_quantity_range"
+            "ship_count_range",
+            "weapon_count_range",
+            "module_count_range",
+            "turret_count_range",
+            "ship_quantity_range",
+            "weapon_quantity_range",
+            "module_quantity_range",
+            "turret_quantity_range",
         ]
 
         for field in range_fields:

@@ -64,7 +64,7 @@ class SimpleTTKResolver:
         flogger.debug(
             f"Combat resolution initiated: {ship1_stats.ship_name} (hp={ship1_stats.total_hp}, "
             f"dps={ship1_stats.dps:.1f}) vs {ship2_stats.ship_name} (hp={ship2_stats.total_hp}, "
-            f"dps={ship2_stats.dps:.1f}), variance={variance_percent*100:.1f}%"
+            f"dps={ship2_stats.dps:.1f}), variance={variance_percent * 100:.1f}%"
         )
 
         # 1. Apply variance to HP (2 rolls)
@@ -178,10 +178,7 @@ class SimpleTTKResolver:
                 f" (ttk1={ttk1_str}, ttk2={ttk2_str})"
             )
         else:
-            flogger.info(
-                f"Fight result: winner={winner_name} loser={loser_name}"
-                f" ttk1={ttk1_str} ttk2={ttk2_str}"
-            )
+            flogger.info(f"Fight result: winner={winner_name} loser={loser_name} ttk1={ttk1_str} ttk2={ttk2_str}")
 
         return FightResults(
             winner_name=winner_name,
@@ -441,8 +438,7 @@ class CombatService:
         total_hp = armour + shield
 
         flogger.debug(
-            f"Ship stats: {loadout.ship_name} dps={dps:.1f} armour={armour}"
-            f" shield={shield} total_hp={total_hp}"
+            f"Ship stats: {loadout.ship_name} dps={dps:.1f} armour={armour} shield={shield} total_hp={total_hp}"
         )
         flogger.trace(f"Accuracy: {loadout.base_accuracy}, Evasion: {loadout.base_evasion}")
 
@@ -484,7 +480,8 @@ class CombatService:
         if variance_percent is None:
             variance_percent = GameConstants.DUEL_VARIANCE_PERCENT
             flogger.debug(
-                f"Variance percent not specified, using GameConstants.DUEL_VARIANCE_PERCENT={variance_percent*100:.1f}%"
+                f"Variance percent not specified, using GameConstants"
+                f".DUEL_VARIANCE_PERCENT={variance_percent * 100:.1f}%"
             )
 
         flogger.debug(f"Collecting combat stats for {loadout1.ship_name} (initiator)")

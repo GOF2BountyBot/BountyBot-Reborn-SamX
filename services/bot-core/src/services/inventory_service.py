@@ -19,6 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 flogger = bblogger.get_logger("inventory-service")
 
+
 class InventoryService:
     def __init__(self):
         self.inventory_repo = InventoryRepository()
@@ -33,10 +34,7 @@ class InventoryService:
     VALID_ITEM_TYPES = ["ship", "weapon", "module", "turret"]
 
     async def get_player_inventory(
-        self,
-        db: AsyncSession,
-        player_id: int,
-        item_type: str | None = None
+        self, db: AsyncSession, player_id: int, item_type: str | None = None
     ) -> list[dict[str, Any]]:
         """
         Get a player's inventory, optionally filtered by item type.
@@ -63,7 +61,7 @@ class InventoryService:
                     "item_name": item.item_name,
                     "quantity": item.quantity,
                     "acquired_at": item.acquired_at.isoformat(),
-                    "item_details": await self._get_item_details(db, item.item_name)
+                    "item_details": await self._get_item_details(db, item.item_name),
                 }
                 formatted_items.append(formatted_item)
 
@@ -75,12 +73,7 @@ class InventoryService:
             raise
 
     async def add_item_to_inventory(
-        self,
-        db: AsyncSession,
-        player_id: int,
-        item_type: str,
-        item_name: str,
-        quantity: int = 1
+        self, db: AsyncSession, player_id: int, item_type: str, item_name: str, quantity: int = 1
     ) -> dict[str, Any]:
         """
         Add items to a player's inventory.
@@ -104,9 +97,7 @@ class InventoryService:
                 raise ValueError(f"Item {item_name} does not exist or is not of type {item_type}")
 
             # Add item to inventory
-            inventory_item = await self.inventory_repo.add_item(
-                db, player_id, item_type, item_name, quantity
-            )
+            inventory_item = await self.inventory_repo.add_item(db, player_id, item_type, item_name, quantity)
 
             transaction_details = {
                 "player_id": player_id,
@@ -114,7 +105,7 @@ class InventoryService:
                 "item_name": item_name,
                 "quantity_added": quantity,
                 "new_total_quantity": inventory_item.quantity,
-                "transaction_time": inventory_item.acquired_at.isoformat()
+                "transaction_time": inventory_item.acquired_at.isoformat(),
             }
 
             flogger.info(f"Added {quantity}x {item_name} to player {player_id} inventory")
@@ -125,12 +116,7 @@ class InventoryService:
             raise
 
     async def remove_item_from_inventory(
-        self,
-        db: AsyncSession,
-        player_id: int,
-        item_type: str,
-        item_name: str,
-        quantity: int = 1
+        self, db: AsyncSession, player_id: int, item_type: str, item_name: str, quantity: int = 1
     ) -> dict[str, Any]:
         """
         Remove items from a player's inventory.
@@ -150,17 +136,13 @@ class InventoryService:
                 raise ValueError(f"Player {player_id} not found")
 
             # Check if player has the item
-            existing_item = await self.inventory_repo.get_player_item(
-                db, player_id, item_type, item_name
-            )
+            existing_item = await self.inventory_repo.get_player_item(db, player_id, item_type, item_name)
 
             if not existing_item:
                 raise ValueError(f"Player does not have {item_name} in inventory")
 
             if existing_item.quantity < quantity:
-                raise ValueError(
-                    f"Insufficient quantity. Available: {existing_item.quantity}, Requested: {quantity}"
-                )
+                raise ValueError(f"Insufficient quantity. Available: {existing_item.quantity}, Requested: {quantity}")
 
             old_quantity = existing_item.quantity
 
@@ -168,9 +150,7 @@ class InventoryService:
             await self.inventory_repo.remove_item(db, player_id, item_type, item_name, quantity)
 
             # Get updated item (or None if completely removed)
-            updated_item = await self.inventory_repo.get_player_item(
-                db, player_id, item_type, item_name
-            )
+            updated_item = await self.inventory_repo.get_player_item(db, player_id, item_type, item_name)
 
             transaction_details = {
                 "player_id": player_id,
@@ -179,7 +159,7 @@ class InventoryService:
                 "quantity_removed": quantity,
                 "old_quantity": old_quantity,
                 "new_quantity": updated_item.quantity if updated_item else 0,
-                "item_completely_removed": updated_item is None
+                "item_completely_removed": updated_item is None,
             }
 
             flogger.info(f"Removed {quantity}x {item_name} from player {player_id} inventory")
@@ -196,7 +176,7 @@ class InventoryService:
         to_player_id: int,
         item_type: str,
         item_name: str,
-        quantity: int = 1
+        quantity: int = 1,
     ) -> dict[str, Any]:
         """
         Transfer items between players (future feature for trading).
@@ -221,9 +201,7 @@ class InventoryService:
                 )
 
                 # Add to target player
-                add_result = await self.add_item_to_inventory(
-                    db, to_player_id, item_type, item_name, quantity
-                )
+                add_result = await self.add_item_to_inventory(db, to_player_id, item_type, item_name, quantity)
 
             transfer_details = {
                 "from_player_id": from_player_id,
@@ -232,7 +210,7 @@ class InventoryService:
                 "item_name": item_name,
                 "quantity": quantity,
                 "from_player_result": remove_result,
-                "to_player_result": add_result
+                "to_player_result": add_result,
             }
 
             flogger.info(f"Transferred {quantity}x {item_name} from player {from_player_id} to {to_player_id}")
@@ -263,12 +241,7 @@ class InventoryService:
             flogger.error(f"Error getting inventory summary for player {player_id}: {e}")
             raise
 
-    async def search_inventory(
-        self,
-        db: AsyncSession,
-        player_id: int,
-        search_term: str
-    ) -> list[dict[str, Any]]:
+    async def search_inventory(self, db: AsyncSession, player_id: int, search_term: str) -> list[dict[str, Any]]:
         """Search player's inventory for items matching a search term."""
         try:
             # Get all inventory items
@@ -276,10 +249,7 @@ class InventoryService:
 
             # Filter by search term (case-insensitive)
             search_term_lower = search_term.lower()
-            matching_items = [
-                item for item in all_items
-                if search_term_lower in item["item_name"].lower()
-            ]
+            matching_items = [item for item in all_items if search_term_lower in item["item_name"].lower()]
 
             flogger.debug(f"Found {len(matching_items)} items matching '{search_term}' for player {player_id}")
             return matching_items
@@ -314,7 +284,7 @@ class InventoryService:
                 "ship_name": ship_name,
                 "item_type": item_type,
                 "item_name": item_name,
-                "reason": None
+                "reason": None,
             }
 
             # Look up ship slot limits
@@ -358,15 +328,12 @@ class InventoryService:
                     "module": "module",
                 }
                 inventory_type = inventory_type_map.get(item_type_lower, item_type_lower)
-                current_count = await self.inventory_repo.get_item_count_by_type(
-                    db, player_id, inventory_type
-                )
+                current_count = await self.inventory_repo.get_item_count_by_type(db, player_id, inventory_type)
 
             if current_count >= max_slots:
                 compatibility["compatible"] = False
                 compatibility["reason"] = (
-                    f"No available {item_type} slots on {ship_name} "
-                    f"({current_count}/{max_slots} used)"
+                    f"No available {item_type} slots on {ship_name} ({current_count}/{max_slots} used)"
                 )
 
             return compatibility
@@ -462,13 +429,7 @@ class InventoryService:
                 return True
         return False
 
-    async def get_player_item_count(
-        self,
-        db: AsyncSession,
-        player_id: int,
-        item_type: str,
-        item_name: str
-    ) -> int:
+    async def get_player_item_count(self, db: AsyncSession, player_id: int, item_type: str, item_name: str) -> int:
         """Get the quantity of a specific item a player owns."""
         try:
             item = await self.inventory_repo.get_player_item(db, player_id, item_type, item_name)

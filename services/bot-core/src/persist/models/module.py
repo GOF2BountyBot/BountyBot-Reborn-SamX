@@ -8,7 +8,7 @@ from persist.models.item import Item
 
 
 class Module(Item):
-    __tablename__ = TableNames.Module.value   # Using the Enum to get the name of the table
+    __tablename__ = TableNames.Module.value  # Using the Enum to get the name of the table
 
     id: Mapped[int] = mapped_column(Integer, ForeignKey(f"{TableNames.Item.value}.id"), primary_key=True)
     tech_level: Mapped[int] = mapped_column(Integer)
@@ -16,6 +16,6 @@ class Module(Item):
     extra_atts: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=True, default=dict)
 
     __mapper_args__ = {
-        'polymorphic_identity': 'module',
-        'concrete': False,
+        "polymorphic_identity": "module",
+        "concrete": False,
     }

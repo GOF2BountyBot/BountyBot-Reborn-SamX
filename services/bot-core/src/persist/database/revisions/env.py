@@ -3,7 +3,7 @@ import os
 import sys
 
 # MUST be before any app imports so that `persist.*` and `shared` are resolvable
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', '..')))
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..")))
 
 from logging.config import fileConfig
 
@@ -92,7 +92,7 @@ def run_migrations_online() -> None:
         context.configure(
             connection=connection,
             target_metadata=target_metadata,
-            compare_type=True,           # detect column-type changes during autogenerate
+            compare_type=True,  # detect column-type changes during autogenerate
             compare_server_default=True,  # detect server_default changes during autogenerate
         )
 

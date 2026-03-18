@@ -5,7 +5,6 @@ Handles database operations for PlayerInventory entities including
 item management, quantity tracking, and inventory queries.
 """
 
-
 from shared import bblogger
 from sqlalchemy import and_, delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -15,8 +14,8 @@ from persist.models.player_inventory import PlayerInventory
 
 flogger = bblogger.get_logger("inventory-repository")
 
-class InventoryRepository(IRepository[PlayerInventory]):
 
+class InventoryRepository(IRepository[PlayerInventory]):
     async def get_by_id(self, db: AsyncSession, obj_id: int) -> PlayerInventory | None:
         """Get inventory item by ID."""
         try:
@@ -97,10 +96,7 @@ class InventoryRepository(IRepository[PlayerInventory]):
             raise
 
     async def get_player_items(
-        self,
-        db: AsyncSession,
-        player_id: int,
-        item_type: str | None = None
+        self, db: AsyncSession, player_id: int, item_type: str | None = None
     ) -> list[PlayerInventory]:
         """Get all inventory items for a player, optionally filtered by type."""
         try:
@@ -116,11 +112,7 @@ class InventoryRepository(IRepository[PlayerInventory]):
             raise
 
     async def get_player_item(
-        self,
-        db: AsyncSession,
-        player_id: int,
-        item_type: str,
-        item_name: str
+        self, db: AsyncSession, player_id: int, item_type: str, item_name: str
     ) -> PlayerInventory | None:
         """Get a specific item from player's inventory."""
         try:
@@ -129,7 +121,7 @@ class InventoryRepository(IRepository[PlayerInventory]):
                     and_(
                         PlayerInventory.player_id == player_id,
                         PlayerInventory.item_type == item_type,
-                        PlayerInventory.item_name == item_name
+                        PlayerInventory.item_name == item_name,
                     )
                 )
             )
@@ -139,12 +131,7 @@ class InventoryRepository(IRepository[PlayerInventory]):
             raise
 
     async def add_item(
-        self,
-        db: AsyncSession,
-        player_id: int,
-        item_type: str,
-        item_name: str,
-        quantity: int
+        self, db: AsyncSession, player_id: int, item_type: str, item_name: str, quantity: int
     ) -> PlayerInventory:
         """Add items to player's inventory (or increase existing quantity)."""
         try:
@@ -161,12 +148,7 @@ class InventoryRepository(IRepository[PlayerInventory]):
                 return existing_item
 
             # Create new item
-            item_data = {
-                "player_id": player_id,
-                "item_type": item_type,
-                "item_name": item_name,
-                "quantity": quantity
-            }
+            item_data = {"player_id": player_id, "item_type": item_type, "item_name": item_name, "quantity": quantity}
             return await self.create_or_update(db, item_data)
 
         except Exception as e:
@@ -174,12 +156,7 @@ class InventoryRepository(IRepository[PlayerInventory]):
             raise
 
     async def remove_item(
-        self,
-        db: AsyncSession,
-        player_id: int,
-        item_type: str,
-        item_name: str,
-        quantity: int
+        self, db: AsyncSession, player_id: int, item_type: str, item_name: str, quantity: int
     ) -> None:
         """Remove items from player's inventory."""
         try:
@@ -215,9 +192,7 @@ class InventoryRepository(IRepository[PlayerInventory]):
                 raise ValueError("Quantity cannot be negative")
 
             await db.execute(
-                update(PlayerInventory)
-                .where(PlayerInventory.id == inventory_id)
-                .values(quantity=new_quantity)
+                update(PlayerInventory).where(PlayerInventory.id == inventory_id).values(quantity=new_quantity)
             )
             try:
                 await db.commit()
@@ -237,10 +212,7 @@ class InventoryRepository(IRepository[PlayerInventory]):
         try:
             result = await db.execute(
                 select(PlayerInventory).where(
-                    and_(
-                        PlayerInventory.player_id == player_id,
-                        PlayerInventory.item_type == item_type
-                    )
+                    and_(PlayerInventory.player_id == player_id, PlayerInventory.item_type == item_type)
                 )
             )
             items = result.scalars().all()
@@ -255,9 +227,7 @@ class InventoryRepository(IRepository[PlayerInventory]):
         Returns the number of rows deleted.
         """
         try:
-            result = await db.execute(
-                delete(PlayerInventory).where(PlayerInventory.player_id == player_id)
-            )
+            result = await db.execute(delete(PlayerInventory).where(PlayerInventory.player_id == player_id))
             await db.flush()
             deleted_count = result.rowcount
             flogger.info(f"Cleared {deleted_count} inventory items for player {player_id}")
@@ -271,13 +241,7 @@ class InventoryRepository(IRepository[PlayerInventory]):
         try:
             items = await self.get_player_items(db, player_id)
 
-            summary = {
-                "ship": 0,
-                "weapon": 0,
-                "module": 0,
-                "turret": 0,
-                "total_items": 0
-            }
+            summary = {"ship": 0, "weapon": 0, "module": 0, "turret": 0, "total_items": 0}
 
             for item in items:
                 if item.item_type in summary:

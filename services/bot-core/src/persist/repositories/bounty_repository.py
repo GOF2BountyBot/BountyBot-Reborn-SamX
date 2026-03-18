@@ -16,7 +16,6 @@ flogger = bblogger.get_logger("bounty-repository")
 
 
 class BountyRepository(IRepository[Bounty]):
-
     # ------------------------------------------------------------------ #
     # IRepository abstract method implementations                          #
     # ------------------------------------------------------------------ #
@@ -90,9 +89,7 @@ class BountyRepository(IRepository[Bounty]):
             flogger.error(f"Error getting active bounties for guild {guild_id}: {e}")
             raise
 
-    async def get_active_by_guild_and_division(
-        self, db: AsyncSession, guild_id: int, division: str
-    ) -> list[Bounty]:
+    async def get_active_by_guild_and_division(self, db: AsyncSession, guild_id: int, division: str) -> list[Bounty]:
         """Get all active bounties for a given guild and division."""
         try:
             result = await db.execute(
@@ -106,10 +103,7 @@ class BountyRepository(IRepository[Bounty]):
             )
             return list(result.scalars().all())
         except Exception as e:
-            flogger.error(
-                f"Error getting active bounties for guild {guild_id} "
-                f"division {division}: {e}"
-            )
+            flogger.error(f"Error getting active bounties for guild {guild_id} division {division}: {e}")
             raise
 
     async def create(self, db: AsyncSession, bounty: Bounty) -> Bounty:
@@ -141,13 +135,13 @@ class BountyRepository(IRepository[Bounty]):
             flogger.error(f"Error counting bounties: {e}")
             raise
 
-    async def count_active_by_guild_and_division(
-        self, db: AsyncSession, guild_id: int, division: str
-    ) -> int:
+    async def count_active_by_guild_and_division(self, db: AsyncSession, guild_id: int, division: str) -> int:
         """Return count of active bounties for a guild and division."""
         try:
             result = await db.execute(
-                select(func.count()).select_from(Bounty).where(  # pylint: disable=not-callable
+                select(func.count())
+                .select_from(Bounty)
+                .where(  # pylint: disable=not-callable
                     and_(
                         Bounty.guild_id == guild_id,
                         Bounty.division == division,
@@ -157,8 +151,5 @@ class BountyRepository(IRepository[Bounty]):
             )
             return result.scalar_one()
         except Exception as e:
-            flogger.error(
-                f"Error counting active bounties for guild {guild_id} "
-                f"division {division}: {e}"
-            )
+            flogger.error(f"Error counting active bounties for guild {guild_id} division {division}: {e}")
             raise

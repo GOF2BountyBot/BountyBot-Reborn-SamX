@@ -8,7 +8,7 @@ from persist.models.item import Item
 
 
 class Weapon(Item):
-    __tablename__ = TableNames.Weapon.value   # Enum for 'weapon'
+    __tablename__ = TableNames.Weapon.value  # Enum for 'weapon'
 
     id: Mapped[int] = mapped_column(Integer, ForeignKey(f"{TableNames.Item.value}.id"), primary_key=True)
     tech_level: Mapped[int] = mapped_column(Integer, nullable=True)
@@ -16,6 +16,6 @@ class Weapon(Item):
     extra_atts: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=True, default=dict)
 
     __mapper_args__ = {
-        'polymorphic_identity': 'weapon',
-        'concrete': False,
+        "polymorphic_identity": "weapon",
+        "concrete": False,
     }

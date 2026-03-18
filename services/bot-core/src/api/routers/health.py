@@ -21,18 +21,16 @@ flogger = bblogger.get_logger("bot-healthcheck-api-router")
 router = APIRouter(
     prefix="/health",
     tags=["health"],
-    responses={
-        200: {"description": "Service is healthy"},
-        503: {"description": "Service is unhealthy"}
-    }
+    responses={200: {"description": "Service is healthy"}, 503: {"description": "Service is unhealthy"}},
 )
+
 
 @router.get(
     "/",
     response_model=HealthResponse,
     status_code=status.HTTP_200_OK,
     summary="Comprehensive Health Check",
-    description="Returns detailed health information about the bot service, database, and schema version"
+    description="Returns detailed health information about the bot service, database, and schema version",
 )
 async def health_check(request: Request) -> HealthResponse:
     """
@@ -61,10 +59,7 @@ async def health_check(request: Request) -> HealthResponse:
         else:
             flogger.warning("Database manager not found in app state")
             checks["database_connectivity"] = False
-            database_health = {
-                "status": "not_initialized",
-                "error": "Database manager not available"
-            }
+            database_health = {"status": "not_initialized", "error": "Database manager not available"}
     except Exception as e:  # pylint: disable=broad-exception-caught
         flogger.error(f"Database health check failed: {e}")
         checks["database_connectivity"] = False
@@ -80,10 +75,7 @@ async def health_check(request: Request) -> HealthResponse:
         else:
             flogger.warning("Schema manager not found in app state")
             checks["schema_version_current"] = False
-            schema_health = {
-                "status": "not_initialized",
-                "error": "Schema manager not available"
-            }
+            schema_health = {"status": "not_initialized", "error": "Schema manager not available"}
     except Exception as e:  # pylint: disable=broad-exception-caught
         flogger.error(f"Schema health check failed: {e}")
         checks["schema_version_current"] = False
@@ -106,34 +98,33 @@ async def health_check(request: Request) -> HealthResponse:
         environment={
             "python_version": platform.python_version(),
             "platform": platform.platform(),
-            "architecture": platform.architecture()[0]
+            "architecture": platform.architecture()[0],
         },
         checks=checks,
         database_check=database_health,
-        schema_check=schema_health
+        schema_check=schema_health,
     )
+
 
 @router.get(
     "/simple",
     response_model=SimpleHealthResponse,
     status_code=status.HTTP_200_OK,
     summary="Simple Health Check",
-    description="Returns basic health status for load balancer checks"
+    description="Returns basic health status for load balancer checks",
 )
 async def simple_health_check() -> SimpleHealthResponse:
     flogger.debug("Endpoint called: simple_health_check")
-    response = SimpleHealthResponse(
-        status="healthy",
-        timestamp=datetime.now(UTC)
-    )
+    response = SimpleHealthResponse(status="healthy", timestamp=datetime.now(UTC))
     flogger.debug(f"simple_health_check returning status={response.status}")
     return response
+
 
 @router.get(
     "/readiness",
     status_code=status.HTTP_200_OK,
     summary="Readiness Check",
-    description="Checks if the service is ready to accept requests (includes database connectivity)"
+    description="Checks if the service is ready to accept requests (includes database connectivity)",
 )
 async def readiness_check(request: Request) -> dict[str, str]:
     flogger.debug("Endpoint called: readiness_check")
@@ -143,26 +134,21 @@ async def readiness_check(request: Request) -> dict[str, str]:
             db_health = await db_manager.get_health_info()
             if not db_health.get("connectivity", False):
                 flogger.warning("Service not ready: database not accessible")
-                raise HTTPException(
-                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                    detail="Database not accessible"
-                )
+                raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Database not accessible")
         flogger.debug("readiness_check passed: service is ready")
         return {"status": "ready"}
     except HTTPException:
         raise
     except Exception as e:
         flogger.error(f"Readiness check failed: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=f"Service not ready: {e!s}"
-        ) from e
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=f"Service not ready: {e!s}") from e
+
 
 @router.get(
     "/liveness",
     status_code=status.HTTP_200_OK,
     summary="Liveness Check",
-    description="Checks if the service is alive and responsive"
+    description="Checks if the service is alive and responsive",
 )
 async def liveness_check() -> dict[str, str]:
     flogger.debug("Endpoint called: liveness_check")
@@ -170,11 +156,12 @@ async def liveness_check() -> dict[str, str]:
     flogger.debug("liveness_check returning status=alive")
     return response
 
+
 @router.get(
     "/database",
     status_code=status.HTTP_200_OK,
     summary="Database Health Check",
-    description="Detailed database connectivity and schema information"
+    description="Detailed database connectivity and schema information",
 )
 async def database_health_check(request: Request) -> dict[str, Any]:
     """
@@ -182,49 +169,34 @@ async def database_health_check(request: Request) -> dict[str, Any]:
     """
     flogger.debug("Endpoint called: database_health_check")
     try:
-        health_info = {
-            "timestamp": datetime.now(UTC),
-            "database": None,
-            "schema": None
-        }
+        health_info = {"timestamp": datetime.now(UTC), "database": None, "schema": None}
 
         # Database part
         if hasattr(request.app.state, "db_manager"):
             db_manager = request.app.state.db_manager
             health_info["database"] = await db_manager.get_health_info()
         else:
-            health_info["database"] = {
-                "status": "not_initialized",
-                "error": "Database manager not available"
-            }
+            health_info["database"] = {"status": "not_initialized", "error": "Database manager not available"}
 
         # Schema part
         if hasattr(request.app.state, "schema_manager"):
             schema_manager = request.app.state.schema_manager
             health_info["schema"] = await schema_manager.get_schema_health_info()
         else:
-            health_info["schema"] = {
-                "status": "not_initialized",
-                "error": "Schema manager not available"
-            }
+            health_info["schema"] = {"status": "not_initialized", "error": "Schema manager not available"}
 
         # Enforce connectivity
         db_status = health_info["database"].get("status", "unknown")
         db_connectivity = health_info["database"].get("connectivity", False)
         if not db_connectivity:
-            flogger.debug(
-                f"database_health_check failed: db_status={db_status}, connectivity=False"
-            )
+            flogger.debug(f"database_health_check failed: db_status={db_status}, connectivity=False")
             from fastapi.encoders import jsonable_encoder
-            raise HTTPException(
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail=jsonable_encoder(health_info)
-            )
+
+            raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=jsonable_encoder(health_info))
 
         schema_status = health_info["schema"].get("status", "unknown")
         flogger.debug(
-            f"database_health_check passed: db_status={db_status}, "
-            f"schema_status={schema_status}, connectivity=True"
+            f"database_health_check passed: db_status={db_status}, schema_status={schema_status}, connectivity=True"
         )
         return health_info
 
@@ -233,6 +205,5 @@ async def database_health_check(request: Request) -> dict[str, Any]:
     except Exception as e:  # pylint: disable=broad-exception-caught
         flogger.error(f"Database health check failed: {e}")
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail={"error": str(e), "timestamp": datetime.now(UTC)}
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail={"error": str(e), "timestamp": datetime.now(UTC)}
         ) from e

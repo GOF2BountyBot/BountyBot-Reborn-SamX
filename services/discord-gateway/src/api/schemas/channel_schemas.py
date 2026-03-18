@@ -5,7 +5,6 @@ This module defines request/response models for Discord channel, category,
 forum-tag and forum-thread operations.
 """
 
-
 from pydantic import BaseModel, Field
 
 from api.schemas.base_schemas import BaseCreateRequest, BaseResponse, BaseUpdateRequest, PaginatedResponse
@@ -14,8 +13,10 @@ from api.schemas.message_schemas import EmbedPayload
 # -------------------------------------------------------------------
 # Channel / Category core schemas
 
+
 class Channel(BaseModel):
     """Consolidated channel information model."""
+
     id: int = Field(..., description="Channel ID")
     name: str = Field(..., description="Channel name")
     type: str = Field(..., description="Channel type")
@@ -28,49 +29,64 @@ class Channel(BaseModel):
     slowmode_delay: int | None = Field(None, description="Slowmode delay in seconds")
     bitrate: int | None = Field(None, description="Voice channel bitrate")
     user_limit: int | None = Field(None, description="Voice channel user limit")
-    default_auto_archive_duration: int | None = Field(
-        None, description="Forum auto-archive duration in minutes"
-    )
+    default_auto_archive_duration: int | None = Field(None, description="Forum auto-archive duration in minutes")
+
 
 class Category(BaseModel):
     """Category information model."""
+
     id: int = Field(..., description="Category ID")
     name: str = Field(..., description="Category name")
     position: int = Field(..., description="Category position")
     guild_id: int = Field(..., description="Guild ID")
     created_at: str = Field(..., description="Category creation timestamp")
 
+
 class ChannelResponse(BaseResponse):
     """Response model for single channel endpoint."""
+
     data: Channel = Field(..., description="Channel data")
+
 
 class ChannelListResponse(PaginatedResponse):
     """Response model for channel list endpoint."""
+
     data: list[Channel] = Field(..., description="List of channels")
+
 
 class CategoryResponse(BaseResponse):
     """Response model for single category endpoint."""
+
     data: Category = Field(..., description="Category data")
+
 
 class CategoryListResponse(PaginatedResponse):
     """Response model for category list endpoint."""
+
     data: list[Category] = Field(..., description="List of categories")
+
 
 class CategoryCreateRequest(BaseCreateRequest):
     """Request model for creating a category."""
+
     name: str = Field(..., description="Category name")
     position: int | None = Field(None, ge=0, description="Category position (≥0)")
 
+
 class CategoryUpdateRequest(BaseUpdateRequest):
     """Request model for updating a category."""
+
     name: str | None = Field(None, description="Category name")
     position: int | None = Field(None, ge=0, description="Category position (≥0)")
+
 
 # -------------------------------------------------------------------
 # Create / Update requests for Guild Channels (text/voice/forum)
 
+
 class ChannelCreateRequest(BaseCreateRequest):
     """Request model for creating a channel."""
+
     name: str = Field(..., description="Channel name")
     type: str = Field("text", description="Channel type (text, voice, forum)")
     topic: str | None = Field(None, description="Channel topic")
@@ -87,6 +103,7 @@ class ChannelCreateRequest(BaseCreateRequest):
 
 class ChannelUpdateRequest(BaseUpdateRequest):
     """Request model for updating a channel."""
+
     name: str | None = Field(None, description="Channel name")
     topic: str | None = Field(None, description="Channel topic")
     bitrate: int | None = Field(None, ge=0, description="Voice channel bitrate (≥0)")
@@ -103,42 +120,55 @@ class ChannelUpdateRequest(BaseUpdateRequest):
 # -------------------------------------------------------------------
 # Forum Tag schemas
 
+
 class ForumTag(BaseModel):
     """Payload model for a forum tag."""
+
     id: int = Field(..., description="Tag ID")
     channel_id: int = Field(..., description="Channel ID")
     name: str = Field(..., description="Tag name")
     emoji: str | None = Field(None, description="Emoji identifier for tag")
 
+
 class ForumTagCreateRequest(BaseModel):
     """Request to create a forum tag."""
+
     name: str = Field(..., description="Tag name")
     emoji: str | None = Field(None, description="Emoji identifier for tag")
 
+
 class ForumTagUpdateRequest(BaseModel):
     """Request to update a forum tag."""
+
     name: str | None = Field(None, description="New tag name")
     emoji: str | None = Field(None, description="New emoji for tag")
 
+
 class ForumTagResponse(BaseResponse):
     """Single-tag response model."""
+
     data: ForumTag = Field(..., description="Tag data")
+
 
 class ForumTagListResponse(PaginatedResponse):
     """List-tags response model."""
+
     data: list[ForumTag] = Field(..., description="List of forum tags")
+
 
 class ForumTagListRequest(BaseModel):
     """Request model for updating tags on a thread/channel."""
-    tags: list[int | ForumTag] = Field(
-        ..., description="List of forum tag IDs or tag objects"
-    )
+
+    tags: list[int | ForumTag] = Field(..., description="List of forum tag IDs or tag objects")
+
 
 # -------------------------------------------------------------------
 # Forum-Thread schemas
 
+
 class Thread(BaseModel):
     """Consolidated thread information model."""
+
     id: int = Field(..., description="Thread channel ID")
     name: str = Field(..., description="Thread name/title")
     channel_id: int = Field(..., description="Parent channel ID")
@@ -148,45 +178,44 @@ class Thread(BaseModel):
     locked: bool = Field(..., description="Whether the thread is locked")
     message_count: int | None = Field(None, description="Number of messages in the thread")
     member_count: int | None = Field(None, description="Number of members in the thread")
-    default_auto_archive_duration: int | None = Field(
-        None, description="Auto-archive duration in minutes"
-    )
+    default_auto_archive_duration: int | None = Field(None, description="Auto-archive duration in minutes")
     created_at: str = Field(..., description="Thread creation timestamp")
     last_message_id: int | None = Field(None, description="Last message ID in the thread")
 
     # Newly added fields to surface forum tag information on thread detail responses
-    applied_tag_ids: list[int] | None = Field(
-        None, description="List of applied forum tag IDs on this thread"
-    )
-    applied_tags: list[ForumTag] | None = Field(
-        None, description="List of applied forum tag objects (when available)"
-    )
+    applied_tag_ids: list[int] | None = Field(None, description="List of applied forum tag IDs on this thread")
+    applied_tags: list[ForumTag] | None = Field(None, description="List of applied forum tag objects (when available)")
+
 
 class ThreadCreateRequest(BaseModel):
     """Request model for creating a forum thread."""
+
     name: str = Field(..., description="Thread name/title")
     auto_archive_duration: int | None = Field(
         None,
-        description=(
-            "Auto-archive duration in minutes. Allowed values: "
-            "60, 1440, 4320, or 10080"
-        ),
+        description=("Auto-archive duration in minutes. Allowed values: 60, 1440, 4320, or 10080"),
     )
     type: str | None = Field("public_thread", description="Thread type (public_thread, private_thread)")
     initial_message: EmbedPayload | None = Field(
         None, description="Initial message embed payload posted when thread is created"
     )
 
+
 class ThreadUpdateRequest(BaseModel):
     """Request model for updating a forum thread."""
+
     name: str | None = Field(None, description="New thread name/title")
     archived: bool | None = Field(None, description="Archive (close) the thread if True")
     locked: bool | None = Field(None, description="Lock/unlock the thread")
 
+
 class ThreadResponse(BaseResponse):
     """Response model for single thread endpoint."""
+
     data: Thread = Field(..., description="Thread data")
+
 
 class ThreadListResponse(PaginatedResponse):
     """Response model for listing threads."""
+
     data: list[Thread] = Field(..., description="List of forum threads")

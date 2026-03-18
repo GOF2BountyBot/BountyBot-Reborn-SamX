@@ -5,7 +5,6 @@ Handles database operations for Player entities including guild-isolated
 player management, progression tracking, and statistics.
 """
 
-
 from shared import bblogger
 from sqlalchemy import and_, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -15,8 +14,8 @@ from persist.models.player import Player
 
 flogger = bblogger.get_logger("player-repository")
 
-class PlayerRepository(IRepository[Player]):
 
+class PlayerRepository(IRepository[Player]):
     async def get_by_id(self, db: AsyncSession, obj_id: int) -> Player | None:
         """Get player by ID."""
         try:
@@ -33,9 +32,7 @@ class PlayerRepository(IRepository[Player]):
         The lock is held until the enclosing transaction commits or rolls back.
         """
         try:
-            result = await db.execute(
-                select(Player).where(Player.id == obj_id).with_for_update()
-            )
+            result = await db.execute(select(Player).where(Player.id == obj_id).with_for_update())
             return result.scalars().first()
         except Exception as e:
             flogger.error(f"Error getting player (FOR UPDATE) by ID {obj_id}: {e}")
@@ -91,7 +88,7 @@ class PlayerRepository(IRepository[Player]):
             if player:
                 # Update existing player
                 for key, value in raw.items():
-                    if hasattr(player, key) and key not in ['id', 'created_at']:
+                    if hasattr(player, key) and key not in ["id", "created_at"]:
                         setattr(player, key, value)
                 await db.commit()
                 await db.refresh(player)
@@ -122,9 +119,7 @@ class PlayerRepository(IRepository[Player]):
         """Get player by user ID and guild ID combination."""
         try:
             result = await db.execute(
-                select(Player).where(
-                    and_(Player.user_id == user_id, Player.guild_id == guild_id)
-                )
+                select(Player).where(and_(Player.user_id == user_id, Player.guild_id == guild_id))
             )
             return result.scalars().first()
         except Exception as e:
@@ -134,9 +129,7 @@ class PlayerRepository(IRepository[Player]):
     async def get_players_by_guild(self, db: AsyncSession, guild_id: int) -> list[Player]:
         """Get all players in a specific guild."""
         try:
-            result = await db.execute(
-                select(Player).where(Player.guild_id == guild_id)
-            )
+            result = await db.execute(select(Player).where(Player.guild_id == guild_id))
             return list(result.scalars().all())
         except Exception as e:
             flogger.error(f"Error getting players for guild {guild_id}: {e}")
@@ -145,9 +138,7 @@ class PlayerRepository(IRepository[Player]):
     async def get_players_by_user(self, db: AsyncSession, user_id: int) -> list[Player]:
         """Get all players for a specific user across all guilds."""
         try:
-            result = await db.execute(
-                select(Player).where(Player.user_id == user_id)
-            )
+            result = await db.execute(select(Player).where(Player.user_id == user_id))
             return list(result.scalars().all())
         except Exception as e:
             flogger.error(f"Error getting players for user {user_id}: {e}")
@@ -167,11 +158,7 @@ class PlayerRepository(IRepository[Player]):
                 caller (e.g. inside ``async with db.begin()``).
         """
         try:
-            await db.execute(
-                update(Player)
-                .where(Player.id == player_id)
-                .values(credits=new_credits)
-            )
+            await db.execute(update(Player).where(Player.id == player_id).values(credits=new_credits))
             if commit:
                 await db.commit()
             else:
@@ -189,11 +176,7 @@ class PlayerRepository(IRepository[Player]):
     async def update_xp(self, db: AsyncSession, player_id: int, xp: int) -> Player:
         """Update player XP."""
         try:
-            await db.execute(
-                update(Player)
-                .where(Player.id == player_id)
-                .values(xp=xp)
-            )
+            await db.execute(update(Player).where(Player.id == player_id).values(xp=xp))
             await db.commit()
 
             player = await self.get_by_id(db, player_id)
@@ -211,11 +194,7 @@ class PlayerRepository(IRepository[Player]):
             if tier not in valid_tiers:
                 raise ValueError(f"Invalid tier: {tier}. Must be one of {valid_tiers}")
 
-            await db.execute(
-                update(Player)
-                .where(Player.id == player_id)
-                .values(tier=tier)
-            )
+            await db.execute(update(Player).where(Player.id == player_id).values(tier=tier))
             await db.commit()
 
             player = await self.get_by_id(db, player_id)
@@ -229,11 +208,7 @@ class PlayerRepository(IRepository[Player]):
     async def update_active_ship(self, db: AsyncSession, player_id: int, ship_id: int | None) -> Player:
         """Update player's active ship."""
         try:
-            await db.execute(
-                update(Player)
-                .where(Player.id == player_id)
-                .values(active_ship_id=ship_id)
-            )
+            await db.execute(update(Player).where(Player.id == player_id).values(active_ship_id=ship_id))
             await db.commit()
 
             player = await self.get_by_id(db, player_id)

@@ -90,24 +90,15 @@ class DuelService:
                 f"Challenger insufficient stakes: player_id={challenger_id} "
                 f"has {challenger.credits} credits, needs {stakes}"
             )
-            raise ValueError(
-                f"Challenger has insufficient credits: "
-                f"has {challenger.credits}, needs {stakes}."
-            )
+            raise ValueError(f"Challenger has insufficient credits: has {challenger.credits}, needs {stakes}.")
         if target.credits < stakes:
             flogger.warning(
-                f"Target insufficient stakes: player_id={target_id} "
-                f"has {target.credits} credits, needs {stakes}"
+                f"Target insufficient stakes: player_id={target_id} has {target.credits} credits, needs {stakes}"
             )
-            raise ValueError(
-                f"Target has insufficient credits: "
-                f"has {target.credits}, needs {stakes}."
-            )
+            raise ValueError(f"Target has insufficient credits: has {target.credits}, needs {stakes}.")
 
         # Prevent duplicate pending duels
-        existing = await self.duel_repo.get_pending_by_players(
-            db, challenger_id, target_id, guild_id
-        )
+        existing = await self.duel_repo.get_pending_by_players(db, challenger_id, target_id, guild_id)
         if existing is not None:
             flogger.warning(
                 f"Duplicate duel attempt: duel_id={existing.id} already pending between "
@@ -129,8 +120,7 @@ class DuelService:
         )
         created = await self.duel_repo.create(db, duel)
         flogger.info(
-            f"Duel challenge created: id={created.id} "
-            f"challenger={challenger_id} target={target_id} stakes={stakes}"
+            f"Duel challenge created: id={created.id} challenger={challenger_id} target={target_id} stakes={stakes}"
         )
         return created
 
@@ -165,12 +155,9 @@ class DuelService:
 
         if duel.status != "pending":
             flogger.error(
-                f"Invalid duel status for accept: duel_id={duel_id} status={duel.status} "
-                f"(expected 'pending')"
+                f"Invalid duel status for accept: duel_id={duel_id} status={duel.status} (expected 'pending')"
             )
-            raise ValueError(
-                f"Duel {duel_id} cannot be accepted — current status is {duel.status!r}."
-            )
+            raise ValueError(f"Duel {duel_id} cannot be accepted — current status is {duel.status!r}.")
 
         stakes = duel.stakes
 
@@ -194,27 +181,21 @@ class DuelService:
                 f"player_id={challenger.id} has {challenger.credits}, needs {stakes}"
             )
             raise ValueError(
-                f"Challenger has insufficient credits at accept-time: "
-                f"has {challenger.credits}, needs {stakes}."
+                f"Challenger has insufficient credits at accept-time: has {challenger.credits}, needs {stakes}."
             )
         if target.credits < stakes:
             flogger.warning(
                 f"Target insufficient credits at accept-time: duel_id={duel_id} "
                 f"player_id={target.id} has {target.credits}, needs {stakes}"
             )
-            raise ValueError(
-                f"Target has insufficient credits at accept-time: "
-                f"has {target.credits}, needs {stakes}."
-            )
+            raise ValueError(f"Target has insufficient credits at accept-time: has {target.credits}, needs {stakes}.")
 
         # Build minimal ship loadouts
         challenger_loadout = self._build_loadout(challenger)
         target_loadout = self._build_loadout(target)
 
         # Resolve combat
-        fight_results = self.combat_service.fight_ships(
-            challenger_loadout, target_loadout
-        )
+        fight_results = self.combat_service.fight_ships(challenger_loadout, target_loadout)
 
         credits_transferred = 0
 
@@ -236,10 +217,7 @@ class DuelService:
 
             credits_transferred = stakes
 
-            flogger.info(
-                f"Duel {duel_id} resolved: winner player={winner.id} "
-                f"stakes={stakes} transferred"
-            )
+            flogger.info(f"Duel {duel_id} resolved: winner player={winner.id} stakes={stakes} transferred")
         else:
             flogger.info(f"Duel {duel_id} ended in a stalemate — no credits transferred.")
 
@@ -280,12 +258,9 @@ class DuelService:
 
         if duel.status != "pending":
             flogger.error(
-                f"Invalid duel status for reject: duel_id={duel_id} status={duel.status} "
-                f"(expected 'pending')"
+                f"Invalid duel status for reject: duel_id={duel_id} status={duel.status} (expected 'pending')"
             )
-            raise ValueError(
-                f"Duel {duel_id} cannot be rejected — current status is {duel.status!r}."
-            )
+            raise ValueError(f"Duel {duel_id} cannot be rejected — current status is {duel.status!r}.")
 
         updated = await self.duel_repo.update_status(db, duel_id, "rejected")
         flogger.info(f"Duel {duel_id} rejected.")
@@ -317,9 +292,7 @@ class DuelService:
     # Query helpers
     # ------------------------------------------------------------------
 
-    async def get_pending_for_target(
-        self, db, target_id: int, guild_id: int
-    ) -> list[DuelRequest]:
+    async def get_pending_for_target(self, db, target_id: int, guild_id: int) -> list[DuelRequest]:
         """Return all pending duels where *target_id* is the target in the given guild.
 
         Used by the Discord gateway for autocomplete on /duel-accept and /duel-reject.
@@ -360,12 +333,9 @@ class DuelService:
 
         if duel.status != "pending":
             flogger.error(
-                f"Invalid duel status for expire: duel_id={duel_id} status={duel.status} "
-                f"(expected 'pending')"
+                f"Invalid duel status for expire: duel_id={duel_id} status={duel.status} (expected 'pending')"
             )
-            raise ValueError(
-                f"Duel {duel_id} cannot be expired — current status is {duel.status!r}."
-            )
+            raise ValueError(f"Duel {duel_id} cannot be expired — current status is {duel.status!r}.")
 
         updated = await self.duel_repo.update_status(db, duel_id, "expired")
         flogger.info(f"Duel {duel_id} expired.")

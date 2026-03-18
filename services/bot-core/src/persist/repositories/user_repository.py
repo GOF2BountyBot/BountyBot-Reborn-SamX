@@ -5,7 +5,6 @@ Handles database operations for User entities including creation,
 retrieval, and user management operations.
 """
 
-
 from shared import bblogger
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -15,8 +14,8 @@ from persist.models.user import User
 
 flogger = bblogger.get_logger("user-repository")
 
-class UserRepository(IRepository[User]):
 
+class UserRepository(IRepository[User]):
     async def get_by_id(self, db: AsyncSession, obj_id: int) -> User | None:
         """Get user by Discord ID."""
         try:
@@ -28,9 +27,7 @@ class UserRepository(IRepository[User]):
     async def get_by_name(self, db: AsyncSession, name: str) -> User | None:
         """Get user by Discord username."""
         try:
-            result = await db.execute(
-                select(User).where(User.discord_username == name)
-            )
+            result = await db.execute(select(User).where(User.discord_username == name))
             return result.scalars().first()
         except Exception as e:
             flogger.error(f"Error getting user by name {name}: {e}")
@@ -86,10 +83,7 @@ class UserRepository(IRepository[User]):
                 flogger.debug(f"Updated user: {user_id}")
             else:
                 # Create new user
-                user = User(
-                    id=user_id,
-                    discord_username=raw.get("discord_username")
-                )
+                user = User(id=user_id, discord_username=raw.get("discord_username"))
                 user = await self.add(db, user)
                 flogger.info(f"Created new user: {user_id}")
 

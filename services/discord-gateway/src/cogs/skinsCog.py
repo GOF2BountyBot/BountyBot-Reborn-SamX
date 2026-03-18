@@ -29,27 +29,21 @@ class SquareCheckView(discord.ui.View):
         self.result: str | None = None
 
     @discord.ui.button(label="Crop", style=discord.ButtonStyle.primary, emoji="\u2702\ufe0f")
-    async def crop_button(
-        self, interaction: discord.Interaction, button: discord.ui.Button
-    ):
+    async def crop_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         _ = button  # unused but required by discord.py callback signature
         self.result = "crop"
         self.stop()
         await interaction.response.defer()
 
     @discord.ui.button(label="Stretch", style=discord.ButtonStyle.secondary, emoji="\u2194\ufe0f")
-    async def stretch_button(
-        self, interaction: discord.Interaction, button: discord.ui.Button
-    ):
+    async def stretch_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         _ = button
         self.result = "stretch"
         self.stop()
         await interaction.response.defer()
 
     @discord.ui.button(label="Cancel", style=discord.ButtonStyle.danger)
-    async def cancel_button(
-        self, interaction: discord.Interaction, button: discord.ui.Button
-    ):
+    async def cancel_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         _ = button
         self.result = None
         self.stop()
@@ -57,7 +51,12 @@ class SquareCheckView(discord.ui.View):
 
 
 class FormatDownloadView(discord.ui.View):
-    """Buttons for downloading texture in different AEI formats."""
+    """Buttons for downloading render/texture in PNG and AEI formats.
+
+    *render_bytes* is the 3D-rendered image (used by the PNG download button
+    when available).  *texture_bytes* is always the composited texture map
+    (used for AEI conversion, and as PNG fallback when no render is available).
+    """
 
     def __init__(
         self,
@@ -65,38 +64,37 @@ class FormatDownloadView(discord.ui.View):
         texture_bytes: bytes,
         ship_name: str,
         timeout: float = 120,
+        render_bytes: bytes | None = None,
     ):
         super().__init__(timeout=timeout)
         self._cog = cog
         self._texture_bytes = texture_bytes
+        self._render_bytes = render_bytes
         self._ship_name = ship_name
 
     @discord.ui.button(label="Download PNG", style=discord.ButtonStyle.secondary)
-    async def png_button(
-        self, interaction: discord.Interaction, button: discord.ui.Button
-    ):
+    async def png_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         _ = button
         await interaction.response.defer()
+        # Use the 3D render when available, otherwise fall back to the texture
+        png_data = self._render_bytes if self._render_bytes is not None else self._texture_bytes
+        suffix = "render" if self._render_bytes is not None else "skin"
         file = discord.File(
-            BytesIO(self._texture_bytes),
-            filename=f"{self._ship_name}_skin.png",
+            BytesIO(png_data),
+            filename=f"{self._ship_name}_{suffix}.png",
         )
         await interaction.followup.send(
-            f"Here's your **{self._ship_name}** skin texture as PNG!",
+            f"Here's your **{self._ship_name}** as PNG!",
             file=file,
         )
 
     @discord.ui.button(label="AEI (Android/ETC1)", style=discord.ButtonStyle.green)
-    async def etc1_button(
-        self, interaction: discord.Interaction, button: discord.ui.Button
-    ):
+    async def etc1_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         _ = button
         await self._convert_and_send(interaction, "etc1")
 
     @discord.ui.button(label="AEI (PC/DXT5)", style=discord.ButtonStyle.blurple)
-    async def dxt5_button(
-        self, interaction: discord.Interaction, button: discord.ui.Button
-    ):
+    async def dxt5_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         _ = button
         await self._convert_and_send(interaction, "dxt5")
 
@@ -110,9 +108,7 @@ class FormatDownloadView(discord.ui.View):
             )
             response.raise_for_status()
             aei_bytes = response.content
-            file = discord.File(
-                BytesIO(aei_bytes), filename=f"{self._ship_name}_{fmt}.aei"
-            )
+            file = discord.File(BytesIO(aei_bytes), filename=f"{self._ship_name}_{fmt}.aei")
             await interaction.followup.send(
                 f"Here's your **{self._ship_name}** skin in **{fmt.upper()}** format!",
                 file=file,
@@ -158,9 +154,7 @@ class SkinsCog(commands.Cog):
         await self.bot.wait_until_ready()
         try:
             flogger.info("Preloading ship skins…")
-            resp = await self.http_client.get(
-                f"{api_base}/about/categories/ship/objects", timeout=10
-            )
+            resp = await self.http_client.get(f"{api_base}/about/categories/ship/objects", timeout=10)
             resp.raise_for_status()
             ships = resp.json()
             for sh in ships:
@@ -168,9 +162,7 @@ class SkinsCog(commands.Cog):
                 if not name:
                     continue
                 try:
-                    full = await self.http_client.get(
-                        f"{api_base}/about/object/name/{name}", timeout=10
-                    )
+                    full = await self.http_client.get(f"{api_base}/about/object/name/{name}", timeout=10)
                     full.raise_for_status()
                     data = full.json()
                     skins = data.get("compatible_skins") or {}
@@ -179,9 +171,7 @@ class SkinsCog(commands.Cog):
                     flogger.warning(f"Timeout loading skins for {name}: {e}")
                     self._ship_skins[name] = []
                 except HttpxHTTPStatusError as e:
-                    flogger.warning(
-                        f"HTTP error loading skins for {name}: {e.response.status_code}"
-                    )
+                    flogger.warning(f"HTTP error loading skins for {name}: {e.response.status_code}")
                     self._ship_skins[name] = []
                 except HttpxRequestError as e:
                     flogger.warning(f"Request error loading skins for {name}: {e}")
@@ -189,9 +179,7 @@ class SkinsCog(commands.Cog):
                 except Exception as e:  # pylint: disable=broad-exception-caught
                     flogger.warning(f"Unexpected error loading skins for {name}: {e}")
                     self._ship_skins[name] = []
-            flogger.info(
-                f"Finished preloading skins for {len(self._ship_skins)} ships"
-            )
+            flogger.info(f"Finished preloading skins for {len(self._ship_skins)} ships")
         except HttpxTimeoutException as e:
             flogger.error(f"Timeout preloading ship list: {e}")
         except HttpxHTTPStatusError as e:
@@ -209,16 +197,10 @@ class SkinsCog(commands.Cog):
         self, _interaction: discord.Interaction, current: str
     ) -> list[app_commands.Choice[str]]:
         txt = current.lower()
-        choices = [
-            app_commands.Choice(name=name, value=name)
-            for name in self._ship_skins
-            if txt in name.lower()
-        ]
+        choices = [app_commands.Choice(name=name, value=name) for name in self._ship_skins if txt in name.lower()]
         return choices[:25]
 
-    async def skin_autocomplete(
-        self, interaction: discord.Interaction, current: str
-    ) -> list[app_commands.Choice[str]]:
+    async def skin_autocomplete(self, interaction: discord.Interaction, current: str) -> list[app_commands.Choice[str]]:
         # read the already-selected ship from namespace
         ship = getattr(interaction.namespace, "ship", None)
         if not ship:
@@ -230,11 +212,7 @@ class SkinsCog(commands.Cog):
         if not skins:
             return [app_commands.Choice(name="Default", value="Default")]
         txt = current.lower()
-        choices = [
-            app_commands.Choice(name=s, value=s)
-            for s in skins
-            if txt in s.lower()
-        ]
+        choices = [app_commands.Choice(name=s, value=s) for s in skins if txt in s.lower()]
         if not choices:
             choices = [app_commands.Choice(name="Default", value="Default")]
         return choices[:25]
@@ -242,47 +220,38 @@ class SkinsCog(commands.Cog):
     async def skinnable_ship_autocomplete(
         self, _interaction: discord.Interaction, current: str
     ) -> list[app_commands.Choice[str]]:
-        """Autocomplete that returns only skinnable ships (have render-info)."""
+        """Autocomplete that returns only skinnable ships.
+
+        Uses the full ``_ship_skins`` list as the candidate pool and filters
+        out ships that are known to be non-skinnable (from cached render-info).
+        Ships without cached render-info are included so the list is never
+        artificially truncated to only previously-rendered ships.
+        """
         txt = current.lower()
         choices = [
             app_commands.Choice(name=name, value=name)
-            for name, ri in self._ship_render_info.items()
-            if txt in name.lower() and ri.get("skinnable", False)
+            for name in self._ship_skins
+            if txt in name.lower() and self._ship_render_info.get(name, {}).get("skinnable", True)
         ]
-        # Fall back: if no render-info cached yet, use all ships
-        if not choices and not self._ship_render_info:
-            choices = [
-                app_commands.Choice(name=name, value=name)
-                for name in self._ship_skins
-                if txt in name.lower()
-            ]
         return choices[:25]
 
     # ------------------------------------------------------------------
     # /ship_skin
     # ------------------------------------------------------------------
 
-    @app_commands.command(
-        name="ship_skin", description="Display a ship skin image (or default icon)"
-    )
+    @app_commands.command(name="ship_skin", description="Display a ship skin image (or default icon)")
     @app_commands.describe(ship="Select the ship", skin="Select the skin (or Default)")
     @app_commands.autocomplete(ship=ship_autocomplete, skin=skin_autocomplete)
-    async def ship_skin(
-        self, interaction: discord.Interaction, ship: str, skin: str
-    ):
+    async def ship_skin(self, interaction: discord.Interaction, ship: str, skin: str):
         await interaction.response.defer(thinking=True)
         # fetch full ship object to get URLs
         try:
-            resp = await self.http_client.get(
-                f"{api_base}/about/object/name/{ship}", timeout=10
-            )
+            resp = await self.http_client.get(f"{api_base}/about/object/name/{ship}", timeout=10)
             resp.raise_for_status()
             obj = resp.json()
         except httpx.HTTPStatusError as e:
             if e.response.status_code == 404:
-                return await interaction.followup.send(
-                    f"❌ Ship '{ship}' not found.", ephemeral=True
-                )
+                return await interaction.followup.send(f"❌ Ship '{ship}' not found.", ephemeral=True)
             flogger.error(f"HTTP error fetching ship '{ship}': {e}")
             return await interaction.followup.send(
                 "❌ API error fetching ship data. Please try again later.", ephemeral=True
@@ -301,13 +270,9 @@ class SkinsCog(commands.Cog):
             img_url = skins_map.get(skin)
 
         if not img_url:
-            return await interaction.followup.send(
-                f"❌ Skin '{skin}' not found for ship '{ship}'.", ephemeral=True
-            )
+            return await interaction.followup.send(f"❌ Skin '{skin}' not found for ship '{ship}'.", ephemeral=True)
 
-        embed = discord.Embed(
-            title=f"{ship} — {skin}", color=discord.Color.green()
-        )
+        embed = discord.Embed(title=f"{ship} — {skin}", color=discord.Color.green())
         embed.set_image(url=img_url)
         await interaction.followup.send(embed=embed)
 
@@ -334,13 +299,9 @@ class SkinsCog(commands.Cog):
             return m.author.id == interaction.user.id and len(m.attachments) > 0
 
         try:
-            msg: discord.Message = await self.bot.wait_for(
-                "message", check=check_msg, timeout=120
-            )
+            msg: discord.Message = await self.bot.wait_for("message", check=check_msg, timeout=120)
         except TimeoutError:
-            await interaction.followup.send(
-                "Timed out waiting for base texture upload.", ephemeral=True
-            )
+            await interaction.followup.send("Timed out waiting for base texture upload.", ephemeral=True)
             return None, ""
 
         attachment = msg.attachments[0]
@@ -356,15 +317,12 @@ class SkinsCog(commands.Cog):
         if width and height and width != height:
             view = SquareCheckView(timeout=60)
             await interaction.followup.send(
-                f"Your image is **{width}x{height}** (not square). "
-                "Choose how to handle it:",
+                f"Your image is **{width}x{height}** (not square). Choose how to handle it:",
                 view=view,
             )
             await view.wait()
             if view.result is None:
-                await interaction.followup.send(
-                    "❌ Render cancelled.", ephemeral=True
-                )
+                await interaction.followup.send("❌ Render cancelled.", ephemeral=True)
                 return None, ""
             square_mode = view.result
 
@@ -389,10 +347,8 @@ class SkinsCog(commands.Cog):
 
             def make_check(uid: int):
                 def check(m: discord.Message) -> bool:
-                    return m.author.id == uid and (
-                        len(m.attachments) > 0
-                        or m.content.lower() in ("skip", "disable")
-                    )
+                    return m.author.id == uid and (len(m.attachments) > 0 or m.content.lower() in ("skip", "disable"))
+
                 return check
 
             try:
@@ -431,6 +387,7 @@ class SkinsCog(commands.Cog):
     @app_commands.describe(
         ship="The ship to render",
         skin="Optional: select a pre-made skin to apply",
+        image="Optional: upload a custom skin image (overrides skin selection)",
         autoskin="Automatically apply the default skin without prompting",
     )
     @app_commands.autocomplete(ship=skinnable_ship_autocomplete, skin=skin_autocomplete)
@@ -439,6 +396,7 @@ class SkinsCog(commands.Cog):
         interaction: discord.Interaction,
         ship: str,
         skin: str = "Default",
+        image: discord.Attachment | None = None,
         autoskin: bool = False,
     ):
         await interaction.response.defer()
@@ -454,22 +412,27 @@ class SkinsCog(commands.Cog):
 
         if not diffuse_path:
             flogger.error(f"No diffuse_path in render-info for {ship}")
-            await interaction.followup.send(
-                f"❌ No base texture found for **{ship}**.", ephemeral=True
-            )
+            await interaction.followup.send(f"❌ No base texture found for **{ship}**.", ephemeral=True)
             return
 
-        # 2. Resolve the skin overlay image (if not Default)
+        # 2. Resolve the skin overlay image
         skin_bytes: bytes | None = None
-        if skin != "Default":
+        if image is not None:
+            # Custom upload takes priority over pre-made skin selection
+            try:
+                skin_bytes = await image.read()
+                flogger.debug(f"Custom skin image uploaded for {ship}: {len(skin_bytes)} bytes")
+            except Exception as e:  # pylint: disable=broad-exception-caught
+                flogger.error(f"Failed to read uploaded image for {ship}: {e}")
+                await interaction.followup.send("❌ Failed to read the uploaded image.", ephemeral=True)
+                return
+        elif skin != "Default":
             skin_bytes = await self._download_skin_image(interaction, ship, skin, render_info)
             if skin_bytes is None:
                 return  # error already sent
 
         # 3. Composite via blender-service (base texture loaded from disk)
-        composite_bytes = await self._composite_textures(
-            interaction, ship, ship_path, diffuse_path, skin_bytes
-        )
+        composite_bytes = await self._composite_textures(interaction, ship, ship_path, diffuse_path, skin_bytes)
         if composite_bytes is None:
             return
 
@@ -485,26 +448,20 @@ class SkinsCog(commands.Cog):
             rendered_bytes = render_resp.content
         except HttpxHTTPStatusError as e:
             flogger.error(f"Render API error for {ship}: {e.response.status_code}")
-            await interaction.followup.send(
-                f"❌ Render failed: API error {e.response.status_code}", ephemeral=True
-            )
+            await interaction.followup.send(f"❌ Render failed: API error {e.response.status_code}", ephemeral=True)
             return
         except HttpxTimeoutException:
             flogger.error(f"Render timed out for {ship}")
-            await interaction.followup.send(
-                "❌ Render timed out. Please try again later.", ephemeral=True
-            )
+            await interaction.followup.send("❌ Render timed out. Please try again later.", ephemeral=True)
             return
         except Exception as e:  # pylint: disable=broad-exception-caught
             flogger.error(f"Render error for {ship}: {e}")
-            await interaction.followup.send(
-                "❌ Render failed. Please try again later.", ephemeral=True
-            )
+            await interaction.followup.send("❌ Render failed. Please try again later.", ephemeral=True)
             return
 
         # 5. Send rendered image + format buttons
         file = discord.File(BytesIO(rendered_bytes), filename=f"{ship}_render.png")
-        view = FormatDownloadView(self, composite_bytes, ship)
+        view = FormatDownloadView(self, composite_bytes, ship, render_bytes=rendered_bytes)
         await interaction.followup.send(
             f"🚀 Here's your **{ship}** skin render!",
             file=file,
@@ -558,17 +515,13 @@ class SkinsCog(commands.Cog):
                     return  # error already sent
 
             # 2b. Composite via blender-service (base texture loaded from disk)
-            composite_bytes = await self._composite_textures(
-                interaction, ship, ship_path, diffuse_path, skin_bytes
-            )
+            composite_bytes = await self._composite_textures(interaction, ship, ship_path, diffuse_path, skin_bytes)
 
         if composite_bytes is None:
             return
 
         # 3. Return composited texture + format buttons
-        file = discord.File(
-            BytesIO(composite_bytes), filename=f"{ship}_texture.png"
-        )
+        file = discord.File(BytesIO(composite_bytes), filename=f"{ship}_texture.png")
         view = FormatDownloadView(self, composite_bytes, ship)
         await interaction.followup.send(
             f"🎨 Here's your composited **{ship}** skin texture!",
@@ -580,18 +533,12 @@ class SkinsCog(commands.Cog):
     # Internal helpers
     # ------------------------------------------------------------------
 
-    async def _fetch_render_info(
-        self, interaction: discord.Interaction, ship: str
-    ) -> dict | None:
+    async def _fetch_render_info(self, interaction: discord.Interaction, ship: str) -> dict | None:
         """Fetch render-info for a ship. Sends error and returns None on failure."""
         try:
-            resp = await self.http_client.get(
-                f"{api_base}/about/ships/{ship}/render-info", timeout=10
-            )
+            resp = await self.http_client.get(f"{api_base}/about/ships/{ship}/render-info", timeout=10)
             if resp.status_code == 404:
-                await interaction.followup.send(
-                    f"❌ Ship **{ship}** not found.", ephemeral=True
-                )
+                await interaction.followup.send(f"❌ Ship **{ship}** not found.", ephemeral=True)
                 return None
             resp.raise_for_status()
             data = resp.json()
@@ -603,21 +550,15 @@ class SkinsCog(commands.Cog):
             )
             return None
         except HttpxTimeoutException:
-            await interaction.followup.send(
-                "❌ Timed out fetching ship info. Please try again.", ephemeral=True
-            )
+            await interaction.followup.send("❌ Timed out fetching ship info. Please try again.", ephemeral=True)
             return None
         except Exception as e:  # pylint: disable=broad-exception-caught
             flogger.error(f"Unexpected error fetching render-info for {ship}: {e}")
-            await interaction.followup.send(
-                "⚠️ Unexpected error fetching ship info.", ephemeral=True
-            )
+            await interaction.followup.send("⚠️ Unexpected error fetching ship info.", ephemeral=True)
             return None
 
         if not data.get("skinnable", False):
-            await interaction.followup.send(
-                f"❌ **{ship}** does not support custom skins.", ephemeral=True
-            )
+            await interaction.followup.send(f"❌ **{ship}** does not support custom skins.", ephemeral=True)
             return None
 
         # Cache render info for autocomplete
@@ -635,9 +576,7 @@ class SkinsCog(commands.Cog):
         skins_map = render_info.get("compatible_skins") or {}
         skin_url = skins_map.get(skin)
         if not skin_url:
-            await interaction.followup.send(
-                f"❌ Skin **{skin}** not found for **{ship}**.", ephemeral=True
-            )
+            await interaction.followup.send(f"❌ Skin **{skin}** not found for **{ship}**.", ephemeral=True)
             return None
 
         try:
@@ -647,9 +586,7 @@ class SkinsCog(commands.Cog):
             return resp.content
         except Exception as e:  # pylint: disable=broad-exception-caught
             flogger.error(f"Failed to download skin image for {ship}/{skin}: {e}")
-            await interaction.followup.send(
-                f"❌ Failed to download skin image for **{skin}**.", ephemeral=True
-            )
+            await interaction.followup.send(f"❌ Failed to download skin image for **{skin}**.", ephemeral=True)
             return None
 
     async def _composite_textures_with_upload(
@@ -695,15 +632,11 @@ class SkinsCog(commands.Cog):
             return None
         except HttpxTimeoutException:
             flogger.error(f"Composite timed out for {ship}")
-            await interaction.followup.send(
-                "❌ Compositing timed out. Please try again.", ephemeral=True
-            )
+            await interaction.followup.send("❌ Compositing timed out. Please try again.", ephemeral=True)
             return None
         except Exception as e:  # pylint: disable=broad-exception-caught
             flogger.error(f"Composite error for {ship}: {e}")
-            await interaction.followup.send(
-                "❌ Texture compositing failed. Please try again later.", ephemeral=True
-            )
+            await interaction.followup.send("❌ Texture compositing failed. Please try again later.", ephemeral=True)
             return None
 
     async def _composite_textures(
@@ -734,9 +667,7 @@ class SkinsCog(commands.Cog):
 
         # If a skin overlay was provided, send it as region texture 1
         if skin_bytes is not None:
-            files.append(
-                ("region_textures", ("region1.png", skin_bytes, "image/png"))
-            )
+            files.append(("region_textures", ("region1.png", skin_bytes, "image/png")))
             data["region_indices"] = "1"
 
         try:
@@ -749,9 +680,7 @@ class SkinsCog(commands.Cog):
             flogger.info(f"Composite successful for {ship}")
             return resp.content
         except HttpxHTTPStatusError as e:
-            flogger.error(
-                f"Composite API error for {ship}: {e.response.status_code}"
-            )
+            flogger.error(f"Composite API error for {ship}: {e.response.status_code}")
             await interaction.followup.send(
                 f"❌ Texture compositing failed: API error {e.response.status_code}",
                 ephemeral=True,
@@ -759,15 +688,11 @@ class SkinsCog(commands.Cog):
             return None
         except HttpxTimeoutException:
             flogger.error(f"Composite timed out for {ship}")
-            await interaction.followup.send(
-                "❌ Compositing timed out. Please try again.", ephemeral=True
-            )
+            await interaction.followup.send("❌ Compositing timed out. Please try again.", ephemeral=True)
             return None
         except Exception as e:  # pylint: disable=broad-exception-caught
             flogger.error(f"Composite error for {ship}: {e}")
-            await interaction.followup.send(
-                "❌ Texture compositing failed. Please try again later.", ephemeral=True
-            )
+            await interaction.followup.send("❌ Texture compositing failed. Please try again later.", ephemeral=True)
             return None
 
 

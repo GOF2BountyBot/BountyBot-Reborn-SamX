@@ -7,10 +7,11 @@ from shared import bblogger
 
 flogger = bblogger.get_logger("bot-emoji-service")
 
+
 class EmojiService:
     def __init__(self):
-        self.bot_token = os.getenv('BOTTOKEN')
-        self.app_id = os.getenv('BOTAPPID')
+        self.bot_token = os.getenv("BOTTOKEN")
+        self.app_id = os.getenv("BOTAPPID")
         self.emojis_cache: dict[str, str] = {}
 
         if not self.bot_token:
@@ -29,9 +30,9 @@ class EmojiService:
         """
         s = object_name.lower()
         # decompose accents (e.g. 'e' -> 'e' + accent) and drop the accent parts
-        s = unicodedata.normalize('NFD', s)
-        s = ''.join(ch for ch in s if unicodedata.category(ch) != 'Mn')
-        normalized = re.sub(r'[^a-z0-9]', '', s)
+        s = unicodedata.normalize("NFD", s)
+        s = "".join(ch for ch in s if unicodedata.category(ch) != "Mn")
+        normalized = re.sub(r"[^a-z0-9]", "", s)
         flogger.debug(f"Normalized '{object_name}' to '{normalized}'")
         return normalized
 
@@ -43,10 +44,7 @@ class EmojiService:
         flogger.info("Fetching application emojis from Discord API")
 
         url = f"https://discord.com/api/v10/applications/{self.app_id}/emojis"
-        headers = {
-            "Authorization": f"Bot {self.bot_token}",
-            "Content-Type": "application/json"
-        }
+        headers = {"Authorization": f"Bot {self.bot_token}", "Content-Type": "application/json"}
 
         try:
             with httpx.Client() as client:
@@ -57,11 +55,11 @@ class EmojiService:
             emoji_dict = {}
 
             # Handle both direct list and items wrapper
-            emojis = data.get('items', data) if isinstance(data, dict) else data
+            emojis = data.get("items", data) if isinstance(data, dict) else data
 
             for emoji in emojis:
-                name = emoji.get('name')
-                emoji_id = emoji.get('id')
+                name = emoji.get("name")
+                emoji_id = emoji.get("id")
                 if name and emoji_id:
                     emoji_dict[name.lower()] = emoji_id
                     flogger.trace(f"Loaded emoji: {name} -> {emoji_id}")

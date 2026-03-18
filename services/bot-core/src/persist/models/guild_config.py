@@ -36,22 +36,18 @@ class GuildConfig(Base):
     turret_quantity_range: Mapped[dict[str, int]] = mapped_column(JSON, default={"min": 2, "max": 4})
 
     # Tech level probabilities (JSON objects)
-    tech_level_probabilities: Mapped[dict[str, float]] = mapped_column(JSON, default={
-        "same_level": 0.70,
-        "one_lower": 0.20,
-        "two_lower": 0.10
-    })
+    tech_level_probabilities: Mapped[dict[str, float]] = mapped_column(
+        JSON, default={"same_level": 0.70, "one_lower": 0.20, "two_lower": 0.10}
+    )
 
     # Economic settings
     sale_price_factor: Mapped[float] = mapped_column(Float, default=0.8)
     starting_credits: Mapped[int] = mapped_column(Integer, default=0)
 
     # XP and tier thresholds
-    xp_thresholds: Mapped[dict[str, int]] = mapped_column(JSON, default={
-        "Silver": 1000,
-        "Gold": 5000,
-        "Platinum": 15000
-    })
+    xp_thresholds: Mapped[dict[str, int]] = mapped_column(
+        JSON, default={"Silver": 1000, "Gold": 5000, "Platinum": 15000}
+    )
 
     # Activity temperature per division (persisted for decay across restarts)
     # Default: {"bronze": 1.0, "silver": 1.0, "gold": 1.0}
@@ -83,7 +79,7 @@ class GuildConfig(Base):
             "ship": self.ship_count_range,
             "weapon": self.weapon_count_range,
             "module": self.module_count_range,
-            "turret": self.turret_count_range
+            "turret": self.turret_count_range,
         }
         return range_map.get(item_type, {"min": 1, "max": 1})
 
@@ -93,6 +89,6 @@ class GuildConfig(Base):
             "ship": self.ship_quantity_range,
             "weapon": self.weapon_quantity_range,
             "module": self.module_quantity_range,
-            "turret": self.turret_quantity_range
+            "turret": self.turret_quantity_range,
         }
         return range_map.get(item_type, {"min": 1, "max": 1})

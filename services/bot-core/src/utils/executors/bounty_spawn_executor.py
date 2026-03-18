@@ -85,9 +85,7 @@ async def execute_bounty_spawn_job(job_id: str, payload: dict) -> dict:
     temperature: float = float(payload.get("temperature", _DEFAULT_TEMPERATURE))
 
     max_bounties: int = TemperatureService.get_max_bounties(temperature)
-    flogger.debug(
-        f"BountySpawnJob[{job_id}] temperature={temperature}, max_bounties={max_bounties}"
-    )
+    flogger.debug(f"BountySpawnJob[{job_id}] temperature={temperature}, max_bounties={max_bounties}")
 
     total_spawned = 0
     guild_results: dict = {}
@@ -113,9 +111,7 @@ async def execute_bounty_spawn_job(job_id: str, payload: dict) -> dict:
                 # Bulk mode — enumerate all configured guilds.
                 guild_configs = await config_repo.list_all(db)
                 if not guild_configs:
-                    flogger.info(
-                        f"BountySpawnJob[{job_id}] no guilds configured, nothing to do"
-                    )
+                    flogger.info(f"BountySpawnJob[{job_id}] no guilds configured, nothing to do")
                     return {"status": "success", "guilds_processed": 0, "total_spawned": 0}
 
             # ------------------------------------------------------------------
@@ -137,9 +133,7 @@ async def execute_bounty_spawn_job(job_id: str, payload: dict) -> dict:
                     # expects lowercase.
                     div_lower = div.lower()
 
-                    active_bounties = await bounty_repo.get_active_by_guild_and_division(
-                        db, gid, div_lower
-                    )
+                    active_bounties = await bounty_repo.get_active_by_guild_and_division(db, gid, div_lower)
                     active_count = len(active_bounties)
 
                     if active_count >= max_bounties:
@@ -155,9 +149,7 @@ async def execute_bounty_spawn_job(job_id: str, payload: dict) -> dict:
                         f"BountySpawnJob[{job_id}] guild={gid} div={div_lower}: "
                         f"{active_count}/{max_bounties} active — spawning"
                     )
-                    spawned_bounty = await bounty_service.spawn_bounty(
-                        db, gid, div_lower
-                    )
+                    spawned_bounty = await bounty_service.spawn_bounty(db, gid, div_lower)
 
                     if spawned_bounty is None:
                         flogger.warning(
@@ -188,11 +180,7 @@ async def execute_bounty_spawn_job(job_id: str, payload: dict) -> dict:
                         "bounty_id": spawned_bounty.id,
                         "criminal": spawned_bounty.criminal_name,
                         "reward": spawned_bounty.reward,
-                        "end_time": (
-                            spawned_bounty.end_time.isoformat()
-                            if spawned_bounty.end_time
-                            else None
-                        ),
+                        "end_time": (spawned_bounty.end_time.isoformat() if spawned_bounty.end_time else None),
                     }
 
                 guild_results[gid] = {"spawned": guild_spawned, "divisions": division_results}
@@ -221,6 +209,7 @@ async def execute_bounty_spawn_job(job_id: str, payload: dict) -> dict:
 # Helper: schedule bounty expiry
 # ---------------------------------------------------------------------------
 
+
 async def _schedule_expiry_job(parent_job_id: str, bounty) -> None:
     """POST a one-time job to the scheduler API to expire *bounty* at end_time.
 
@@ -229,8 +218,7 @@ async def _schedule_expiry_job(parent_job_id: str, bounty) -> None:
     """
     if bounty.end_time is None:
         flogger.warning(
-            f"BountySpawnJob[{parent_job_id}] bounty id={bounty.id} has no end_time; "
-            "skipping expiry scheduling"
+            f"BountySpawnJob[{parent_job_id}] bounty id={bounty.id} has no end_time; skipping expiry scheduling"
         )
         return
 
@@ -259,16 +247,14 @@ async def _schedule_expiry_job(parent_job_id: str, bounty) -> None:
             f"for bounty id={bounty.id} at {bounty.end_time.isoformat()}"
         )
     except Exception as e:  # pylint: disable=broad-exception-caught
-        flogger.error(
-            f"BountySpawnJob[{parent_job_id}] failed to schedule expiry for "
-            f"bounty id={bounty.id}: {e}"
-        )
+        flogger.error(f"BountySpawnJob[{parent_job_id}] failed to schedule expiry for bounty id={bounty.id}: {e}")
         flogger.trace(traceback.format_exc())
 
 
 # ---------------------------------------------------------------------------
 # Helper: announce bounty to discord-gateway
 # ---------------------------------------------------------------------------
+
 
 async def _announce_bounty(parent_job_id: str, bounty) -> None:
     """POST a bounty announcement to the discord-gateway messages endpoint.
@@ -288,9 +274,7 @@ async def _announce_bounty(parent_job_id: str, bounty) -> None:
             "reward": bounty.reward,
             "route_length": len(bounty.route) if bounty.route else 0,
             "tech_level": bounty.tech_level,
-            "end_time": (
-                bounty.end_time.isoformat() if bounty.end_time else None
-            ),
+            "end_time": (bounty.end_time.isoformat() if bounty.end_time else None),
         },
     }
 
@@ -302,13 +286,9 @@ async def _announce_bounty(parent_job_id: str, bounty) -> None:
                 timeout=10,
             )
         resp.raise_for_status()
-        flogger.info(
-            f"BountySpawnJob[{parent_job_id}] announced bounty id={bounty.id} "
-            f"to discord-gateway"
-        )
+        flogger.info(f"BountySpawnJob[{parent_job_id}] announced bounty id={bounty.id} to discord-gateway")
     except Exception as e:  # pylint: disable=broad-exception-caught
         flogger.error(
-            f"BountySpawnJob[{parent_job_id}] failed to announce bounty id={bounty.id} "
-            f"to discord-gateway: {e}"
+            f"BountySpawnJob[{parent_job_id}] failed to announce bounty id={bounty.id} to discord-gateway: {e}"
         )
         flogger.trace(traceback.format_exc())

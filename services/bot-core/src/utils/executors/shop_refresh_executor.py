@@ -58,9 +58,7 @@ async def execute_shop_refresh_job(job_id: str, payload: dict) -> dict:
             if guild_id and tier:
                 # ── Single guild + single tier ──────────────────────────────
                 result = await shop_service.refresh_shop(db, guild_id, tier, force_tech_level)
-                flogger.info(
-                    f"ShopRefreshJob[{job_id}] completed for guild {guild_id}, tier {tier}"
-                )
+                flogger.info(f"ShopRefreshJob[{job_id}] completed for guild {guild_id}, tier {tier}")
                 return {
                     "status": "success",
                     "guild_id": guild_id,
@@ -72,12 +70,8 @@ async def execute_shop_refresh_job(job_id: str, payload: dict) -> dict:
                 # ── Single guild, all tiers ────────────────────────────────
                 results: dict = {}
                 for t in _SHOP_TIERS:
-                    results[t] = await shop_service.refresh_shop(
-                        db, guild_id, t, force_tech_level
-                    )
-                flogger.info(
-                    f"ShopRefreshJob[{job_id}] completed for guild {guild_id}, all tiers"
-                )
+                    results[t] = await shop_service.refresh_shop(db, guild_id, t, force_tech_level)
+                flogger.info(f"ShopRefreshJob[{job_id}] completed for guild {guild_id}, all tiers")
                 return {
                     "status": "success",
                     "guild_id": guild_id,
@@ -104,9 +98,7 @@ async def execute_shop_refresh_job(job_id: str, payload: dict) -> dict:
                     gid = config.guild_id
                     tier_results: dict = {}
                     for t in _SHOP_TIERS:
-                        tier_results[t] = await shop_service.refresh_shop(
-                            db, gid, t, force_tech_level
-                        )
+                        tier_results[t] = await shop_service.refresh_shop(db, gid, t, force_tech_level)
                     bulk_results[gid] = tier_results
             finally:
                 shop_service.clear_static_cache()
@@ -114,8 +106,7 @@ async def execute_shop_refresh_job(job_id: str, payload: dict) -> dict:
             end_ts = datetime.now(UTC)
             duration = (end_ts - start_ts).total_seconds()
             flogger.info(
-                f"ShopRefreshJob[{job_id}] bulk refresh completed: "
-                f"{len(bulk_results)} guilds in {duration:.2f}s"
+                f"ShopRefreshJob[{job_id}] bulk refresh completed: {len(bulk_results)} guilds in {duration:.2f}s"
             )
             return {
                 "status": "success",

@@ -12,12 +12,14 @@ flogger = bblogger.get_logger("bot-data-loader")
 # Global emoji service instance
 _emoji_service: EmojiService | None = None
 
+
 def get_emoji_service() -> EmojiService:
     """Get or create the global emoji service instance."""
     global _emoji_service
     if _emoji_service is None:
         _emoji_service = EmojiService()
     return _emoji_service
+
 
 def get_repository(category: str):
     """
@@ -45,6 +47,7 @@ def get_repository(category: str):
 
     return repo_cls()
 
+
 async def load_folder(repo, data_dir: Path) -> None:
     """Async load all JSON files under a given folder into the DB."""
     flogger.debug(f"Loading data from folder: {data_dir}")
@@ -61,17 +64,19 @@ async def load_folder(repo, data_dir: Path) -> None:
             obj = await repo.create_or_update(db, payload)
             flogger.debug(f" ✓ Upserted {obj!r}")
 
+
 def _resolve_emojis(obj):
     """
     Only resolve the top-level 'emoji' field, using obj['name'] as the lookup key.
     Leaves 'name' (and all other fields) untouched.
     """
     service = get_emoji_service()
-    if isinstance(obj, dict) and 'name' in obj:
-        new_emoji = service.resolve_emoji(obj['name'])
+    if isinstance(obj, dict) and "name" in obj:
+        new_emoji = service.resolve_emoji(obj["name"])
         if new_emoji:
-            obj['emoji'] = new_emoji
+            obj["emoji"] = new_emoji
     return obj
+
 
 async def load_data(category: str, data_root: str | Path | None = None) -> list[str]:
     """

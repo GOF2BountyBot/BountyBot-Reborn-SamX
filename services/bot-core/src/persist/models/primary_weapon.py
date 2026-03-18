@@ -12,6 +12,6 @@ class PrimaryWeapon(Weapon):
     dps: Mapped[float] = mapped_column(Float, nullable=False)
 
     __mapper_args__ = {
-        'polymorphic_identity': 'primary_weapon',
-        'concrete': False,
+        "polymorphic_identity": "primary_weapon",
+        "concrete": False,
     }

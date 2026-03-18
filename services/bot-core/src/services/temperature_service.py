@@ -62,15 +62,12 @@ class TemperatureService:
         Returns:
             New temperature after decay.
         """
-        flogger.trace(
-            f"Decay calculation: {current_temp} * {GameConstants.GUILD_ACTIVITY_DECAY_RATE}"
-        )
+        flogger.trace(f"Decay calculation: {current_temp} * {GameConstants.GUILD_ACTIVITY_DECAY_RATE}")
         decayed = current_temp * GameConstants.GUILD_ACTIVITY_DECAY_RATE
         flogger.trace(f"After multiplication (before clamp/round): {decayed}")
         new_temp = max(GameConstants.MIN_GUILD_ACTIVITY, round(decayed, 1))
         flogger.info(
-            f"Temperature decayed: {current_temp} → {new_temp}"
-            f" (rate={GameConstants.GUILD_ACTIVITY_DECAY_RATE})"
+            f"Temperature decayed: {current_temp} → {new_temp} (rate={GameConstants.GUILD_ACTIVITY_DECAY_RATE})"
         )
         return new_temp
 

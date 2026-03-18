@@ -5,7 +5,6 @@ Handles REST API endpoints for user management operations.
 All operations are performed via this API by the discord-gateway service.
 """
 
-
 from fastapi import APIRouter, Depends, HTTPException, status
 from persist.database.manager import get_db_session
 from persist.repositories.user_repository import UserRepository
@@ -18,21 +17,17 @@ flogger = bblogger.get_logger("users-api-router")
 router = APIRouter(
     prefix="/users",
     tags=["users"],
-    responses={
-        404: {"description": "User not found"},
-        500: {"description": "Internal server error"}
-    }
+    responses={404: {"description": "User not found"}, 500: {"description": "Internal server error"}},
 )
+
 
 # Dependency injection
 async def get_user_repository():
     return UserRepository()
 
+
 @router.post("/", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
-async def create_user(
-    request: CreateUserRequest,
-    user_repo: UserRepository = Depends(get_user_repository)
-):
+async def create_user(request: CreateUserRequest, user_repo: UserRepository = Depends(get_user_repository)):
     """
     Create a new user.
 
@@ -47,8 +42,7 @@ async def create_user(
             if existing_user:
                 flogger.warning(f"User {request.id} already exists")
                 raise HTTPException(
-                    status_code=status.HTTP_409_CONFLICT,
-                    detail=f"User with ID {request.id} already exists"
+                    status_code=status.HTTP_409_CONFLICT, detail=f"User with ID {request.id} already exists"
                 )
 
             # Create new user
@@ -60,23 +54,18 @@ async def create_user(
                 id=user.id,
                 discord_username=user.discord_username,
                 created_at=user.created_at.isoformat(),
-                updated_at=user.updated_at.isoformat()
+                updated_at=user.updated_at.isoformat(),
             )
 
     except HTTPException:
         raise
     except Exception as e:
         flogger.error(f"Error creating user {request.id}: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to create user"
-        ) from e
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to create user") from e
+
 
 @router.get("/{user_id}", response_model=UserResponse)
-async def get_user(
-    user_id: int,
-    user_repo: UserRepository = Depends(get_user_repository)
-):
+async def get_user(user_id: int, user_repo: UserRepository = Depends(get_user_repository)):
     """
     Get a user by Discord ID.
     """
@@ -86,32 +75,25 @@ async def get_user(
         async with get_db_session() as db:
             user = await user_repo.get_by_id(db, user_id)
             if not user:
-                raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND,
-                    detail=f"User {user_id} not found"
-                )
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"User {user_id} not found")
 
             return UserResponse(
                 id=user.id,
                 discord_username=user.discord_username,
                 created_at=user.created_at.isoformat(),
-                updated_at=user.updated_at.isoformat()
+                updated_at=user.updated_at.isoformat(),
             )
 
     except HTTPException:
         raise
     except Exception as e:
         flogger.error(f"Error getting user {user_id}: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to get user"
-        ) from e
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to get user") from e
+
 
 @router.put("/{user_id}", response_model=UserResponse)
 async def update_user(
-    user_id: int,
-    request: UpdateUserRequest,
-    user_repo: UserRepository = Depends(get_user_repository)
+    user_id: int, request: UpdateUserRequest, user_repo: UserRepository = Depends(get_user_repository)
 ):
     """
     Update a user's information.
@@ -122,10 +104,7 @@ async def update_user(
         async with get_db_session() as db:
             user = await user_repo.get_by_id(db, user_id)
             if not user:
-                raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND,
-                    detail=f"User {user_id} not found"
-                )
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"User {user_id} not found")
 
             # Update user data
             update_data = request.model_dump(exclude_unset=True)
@@ -138,24 +117,18 @@ async def update_user(
                 id=user.id,
                 discord_username=user.discord_username,
                 created_at=user.created_at.isoformat(),
-                updated_at=user.updated_at.isoformat()
+                updated_at=user.updated_at.isoformat(),
             )
 
     except HTTPException:
         raise
     except Exception as e:
         flogger.error(f"Error updating user {user_id}: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to update user"
-        ) from e
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to update user") from e
+
 
 @router.get("/", response_model=list[UserResponse])
-async def list_users(
-    skip: int = 0,
-    limit: int = 100,
-    user_repo: UserRepository = Depends(get_user_repository)
-):
+async def list_users(skip: int = 0, limit: int = 100, user_repo: UserRepository = Depends(get_user_repository)):
     """
     List all users with pagination.
     """
@@ -166,30 +139,26 @@ async def list_users(
             users = await user_repo.list_all(db)
 
             # Apply pagination
-            paginated_users = users[skip:skip + limit]
+            paginated_users = users[skip : skip + limit]
 
             return [
                 UserResponse(
                     id=user.id,
                     discord_username=user.discord_username,
                     created_at=user.created_at.isoformat(),
-                    updated_at=user.updated_at.isoformat()
+                    updated_at=user.updated_at.isoformat(),
                 )
                 for user in paginated_users
             ]
 
     except Exception as e:
         flogger.error(f"Error listing users: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to list users"
-        ) from e
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to list users") from e
+
 
 @router.post("/{user_id}/get-or-create", response_model=UserResponse)
 async def get_or_create_user(
-    user_id: int,
-    discord_username: str | None = None,
-    user_repo: UserRepository = Depends(get_user_repository)
+    user_id: int, discord_username: str | None = None, user_repo: UserRepository = Depends(get_user_repository)
 ):
     """
     Get existing user or create new one if doesn't exist.
@@ -206,12 +175,11 @@ async def get_or_create_user(
                 id=user.id,
                 discord_username=user.discord_username,
                 created_at=user.created_at.isoformat(),
-                updated_at=user.updated_at.isoformat()
+                updated_at=user.updated_at.isoformat(),
             )
 
     except Exception as e:
         flogger.error(f"Error getting/creating user {user_id}: {e}")
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to get or create user"
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to get or create user"
         ) from e

@@ -16,10 +16,12 @@ from shared import bblogger
 
 flogger = bblogger.get_logger("circuit-breaker")
 
+
 class CircuitState(Enum):
     CLOSED = "closed"
     OPEN = "open"
     HALF_OPEN = "half_open"
+
 
 @dataclass
 class CircuitBreakerConfig:
@@ -27,6 +29,7 @@ class CircuitBreakerConfig:
     recovery_timeout: int = 60
     expected_exception: type[Exception] = Exception
     success_threshold: int = 3  # Successful calls needed to close circuit
+
 
 class CircuitBreaker:
     """
@@ -38,12 +41,13 @@ class CircuitBreaker:
     - Closing circuit after successful operations
     """
 
-    def __init__(self, failure_threshold: int = 5, recovery_timeout: int = 60,
-                 expected_exception: type[Exception] = Exception):
+    def __init__(
+        self, failure_threshold: int = 5, recovery_timeout: int = 60, expected_exception: type[Exception] = Exception
+    ):
         self.config = CircuitBreakerConfig(
             failure_threshold=failure_threshold,
             recovery_timeout=recovery_timeout,
-            expected_exception=expected_exception
+            expected_exception=expected_exception,
         )
         self.state = CircuitState.CLOSED
         self.failure_count = 0
@@ -133,8 +137,9 @@ class CircuitBreaker:
             "success_count": self.success_count,
             "last_failure_time": self.last_failure_time,
             "failure_threshold": self.config.failure_threshold,
-            "recovery_timeout": self.config.recovery_timeout
+            "recovery_timeout": self.config.recovery_timeout,
         }
+
 
 class CircuitBreakerOpenException(Exception):
     """Exception raised when circuit breaker is open."""

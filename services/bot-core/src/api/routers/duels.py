@@ -49,9 +49,7 @@ async def get_pending_duels(
             result = [DuelRequestResponse.model_validate(d) for d in duels]
             return result
         except Exception as exc:
-            flogger.error(
-                f"Get pending duels failed for user_id={user_id} guild_id={guild_id}: {exc}"
-            )
+            flogger.error(f"Get pending duels failed for user_id={user_id} guild_id={guild_id}: {exc}")
             raise HTTPException(status_code=500, detail="Failed to retrieve pending duels") from exc
 
 
@@ -96,8 +94,7 @@ async def create_challenge(
             return DuelRequestResponse.model_validate(duel)
         except ValueError as exc:
             flogger.error(
-                f"Duel challenge failed: challenger={request.challenger_id}"
-                f" target={request.target_id}: {exc}"
+                f"Duel challenge failed: challenger={request.challenger_id} target={request.target_id}: {exc}"
             )
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 

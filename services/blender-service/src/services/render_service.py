@@ -90,21 +90,13 @@ class RenderService:
         """
         cfg = self._config
         if res_x > cfg.max_res_x:
-            raise ValueError(
-                f"Attempted to render an image above 2160p/4k (width={res_x})"
-            )
+            raise ValueError(f"Attempted to render an image above 2160p/4k (width={res_x})")
         if res_x < cfg.min_res_x:
-            raise ValueError(
-                f"Attempted to render an image below 240p (width={res_x})"
-            )
+            raise ValueError(f"Attempted to render an image below 240p (width={res_x})")
         if res_y > cfg.max_res_y:
-            raise ValueError(
-                f"Attempted to render an image above 2160p/4k (height={res_y})"
-            )
+            raise ValueError(f"Attempted to render an image above 2160p/4k (height={res_y})")
         if res_y < cfg.min_res_y:
-            raise ValueError(
-                f"Attempted to render an image below 240p (height={res_y})"
-            )
+            raise ValueError(f"Attempted to render an image below 240p (height={res_y})")
         if num_samples < cfg.min_samples:
             raise ValueError("numSamples must be at least 1")
         if num_samples > cfg.max_samples:
@@ -189,20 +181,12 @@ class RenderService:
         else:
             # Create an empty MTL so _render.py can append to it
             temp_mtl_path.touch()
-            flogger.warning(
-                f"[{render_id}] Original MTL not found at {original_mtl} — "
-                "created empty temp MTL"
-            )
+            flogger.warning(f"[{render_id}] Original MTL not found at {original_mtl} — created empty temp MTL")
 
         # Write render_vars (6-line format expected by _render.py).
         resolution_str = f"{res_x}x{res_y}"
         render_vars_content = (
-            f"{resolution_str}\n"
-            f"{output_path}\n"
-            f"{temp_obj_path}\n"
-            f"{texture_path}\n"
-            f"{num_samples}\n"
-            f"{temp_mtl_path}\n"
+            f"{resolution_str}\n{output_path}\n{temp_obj_path}\n{texture_path}\n{num_samples}\n{temp_mtl_path}\n"
         )
         render_vars_path.write_text(render_vars_content)
         flogger.debug(f"[{render_id}] render_vars written to {render_vars_path}")
@@ -210,8 +194,10 @@ class RenderService:
         # Build the Blender command.
         cmd = [
             self._blender_path,
-            "-b", str(self._cube_blend),
-            "-P", str(self._render_script),
+            "-b",
+            str(self._cube_blend),
+            "-P",
+            str(self._render_script),
         ]
         flogger.info(f"[{render_id}] Invoking Blender: {' '.join(cmd)}")
 
@@ -233,31 +219,20 @@ class RenderService:
         if stderr:
             flogger.debug(f"[{render_id}] Blender stderr:\n{stderr.decode(errors='replace')}")
 
-        flogger.info(
-            f"[{render_id}] Blender exited with code {proc.returncode} "
-            f"in {elapsed:.1f}s"
-        )
+        flogger.info(f"[{render_id}] Blender exited with code {proc.returncode} in {elapsed:.1f}s")
 
         if proc.returncode != 0:
             flogger.error(
                 f"[{render_id}] Blender failed (rc={proc.returncode}). "
                 "Temp dir preserved for debugging: " + str(temp_dir)
             )
-            raise RenderError(
-                f"Blender exited with non-zero return code {proc.returncode}. "
-                f"See logs for details."
-            )
+            raise RenderError(f"Blender exited with non-zero return code {proc.returncode}. See logs for details.")
 
         # Verify the output file was produced.
         output_file = Path(output_path)
         if not output_file.exists():
-            flogger.error(
-                f"[{render_id}] Output file not found at {output_path}. "
-                "Temp dir preserved: " + str(temp_dir)
-            )
-            raise RenderError(
-                f"Blender completed but output file was not produced: {output_path}"
-            )
+            flogger.error(f"[{render_id}] Output file not found at {output_path}. Temp dir preserved: " + str(temp_dir))
+            raise RenderError(f"Blender completed but output file was not produced: {output_path}")
 
         # Load, trim, and save the result.
         flogger.info(f"[{render_id}] Trimming rendered image: {output_path}")
@@ -265,10 +240,7 @@ class RenderService:
             trimmed_img = self.trim(rendered_img)
             original_size = rendered_img.size
         trimmed_img.save(output_path)
-        flogger.info(
-            f"[{render_id}] Trimmed image saved: "
-            f"{original_size} → {trimmed_img.size}"
-        )
+        flogger.info(f"[{render_id}] Trimmed image saved: {original_size} → {trimmed_img.size}")
 
         # Clean up temp directory on success.
         shutil.rmtree(temp_dir, ignore_errors=True)

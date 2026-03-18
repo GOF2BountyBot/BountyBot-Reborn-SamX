@@ -85,8 +85,10 @@ class SystemGraphService:
         self._jump_gate_systems = jump_gates
 
         self._loaded = True
-        flogger.info(f"System graph loaded: {len(self._graph)} systems, {edge_count} edges, "
-                     f"{len(self._jump_gate_systems)} jump-gate systems")
+        flogger.info(
+            f"System graph loaded: {len(self._graph)} systems, {edge_count} edges, "
+            f"{len(self._jump_gate_systems)} jump-gate systems"
+        )
 
     def get_system(self, name: str) -> SystemNode | None:
         """Get a system by name. Returns None if not found."""

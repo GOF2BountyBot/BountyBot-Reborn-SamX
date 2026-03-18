@@ -9,6 +9,7 @@ from persist.repositories.generic_repository import GenericRepository
 
 flogger = bblogger.get_logger("bot-module-repository")
 
+
 class ModuleRepository(GenericRepository[Module]):
     def __init__(self):
         flogger.trace("Initializing ModuleRepository")
@@ -18,9 +19,7 @@ class ModuleRepository(GenericRepository[Module]):
     async def get_by_name(self, db: AsyncSession, name: str) -> Module | None:
         flogger.trace(f"Querying module by name: {name}")
         try:
-            result = await db.execute(
-                select(self._model).filter_by(name=name)
-            )
+            result = await db.execute(select(self._model).filter_by(name=name))
             module = result.scalars().one_or_none()
             if module:
                 flogger.trace(f"Found module by name {name}: id={module.id}")
@@ -43,29 +42,26 @@ class ModuleRepository(GenericRepository[Module]):
         """
         module_name = raw.get("name", "unknown")
         flogger.trace(f"Creating or updating module: {module_name}")
-        flogger.debug(f"Module data: name={module_name}, tech_level={raw.get('techLevel')}, "
-                      f"max_equipped={raw.get('maxEquipped')}")
+        flogger.debug(
+            f"Module data: name={module_name}, tech_level={raw.get('techLevel')}, max_equipped={raw.get('maxEquipped')}"
+        )
 
         try:
             item_fields = {
-                "name":     raw["name"],
-                "aliases":  raw.get("aliases", []),
+                "name": raw["name"],
+                "aliases": raw.get("aliases", []),
                 "built_in": raw.get("builtIn", False),
-                "emoji":    raw.get("emoji"),
-                "icon":     raw.get("icon"),
-                "value":    raw.get("value"),
-                "wiki":     raw.get("wiki"),
-                "type":     raw.get("type"),
+                "emoji": raw.get("emoji"),
+                "icon": raw.get("icon"),
+                "value": raw.get("value"),
+                "wiki": raw.get("wiki"),
+                "type": raw.get("type"),
             }
             module_fields = {
                 "tech_level": raw.get("techLevel"),
                 "max_equipped": raw.get("maxEquipped"),
             }
-            extra = {
-                 k: v
-                 for k, v in raw.items()
-                 if k not in (*item_fields, "techLevel", "maxEquipped")
-            }
+            extra = {k: v for k, v in raw.items() if k not in (*item_fields, "techLevel", "maxEquipped")}
 
             obj = await self.get_by_name(db, item_fields["name"])
             if obj:
@@ -89,8 +85,10 @@ class ModuleRepository(GenericRepository[Module]):
             await db.commit()
             await db.refresh(obj)
             flogger.debug(f"Module {action} successfully: id={obj.id}, name={obj.name}")
-            flogger.trace(f"Module {action}: id={obj.id}, name={obj.name}, "
-                          f"tech_level={obj.tech_level}, max_equipped={obj.max_equipped}")
+            flogger.trace(
+                f"Module {action}: id={obj.id}, name={obj.name}, "
+                f"tech_level={obj.tech_level}, max_equipped={obj.max_equipped}"
+            )
             return obj
         except Exception as e:
             flogger.error(f"Error creating or updating module {module_name}: {e}")

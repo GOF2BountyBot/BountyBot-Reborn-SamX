@@ -30,6 +30,7 @@ class PlayerResponse(BaseModel):
     created_at: str
     updated_at: str
 
+
 class PlayerStatisticsResponse(BaseModel):
     player_id: int
     tier: str
@@ -44,22 +45,25 @@ class PlayerStatisticsResponse(BaseModel):
     created_at: str
     updated_at: str
 
+
 class CreatePlayerRequest(BaseModel):
     discord_id: int
     guild_id: int
     discord_username: str | None = None
 
+
 class UpdateCreditsRequest(BaseModel):
     credits: int = Field(ge=0, description="Credits must be non-negative")
     update_lifetime: bool = Field(default=True, description="Whether to update lifetime credits")
 
+
 class UpdateXPRequest(BaseModel):
     xp: int = Field(ge=0, le=1000000, description="XP must be between 0 and 1,000,000")
 
+
 class UpdateTierRequest(BaseModel):
     tier: str = Field(
-        pattern="^(Bronze|Silver|Gold|Platinum)$",
-        description="Must be Bronze, Silver, Gold, or Platinum"
+        pattern="^(Bronze|Silver|Gold|Platinum)$", description="Must be Bronze, Silver, Gold, or Platinum"
     )
 
 
@@ -79,6 +83,7 @@ class TransferCreditsResponse(BaseModel):
 
 class PrestigeResponse(BaseModel):
     """Response returned after a successful prestige operation."""
+
     player_id: int
     prestige_count: int
     level_before: int

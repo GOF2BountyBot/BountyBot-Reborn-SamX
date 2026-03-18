@@ -39,22 +39,27 @@ router = APIRouter(
     responses={
         403: {"description": "Insufficient permissions"},
         404: {"description": "Resource not found"},
-        500: {"description": "Internal server error"}
-    }
+        500: {"description": "Internal server error"},
+    },
 )
+
 
 # Dependency injection
 async def get_player_service():
     return PlayerService()
 
+
 async def get_shop_service():
     return ShopService()
+
 
 async def get_config_service():
     return ConfigService()
 
+
 async def get_inventory_service():
     return InventoryService()
+
 
 async def verify_admin_permissions(guild_id: int, user_id: int) -> bool:
     """
@@ -69,24 +74,22 @@ async def verify_admin_permissions(guild_id: int, user_id: int) -> bool:
     admin_ids_raw = os.environ.get("ADMIN_USER_IDS", "").strip()
     if not admin_ids_raw:
         flogger.warning(
-            f"ADMIN_USER_IDS not configured - allowing access for user {user_id} "
-            f"in guild {guild_id} (dev mode)"
+            f"ADMIN_USER_IDS not configured - allowing access for user {user_id} in guild {guild_id} (dev mode)"
         )
         return True
     admin_ids = {int(uid.strip()) for uid in admin_ids_raw.split(",") if uid.strip()}
     if user_id in admin_ids:
         return True
-    flogger.warning(
-        f"Permission denied: user {user_id} is not in ADMIN_USER_IDS for guild {guild_id}"
-    )
+    flogger.warning(f"Permission denied: user {user_id} is not in ADMIN_USER_IDS for guild {guild_id}")
     return False
+
 
 @router.post("/guilds/initialize", response_model=GuildInitializationResponse)
 async def initialize_guild(
     request: InitializeGuildRequest,
     user_id: int,
     config_service: ConfigService = Depends(get_config_service),
-    shop_service: ShopService = Depends(get_shop_service)
+    shop_service: ShopService = Depends(get_shop_service),
 ):
     """
     Initialize a guild with default configuration and empty shops.
@@ -109,7 +112,7 @@ async def initialize_guild(
             config_data = {
                 "guild_id": request.guild_id,
                 "admin_role_id": request.admin_role_id,
-                "starting_credits": request.starting_credits
+                "starting_credits": request.starting_credits,
             }
 
             await config_service.create_or_update_config(db, config_data)
@@ -139,15 +142,15 @@ async def initialize_guild(
                 admin_role_id=request.admin_role_id,
                 shops_created=shops_created,
                 config_created=True,
-                message=f"Guild {request.guild_id} initialized successfully with {shops_created} shops"
+                message=f"Guild {request.guild_id} initialized successfully with {shops_created} shops",
             )
 
     except Exception as e:
         flogger.error(f"Error initializing guild {request.guild_id}: {e}")
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to initialize guild"
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to initialize guild"
         ) from e
+
 
 @router.post("/guilds/{guild_id}/reset")
 async def reset_guild(
@@ -155,7 +158,7 @@ async def reset_guild(
     user_id: int,
     preserve_players: bool = True,
     config_service: ConfigService = Depends(get_config_service),
-    shop_service: ShopService = Depends(get_shop_service)
+    shop_service: ShopService = Depends(get_shop_service),
 ):
     """
     Reset guild configuration to defaults.
@@ -198,22 +201,16 @@ async def reset_guild(
                 "guild_id": guild_id,
                 "players_preserved": preserve_players,
                 "shops_refreshed": shops_refreshed,
-                "message": f"Guild {guild_id} reset successfully"
+                "message": f"Guild {guild_id} reset successfully",
             }
 
     except Exception as e:
         flogger.error(f"Error resetting guild {guild_id}: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to reset guild"
-        ) from e
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to reset guild") from e
+
 
 @router.delete("/guilds/{guild_id}/uninstall")
-async def uninstall_bot(
-    guild_id: int,
-    user_id: int,
-    config_service: ConfigService = Depends(get_config_service)
-):
+async def uninstall_bot(guild_id: int, user_id: int, config_service: ConfigService = Depends(get_config_service)):
     """
     Completely remove all bot data for a guild.
 
@@ -246,22 +243,20 @@ async def uninstall_bot(
                 "guild_id": guild_id,
                 "removed_counts": removed_counts,
                 "message": f"Bot completely uninstalled from guild {guild_id}",
-                "warning": "All data has been permanently deleted"
+                "warning": "All data has been permanently deleted",
             }
 
     except Exception as e:
         flogger.error(f"Error uninstalling bot from guild {guild_id}: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to uninstall bot"
-        ) from e
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to uninstall bot") from e
+
 
 @router.put("/players/credits")
 async def update_player_credits(
     request: UpdatePlayerCreditsRequest,
     user_id: int,
     guild_id: int,
-    player_service: PlayerService = Depends(get_player_service)
+    player_service: PlayerService = Depends(get_player_service),
 ):
     """Update a player's credits. Requires admin permissions."""
     if not await verify_admin_permissions(guild_id, user_id):
@@ -290,27 +285,22 @@ async def update_player_credits(
                 "old_credits": player.credits - request.credits,
                 "new_credits": request.credits,
                 "lifetime_credits": player.lifetime_credits,
-                "message": f"Credits updated for player {request.player_id}"
+                "message": f"Credits updated for player {request.player_id}",
             }
 
     except ValueError as e:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=str(e)
-        ) from e
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e)) from e
     except Exception as e:
         flogger.error(f"Error updating credits for player {request.player_id}: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to update credits"
-        ) from e
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to update credits") from e
+
 
 @router.put("/players/xp")
 async def update_player_xp(
     request: UpdatePlayerXPRequest,
     user_id: int,
     guild_id: int,
-    player_service: PlayerService = Depends(get_player_service)
+    player_service: PlayerService = Depends(get_player_service),
 ):
     """Update a player's XP and check for tier advancement. Requires admin permissions."""
     if not await verify_admin_permissions(guild_id, user_id):
@@ -344,27 +334,19 @@ async def update_player_xp(
                 "old_tier": old_tier,
                 "new_tier": player.tier,
                 "tier_changed": old_tier != player.tier,
-                "message": f"XP updated for player {request.player_id}"
+                "message": f"XP updated for player {request.player_id}",
             }
 
     except ValueError as e:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=str(e)
-        ) from e
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e)) from e
     except Exception as e:
         flogger.error(f"Error updating XP for player {request.player_id}: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to update XP"
-        ) from e
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to update XP") from e
+
 
 @router.post("/players/{player_id}/reset")
 async def reset_player(
-    player_id: int,
-    user_id: int,
-    guild_id: int,
-    player_service: PlayerService = Depends(get_player_service)
+    player_id: int, user_id: int, guild_id: int, player_service: PlayerService = Depends(get_player_service)
 ):
     """Reset a player's stats back to defaults. Requires admin permissions."""
     if not await verify_admin_permissions(guild_id, user_id):
@@ -414,24 +396,22 @@ async def reset_player(
                 "duel_wins": player.duel_wins,
                 "duel_losses": player.duel_losses,
                 "prestige_count": player.prestige_count,
-                "message": f"Player {player_id} stats reset to defaults"
+                "message": f"Player {player_id} stats reset to defaults",
             }
 
     except HTTPException:
         raise
     except Exception as e:
         flogger.error(f"Error resetting player {player_id}: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to reset player"
-        ) from e
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to reset player") from e
+
 
 @router.post("/players/inventory/add")
 async def add_inventory_item(
     request: AddInventoryItemRequest,
     user_id: int,
     guild_id: int,
-    inventory_service: InventoryService = Depends(get_inventory_service)
+    inventory_service: InventoryService = Depends(get_inventory_service),
 ):
     """Add items to a player's inventory. Requires admin permissions."""
     if not await verify_admin_permissions(guild_id, user_id):
@@ -465,31 +445,23 @@ async def add_inventory_item(
 
             return {
                 **transaction_details,
-                "message": (
-                    f"Added {request.quantity}x {request.item_name} "
-                    f"to player {request.player_id} inventory"
-                ),
+                "message": (f"Added {request.quantity}x {request.item_name} to player {request.player_id} inventory"),
             }
 
     except ValueError as e:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=str(e)
-        ) from e
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e)) from e
     except HTTPException:
         raise
     except Exception as e:
         flogger.error(f"Error adding inventory item: {e}")
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to add inventory item"
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to add inventory item"
         ) from e
+
 
 @router.post("/shops/refresh")
 async def refresh_shop(
-    request: RefreshShopRequest,
-    user_id: int,
-    shop_service: ShopService = Depends(get_shop_service)
+    request: RefreshShopRequest, user_id: int, shop_service: ShopService = Depends(get_shop_service)
 ):
     """Force refresh a shop's inventory. Requires admin permissions."""
     if not await verify_admin_permissions(request.guild_id, user_id):
@@ -515,26 +487,19 @@ async def refresh_shop(
 
             return {
                 **refresh_details,
-                "message": f"Successfully refreshed {request.tier} shop for guild {request.guild_id}"
+                "message": f"Successfully refreshed {request.tier} shop for guild {request.guild_id}",
             }
 
     except ValueError as e:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(e)
-        ) from e
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
     except Exception as e:
         flogger.error(f"Error refreshing shop: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to refresh shop"
-        ) from e
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to refresh shop") from e
+
 
 @router.put("/shops/config")
 async def update_shop_config(
-    request: UpdateShopConfigRequest,
-    user_id: int,
-    config_service: ConfigService = Depends(get_config_service)
+    request: UpdateShopConfigRequest, user_id: int, config_service: ConfigService = Depends(get_config_service)
 ):
     """Update shop configuration parameters. Requires admin permissions."""
     if not await verify_admin_permissions(request.guild_id, user_id):
@@ -559,15 +524,15 @@ async def update_shop_config(
             return {
                 "guild_id": request.guild_id,
                 "updated_config": config,
-                "message": f"Shop configuration updated for guild {request.guild_id}"
+                "message": f"Shop configuration updated for guild {request.guild_id}",
             }
 
     except Exception as e:
         flogger.error(f"Error updating shop config: {e}")
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to update shop configuration"
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to update shop configuration"
         ) from e
+
 
 @router.get("/system/health", response_model=SystemHealthResponse)
 async def get_system_health(
@@ -595,7 +560,7 @@ async def get_system_health(
                 "total_players": total_players,
                 "total_guilds": total_guilds,
                 "shop_items_count": shop_items_count,
-                "system_status": "operational"
+                "system_status": "operational",
             }
 
             return SystemHealthResponse(**health_info)
@@ -603,15 +568,13 @@ async def get_system_health(
     except Exception as e:
         flogger.error(f"Error getting system health: {e}")
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to get system health"
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to get system health"
         ) from e
+
 
 @router.get("/guilds/{guild_id}/stats")
 async def get_guild_statistics(
-    guild_id: int,
-    user_id: int,
-    player_service: PlayerService = Depends(get_player_service)
+    guild_id: int, user_id: int, player_service: PlayerService = Depends(get_player_service)
 ):
     """Get comprehensive statistics for a guild. Requires admin permissions."""
     if not await verify_admin_permissions(guild_id, user_id):
@@ -641,7 +604,7 @@ async def get_guild_statistics(
                 "total_credits": total_credits,
                 "total_xp": total_xp,
                 "average_credits": total_credits / total_players if total_players > 0 else 0,
-                "average_xp": total_xp / total_players if total_players > 0 else 0
+                "average_xp": total_xp / total_players if total_players > 0 else 0,
             }
 
             return stats
@@ -649,6 +612,5 @@ async def get_guild_statistics(
     except Exception as e:
         flogger.error(f"Error getting guild statistics: {e}")
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to get guild statistics"
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to get guild statistics"
         ) from e

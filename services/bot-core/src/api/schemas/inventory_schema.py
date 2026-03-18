@@ -12,6 +12,7 @@ class InventoryItemResponse(BaseModel):
     acquired_at: str
     item_details: dict[str, Any]
 
+
 class InventorySummaryResponse(BaseModel):
     player_id: int
     player_tier: str
@@ -22,11 +23,13 @@ class InventorySummaryResponse(BaseModel):
     turret: int
     total_items: int
 
+
 class AddItemRequest(BaseModel):
     player_id: int
     item_type: str = Field(pattern="^(ship|weapon|module|turret)$")
     item_name: str
     quantity: int = Field(gt=0, default=1)
+
 
 class RemoveItemRequest(BaseModel):
     player_id: int
@@ -34,12 +37,14 @@ class RemoveItemRequest(BaseModel):
     item_name: str
     quantity: int = Field(gt=0, default=1)
 
+
 class TransferItemRequest(BaseModel):
     from_player_id: int
     to_player_id: int
     item_type: str = Field(pattern="^(ship|weapon|module|turret)$")
     item_name: str
     quantity: int = Field(gt=0, default=1)
+
 
 class ItemTransactionResponse(BaseModel):
     player_id: int

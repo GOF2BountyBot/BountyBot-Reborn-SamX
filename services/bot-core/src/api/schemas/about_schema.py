@@ -17,20 +17,26 @@ class ItemResponse(BaseModel):
     tech_level: int | None = None
     extra_atts: dict[str, Any] | None = None
 
+
 class ModuleResponse(ItemResponse):
     max_equipped: int | None = None
+
 
 class WeaponResponse(ItemResponse):
     pass
 
+
 class PrimaryWeaponResponse(WeaponResponse):
     dps: float | None = None
+
 
 class SecondaryWeaponResponse(WeaponResponse):
     pass
 
+
 class TurretWeaponResponse(WeaponResponse):
     pass
+
 
 class ShipResponse(ItemResponse):
     armour: int | None = None
@@ -49,10 +55,12 @@ class ShipResponse(ItemResponse):
     assets: list[str] | None = None
     save_due: bool | None = None
 
+
 class CriminalResponse(ItemResponse):
     is_player: bool
-    faction: str                   # ← add faction
+    faction: str  # ← add faction
+
 
 class SystemResponse(ItemResponse):
-    coordinates: list[float]       # ← e.g. [x, y, z]
-    faction: str                   # ← add faction
+    coordinates: list[float]  # ← e.g. [x, y, z]
+    faction: str  # ← add faction

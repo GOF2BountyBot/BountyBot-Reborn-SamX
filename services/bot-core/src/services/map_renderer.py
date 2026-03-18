@@ -35,9 +35,9 @@ _DEFAULT_MAP_PATH = os.path.join(
 )
 
 # Drawing colours (RGB tuples)
-_COLOUR_LINE = (255, 0, 0)        # bright red
-_COLOUR_START = (0, 255, 0)       # green
-_COLOUR_END = (255, 0, 0)         # red
+_COLOUR_LINE = (255, 0, 0)  # bright red
+_COLOUR_START = (0, 255, 0)  # green
+_COLOUR_END = (255, 0, 0)  # red
 _COLOUR_WAYPOINT = (255, 255, 0)  # yellow
 
 # Drawing dimensions
@@ -204,7 +204,6 @@ class MapRenderer:
             if node is not None:
                 system_coords[system_name] = node.coordinates
         flogger.info(
-            f"render_route_for_bounty: route={len(route)} systems, "
-            f"{len(system_coords)} coords resolved from graph"
+            f"render_route_for_bounty: route={len(route)} systems, {len(system_coords)} coords resolved from graph"
         )
         return self.render_route(route, system_coords)

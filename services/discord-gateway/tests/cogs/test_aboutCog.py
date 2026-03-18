@@ -1343,12 +1343,14 @@ class TestMakeRouteCommand:
             mock_about_cog, interaction, "Sol", "Alpha"
         ))
 
-        mock_about_cog.http_client.get.assert_awaited_once()
-        call_args = mock_about_cog.http_client.get.call_args
-        assert "systems/route" in call_args[0][0]
+        # make_route makes 2 GET calls: /systems/route (first) and /systems/route/map (second).
+        # Verify the first call is the route endpoint with the correct start/end params.
+        assert mock_about_cog.http_client.get.await_count >= 1
+        first_call = mock_about_cog.http_client.get.call_args_list[0]
+        assert "systems/route" in first_call[0][0]
         # Verify start and end were passed as params
-        assert call_args[1].get("params", {}).get("start") == "Sol"
-        assert call_args[1].get("params", {}).get("end") == "Alpha"
+        assert first_call[1].get("params", {}).get("start") == "Sol"
+        assert first_call[1].get("params", {}).get("end") == "Alpha"
 
 
 # ---------------------------------------------------------------------------

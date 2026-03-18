@@ -29,6 +29,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 flogger = bblogger.get_logger("shop-service")
 
+
 class ShopService:
     def __init__(self):
         self.shop_repo = ShopRepository()
@@ -92,11 +93,7 @@ class ShopService:
         self._price_cache = None
 
     async def get_shop_items(
-        self,
-        db: AsyncSession,
-        guild_id: int,
-        tier: str,
-        item_type: str | None = None
+        self, db: AsyncSession, guild_id: int, tier: str, item_type: str | None = None
     ) -> list[GuildShop]:
         """
         Get shop items for a specific guild tier.
@@ -123,11 +120,7 @@ class ShopService:
             raise
 
     async def purchase_item(
-        self,
-        db: AsyncSession,
-        player_id: int,
-        shop_item_id: int,
-        quantity: int = 1
+        self, db: AsyncSession, player_id: int, shop_item_id: int, quantity: int = 1
     ) -> dict[str, Any]:
         """
         Purchase an item from the shop.
@@ -170,14 +163,10 @@ class ShopService:
                     raise ValueError(f"Insufficient credits. Cost: {total_cost}, Available: {player.credits}")
 
                 # Deduct credits from player
-                await self.player_repo.update_credits(
-                    db, player_id, player.credits - total_cost, commit=False
-                )
+                await self.player_repo.update_credits(db, player_id, player.credits - total_cost, commit=False)
 
                 # Add item to player inventory
-                await self.inventory_repo.add_item(
-                    db, player_id, shop_item.item_type, shop_item.item_name, quantity
-                )
+                await self.inventory_repo.add_item(db, player_id, shop_item.item_type, shop_item.item_name, quantity)
 
                 # Remove item from shop
                 new_shop_quantity = shop_item.quantity - quantity
@@ -196,7 +185,7 @@ class ShopService:
                 "unit_price": shop_item.price,
                 "total_cost": total_cost,
                 "remaining_credits": player.credits - total_cost,
-                "remaining_shop_quantity": new_shop_quantity
+                "remaining_shop_quantity": new_shop_quantity,
             }
 
             flogger.info(f"Player {player_id} purchased {quantity}x {shop_item.item_name} for {total_cost} credits")
@@ -236,9 +225,7 @@ class ShopService:
 
             # Validate item is a ship
             if shop_item.item_type != "ship":
-                raise ValueError(
-                    f"Shop item {shop_item_id} is not a ship (type={shop_item.item_type})"
-                )
+                raise ValueError(f"Shop item {shop_item_id} is not a ship (type={shop_item.item_type})")
 
             # Get static ship data for the new ship (slot limits)
             new_ship_static = await self.ship_repo.get_by_name(db, shop_item.item_name)
@@ -276,10 +263,7 @@ class ShopService:
                         )
                 else:
                     if player.credits < new_ship_price:
-                        raise ValueError(
-                            f"Insufficient credits. Cost: {new_ship_price}, "
-                            f"Available: {player.credits}"
-                        )
+                        raise ValueError(f"Insufficient credits. Cost: {new_ship_price}, Available: {player.credits}")
 
                 # a. Create new PlayerShip record for the player (inactive for now)
                 new_player_ship = PlayerShip(
@@ -319,9 +303,7 @@ class ShopService:
                     }
 
                     for equip_type in ("weapons", "modules", "turrets"):
-                        old_items: list[str] = list(
-                            getattr(old_player_ship, equip_type) or []
-                        )
+                        old_items: list[str] = list(getattr(old_player_ship, equip_type) or [])
                         max_slots = slot_limits[equip_type]
                         inv_type = inventory_type_map[equip_type]
 
@@ -334,9 +316,7 @@ class ShopService:
 
                         # Unequip overflow items to inventory
                         for item_name in overflow:
-                            await self.inventory_repo.add_item(
-                                db, player_id, inv_type, item_name, 1
-                            )
+                            await self.inventory_repo.add_item(db, player_id, inv_type, item_name, 1)
 
                     # Apply transferred loadout to new ship
                     new_player_ship.weapons = items_transferred["weapons"]
@@ -361,11 +341,8 @@ class ShopService:
 
                 # d. Set new ship as active (deactivate all others first)
                 from sqlalchemy import update as sa_update
-                await db.execute(
-                    sa_update(PlayerShip)
-                    .where(PlayerShip.player_id == player_id)
-                    .values(is_active=False)
-                )
+
+                await db.execute(sa_update(PlayerShip).where(PlayerShip.player_id == player_id).values(is_active=False))
                 new_player_ship.is_active = True
 
                 # e. Calculate and set final credit balance in a single update
@@ -417,7 +394,7 @@ class ShopService:
         item_type: str,
         item_name: str,
         quantity: int = 1,
-        target_tier: str = "Bronze"
+        target_tier: str = "Bronze",
     ) -> dict[str, Any]:
         """
         Sell an item back to the shop.
@@ -438,9 +415,7 @@ class ShopService:
                 raise ValueError(f"Invalid target tier: {target_tier}")
 
             # Check if player has the item
-            inventory_item = await self.inventory_repo.get_player_item(
-                db, player_id, item_type, item_name
-            )
+            inventory_item = await self.inventory_repo.get_player_item(db, player_id, item_type, item_name)
             if not inventory_item or inventory_item.quantity < quantity:
                 available = inventory_item.quantity if inventory_item else 0
                 raise ValueError(f"Insufficient item quantity. Available: {available}, Requested: {quantity}")
@@ -461,14 +436,12 @@ class ShopService:
                 await self.inventory_repo.remove_item(db, player_id, item_type, item_name, quantity)
 
                 # Add credits to player
-                await self.player_repo.update_credits(
-                    db, player_id, player.credits + total_sell_value, commit=False
-                )
+                await self.player_repo.update_credits(db, player_id, player.credits + total_sell_value, commit=False)
 
                 # Add item to target shop
                 await self._add_item_to_shop(
-                    db, player.guild_id, target_tier, item_type,
-                    item_name, quantity, base_price)
+                    db, player.guild_id, target_tier, item_type, item_name, quantity, base_price
+                )
 
             transaction_details = {
                 "player_id": player_id,
@@ -478,7 +451,7 @@ class ShopService:
                 "unit_sell_price": unit_sell_price,
                 "total_sell_value": total_sell_value,
                 "new_credits": player.credits + total_sell_value,
-                "target_shop_tier": target_tier
+                "target_shop_tier": target_tier,
             }
 
             flogger.info(f"Player {player_id} sold {quantity}x {item_name} for {total_sell_value} credits")
@@ -557,15 +530,11 @@ class ShopService:
                         equipped: list[str] = list(getattr(player_ship, equip_type) or [])
                         inv_type = inventory_type_map[equip_type]
                         for item_name in equipped:
-                            await self.inventory_repo.add_item(
-                                db, player_id, inv_type, item_name, 1
-                            )
+                            await self.inventory_repo.add_item(db, player_id, inv_type, item_name, 1)
                             items_unequipped[equip_type].append(item_name)
 
                 # Credit player with ship's full value (no tax)
-                await self.player_repo.update_credits(
-                    db, player_id, player.credits + ship_value, commit=False
-                )
+                await self.player_repo.update_credits(db, player_id, player.credits + ship_value, commit=False)
 
                 # Remove the PlayerShip from database
                 await db.delete(player_ship)
@@ -598,8 +567,7 @@ class ShopService:
 
             flogger.info(
                 f"Player {player_id} sold ship '{player_ship.ship_name}' (id={ship_id}) "
-                f"for {ship_value} credits"
-                + (f", unequipped {total_unequipped} items" if total_unequipped else "")
+                f"for {ship_value} credits" + (f", unequipped {total_unequipped} items" if total_unequipped else "")
             )
             return transaction_details
 
@@ -608,11 +576,7 @@ class ShopService:
             raise
 
     async def refresh_shop(
-        self,
-        db: AsyncSession,
-        guild_id: int,
-        tier: str,
-        force_tech_level: int | None = None
+        self, db: AsyncSession, guild_id: int, tier: str, force_tech_level: int | None = None
     ) -> dict[str, Any]:
         """
         Refresh a shop's inventory based on guild configuration.
@@ -669,7 +633,7 @@ class ShopService:
                         "item_name": item_name,
                         "quantity": item_quantity,
                         "price": base_price,
-                        "last_restocked": datetime.now(UTC)
+                        "last_restocked": datetime.now(UTC),
                     }
 
                     shop_item = await self.shop_repo.create_or_update(db, shop_item_data)
@@ -680,7 +644,7 @@ class ShopService:
                 "tier": tier,
                 "tech_level": shop_tech_level,
                 "items_generated": len(generated_items),
-                "refresh_time": datetime.now(UTC).isoformat()
+                "refresh_time": datetime.now(UTC).isoformat(),
             }
 
             flogger.info(f"Refreshed {tier} shop for guild {guild_id}: {len(generated_items)} items generated")
@@ -733,9 +697,7 @@ class ShopService:
             return max(1, shop_tech_level - 1)
         return max(1, shop_tech_level - 2)
 
-    async def _get_random_item_by_tech_level(
-        self, db: AsyncSession, item_type: str, tech_level: int
-    ) -> str | None:
+    async def _get_random_item_by_tech_level(self, db: AsyncSession, item_type: str, tech_level: int) -> str | None:
         """Get a random item name by type and tech level.
 
         Uses the in-memory static cache if available (populated by
@@ -744,16 +706,11 @@ class ShopService:
         """
         if item_type == "ship":
             all_ships = (
-                self._static_cache["ship"]
-                if self._static_cache is not None
-                else await self.ship_repo.list_all(db)
+                self._static_cache["ship"] if self._static_cache is not None else await self.ship_repo.list_all(db)
             )
             if not all_ships:
                 return None
-            weights = [
-                (s.shop_spawn_rate if s.shop_spawn_rate is not None else 1.0)
-                for s in all_ships
-            ]
+            weights = [(s.shop_spawn_rate if s.shop_spawn_rate is not None else 1.0) for s in all_ships]
             chosen = random.choices(all_ships, weights=weights, k=1)[0]
             return chosen.name
 
@@ -768,9 +725,7 @@ class ShopService:
 
         if item_type == "module":
             all_modules = (
-                self._static_cache["module"]
-                if self._static_cache is not None
-                else await self.module_repo.list_all(db)
+                self._static_cache["module"] if self._static_cache is not None else await self.module_repo.list_all(db)
             )
             items = [m for m in all_modules if m.tech_level == tech_level]
             return random.choice(items).name if items else None
@@ -811,14 +766,7 @@ class ShopService:
         return 0
 
     async def _add_item_to_shop(
-        self,
-        db: AsyncSession,
-        guild_id: int,
-        tier: str,
-        item_type: str,
-        item_name: str,
-        quantity: int,
-        base_price: int
+        self, db: AsyncSession, guild_id: int, tier: str, item_type: str, item_name: str, quantity: int, base_price: int
     ) -> None:
         """Add an item to a shop (used when players sell items)."""
         try:
@@ -839,7 +787,7 @@ class ShopService:
                     "item_name": item_name,
                     "quantity": quantity,
                     "price": base_price,
-                    "last_restocked": datetime.now(UTC)
+                    "last_restocked": datetime.now(UTC),
                 }
                 await self.shop_repo.create_or_update(db, shop_item_data)
 

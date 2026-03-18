@@ -14,6 +14,7 @@ from utils.executors.time_announcement_executor import execute_time_announcement
 
 flogger = get_logger("bot-job-executor")
 
+
 class JobExecutor:
     """
     Handles the actual work of running a scheduled job.
@@ -77,11 +78,7 @@ class JobExecutor:
             flogger.info(f"[{end_ts.isoformat()}] Completed job '{job_id}' in {duration:.2f}s")
 
         except Exception as e:  # pylint: disable=broad-exception-caught
-            flogger.error(
-                f"[{datetime.now(UTC).isoformat()}] "
-                f"Job '{job_id}' failed: {e}",
-                exc_info=True
-            )
+            flogger.error(f"[{datetime.now(UTC).isoformat()}] Job '{job_id}' failed: {e}", exc_info=True)
             flogger.trace(traceback.format_exc())
 
 

@@ -90,9 +90,7 @@ class BountyService:
     # Criminal Selection
     # ------------------------------------------------------------------
 
-    async def select_criminal(
-        self, db: AsyncSession, guild_id: int, division: str
-    ) -> Criminal | None:
+    async def select_criminal(self, db: AsyncSession, guild_id: int, division: str) -> Criminal | None:
         """Select a random criminal not already active in this division.
 
         Loads all non-player criminals, filters out those already active
@@ -112,18 +110,14 @@ class BountyService:
         available = [c for c in all_criminals if not c.is_player]
 
         # Get active bounties for this guild+division
-        active_bounties = await self.bounty_repo.get_active_by_guild_and_division(
-            db, guild_id, division
-        )
+        active_bounties = await self.bounty_repo.get_active_by_guild_and_division(db, guild_id, division)
         active_names = {b.criminal_name for b in active_bounties}
 
         # Filter out criminals already active in this division
         available = [c for c in available if c.name not in active_names]
 
         if not available:
-            flogger.info(
-                f"No available criminals for guild {guild_id} division {division}"
-            )
+            flogger.info(f"No available criminals for guild {guild_id} division {division}")
             return None
 
         # Pick a random faction, then a random criminal from that faction
@@ -182,9 +176,7 @@ class BountyService:
             tl = center + 1
             max_search = min(max_tl, center + upper_bound)
             while tl <= max_search:
-                items = await self.item_repo.get_all_by_tech_level(
-                    db, tl, item_type=item_type
-                )
+                items = await self.item_repo.get_all_by_tech_level(db, tl, item_type=item_type)
                 if items:
                     return tl
                 tl += 1
@@ -285,9 +277,7 @@ class BountyService:
 
             result = await db.execute(select(Ship))
             all_ships = list(result.scalars().all())
-            matching_ships = [
-                s for s in all_ships if ship_tech_level_for_value(s.value) == ship_tl
-            ]
+            matching_ships = [s for s in all_ships if ship_tech_level_for_value(s.value) == ship_tl]
             if matching_ships:
                 ship = random.choice(matching_ships)
 
@@ -329,18 +319,14 @@ class BountyService:
                 item_type="primary_weapon",
             )
             if weapon_tl != -1:
-                all_weapons = await self.item_repo.get_all_by_tech_level(
-                    db, weapon_tl, item_type="primary_weapon"
-                )
+                all_weapons = await self.item_repo.get_all_by_tech_level(db, weapon_tl, item_type="primary_weapon")
                 damaging = [w for w in all_weapons if w.dps > 0]
                 non_damaging = [w for w in all_weapons if w.dps <= 0]
 
                 for _ in range(ship.max_primaries):
                     # 20% chance to pick a non-damaging weapon (if available)
                     pick_non_damaging = (
-                        non_damaging
-                        and random.randint(1, 100)
-                        <= GameConstants.CRIMINAL_EQUIP_DAMAGELESS_WEAPON_CHANCE
+                        non_damaging and random.randint(1, 100) <= GameConstants.CRIMINAL_EQUIP_DAMAGELESS_WEAPON_CHANCE
                     )
                     pool = non_damaging if pick_non_damaging else (damaging or all_weapons)
                     if pool:
@@ -352,9 +338,7 @@ class BountyService:
         equipped_modules = []
         if ship.max_modules > 0:
             # Resolve all modules at item_tl for generic slots
-            generic_modules = await self.item_repo.get_all_by_tech_level(
-                db, item_tl, item_type="module"
-            )
+            generic_modules = await self.item_repo.get_all_by_tech_level(db, item_tl, item_type="module")
 
             # Slot 1: armour module guaranteed at TL > 1
             if tech_level > 1 and len(equipped_modules) < ship.max_modules:
@@ -385,14 +369,8 @@ class BountyService:
             "ship_max_primaries": ship.max_primaries,
             "ship_max_modules": ship.max_modules,
             "ship_max_turrets": ship.max_turrets,
-            "weapons": [
-                {"name": w.name, "value": w.value, "dps": w.dps}
-                for w in equipped_weapons
-            ],
-            "modules": [
-                {"name": m.name, "value": m.value, "tech_level": m.tech_level}
-                for m in equipped_modules
-            ],
+            "weapons": [{"name": w.name, "value": w.value, "dps": w.dps} for w in equipped_weapons],
+            "modules": [{"name": m.name, "value": m.value, "tech_level": m.tech_level} for m in equipped_modules],
             "turrets": [],
             "total_value": total_value,
         }
@@ -410,14 +388,8 @@ class BountyService:
         Returns:
             ShipLoadout ready for combat resolution.
         """
-        weapons = [
-            WeaponStats(name=w["name"], dps=w.get("dps", 0))
-            for w in criminal_ship.get("weapons", [])
-        ]
-        turrets = [
-            WeaponStats(name=t["name"], dps=t.get("dps", 0))
-            for t in criminal_ship.get("turrets", [])
-        ]
+        weapons = [WeaponStats(name=w["name"], dps=w.get("dps", 0)) for w in criminal_ship.get("weapons", [])]
+        turrets = [WeaponStats(name=t["name"], dps=t.get("dps", 0)) for t in criminal_ship.get("turrets", [])]
         return ShipLoadout(
             ship_name=criminal_ship.get("ship_name", "Unknown"),
             base_armour=criminal_ship.get("ship_armour", 100),
@@ -445,9 +417,7 @@ class BountyService:
             base_armour = 100
         return ShipLoadout(ship_name=ship_name, base_armour=base_armour)
 
-    async def _find_typed_module(
-        self, db: AsyncSession, module_keyword: str, item_tl: int
-    ):
+    async def _find_typed_module(self, db: AsyncSession, module_keyword: str, item_tl: int):
         """Find the first module whose name contains *module_keyword* (case-insensitive).
 
         Searches at *item_tl* first, then broadens to all tech levels.
@@ -461,9 +431,7 @@ class BountyService:
             A matching module object, or None if none found.
         """
         # Search at item_tl first
-        modules_at_tl = await self.item_repo.get_all_by_tech_level(
-            db, item_tl, item_type="module"
-        )
+        modules_at_tl = await self.item_repo.get_all_by_tech_level(db, item_tl, item_type="module")
         keyword_lower = module_keyword.lower()
         matches = [m for m in modules_at_tl if keyword_lower in m.name.lower()]
         if matches:
@@ -473,9 +441,7 @@ class BountyService:
         for tl in range(GameConstants.MIN_TECH_LEVEL, GameConstants.MAX_TECH_LEVEL + 1):
             if tl == item_tl:
                 continue
-            modules = await self.item_repo.get_all_by_tech_level(
-                db, tl, item_type="module"
-            )
+            modules = await self.item_repo.get_all_by_tech_level(db, tl, item_type="module")
             matches = [m for m in modules if keyword_lower in m.name.lower()]
             if matches:
                 return random.choice(matches)
@@ -589,9 +555,7 @@ class BountyService:
             status="active",
         )
         created = await self.bounty_repo.create(db, bounty)
-        flogger.info(
-            f"Spawned bounty {created.id}: {criminal.name} in {division} for guild {guild_id}"
-        )
+        flogger.info(f"Spawned bounty {created.id}: {criminal.name} in {division} for guild {guild_id}")
         return created
 
     # ------------------------------------------------------------------
@@ -638,9 +602,7 @@ class BountyService:
         division = "bronze" if player.classic_mode else player.tier.lower() if player.tier else "bronze"
 
         # Step 4: Get active bounties for this division
-        active_bounties = await self.bounty_repo.get_active_by_guild_and_division(
-            db, guild_id, division
-        )
+        active_bounties = await self.bounty_repo.get_active_by_guild_and_division(db, guild_id, division)
 
         # Step 5: Check system against all active bounties
         for bounty in active_bounties:
@@ -671,10 +633,7 @@ class BountyService:
                 # CORRECT — found the criminal! Now resolve combat.
                 await self.bounty_repo.update(db, bounty)
 
-                flogger.info(
-                    f"Player {player_id} found {bounty.criminal_name} at {system_name} "
-                    f"(bounty {bounty.id})"
-                )
+                flogger.info(f"Player {player_id} found {bounty.criminal_name} at {system_name} (bounty {bounty.id})")
 
                 # Determine if combat happens
                 duel_won = False
@@ -686,16 +645,10 @@ class BountyService:
                 else:
                     # Build loadouts and fight
                     player_loadout = self._build_player_loadout(player)
-                    criminal_loadout = self._build_criminal_loadout(
-                        bounty.criminal_ship or {}
-                    )
-                    fight_results = self.combat_service.fight_ships(
-                        player_loadout, criminal_loadout
-                    )
+                    criminal_loadout = self._build_criminal_loadout(bounty.criminal_ship or {})
+                    fight_results = self.combat_service.fight_ships(player_loadout, criminal_loadout)
                     # Stalemate counts as player win (legacy behavior)
-                    duel_won = (
-                        fight_results.winner_name == player_loadout.ship_name
-                    ) or fight_results.is_stalemate
+                    duel_won = (fight_results.winner_name == player_loadout.ship_name) or fight_results.is_stalemate
 
                 if duel_won:
                     # Player wins → distribute rewards
@@ -738,9 +691,7 @@ class BountyService:
             await self.bounty_repo.update(db, bounty)
             await db.commit()
             await db.refresh(player)
-            flogger.debug(
-                f"Player {player_id} checked {system_name} on bounty {bounty.id}: incorrect"
-            )
+            flogger.debug(f"Player {player_id} checked {system_name} on bounty {bounty.id}: incorrect")
             return CheckResponse(
                 result=CheckResult.INCORRECT,
                 bounty_id=bounty.id,
@@ -855,9 +806,7 @@ class BountyService:
         for reward in rewards:
             player = await self.player_repo.get_by_id(db, reward.player_id)
             if player is None:
-                flogger.warning(
-                    f"Player {reward.player_id} not found during reward distribution"
-                )
+                flogger.warning(f"Player {reward.player_id} not found during reward distribution")
                 continue
 
             # Record level before
@@ -884,9 +833,7 @@ class BountyService:
 
         # Update bounty status
         bounty.status = "completed"
-        bounty.win_user_id = next(
-            (r.player_id for r in rewards if r.is_winner), None
-        )
+        bounty.win_user_id = next((r.player_id for r in rewards if r.is_winner), None)
         await self.bounty_repo.update(db, bounty)
 
         # Refresh all modified players for accurate state.
@@ -975,10 +922,7 @@ class BountyService:
         bounty.respawn_time = datetime.now(UTC) + timedelta(minutes=respawn_delay)
 
         await self.bounty_repo.update(db, bounty)
-        flogger.info(
-            f"Bounty {bounty_id} escaped (count: {bounty.escape_count}), "
-            f"respawn in {respawn_delay} minutes"
-        )
+        flogger.info(f"Bounty {bounty_id} escaped (count: {bounty.escape_count}), respawn in {respawn_delay} minutes")
         return bounty, respawn_delay
 
     # ------------------------------------------------------------------
@@ -1050,8 +994,5 @@ class BountyService:
         bounty.end_time = datetime.now(UTC) + timedelta(days=len(route))
 
         await self.bounty_repo.update(db, bounty)
-        flogger.info(
-            f"Bounty {bounty_id} respawned: {bounty.criminal_name} "
-            f"with new route ({len(route)} systems)"
-        )
+        flogger.info(f"Bounty {bounty_id} respawned: {bounty.criminal_name} with new route ({len(route)} systems)")
         return bounty

@@ -89,6 +89,8 @@ class TextureCompositingService:
         max_layer_num = max(all_indices)
         flogger.debug(f"Iterating mask regions 1..{max_layer_num}")
 
+        target_size = working_tex.size
+
         for mask_num in range(1, max_layer_num + 1):
             if mask_num in region_textures:
                 # Apply the region's custom texture
@@ -111,12 +113,24 @@ class TextureCompositingService:
                 )
                 continue
 
+            # Image.composite requires all three images to be the same size.
+            # Resize the region texture and mask to match the working texture
+            # if they differ (e.g. a small skin overlay applied to a 2048×2048 base).
+            if new_tex.size != target_size:
+                flogger.debug(f"Region {mask_num}: resizing region texture {new_tex.size} → {target_size}")
+                new_tex = new_tex.resize(target_size, Image.LANCZOS)
+
             # Invert mask: Gimp and Pillow use opposite conventions for opacity
             raw_mask = region_masks[mask_num]
             # Ensure mask is in RGB/L mode before inverting (invert does not support RGBA)
             if raw_mask.mode == "RGBA":
                 raw_mask = raw_mask.convert("RGB")
             mask = self.ensure_image_mode(ImageOps.invert(raw_mask), "L")
+
+            if mask.size != target_size:
+                flogger.debug(f"Region {mask_num}: resizing mask {mask.size} → {target_size}")
+                mask = mask.resize(target_size, Image.LANCZOS)
+
             flogger.debug(f"Region {mask_num}: mask inverted, applying composite")
 
             # Apply texture through mask

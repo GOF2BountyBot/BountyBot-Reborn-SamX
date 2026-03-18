@@ -9,6 +9,7 @@ from persist.repositories.generic_repository import GenericRepository
 
 flogger = bblogger.get_logger("bot-criminal-repository")
 
+
 class CriminalRepository(GenericRepository[Criminal]):
     def __init__(self):
         super().__init__(Criminal)
@@ -26,16 +27,15 @@ class CriminalRepository(GenericRepository[Criminal]):
 
         try:
             # look up existing
-            result = await db.execute(
-                select(self._model).filter_by(name=raw["name"])
-            )
+            result = await db.execute(select(self._model).filter_by(name=raw["name"]))
             obj = result.scalars().one_or_none()
 
             # attribute name mapping
             mapping = {
-                "builtIn":  "built_in",
+                "builtIn": "built_in",
                 "isPlayer": "is_player",
             }
+
             def to_attr(k: str) -> str:
                 return mapping.get(k, k.lower())
 
@@ -45,7 +45,7 @@ class CriminalRepository(GenericRepository[Criminal]):
                     setattr(obj, to_attr(k), v)
             else:
                 flogger.debug(f"Creating new criminal from raw data: name={raw.get('name')}")
-                attrs = { to_attr(k): v for k, v in raw.items() }
+                attrs = {to_attr(k): v for k, v in raw.items()}
                 obj = Criminal(**attrs)
                 db.add(obj)
 

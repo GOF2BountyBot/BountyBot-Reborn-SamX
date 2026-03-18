@@ -8,7 +8,6 @@ from persist.models.base import Base
 class Item(Base):
     __tablename__ = TableNames.Item.value  # Using the Enum to get the name of the table
 
-
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     name: Mapped[str] = mapped_column(String, unique=True, nullable=False)
     aliases: Mapped[list[str]] = mapped_column(ARRAY(String))

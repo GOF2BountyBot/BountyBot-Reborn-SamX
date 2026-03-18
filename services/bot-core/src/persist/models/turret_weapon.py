@@ -13,6 +13,6 @@ class TurretWeapon(Weapon):
     automatic: Mapped[bool] = mapped_column(Boolean, default=False)
 
     __mapper_args__ = {
-        'polymorphic_identity': 'turret_weapon',
-        'concrete': False,
+        "polymorphic_identity": "turret_weapon",
+        "concrete": False,
     }

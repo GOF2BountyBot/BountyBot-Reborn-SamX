@@ -78,9 +78,7 @@ async def execute_bounty_respawn_job(job_id: str, payload: dict) -> dict:
 
         end_ts = datetime.now(UTC)
         duration = (end_ts - start_ts).total_seconds()
-        flogger.info(
-            f"BountyRespawnJob[{job_id}] completed in {duration:.2f}s"
-        )
+        flogger.info(f"BountyRespawnJob[{job_id}] completed in {duration:.2f}s")
         return {"status": "success", "bounty_id": bounty.id}
 
     except Exception as e:  # pylint: disable=broad-exception-caught
@@ -92,6 +90,7 @@ async def execute_bounty_respawn_job(job_id: str, payload: dict) -> dict:
 # ---------------------------------------------------------------------------
 # Helper: announce bounty respawn to discord-gateway
 # ---------------------------------------------------------------------------
+
 
 async def _announce_respawn(parent_job_id: str, bounty) -> None:
     """POST a bounty respawn announcement to the discord-gateway messages endpoint.
@@ -111,9 +110,7 @@ async def _announce_respawn(parent_job_id: str, bounty) -> None:
             "reward": bounty.reward,
             "route_length": len(bounty.route) if bounty.route else 0,
             "tech_level": bounty.tech_level,
-            "end_time": (
-                bounty.end_time.isoformat() if bounty.end_time else None
-            ),
+            "end_time": (bounty.end_time.isoformat() if bounty.end_time else None),
         },
     }
 
@@ -129,13 +126,8 @@ async def _announce_respawn(parent_job_id: str, bounty) -> None:
                 timeout=10,
             )
         resp.raise_for_status()
-        flogger.debug(
-            f"BountyRespawnJob[{parent_job_id}] announcement response status={resp.status_code}"
-        )
-        flogger.info(
-            f"BountyRespawnJob[{parent_job_id}] announced respawn of bounty "
-            f"id={bounty.id} to discord-gateway"
-        )
+        flogger.debug(f"BountyRespawnJob[{parent_job_id}] announcement response status={resp.status_code}")
+        flogger.info(f"BountyRespawnJob[{parent_job_id}] announced respawn of bounty id={bounty.id} to discord-gateway")
     except Exception as e:  # pylint: disable=broad-exception-caught
         flogger.error(
             f"BountyRespawnJob[{parent_job_id}] failed to announce respawn of "

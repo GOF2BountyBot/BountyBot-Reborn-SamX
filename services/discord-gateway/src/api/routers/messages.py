@@ -25,8 +25,8 @@ router = APIRouter(
         400: {"description": "Bad request - missing required parameters or invalid IDs"},
         404: {"description": "Message not found"},
         500: {"description": "Internal server error"},
-        503: {"description": "Service unavailable - bot not ready"}
-    }
+        503: {"description": "Service unavailable - bot not ready"},
+    },
 )
 
 
@@ -79,15 +79,13 @@ async def _find_message(bot: discord.Client, message_id: int, logger) -> discord
                 continue
             except TimeoutError:
                 logger.debug(
-                    f"fetch_message timeout for channel {getattr(channel, 'id', None)} "
-                    f"while searching for {message_id}"
+                    f"fetch_message timeout for channel {getattr(channel, 'id', None)} while searching for {message_id}"
                 )
                 continue
             except Exception as exc:  # pylint: disable=broad-exception-caught
                 # best-effort: log and continue searching other channels
                 logger.debug(
-                    f"Unexpected error fetching message {message_id} "
-                    f"from channel {getattr(channel, 'id', None)}: {exc}"
+                    f"Unexpected error fetching message {message_id} from channel {getattr(channel, 'id', None)}: {exc}"
                 )
                 continue
 
@@ -99,17 +97,14 @@ async def _find_message(bot: discord.Client, message_id: int, logger) -> discord
     response_model=MessageResponse,
     status_code=status.HTTP_200_OK,
     summary="Get Discord Message",
-    description="Retrieve an existing Discord message"
+    description="Retrieve an existing Discord message",
 )
 async def get_message(request: Request, message_id: int) -> MessageResponse:
     """Retrieve an existing Discord message."""
     flogger.info(f"get_message called for message_id={message_id}")
 
     if message_id <= 0:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="message_id must be a positive integer"
-        )
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="message_id must be a positive integer")
 
     try:
         bot = await resolve_bot(request)
@@ -118,18 +113,12 @@ async def get_message(request: Request, message_id: int) -> MessageResponse:
 
         if not message:
             flogger.error(f"Message {message_id} not found")
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Message {message_id} not found"
-            )
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Message {message_id} not found")
 
         message_data = MessageConverter.message_to_payload(message)
         flogger.info(f"Successfully retrieved message {message_id}")
 
-        return MessageResponse(
-            status="found",
-            data=message_data
-        )
+        return MessageResponse(status="found", data=message_data)
     except HTTPException:
         raise
     except Exception as exc:  # pylint: disable=broad-exception-caught
@@ -142,19 +131,14 @@ async def get_message(request: Request, message_id: int) -> MessageResponse:
     response_model=MessageResponse,
     status_code=status.HTTP_200_OK,
     summary="Update Discord Message",
-    description="Update an existing Discord message with new embed content"
+    description="Update an existing Discord message with new embed content",
 )
-async def update_message(
-    request: Request, message_id: int, payload: MessageUpdateRequest
-) -> MessageResponse:
+async def update_message(request: Request, message_id: int, payload: MessageUpdateRequest) -> MessageResponse:
     """Update an existing Discord message."""
     flogger.info(f"update_message called for message_id={message_id}")
 
     if message_id <= 0:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="message_id must be a positive integer"
-        )
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="message_id must be a positive integer")
 
     try:
         bot = await resolve_bot(request)
@@ -163,18 +147,12 @@ async def update_message(
 
         if not message:
             flogger.error(f"Message {message_id} not found")
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Message {message_id} not found"
-            )
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Message {message_id} not found")
 
         # Check if bot can edit this message (must be bot's own message)
         if not getattr(message, "author", None) or message.author.id != getattr(bot.user, "id", None):
             flogger.error(f"Cannot edit message {message_id} - not sent by bot")
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Can only edit messages sent by the bot"
-            )
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Can only edit messages sent by the bot")
 
         embed = EmbedConverter.payload_to_embed(payload.content)
         await message.edit(embed=embed)
@@ -183,17 +161,13 @@ async def update_message(
         updated_message_data = MessageConverter.message_to_payload(message)
         flogger.info(f"Successfully updated message {message_id}")
 
-        return MessageResponse(
-            status="updated",
-            data=updated_message_data
-        )
+        return MessageResponse(status="updated", data=updated_message_data)
     except HTTPException:
         raise
     except discord.HTTPException as exc:
         flogger.exception("Discord API error during update_message")
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Discord API error: {exc}"
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Discord API error: {exc}"
         ) from exc
     except Exception as exc:  # pylint: disable=broad-exception-caught
         flogger.exception("Unexpected error during update_message")
@@ -205,17 +179,14 @@ async def update_message(
     response_model=DeleteResponse,
     status_code=status.HTTP_200_OK,
     summary="Delete Discord Message",
-    description="Delete an existing Discord message"
+    description="Delete an existing Discord message",
 )
 async def delete_message(request: Request, message_id: int) -> DeleteResponse:
     """Delete an existing Discord message."""
     flogger.info(f"delete_message called for message_id={message_id}")
 
     if message_id <= 0:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="message_id must be a positive integer"
-        )
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="message_id must be a positive integer")
 
     try:
         bot = await resolve_bot(request)
@@ -224,10 +195,7 @@ async def delete_message(request: Request, message_id: int) -> DeleteResponse:
 
         if not message:
             flogger.error(f"Message {message_id} not found")
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Message {message_id} not found"
-            )
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Message {message_id} not found")
 
         # Check if bot can delete this message
         if not getattr(message, "author", None) or message.author.id != getattr(bot.user, "id", None):
@@ -238,8 +206,7 @@ async def delete_message(request: Request, message_id: int) -> DeleteResponse:
                 if not bot_member or not channel.permissions_for(bot_member).manage_messages:
                     flogger.error(f"Cannot delete message {message_id} - insufficient permissions")
                     raise HTTPException(
-                        status_code=status.HTTP_403_FORBIDDEN,
-                        detail="Insufficient permissions to delete this message"
+                        status_code=status.HTTP_403_FORBIDDEN, detail="Insufficient permissions to delete this message"
                     )
 
         await message.delete()
@@ -247,18 +214,13 @@ async def delete_message(request: Request, message_id: int) -> DeleteResponse:
         msg = f"Message {message_id} deleted"
         flogger.info(msg)
 
-        return DeleteResponse(
-            status="deleted",
-            deleted=True,
-            message=msg
-        )
+        return DeleteResponse(status="deleted", deleted=True, message=msg)
     except HTTPException:
         raise
     except discord.HTTPException as exc:
         flogger.exception("Discord API error during delete_message")
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Discord API error: {exc}"
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Discord API error: {exc}"
         ) from exc
     except Exception as exc:  # pylint: disable=broad-exception-caught
         flogger.exception("Unexpected error during delete_message")

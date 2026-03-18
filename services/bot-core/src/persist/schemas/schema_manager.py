@@ -23,6 +23,7 @@ flogger = bblogger.get_logger("bot-schema-manager")
 
 CURRENT_SCHEMA_VERSION = "1.0.0"  # Update as necessary
 
+
 class SchemaManager:
     def __init__(self, db_manager):
         self.db_manager = db_manager
@@ -79,10 +80,7 @@ class SchemaManager:
             if schema_version is None:
                 # if no schema version, set the current one
                 flogger.debug("No existing SchemaVersion found; initializing with current version")
-                schema_version = SchemaVersion(
-                    version=CURRENT_SCHEMA_VERSION,
-                    description="Initial Schema Version"
-                )
+                schema_version = SchemaVersion(version=CURRENT_SCHEMA_VERSION, description="Initial Schema Version")
                 session.add(schema_version)
                 flogger.debug(f"Committing new SchemaVersion record: {CURRENT_SCHEMA_VERSION}")
                 await session.commit()
@@ -134,7 +132,7 @@ class SchemaManager:
             health_info = {
                 "version": current_version,
                 "expected_version": CURRENT_SCHEMA_VERSION,
-                "version_match": version_match
+                "version_match": version_match,
             }
             if version_match:
                 flogger.debug("Schema version health check passed")
@@ -146,10 +144,8 @@ class SchemaManager:
             return health_info
         except Exception as e:  # pylint: disable=broad-exception-caught
             flogger.error(f"Error retrieving schema health info: {e}")
-            return {
-                "status": "error",
-                "error": str(e)
-            }
+            return {"status": "error", "error": str(e)}
+
 
 async def initialize_schema(db_manager) -> SchemaManager:
     """

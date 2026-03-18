@@ -13,6 +13,6 @@ class SecondaryWeapon(Weapon):
     loading_speed: Mapped[int] = mapped_column(Integer, nullable=True)
 
     __mapper_args__ = {
-        'polymorphic_identity': 'secondary_weapon',
-        'concrete': False,
+        "polymorphic_identity": "secondary_weapon",
+        "concrete": False,
     }

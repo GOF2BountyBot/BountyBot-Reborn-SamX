@@ -23,58 +23,51 @@ router = APIRouter(
         404: {"description": "Category not found"},
         403: {"description": "Insufficient permissions"},
         500: {"description": "Internal server error"},
-        503: {"description": "Service unavailable - bot not ready"}
-    }
+        503: {"description": "Service unavailable - bot not ready"},
+    },
 )
+
 
 @router.get(
     "/categories/{category_id}",
     response_model=CategoryResponse,
     status_code=status.HTTP_200_OK,
     summary="Get Category Details",
-    description="Get detailed information about a specific category"
+    description="Get detailed information about a specific category",
 )
 async def get_category(request: Request, category_id: int) -> CategoryResponse:
     """Get detailed information about a specific category."""
     flogger.info(f"get_category endpoint called for category_id: {category_id}")
     try:
         bot = await resolve_bot(request)
-        channel = await get_entity_or_404(
-            bot.get_channel, bot.fetch_channel, category_id, "Channel"
-        )
+        channel = await get_entity_or_404(bot.get_channel, bot.fetch_channel, category_id, "Channel")
 
         validate_channel_type(channel, ["category"], category_id)
 
         category_data = ChannelConverter.category_to_detail(channel)
         flogger.info(f"Successfully retrieved category details for {channel.name}")
 
-        return CategoryResponse(
-            status="success",
-            data=category_data
-        )
+        return CategoryResponse(status="success", data=category_data)
     except HTTPException:
         raise
     except Exception as exc:  # pylint: disable=broad-exception-caught
         flogger.error(f"Unexpected error in get_category for category {category_id}: {exc}")
         await handle_discord_exception("get category details", exc)
 
+
 @router.put(
     "/categories/{category_id}",
     response_model=CategoryResponse,
     status_code=status.HTTP_200_OK,
     summary="Update Category",
-    description="Update a category's properties"
+    description="Update a category's properties",
 )
-async def update_category(
-    request: Request, category_id: int, category_data: CategoryUpdateRequest
-) -> CategoryResponse:
+async def update_category(request: Request, category_id: int, category_data: CategoryUpdateRequest) -> CategoryResponse:
     """Update a category's properties."""
     flogger.info(f"update_category endpoint called for category_id: {category_id}")
     try:
         bot = await resolve_bot(request)
-        channel = await get_entity_or_404(
-            bot.get_channel, bot.fetch_channel, category_id, "Channel"
-        )
+        channel = await get_entity_or_404(bot.get_channel, bot.fetch_channel, category_id, "Channel")
 
         validate_channel_type(channel, ["category"], category_id)
 
@@ -88,42 +81,34 @@ async def update_category(
         if update_kwargs:
             await channel.edit(**update_kwargs)
             # Re-fetch the channel after the edit
-            channel = await get_entity_or_404(
-                bot.get_channel, bot.fetch_channel, category_id, "Channel"
-            )
+            channel = await get_entity_or_404(bot.get_channel, bot.fetch_channel, category_id, "Channel")
 
         category_detail = ChannelConverter.category_to_detail(channel)
         flogger.info(f"Successfully updated category {channel.name}")
 
-        return CategoryResponse(
-            status="updated",
-            data=category_detail
-        )
+        return CategoryResponse(status="updated", data=category_detail)
     except HTTPException:
         raise
     except Exception as exc:  # pylint: disable=broad-exception-caught
         flogger.error(f"Unexpected error in update_category for category {category_id}: {exc}")
         await handle_discord_exception("update category", exc)
 
+
 @router.delete(
     "/categories/{category_id}",
     response_model=DeleteResponse,
     status_code=status.HTTP_200_OK,
     summary="Delete Category",
-    description="Delete a category (child channels remain or are deleted based on cascade parameter)"
+    description="Delete a category (child channels remain or are deleted based on cascade parameter)",
 )
 async def delete_category(
-    request: Request,
-    category_id: int,
-    cascade: bool = Query(False, description="Whether to delete child channels")
+    request: Request, category_id: int, cascade: bool = Query(False, description="Whether to delete child channels")
 ) -> DeleteResponse:
     """Delete a category."""
     flogger.info(f"delete_category endpoint called for category_id: {category_id}, cascade: {cascade}")
     try:
         bot = await resolve_bot(request)
-        channel = await get_entity_or_404(
-            bot.get_channel, bot.fetch_channel, category_id, "Channel"
-        )
+        channel = await get_entity_or_404(bot.get_channel, bot.fetch_channel, category_id, "Channel")
 
         validate_channel_type(channel, ["category"], category_id)
 
@@ -144,32 +129,27 @@ async def delete_category(
             message += f" along with {len(child_channels)} child channels"
 
         flogger.info(message)
-        return DeleteResponse(
-            status="deleted",
-            deleted=True,
-            message=message
-        )
+        return DeleteResponse(status="deleted", deleted=True, message=message)
     except HTTPException:
         raise
     except Exception as exc:  # pylint: disable=broad-exception-caught
         flogger.error(f"Unexpected error in delete_category for category {category_id}: {exc}")
         await handle_discord_exception("delete category", exc)
 
+
 @router.get(
     "/categories/{category_id}/channels",
     response_model=ChannelListResponse,
     status_code=status.HTTP_200_OK,
     summary="List Category Channels",
-    description="Get a list of all channels within a category"
+    description="Get a list of all channels within a category",
 )
 async def list_category_channels(request: Request, category_id: int) -> ChannelListResponse:
     """List all channels within a category."""
     flogger.info(f"list_category_channels endpoint called for category_id: {category_id}")
     try:
         bot = await resolve_bot(request)
-        channel = await get_entity_or_404(
-            bot.get_channel, bot.fetch_channel, category_id, "Channel"
-        )
+        channel = await get_entity_or_404(bot.get_channel, bot.fetch_channel, category_id, "Channel")
 
         validate_channel_type(channel, ["category"], category_id)
 
@@ -181,31 +161,27 @@ async def list_category_channels(request: Request, category_id: int) -> ChannelL
             channels.append(channel_data)
 
         flogger.info(f"Successfully retrieved {len(channels)} channels from category {channel.name}")
-        return ChannelListResponse(
-            status="success",
-            data=channels
-        )
+        return ChannelListResponse(status="success", data=channels)
     except HTTPException:
         raise
     except Exception as exc:  # pylint: disable=broad-exception-caught
         flogger.error(f"Unexpected error in list_category_channels for category {category_id}: {exc}")
         await handle_discord_exception("list category channels", exc)
 
+
 @router.get(
     "/categories/{category_id}/permissions",
     response_model=PermissionOverwriteListResponse,
     status_code=status.HTTP_200_OK,
     summary="Get Category Permissions",
-    description="Get permission overwrites for a category"
+    description="Get permission overwrites for a category",
 )
 async def get_category_permissions(request: Request, category_id: int) -> PermissionOverwriteListResponse:
     """Get permission overwrites for a category."""
     flogger.info(f"get_category_permissions endpoint called for category_id: {category_id}")
     try:
         bot = await resolve_bot(request)
-        channel = await get_entity_or_404(
-            bot.get_channel, bot.fetch_channel, category_id, "Channel"
-        )
+        channel = await get_entity_or_404(bot.get_channel, bot.fetch_channel, category_id, "Channel")
 
         validate_channel_type(channel, ["category"], category_id)
 
@@ -215,35 +191,29 @@ async def get_category_permissions(request: Request, category_id: int) -> Permis
             overwrites.append(overwrite_data)
 
         flogger.info(f"Successfully retrieved {len(overwrites)} permission overwrites for category {channel.name}")
-        return PermissionOverwriteListResponse(
-            status="success",
-            data=overwrites
-        )
+        return PermissionOverwriteListResponse(status="success", data=overwrites)
     except HTTPException:
         raise
     except Exception as exc:  # pylint: disable=broad-exception-caught
         flogger.error(f"Unexpected error in get_category_permissions for category {category_id}: {exc}")
         await handle_discord_exception("get category permissions", exc)
 
+
 @router.put(
     "/categories/{category_id}/permissions",
     response_model=SuccessResponse,
     status_code=status.HTTP_200_OK,
     summary="Update Category Permissions",
-    description="Replace all permission overwrites for a category"
+    description="Replace all permission overwrites for a category",
 )
 async def update_category_permissions(
-    request: Request,
-    category_id: int,
-    permissions_data: PermissionOverwriteListRequest
+    request: Request, category_id: int, permissions_data: PermissionOverwriteListRequest
 ) -> SuccessResponse:
     """Replace all permission overwrites for a category."""
     flogger.info(f"update_category_permissions endpoint called for category_id: {category_id}")
     try:
         bot = await resolve_bot(request)
-        channel = await get_entity_or_404(
-            bot.get_channel, bot.fetch_channel, category_id, "Channel"
-        )
+        channel = await get_entity_or_404(bot.get_channel, bot.fetch_channel, category_id, "Channel")
 
         validate_channel_type(channel, ["category"], category_id)
         guild = channel.guild

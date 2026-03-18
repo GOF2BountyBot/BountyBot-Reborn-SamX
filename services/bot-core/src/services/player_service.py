@@ -21,6 +21,7 @@ from services.game_maths import calculate_user_level
 
 flogger = bblogger.get_logger("player-service")
 
+
 class PlayerService:
     def __init__(self):
         self.user_repo = UserRepository()
@@ -28,11 +29,7 @@ class PlayerService:
         self.config_repo = ConfigRepository()
 
     async def get_or_create_player(
-        self,
-        db: AsyncSession,
-        discord_id: int,
-        guild_id: int,
-        discord_username: str | None = None
+        self, db: AsyncSession, discord_id: int, guild_id: int, discord_username: str | None = None
     ) -> Player:
         """
         Get existing player or create new one with starter loadout.
@@ -108,7 +105,7 @@ class PlayerService:
                 "is_active": True,
                 "weapons": ["Micro Gun MK I"],
                 "modules": ["Telta Quickscan", "E2 Exoclad", "IMT Extract 1.3"],
-                "turrets": []
+                "turrets": [],
             }
 
             starter_ship = await ship_repo.create_or_update(db, starter_ship_data)
@@ -123,11 +120,7 @@ class PlayerService:
             raise
 
     async def update_player_credits(
-        self,
-        db: AsyncSession,
-        player_id: int,
-        new_credits: int,
-        update_lifetime: bool = True
+        self, db: AsyncSession, player_id: int, new_credits: int, update_lifetime: bool = True
     ) -> Player:
         """Update player credits and optionally lifetime credits."""
         try:
@@ -221,9 +214,7 @@ class PlayerService:
             # Check level, not tier
             current_level = calculate_user_level(player.xp)
             if current_level < 10:
-                raise ValueError(
-                    f"Player must be level 10 to prestige (current level: {current_level})"
-                )
+                raise ValueError(f"Player must be level 10 to prestige (current level: {current_level})")
 
             # Record state before prestige
             level_before = current_level
@@ -241,6 +232,7 @@ class PlayerService:
             # For now: clear all non-ship inventory items
             # TODO: When Kaamo storage is implemented, preserve those items
             from persist.repositories.inventory_repository import InventoryRepository
+
             inventory_repo = InventoryRepository()
             await inventory_repo.clear_player_inventory(db, player_id)
 
@@ -280,20 +272,17 @@ class PlayerService:
                 "prestige_count": player.prestige_count,
                 "credits": player.credits,
                 "lifetime_credits": player.lifetime_credits,
-                "bounty_stats": {
-                    "systems_checked": player.systems_checked,
-                    "bounty_wins": player.bounty_wins
-                },
+                "bounty_stats": {"systems_checked": player.systems_checked, "bounty_wins": player.bounty_wins},
                 "duel_stats": {
                     "wins": player.duel_wins,
                     "losses": player.duel_losses,
                     "win_rate": round(duel_win_rate, 2),
                     "credits_won": player.duel_credits_won,
                     "credits_lost": player.duel_credits_lost,
-                    "net_credits": net_duel_credits
+                    "net_credits": net_duel_credits,
                 },
                 "created_at": player.created_at.isoformat(),
-                "updated_at": player.updated_at.isoformat()
+                "updated_at": player.updated_at.isoformat(),
             }
 
         except Exception as e:
@@ -366,9 +355,7 @@ class PlayerService:
             await self.player_repo.update_credits(db, source_player_id, source_new, commit=False)
             await self.player_repo.update_credits(db, target_player_id, target_new, commit=False)
 
-        flogger.info(
-            f"Transferred {amount} credits from player {source_player_id} to player {target_player_id}"
-        )
+        flogger.info(f"Transferred {amount} credits from player {source_player_id} to player {target_player_id}")
 
         return {
             "source_player_id": source_player_id,
@@ -412,8 +399,7 @@ class PlayerService:
 
             if leveled_up:
                 flogger.info(
-                    f"Player {player_id} leveled up: {level_before} -> {level_after} "
-                    f"(surplus: {player.xp_surplus})"
+                    f"Player {player_id} leveled up: {level_before} -> {level_after} (surplus: {player.xp_surplus})"
                 )
 
             division_after = DivisionService.get_division_for_level(level_after)
@@ -423,8 +409,7 @@ class PlayerService:
             await db.refresh(player)
 
             flogger.debug(
-                f"Added {xp_amount} XP to player {player_id}: total={player.xp}, "
-                f"level={level_before}->{level_after}"
+                f"Added {xp_amount} XP to player {player_id}: total={player.xp}, level={level_before}->{level_after}"
             )
 
             return {

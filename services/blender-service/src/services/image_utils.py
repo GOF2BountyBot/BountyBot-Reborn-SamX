@@ -60,9 +60,7 @@ def crop_to_square(image: Image.Image) -> Image.Image:
         left = diff // 2
         right = width - (diff - left)  # extra pixel goes to the right
         result = image.crop((left, 0, right, height))
-        flogger.debug(
-            f"crop_to_square() exit: landscape crop left={left} right={right} result_size={result.size}"
-        )
+        flogger.debug(f"crop_to_square() exit: landscape crop left={left} right={right} result_size={result.size}")
         return result
     else:
         # Portrait: crop top and bottom, keep full width

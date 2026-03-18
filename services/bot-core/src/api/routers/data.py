@@ -8,15 +8,17 @@ flogger = bblogger.get_logger("data-router")
 
 
 class DataCategory(StrEnum):
-    module     = "module"
-    primary    = "primary_weapon"
-    secondary  = "secondary_weapon"
-    turret     = "turret_weapon"
-    ship       = "ship"
-    criminal   = "criminal"
-    system     = "system"
+    module = "module"
+    primary = "primary_weapon"
+    secondary = "secondary_weapon"
+    turret = "turret_weapon"
+    ship = "ship"
+    criminal = "criminal"
+    system = "system"
+
 
 router = APIRouter(prefix="/data", tags=["data"])
+
 
 @router.post("/{category}", response_model=list[str])
 async def api_load_data(category: DataCategory):
@@ -36,6 +38,7 @@ async def api_load_data(category: DataCategory):
     except Exception as e:
         flogger.exception(f"Unexpected error: category={category.value}")
         raise HTTPException(status_code=500, detail="Internal server error") from e
+
 
 @router.get("/categories", response_model=list[str])
 def list_data_categories():

@@ -90,16 +90,15 @@ class EquipmentService:
             # 3. Item exists in game data
             flogger.trace(f"Mapping equipment_type to inventory_type: {equipment_type}")
             inventory_type = self._map_equipment_type_to_inventory_type(equipment_type)
-            flogger.trace(f"Validating item exists in game data: item_name={item_name}, "
-                         f"inventory_type={inventory_type}")
+            flogger.trace(
+                f"Validating item exists in game data: item_name={item_name}, inventory_type={inventory_type}"
+            )
             await self._validate_item_exists(db, item_name, inventory_type)
             flogger.trace(f"Item exists in game data: item_name={item_name}")
 
             # 4. Player owns item in inventory
             flogger.trace(f"Checking player inventory: player_id={player_id}, item_name={item_name}")
-            inv_item = await self.inventory_repo.get_player_item(
-                db, player_id, inventory_type, item_name
-            )
+            inv_item = await self.inventory_repo.get_player_item(db, player_id, inventory_type, item_name)
             if not inv_item:
                 flogger.warning(
                     f"Item not found in player inventory: player_id={player_id}, "
@@ -116,18 +115,12 @@ class EquipmentService:
             flogger.trace(f"Slot available for {equipment_type} on ship {ship_id}")
 
             # 6. Add item to ship loadout
-            updated_ship = await self.ship_repo.add_equipment(
-                db, ship_id, equipment_type, item_name
-            )
+            updated_ship = await self.ship_repo.add_equipment(db, ship_id, equipment_type, item_name)
 
             # 7. Remove item from inventory
-            await self.inventory_repo.remove_item(
-                db, player_id, inventory_type, item_name, quantity=1
-            )
+            await self.inventory_repo.remove_item(db, player_id, inventory_type, item_name, quantity=1)
 
-            flogger.info(
-                f"Player {player_id} equipped '{item_name}' ({equipment_type}) on ship {ship_id}"
-            )
+            flogger.info(f"Player {player_id} equipped '{item_name}' ({equipment_type}) on ship {ship_id}")
             return {
                 "success": True,
                 "ship": updated_ship,
@@ -186,24 +179,16 @@ class EquipmentService:
                     f"Item not equipped on ship: player_id={player_id}, ship_id={ship_id}, "
                     f"item_name={item_name}, equipment_type={equipment_type}"
                 )
-                raise ValueError(
-                    f"Item '{item_name}' is not equipped in {equipment_type} on ship {ship_id}"
-                )
+                raise ValueError(f"Item '{item_name}' is not equipped in {equipment_type} on ship {ship_id}")
 
             # 4. Remove item from ship loadout
-            updated_ship = await self.ship_repo.remove_equipment(
-                db, ship_id, equipment_type, item_name
-            )
+            updated_ship = await self.ship_repo.remove_equipment(db, ship_id, equipment_type, item_name)
 
             # 5. Add item back to inventory
             inventory_type = self._map_equipment_type_to_inventory_type(equipment_type)
-            await self.inventory_repo.add_item(
-                db, player_id, inventory_type, item_name, quantity=1
-            )
+            await self.inventory_repo.add_item(db, player_id, inventory_type, item_name, quantity=1)
 
-            flogger.info(
-                f"Player {player_id} unequipped '{item_name}' ({equipment_type}) from ship {ship_id}"
-            )
+            flogger.info(f"Player {player_id} unequipped '{item_name}' ({equipment_type}) from ship {ship_id}")
             return {
                 "success": True,
                 "ship": updated_ship,
@@ -247,8 +232,7 @@ class EquipmentService:
                 f"Invalid equipment_type: {equipment_type}. Must be one of: {sorted(VALID_EQUIPMENT_TYPES)}"
             )
             raise ValueError(
-                f"Invalid equipment_type '{equipment_type}'. "
-                f"Must be one of: {sorted(VALID_EQUIPMENT_TYPES)}"
+                f"Invalid equipment_type '{equipment_type}'. Must be one of: {sorted(VALID_EQUIPMENT_TYPES)}"
             )
 
     def _get_equipment_list(self, ship: Any, equipment_type: str) -> list[str]:
@@ -277,15 +261,11 @@ class EquipmentService:
                 f"Ship ownership mismatch: ship_id={ship_id}, "
                 f"expected player_id={player_id}, actual player_id={ship.player_id}"
             )
-            raise ValueError(
-                f"Ship {ship_id} does not belong to player {player_id}"
-            )
+            raise ValueError(f"Ship {ship_id} does not belong to player {player_id}")
         flogger.trace(f"Ship ownership verified: ship_id={ship_id}, player_id={player_id}")
         return ship
 
-    async def _validate_item_exists(
-        self, db: AsyncSession, item_name: str, inventory_type: str
-    ) -> None:
+    async def _validate_item_exists(self, db: AsyncSession, item_name: str, inventory_type: str) -> None:
         """Verify the item exists in the game data catalogue.
 
         The ItemRepository stores the item_type as e.g. ``primary_weapon``,
@@ -295,8 +275,7 @@ class EquipmentService:
         Raises:
             ValueError: if item not found in game data.
         """
-        flogger.trace(f"Validating item exists in game data: item_name={item_name}, "
-                     f"inventory_type={inventory_type}")
+        flogger.trace(f"Validating item exists in game data: item_name={item_name}, inventory_type={inventory_type}")
         game_type_map = {
             "weapon": "primary_weapon",
             "module": "module",
@@ -306,24 +285,17 @@ class EquipmentService:
         flogger.trace(f"Mapped inventory_type to game_item_type: {inventory_type} -> {game_item_type}")
         item = await self.item_repo.get_by_name(db, item_name, item_type=game_item_type)
         if not item:
-            flogger.warning(
-                f"Item not found in game data: item_name={item_name}, game_item_type={game_item_type}"
-            )
-            raise ValueError(
-                f"Item '{item_name}' (type={game_item_type}) not found in game data"
-            )
+            flogger.warning(f"Item not found in game data: item_name={item_name}, game_item_type={game_item_type}")
+            raise ValueError(f"Item '{item_name}' (type={game_item_type}) not found in game data")
         flogger.trace(f"Item found in game data: item_name={item_name}, game_item_type={game_item_type}")
 
-    async def _validate_slot_available(
-        self, db: AsyncSession, ship: Any, equipment_type: str
-    ) -> None:
+    async def _validate_slot_available(self, db: AsyncSession, ship: Any, equipment_type: str) -> None:
         """Check that the ship has a free slot for the given equipment type.
 
         Raises:
             ValueError: if the ship's slots for this type are full.
         """
-        flogger.trace(f"Validating slot availability: ship_name={ship.ship_name}, "
-                     f"equipment_type={equipment_type}")
+        flogger.trace(f"Validating slot availability: ship_name={ship.ship_name}, equipment_type={equipment_type}")
         slot_field = self._map_equipment_type_to_slot(equipment_type)
 
         # Get static ship data for the slot limit

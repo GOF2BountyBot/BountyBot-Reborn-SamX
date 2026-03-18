@@ -63,14 +63,11 @@ async def check_bounty(
 ):
     """Check a system against active bounties for a given guild."""
     flogger.info(
-        f"Bounty check request: player_id={request.player_id}"
-        f" system={request.system_name!r} guild_id={guild_id}"
+        f"Bounty check request: player_id={request.player_id} system={request.system_name!r} guild_id={guild_id}"
     )
     try:
         async with get_db_session() as db:
-            result = await service.check_bounty(
-                db, request.player_id, request.system_name, guild_id
-            )
+            result = await service.check_bounty(db, request.player_id, request.system_name, guild_id)
         flogger.info(
             f"Bounty check result: player_id={request.player_id}"
             f" system={request.system_name!r} result={result.result.value}"
@@ -103,9 +100,7 @@ async def list_bounties(
     """List active bounties (player-facing — hides the answer)."""
     async with get_db_session() as db:
         if division:
-            bounties = await service.bounty_repo.get_active_by_guild_and_division(
-                db, guild_id, division
-            )
+            bounties = await service.bounty_repo.get_active_by_guild_and_division(db, guild_id, division)
         else:
             bounties = await service.bounty_repo.get_active_by_guild(db, guild_id)
         return [BountyPublicResponse.model_validate(b) for b in bounties]
@@ -147,14 +142,11 @@ async def spawn_bounty(
 ):
     """Manually spawn a new bounty (admin endpoint)."""
     flogger.info(
-        f"Bounty spawn request: guild_id={request.guild_id}"
-        f" division={request.division} tech_level={request.tech_level}"
+        f"Bounty spawn request: guild_id={request.guild_id} division={request.division} tech_level={request.tech_level}"
     )
     try:
         async with get_db_session() as db:
-            bounty = await service.spawn_bounty(
-                db, request.guild_id, request.division, request.tech_level
-            )
+            bounty = await service.spawn_bounty(db, request.guild_id, request.division, request.tech_level)
         if bounty is None:
             flogger.error(
                 f"Bounty spawn failed: guild_id={request.guild_id}"
@@ -172,10 +164,7 @@ async def spawn_bounty(
     except HTTPException:
         raise
     except Exception as e:
-        flogger.error(
-            f"Bounty spawn error: guild_id={request.guild_id}"
-            f" division={request.division}: {e}"
-        )
+        flogger.error(f"Bounty spawn error: guild_id={request.guild_id} division={request.division}: {e}")
         raise
 
 

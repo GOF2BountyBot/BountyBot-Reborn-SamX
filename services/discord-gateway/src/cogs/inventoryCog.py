@@ -13,6 +13,7 @@ flogger = bblogger.get_logger("discord-gateway-InventoryCog")
 api_base = os.environ.get("BOT_API_BASE_URL", "http://bot-core:8000/api/v1")
 flogger.debug(f"inventoryCog loading with API_BASE_URL: {api_base}")
 
+
 class InventoryCog(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
@@ -25,28 +26,21 @@ class InventoryCog(commands.Cog):
     async def _get_player_id(self, user_id: int, guild_id: int) -> int | None:
         """Helper to get player ID from Discord user ID."""
         try:
-            user_data = {
-                "discord_id": user_id,
-                "guild_id": guild_id,
-                "discord_username": "temp"
-            }
+            user_data = {"discord_id": user_id, "guild_id": guild_id, "discord_username": "temp"}
 
             resp = await self.http_client.post(f"{api_base}/players/", json=user_data, timeout=5)
             resp.raise_for_status()
-            return resp.json()['id']
+            return resp.json()["id"]
         except Exception:  # pylint: disable=broad-exception-caught
             return None
 
     @app_commands.command(name="inventory", description="View your inventory")
     @app_commands.describe(
         item_type="Filter by item type (ship, weapon, module, turret)",
-        user="View another user's inventory (admin only)"
+        user="View another user's inventory (admin only)",
     )
     async def inventory(
-        self,
-        interaction: discord.Interaction,
-        item_type: str | None = None,
-        user: discord.User | None = None
+        self, interaction: discord.Interaction, item_type: str | None = None, user: discord.User | None = None
     ):
         """Display player inventory."""
         flogger.info(f"/inventory: guild={interaction.guild_id}, user={interaction.user.id}")
@@ -59,10 +53,10 @@ class InventoryCog(commands.Cog):
             if user and user != interaction.user:
                 # Require admin permission to view another user's inventory
                 from cogs.adminCog import _check_is_admin
+
                 if not await _check_is_admin(interaction):
                     await interaction.followup.send(
-                        "❌ You need admin permissions to view another user's inventory.",
-                        ephemeral=True
+                        "❌ You need admin permissions to view another user's inventory.", ephemeral=True
                     )
                     return
 
@@ -74,29 +68,21 @@ class InventoryCog(commands.Cog):
             # Get inventory
             params = {}
             if item_type:
-                params['item_type'] = item_type
+                params["item_type"] = item_type
 
-            resp = await self.http_client.get(
-                f"{api_base}/inventory/player/{player_id}",
-                params=params,
-                timeout=10
-            )
+            resp = await self.http_client.get(f"{api_base}/inventory/player/{player_id}", params=params, timeout=10)
             resp.raise_for_status()
             items = resp.json()
 
             if not items:
                 type_text = f" ({item_type})" if item_type else ""
                 await interaction.followup.send(
-                    f"📭 No items found in {target_user.display_name}'s inventory{type_text}.",
-                    ephemeral=True
+                    f"📭 No items found in {target_user.display_name}'s inventory{type_text}.", ephemeral=True
                 )
                 return
 
             # Get inventory summary for overview
-            summary_resp = await self.http_client.get(
-                f"{api_base}/inventory/player/{player_id}/summary",
-                timeout=10
-            )
+            summary_resp = await self.http_client.get(f"{api_base}/inventory/player/{player_id}/summary", timeout=10)
             summary_resp.raise_for_status()
             summary = summary_resp.json()
 
@@ -105,10 +91,7 @@ class InventoryCog(commands.Cog):
             if item_type:
                 title += f" - {item_type.title()}s"
 
-            embed = discord.Embed(
-                title=title,
-                color=discord.Color.blue()
-            )
+            embed = discord.Embed(title=title, color=discord.Color.blue())
 
             # Add summary as description
             summary_text = (
@@ -121,7 +104,7 @@ class InventoryCog(commands.Cog):
             # Group items by type
             items_by_type = {}
             for item in items:
-                item_type_key = item['item_type']
+                item_type_key = item["item_type"]
                 if item_type_key not in items_by_type:
                     items_by_type[item_type_key] = []
                 items_by_type[item_type_key].append(item)
@@ -129,21 +112,19 @@ class InventoryCog(commands.Cog):
             # Add fields for each item type
             for item_type_key, type_items in items_by_type.items():
                 # Sort by name
-                type_items.sort(key=lambda x: x['item_name'])
+                type_items.sort(key=lambda x: x["item_name"])
 
                 # Format items
                 items_text = ""
                 for item in type_items[:20]:  # Limit to prevent embed size issues
-                    quantity_text = f"x{item['quantity']}" if item['quantity'] > 1 else ""
+                    quantity_text = f"x{item['quantity']}" if item["quantity"] > 1 else ""
                     items_text += f"• {item['item_name']} {quantity_text}\n"
 
                 if len(type_items) > 20:
                     items_text += f"... and {len(type_items) - 20} more"
 
                 embed.add_field(
-                    name=f"{item_type_key.title()}s ({len(type_items)})",
-                    value=items_text or "None",
-                    inline=True
+                    name=f"{item_type_key.title()}s ({len(type_items)})", value=items_text or "None", inline=True
                 )
 
             embed.set_thumbnail(url=target_user.display_avatar.url)
@@ -174,31 +155,26 @@ class InventoryCog(commands.Cog):
 
             # Search inventory
             resp = await self.http_client.get(
-                f"{api_base}/inventory/player/{player_id}/search",
-                params={'q': query},
-                timeout=10
+                f"{api_base}/inventory/player/{player_id}/search", params={"q": query}, timeout=10
             )
             resp.raise_for_status()
             items = resp.json()
 
             if not items:
-                await interaction.followup.send(
-                    f"🔍 No items found matching '{query}'.",
-                    ephemeral=True
-                )
+                await interaction.followup.send(f"🔍 No items found matching '{query}'.", ephemeral=True)
                 return
 
             # Create search results embed
             embed = discord.Embed(
                 title=f"🔍 Search Results for '{query}'",
                 description=f"Found {len(items)} matching items",
-                color=discord.Color.green()
+                color=discord.Color.green(),
             )
 
             # Group by type and display
             items_by_type = {}
             for item in items:
-                item_type = item['item_type']
+                item_type = item["item_type"]
                 if item_type not in items_by_type:
                     items_by_type[item_type] = []
                 items_by_type[item_type].append(item)
@@ -206,17 +182,13 @@ class InventoryCog(commands.Cog):
             for item_type, type_items in items_by_type.items():
                 items_text = ""
                 for item in type_items[:10]:  # Limit results
-                    quantity_text = f" x{item['quantity']}" if item['quantity'] > 1 else ""
+                    quantity_text = f" x{item['quantity']}" if item["quantity"] > 1 else ""
                     items_text += f"• **{item['item_name']}**{quantity_text}\n"
 
                 if len(type_items) > 10:
                     items_text += f"... and {len(type_items) - 10} more"
 
-                embed.add_field(
-                    name=f"{item_type.title()}s",
-                    value=items_text,
-                    inline=True
-                )
+                embed.add_field(name=f"{item_type.title()}s", value=items_text, inline=True)
 
             await interaction.followup.send(embed=embed)
             flogger.debug(f"/search '{query}' by {interaction.user} in guild {interaction.guild_id}")
@@ -229,8 +201,7 @@ class InventoryCog(commands.Cog):
 
     @app_commands.command(name="item", description="Get detailed information about a specific item")
     @app_commands.describe(
-        item_name="Name of the item to check",
-        item_type="Type of the item (ship, weapon, module, turret)"
+        item_name="Name of the item to check", item_type="Type of the item (ship, weapon, module, turret)"
     )
     async def item(self, interaction: discord.Interaction, item_name: str, item_type: str):
         """Get detailed item information including inventory count."""
@@ -247,22 +218,19 @@ class InventoryCog(commands.Cog):
             # Get item count
             resp = await self.http_client.get(
                 f"{api_base}/inventory/player/{player_id}/item/{item_name}/count",
-                params={'item_type': item_type},
-                timeout=10
+                params={"item_type": item_type},
+                timeout=10,
             )
             resp.raise_for_status()
             count_data = resp.json()
 
             # Create item info embed
-            embed = discord.Embed(
-                title=f"📦 {item_name}",
-                color=self._get_item_type_color(item_type)
-            )
+            embed = discord.Embed(title=f"📦 {item_name}", color=self._get_item_type_color(item_type))
 
             embed.add_field(name="Type", value=item_type.title(), inline=True)
-            embed.add_field(name="Quantity Owned", value=str(count_data['quantity']), inline=True)
+            embed.add_field(name="Quantity Owned", value=str(count_data["quantity"]), inline=True)
 
-            if count_data['quantity'] == 0:
+            if count_data["quantity"] == 0:
                 embed.add_field(name="Status", value="❌ Not Owned", inline=True)
             else:
                 embed.add_field(name="Status", value="✅ Owned", inline=True)
@@ -292,10 +260,7 @@ class InventoryCog(commands.Cog):
     async def _get_active_ship(self, player_id: int) -> dict | None:
         """Helper to fetch the player's active ship. Returns ship dict or None."""
         try:
-            resp = await self.http_client.get(
-                f"{api_base}/ships/player/{player_id}",
-                timeout=10
-            )
+            resp = await self.http_client.get(f"{api_base}/ships/player/{player_id}", timeout=10)
             resp.raise_for_status()
             ships = resp.json()
             for ship in ships:
@@ -306,15 +271,14 @@ class InventoryCog(commands.Cog):
             return None
 
     @app_commands.command(name="equip", description="Equip an item from your inventory onto your active ship")
-    @app_commands.describe(
-        item_name="Name of the item to equip",
-        equipment_type="Type of equipment slot"
+    @app_commands.describe(item_name="Name of the item to equip", equipment_type="Type of equipment slot")
+    @app_commands.choices(
+        equipment_type=[
+            app_commands.Choice(name="Weapon", value="weapon"),
+            app_commands.Choice(name="Module", value="module"),
+            app_commands.Choice(name="Turret", value="turret"),
+        ]
     )
-    @app_commands.choices(equipment_type=[
-        app_commands.Choice(name="Weapon", value="weapon"),
-        app_commands.Choice(name="Module", value="module"),
-        app_commands.Choice(name="Turret", value="turret"),
-    ])
     async def equip(
         self,
         interaction: discord.Interaction,
@@ -335,8 +299,7 @@ class InventoryCog(commands.Cog):
             active_ship = await self._get_active_ship(player_id)
             if not active_ship:
                 await interaction.followup.send(
-                    "❌ No active ship found. Use `/ships` to set an active ship.",
-                    ephemeral=True
+                    "❌ No active ship found. Use `/ships` to set an active ship.", ephemeral=True
                 )
                 return
 
@@ -350,7 +313,7 @@ class InventoryCog(commands.Cog):
                     "equipment_type": api_equipment_type,
                     "item_name": item_name,
                 },
-                timeout=10
+                timeout=10,
             )
             resp.raise_for_status()
             ship_data = resp.json()
@@ -358,12 +321,10 @@ class InventoryCog(commands.Cog):
             embed = discord.Embed(
                 title="⚙️ Item Equipped",
                 description=f"**{item_name}** has been equipped to your ship!",
-                color=discord.Color.green()
+                color=discord.Color.green(),
             )
             embed.add_field(
-                name="Ship",
-                value=ship_data.get("nickname") or ship_data.get("ship_name", "Unknown"),
-                inline=True
+                name="Ship", value=ship_data.get("nickname") or ship_data.get("ship_name", "Unknown"), inline=True
             )
             embed.add_field(name="Slot", value=equipment_type.title(), inline=True)
 
@@ -390,9 +351,7 @@ class InventoryCog(commands.Cog):
                     detail = "Cannot equip item."
                 await interaction.followup.send(f"❌ {detail}", ephemeral=True)
             elif e.response.status_code == 404:
-                await interaction.followup.send(
-                    f"❌ Ship or item '{item_name}' not found.", ephemeral=True
-                )
+                await interaction.followup.send(f"❌ Ship or item '{item_name}' not found.", ephemeral=True)
             else:
                 await interaction.followup.send(f"❌ API Error: {e}", ephemeral=True)
         except Exception as e:  # pylint: disable=broad-exception-caught
@@ -400,15 +359,14 @@ class InventoryCog(commands.Cog):
             await interaction.followup.send("⚠️ An error occurred while equipping the item.", ephemeral=True)
 
     @app_commands.command(name="unequip", description="Unequip an item from your active ship to inventory")
-    @app_commands.describe(
-        item_name="Name of the item to unequip",
-        equipment_type="Type of equipment slot"
+    @app_commands.describe(item_name="Name of the item to unequip", equipment_type="Type of equipment slot")
+    @app_commands.choices(
+        equipment_type=[
+            app_commands.Choice(name="Weapon", value="weapon"),
+            app_commands.Choice(name="Module", value="module"),
+            app_commands.Choice(name="Turret", value="turret"),
+        ]
     )
-    @app_commands.choices(equipment_type=[
-        app_commands.Choice(name="Weapon", value="weapon"),
-        app_commands.Choice(name="Module", value="module"),
-        app_commands.Choice(name="Turret", value="turret"),
-    ])
     async def unequip(
         self,
         interaction: discord.Interaction,
@@ -429,8 +387,7 @@ class InventoryCog(commands.Cog):
             active_ship = await self._get_active_ship(player_id)
             if not active_ship:
                 await interaction.followup.send(
-                    "❌ No active ship found. Use `/ships` to set an active ship.",
-                    ephemeral=True
+                    "❌ No active ship found. Use `/ships` to set an active ship.", ephemeral=True
                 )
                 return
 
@@ -444,7 +401,7 @@ class InventoryCog(commands.Cog):
                     "equipment_type": api_equipment_type,
                     "item_name": item_name,
                 },
-                timeout=10
+                timeout=10,
             )
             resp.raise_for_status()
             ship_data = resp.json()
@@ -452,12 +409,10 @@ class InventoryCog(commands.Cog):
             embed = discord.Embed(
                 title="📦 Item Unequipped",
                 description=f"**{item_name}** has been moved back to your inventory.",
-                color=discord.Color.blue()
+                color=discord.Color.blue(),
             )
             embed.add_field(
-                name="Ship",
-                value=ship_data.get("nickname") or ship_data.get("ship_name", "Unknown"),
-                inline=True
+                name="Ship", value=ship_data.get("nickname") or ship_data.get("ship_name", "Unknown"), inline=True
             )
             embed.add_field(name="Slot", value=equipment_type.title(), inline=True)
 
@@ -474,9 +429,7 @@ class InventoryCog(commands.Cog):
                     detail = "Cannot unequip item."
                 await interaction.followup.send(f"❌ {detail}", ephemeral=True)
             elif e.response.status_code == 404:
-                await interaction.followup.send(
-                    f"❌ Ship or item '{item_name}' not found.", ephemeral=True
-                )
+                await interaction.followup.send(f"❌ Ship or item '{item_name}' not found.", ephemeral=True)
             else:
                 await interaction.followup.send(f"❌ API Error: {e}", ephemeral=True)
         except Exception as e:  # pylint: disable=broad-exception-caught
@@ -489,7 +442,7 @@ class InventoryCog(commands.Cog):
             "ship": discord.Color.green(),
             "weapon": discord.Color.red(),
             "module": discord.Color.blue(),
-            "turret": discord.Color.purple()
+            "turret": discord.Color.purple(),
         }
         return type_colors.get(item_type, discord.Color.default())
 
@@ -522,6 +475,7 @@ class InventoryCog(commands.Cog):
         flogger.exception("Error in /unequip", exc_info=error)
         if not interaction.response.is_done():
             await interaction.response.send_message("⚠️ An error occurred.", ephemeral=True)
+
 
 async def setup(bot: commands.Bot):
     flogger.debug("Setting up InventoryCog...")

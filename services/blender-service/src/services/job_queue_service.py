@@ -3,6 +3,7 @@
 Manages render jobs as background tasks with status polling.  Jobs are
 stored in an in-memory dict (no persistence — jobs lost on restart).
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -82,8 +83,7 @@ class JobQueueService:
         self._max_queue_size = max_queue_size
         self._cleanup_task: asyncio.Task | None = None
         self._active_tasks: set[asyncio.Task] = set()
-        flogger.info(f"JobQueueService initialized (max_concurrent={max_concurrent}, "
-                     f"max_queue_size={max_queue_size})")
+        flogger.info(f"JobQueueService initialized (max_concurrent={max_concurrent}, max_queue_size={max_queue_size})")
 
     def create_job(self, model_path: str, res_x: int, res_y: int, num_samples: int) -> RenderJob:
         """Create a new job and return it. Does NOT start processing.
@@ -191,8 +191,10 @@ class JobQueueService:
 
     def shutdown(self) -> None:
         """Cancel cleanup task and all active render tasks."""
-        flogger.info(f"Shutting down job queue (cleanup_task set: {self._cleanup_task is not None}, "
-                     f"active tasks: {len(self._active_tasks)})")
+        flogger.info(
+            f"Shutting down job queue (cleanup_task set: {self._cleanup_task is not None}, "
+            f"active tasks: {len(self._active_tasks)})"
+        )
         if self._cleanup_task:
             self._cleanup_task.cancel()
             flogger.debug("Cleanup task cancelled")

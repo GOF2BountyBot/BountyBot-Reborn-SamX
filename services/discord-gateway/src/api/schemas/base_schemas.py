@@ -13,31 +13,41 @@ from pydantic import BaseModel, Field
 
 class BaseResponse(BaseModel):
     """Base response model for all API endpoints."""
+
     status: str = Field(..., description="Operation status")
     timestamp: datetime = Field(default_factory=lambda: datetime.now(UTC), description="Response timestamp")
     message: str | None = Field(None, description="Optional response message")
 
+
 class PaginatedResponse(BaseResponse):
     """Base response model for paginated endpoints."""
+
     total_count: int | None = Field(None, description="Total number of items")
     page: int | None = Field(None, description="Current page number")
     page_size: int | None = Field(None, description="Items per page")
     has_more: bool | None = Field(None, description="Whether there are more items")
 
+
 class SuccessResponse(BaseResponse):
     """Generic success response for operations without specific return data."""
+
     message: str = Field(..., description="Success message")
+
 
 class DeleteResponse(BaseResponse):
     """Response model for delete operations."""
+
     deleted: bool = Field(True, description="Whether deletion was successful")
     message: str = Field(..., description="Deletion confirmation message")
+
 
 class BaseCreateRequest(BaseModel):
     """Base request model for create operations."""
 
+
 class BaseUpdateRequest(BaseModel):
     """Base request model for update operations."""
+
 
 # Generic response patterns
 def create_resource_response(resource_name: str, resource_model):
@@ -47,9 +57,10 @@ def create_resource_response(resource_name: str, resource_model):
         (BaseResponse,),
         {
             "data": (resource_model, Field(..., description=f"{resource_name} data")),
-            "__annotations__": {"data": resource_model}
-        }
+            "__annotations__": {"data": resource_model},
+        },
     )
+
 
 def create_resource_list_response(resource_name: str, resource_model):
     """Factory function to create standardized resource list responses."""
@@ -58,6 +69,6 @@ def create_resource_list_response(resource_name: str, resource_model):
         (PaginatedResponse,),
         {
             "data": (list[resource_model], Field(..., description=f"List of {resource_name} items")),
-            "__annotations__": {"data": list[resource_model]}
-        }
+            "__annotations__": {"data": list[resource_model]},
+        },
     )

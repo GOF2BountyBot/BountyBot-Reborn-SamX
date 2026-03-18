@@ -9,6 +9,7 @@ from persist.repositories.generic_repository import GenericRepository
 
 flogger = bblogger.get_logger("bot-turret-weapon-repository")
 
+
 class TurretWeaponRepository(GenericRepository[TurretWeapon]):
     def __init__(self):
         super().__init__(TurretWeapon)
@@ -16,9 +17,7 @@ class TurretWeaponRepository(GenericRepository[TurretWeapon]):
     async def get_by_name(self, db: AsyncSession, name: str) -> TurretWeapon | None:
         flogger.trace(f"get_by_name: entering with name={name}")
         try:
-            result = await db.execute(
-                select(self._model).filter_by(name=name)
-            )
+            result = await db.execute(select(self._model).filter_by(name=name))
             weapon = result.scalars().one_or_none()
             if weapon:
                 flogger.trace(f"get_by_name: found turret weapon id={weapon.id}, name={weapon.name}")
@@ -46,14 +45,14 @@ class TurretWeaponRepository(GenericRepository[TurretWeapon]):
         try:
             # common item fields
             item_fields = {
-                "name":       raw["name"],
-                "aliases":    raw.get("aliases", []),
-                "built_in":   raw.get("builtIn", False),
-                "emoji":      raw.get("emoji"),
-                "icon":       raw.get("icon"),
-                "value":      raw.get("value"),
-                "wiki":       raw.get("wiki"),
-                "type":       raw.get("type"),
+                "name": raw["name"],
+                "aliases": raw.get("aliases", []),
+                "built_in": raw.get("builtIn", False),
+                "emoji": raw.get("emoji"),
+                "icon": raw.get("icon"),
+                "value": raw.get("value"),
+                "wiki": raw.get("wiki"),
+                "type": raw.get("type"),
             }
             # weapon-level fields
             weapon_fields = {
@@ -61,16 +60,12 @@ class TurretWeaponRepository(GenericRepository[TurretWeapon]):
             }
             # turret-weapon specific fields
             turret_fields = {
-                "dps":        raw["dps"],
-                "automatic":  raw.get("automatic"),
+                "dps": raw["dps"],
+                "automatic": raw.get("automatic"),
             }
 
             # everything else → JSON blob
-            extra = {
-                 k: v
-                 for k, v in raw.items()
-                 if k not in (*item_fields, *weapon_fields, *turret_fields)
-            }
+            extra = {k: v for k, v in raw.items() if k not in (*item_fields, *weapon_fields, *turret_fields)}
             flogger.trace(
                 f"create_or_update: parsed fields for {weapon_name}: "
                 f"item_fields={item_fields}, weapon_fields={weapon_fields}, "
@@ -107,8 +102,6 @@ class TurretWeaponRepository(GenericRepository[TurretWeapon]):
             flogger.trace(f"create_or_update: exiting with turret weapon id={obj.id}, name={obj.name}")
             return obj
         except Exception as e:
-            flogger.error(
-                f"create_or_update: error creating/updating turret weapon {weapon_name}: {e}"
-            )
+            flogger.error(f"create_or_update: error creating/updating turret weapon {weapon_name}: {e}")
             await db.rollback()
             raise

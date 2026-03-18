@@ -19,9 +19,7 @@ class GuildShop(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     guild_id: Mapped[int] = mapped_column(
-        BigInteger,
-        ForeignKey(f"{TableNames.GuildConfigs.value}.guild_id"),
-        nullable=False
+        BigInteger, ForeignKey(f"{TableNames.GuildConfigs.value}.guild_id"), nullable=False
     )
     tier: Mapped[str] = mapped_column(String(20), nullable=False)  # Bronze, Silver, Gold, Platinum
     tech_level: Mapped[int] = mapped_column(Integer, nullable=False)  # 1-9 (randomly selected on refresh)
@@ -33,11 +31,7 @@ class GuildShop(Base):
     refresh_interval_hours: Mapped[int] = mapped_column(Integer, default=12)  # Hours between refreshes
 
     # Relationships
-    guild_config: Mapped["GuildConfig"] = relationship(
-        "GuildConfig",
-        back_populates="shops",
-        foreign_keys=[guild_id]
-    )
+    guild_config: Mapped["GuildConfig"] = relationship("GuildConfig", back_populates="shops", foreign_keys=[guild_id])
 
     def __repr__(self) -> str:
         return (

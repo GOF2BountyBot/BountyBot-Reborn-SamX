@@ -35,8 +35,8 @@ primary_weapon_repo = PrimaryWeaponRepository()
 secondary_weapon_repo = SecondaryWeaponRepository()
 turret_weapon_repo = TurretWeaponRepository()
 ship_repo = ShipRepository()
-system_repo    = SystemRepository()
-criminal_repo  = CriminalRepository()
+system_repo = SystemRepository()
+criminal_repo = CriminalRepository()
 
 # Category to repository mapping
 CATEGORY_REPOS = {
@@ -45,7 +45,7 @@ CATEGORY_REPOS = {
     DataCategory.secondary: secondary_weapon_repo,
     DataCategory.turret: turret_weapon_repo,
     DataCategory.ship: ship_repo,
-    DataCategory.system:   system_repo,
+    DataCategory.system: system_repo,
     DataCategory.criminal: criminal_repo,
 }
 
@@ -56,13 +56,15 @@ CATEGORY_RESPONSE_MODELS = {
     DataCategory.secondary: SecondaryWeaponResponse,
     DataCategory.turret: TurretWeaponResponse,
     DataCategory.ship: ShipResponse,
-    DataCategory.system:   SystemResponse,
+    DataCategory.system: SystemResponse,
     DataCategory.criminal: CriminalResponse,
 }
+
 
 async def get_db() -> AsyncGenerator[AsyncSession, None]:
     async with db_manager.get_session() as session:
         yield session
+
 
 @router.get("/categories", response_model=list[str])
 async def list_categories():
@@ -78,6 +80,7 @@ async def list_categories():
     except Exception as e:
         flogger.exception(f"Error retrieving categories: error={e}")
         raise HTTPException(status_code=500, detail="Internal server error") from e
+
 
 @router.get("/categories/{category}/objects", response_model=list[dict[str, Any]])
 async def list_objects_for_category(category: DataCategory, db: AsyncSession = Depends(get_db)):
@@ -96,12 +99,14 @@ async def list_objects_for_category(category: DataCategory, db: AsyncSession = D
         # Convert to simplified format for dropdown menus
         result = []
         for obj in objects:
-            result.append({
-                "id": obj.id,
-                "name": obj.name,
-                "aliases": obj.aliases if hasattr(obj, 'aliases') else [],
-                "emoji": obj.emoji if hasattr(obj, 'emoji') else None
-            })
+            result.append(
+                {
+                    "id": obj.id,
+                    "name": obj.name,
+                    "aliases": obj.aliases if hasattr(obj, "aliases") else [],
+                    "emoji": obj.emoji if hasattr(obj, "emoji") else None,
+                }
+            )
 
         flogger.debug(f"Objects retrieved: count={len(result)}, category={category.value}")
         return result
@@ -110,6 +115,7 @@ async def list_objects_for_category(category: DataCategory, db: AsyncSession = D
     except Exception as e:
         flogger.exception(f"Error retrieving objects: category={category.value}, error={e}")
         raise HTTPException(status_code=500, detail="Internal server error") from e
+
 
 @router.get("/object/name/{object_name}", response_model=dict[str, Any])
 async def get_object_by_name(object_name: str, db: AsyncSession = Depends(get_db)):
@@ -136,7 +142,7 @@ async def get_object_by_name(object_name: str, db: AsyncSession = Depends(get_db
                     "type": getattr(obj, "type", None),
                     "tech_level": getattr(obj, "tech_level", None),
                     "extra_atts": getattr(obj, "extra_atts", None),
-                    "category": category.value
+                    "category": category.value,
                 }
 
                 if category == DataCategory.module:
@@ -144,29 +150,31 @@ async def get_object_by_name(object_name: str, db: AsyncSession = Depends(get_db
                 elif category == DataCategory.primary:
                     result["dps"] = obj.dps
                 elif category == DataCategory.ship:
-                    result.update({
-                        "armour": obj.armour,
-                        "cargo": obj.cargo,
-                        "handling": obj.handling,
-                        "shop_spawn_rate": obj.shop_spawn_rate,
-                        "max_modules": obj.max_modules,
-                        "max_primaries": obj.max_primaries,
-                        "max_secondaries": obj.max_secondaries,
-                        "max_turrets": obj.max_turrets,
-                        "manufacturer": obj.manufacturer,
-                        "skinnable": obj.skinnable,
-                        "compatible_skins": obj.compatible_skins or [],
-                        "model": obj.model,
-                        "norm_spec": obj.norm_spec,
-                        "assets": obj.assets or [],
-                        "save_due": obj.save_due,
-                    })
+                    result.update(
+                        {
+                            "armour": obj.armour,
+                            "cargo": obj.cargo,
+                            "handling": obj.handling,
+                            "shop_spawn_rate": obj.shop_spawn_rate,
+                            "max_modules": obj.max_modules,
+                            "max_primaries": obj.max_primaries,
+                            "max_secondaries": obj.max_secondaries,
+                            "max_turrets": obj.max_turrets,
+                            "manufacturer": obj.manufacturer,
+                            "skinnable": obj.skinnable,
+                            "compatible_skins": obj.compatible_skins or [],
+                            "model": obj.model,
+                            "norm_spec": obj.norm_spec,
+                            "assets": obj.assets or [],
+                            "save_due": obj.save_due,
+                        }
+                    )
                 elif category == DataCategory.criminal:
                     # result["is_player"] = obj.is_player
-                    result["faction"]   = obj.faction
+                    result["faction"] = obj.faction
                 elif category == DataCategory.system:
                     result["coordinates"] = obj.coordinates
-                    result["faction"]     = obj.faction
+                    result["faction"] = obj.faction
 
                 flogger.debug(f"Object found: name={object_name}, category={category.value}, id={obj.id}")
                 return result
@@ -179,6 +187,7 @@ async def get_object_by_name(object_name: str, db: AsyncSession = Depends(get_db
     except Exception as e:
         flogger.exception(f"Error retrieving object by name: object_name={object_name}, error={e}")
         raise HTTPException(status_code=500, detail="Internal server error") from e
+
 
 @router.get("/object/alias/{alias}", response_model=dict[str, Any])
 async def get_object_by_alias(alias: str, db: AsyncSession = Depends(get_db)):
@@ -203,7 +212,7 @@ async def get_object_by_alias(alias: str, db: AsyncSession = Depends(get_db)):
                     "type": getattr(obj, "type", None),
                     "tech_level": getattr(obj, "tech_level", None),
                     "extra_atts": getattr(obj, "extra_atts", None),
-                    "category": category.value
+                    "category": category.value,
                 }
 
                 if category == DataCategory.module:
@@ -211,29 +220,31 @@ async def get_object_by_alias(alias: str, db: AsyncSession = Depends(get_db)):
                 elif category == DataCategory.primary:
                     result["dps"] = obj.dps
                 elif category == DataCategory.ship:
-                    result.update({
-                        "armour": obj.armour,
-                        "cargo": obj.cargo,
-                        "handling": obj.handling,
-                        "shop_spawn_rate": obj.shop_spawn_rate,
-                        "max_modules": obj.max_modules,
-                        "max_primaries": obj.max_primaries,
-                        "max_secondaries": obj.max_secondaries,
-                        "max_turrets": obj.max_turrets,
-                        "manufacturer": obj.manufacturer,
-                        "skinnable": obj.skinnable,
-                        "compatible_skins": obj.compatible_skins or [],
-                        "model": obj.model,
-                        "norm_spec": obj.norm_spec,
-                        "assets": obj.assets or [],
-                        "save_due": obj.save_due,
-                    })
+                    result.update(
+                        {
+                            "armour": obj.armour,
+                            "cargo": obj.cargo,
+                            "handling": obj.handling,
+                            "shop_spawn_rate": obj.shop_spawn_rate,
+                            "max_modules": obj.max_modules,
+                            "max_primaries": obj.max_primaries,
+                            "max_secondaries": obj.max_secondaries,
+                            "max_turrets": obj.max_turrets,
+                            "manufacturer": obj.manufacturer,
+                            "skinnable": obj.skinnable,
+                            "compatible_skins": obj.compatible_skins or [],
+                            "model": obj.model,
+                            "norm_spec": obj.norm_spec,
+                            "assets": obj.assets or [],
+                            "save_due": obj.save_due,
+                        }
+                    )
                 elif category == DataCategory.criminal:
                     # result["is_player"] = obj.is_player
-                    result["faction"]   = obj.faction
+                    result["faction"] = obj.faction
                 elif category == DataCategory.system:
                     result["coordinates"] = obj.coordinates
-                    result["faction"]     = obj.faction
+                    result["faction"] = obj.faction
 
                 flogger.debug(f"Object found by alias: alias={alias}, category={category.value}, id={obj.id}")
                 return result
@@ -245,6 +256,7 @@ async def get_object_by_alias(alias: str, db: AsyncSession = Depends(get_db)):
     except Exception as e:
         flogger.exception(f"Error retrieving object by alias: alias={alias}, error={e}")
         raise HTTPException(status_code=500, detail="Internal server error") from e
+
 
 @router.get("/object/{category}/{object_id}", response_model=dict[str, Any])
 async def get_object_by_id(category: DataCategory, object_id: int, db: AsyncSession = Depends(get_db)):
@@ -277,7 +289,7 @@ async def get_object_by_id(category: DataCategory, object_id: int, db: AsyncSess
             "type": getattr(obj, "type", None),
             "tech_level": getattr(obj, "tech_level", None),
             "extra_atts": getattr(obj, "extra_atts", None),
-            "category": category.value
+            "category": category.value,
         }
 
         if category == DataCategory.module:
@@ -285,31 +297,33 @@ async def get_object_by_id(category: DataCategory, object_id: int, db: AsyncSess
         elif category == DataCategory.primary:
             result["dps"] = obj.dps
         elif category == DataCategory.ship:
-            result.update({
-                "armour": obj.armour,
-                "cargo": obj.cargo,
-                "handling": obj.handling,
-                "shop_spawn_rate": obj.shop_spawn_rate,
-                "max_modules": obj.max_modules,
-                "max_primaries": obj.max_primaries,
-                "max_secondaries": obj.max_secondaries,
-                "max_turrets": obj.max_turrets,
-                "manufacturer": obj.manufacturer,
-                "skinnable": obj.skinnable,
-                "compatible_skins": obj.compatible_skins or [],
-                "model": obj.model,
-                "norm_spec": obj.norm_spec,
-                "assets": obj.assets or [],
-                "save_due": obj.save_due,
-            })
+            result.update(
+                {
+                    "armour": obj.armour,
+                    "cargo": obj.cargo,
+                    "handling": obj.handling,
+                    "shop_spawn_rate": obj.shop_spawn_rate,
+                    "max_modules": obj.max_modules,
+                    "max_primaries": obj.max_primaries,
+                    "max_secondaries": obj.max_secondaries,
+                    "max_turrets": obj.max_turrets,
+                    "manufacturer": obj.manufacturer,
+                    "skinnable": obj.skinnable,
+                    "compatible_skins": obj.compatible_skins or [],
+                    "model": obj.model,
+                    "norm_spec": obj.norm_spec,
+                    "assets": obj.assets or [],
+                    "save_due": obj.save_due,
+                }
+            )
         elif category == DataCategory.criminal:
             # result["is_player"] = obj.is_player
-            result["faction"]   = obj.faction
+            result["faction"] = obj.faction
         elif category == DataCategory.system:
             result["coordinates"] = obj.coordinates
-            result["faction"]     = obj.faction
-            result["neighbours"]  = getattr(obj, "neighbours", None)
-            result["security"]    = getattr(obj, "security", None)
+            result["faction"] = obj.faction
+            result["neighbours"] = getattr(obj, "neighbours", None)
+            result["security"] = getattr(obj, "security", None)
 
         flogger.debug(f"Object retrieved by ID: category={category.value}, object_id={object_id}")
         return result
@@ -359,15 +373,9 @@ async def get_ship_render_info(
         assets: list[str] = ship.assets or []
 
         # Extract file paths from the assets list
-        mtl_path: str | None = next(
-            (a for a in assets if a.endswith(".mtl")), None
-        )
-        skin_base_path: str | None = next(
-            (a for a in assets if "skinBase" in a), None
-        )
-        diffuse_path: str | None = next(
-            (a for a in assets if "_diffuse" in a), None
-        )
+        mtl_path: str | None = next((a for a in assets if a.endswith(".mtl")), None)
+        skin_base_path: str | None = next((a for a in assets if "skinBase" in a), None)
+        diffuse_path: str | None = next((a for a in assets if "_diffuse" in a), None)
 
         # Collect mask files (mask1.jpg, mask2.jpg …) ordered numerically
         import re

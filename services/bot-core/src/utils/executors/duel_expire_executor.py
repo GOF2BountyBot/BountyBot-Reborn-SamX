@@ -78,9 +78,7 @@ async def execute_duel_expire_job(job_id: str, payload: dict) -> dict:
 
         end_ts = datetime.now(UTC)
         duration = (end_ts - start_ts).total_seconds()
-        flogger.info(
-            f"DuelExpireJob[{job_id}] completed in {duration:.2f}s"
-        )
+        flogger.info(f"DuelExpireJob[{job_id}] completed in {duration:.2f}s")
         return {"status": "success", "duel_id": duel.id}
 
     except Exception as e:  # pylint: disable=broad-exception-caught
@@ -92,6 +90,7 @@ async def execute_duel_expire_job(job_id: str, payload: dict) -> dict:
 # ---------------------------------------------------------------------------
 # Helper: notify both players of duel expiry via discord-gateway
 # ---------------------------------------------------------------------------
+
 
 async def _notify_expiry(parent_job_id: str, duel) -> None:
     """POST a duel expiry notification to the discord-gateway messages endpoint.
@@ -114,8 +113,7 @@ async def _notify_expiry(parent_job_id: str, duel) -> None:
 
     try:
         flogger.debug(
-            f"DuelExpireJob[{parent_job_id}] posting duel expiry notification "
-            f"to discord-gateway for duel id={duel.id}"
+            f"DuelExpireJob[{parent_job_id}] posting duel expiry notification to discord-gateway for duel id={duel.id}"
         )
         async with httpx.AsyncClient() as client:
             resp = await client.post(
@@ -124,10 +122,7 @@ async def _notify_expiry(parent_job_id: str, duel) -> None:
                 timeout=10,
             )
         resp.raise_for_status()
-        flogger.debug(
-            f"DuelExpireJob[{parent_job_id}] received HTTP {resp.status_code} "
-            f"from discord-gateway"
-        )
+        flogger.debug(f"DuelExpireJob[{parent_job_id}] received HTTP {resp.status_code} from discord-gateway")
         flogger.info(
             f"DuelExpireJob[{parent_job_id}] notified discord-gateway of "
             f"duel id={duel.id} expiry (challenger={duel.challenger_id}, "
@@ -135,7 +130,6 @@ async def _notify_expiry(parent_job_id: str, duel) -> None:
         )
     except Exception as e:  # pylint: disable=broad-exception-caught
         flogger.error(
-            f"DuelExpireJob[{parent_job_id}] failed to notify discord-gateway "
-            f"of duel id={duel.id} expiry: {e}"
+            f"DuelExpireJob[{parent_job_id}] failed to notify discord-gateway of duel id={duel.id} expiry: {e}"
         )
         flogger.trace(traceback.format_exc())

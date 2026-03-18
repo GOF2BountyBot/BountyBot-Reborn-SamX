@@ -63,10 +63,7 @@ class DatabaseManager:
         )
 
         # Use asyncpg dialect
-        self._connection_string = (
-            f"postgresql+asyncpg://{db_user}:{db_password}@"
-            f"{db_host}:{db_port}/{db_name}"
-        )
+        self._connection_string = f"postgresql+asyncpg://{db_user}:{db_password}@{db_host}:{db_port}/{db_name}"
         self._pool_config = {
             "pool_size": pool_size,
             "max_overflow": max_overflow,
@@ -89,18 +86,10 @@ class DatabaseManager:
         try:
             flogger.info("Initializing async database connection...")
             flogger.debug("Creating AsyncEngine with asyncpg dialect and connection pool")
-            self._engine = create_async_engine(
-                self._connection_string,
-                future=True,
-                **self._pool_config
-            )
+            self._engine = create_async_engine(self._connection_string, future=True, **self._pool_config)
             flogger.debug("AsyncEngine created successfully")
             flogger.debug("Creating async_sessionmaker")
-            self._session_factory = sessionmaker(
-                bind=self._engine,
-                class_=AsyncSession,
-                expire_on_commit=False
-            )
+            self._session_factory = sessionmaker(bind=self._engine, class_=AsyncSession, expire_on_commit=False)
             flogger.debug("async_sessionmaker created successfully")
             await self._test_connection()
             flogger.info("Database manager initialized successfully")
@@ -123,10 +112,7 @@ class DatabaseManager:
                     raise RuntimeError("Unexpected test result from database")
             except OperationalError as e:
                 if attempt < max_retries - 1:
-                    flogger.warning(
-                        f"DB connection attempt {attempt+1} failed: {e}. "
-                        f"Retrying in {retry_delay}s..."
-                    )
+                    flogger.warning(f"DB connection attempt {attempt + 1} failed: {e}. Retrying in {retry_delay}s...")
                     time.sleep(retry_delay)
                     retry_delay *= 2
                 else:
@@ -177,11 +163,7 @@ class DatabaseManager:
             finally:
                 flogger.debug("Session released")
 
-    async def execute_sql(
-        self,
-        sql_statement: str,
-        parameters: dict[str, Any] | None = None
-    ) -> Any:
+    async def execute_sql(self, sql_statement: str, parameters: dict[str, Any] | None = None) -> Any:
         """
         Execute a raw SQL statement in a transaction.
         Returns the Result object.
@@ -198,11 +180,7 @@ class DatabaseManager:
             flogger.error(f"SQL execution failed: {e}")
             raise
 
-    async def table_exists(
-        self,
-        table_name: str,
-        schema: str | None = None
-    ) -> bool:
+    async def table_exists(self, table_name: str, schema: str | None = None) -> bool:
         """
         Check if a table exists in the database.
         """
@@ -224,18 +202,12 @@ class DatabaseManager:
         """
         Get database health information for health checks.
         """
-        health_info = {
-            "status": "unknown",
-            "connection_pool": {},
-            "connectivity": False,
-            "error": None
-        }
+        health_info = {"status": "unknown", "connection_pool": {}, "connectivity": False, "error": None}
 
         try:
             if self._engine is None:
                 flogger.debug("Health check: engine not initialized")
-                health_info.update(status="not_initialized",
-                                   error="Database manager not initialized")
+                health_info.update(status="not_initialized", error="Database manager not initialized")
                 return health_info
 
             flogger.debug("Health check: testing connectivity")
@@ -250,7 +222,7 @@ class DatabaseManager:
                 "checked_in": pool.checkedin(),
                 "checked_out": pool.checkedout(),
                 "overflow": pool.overflow(),
-                "status": pool.status()
+                "status": pool.status(),
             }
             health_info["connection_pool"] = pool_stats
             flogger.debug(
@@ -295,18 +267,22 @@ class DatabaseManager:
 # Global database manager instance
 db_manager = DatabaseManager()
 
+
 # Convenience functions for common operations
 def get_db_connection():
     """Convenience function to get a database connection."""
     return db_manager.get_connection()
 
+
 def get_db_session():
     """Convenience function to get a database session."""
     return db_manager.get_session()
 
+
 async def execute_sql(sql: str, params: dict[str, Any] | None = None):
     """Convenience function to execute SQL."""
     return await db_manager.execute_sql(sql, params)
+
 
 async def table_exists(table_name: str, schema: str | None = None) -> bool:
     """Convenience function to check if a table exists."""

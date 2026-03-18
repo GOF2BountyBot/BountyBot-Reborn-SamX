@@ -68,10 +68,7 @@ class DivisionService:
             index = names.index(division_name)
         except ValueError:
             flogger.debug(f"Division boundary query: unknown division {division_name!r}")
-            raise ValueError(
-                f"Unknown division: {division_name!r}. "
-                f"Valid divisions are: {names}"
-            ) from None
+            raise ValueError(f"Unknown division: {division_name!r}. Valid divisions are: {names}") from None
 
         result = boundaries[index]
         flogger.debug(f"Division boundary query: {division_name} → min={result[0]} max={result[1]}")

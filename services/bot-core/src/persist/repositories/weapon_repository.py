@@ -1,4 +1,3 @@
-
 from shared import bblogger
 
 from persist.models.weapon import Weapon

@@ -28,4 +28,5 @@ class UpdateJob(BaseModel):
     Model for updating the 'payload' of an existing job.
     Matches the shape of the original payload passed at scheduling time.
     """
+
     payload: dict | None = {}

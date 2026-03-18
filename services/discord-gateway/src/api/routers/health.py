@@ -20,28 +20,29 @@ flogger = bblogger.get_logger("gateway-healthcheck-api-router")
 router = APIRouter(
     prefix="/health",
     tags=["health"],
-    responses={
-        200: {"description": "Service is healthy"},
-        503: {"description": "Service is unhealthy"}
-    }
+    responses={200: {"description": "Service is healthy"}, 503: {"description": "Service is unhealthy"}},
 )
+
 
 class HealthCheckResponse(BaseResponse):
     """Comprehensive health check response model."""
+
     version: str
     service: str
     environment: dict[str, Any]
     checks: dict[str, bool]
 
+
 class SimpleHealthResponse(BaseResponse):
     """Simple health check response for load balancers."""
+
 
 @router.get(
     "",
     response_model=HealthCheckResponse,
     status_code=status.HTTP_200_OK,
     summary="Comprehensive Health Check",
-    description="Returns detailed health information about the Discord Gateway API service"
+    description="Returns detailed health information about the Discord Gateway API service",
 )
 async def health_check(_request: Request) -> HealthCheckResponse:
     """
@@ -76,17 +77,18 @@ async def health_check(_request: Request) -> HealthCheckResponse:
         environment={
             "python_version": platform.python_version(),
             "platform": platform.platform(),
-            "architecture": platform.architecture()[0]
+            "architecture": platform.architecture()[0],
         },
-        checks=checks
+        checks=checks,
     )
+
 
 @router.get(
     "/simple",
     response_model=SimpleHealthResponse,
     status_code=status.HTTP_200_OK,
     summary="Simple Health Check",
-    description="Returns basic health status for load balancer checks"
+    description="Returns basic health status for load balancer checks",
 )
 async def simple_health_check() -> SimpleHealthResponse:
     """
@@ -95,16 +97,14 @@ async def simple_health_check() -> SimpleHealthResponse:
     """
     flogger.debug("Simple health check endpoint called: GET /health/simple")
     flogger.debug("Health check result: status=healthy")
-    return SimpleHealthResponse(
-        status="healthy",
-        timestamp=datetime.now(UTC)
-    )
+    return SimpleHealthResponse(status="healthy", timestamp=datetime.now(UTC))
+
 
 @router.get(
     "liveness",
     status_code=status.HTTP_200_OK,
     summary="Liveness Check",
-    description="Checks if the service is alive and responsive"
+    description="Checks if the service is alive and responsive",
 )
 async def liveness_check() -> dict[str, str]:
     """

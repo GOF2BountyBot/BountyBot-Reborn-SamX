@@ -5,7 +5,6 @@ Handles database operations for GuildShop entities including
 tier-based shop management, item queries, and inventory operations.
 """
 
-
 from shared import bblogger
 from sqlalchemy import and_, delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -15,8 +14,8 @@ from persist.models.guild_shop import GuildShop
 
 flogger = bblogger.get_logger("shop-repository")
 
-class ShopRepository(IRepository[GuildShop]):
 
+class ShopRepository(IRepository[GuildShop]):
     async def get_by_id(self, db: AsyncSession, obj_id: int) -> GuildShop | None:
         """Get shop item by ID."""
         try:
@@ -76,7 +75,7 @@ class ShopRepository(IRepository[GuildShop]):
             if existing_item:
                 # Update existing item
                 for key, value in raw.items():
-                    if hasattr(existing_item, key) and key not in ['id', 'guild_id', 'tier', 'item_name']:
+                    if hasattr(existing_item, key) and key not in ["id", "guild_id", "tier", "item_name"]:
                         setattr(existing_item, key, value)
                 await db.commit()
                 await db.refresh(existing_item)
@@ -103,20 +102,11 @@ class ShopRepository(IRepository[GuildShop]):
             raise
 
     async def get_shop_items(
-        self,
-        db: AsyncSession,
-        guild_id: int,
-        tier: str,
-        item_type: str | None = None
+        self, db: AsyncSession, guild_id: int, tier: str, item_type: str | None = None
     ) -> list[GuildShop]:
         """Get all items in a specific guild shop tier, optionally filtered by type."""
         try:
-            query = select(GuildShop).where(
-                and_(
-                    GuildShop.guild_id == guild_id,
-                    GuildShop.tier == tier
-                )
-            )
+            query = select(GuildShop).where(and_(GuildShop.guild_id == guild_id, GuildShop.tier == tier))
 
             if item_type:
                 query = query.where(GuildShop.item_type == item_type)
@@ -129,21 +119,13 @@ class ShopRepository(IRepository[GuildShop]):
             raise
 
     async def get_shop_item_by_name(
-        self,
-        db: AsyncSession,
-        guild_id: int,
-        tier: str,
-        item_name: str
+        self, db: AsyncSession, guild_id: int, tier: str, item_name: str
     ) -> GuildShop | None:
         """Get a specific item from a guild shop."""
         try:
             result = await db.execute(
                 select(GuildShop).where(
-                    and_(
-                        GuildShop.guild_id == guild_id,
-                        GuildShop.tier == tier,
-                        GuildShop.item_name == item_name
-                    )
+                    and_(GuildShop.guild_id == guild_id, GuildShop.tier == tier, GuildShop.item_name == item_name)
                 )
             )
             return result.scalars().first()
@@ -157,11 +139,7 @@ class ShopRepository(IRepository[GuildShop]):
             if new_quantity < 0:
                 raise ValueError("Quantity cannot be negative")
 
-            await db.execute(
-                update(GuildShop)
-                .where(GuildShop.id == shop_item_id)
-                .values(quantity=new_quantity)
-            )
+            await db.execute(update(GuildShop).where(GuildShop.id == shop_item_id).values(quantity=new_quantity))
             await db.commit()
 
             item = await self.get_by_id(db, shop_item_id)
@@ -175,14 +153,7 @@ class ShopRepository(IRepository[GuildShop]):
     async def clear_shop_tier(self, db: AsyncSession, guild_id: int, tier: str) -> None:
         """Clear all items from a specific shop tier."""
         try:
-            await db.execute(
-                delete(GuildShop).where(
-                    and_(
-                        GuildShop.guild_id == guild_id,
-                        GuildShop.tier == tier
-                    )
-                )
-            )
+            await db.execute(delete(GuildShop).where(and_(GuildShop.guild_id == guild_id, GuildShop.tier == tier)))
             await db.commit()
             flogger.info(f"Cleared all items from {tier} shop in guild {guild_id}")
         except Exception as e:
@@ -193,9 +164,7 @@ class ShopRepository(IRepository[GuildShop]):
     async def clear_all_guild_shops(self, db: AsyncSession, guild_id: int) -> None:
         """Clear all shop items for a guild."""
         try:
-            await db.execute(
-                delete(GuildShop).where(GuildShop.guild_id == guild_id)
-            )
+            await db.execute(delete(GuildShop).where(GuildShop.guild_id == guild_id))
             await db.commit()
             flogger.info(f"Cleared all shops for guild {guild_id}")
         except Exception as e:
@@ -206,9 +175,7 @@ class ShopRepository(IRepository[GuildShop]):
     async def get_guild_shops_summary(self, db: AsyncSession, guild_id: int) -> dict:
         """Get a summary of all shops for a guild."""
         try:
-            result = await db.execute(
-                select(GuildShop).where(GuildShop.guild_id == guild_id)
-            )
+            result = await db.execute(select(GuildShop).where(GuildShop.guild_id == guild_id))
             items = result.scalars().all()
 
             summary = {
@@ -218,8 +185,8 @@ class ShopRepository(IRepository[GuildShop]):
                     "Bronze": {"items": 0, "total_quantity": 0},
                     "Silver": {"items": 0, "total_quantity": 0},
                     "Gold": {"items": 0, "total_quantity": 0},
-                    "Platinum": {"items": 0, "total_quantity": 0}
-                }
+                    "Platinum": {"items": 0, "total_quantity": 0},
+                },
             }
 
             for item in items:
@@ -233,22 +200,14 @@ class ShopRepository(IRepository[GuildShop]):
             raise
 
     async def get_items_by_tech_level(
-        self,
-        db: AsyncSession,
-        guild_id: int,
-        tier: str,
-        tech_level: int
+        self, db: AsyncSession, guild_id: int, tier: str, tech_level: int
     ) -> list[GuildShop]:
         """Get all items of a specific tech level from a shop."""
         try:
             result = await db.execute(
-                select(GuildShop).where(
-                    and_(
-                        GuildShop.guild_id == guild_id,
-                        GuildShop.tier == tier,
-                        GuildShop.tech_level == tech_level
-                    )
-                ).order_by(GuildShop.item_type, GuildShop.item_name)
+                select(GuildShop)
+                .where(and_(GuildShop.guild_id == guild_id, GuildShop.tier == tier, GuildShop.tech_level == tech_level))
+                .order_by(GuildShop.item_type, GuildShop.item_name)
             )
             return list(result.scalars().all())
         except Exception as e:
@@ -262,9 +221,7 @@ class ShopRepository(IRepository[GuildShop]):
                 raise ValueError("Price multiplier must be positive")
 
             result = await db.execute(
-                update(GuildShop)
-                .where(GuildShop.guild_id == guild_id)
-                .values(price=GuildShop.price * price_multiplier)
+                update(GuildShop).where(GuildShop.guild_id == guild_id).values(price=GuildShop.price * price_multiplier)
             )
             await db.commit()
 
@@ -279,9 +236,7 @@ class ShopRepository(IRepository[GuildShop]):
     async def get_items_due_for_refresh(self, db: AsyncSession, guild_id: int) -> list[GuildShop]:
         """Get all shop items that are due for refresh based on their intervals."""
         try:
-            result = await db.execute(
-                select(GuildShop).where(GuildShop.guild_id == guild_id)
-            )
+            result = await db.execute(select(GuildShop).where(GuildShop.guild_id == guild_id))
             items = result.scalars().all()
 
             # Filter items that are due for refresh
@@ -305,7 +260,7 @@ class ShopRepository(IRepository[GuildShop]):
                 "total_quantity": sum(item.quantity for item in items),
                 "item_types": {},
                 "tech_levels": {},
-                "price_range": {"min": 0, "max": 0, "average": 0}
+                "price_range": {"min": 0, "max": 0, "average": 0},
             }
 
             if items:

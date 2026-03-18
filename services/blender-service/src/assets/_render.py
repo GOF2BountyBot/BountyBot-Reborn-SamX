@@ -20,6 +20,7 @@ Updated for blender-service:
   MTL).  As a fallback, the texture is also applied via Blender's node
   system after import.
 """
+
 try:
     import bpy  # type: ignore[reportMissingImports]
 except ImportError as _err:
@@ -119,8 +120,17 @@ print(f"args.mtl_path:          {args.mtl_path}")
 # picks it up.  render_service.py copies both the OBJ and MTL into the
 # same temp directory, so the ``mtllib`` directive in the OBJ resolves to
 # this temp MTL (which now contains the ``map_Kd`` line).
+#
+# IMPORTANT: Blender's OBJ/MTL importer resolves ``map_Kd`` paths
+# RELATIVE to the MTL file's directory.  We must compute a relative path
+# from the temp MTL directory to the texture file so Blender can find it.
+_mtl_dir = os.path.dirname(os.path.abspath(args.mtl_path))
+_tex_abs = os.path.abspath(args.texture_path)
+_tex_rel = os.path.relpath(_tex_abs, _mtl_dir)
+print(f"map_Kd relative path: {_tex_rel}  (from {_mtl_dir})")
+
 with open(args.mtl_path, "a") as _f:
-    _f.write("map_Kd " + args.texture_path + "\n")
+    _f.write("map_Kd " + _tex_rel + "\n")
 
 ctx = bpy.context
 
@@ -132,9 +142,9 @@ bpy.ops.wm.obj_import(
     filter_glob="*.obj;*.mtl",
 )
 
-# Belt-and-suspenders: also apply the texture via the node system in case
-# the MTL-based approach did not wire it up (e.g. missing material block,
-# different Blender version behaviour, etc.).
+# Belt-and-suspenders: also apply the texture programmatically via the
+# node system.  This covers cases where the MTL has no material block or
+# Blender did not wire up the ``map_Kd`` correctly.
 texture_image = bpy.data.images.load(args.texture_path)
 for obj in bpy.data.objects:
     if obj.type != "MESH":

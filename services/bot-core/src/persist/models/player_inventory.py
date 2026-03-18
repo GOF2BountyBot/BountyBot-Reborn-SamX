@@ -17,11 +17,7 @@ class PlayerInventory(Base):
     __tablename__ = TableNames.PlayerInventories.value
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    player_id: Mapped[int] = mapped_column(
-        Integer,
-        ForeignKey(f"{TableNames.Players.value}.id"),
-        nullable=False
-    )
+    player_id: Mapped[int] = mapped_column(Integer, ForeignKey(f"{TableNames.Players.value}.id"), nullable=False)
     item_type: Mapped[str] = mapped_column(String(50), nullable=False)  # 'ship', 'weapon', 'module', 'turret'
     item_name: Mapped[str] = mapped_column(String(100), nullable=False)  # References static item data
     quantity: Mapped[int] = mapped_column(Integer, default=1, nullable=False)

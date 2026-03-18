@@ -17,10 +17,7 @@ def _get_scheduler(req: Request):
     scheduler = getattr(req.app.state, "scheduler", None)
     if scheduler is None:
         flogger.warning("Scheduler requested but not available")
-        raise HTTPException(
-            status_code=503,
-            detail="Scheduler is not available. The service may still be starting up."
-        )
+        raise HTTPException(status_code=503, detail="Scheduler is not available. The service may still be starting up.")
     return scheduler
 
 
@@ -41,6 +38,7 @@ async def list_jobs(req: Request):
     flogger.info(f"Found {len(result)} scheduled job(s)")
     return result
 
+
 @router.get("/jobs/{job_id}", response_model=JobInfo)
 async def get_job(req: Request, job_id: str):
     flogger.info(f"Get job endpoint: starting job_id={job_id}")
@@ -57,6 +55,7 @@ async def get_job(req: Request, job_id: str):
     )
     flogger.info(f"Retrieved job '{job_id}': next_run_time={info.next_run_time}")
     return info
+
 
 @router.post("/jobs")
 async def schedule_job(req: Request, job: OneTimeJob):
@@ -104,6 +103,7 @@ async def schedule_recurring(req: Request, job: RecurringJob):
 
     return {"status": "scheduled_recurring", "job_id": job_id, "cron": job.cron}
 
+
 @router.put("/jobs/{job_id}")
 async def update_job(req: Request, job_id: str, update: UpdateJob):
     """
@@ -127,6 +127,7 @@ async def update_job(req: Request, job_id: str, update: UpdateJob):
         raise HTTPException(400, f"Could not update job: {e}") from e
 
     return {"status": "updated", "job_id": job_id}
+
 
 @router.delete("/jobs/all")
 async def delete_all_jobs(req: Request):

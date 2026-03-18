@@ -5,13 +5,13 @@ This factory pattern allows for easy registration and creation
 of message-specific payload builders.
 """
 
-
 from shared import bblogger
 
 from message_builders.base import MessagePayloadBuilder
 from message_builders.builders.time_announcement import TimeAnnouncementBuilder
 
 logger = bblogger.get_logger("message-builder-factory")
+
 
 class MessageBuilderFactory:
     """Factory for creating message payload builders."""

@@ -18,11 +18,7 @@ class PlayerShip(Base):
     __tablename__ = TableNames.PlayerShips.value
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    player_id: Mapped[int] = mapped_column(
-        Integer,
-        ForeignKey(f"{TableNames.Players.value}.id"),
-        nullable=False
-    )
+    player_id: Mapped[int] = mapped_column(Integer, ForeignKey(f"{TableNames.Players.value}.id"), nullable=False)
     ship_name: Mapped[str] = mapped_column(String(100), nullable=False)  # References static ship data
     nickname: Mapped[str | None] = mapped_column(String(100), nullable=True)  # Custom ship name
     is_active: Mapped[bool] = mapped_column(Boolean, default=False)
@@ -48,10 +44,6 @@ class PlayerShip(Base):
 
     def get_equipped_count(self, equipment_type: str) -> int:
         """Get the count of equipped items of a specific type."""
-        equipment_map = {
-            "weapons": self.weapons,
-            "modules": self.modules,
-            "turrets": self.turrets
-        }
+        equipment_map = {"weapons": self.weapons, "modules": self.modules, "turrets": self.turrets}
         equipment_list = equipment_map.get(equipment_type, [])
         return len(equipment_list) if equipment_list else 0

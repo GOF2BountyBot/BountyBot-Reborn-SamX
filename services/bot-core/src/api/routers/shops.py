@@ -28,22 +28,18 @@ flogger = bblogger.get_logger("shops-api-router")
 router = APIRouter(
     prefix="/shops",
     tags=["shops"],
-    responses={
-        404: {"description": "Shop or item not found"},
-        500: {"description": "Internal server error"}
-    }
+    responses={404: {"description": "Shop or item not found"}, 500: {"description": "Internal server error"}},
 )
+
 
 # Dependency injection
 async def get_shop_service():
     return ShopService()
 
+
 @router.get("/guild/{guild_id}/tier/{tier}", response_model=list[ShopItemResponse])
 async def get_shop_items(
-    guild_id: int,
-    tier: str,
-    item_type: str | None = None,
-    shop_service: ShopService = Depends(get_shop_service)
+    guild_id: int, tier: str, item_type: str | None = None, shop_service: ShopService = Depends(get_shop_service)
 ):
     """Get all items in a specific guild shop tier."""
     flogger.debug(f"Getting items from {tier} shop in guild {guild_id}, type filter: {item_type}")
@@ -63,28 +59,20 @@ async def get_shop_items(
                     quantity=item.quantity,
                     price=item.price,
                     last_restocked=item.last_restocked.isoformat(),
-                    refresh_interval_hours=item.refresh_interval_hours
+                    refresh_interval_hours=item.refresh_interval_hours,
                 )
                 for item in items
             ]
 
     except ValueError as e:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(e)
-        ) from e
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
     except Exception as e:
         flogger.error(f"Error getting shop items: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to get shop items"
-        ) from e
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to get shop items") from e
+
 
 @router.get("/guild/{guild_id}/summary", response_model=ShopSummaryResponse)
-async def get_guild_shops_summary(
-    guild_id: int,
-    shop_service: ShopService = Depends(get_shop_service)
-):
+async def get_guild_shops_summary(guild_id: int, shop_service: ShopService = Depends(get_shop_service)):
     """Get a summary of all shops for a guild."""
     flogger.debug(f"Getting shops summary for guild {guild_id}")
 
@@ -93,23 +81,18 @@ async def get_guild_shops_summary(
             summary = await shop_service.shop_repo.get_guild_shops_summary(db, guild_id)
 
             return ShopSummaryResponse(
-                guild_id=summary["guild_id"],
-                total_items=summary["total_items"],
-                shops=summary["shops"]
+                guild_id=summary["guild_id"], total_items=summary["total_items"], shops=summary["shops"]
             )
 
     except Exception as e:
         flogger.error(f"Error getting shops summary: {e}")
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to get shops summary"
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to get shops summary"
         ) from e
 
+
 @router.post("/purchase", response_model=TransactionResponse)
-async def purchase_item(
-    request: PurchaseRequest,
-    shop_service: ShopService = Depends(get_shop_service)
-):
+async def purchase_item(request: PurchaseRequest, shop_service: ShopService = Depends(get_shop_service)):
     """Purchase an item from a shop."""
     flogger.info(f"Player {request.player_id} purchasing {request.quantity} of shop item {request.shop_item_id}")
 
@@ -126,26 +109,20 @@ async def purchase_item(
                 quantity=transaction["quantity"],
                 total_cost=transaction["total_cost"],
                 remaining_credits=transaction["remaining_credits"],
-                transaction_type="purchase"
+                transaction_type="purchase",
             )
 
     except ValueError as e:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(e)
-        ) from e
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
     except Exception as e:
         flogger.error(f"Error processing purchase: {e}")
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to process purchase"
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to process purchase"
         ) from e
 
+
 @router.post("/purchase-ship", response_model=TransactionResponse)
-async def purchase_ship(
-    request: ShipPurchaseRequest,
-    shop_service: ShopService = Depends(get_shop_service)
-):
+async def purchase_ship(request: ShipPurchaseRequest, shop_service: ShopService = Depends(get_shop_service)):
     """Purchase a ship from a shop with optional trade-in of current active ship."""
     flogger.info(
         f"Player {request.player_id} purchasing ship from shop item {request.shop_item_id}"
@@ -165,38 +142,29 @@ async def purchase_ship(
                 quantity=transaction["quantity"],
                 total_cost=transaction["net_cost"],
                 remaining_credits=transaction["remaining_credits"],
-                transaction_type="ship_purchase"
+                transaction_type="ship_purchase",
             )
 
     except ValueError as e:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(e)
-        ) from e
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
     except Exception as e:
         flogger.error(f"Error processing ship purchase: {e}")
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to process ship purchase"
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to process ship purchase"
         ) from e
 
 
 @router.post("/sell", response_model=TransactionResponse)
-async def sell_item(
-    request: SellRequest,
-    shop_service: ShopService = Depends(get_shop_service)
-):
+async def sell_item(request: SellRequest, shop_service: ShopService = Depends(get_shop_service)):
     """Sell an item back to a shop."""
     flogger.info(
-        f"Player {request.player_id} selling {request.quantity}x "
-        f"{request.item_name} to {request.target_tier} shop"
+        f"Player {request.player_id} selling {request.quantity}x {request.item_name} to {request.target_tier} shop"
     )
 
     try:
         async with get_db_session() as db:
             transaction = await shop_service.sell_item(
-                db, request.player_id, request.item_type,
-                request.item_name, request.quantity, request.target_tier
+                db, request.player_id, request.item_type, request.item_name, request.quantity, request.target_tier
             )
 
             return TransactionResponse(
@@ -206,26 +174,18 @@ async def sell_item(
                 quantity=transaction["quantity"],
                 total_value=transaction["total_sell_value"],
                 remaining_credits=transaction["new_credits"],
-                transaction_type="sale"
+                transaction_type="sale",
             )
 
     except ValueError as e:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(e)
-        ) from e
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
     except Exception as e:
         flogger.error(f"Error processing sale: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to process sale"
-        ) from e
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to process sale") from e
+
 
 @router.post("/sell-ship", response_model=TransactionResponse)
-async def sell_ship(
-    request: ShipSellRequest,
-    shop_service: ShopService = Depends(get_shop_service)
-):
+async def sell_ship(request: ShipSellRequest, shop_service: ShopService = Depends(get_shop_service)):
     """Sell a player's inactive ship back to the shop at full value."""
     flogger.info(
         f"Player {request.player_id} selling ship id={request.ship_id} "
@@ -253,23 +213,16 @@ async def sell_ship(
             )
 
     except ValueError as e:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(e)
-        ) from e
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
     except Exception as e:
         flogger.error(f"Error processing ship sale: {e}")
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to process ship sale"
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to process ship sale"
         ) from e
 
 
 @router.post("/refresh", response_model=dict[str, Any])
-async def refresh_shop(
-    request: RefreshShopRequest,
-    shop_service: ShopService = Depends(get_shop_service)
-):
+async def refresh_shop(request: RefreshShopRequest, shop_service: ShopService = Depends(get_shop_service)):
     """Force refresh a shop's inventory."""
     flogger.info(f"Refreshing {request.tier} shop for guild {request.guild_id}")
 
@@ -282,23 +235,14 @@ async def refresh_shop(
             return refresh_details
 
     except ValueError as e:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(e)
-        ) from e
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
     except Exception as e:
         flogger.error(f"Error refreshing shop: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to refresh shop"
-        ) from e
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to refresh shop") from e
+
 
 @router.get("/guild/{guild_id}/tier/{tier}/stats")
-async def get_shop_statistics(
-    guild_id: int,
-    tier: str,
-    shop_service: ShopService = Depends(get_shop_service)
-):
+async def get_shop_statistics(guild_id: int, tier: str, shop_service: ShopService = Depends(get_shop_service)):
     """Get detailed statistics for a specific shop."""
     flogger.debug(f"Getting statistics for {tier} shop in guild {guild_id}")
 
@@ -310,31 +254,23 @@ async def get_shop_statistics(
     except Exception as e:
         flogger.error(f"Error getting shop statistics: {e}")
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to get shop statistics"
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to get shop statistics"
         ) from e
+
 
 @router.get("/guild/{guild_id}/tier/{tier}/tech-level/{tech_level}")
 async def get_items_by_tech_level(
-    guild_id: int,
-    tier: str,
-    tech_level: int,
-    shop_service: ShopService = Depends(get_shop_service)
+    guild_id: int, tier: str, tech_level: int, shop_service: ShopService = Depends(get_shop_service)
 ):
     """Get all items of a specific tech level from a shop."""
     flogger.debug(f"Getting tech level {tech_level} items from {tier} shop in guild {guild_id}")
 
     try:
         if tech_level < 1 or tech_level > 9:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Tech level must be between 1 and 9"
-            )
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Tech level must be between 1 and 9")
 
         async with get_db_session() as db:
-            items = await shop_service.shop_repo.get_items_by_tech_level(
-                db, guild_id, tier, tech_level
-            )
+            items = await shop_service.shop_repo.get_items_by_tech_level(db, guild_id, tier, tech_level)
 
             return [
                 ShopItemResponse(
@@ -347,7 +283,7 @@ async def get_items_by_tech_level(
                     quantity=item.quantity,
                     price=item.price,
                     last_restocked=item.last_restocked.isoformat(),
-                    refresh_interval_hours=item.refresh_interval_hours
+                    refresh_interval_hours=item.refresh_interval_hours,
                 )
                 for item in items
             ]
@@ -357,15 +293,12 @@ async def get_items_by_tech_level(
     except Exception as e:
         flogger.error(f"Error getting items by tech level: {e}")
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to get items by tech level"
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to get items by tech level"
         ) from e
 
+
 @router.get("/guild/{guild_id}/refresh-status")
-async def get_refresh_status(
-    guild_id: int,
-    shop_service: ShopService = Depends(get_shop_service)
-):
+async def get_refresh_status(guild_id: int, shop_service: ShopService = Depends(get_shop_service)):
     """Get refresh status for all shops in a guild."""
     flogger.debug(f"Getting refresh status for guild {guild_id}")
 
@@ -384,21 +317,18 @@ async def get_refresh_status(
                 "guild_id": guild_id,
                 "total_items_due_for_refresh": len(due_items),
                 "due_by_tier": due_by_tier,
-                "needs_refresh": len(due_items) > 0
+                "needs_refresh": len(due_items) > 0,
             }
 
     except Exception as e:
         flogger.error(f"Error getting refresh status: {e}")
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to get refresh status"
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to get refresh status"
         ) from e
 
+
 @router.get("/item/{shop_item_id}")
-async def get_shop_item(
-    shop_item_id: int,
-    shop_service: ShopService = Depends(get_shop_service)
-):
+async def get_shop_item(shop_item_id: int, shop_service: ShopService = Depends(get_shop_service)):
     """Get details for a specific shop item."""
     flogger.debug(f"Getting shop item {shop_item_id}")
 
@@ -406,10 +336,7 @@ async def get_shop_item(
         async with get_db_session() as db:
             item = await shop_service.shop_repo.get_by_id(db, shop_item_id)
             if not item:
-                raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND,
-                    detail=f"Shop item {shop_item_id} not found"
-                )
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Shop item {shop_item_id} not found")
 
             return ShopItemResponse(
                 id=item.id,
@@ -421,23 +348,21 @@ async def get_shop_item(
                 quantity=item.quantity,
                 price=item.price,
                 last_restocked=item.last_restocked.isoformat(),
-                refresh_interval_hours=item.refresh_interval_hours
+                refresh_interval_hours=item.refresh_interval_hours,
             )
 
     except HTTPException:
         raise
     except Exception as e:
         flogger.error(f"Error getting shop item: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to get shop item"
-        ) from e
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to get shop item") from e
+
 
 @router.put("/guild/{guild_id}/prices")
 async def update_shop_prices(
     guild_id: int,
     price_multiplier: float = Query(..., gt=0, description="Price multiplier (e.g., 1.1 for 10% increase)"),
-    shop_service: ShopService = Depends(get_shop_service)
+    shop_service: ShopService = Depends(get_shop_service),
 ):
     """Update all shop prices for a guild by a multiplier."""
     flogger.info(f"Updating shop prices for guild {guild_id} with multiplier {price_multiplier}")
@@ -450,17 +375,13 @@ async def update_shop_prices(
                 "guild_id": guild_id,
                 "price_multiplier": price_multiplier,
                 "items_updated": updated_count,
-                "message": f"Updated prices for {updated_count} shop items"
+                "message": f"Updated prices for {updated_count} shop items",
             }
 
     except ValueError as e:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(e)
-        ) from e
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
     except Exception as e:
         flogger.error(f"Error updating shop prices: {e}")
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to update shop prices"
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to update shop prices"
         ) from e

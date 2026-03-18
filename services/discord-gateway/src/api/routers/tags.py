@@ -89,7 +89,7 @@ async def get_tag(request: Request, tag_id: int) -> ForumTagResponse:
                     with suppress(Exception):
                         tag_payload["emoji"] = normalize_emoji(tag_payload["emoji"])
 
-        tag_name = getattr(tag, 'name', tag_id)
+        tag_name = getattr(tag, "name", tag_id)
         flogger.debug(f"get_tag: response payload prepared, tag_name={tag_name}, channel_id={parent_channel.id}")
         flogger.info(f"get_tag: successfully retrieved tag {tag_name}")
         return ForumTagResponse(status="success", data=tag_payload)
@@ -180,7 +180,7 @@ async def create_forum_tag(request: Request, channel_id: int, tag: ForumTagCreat
                     with suppress(Exception):
                         tag_data["emoji"] = normalize_emoji(tag_data["emoji"])
 
-        new_tag_name = getattr(new_tag, 'name', tag.name)
+        new_tag_name = getattr(new_tag, "name", tag.name)
         flogger.debug(f"create_forum_tag: response prepared, new_tag_name={new_tag_name}, channel_id={channel_id}")
         flogger.info(f"create_forum_tag: successfully created tag {new_tag_name}")
         return ForumTagResponse(status="created", data=tag_data)
@@ -315,7 +315,7 @@ async def update_tag(request: Request, tag_id: int, tag_data: ForumTagUpdateRequ
                     except Exception:  # pylint: disable=broad-exception-caught
                         updated_tag_data["emoji"] = tag_data.emoji
 
-        updated_tag_name = getattr(updated_tag, 'name', tag_id)
+        updated_tag_name = getattr(updated_tag, "name", tag_id)
         flogger.debug(f"update_tag: response prepared, updated_tag_name={updated_tag_name}")
         flogger.info(f"update_tag: successfully updated tag {updated_tag_name}")
         return ForumTagResponse(status="updated", data=updated_tag_data)

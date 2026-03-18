@@ -99,14 +99,9 @@ def reward_per_sys_check(tech_level: int, loadout_value: int) -> int:
     divisor_offset = 1 if tech_level == 1 else 2
     reward = max(
         GameConstants.CLASSIC_CREDITS_PER_CHECK,
-        int(
-            (loadout_value * multiplier)
-            / (2 * (tech_level + divisor_offset) * 10)
-        ),
+        int((loadout_value * multiplier) / (2 * (tech_level + divisor_offset) * 10)),
     )
-    flogger.debug(
-        f"reward_per_sys_check: tl={tech_level} loadout_value={loadout_value} → {reward} credits"
-    )
+    flogger.debug(f"reward_per_sys_check: tl={tech_level} loadout_value={loadout_value} → {reward} credits")
     return reward
 
 

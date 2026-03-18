@@ -19,11 +19,7 @@ class Player(Base):
     __tablename__ = TableNames.Players.value
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    user_id: Mapped[int] = mapped_column(
-        BigInteger,
-        ForeignKey(f"{TableNames.Users.value}.id"),
-        nullable=False
-    )
+    user_id: Mapped[int] = mapped_column(BigInteger, ForeignKey(f"{TableNames.Users.value}.id"), nullable=False)
     guild_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
 
     # Economy
@@ -53,9 +49,7 @@ class Player(Base):
 
     # Active ship reference
     active_ship_id: Mapped[int | None] = mapped_column(
-        Integer,
-        ForeignKey(f"{TableNames.PlayerShips.value}.id", use_alter=True),
-        nullable=True
+        Integer, ForeignKey(f"{TableNames.PlayerShips.value}.id", use_alter=True), nullable=True
     )
 
     # Timestamps
@@ -70,10 +64,7 @@ class Player(Base):
         "PlayerInventory", back_populates="player", cascade="all, delete-orphan"
     )
     ships: Mapped[list["PlayerShip"]] = relationship(
-        "PlayerShip",
-        back_populates="player",
-        cascade="all, delete-orphan",
-        foreign_keys="PlayerShip.player_id"
+        "PlayerShip", back_populates="player", cascade="all, delete-orphan", foreign_keys="PlayerShip.player_id"
     )
     active_ship: Mapped[Optional["PlayerShip"]] = relationship(
         "PlayerShip", foreign_keys=[active_ship_id], post_update=True

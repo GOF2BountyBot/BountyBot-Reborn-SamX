@@ -175,17 +175,14 @@ class EmbedConverter:
             out.append(f)
             flogger.trace(f"Added field[{idx}]")
             if (idx + 1) % per_row == 0 and (idx + 1) < len(fields):
-                spacer = EmbedField(name="\u200B", value="\u200B", inline=True)
+                spacer = EmbedField(name="\u200b", value="\u200b", inline=True)
                 out.append(spacer)
                 flogger.trace(f"Inserted zero-width spacer after field index {idx}")
         flogger.debug(f"_inject_spacers completed: {len(out)} items (added {len(out) - len(fields)} spacers)")
         return out
 
     @staticmethod
-    def payload_to_grid_embed(
-        payload: EmbedPayload | dict[str, Any] | Any,
-        fields_per_row: int
-    ) -> discord.Embed:
+    def payload_to_grid_embed(payload: EmbedPayload | dict[str, Any] | Any, fields_per_row: int) -> discord.Embed:
         """
         Same as payload_to_embed, but first injects zero-width spacers
         so you get exactly `fields_per_row` inline fields per row.
@@ -194,9 +191,7 @@ class EmbedConverter:
         flogger.debug(f"payload_to_grid_embed called: {fields_per_row} per row")
         ep = EmbedConverter._coerce_to_embed_payload(payload)
         flogger.trace(f"Creating grid layout with {len(ep.fields or [])} original fields")
-        grid_payload = ep.model_copy(update={
-            "fields": EmbedConverter._inject_spacers(ep.fields or [], fields_per_row)
-        })
+        grid_payload = ep.model_copy(update={"fields": EmbedConverter._inject_spacers(ep.fields or [], fields_per_row)})
         flogger.trace(f"Grid payload created with {len(grid_payload.fields or [])} total fields (including spacers)")
         return EmbedConverter.payload_to_embed(grid_payload)
 
@@ -212,8 +207,10 @@ class EmbedConverter:
             EmbedPayload containing embed structure
         """
         flogger.debug("embed_to_payload called")
-        flogger.trace(f"Extracting embed structure: title_present={bool(embed.title)}, "
-                      f"description_present={bool(embed.description)}, color={embed.color}")
+        flogger.trace(
+            f"Extracting embed structure: title_present={bool(embed.title)}, "
+            f"description_present={bool(embed.description)}, color={embed.color}"
+        )
         try:
             title = embed.title if embed.title is not None else None
             description = embed.description if embed.description is not None else None
@@ -253,8 +250,9 @@ class EmbedConverter:
                     footer = embed.footer
                     footer_text = getattr(footer, "text", None) or None
                     footer_icon_url = getattr(footer, "icon_url", None) or None
-                    flogger.trace(f"Extracted footer: text_present={bool(footer_text)}, "
-                                  f"icon_url_present={bool(footer_icon_url)}")
+                    flogger.trace(
+                        f"Extracted footer: text_present={bool(footer_text)}, icon_url_present={bool(footer_icon_url)}"
+                    )
             except Exception:  # pylint: disable=broad-exception-caught
                 flogger.trace("Failed to extract footer, setting to None")
                 # swallow — treat as no footer
@@ -291,7 +289,7 @@ class EmbedConverter:
                 footer_icon_url=footer_icon_url,
                 timestamp=timestamp,
                 thumbnail_url=thumbnail_url,
-                image_url=image_url
+                image_url=image_url,
             )
             flogger.debug("embed_to_payload successfully created payload")
             return payload

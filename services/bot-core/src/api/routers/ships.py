@@ -27,27 +27,25 @@ flogger = bblogger.get_logger("ships-api-router")
 router = APIRouter(
     prefix="/ships",
     tags=["ships"],
-    responses={
-        404: {"description": "Ship or player not found"},
-        500: {"description": "Internal server error"}
-    }
+    responses={404: {"description": "Ship or player not found"}, 500: {"description": "Internal server error"}},
 )
+
 
 # Dependency injection
 async def get_ship_repository():
     return ShipRepository()
 
+
 async def get_player_repository():
     return PlayerRepository()
+
 
 async def get_equipment_service():
     return EquipmentService()
 
+
 @router.get("/player/{player_id}", response_model=list[ShipResponse])
-async def get_player_ships(
-    player_id: int,
-    ship_repo: ShipRepository = Depends(get_ship_repository)
-):
+async def get_player_ships(player_id: int, ship_repo: ShipRepository = Depends(get_ship_repository)):
     """Get all ships owned by a player."""
     flogger.debug(f"Getting ships for player {player_id}")
 
@@ -65,7 +63,7 @@ async def get_player_ships(
                     weapons=ship.weapons,
                     modules=ship.modules,
                     turrets=ship.turrets,
-                    created_at=ship.created_at.isoformat()
+                    created_at=ship.created_at.isoformat(),
                 )
                 for ship in ships
             ]
@@ -73,15 +71,12 @@ async def get_player_ships(
     except Exception as e:
         flogger.error(f"Error getting ships for player {player_id}: {e}")
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to get player ships"
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to get player ships"
         ) from e
 
+
 @router.get("/{ship_id}", response_model=ShipResponse)
-async def get_ship(
-    ship_id: int,
-    ship_repo: ShipRepository = Depends(get_ship_repository)
-):
+async def get_ship(ship_id: int, ship_repo: ShipRepository = Depends(get_ship_repository)):
     """Get a specific ship by ID."""
     flogger.debug(f"Getting ship {ship_id}")
 
@@ -89,10 +84,7 @@ async def get_ship(
         async with get_db_session() as db:
             ship = await ship_repo.get_by_id(db, ship_id)
             if not ship:
-                raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND,
-                    detail=f"Ship {ship_id} not found"
-                )
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Ship {ship_id} not found")
 
             return ShipResponse(
                 id=ship.id,
@@ -103,23 +95,21 @@ async def get_ship(
                 weapons=ship.weapons,
                 modules=ship.modules,
                 turrets=ship.turrets,
-                created_at=ship.created_at.isoformat()
+                created_at=ship.created_at.isoformat(),
             )
 
     except HTTPException:
         raise
     except Exception as e:
         flogger.error(f"Error getting ship {ship_id}: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to get ship"
-        ) from e
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to get ship") from e
+
 
 @router.post("/", response_model=ShipResponse, status_code=status.HTTP_201_CREATED)
 async def create_ship(
     request: CreateShipRequest,
     ship_repo: ShipRepository = Depends(get_ship_repository),
-    player_repo: PlayerRepository = Depends(get_player_repository)
+    player_repo: PlayerRepository = Depends(get_player_repository),
 ):
     """Create a new ship for a player."""
     flogger.info(f"Creating ship {request.ship_name} for player {request.player_id}")
@@ -130,8 +120,7 @@ async def create_ship(
             player = await player_repo.get_by_id(db, request.player_id)
             if not player:
                 raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND,
-                    detail=f"Player {request.player_id} not found"
+                    status_code=status.HTTP_404_NOT_FOUND, detail=f"Player {request.player_id} not found"
                 )
 
             # Create ship
@@ -147,23 +136,18 @@ async def create_ship(
                 weapons=ship.weapons,
                 modules=ship.modules,
                 turrets=ship.turrets,
-                created_at=ship.created_at.isoformat()
+                created_at=ship.created_at.isoformat(),
             )
 
     except HTTPException:
         raise
     except Exception as e:
         flogger.error(f"Error creating ship: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to create ship"
-        ) from e
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to create ship") from e
+
 
 @router.get("/player/{player_id}/active", response_model=ShipResponse | None)
-async def get_active_ship(
-    player_id: int,
-    ship_repo: ShipRepository = Depends(get_ship_repository)
-):
+async def get_active_ship(player_id: int, ship_repo: ShipRepository = Depends(get_ship_repository)):
     """Get the active ship for a player."""
     flogger.debug(f"Getting active ship for player {player_id}")
 
@@ -183,22 +167,22 @@ async def get_active_ship(
                 weapons=ship.weapons,
                 modules=ship.modules,
                 turrets=ship.turrets,
-                created_at=ship.created_at.isoformat()
+                created_at=ship.created_at.isoformat(),
             )
 
     except Exception as e:
         flogger.error(f"Error getting active ship for player {player_id}: {e}")
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to get active ship"
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to get active ship"
         ) from e
+
 
 @router.put("/{ship_id}/set-active", response_model=ShipResponse)
 async def set_active_ship(
     ship_id: int,
     player_id: int,
     ship_repo: ShipRepository = Depends(get_ship_repository),
-    player_repo: PlayerRepository = Depends(get_player_repository)
+    player_repo: PlayerRepository = Depends(get_player_repository),
 ):
     """Set a ship as the active ship for a player."""
     flogger.info(f"Setting ship {ship_id} as active for player {player_id}")
@@ -219,26 +203,21 @@ async def set_active_ship(
                 weapons=ship.weapons,
                 modules=ship.modules,
                 turrets=ship.turrets,
-                created_at=ship.created_at.isoformat()
+                created_at=ship.created_at.isoformat(),
             )
 
     except ValueError as e:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(e)
-        ) from e
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
     except Exception as e:
         flogger.error(f"Error setting active ship: {e}")
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to set active ship"
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to set active ship"
         ) from e
+
 
 @router.put("/{ship_id}/loadout", response_model=ShipResponse)
 async def update_ship_loadout(
-    ship_id: int,
-    request: UpdateLoadoutRequest,
-    ship_repo: ShipRepository = Depends(get_ship_repository)
+    ship_id: int, request: UpdateLoadoutRequest, ship_repo: ShipRepository = Depends(get_ship_repository)
 ):
     """Update a ship's equipment loadout."""
     flogger.info(f"Updating loadout for ship {ship_id}")
@@ -265,26 +244,21 @@ async def update_ship_loadout(
                 weapons=ship.weapons,
                 modules=ship.modules,
                 turrets=ship.turrets,
-                created_at=ship.created_at.isoformat()
+                created_at=ship.created_at.isoformat(),
             )
 
     except ValueError as e:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(e)
-        ) from e
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
     except Exception as e:
         flogger.error(f"Error updating ship loadout: {e}")
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to update ship loadout"
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to update ship loadout"
         ) from e
+
 
 @router.put("/{ship_id}/nickname", response_model=ShipResponse)
 async def update_ship_nickname(
-    ship_id: int,
-    request: UpdateNicknameRequest,
-    ship_repo: ShipRepository = Depends(get_ship_repository)
+    ship_id: int, request: UpdateNicknameRequest, ship_repo: ShipRepository = Depends(get_ship_repository)
 ):
     """Update a ship's nickname."""
     flogger.info(f"Updating nickname for ship {ship_id}: {request.nickname}")
@@ -302,20 +276,17 @@ async def update_ship_nickname(
                 weapons=ship.weapons,
                 modules=ship.modules,
                 turrets=ship.turrets,
-                created_at=ship.created_at.isoformat()
+                created_at=ship.created_at.isoformat(),
             )
 
     except ValueError as e:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(e)
-        ) from e
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
     except Exception as e:
         flogger.error(f"Error updating ship nickname: {e}")
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to update ship nickname"
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to update ship nickname"
         ) from e
+
 
 @router.post("/{ship_id}/equip", response_model=ShipResponse)
 async def equip_item(
@@ -329,8 +300,7 @@ async def equip_item(
     availability, and inventory possession before moving the item.
     """
     flogger.info(
-        f"Equipping '{request.item_name}' ({request.equipment_type}) "
-        f"for player {request.player_id} on ship {ship_id}"
+        f"Equipping '{request.item_name}' ({request.equipment_type}) for player {request.player_id} on ship {ship_id}"
     )
 
     try:
@@ -418,11 +388,9 @@ async def unequip_item(
             detail="Failed to unequip item",
         ) from e
 
+
 @router.get("/{ship_id}/loadout", response_model=ShipLoadoutSummaryResponse)
-async def get_ship_loadout(
-    ship_id: int,
-    ship_repo: ShipRepository = Depends(get_ship_repository)
-):
+async def get_ship_loadout(ship_id: int, ship_repo: ShipRepository = Depends(get_ship_repository)):
     """Get detailed loadout information for a ship."""
     flogger.debug(f"Getting loadout for ship {ship_id}")
 
@@ -440,26 +408,20 @@ async def get_ship_loadout(
                 turrets=loadout["turrets"],
                 weapons_count=loadout["weapons_count"],
                 modules_count=loadout["modules_count"],
-                turrets_count=loadout["turrets_count"]
+                turrets_count=loadout["turrets_count"],
             )
 
     except ValueError as e:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=str(e)
-        ) from e
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e)) from e
     except Exception as e:
         flogger.error(f"Error getting ship loadout: {e}")
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to get ship loadout"
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to get ship loadout"
         ) from e
 
+
 @router.delete("/{ship_id}")
-async def delete_ship(
-    ship_id: int,
-    ship_repo: ShipRepository = Depends(get_ship_repository)
-):
+async def delete_ship(ship_id: int, ship_repo: ShipRepository = Depends(get_ship_repository)):
     """Delete a ship."""
     flogger.warning(f"Deleting ship {ship_id}")
 
@@ -467,16 +429,13 @@ async def delete_ship(
         async with get_db_session() as db:
             ship = await ship_repo.get_by_id(db, ship_id)
             if not ship:
-                raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND,
-                    detail=f"Ship {ship_id} not found"
-                )
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Ship {ship_id} not found")
 
             # Don't allow deleting active ships
             if ship.is_active:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="Cannot delete active ship. Set another ship as active first."
+                    detail="Cannot delete active ship. Set another ship as active first.",
                 )
 
             await ship_repo.remove(db, ship)
@@ -487,7 +446,4 @@ async def delete_ship(
         raise
     except Exception as e:
         flogger.error(f"Error deleting ship {ship_id}: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to delete ship"
-        ) from e
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to delete ship") from e

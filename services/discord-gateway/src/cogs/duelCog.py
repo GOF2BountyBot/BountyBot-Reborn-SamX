@@ -45,9 +45,7 @@ class DuelCog(commands.Cog):
                 stakes = d.get("stakes", 0)
                 label = f"Duel #{duel_id} — {stakes:,}cr stakes" if stakes else f"Duel #{duel_id} — friendly duel"
                 if current.lower() in label.lower():
-                    choices.append(
-                        app_commands.Choice(name=label[:100], value=str(duel_id))
-                    )
+                    choices.append(app_commands.Choice(name=label[:100], value=str(duel_id)))
             return choices[:25]
         except Exception:  # pylint: disable=broad-exception-caught
             return []
@@ -114,9 +112,7 @@ class DuelCog(commands.Cog):
                 f"/duel-challenge error: guild={interaction.guild_id} user={interaction.user.id}"
                 f" target={target.id} error={e}"
             )
-            await interaction.followup.send(
-                "⚠️ An error occurred while creating the duel challenge.", ephemeral=True
-            )
+            await interaction.followup.send("⚠️ An error occurred while creating the duel challenge.", ephemeral=True)
 
     def _build_challenge_embed(
         self,
@@ -149,9 +145,7 @@ class DuelCog(commands.Cog):
         return embed
 
     @duel_challenge.error
-    async def duel_challenge_error(
-        self, interaction: discord.Interaction, error: app_commands.AppCommandError
-    ):
+    async def duel_challenge_error(self, interaction: discord.Interaction, error: app_commands.AppCommandError):
         flogger.exception("Error in /duel-challenge", exc_info=error)
         if not interaction.response.is_done():
             await interaction.response.send_message("⚠️ An error occurred.", ephemeral=True)
@@ -198,9 +192,7 @@ class DuelCog(commands.Cog):
             if e.response.status_code == 404:
                 await interaction.followup.send("❌ Duel not found.", ephemeral=True)
             elif e.response.status_code == 403:
-                await interaction.followup.send(
-                    "❌ You can only accept duels that were issued to you.", ephemeral=True
-                )
+                await interaction.followup.send("❌ You can only accept duels that were issued to you.", ephemeral=True)
             elif e.response.status_code == 400:
                 try:
                     detail = e.response.json().get("detail", str(e))
@@ -218,9 +210,7 @@ class DuelCog(commands.Cog):
                 f"/duel-accept error: guild={interaction.guild_id} user={interaction.user.id}"
                 f" duel_id={duel_id} error={e}"
             )
-            await interaction.followup.send(
-                "⚠️ An error occurred while accepting the duel.", ephemeral=True
-            )
+            await interaction.followup.send("⚠️ An error occurred while accepting the duel.", ephemeral=True)
 
     def _build_accept_embed(self, duel_id: int, data: dict) -> discord.Embed:
         """Build an embed for a completed duel (accept result)."""
@@ -269,9 +259,7 @@ class DuelCog(commands.Cog):
         return embed
 
     @duel_accept.error
-    async def duel_accept_error(
-        self, interaction: discord.Interaction, error: app_commands.AppCommandError
-    ):
+    async def duel_accept_error(self, interaction: discord.Interaction, error: app_commands.AppCommandError):
         flogger.exception("Error in /duel-accept", exc_info=error)
         if not interaction.response.is_done():
             await interaction.response.send_message("⚠️ An error occurred.", ephemeral=True)
@@ -308,10 +296,7 @@ class DuelCog(commands.Cog):
 
             embed = discord.Embed(
                 title="🚫 Duel Rejected",
-                description=(
-                    f"**Duel #{duel_id}** has been rejected.\n"
-                    "The challenge has been declined."
-                ),
+                description=(f"**Duel #{duel_id}** has been rejected.\nThe challenge has been declined."),
                 color=discord.Color.red(),
             )
             if data.get("challenger_id"):
@@ -329,9 +314,7 @@ class DuelCog(commands.Cog):
             if e.response.status_code == 404:
                 await interaction.followup.send("❌ Duel not found.", ephemeral=True)
             elif e.response.status_code == 403:
-                await interaction.followup.send(
-                    "❌ You can only reject duels that were issued to you.", ephemeral=True
-                )
+                await interaction.followup.send("❌ You can only reject duels that were issued to you.", ephemeral=True)
             elif e.response.status_code == 400:
                 try:
                     detail = e.response.json().get("detail", str(e))
@@ -349,14 +332,10 @@ class DuelCog(commands.Cog):
                 f"/duel-reject error: guild={interaction.guild_id} user={interaction.user.id}"
                 f" duel_id={duel_id} error={e}"
             )
-            await interaction.followup.send(
-                "⚠️ An error occurred while rejecting the duel.", ephemeral=True
-            )
+            await interaction.followup.send("⚠️ An error occurred while rejecting the duel.", ephemeral=True)
 
     @duel_reject.error
-    async def duel_reject_error(
-        self, interaction: discord.Interaction, error: app_commands.AppCommandError
-    ):
+    async def duel_reject_error(self, interaction: discord.Interaction, error: app_commands.AppCommandError):
         flogger.exception("Error in /duel-reject", exc_info=error)
         if not interaction.response.is_done():
             await interaction.response.send_message("⚠️ An error occurred.", ephemeral=True)

@@ -16,8 +16,10 @@ from api.schemas.base_schemas import BaseCreateRequest, BaseResponse, BaseUpdate
 def _generate_role_name() -> str:
     return f"unk-role-{uuid4().hex[:8]}"
 
+
 class Role(BaseModel):
     """Consolidated role information model."""
+
     id: int = Field(..., description="Role ID")
     guild_id: int = Field(..., description="Guild ID")
     name: str = Field(..., description="Role name")
@@ -30,16 +32,22 @@ class Role(BaseModel):
     created_at: str = Field(..., description="Role creation timestamp")
     tags: dict[str, Any] | None = Field(None, description="Role tags")
 
+
 class RoleResponse(BaseResponse):
     """Response model for single role endpoint."""
+
     data: Role = Field(..., description="Role data")
+
 
 class RoleListResponse(PaginatedResponse):
     """Response model for role list endpoint."""
+
     data: list[Role] = Field(..., description="List of roles")
+
 
 class RoleCreateRequest(BaseCreateRequest):
     """Request model for creating a role."""
+
     name: str | None = Field(default_factory=_generate_role_name, description="Role name")
     permissions: int | None = Field(None, description="Role permissions")
     color: int | None = Field(0, description="Role color")
@@ -47,8 +55,10 @@ class RoleCreateRequest(BaseCreateRequest):
     position: int | None = Field(None, description="Role position")
     mentionable: bool | None = Field(False, description="Whether role is mentionable")
 
+
 class RoleUpdateRequest(BaseUpdateRequest):
     """Request model for updating a role."""
+
     name: str | None = Field(None, description="Role name")
     permissions: int | None = Field(None, description="Role permissions")
     color: int | None = Field(None, description="Role color")

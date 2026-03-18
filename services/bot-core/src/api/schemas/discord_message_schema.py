@@ -10,6 +10,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_serializer
 
 class EmbedPayloadDict(BaseModel):
     """Embed payload as dictionary for storage."""
+
     title: str | None = None
     description: str | None = None
     color: int | None = None
@@ -23,6 +24,7 @@ class EmbedPayloadDict(BaseModel):
 
 class DiscordMessageRequest(BaseModel):
     """Request model for generic Discord message operations."""
+
     guild_id: int = Field(..., description="Discord guild ID")
     channel_id: int = Field(..., description="Discord channel ID")
     message_id: int | None = Field(None, description="Discord message ID (use for update/get/delete operations)")
@@ -32,6 +34,7 @@ class DiscordMessageRequest(BaseModel):
 
 class DiscordMessageResponse(BaseModel):
     """Response model for Discord message operations."""
+
     model_config = ConfigDict(from_attributes=True)
 
     id: UUID
@@ -40,6 +43,7 @@ class DiscordMessageResponse(BaseModel):
     @classmethod
     def serialize_uuid(cls, v: UUID) -> str:
         return str(v)
+
     guild_id: int
     channel_id: int
     message_id: int

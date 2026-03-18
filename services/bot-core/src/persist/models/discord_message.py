@@ -18,39 +18,30 @@ from persist.models.base import Base
 
 class DiscordMessage(Base):
     """Model for Discord message persistence with embed support."""
+
     __tablename__ = TableNames.DiscordMessage.value
 
     # cross-dialect UUID column: native on Postgres, CHAR(36) elsewhere
-    id: Mapped[uuid.UUID] = mapped_column(
-        UUIDType(binary=False),
-        primary_key=True,
-        default=uuid.uuid4,
-        nullable=False
-    )
+    id: Mapped[uuid.UUID] = mapped_column(UUIDType(binary=False), primary_key=True, default=uuid.uuid4, nullable=False)
 
-    guild_id:   Mapped[int]       = mapped_column(BigInteger, nullable=False)
-    channel_id: Mapped[int]       = mapped_column(BigInteger, nullable=False)
-    message_id: Mapped[int]       = mapped_column(BigInteger, nullable=False)
-    message_type: Mapped[str]     = mapped_column(String(50), nullable=False, default="general")
-    embed_payload: Mapped[str]    = mapped_column(Text, nullable=False)
+    guild_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    channel_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    message_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    message_type: Mapped[str] = mapped_column(String(50), nullable=False, default="general")
+    embed_payload: Mapped[str] = mapped_column(Text, nullable=False)
 
-    created_at: Mapped[datetime]  = mapped_column(
-        DateTime(timezone=True),
-        default=lambda: datetime.now(UTC)
-    )
-    updated_at: Mapped[datetime]  = mapped_column(
-        DateTime(timezone=True),
-        default=lambda: datetime.now(UTC),
-        onupdate=lambda: datetime.now(UTC)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(UTC))
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC), onupdate=lambda: datetime.now(UTC)
     )
 
     __table_args__ = (
         # ensure one record per guild/channel/message-ID triple
-        UniqueConstraint('guild_id', 'channel_id', 'message_id', name='uq_guild_channel_message'),
+        UniqueConstraint("guild_id", "channel_id", "message_id", name="uq_guild_channel_message"),
         # useful lookup indices
-        Index('ix_discord_message_guild_channel', 'guild_id', 'channel_id'),
-        Index('ix_discord_message_type_guild_channel', 'message_type', 'guild_id', 'channel_id'),
-        Index('ix_discord_message_created_at', 'created_at'),
+        Index("ix_discord_message_guild_channel", "guild_id", "channel_id"),
+        Index("ix_discord_message_type_guild_channel", "message_type", "guild_id", "channel_id"),
+        Index("ix_discord_message_created_at", "created_at"),
     )
 
     def __repr__(self) -> str:

@@ -1,4 +1,3 @@
-
 from pydantic import BaseModel, Field
 
 
@@ -15,15 +14,18 @@ class ShopItemResponse(BaseModel):
     last_restocked: str
     refresh_interval_hours: int
 
+
 class ShopSummaryResponse(BaseModel):
     guild_id: int
     total_items: int
     shops: dict[str, dict[str, int]]
 
+
 class PurchaseRequest(BaseModel):
     player_id: int
     shop_item_id: int
     quantity: int = Field(gt=0, default=1)
+
 
 class SellRequest(BaseModel):
     player_id: int
@@ -31,6 +33,7 @@ class SellRequest(BaseModel):
     item_name: str
     quantity: int = Field(gt=0, default=1)
     target_tier: str = Field(default="Bronze", pattern="^(Bronze|Silver|Gold|Platinum)$")
+
 
 class TransactionResponse(BaseModel):
     player_id: int
@@ -42,15 +45,18 @@ class TransactionResponse(BaseModel):
     remaining_credits: int
     transaction_type: str
 
+
 class RefreshShopRequest(BaseModel):
     guild_id: int
     tier: str = Field(pattern="^(Bronze|Silver|Gold|Platinum)$")
     force_tech_level: int | None = Field(None, ge=1, le=9)
 
+
 class ShipPurchaseRequest(BaseModel):
     player_id: int
     shop_item_id: int
     sell_old_ship: bool = False
+
 
 class ShipSellRequest(BaseModel):
     player_id: int

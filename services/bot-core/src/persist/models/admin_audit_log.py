@@ -24,15 +24,12 @@ class AdminAuditLog(Base):
         nullable=False,
     )
     user_id: Mapped[int] = mapped_column(BigInteger, nullable=False)  # Discord user
-    guild_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)   # null = system-wide
-    action: Mapped[str] = mapped_column(String(64), nullable=False)           # e.g. "guild_reset"
+    guild_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)  # null = system-wide
+    action: Mapped[str] = mapped_column(String(64), nullable=False)  # e.g. "guild_reset"
     resource_type: Mapped[str | None] = mapped_column(String(32), nullable=True)  # e.g. "player"
-    resource_id: Mapped[str | None] = mapped_column(String(64), nullable=True)    # affected resource
-    details: Mapped[str | None] = mapped_column(Text, nullable=True)               # JSON payload
+    resource_id: Mapped[str | None] = mapped_column(String(64), nullable=True)  # affected resource
+    details: Mapped[str | None] = mapped_column(Text, nullable=True)  # JSON payload
     status: Mapped[str] = mapped_column(String(16), default="success", nullable=False)
 
     def __repr__(self) -> str:
-        return (
-            f"<AdminAuditLog id={self.id} user={self.user_id} "
-            f"action={self.action!r} status={self.status!r}>"
-        )
+        return f"<AdminAuditLog id={self.id} user={self.user_id} action={self.action!r} status={self.status!r}>"

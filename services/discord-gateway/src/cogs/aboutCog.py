@@ -1,3 +1,4 @@
+import io
 import os
 
 import discord
@@ -364,10 +365,7 @@ class AboutCog(commands.Cog):
                 filtered = [o for o in filtered if o.get("tech_level") == tech_level]
             if manufacturer is not None:
                 manufacturer_lower = manufacturer.lower()
-                filtered = [
-                    o for o in filtered
-                    if manufacturer_lower in str(o.get("manufacturer", "")).lower()
-                ]
+                filtered = [o for o in filtered if manufacturer_lower in str(o.get("manufacturer", "")).lower()]
 
             if not filtered:
                 filter_desc = []
@@ -430,9 +428,7 @@ class AboutCog(commands.Cog):
             )
             await interaction.followup.send("⚠️ An error occurred while listing objects.", ephemeral=True)
 
-    @app_commands.command(
-        name="make-route", description="Find the shortest route between two star systems"
-    )
+    @app_commands.command(name="make-route", description="Find the shortest route between two star systems")
     @app_commands.describe(
         start="Starting star system",
         end="Destination star system",
@@ -468,7 +464,33 @@ class AboutCog(commands.Cog):
             embed.add_field(name="Total Hops", value=str(hops), inline=True)
             embed.set_footer(text=f"Shortest path via A* ({len(route)} system(s))")
 
-            await interaction.followup.send(embed=embed)
+            # Attempt to fetch the route map image and attach it to the embed.
+            # This is a best-effort enhancement — a failure does not block the response.
+            map_file: discord.File | None = None
+            try:
+                map_resp = await self.http_client.get(
+                    f"{api_base}/systems/route/map",
+                    params={"start": start, "end": end},
+                    timeout=10,
+                )
+                map_resp.raise_for_status()
+                map_file = discord.File(io.BytesIO(map_resp.content), filename="route_map.png")
+                embed.set_image(url="attachment://route_map.png")
+                flogger.debug(
+                    f"/make-route map fetched: guild={interaction.guild_id} user={interaction.user.id}"
+                    f" start={start} end={end}"
+                )
+            except Exception as map_err:  # pylint: disable=broad-exception-caught
+                flogger.warning(
+                    f"/make-route map unavailable (non-fatal): guild={interaction.guild_id}"
+                    f" user={interaction.user.id} start={start} end={end} error={map_err}"
+                )
+
+            if map_file is not None:
+                await interaction.followup.send(embed=embed, file=map_file)
+            else:
+                await interaction.followup.send(embed=embed)
+
             flogger.info(
                 f"/make-route success: guild={interaction.guild_id} user={interaction.user.id}"
                 f" start={start} end={end} hops={hops}"
@@ -496,9 +518,7 @@ class AboutCog(commands.Cog):
                 f"/make-route error: guild={interaction.guild_id} user={interaction.user.id}"
                 f" start={start} end={end} error={e}"
             )
-            await interaction.followup.send(
-                "⚠️ An error occurred while finding the route.", ephemeral=True
-            )
+            await interaction.followup.send("⚠️ An error occurred while finding the route.", ephemeral=True)
 
 
 async def setup(bot: commands.Bot):

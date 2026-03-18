@@ -16,14 +16,13 @@ flogger = bblogger.get_logger("blender-healthcheck-api-router")
 router = APIRouter(
     prefix="/health",
     tags=["health"],
-    responses={
-        200: {"description": "Service is healthy"},
-        503: {"description": "Service is unhealthy"}
-    }
+    responses={200: {"description": "Service is healthy"}, 503: {"description": "Service is unhealthy"}},
 )
+
 
 class HealthResponse(BaseModel):
     """Health check response model."""
+
     status: str
     timestamp: datetime
     version: str
@@ -31,17 +30,20 @@ class HealthResponse(BaseModel):
     environment: dict[str, Any]
     checks: dict[str, bool]
 
+
 class SimpleHealthResponse(BaseModel):
     """Simple health check response."""
+
     status: str
     timestamp: datetime
+
 
 @router.get(
     "/",
     response_model=HealthResponse,
     status_code=status.HTTP_200_OK,
     summary="Comprehensive Health Check",
-    description="Returns detailed health information about the Blender service"
+    description="Returns detailed health information about the Blender service",
 )
 async def health_check(request: Request) -> HealthResponse:
     """
@@ -75,9 +77,9 @@ async def health_check(request: Request) -> HealthResponse:
             environment={
                 "python_version": platform.python_version(),
                 "platform": platform.platform(),
-                "architecture": platform.architecture()[0]
+                "architecture": platform.architecture()[0],
             },
-            checks=checks
+            checks=checks,
         )
         flogger.debug(
             f"Comprehensive health check response: status={response.status}, "
@@ -88,12 +90,13 @@ async def health_check(request: Request) -> HealthResponse:
         flogger.error(f"Error in health_check: {exc}")
         raise
 
+
 @router.get(
     "/simple",
     response_model=SimpleHealthResponse,
     status_code=status.HTTP_200_OK,
     summary="Simple Health Check",
-    description="Returns basic health status for load balancer checks"
+    description="Returns basic health status for load balancer checks",
 )
 async def simple_health_check() -> SimpleHealthResponse:
     """
@@ -103,21 +106,19 @@ async def simple_health_check() -> SimpleHealthResponse:
     """
     flogger.debug("Inside simple_health_check method...")
     try:
-        response = SimpleHealthResponse(
-            status="healthy",
-            timestamp=datetime.now(UTC)
-        )
+        response = SimpleHealthResponse(status="healthy", timestamp=datetime.now(UTC))
         flogger.debug(f"Simple health check response: status={response.status}")
         return response
     except Exception as exc:
         flogger.error(f"Error in simple_health_check: {exc}")
         raise
 
+
 @router.get(
     "/liveness",
     status_code=status.HTTP_200_OK,
     summary="Liveness Check",
-    description="Checks if the service is alive and responsive"
+    description="Checks if the service is alive and responsive",
 )
 async def liveness_check() -> dict[str, str]:
     """

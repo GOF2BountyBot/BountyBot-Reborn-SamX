@@ -36,9 +36,7 @@ class Bounty(Base):
     checked: Mapped[dict] = mapped_column(JSON, nullable=False)
 
     # Timing
-    issue_time: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=lambda: datetime.now(UTC)
-    )
+    issue_time: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(UTC))
     end_time: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     # Criminal details
@@ -52,9 +50,7 @@ class Bounty(Base):
     respawn_time: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     # Timestamps
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=lambda: datetime.now(UTC)
-    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(UTC))
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         default=lambda: datetime.now(UTC),

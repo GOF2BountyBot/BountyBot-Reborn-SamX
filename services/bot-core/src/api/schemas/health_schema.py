@@ -14,6 +14,7 @@ class HealthResponse(BaseModel):
     database_check: dict[str, Any] | None = None
     schema_check: dict[str, Any] | None = None
 
+
 class SimpleHealthResponse(BaseModel):
     status: str
     timestamp: datetime

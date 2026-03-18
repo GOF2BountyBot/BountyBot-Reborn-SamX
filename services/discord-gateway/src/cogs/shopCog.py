@@ -13,6 +13,7 @@ flogger = bblogger.get_logger("discord-gateway-ShopCog")
 api_base = os.environ.get("BOT_API_BASE_URL", "http://bot-core:8000/api/v1")
 flogger.debug(f"shopCog loading with API_BASE_URL: {api_base}")
 
+
 class ShopCog(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
@@ -27,11 +28,7 @@ class ShopCog(commands.Cog):
     async def _get_player_data(self, user_id: int, guild_id: int) -> dict | None:
         """Helper to get player data from Discord user ID."""
         try:
-            user_data = {
-                "discord_id": user_id,
-                "guild_id": guild_id,
-                "discord_username": "temp"
-            }
+            user_data = {"discord_id": user_id, "guild_id": guild_id, "discord_username": "temp"}
 
             resp = await self.http_client.post(f"{api_base}/players/", json=user_data, timeout=5)
             resp.raise_for_status()
@@ -40,21 +37,15 @@ class ShopCog(commands.Cog):
             return None
 
     async def tier_autocomplete(
-        self,
-        _interaction: discord.Interaction,
-        current: str
+        self, _interaction: discord.Interaction, current: str
     ) -> list[app_commands.Choice[str]]:
         """Autocomplete for tier selection."""
         return [
-            app_commands.Choice(name=tier, value=tier)
-            for tier in self._valid_tiers
-            if current.lower() in tier.lower()
+            app_commands.Choice(name=tier, value=tier) for tier in self._valid_tiers if current.lower() in tier.lower()
         ]
 
     async def item_type_autocomplete(
-        self,
-        _interaction: discord.Interaction,
-        current: str
+        self, _interaction: discord.Interaction, current: str
     ) -> list[app_commands.Choice[str]]:
         """Autocomplete for item type selection."""
         return [
@@ -66,15 +57,10 @@ class ShopCog(commands.Cog):
     @app_commands.command(name="shop", description="Browse the guild shop")
     @app_commands.describe(
         tier="Shop tier to browse (Bronze, Silver, Gold, Platinum)",
-        item_type="Filter by item type (ship, weapon, module, turret)"
+        item_type="Filter by item type (ship, weapon, module, turret)",
     )
     @app_commands.autocomplete(tier=tier_autocomplete, item_type=item_type_autocomplete)
-    async def shop(
-        self,
-        interaction: discord.Interaction,
-        tier: str,
-        item_type: str | None = None
-    ):
+    async def shop(self, interaction: discord.Interaction, tier: str, item_type: str | None = None):
         """Browse guild shop by tier."""
         await interaction.response.defer(thinking=True)
 
@@ -82,8 +68,7 @@ class ShopCog(commands.Cog):
             # Validate tier
             if tier not in self._valid_tiers:
                 await interaction.followup.send(
-                    f"❌ Invalid tier. Valid tiers: {', '.join(self._valid_tiers)}",
-                    ephemeral=True
+                    f"❌ Invalid tier. Valid tiers: {', '.join(self._valid_tiers)}", ephemeral=True
                 )
                 return
 
@@ -94,35 +79,30 @@ class ShopCog(commands.Cog):
                 return
 
             # Check tier access (players can only access their tier and below)
-            player_tier_level = self._valid_tiers.index(player['tier'])
+            player_tier_level = self._valid_tiers.index(player["tier"])
             requested_tier_level = self._valid_tiers.index(tier)
 
             if requested_tier_level > player_tier_level:
                 await interaction.followup.send(
                     f"🔒 You need to be **{tier}** tier to access this shop. Your current tier: **{player['tier']}**",
-                    ephemeral=True
+                    ephemeral=True,
                 )
                 return
 
             # Get shop items
             params = {}
             if item_type:
-                params['item_type'] = item_type
+                params["item_type"] = item_type
 
             resp = await self.http_client.get(
-                f"{api_base}/shops/guild/{interaction.guild_id}/tier/{tier}",
-                params=params,
-                timeout=10
+                f"{api_base}/shops/guild/{interaction.guild_id}/tier/{tier}", params=params, timeout=10
             )
             resp.raise_for_status()
             items = resp.json()
 
             if not items:
                 type_filter = f" ({item_type}s)" if item_type else ""
-                await interaction.followup.send(
-                    f"🏪 The {tier} shop{type_filter} is currently empty.",
-                    ephemeral=True
-                )
+                await interaction.followup.send(f"🏪 The {tier} shop{type_filter} is currently empty.", ephemeral=True)
                 return
 
             # Create shop embed
@@ -133,13 +113,13 @@ class ShopCog(commands.Cog):
             embed = discord.Embed(
                 title=title,
                 description=f"💰 Your credits: {player['credits']:,} | Items available: {len(items)}",
-                color=self._get_tier_color(tier)
+                color=self._get_tier_color(tier),
             )
 
             # Group items by type
             items_by_type = {}
             for item in items:
-                item_type_key = item['item_type']
+                item_type_key = item["item_type"]
                 if item_type_key not in items_by_type:
                     items_by_type[item_type_key] = []
                 items_by_type[item_type_key].append(item)
@@ -147,20 +127,19 @@ class ShopCog(commands.Cog):
             # Display items
             for item_type_key, type_items in items_by_type.items():
                 # Sort by price
-                type_items.sort(key=lambda x: x['price'])
+                type_items.sort(key=lambda x: x["price"])
 
                 items_text = ""
                 for item in type_items[:10]:  # Limit to prevent embed size issues
-                    tech_level = f"T{item['tech_level']}" if item['tech_level'] else ""
-                    quantity = f"x{item['quantity']}" if item['quantity'] > 1 else ""
+                    tech_level = f"T{item['tech_level']}" if item["tech_level"] else ""
+                    quantity = f"x{item['quantity']}" if item["quantity"] > 1 else ""
 
                     price_text = f"{item['price']:,} credits"
-                    if player['credits'] < item['price']:
+                    if player["credits"] < item["price"]:
                         price_text = f"~~{price_text}~~ 💸"
 
                     items_text += (
-                        f"**{item['item_name']}** {tech_level} {quantity}\n"
-                        f"    💰 {price_text} | ID: {item['id']}\n"
+                        f"**{item['item_name']}** {tech_level} {quantity}\n    💰 {price_text} | ID: {item['id']}\n"
                     )
 
                 if len(type_items) > 10:
@@ -169,7 +148,7 @@ class ShopCog(commands.Cog):
                 embed.add_field(
                     name=f"{item_type_key.title()}s ({len(type_items)})",
                     value=items_text or "None available",
-                    inline=False
+                    inline=False,
                 )
 
             embed.set_footer(text=f"Use /buy <item_id> [quantity] to purchase items | Your tier: {player['tier']}")
@@ -184,10 +163,7 @@ class ShopCog(commands.Cog):
             await interaction.followup.send("⚠️ An error occurred while fetching shop items.", ephemeral=True)
 
     @app_commands.command(name="buy", description="Purchase an item from the shop")
-    @app_commands.describe(
-        item_id="ID of the shop item to purchase",
-        quantity="Quantity to purchase (default: 1)"
-    )
+    @app_commands.describe(item_id="ID of the shop item to purchase", quantity="Quantity to purchase (default: 1)")
     async def buy(self, interaction: discord.Interaction, item_id: int, quantity: int = 1):
         """Purchase item from shop."""
         await interaction.response.defer(thinking=True)
@@ -209,47 +185,36 @@ class ShopCog(commands.Cog):
             shop_item = item_resp.json()
 
             # Check tier access
-            player_tier_level = self._valid_tiers.index(player['tier'])
-            item_tier_level = self._valid_tiers.index(shop_item['tier'])
+            player_tier_level = self._valid_tiers.index(player["tier"])
+            item_tier_level = self._valid_tiers.index(shop_item["tier"])
 
             if item_tier_level > player_tier_level:
                 await interaction.followup.send(
-                    f"🔒 You need to be **{shop_item['tier']}** tier to purchase this item.",
-                    ephemeral=True
+                    f"🔒 You need to be **{shop_item['tier']}** tier to purchase this item.", ephemeral=True
                 )
                 return
 
             # Calculate total cost
-            total_cost = shop_item['price'] * quantity
+            total_cost = shop_item["price"] * quantity
 
             # Check if player has enough credits
-            if player['credits'] < total_cost:
+            if player["credits"] < total_cost:
                 await interaction.followup.send(
-                    f"💸 Insufficient credits! Cost: {total_cost:,} | You have: {player['credits']:,}",
-                    ephemeral=True
+                    f"💸 Insufficient credits! Cost: {total_cost:,} | You have: {player['credits']:,}", ephemeral=True
                 )
                 return
 
             # Check if enough quantity available
-            if shop_item['quantity'] < quantity:
+            if shop_item["quantity"] < quantity:
                 await interaction.followup.send(
-                    f"❌ Insufficient stock! Available: {shop_item['quantity']} | Requested: {quantity}",
-                    ephemeral=True
+                    f"❌ Insufficient stock! Available: {shop_item['quantity']} | Requested: {quantity}", ephemeral=True
                 )
                 return
 
             # Make purchase
-            purchase_data = {
-                "player_id": player['id'],
-                "shop_item_id": item_id,
-                "quantity": quantity
-            }
+            purchase_data = {"player_id": player["id"], "shop_item_id": item_id, "quantity": quantity}
 
-            resp = await self.http_client.post(
-                f"{api_base}/shops/purchase",
-                json=purchase_data,
-                timeout=10
-            )
+            resp = await self.http_client.post(f"{api_base}/shops/purchase", json=purchase_data, timeout=10)
             resp.raise_for_status()
             transaction = resp.json()
 
@@ -257,10 +222,10 @@ class ShopCog(commands.Cog):
             embed = discord.Embed(
                 title="✅ Purchase Successful!",
                 description=f"You bought **{quantity}x {transaction['item_name']}**",
-                color=discord.Color.green()
+                color=discord.Color.green(),
             )
 
-            embed.add_field(name="Item Type", value=transaction['item_type'].title(), inline=True)
+            embed.add_field(name="Item Type", value=transaction["item_type"].title(), inline=True)
             embed.add_field(name="Quantity", value=str(quantity), inline=True)
             embed.add_field(name="Total Cost", value=f"{transaction['total_cost']:,} credits", inline=True)
             embed.add_field(name="Remaining Credits", value=f"{transaction['remaining_credits']:,}", inline=True)
@@ -277,7 +242,7 @@ class ShopCog(commands.Cog):
             if e.response.status_code == 400:
                 # Try to get the error message from the response
                 try:
-                    error_detail = e.response.json().get('detail', 'Invalid request')
+                    error_detail = e.response.json().get("detail", "Invalid request")
                     await interaction.followup.send(f"❌ {error_detail}", ephemeral=True)
                 except Exception:  # pylint: disable=broad-exception-caught
                     await interaction.followup.send("❌ Invalid purchase request.", ephemeral=True)
@@ -294,7 +259,7 @@ class ShopCog(commands.Cog):
         item_name="Name of the item to sell",
         item_type="Type of the item (ship, weapon, module, turret)",
         quantity="Quantity to sell (default: 1)",
-        target_tier="Shop tier to sell to (default: Bronze)"
+        target_tier="Shop tier to sell to (default: Bronze)",
     )
     @app_commands.autocomplete(item_type=item_type_autocomplete, target_tier=tier_autocomplete)
     async def sell(
@@ -303,7 +268,7 @@ class ShopCog(commands.Cog):
         item_name: str,
         item_type: str,
         quantity: int = 1,
-        target_tier: str = "Bronze"
+        target_tier: str = "Bronze",
     ):
         """Sell item back to shop."""
         await interaction.response.defer(thinking=True)
@@ -315,15 +280,13 @@ class ShopCog(commands.Cog):
 
             if item_type not in self._valid_item_types:
                 await interaction.followup.send(
-                    f"❌ Invalid item type. Valid types: {', '.join(self._valid_item_types)}",
-                    ephemeral=True
+                    f"❌ Invalid item type. Valid types: {', '.join(self._valid_item_types)}", ephemeral=True
                 )
                 return
 
             if target_tier not in self._valid_tiers:
                 await interaction.followup.send(
-                    f"❌ Invalid tier. Valid tiers: {', '.join(self._valid_tiers)}",
-                    ephemeral=True
+                    f"❌ Invalid tier. Valid tiers: {', '.join(self._valid_tiers)}", ephemeral=True
                 )
                 return
 
@@ -335,18 +298,14 @@ class ShopCog(commands.Cog):
 
             # Make sell request
             sell_data = {
-                "player_id": player['id'],
+                "player_id": player["id"],
                 "item_type": item_type,
                 "item_name": item_name,
                 "quantity": quantity,
-                "target_tier": target_tier
+                "target_tier": target_tier,
             }
 
-            resp = await self.http_client.post(
-                f"{api_base}/shops/sell",
-                json=sell_data,
-                timeout=10
-            )
+            resp = await self.http_client.post(f"{api_base}/shops/sell", json=sell_data, timeout=10)
             resp.raise_for_status()
             transaction = resp.json()
 
@@ -354,7 +313,7 @@ class ShopCog(commands.Cog):
             embed = discord.Embed(
                 title="✅ Sale Successful!",
                 description=f"You sold **{quantity}x {item_name}** to the {target_tier} shop",
-                color=discord.Color.green()
+                color=discord.Color.green(),
             )
 
             embed.add_field(name="Item Type", value=item_type.title(), inline=True)
@@ -368,7 +327,7 @@ class ShopCog(commands.Cog):
         except httpx.HTTPStatusError as e:
             if e.response.status_code == 400:
                 try:
-                    error_detail = e.response.json().get('detail', 'Invalid request')
+                    error_detail = e.response.json().get("detail", "Invalid request")
                     await interaction.followup.send(f"❌ {error_detail}", ephemeral=True)
                 except Exception:  # pylint: disable=broad-exception-caught
                     await interaction.followup.send("❌ Invalid sell request.", ephemeral=True)
@@ -396,7 +355,7 @@ class ShopCog(commands.Cog):
             embed = discord.Embed(
                 title="🏪 Guild Shops Summary",
                 description=f"Total items across all shops: {summary['total_items']}",
-                color=discord.Color.blue()
+                color=discord.Color.blue(),
             )
 
             if player:
@@ -404,12 +363,12 @@ class ShopCog(commands.Cog):
 
             # Add shop info for each tier
             for tier in self._valid_tiers:
-                if tier in summary['shops']:
-                    shop_info = summary['shops'][tier]
+                if tier in summary["shops"]:
+                    shop_info = summary["shops"][tier]
 
                     # Check if player can access this tier
                     if player:
-                        player_tier_level = self._valid_tiers.index(player['tier'])
+                        player_tier_level = self._valid_tiers.index(player["tier"])
                         tier_level = self._valid_tiers.index(tier)
                         accessible = "🔓" if tier_level <= player_tier_level else "🔒"
                     else:
@@ -418,14 +377,10 @@ class ShopCog(commands.Cog):
                     embed.add_field(
                         name=f"{accessible} {tier} Shop",
                         value=f"Items: {shop_info['items']}\nTotal Stock: {shop_info['total_quantity']}",
-                        inline=True
+                        inline=True,
                     )
                 else:
-                    embed.add_field(
-                        name=f"🔒 {tier} Shop",
-                        value="Empty",
-                        inline=True
-                    )
+                    embed.add_field(name=f"🔒 {tier} Shop", value="Empty", inline=True)
 
             embed.set_footer(text="Use /shop <tier> to browse a specific shop")
 
@@ -444,7 +399,7 @@ class ShopCog(commands.Cog):
             "Bronze": discord.Color.from_rgb(205, 127, 50),
             "Silver": discord.Color.from_rgb(192, 192, 192),
             "Gold": discord.Color.from_rgb(255, 215, 0),
-            "Platinum": discord.Color.from_rgb(229, 228, 226)
+            "Platinum": discord.Color.from_rgb(229, 228, 226),
         }
         return tier_colors.get(tier, discord.Color.default())
 
@@ -471,6 +426,7 @@ class ShopCog(commands.Cog):
         flogger.exception("Error in /shops", exc_info=error)
         if not interaction.response.is_done():
             await interaction.response.send_message("⚠️ An error occurred.", ephemeral=True)
+
 
 async def setup(bot: commands.Bot):
     flogger.debug("Setting up ShopCog...")

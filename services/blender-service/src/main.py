@@ -29,6 +29,7 @@ from shared import bblogger
 
 flogger = bblogger.get_logger("blender-main-script")
 
+
 # Handle app startup/shutdown as app lifespan events
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -79,16 +80,13 @@ def create_app() -> FastAPI:
         contact={
             "name": "BountyBot Team",
             "url": "https://github.com/GOF2BountyBot/BountyBot-Reborn-SamX",
-            "email": "support@bountybot.com"
+            "email": "support@bountybot.com",
         },
-        license_info={
-            "name": "MIT",
-            "url": "https://opensource.org/licenses/MIT"
-        },
+        license_info={"name": "MIT", "url": "https://opensource.org/licenses/MIT"},
         docs_url="/docs",
         redoc_url="/redoc",
         openapi_url="/openapi.json",
-        lifespan=lifespan  # This includes our database initialization
+        lifespan=lifespan,  # This includes our database initialization
     )
 
     # CORS not needed — internal service, no browser clients
@@ -97,6 +95,7 @@ def create_app() -> FastAPI:
     include_routers(app)
 
     return app
+
 
 def include_routers(app: FastAPI) -> None:
     """
@@ -115,14 +114,14 @@ def include_routers(app: FastAPI) -> None:
                 module = importlib.import_module(f"routers.{modname}")
 
                 # Look for router attribute in the module
-                if hasattr(module, 'router'):
+                if hasattr(module, "router"):
                     router = module.router
 
                     # Include the router with appropriate prefix
                     app.include_router(
                         router,
                         prefix="/api/v1",  # Global API version prefix
-                        tags=[modname]  # Add module name as tag
+                        tags=[modname],  # Add module name as tag
                     )
                     flogger.info(f"✓ Included router from routers.{modname}")
                 else:
@@ -131,19 +130,17 @@ def include_routers(app: FastAPI) -> None:
             except ImportError as e:
                 flogger.error(f"✗ Failed to import routers.{modname}: {e}")
 
+
 # Create the app instance
 app = create_app()
+
 
 # Root endpoint - NO CHANGES
 @app.get("/", tags=["root"])
 async def root():
     """Root endpoint with API information."""
-    return {
-        "message": "Blender API is running",
-        "version": "1.0.0",
-        "docs": "/docs",
-        "redoc": "/redoc"
-    }
+    return {"message": "Blender API is running", "version": "1.0.0", "docs": "/docs", "redoc": "/redoc"}
+
 
 # Health check filter
 class HealthFilter(pyLogging.Filter):
@@ -152,17 +149,21 @@ class HealthFilter(pyLogging.Filter):
         # drop lines that mention the health path
         return "/api/v1/health/" not in msg
 
+
 if __name__ == "__main__":
     import uvicorn
+
     flogger.info("Starting uvicorn...")
     # attach filter to uvicorn.access to filter health check API requests
     # from being logged as they are particularly noisy
     pyLogging.getLogger("uvicorn.access").addFilter(HealthFilter())
-    uvicorn.run("main:app",
-                host=os.getenv("BLENDER_HOST", "0.0.0.0"),
-                port=int(os.getenv("BLENDER_PORT", os.getenv("PORT", "8001"))),
-                # access_log shows API requests in log output, can get a bit noisy tho
-                access_log=os.getenv("ACCESS_LOG", "true").lower() == "true",
-                # reload is useful for development but should be turned off for production
-                # It will monitor the filesystem and restart the server when changes are detected.
-                reload=True)
+    uvicorn.run(
+        "main:app",
+        host=os.getenv("BLENDER_HOST", "0.0.0.0"),
+        port=int(os.getenv("BLENDER_PORT", os.getenv("PORT", "8001"))),
+        # access_log shows API requests in log output, can get a bit noisy tho
+        access_log=os.getenv("ACCESS_LOG", "true").lower() == "true",
+        # reload is useful for development but should be turned off for production
+        # It will monitor the filesystem and restart the server when changes are detected.
+        reload=True,
+    )

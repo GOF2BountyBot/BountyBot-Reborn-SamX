@@ -16,8 +16,8 @@ from persist.models.guild_config import GuildConfig
 
 flogger = bblogger.get_logger("config-repository")
 
-class ConfigRepository(IRepository[GuildConfig]):
 
+class ConfigRepository(IRepository[GuildConfig]):
     async def get_by_id(self, db: AsyncSession, obj_id: int) -> GuildConfig | None:
         """Get config by ID."""
         try:
@@ -74,7 +74,7 @@ class ConfigRepository(IRepository[GuildConfig]):
             if existing_config:
                 # Update existing config
                 for key, value in raw.items():
-                    if hasattr(existing_config, key) and key not in ['id', 'guild_id', 'created_at']:
+                    if hasattr(existing_config, key) and key not in ["id", "guild_id", "created_at"]:
                         setattr(existing_config, key, value)
                 try:
                     await db.commit()
@@ -106,9 +106,7 @@ class ConfigRepository(IRepository[GuildConfig]):
     async def get_by_guild_id(self, db: AsyncSession, guild_id: int) -> GuildConfig | None:
         """Get config by guild ID."""
         try:
-            result = await db.execute(
-                select(GuildConfig).where(GuildConfig.guild_id == guild_id)
-            )
+            result = await db.execute(select(GuildConfig).where(GuildConfig.guild_id == guild_id))
             return result.scalars().first()
         except Exception as e:
             flogger.error(f"Error getting config for guild {guild_id}: {e}")
@@ -128,18 +126,10 @@ class ConfigRepository(IRepository[GuildConfig]):
                 "weapon_quantity_range": {"min": 2, "max": 4},
                 "module_quantity_range": {"min": 2, "max": 4},
                 "turret_quantity_range": {"min": 2, "max": 4},
-                "tech_level_probabilities": {
-                    "same_level": 0.70,
-                    "one_lower": 0.20,
-                    "two_lower": 0.10
-                },
+                "tech_level_probabilities": {"same_level": 0.70, "one_lower": 0.20, "two_lower": 0.10},
                 "sale_price_factor": 0.8,
                 "starting_credits": 0,
-                "xp_thresholds": {
-                    "Silver": 1000,
-                    "Gold": 5000,
-                    "Platinum": 15000
-                }
+                "xp_thresholds": {"Silver": 1000, "Gold": 5000, "Platinum": 15000},
             }
 
             config = await self.create_or_update(db, default_config)
@@ -163,9 +153,16 @@ class ConfigRepository(IRepository[GuildConfig]):
 
             # Update shop configuration fields
             updatable_fields = [
-                "tech_level_probabilities", "sale_price_factor",
-                "ship_count_range", "weapon_count_range", "module_count_range", "turret_count_range",
-                "ship_quantity_range", "weapon_quantity_range", "module_quantity_range", "turret_quantity_range"
+                "tech_level_probabilities",
+                "sale_price_factor",
+                "ship_count_range",
+                "weapon_count_range",
+                "module_count_range",
+                "turret_count_range",
+                "ship_quantity_range",
+                "weapon_quantity_range",
+                "module_quantity_range",
+                "turret_quantity_range",
             ]
 
             for field in updatable_fields:
@@ -303,18 +300,18 @@ class ConfigRepository(IRepository[GuildConfig]):
                         "ships": config.ship_count_range,
                         "weapons": config.weapon_count_range,
                         "modules": config.module_count_range,
-                        "turrets": config.turret_count_range
+                        "turrets": config.turret_count_range,
                     },
                     "quantity_ranges": {
                         "ships": config.ship_quantity_range,
                         "weapons": config.weapon_quantity_range,
                         "modules": config.module_quantity_range,
-                        "turrets": config.turret_quantity_range
+                        "turrets": config.turret_quantity_range,
                     },
-                    "tech_level_probabilities": config.tech_level_probabilities
+                    "tech_level_probabilities": config.tech_level_probabilities,
                 },
                 "created_at": config.created_at.isoformat(),
-                "updated_at": config.updated_at.isoformat()
+                "updated_at": config.updated_at.isoformat(),
             }
 
         except Exception as e:
@@ -331,7 +328,7 @@ class ConfigRepository(IRepository[GuildConfig]):
                     "guild_id": config.guild_id,
                     "admin_role_configured": config.admin_role_id is not None,
                     "starting_credits": config.starting_credits,
-                    "created_at": config.created_at.isoformat()
+                    "created_at": config.created_at.isoformat(),
                 }
                 for config in configs
             ]
@@ -372,15 +369,11 @@ class ConfigRepository(IRepository[GuildConfig]):
                 await db.rollback()
                 raise
 
-            flogger.debug(
-                f"Updated division_temperatures for guild {guild_id}: {temperatures}"
-            )
+            flogger.debug(f"Updated division_temperatures for guild {guild_id}: {temperatures}")
             return config
 
         except Exception as e:
-            flogger.error(
-                f"Error updating division_temperatures for guild {guild_id}: {e}"
-            )
+            flogger.error(f"Error updating division_temperatures for guild {guild_id}: {e}")
             raise
 
     async def delete_guild_config(self, db: AsyncSession, guild_id: int) -> bool:

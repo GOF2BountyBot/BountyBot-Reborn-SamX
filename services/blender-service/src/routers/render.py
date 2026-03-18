@@ -59,10 +59,7 @@ async def render_ship(
     Missing required fields return HTTP 422 (FastAPI default).
     Blender failures return HTTP 500.
     """
-    flogger.info(
-        f"render_ship request: model_path={model_path!r}, "
-        f"res={res_x}x{res_y}, num_samples={num_samples}"
-    )
+    flogger.info(f"render_ship request: model_path={model_path!r}, res={res_x}x{res_y}, num_samples={num_samples}")
 
     # Use live config from app state if available, else fall back to module-level service.
     render_config = getattr(getattr(request.app, "state", None), "render_config", None)
@@ -138,10 +135,7 @@ async def render_ship(
 
     output_buf = BytesIO(image_bytes)
     output_buf.seek(0)
-    flogger.info(
-        f"render_ship response: returning PNG ({len(image_bytes)} bytes), "
-        f"render_id={render_id}"
-    )
+    flogger.info(f"render_ship response: returning PNG ({len(image_bytes)} bytes), render_id={render_id}")
     return StreamingResponse(
         output_buf,
         media_type="image/png",
@@ -169,8 +163,7 @@ async def submit_render_job(
 ) -> dict:
     """Submit an async render job. Returns job_id immediately."""
     flogger.info(
-        f"submit_render_job request: model_path={model_path!r}, "
-        f"res={res_x}x{res_y}, num_samples={num_samples}"
+        f"submit_render_job request: model_path={model_path!r}, res={res_x}x{res_y}, num_samples={num_samples}"
     )
 
     # Use live config from app state if available.

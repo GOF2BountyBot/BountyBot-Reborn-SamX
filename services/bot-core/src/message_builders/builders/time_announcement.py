@@ -38,9 +38,9 @@ class TimeAnnouncementBuilder(MessagePayloadBuilder):
         payload = {
             "title": "🕒 Current Time",
             "description": f"**Current time:** {data['current_time']}",
-            "color": 0x3498db,
+            "color": 0x3498DB,
             "footer_text": "Time Announcement",
-            "timestamp": datetime.now(UTC).isoformat()
+            "timestamp": datetime.now(UTC).isoformat(),
         }
         logger.info(f"build_payload generated payload: {payload}")
         return payload

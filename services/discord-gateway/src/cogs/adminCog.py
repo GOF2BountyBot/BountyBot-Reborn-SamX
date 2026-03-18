@@ -310,9 +310,7 @@ class AdminCog(commands.Cog):
                     timeout=10,
                 )
                 if resp.status_code == 404:
-                    await interaction.followup.send(
-                        f"❌ Player not found for {user.display_name}.", ephemeral=True
-                    )
+                    await interaction.followup.send(f"❌ Player not found for {user.display_name}.", ephemeral=True)
                     return
                 resp.raise_for_status()
                 result = resp.json()
@@ -499,9 +497,7 @@ class AdminCog(commands.Cog):
             await interaction.followup.send("⚠️ An error occurred while managing configuration.", ephemeral=True)
 
     @app_commands.command(name="admin_uninstall", description="[ADMIN] Completely remove all bot data from this guild")
-    @app_commands.describe(
-        confirm="Type CONFIRM-DELETE to confirm (this is IRREVERSIBLE)"
-    )
+    @app_commands.describe(confirm="Type CONFIRM-DELETE to confirm (this is IRREVERSIBLE)")
     @is_admin()
     async def admin_uninstall(
         self,
@@ -757,17 +753,13 @@ class AdminCog(commands.Cog):
                     json={setting: value},
                 )
                 resp.raise_for_status()
-                await interaction.response.send_message(
-                    f"✅ Updated `{setting}` = `{value}`", ephemeral=True
-                )
+                await interaction.response.send_message(f"✅ Updated `{setting}` = `{value}`", ephemeral=True)
                 flogger.info(f"Admin {interaction.user} updated render config: {setting}={value}")
 
             elif action == "reset":
                 resp = await self.http_client.post(f"{blender_base}/config/render/reset")
                 resp.raise_for_status()
-                await interaction.response.send_message(
-                    "✅ Render config reset to defaults.", ephemeral=True
-                )
+                await interaction.response.send_message("✅ Render config reset to defaults.", ephemeral=True)
                 flogger.info(f"Admin {interaction.user} reset render config")
 
         except httpx.HTTPStatusError as e:
@@ -789,12 +781,8 @@ class AdminCog(commands.Cog):
             result = resp.json()
 
             embed = discord.Embed(title="🗑️ Render Cache Cleared", color=discord.Color.green())
-            embed.add_field(
-                name="Directories Cleared", value=str(result["cleared_directories"]), inline=True
-            )
-            embed.add_field(
-                name="Space Freed", value=f"{result['freed_mb']} MB", inline=True
-            )
+            embed.add_field(name="Directories Cleared", value=str(result["cleared_directories"]), inline=True)
+            embed.add_field(name="Space Freed", value=f"{result['freed_mb']} MB", inline=True)
             await interaction.response.send_message(embed=embed, ephemeral=True)
             flogger.info(
                 f"Admin {interaction.user} cleared render cache: "

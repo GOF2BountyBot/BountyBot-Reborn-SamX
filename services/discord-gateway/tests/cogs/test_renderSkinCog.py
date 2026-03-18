@@ -184,12 +184,12 @@ class TestSquareCheckView:
 
 
 class TestFormatDownloadView:
-    """Tests for FormatDownloadView AEI conversion buttons."""
+    """Tests for FormatDownloadView PNG / AEI conversion buttons."""
 
-    def _make_view(self, cog, texture_bytes: bytes = b"PNG_DATA"):
+    def _make_view(self, cog, texture_bytes: bytes = b"PNG_DATA", render_bytes: bytes | None = None):
         _evict_discord_modules()
         from cogs.skinsCog import FormatDownloadView
-        return FormatDownloadView(cog, texture_bytes, "TestShip", timeout=120)
+        return FormatDownloadView(cog, texture_bytes, "TestShip", timeout=120, render_bytes=render_bytes)
 
     def test_format_download_view_etc1(self, mock_cog):
         """ETC1 button calls blender /textures/convert with format=etc1."""
@@ -235,8 +235,8 @@ class TestFormatDownloadView:
         assert call_kwargs[1]["data"]["format"] == "dxt5"
         interaction.followup.send.assert_called_once()
 
-    def test_format_download_view_png(self, mock_cog):
-        """PNG button sends the raw texture bytes as a PNG file."""
+    def test_format_download_view_png_fallback(self, mock_cog):
+        """PNG button sends texture bytes when no render_bytes provided."""
         texture_data = b"PNG_DATA"
         view = self._make_view(mock_cog, texture_bytes=texture_data)
 
@@ -253,6 +253,24 @@ class TestFormatDownloadView:
         sent_file = call_kwargs[1]["file"]
         assert sent_file.filename == "TestShip_skin.png"
 
+    def test_format_download_view_png_render(self, mock_cog):
+        """PNG button sends render_bytes when provided (not texture_bytes)."""
+        texture_data = b"TEXTURE_DATA"
+        render_data = b"RENDER_DATA"
+        view = self._make_view(mock_cog, texture_bytes=texture_data, render_bytes=render_data)
+
+        interaction = MagicMock()
+        interaction.response.defer = AsyncMock()
+        interaction.followup.send = AsyncMock()
+
+        asyncio.run(view.png_button.callback(interaction))
+
+        interaction.response.defer.assert_called_once()
+        interaction.followup.send.assert_called_once()
+        call_kwargs = interaction.followup.send.call_args
+        sent_file = call_kwargs[1]["file"]
+        assert sent_file.filename == "TestShip_render.png"
+
 
 # ---------------------------------------------------------------------------
 # skinnable_ship_autocomplete tests
@@ -263,8 +281,9 @@ class TestSkinnableShipAutocomplete:
     """Tests for autocomplete that filters to skinnable ships only."""
 
     def test_skinnable_autocomplete_filters_non_skinnable(self, mock_cog):
-        """skinnable_ship_autocomplete returns only ships with render_info skinnable=True."""
-        # Add a non-skinnable ship to render_info
+        """skinnable_ship_autocomplete excludes ships with render_info skinnable=False."""
+        # Add a non-skinnable ship to both _ship_skins and _ship_render_info
+        mock_cog._ship_skins["Not Skinnable"] = []
         mock_cog._ship_render_info["Not Skinnable"] = {"skinnable": False}
 
         choices = asyncio.run(
@@ -283,14 +302,25 @@ class TestSkinnableShipAutocomplete:
         assert len(choices) == 1
         assert choices[0].name == "Skinnable Ship"
 
-    def test_skinnable_autocomplete_fallback_no_render_info(self, mock_cog):
-        """skinnable_ship_autocomplete falls back to all ships when no render info cached."""
+    def test_skinnable_autocomplete_includes_uncached_ships(self, mock_cog):
+        """Ships without cached render-info are included (assumed skinnable)."""
         mock_cog._ship_render_info = {}
         choices = asyncio.run(
             mock_cog.skinnable_ship_autocomplete(MagicMock(), "")
         )
-        # Should return all ships from _ship_skins
+        # Should return all ships from _ship_skins (both included by default)
         assert len(choices) == 2
+
+    def test_skinnable_autocomplete_partial_cache(self, mock_cog):
+        """Ships not yet in render_info cache still appear in autocomplete."""
+        # _ship_render_info only has "Skinnable Ship" but _ship_skins has both
+        choices = asyncio.run(
+            mock_cog.skinnable_ship_autocomplete(MagicMock(), "")
+        )
+        names = [c.name for c in choices]
+        # Both should appear — "Plain Ship" has no render_info so defaults to skinnable=True
+        assert "Skinnable Ship" in names
+        assert "Plain Ship" in names
 
 
 # ---------------------------------------------------------------------------

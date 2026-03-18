@@ -139,9 +139,9 @@ class BountyRepository(IRepository[Bounty]):
         """Return count of active bounties for a guild and division."""
         try:
             result = await db.execute(
-                select(func.count())
+                select(func.count())  # pylint: disable=not-callable
                 .select_from(Bounty)
-                .where(  # pylint: disable=not-callable
+                .where(
                     and_(
                         Bounty.guild_id == guild_id,
                         Bounty.division == division,

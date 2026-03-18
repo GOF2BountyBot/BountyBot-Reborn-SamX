@@ -120,8 +120,9 @@ class TemperatureService:
         # the exponentiation below.  Temperature should always be ≥ 1.0 via
         # system invariants, but we clamp defensively.
         flogger.trace(f"calculate_spawn_delay: input temperature={temperature}, route_length={route_length}")
+        original_temperature = temperature
         temperature = max(GameConstants.MIN_GUILD_ACTIVITY, temperature)
-        if temperature != temperature:  # Was clamped
+        if temperature != original_temperature:  # Was clamped
             flogger.trace(f"Temperature clamped to MIN_GUILD_ACTIVITY={GameConstants.MIN_GUILD_ACTIVITY}")
 
         base_delay = random.uniform(

@@ -106,6 +106,7 @@ async def execute_bounty_spawn_job(job_id: str, payload: dict) -> dict:
 
                 cfg = _SingleGuildConfig()
                 cfg.guild_id = guild_id
+                cfg.bounty_channel_id = None
                 guild_configs = [cfg]
             else:
                 # Bulk mode — enumerate all configured guilds.
@@ -173,7 +174,8 @@ async def execute_bounty_spawn_job(job_id: str, payload: dict) -> dict:
                     # ----------------------------------------------------------
                     # Announce to discord-gateway
                     # ----------------------------------------------------------
-                    await _announce_bounty(job_id, spawned_bounty)
+                    bounty_channel_id = getattr(config, "bounty_channel_id", None)
+                    await _announce_bounty(job_id, spawned_bounty, bounty_channel_id)
 
                     division_results[div] = {
                         "spawned": 1,
@@ -256,39 +258,62 @@ async def _schedule_expiry_job(parent_job_id: str, bounty) -> None:
 # ---------------------------------------------------------------------------
 
 
-async def _announce_bounty(parent_job_id: str, bounty) -> None:
-    """POST a bounty announcement to the discord-gateway messages endpoint.
+async def _announce_bounty(parent_job_id: str, bounty, bounty_channel_id: int | None) -> None:
+    """POST a bounty announcement to the discord-gateway channel messages endpoint.
 
-    The gateway is responsible for routing the message to the correct Discord
-    channel.  Failures are logged but do NOT propagate — a failed announcement
-    is non-fatal for the spawn operation.
+    POSTs to ``POST /api/v1/channels/{bounty_channel_id}/messages`` with an
+    EmbedPayload as the request body (matching ``MessageCreateRequest`` schema).
+
+    If ``bounty_channel_id`` is None, a warning is logged and the announcement
+    is skipped — no channel has been configured for this guild yet.
+
+    Failures are logged but do NOT propagate — a failed announcement is
+    non-fatal for the spawn operation.
     """
+    if bounty_channel_id is None:
+        flogger.warning(
+            f"BountySpawnJob[{parent_job_id}] guild={bounty.guild_id}: "
+            "bounty_channel_id not configured, skipping announcement"
+        )
+        return
+
+    route_length = len(bounty.route) if bounty.route else 0
+    end_time_str = bounty.end_time.isoformat() if bounty.end_time else "Unknown"
+    division_display = str(bounty.division).capitalize()
+
     announcement = {
-        "guild_id": bounty.guild_id,
-        "message_type": "bounty_spawn",
         "content": {
-            "bounty_id": bounty.id,
-            "division": bounty.division,
-            "criminal_name": bounty.criminal_name,
-            "criminal_faction": bounty.criminal_faction,
-            "reward": bounty.reward,
-            "route_length": len(bounty.route) if bounty.route else 0,
-            "tech_level": bounty.tech_level,
-            "end_time": (bounty.end_time.isoformat() if bounty.end_time else None),
+            "title": "🎯 New Bounty!",
+            "description": (
+                f"A new **{division_display}** division bounty has been posted. "
+                "Track down the criminal and claim your reward!"
+            ),
+            "color": 15158332,  # Red (#E74C3C)
+            "fields": [
+                {"name": "Criminal", "value": str(bounty.criminal_name), "inline": True},
+                {"name": "Faction", "value": str(bounty.criminal_faction), "inline": True},
+                {"name": "Division", "value": division_display, "inline": True},
+                {"name": "Reward", "value": f"{bounty.reward:,} credits", "inline": True},
+                {"name": "Route Length", "value": f"{route_length} systems", "inline": True},
+                {"name": "Expires", "value": end_time_str, "inline": True},
+            ],
+            "footer_text": "Use /check to hunt this bounty!",
         },
+        "message_type": "default",
     }
 
     try:
         async with httpx.AsyncClient() as client:
             resp = await client.post(
-                f"{_GATEWAY_BASE_URL}/messages",
+                f"{_GATEWAY_BASE_URL}/channels/{bounty_channel_id}/messages",
                 json=announcement,
                 timeout=10,
             )
         resp.raise_for_status()
-        flogger.info(f"BountySpawnJob[{parent_job_id}] announced bounty id={bounty.id} to discord-gateway")
+        flogger.info(f"BountySpawnJob[{parent_job_id}] announced bounty id={bounty.id} to channel {bounty_channel_id}")
     except Exception as e:  # pylint: disable=broad-exception-caught
         flogger.error(
-            f"BountySpawnJob[{parent_job_id}] failed to announce bounty id={bounty.id} to discord-gateway: {e}"
+            f"BountySpawnJob[{parent_job_id}] failed to announce bounty id={bounty.id} "
+            f"to channel {bounty_channel_id}: {e}"
         )
         flogger.trace(traceback.format_exc())

@@ -14,6 +14,8 @@ Tests verify:
  - Single-guild mode respects the guild_id payload field
  - Specific division mode respects the division payload field
  - job_executor.py dispatches bounty_spawn job_type
+ - bounty_channel_id=None skips announcement with warning
+ - bounty_channel_id set causes POST to /channels/{id}/messages
 
 IMPORTANT: shared.bblogger is mocked BEFORE any source imports (via
 conftest.py, with a belt-and-suspenders guard below).
@@ -26,7 +28,7 @@ at the source module level:
   - "persist.repositories.config_repository.ConfigRepository"
   - "services.temperature_service.TemperatureService"
 We pre-register stub modules in sys.modules so deferred imports inside
-execute_bounty_spawn_job resolve without pulling in real ORM code.
+execute_bounty_spawn_job resolve without requiring real ORM code.
 """
 
 import os as _os
@@ -105,9 +107,10 @@ _ensure_stub("services")
 # ---------------------------------------------------------------------------
 
 
-def _make_guild_config(guild_id: int) -> MagicMock:
+def _make_guild_config(guild_id: int, bounty_channel_id: int | None = 123456) -> MagicMock:
     cfg = MagicMock()
     cfg.guild_id = guild_id
+    cfg.bounty_channel_id = bounty_channel_id
     return cfg
 
 
@@ -152,8 +155,8 @@ def _configure_db_manager(mock_db: AsyncMock) -> None:
 
 def _configure_temperature_service(max_bounties: int = 5) -> None:
     """Set TemperatureService.get_max_bounties to return *max_bounties*."""
-    sys.modules["services.temperature_service"].TemperatureService.get_max_bounties = (
-        MagicMock(return_value=max_bounties)
+    sys.modules["services.temperature_service"].TemperatureService.get_max_bounties = MagicMock(
+        return_value=max_bounties
     )
 
 
@@ -168,9 +171,7 @@ def _configure_bounty_repo(active_lists: dict) -> AsyncMock:
         return active_lists.get((guild_id, division), [])
 
     mock_repo.get_active_by_guild_and_division = _get_active
-    sys.modules["persist.repositories.bounty_repository"].BountyRepository = MagicMock(
-        return_value=mock_repo
-    )
+    sys.modules["persist.repositories.bounty_repository"].BountyRepository = MagicMock(return_value=mock_repo)
     return mock_repo
 
 
@@ -186,9 +187,7 @@ def _configure_config_repo(guild_configs: list) -> AsyncMock:
     """Configure ConfigRepository.list_all to return *guild_configs*."""
     mock_repo = AsyncMock()
     mock_repo.list_all = AsyncMock(return_value=guild_configs)
-    sys.modules["persist.repositories.config_repository"].ConfigRepository = MagicMock(
-        return_value=mock_repo
-    )
+    sys.modules["persist.repositories.config_repository"].ConfigRepository = MagicMock(return_value=mock_repo)
     return mock_repo
 
 
@@ -381,7 +380,7 @@ async def test_expiry_skipped_when_no_end_time():
 
 @pytest.mark.asyncio
 async def test_announce_called_after_spawn():
-    """_announce_bounty is called with the job_id and spawned bounty."""
+    """_announce_bounty is called with the job_id, bounty, and bounty_channel_id."""
     from utils.executors.bounty_spawn_executor import execute_bounty_spawn_job
 
     mock_db = AsyncMock()
@@ -391,7 +390,8 @@ async def test_announce_called_after_spawn():
     bounty = _make_bounty(bounty_id=55, guild_id=600, division="gold")
     _configure_bounty_repo({})
     _configure_bounty_service(bounty)
-
+    # Single-guild mode creates a _SingleGuildConfig with bounty_channel_id=None
+    # so _announce_bounty will be called with None as the channel_id.
     mock_announce = AsyncMock()
 
     with (
@@ -403,7 +403,39 @@ async def test_announce_called_after_spawn():
             {"job_type": "bounty_spawn", "guild_id": 600, "division": "Gold"},
         )
 
-    mock_announce.assert_awaited_once_with("job-announce", bounty)
+    # _announce_bounty is called with (job_id, bounty, bounty_channel_id)
+    mock_announce.assert_awaited_once_with("job-announce", bounty, None)
+
+
+@pytest.mark.asyncio
+async def test_announce_called_with_channel_id_from_config():
+    """_announce_bounty is called with bounty_channel_id from the guild config."""
+    from utils.executors.bounty_spawn_executor import execute_bounty_spawn_job
+
+    mock_db = AsyncMock()
+    _configure_db_manager(mock_db)
+    _configure_temperature_service(max_bounties=5)
+
+    bounty = _make_bounty(bounty_id=66, guild_id=700, division="bronze")
+    # Only one division slot open (bronze), rest full to ensure one spawn per guild.
+    _configure_bounty_repo({(700, "silver"): [MagicMock()] * 5, (700, "gold"): [MagicMock()] * 5})
+    _configure_bounty_service(bounty)
+    # Bulk mode uses config objects from ConfigRepository which have bounty_channel_id.
+    _configure_config_repo([_make_guild_config(700, bounty_channel_id=999111)])
+
+    mock_announce = AsyncMock()
+
+    with (
+        patch("utils.executors.bounty_spawn_executor._schedule_expiry_job", new=AsyncMock()),
+        patch("utils.executors.bounty_spawn_executor._announce_bounty", new=mock_announce),
+    ):
+        await execute_bounty_spawn_job(
+            "job-announce-channel",
+            {"job_type": "bounty_spawn"},
+        )
+
+    # Should be called exactly once (only bronze spawned) with the channel_id from config.
+    mock_announce.assert_awaited_once_with("job-announce-channel", bounty, 999111)
 
 
 @pytest.mark.asyncio
@@ -420,8 +452,53 @@ async def test_announce_http_error_is_non_fatal():
         mock_cls.return_value.__aenter__ = AsyncMock(return_value=mock_client)
         mock_cls.return_value.__aexit__ = AsyncMock(return_value=False)
 
-        # Must NOT raise.
-        await _announce_bounty("parent-job", bounty)
+        # Must NOT raise even with a channel_id set.
+        await _announce_bounty("parent-job", bounty, 12345)
+
+
+@pytest.mark.asyncio
+async def test_announce_skipped_when_no_channel_id():
+    """_announce_bounty skips HTTP when bounty_channel_id is None."""
+    from utils.executors.bounty_spawn_executor import _announce_bounty
+
+    bounty = _make_bounty(bounty_id=3, guild_id=100)
+
+    with patch("utils.executors.bounty_spawn_executor.httpx.AsyncClient") as mock_cls:
+        await _announce_bounty("parent-job", bounty, None)
+        # No HTTP call should be made.
+        mock_cls.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_announce_posts_to_correct_channel_endpoint():
+    """_announce_bounty POSTs to /channels/{channel_id}/messages with embed payload."""
+    from utils.executors.bounty_spawn_executor import _announce_bounty
+
+    bounty = _make_bounty(bounty_id=4, guild_id=101, criminal_name="Pirate X", reward=75000)
+    channel_id = 987654
+
+    mock_response = MagicMock()
+    mock_response.raise_for_status = MagicMock()
+
+    with patch("utils.executors.bounty_spawn_executor.httpx.AsyncClient") as mock_cls:
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(return_value=mock_response)
+        mock_cls.return_value.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_cls.return_value.__aexit__ = AsyncMock(return_value=False)
+
+        await _announce_bounty("parent-job", bounty, channel_id)
+
+        # Verify the correct URL was used.
+        call_args = mock_client.post.call_args
+        posted_url = call_args.args[0] if call_args.args else call_args.kwargs.get("url")
+        assert f"/channels/{channel_id}/messages" in posted_url
+
+        # Verify the body has the expected EmbedPayload structure.
+        posted_body = call_args.kwargs.get("json") or (call_args.args[1] if len(call_args.args) > 1 else {})
+        assert "content" in posted_body
+        assert posted_body["content"]["title"] == "🎯 New Bounty!"
+        assert posted_body["content"]["footer_text"] == "Use /check to hunt this bounty!"
+        assert "message_type" in posted_body
 
 
 # ===========================================================================

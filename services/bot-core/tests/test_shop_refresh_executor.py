@@ -9,6 +9,9 @@ Tests verify:
  - ShopService errors re-raise
  - correct item counts when ShopService is called (via real config objects)
  - job_executor.py dispatches shop_refresh job_type
+ - shop_channel_id=None skips announcement with warning
+ - shop_channel_id set causes POST to /channels/{id}/messages
+ - _announce_shop_refresh is called once per guild in bulk mode
 
 IMPORTANT: shared.bblogger is mocked BEFORE any source imports (via
 conftest.py, with a belt-and-suspenders guard below).
@@ -58,6 +61,7 @@ if _SRC not in sys.path:
 # without requiring a live database or installed ORM extras.
 # ---------------------------------------------------------------------------
 
+
 def _ensure_stub(module_path: str, **attrs) -> types.ModuleType:
     """Create and register a stub module if not already present."""
     if module_path not in sys.modules:
@@ -100,9 +104,11 @@ _ensure_stub("services")
 # Helpers
 # ===========================================================================
 
-def _make_guild_config(guild_id: int) -> MagicMock:
+
+def _make_guild_config(guild_id: int, shop_channel_id: int | None = 234567) -> MagicMock:
     cfg = MagicMock()
     cfg.guild_id = guild_id
+    cfg.shop_channel_id = shop_channel_id
     return cfg
 
 
@@ -145,14 +151,10 @@ async def test_single_guild_single_tier_calls_refresh_once():
     _configure_db_manager(mock_db)
 
     mock_shop_svc = AsyncMock()
-    mock_shop_svc.refresh_shop = AsyncMock(
-        return_value=_make_refresh_result(111, "Bronze")
-    )
+    mock_shop_svc.refresh_shop = AsyncMock(return_value=_make_refresh_result(111, "Bronze"))
     sys.modules["services.shop_service"].ShopService = MagicMock(return_value=mock_shop_svc)
 
-    result = await execute_shop_refresh_job(
-        "job-1", {"job_type": "shop_refresh", "guild_id": 111, "tier": "Bronze"}
-    )
+    result = await execute_shop_refresh_job("job-1", {"job_type": "shop_refresh", "guild_id": 111, "tier": "Bronze"})
 
     mock_shop_svc.refresh_shop.assert_awaited_once_with(mock_db, 111, "Bronze", None)
     assert result["status"] == "success"
@@ -169,9 +171,7 @@ async def test_single_guild_single_tier_passes_force_tech_level():
     _configure_db_manager(mock_db)
 
     mock_shop_svc = AsyncMock()
-    mock_shop_svc.refresh_shop = AsyncMock(
-        return_value=_make_refresh_result(222, "Gold")
-    )
+    mock_shop_svc.refresh_shop = AsyncMock(return_value=_make_refresh_result(222, "Gold"))
     sys.modules["services.shop_service"].ShopService = MagicMock(return_value=mock_shop_svc)
 
     result = await execute_shop_refresh_job(
@@ -202,16 +202,16 @@ async def test_single_guild_all_tiers_calls_refresh_three_times():
     _configure_db_manager(mock_db)
 
     mock_shop_svc = AsyncMock()
-    mock_shop_svc.refresh_shop = AsyncMock(side_effect=[
-        _make_refresh_result(333, "Bronze"),
-        _make_refresh_result(333, "Silver"),
-        _make_refresh_result(333, "Gold"),
-    ])
+    mock_shop_svc.refresh_shop = AsyncMock(
+        side_effect=[
+            _make_refresh_result(333, "Bronze"),
+            _make_refresh_result(333, "Silver"),
+            _make_refresh_result(333, "Gold"),
+        ]
+    )
     sys.modules["services.shop_service"].ShopService = MagicMock(return_value=mock_shop_svc)
 
-    result = await execute_shop_refresh_job(
-        "job-3", {"job_type": "shop_refresh", "guild_id": 333}
-    )
+    result = await execute_shop_refresh_job("job-3", {"job_type": "shop_refresh", "guild_id": 333})
 
     assert mock_shop_svc.refresh_shop.await_count == 3
     assert result["status"] == "success"
@@ -239,9 +239,7 @@ async def test_single_guild_all_tiers_order_is_bronze_silver_gold():
     mock_shop_svc.refresh_shop = _capture_tier
     sys.modules["services.shop_service"].ShopService = MagicMock(return_value=mock_shop_svc)
 
-    await execute_shop_refresh_job(
-        "job-4", {"job_type": "shop_refresh", "guild_id": 444}
-    )
+    await execute_shop_refresh_job("job-4", {"job_type": "shop_refresh", "guild_id": 444})
 
     assert called_tiers == ["Bronze", "Silver", "Gold"]
 
@@ -260,19 +258,16 @@ async def test_bulk_refresh_iterates_all_guilds():
     _configure_db_manager(mock_db)
 
     mock_shop_svc = AsyncMock()
-    mock_shop_svc.refresh_shop = AsyncMock(
-        side_effect=lambda db, gid, t, ftl: _make_refresh_result(gid, t)
-    )
+    mock_shop_svc.refresh_shop = AsyncMock(side_effect=lambda db, gid, t, ftl: _make_refresh_result(gid, t))
     sys.modules["services.shop_service"].ShopService = MagicMock(return_value=mock_shop_svc)
 
     guild_configs = [_make_guild_config(10), _make_guild_config(20)]
     mock_config_repo = AsyncMock()
     mock_config_repo.list_all = AsyncMock(return_value=guild_configs)
-    sys.modules["persist.repositories.config_repository"].ConfigRepository = MagicMock(
-        return_value=mock_config_repo
-    )
+    sys.modules["persist.repositories.config_repository"].ConfigRepository = MagicMock(return_value=mock_config_repo)
 
-    result = await execute_shop_refresh_job("job-5", {"job_type": "shop_refresh"})
+    with patch("utils.executors.shop_refresh_executor._announce_shop_refresh", new=AsyncMock()):
+        result = await execute_shop_refresh_job("job-5", {"job_type": "shop_refresh"})
 
     # 2 guilds x 3 tiers = 6 calls
     assert mock_shop_svc.refresh_shop.await_count == 6
@@ -295,15 +290,45 @@ async def test_bulk_refresh_no_guilds_returns_zero():
 
     mock_config_repo = AsyncMock()
     mock_config_repo.list_all = AsyncMock(return_value=[])
-    sys.modules["persist.repositories.config_repository"].ConfigRepository = MagicMock(
-        return_value=mock_config_repo
-    )
+    sys.modules["persist.repositories.config_repository"].ConfigRepository = MagicMock(return_value=mock_config_repo)
 
     result = await execute_shop_refresh_job("job-6", {"job_type": "shop_refresh"})
 
     mock_shop_svc.refresh_shop.assert_not_awaited()
     assert result["status"] == "success"
     assert result["guilds_refreshed"] == 0
+
+
+@pytest.mark.asyncio
+async def test_bulk_refresh_announces_once_per_guild():
+    """_announce_shop_refresh is called exactly once per guild in bulk mode."""
+    from utils.executors.shop_refresh_executor import execute_shop_refresh_job
+
+    mock_db = AsyncMock()
+    _configure_db_manager(mock_db)
+
+    mock_shop_svc = AsyncMock()
+    mock_shop_svc.refresh_shop = AsyncMock(side_effect=lambda db, gid, t, ftl: _make_refresh_result(gid, t))
+    sys.modules["services.shop_service"].ShopService = MagicMock(return_value=mock_shop_svc)
+
+    guild_configs = [
+        _make_guild_config(30, shop_channel_id=111000),
+        _make_guild_config(40, shop_channel_id=222000),
+    ]
+    mock_config_repo = AsyncMock()
+    mock_config_repo.list_all = AsyncMock(return_value=guild_configs)
+    sys.modules["persist.repositories.config_repository"].ConfigRepository = MagicMock(return_value=mock_config_repo)
+
+    mock_announce = AsyncMock()
+    with patch("utils.executors.shop_refresh_executor._announce_shop_refresh", new=mock_announce):
+        await execute_shop_refresh_job("job-announce-bulk", {"job_type": "shop_refresh"})
+
+    # Called once per guild (not once per tier).
+    assert mock_announce.await_count == 2
+    calls = mock_announce.call_args_list
+    # Each call: (job_id, guild_id, shop_channel_id)
+    called_args = {(c.args[1], c.args[2]) for c in calls}
+    assert called_args == {(30, 111000), (40, 222000)}
 
 
 # ===========================================================================
@@ -331,6 +356,67 @@ async def test_shop_service_error_is_re_raised():
 
 
 # ===========================================================================
+# Tests: _announce_shop_refresh
+# ===========================================================================
+
+
+@pytest.mark.asyncio
+async def test_announce_shop_refresh_skipped_when_no_channel_id():
+    """_announce_shop_refresh skips HTTP when shop_channel_id is None."""
+    from utils.executors.shop_refresh_executor import _announce_shop_refresh
+
+    with patch("utils.executors.shop_refresh_executor.httpx.AsyncClient") as mock_cls:
+        await _announce_shop_refresh("parent-job", 100, None)
+        mock_cls.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_announce_shop_refresh_http_error_is_non_fatal():
+    """An HTTP error in _announce_shop_refresh does not propagate."""
+    import httpx
+    from utils.executors.shop_refresh_executor import _announce_shop_refresh
+
+    with patch("utils.executors.shop_refresh_executor.httpx.AsyncClient") as mock_cls:
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(side_effect=httpx.ConnectError("refused"))
+        mock_cls.return_value.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_cls.return_value.__aexit__ = AsyncMock(return_value=False)
+
+        # Must NOT raise.
+        await _announce_shop_refresh("parent-job", 100, 12345)
+
+
+@pytest.mark.asyncio
+async def test_announce_shop_refresh_posts_to_correct_endpoint():
+    """_announce_shop_refresh POSTs to /channels/{channel_id}/messages with embed payload."""
+    from utils.executors.shop_refresh_executor import _announce_shop_refresh
+
+    channel_id = 555666
+    guild_id = 101
+
+    mock_response = MagicMock()
+    mock_response.raise_for_status = MagicMock()
+
+    with patch("utils.executors.shop_refresh_executor.httpx.AsyncClient") as mock_cls:
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(return_value=mock_response)
+        mock_cls.return_value.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_cls.return_value.__aexit__ = AsyncMock(return_value=False)
+
+        await _announce_shop_refresh("parent-job", guild_id, channel_id)
+
+        call_args = mock_client.post.call_args
+        posted_url = call_args.args[0] if call_args.args else call_args.kwargs.get("url")
+        assert f"/channels/{channel_id}/messages" in posted_url
+
+        posted_body = call_args.kwargs.get("json") or (call_args.args[1] if len(call_args.args) > 1 else {})
+        assert "content" in posted_body
+        assert posted_body["content"]["title"] == "🛒 Shop Refreshed!"
+        assert posted_body["content"]["footer_text"] == "Use /shop to browse!"
+        assert "message_type" in posted_body
+
+
+# ===========================================================================
 # Tests: item count verification via GameConstants
 # ===========================================================================
 
@@ -338,6 +424,7 @@ async def test_shop_service_error_is_re_raised():
 def test_default_item_counts_from_game_constants():
     """Verify GameConstants default shop counts: 5 ships + 5 weapons + 5 modules + 2 turrets = 17."""
     import importlib.util
+
     _spec = importlib.util.spec_from_file_location(
         "_game_constants_direct",
         _os.path.join(_SRC, "services", "game_constants.py"),

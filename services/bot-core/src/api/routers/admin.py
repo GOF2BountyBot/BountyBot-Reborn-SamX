@@ -113,6 +113,10 @@ async def initialize_guild(
                 "guild_id": request.guild_id,
                 "admin_role_id": request.admin_role_id,
                 "starting_credits": request.starting_credits,
+                "category_id": request.category_id,
+                "bounty_channel_id": request.bounty_channel_id,
+                "shop_channel_id": request.shop_channel_id,
+                "general_channel_id": request.general_channel_id,
             }
 
             await config_service.create_or_update_config(db, config_data)
@@ -126,6 +130,10 @@ async def initialize_guild(
                 shops_created += 1
 
             flogger.info(f"Successfully initialized guild {request.guild_id}")
+
+            channels_configured = any(
+                [request.category_id, request.bounty_channel_id, request.shop_channel_id, request.general_channel_id]
+            )
 
             await AuditService.log_action(
                 db,
@@ -142,6 +150,7 @@ async def initialize_guild(
                 admin_role_id=request.admin_role_id,
                 shops_created=shops_created,
                 config_created=True,
+                channels_configured=channels_configured,
                 message=f"Guild {request.guild_id} initialized successfully with {shops_created} shops",
             )
 

@@ -14,6 +14,10 @@ class GuildConfigResponse(BaseModel):
     shop_config: dict[str, Any]
     created_at: str
     updated_at: str
+    category_id: int | None = None
+    bounty_channel_id: int | None = None
+    shop_channel_id: int | None = None
+    general_channel_id: int | None = None
 
 
 class ConfigValidationResponse(BaseModel):
@@ -29,6 +33,10 @@ class UpdateConfigRequest(BaseModel):
     starting_credits: int | None = Field(None, ge=0)
     sale_price_factor: float | None = Field(None, gt=0, le=1)
     xp_thresholds: dict[str, int] | None = None
+    category_id: int | None = None
+    bounty_channel_id: int | None = None
+    shop_channel_id: int | None = None
+    general_channel_id: int | None = None
 
 
 class UpdateShopConfigRequest(BaseModel):

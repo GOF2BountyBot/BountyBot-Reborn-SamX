@@ -23,6 +23,12 @@ class GuildConfig(Base):
     # Admin role configuration
     admin_role_id: Mapped[int] = mapped_column(BigInteger, nullable=True)
 
+    # Discord channel IDs for announcements
+    category_id: Mapped[int] = mapped_column(BigInteger, nullable=True)
+    bounty_channel_id: Mapped[int] = mapped_column(BigInteger, nullable=True)
+    shop_channel_id: Mapped[int] = mapped_column(BigInteger, nullable=True)
+    general_channel_id: Mapped[int] = mapped_column(BigInteger, nullable=True)
+
     # Shop inventory size ranges (JSON objects with min/max values)
     ship_count_range: Mapped[dict[str, int]] = mapped_column(JSON, default={"min": 3, "max": 5})
     weapon_count_range: Mapped[dict[str, int]] = mapped_column(JSON, default={"min": 3, "max": 5})

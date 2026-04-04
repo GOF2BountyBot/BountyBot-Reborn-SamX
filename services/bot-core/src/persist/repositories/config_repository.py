@@ -312,6 +312,10 @@ class ConfigRepository(IRepository[GuildConfig]):
                 },
                 "created_at": config.created_at.isoformat(),
                 "updated_at": config.updated_at.isoformat(),
+                "category_id": config.category_id,
+                "bounty_channel_id": config.bounty_channel_id,
+                "shop_channel_id": config.shop_channel_id,
+                "general_channel_id": config.general_channel_id,
             }
 
         except Exception as e:

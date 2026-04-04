@@ -6,6 +6,10 @@ class InitializeGuildRequest(BaseModel):
     guild_id: int = Field(ge=1)
     admin_role_id: int | None = Field(default=None, ge=1)
     starting_credits: int = Field(default=0, ge=0)
+    category_id: int | None = None
+    bounty_channel_id: int | None = None
+    shop_channel_id: int | None = None
+    general_channel_id: int | None = None
 
 
 class GuildInitializationResponse(BaseModel):
@@ -13,6 +17,7 @@ class GuildInitializationResponse(BaseModel):
     admin_role_id: int | None
     shops_created: int
     config_created: bool
+    channels_configured: bool = False
     message: str
 
 

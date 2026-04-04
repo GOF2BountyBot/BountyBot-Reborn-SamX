@@ -53,6 +53,10 @@ async def get_guild_config(guild_id: int, config_service: ConfigService = Depend
                 shop_config=config["shop_config"],
                 created_at=config["created_at"],
                 updated_at=config["updated_at"],
+                category_id=config.get("category_id"),
+                bounty_channel_id=config.get("bounty_channel_id"),
+                shop_channel_id=config.get("shop_channel_id"),
+                general_channel_id=config.get("general_channel_id"),
             )
 
     except Exception as e:
@@ -86,6 +90,10 @@ async def update_guild_config(
                 shop_config=config["shop_config"],
                 created_at=config["created_at"],
                 updated_at=config["updated_at"],
+                category_id=config.get("category_id"),
+                bounty_channel_id=config.get("bounty_channel_id"),
+                shop_channel_id=config.get("shop_channel_id"),
+                general_channel_id=config.get("general_channel_id"),
             )
 
     except ValueError as e:
@@ -121,6 +129,10 @@ async def update_shop_config(
                 shop_config=config["shop_config"],
                 created_at=config["created_at"],
                 updated_at=config["updated_at"],
+                category_id=config.get("category_id"),
+                bounty_channel_id=config.get("bounty_channel_id"),
+                shop_channel_id=config.get("shop_channel_id"),
+                general_channel_id=config.get("general_channel_id"),
             )
 
     except ValueError as e:
@@ -151,6 +163,10 @@ async def reset_guild_config(guild_id: int, config_service: ConfigService = Depe
                 shop_config=config["shop_config"],
                 created_at=config["created_at"],
                 updated_at=config["updated_at"],
+                category_id=config.get("category_id"),
+                bounty_channel_id=config.get("bounty_channel_id"),
+                shop_channel_id=config.get("shop_channel_id"),
+                general_channel_id=config.get("general_channel_id"),
             )
 
     except Exception as e:
@@ -179,6 +195,10 @@ async def update_admin_role(guild_id: int, role_id: int, config_service: ConfigS
                 shop_config=config["shop_config"],
                 created_at=config["created_at"],
                 updated_at=config["updated_at"],
+                category_id=config.get("category_id"),
+                bounty_channel_id=config.get("bounty_channel_id"),
+                shop_channel_id=config.get("shop_channel_id"),
+                general_channel_id=config.get("general_channel_id"),
             )
 
     except ValueError as e:
@@ -211,6 +231,10 @@ async def update_starting_credits(
                 shop_config=config["shop_config"],
                 created_at=config["created_at"],
                 updated_at=config["updated_at"],
+                category_id=config.get("category_id"),
+                bounty_channel_id=config.get("bounty_channel_id"),
+                shop_channel_id=config.get("shop_channel_id"),
+                general_channel_id=config.get("general_channel_id"),
             )
 
     except ValueError as e:
@@ -243,6 +267,10 @@ async def update_xp_thresholds(
                 shop_config=config["shop_config"],
                 created_at=config["created_at"],
                 updated_at=config["updated_at"],
+                category_id=config.get("category_id"),
+                bounty_channel_id=config.get("bounty_channel_id"),
+                shop_channel_id=config.get("shop_channel_id"),
+                general_channel_id=config.get("general_channel_id"),
             )
 
     except ValueError as e:

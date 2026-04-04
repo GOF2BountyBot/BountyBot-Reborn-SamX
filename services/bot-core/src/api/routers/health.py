@@ -26,7 +26,7 @@ router = APIRouter(
 
 
 @router.get(
-    "/",
+    "",
     response_model=HealthResponse,
     status_code=status.HTTP_200_OK,
     summary="Comprehensive Health Check",

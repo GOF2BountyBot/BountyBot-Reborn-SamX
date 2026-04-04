@@ -150,15 +150,18 @@ class TestOnGuildJoin:
 
         general_channel = MagicMock(spec=discord.TextChannel)
         general_channel.name = "general"
+        general_channel.id = 444
         general_channel.send = AsyncMock()
-        general_channel.permissions_for = MagicMock(
-            return_value=MagicMock(send_messages=True)
-        )
+        general_channel.permissions_for = MagicMock(return_value=MagicMock(send_messages=True))
 
-        # The category that gets created
+        # The category that gets created — channels list includes general so it is
+        # found by ensure_bountybot_infrastructure (no creation needed for general).
         mock_cat = _make_mock_category()
         mock_cat.channels = [general_channel]
         guild.create_category = AsyncMock(return_value=mock_cat)
+
+        # guild.get_channel returns the general channel (used by new welcome logic)
+        guild.get_channel = MagicMock(return_value=general_channel)
 
         # API response: success
         api_resp = MagicMock()
@@ -176,7 +179,7 @@ class TestOnGuildJoin:
         # Category was created
         guild.create_category.assert_called_once()
 
-        # Welcome message was sent
+        # Welcome message was sent to the general channel
         general_channel.send.assert_called_once()
         embed_arg = general_channel.send.call_args[1]["embed"]
         assert embed_arg is not None
@@ -189,25 +192,26 @@ class TestOnGuildJoin:
 
         general_channel = MagicMock(spec=discord.TextChannel)
         general_channel.name = "general"
+        general_channel.id = 444
         general_channel.send = AsyncMock()
-        general_channel.permissions_for = MagicMock(
-            return_value=MagicMock(send_messages=True)
-        )
+        general_channel.permissions_for = MagicMock(return_value=MagicMock(send_messages=True))
 
         mock_cat = _make_mock_category()
         mock_cat.channels = [general_channel]
         guild.create_category = AsyncMock(return_value=mock_cat)
 
+        # guild.get_channel returns the general channel (used by new welcome logic)
+        guild.get_channel = MagicMock(return_value=general_channel)
+
         # API call fails
-        mock_setup_cog.http_client.post = AsyncMock(
-            side_effect=Exception("Connection refused")
-        )
+        mock_setup_cog.http_client.post = AsyncMock(side_effect=Exception("Connection refused"))
 
         # Should NOT raise — failure is handled gracefully
         asyncio.run(mock_setup_cog.on_guild_join(guild))
 
-        # Channel creation and welcome message should still proceed
+        # Channel creation still proceeds even when API fails
         guild.create_category.assert_called_once()
+        # Welcome message should still be sent (channels were set up before API call)
         general_channel.send.assert_called_once()
 
     def test_on_guild_join_permission_error_graceful(self, mock_setup_cog):
@@ -221,9 +225,7 @@ class TestOnGuildJoin:
             status = 403
             reason = "Forbidden"
 
-        guild.create_category = AsyncMock(
-            side_effect=discord.Forbidden(FakeResponse(), "Missing Permissions")
-        )
+        guild.create_category = AsyncMock(side_effect=discord.Forbidden(FakeResponse(), "Missing Permissions"))
         guild.system_channel = None
         guild.text_channels = []
 
@@ -247,16 +249,18 @@ class TestOnGuildJoin:
 
         general_channel = MagicMock(spec=discord.TextChannel)
         general_channel.name = "general"
+        general_channel.id = 444
         general_channel.send = AsyncMock()
-        general_channel.permissions_for = MagicMock(
-            return_value=MagicMock(send_messages=True)
-        )
+        general_channel.permissions_for = MagicMock(return_value=MagicMock(send_messages=True))
 
         # The "BountyBot" category already exists
         existing_cat = MagicMock(spec=discord.CategoryChannel)
         existing_cat.name = "BountyBot"
         existing_cat.channels = [general_channel]
         guild.categories = [existing_cat]
+
+        # guild.get_channel returns the general channel (used by new welcome logic)
+        guild.get_channel = MagicMock(return_value=general_channel)
 
         # API success
         api_resp = MagicMock()
@@ -295,9 +299,7 @@ class TestOnGuildRemove:
         """on_guild_remove should not raise if the cleanup API call fails."""
         guild = _make_mock_guild()
 
-        mock_setup_cog.http_client.delete = AsyncMock(
-            side_effect=Exception("Connection refused")
-        )
+        mock_setup_cog.http_client.delete = AsyncMock(side_effect=Exception("Connection refused"))
 
         # Must not raise
         asyncio.run(mock_setup_cog.on_guild_remove(guild))

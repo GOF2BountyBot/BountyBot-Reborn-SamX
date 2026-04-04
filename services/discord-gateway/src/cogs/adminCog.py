@@ -153,11 +153,20 @@ class AdminCog(commands.Cog):
                     await guild.fetch_roles()
                     admin_role = guild.get_role(role_data["id"])
 
+            # Create (or find) BountyBot Discord channels
+            from utils.guild_setup import ensure_bountybot_infrastructure
+
+            channel_ids = await ensure_bountybot_infrastructure(guild)
+
             # Send initialization to core API
             init_payload = {
                 "guild_id": interaction.guild_id,
-                "admin_role_id": admin_role.id,
+                "admin_role_id": admin_role.id if admin_role else None,
                 "starting_credits": max(0, starting_credits),
+                "category_id": channel_ids.get("category_id"),
+                "bounty_channel_id": channel_ids.get("bounty_channel_id"),
+                "shop_channel_id": channel_ids.get("shop_channel_id"),
+                "general_channel_id": channel_ids.get("general_channel_id"),
             }
             resp = await self.http_client.post(
                 f"{api_base}/admin/guilds/initialize",
@@ -176,6 +185,18 @@ class AdminCog(commands.Cog):
             embed.add_field(name="Shops Created", value=str(result["shops_created"]), inline=True)
             embed.add_field(name="Admin Role", value=admin_role.mention, inline=True)
             embed.add_field(name="Starting Credits", value=f"{starting_credits:,}", inline=True)
+
+            # Add channel info to embed
+            channels_info = []
+            if channel_ids.get("bounty_channel_id"):
+                channels_info.append(f"Bounty Board: <#{channel_ids['bounty_channel_id']}>")
+            if channel_ids.get("shop_channel_id"):
+                channels_info.append(f"Shop: <#{channel_ids['shop_channel_id']}>")
+            if channel_ids.get("general_channel_id"):
+                channels_info.append(f"General: <#{channel_ids['general_channel_id']}>")
+            if channels_info:
+                embed.add_field(name="Channels", value="\n".join(channels_info), inline=False)
+
             embed.set_footer(text="The bot is now ready for use in this guild!")
 
             await interaction.followup.send(embed=embed, ephemeral=True)

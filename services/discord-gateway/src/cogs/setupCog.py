@@ -12,10 +12,6 @@ flogger = bblogger.get_logger("discord-gateway-SetupCog")
 api_base = os.environ.get("BOT_API_BASE_URL", "http://bot-core:8000/api/v1")
 flogger.debug(f"setupCog loading with API_BASE_URL: {api_base}")
 
-# Channels to create inside the BountyBot category
-_BOUNTYBOT_CATEGORY = "BountyBot"
-_GAME_CHANNELS = ["bounty-board", "shop", "general"]
-
 
 class SetupCog(commands.Cog):
     def __init__(self, bot: commands.Bot):
@@ -35,59 +31,44 @@ class SetupCog(commands.Cog):
         """Handle bot joining a new guild: initialize API and create channels."""
         flogger.info(f"Bot joined guild {guild.id} ({guild.name})")
 
-        # 1. Initialize guild via bot-core API
+        # 1. Create (or find) BountyBot channels via shared utility
+        from utils.guild_setup import ensure_bountybot_infrastructure
+
+        channel_ids = await ensure_bountybot_infrastructure(guild)
+
+        # 2. Initialize guild via bot-core API (include channel IDs)
         try:
+            init_payload: dict = {"guild_id": guild.id}
+            if channel_ids.get("category_id") is not None:
+                init_payload["category_id"] = channel_ids["category_id"]
+            if channel_ids.get("bounty_channel_id") is not None:
+                init_payload["bounty_channel_id"] = channel_ids["bounty_channel_id"]
+            if channel_ids.get("shop_channel_id") is not None:
+                init_payload["shop_channel_id"] = channel_ids["shop_channel_id"]
+            if channel_ids.get("general_channel_id") is not None:
+                init_payload["general_channel_id"] = channel_ids["general_channel_id"]
+
             resp = await self.http_client.post(
                 f"{api_base}/admin/guilds/initialize",
-                json={"guild_id": guild.id},
+                json=init_payload,
                 timeout=30,
             )
             resp.raise_for_status()
             flogger.info(f"Guild {guild.id} initialized via API")
         except Exception as e:  # pylint: disable=broad-exception-caught
             flogger.warning(f"Failed to initialize guild {guild.id} via API: {e}")
-            # Continue even if API init fails — try to set up channels
+            # Continue even if API init fails — channels are already set up
 
-        # 2. Create BountyBot category and channels
-        category = None
-        try:
-            # Check if category already exists
-            existing_category = discord.utils.get(guild.categories, name=_BOUNTYBOT_CATEGORY)
-            if existing_category:
-                category = existing_category
-                flogger.debug(f"Category '{_BOUNTYBOT_CATEGORY}' already exists in guild {guild.id}")
-            else:
-                # Build overwrites so the bot can always send messages
-                overwrites = {
-                    guild.default_role: discord.PermissionOverwrite(read_messages=True, send_messages=False),
-                    guild.me: discord.PermissionOverwrite(read_messages=True, send_messages=True),
-                }
-                category = await guild.create_category(_BOUNTYBOT_CATEGORY, overwrites=overwrites)
-                flogger.info(f"Created category '{_BOUNTYBOT_CATEGORY}' in guild {guild.id}")
-
-            # Create channels under the category (skip if they already exist)
-            for channel_name in _GAME_CHANNELS:
-                existing_channel = discord.utils.get(category.channels, name=channel_name)
-                if existing_channel is None:
-                    await guild.create_text_channel(channel_name, category=category)
-                    flogger.info(f"Created channel '#{channel_name}' in guild {guild.id}")
-                else:
-                    flogger.debug(f"Channel '#{channel_name}' already exists in guild {guild.id}")
-
-        except discord.Forbidden:
-            flogger.warning(f"Missing permissions to create channels in guild {guild.id}")
-        except Exception as e:  # pylint: disable=broad-exception-caught
-            flogger.error(f"Error creating channels in guild {guild.id}: {e}")
-
-        # 3. Send welcome message to general or first text channel
+        # 3. Send welcome message to the general channel
         try:
             welcome_channel = None
 
-            # Prefer the 'general' channel we just created (or that already exists)
-            if category:
-                welcome_channel = discord.utils.get(category.channels, name="general")
+            # Prefer the general channel returned by the infrastructure utility
+            general_channel_id = channel_ids.get("general_channel_id")
+            if general_channel_id is not None:
+                welcome_channel = guild.get_channel(general_channel_id)
 
-            # Fall back to guild's system channel or first text channel
+            # Fall back to guild's system channel or first writable text channel
             if welcome_channel is None:
                 welcome_channel = guild.system_channel
             if welcome_channel is None:

@@ -53,7 +53,6 @@ for _mod in ["discord", "discord.ext", "discord.ext.commands", "discord.app_comm
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "src"))
 
 
-
 @pytest.fixture
 def mock_bot():
     """Create a mock Discord bot for adminCog testing."""
@@ -67,9 +66,16 @@ def mock_bot():
 
 def _evict_discord_modules():
     """Remove cached discord/source modules so they re-import with real discord."""
-    to_evict = [k for k in sys.modules if k == "discord" or k.startswith("discord.")
-                or k in ("api", "bot", "utils") or k.startswith("api.") or k.startswith("utils.")
-                or k.startswith("cogs.")]
+    to_evict = [
+        k
+        for k in sys.modules
+        if k == "discord"
+        or k.startswith("discord.")
+        or k in ("api", "bot", "utils")
+        or k.startswith("api.")
+        or k.startswith("utils.")
+        or k.startswith("cogs.")
+    ]
     for k in to_evict:
         sys.modules.pop(k, None)
 
@@ -81,6 +87,7 @@ def mock_admin_cog(mock_bot):
     sys.modules["shared.bblogger"] = _mock_bblogger
     _evict_discord_modules()
     from cogs.adminCog import AdminCog
+
     cog = AdminCog(mock_bot)
     return cog
 
@@ -111,6 +118,7 @@ def _create_mock_user(user_id=111111111, name="TestUser", is_admin=False):
 # TestAdminPlayerExtended — covers add_credits, set_xp, reset, missing args
 # ---------------------------------------------------------------------------
 
+
 class TestAdminPlayerAddCredits:
     """Tests for admin_player add_credits action."""
 
@@ -122,10 +130,13 @@ class TestAdminPlayerAddCredits:
         player_resp = MagicMock()
         player_resp.status_code = 200
         player_resp.json.return_value = {
-            "id": 1, "credits": 500,
-            "xp": 100, "tier": "Bronze",
-            "lifetime_credits": 500, "prestige_count": 0,
-            "created_at": "2024-01-01T00:00:00"
+            "id": 1,
+            "credits": 500,
+            "xp": 100,
+            "tier": "Bronze",
+            "lifetime_credits": 500,
+            "prestige_count": 0,
+            "created_at": "2024-01-01T00:00:00",
         }
 
         update_resp = MagicMock()
@@ -135,9 +146,7 @@ class TestAdminPlayerAddCredits:
         mock_admin_cog.http_client.post = AsyncMock(return_value=player_resp)
         mock_admin_cog.http_client.put = AsyncMock(return_value=update_resp)
 
-        asyncio.run(mock_admin_cog.admin_player.callback(
-            mock_admin_cog, interaction, user, "add_credits", 200, None
-        ))
+        asyncio.run(mock_admin_cog.admin_player.callback(mock_admin_cog, interaction, user, "add_credits", 200, None))
 
         interaction.response.defer.assert_called_once_with(thinking=True, ephemeral=True)
         interaction.followup.send.assert_called_once()
@@ -150,16 +159,17 @@ class TestAdminPlayerAddCredits:
         player_resp = MagicMock()
         player_resp.status_code = 200
         player_resp.json.return_value = {
-            "id": 1, "credits": 500,
-            "xp": 100, "tier": "Bronze",
-            "lifetime_credits": 500, "prestige_count": 0,
-            "created_at": "2024-01-01T00:00:00"
+            "id": 1,
+            "credits": 500,
+            "xp": 100,
+            "tier": "Bronze",
+            "lifetime_credits": 500,
+            "prestige_count": 0,
+            "created_at": "2024-01-01T00:00:00",
         }
         mock_admin_cog.http_client.post = AsyncMock(return_value=player_resp)
 
-        asyncio.run(mock_admin_cog.admin_player.callback(
-            mock_admin_cog, interaction, user, "add_credits", None, None
-        ))
+        asyncio.run(mock_admin_cog.admin_player.callback(mock_admin_cog, interaction, user, "add_credits", None, None))
 
         interaction.followup.send.assert_called_once()
         call_args = interaction.followup.send.call_args[0][0]
@@ -173,16 +183,17 @@ class TestAdminPlayerAddCredits:
         player_resp = MagicMock()
         player_resp.status_code = 200
         player_resp.json.return_value = {
-            "id": 1, "credits": 500,
-            "xp": 100, "tier": "Bronze",
-            "lifetime_credits": 500, "prestige_count": 0,
-            "created_at": "2024-01-01T00:00:00"
+            "id": 1,
+            "credits": 500,
+            "xp": 100,
+            "tier": "Bronze",
+            "lifetime_credits": 500,
+            "prestige_count": 0,
+            "created_at": "2024-01-01T00:00:00",
         }
         mock_admin_cog.http_client.post = AsyncMock(return_value=player_resp)
 
-        asyncio.run(mock_admin_cog.admin_player.callback(
-            mock_admin_cog, interaction, user, "set_credits", None, None
-        ))
+        asyncio.run(mock_admin_cog.admin_player.callback(mock_admin_cog, interaction, user, "set_credits", None, None))
 
         interaction.followup.send.assert_called_once()
         call_args = interaction.followup.send.call_args[0][0]
@@ -196,26 +207,29 @@ class TestAdminPlayerAddCredits:
         player_resp = MagicMock()
         player_resp.status_code = 200
         player_resp.json.return_value = {
-            "id": 1, "credits": 500,
-            "xp": 100, "tier": "Bronze",
-            "lifetime_credits": 500, "prestige_count": 0,
-            "created_at": "2024-01-01T00:00:00"
+            "id": 1,
+            "credits": 500,
+            "xp": 100,
+            "tier": "Bronze",
+            "lifetime_credits": 500,
+            "prestige_count": 0,
+            "created_at": "2024-01-01T00:00:00",
         }
 
         xp_resp = MagicMock()
         xp_resp.status_code = 200
         xp_resp.json.return_value = {
-            "old_xp": 100, "new_xp": 5000,
-            "old_tier": "Bronze", "new_tier": "Silver",
-            "tier_changed": True
+            "old_xp": 100,
+            "new_xp": 5000,
+            "old_tier": "Bronze",
+            "new_tier": "Silver",
+            "tier_changed": True,
         }
 
         mock_admin_cog.http_client.post = AsyncMock(return_value=player_resp)
         mock_admin_cog.http_client.put = AsyncMock(return_value=xp_resp)
 
-        asyncio.run(mock_admin_cog.admin_player.callback(
-            mock_admin_cog, interaction, user, "set_xp", None, 5000
-        ))
+        asyncio.run(mock_admin_cog.admin_player.callback(mock_admin_cog, interaction, user, "set_xp", None, 5000))
 
         interaction.response.defer.assert_called_once_with(thinking=True, ephemeral=True)
         interaction.followup.send.assert_called_once()
@@ -228,16 +242,17 @@ class TestAdminPlayerAddCredits:
         player_resp = MagicMock()
         player_resp.status_code = 200
         player_resp.json.return_value = {
-            "id": 1, "credits": 500,
-            "xp": 100, "tier": "Bronze",
-            "lifetime_credits": 500, "prestige_count": 0,
-            "created_at": "2024-01-01T00:00:00"
+            "id": 1,
+            "credits": 500,
+            "xp": 100,
+            "tier": "Bronze",
+            "lifetime_credits": 500,
+            "prestige_count": 0,
+            "created_at": "2024-01-01T00:00:00",
         }
         mock_admin_cog.http_client.post = AsyncMock(return_value=player_resp)
 
-        asyncio.run(mock_admin_cog.admin_player.callback(
-            mock_admin_cog, interaction, user, "set_xp", None, None
-        ))
+        asyncio.run(mock_admin_cog.admin_player.callback(mock_admin_cog, interaction, user, "set_xp", None, None))
 
         interaction.followup.send.assert_called_once()
         call_args = interaction.followup.send.call_args[0][0]
@@ -251,26 +266,29 @@ class TestAdminPlayerAddCredits:
         player_resp = MagicMock()
         player_resp.status_code = 200
         player_resp.json.return_value = {
-            "id": 1, "credits": 500,
-            "xp": 100, "tier": "Bronze",
-            "lifetime_credits": 500, "prestige_count": 0,
-            "created_at": "2024-01-01T00:00:00"
+            "id": 1,
+            "credits": 500,
+            "xp": 100,
+            "tier": "Bronze",
+            "lifetime_credits": 500,
+            "prestige_count": 0,
+            "created_at": "2024-01-01T00:00:00",
         }
 
         xp_resp = MagicMock()
         xp_resp.status_code = 200
         xp_resp.json.return_value = {
-            "old_xp": 100, "new_xp": 200,
-            "old_tier": "Bronze", "new_tier": "Bronze",
-            "tier_changed": False
+            "old_xp": 100,
+            "new_xp": 200,
+            "old_tier": "Bronze",
+            "new_tier": "Bronze",
+            "tier_changed": False,
         }
 
         mock_admin_cog.http_client.post = AsyncMock(return_value=player_resp)
         mock_admin_cog.http_client.put = AsyncMock(return_value=xp_resp)
 
-        asyncio.run(mock_admin_cog.admin_player.callback(
-            mock_admin_cog, interaction, user, "set_xp", None, 200
-        ))
+        asyncio.run(mock_admin_cog.admin_player.callback(mock_admin_cog, interaction, user, "set_xp", None, 200))
 
         interaction.followup.send.assert_called_once()
 
@@ -280,15 +298,12 @@ class TestAdminPlayerAddCredits:
         user = _create_mock_user()
 
         import httpx
+
         mock_request = MagicMock()
-        http_error = httpx.HTTPStatusError(
-            "Server error", request=mock_request, response=MagicMock(status_code=500)
-        )
+        http_error = httpx.HTTPStatusError("Server error", request=mock_request, response=MagicMock(status_code=500))
         mock_admin_cog.http_client.post = AsyncMock(side_effect=http_error)
 
-        asyncio.run(mock_admin_cog.admin_player.callback(
-            mock_admin_cog, interaction, user, "view_stats", None, None
-        ))
+        asyncio.run(mock_admin_cog.admin_player.callback(mock_admin_cog, interaction, user, "view_stats", None, None))
 
         interaction.followup.send.assert_called_once()
         call_args = interaction.followup.send.call_args[0][0]
@@ -301,9 +316,7 @@ class TestAdminPlayerAddCredits:
 
         mock_admin_cog.http_client.post = AsyncMock(side_effect=Exception("Connection error"))
 
-        asyncio.run(mock_admin_cog.admin_player.callback(
-            mock_admin_cog, interaction, user, "view_stats", None, None
-        ))
+        asyncio.run(mock_admin_cog.admin_player.callback(mock_admin_cog, interaction, user, "view_stats", None, None))
 
         interaction.followup.send.assert_called_once()
         call_args = interaction.followup.send.call_args[0][0]
@@ -313,6 +326,7 @@ class TestAdminPlayerAddCredits:
 # ---------------------------------------------------------------------------
 # TestAdminRefreshShop — covers valid tiers, invalid tier, invalid tech level
 # ---------------------------------------------------------------------------
+
 
 class TestAdminRefreshShop:
     """Tests for admin_refresh_shop command."""
@@ -325,14 +339,10 @@ class TestAdminRefreshShop:
 
         refresh_resp = MagicMock()
         refresh_resp.status_code = 200
-        refresh_resp.json.return_value = {
-            "message": "Shop refreshed successfully"
-        }
+        refresh_resp.json.return_value = {"message": "Shop refreshed successfully"}
         mock_admin_cog.http_client.post = AsyncMock(return_value=refresh_resp)
 
-        asyncio.run(mock_admin_cog.admin_refresh_shop.callback(
-            mock_admin_cog, interaction, "Bronze", None
-        ))
+        asyncio.run(mock_admin_cog.admin_refresh_shop.callback(mock_admin_cog, interaction, "Bronze", None))
 
         interaction.response.defer.assert_called_once_with(thinking=True, ephemeral=True)
         interaction.followup.send.assert_called_once()
@@ -348,9 +358,7 @@ class TestAdminRefreshShop:
         refresh_resp.json.return_value = {"message": "Shop refreshed with tech level 5"}
         mock_admin_cog.http_client.post = AsyncMock(return_value=refresh_resp)
 
-        asyncio.run(mock_admin_cog.admin_refresh_shop.callback(
-            mock_admin_cog, interaction, "Gold", 5
-        ))
+        asyncio.run(mock_admin_cog.admin_refresh_shop.callback(mock_admin_cog, interaction, "Gold", 5))
 
         interaction.followup.send.assert_called_once()
 
@@ -358,9 +366,7 @@ class TestAdminRefreshShop:
         """admin_refresh_shop should reject invalid tier."""
         interaction = _create_mock_interaction()
 
-        asyncio.run(mock_admin_cog.admin_refresh_shop.callback(
-            mock_admin_cog, interaction, "Diamond", None
-        ))
+        asyncio.run(mock_admin_cog.admin_refresh_shop.callback(mock_admin_cog, interaction, "Diamond", None))
 
         interaction.followup.send.assert_called_once()
         call_args = interaction.followup.send.call_args[0][0]
@@ -371,9 +377,7 @@ class TestAdminRefreshShop:
         """admin_refresh_shop should reject tech level < 1 (e.g., -1)."""
         interaction = _create_mock_interaction()
 
-        asyncio.run(mock_admin_cog.admin_refresh_shop.callback(
-            mock_admin_cog, interaction, "Silver", -1
-        ))
+        asyncio.run(mock_admin_cog.admin_refresh_shop.callback(mock_admin_cog, interaction, "Silver", -1))
 
         interaction.followup.send.assert_called_once()
         call_args = interaction.followup.send.call_args[0][0]
@@ -383,9 +387,7 @@ class TestAdminRefreshShop:
         """admin_refresh_shop should reject tech level > 9."""
         interaction = _create_mock_interaction()
 
-        asyncio.run(mock_admin_cog.admin_refresh_shop.callback(
-            mock_admin_cog, interaction, "Platinum", 10
-        ))
+        asyncio.run(mock_admin_cog.admin_refresh_shop.callback(mock_admin_cog, interaction, "Platinum", 10))
 
         interaction.followup.send.assert_called_once()
         call_args = interaction.followup.send.call_args[0][0]
@@ -398,15 +400,12 @@ class TestAdminRefreshShop:
         interaction.user = user
 
         import httpx
+
         mock_request = MagicMock()
-        http_error = httpx.HTTPStatusError(
-            "Server error", request=mock_request, response=MagicMock(status_code=500)
-        )
+        http_error = httpx.HTTPStatusError("Server error", request=mock_request, response=MagicMock(status_code=500))
         mock_admin_cog.http_client.post = AsyncMock(side_effect=http_error)
 
-        asyncio.run(mock_admin_cog.admin_refresh_shop.callback(
-            mock_admin_cog, interaction, "Bronze", None
-        ))
+        asyncio.run(mock_admin_cog.admin_refresh_shop.callback(mock_admin_cog, interaction, "Bronze", None))
 
         interaction.followup.send.assert_called_once()
         call_args = interaction.followup.send.call_args[0][0]
@@ -418,9 +417,7 @@ class TestAdminRefreshShop:
 
         mock_admin_cog.http_client.post = AsyncMock(side_effect=Exception("Unexpected error"))
 
-        asyncio.run(mock_admin_cog.admin_refresh_shop.callback(
-            mock_admin_cog, interaction, "Bronze", None
-        ))
+        asyncio.run(mock_admin_cog.admin_refresh_shop.callback(mock_admin_cog, interaction, "Bronze", None))
 
         interaction.followup.send.assert_called_once()
         call_args = interaction.followup.send.call_args[0][0]
@@ -430,6 +427,7 @@ class TestAdminRefreshShop:
 # ---------------------------------------------------------------------------
 # TestAdminGuildStats — covers success and error paths
 # ---------------------------------------------------------------------------
+
 
 class TestAdminGuildStats:
     """Tests for admin_guild_stats command."""
@@ -448,7 +446,7 @@ class TestAdminGuildStats:
             "total_credits": 100000,
             "total_xp": 500000,
             "average_credits": 2380.95,
-            "average_xp": 11904.76
+            "average_xp": 11904.76,
         }
         mock_admin_cog.http_client.get = AsyncMock(return_value=stats_resp)
 
@@ -471,7 +469,7 @@ class TestAdminGuildStats:
             "total_credits": 0,
             "total_xp": 0,
             "average_credits": 0.0,
-            "average_xp": 0.0
+            "average_xp": 0.0,
         }
         mock_admin_cog.http_client.get = AsyncMock(return_value=stats_resp)
 
@@ -484,10 +482,9 @@ class TestAdminGuildStats:
         interaction = _create_mock_interaction()
 
         import httpx
+
         mock_request = MagicMock()
-        http_error = httpx.HTTPStatusError(
-            "Server error", request=mock_request, response=MagicMock(status_code=500)
-        )
+        http_error = httpx.HTTPStatusError("Server error", request=mock_request, response=MagicMock(status_code=500))
         mock_admin_cog.http_client.get = AsyncMock(side_effect=http_error)
 
         asyncio.run(mock_admin_cog.admin_guild_stats.callback(mock_admin_cog, interaction))
@@ -513,6 +510,7 @@ class TestAdminGuildStats:
 # TestAdminConfig — covers view, set_credits, set_role, reset actions
 # ---------------------------------------------------------------------------
 
+
 class TestAdminConfig:
     """Tests for admin_config command."""
 
@@ -530,13 +528,11 @@ class TestAdminConfig:
             "sale_price_factor": 0.5,
             "xp_thresholds": {"Silver": 1000, "Gold": 5000, "Platinum": 20000},
             "created_at": "2024-01-01T00:00:00",
-            "updated_at": "2024-01-01T00:00:00"
+            "updated_at": "2024-01-01T00:00:00",
         }
         mock_admin_cog.http_client.get = AsyncMock(return_value=cfg_resp)
 
-        asyncio.run(mock_admin_cog.admin_config.callback(
-            mock_admin_cog, interaction, "view", None, None
-        ))
+        asyncio.run(mock_admin_cog.admin_config.callback(mock_admin_cog, interaction, "view", None, None))
 
         interaction.response.defer.assert_called_once_with(thinking=True, ephemeral=True)
         interaction.followup.send.assert_called_once()
@@ -549,9 +545,7 @@ class TestAdminConfig:
         update_resp.status_code = 200
         mock_admin_cog.http_client.put = AsyncMock(return_value=update_resp)
 
-        asyncio.run(mock_admin_cog.admin_config.callback(
-            mock_admin_cog, interaction, "set_credits", 500, None
-        ))
+        asyncio.run(mock_admin_cog.admin_config.callback(mock_admin_cog, interaction, "set_credits", 500, None))
 
         interaction.followup.send.assert_called_once()
         call_args = interaction.followup.send.call_args[0][0]
@@ -561,9 +555,7 @@ class TestAdminConfig:
         """admin_config set_credits should reject missing amount."""
         interaction = _create_mock_interaction()
 
-        asyncio.run(mock_admin_cog.admin_config.callback(
-            mock_admin_cog, interaction, "set_credits", None, None
-        ))
+        asyncio.run(mock_admin_cog.admin_config.callback(mock_admin_cog, interaction, "set_credits", None, None))
 
         interaction.followup.send.assert_called_once()
         call_args = interaction.followup.send.call_args[0][0]
@@ -581,9 +573,7 @@ class TestAdminConfig:
         update_resp.status_code = 200
         mock_admin_cog.http_client.put = AsyncMock(return_value=update_resp)
 
-        asyncio.run(mock_admin_cog.admin_config.callback(
-            mock_admin_cog, interaction, "set_role", None, role
-        ))
+        asyncio.run(mock_admin_cog.admin_config.callback(mock_admin_cog, interaction, "set_role", None, role))
 
         interaction.followup.send.assert_called_once()
         call_args = interaction.followup.send.call_args[0][0]
@@ -593,9 +583,7 @@ class TestAdminConfig:
         """admin_config set_role should reject missing role."""
         interaction = _create_mock_interaction()
 
-        asyncio.run(mock_admin_cog.admin_config.callback(
-            mock_admin_cog, interaction, "set_role", None, None
-        ))
+        asyncio.run(mock_admin_cog.admin_config.callback(mock_admin_cog, interaction, "set_role", None, None))
 
         interaction.followup.send.assert_called_once()
         call_args = interaction.followup.send.call_args[0][0]
@@ -609,9 +597,7 @@ class TestAdminConfig:
         reset_resp.status_code = 200
         mock_admin_cog.http_client.post = AsyncMock(return_value=reset_resp)
 
-        asyncio.run(mock_admin_cog.admin_config.callback(
-            mock_admin_cog, interaction, "reset", None, None
-        ))
+        asyncio.run(mock_admin_cog.admin_config.callback(mock_admin_cog, interaction, "reset", None, None))
 
         interaction.followup.send.assert_called_once()
         call_args = interaction.followup.send.call_args[0][0]
@@ -622,15 +608,12 @@ class TestAdminConfig:
         interaction = _create_mock_interaction()
 
         import httpx
+
         mock_request = MagicMock()
-        http_error = httpx.HTTPStatusError(
-            "Server error", request=mock_request, response=MagicMock(status_code=500)
-        )
+        http_error = httpx.HTTPStatusError("Server error", request=mock_request, response=MagicMock(status_code=500))
         mock_admin_cog.http_client.get = AsyncMock(side_effect=http_error)
 
-        asyncio.run(mock_admin_cog.admin_config.callback(
-            mock_admin_cog, interaction, "view", None, None
-        ))
+        asyncio.run(mock_admin_cog.admin_config.callback(mock_admin_cog, interaction, "view", None, None))
 
         interaction.followup.send.assert_called_once()
         call_args = interaction.followup.send.call_args[0][0]
@@ -642,9 +625,7 @@ class TestAdminConfig:
 
         mock_admin_cog.http_client.get = AsyncMock(side_effect=Exception("Unexpected"))
 
-        asyncio.run(mock_admin_cog.admin_config.callback(
-            mock_admin_cog, interaction, "view", None, None
-        ))
+        asyncio.run(mock_admin_cog.admin_config.callback(mock_admin_cog, interaction, "view", None, None))
 
         interaction.followup.send.assert_called_once()
         call_args = interaction.followup.send.call_args[0][0]
@@ -654,6 +635,7 @@ class TestAdminConfig:
 # ---------------------------------------------------------------------------
 # TestAdminSetupExtended — error paths, no-role with fetch fallback
 # ---------------------------------------------------------------------------
+
 
 class TestAdminSetupExtended:
     """Extended tests for admin_setup command."""
@@ -683,14 +665,14 @@ class TestAdminSetupExtended:
         init_resp.json.return_value = {
             "message": "Guild initialized successfully",
             "guild_id": 987654321,
-            "shops_created": 4
+            "shops_created": 4,
         }
 
-        mock_admin_cog.http_client.post = AsyncMock(side_effect=[role_create_resp, init_resp])
+        _channel_ids = {"category_id": 111, "bounty_channel_id": 222, "shop_channel_id": 333, "general_channel_id": 444}
+        with patch("utils.guild_setup.ensure_bountybot_infrastructure", new=AsyncMock(return_value=_channel_ids)):
+            mock_admin_cog.http_client.post = AsyncMock(side_effect=[role_create_resp, init_resp])
 
-        asyncio.run(mock_admin_cog.admin_setup.callback(
-            mock_admin_cog, interaction, None, 0
-        ))
+            asyncio.run(mock_admin_cog.admin_setup.callback(mock_admin_cog, interaction, None, 0))
 
         interaction.response.defer.assert_called_once_with(thinking=True, ephemeral=True)
         interaction.followup.send.assert_called_once()
@@ -706,15 +688,15 @@ class TestAdminSetupExtended:
         type(role).mention = PropertyMock(return_value="<@&222222222>")
 
         import httpx
-        mock_request = MagicMock()
-        http_error = httpx.HTTPStatusError(
-            "Conflict", request=mock_request, response=MagicMock(status_code=409)
-        )
-        mock_admin_cog.http_client.post = AsyncMock(side_effect=http_error)
 
-        asyncio.run(mock_admin_cog.admin_setup.callback(
-            mock_admin_cog, interaction, role, 0
-        ))
+        mock_request = MagicMock()
+        http_error = httpx.HTTPStatusError("Conflict", request=mock_request, response=MagicMock(status_code=409))
+        # Patch ensure_bountybot_infrastructure so it doesn't require a real Guild mock
+        _channel_ids = {"category_id": 111, "bounty_channel_id": 222, "shop_channel_id": 333, "general_channel_id": 444}
+        with patch("utils.guild_setup.ensure_bountybot_infrastructure", new=AsyncMock(return_value=_channel_ids)):
+            mock_admin_cog.http_client.post = AsyncMock(side_effect=http_error)
+
+            asyncio.run(mock_admin_cog.admin_setup.callback(mock_admin_cog, interaction, role, 0))
 
         interaction.followup.send.assert_called_once()
         call_args = interaction.followup.send.call_args[0][0]
@@ -724,6 +706,7 @@ class TestAdminSetupExtended:
 # ---------------------------------------------------------------------------
 # TestAdminCheckExtended — member not found, API error
 # ---------------------------------------------------------------------------
+
 
 class TestAdminCheckExtended:
     """Extended tests for admin_check command."""
@@ -780,12 +763,14 @@ class TestAdminCheckExtended:
 # TestErrorHandlerPaths — admin_setup_error, admin_player_error
 # ---------------------------------------------------------------------------
 
+
 class TestErrorHandlerPaths:
     """Tests for error handler methods."""
 
     def test_admin_setup_error_missing_permissions(self, mock_admin_cog):
         """admin_setup_error should handle MissingPermissions error."""
         from discord import app_commands
+
         interaction = _create_mock_interaction()
         interaction.response.is_done = MagicMock(return_value=False)
 
@@ -800,6 +785,7 @@ class TestErrorHandlerPaths:
     def test_admin_setup_error_other_error_not_done(self, mock_admin_cog):
         """admin_setup_error should handle other errors when response not done."""
         from discord import app_commands
+
         interaction = _create_mock_interaction()
         interaction.response.is_done = MagicMock(return_value=False)
 
@@ -812,6 +798,7 @@ class TestErrorHandlerPaths:
     def test_admin_setup_error_other_error_already_done(self, mock_admin_cog):
         """admin_setup_error should not resend if response already done."""
         from discord import app_commands
+
         interaction = _create_mock_interaction()
         interaction.response.is_done = MagicMock(return_value=True)
 
@@ -824,6 +811,7 @@ class TestErrorHandlerPaths:
     def test_admin_player_error_missing_permissions(self, mock_admin_cog):
         """admin_player_error should handle MissingPermissions error."""
         from discord import app_commands
+
         interaction = _create_mock_interaction()
         interaction.response.is_done = MagicMock(return_value=False)
 
@@ -838,6 +826,7 @@ class TestErrorHandlerPaths:
     def test_admin_player_error_other_error_not_done(self, mock_admin_cog):
         """admin_player_error should handle other errors when response not done."""
         from discord import app_commands
+
         interaction = _create_mock_interaction()
         interaction.response.is_done = MagicMock(return_value=False)
 
@@ -850,6 +839,7 @@ class TestErrorHandlerPaths:
     def test_admin_player_error_other_error_already_done(self, mock_admin_cog):
         """admin_player_error should not resend if response already done."""
         from discord import app_commands
+
         interaction = _create_mock_interaction()
         interaction.response.is_done = MagicMock(return_value=True)
 
@@ -863,6 +853,7 @@ class TestErrorHandlerPaths:
 # ---------------------------------------------------------------------------
 # TestCogUnload — covers cog_unload method
 # ---------------------------------------------------------------------------
+
 
 class TestCogUnload:
     """Tests for cog_unload method."""
@@ -880,6 +871,7 @@ class TestCogUnload:
 # ---------------------------------------------------------------------------
 # TestTierAutocomplete — covers tier_autocomplete
 # ---------------------------------------------------------------------------
+
 
 class TestTierAutocomplete:
     """Tests for tier_autocomplete method."""
@@ -930,12 +922,14 @@ class TestTierAutocomplete:
 # We invoke it directly by capturing the closure.
 # ---------------------------------------------------------------------------
 
+
 def _get_is_admin_predicate():
     """Get the inner predicate function from is_admin()."""
     sys.modules["shared"] = _mock_shared
     sys.modules["shared.bblogger"] = _mock_bblogger
     _evict_discord_modules()
     from cogs.adminCog import is_admin as _is_admin_fn
+
     # app_commands.check wraps the predicate. We can extract it via __closure__
     # or just call it directly since the decorator returns a function that
     # has the predicate stored in its closure. Simplest approach: re-implement
@@ -944,11 +938,11 @@ def _get_is_admin_predicate():
     # calling check.__wrapped__ if available, otherwise use __closure__.
     check_decorator = _is_admin_fn()
     # app_commands.check stores the predicate; access via closure cells
-    if hasattr(check_decorator, '__wrapped__'):
+    if hasattr(check_decorator, "__wrapped__"):
         return check_decorator.__wrapped__
     # For Discord.py app_commands.check, the wrapped function is the first
     # cell's content
-    for cell in (check_decorator.__closure__ or []):
+    for cell in check_decorator.__closure__ or []:
         try:
             obj = cell.cell_contents
             if callable(obj) and asyncio.iscoroutinefunction(obj):
@@ -973,6 +967,7 @@ class TestIsAdminPredicate:
         import importlib
 
         import cogs.adminCog as _adm
+
         importlib.reload(_adm)
 
         interaction = _create_mock_interaction()
@@ -1035,6 +1030,7 @@ class TestIsAdminPredicate:
 # TestIsAdminPredicateDirect — actually invoke the predicate to cover lines 24-46
 # ---------------------------------------------------------------------------
 
+
 def _extract_is_admin_predicate():
     """
     Import is_admin(), call it to obtain the decorator produced by
@@ -1049,7 +1045,7 @@ def _extract_is_admin_predicate():
     decorator = _is_admin_fn()
     # app_commands.check wraps the predicate in a decorator whose closure
     # contains the original coroutine function.
-    for cell in (decorator.__closure__ or []):
+    for cell in decorator.__closure__ or []:
         try:
             obj = cell.cell_contents
             if callable(obj) and asyncio.iscoroutinefunction(obj):
@@ -1204,6 +1200,7 @@ class TestIsAdminPredicateDirect:
 # TestAdminPlayerViewStatsProper — covers lines 254-274 with proper mocking
 # ---------------------------------------------------------------------------
 
+
 class TestAdminPlayerViewStatsProper:
     """Tests for admin_player view_stats with proper http_client mocking (covers lines 254-274)."""
 
@@ -1223,23 +1220,17 @@ class TestAdminPlayerViewStatsProper:
             "credits": 1200,
             "lifetime_credits": 3000,
             "prestige_count": 1,
-            "created_at": "2024-06-15T12:00:00"
+            "created_at": "2024-06-15T12:00:00",
         }
 
         stats_resp = MagicMock()
         stats_resp.status_code = 200
-        stats_resp.json.return_value = {
-            "total_games": 10,
-            "total_victory": 7,
-            "total_defeat": 3
-        }
+        stats_resp.json.return_value = {"total_games": 10, "total_victory": 7, "total_defeat": 3}
 
         mock_admin_cog.http_client.post = AsyncMock(return_value=player_resp)
         mock_admin_cog.http_client.get = AsyncMock(return_value=stats_resp)
 
-        asyncio.run(mock_admin_cog.admin_player.callback(
-            mock_admin_cog, interaction, user, "view_stats", None, None
-        ))
+        asyncio.run(mock_admin_cog.admin_player.callback(mock_admin_cog, interaction, user, "view_stats", None, None))
 
         interaction.response.defer.assert_called_once_with(thinking=True, ephemeral=True)
         interaction.followup.send.assert_called_once()
@@ -1253,6 +1244,7 @@ class TestAdminPlayerViewStatsProper:
 # ---------------------------------------------------------------------------
 # TestAdminPlayerSetCreditsProper — covers lines 281-299 with proper mocking
 # ---------------------------------------------------------------------------
+
 
 class TestAdminPlayerSetCreditsProper:
     """Tests for admin_player set_credits with proper http_client mocking (covers lines 281-299)."""
@@ -1273,22 +1265,17 @@ class TestAdminPlayerSetCreditsProper:
             "credits": 300,
             "lifetime_credits": 300,
             "prestige_count": 0,
-            "created_at": "2024-01-01T00:00:00"
+            "created_at": "2024-01-01T00:00:00",
         }
 
         update_resp = MagicMock()
         update_resp.status_code = 200
-        update_resp.json.return_value = {
-            "old_credits": 300,
-            "new_credits": 5000
-        }
+        update_resp.json.return_value = {"old_credits": 300, "new_credits": 5000}
 
         mock_admin_cog.http_client.post = AsyncMock(return_value=player_resp)
         mock_admin_cog.http_client.put = AsyncMock(return_value=update_resp)
 
-        asyncio.run(mock_admin_cog.admin_player.callback(
-            mock_admin_cog, interaction, user, "set_credits", 5000, None
-        ))
+        asyncio.run(mock_admin_cog.admin_player.callback(mock_admin_cog, interaction, user, "set_credits", 5000, None))
 
         interaction.response.defer.assert_called_once_with(thinking=True, ephemeral=True)
         interaction.followup.send.assert_called_once()
@@ -1321,22 +1308,17 @@ class TestAdminPlayerSetCreditsProper:
             "credits": 100,
             "lifetime_credits": 100,
             "prestige_count": 0,
-            "created_at": "2024-01-01T00:00:00"
+            "created_at": "2024-01-01T00:00:00",
         }
 
         update_resp = MagicMock()
         update_resp.status_code = 200
-        update_resp.json.return_value = {
-            "old_credits": 100,
-            "new_credits": 0
-        }
+        update_resp.json.return_value = {"old_credits": 100, "new_credits": 0}
 
         mock_admin_cog.http_client.post = AsyncMock(return_value=player_resp)
         mock_admin_cog.http_client.put = AsyncMock(return_value=update_resp)
 
-        asyncio.run(mock_admin_cog.admin_player.callback(
-            mock_admin_cog, interaction, user, "set_credits", -500, None
-        ))
+        asyncio.run(mock_admin_cog.admin_player.callback(mock_admin_cog, interaction, user, "set_credits", -500, None))
 
         interaction.followup.send.assert_called_once()
 
@@ -1346,5 +1328,5 @@ class TestAdminPlayerSetCreditsProper:
         assert put_json["credits"] == 0
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     pytest.main([__file__, "-v"])

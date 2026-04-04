@@ -159,7 +159,12 @@ class AdminCog(commands.Cog):
                 "admin_role_id": admin_role.id,
                 "starting_credits": max(0, starting_credits),
             }
-            resp = await self.http_client.post(f"{api_base}/admin/guilds/initialize", json=init_payload, timeout=30)
+            resp = await self.http_client.post(
+                f"{api_base}/admin/guilds/initialize",
+                json=init_payload,
+                params={"user_id": interaction.user.id},
+                timeout=30,
+            )
             resp.raise_for_status()
             result = resp.json()
 
@@ -243,6 +248,7 @@ class AdminCog(commands.Cog):
                 resp = await self.http_client.put(
                     f"{api_base}/admin/players/credits",
                     json={"player_id": player["id"], "credits": max(0, credit_amount), "update_lifetime": False},
+                    params={"user_id": interaction.user.id, "guild_id": interaction.guild_id},
                     timeout=10,
                 )
                 resp.raise_for_status()
@@ -265,6 +271,7 @@ class AdminCog(commands.Cog):
                 resp = await self.http_client.put(
                     f"{api_base}/admin/players/credits",
                     json={"player_id": player["id"], "credits": new_total, "update_lifetime": True},
+                    params={"user_id": interaction.user.id, "guild_id": interaction.guild_id},
                     timeout=10,
                 )
                 resp.raise_for_status()
@@ -286,6 +293,7 @@ class AdminCog(commands.Cog):
                 resp = await self.http_client.put(
                     f"{api_base}/admin/players/xp",
                     json={"player_id": player["id"], "xp": max(0, min(1_000_000, xp))},
+                    params={"user_id": interaction.user.id, "guild_id": interaction.guild_id},
                     timeout=10,
                 )
                 resp.raise_for_status()
@@ -307,6 +315,7 @@ class AdminCog(commands.Cog):
             elif action == "reset":
                 resp = await self.http_client.post(
                     f"{api_base}/admin/players/{player['id']}/reset",
+                    params={"user_id": interaction.user.id, "guild_id": interaction.guild_id},
                     timeout=10,
                 )
                 if resp.status_code == 404:
@@ -358,7 +367,12 @@ class AdminCog(commands.Cog):
                 return
 
             refresh_data = {"guild_id": interaction.guild_id, "tier": tier, "force_tech_level": force_tech_level}
-            resp = await self.http_client.post(f"{api_base}/admin/shops/refresh", json=refresh_data, timeout=30)
+            resp = await self.http_client.post(
+                f"{api_base}/admin/shops/refresh",
+                json=refresh_data,
+                params={"user_id": interaction.user.id},
+                timeout=30,
+            )
             resp.raise_for_status()
             result = resp.json()
 
@@ -385,7 +399,11 @@ class AdminCog(commands.Cog):
         """View comprehensive guild statistics."""
         await interaction.response.defer(thinking=True, ephemeral=True)
         try:
-            resp = await self.http_client.get(f"{api_base}/admin/guilds/{interaction.guild_id}/stats", timeout=10)
+            resp = await self.http_client.get(
+                f"{api_base}/admin/guilds/{interaction.guild_id}/stats",
+                params={"user_id": interaction.user.id},
+                timeout=10,
+            )
             resp.raise_for_status()
             stats = resp.json()
 

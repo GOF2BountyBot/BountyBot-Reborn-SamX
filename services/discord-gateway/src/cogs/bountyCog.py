@@ -1,11 +1,11 @@
 import os
-from datetime import UTC, datetime
 
 import discord
 import httpx
 from discord import app_commands
 from discord.ext import commands
 from shared import bblogger
+from utils.timestamp_utils import iso_to_discord_ts
 
 # Set up logger
 flogger = bblogger.get_logger("discord-gateway-BountyCog")
@@ -52,6 +52,16 @@ class BountyCog(commands.Cog):
         except Exception as e:  # pylint: disable=broad-exception-caught
             flogger.warning(f"BountyCog: Unexpected error preloading systems: {e}")
             self._systems = []
+
+    async def _get_player_id(self, user_id: int, guild_id: int) -> int | None:
+        """Resolve a Discord user ID to a game player ID via the upsert endpoint."""
+        try:
+            user_data = {"discord_id": user_id, "guild_id": guild_id, "discord_username": "temp"}
+            resp = await self.http_client.post(f"{api_base}/players/", json=user_data, timeout=5)
+            resp.raise_for_status()
+            return resp.json().get("id")
+        except Exception:  # pylint: disable=broad-exception-caught
+            return None
 
     # ------------------------------------------------------------------
     # Autocomplete
@@ -113,9 +123,14 @@ class BountyCog(commands.Cog):
         flogger.info(f"/check invoked: guild={interaction.guild_id} user={interaction.user.id} system={system}")
 
         try:
+            player_id = await self._get_player_id(interaction.user.id, interaction.guild_id)
+            if player_id is None:
+                await interaction.followup.send("❌ Player not found. Use `/profile` first.", ephemeral=True)
+                return
+
             resp = await self.http_client.post(
                 f"{api_base}/bounties/check",
-                json={"player_id": interaction.user.id, "system_name": system},
+                json={"player_id": player_id, "system_name": system},
                 params={"guild_id": interaction.guild_id},
                 timeout=10,
             )
@@ -132,12 +147,49 @@ class BountyCog(commands.Cog):
             result = data.get("result", "")
             message = data.get("message", "")
 
+            # Handle on_cooldown as ephemeral message (not an embed)
+            if result == "on_cooldown":
+                await interaction.followup.send(f"⏱️ {message}", ephemeral=True)
+                return
+
             embed = self._build_check_embed(result, system, message)
             await interaction.followup.send(embed=embed)
             flogger.info(
                 f"/check success: guild={interaction.guild_id} user={interaction.user.id}"
                 f" system={system} result={result}"
             )
+
+            # If the player's tier changed, update their Discord role (non-fatal)
+            new_tier = data.get("new_tier")
+            if new_tier:
+                try:
+                    config_resp = await self.http_client.get(
+                        f"{api_base}/config/guild/{interaction.guild_id}", timeout=5
+                    )
+                    config_resp.raise_for_status()
+                    config = config_resp.json()
+                    guild = interaction.guild
+                    new_role_id = config.get(f"{new_tier.lower()}_role_id")
+                    if new_role_id:
+                        new_role = guild.get_role(new_role_id)
+                        if new_role and new_role not in interaction.user.roles:
+                            # Remove old tier roles, add new one
+                            old_tier_roles = []
+                            for tier_key in ("bronze_role_id", "silver_role_id", "gold_role_id"):
+                                rid = config.get(tier_key)
+                                if rid:
+                                    old_role = guild.get_role(rid)
+                                    if old_role and old_role in interaction.user.roles and old_role != new_role:
+                                        old_tier_roles.append(old_role)
+                            if old_tier_roles:
+                                await interaction.user.remove_roles(*old_tier_roles, reason="BountyBot tier change")
+                            await interaction.user.add_roles(new_role, reason=f"BountyBot promoted to {new_tier}")
+                            flogger.info(
+                                f"Updated tier role for user {interaction.user.id}: {new_tier} "
+                                f"in guild {interaction.guild_id}"
+                            )
+                except Exception as e:  # pylint: disable=broad-exception-caught
+                    flogger.warning(f"Failed to update tier role: {e}")
 
         except httpx.HTTPStatusError as e:
             if e.response.status_code == 429:
@@ -155,9 +207,18 @@ class BountyCog(commands.Cog):
             flogger.error(f"/check error: guild={interaction.guild_id} user={interaction.user.id} error={e}")
             await interaction.followup.send("⚠️ An error occurred while checking the system.", ephemeral=True)
 
+    @staticmethod
+    def _format_loadout_item(item) -> str:
+        """Format a loadout item dict as 'emoji name' or '• name'."""
+        if isinstance(item, str):
+            return f"• {item}"
+        name = item.get("name", str(item))
+        emoji = item.get("emoji") or ""
+        return f"{emoji} {name}" if emoji else f"• {name}"
+
     def _build_check_embed(self, result: str, system: str, message: str) -> discord.Embed:
         """Build an embed for the /check command based on result."""
-        if result == "CORRECT":
+        if result == "correct":
             embed = discord.Embed(
                 title="🎯 Bounty Found!",
                 description=f"**{system}** — Bounty found! Combat initiated!",
@@ -165,7 +226,7 @@ class BountyCog(commands.Cog):
             )
             if message:
                 embed.add_field(name="Result", value=message, inline=False)
-        elif result == "INCORRECT":
+        elif result == "incorrect":
             embed = discord.Embed(
                 title="❌ System Checked",
                 description=f"**{system}** — System checked, bounty not here.",
@@ -173,7 +234,7 @@ class BountyCog(commands.Cog):
             )
             if message:
                 embed.add_field(name="Intel", value=message, inline=False)
-        elif result == "ALREADY_CHECKED":
+        elif result == "already_checked":
             embed = discord.Embed(
                 title="🔁 Already Checked",
                 description=f"**{system}** — This system has already been checked.",
@@ -181,7 +242,7 @@ class BountyCog(commands.Cog):
             )
             if message:
                 embed.add_field(name="Note", value=message, inline=False)
-        else:  # NOT_FOUND or unknown
+        else:  # not_found or unknown
             embed = discord.Embed(
                 title="🔍 No Bounty",
                 description=f"**{system}** — No bounty found at this system.",
@@ -249,22 +310,13 @@ class BountyCog(commands.Cog):
             )
 
             for bounty in bounty_list:
-                systems_checked = len(bounty.get("checked", {}))
+                # Only count systems actually checked (value != -1 means checked by a player)
+                systems_checked = sum(1 for v in bounty.get("checked", {}).values() if v != -1)
                 total_systems = len(bounty.get("route", []))
                 end_time = bounty.get("end_time")
                 time_str = ""
                 if end_time:
-                    try:
-                        dt = datetime.fromisoformat(end_time.replace("Z", "+00:00"))
-                        now = datetime.now(tz=UTC)
-                        remaining = dt - now
-                        secs = int(remaining.total_seconds())
-                        if secs > 0:
-                            hours, rem = divmod(secs, 3600)
-                            mins, _ = divmod(rem, 60)
-                            time_str = f" | ⏰ {hours}h {mins}m"
-                    except Exception:  # pylint: disable=broad-exception-caught
-                        pass
+                    time_str = f" | Expires {iso_to_discord_ts(end_time, 'R')}"
 
                 faction = bounty.get("criminal_faction") or ""
                 faction_str = f" ({faction})" if faction else ""
@@ -348,7 +400,8 @@ class BountyCog(commands.Cog):
             else:
                 route_lines = []
                 for i, system_name in enumerate(route_systems, start=1):
-                    if system_name in checked:
+                    # A system is truly checked when its value != -1 (player_id assigned)
+                    if checked.get(system_name, -1) != -1:
                         route_lines.append(f"{i}. ~~{system_name}~~ ✅")
                     else:
                         route_lines.append(f"{i}. {system_name}")
@@ -358,7 +411,8 @@ class BountyCog(commands.Cog):
                     inline=False,
                 )
 
-            systems_checked = len(checked)
+            # Only count systems actually checked (value != -1 means checked by a player)
+            systems_checked = sum(1 for v in checked.values() if v != -1)
             embed.set_footer(text=f"{systems_checked}/{len(route_systems)} systems checked")
 
             await interaction.followup.send(embed=embed)
@@ -423,9 +477,18 @@ class BountyCog(commands.Cog):
             criminal_ship = data.get("criminal_ship") or {}
             tech_level = data.get("tech_level", 1)
 
-            ship_name = criminal_ship.get("name", "Unknown Ship")
+            ship_name = criminal_ship.get("ship_name", "Unknown Ship")
+            ship_emoji = criminal_ship.get("ship_emoji") or ""
+            ship_armour = criminal_ship.get("ship_armour", 0)
             weapons = criminal_ship.get("weapons", [])
             modules = criminal_ship.get("modules", [])
+            turrets = criminal_ship.get("turrets", [])
+
+            total_dps = sum(w.get("dps", 0) for w in weapons) + sum(t.get("dps", 0) for t in turrets)
+            rounded_dps = round(total_dps, 1)
+            dps_str = str(int(rounded_dps)) if rounded_dps == int(rounded_dps) else f"{rounded_dps:.1f}"
+
+            ship_display = f"{ship_emoji} {ship_name}" if ship_emoji else ship_name
 
             embed = discord.Embed(
                 title=f"🚀 Loadout — {criminal_name}",
@@ -433,23 +496,24 @@ class BountyCog(commands.Cog):
                 color=discord.Color.dark_red(),
             )
 
-            embed.add_field(name="🛸 Ship", value=ship_name, inline=False)
+            embed.add_field(
+                name="🛸 Ship", value=f"{ship_display}\nHP: **{ship_armour}** | DPS: **{dps_str}**", inline=False
+            )
 
             if weapons:
-                weapons_str = "\n".join(
-                    f"• {w}" if isinstance(w, str) else f"• {w.get('name', str(w))}" for w in weapons
-                )
-                embed.add_field(name="🔫 Weapons", value=weapons_str, inline=False)
-            else:
-                embed.add_field(name="🔫 Weapons", value="None", inline=False)
+                weapons_str = "\n".join(self._format_loadout_item(w) for w in weapons)
+                embed.add_field(name="🔫 Primary Weapons", value=weapons_str, inline=False)
+
+            if turrets:
+                turrets_str = "\n".join(self._format_loadout_item(t) for t in turrets)
+                embed.add_field(name="🔫 Turrets", value=turrets_str, inline=False)
 
             if modules:
-                modules_str = "\n".join(
-                    f"• {m}" if isinstance(m, str) else f"• {m.get('name', str(m))}" for m in modules
-                )
+                modules_str = "\n".join(self._format_loadout_item(m) for m in modules)
                 embed.add_field(name="⚙️ Modules", value=modules_str, inline=False)
-            else:
-                embed.add_field(name="⚙️ Modules", value="None", inline=False)
+
+            if not weapons and not turrets and not modules:
+                embed.add_field(name="Equipment", value="*No equipment*", inline=False)
 
             await interaction.followup.send(embed=embed)
             flogger.info(

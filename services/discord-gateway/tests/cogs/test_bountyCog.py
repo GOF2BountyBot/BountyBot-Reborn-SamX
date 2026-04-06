@@ -59,10 +59,14 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "src"))
 def _evict_discord_modules():
     """Remove cached discord/source modules so they re-import with real discord."""
     to_evict = [
-        k for k in sys.modules
-        if k == "discord" or k.startswith("discord.")
-        or k in ("api", "bot", "utils") or k.startswith("api.")
-        or k.startswith("utils.") or k.startswith("cogs.")
+        k
+        for k in sys.modules
+        if k == "discord"
+        or k.startswith("discord.")
+        or k in ("api", "bot", "utils")
+        or k.startswith("api.")
+        or k.startswith("utils.")
+        or k.startswith("cogs.")
     ]
     for k in to_evict:
         sys.modules.pop(k, None)
@@ -114,7 +118,7 @@ def _make_bounty_public(
     }
 
 
-def _make_check_response(result="CORRECT", bounty_id=1, message=""):
+def _make_check_response(result="correct", bounty_id=1, message=""):
     """Return a minimal BountyCheckResponse dict."""
     return {
         "result": result,
@@ -153,9 +157,15 @@ def _make_loadout_response(
     """Return a minimal loadout response dict."""
     if criminal_ship is None:
         criminal_ship = {
-            "name": "Viper MkII",
-            "weapons": ["Pulse Laser", "Beam Laser"],
-            "modules": ["Shield Booster"],
+            "ship_name": "Viper MkII",
+            "ship_emoji": "",
+            "ship_armour": 150,
+            "weapons": [
+                {"name": "Pulse Laser", "emoji": "", "dps": 10},
+                {"name": "Beam Laser", "emoji": "", "dps": 15},
+            ],
+            "modules": [{"name": "Shield Booster", "emoji": ""}],
+            "turrets": [],
         }
     return {
         "bounty_id": bounty_id,
@@ -251,9 +261,7 @@ class TestPreloadData:
 
     def test_preload_data_handles_api_failure_gracefully(self, mock_bounty_cog):
         """_preload_data should set _systems to [] on API failure."""
-        mock_bounty_cog.http_client.get = AsyncMock(
-            side_effect=RuntimeError("connection refused")
-        )
+        mock_bounty_cog.http_client.get = AsyncMock(side_effect=RuntimeError("connection refused"))
 
         asyncio.run(mock_bounty_cog._preload_data())
 
@@ -315,9 +323,7 @@ class TestSystemAutocomplete:
 class TestBountyAutocomplete:
     """Tests for bounty_autocomplete method."""
 
-    def test_bounty_autocomplete_returns_formatted_choices(
-        self, mock_bounty_cog, make_mock_response
-    ):
+    def test_bounty_autocomplete_returns_formatted_choices(self, mock_bounty_cog, make_mock_response):
         """bounty_autocomplete should return formatted bounty choices."""
         bounties = [
             _make_bounty_public(1, "Falcon-Jones", "gold", reward=5000, reward_per_sys=500),
@@ -334,9 +340,7 @@ class TestBountyAutocomplete:
         assert "Gold" in result[0].name
         assert "5,000cr" in result[0].name
 
-    def test_bounty_autocomplete_filters_by_current_input(
-        self, mock_bounty_cog, make_mock_response
-    ):
+    def test_bounty_autocomplete_filters_by_current_input(self, mock_bounty_cog, make_mock_response):
         """bounty_autocomplete should filter choices by current input."""
         bounties = [
             _make_bounty_public(1, "BlackViper", "bronze", reward=1000),
@@ -353,9 +357,7 @@ class TestBountyAutocomplete:
 
     def test_bounty_autocomplete_handles_api_failure(self, mock_bounty_cog):
         """bounty_autocomplete should return empty list on API failure."""
-        mock_bounty_cog.http_client.get = AsyncMock(
-            side_effect=RuntimeError("connection refused")
-        )
+        mock_bounty_cog.http_client.get = AsyncMock(side_effect=RuntimeError("connection refused"))
         interaction = _create_mock_interaction()
 
         result = asyncio.run(mock_bounty_cog.bounty_autocomplete(interaction, ""))
@@ -371,12 +373,15 @@ class TestBountyAutocomplete:
 class TestCheckCommand:
     """Tests for the /check slash command."""
 
+    @pytest.fixture(autouse=True)
+    def _patch_player_id(self, mock_bounty_cog):
+        """Patch _get_player_id to return a valid game player ID for all /check tests."""
+        mock_bounty_cog._get_player_id = AsyncMock(return_value=42)
+
     def test_check_correct_result_green_embed(self, mock_bounty_cog, make_mock_response):
         """/check CORRECT result should display green embed."""
         interaction = _create_mock_interaction()
-        resp = make_mock_response(
-            _make_check_response("CORRECT", bounty_id=1, message="Target neutralised!")
-        )
+        resp = make_mock_response(_make_check_response("correct", bounty_id=1, message="Target neutralised!"))
         mock_bounty_cog.http_client.post = AsyncMock(return_value=resp)
 
         asyncio.run(mock_bounty_cog.check.callback(mock_bounty_cog, interaction, "Alpha"))
@@ -388,12 +393,13 @@ class TestCheckCommand:
         embed = call_kwargs["embed"]
         # Green color for CORRECT
         import discord
+
         assert embed.color == discord.Color.green()
 
     def test_check_not_found_result_orange_embed(self, mock_bounty_cog, make_mock_response):
         """/check NOT_FOUND result should display orange embed."""
         interaction = _create_mock_interaction()
-        resp = make_mock_response(_make_check_response("NOT_FOUND"))
+        resp = make_mock_response(_make_check_response("not_found"))
         mock_bounty_cog.http_client.post = AsyncMock(return_value=resp)
 
         asyncio.run(mock_bounty_cog.check.callback(mock_bounty_cog, interaction, "Delta"))
@@ -402,14 +408,13 @@ class TestCheckCommand:
         call_kwargs = interaction.followup.send.call_args[1]
         assert "embed" in call_kwargs
         import discord
+
         assert call_kwargs["embed"].color == discord.Color.orange()
 
     def test_check_incorrect_result_red_embed(self, mock_bounty_cog, make_mock_response):
         """/check INCORRECT result should display red embed."""
         interaction = _create_mock_interaction()
-        resp = make_mock_response(
-            _make_check_response("INCORRECT", message="Bounty is 2 jumps away.")
-        )
+        resp = make_mock_response(_make_check_response("incorrect", message="Bounty is 2 jumps away."))
         mock_bounty_cog.http_client.post = AsyncMock(return_value=resp)
 
         asyncio.run(mock_bounty_cog.check.callback(mock_bounty_cog, interaction, "Beta"))
@@ -418,12 +423,13 @@ class TestCheckCommand:
         call_kwargs = interaction.followup.send.call_args[1]
         assert "embed" in call_kwargs
         import discord
+
         assert call_kwargs["embed"].color == discord.Color.red()
 
     def test_check_already_checked_result_yellow_embed(self, mock_bounty_cog, make_mock_response):
         """/check ALREADY_CHECKED result should display yellow embed."""
         interaction = _create_mock_interaction()
-        resp = make_mock_response(_make_check_response("ALREADY_CHECKED"))
+        resp = make_mock_response(_make_check_response("already_checked"))
         mock_bounty_cog.http_client.post = AsyncMock(return_value=resp)
 
         asyncio.run(mock_bounty_cog.check.callback(mock_bounty_cog, interaction, "Alpha"))
@@ -432,6 +438,7 @@ class TestCheckCommand:
         call_kwargs = interaction.followup.send.call_args[1]
         assert "embed" in call_kwargs
         import discord
+
         assert call_kwargs["embed"].color == discord.Color.yellow()
 
     def test_check_cooldown_429_response(self, mock_bounty_cog, make_mock_response):
@@ -451,9 +458,7 @@ class TestCheckCommand:
     def test_check_api_error_handled_gracefully(self, mock_bounty_cog):
         """/check generic exception should show error message."""
         interaction = _create_mock_interaction()
-        mock_bounty_cog.http_client.post = AsyncMock(
-            side_effect=RuntimeError("connection refused")
-        )
+        mock_bounty_cog.http_client.post = AsyncMock(side_effect=RuntimeError("connection refused"))
 
         asyncio.run(mock_bounty_cog.check.callback(mock_bounty_cog, interaction, "Alpha"))
 
@@ -465,12 +470,11 @@ class TestCheckCommand:
     def test_check_http_status_error_handled(self, mock_bounty_cog):
         """/check HTTPStatusError (non-429) should show API error."""
         import httpx
+
         interaction = _create_mock_interaction()
         error_response = MagicMock()
         error_response.status_code = 500
-        http_error = httpx.HTTPStatusError(
-            "500 Error", request=MagicMock(), response=error_response
-        )
+        http_error = httpx.HTTPStatusError("500 Error", request=MagicMock(), response=error_response)
         mock_bounty_cog.http_client.post = AsyncMock(side_effect=http_error)
 
         asyncio.run(mock_bounty_cog.check.callback(mock_bounty_cog, interaction, "Alpha"))
@@ -506,9 +510,7 @@ class TestBountiesCommand:
         call_kwargs = interaction.followup.send.call_args[1]
         assert "embed" in call_kwargs
 
-    def test_bounties_no_active_bounties_shows_empty_message(
-        self, mock_bounty_cog, make_mock_response
-    ):
+    def test_bounties_no_active_bounties_shows_empty_message(self, mock_bounty_cog, make_mock_response):
         """/bounties with no bounties should show 'No active bounties'."""
         interaction = _create_mock_interaction()
         resp = make_mock_response([])
@@ -529,9 +531,7 @@ class TestBountiesCommand:
         resp = make_mock_response(bounty_list)
         mock_bounty_cog.http_client.get = AsyncMock(return_value=resp)
 
-        asyncio.run(
-            mock_bounty_cog.bounties.callback(mock_bounty_cog, interaction, division="gold")
-        )
+        asyncio.run(mock_bounty_cog.bounties.callback(mock_bounty_cog, interaction, division="gold"))
 
         call_kwargs = mock_bounty_cog.http_client.get.call_args[1]
         assert call_kwargs["params"].get("division") == "gold"
@@ -558,9 +558,7 @@ class TestBountiesCommand:
 class TestRouteCommand:
     """Tests for the /route slash command."""
 
-    def test_route_displays_checked_and_unchecked_systems(
-        self, mock_bounty_cog, make_mock_response
-    ):
+    def test_route_displays_checked_and_unchecked_systems(self, mock_bounty_cog, make_mock_response):
         """/route should show strikethrough for checked systems."""
         interaction = _create_mock_interaction()
         resp = make_mock_response(
@@ -598,12 +596,11 @@ class TestRouteCommand:
     def test_route_404_shows_bounty_not_found(self, mock_bounty_cog):
         """/route 404 should send bounty not found message."""
         import httpx
+
         interaction = _create_mock_interaction()
         error_response = MagicMock()
         error_response.status_code = 404
-        http_error = httpx.HTTPStatusError(
-            "404 Not Found", request=MagicMock(), response=error_response
-        )
+        http_error = httpx.HTTPStatusError("404 Not Found", request=MagicMock(), response=error_response)
         mock_bounty_cog.http_client.get = AsyncMock(side_effect=http_error)
 
         asyncio.run(mock_bounty_cog.route.callback(mock_bounty_cog, interaction, "999"))
@@ -634,9 +631,7 @@ class TestRouteCommand:
 class TestCriminalLoadoutCommand:
     """Tests for the /criminal-loadout slash command."""
 
-    def test_criminal_loadout_displays_ship_weapons_modules(
-        self, mock_bounty_cog, make_mock_response
-    ):
+    def test_criminal_loadout_displays_ship_weapons_modules(self, mock_bounty_cog, make_mock_response):
         """/criminal-loadout should display ship name, weapons, and modules."""
         interaction = _create_mock_interaction()
         resp = make_mock_response(_make_loadout_response())
@@ -657,9 +652,7 @@ class TestCriminalLoadoutCommand:
         """/criminal-loadout with non-numeric bounty string should show error."""
         interaction = _create_mock_interaction()
 
-        asyncio.run(
-            mock_bounty_cog.criminal_loadout.callback(mock_bounty_cog, interaction, "not-a-number")
-        )
+        asyncio.run(mock_bounty_cog.criminal_loadout.callback(mock_bounty_cog, interaction, "not-a-number"))
 
         interaction.followup.send.assert_awaited_once()
         call_kwargs = interaction.followup.send.call_args
@@ -669,12 +662,11 @@ class TestCriminalLoadoutCommand:
     def test_criminal_loadout_404_shows_not_found(self, mock_bounty_cog):
         """/criminal-loadout 404 should send bounty not found message."""
         import httpx
+
         interaction = _create_mock_interaction()
         error_response = MagicMock()
         error_response.status_code = 404
-        http_error = httpx.HTTPStatusError(
-            "404 Not Found", request=MagicMock(), response=error_response
-        )
+        http_error = httpx.HTTPStatusError("404 Not Found", request=MagicMock(), response=error_response)
         mock_bounty_cog.http_client.get = AsyncMock(side_effect=http_error)
 
         asyncio.run(mock_bounty_cog.criminal_loadout.callback(mock_bounty_cog, interaction, "999"))
@@ -782,3 +774,71 @@ class TestErrorHandlers:
         asyncio.run(mock_bounty_cog.check_error(interaction, error))
 
         interaction.response.send_message.assert_not_awaited()
+
+
+# ===========================================================================
+# Gap 4: Discord Embed Rendering Rule Tests — BountyCog
+# ===========================================================================
+
+
+class TestBountiesNoTimestampsInBadLocations:
+    """Gap 4: Embed rendering rule — <t:...> Discord timestamps must NOT appear
+    in the embed footer or author fields for the /bounties command.
+    """
+
+    def _get_bounties_embed(self, mock_bounty_cog, make_mock_response):
+        """Helper: trigger /bounties and return the sent embed."""
+        interaction = _create_mock_interaction()
+        bounty_list = [
+            _make_bounty_public(1, "BlackViper", "bronze"),
+        ]
+        resp = make_mock_response(bounty_list)
+        mock_bounty_cog.http_client.get = AsyncMock(return_value=resp)
+
+        asyncio.run(mock_bounty_cog.bounties.callback(mock_bounty_cog, interaction))
+
+        interaction.followup.send.assert_awaited_once()
+        call_kwargs = interaction.followup.send.call_args[1]
+        return call_kwargs.get("embed")
+
+    def test_bounties_no_timestamps_in_footer(self, mock_bounty_cog, make_mock_response):
+        """The /bounties embed footer must not contain a Discord timestamp (<t:...) pattern.
+
+        Discord renders <t:...> timestamps in fields and descriptions but NOT in footer
+        text where they appear as raw code, confusing users.
+        """
+        embed = self._get_bounties_embed(mock_bounty_cog, make_mock_response)
+        if embed is None:
+            return  # embed not sent — skip
+
+        footer = embed.footer
+        footer_text = ""
+        if footer is not None:
+            try:
+                footer_text = str(footer.text or "")
+            except AttributeError:
+                footer_text = str(footer)
+
+        assert "<t:" not in footer_text, (
+            f"Discord timestamp found in /bounties embed footer: {footer_text!r}. "
+            "Timestamps in footers render as raw text — move them to fields or description."
+        )
+
+    def test_bounties_no_timestamps_in_author(self, mock_bounty_cog, make_mock_response):
+        """The /bounties embed author field must not contain a Discord timestamp (<t:...) pattern."""
+        embed = self._get_bounties_embed(mock_bounty_cog, make_mock_response)
+        if embed is None:
+            return
+
+        author = embed.author
+        author_text = ""
+        if author is not None:
+            try:
+                author_text = str(author.name or "")
+            except AttributeError:
+                author_text = str(author)
+
+        assert "<t:" not in author_text, (
+            f"Discord timestamp found in /bounties embed author: {author_text!r}. "
+            "Timestamps in author fields render as raw text."
+        )

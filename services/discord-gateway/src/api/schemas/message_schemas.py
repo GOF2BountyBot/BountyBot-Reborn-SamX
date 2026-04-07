@@ -61,6 +61,7 @@ class MessageCreateRequest(BaseModel):
     """Request schema for creating messages. Context inferred from URI."""
 
     content: EmbedPayload = Field(..., description="Message embed content")
+    text_content: str | None = Field(None, description="Plain text content (e.g. role mentions) sent alongside embed")
     message_type: str = Field("default", description="Type of message")
 
 
@@ -81,3 +82,18 @@ class MessageListResponse(PaginatedResponse):
     """Response model for message list endpoint."""
 
     data: list[Message | MessageSummary] = Field(..., description="List of messages")
+
+
+class FileUploadData(BaseModel):
+    """Data returned after a successful file upload to a Discord channel."""
+
+    message_id: int = Field(..., description="ID of the Discord message containing the attachment")
+    attachment_url: str = Field(..., description="CDN URL of the uploaded attachment")
+    filename: str = Field(..., description="Filename of the uploaded attachment")
+    size: int = Field(..., description="Size of the uploaded attachment in bytes")
+
+
+class FileUploadResponse(BaseResponse):
+    """Response model for the file upload endpoint."""
+
+    data: FileUploadData = Field(..., description="Upload result data")

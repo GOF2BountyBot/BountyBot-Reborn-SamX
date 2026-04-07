@@ -5,8 +5,10 @@ This module provides REST endpoints for managing Discord channels
 with simplified URIs and consolidated operations.
 """
 
+import io
+
 import discord
-from fastapi import APIRouter, HTTPException, Query, Request, status
+from fastapi import APIRouter, Header, HTTPException, Query, Request, status
 from shared import bblogger
 from utils.discord_converters import ChannelConverter, MessageConverter, PermissionConverter
 from utils.discord_helpers import get_entity_or_404, handle_discord_exception, resolve_bot, validate_channel_type
@@ -22,7 +24,13 @@ from api.schemas.channel_schemas import (
     ThreadListResponse,
     ThreadResponse,
 )
-from api.schemas.message_schemas import MessageCreateRequest, MessageListResponse, MessageResponse
+from api.schemas.message_schemas import (
+    FileUploadResponse,
+    MessageCreateRequest,
+    MessageListResponse,
+    MessageResponse,
+    MessageUpdateRequest,
+)
 from api.schemas.permission_schemas import PermissionOverwriteListRequest, PermissionOverwriteListResponse
 
 flogger = bblogger.get_logger("gateway-channel-router")
@@ -228,14 +236,15 @@ async def create_channel_message(request: Request, channel_id: int, payload: Mes
             )
         # Convert the incoming embed-payload to a discord.Embed (EmbedConverter raises on invalid payload)
         embed = EmbedConverter.payload_to_embed(payload.content)
-        # Send the message (discord.py may raise; also handle older/newer signature differences if needed)
+        text_content = payload.text_content
+        # Send the message with optional text content (e.g. role mentions)
         try:
-            message = await channel.send(embed=embed)
+            message = await channel.send(content=text_content, embed=embed)
         except TypeError:
             # fallback if discord.py variant doesn't accept embed arg on send
-            message = await channel.send()
+            message = await channel.send(content=text_content)
             if embed:
-                await message.reply(embed=embed)  # or send as follow-up; adjust per your bot library version
+                await message.reply(embed=embed)
         # Build a canonical Message-shaped dict (fields must match api.schemas.message_schemas.Message)
         # Prefer the request payload's content as the authoritative embed payload we've converted from.
         try:
@@ -265,6 +274,89 @@ async def create_channel_message(request: Request, channel_id: int, payload: Mes
     except Exception as exc:  # pylint: disable=broad-exception-caught
         flogger.error(f"Unexpected error in create_channel_message: {exc}")
         await handle_discord_exception("create channel message", exc)
+
+
+@router.put(
+    "/channels/{channel_id}/messages/{message_id}",
+    response_model=MessageResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Edit Channel Message",
+    description="Edit an existing message in a channel (must be sent by the bot)",
+)
+async def edit_channel_message(
+    request: Request, channel_id: int, message_id: int, payload: MessageUpdateRequest
+) -> MessageResponse:
+    """Edit a message directly using the known channel ID (avoids global channel scan)."""
+    flogger.info(f"edit_channel_message called for channel_id={channel_id} message_id={message_id}")
+    try:
+        bot = await resolve_bot(request)
+        channel = await get_entity_or_404(bot.get_channel, bot.fetch_channel, channel_id, "Channel")
+
+        if not hasattr(channel, "fetch_message"):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST, detail=f"Channel {channel_id} cannot contain messages"
+            )
+
+        try:
+            message = await channel.fetch_message(message_id)
+        except discord.NotFound as exc:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND, detail=f"Message {message_id} not found in channel {channel_id}"
+            ) from exc
+
+        if not getattr(message, "author", None) or message.author.id != getattr(bot.user, "id", None):
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Can only edit messages sent by the bot")
+
+        embed = EmbedConverter.payload_to_embed(payload.content)
+        await message.edit(embed=embed)
+
+        updated_data = MessageConverter.message_to_payload(message)
+        flogger.info(f"Successfully edited message {message_id} in channel {channel_id}")
+        return MessageResponse(status="updated", data=updated_data)
+    except HTTPException:
+        raise
+    except Exception as exc:  # pylint: disable=broad-exception-caught
+        flogger.error(f"Unexpected error in edit_channel_message: {exc}")
+        await handle_discord_exception("edit channel message", exc)
+
+
+@router.delete(
+    "/channels/{channel_id}/messages/{message_id}",
+    response_model=DeleteResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Delete Channel Message",
+    description="Delete an existing message in a channel using the known channel ID (avoids global channel scan)",
+)
+async def delete_channel_message(request: Request, channel_id: int, message_id: int) -> DeleteResponse:
+    """Delete a message directly using the known channel ID (avoids global channel scan)."""
+    flogger.info(f"delete_channel_message called for channel_id={channel_id} message_id={message_id}")
+    try:
+        bot = await resolve_bot(request)
+        channel = await get_entity_or_404(bot.get_channel, bot.fetch_channel, channel_id, "Channel")
+
+        if not hasattr(channel, "fetch_message"):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST, detail=f"Channel {channel_id} cannot contain messages"
+            )
+
+        try:
+            message = await channel.fetch_message(message_id)
+        except discord.NotFound:
+            # Message already deleted — treat as success
+            msg = f"Message {message_id} not found in channel {channel_id} (already deleted)"
+            flogger.info(msg)
+            return DeleteResponse(status="deleted", deleted=True, message=msg)
+
+        await message.delete()
+
+        msg = f"Message {message_id} deleted from channel {channel_id}"
+        flogger.info(msg)
+        return DeleteResponse(status="deleted", deleted=True, message=msg)
+    except HTTPException:
+        raise
+    except Exception as exc:  # pylint: disable=broad-exception-caught
+        flogger.error(f"Unexpected error in delete_channel_message: {exc}")
+        await handle_discord_exception("delete channel message", exc)
 
 
 @router.get(
@@ -488,3 +580,64 @@ async def move_channel_to_category(request: Request, channel_id: int, category_i
     except Exception as exc:  # pylint: disable=broad-exception-caught
         flogger.error(f"Unexpected error in move_channel_to_category: {exc}")
         await handle_discord_exception("move channel to category", exc)
+
+
+@router.post(
+    "/channels/{channel_id}/upload",
+    response_model=FileUploadResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Upload File to Channel",
+    description="Upload a file attachment to a channel and return the CDN URL",
+)
+async def upload_file_to_channel(
+    request: Request,
+    channel_id: int,
+    x_filename: str = Header("upload.png", alias="X-Filename"),
+) -> FileUploadResponse:
+    """Upload a file to a channel and return the attachment CDN URL."""
+    flogger.info(f"upload_file_to_channel called for channel_id={channel_id}")
+    try:
+        bot = await resolve_bot(request)
+        channel = await get_entity_or_404(bot.get_channel, bot.fetch_channel, channel_id, "Channel")
+
+        if not hasattr(channel, "send"):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Channel {channel_id} cannot receive messages",
+            )
+
+        # Read the raw body bytes
+        body = await request.body()
+        if not body:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Request body is empty — expected file content",
+            )
+
+        # Send as Discord file attachment
+        file = discord.File(io.BytesIO(body), filename=x_filename)
+        message = await channel.send(file=file)
+
+        # Extract the CDN URL from the attachment
+        if not message.attachments:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Message sent but no attachments returned",
+            )
+
+        attachment = message.attachments[0]
+        result = {
+            "message_id": message.id,
+            "attachment_url": attachment.url,
+            "filename": attachment.filename,
+            "size": attachment.size,
+        }
+
+        flogger.info(f"Uploaded file to channel {channel_id}: message_id={message.id}, url={attachment.url}")
+        return FileUploadResponse(status="created", data=result)
+
+    except HTTPException:
+        raise
+    except Exception as exc:  # pylint: disable=broad-exception-caught
+        flogger.error(f"Unexpected error in upload_file_to_channel for channel {channel_id}: {exc}")
+        await handle_discord_exception("upload file to channel", exc)

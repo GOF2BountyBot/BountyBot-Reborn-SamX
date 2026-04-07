@@ -175,7 +175,7 @@ class BountyCog(commands.Cog):
                         if new_role and new_role not in interaction.user.roles:
                             # Remove old tier roles, add new one
                             old_tier_roles = []
-                            for tier_key in ("bronze_role_id", "silver_role_id", "gold_role_id"):
+                            for tier_key in ("bronze_role_id", "silver_role_id", "gold_role_id", "platinum_role_id"):
                                 rid = config.get(tier_key)
                                 if rid:
                                     old_role = guild.get_role(rid)
@@ -479,10 +479,18 @@ class BountyCog(commands.Cog):
 
             ship_name = criminal_ship.get("ship_name", "Unknown Ship")
             ship_emoji = criminal_ship.get("ship_emoji") or ""
-            ship_armour = criminal_ship.get("ship_armour", 0)
             weapons = criminal_ship.get("weapons", [])
             modules = criminal_ship.get("modules", [])
             turrets = criminal_ship.get("turrets", [])
+
+            # Use computed HP fields when available, fall back to legacy ship_armour
+            armor_hp = criminal_ship.get("armor_hp")
+            shield_hp = criminal_ship.get("shield_hp", 0)
+            total_hp = criminal_ship.get("total_hp")
+            if armor_hp is None:
+                armor_hp = criminal_ship.get("ship_armour", 0)
+                shield_hp = 0
+                total_hp = armor_hp
 
             total_dps = sum(w.get("dps", 0) for w in weapons) + sum(t.get("dps", 0) for t in turrets)
             rounded_dps = round(total_dps, 1)
@@ -490,15 +498,19 @@ class BountyCog(commands.Cog):
 
             ship_display = f"{ship_emoji} {ship_name}" if ship_emoji else ship_name
 
+            # Build HP display string
+            if shield_hp and shield_hp > 0:
+                hp_display = f"Armor HP: **{armor_hp}** | Shield HP: **{shield_hp}** | Total HP: **{total_hp}**"
+            else:
+                hp_display = f"HP: **{armor_hp}**"
+
             embed = discord.Embed(
                 title=f"🚀 Loadout — {criminal_name}",
                 description=f"Bounty #{bounty_id} | Tech Level: **T{tech_level}**",
                 color=discord.Color.dark_red(),
             )
 
-            embed.add_field(
-                name="🛸 Ship", value=f"{ship_display}\nHP: **{ship_armour}** | DPS: **{dps_str}**", inline=False
-            )
+            embed.add_field(name="🛸 Ship", value=f"{ship_display}\n{hp_display} | DPS: **{dps_str}**", inline=False)
 
             if weapons:
                 weapons_str = "\n".join(self._format_loadout_item(w) for w in weapons)

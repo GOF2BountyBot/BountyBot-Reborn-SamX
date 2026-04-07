@@ -117,36 +117,55 @@ class ShopCog(commands.Cog):
             )
 
             # Group items by type
-            items_by_type = {}
+            items_by_type: dict[str, list] = {}
             for item in items:
                 item_type_key = item["item_type"]
                 if item_type_key not in items_by_type:
                     items_by_type[item_type_key] = []
                 items_by_type[item_type_key].append(item)
 
-            # Display items
-            for item_type_key, type_items in items_by_type.items():
+            # Display in order: ships > weapons > turrets > modules
+            type_order = ["ship", "primary_weapon", "secondary_weapon", "turret_weapon", "module"]
+            # Add any types not in the predefined order
+            for key in items_by_type:
+                if key not in type_order:
+                    type_order.append(key)
+
+            type_labels = {
+                "ship": "Ships",
+                "primary_weapon": "Primary Weapons",
+                "secondary_weapon": "Secondary Weapons",
+                "turret_weapon": "Turret Weapons",
+                "module": "Modules",
+            }
+
+            for item_type_key in type_order:
+                type_items = items_by_type.get(item_type_key)
+                if not type_items:
+                    continue
+
                 # Sort by price
                 type_items.sort(key=lambda x: x["price"])
 
                 items_text = ""
                 for item in type_items[:10]:  # Limit to prevent embed size issues
-                    tech_level = f"T{item['tech_level']}" if item["tech_level"] else ""
+                    tech_level = f"T{item['tech_level']}" if item.get("tech_level") else ""
                     quantity = f"x{item['quantity']}" if item["quantity"] > 1 else ""
+                    emoji = item.get("emoji") or ""
 
                     price_text = f"{item['price']:,} credits"
                     if player["credits"] < item["price"]:
                         price_text = f"~~{price_text}~~ 💸"
 
-                    items_text += (
-                        f"**{item['item_name']}** {tech_level} {quantity}\n    💰 {price_text} | ID: {item['id']}\n"
-                    )
+                    name_display = f"{emoji} **{item['item_name']}**" if emoji else f"**{item['item_name']}**"
+                    items_text += f"{name_display} {tech_level} {quantity}\n    {price_text} | ID: {item['id']}\n"
 
                 if len(type_items) > 10:
                     items_text += f"... and {len(type_items) - 10} more items\n"
 
+                label = type_labels.get(item_type_key, f"{item_type_key.title()}s")
                 embed.add_field(
-                    name=f"{item_type_key.title()}s ({len(type_items)})",
+                    name=f"{label} ({len(type_items)})",
                     value=items_text or "None available",
                     inline=False,
                 )
@@ -162,8 +181,35 @@ class ShopCog(commands.Cog):
             flogger.error(f"Error in /shop: {e}")
             await interaction.followup.send("⚠️ An error occurred while fetching shop items.", ephemeral=True)
 
+    async def buy_item_autocomplete(
+        self, interaction: discord.Interaction, current: str
+    ) -> list[app_commands.Choice[int]]:
+        """Live autocomplete for shop items the player can buy."""
+        try:
+            # Get player data to determine accessible tier
+            player = await self._get_player_data(interaction.user.id, interaction.guild_id)
+            if not player:
+                return []
+            player_tier_idx = self._valid_tiers.index(player["tier"])
+            choices: list[app_commands.Choice[int]] = []
+            for tier_idx in range(player_tier_idx + 1):
+                tier = self._valid_tiers[tier_idx]
+                resp = await self.http_client.get(
+                    f"{api_base}/shops/guild/{interaction.guild_id}/tier/{tier}", timeout=5
+                )
+                if resp.status_code != 200:
+                    continue
+                for item in resp.json():
+                    label = f"{item['item_name']} ({item['price']:,}cr) [{tier}]"
+                    if current.lower() in label.lower():
+                        choices.append(app_commands.Choice(name=label[:100], value=item["id"]))
+            return choices[:25]
+        except Exception:  # pylint: disable=broad-exception-caught
+            return []
+
     @app_commands.command(name="buy", description="Purchase an item from the shop")
-    @app_commands.describe(item_id="ID of the shop item to purchase", quantity="Quantity to purchase (default: 1)")
+    @app_commands.describe(item_id="Select an item to purchase", quantity="Quantity to purchase (default: 1)")
+    @app_commands.autocomplete(item_id=buy_item_autocomplete)
     async def buy(self, interaction: discord.Interaction, item_id: int, quantity: int = 1):
         """Purchase item from shop."""
         await interaction.response.defer(thinking=True)
@@ -254,6 +300,29 @@ class ShopCog(commands.Cog):
             flogger.error(f"Error in /buy: {e}")
             await interaction.followup.send("⚠️ An error occurred while processing purchase.", ephemeral=True)
 
+    async def sell_item_autocomplete(
+        self, interaction: discord.Interaction, current: str
+    ) -> list[app_commands.Choice[str]]:
+        """Live autocomplete for inventory items the player can sell."""
+        try:
+            player = await self._get_player_data(interaction.user.id, interaction.guild_id)
+            if not player:
+                return []
+            resp = await self.http_client.get(f"{api_base}/inventory/player/{player['id']}", timeout=5)
+            if resp.status_code != 200:
+                return []
+            items = resp.json()
+            choices: list[app_commands.Choice[str]] = []
+            for item in items:
+                name = item.get("item_name", "")
+                qty = item.get("quantity", 1)
+                label = f"{name} x{qty}" if qty > 1 else name
+                if current.lower() in label.lower():
+                    choices.append(app_commands.Choice(name=label[:100], value=name))
+            return choices[:25]
+        except Exception:  # pylint: disable=broad-exception-caught
+            return []
+
     @app_commands.command(name="sell", description="Sell an item back to the shop")
     @app_commands.describe(
         item_name="Name of the item to sell",
@@ -261,7 +330,9 @@ class ShopCog(commands.Cog):
         quantity="Quantity to sell (default: 1)",
         target_tier="Shop tier to sell to (default: Bronze)",
     )
-    @app_commands.autocomplete(item_type=item_type_autocomplete, target_tier=tier_autocomplete)
+    @app_commands.autocomplete(
+        item_name=sell_item_autocomplete, item_type=item_type_autocomplete, target_tier=tier_autocomplete
+    )
     async def sell(
         self,
         interaction: discord.Interaction,

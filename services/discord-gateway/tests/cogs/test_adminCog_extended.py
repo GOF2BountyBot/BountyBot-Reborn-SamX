@@ -669,7 +669,7 @@ class TestAdminSetupExtended:
         }
 
         _channel_ids = {"category_id": 111, "bounty_channel_id": 222, "shop_channel_id": 333, "general_channel_id": 444}
-        with patch("utils.guild_setup.ensure_bountybot_infrastructure", new=AsyncMock(return_value=_channel_ids)):
+        with patch("cogs.adminCog.ensure_bountybot_infrastructure", new=AsyncMock(return_value=_channel_ids)):
             mock_admin_cog.http_client.post = AsyncMock(side_effect=[role_create_resp, init_resp])
 
             asyncio.run(mock_admin_cog.admin_setup.callback(mock_admin_cog, interaction, None, 0))
@@ -693,7 +693,7 @@ class TestAdminSetupExtended:
         http_error = httpx.HTTPStatusError("Conflict", request=mock_request, response=MagicMock(status_code=409))
         # Patch ensure_bountybot_infrastructure so it doesn't require a real Guild mock
         _channel_ids = {"category_id": 111, "bounty_channel_id": 222, "shop_channel_id": 333, "general_channel_id": 444}
-        with patch("utils.guild_setup.ensure_bountybot_infrastructure", new=AsyncMock(return_value=_channel_ids)):
+        with patch("cogs.adminCog.ensure_bountybot_infrastructure", new=AsyncMock(return_value=_channel_ids)):
             mock_admin_cog.http_client.post = AsyncMock(side_effect=http_error)
 
             asyncio.run(mock_admin_cog.admin_setup.callback(mock_admin_cog, interaction, role, 0))

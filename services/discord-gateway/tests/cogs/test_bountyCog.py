@@ -160,11 +160,27 @@ def _make_loadout_response(
             "ship_name": "Viper MkII",
             "ship_emoji": "",
             "ship_armour": 150,
+            "armor_hp": 310,
+            "shield_hp": 380,
+            "total_hp": 690,
             "weapons": [
                 {"name": "Pulse Laser", "emoji": "", "dps": 10},
                 {"name": "Beam Laser", "emoji": "", "dps": 15},
             ],
-            "modules": [{"name": "Shield Booster", "emoji": ""}],
+            "modules": [
+                {
+                    "name": "D'iol Armour",
+                    "emoji": "",
+                    "type": "ArmourModule",
+                    "extra_atts": {"armour": 160},
+                },
+                {
+                    "name": "Particle Shield",
+                    "emoji": "",
+                    "type": "ShieldModule",
+                    "extra_atts": {"shield": 380},
+                },
+            ],
             "turrets": [],
         }
     return {
@@ -687,6 +703,81 @@ class TestCriminalLoadoutCommand:
         call_kwargs = interaction.followup.send.call_args
         assert call_kwargs[1].get("ephemeral", False)
         assert "error occurred" in call_kwargs[0][0].lower()
+
+    def test_criminal_loadout_displays_armor_and_shield_hp(self, mock_bounty_cog, make_mock_response):
+        """/criminal-loadout should show Armor HP, Shield HP, and Total HP when shield present."""
+        interaction = _create_mock_interaction()
+        criminal_ship = {
+            "ship_name": "Viper MkII",
+            "ship_emoji": "",
+            "ship_armour": 150,
+            "armor_hp": 310,
+            "shield_hp": 380,
+            "total_hp": 690,
+            "weapons": [],
+            "modules": [],
+            "turrets": [],
+        }
+        resp = make_mock_response(_make_loadout_response(criminal_ship=criminal_ship))
+        mock_bounty_cog.http_client.get = AsyncMock(return_value=resp)
+
+        asyncio.run(mock_bounty_cog.criminal_loadout.callback(mock_bounty_cog, interaction, "1"))
+
+        interaction.followup.send.assert_awaited_once()
+        embed = interaction.followup.send.call_args[1]["embed"]
+        # Ship field should contain Armor HP, Shield HP, Total HP
+        ship_field = next(f for f in embed.fields if "Ship" in f.name)
+        assert "310" in ship_field.value  # armor_hp
+        assert "380" in ship_field.value  # shield_hp
+        assert "690" in ship_field.value  # total_hp
+
+    def test_criminal_loadout_displays_base_hp_when_no_shield(self, mock_bounty_cog, make_mock_response):
+        """/criminal-loadout should show just HP when shield_hp is 0."""
+        interaction = _create_mock_interaction()
+        criminal_ship = {
+            "ship_name": "Betty",
+            "ship_emoji": "",
+            "ship_armour": 120,
+            "armor_hp": 280,
+            "shield_hp": 0,
+            "total_hp": 280,
+            "weapons": [],
+            "modules": [],
+            "turrets": [],
+        }
+        resp = make_mock_response(_make_loadout_response(criminal_ship=criminal_ship))
+        mock_bounty_cog.http_client.get = AsyncMock(return_value=resp)
+
+        asyncio.run(mock_bounty_cog.criminal_loadout.callback(mock_bounty_cog, interaction, "1"))
+
+        interaction.followup.send.assert_awaited_once()
+        embed = interaction.followup.send.call_args[1]["embed"]
+        ship_field = next(f for f in embed.fields if "Ship" in f.name)
+        assert "280" in ship_field.value
+        # Should NOT say "Shield HP" or "Total HP" when shield is 0
+        assert "Shield HP" not in ship_field.value
+
+    def test_criminal_loadout_falls_back_to_ship_armour_if_no_hp_fields(self, mock_bounty_cog, make_mock_response):
+        """/criminal-loadout with legacy loadout (no armor_hp) falls back to ship_armour."""
+        interaction = _create_mock_interaction()
+        criminal_ship = {
+            "ship_name": "OldShip",
+            "ship_emoji": "",
+            "ship_armour": 250,
+            # No armor_hp / shield_hp / total_hp keys
+            "weapons": [],
+            "modules": [],
+            "turrets": [],
+        }
+        resp = make_mock_response(_make_loadout_response(criminal_ship=criminal_ship))
+        mock_bounty_cog.http_client.get = AsyncMock(return_value=resp)
+
+        asyncio.run(mock_bounty_cog.criminal_loadout.callback(mock_bounty_cog, interaction, "1"))
+
+        interaction.followup.send.assert_awaited_once()
+        embed = interaction.followup.send.call_args[1]["embed"]
+        ship_field = next(f for f in embed.fields if "Ship" in f.name)
+        assert "250" in ship_field.value
 
 
 # ---------------------------------------------------------------------------

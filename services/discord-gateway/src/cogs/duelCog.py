@@ -5,6 +5,7 @@ import httpx
 from discord import app_commands
 from discord.ext import commands
 from shared import bblogger
+from utils.timestamp_utils import iso_to_discord_ts
 
 # Set up logger
 flogger = bblogger.get_logger("discord-gateway-DuelCog")
@@ -134,12 +135,14 @@ class DuelCog(commands.Cog):
             ),
             color=discord.Color.orange(),
         )
+        expires_at = data.get("expires_at")
+        if expires_at:
+            expiry_str = f"Challenge expires {iso_to_discord_ts(expires_at, 'R')}."
+        else:
+            expiry_str = "Challenge expires in **24 hours**."
         embed.add_field(
             name="📋 Instructions",
-            value=(
-                f"{target.mention}: Use `/duel-accept` to accept or `/duel-reject` to decline.\n"
-                "Challenge expires in **24 hours**."
-            ),
+            value=(f"{target.mention}: Use `/duel-accept` to accept or `/duel-reject` to decline.\n{expiry_str}"),
             inline=False,
         )
         return embed

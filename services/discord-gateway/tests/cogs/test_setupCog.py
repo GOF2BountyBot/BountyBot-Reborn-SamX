@@ -141,139 +141,97 @@ def mock_setup_cog(mock_bot):
 class TestOnGuildJoin:
     """Tests for on_guild_join event listener."""
 
-    def test_on_guild_join_success(self, mock_setup_cog):
-        """on_guild_join should initialize guild, create channels, and send welcome."""
-        guild = _make_mock_guild()
-
-        # Mock the bot's general channel to receive welcome message
+    def test_on_guild_join_sends_welcome_to_system_channel(self, mock_setup_cog):
+        """on_guild_join should send a welcome message to the system channel."""
         import discord
 
-        general_channel = MagicMock(spec=discord.TextChannel)
-        general_channel.name = "general"
-        general_channel.id = 444
-        general_channel.send = AsyncMock()
-        general_channel.permissions_for = MagicMock(return_value=MagicMock(send_messages=True))
+        guild = _make_mock_guild()
 
-        # The category that gets created — channels list includes general so it is
-        # found by ensure_bountybot_infrastructure (no creation needed for general).
-        mock_cat = _make_mock_category()
-        mock_cat.channels = [general_channel]
-        guild.create_category = AsyncMock(return_value=mock_cat)
-
-        # guild.get_channel returns the general channel (used by new welcome logic)
-        guild.get_channel = MagicMock(return_value=general_channel)
-
-        # API response: success
-        api_resp = MagicMock()
-        api_resp.status_code = 200
-        api_resp.raise_for_status = MagicMock()
-        mock_setup_cog.http_client.post = AsyncMock(return_value=api_resp)
+        system_channel = MagicMock(spec=discord.TextChannel)
+        system_channel.name = "general"
+        system_channel.send = AsyncMock()
+        guild.system_channel = system_channel
 
         asyncio.run(mock_setup_cog.on_guild_join(guild))
 
-        # API was called
-        mock_setup_cog.http_client.post.assert_called_once()
-        call_url = mock_setup_cog.http_client.post.call_args[0][0]
-        assert "admin/guilds/initialize" in call_url
-
-        # Category was created
-        guild.create_category.assert_called_once()
-
-        # Welcome message was sent to the general channel
-        general_channel.send.assert_called_once()
-        embed_arg = general_channel.send.call_args[1]["embed"]
+        # Welcome message was sent
+        system_channel.send.assert_called_once()
+        embed_arg = system_channel.send.call_args[1]["embed"]
         assert embed_arg is not None
+        # Should mention /admin_setup
+        assert "admin_setup" in embed_arg.description
 
-    def test_on_guild_join_api_failure_graceful(self, mock_setup_cog):
-        """on_guild_join should continue even if the API call fails."""
-        guild = _make_mock_guild()
-
+    def test_on_guild_join_falls_back_to_writable_channel(self, mock_setup_cog):
+        """on_guild_join should fall back to first writable text channel if no system channel."""
         import discord
 
-        general_channel = MagicMock(spec=discord.TextChannel)
-        general_channel.name = "general"
-        general_channel.id = 444
-        general_channel.send = AsyncMock()
-        general_channel.permissions_for = MagicMock(return_value=MagicMock(send_messages=True))
+        guild = _make_mock_guild()
+        guild.system_channel = None
 
-        mock_cat = _make_mock_category()
-        mock_cat.channels = [general_channel]
-        guild.create_category = AsyncMock(return_value=mock_cat)
+        writable_channel = MagicMock(spec=discord.TextChannel)
+        writable_channel.name = "chat"
+        writable_channel.send = AsyncMock()
+        writable_channel.permissions_for = MagicMock(return_value=MagicMock(send_messages=True))
+        guild.text_channels = [writable_channel]
 
-        # guild.get_channel returns the general channel (used by new welcome logic)
-        guild.get_channel = MagicMock(return_value=general_channel)
-
-        # API call fails
-        mock_setup_cog.http_client.post = AsyncMock(side_effect=Exception("Connection refused"))
-
-        # Should NOT raise — failure is handled gracefully
         asyncio.run(mock_setup_cog.on_guild_join(guild))
 
-        # Channel creation still proceeds even when API fails
-        guild.create_category.assert_called_once()
-        # Welcome message should still be sent (channels were set up before API call)
-        general_channel.send.assert_called_once()
+        writable_channel.send.assert_called_once()
 
-    def test_on_guild_join_permission_error_graceful(self, mock_setup_cog):
-        """on_guild_join should handle Discord permission errors when creating channels."""
+    def test_on_guild_join_no_channel_available(self, mock_setup_cog):
+        """on_guild_join should not raise if no writable channel is found."""
         guild = _make_mock_guild()
-
-        import discord
-
-        # Category creation raises Forbidden
-        class FakeResponse:
-            status = 403
-            reason = "Forbidden"
-
-        guild.create_category = AsyncMock(side_effect=discord.Forbidden(FakeResponse(), "Missing Permissions"))
         guild.system_channel = None
         guild.text_channels = []
-
-        # API success
-        api_resp = MagicMock()
-        api_resp.status_code = 200
-        api_resp.raise_for_status = MagicMock()
-        mock_setup_cog.http_client.post = AsyncMock(return_value=api_resp)
 
         # Should NOT raise
         asyncio.run(mock_setup_cog.on_guild_join(guild))
 
-        # API was still called
-        mock_setup_cog.http_client.post.assert_called_once()
-
-    def test_on_guild_join_existing_category_skipped(self, mock_setup_cog):
-        """on_guild_join should reuse existing BountyBot category instead of creating a new one."""
+    def test_on_guild_join_permission_error_graceful(self, mock_setup_cog):
+        """on_guild_join should handle Discord Forbidden errors gracefully."""
         import discord
 
         guild = _make_mock_guild()
 
-        general_channel = MagicMock(spec=discord.TextChannel)
-        general_channel.name = "general"
-        general_channel.id = 444
-        general_channel.send = AsyncMock()
-        general_channel.permissions_for = MagicMock(return_value=MagicMock(send_messages=True))
+        system_channel = MagicMock(spec=discord.TextChannel)
+        system_channel.name = "general"
+        system_channel.send = AsyncMock(side_effect=discord.Forbidden(MagicMock(status=403), "Forbidden"))
+        guild.system_channel = system_channel
 
-        # The "BountyBot" category already exists
-        existing_cat = MagicMock(spec=discord.CategoryChannel)
-        existing_cat.name = "BountyBot"
-        existing_cat.channels = [general_channel]
-        guild.categories = [existing_cat]
+        # Should NOT raise
+        asyncio.run(mock_setup_cog.on_guild_join(guild))
 
-        # guild.get_channel returns the general channel (used by new welcome logic)
-        guild.get_channel = MagicMock(return_value=general_channel)
+    def test_on_guild_join_does_not_create_infrastructure(self, mock_setup_cog):
+        """on_guild_join should NOT create channels, categories, or roles."""
+        import discord
 
-        # API success
-        api_resp = MagicMock()
-        api_resp.status_code = 200
-        api_resp.raise_for_status = MagicMock()
-        mock_setup_cog.http_client.post = AsyncMock(return_value=api_resp)
+        guild = _make_mock_guild()
+
+        system_channel = MagicMock(spec=discord.TextChannel)
+        system_channel.name = "general"
+        system_channel.send = AsyncMock()
+        guild.system_channel = system_channel
 
         asyncio.run(mock_setup_cog.on_guild_join(guild))
 
-        # create_category should NOT have been called
+        # No infrastructure creation — only /admin_setup should create channels/roles
         guild.create_category.assert_not_called()
-        # Welcome message was still sent
-        general_channel.send.assert_called_once()
+        guild.create_text_channel.assert_not_called()
+        guild.fetch_roles.assert_not_called()
+
+    def test_on_guild_join_generic_error_graceful(self, mock_setup_cog):
+        """on_guild_join should handle unexpected errors gracefully."""
+        import discord
+
+        guild = _make_mock_guild()
+
+        system_channel = MagicMock(spec=discord.TextChannel)
+        system_channel.name = "general"
+        system_channel.send = AsyncMock(side_effect=RuntimeError("unexpected"))
+        guild.system_channel = system_channel
+
+        # Should NOT raise
+        asyncio.run(mock_setup_cog.on_guild_join(guild))
 
 
 class TestOnGuildRemove:

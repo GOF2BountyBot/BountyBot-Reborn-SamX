@@ -1951,5 +1951,73 @@ class TestMoveChannelCategoryIntoCategory:
         assert "Cannot move category" in resp.json()["detail"]
 
 
+# ---------------------------------------------------------------------------
+# DELETE /channels/{channel_id}/messages/{message_id}
+# ---------------------------------------------------------------------------
+
+
+class TestDeleteChannelMessage:
+    """Tests for DELETE /channels/{channel_id}/messages/{message_id} endpoint."""
+
+    def test_delete_channel_message_success(self):
+        """DELETE message in channel should return 200 with deleted=True."""
+        text_ch = create_mock_text_channel(1234567890)
+        mock_msg = MagicMock()
+        mock_msg.id = 9876543210
+        mock_msg.delete = AsyncMock()
+        text_ch.fetch_message = AsyncMock(return_value=mock_msg)
+
+        bot = DiscordMockUtils.create_mock_bot(user_id=123456789, username="TestBot")
+        bot.get_channel = lambda cid: text_ch if cid == 1234567890 else None
+        bot.fetch_channel = AsyncMock(side_effect=lambda cid: text_ch if cid == 1234567890 else None)
+
+        gen = _build_app(bot)
+        app, _mocks = next(gen)
+        client = TestClient(app)
+
+        resp = client.delete("/api/v1/channels/1234567890/messages/9876543210")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["status"] == "deleted"
+        assert data["deleted"] is True
+        mock_msg.delete.assert_awaited_once()
+
+    def test_delete_channel_message_not_found_returns_200(self):
+        """DELETE message that doesn't exist (404 from Discord) should still return 200 (already deleted)."""
+        from tests.mocks.discord_mock_utils import create_discord_not_found
+
+        text_ch = create_mock_text_channel(1234567890)
+        # fetch_message raises real discord.NotFound so it's caught by except discord.NotFound
+        text_ch.fetch_message = AsyncMock(side_effect=create_discord_not_found("Not found"))
+
+        bot = DiscordMockUtils.create_mock_bot(user_id=123456789, username="TestBot")
+        bot.get_channel = lambda cid: text_ch if cid == 1234567890 else None
+        bot.fetch_channel = AsyncMock(side_effect=lambda cid: text_ch if cid == 1234567890 else None)
+
+        gen = _build_app(bot)
+        app, _mocks = next(gen)
+        client = TestClient(app)
+
+        resp = client.delete("/api/v1/channels/1234567890/messages/9876543210")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["status"] == "deleted"
+        assert data["deleted"] is True
+        assert "already deleted" in data["message"].lower()
+
+    def test_delete_channel_message_channel_not_found_returns_404(self):
+        """DELETE message in non-existent channel should return 404."""
+        bot = DiscordMockUtils.create_mock_bot(user_id=123456789, username="TestBot")
+        bot.get_channel = lambda cid: None
+        bot.fetch_channel = AsyncMock(side_effect=lambda cid: None)
+
+        gen = _build_app(bot)
+        app, _mocks = next(gen)
+        client = TestClient(app)
+
+        resp = client.delete("/api/v1/channels/9999999999/messages/9876543210")
+        assert resp.status_code == 404
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

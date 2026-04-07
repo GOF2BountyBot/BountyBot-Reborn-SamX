@@ -5,6 +5,7 @@ import httpx
 from discord import app_commands
 from discord.ext import commands
 from shared import bblogger
+from utils.timestamp_utils import iso_to_discord_ts
 
 # Set up logger
 flogger = bblogger.get_logger("discord-gateway-PlayerCog")
@@ -77,10 +78,72 @@ class PlayerCog(commands.Cog):
 
             # Set thumbnail based on tier
             embed.set_thumbnail(url=interaction.user.display_avatar.url)
-            embed.set_footer(text=f"Player ID: {player_data['id']} | Joined: {player_data['created_at'][:10]}")
+            embed.add_field(name="Joined", value=iso_to_discord_ts(player_data["created_at"], "D"), inline=True)
+            embed.set_footer(text=f"Player ID: {player_data['id']}")
+
+            # Fetch promotion status (non-fatal enhancement)
+            try:
+                promo_resp = await self.http_client.get(
+                    f"{api_base}/players/{player_data['id']}/promotion-status", timeout=5
+                )
+                promo_resp.raise_for_status()
+                promo_status = promo_resp.json()
+
+                if promo_status.get("can_promote") and promo_status.get("next_tier"):
+                    embed.add_field(
+                        name="Promotion",
+                        value=f"⬆️ **Eligible for {promo_status['next_tier']}!** Use `/promote`",
+                        inline=False,
+                    )
+                elif promo_status.get("next_tier"):
+                    threshold = promo_status.get("xp_threshold_for_next", 0)
+                    embed.add_field(
+                        name="Next Tier",
+                        value=f"{promo_status['next_tier']} ({threshold:,} XP needed)",
+                        inline=False,
+                    )
+                else:
+                    embed.add_field(name="Tier", value="🏆 Maximum Tier", inline=False)
+            except Exception:  # pylint: disable=broad-exception-caught
+                pass  # Promotion status is non-fatal
 
             await interaction.followup.send(embed=embed)
             flogger.debug(f"/profile success: guild={interaction.guild_id}, user={interaction.user.id}")
+
+            # Attempt to assign the Bounty Hunter role + tier role (non-fatal)
+            try:
+                config_resp = await self.http_client.get(f"{api_base}/config/guild/{interaction.guild_id}", timeout=5)
+                config_resp.raise_for_status()
+                config = config_resp.json()
+                guild = interaction.guild
+                roles_to_add: list[discord.Role] = []
+
+                # General Bounty Hunter role
+                bh_role_id = config.get("bounty_hunter_role_id")
+                if bh_role_id:
+                    role = guild.get_role(bh_role_id)
+                    if role and role not in interaction.user.roles:
+                        roles_to_add.append(role)
+
+                # Tier-specific role based on the player's current tier
+                player_tier = (player_data.get("tier") or "Bronze").lower()
+                tier_role_key = f"{player_tier}_role_id"
+                tier_role_id = config.get(tier_role_key)
+                if tier_role_id:
+                    tier_role = guild.get_role(tier_role_id)
+                    if tier_role and tier_role not in interaction.user.roles:
+                        roles_to_add.append(tier_role)
+
+                if roles_to_add:
+                    await interaction.user.add_roles(*roles_to_add, reason="BountyBot player registration")
+                    role_names = ", ".join(r.name for r in roles_to_add)
+                    flogger.info(
+                        f"Assigned roles [{role_names}] to user {interaction.user.id} in guild {interaction.guild_id}"
+                    )
+            except Exception as e:  # pylint: disable=broad-exception-caught
+                flogger.warning(
+                    f"Failed to assign roles: guild={interaction.guild_id}, user={interaction.user.id}, error={e}"
+                )
 
         except httpx.HTTPStatusError as e:
             flogger.error(
@@ -250,6 +313,250 @@ class PlayerCog(commands.Cog):
             flogger.error(f"/prestige error: guild={interaction.guild_id}, user={interaction.user.id}, error={e}")
             await interaction.followup.send("⚠️ An error occurred.", ephemeral=True)
 
+    @app_commands.command(name="promote", description="Promote to the next tier")
+    async def promote(self, interaction: discord.Interaction):
+        """Promote player to the next tier if eligible."""
+        flogger.info(f"/promote: guild={interaction.guild_id}, user={interaction.user.id}")
+        await interaction.response.defer(thinking=True)
+
+        try:
+            # Resolve player (create if not exists)
+            user_data = {
+                "discord_id": interaction.user.id,
+                "guild_id": interaction.guild_id,
+                "discord_username": str(interaction.user),
+            }
+
+            resp = await self.http_client.post(f"{api_base}/players/", json=user_data, timeout=10)
+            resp.raise_for_status()
+            player_data = resp.json()
+
+            # Attempt promotion
+            promote_resp = await self.http_client.put(f"{api_base}/players/{player_data['id']}/promote", timeout=10)
+            promote_resp.raise_for_status()
+            promote_data = promote_resp.json()
+
+            new_tier = promote_data["new_tier"]
+            old_tier = promote_data["old_tier"]
+
+            embed = discord.Embed(
+                title="⬆️ Tier Promoted!",
+                description=f"You have advanced from **{old_tier}** to **{new_tier}**!",
+                color=self._get_tier_color(new_tier),
+            )
+            embed.add_field(name="New Tier", value=f"**{new_tier}**", inline=True)
+            embed.add_field(name="XP", value=f"{promote_data['xp']:,}", inline=True)
+
+            if promote_data.get("eligible_for_next") and promote_data.get("next_tier"):
+                embed.add_field(
+                    name="Next Promotion",
+                    value=f"⬆️ Eligible for **{promote_data['next_tier']}**! Use `/promote` again.",
+                    inline=False,
+                )
+            elif promote_data.get("next_tier"):
+                embed.add_field(
+                    name="Next Promotion",
+                    value=f"Keep earning XP to reach **{promote_data['next_tier']}**!",
+                    inline=False,
+                )
+            else:
+                embed.add_field(name="Next Promotion", value="🏆 Maximum tier reached! Use `/prestige`.", inline=False)
+
+            await interaction.followup.send(embed=embed)
+            flogger.info(
+                f"/promote success: guild={interaction.guild_id}, user={interaction.user.id}, {old_tier} -> {new_tier}"
+            )
+
+        except httpx.HTTPStatusError as e:
+            flogger.error(
+                f"/promote HTTP error: guild={interaction.guild_id}, user={interaction.user.id}, "
+                f"status={e.response.status_code}"
+            )
+            if e.response.status_code == 400:
+                try:
+                    detail = e.response.json().get("detail", "Cannot promote at this time.")
+                except Exception:  # pylint: disable=broad-exception-caught
+                    detail = "Cannot promote at this time."
+                # Show error embed with current tier color if we know it
+                embed = discord.Embed(
+                    title="❌ Cannot Promote",
+                    description=detail,
+                    color=discord.Color.red(),
+                )
+                await interaction.followup.send(embed=embed, ephemeral=True)
+            else:
+                await interaction.followup.send(f"❌ API Error: {e}", ephemeral=True)
+        except Exception as e:  # pylint: disable=broad-exception-caught
+            flogger.error(f"/promote error: guild={interaction.guild_id}, user={interaction.user.id}, error={e}")
+            await interaction.followup.send("⚠️ An error occurred.", ephemeral=True)
+
+    @app_commands.command(name="loadout", description="View your active ship loadout")
+    @app_commands.describe(player="Player to view loadout for (default: yourself)")
+    async def loadout(self, interaction: discord.Interaction, player: discord.Member | None = None):
+        """Display the active ship loadout for a player."""
+        target = player or interaction.user
+        flogger.info(f"/loadout: guild={interaction.guild_id}, user={interaction.user.id}, target={target.id}")
+        await interaction.response.defer(thinking=True)
+
+        try:
+            # Resolve target Discord user to a game player_id
+            user_data = {
+                "discord_id": target.id,
+                "guild_id": interaction.guild_id,
+                "discord_username": str(target),
+            }
+            resp = await self.http_client.post(f"{api_base}/players/", json=user_data, timeout=10)
+            resp.raise_for_status()
+            player_data = resp.json()
+            player_id = player_data["id"]
+
+            # Fetch loadout from bot-core
+            loadout_resp = await self.http_client.get(f"{api_base}/players/{player_id}/loadout", timeout=10)
+            loadout_resp.raise_for_status()
+            data = loadout_resp.json()
+
+            # Handle "no active ship" case
+            if data.get("ship_name") is None:
+                await interaction.followup.send(f"❌ {target.display_name} has no active ship.", ephemeral=True)
+                return
+
+            ship_name = data.get("ship_name", "Unknown Ship")
+            ship_emoji = data.get("ship_emoji") or ""
+            ship_nickname = data.get("ship_nickname")
+            armor_hp = data.get("armor_hp", 0)
+            shield_hp = data.get("shield_hp", 0)
+            total_hp = data.get("total_hp", 0)
+            total_dps = data.get("total_dps", 0)
+            weapons = data.get("weapons", [])
+            modules = data.get("modules", [])
+            turrets = data.get("turrets", [])
+            total_value = data.get("total_value", 0)
+
+            # Build title: use ship nickname if set, otherwise ship name
+            title_name = ship_nickname or ship_name
+            embed = discord.Embed(
+                title=f"🚀 Loadout — {target.display_name}",
+                description=f"Active Ship: **{ship_emoji} {title_name}**"
+                if ship_emoji
+                else f"Active Ship: **{title_name}**",
+                color=discord.Color.blurple(),
+            )
+
+            # Format DPS display
+            rounded_dps = round(total_dps, 1) if total_dps else 0
+            dps_str = str(int(rounded_dps)) if rounded_dps == int(rounded_dps) else f"{rounded_dps:.1f}"
+
+            # HP display
+            if shield_hp and shield_hp > 0:
+                hp_display = f"Armor HP: **{armor_hp}** | Shield HP: **{shield_hp}** | Total HP: **{total_hp}**"
+            else:
+                hp_display = f"HP: **{armor_hp}**"
+
+            embed.add_field(
+                name="🛸 Ship Stats",
+                value=f"{hp_display} | DPS: **{dps_str}**",
+                inline=False,
+            )
+
+            if weapons:
+                weapons_str = "\n".join(self._format_loadout_item(w) for w in weapons)
+                embed.add_field(name="🔫 Primary Weapons", value=weapons_str, inline=False)
+
+            if turrets:
+                turrets_str = "\n".join(self._format_loadout_item(t) for t in turrets)
+                embed.add_field(name="🔫 Turrets", value=turrets_str, inline=False)
+
+            if modules:
+                modules_str = "\n".join(self._format_loadout_item(m) for m in modules)
+                embed.add_field(name="⚙️ Modules", value=modules_str, inline=False)
+
+            if not weapons and not turrets and not modules:
+                embed.add_field(name="Equipment", value="*No equipment*", inline=False)
+
+            embed.set_footer(text=f"Total Value: {total_value:,} credits | Player ID: {player_id}")
+
+            await interaction.followup.send(embed=embed)
+            flogger.info(
+                f"/loadout success: guild={interaction.guild_id}, user={interaction.user.id}, target={target.id}"
+            )
+
+        except httpx.HTTPStatusError as e:
+            flogger.error(
+                f"/loadout HTTP error: guild={interaction.guild_id}, user={interaction.user.id}, "
+                f"status={e.response.status_code}"
+            )
+            if e.response.status_code == 404:
+                await interaction.followup.send("❌ Player not found.", ephemeral=True)
+            else:
+                await interaction.followup.send(f"❌ API Error: {e}", ephemeral=True)
+        except Exception as e:  # pylint: disable=broad-exception-caught
+            flogger.error(f"/loadout error: guild={interaction.guild_id}, user={interaction.user.id}, error={e}")
+            await interaction.followup.send("⚠️ An error occurred while fetching the loadout.", ephemeral=True)
+
+    def _format_loadout_item(self, item: dict) -> str:
+        """Format a loadout item (weapon, module, or turret) for display."""
+        emoji = item.get("emoji") or ""
+        name = item.get("name", "Unknown")
+        dps = item.get("dps")
+        value = item.get("value")
+        parts = [f"{emoji} **{name}**" if emoji else f"**{name}**"]
+        if dps is not None:
+            rounded = round(dps, 1)
+            dps_str = str(int(rounded)) if rounded == int(rounded) else f"{rounded:.1f}"
+            parts.append(f"DPS: {dps_str}")
+        if value is not None:
+            parts.append(f"Value: {value:,}")
+        return " | ".join(parts)
+
+    @loadout.error
+    async def loadout_error(self, interaction: discord.Interaction, error: app_commands.AppCommandError):
+        flogger.exception("Error in /loadout", exc_info=error)
+        if not interaction.response.is_done():
+            await interaction.response.send_message("⚠️ An error occurred.", ephemeral=True)
+
+    @app_commands.command(name="unregister", description="Remove your Bounty Hunter role (keeps your player data)")
+    async def unregister(self, interaction: discord.Interaction):
+        """Remove the Bounty Hunter role from the user. Does NOT delete player data."""
+        await interaction.response.defer(thinking=True, ephemeral=True)
+
+        try:
+            config_resp = await self.http_client.get(f"{api_base}/config/guild/{interaction.guild_id}", timeout=5)
+            config_resp.raise_for_status()
+            config = config_resp.json()
+            bh_role_id = config.get("bounty_hunter_role_id")
+
+            if not bh_role_id:
+                await interaction.followup.send("⚠️ No Bounty Hunter role is configured for this guild.", ephemeral=True)
+                return
+
+            guild = interaction.guild
+            role = guild.get_role(bh_role_id)
+
+            if not role:
+                await interaction.followup.send("⚠️ Bounty Hunter role not found in this guild.", ephemeral=True)
+                return
+
+            if role not in interaction.user.roles:
+                await interaction.followup.send(
+                    "ℹ️ You don't have the Bounty Hunter role.",  # noqa: RUF001
+                    ephemeral=True,
+                )
+                return
+
+            await interaction.user.remove_roles(role, reason="Player unregistered from BountyBot")
+            await interaction.followup.send(
+                "✅ Bounty Hunter role removed. Your player data is preserved — use `/profile` to re-register anytime.",
+                ephemeral=True,
+            )
+            flogger.info(
+                f"/unregister: removed Bounty Hunter role from user {interaction.user.id} "
+                f"in guild {interaction.guild_id}"
+            )
+
+        except Exception as e:  # pylint: disable=broad-exception-caught
+            flogger.error(f"/unregister error: guild={interaction.guild_id}, user={interaction.user.id}, error={e}")
+            await interaction.followup.send("⚠️ An error occurred while removing the role.", ephemeral=True)
+
     def _get_tier_color(self, tier: str) -> discord.Color:
         """Get Discord color based on player tier."""
         tier_colors = {
@@ -275,6 +582,18 @@ class PlayerCog(commands.Cog):
     @prestige.error
     async def prestige_error(self, interaction: discord.Interaction, error: app_commands.AppCommandError):
         flogger.exception("Error in /prestige", exc_info=error)
+        if not interaction.response.is_done():
+            await interaction.response.send_message("⚠️ An error occurred.", ephemeral=True)
+
+    @promote.error
+    async def promote_error(self, interaction: discord.Interaction, error: app_commands.AppCommandError):
+        flogger.exception("Error in /promote", exc_info=error)
+        if not interaction.response.is_done():
+            await interaction.response.send_message("⚠️ An error occurred.", ephemeral=True)
+
+    @unregister.error
+    async def unregister_error(self, interaction: discord.Interaction, error: app_commands.AppCommandError):
+        flogger.exception("Error in /unregister", exc_info=error)
         if not interaction.response.is_done():
             await interaction.response.send_message("⚠️ An error occurred.", ephemeral=True)
 

@@ -6,6 +6,8 @@ import httpx
 from discord import app_commands
 from discord.ext import commands
 from shared import bblogger
+from utils.guild_setup import ensure_bountybot_infrastructure
+from utils.timestamp_utils import iso_to_discord_ts
 
 # Set up logger
 flogger = bblogger.get_logger("discord-gateway-AdminCog")
@@ -122,40 +124,17 @@ class AdminCog(commands.Cog):
 
     @app_commands.command(name="admin_setup", description="[ADMIN] Initialize the bot for this guild")
     @app_commands.describe(
-        admin_role="Role that should have admin permissions for the bot",
+        admin_role="Role that should have admin permissions for the bot (required)",
         starting_credits="Starting credits for new players (default: 0)",
     )
     @is_admin()
-    async def admin_setup(
-        self, interaction: discord.Interaction, admin_role: discord.Role | None = None, starting_credits: int = 0
-    ):
+    async def admin_setup(self, interaction: discord.Interaction, admin_role: discord.Role, starting_credits: int = 0):
         """Initialize guild for bot usage."""
         await interaction.response.defer(thinking=True, ephemeral=True)
         guild = self.bot.get_guild(interaction.guild_id)
 
         try:
-            # If no role provided, create one via your Gateway API
-            if admin_role is None:
-                payload = {
-                    "name": "BountyBot Admins",
-                    "permissions": discord.Permissions(manage_guild=True).value,
-                    "hoist": False,
-                    "mentionable": False,
-                }
-                resp = await self.http_client.post(
-                    f"{api_base}/guilds/{interaction.guild_id}/roles", json=payload, timeout=30
-                )
-                resp.raise_for_status()
-                role_data = resp.json()["data"]
-                # Fetch the Role object from cache or reload
-                admin_role = guild.get_role(role_data["id"])
-                if admin_role is None:
-                    await guild.fetch_roles()
-                    admin_role = guild.get_role(role_data["id"])
-
-            # Create (or find) BountyBot Discord channels
-            from utils.guild_setup import ensure_bountybot_infrastructure
-
+            # Create (or find) BountyBot Discord infrastructure (role + category + 7 channels)
             channel_ids = await ensure_bountybot_infrastructure(guild)
 
             # Send initialization to core API
@@ -164,9 +143,19 @@ class AdminCog(commands.Cog):
                 "admin_role_id": admin_role.id if admin_role else None,
                 "starting_credits": max(0, starting_credits),
                 "category_id": channel_ids.get("category_id"),
-                "bounty_channel_id": channel_ids.get("bounty_channel_id"),
+                "bronze_bounty_channel_id": channel_ids.get("bronze_bounty_channel_id"),
+                "silver_bounty_channel_id": channel_ids.get("silver_bounty_channel_id"),
+                "gold_bounty_channel_id": channel_ids.get("gold_bounty_channel_id"),
+                "platinum_bounty_channel_id": channel_ids.get("platinum_bounty_channel_id"),
                 "shop_channel_id": channel_ids.get("shop_channel_id"),
-                "general_channel_id": channel_ids.get("general_channel_id"),
+                "hunting_channel_id": channel_ids.get("hunting_channel_id"),
+                "discussion_channel_id": channel_ids.get("discussion_channel_id"),
+                "image_channel_id": channel_ids.get("image_channel_id"),
+                "bounty_hunter_role_id": channel_ids.get("bounty_hunter_role_id"),
+                "bronze_role_id": channel_ids.get("bronze_role_id"),
+                "silver_role_id": channel_ids.get("silver_role_id"),
+                "gold_role_id": channel_ids.get("gold_role_id"),
+                "platinum_role_id": channel_ids.get("platinum_role_id"),
             }
             resp = await self.http_client.post(
                 f"{api_base}/admin/guilds/initialize",
@@ -186,16 +175,40 @@ class AdminCog(commands.Cog):
             embed.add_field(name="Admin Role", value=admin_role.mention, inline=True)
             embed.add_field(name="Starting Credits", value=f"{starting_credits:,}", inline=True)
 
-            # Add channel info to embed
+            # Add channel info to embed (all 8 channels)
+            channel_display = [
+                ("bronze_bounty_channel_id", "Bronze Bounty Board"),
+                ("silver_bounty_channel_id", "Silver Bounty Board"),
+                ("gold_bounty_channel_id", "Gold Bounty Board"),
+                ("platinum_bounty_channel_id", "Platinum Bounty Board"),
+                ("shop_channel_id", "Shop"),
+                ("hunting_channel_id", "Bounty Hunting"),
+                ("discussion_channel_id", "Bounty Discussions"),
+                ("image_channel_id", "Bot Images (hidden)"),
+            ]
             channels_info = []
-            if channel_ids.get("bounty_channel_id"):
-                channels_info.append(f"Bounty Board: <#{channel_ids['bounty_channel_id']}>")
-            if channel_ids.get("shop_channel_id"):
-                channels_info.append(f"Shop: <#{channel_ids['shop_channel_id']}>")
-            if channel_ids.get("general_channel_id"):
-                channels_info.append(f"General: <#{channel_ids['general_channel_id']}>")
+            for key, label in channel_display:
+                cid = channel_ids.get(key)
+                if cid:
+                    channels_info.append(f"{label}: <#{cid}>")
             if channels_info:
                 embed.add_field(name="Channels", value="\n".join(channels_info), inline=False)
+
+            # Add Bounty Hunter role if created
+            bh_role_id = channel_ids.get("bounty_hunter_role_id")
+            if bh_role_id:
+                embed.add_field(name="Bounty Hunter Role", value=f"<@&{bh_role_id}>", inline=True)
+
+            # Show tier roles
+            for tier_key, tier_label in [
+                ("bronze_role_id", "Bronze"),
+                ("silver_role_id", "Silver"),
+                ("gold_role_id", "Gold"),
+                ("platinum_role_id", "Platinum"),
+            ]:
+                tier_rid = channel_ids.get(tier_key)
+                if tier_rid:
+                    embed.add_field(name=f"Bounty Hunter {tier_label}", value=f"<@&{tier_rid}>", inline=True)
 
             embed.set_footer(text="The bot is now ready for use in this guild!")
 
@@ -257,7 +270,7 @@ class AdminCog(commands.Cog):
                 embed.add_field(name="Lifetime Credits", value=f"{player['lifetime_credits']:,}", inline=True)
                 embed.add_field(name="Prestige Count", value=str(player["prestige_count"]), inline=True)
                 embed.set_thumbnail(url=user.display_avatar.url)
-                embed.set_footer(text=f"Created: {player['created_at'][:10]}")
+                embed.set_footer(text=f"Created: {iso_to_discord_ts(player['created_at'], 'D')}")
 
                 await interaction.followup.send(embed=embed, ephemeral=True)
 
@@ -495,7 +508,10 @@ class AdminCog(commands.Cog):
                     f"Platinum: {thresholds['Platinum']:,}"
                 )
                 embed.add_field(name="XP Thresholds", value=threshold_text, inline=True)
-                embed.set_footer(text=f"Created: {cfg['created_at'][:10]} | Updated: {cfg['updated_at'][:10]}")
+                embed.set_footer(
+                    text=f"Created: {iso_to_discord_ts(cfg['created_at'], 'D')} | "
+                    f"Updated: {iso_to_discord_ts(cfg['updated_at'], 'D')}"
+                )
 
                 await interaction.followup.send(embed=embed, ephemeral=True)
 
@@ -566,6 +582,79 @@ class AdminCog(commands.Cog):
             return
 
         try:
+            # Fetch current config to get channel/role IDs for cleanup
+            cfg: dict = {}
+            try:
+                cfg_resp = await self.http_client.get(f"{api_base}/config/guild/{interaction.guild_id}", timeout=10)
+                cfg_resp.raise_for_status()
+                cfg = cfg_resp.json()
+            except Exception as e:  # pylint: disable=broad-exception-caught
+                flogger.warning(f"Guild {interaction.guild_id}: could not fetch config for cleanup: {e}")
+
+            # Delete Discord channels/category/role (best-effort, non-fatal)
+            guild = self.bot.get_guild(interaction.guild_id)
+            if guild:
+                # Delete the 8 text channels
+                channel_keys = [
+                    "bronze_bounty_channel_id",
+                    "silver_bounty_channel_id",
+                    "gold_bounty_channel_id",
+                    "platinum_bounty_channel_id",
+                    "shop_channel_id",
+                    "hunting_channel_id",
+                    "discussion_channel_id",
+                    "image_channel_id",
+                ]
+                for key in channel_keys:
+                    ch_id = cfg.get(key)
+                    if ch_id:
+                        ch = guild.get_channel(ch_id)
+                        if ch:
+                            try:
+                                await ch.delete(reason="BountyBot uninstall")
+                            except Exception as e:  # pylint: disable=broad-exception-caught
+                                flogger.warning(f"Guild {interaction.guild_id}: failed to delete channel {ch_id}: {e}")
+
+                # Delete the category
+                cat_id = cfg.get("category_id")
+                if cat_id:
+                    cat = guild.get_channel(cat_id)
+                    if cat:
+                        try:
+                            await cat.delete(reason="BountyBot uninstall")
+                        except Exception as e:  # pylint: disable=broad-exception-caught
+                            flogger.warning(f"Guild {interaction.guild_id}: failed to delete category {cat_id}: {e}")
+
+                # Delete BountyBot roles (by stored ID + by known name for robustness)
+                _BOUNTYBOT_ROLE_NAMES = {
+                    "bounty hunter",
+                    "bounty hunter bronze",
+                    "bounty hunter silver",
+                    "bounty hunter gold",
+                    "bounty hunter platinum",
+                }
+                stored_role_ids: set = set()
+                for rk in (
+                    "bounty_hunter_role_id",
+                    "bronze_role_id",
+                    "silver_role_id",
+                    "gold_role_id",
+                    "platinum_role_id",
+                ):
+                    rid = cfg.get(rk)
+                    if rid:
+                        stored_role_ids.add(rid)
+
+                for role in guild.roles:
+                    if role.id in stored_role_ids or role.name.lower() in _BOUNTYBOT_ROLE_NAMES:
+                        try:
+                            await role.delete(reason="BountyBot uninstall")
+                        except Exception as e:  # pylint: disable=broad-exception-caught
+                            flogger.warning(
+                                f"Guild {interaction.guild_id}: failed to delete role {role.name} ({role.id}): {e}"
+                            )
+
+            # Call bot-core uninstall API to remove game data
             resp = await self.http_client.delete(
                 f"{api_base}/admin/guilds/{interaction.guild_id}/uninstall",
                 params={"user_id": interaction.user.id},
@@ -623,68 +712,71 @@ class AdminCog(commands.Cog):
         """Update shop-specific configuration for this guild."""
         await interaction.response.defer(thinking=True, ephemeral=True)
 
-        # Build payload — only include provided fields
-        payload: dict = {"guild_id": interaction.guild_id}
-        if ship_count_min is not None:
-            payload["ship_count_min"] = ship_count_min
-        if ship_count_max is not None:
-            payload["ship_count_max"] = ship_count_max
-        if weapon_count_min is not None:
-            payload["weapon_count_min"] = weapon_count_min
-        if weapon_count_max is not None:
-            payload["weapon_count_max"] = weapon_count_max
-        if module_count_min is not None:
-            payload["module_count_min"] = module_count_min
-        if module_count_max is not None:
-            payload["module_count_max"] = module_count_max
-        if turret_count_min is not None:
-            payload["turret_count_min"] = turret_count_min
-        if turret_count_max is not None:
-            payload["turret_count_max"] = turret_count_max
-        if sale_factor is not None:
-            payload["sale_factor"] = sale_factor
+        # Build item_count_ranges — only include a type's range when BOTH min and max
+        # are provided so that bot-core never receives a partial {"min": N} dict that
+        # would fail its "min and max required" validation.
+        item_count_ranges: dict[str, dict[str, int]] = {}
+        if ship_count_min is not None and ship_count_max is not None:
+            item_count_ranges["ships"] = {"min": ship_count_min, "max": ship_count_max}
+        if weapon_count_min is not None and weapon_count_max is not None:
+            item_count_ranges["weapons"] = {"min": weapon_count_min, "max": weapon_count_max}
+        if module_count_min is not None and module_count_max is not None:
+            item_count_ranges["modules"] = {"min": module_count_min, "max": module_count_max}
+        if turret_count_min is not None and turret_count_max is not None:
+            item_count_ranges["turrets"] = {"min": turret_count_min, "max": turret_count_max}
+
+        # Build the shop-config payload matching UpdateShopConfigRequest
+        shop_payload: dict = {"guild_id": interaction.guild_id}
+        if item_count_ranges:
+            shop_payload["item_count_ranges"] = item_count_ranges
 
         try:
             resp = await self.http_client.put(
                 f"{api_base}/config/guild/{interaction.guild_id}/shop",
-                json=payload,
+                json=shop_payload,
                 timeout=10,
             )
             resp.raise_for_status()
             cfg = resp.json()
 
-            # Display updated config
+            # If the user also supplied sale_factor, update it via the general
+            # config endpoint (sale_price_factor is not part of UpdateShopConfigRequest).
+            if sale_factor is not None:
+                sale_resp = await self.http_client.put(
+                    f"{api_base}/config/guild/{interaction.guild_id}",
+                    json={"guild_id": interaction.guild_id, "sale_price_factor": sale_factor},
+                    timeout=10,
+                )
+                sale_resp.raise_for_status()
+                cfg = sale_resp.json()
+
+            # Display updated config.
+            # The GuildConfigResponse.shop_config dict is structured as:
+            #   {
+            #     "item_count_ranges": {"ships": {"min": N, "max": N}, ...},
+            #     "quantity_ranges":   {"ships": {"min": N, "max": N}, ...},
+            #     "tech_level_probabilities": {...},
+            #   }
             shop_cfg = cfg.get("shop_config", {})
+            item_ranges = shop_cfg.get("item_count_ranges", {})
+
+            def _range_str(key: str) -> str:
+                r = item_ranges.get(key, {})
+                return f"Min: {r.get('min', '?')} / Max: {r.get('max', '?')}"
+
             embed = discord.Embed(
                 title="✅ Shop Configuration Updated",
                 description="Current shop configuration for this guild:",
                 color=discord.Color.green(),
             )
-            embed.add_field(
-                name="Ships",
-                value=f"Min: {shop_cfg.get('ship_count_min', '?')} / Max: {shop_cfg.get('ship_count_max', '?')}",
-                inline=True,
-            )
-            embed.add_field(
-                name="Weapons",
-                value=f"Min: {shop_cfg.get('weapon_count_min', '?')} / Max: {shop_cfg.get('weapon_count_max', '?')}",
-                inline=True,
-            )
-            embed.add_field(
-                name="Modules",
-                value=f"Min: {shop_cfg.get('module_count_min', '?')} / Max: {shop_cfg.get('module_count_max', '?')}",
-                inline=True,
-            )
-            embed.add_field(
-                name="Turrets",
-                value=f"Min: {shop_cfg.get('turret_count_min', '?')} / Max: {shop_cfg.get('turret_count_max', '?')}",
-                inline=True,
-            )
+            embed.add_field(name="Ships", value=_range_str("ships"), inline=True)
+            embed.add_field(name="Weapons", value=_range_str("weapons"), inline=True)
+            embed.add_field(name="Modules", value=_range_str("modules"), inline=True)
+            embed.add_field(name="Turrets", value=_range_str("turrets"), inline=True)
+            sale_pf = cfg.get("sale_price_factor")
             embed.add_field(
                 name="Sale Price Factor",
-                value=f"{cfg.get('sale_price_factor', shop_cfg.get('sale_factor', '?')):.0%}"
-                if isinstance(cfg.get("sale_price_factor", shop_cfg.get("sale_factor")), float)
-                else str(cfg.get("sale_price_factor", shop_cfg.get("sale_factor", "?"))),
+                value=f"{sale_pf:.0%}" if isinstance(sale_pf, float) else str(sale_pf or "?"),
                 inline=True,
             )
 
@@ -834,6 +926,346 @@ class AdminCog(commands.Cog):
             flogger.error(f"Error in /render_cache_clear: {e}")
             if not interaction.response.is_done():
                 await interaction.response.send_message("⚠️ An error occurred.", ephemeral=True)
+
+    # ------------------------------------------------------------------
+    # Bounty admin commands
+    # ------------------------------------------------------------------
+
+    @app_commands.command(name="admin_clear_bounties", description="[ADMIN] Clear active bounties for this guild")
+    @is_admin()
+    @app_commands.describe(
+        tier="Tier to clear (omit for all tiers)",
+        confirm="Type CONFIRM to execute this destructive action",
+    )
+    @app_commands.choices(
+        tier=[
+            app_commands.Choice(name="Bronze", value="bronze"),
+            app_commands.Choice(name="Silver", value="silver"),
+            app_commands.Choice(name="Gold", value="gold"),
+        ]
+    )
+    async def admin_clear_bounties(self, interaction: discord.Interaction, confirm: str, tier: str | None = None):
+        """Clear active bounties for this guild."""
+        await interaction.response.defer(thinking=True, ephemeral=True)
+
+        if confirm != "CONFIRM":
+            await interaction.followup.send(
+                "❌ You must type CONFIRM to execute this destructive action.", ephemeral=True
+            )
+            return
+
+        try:
+            params: dict = {"user_id": interaction.user.id}
+            if tier:
+                params["tier"] = tier
+
+            resp = await self.http_client.delete(
+                f"{api_base}/bounties/guild/{interaction.guild_id}/clear",
+                params=params,
+                timeout=30,
+            )
+            resp.raise_for_status()
+            result = resp.json()
+
+            tier_display = tier.title() if tier else "All"
+            embed = discord.Embed(title="🗑️ Bounties Cleared", color=discord.Color(0xFFA500))
+            embed.add_field(name="Tier", value=tier_display, inline=True)
+            embed.add_field(name="Bounties Cleared", value=str(result.get("cleared_count", 0)), inline=True)
+            embed.add_field(
+                name="Announcements Deleted", value=str(result.get("announcements_deleted", 0)), inline=True
+            )
+
+            await interaction.followup.send(embed=embed, ephemeral=True)
+            flogger.info(f"Admin {interaction.user} cleared {tier_display} bounties in guild {interaction.guild_id}")
+
+        except httpx.HTTPStatusError as e:
+            await interaction.followup.send(f"❌ API Error: {e}", ephemeral=True)
+        except Exception as e:  # pylint: disable=broad-exception-caught
+            flogger.error(f"Error in /admin_clear_bounties: {e}")
+            await interaction.followup.send("⚠️ An error occurred while clearing bounties.", ephemeral=True)
+
+    @app_commands.command(name="admin_config_bounty", description="[ADMIN] View or update bounty configuration")
+    @is_admin()
+    @app_commands.describe(
+        action="View current config or update settings",
+        max_bronze="Max active bounties for Bronze tier (0-20)",
+        max_silver="Max active bounties for Silver tier (0-20)",
+        max_gold="Max active bounties for Gold tier (0-20)",
+        expiry_minutes="Bounty expiry time in minutes (10-10080)",
+        spawn_interval="Spawn check interval in minutes (5-1440)",
+    )
+    @app_commands.choices(
+        action=[
+            app_commands.Choice(name="View", value="view"),
+            app_commands.Choice(name="Update", value="update"),
+        ]
+    )
+    async def admin_config_bounty(
+        self,
+        interaction: discord.Interaction,
+        action: str,
+        max_bronze: int | None = None,
+        max_silver: int | None = None,
+        max_gold: int | None = None,
+        expiry_minutes: int | None = None,
+        spawn_interval: int | None = None,
+    ):
+        """View or update bounty configuration for this guild."""
+        await interaction.response.defer(thinking=True, ephemeral=True)
+
+        try:
+            if action == "view":
+                resp = await self.http_client.get(
+                    f"{api_base}/config/guild/{interaction.guild_id}/bounty",
+                    timeout=10,
+                )
+                resp.raise_for_status()
+                cfg = resp.json()
+
+                max_per_tier = cfg.get("max_bounties_per_tier", {})
+                active_per_tier = cfg.get("active_bounties_per_tier", {})
+                expiry = cfg.get("bounty_expiry_minutes", "?")
+                spawn_int = cfg.get("bounty_spawn_interval_minutes", "?")
+                next_spawn = cfg.get("next_spawn_check_at")
+
+                bronze_max = max_per_tier.get("bronze", "?")
+                silver_max = max_per_tier.get("silver", "?")
+                gold_max = max_per_tier.get("gold", "?")
+                bronze_active = active_per_tier.get("bronze", 0)
+                silver_active = active_per_tier.get("silver", 0)
+                gold_active = active_per_tier.get("gold", 0)
+
+                embed = discord.Embed(title="⚙️ Bounty Configuration", color=discord.Color.blue())
+                embed.add_field(
+                    name="Max Per Tier",
+                    value=(
+                        f"Bronze: {bronze_max} ({bronze_active} active) | "
+                        f"Silver: {silver_max} ({silver_active} active) | "
+                        f"Gold: {gold_max} ({gold_active} active)"
+                    ),
+                    inline=False,
+                )
+                embed.add_field(name="Expiry Time", value=f"{expiry} minutes", inline=True)
+                embed.add_field(name="Spawn Interval", value=f"{spawn_int} minutes (±25% randomization)", inline=True)
+                embed.add_field(name="Next Spawn Check", value=iso_to_discord_ts(next_spawn, "R"), inline=True)
+
+                await interaction.followup.send(embed=embed, ephemeral=True)
+
+            elif action == "update":
+                payload: dict = {}
+                if max_bronze is not None:
+                    payload["max_bronze"] = max_bronze
+                if max_silver is not None:
+                    payload["max_silver"] = max_silver
+                if max_gold is not None:
+                    payload["max_gold"] = max_gold
+                if expiry_minutes is not None:
+                    payload["bounty_expiry_minutes"] = expiry_minutes
+                if spawn_interval is not None:
+                    payload["bounty_spawn_interval_minutes"] = spawn_interval
+
+                resp = await self.http_client.put(
+                    f"{api_base}/config/guild/{interaction.guild_id}/bounty",
+                    json=payload,
+                    timeout=10,
+                )
+                resp.raise_for_status()
+                result = resp.json()
+
+                embed = discord.Embed(title="✅ Bounty Config Updated", color=discord.Color.green())
+                max_per_tier = result.get("max_bounties_per_tier", {})
+                if max_per_tier:
+                    embed.add_field(
+                        name="Max Per Tier",
+                        value=(
+                            f"Bronze: {max_per_tier.get('bronze', '?')} | "
+                            f"Silver: {max_per_tier.get('silver', '?')} | "
+                            f"Gold: {max_per_tier.get('gold', '?')}"
+                        ),
+                        inline=False,
+                    )
+                if result.get("bounty_expiry_minutes"):
+                    embed.add_field(name="Expiry Time", value=f"{result['bounty_expiry_minutes']} minutes", inline=True)
+                if result.get("bounty_spawn_interval_minutes"):
+                    embed.add_field(
+                        name="Spawn Interval",
+                        value=f"{result['bounty_spawn_interval_minutes']} minutes",
+                        inline=True,
+                    )
+
+                await interaction.followup.send(embed=embed, ephemeral=True)
+
+            flogger.info(f"Admin {interaction.user} performed bounty config {action} in guild {interaction.guild_id}")
+
+        except httpx.HTTPStatusError as e:
+            await interaction.followup.send(f"❌ API Error: {e}", ephemeral=True)
+        except Exception as e:  # pylint: disable=broad-exception-caught
+            flogger.error(f"Error in /admin_config_bounty: {e}")
+            await interaction.followup.send("⚠️ An error occurred while managing bounty configuration.", ephemeral=True)
+
+    @app_commands.command(name="admin_config_xp", description="[ADMIN] View or update XP tier thresholds")
+    @is_admin()
+    @app_commands.describe(
+        action="View current thresholds or update them",
+        silver="XP threshold for Silver tier",
+        gold="XP threshold for Gold tier",
+        platinum="XP threshold for Platinum tier",
+    )
+    @app_commands.choices(
+        action=[
+            app_commands.Choice(name="View", value="view"),
+            app_commands.Choice(name="Update", value="update"),
+        ]
+    )
+    async def admin_config_xp(
+        self,
+        interaction: discord.Interaction,
+        action: str,
+        silver: int | None = None,
+        gold: int | None = None,
+        platinum: int | None = None,
+    ):
+        """View or update XP tier thresholds for this guild."""
+        await interaction.response.defer(thinking=True, ephemeral=True)
+
+        try:
+            if action == "view":
+                resp = await self.http_client.get(
+                    f"{api_base}/config/guild/{interaction.guild_id}",
+                    timeout=10,
+                )
+                resp.raise_for_status()
+                config = resp.json()
+                thresholds = config.get("xp_thresholds", {})
+
+                silver_val = thresholds.get("Silver", "?")
+                gold_val = thresholds.get("Gold", "?")
+                platinum_val = thresholds.get("Platinum", "?")
+
+                embed = discord.Embed(title="⚙️ XP Tier Thresholds", color=discord.Color.blue())
+                embed.add_field(
+                    name="Thresholds",
+                    value=(
+                        f"Silver: {silver_val:,} XP\nGold: {gold_val:,} XP\nPlatinum: {platinum_val:,} XP"
+                        if isinstance(silver_val, int)
+                        else f"Silver: {silver_val}\nGold: {gold_val}\nPlatinum: {platinum_val}"
+                    ),
+                    inline=False,
+                )
+                await interaction.followup.send(embed=embed, ephemeral=True)
+
+            elif action == "update":
+                # Require all three thresholds
+                if silver is None or gold is None or platinum is None:
+                    await interaction.followup.send(
+                        "❌ All three thresholds are required: silver, gold, and platinum.", ephemeral=True
+                    )
+                    return
+
+                # Client-side pre-validation: ascending order
+                if not (silver < gold < platinum):
+                    await interaction.followup.send(
+                        "❌ Thresholds must be in strictly ascending order: silver < gold < platinum.", ephemeral=True
+                    )
+                    return
+
+                payload = {"thresholds": {"Silver": silver, "Gold": gold, "Platinum": platinum}}
+                resp = await self.http_client.put(
+                    f"{api_base}/config/guild/{interaction.guild_id}/xp-thresholds",
+                    json=payload,
+                    timeout=10,
+                )
+                resp.raise_for_status()
+                result = resp.json()
+                updated = result.get("xp_thresholds", payload["thresholds"])
+
+                embed = discord.Embed(title="✅ XP Thresholds Updated", color=discord.Color.green())
+                embed.add_field(
+                    name="New Thresholds",
+                    value=(
+                        f"Silver: {updated.get('Silver', silver):,} XP\n"
+                        f"Gold: {updated.get('Gold', gold):,} XP\n"
+                        f"Platinum: {updated.get('Platinum', platinum):,} XP"
+                    ),
+                    inline=False,
+                )
+                await interaction.followup.send(embed=embed, ephemeral=True)
+
+            flogger.info(f"Admin {interaction.user} performed XP config {action} in guild {interaction.guild_id}")
+
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code == 400:
+                try:
+                    detail = e.response.json().get("detail", "Validation error.")
+                except Exception:  # pylint: disable=broad-exception-caught
+                    detail = "Validation error."
+                await interaction.followup.send(f"❌ {detail}", ephemeral=True)
+            else:
+                await interaction.followup.send(f"❌ API Error: {e}", ephemeral=True)
+        except Exception as e:  # pylint: disable=broad-exception-caught
+            flogger.error(f"Error in /admin_config_xp: {e}")
+            await interaction.followup.send("⚠️ An error occurred while managing XP thresholds.", ephemeral=True)
+
+    @app_commands.command(name="admin_spawn_bounty", description="[ADMIN] Manually trigger a bounty spawn")
+    @is_admin()
+    @app_commands.describe(tier="Tier to spawn for (omit for all tiers)")
+    @app_commands.choices(
+        tier=[
+            app_commands.Choice(name="Bronze", value="bronze"),
+            app_commands.Choice(name="Silver", value="silver"),
+            app_commands.Choice(name="Gold", value="gold"),
+        ]
+    )
+    async def admin_spawn_bounty(self, interaction: discord.Interaction, tier: str | None = None):
+        """Manually trigger a bounty spawn for this guild."""
+        await interaction.response.defer(thinking=True, ephemeral=True)
+
+        try:
+            params: dict = {"user_id": interaction.user.id}
+            if tier:
+                params["tier"] = tier
+
+            resp = await self.http_client.post(
+                f"{api_base}/bounties/guild/{interaction.guild_id}/admin-spawn",
+                params=params,
+                timeout=30,
+            )
+            resp.raise_for_status()
+            result = resp.json()
+
+            spawned = result.get("spawned", [])
+            skipped_tiers = result.get("skipped_tiers", [])
+            errors = result.get("errors", [])
+
+            embed = discord.Embed(title="🎯 Bounties Spawned", color=discord.Color.green())
+
+            if spawned:
+                lines = [
+                    f"- {b['division'].title()}: {b['criminal_name']} "
+                    f"(T{b.get('tech_level', '?')}, {b.get('reward', 0):,}cr)"
+                    for b in spawned
+                ]
+                embed.add_field(name=f"Spawned ({len(spawned)})", value="\n".join(lines), inline=False)
+            else:
+                embed.add_field(name="Spawned", value="No bounties spawned.", inline=False)
+
+            if skipped_tiers:
+                embed.add_field(name="Skipped Tiers", value=", ".join(skipped_tiers), inline=True)
+
+            if errors:
+                embed.add_field(name="Errors", value="\n".join(str(e) for e in errors), inline=False)
+
+            await interaction.followup.send(embed=embed, ephemeral=True)
+            flogger.info(
+                f"Admin {interaction.user} spawned bounties in guild {interaction.guild_id}: "
+                f"{len(spawned)} spawned, {skipped_tiers} skipped"
+            )
+
+        except httpx.HTTPStatusError as e:
+            await interaction.followup.send(f"❌ API Error: {e}", ephemeral=True)
+        except Exception as e:  # pylint: disable=broad-exception-caught
+            flogger.error(f"Error in /admin_spawn_bounty: {e}")
+            await interaction.followup.send("⚠️ An error occurred while spawning bounties.", ephemeral=True)
 
     # Error handlers
     @admin_setup.error

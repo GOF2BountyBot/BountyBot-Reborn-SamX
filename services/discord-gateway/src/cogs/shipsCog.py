@@ -5,6 +5,7 @@ import httpx
 from discord import app_commands
 from discord.ext import commands
 from shared import bblogger
+from utils.timestamp_utils import iso_to_discord_ts
 
 # Set up logger
 flogger = bblogger.get_logger("discord-gateway-ShipsCog")
@@ -96,7 +97,10 @@ class ShipsCog(commands.Cog):
 
                 loadout_summary = f"W:{weapons_count} | M:{modules_count} | T:{turrets_count}"
 
-                ship_info = f"{status}{nickname}\nLoadout: {loadout_summary}\nCreated: {ship['created_at'][:10]}"
+                ship_info = (
+                    f"{status}{nickname}\nLoadout: {loadout_summary}\n"
+                    f"Created: {iso_to_discord_ts(ship['created_at'], 'D')}"
+                )
 
                 embed.add_field(name=f"{ship['ship_name']} (ID: {ship['id']})", value=ship_info, inline=True)
 
@@ -170,7 +174,7 @@ class ShipsCog(commands.Cog):
             # Basic info
             embed.add_field(name="Type", value=ship["ship_name"], inline=True)
             embed.add_field(name="Status", value="Active" if ship["is_active"] else "Inactive", inline=True)
-            embed.add_field(name="Created", value=ship["created_at"][:10], inline=True)
+            embed.add_field(name="Created", value=iso_to_discord_ts(ship["created_at"], "D"), inline=True)
 
             # Loadout details
             if loadout["weapons"]:

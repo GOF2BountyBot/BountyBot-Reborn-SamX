@@ -77,6 +77,9 @@ class TextureCompositingService:
 
         # Step 2: Alpha-composite skinBase on top of the underlayer
         skin_base_rgba = self.ensure_image_mode(skin_base)
+        if skin_base_rgba.size != working_tex.size:
+            flogger.debug(f"Resizing skinBase {skin_base_rgba.size} → {working_tex.size} to match base_texture")
+            skin_base_rgba = skin_base_rgba.resize(working_tex.size, Image.LANCZOS)
         working_tex = Image.alpha_composite(working_tex, skin_base_rgba)
         flogger.debug("skinBase composited onto underlayer")
 

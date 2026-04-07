@@ -15,10 +15,12 @@ Updated for blender-service:
     Line 5:  64  (numSamples)
     Line 6:  /path/to/temp_copy.mtl  (temp MTL file — service pre-created this)
 - render_service.py copies both the OBJ and MTL to a temp directory.
-  The script appends ``map_Kd <texture_path>`` to the temp MTL, then
-  imports the temp OBJ (whose ``mtllib`` resolves to the co-located temp
-  MTL).  As a fallback, the texture is also applied via Blender's node
-  system after import.
+  The script rewrites the temp MTL so that every ``newmtl`` block contains a
+  ``map_Kd`` line pointing to the composited texture.  The OBJ's ``mtllib``
+  directive resolves to this co-located temp MTL.  After the render the
+  original MTL content is restored to aid debugging.
+  The texture is also applied via an Emission shader node to ensure colours
+  are reproduced accurately regardless of scene lighting.
 """
 
 try:
@@ -27,7 +29,16 @@ except ImportError as _err:
     raise ValueError("This script can only be run by Blender.") from _err
 
 import os
+import sys
 from math import radians
+
+# Add the directory containing this script to sys.path so we can import
+# _mtl_utils (a pure-Python module with no bpy dependency).
+_ASSETS_DIR = os.path.dirname(os.path.abspath(__file__))
+if _ASSETS_DIR not in sys.path:
+    sys.path.insert(0, _ASSETS_DIR)
+
+from _mtl_utils import patch_all_mtl_blocks
 
 ##### CONFIG VARIABLES #####
 
@@ -116,21 +127,23 @@ print(f"args.mtl_path:          {args.mtl_path}")
 
 ##### CONFIGURE THE SCENE #####
 
-# Append the texture reference to the temp MTL so Blender's OBJ importer
-# picks it up.  render_service.py copies both the OBJ and MTL into the
-# same temp directory, so the ``mtllib`` directive in the OBJ resolves to
-# this temp MTL (which now contains the ``map_Kd`` line).
-#
-# IMPORTANT: Blender's OBJ/MTL importer resolves ``map_Kd`` paths
-# RELATIVE to the MTL file's directory.  We must compute a relative path
-# from the temp MTL directory to the texture file so Blender can find it.
+# Rewrite the temp MTL so every ``newmtl`` block has a ``map_Kd`` entry
+# pointing to the composited skin texture.  Blender's OBJ/MTL importer
+# resolves ``map_Kd`` paths RELATIVE to the MTL file's directory, so we
+# compute a relative path from the temp MTL directory to the texture file.
 _mtl_dir = os.path.dirname(os.path.abspath(args.mtl_path))
 _tex_abs = os.path.abspath(args.texture_path)
 _tex_rel = os.path.relpath(_tex_abs, _mtl_dir)
 print(f"map_Kd relative path: {_tex_rel}  (from {_mtl_dir})")
 
-with open(args.mtl_path, "a") as _f:
-    _f.write("map_Kd " + _tex_rel + "\n")
+# Save the original MTL content so we can restore it in CLEANUP.
+with open(args.mtl_path) as _f:
+    _original_mtl_content = _f.read()
+
+# Inject map_Kd into EVERY newmtl block (not just the last one).
+_patched_content = patch_all_mtl_blocks(_original_mtl_content, _tex_rel)
+with open(args.mtl_path, "w") as _f:
+    _f.write(_patched_content)
 
 ctx = bpy.context
 
@@ -142,29 +155,76 @@ bpy.ops.wm.obj_import(
     filter_glob="*.obj;*.mtl",
 )
 
-# Belt-and-suspenders: also apply the texture programmatically via the
-# node system.  This covers cases where the MTL has no material block or
-# Blender did not wire up the ``map_Kd`` correctly.
+# Apply the skin texture to every mesh material using a pure Emission shader.
+#
+# WHY EMISSION, NOT PRINCIPLED BSDF:
+# The cube.blend scene has a single Sun light pointing straight down (-Z axis,
+# rotation [0,0,0]).  After camera_to_view_selected() the camera is placed
+# looking at the ship from a front/side angle.  Principled BSDF requires
+# physical light to hit a surface before it shows colour — with the sun shining
+# straight down, all front/side faces visible to the camera are in shadow and
+# render near-black regardless of texture.  An Emission shader outputs the
+# texture colour directly, independent of scene lighting, which is the correct
+# behaviour for a skin preview render.
 texture_image = bpy.data.images.load(args.texture_path)
+# Force pixel data into memory so CYCLES can access it during rendering.
+_ = list(texture_image.pixels[:4])
+
+
+def _apply_emission_shader(mat, texture_image) -> None:
+    """Set up an Emission shader node tree on *mat* using *texture_image*.
+
+    Replaces the material's entire node tree with:
+        Image Texture → Emission → Material Output
+
+    This is lighting-independent and faithfully reproduces the skin texture.
+
+    :param mat: Blender material to configure (must support ``use_nodes``).
+    :param texture_image: ``bpy.types.Image`` instance to use as the texture.
+    """
+    mat.use_nodes = True
+    tree = mat.node_tree
+    tree.nodes.clear()
+    out_node = tree.nodes.new("ShaderNodeOutputMaterial")
+    emit_node = tree.nodes.new("ShaderNodeEmission")
+    tex_node = tree.nodes.new("ShaderNodeTexImage")
+    tex_node.image = texture_image
+    tree.links.new(tex_node.outputs["Color"], emit_node.inputs["Color"])
+    tree.links.new(emit_node.outputs["Emission"], out_node.inputs["Surface"])
+
+
+_mat_count = 0
+_mesh_count = 0
+
 for obj in bpy.data.objects:
     if obj.type != "MESH":
         continue
-    for slot in obj.material_slots:
-        mat = slot.material
-        if mat is None:
-            continue
-        mat.use_nodes = True
-        tree = mat.node_tree
-        # Find the Principled BSDF node (created by the OBJ importer).
-        bsdf = next((n for n in tree.nodes if n.type == "BSDF_PRINCIPLED"), None)
-        if bsdf is None:
-            continue
-        # Create an Image Texture node and connect it to Base Color.
-        tex_node = tree.nodes.new("ShaderNodeTexImage")
-        tex_node.image = texture_image
-        tree.links.new(tex_node.outputs["Color"], bsdf.inputs["Base Color"])
+    _mesh_count += 1
 
-print(f"✓ Texture applied to materials from: {args.texture_path}")
+    if len(obj.material_slots) == 0:
+        # Gap 1: Mesh with no material slots — create and assign a new skin material
+        # so the surface renders with the texture rather than Blender's default grey.
+        print(f"  Creating new emission material for mesh with no slots: {obj.name}")
+        _new_mat = bpy.data.materials.new(name=f"SkinMat_{obj.name}")
+        _apply_emission_shader(_new_mat, texture_image)
+        obj.data.materials.append(_new_mat)
+        _mat_count += 1
+    else:
+        for _slot_idx, slot in enumerate(obj.material_slots):
+            mat = slot.material
+            if mat is None:
+                # Gap 2: Slot with None material — create and assign a new skin
+                # material so the surface renders with the texture instead of grey.
+                print(f"  Replacing None material in slot {_slot_idx} on mesh: {obj.name}")
+                _new_mat = bpy.data.materials.new(name=f"SkinMat_{obj.name}_{_slot_idx}")
+                _apply_emission_shader(_new_mat, texture_image)
+                slot.material = _new_mat
+                _mat_count += 1
+            else:
+                _apply_emission_shader(mat, texture_image)
+                _mat_count += 1
+
+print(f"✓ Applied texture to {_mat_count} materials across {_mesh_count} mesh objects")
 
 # Deselect everything (the camera might be selected after import).
 bpy.ops.object.select_all(action="DESELECT")
@@ -230,11 +290,8 @@ bpy.ops.render.render(write_still=True)
 
 ##### CLEANUP #####
 
-# Remove the ``map_Kd`` line we appended to the temp MTL.
-# (The temp directory is cleaned up by render_service.py on success, but
-# keeping the file tidy aids debugging when the dir is preserved on failure.)
-with open(args.mtl_path) as _f:
-    _lines = _f.readlines()
+# Restore the original MTL content.  The temp directory is cleaned up by
+# render_service.py on success, but restoring the file aids debugging when
+# the directory is preserved on failure.
 with open(args.mtl_path, "w") as _f:
-    for _line in _lines[:-1]:
-        _f.write(_line)
+    _f.write(_original_mtl_content)

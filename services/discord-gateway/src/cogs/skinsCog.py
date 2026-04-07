@@ -50,6 +50,112 @@ class SquareCheckView(discord.ui.View):
         await interaction.response.defer()
 
 
+class RegionModeView(discord.ui.View):
+    """Buttons for choosing how to apply a skin to a multi-region ship.
+
+    Presents three options:
+    - "Apply to All Regions" (primary) → result = "all"
+    - "Customize Per Region" (secondary) → result = "custom"
+    - "Cancel" (danger) → result = None
+    """
+
+    def __init__(self, timeout: float = 60):
+        super().__init__(timeout=timeout)
+        self.result: str | None = None
+
+    @discord.ui.button(label="Apply to All Regions", style=discord.ButtonStyle.primary, emoji="\U0001f3a8")
+    async def apply_all_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        _ = button
+        self.result = "all"
+        self.stop()
+        await interaction.response.defer()
+
+    @discord.ui.button(label="Customize Per Region", style=discord.ButtonStyle.secondary, emoji="\U0001f527")
+    async def customize_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        _ = button
+        self.result = "custom"
+        self.stop()
+        await interaction.response.defer()
+
+    @discord.ui.button(label="Cancel", style=discord.ButtonStyle.danger, emoji="\u274c")
+    async def cancel_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        _ = button
+        self.result = None
+        self.stop()
+        await interaction.response.defer()
+
+
+class RegionOptionView(discord.ui.View):
+    """Dropdown select for choosing what texture to apply to a specific region.
+
+    Dynamically builds options from the available skin and region context.
+    self.selected_value is set to the chosen option value when the user selects.
+    """
+
+    def __init__(
+        self,
+        region_num: int,
+        total_regions: int,
+        skin_name: str | None = None,
+        compatible_skins: dict | None = None,
+        timeout: float = 120,
+    ):
+        super().__init__(timeout=timeout)
+        self.selected_value: str | None = None
+
+        # Build options dynamically
+        options: list[discord.SelectOption] = []
+
+        if skin_name:
+            options.append(
+                discord.SelectOption(
+                    label=f"Apply '{skin_name}'",
+                    value=f"skin:{skin_name}",
+                    emoji="\u2728",  # ✨
+                )
+            )
+
+        options.append(
+            discord.SelectOption(
+                label="Upload custom image",
+                value="upload",
+                emoji="\U0001f4e4",  # 📤
+            )
+        )
+        options.append(
+            discord.SelectOption(
+                label="Keep default look",
+                value="skip",
+                emoji="\U0001f532",  # 🔲
+            )
+        )
+
+        if compatible_skins:
+            for name in compatible_skins:
+                if name != skin_name and len(options) < 25:
+                    options.append(
+                        discord.SelectOption(
+                            label=name,
+                            value=f"skin:{name}",
+                            emoji="\U0001f3a8",  # 🎨
+                        )
+                    )
+
+        select = discord.ui.Select(
+            placeholder=f"Region {region_num} of {total_regions}",
+            options=options,
+        )
+        select.callback = self._select_callback
+        self.add_item(select)
+
+    async def _select_callback(self, interaction: discord.Interaction):
+        # The select item's values attribute holds the chosen option
+        select_item = self.children[0]
+        self.selected_value = select_item.values[0]
+        self.stop()
+        await interaction.response.defer()
+
+
 class FormatDownloadView(discord.ui.View):
     """Buttons for downloading render/texture in PNG and AEI formats.
 
@@ -277,7 +383,7 @@ class SkinsCog(commands.Cog):
         await interaction.followup.send(embed=embed)
 
     # ------------------------------------------------------------------
-    # Internal: collect textures from user
+    # Internal: collect base texture from user
     # ------------------------------------------------------------------
 
     async def _collect_base_texture(
@@ -331,50 +437,219 @@ class SkinsCog(commands.Cog):
 
         return img_bytes, square_mode
 
-    async def _collect_region_textures(
+    # ------------------------------------------------------------------
+    # Internal: multi-region helpers
+    # ------------------------------------------------------------------
+
+    async def _resolve_region_mode(
         self,
         interaction: discord.Interaction,
-        num_regions: int,
-    ) -> dict[int, bytes]:
-        """Collect per-region textures from the user. Returns {region_idx: bytes}."""
-        region_textures: dict[int, bytes] = {}
+        render_info: dict,
+        skin_bytes: bytes | None,
+        skin_name: str | None,
+        image_provided: bool,
+    ) -> str | None:
+        """Determine how to handle regions for a render/texture command.
+
+        Returns:
+            "all"    — apply skin as base texture (single-region or no skin)
+            "custom" — enter per-region customization flow
+            None     — user cancelled or timed out
+        """
+        # No skin and no image → default render, skip all region prompts
+        if not image_provided and skin_bytes is None:
+            return "all"
+
+        # Single region (0 or 1 mask) → no prompt, apply uniformly
+        num_regions = len(render_info.get("mask_paths", []))
+        if num_regions <= 1:
+            return "all"
+
+        # Multi-region ship with a skin/image → present the choice
+        skin_label = f"'{skin_name}'" if skin_name else "the custom image"
+        view = RegionModeView(timeout=60)
+        await interaction.followup.send(
+            f"**{render_info.get('ship_name', 'This ship')}** has **{num_regions} skinnable regions**. "
+            f"How would you like to apply {skin_label}?",
+            view=view,
+        )
+        await view.wait()
+
+        if view.result is None:
+            # timed out or cancelled
+            timed_out = view.result is None and not view.is_finished()
+            if timed_out:
+                await interaction.followup.send("❌ Region mode selection timed out.", ephemeral=True)
+            else:
+                await interaction.followup.send("❌ Operation cancelled.", ephemeral=True)
+        return view.result
+
+    async def _collect_per_region_choices(
+        self,
+        interaction: discord.Interaction,
+        render_info: dict,
+        skin_name: str | None,
+        skin_bytes: bytes | None,
+        compatible_skins: dict,
+    ) -> dict[int, dict] | None:
+        """Collect per-region texture choices from the user via Select menus.
+
+        For each region 1..N, presents a RegionOptionView dropdown.
+        Returns a dict mapping region_index → {action, bytes} or None on full failure.
+
+        region_choices[i] can be:
+            {"action": "skin",   "bytes": <bytes>}
+            {"action": "upload", "bytes": <bytes>}
+            {"action": "skip"}
+        """
+        mask_paths = render_info.get("mask_paths", [])
+        num_regions = len(mask_paths)
+        region_choices: dict[int, dict] = {}
+
+        # Cache downloaded skins within this invocation to avoid redundant downloads
+        skin_cache: dict[str, bytes] = {}
+        if skin_name and skin_bytes is not None:
+            skin_cache[skin_name] = skin_bytes
 
         for region_idx in range(1, num_regions + 1):
-            await interaction.followup.send(
-                f"Upload texture for **Region {region_idx}** "
-                "(or type `skip` to skip, `disable` to revert to base texture):",
+            view = RegionOptionView(
+                region_num=region_idx,
+                total_regions=num_regions,
+                skin_name=skin_name,
+                compatible_skins=compatible_skins,
+                timeout=120,
             )
+            await interaction.followup.send(
+                f"**Region {region_idx} of {num_regions}** — Select what to apply:",
+                view=view,
+            )
+            await view.wait()
 
-            def make_check(uid: int):
-                def check(m: discord.Message) -> bool:
-                    return m.author.id == uid and (len(m.attachments) > 0 or m.content.lower() in ("skip", "disable"))
-
-                return check
-
-            try:
-                msg: discord.Message = await self.bot.wait_for(
-                    "message",
-                    check=make_check(interaction.user.id),
-                    timeout=120,
-                )
-            except TimeoutError:
+            selected = view.selected_value
+            if selected is None:
+                # Timed out — skip this region, continue
+                flogger.debug(f"Region {region_idx} timed out — skipping")
                 await interaction.followup.send(
-                    f"Timed out waiting for Region {region_idx} texture - skipping.",
+                    f"⏱️ Timed out for Region {region_idx} — keeping default look.",
+                    ephemeral=True,
                 )
+                region_choices[region_idx] = {"action": "skip"}
                 continue
 
-            if msg.content.lower() == "skip":
-                flogger.debug(f"Region {region_idx} skipped")
-                continue
-            if msg.content.lower() == "disable":
-                flogger.debug(f"Region {region_idx} disabled")
-                region_textures[region_idx] = b""  # sentinel: disabled
-                continue
+            if selected == "skip":
+                flogger.debug(f"Region {region_idx}: keep default")
+                region_choices[region_idx] = {"action": "skip"}
+                await interaction.followup.send(f"✅ Region {region_idx} → default", ephemeral=True)
 
-            attachment = msg.attachments[0]
-            region_textures[region_idx] = await attachment.read()
+            elif selected == "upload":
+                flogger.debug(f"Region {region_idx}: upload custom image")
+                await interaction.followup.send(
+                    f"Upload your image for **Region {region_idx}**:",
+                    ephemeral=True,
+                )
 
-        return region_textures
+                def make_check(uid: int):
+                    def check(m: discord.Message) -> bool:
+                        return m.author.id == uid and len(m.attachments) > 0
+
+                    return check
+
+                try:
+                    msg: discord.Message = await self.bot.wait_for(
+                        "message",
+                        check=make_check(interaction.user.id),
+                        timeout=120,
+                    )
+                    uploaded_bytes = await msg.attachments[0].read()
+                    region_choices[region_idx] = {"action": "upload", "bytes": uploaded_bytes}
+                    await interaction.followup.send(f"✅ Region {region_idx} → custom upload", ephemeral=True)
+                except TimeoutError:
+                    flogger.debug(f"Region {region_idx} upload timed out — skipping")
+                    await interaction.followup.send(
+                        f"⏱️ Upload timed out for Region {region_idx} — keeping default look.",
+                        ephemeral=True,
+                    )
+                    region_choices[region_idx] = {"action": "skip"}
+
+            elif selected.startswith("skin:"):
+                chosen_skin = selected[len("skin:") :]
+                flogger.debug(f"Region {region_idx}: applying skin '{chosen_skin}'")
+
+                # Download (or use cached) skin bytes
+                if chosen_skin not in skin_cache:
+                    downloaded = await self._download_skin_image(interaction, "", chosen_skin, render_info)
+                    if downloaded is None:
+                        # Error already reported; treat as skip
+                        flogger.warning(f"Failed to download skin '{chosen_skin}' for region {region_idx} — skipping")
+                        region_choices[region_idx] = {"action": "skip"}
+                        continue
+                    skin_cache[chosen_skin] = downloaded
+
+                region_choices[region_idx] = {"action": "skin", "bytes": skin_cache[chosen_skin]}
+                await interaction.followup.send(f"✅ Region {region_idx} → {chosen_skin}", ephemeral=True)
+
+        return region_choices if region_choices else None
+
+    async def _composite_textures_multiregion(
+        self,
+        interaction: discord.Interaction,
+        ship: str,
+        ship_path: str,
+        diffuse_path: str,
+        region_choices: dict[int, dict],
+    ) -> bytes | None:
+        """Call blender-service composite endpoint for per-region customization.
+
+        Uses the ship's diffuse texture (on disk) as the base and applies
+        per-region textures at the specified mask indices.
+        Returns composited PNG bytes or None on error.
+        """
+        await interaction.followup.send("🔧 Compositing textures…")
+
+        data: dict[str, str] = {
+            "ship_path": ship_path,
+            "base_texture_path": diffuse_path,
+            "square_mode": "none",
+            "disabled_regions": "",
+        }
+
+        files: list[tuple] = []
+        active_regions: list[int] = []
+
+        for region_idx, choice in sorted(region_choices.items()):
+            action = choice.get("action")
+            if action in ("skin", "upload"):
+                tex_bytes = choice.get("bytes")
+                if tex_bytes:
+                    files.append(("region_textures", (f"region_{region_idx}.png", tex_bytes, "image/png")))
+                    active_regions.append(region_idx)
+
+        data["region_indices"] = ",".join(str(i) for i in active_regions)
+
+        try:
+            resp = await self.blender_client.post(
+                "/textures/composite",
+                files=files if files else None,
+                data=data,
+            )
+            resp.raise_for_status()
+            flogger.info(f"Multi-region composite successful for {ship} (regions: {active_regions})")
+            return resp.content
+        except HttpxHTTPStatusError as e:
+            flogger.error(f"Multi-region composite API error for {ship}: {e.response.status_code}")
+            await interaction.followup.send(
+                f"❌ Texture compositing failed: API error {e.response.status_code}",
+                ephemeral=True,
+            )
+            return None
+        except HttpxTimeoutException:
+            flogger.error(f"Multi-region composite timed out for {ship}")
+            await interaction.followup.send("❌ Compositing timed out. Please try again.", ephemeral=True)
+            return None
+        except Exception as e:  # pylint: disable=broad-exception-caught
+            flogger.error(f"Multi-region composite error for {ship}: {e}")
+            await interaction.followup.send("❌ Texture compositing failed. Please try again later.", ephemeral=True)
+            return None
 
     # ------------------------------------------------------------------
     # /render_skin
@@ -431,8 +706,29 @@ class SkinsCog(commands.Cog):
             if skin_bytes is None:
                 return  # error already sent
 
-        # 3. Composite via blender-service (base texture loaded from disk)
-        composite_bytes = await self._composite_textures(interaction, ship, ship_path, diffuse_path, skin_bytes)
+        # 2b. Resolve region mode for multi-region ships
+        skin_name_for_region = skin if skin != "Default" else None
+        region_mode = await self._resolve_region_mode(
+            interaction, render_info, skin_bytes, skin_name_for_region, image is not None
+        )
+        if region_mode is None:
+            return  # cancelled
+
+        if region_mode == "custom":
+            compatible_skins = render_info.get("compatible_skins") or {}
+            region_choices = await self._collect_per_region_choices(
+                interaction, render_info, skin_name_for_region, skin_bytes, compatible_skins
+            )
+            if region_choices is None:
+                await interaction.followup.send("❌ Region customization cancelled.", ephemeral=True)
+                return
+            composite_bytes = await self._composite_textures_multiregion(
+                interaction, ship, ship_path, diffuse_path, region_choices
+            )
+        else:
+            # "all" mode — existing behavior (skin as base texture, or no skin for default render)
+            composite_bytes = await self._composite_textures(interaction, ship, ship_path, diffuse_path, skin_bytes)
+
         if composite_bytes is None:
             return
 
@@ -514,8 +810,28 @@ class SkinsCog(commands.Cog):
                 if skin_bytes is None:
                     return  # error already sent
 
-            # 2b. Composite via blender-service (base texture loaded from disk)
-            composite_bytes = await self._composite_textures(interaction, ship, ship_path, diffuse_path, skin_bytes)
+            # 2b. Resolve region mode for multi-region ships
+            skin_name_for_region = skin if skin != "Default" else None
+            region_mode = await self._resolve_region_mode(
+                interaction, render_info, skin_bytes, skin_name_for_region, False
+            )
+            if region_mode is None:
+                return  # cancelled
+
+            if region_mode == "custom":
+                compatible_skins = render_info.get("compatible_skins") or {}
+                region_choices = await self._collect_per_region_choices(
+                    interaction, render_info, skin_name_for_region, skin_bytes, compatible_skins
+                )
+                if region_choices is None:
+                    await interaction.followup.send("❌ Region customization cancelled.", ephemeral=True)
+                    return
+                composite_bytes = await self._composite_textures_multiregion(
+                    interaction, ship, ship_path, diffuse_path, region_choices
+                )
+            else:
+                # "all" mode — existing behavior
+                composite_bytes = await self._composite_textures(interaction, ship, ship_path, diffuse_path, skin_bytes)
 
         if composite_bytes is None:
             return
@@ -665,10 +981,9 @@ class SkinsCog(commands.Cog):
             "disabled_regions": "",
         }
 
-        # If a skin overlay was provided, send it as region texture 1
+        # If a skin was provided, send it as the base texture (replaces the diffuse BMP entirely)
         if skin_bytes is not None:
-            files.append(("region_textures", ("region1.png", skin_bytes, "image/png")))
-            data["region_indices"] = "1"
+            files.append(("base_texture", ("base_skin.png", skin_bytes, "image/png")))
 
         try:
             resp = await self.blender_client.post(

@@ -1,3 +1,4 @@
+import json
 import uuid
 from datetime import UTC, datetime, timedelta
 
@@ -21,20 +22,62 @@ def _get_scheduler(req: Request):
     return scheduler
 
 
+def _safe_serialize_args(args) -> list:
+    """Safely serialize job args to a JSON-compatible list.
+
+    APScheduler job args may contain non-JSON-serializable objects (datetime,
+    custom dataclasses, etc.).  We use json.dumps with default=str to coerce
+    everything to a serializable form, then round-trip back to a Python list.
+
+    Args:
+        args: The raw args tuple/list from an APScheduler job.
+
+    Returns:
+        A JSON-safe list suitable for inclusion in a Pydantic response model.
+    """
+    try:
+        raw = list(args) if args is not None else []
+        return json.loads(json.dumps(raw, default=str))
+    except Exception:
+        # Last-resort: stringify every element individually
+        try:
+            return [str(a) for a in (args or [])]
+        except Exception:
+            return []
+
+
+_DEFAULT_JOB_IDS = frozenset({"bounty_spawn_default", "shop_refresh_default", "temperature_decay_default"})
+
+
 @router.get("/jobs", response_model=list[JobInfo])
-async def list_jobs(req: Request):
+async def list_jobs(req: Request, guild_id: int | None = None):
     flogger.info("List scheduled jobs endpoint: starting")
-    flogger.debug("Listing all scheduled jobs")
+    flogger.debug(f"Listing scheduled jobs guild_id={guild_id}")
     jobs = _get_scheduler(req).get_jobs()
-    result = [
-        JobInfo(
-            id=j.job_id,
-            next_run_time=j.next_run_time,
-            trigger=str(j.trigger),
-            args=j.args,
+
+    result = []
+    for j in jobs:
+        jid = getattr(j, "id", None) or getattr(j, "job_id", "unknown")
+
+        if guild_id is not None:
+            # Always include the default recurring jobs (they serve all guilds)
+            if jid in _DEFAULT_JOB_IDS:
+                pass  # include unconditionally
+            else:
+                # Include only if the payload's guild_id matches
+                args = list(j.args) if j.args else []
+                if not (len(args) >= 2 and isinstance(args[1], dict) and args[1].get("guild_id") == guild_id):
+                    continue  # skip this job
+
+        result.append(
+            JobInfo(
+                id=jid,
+                next_run_time=j.next_run_time,
+                trigger=str(j.trigger),
+                args=_safe_serialize_args(j.args),
+            )
         )
-        for j in jobs
-    ]
+
     flogger.info(f"Found {len(result)} scheduled job(s)")
     return result
 
@@ -48,10 +91,10 @@ async def get_job(req: Request, job_id: str):
         flogger.warning(f"Job '{job_id}' not found")
         raise HTTPException(404, "Job not found")
     info = JobInfo(
-        id=job.job_id,
+        id=getattr(job, "id", None) or getattr(job, "job_id", "unknown"),
         next_run_time=job.next_run_time,
         trigger=str(job.trigger),
-        args=job.args,
+        args=_safe_serialize_args(job.args),
     )
     flogger.info(f"Retrieved job '{job_id}': next_run_time={info.next_run_time}")
     return info
@@ -138,6 +181,29 @@ async def delete_all_jobs(req: Request):
     return {"status": "all_jobs_deleted"}
 
 
+@router.delete("/jobs/guild/{guild_id}")
+async def delete_guild_jobs(req: Request, guild_id: int):
+    """Delete all one-time jobs scoped to a specific guild.
+
+    Iterates all scheduled jobs and removes those whose payload (args[1]) contains
+    a ``guild_id`` matching the path parameter.  Default recurring jobs that serve
+    all guilds are never removed by this endpoint.
+    """
+    flogger.info(f"Delete guild jobs endpoint: starting guild_id={guild_id}")
+    scheduler = _get_scheduler(req)
+    removed = 0
+    for job in scheduler.get_jobs():
+        try:
+            args = list(job.args) if job.args else []
+            if len(args) >= 2 and isinstance(args[1], dict) and args[1].get("guild_id") == guild_id:
+                scheduler.remove_job(job.id)
+                removed += 1
+        except Exception:  # pylint: disable=broad-exception-caught
+            continue
+    flogger.info(f"Removed {removed} guild job(s) for guild_id={guild_id}")
+    return {"status": "guild_jobs_deleted", "guild_id": guild_id, "removed_count": removed}
+
+
 @router.delete("/jobs/{job_id}")
 async def delete_job(req: Request, job_id: str):
     flogger.info(f"Delete job endpoint: starting job_id={job_id}")
@@ -149,3 +215,25 @@ async def delete_job(req: Request, job_id: str):
     sched.remove_job(job_id)
     flogger.info(f"Deleted job '{job_id}'")
     return {"status": "deleted", "job_id": job_id}
+
+
+@router.post("/reset")
+async def reset_scheduler(req: Request):
+    """Remove all jobs and re-register the 3 default recurring jobs.
+
+    This is an admin-level operation that wipes the entire job queue and then
+    calls ``register_default_jobs`` to recreate the standard recurring jobs
+    (bounty_spawn_default, shop_refresh_default, temperature_decay_default).
+    """
+    flogger.info("Reset scheduler endpoint: starting")
+    scheduler = _get_scheduler(req)
+    scheduler.remove_all_jobs()
+    flogger.info("All jobs removed; re-registering default jobs")
+
+    # Deferred import to avoid circular import at module load time
+    from main import register_default_jobs
+
+    register_default_jobs(scheduler)
+    jobs = scheduler.get_jobs()
+    flogger.info(f"Scheduler reset complete: {len(jobs)} default job(s) registered")
+    return {"status": "reset", "jobs_registered": len(jobs)}

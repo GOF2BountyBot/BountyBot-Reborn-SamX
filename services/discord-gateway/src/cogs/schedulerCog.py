@@ -58,12 +58,12 @@ class SchedulerCog(commands.Cog):
     @app_commands.command(name="scheduler_list", description="[ADMIN] List all scheduled jobs")
     @is_admin()
     async def scheduler_list(self, interaction: discord.Interaction):
-        """List all currently scheduled APScheduler jobs."""
+        """List all currently scheduled APScheduler jobs relevant to this guild."""
         await interaction.response.defer(thinking=True, ephemeral=True)
         flogger.debug(f"/scheduler_list invoked: guild={interaction.guild_id} user={interaction.user.id}")
 
         try:
-            resp = await self.http_client.get(f"{api_base}/jobs", timeout=10)
+            resp = await self.http_client.get(f"{api_base}/jobs", params={"guild_id": interaction.guild_id}, timeout=10)
             resp.raise_for_status()
             jobs = resp.json()
 
@@ -341,6 +341,122 @@ class SchedulerCog(commands.Cog):
     @scheduler_delete.error
     async def scheduler_delete_error(self, interaction: discord.Interaction, error: app_commands.AppCommandError):
         flogger.exception("Error in /scheduler_delete", exc_info=error)
+        if not interaction.response.is_done():
+            await interaction.response.send_message("⚠️ An error occurred.", ephemeral=True)
+
+    # ------------------------------------------------------------------
+    # /admin_reset_scheduler — Wipe all jobs and re-register defaults
+    # ------------------------------------------------------------------
+
+    @app_commands.command(
+        name="admin_reset_scheduler",
+        description="[ADMIN] Wipe all scheduled jobs and re-register the 3 default recurring jobs",
+    )
+    @is_admin()
+    async def admin_reset_scheduler(self, interaction: discord.Interaction):
+        """Remove all scheduled jobs and re-register the default recurring jobs."""
+        await interaction.response.defer(thinking=True, ephemeral=True)
+        flogger.debug(f"/admin_reset_scheduler invoked: guild={interaction.guild_id} user={interaction.user.id}")
+
+        try:
+            resp = await self.http_client.post(f"{api_base}/reset", timeout=10)
+            resp.raise_for_status()
+            result = resp.json()
+
+            jobs_registered = result.get("jobs_registered", 0)
+            embed = discord.Embed(
+                title="🔄 Scheduler Reset",
+                description=f"All jobs wiped and **{jobs_registered}** default job(s) re-registered.",
+                color=discord.Color.green(),
+            )
+            embed.add_field(name="Status", value=result.get("status", "reset"), inline=True)
+            embed.add_field(name="Jobs Registered", value=str(jobs_registered), inline=True)
+            embed.set_footer(text="Default jobs: bounty_spawn_default, shop_refresh_default, temperature_decay_default")
+
+            await interaction.followup.send(embed=embed, ephemeral=True)
+            flogger.info(
+                f"/admin_reset_scheduler success: guild={interaction.guild_id} user={interaction.user.id}"
+                f" jobs_registered={jobs_registered}"
+            )
+
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code == 503:
+                await interaction.followup.send(
+                    "⚠️ Scheduler is unavailable. The service may still be starting up.", ephemeral=True
+                )
+            else:
+                flogger.error(
+                    f"/admin_reset_scheduler API error: guild={interaction.guild_id} user={interaction.user.id}"
+                    f" status={e.response.status_code}"
+                )
+                await interaction.followup.send(f"❌ API Error: {e}", ephemeral=True)
+        except Exception as e:  # pylint: disable=broad-exception-caught
+            flogger.error(
+                f"/admin_reset_scheduler error: guild={interaction.guild_id} user={interaction.user.id} error={e}"
+            )
+            await interaction.followup.send("⚠️ An error occurred while resetting the scheduler.", ephemeral=True)
+
+    @admin_reset_scheduler.error
+    async def admin_reset_scheduler_error(self, interaction: discord.Interaction, error: app_commands.AppCommandError):
+        flogger.exception("Error in /admin_reset_scheduler", exc_info=error)
+        if not interaction.response.is_done():
+            await interaction.response.send_message("⚠️ An error occurred.", ephemeral=True)
+
+    # ------------------------------------------------------------------
+    # /admin_clear_scheduler — Delete all one-time jobs for this guild
+    # ------------------------------------------------------------------
+
+    @app_commands.command(
+        name="admin_clear_scheduler",
+        description="[ADMIN] Delete all one-time scheduled jobs scoped to this guild",
+    )
+    @is_admin()
+    async def admin_clear_scheduler(self, interaction: discord.Interaction):
+        """Delete all one-time jobs associated with the invoking guild."""
+        await interaction.response.defer(thinking=True, ephemeral=True)
+        flogger.debug(f"/admin_clear_scheduler invoked: guild={interaction.guild_id} user={interaction.user.id}")
+
+        try:
+            resp = await self.http_client.delete(f"{api_base}/jobs/guild/{interaction.guild_id}", timeout=10)
+            resp.raise_for_status()
+            result = resp.json()
+
+            removed = result.get("removed_count", 0)
+            embed = discord.Embed(
+                title="🧹 Guild Jobs Cleared",
+                description=f"Removed **{removed}** one-time job(s) for this guild.",
+                color=discord.Color.orange(),
+            )
+            embed.add_field(name="Status", value=result.get("status", "guild_jobs_deleted"), inline=True)
+            embed.add_field(name="Jobs Removed", value=str(removed), inline=True)
+            embed.add_field(name="Guild ID", value=str(interaction.guild_id), inline=True)
+
+            await interaction.followup.send(embed=embed, ephemeral=True)
+            flogger.info(
+                f"/admin_clear_scheduler success: guild={interaction.guild_id} user={interaction.user.id}"
+                f" removed={removed}"
+            )
+
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code == 503:
+                await interaction.followup.send(
+                    "⚠️ Scheduler is unavailable. The service may still be starting up.", ephemeral=True
+                )
+            else:
+                flogger.error(
+                    f"/admin_clear_scheduler API error: guild={interaction.guild_id} user={interaction.user.id}"
+                    f" status={e.response.status_code}"
+                )
+                await interaction.followup.send(f"❌ API Error: {e}", ephemeral=True)
+        except Exception as e:  # pylint: disable=broad-exception-caught
+            flogger.error(
+                f"/admin_clear_scheduler error: guild={interaction.guild_id} user={interaction.user.id} error={e}"
+            )
+            await interaction.followup.send("⚠️ An error occurred while clearing guild jobs.", ephemeral=True)
+
+    @admin_clear_scheduler.error
+    async def admin_clear_scheduler_error(self, interaction: discord.Interaction, error: app_commands.AppCommandError):
+        flogger.exception("Error in /admin_clear_scheduler", exc_info=error)
         if not interaction.response.is_done():
             await interaction.response.send_message("⚠️ An error occurred.", ephemeral=True)
 

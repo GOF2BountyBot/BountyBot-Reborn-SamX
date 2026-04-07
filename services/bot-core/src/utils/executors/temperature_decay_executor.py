@@ -25,7 +25,7 @@ flogger = get_logger("temperature-decay-executor")
 # ---------------------------------------------------------------------------
 # Supported bounty divisions (matches GameConstants.DIVISION_NAMES)
 # ---------------------------------------------------------------------------
-_BOUNTY_DIVISIONS: list[str] = ["bronze", "silver", "gold"]
+_BOUNTY_DIVISIONS: list[str] = ["bronze", "silver", "gold", "platinum"]
 
 # Default temperature applied to a division that has no stored value yet.
 _DEFAULT_TEMPERATURE: float = 1.0

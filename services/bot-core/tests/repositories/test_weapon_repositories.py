@@ -137,7 +137,6 @@ class TestPrimaryWeaponRepository:
 
         captured_kwargs = {}
 
-
         class MockPrimaryWeapon:
             def __init__(self, **kwargs):
                 captured_kwargs.update(kwargs)
@@ -165,6 +164,20 @@ class TestPrimaryWeaponRepository:
         mock_db.add.assert_not_called()
         mock_db.commit.assert_awaited_once()
         assert result is existing
+
+    @pytest.mark.asyncio
+    async def test_create_or_update_raises_when_name_missing(self, repo, mock_db):
+        """create_or_update must raise ValueError when 'name' key is absent."""
+        with pytest.raises(ValueError, match="Missing required key 'name' in data for primary_weapon"):
+            await repo.create_or_update(mock_db, {"dps": 100.0})
+
+        mock_db.execute.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_create_or_update_raises_when_dps_missing(self, repo, mock_db):
+        """create_or_update must raise ValueError when 'dps' key is absent."""
+        with pytest.raises(ValueError, match="Missing required key 'dps' in data for primary_weapon"):
+            await repo.create_or_update(mock_db, {"name": "Laser Cannon"})
 
 
 # ---------------------------------------------------------------------------
@@ -255,6 +268,20 @@ class TestSecondaryWeaponRepository:
         mock_db.commit.assert_awaited_once()
         assert result is existing
 
+    @pytest.mark.asyncio
+    async def test_create_or_update_raises_when_name_missing(self, repo, mock_db):
+        """create_or_update must raise ValueError when 'name' key is absent."""
+        with pytest.raises(ValueError, match="Missing required key 'name' in data for secondary_weapon"):
+            await repo.create_or_update(mock_db, {"damage": 500})
+
+        mock_db.execute.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_create_or_update_raises_when_damage_missing(self, repo, mock_db):
+        """create_or_update must raise ValueError when 'damage' key is absent."""
+        with pytest.raises(ValueError, match="Missing required key 'damage' in data for secondary_weapon"):
+            await repo.create_or_update(mock_db, {"name": "Missile"})
+
 
 # ---------------------------------------------------------------------------
 # TestTurretWeaponRepository
@@ -343,3 +370,17 @@ class TestTurretWeaponRepository:
         mock_db.add.assert_not_called()
         mock_db.commit.assert_awaited_once()
         assert result is existing
+
+    @pytest.mark.asyncio
+    async def test_create_or_update_raises_when_name_missing(self, repo, mock_db):
+        """create_or_update must raise ValueError when 'name' key is absent."""
+        with pytest.raises(ValueError, match="Missing required key 'name' in data for turret_weapon"):
+            await repo.create_or_update(mock_db, {"dps": 80.0})
+
+        mock_db.execute.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_create_or_update_raises_when_dps_missing(self, repo, mock_db):
+        """create_or_update must raise ValueError when 'dps' key is absent."""
+        with pytest.raises(ValueError, match="Missing required key 'dps' in data for turret_weapon"):
+            await repo.create_or_update(mock_db, {"name": "Heavy Turret"})

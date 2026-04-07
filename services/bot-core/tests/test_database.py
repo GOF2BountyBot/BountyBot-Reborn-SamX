@@ -326,8 +326,14 @@ class TestCircuitBreakerGetState:
         """get_state() dict must contain the documented keys."""
         cb = CircuitBreaker()
         state = cb.get_state()
-        for key in ("state", "failure_count", "success_count", "last_failure_time",
-                    "failure_threshold", "recovery_timeout"):
+        for key in (
+            "state",
+            "failure_count",
+            "success_count",
+            "last_failure_time",
+            "failure_threshold",
+            "recovery_timeout",
+        ):
             assert key in state, f"Missing key: {key}"
 
     def test_get_state_reflects_current_state(self):
@@ -646,11 +652,25 @@ class TestTableNames:
     def test_enum_membership(self):
         """All expected names must exist as enum members."""
         expected_names = {
-            "Bounty", "Criminal", "DiscordMessage", "DuelRequest",
-            "GuildConfigs", "GuildShops",
-            "Item", "Module", "PlayerInventories", "PlayerShips", "Players",
-            "PrimaryWeapon", "SecondaryWeapon", "SchemaVersion", "Ship",
-            "System", "TurretWeapon", "Users", "Weapon",
+            "Bounty",
+            "Criminal",
+            "DiscordMessage",
+            "DuelRequest",
+            "GuildConfigs",
+            "GuildShops",
+            "Item",
+            "Module",
+            "PlayerInventories",
+            "PlayerShips",
+            "Players",
+            "PrimaryWeapon",
+            "SecondaryWeapon",
+            "SchemaVersion",
+            "Ship",
+            "System",
+            "TurretWeapon",
+            "Users",
+            "Weapon",
         }
         actual_names = {m.name for m in TableNames}
         assert expected_names == actual_names
@@ -658,9 +678,7 @@ class TestTableNames:
     def test_values_are_lowercase_snake_case(self):
         """Table name values must be lowercase (snake_case) strings."""
         for member in TableNames:
-            assert member.value == member.value.lower(), (
-                f"{member.name}.value='{member.value}' is not lowercase"
-            )
+            assert member.value == member.value.lower(), f"{member.name}.value='{member.value}' is not lowercase"
 
 
 # ===========================================================================
@@ -701,8 +719,10 @@ class TestDatabaseManagerInitialize:
         with patch("persist.database.manager.bblogger"):
             mgr = DatabaseManager()
 
-        with patch("persist.database.manager.create_async_engine", side_effect=Exception("engine fail")), \
-             pytest.raises(Exception, match="engine fail"):
+        with (
+            patch("persist.database.manager.create_async_engine", side_effect=Exception("engine fail")),
+            pytest.raises(Exception, match="engine fail"),
+        ):
             await mgr.initialize()
 
 
@@ -767,9 +787,7 @@ class TestDatabaseManagerTestConnection:
             mgr = DatabaseManager()
 
         mock_conn = AsyncMock()
-        mock_conn.execute = AsyncMock(
-            side_effect=OperationalError("conn refused", {}, Exception())
-        )
+        mock_conn.execute = AsyncMock(side_effect=OperationalError("conn refused", {}, Exception()))
         mock_conn.__aenter__ = AsyncMock(return_value=mock_conn)
         mock_conn.__aexit__ = AsyncMock(return_value=False)
 
@@ -833,9 +851,7 @@ class TestDatabaseManagerExecuteSql:
             mgr = DatabaseManager()
 
         mock_conn = AsyncMock()
-        mock_conn.execute = AsyncMock(
-            side_effect=SQLAlchemyError("sql fail")
-        )
+        mock_conn.execute = AsyncMock(side_effect=SQLAlchemyError("sql fail"))
 
         mock_begin = AsyncMock()
         mock_begin.__aenter__ = AsyncMock(return_value=None)

@@ -13,6 +13,7 @@ class ShopItemResponse(BaseModel):
     price: int
     last_restocked: str
     refresh_interval_hours: int
+    emoji: str | None = None
 
 
 class ShopSummaryResponse(BaseModel):

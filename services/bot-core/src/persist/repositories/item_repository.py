@@ -212,6 +212,10 @@ class ItemRepository(GenericRepository[Item]):
         Maps the common Item fields; additional keys are ignored.
         """
         try:
+            # validate required keys upfront
+            if "name" not in raw:
+                raise ValueError("Missing required key 'name' in data for item")
+
             item_name = raw.get("name", "unknown")
             flogger.trace(f"create_or_update entry: creating or updating item name={item_name!r}")
             flogger.debug(f"Item data: name={item_name!r}, type={raw.get('type')}, value={raw.get('value')}")

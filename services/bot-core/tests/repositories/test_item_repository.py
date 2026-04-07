@@ -58,9 +58,7 @@ def _make_scalars_result(values: list) -> MagicMock:
     """Build a mock db.execute result whose .scalars().all() returns *values*."""
     scalars_mock = MagicMock()
     scalars_mock.all = MagicMock(return_value=values)
-    scalars_mock.one_or_none = MagicMock(
-        return_value=values[0] if values else None
-    )
+    scalars_mock.one_or_none = MagicMock(return_value=values[0] if values else None)
     result_mock = MagicMock()
     result_mock.scalars = MagicMock(return_value=scalars_mock)
     return result_mock
@@ -167,8 +165,8 @@ class TestGetByName:
         # First call (ship) returns no result; second call (primary_weapon) returns the item
         mock_db.execute = AsyncMock(
             side_effect=[
-                _make_one_or_none_result(None),   # ship — not found
-                _make_one_or_none_result(item),    # primary_weapon — found
+                _make_one_or_none_result(None),  # ship — not found
+                _make_one_or_none_result(item),  # primary_weapon — found
             ]
         )
 
@@ -181,9 +179,7 @@ class TestGetByName:
     @pytest.mark.asyncio
     async def test_get_by_name_without_item_type_not_found_anywhere(self, repo, mock_db):
         """get_by_name without item_type returns None when item not in any model."""
-        mock_db.execute = AsyncMock(
-            side_effect=[_make_one_or_none_result(None)] * 5
-        )
+        mock_db.execute = AsyncMock(side_effect=[_make_one_or_none_result(None)] * 5)
 
         result = await repo.get_by_name(mock_db, "Completely Unknown")
 
@@ -255,10 +251,10 @@ class TestGetAllByTechLevel:
         # 4 tech_level models: PrimaryWeapon, SecondaryWeapon, TurretWeapon, Module
         mock_db.execute = AsyncMock(
             side_effect=[
-                _make_scalars_result([weapon1]),   # PrimaryWeapon
-                _make_scalars_result([weapon2]),   # SecondaryWeapon
-                _make_scalars_result([]),          # TurretWeapon — empty
-                _make_scalars_result([module1]),   # Module
+                _make_scalars_result([weapon1]),  # PrimaryWeapon
+                _make_scalars_result([weapon2]),  # SecondaryWeapon
+                _make_scalars_result([]),  # TurretWeapon — empty
+                _make_scalars_result([module1]),  # Module
             ]
         )
 
@@ -273,9 +269,7 @@ class TestGetAllByTechLevel:
     @pytest.mark.asyncio
     async def test_get_all_by_tech_level_without_item_type_empty(self, repo, mock_db):
         """get_all_by_tech_level without item_type returns [] if no items exist."""
-        mock_db.execute = AsyncMock(
-            side_effect=[_make_scalars_result([])] * 4
-        )
+        mock_db.execute = AsyncMock(side_effect=[_make_scalars_result([])] * 4)
 
         result = await repo.get_all_by_tech_level(mock_db, 99)
 
@@ -414,10 +408,10 @@ class TestGetCount:
         mock_db.execute = AsyncMock(
             side_effect=[
                 _make_scalar_result(10),  # Ship
-                _make_scalar_result(5),   # PrimaryWeapon
-                _make_scalar_result(3),   # SecondaryWeapon
-                _make_scalar_result(2),   # TurretWeapon
-                _make_scalar_result(7),   # Module
+                _make_scalar_result(5),  # PrimaryWeapon
+                _make_scalar_result(3),  # SecondaryWeapon
+                _make_scalar_result(2),  # TurretWeapon
+                _make_scalar_result(7),  # Module
             ]
         )
 
@@ -429,9 +423,7 @@ class TestGetCount:
     @pytest.mark.asyncio
     async def test_get_count_returns_zero_when_all_empty(self, repo, mock_db):
         """get_count returns 0 when all tables are empty."""
-        mock_db.execute = AsyncMock(
-            side_effect=[_make_scalar_result(0)] * 5
-        )
+        mock_db.execute = AsyncMock(side_effect=[_make_scalar_result(0)] * 5)
 
         result = await repo.get_count(mock_db)
 
@@ -551,3 +543,18 @@ class TestCreateOrUpdate:
         # setattr should have been called for each item field
         existing.name = "Updated Shield"  # sanity: mock accepts attribute sets
         mock_db.refresh.assert_awaited_once_with(existing)
+
+    @pytest.mark.asyncio
+    async def test_raises_value_error_when_name_missing(self, repo, mock_db):
+        """create_or_update must raise ValueError when 'name' key is absent."""
+        with pytest.raises(ValueError, match="Missing required key 'name' in data for item"):
+            await repo.create_or_update(mock_db, {"value": 100, "type": "module"})
+
+        mock_db.execute.assert_not_awaited()
+        mock_db.add.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_raises_value_error_on_empty_dict(self, repo, mock_db):
+        """create_or_update must raise ValueError for an empty dict."""
+        with pytest.raises(ValueError, match="Missing required key 'name' in data for item"):
+            await repo.create_or_update(mock_db, {})

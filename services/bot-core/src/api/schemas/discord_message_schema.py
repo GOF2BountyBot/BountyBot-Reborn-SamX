@@ -30,6 +30,7 @@ class DiscordMessageRequest(BaseModel):
     message_id: int | None = Field(None, description="Discord message ID (use for update/get/delete operations)")
     embed_payload: EmbedPayloadDict = Field(..., description="Embed payload for the message")
     message_type: str = Field("general", description="Type of message")
+    reference_id: int | None = Field(None, description="Optional reference entity ID (e.g. bounty ID)")
 
 
 class DiscordMessageResponse(BaseModel):
@@ -49,5 +50,6 @@ class DiscordMessageResponse(BaseModel):
     message_id: int
     embed_payload: str
     message_type: str
+    reference_id: int | None = None
     created_at: datetime
     updated_at: datetime

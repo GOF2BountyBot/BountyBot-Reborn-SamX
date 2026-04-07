@@ -104,12 +104,15 @@ async def test_remove_deletes_item(db_session: AsyncSession, repo: InventoryRepo
 async def test_create_or_update_creates_new(db_session: AsyncSession, repo: InventoryRepository):
     player = await _setup_player(db_session)
 
-    result = await repo.create_or_update(db_session, {
-        "player_id": player.id,
-        "item_type": "weapon",
-        "item_name": "Blaster",
-        "quantity": 3,
-    })
+    result = await repo.create_or_update(
+        db_session,
+        {
+            "player_id": player.id,
+            "item_type": "weapon",
+            "item_name": "Blaster",
+            "quantity": 3,
+        },
+    )
 
     assert result.item_name == "Blaster"
     assert result.quantity == 3
@@ -117,19 +120,25 @@ async def test_create_or_update_creates_new(db_session: AsyncSession, repo: Inve
 
 async def test_create_or_update_adds_quantity_to_existing(db_session: AsyncSession, repo: InventoryRepository):
     player = await _setup_player(db_session)
-    await repo.create_or_update(db_session, {
-        "player_id": player.id,
-        "item_type": "weapon",
-        "item_name": "Blaster",
-        "quantity": 3,
-    })
+    await repo.create_or_update(
+        db_session,
+        {
+            "player_id": player.id,
+            "item_type": "weapon",
+            "item_name": "Blaster",
+            "quantity": 3,
+        },
+    )
 
-    result = await repo.create_or_update(db_session, {
-        "player_id": player.id,
-        "item_type": "weapon",
-        "item_name": "Blaster",
-        "quantity": 2,
-    })
+    result = await repo.create_or_update(
+        db_session,
+        {
+            "player_id": player.id,
+            "item_type": "weapon",
+            "item_name": "Blaster",
+            "quantity": 2,
+        },
+    )
 
     assert result.quantity == 5  # 3 + 2
 

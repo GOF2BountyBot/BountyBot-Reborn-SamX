@@ -21,6 +21,10 @@ from services.game_maths import calculate_user_level
 
 flogger = bblogger.get_logger("player-service")
 
+# Tier ordering constants
+_TIER_ORDER = {"Bronze": 1, "Silver": 2, "Gold": 3, "Platinum": 4}
+_TIER_NAMES = {1: "Bronze", 2: "Silver", 3: "Gold", 4: "Platinum"}
+
 
 class PlayerService:
     def __init__(self):
@@ -93,25 +97,28 @@ class PlayerService:
         """Create the starter ship and equipment for a new player."""
         try:
             from persist.repositories.inventory_repository import InventoryRepository
-            from persist.repositories.ship_repository import ShipRepository
+            from persist.repositories.player_ship_repository import PlayerShipRepository
 
-            ship_repo = ShipRepository()
-            _inventory_repo = InventoryRepository()
+            player_ship_repo = PlayerShipRepository()
 
-            # Create starter ship "Betty" with basic equipment
+            # Create starter PlayerShip record linking the player to the "Betty" ship
             starter_ship_data = {
                 "player_id": player.id,
                 "ship_name": "Betty",
                 "is_active": True,
-                "weapons": ["Micro Gun MK I"],
-                "modules": ["Telta Quickscan", "E2 Exoclad", "IMT Extract 1.3"],
+                "weapons": ["Nirai Impulse EX 1"],
+                "modules": ["E2 Exoclad", "Telta Quickscan"],
                 "turrets": [],
             }
 
-            starter_ship = await ship_repo.create_or_update(db, starter_ship_data)
+            starter_ship = await player_ship_repo.create_or_update(db, starter_ship_data)
 
-            # Update player's active ship
+            # Update player's active ship reference (PlayerShip.id, not Ship.id)
             await self.player_repo.update_active_ship(db, player.id, starter_ship.id)
+
+            # Add Micro Gun MK I to player's cargo inventory
+            inv_repo = InventoryRepository()
+            await inv_repo.add_item(db, player.id, "primary_weapon", "Micro Gun MK I", quantity=1)
 
             flogger.info("Created starter loadout for player %s", player.id)
 
@@ -149,7 +156,7 @@ class PlayerService:
             raise
 
     async def update_player_xp(self, db: AsyncSession, player_id: int, xp: int) -> Player:
-        """Update player XP and check for tier advancement."""
+        """Update player XP. Tier is NOT auto-advanced; use promote_player() to advance tier."""
         try:
             player = await self.player_repo.get_by_id(db, player_id)
             if not player:
@@ -160,16 +167,7 @@ class PlayerService:
             elif xp > 1000000:
                 xp = 1000000  # Clamp to max
 
-            old_tier = player.tier
             player.xp = xp
-
-            # Check for tier advancement
-            config = await self.config_repo.get_by_guild_id(db, player.guild_id)
-            if config:
-                new_tier = self._calculate_tier_from_xp(xp, config.xp_thresholds)
-                if new_tier != old_tier:
-                    player.tier = new_tier
-                    flogger.info(f"Player {player_id} advanced from {old_tier} to {new_tier}")
 
             await db.commit()
             await db.refresh(player)
@@ -190,6 +188,95 @@ class PlayerService:
         if xp >= thresholds.get("Silver", 1000):
             return "Silver"
         return "Bronze"
+
+    async def get_promotion_status(self, db: AsyncSession, player_id: int) -> dict:
+        """Get promotion eligibility status for a player."""
+        try:
+            player = await self.player_repo.get_by_id(db, player_id)
+            if not player:
+                raise ValueError(f"Player {player_id} not found")
+
+            config = await self.config_repo.get_by_guild_id(db, player.guild_id)
+            thresholds = config.xp_thresholds if config else {"Silver": 1000, "Gold": 5000, "Platinum": 15000}
+
+            current_level = _TIER_ORDER.get(player.tier, 1)
+            eligible_tier = self._calculate_tier_from_xp(player.xp, thresholds)
+            eligible_level = _TIER_ORDER.get(eligible_tier, 1)
+
+            next_level = current_level + 1
+            next_tier = _TIER_NAMES.get(next_level)  # None if at Platinum
+
+            can_promote = next_tier is not None and eligible_level >= next_level
+
+            xp_threshold = thresholds.get(next_tier) if next_tier else None
+            xp_surplus = (player.xp - xp_threshold) if (can_promote and xp_threshold is not None) else None
+
+            return {
+                "player_id": player.id,
+                "current_tier": player.tier,
+                "current_tier_level": current_level,
+                "eligible_tier": eligible_tier,
+                "next_tier": next_tier,
+                "can_promote": can_promote,
+                "xp": player.xp,
+                "xp_threshold_for_next": xp_threshold,
+                "xp_surplus_for_next": xp_surplus,
+            }
+
+        except Exception as e:
+            flogger.error(f"Error getting promotion status for player {player_id}: {e}")
+            raise
+
+    async def promote_player(self, db: AsyncSession, player_id: int) -> dict:
+        """Promote a player to the next tier if eligible."""
+        try:
+            player = await self.player_repo.get_by_id(db, player_id)
+            if not player:
+                raise ValueError(f"Player {player_id} not found")
+
+            current_level = _TIER_ORDER.get(player.tier, 1)
+            if current_level >= 4:  # Platinum
+                raise ValueError("Already at maximum tier (Platinum)")
+
+            config = await self.config_repo.get_by_guild_id(db, player.guild_id)
+            thresholds = config.xp_thresholds if config else {"Silver": 1000, "Gold": 5000, "Platinum": 15000}
+
+            eligible_tier = self._calculate_tier_from_xp(player.xp, thresholds)
+            eligible_level = _TIER_ORDER.get(eligible_tier, 1)
+
+            next_level = current_level + 1
+            next_tier = _TIER_NAMES[next_level]
+
+            if eligible_level < next_level:
+                threshold = thresholds.get(next_tier, 0)
+                raise ValueError(
+                    f"Not eligible for promotion. Need {threshold:,} XP for {next_tier}, currently have {player.xp:,}"
+                )
+
+            old_tier = player.tier
+            player.tier = next_tier
+            await db.commit()
+            await db.refresh(player)
+
+            flogger.info(f"Player {player_id} promoted from {old_tier} to {next_tier}")
+
+            # Check if eligible for further promotion
+            further_level = next_level + 1
+            further_tier = _TIER_NAMES.get(further_level)
+            eligible_for_next = further_tier is not None and eligible_level >= further_level
+
+            return {
+                "player_id": player.id,
+                "old_tier": old_tier,
+                "new_tier": next_tier,
+                "xp": player.xp,
+                "eligible_for_next": eligible_for_next,
+                "next_tier": further_tier,
+            }
+
+        except Exception as e:
+            flogger.error(f"Error promoting player {player_id}: {e}")
+            raise
 
     async def prestige_player(self, db: AsyncSession, player_id: int) -> dict:
         """Prestige a player — reset progress, increment prestige counter.

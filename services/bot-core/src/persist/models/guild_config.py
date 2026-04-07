@@ -24,10 +24,20 @@ class GuildConfig(Base):
     admin_role_id: Mapped[int] = mapped_column(BigInteger, nullable=True)
 
     # Discord channel IDs for announcements
-    category_id: Mapped[int] = mapped_column(BigInteger, nullable=True)
-    bounty_channel_id: Mapped[int] = mapped_column(BigInteger, nullable=True)
-    shop_channel_id: Mapped[int] = mapped_column(BigInteger, nullable=True)
-    general_channel_id: Mapped[int] = mapped_column(BigInteger, nullable=True)
+    category_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    shop_channel_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    bronze_bounty_channel_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    silver_bounty_channel_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    gold_bounty_channel_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    hunting_channel_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    discussion_channel_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    image_channel_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    bounty_hunter_role_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    bronze_role_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    silver_role_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    gold_role_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    platinum_bounty_channel_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    platinum_role_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
 
     # Shop inventory size ranges (JSON objects with min/max values)
     ship_count_range: Mapped[dict[str, int]] = mapped_column(JSON, default={"min": 3, "max": 5})
@@ -56,12 +66,20 @@ class GuildConfig(Base):
     )
 
     # Activity temperature per division (persisted for decay across restarts)
-    # Default: {"bronze": 1.0, "silver": 1.0, "gold": 1.0}
+    # Default: {"bronze": 1.0, "silver": 1.0, "gold": 1.0, "platinum": 1.0}
     division_temperatures: Mapped[dict[str, float]] = mapped_column(
         JSON,
-        default={"bronze": 1.0, "silver": 1.0, "gold": 1.0},
+        default={"bronze": 1.0, "silver": 1.0, "gold": 1.0, "platinum": 1.0},
         nullable=True,
     )
+
+    # Bounty configuration (per-guild)
+    bounty_max_per_tier: Mapped[dict[str, int] | None] = mapped_column(
+        JSON, default={"bronze": 3, "silver": 3, "gold": 3, "platinum": 3}, nullable=True
+    )
+    bounty_expiry_minutes: Mapped[int | None] = mapped_column(Integer, default=480, nullable=True)
+    bounty_spawn_interval_minutes: Mapped[int | None] = mapped_column(Integer, default=60, nullable=True)
+    next_spawn_check_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     # Timestamps
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(UTC))

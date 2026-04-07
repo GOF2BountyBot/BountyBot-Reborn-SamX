@@ -36,9 +36,9 @@ class TestGetDivisionForLevel:
             (6, "silver"),
             (7, "silver"),  # max silver
             # Gold boundaries
-            (8, "gold"),    # min gold
+            (8, "gold"),  # min gold
             (9, "gold"),
-            (10, "gold"),   # max gold
+            (10, "gold"),  # max gold
         ],
     )
     def test_standard_levels(self, level: int, expected_division: str) -> None:
@@ -48,26 +48,22 @@ class TestGetDivisionForLevel:
     @pytest.mark.parametrize(
         "level, expected_division",
         [
-            (-1, "bronze"),   # one below minimum
-            (-100, "bronze"), # far below minimum
+            (-1, "bronze"),  # one below minimum
+            (-100, "bronze"),  # far below minimum
         ],
     )
-    def test_negative_level_clamped_to_bronze(
-        self, level: int, expected_division: str
-    ) -> None:
+    def test_negative_level_clamped_to_bronze(self, level: int, expected_division: str) -> None:
         """Negative levels clamp to bronze (lowest division)."""
         assert DivisionService.get_division_for_level(level) == expected_division
 
     @pytest.mark.parametrize(
         "level, expected_division",
         [
-            (11, "gold"),   # one above maximum
+            (11, "gold"),  # one above maximum
             (100, "gold"),  # far above maximum
         ],
     )
-    def test_overlimit_level_clamped_to_gold(
-        self, level: int, expected_division: str
-    ) -> None:
+    def test_overlimit_level_clamped_to_gold(self, level: int, expected_division: str) -> None:
         """Levels above 10 clamp to gold (highest division)."""
         assert DivisionService.get_division_for_level(level) == expected_division
 
@@ -88,9 +84,7 @@ class TestGetDivisionBoundaries:
             ("gold", 8, 10),
         ],
     )
-    def test_known_divisions(
-        self, division_name: str, expected_min: int, expected_max: int
-    ) -> None:
+    def test_known_divisions(self, division_name: str, expected_min: int, expected_max: int) -> None:
         """Each known division returns the correct (min_level, max_level) tuple."""
         result = DivisionService.get_division_boundaries(division_name)
         assert result == (expected_min, expected_max)
@@ -149,16 +143,16 @@ class TestGetDivisionForPlayerXp:
         [
             # XP_LEVEL_BOUNDARIES: [-1, 0, 1050, 2000, 3500, 10000, 18000, 61000, 71000, 90000, 1000000]
             # index 0 is sentinel, level = index - 1 for first match exceeding xp
-            (0, "bronze"),     # calculate_user_level(0) == 0 → bronze
-            (-1, "bronze"),    # very low XP → level 0 → bronze
+            (0, "bronze"),  # calculate_user_level(0) == 0 → bronze
+            (-1, "bronze"),  # very low XP → level 0 → bronze
             (1049, "bronze"),  # just below level 2 boundary → level 1 → bronze
             (3500, "silver"),  # exactly at level 4 boundary → level 4 → silver
-            (10000, "silver"), # exactly at level 5 boundary → level 5 → silver
-            (60999, "silver"), # just below level 7 boundary → level 6 → silver
-            (71000, "gold"),   # exactly at level 8 boundary → level 8 → gold
-            (90000, "gold"),   # exactly at level 9 boundary → level 9 → gold
+            (10000, "silver"),  # exactly at level 5 boundary → level 5 → silver
+            (60999, "silver"),  # just below level 7 boundary → level 6 → silver
+            (71000, "gold"),  # exactly at level 8 boundary → level 8 → gold
+            (90000, "gold"),  # exactly at level 9 boundary → level 9 → gold
             (999999, "gold"),  # just below level 10 boundary → level 9 → gold
-            (1000000, "gold"), # at level 10 boundary → level 10 → gold
+            (1000000, "gold"),  # at level 10 boundary → level 10 → gold
         ],
     )
     def test_xp_to_division(self, xp: int, expected_division: str) -> None:

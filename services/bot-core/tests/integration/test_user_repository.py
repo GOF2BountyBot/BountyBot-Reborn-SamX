@@ -60,11 +60,13 @@ async def test_get_by_name_returns_none_for_missing(db_session: AsyncSession, re
 
 async def test_list_all_returns_all_users(db_session: AsyncSession, repo: UserRepository):
     """list_all should return every user in the database."""
-    db_session.add_all([
-        User(id=1, discord_username="u1"),
-        User(id=2, discord_username="u2"),
-        User(id=3, discord_username="u3"),
-    ])
+    db_session.add_all(
+        [
+            User(id=1, discord_username="u1"),
+            User(id=2, discord_username="u2"),
+            User(id=3, discord_username="u3"),
+        ]
+    )
     await db_session.commit()
 
     users = await repo.list_all(db_session)

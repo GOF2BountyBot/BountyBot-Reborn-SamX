@@ -91,6 +91,7 @@ def mock_db() -> AsyncMock:
 # get_by_id – exception path (lines 24-26)
 # ===================================================================
 
+
 class TestGetById:
     @pytest.mark.asyncio
     async def test_get_by_id_exception(self, repo, mock_db):
@@ -104,6 +105,7 @@ class TestGetById:
 # list_all – exception path (lines 37-39)
 # ===================================================================
 
+
 class TestListAll:
     @pytest.mark.asyncio
     async def test_list_all_exception(self, repo, mock_db):
@@ -116,6 +118,7 @@ class TestListAll:
 # ===================================================================
 # add – exception path with rollback (lines 49-52)
 # ===================================================================
+
 
 class TestAdd:
     @pytest.mark.asyncio
@@ -133,6 +136,7 @@ class TestAdd:
 # create_or_update – inner commit exception with rollback (lines 74-76)
 # ===================================================================
 
+
 class TestCreateOrUpdate:
     @pytest.mark.asyncio
     async def test_create_or_update_commit_fail_triggers_rollback(self, repo, mock_db):
@@ -143,12 +147,15 @@ class TestCreateOrUpdate:
         mock_db.commit = AsyncMock(side_effect=Exception("commit fail"))
 
         with pytest.raises(Exception, match="commit fail"):
-            await repo.create_or_update(mock_db, {
-                "player_id": 10,
-                "item_type": "weapon",
-                "item_name": "Laser Cannon",
-                "quantity": 2,
-            })
+            await repo.create_or_update(
+                mock_db,
+                {
+                    "player_id": 10,
+                    "item_type": "weapon",
+                    "item_name": "Laser Cannon",
+                    "quantity": 2,
+                },
+            )
 
         mock_db.rollback.assert_awaited()
 
@@ -156,6 +163,7 @@ class TestCreateOrUpdate:
 # ===================================================================
 # remove – exception path with rollback (lines 94-97)
 # ===================================================================
+
 
 class TestRemove:
     @pytest.mark.asyncio
@@ -172,6 +180,7 @@ class TestRemove:
 # ===================================================================
 # get_player_items – exception path (lines 114-116)
 # ===================================================================
+
 
 class TestGetPlayerItems:
     @pytest.mark.asyncio
@@ -193,6 +202,7 @@ class TestGetPlayerItems:
 # get_player_item – exception path (lines 137-139)
 # ===================================================================
 
+
 class TestGetPlayerItem:
     @pytest.mark.asyncio
     async def test_get_player_item_exception(self, repo, mock_db):
@@ -205,6 +215,7 @@ class TestGetPlayerItem:
 # ===================================================================
 # update_quantity – inner commit exception with rollback (lines 224-226)
 # ===================================================================
+
 
 class TestUpdateQuantity:
     @pytest.mark.asyncio
@@ -225,6 +236,7 @@ class TestUpdateQuantity:
 # get_item_count_by_type – exception path (lines 248-250)
 # ===================================================================
 
+
 class TestGetItemCountByType:
     @pytest.mark.asyncio
     async def test_get_item_count_by_type_exception(self, repo, mock_db):
@@ -238,6 +250,7 @@ class TestGetItemCountByType:
 # clear_player_inventory – exception path (lines 265-267)
 # ===================================================================
 
+
 class TestClearPlayerInventory:
     @pytest.mark.asyncio
     async def test_clear_player_inventory_exception(self, repo, mock_db):
@@ -250,6 +263,7 @@ class TestClearPlayerInventory:
 # ===================================================================
 # get_inventory_summary – exception path (lines 288-290)
 # ===================================================================
+
 
 class TestGetInventorySummary:
     @pytest.mark.asyncio

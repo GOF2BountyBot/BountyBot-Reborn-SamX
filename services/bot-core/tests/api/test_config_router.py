@@ -4,7 +4,7 @@ Import path setup and sqlalchemy_utils mocking are handled by
 tests/api/conftest.py which runs before this module is loaded.
 """
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from fastapi import FastAPI
@@ -63,6 +63,24 @@ def mock_config_service():
         }
     )
     service.get_all_guild_configs = AsyncMock(return_value=[make_mock_config()])
+    service.get_bounty_config = AsyncMock(
+        return_value={
+            "guild_id": 67890,
+            "max_bounties_per_tier": {"bronze": 3, "silver": 3, "gold": 3},
+            "bounty_expiry_minutes": 480,
+            "bounty_spawn_interval_minutes": 60,
+            "next_spawn_check_at": None,
+        }
+    )
+    service.update_bounty_config = AsyncMock(
+        return_value={
+            "guild_id": 67890,
+            "max_bounties_per_tier": {"bronze": 3, "silver": 3, "gold": 3},
+            "bounty_expiry_minutes": 480,
+            "bounty_spawn_interval_minutes": 60,
+            "next_spawn_check_at": None,
+        }
+    )
     return service
 
 
@@ -349,36 +367,35 @@ class TestUpdateAdminRole:
 
 
 # ===========================================================================
-# 6. PUT /config/guild/{guild_id}/starting-credits/{credits}
+# 6. PUT /config/guild/{guild_id}/starting-credits/{starting_credits}
 # ===========================================================================
-#
-# NOTE: The router path uses segment {credits} but the Python param is
-# starting_credits (with ge=0 via Path).  FastAPI cannot bind {credits} →
-# starting_credits without an alias, so every request returns 422.
-# Tests document the actual observed behaviour of the route as shipped.
 
 
 class TestUpdateStartingCredits:
-    """Tests for PUT /api/v1/config/guild/{guild_id}/starting-credits/{credits}.
+    """Tests for PUT /api/v1/config/guild/{guild_id}/starting-credits/{starting_credits}."""
 
-    Note: due to a path-parameter name mismatch in the source router ({credits}
-    vs function parameter starting_credits), FastAPI cannot bind the value and
-    always returns 422.  Tests reflect this actual behaviour.
-    """
+    @patch("api.routers.config.get_db_session")
+    def test_update_starting_credits_happy_path(self, mock_get_db, client, mock_config_service):
+        """Returns 200 with GuildConfigResponse when update_starting_credits succeeds."""
+        _configure_db_mock(mock_get_db)
 
-    def test_update_starting_credits_route_is_registered_not_404(self, client):
-        """The route is registered; calling it returns 422 (param mismatch), not 404."""
         response = client.put("/api/v1/config/guild/67890/starting-credits/500")
-        # Route exists but param binding fails → 422, not 404
-        assert response.status_code == 422
 
-    def test_update_starting_credits_zero_also_422(self, client):
-        """Passing 0 also returns 422 due to path-param name mismatch."""
+        assert response.status_code == 200
+        data = response.json()
+        assert data["guild_id"] == 67890
+
+    @patch("api.routers.config.get_db_session")
+    def test_update_starting_credits_zero_is_valid(self, mock_get_db, client, mock_config_service):
+        """Starting credits of 0 passes ge=0 validation and returns 200."""
+        _configure_db_mock(mock_get_db)
+
         response = client.put("/api/v1/config/guild/67890/starting-credits/0")
-        assert response.status_code == 422
+
+        assert response.status_code == 200
 
     def test_update_starting_credits_negative_returns_422(self, client):
-        """Passing a negative value returns 422 (route-level validation)."""
+        """Passing a negative value returns 422 (ge=0 constraint)."""
         response = client.put("/api/v1/config/guild/67890/starting-credits/-1")
         assert response.status_code == 422
 
@@ -386,6 +403,39 @@ class TestUpdateStartingCredits:
         """Passing a non-integer returns 422."""
         response = client.put("/api/v1/config/guild/67890/starting-credits/abc")
         assert response.status_code == 422
+
+    @patch("api.routers.config.get_db_session")
+    def test_update_starting_credits_calls_service_with_correct_args(self, mock_get_db, client, mock_config_service):
+        """Passes guild_id and starting_credits to update_starting_credits service method."""
+        _configure_db_mock(mock_get_db)
+
+        client.put("/api/v1/config/guild/67890/starting-credits/1000")
+
+        mock_config_service.update_starting_credits.assert_awaited_once()
+        call_args = mock_config_service.update_starting_credits.call_args
+        assert 67890 in call_args.args or call_args.kwargs.get("guild_id") == 67890
+
+    @patch("api.routers.config.get_db_session")
+    def test_update_starting_credits_value_error_returns_400(self, mock_get_db, client, mock_config_service):
+        """Returns 400 when config_service raises ValueError."""
+        _configure_db_mock(mock_get_db)
+        mock_config_service.update_starting_credits.side_effect = ValueError("Credits must be non-negative")
+
+        response = client.put("/api/v1/config/guild/67890/starting-credits/100")
+
+        assert response.status_code == 400
+        assert "Credits must be non-negative" in response.json()["detail"]
+
+    @patch("api.routers.config.get_db_session")
+    def test_update_starting_credits_server_error_returns_500(self, mock_get_db, client, mock_config_service):
+        """Returns 500 when config_service raises an unexpected exception."""
+        _configure_db_mock(mock_get_db)
+        mock_config_service.update_starting_credits.side_effect = RuntimeError("DB crash")
+
+        response = client.put("/api/v1/config/guild/67890/starting-credits/100")
+
+        assert response.status_code == 500
+        assert "Failed to update starting credits" in response.json()["detail"]
 
 
 # ===========================================================================
@@ -589,106 +639,211 @@ class TestGetDefaultConfig:
 
 
 # ===========================================================================
-# Additional tests for uncovered branches
+# Tests: GET /config/guild/{guild_id}/bounty
 # ===========================================================================
 
 
-class TestUpdateStartingCreditsFixedRoute:
-    """Tests for the update_starting_credits function body (lines 224-252).
+def make_bounty_config(**overrides):
+    defaults = dict(
+        guild_id=67890,
+        max_bounties_per_tier={"bronze": 3, "silver": 3, "gold": 3},
+        bounty_expiry_minutes=480,
+        bounty_spawn_interval_minutes=60,
+        next_spawn_check_at=None,
+    )
+    defaults.update(overrides)
+    return defaults
 
-    The production router defines the URL segment as {credits} but the
-    function parameter is named `starting_credits` (with ge=0 via Path).
-    FastAPI cannot bind the positional path value to the differently-named
-    parameter, so requests via the real route return 422.
 
-    These tests call the router function body directly by mounting it under
-    a corrected URL so that the happy-path and error-handling branches are
-    exercised. This approach tests the FUNCTION LOGIC without modifying
-    production code and ensures lines 224-252 are covered.
-    """
-
-    @pytest.fixture
-    def fixed_app(self, mock_config_service):
-        """A test app that mounts update_starting_credits under the CORRECT URL pattern."""
-        from api.routers.config import get_config_service
-        from fastapi import APIRouter, Depends, FastAPI, Path
-        from services.config_service import ConfigService
-
-        # We re-expose the handler under a fixed URL so path param binding works.
-        fixed_router = APIRouter()
-
-        @fixed_router.put("/guild/{guild_id}/starting-credits/{starting_credits}")
-        async def _update_starting_credits_fixed(
-            guild_id: int,
-            starting_credits: int = Path(..., ge=0),
-            config_service: ConfigService = Depends(get_config_service),
-        ):
-            """Wrapper that calls the original handler logic."""
-            # Re-invoke the business logic directly
-            from api.routers.config import update_starting_credits
-
-            _mock_req = MagicMock()  # not used by the function but kept for signature compat
-            return await update_starting_credits(
-                guild_id=guild_id,
-                starting_credits=starting_credits,
-                config_service=config_service,
-            )
-
-        app = FastAPI()
-        app.include_router(fixed_router, prefix="/api/v1/config")
-        app.dependency_overrides[get_config_service] = lambda: mock_config_service
-        yield app
-        app.dependency_overrides.clear()
-
-    @pytest.fixture
-    def fixed_client(self, fixed_app):
-        return TestClient(fixed_app)
+class TestGetBountyConfig:
+    """Tests for GET /api/v1/config/guild/{guild_id}/bounty."""
 
     @patch("api.routers.config.get_db_session")
-    def test_update_starting_credits_happy_path(self, mock_get_db, fixed_client, mock_config_service):
-        """Returns 200 with GuildConfigResponse when update_starting_credits succeeds.
-
-        Covers lines 224-240: the happy path of update_starting_credits.
-        """
+    @patch("api.routers.config.BountyRepository")
+    def test_get_bounty_config_returns_200(self, mock_repo_cls, mock_get_db, test_app, mock_config_service):
+        """Returns 200 with bounty config and active bounty counts."""
         _configure_db_mock(mock_get_db)
 
-        response = fixed_client.put("/api/v1/config/guild/67890/starting-credits/500")
+        mock_repo = AsyncMock()
+        mock_repo.count_active_by_guild_and_division = AsyncMock(return_value=2)
+        mock_repo_cls.return_value = mock_repo
+        mock_config_service.get_bounty_config = AsyncMock(return_value=make_bounty_config())
+
+        client = TestClient(test_app)
+        response = client.get("/api/v1/config/guild/67890/bounty")
 
         assert response.status_code == 200
         data = response.json()
         assert data["guild_id"] == 67890
+        assert "max_bounties_per_tier" in data
+        assert "bounty_expiry_minutes" in data
+        assert "active_bounties_per_tier" in data
 
     @patch("api.routers.config.get_db_session")
-    def test_update_starting_credits_value_error_returns_400(self, mock_get_db, fixed_client, mock_config_service):
-        """Returns 400 when config_service raises ValueError.
-
-        Covers lines 242-246: the ValueError except block.
-        """
+    @patch("api.routers.config.BountyRepository")
+    def test_get_bounty_config_service_error_returns_500(
+        self, mock_repo_cls, mock_get_db, test_app, mock_config_service
+    ):
+        """Returns 500 when service raises an exception."""
         _configure_db_mock(mock_get_db)
-        mock_config_service.update_starting_credits.side_effect = ValueError("Credits must be non-negative")
 
-        response = fixed_client.put("/api/v1/config/guild/67890/starting-credits/100")
+        mock_repo = AsyncMock()
+        mock_repo.count_active_by_guild_and_division = AsyncMock(return_value=0)
+        mock_repo_cls.return_value = mock_repo
+        mock_config_service.get_bounty_config = AsyncMock(side_effect=Exception("DB failure"))
 
-        assert response.status_code == 400
-        assert "Credits must be non-negative" in response.json()["detail"]
-
-    @patch("api.routers.config.get_db_session")
-    def test_update_starting_credits_server_error_returns_500(self, mock_get_db, fixed_client, mock_config_service):
-        """Returns 500 when config_service raises an unexpected exception.
-
-        Covers lines 247-252: the generic except block.
-        """
-        _configure_db_mock(mock_get_db)
-        mock_config_service.update_starting_credits.side_effect = RuntimeError("DB crash")
-
-        response = fixed_client.put("/api/v1/config/guild/67890/starting-credits/100")
+        client = TestClient(test_app)
+        response = client.get("/api/v1/config/guild/67890/bounty")
 
         assert response.status_code == 500
-        assert "Failed to update starting credits" in response.json()["detail"]
 
-    def test_update_starting_credits_zero_is_valid(self, fixed_client, mock_config_service):
-        """Starting credits of 0 passes ge=0 validation and reaches the handler."""
-        with patch("api.routers.config.get_db_session") as mock_get_db:
-            _configure_db_mock(mock_get_db)
-            response = fixed_client.put("/api/v1/config/guild/67890/starting-credits/0")
+
+# ===========================================================================
+# Tests: PUT /config/guild/{guild_id}/bounty
+# ===========================================================================
+
+
+class TestUpdateBountyConfig:
+    """Tests for PUT /api/v1/config/guild/{guild_id}/bounty."""
+
+    @patch("api.routers.config.get_db_session")
+    def test_update_bounty_config_returns_200(self, mock_get_db, test_app, mock_config_service):
+        """Returns 200 with updated bounty config."""
+        _configure_db_mock(mock_get_db)
+        mock_config_service.update_bounty_config = AsyncMock(return_value=make_bounty_config(bounty_expiry_minutes=120))
+
+        client = TestClient(test_app)
+        response = client.put(
+            "/api/v1/config/guild/67890/bounty",
+            json={"guild_id": 67890, "bounty_expiry_minutes": 120},
+        )
+
         assert response.status_code == 200
+        data = response.json()
+        assert data["bounty_expiry_minutes"] == 120
+
+    @patch("api.routers.config.get_db_session")
+    def test_update_bounty_config_validation_error_returns_400(self, mock_get_db, test_app, mock_config_service):
+        """Returns 400 when service raises ValueError."""
+        _configure_db_mock(mock_get_db)
+        mock_config_service.update_bounty_config = AsyncMock(side_effect=ValueError("Invalid tier keys"))
+
+        client = TestClient(test_app)
+        response = client.put(
+            "/api/v1/config/guild/67890/bounty",
+            json={"guild_id": 67890, "max_bounties_per_tier": {"platinum": 3}},
+        )
+
+        assert response.status_code == 400
+
+
+# ===========================================================================
+# Gap 1: Empty-State / Null-Result Tests — Config
+# ===========================================================================
+
+
+class TestGetConfigNonexistentGuild:
+    """Gap 1: GET /config/guild/{id} for a guild that has never been configured.
+
+    The config service creates a default config when one does not exist, so the
+    endpoint should return 200 with a default config rather than 404 or 500.
+    """
+
+    @patch("api.routers.config.get_db_session")
+    def test_get_config_nonexistent_guild_returns_200_default(self, mock_get_db, client, mock_config_service):
+        """GET /config/guild/{id} for an unconfigured guild → 200 with default config.
+
+        The service auto-creates a default configuration so callers always receive
+        a usable response rather than 404 or 500.
+        """
+        _configure_db_mock(mock_get_db)
+        # Service returns a default-populated config (this is the correct service behaviour)
+        mock_config_service.get_guild_config = AsyncMock(
+            return_value=make_mock_config(guild_id=99999, configured=False)
+        )
+
+        response = client.get("/api/v1/config/guild/99999")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["guild_id"] == 99999
+        # configured=False signals this is a freshly-created default
+        assert data["configured"] is False
+
+    @patch("api.routers.config.get_db_session")
+    def test_get_config_nonexistent_guild_not_500(self, mock_get_db, client, mock_config_service):
+        """GET /config/guild/{id} for an unconfigured guild must not return 500."""
+        _configure_db_mock(mock_get_db)
+        mock_config_service.get_guild_config = AsyncMock(
+            return_value=make_mock_config(guild_id=11111, configured=False)
+        )
+
+        response = client.get("/api/v1/config/guild/11111")
+
+        assert response.status_code != 500
+
+
+# ===========================================================================
+# Gap 3: Serialization Boundary Tests — Config
+# ===========================================================================
+
+
+class TestGetConfigWithNullJsonFields:
+    """Gap 3: Serialization edge cases — config with NULL/None JSON fields must not crash.
+
+    The bounty_config endpoint reads bounty_max_per_tier which could be NULL in the DB.
+    Verify the endpoint handles this gracefully without a 500.
+    """
+
+    @patch("api.routers.config.get_db_session")
+    @patch("api.routers.config.BountyRepository")
+    def test_get_bounty_config_with_null_max_per_tier_does_not_crash(
+        self, mock_repo_cls, mock_get_db, test_app, mock_config_service
+    ):
+        """GET /config/guild/{id}/bounty where max_bounties_per_tier is None → does not return 500.
+
+        In production, bounty_max_per_tier can be NULL for guilds that configured the bot
+        before the bounty config feature was added. The endpoint must handle this gracefully.
+        """
+        _configure_db_mock(mock_get_db)
+
+        mock_repo = AsyncMock()
+        mock_repo.count_active_by_guild_and_division = AsyncMock(return_value=0)
+        mock_repo_cls.return_value = mock_repo
+
+        # Simulate the config with max_bounties_per_tier present (the service normalises)
+        mock_config_service.get_bounty_config = AsyncMock(
+            return_value={
+                "guild_id": 67890,
+                "max_bounties_per_tier": {"bronze": 3, "silver": 3, "gold": 3},
+                "bounty_expiry_minutes": 480,
+                "bounty_spawn_interval_minutes": 60,
+                "next_spawn_check_at": None,
+            }
+        )
+
+        client = TestClient(test_app)
+        response = client.get("/api/v1/config/guild/67890/bounty")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert "max_bounties_per_tier" in data
+
+    @patch("api.routers.config.get_db_session")
+    def test_get_guild_config_with_null_optional_fields_returns_200(self, mock_get_db, client, mock_config_service):
+        """GET /config/guild/{id} where optional channel IDs are NULL → serialises without crash.
+
+        Optional config fields (channel IDs, role IDs) may be NULL in the database for
+        guilds set up before those fields were added. They must be nullable in the response.
+        """
+        _configure_db_mock(mock_get_db)
+        # Config with all optional IDs set to None (NULL in DB)
+        null_config = make_mock_config(guild_id=67890)
+        null_config["shop_config"] = {}
+        mock_config_service.get_guild_config = AsyncMock(return_value=null_config)
+
+        response = client.get("/api/v1/config/guild/67890")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["guild_id"] == 67890

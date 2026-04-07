@@ -9,11 +9,13 @@ Handles administrative operations including:
 - System health and statistics
 """
 
+import json
 import os
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from persist.database.manager import get_db_session
 from services.audit_service import AuditService
+from services.bounty_service import BountyService
 from services.config_service import ConfigService
 from services.inventory_service import InventoryService
 from services.player_service import PlayerService
@@ -114,9 +116,19 @@ async def initialize_guild(
                 "admin_role_id": request.admin_role_id,
                 "starting_credits": request.starting_credits,
                 "category_id": request.category_id,
-                "bounty_channel_id": request.bounty_channel_id,
                 "shop_channel_id": request.shop_channel_id,
-                "general_channel_id": request.general_channel_id,
+                "bronze_bounty_channel_id": request.bronze_bounty_channel_id,
+                "silver_bounty_channel_id": request.silver_bounty_channel_id,
+                "gold_bounty_channel_id": request.gold_bounty_channel_id,
+                "hunting_channel_id": request.hunting_channel_id,
+                "discussion_channel_id": request.discussion_channel_id,
+                "image_channel_id": request.image_channel_id,
+                "bounty_hunter_role_id": request.bounty_hunter_role_id,
+                "bronze_role_id": request.bronze_role_id,
+                "silver_role_id": request.silver_role_id,
+                "gold_role_id": request.gold_role_id,
+                "platinum_bounty_channel_id": request.platinum_bounty_channel_id,
+                "platinum_role_id": request.platinum_role_id,
             }
 
             await config_service.create_or_update_config(db, config_data)
@@ -132,7 +144,16 @@ async def initialize_guild(
             flogger.info(f"Successfully initialized guild {request.guild_id}")
 
             channels_configured = any(
-                [request.category_id, request.bounty_channel_id, request.shop_channel_id, request.general_channel_id]
+                [
+                    request.category_id,
+                    request.shop_channel_id,
+                    request.bronze_bounty_channel_id,
+                    request.silver_bounty_channel_id,
+                    request.gold_bounty_channel_id,
+                    request.hunting_channel_id,
+                    request.discussion_channel_id,
+                    request.image_channel_id,
+                ]
             )
 
             await AuditService.log_action(
@@ -151,6 +172,11 @@ async def initialize_guild(
                 shops_created=shops_created,
                 config_created=True,
                 channels_configured=channels_configured,
+                bounty_hunter_role_id=request.bounty_hunter_role_id,
+                bronze_role_id=request.bronze_role_id,
+                silver_role_id=request.silver_role_id,
+                gold_role_id=request.gold_role_id,
+                platinum_role_id=request.platinum_role_id,
                 message=f"Guild {request.guild_id} initialized successfully with {shops_created} shops",
             )
 
@@ -165,6 +191,7 @@ async def initialize_guild(
 async def reset_guild(
     guild_id: int,
     user_id: int,
+    request: Request,
     preserve_players: bool = True,
     config_service: ConfigService = Depends(get_config_service),
     shop_service: ShopService = Depends(get_shop_service),
@@ -179,6 +206,39 @@ async def reset_guild(
 
     if not await verify_admin_permissions(guild_id, user_id):
         raise HTTPException(status_code=403, detail="Insufficient permissions")
+
+    # Best-effort: cancel scheduled jobs for this guild before resetting
+    jobs_cancelled = 0
+    try:
+        scheduler = getattr(request.app.state, "scheduler", None)
+        if scheduler is not None:
+            for job in scheduler.get_jobs():
+                try:
+                    job_args = list(job.args) if job.args else []
+                    # args[1] is the payload dict for run_job(job_id, payload)
+                    payload = job_args[1] if len(job_args) > 1 else {}
+                    payload_str = json.dumps(payload, default=str)
+                    if str(guild_id) in payload_str:
+                        scheduler.remove_job(job.id)
+                        jobs_cancelled += 1
+                        flogger.info(f"Cancelled job {job.id} for guild {guild_id} during reset")
+                except Exception as _job_exc:
+                    flogger.warning(f"Non-fatal: failed to inspect/cancel job {getattr(job, 'id', '?')}: {_job_exc}")
+        else:
+            flogger.debug("Scheduler not available during reset; skipping job cancellation")
+    except Exception as sched_exc:
+        flogger.warning(f"Non-fatal: error during scheduler cleanup for guild {guild_id}: {sched_exc}")
+
+    # Best-effort: clear active bounties for the guild
+    bounties_cleared = 0
+    try:
+        bounty_service = BountyService()
+        async with get_db_session() as db:
+            result = await bounty_service.clear_bounties(db, guild_id, tier=None)
+            bounties_cleared = result.get("cleared_count", 0)
+            flogger.info(f"Cleared {bounties_cleared} bounties for guild {guild_id} during reset")
+    except Exception as bounty_exc:
+        flogger.warning(f"Non-fatal: failed to clear bounties for guild {guild_id} during reset: {bounty_exc}")
 
     try:
         async with get_db_session() as db:
@@ -203,13 +263,15 @@ async def reset_guild(
                 guild_id=guild_id,
                 resource_type="guild",
                 resource_id=str(guild_id),
-                details={"preserve_players": preserve_players},
+                details={"preserve_players": preserve_players, "jobs_cancelled": jobs_cancelled},
             )
 
             return {
                 "guild_id": guild_id,
                 "players_preserved": preserve_players,
                 "shops_refreshed": shops_refreshed,
+                "bounties_cleared": bounties_cleared,
+                "jobs_cancelled": jobs_cancelled,
                 "message": f"Guild {guild_id} reset successfully",
             }
 
@@ -219,7 +281,12 @@ async def reset_guild(
 
 
 @router.delete("/guilds/{guild_id}/uninstall")
-async def uninstall_bot(guild_id: int, user_id: int, config_service: ConfigService = Depends(get_config_service)):
+async def uninstall_bot(
+    guild_id: int,
+    user_id: int,
+    request: Request,
+    config_service: ConfigService = Depends(get_config_service),
+):
     """
     Completely remove all bot data for a guild.
 
@@ -230,6 +297,40 @@ async def uninstall_bot(guild_id: int, user_id: int, config_service: ConfigServi
 
     if not await verify_admin_permissions(guild_id, user_id):
         raise HTTPException(status_code=403, detail="Insufficient permissions")
+
+    # Best-effort: cancel scheduled jobs for this guild before removing DB data
+    jobs_cancelled = 0
+    try:
+        scheduler = getattr(request.app.state, "scheduler", None)
+        if scheduler is not None:
+            for job in scheduler.get_jobs():
+                # Check if job args contain the guild_id
+                try:
+                    job_args = list(job.args) if job.args else []
+                    # args[1] is the payload dict for run_job(job_id, payload)
+                    payload = job_args[1] if len(job_args) > 1 else {}
+                    payload_str = json.dumps(payload, default=str)
+                    if str(guild_id) in payload_str:
+                        scheduler.remove_job(job.id)
+                        jobs_cancelled += 1
+                        flogger.info(f"Cancelled job {job.id} for guild {guild_id} during uninstall")
+                except Exception as _job_exc:
+                    flogger.warning(f"Non-fatal: failed to inspect/cancel job {getattr(job, 'id', '?')}: {_job_exc}")
+        else:
+            flogger.debug("Scheduler not available during uninstall; skipping job cancellation")
+    except Exception as sched_exc:
+        flogger.warning(f"Non-fatal: error during scheduler cleanup for guild {guild_id}: {sched_exc}")
+
+    # Best-effort: clear active bounties for the guild
+    bounties_cleared = 0
+    try:
+        bounty_service = BountyService()
+        async with get_db_session() as db:
+            result = await bounty_service.clear_bounties(db, guild_id, tier=None)
+            bounties_cleared = result.get("cleared_count", 0)
+            flogger.info(f"Cleared {bounties_cleared} bounties for guild {guild_id} during uninstall")
+    except Exception as bounty_exc:
+        flogger.warning(f"Non-fatal: failed to clear bounties for guild {guild_id} during uninstall: {bounty_exc}")
 
     try:
         async with get_db_session() as db:
@@ -245,12 +346,14 @@ async def uninstall_bot(guild_id: int, user_id: int, config_service: ConfigServi
                 guild_id=guild_id,
                 resource_type="guild",
                 resource_id=str(guild_id),
-                details={"removed_counts": removed_counts},
+                details={"removed_counts": removed_counts, "jobs_cancelled": jobs_cancelled},
             )
 
             return {
                 "guild_id": guild_id,
                 "removed_counts": removed_counts,
+                "jobs_cancelled": jobs_cancelled,
+                "bounties_cleared": bounties_cleared,
                 "message": f"Bot completely uninstalled from guild {guild_id}",
                 "warning": "All data has been permanently deleted",
             }

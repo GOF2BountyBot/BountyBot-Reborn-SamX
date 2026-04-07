@@ -41,6 +41,12 @@ class SecondaryWeaponRepository(GenericRepository[SecondaryWeapon]):
         flogger.debug(f"Starting create_or_update for secondary weapon: {raw.get('name')}")
 
         try:
+            # validate required keys upfront
+            if "name" not in raw:
+                raise ValueError("Missing required key 'name' in data for secondary_weapon")
+            if "damage" not in raw:
+                raise ValueError("Missing required key 'damage' in data for secondary_weapon")
+
             # common item fields
             item_fields = {
                 "name": raw["name"],

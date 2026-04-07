@@ -28,6 +28,7 @@ from persist.repositories.shop_repository import ShopRepository
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _make_shop_item(**overrides) -> MagicMock:
     defaults = dict(
         id=1,
@@ -67,6 +68,7 @@ def _make_scalar_one_result(value) -> MagicMock:
 # Fixtures
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture
 def repo() -> ShopRepository:
     return ShopRepository()
@@ -89,6 +91,7 @@ def mock_db() -> AsyncMock:
 # get_by_id – exception path (lines 24-26)
 # ===================================================================
 
+
 class TestGetById:
     @pytest.mark.asyncio
     async def test_get_by_id_exception(self, repo, mock_db):
@@ -100,6 +103,7 @@ class TestGetById:
 # ===================================================================
 # count – exception path (lines 34-39)
 # ===================================================================
+
 
 class TestCount:
     @pytest.mark.asyncio
@@ -119,6 +123,7 @@ class TestCount:
 # list_all – exception path (lines 46-48)
 # ===================================================================
 
+
 class TestListAll:
     @pytest.mark.asyncio
     async def test_list_all_exception(self, repo, mock_db):
@@ -130,6 +135,7 @@ class TestListAll:
 # ===================================================================
 # add – exception path (lines 58-61)
 # ===================================================================
+
 
 class TestAdd:
     @pytest.mark.asyncio
@@ -145,6 +151,7 @@ class TestAdd:
 # create_or_update – exception paths (lines 100-103)
 # ===================================================================
 
+
 class TestCreateOrUpdate:
     @pytest.mark.asyncio
     async def test_create_or_update_commit_fail_on_existing(self, repo, mock_db):
@@ -153,15 +160,15 @@ class TestCreateOrUpdate:
         mock_db.commit = AsyncMock(side_effect=Exception("commit fail"))
 
         with pytest.raises(Exception, match="commit fail"):
-            await repo.create_or_update(mock_db, {
-                "guild_id": 100, "tier": "Bronze",
-                "item_name": "Laser", "quantity": 10
-            })
+            await repo.create_or_update(
+                mock_db, {"guild_id": 100, "tier": "Bronze", "item_name": "Laser", "quantity": 10}
+            )
 
 
 # ===================================================================
 # get_shop_items – exception path (lines 127-129)
 # ===================================================================
+
 
 class TestGetShopItems:
     @pytest.mark.asyncio
@@ -175,6 +182,7 @@ class TestGetShopItems:
 # get_shop_item_by_name – exception path (lines 150-152)
 # ===================================================================
 
+
 class TestGetShopItemByName:
     @pytest.mark.asyncio
     async def test_get_shop_item_by_name_exception(self, repo, mock_db):
@@ -186,6 +194,7 @@ class TestGetShopItemByName:
 # ===================================================================
 # update_quantity – exception path (lines 188-191)
 # ===================================================================
+
 
 class TestUpdateQuantity:
     @pytest.mark.asyncio
@@ -200,6 +209,7 @@ class TestUpdateQuantity:
 # clear_shop_tier – exception path (lines 201-204)
 # ===================================================================
 
+
 class TestClearShopTier:
     @pytest.mark.asyncio
     async def test_clear_shop_tier_exception(self, repo, mock_db):
@@ -212,6 +222,7 @@ class TestClearShopTier:
 # ===================================================================
 # clear_all_guild_shops – exception path (lines 231-233)
 # ===================================================================
+
 
 class TestClearAllGuildShops:
     @pytest.mark.asyncio
@@ -226,6 +237,7 @@ class TestClearAllGuildShops:
 # get_guild_shops_summary – exception path (lines 254-256)
 # ===================================================================
 
+
 class TestGetGuildShopsSummary:
     @pytest.mark.asyncio
     async def test_get_guild_shops_summary_exception(self, repo, mock_db):
@@ -238,6 +250,7 @@ class TestGetGuildShopsSummary:
 # get_items_due_for_refresh – exception path (lines 281-294)
 # ===================================================================
 
+
 class TestGetItemsDueForRefresh:
     @pytest.mark.asyncio
     async def test_get_items_due_for_refresh_exception(self, repo, mock_db):
@@ -249,6 +262,7 @@ class TestGetItemsDueForRefresh:
 # ===================================================================
 # get_shop_statistics – exception path (lines 324-326)
 # ===================================================================
+
 
 class TestGetShopStatistics:
     @pytest.mark.asyncio

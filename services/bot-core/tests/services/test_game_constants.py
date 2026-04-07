@@ -27,6 +27,7 @@ def _reset_constants() -> None:
     GameConstants.ACTIVITY_TEMP_PER_PLAYER = 1
     GameConstants.BOUNTY_DELAY_RANDOM_MIN = 5
     GameConstants.BOUNTY_DELAY_RANDOM_MAX = 7
+    GameConstants.BOUNTY_SPAWN_JITTER = 180
     GameConstants.GUILD_ACTIVITY_DECAY_INTERVAL = 3600
     GameConstants.SHOP_REFRESH_INTERVAL = 21600
     GameConstants.CHECK_COOLDOWN = 180
@@ -82,9 +83,7 @@ class TestDivisions:
 
     def test_boundaries_align_with_names(self) -> None:
         """Each boundary tuple index corresponds to the same-index division name."""
-        for name, bounds in zip(
-            GameConstants.DIVISION_NAMES, GameConstants.DIVISION_BOUNDARIES, strict=True
-        ):
+        for name, bounds in zip(GameConstants.DIVISION_NAMES, GameConstants.DIVISION_BOUNDARIES, strict=True):
             min_lvl, max_lvl = bounds
             assert min_lvl <= max_lvl, f"{name}: min must be <= max"
 
@@ -207,6 +206,15 @@ class TestBountySpawnDelay:
 
     def test_min_less_than_max(self) -> None:
         assert GameConstants.BOUNTY_DELAY_RANDOM_MIN < GameConstants.BOUNTY_DELAY_RANDOM_MAX
+
+    def test_bounty_spawn_jitter_default(self) -> None:
+        """BOUNTY_SPAWN_JITTER default is 180 seconds (up to 3 min random offset)."""
+        assert GameConstants.BOUNTY_SPAWN_JITTER == 180
+
+    def test_bounty_spawn_jitter_is_positive(self) -> None:
+        """BOUNTY_SPAWN_JITTER must be a positive integer."""
+        assert isinstance(GameConstants.BOUNTY_SPAWN_JITTER, int)
+        assert GameConstants.BOUNTY_SPAWN_JITTER > 0
 
 
 # ---------------------------------------------------------------------------
@@ -409,6 +417,11 @@ class TestEnvVarOverride:
         monkeypatch.setenv("BOUNTYBOT_SHIP_VALUE_REWARD_PERCENTAGE", "0.05")
         GameConstants.load()
         assert pytest.approx(GameConstants.SHIP_VALUE_REWARD_PERCENTAGE) == 0.05
+
+    def test_bounty_spawn_jitter_override(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("BOUNTYBOT_BOUNTY_SPAWN_JITTER", "60")
+        GameConstants.load()
+        assert GameConstants.BOUNTY_SPAWN_JITTER == 60
 
     def test_env_var_reverts_after_unset(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """After removing the env var and calling load() again the default is restored."""

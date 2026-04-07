@@ -113,11 +113,14 @@ async def test_remove_deletes_player(db_session: AsyncSession, repo: PlayerRepos
 async def test_create_or_update_creates_new(db_session: AsyncSession, repo: PlayerRepository):
     await _create_user(db_session, 10)
 
-    player = await repo.create_or_update(db_session, {
-        "user_id": 10,
-        "guild_id": 3000,
-        "credits": 500,
-    })
+    player = await repo.create_or_update(
+        db_session,
+        {
+            "user_id": 10,
+            "guild_id": 3000,
+            "credits": 500,
+        },
+    )
 
     assert player.user_id == 10
     assert player.guild_id == 3000
@@ -128,11 +131,14 @@ async def test_create_or_update_updates_existing(db_session: AsyncSession, repo:
     await _create_user(db_session, 10)
     await _create_player(db_session, repo, user_id=10, guild_id=3000, credits=100)
 
-    player = await repo.create_or_update(db_session, {
-        "user_id": 10,
-        "guild_id": 3000,
-        "credits": 999,
-    })
+    player = await repo.create_or_update(
+        db_session,
+        {
+            "user_id": 10,
+            "guild_id": 3000,
+            "credits": 999,
+        },
+    )
 
     assert player.credits == 999
 

@@ -8,7 +8,7 @@ following the repository pattern with embed payload support.
 from datetime import UTC, datetime
 
 from shared import bblogger
-from sqlalchemy import and_, desc, select
+from sqlalchemy import and_, delete, desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from persist.models.discord_message import DiscordMessage
@@ -198,3 +198,87 @@ class DiscordMessageRepository(GenericRepository[DiscordMessage]):
             f"No message found to delete for guild_id={guild_id}, channel_id={channel_id}, message_id={message_id}"
         )
         return False
+
+    async def get_by_guild_type_and_reference(
+        self, db: AsyncSession, guild_id: int, message_type: str, reference_id: int
+    ) -> DiscordMessage | None:
+        """
+        Get a Discord message by guild_id, message_type, and reference_id.
+
+        Args:
+            db: Database session
+            guild_id: Discord guild snowflake ID
+            message_type: Type of message (e.g. 'bounty_announcement')
+            reference_id: Linked entity ID (e.g. bounty ID)
+
+        Returns:
+            First matching DiscordMessage or None if not found.
+        """
+        flogger.trace(
+            f"Querying message by guild_id={guild_id}, message_type='{message_type}', reference_id={reference_id}"
+        )
+        result = await db.execute(
+            select(self._model).where(
+                and_(
+                    self._model.guild_id == guild_id,
+                    self._model.message_type == message_type,
+                    self._model.reference_id == reference_id,
+                )
+            )
+        )
+        message = result.scalars().first()
+        flogger.trace(f"Found message: {message.id if message else 'None'}")
+        return message
+
+    async def delete_by_guild_type_and_reference(
+        self, db: AsyncSession, guild_id: int, message_type: str, reference_id: int
+    ) -> bool:
+        """
+        Delete Discord message(s) by guild_id, message_type, and reference_id.
+
+        Args:
+            db: Database session
+            guild_id: Discord guild snowflake ID
+            message_type: Type of message (e.g. 'bounty_announcement')
+            reference_id: Linked entity ID (e.g. bounty ID)
+
+        Returns:
+            True if at least one record was deleted, False otherwise.
+        """
+        flogger.trace(
+            f"Attempting to delete message with guild_id={guild_id}, "
+            f"message_type='{message_type}', reference_id={reference_id}"
+        )
+        try:
+            stmt = (
+                delete(self._model)
+                .where(
+                    and_(
+                        self._model.guild_id == guild_id,
+                        self._model.message_type == message_type,
+                        self._model.reference_id == reference_id,
+                    )
+                )
+                .returning(self._model.id)
+            )
+            result = await db.execute(stmt)
+            await db.commit()
+            deleted_ids = result.fetchall()
+            if deleted_ids:
+                flogger.debug(
+                    f"Deleted {len(deleted_ids)} Discord message(s) for guild_id={guild_id}, "
+                    f"message_type='{message_type}', reference_id={reference_id}"
+                )
+                return True
+            flogger.trace(
+                f"No messages found to delete for guild_id={guild_id}, "
+                f"message_type='{message_type}', reference_id={reference_id}"
+            )
+            return False
+        except Exception as e:
+            flogger.error(
+                f"Error deleting Discord message(s) by reference "
+                f"(guild_id={guild_id}, message_type='{message_type}', reference_id={reference_id}): {e}"
+            )
+            await db.rollback()
+            raise

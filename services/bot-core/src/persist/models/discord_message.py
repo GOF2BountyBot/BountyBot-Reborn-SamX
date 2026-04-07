@@ -35,6 +35,8 @@ class DiscordMessage(Base):
         DateTime(timezone=True), default=lambda: datetime.now(UTC), onupdate=lambda: datetime.now(UTC)
     )
 
+    reference_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+
     __table_args__ = (
         # ensure one record per guild/channel/message-ID triple
         UniqueConstraint("guild_id", "channel_id", "message_id", name="uq_guild_channel_message"),
@@ -42,6 +44,8 @@ class DiscordMessage(Base):
         Index("ix_discord_message_guild_channel", "guild_id", "channel_id"),
         Index("ix_discord_message_type_guild_channel", "message_type", "guild_id", "channel_id"),
         Index("ix_discord_message_created_at", "created_at"),
+        # composite index for reference-based lookups (e.g. bounty announcements)
+        Index("ix_discord_message_reference", "guild_id", "message_type", "reference_id"),
     )
 
     def __repr__(self) -> str:

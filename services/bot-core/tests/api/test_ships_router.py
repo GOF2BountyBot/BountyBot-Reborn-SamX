@@ -84,12 +84,8 @@ def mock_player_repo():
 def mock_equipment_service():
     """Mock EquipmentService for router-level tests."""
     svc = AsyncMock()
-    svc.equip_item = AsyncMock(
-        return_value={"success": True, "ship": make_mock_ship(), "message": "equipped"}
-    )
-    svc.unequip_item = AsyncMock(
-        return_value={"success": True, "ship": make_mock_ship(), "message": "unequipped"}
-    )
+    svc.equip_item = AsyncMock(return_value={"success": True, "ship": make_mock_ship(), "message": "equipped"})
+    svc.unequip_item = AsyncMock(return_value={"success": True, "ship": make_mock_ship(), "message": "unequipped"})
     return svc
 
 

@@ -9,8 +9,10 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from persist.database.manager import get_db_session
+from persist.models.item import Item
 from services.shop_service import ShopService
 from shared import bblogger
+from sqlalchemy import select
 
 from api.schemas.shops_schema import (
     PurchaseRequest,
@@ -48,6 +50,13 @@ async def get_shop_items(
         async with get_db_session() as db:
             items = await shop_service.get_shop_items(db, guild_id, tier, item_type)
 
+            # Look up emojis from Item table by item name
+            item_names = {item.item_name for item in items}
+            emoji_map: dict[str, str | None] = {}
+            if item_names:
+                emoji_result = await db.execute(select(Item.name, Item.emoji).where(Item.name.in_(item_names)))
+                emoji_map = {row.name: row.emoji for row in emoji_result}
+
             return [
                 ShopItemResponse(
                     id=item.id,
@@ -60,6 +69,7 @@ async def get_shop_items(
                     price=item.price,
                     last_restocked=item.last_restocked.isoformat(),
                     refresh_interval_hours=item.refresh_interval_hours,
+                    emoji=emoji_map.get(item.item_name),
                 )
                 for item in items
             ]
@@ -272,6 +282,13 @@ async def get_items_by_tech_level(
         async with get_db_session() as db:
             items = await shop_service.shop_repo.get_items_by_tech_level(db, guild_id, tier, tech_level)
 
+            # Look up emojis from Item table by item name
+            item_names = {item.item_name for item in items}
+            emoji_map: dict[str, str | None] = {}
+            if item_names:
+                emoji_result = await db.execute(select(Item.name, Item.emoji).where(Item.name.in_(item_names)))
+                emoji_map = {row.name: row.emoji for row in emoji_result}
+
             return [
                 ShopItemResponse(
                     id=item.id,
@@ -284,6 +301,7 @@ async def get_items_by_tech_level(
                     price=item.price,
                     last_restocked=item.last_restocked.isoformat(),
                     refresh_interval_hours=item.refresh_interval_hours,
+                    emoji=emoji_map.get(item.item_name),
                 )
                 for item in items
             ]
@@ -338,6 +356,11 @@ async def get_shop_item(shop_item_id: int, shop_service: ShopService = Depends(g
             if not item:
                 raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Shop item {shop_item_id} not found")
 
+            # Look up emoji from Item table by item name
+            emoji_result = await db.execute(select(Item.name, Item.emoji).where(Item.name == item.item_name))
+            emoji_map = {row.name: row.emoji for row in emoji_result}
+            item_emoji = emoji_map.get(item.item_name)
+
             return ShopItemResponse(
                 id=item.id,
                 guild_id=item.guild_id,
@@ -349,6 +372,7 @@ async def get_shop_item(shop_item_id: int, shop_service: ShopService = Depends(g
                 price=item.price,
                 last_restocked=item.last_restocked.isoformat(),
                 refresh_interval_hours=item.refresh_interval_hours,
+                emoji=item_emoji,
             )
 
     except HTTPException:

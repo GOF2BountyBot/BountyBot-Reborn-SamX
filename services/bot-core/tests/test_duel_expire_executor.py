@@ -227,9 +227,7 @@ async def test_value_error_gives_skipped():
 
     mock_db = AsyncMock()
     _configure_db_manager(mock_db)
-    _configure_duel_service(
-        expire_side_effect=ValueError("Duel request with ID 55 not found.")
-    )
+    _configure_duel_service(expire_side_effect=ValueError("Duel request with ID 55 not found."))
 
     mock_notify = AsyncMock()
     with patch("utils.executors.duel_expire_executor._notify_expiry", new=mock_notify):
@@ -250,9 +248,7 @@ async def test_wrong_status_gives_skipped():
 
     mock_db = AsyncMock()
     _configure_db_manager(mock_db)
-    _configure_duel_service(
-        expire_side_effect=ValueError("Duel 10 cannot be expired — current status is 'accepted'.")
-    )
+    _configure_duel_service(expire_side_effect=ValueError("Duel 10 cannot be expired — current status is 'accepted'."))
 
     mock_notify = AsyncMock()
     with patch("utils.executors.duel_expire_executor._notify_expiry", new=mock_notify):
@@ -405,11 +401,7 @@ async def test_timeout_causes_skipped_when_duel_already_resolved():
     mock_db = AsyncMock()
     _configure_db_manager(mock_db)
     # Simulate duel already accepted before the timeout job fires
-    _configure_duel_service(
-        expire_side_effect=ValueError(
-            "Duel 77 cannot be expired — current status is 'accepted'."
-        )
-    )
+    _configure_duel_service(expire_side_effect=ValueError("Duel 77 cannot be expired — current status is 'accepted'."))
 
     mock_notify = AsyncMock()
     with patch("utils.executors.duel_expire_executor._notify_expiry", new=mock_notify):
@@ -432,9 +424,7 @@ async def test_timeout_causes_skipped_when_duel_not_found():
 
     mock_db = AsyncMock()
     _configure_db_manager(mock_db)
-    _configure_duel_service(
-        expire_side_effect=ValueError("Duel request with ID 999 not found.")
-    )
+    _configure_duel_service(expire_side_effect=ValueError("Duel request with ID 999 not found."))
 
     mock_notify = AsyncMock()
     with patch("utils.executors.duel_expire_executor._notify_expiry", new=mock_notify):

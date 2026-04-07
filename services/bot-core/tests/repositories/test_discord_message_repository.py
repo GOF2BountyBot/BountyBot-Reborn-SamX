@@ -353,3 +353,85 @@ class TestDeleteByCompositeKey:
         assert result is False
         mock_db.delete.assert_not_called()
         mock_db.commit.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# TestGetByGuildTypeAndReference
+# ---------------------------------------------------------------------------
+
+
+def _make_first_result(value) -> MagicMock:
+    """Build a mock for result.scalars().first()."""
+    scalars_mock = MagicMock()
+    scalars_mock.first = MagicMock(return_value=value)
+    result_mock = MagicMock()
+    result_mock.scalars = MagicMock(return_value=scalars_mock)
+    return result_mock
+
+
+def _make_returning_result(row_ids: list) -> MagicMock:
+    """Build a mock for result.fetchall() (used by DELETE RETURNING)."""
+    result_mock = MagicMock()
+    result_mock.fetchall = MagicMock(return_value=row_ids)
+    return result_mock
+
+
+class TestGetByGuildTypeAndReference:
+    @pytest.mark.asyncio
+    async def test_returns_message_when_found(self, repo, mock_db):
+        """get_by_guild_type_and_reference returns the matching message when found."""
+        msg = MagicMock()
+        msg.id = "some-uuid"
+        mock_db.execute = AsyncMock(return_value=_make_first_result(msg))
+
+        result = await repo.get_by_guild_type_and_reference(mock_db, 111, "bounty_announcement", 42)
+
+        assert result is msg
+        mock_db.execute.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_returns_none_when_not_found(self, repo, mock_db):
+        """get_by_guild_type_and_reference returns None when no record matches."""
+        mock_db.execute = AsyncMock(return_value=_make_first_result(None))
+
+        result = await repo.get_by_guild_type_and_reference(mock_db, 111, "bounty_announcement", 999)
+
+        assert result is None
+        mock_db.execute.assert_awaited_once()
+
+
+# ---------------------------------------------------------------------------
+# TestDeleteByGuildTypeAndReference
+# ---------------------------------------------------------------------------
+
+
+class TestDeleteByGuildTypeAndReference:
+    @pytest.mark.asyncio
+    async def test_delete_returns_true_when_records_deleted(self, repo, mock_db):
+        """delete_by_guild_type_and_reference returns True when at least one record was deleted."""
+        mock_db.execute = AsyncMock(return_value=_make_returning_result([("uuid-1",)]))
+
+        result = await repo.delete_by_guild_type_and_reference(mock_db, 111, "bounty_announcement", 42)
+
+        assert result is True
+        mock_db.commit.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_delete_returns_false_when_no_records_found(self, repo, mock_db):
+        """delete_by_guild_type_and_reference returns False when no records match."""
+        mock_db.execute = AsyncMock(return_value=_make_returning_result([]))
+
+        result = await repo.delete_by_guild_type_and_reference(mock_db, 111, "bounty_announcement", 999)
+
+        assert result is False
+        mock_db.commit.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_delete_rolls_back_and_raises_on_error(self, repo, mock_db):
+        """delete_by_guild_type_and_reference rolls back and re-raises on DB error."""
+        mock_db.execute = AsyncMock(side_effect=RuntimeError("DB error"))
+
+        with pytest.raises(RuntimeError, match="DB error"):
+            await repo.delete_by_guild_type_and_reference(mock_db, 111, "bounty_announcement", 42)
+
+        mock_db.rollback.assert_awaited_once()

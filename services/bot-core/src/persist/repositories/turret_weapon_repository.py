@@ -43,6 +43,12 @@ class TurretWeaponRepository(GenericRepository[TurretWeapon]):
         flogger.debug(f"create_or_update: creating or updating turret weapon from dict: {raw}")
 
         try:
+            # validate required keys upfront
+            if "name" not in raw:
+                raise ValueError("Missing required key 'name' in data for turret_weapon")
+            if "dps" not in raw:
+                raise ValueError("Missing required key 'dps' in data for turret_weapon")
+
             # common item fields
             item_fields = {
                 "name": raw["name"],

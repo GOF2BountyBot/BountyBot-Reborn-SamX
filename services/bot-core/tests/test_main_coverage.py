@@ -10,6 +10,17 @@ from types import ModuleType
 from unittest.mock import AsyncMock, MagicMock, patch
 
 # ---------------------------------------------------------------------------
+# Ensure src/ is at the front of sys.path so 'main' resolves to src/main.py
+# and not to any other 'main' module that may have been cached earlier.
+# ---------------------------------------------------------------------------
+_SRC_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "src"))
+if _SRC_DIR not in sys.path:
+    sys.path.insert(0, _SRC_DIR)
+elif sys.path[0] != _SRC_DIR:
+    sys.path.remove(_SRC_DIR)
+    sys.path.insert(0, _SRC_DIR)
+
+# ---------------------------------------------------------------------------
 # Mock shared.bblogger BEFORE any src imports
 # ---------------------------------------------------------------------------
 _mock_shared = ModuleType("shared")
@@ -18,15 +29,129 @@ _mock_shared.bblogger.get_logger = MagicMock(return_value=MagicMock())
 sys.modules.setdefault("shared", _mock_shared)
 sys.modules.setdefault("shared.bblogger", _mock_shared.bblogger)
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
+# ---------------------------------------------------------------------------
+# Mock the full apscheduler stack required by main.py at module level.
+#
+# Other test files (e.g. test_scheduler_router.py) may install a *partial*
+# apscheduler mock that only covers apscheduler.triggers.cron.  When main.py
+# is later imported it also needs:
+#   - apscheduler.jobstores.sqlalchemy   (SQLAlchemyJobStore)
+#   - apscheduler.schedulers.asyncio     (AsyncIOScheduler)
+#
+# If those are missing Python raises "not a package" because the top-level
+# 'apscheduler' entry in sys.modules is a plain ModuleType, not a real package.
+# We install the full mock here so the environment is consistent regardless of
+# which tests ran before this file.
+# ---------------------------------------------------------------------------
+
+
+def _ensure_apscheduler_mocked() -> None:
+    """Install complete apscheduler mock covering all submodules used by main.py."""
+    # Top-level package
+    if "apscheduler" not in sys.modules or not hasattr(sys.modules["apscheduler"], "_is_full_mock"):
+        _apscheduler = ModuleType("apscheduler")
+        _apscheduler._is_full_mock = True  # type: ignore[attr-defined]
+        sys.modules["apscheduler"] = _apscheduler
+
+    # apscheduler.triggers.cron  – CronTrigger
+    if "apscheduler.triggers" not in sys.modules:
+        sys.modules["apscheduler.triggers"] = ModuleType("apscheduler.triggers")
+    if "apscheduler.triggers.cron" not in sys.modules:
+        _mod = ModuleType("apscheduler.triggers.cron")
+
+        class _CronTrigger:
+            jitter = None
+
+            def __init__(self, *a, **kw):
+                pass
+
+            @classmethod
+            def from_crontab(cls, expr, *a, **kw):
+                obj = cls()
+                obj._expr = expr
+                return obj
+
+        _mod.CronTrigger = _CronTrigger
+        sys.modules["apscheduler.triggers.cron"] = _mod
+
+    # apscheduler.schedulers.asyncio  – AsyncIOScheduler
+    if "apscheduler.schedulers" not in sys.modules:
+        sys.modules["apscheduler.schedulers"] = ModuleType("apscheduler.schedulers")
+    if "apscheduler.schedulers.asyncio" not in sys.modules:
+        _mod2 = ModuleType("apscheduler.schedulers.asyncio")
+        _mod2.AsyncIOScheduler = MagicMock  # type: ignore[attr-defined]
+        sys.modules["apscheduler.schedulers.asyncio"] = _mod2
+
+    # apscheduler.jobstores.sqlalchemy  – SQLAlchemyJobStore
+    if "apscheduler.jobstores" not in sys.modules:
+        sys.modules["apscheduler.jobstores"] = ModuleType("apscheduler.jobstores")
+    if "apscheduler.jobstores.sqlalchemy" not in sys.modules:
+        _mod3 = ModuleType("apscheduler.jobstores.sqlalchemy")
+        _mod3.SQLAlchemyJobStore = MagicMock  # type: ignore[attr-defined]
+        sys.modules["apscheduler.jobstores.sqlalchemy"] = _mod3
+
+
+_ensure_apscheduler_mocked()
+
+# ---------------------------------------------------------------------------
+# Purge any stale 'main' (and transitive src modules) that were cached during
+# an earlier test run with an incomplete environment (broken apscheduler /
+# services stub).  This forces a clean re-import from src/main.py.
+# NOTE: this runs at collection time.  The autouse fixture below repeats
+# the same cleanup at test-execution time, after other test files have had
+# a chance to contaminate sys.modules.
+# ---------------------------------------------------------------------------
+_STALE_PREFIXES = ("main",)
+for _key in list(sys.modules):
+    if _key in _STALE_PREFIXES or any(_key.startswith(p + ".") for p in _STALE_PREFIXES):
+        _mod_file = getattr(sys.modules[_key], "__file__", "") or ""
+        # Only purge entries that do NOT live inside our src dir
+        if _SRC_DIR not in _mod_file:
+            del sys.modules[_key]
 
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+# ---------------------------------------------------------------------------
+# Autouse fixture: repair the module environment before every test in this
+# file.  This is necessary because other test files run BEFORE these tests
+# and may install partial/broken stubs for 'apscheduler' or 'services' in
+# sys.modules.  Without this repair, 'from main import ...' inside each test
+# body would fail with ImportError (the stale 'main' entry points to a broken
+# partially-imported module or to '__main__').
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture(autouse=True)
+def _repair_module_env():
+    """Ensure sys.modules is clean before each test in this file."""
+    # 1. Ensure src/ is at front of sys.path
+    if _SRC_DIR not in sys.path:
+        sys.path.insert(0, _SRC_DIR)
+    elif sys.path[0] != _SRC_DIR:
+        sys.path.remove(_SRC_DIR)
+        sys.path.insert(0, _SRC_DIR)
+
+    # 2. Install the full apscheduler mock (idempotent – adds missing submodules)
+    _ensure_apscheduler_mocked()
+
+    # 3. Purge any stale 'main' module that does not come from our src dir.
+    #    A previous test run may have cached a broken or wrong 'main'.
+    for _k in list(sys.modules):
+        if _k == "main" or _k.startswith("main."):
+            _f = getattr(sys.modules[_k], "__file__", "") or ""
+            if _SRC_DIR not in _f:
+                del sys.modules[_k]
+
+    yield  # run the test
+    # (no teardown required)
+
+
 # ===================================================================
 # root endpoint (line 282)
 # ===================================================================
+
 
 class TestRootEndpoint:
     def test_root_returns_running_message(self):
@@ -46,14 +171,20 @@ class TestRootEndpoint:
 # HealthFilter (lines 289-292)
 # ===================================================================
 
+
 class TestHealthFilter:
     def test_filter_keeps_non_health_logs(self):
         from main import HealthFilter
 
         f = HealthFilter()
         record = logging.LogRecord(
-            name="test", level=logging.INFO, pathname="", lineno=0,
-            msg="GET /api/v1/players/ 200", args=(), exc_info=None,
+            name="test",
+            level=logging.INFO,
+            pathname="",
+            lineno=0,
+            msg="GET /api/v1/players/ 200",
+            args=(),
+            exc_info=None,
         )
         assert f.filter(record) is True
 
@@ -62,8 +193,13 @@ class TestHealthFilter:
 
         f = HealthFilter()
         record = logging.LogRecord(
-            name="test", level=logging.INFO, pathname="", lineno=0,
-            msg="GET /api/v1/health/ 200", args=(), exc_info=None,
+            name="test",
+            level=logging.INFO,
+            pathname="",
+            lineno=0,
+            msg="GET /api/v1/health/ 200",
+            args=(),
+            exc_info=None,
         )
         assert f.filter(record) is False
 
@@ -71,6 +207,7 @@ class TestHealthFilter:
 # ===================================================================
 # include_routers – import failure (lines 258-261)
 # ===================================================================
+
 
 class TestIncludeRouters:
     def test_import_failure_is_handled_gracefully(self):
@@ -81,8 +218,10 @@ class TestIncludeRouters:
         # Create a fake module info that will fail on import
         fake_module_info = ("finder", "nonexistent_module_xyz", False)
 
-        with patch("main.pkgutil.iter_modules", return_value=[fake_module_info]), \
-             patch("main.importlib.import_module", side_effect=ImportError("no such module")):
+        with (
+            patch("main.pkgutil.iter_modules", return_value=[fake_module_info]),
+            patch("main.importlib.import_module", side_effect=ImportError("no such module")),
+        ):
             # Should NOT raise – the exception is caught and logged
             include_routers(test_app)
 
@@ -95,8 +234,10 @@ class TestIncludeRouters:
         fake_module = ModuleType("fake")
         fake_module_info = ("finder", "fake_mod", False)
 
-        with patch("main.pkgutil.iter_modules", return_value=[fake_module_info]), \
-             patch("main.importlib.import_module", return_value=fake_module):
+        with (
+            patch("main.pkgutil.iter_modules", return_value=[fake_module_info]),
+            patch("main.importlib.import_module", return_value=fake_module),
+        ):
             include_routers(test_app)
             # No router included, no error raised
 
@@ -104,6 +245,7 @@ class TestIncludeRouters:
 # ===================================================================
 # lifespan – startup and shutdown (lines 98-192)
 # ===================================================================
+
 
 class TestLifespan:
     @pytest.mark.asyncio
@@ -128,16 +270,17 @@ class TestLifespan:
         mock_mm_class = MagicMock()
         mock_mm_class.from_async_url.return_value = mock_mm_instance
 
-        with patch("main.db_manager") as mock_db_mgr, \
-             patch("persist.database.migration_manager.MigrationManager", mock_mm_class), \
-             patch("main.initialize_schema", new_callable=AsyncMock, return_value=mock_schema_mgr), \
-             patch("main.auto_seed_data", new_callable=AsyncMock), \
-             patch("main.create_async_engine"), \
-             patch("main.create_engine"), \
-             patch("main.SQLAlchemyJobStore"), \
-             patch("main.AsyncIOScheduler", return_value=mock_scheduler), \
-             patch("main.register_default_jobs"):
-
+        with (
+            patch("main.db_manager") as mock_db_mgr,
+            patch("persist.database.migration_manager.MigrationManager", mock_mm_class),
+            patch("main.initialize_schema", new_callable=AsyncMock, return_value=mock_schema_mgr),
+            patch("main.auto_seed_data", new_callable=AsyncMock),
+            patch("main.create_async_engine"),
+            patch("main.create_engine"),
+            patch("main.SQLAlchemyJobStore"),
+            patch("main.AsyncIOScheduler", return_value=mock_scheduler),
+            patch("main.register_default_jobs"),
+        ):
             mock_db_mgr.initialize = AsyncMock()
             mock_db_mgr._connection_string = "postgresql+asyncpg://user:pass@host/db"
             mock_db_mgr.shutdown = MagicMock()
@@ -175,15 +318,16 @@ class TestLifespan:
         mock_scheduler.start = MagicMock()
         mock_scheduler.shutdown = MagicMock()
 
-        with patch("main.db_manager") as mock_db_mgr, \
-             patch("main.initialize_schema", new_callable=AsyncMock), \
-             patch("main.auto_seed_data", new_callable=AsyncMock, side_effect=Exception("seed fail")), \
-             patch("main.create_async_engine"), \
-             patch("main.create_engine"), \
-             patch("main.SQLAlchemyJobStore"), \
-             patch("main.AsyncIOScheduler", return_value=mock_scheduler), \
-             patch("main.register_default_jobs"):
-
+        with (
+            patch("main.db_manager") as mock_db_mgr,
+            patch("main.initialize_schema", new_callable=AsyncMock),
+            patch("main.auto_seed_data", new_callable=AsyncMock, side_effect=Exception("seed fail")),
+            patch("main.create_async_engine"),
+            patch("main.create_engine"),
+            patch("main.SQLAlchemyJobStore"),
+            patch("main.AsyncIOScheduler", return_value=mock_scheduler),
+            patch("main.register_default_jobs"),
+        ):
             mock_db_mgr.initialize = AsyncMock()
             mock_db_mgr._connection_string = "postgresql+asyncpg://user:pass@host/db"
             mock_db_mgr.shutdown = MagicMock()
@@ -204,11 +348,12 @@ class TestLifespan:
 
         test_app = FastAPI()
 
-        with patch("main.db_manager") as mock_db_mgr, \
-             patch("main.initialize_schema", new_callable=AsyncMock), \
-             patch("main.auto_seed_data", new_callable=AsyncMock), \
-             patch("main.create_async_engine", side_effect=Exception("scheduler fail")):
-
+        with (
+            patch("main.db_manager") as mock_db_mgr,
+            patch("main.initialize_schema", new_callable=AsyncMock),
+            patch("main.auto_seed_data", new_callable=AsyncMock),
+            patch("main.create_async_engine", side_effect=Exception("scheduler fail")),
+        ):
             mock_db_mgr.initialize = AsyncMock()
             mock_db_mgr._connection_string = "postgresql+asyncpg://user:pass@host/db"
             mock_db_mgr.shutdown = MagicMock()
@@ -233,15 +378,16 @@ class TestLifespan:
         mock_scheduler.start = MagicMock()
         mock_scheduler.shutdown = MagicMock(side_effect=Exception("shutdown fail"))
 
-        with patch("main.db_manager") as mock_db_mgr, \
-             patch("main.initialize_schema", new_callable=AsyncMock), \
-             patch("main.auto_seed_data", new_callable=AsyncMock), \
-             patch("main.create_async_engine"), \
-             patch("main.create_engine"), \
-             patch("main.SQLAlchemyJobStore"), \
-             patch("main.AsyncIOScheduler", return_value=mock_scheduler), \
-             patch("main.register_default_jobs"):
-
+        with (
+            patch("main.db_manager") as mock_db_mgr,
+            patch("main.initialize_schema", new_callable=AsyncMock),
+            patch("main.auto_seed_data", new_callable=AsyncMock),
+            patch("main.create_async_engine"),
+            patch("main.create_engine"),
+            patch("main.SQLAlchemyJobStore"),
+            patch("main.AsyncIOScheduler", return_value=mock_scheduler),
+            patch("main.register_default_jobs"),
+        ):
             mock_db_mgr.initialize = AsyncMock()
             mock_db_mgr._connection_string = "postgresql+asyncpg://user:pass@host/db"
             mock_db_mgr.shutdown = MagicMock()
@@ -266,15 +412,16 @@ class TestLifespan:
         mock_scheduler.start = MagicMock()
         mock_scheduler.shutdown = MagicMock()
 
-        with patch("main.db_manager") as mock_db_mgr, \
-             patch("main.initialize_schema", new_callable=AsyncMock), \
-             patch("main.auto_seed_data", new_callable=AsyncMock), \
-             patch("main.create_async_engine"), \
-             patch("main.create_engine"), \
-             patch("main.SQLAlchemyJobStore"), \
-             patch("main.AsyncIOScheduler", return_value=mock_scheduler), \
-             patch("main.register_default_jobs"):
-
+        with (
+            patch("main.db_manager") as mock_db_mgr,
+            patch("main.initialize_schema", new_callable=AsyncMock),
+            patch("main.auto_seed_data", new_callable=AsyncMock),
+            patch("main.create_async_engine"),
+            patch("main.create_engine"),
+            patch("main.SQLAlchemyJobStore"),
+            patch("main.AsyncIOScheduler", return_value=mock_scheduler),
+            patch("main.register_default_jobs"),
+        ):
             mock_db_mgr.initialize = AsyncMock()
             mock_db_mgr._connection_string = "postgresql+asyncpg://user:pass@host/db"
             mock_db_mgr.shutdown = MagicMock(side_effect=Exception("db shutdown fail"))
@@ -292,6 +439,7 @@ class TestLifespan:
 # ===================================================================
 # __main__ block (lines 294-304)
 # ===================================================================
+
 
 class TestMainBlock:
     def test_main_block_calls_uvicorn(self):

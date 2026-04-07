@@ -322,3 +322,106 @@ async def delete_discord_message(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to delete message record: {e!s}"
         ) from e
+
+
+@router.get(
+    "/guild/{guild_id}/type/{message_type}/reference/{reference_id}",
+    response_model=DiscordMessageResponse,
+    summary="Get Discord Message by Reference",
+    description=(
+        "Return the Discord message record linked to the given guild, message type, "
+        "and reference entity ID (e.g. a bounty ID). Returns 404 if no record is found."
+    ),
+)
+async def get_discord_message_by_reference(
+    request: Request,
+    guild_id: int,
+    message_type: str,
+    reference_id: int,
+) -> DiscordMessageResponse:
+    """Get a Discord message by guild, type, and reference entity ID."""
+    flogger.info(f"Reference lookup: guild_id={guild_id}, message_type='{message_type}', reference_id={reference_id}")
+    try:
+        db_manager = request.app.state.db_manager
+        async with db_manager.get_session() as db:
+            message = await discord_message_repo.get_by_guild_type_and_reference(
+                db, guild_id, message_type, reference_id
+            )
+            if not message:
+                flogger.warning(
+                    f"No message found for guild_id={guild_id}, "
+                    f"message_type='{message_type}', reference_id={reference_id}"
+                )
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=(
+                        f"No message found for guild_id={guild_id}, "
+                        f"message_type='{message_type}', reference_id={reference_id}"
+                    ),
+                )
+            flogger.debug(f"Found message record {message.id} for reference_id={reference_id}")
+            return DiscordMessageResponse.from_orm(message)
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        flogger.exception("Unexpected error in get_discord_message_by_reference")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to look up message record: {e!s}",
+        ) from e
+
+
+@router.delete(
+    "/guild/{guild_id}/type/{message_type}/reference/{reference_id}",
+    summary="Delete Discord Message by Reference",
+    description=(
+        "Delete the Discord message record(s) linked to the given guild, message type, "
+        "and reference entity ID. Returns 200 if deleted, 404 if no record is found."
+    ),
+)
+async def delete_discord_message_by_reference(
+    request: Request,
+    guild_id: int,
+    message_type: str,
+    reference_id: int,
+) -> dict:
+    """Delete Discord message(s) by guild, type, and reference entity ID."""
+    flogger.info(f"Reference delete: guild_id={guild_id}, message_type='{message_type}', reference_id={reference_id}")
+    try:
+        db_manager = request.app.state.db_manager
+        async with db_manager.get_session() as db:
+            deleted = await discord_message_repo.delete_by_guild_type_and_reference(
+                db, guild_id, message_type, reference_id
+            )
+            if not deleted:
+                flogger.warning(
+                    f"No message found to delete for guild_id={guild_id}, "
+                    f"message_type='{message_type}', reference_id={reference_id}"
+                )
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=(
+                        f"No message found for guild_id={guild_id}, "
+                        f"message_type='{message_type}', reference_id={reference_id}"
+                    ),
+                )
+            flogger.info(
+                f"Deleted message(s) for guild_id={guild_id}, "
+                f"message_type='{message_type}', reference_id={reference_id}"
+            )
+            return {
+                "status": "deleted",
+                "guild_id": guild_id,
+                "message_type": message_type,
+                "reference_id": reference_id,
+            }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        flogger.exception("Unexpected error in delete_discord_message_by_reference")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to delete message record: {e!s}",
+        ) from e

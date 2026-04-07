@@ -58,6 +58,7 @@ class CheckResponse:
     proximity_hint: bool = False
     distance_to_answer: int | None = None
     combat_won: bool | None = None  # None if no combat, True/False if combat occurred
+    new_tier: str | None = None  # If the player's tier changed after this check
 
 
 @dataclass
@@ -246,6 +247,10 @@ class BountyService:
             return {
                 "ship_name": "Betty",
                 "ship_value": 0,
+                "ship_armour": 50,
+                "armor_hp": 50,
+                "shield_hp": 0,
+                "total_hp": 50,
                 "ship_max_primaries": 0,
                 "ship_max_modules": 0,
                 "ship_max_turrets": 0,
@@ -296,6 +301,10 @@ class BountyService:
             return {
                 "ship_name": "Unknown",
                 "ship_value": 0,
+                "ship_armour": 100,
+                "armor_hp": 100,
+                "shield_hp": 0,
+                "total_hp": 100,
                 "ship_max_primaries": 0,
                 "ship_max_modules": 0,
                 "ship_max_turrets": 0,
@@ -352,26 +361,106 @@ class BountyService:
                 if shield_mod:
                     equipped_modules.append(shield_mod)
 
-            # Fill remaining slots with random modules at item_tl
-            while len(equipped_modules) < ship.max_modules and generic_modules:
-                equipped_modules.append(random.choice(generic_modules))
+            # Fill remaining slots with random modules at item_tl, respecting type-class uniqueness
+            # Track equipped module type counts using MODULE_EQUIP_LIMITS (type-class, not name-based)
+            equipped_type_counts: dict[str, int] = {}
+            for m in equipped_modules:
+                mtype = getattr(m, "type", "")
+                equipped_type_counts[mtype] = equipped_type_counts.get(mtype, 0) + 1
+
+            def _can_equip(module) -> bool:
+                mtype = getattr(module, "type", "")
+                limit = GameConstants.MODULE_EQUIP_LIMITS.get(mtype, -1)
+                if limit == 0:
+                    return False
+                if limit == -1:
+                    return True
+                return equipped_type_counts.get(mtype, 0) < limit
+
+            available_pool = [m for m in generic_modules if _can_equip(m)]
+            while len(equipped_modules) < ship.max_modules and available_pool:
+                chosen = random.choice(available_pool)
+                equipped_modules.append(chosen)
+                mtype = getattr(chosen, "type", "")
+                equipped_type_counts[mtype] = equipped_type_counts.get(mtype, 0) + 1
+                # Re-filter pool based on updated type counts
+                available_pool = [m for m in available_pool if _can_equip(m)]
 
         # ----------------------------------------------------------------
-        # Calculate total value
+        # Calculate partial values (weapons + modules) before turret selection
         # ----------------------------------------------------------------
         weapon_value = sum(getattr(w, "value", 0) for w in equipped_weapons)
         module_value = sum(getattr(m, "value", 0) for m in equipped_modules)
-        total_value = ship.value + weapon_value + module_value
+
+        # ----------------------------------------------------------------
+        # Turret weapon selection
+        # ----------------------------------------------------------------
+        equipped_turrets = []
+        if ship.max_turrets > 0:
+            turret_tl = await self.find_item_tl(
+                db,
+                center=item_tl,
+                min_tl=GameConstants.MIN_TECH_LEVEL,
+                max_tl=GameConstants.MAX_TECH_LEVEL,
+                upper_bound=GameConstants.CRIMINAL_MAX_GEAR_UPGRADE,
+                item_type="turret_weapon",
+            )
+            if turret_tl != -1:
+                all_turrets = await self.item_repo.get_all_by_tech_level(db, turret_tl, item_type="turret_weapon")
+                for _ in range(ship.max_turrets):
+                    if all_turrets:
+                        equipped_turrets.append(random.choice(all_turrets))
+
+        turret_value = sum(getattr(t, "value", 0) for t in equipped_turrets)
+        total_value = ship.value + weapon_value + module_value + turret_value
+
+        # ----------------------------------------------------------------
+        # Calculate HP from base ship + modules
+        # ----------------------------------------------------------------
+        base_armour = getattr(ship, "armour", 100)
+        module_armour = 0
+        shield_hp = 0
+        for m in equipped_modules:
+            mtype = getattr(m, "type", "")
+            extra = getattr(m, "extra_atts", {}) or {}
+            if mtype == "ArmourModule":
+                module_armour += extra.get("armour", 0)
+            elif mtype in ("ShieldModule", "GammaShieldModule"):
+                shield_hp += extra.get("shield", 0)
+
+        armor_hp = base_armour + module_armour
+        total_hp = armor_hp + shield_hp
 
         return {
             "ship_name": ship.name,
+            "ship_emoji": getattr(ship, "emoji", None),
             "ship_value": ship.value,
+            "ship_armour": base_armour,
+            "armor_hp": armor_hp,
+            "shield_hp": shield_hp,
+            "total_hp": total_hp,
             "ship_max_primaries": ship.max_primaries,
             "ship_max_modules": ship.max_modules,
             "ship_max_turrets": ship.max_turrets,
-            "weapons": [{"name": w.name, "value": w.value, "dps": w.dps} for w in equipped_weapons],
-            "modules": [{"name": m.name, "value": m.value, "tech_level": m.tech_level} for m in equipped_modules],
-            "turrets": [],
+            "weapons": [
+                {"name": w.name, "emoji": getattr(w, "emoji", None), "value": w.value, "dps": w.dps}
+                for w in equipped_weapons
+            ],
+            "modules": [
+                {
+                    "name": m.name,
+                    "emoji": getattr(m, "emoji", None),
+                    "value": m.value,
+                    "tech_level": m.tech_level,
+                    "type": getattr(m, "type", ""),
+                    "extra_atts": getattr(m, "extra_atts", {}) or {},
+                }
+                for m in equipped_modules
+            ],
+            "turrets": [
+                {"name": t.name, "emoji": getattr(t, "emoji", None), "value": t.value, "dps": t.dps}
+                for t in equipped_turrets
+            ],
             "total_value": total_value,
         }
 
@@ -397,19 +486,22 @@ class BountyService:
             turrets=turrets,
         )
 
-    def _build_player_loadout(self, player) -> ShipLoadout:
+    def _build_player_loadout(self, player, player_ship=None) -> ShipLoadout:
         """Build a minimal ShipLoadout from a player's active ship.
 
         If the player has no active ship, a default unarmed loadout is used.
 
         Args:
-            player: Player ORM instance.
+            player:      Player ORM instance.
+            player_ship: Explicitly loaded PlayerShip instance (avoids lazy-loading).
+                         If None, falls back to ``player.active_ship`` for backward
+                         compatibility (e.g. in tests using SimpleNamespace).
 
         Returns:
             ShipLoadout with minimal fields populated.
         """
-        if player.active_ship is not None:
-            ship = player.active_ship
+        ship = player_ship if player_ship is not None else getattr(player, "active_ship", None)
+        if ship is not None:
             ship_name = getattr(ship, "ship_name", None) or "Unknown"
             base_armour = getattr(ship, "armour", 100)
         else:
@@ -452,12 +544,101 @@ class BountyService:
     # Bounty Spawning
     # ------------------------------------------------------------------
 
+    async def clear_bounties(self, db: AsyncSession, guild_id: int, tier: str | None = None) -> dict:
+        """Clear active bounties for a guild (and optionally a specific tier).
+
+        Sets matching active bounties to status='cleared', deletes the actual
+        Discord announcement messages via the discord-gateway API, then removes
+        the DiscordMessage DB records.
+
+        Args:
+            db:       Async database session.
+            guild_id: Discord guild ID.
+            tier:     Optional division filter ('bronze', 'silver', 'gold').
+                      If None, clears all tiers.
+
+        Returns:
+            Dict with keys: guild_id, tier, cleared_count, bounty_ids, announcements_deleted.
+        """
+        import os
+
+        import httpx
+        from persist.repositories.discord_message_repository import DiscordMessageRepository
+
+        gateway_host = os.getenv("DISCORD_GATEWAY_HOST", "discord-gateway")
+        gateway_port = os.getenv("GATEWAY_PORT", "7999")
+        gateway_url = f"http://{gateway_host}:{gateway_port}/api/v1"
+
+        # Clear active bounties at the repository level
+        bounty_ids = await self.bounty_repo.clear_active_by_guild(db, guild_id, tier)
+
+        # Delete corresponding Discord announcement messages (gateway + DB)
+        announcements_deleted = 0
+        if bounty_ids:
+            try:
+                msg_repo = DiscordMessageRepository()
+                for bounty_id in bounty_ids:
+                    try:
+                        # Fetch the Discord message record to get the message_id
+                        discord_msg = await msg_repo.get_by_guild_type_and_reference(
+                            db, guild_id, "bounty_announcement", bounty_id
+                        )
+                        if discord_msg is not None:
+                            # Best-effort: delete the actual Discord message via gateway
+                            try:
+                                channel_id = discord_msg.channel_id
+                                async with httpx.AsyncClient() as client:
+                                    resp = await client.delete(
+                                        f"{gateway_url}/channels/{channel_id}/messages/{discord_msg.message_id}",
+                                        timeout=10,
+                                    )
+                                # 404 is acceptable — message may have been manually deleted
+                                if resp.status_code not in (200, 204, 404):
+                                    flogger.warning(
+                                        f"Non-fatal: gateway returned {resp.status_code} "
+                                        f"deleting Discord message {discord_msg.message_id} "
+                                        f"for bounty {bounty_id}"
+                                    )
+                                else:
+                                    flogger.info(
+                                        f"Deleted Discord message {discord_msg.message_id} for bounty {bounty_id}"
+                                    )
+                            except Exception as gw_exc:
+                                flogger.warning(
+                                    f"Non-fatal: failed to delete Discord message "
+                                    f"{discord_msg.message_id} for bounty {bounty_id}: {gw_exc}"
+                                )
+
+                        # Delete the DB record regardless of gateway result
+                        deleted = await msg_repo.delete_by_guild_type_and_reference(
+                            db, guild_id, "bounty_announcement", bounty_id
+                        )
+                        if deleted:
+                            announcements_deleted += 1
+                    except Exception as e:
+                        flogger.warning(f"Non-fatal: failed to delete announcement for bounty {bounty_id}: {e}")
+            except Exception as e:
+                flogger.warning(f"Non-fatal: failed to delete announcements for guild {guild_id}: {e}")
+
+        flogger.info(
+            f"Cleared {len(bounty_ids)} bounties for guild {guild_id} tier={tier}, "
+            f"deleted {announcements_deleted} announcements"
+        )
+        return {
+            "guild_id": guild_id,
+            "tier": tier,
+            "cleared_count": len(bounty_ids),
+            "bounty_ids": bounty_ids,
+            "announcements_deleted": announcements_deleted,
+        }
+
     async def spawn_bounty(
         self,
         db: AsyncSession,
         guild_id: int,
         division: str,
         tech_level: int | None = None,
+        expiry_minutes: int | None = None,
     ) -> Bounty | None:
         """Spawn a new bounty for a guild division.
 
@@ -473,10 +654,12 @@ class BountyService:
         9. Persist to database
 
         Args:
-            db:         Async database session.
-            guild_id:   Discord guild ID.
-            division:   Division name (e.g. "bronze", "silver", "gold").
-            tech_level: Optional override for criminal tech level.
+            db:             Async database session.
+            guild_id:       Discord guild ID.
+            division:       Division name (e.g. "bronze", "silver", "gold").
+            tech_level:     Optional override for criminal tech level.
+            expiry_minutes: Optional override for bounty expiry duration in minutes.
+                            Defaults to 480 (8 hours) if not provided.
 
         Returns:
             Bounty object if spawn succeeds, None if it fails.
@@ -532,7 +715,8 @@ class BountyService:
 
         # Step 7: Set timing
         issue_time = datetime.now(UTC)
-        end_time = issue_time + timedelta(days=len(route))
+        expiry = expiry_minutes if expiry_minutes is not None else 480
+        end_time = issue_time + timedelta(minutes=expiry)
 
         # Step 8: Initialize checked dict
         checked = {system: -1 for system in route}
@@ -639,12 +823,30 @@ class BountyService:
                 duel_won = False
                 fight_results = None
 
-                if player.classic_mode or player.active_ship is None:
+                # Use active_ship_id (column) when available to avoid lazy-loading the
+                # relationship outside the greenlet context (MissingGreenlet error).
+                # Fall back to player.active_ship for SimpleNamespace-based test objects
+                # that do not carry active_ship_id.
+                if hasattr(player, "active_ship_id"):
+                    _no_ship = player.active_ship_id is None
+                else:
+                    _no_ship = getattr(player, "active_ship", None) is None
+
+                if player.classic_mode or _no_ship:
                     # Classic mode or no ship → auto-win
                     duel_won = True
                 else:
+                    # Load the player's ship explicitly to avoid lazy-loading
+                    player_ship = None
+                    if hasattr(player, "active_ship_id") and player.active_ship_id is not None:
+                        from persist.models.player_ship import PlayerShip
+
+                        player_ship = await db.get(PlayerShip, player.active_ship_id)
+                    else:
+                        # Fallback for SimpleNamespace test objects that expose active_ship directly
+                        player_ship = getattr(player, "active_ship", None)
                     # Build loadouts and fight
-                    player_loadout = self._build_player_loadout(player)
+                    player_loadout = self._build_player_loadout(player, player_ship)
                     criminal_loadout = self._build_criminal_loadout(bounty.criminal_ship or {})
                     fight_results = self.combat_service.fight_ships(player_loadout, criminal_loadout)
                     # Stalemate counts as player win (legacy behavior)
@@ -652,21 +854,34 @@ class BountyService:
 
                 if duel_won:
                     # Player wins → distribute rewards
+                    tier_before = player.tier
                     rewards = await self.calc_rewards(db, bounty)
                     await self.distribute_rewards(db, bounty, rewards)
                     await db.commit()
                     await db.refresh(player)
+                    tier_after = player.tier
+                    await self._edit_bounty_announcement(db, bounty)
+                    try:
+                        await self._delete_bounty_announcement(db, bounty)
+                    except Exception as _del_exc:  # pylint: disable=broad-exception-caught
+                        flogger.warning(f"Non-fatal: failed to delete announcement for bounty {bounty.id}: {_del_exc}")
                     return CheckResponse(
                         result=CheckResult.CORRECT,
                         bounty_id=bounty.id,
                         message=f"Defeated {bounty.criminal_name}! Bounty completed.",
                         combat_won=True,
+                        new_tier=tier_after if tier_after != tier_before else None,
                     )
                 else:
                     # Player loses → bounty escapes
                     await self.escape_bounty(db, bounty.id)
                     await db.commit()
                     await db.refresh(player)
+                    await self._edit_bounty_announcement(db, bounty)
+                    try:
+                        await self._delete_bounty_announcement(db, bounty)
+                    except Exception as _del_exc:  # pylint: disable=broad-exception-caught
+                        flogger.warning(f"Non-fatal: failed to delete announcement for bounty {bounty.id}: {_del_exc}")
                     return CheckResponse(
                         result=CheckResult.CORRECT,
                         bounty_id=bounty.id,
@@ -691,6 +906,7 @@ class BountyService:
             await self.bounty_repo.update(db, bounty)
             await db.commit()
             await db.refresh(player)
+            await self._edit_bounty_announcement(db, bounty)
             flogger.debug(f"Player {player_id} checked {system_name} on bounty {bounty.id}: incorrect")
             return CheckResponse(
                 result=CheckResult.INCORRECT,
@@ -705,6 +921,135 @@ class BountyService:
             result=CheckResult.NOT_FOUND,
             message=f"System {system_name} not in any active bounty route",
         )
+
+    # ------------------------------------------------------------------
+    # Bounty Announcement Live-Edit
+    # ------------------------------------------------------------------
+
+    async def _edit_bounty_announcement(self, db: AsyncSession, bounty: Bounty) -> None:
+        """Edit the bounty's Discord announcement to reflect updated checked systems.
+
+        Non-fatal — if the message lookup or edit fails, logs a warning and continues.
+
+        Args:
+            db:     Async database session.
+            bounty: The bounty whose announcement should be updated.
+        """
+        try:
+            import os
+
+            import httpx
+            from message_builders.builders.bounty_announcement import BountyAnnouncementBuilder
+            from persist.repositories.discord_message_repository import DiscordMessageRepository
+
+            msg_repo = DiscordMessageRepository()
+            discord_msg = await msg_repo.get_by_guild_type_and_reference(
+                db, bounty.guild_id, "bounty_announcement", bounty.id
+            )
+
+            if discord_msg is None:
+                flogger.debug(f"No announcement message found for bounty {bounty.id}, skipping edit")
+                return
+
+            # Rebuild the embed with updated checked systems
+            builder = BountyAnnouncementBuilder()
+
+            # Translate bounty.checked (player IDs / -1) → builder format ("checked" / "found")
+            checked_for_builder: dict[str, str] = {}
+            if bounty.checked:
+                for system_name, checker_id in bounty.checked.items():
+                    if checker_id != -1:  # -1 means unchecked
+                        if system_name == bounty.answer:
+                            checked_for_builder[system_name] = "found"
+                        else:
+                            checked_for_builder[system_name] = "checked"
+
+            embed_data = builder.build_payload(
+                {
+                    "criminal_name": bounty.criminal_name,
+                    "criminal_faction": bounty.criminal_faction or "Unknown",
+                    "division": bounty.division,
+                    "tech_level": bounty.tech_level,
+                    "reward": bounty.reward,
+                    "route": bounty.route or [],
+                    "end_time_unix": int(bounty.end_time.timestamp()) if bounty.end_time else 0,
+                    "criminal_ship": bounty.criminal_ship,
+                    "checked": checked_for_builder if checked_for_builder else None,
+                    "bounty_hunter_role_id": None,  # Don't re-mention on edits
+                    "route_map_url": None,  # Image URL already set in the original message
+                }
+            )
+
+            gateway_host = os.getenv("DISCORD_GATEWAY_HOST", "discord-gateway")
+            gateway_port = os.getenv("GATEWAY_PORT", "7999")
+            gateway_url = f"http://{gateway_host}:{gateway_port}/api/v1"
+
+            edit_payload = {
+                "content": embed_data["embed"],
+                "message_type": "bounty_announcement",
+            }
+
+            # Prefer the channel-specific edit endpoint for faster message lookup
+            channel_id = discord_msg.channel_id
+            async with httpx.AsyncClient() as client:
+                resp = await client.put(
+                    f"{gateway_url}/channels/{channel_id}/messages/{discord_msg.message_id}",
+                    json=edit_payload,
+                    timeout=10,
+                )
+            resp.raise_for_status()
+            flogger.info(f"Edited bounty announcement for bounty {bounty.id} (message {discord_msg.message_id})")
+
+        except Exception as e:
+            flogger.warning(f"Failed to edit bounty announcement for bounty {bounty.id}: {e}")
+
+    async def _delete_bounty_announcement(self, db: AsyncSession, bounty: Bounty) -> None:
+        """Delete the bounty announcement from Discord and clean up the DB record.
+
+        Non-fatal — exceptions are caught and logged without propagating.
+
+        Args:
+            db:     Async database session.
+            bounty: The bounty whose announcement should be deleted.
+        """
+        try:
+            import os
+
+            import httpx
+            from persist.repositories.discord_message_repository import DiscordMessageRepository
+
+            msg_repo = DiscordMessageRepository()
+            discord_msg = await msg_repo.get_by_guild_type_and_reference(
+                db, bounty.guild_id, "bounty_announcement", bounty.id
+            )
+
+            if discord_msg is None:
+                flogger.debug(f"No announcement message found for bounty {bounty.id}, skipping delete")
+                return
+
+            gateway_host = os.getenv("DISCORD_GATEWAY_HOST", "discord-gateway")
+            gateway_port = os.getenv("GATEWAY_PORT", "7999")
+            gateway_url = f"http://{gateway_host}:{gateway_port}/api/v1"
+
+            try:
+                channel_id = discord_msg.channel_id
+                async with httpx.AsyncClient() as client:
+                    resp = await client.delete(
+                        f"{gateway_url}/channels/{channel_id}/messages/{discord_msg.message_id}",
+                        timeout=10,
+                    )
+                # 404 is OK — message may have been manually deleted
+                if resp.status_code not in (200, 204, 404):
+                    resp.raise_for_status()
+                flogger.info(f"Deleted Discord message {discord_msg.message_id} for bounty {bounty.id}")
+            except Exception as e:
+                flogger.warning(f"Failed to delete Discord message for bounty {bounty.id}: {e}")
+
+            await msg_repo.delete_by_guild_type_and_reference(db, bounty.guild_id, "bounty_announcement", bounty.id)
+            flogger.info(f"Deleted announcement record for completed/escaped bounty {bounty.id}")
+
+        except Exception as e:
+            flogger.warning(f"Failed to delete announcement for bounty {bounty.id}: {e}")
 
     # ------------------------------------------------------------------
     # Reward Calculation & Distribution
@@ -933,6 +1278,7 @@ class BountyService:
         self,
         db: AsyncSession,
         bounty_id: int,
+        expiry_minutes: int | None = None,
     ) -> Bounty | None:
         """Respawn an escaped bounty with a new route and answer.
 
@@ -940,8 +1286,10 @@ class BountyService:
         and picks a new answer. Resets checked dict and status to 'active'.
 
         Args:
-            db: Async database session.
-            bounty_id: ID of the escaped bounty to respawn.
+            db:             Async database session.
+            bounty_id:      ID of the escaped bounty to respawn.
+            expiry_minutes: Optional override for bounty expiry in minutes.
+                            Defaults to 480 (8 hours) if not provided.
 
         Returns:
             Updated Bounty object with new route/answer, or None on failure.
@@ -990,8 +1338,9 @@ class BountyService:
         bounty.status = "active"
         bounty.respawn_time = None
 
-        # Update end_time based on new route length
-        bounty.end_time = datetime.now(UTC) + timedelta(days=len(route))
+        # Update end_time based on expiry_minutes (or default 480 minutes)
+        expiry = expiry_minutes if expiry_minutes is not None else 480
+        bounty.end_time = datetime.now(UTC) + timedelta(minutes=expiry)
 
         await self.bounty_repo.update(db, bounty)
         flogger.info(f"Bounty {bounty_id} respawned: {bounty.criminal_name} with new route ({len(route)} systems)")

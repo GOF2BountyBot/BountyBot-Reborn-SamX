@@ -150,9 +150,7 @@ class TestGetPendingByPlayers:
     @pytest.mark.asyncio
     async def test_get_pending_by_players(self, repo, mock_db):
         """get_pending_by_players() should return a pending duel between two players."""
-        duel = _make_duel(
-            challenger_id=100, target_id=200, guild_id=111, status="pending"
-        )
+        duel = _make_duel(challenger_id=100, target_id=200, guild_id=111, status="pending")
         mock_db.execute = AsyncMock(return_value=_make_scalars_result([duel]))
 
         result = await repo.get_pending_by_players(mock_db, 100, 200, 111)
@@ -226,9 +224,7 @@ class TestGetActiveByGuild:
         """get_active_by_guild() should return only pending duels for the guild."""
         pending_duel = _make_duel(status="pending", guild_id=111)
 
-        mock_db.execute = AsyncMock(
-            return_value=_make_scalars_result([pending_duel])
-        )
+        mock_db.execute = AsyncMock(return_value=_make_scalars_result([pending_duel]))
 
         result = await repo.get_active_by_guild(mock_db, guild_id=111)
 

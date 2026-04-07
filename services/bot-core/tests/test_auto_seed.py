@@ -42,6 +42,7 @@ if "shared" not in sys.modules:
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _make_session_ctx(scalar_value=0) -> MagicMock:
     """
     Return a mock async context-manager for db_manager.get_session().

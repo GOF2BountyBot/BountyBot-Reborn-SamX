@@ -92,6 +92,8 @@ def mock_message_repo():
     repo.list_by_guild_and_channel = AsyncMock(return_value=[make_mock_message()])
     repo.list_by_guild_and_type = AsyncMock(return_value=[make_mock_message()])
     repo.remove = AsyncMock()
+    repo.get_by_guild_type_and_reference = AsyncMock(return_value=make_mock_message())
+    repo.delete_by_guild_type_and_reference = AsyncMock(return_value=True)
     return repo
 
 
@@ -616,3 +618,88 @@ class TestUpdateDiscordMessageUnexpectedError:
 
         assert response.status_code == 500
         assert "Failed to update message" in response.json()["detail"]
+
+
+# ===========================================================================
+# 8. GET /discord-message/guild/{guild_id}/type/{message_type}/reference/{reference_id}
+# ===========================================================================
+
+
+class TestGetDiscordMessageByReference:
+    """Tests for GET /api/v1/discord-message/guild/{guild_id}/type/{message_type}/reference/{reference_id}."""
+
+    def test_get_by_reference_happy_path(self, client, mock_message_repo):
+        """Returns 200 with DiscordMessageResponse when record exists."""
+        with patch(
+            "api.routers.discord_message.DiscordMessageResponse.from_orm",
+            return_value=MagicMock(
+                id=str(SAMPLE_UUID),
+                guild_id=67890,
+                channel_id=11111,
+                message_id=99999,
+                embed_payload="{}",
+                message_type="bounty_announcement",
+                reference_id=42,
+                created_at=datetime(2026, 1, 1),
+                updated_at=datetime(2026, 1, 1),
+            ),
+        ):
+            response = client.get("/api/v1/discord-message/guild/67890/type/bounty_announcement/reference/42")
+
+        assert response.status_code == 200
+
+    def test_get_by_reference_not_found_returns_404(self, client, mock_message_repo):
+        """Returns 404 when no matching record exists."""
+        mock_message_repo.get_by_guild_type_and_reference = AsyncMock(return_value=None)
+
+        response = client.get("/api/v1/discord-message/guild/67890/type/bounty_announcement/reference/999")
+
+        assert response.status_code == 404
+        assert "No message found" in response.json()["detail"]
+
+    def test_get_by_reference_server_error_returns_500(self, client, mock_message_repo):
+        """Returns 500 when an unexpected exception is raised."""
+        mock_message_repo.get_by_guild_type_and_reference = AsyncMock(side_effect=RuntimeError("DB failure"))
+
+        response = client.get("/api/v1/discord-message/guild/67890/type/bounty_announcement/reference/42")
+
+        assert response.status_code == 500
+        assert "Failed to look up message record" in response.json()["detail"]
+
+
+# ===========================================================================
+# 9. DELETE /discord-message/guild/{guild_id}/type/{message_type}/reference/{reference_id}
+# ===========================================================================
+
+
+class TestDeleteDiscordMessageByReference:
+    """Tests for DELETE /api/v1/discord-message/guild/{guild_id}/type/{message_type}/reference/{reference_id}."""
+
+    def test_delete_by_reference_happy_path(self, client, mock_message_repo):
+        """Returns 200 with status dict when record is deleted."""
+        response = client.delete("/api/v1/discord-message/guild/67890/type/bounty_announcement/reference/42")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["status"] == "deleted"
+        assert data["guild_id"] == 67890
+        assert data["message_type"] == "bounty_announcement"
+        assert data["reference_id"] == 42
+
+    def test_delete_by_reference_not_found_returns_404(self, client, mock_message_repo):
+        """Returns 404 when no matching record exists."""
+        mock_message_repo.delete_by_guild_type_and_reference = AsyncMock(return_value=False)
+
+        response = client.delete("/api/v1/discord-message/guild/67890/type/bounty_announcement/reference/999")
+
+        assert response.status_code == 404
+        assert "No message found" in response.json()["detail"]
+
+    def test_delete_by_reference_server_error_returns_500(self, client, mock_message_repo):
+        """Returns 500 when an unexpected exception is raised."""
+        mock_message_repo.delete_by_guild_type_and_reference = AsyncMock(side_effect=RuntimeError("DB error"))
+
+        response = client.delete("/api/v1/discord-message/guild/67890/type/bounty_announcement/reference/42")
+
+        assert response.status_code == 500
+        assert "Failed to delete message record" in response.json()["detail"]

@@ -105,10 +105,10 @@ _ensure_stub("services")
 # ===========================================================================
 
 
-def _make_guild_config(guild_id: int, shop_channel_id: int | None = 234567) -> MagicMock:
+def _make_guild_config(guild_id: int, hunting_channel_id: int | None = 234567) -> MagicMock:
     cfg = MagicMock()
     cfg.guild_id = guild_id
-    cfg.shop_channel_id = shop_channel_id
+    cfg.hunting_channel_id = hunting_channel_id
     return cfg
 
 
@@ -195,7 +195,7 @@ async def test_single_guild_single_tier_passes_force_tech_level():
 
 @pytest.mark.asyncio
 async def test_single_guild_all_tiers_calls_refresh_three_times():
-    """guild_id without tier triggers refresh for Bronze, Silver, Gold."""
+    """guild_id without tier triggers refresh for Bronze, Silver, Gold, Platinum."""
     from utils.executors.shop_refresh_executor import execute_shop_refresh_job
 
     mock_db = AsyncMock()
@@ -207,18 +207,20 @@ async def test_single_guild_all_tiers_calls_refresh_three_times():
             _make_refresh_result(333, "Bronze"),
             _make_refresh_result(333, "Silver"),
             _make_refresh_result(333, "Gold"),
+            _make_refresh_result(333, "Platinum"),
         ]
     )
     sys.modules["services.shop_service"].ShopService = MagicMock(return_value=mock_shop_svc)
 
     result = await execute_shop_refresh_job("job-3", {"job_type": "shop_refresh", "guild_id": 333})
 
-    assert mock_shop_svc.refresh_shop.await_count == 3
+    assert mock_shop_svc.refresh_shop.await_count == 4
     assert result["status"] == "success"
     assert result["guild_id"] == 333
     assert "Bronze" in result["results"]
     assert "Silver" in result["results"]
     assert "Gold" in result["results"]
+    assert "Platinum" in result["results"]
 
 
 @pytest.mark.asyncio
@@ -241,7 +243,7 @@ async def test_single_guild_all_tiers_order_is_bronze_silver_gold():
 
     await execute_shop_refresh_job("job-4", {"job_type": "shop_refresh", "guild_id": 444})
 
-    assert called_tiers == ["Bronze", "Silver", "Gold"]
+    assert called_tiers == ["Bronze", "Silver", "Gold", "Platinum"]
 
 
 # ===========================================================================
@@ -269,8 +271,8 @@ async def test_bulk_refresh_iterates_all_guilds():
     with patch("utils.executors.shop_refresh_executor._announce_shop_refresh", new=AsyncMock()):
         result = await execute_shop_refresh_job("job-5", {"job_type": "shop_refresh"})
 
-    # 2 guilds x 3 tiers = 6 calls
-    assert mock_shop_svc.refresh_shop.await_count == 6
+    # 2 guilds x 4 tiers = 8 calls
+    assert mock_shop_svc.refresh_shop.await_count == 8
     assert result["status"] == "success"
     assert result["guilds_refreshed"] == 2
     assert 10 in result["results"]
@@ -312,8 +314,8 @@ async def test_bulk_refresh_announces_once_per_guild():
     sys.modules["services.shop_service"].ShopService = MagicMock(return_value=mock_shop_svc)
 
     guild_configs = [
-        _make_guild_config(30, shop_channel_id=111000),
-        _make_guild_config(40, shop_channel_id=222000),
+        _make_guild_config(30, hunting_channel_id=111000),
+        _make_guild_config(40, hunting_channel_id=222000),
     ]
     mock_config_repo = AsyncMock()
     mock_config_repo.list_all = AsyncMock(return_value=guild_configs)
@@ -326,7 +328,7 @@ async def test_bulk_refresh_announces_once_per_guild():
     # Called once per guild (not once per tier).
     assert mock_announce.await_count == 2
     calls = mock_announce.call_args_list
-    # Each call: (job_id, guild_id, shop_channel_id)
+    # Each call: (job_id, guild_id, hunting_channel_id)
     called_args = {(c.args[1], c.args[2]) for c in calls}
     assert called_args == {(30, 111000), (40, 222000)}
 
@@ -515,3 +517,87 @@ async def test_job_executor_does_not_dispatch_shop_refresh_for_other_types():
 
     mock_shop_fn.assert_not_awaited()
     mock_time_fn.assert_awaited_once()
+
+
+# ===========================================================================
+# Tests: role mention in announcements (SEG-10)
+# ===========================================================================
+
+
+@pytest.mark.asyncio
+async def test_shop_announcement_includes_role_mention():
+    """When bounty_hunter_role_id is set, the embed description includes <@&{role_id}>."""
+    from utils.executors.shop_refresh_executor import _announce_shop_refresh
+
+    role_id = 987654321
+    channel_id = 555777
+    guild_id = 202
+
+    mock_response = MagicMock()
+    mock_response.raise_for_status = MagicMock()
+
+    with patch("utils.executors.shop_refresh_executor.httpx.AsyncClient") as mock_cls:
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(return_value=mock_response)
+        mock_cls.return_value.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_cls.return_value.__aexit__ = AsyncMock(return_value=False)
+
+        await _announce_shop_refresh("parent-job", guild_id, channel_id, role_id)
+
+        call_args = mock_client.post.call_args
+        posted_body = call_args.kwargs.get("json") or (call_args.args[1] if len(call_args.args) > 1 else {})
+        description = posted_body["content"]["description"]
+        assert f"<@&{role_id}>" in description
+
+
+@pytest.mark.asyncio
+async def test_shop_announcement_no_role_mention_when_none():
+    """When bounty_hunter_role_id is None, the embed description does NOT contain a role mention."""
+    from utils.executors.shop_refresh_executor import _announce_shop_refresh
+
+    channel_id = 555888
+    guild_id = 303
+
+    mock_response = MagicMock()
+    mock_response.raise_for_status = MagicMock()
+
+    with patch("utils.executors.shop_refresh_executor.httpx.AsyncClient") as mock_cls:
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(return_value=mock_response)
+        mock_cls.return_value.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_cls.return_value.__aexit__ = AsyncMock(return_value=False)
+
+        await _announce_shop_refresh("parent-job", guild_id, channel_id, None)
+
+        call_args = mock_client.post.call_args
+        posted_body = call_args.kwargs.get("json") or (call_args.args[1] if len(call_args.args) > 1 else {})
+        description = posted_body["content"]["description"]
+        assert "<@&" not in description
+
+
+@pytest.mark.asyncio
+async def test_shop_announcement_still_works_without_role():
+    """Backward compatibility: announcement posts successfully when no bounty_hunter_role_id."""
+    from utils.executors.shop_refresh_executor import _announce_shop_refresh
+
+    channel_id = 555999
+    guild_id = 404
+
+    mock_response = MagicMock()
+    mock_response.raise_for_status = MagicMock()
+
+    with patch("utils.executors.shop_refresh_executor.httpx.AsyncClient") as mock_cls:
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(return_value=mock_response)
+        mock_cls.return_value.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_cls.return_value.__aexit__ = AsyncMock(return_value=False)
+
+        # Call with no bounty_hunter_role_id argument (tests default/omitted behavior)
+        await _announce_shop_refresh("parent-job", guild_id, channel_id)
+
+        # Should have posted successfully
+        mock_client.post.assert_awaited_once()
+        call_args = mock_client.post.call_args
+        posted_body = call_args.kwargs.get("json") or (call_args.args[1] if len(call_args.args) > 1 else {})
+        assert posted_body["content"]["title"] == "🛒 Shop Refreshed!"
+        mock_response.raise_for_status.assert_called_once()

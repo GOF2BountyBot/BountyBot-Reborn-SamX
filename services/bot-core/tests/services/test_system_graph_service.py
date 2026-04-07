@@ -202,9 +202,7 @@ class TestLoadGraph:
     @pytest.mark.asyncio
     async def test_load_handles_none_coordinates(self):
         """Systems with None coordinates default to (0, 0)."""
-        null_coord_system = _make_db_system(
-            id=700, name="Void", coordinates=None, neighbours=[]
-        )
+        null_coord_system = _make_db_system(id=700, name="Void", coordinates=None, neighbours=[])
         # Override coordinates attribute to None directly
         null_coord_system.coordinates = None
         service = await _build_loaded_service(systems=[null_coord_system])
@@ -215,9 +213,7 @@ class TestLoadGraph:
     @pytest.mark.asyncio
     async def test_load_handles_none_neighbours(self):
         """Systems with None neighbours default to empty list."""
-        null_nb_system = _make_db_system(
-            id=701, name="Orphan", coordinates=[100, 200], neighbours=[]
-        )
+        null_nb_system = _make_db_system(id=701, name="Orphan", coordinates=[100, 200], neighbours=[])
         null_nb_system.neighbours = None
         service = await _build_loaded_service(systems=[null_nb_system])
         node = service.get_system("Orphan")
@@ -227,9 +223,7 @@ class TestLoadGraph:
     @pytest.mark.asyncio
     async def test_load_handles_none_faction_and_security(self):
         """None faction defaults to '' and None security defaults to 1."""
-        raw = _make_db_system(
-            id=702, name="Unknown", coordinates=[0, 0], neighbours=[], faction="terran", security=2
-        )
+        raw = _make_db_system(id=702, name="Unknown", coordinates=[0, 0], neighbours=[], faction="terran", security=2)
         raw.faction = None
         raw.security = None
         service = await _build_loaded_service(systems=[raw])
@@ -351,9 +345,7 @@ class TestGetNeighbours:
     @pytest.mark.asyncio
     async def test_get_neighbours_partial_filtering(self):
         """Only in-graph neighbours are returned; out-of-graph ones are dropped."""
-        sys_a = _make_db_system(
-            id=1, name="Alpha", coordinates=[0, 0], neighbours=["Beta", "Gamma", "Delta"]
-        )
+        sys_a = _make_db_system(id=1, name="Alpha", coordinates=[0, 0], neighbours=["Beta", "Gamma", "Delta"])
         sys_b = _make_db_system(id=2, name="Beta", coordinates=[10, 0], neighbours=["Alpha"])
         # Gamma and Delta are NOT loaded
         service = await _build_loaded_service(systems=[sys_a, sys_b])

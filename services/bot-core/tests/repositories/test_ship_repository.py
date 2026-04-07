@@ -229,3 +229,18 @@ class TestShipRepositoryCreateOrUpdate:
         await repo.create_or_update(mock_db, {"name": "Scout"})
 
         mock_db.execute.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_raises_value_error_when_name_missing(self, repo, mock_db):
+        """create_or_update must raise ValueError when 'name' key is absent."""
+        with pytest.raises(ValueError, match="Missing required key 'name' in data for ship"):
+            await repo.create_or_update(mock_db, {"ship_name": "Betty", "player_id": 1})
+
+        mock_db.execute.assert_not_awaited()
+        mock_db.add.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_raises_value_error_on_empty_dict(self, repo, mock_db):
+        """create_or_update must raise ValueError for an empty dict."""
+        with pytest.raises(ValueError, match="Missing required key 'name' in data for ship"):
+            await repo.create_or_update(mock_db, {})

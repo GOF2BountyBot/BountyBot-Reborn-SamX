@@ -14,9 +14,14 @@ from sqlalchemy.exc import IntegrityError
 
 from api.schemas.players_schema import (
     CreatePlayerRequest,
+    LoadoutModuleItem,
+    LoadoutWeaponItem,
+    PlayerLoadoutResponse,
     PlayerResponse,
     PlayerStatisticsResponse,
     PrestigeResponse,
+    PromoteResponse,
+    PromotionStatusResponse,
     TransferCreditsRequest,
     TransferCreditsResponse,
     UpdateCreditsRequest,
@@ -291,6 +296,189 @@ async def get_player_statistics(player_id: int, player_service: PlayerService = 
         flogger.error(f"Error getting statistics for player {player_id}: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to get player statistics"
+        ) from e
+
+
+@router.get("/{player_id}/promotion-status", response_model=PromotionStatusResponse)
+async def get_promotion_status(player_id: int, player_service: PlayerService = Depends(get_player_service)):
+    """Get promotion eligibility status for a player."""
+    flogger.debug(f"Getting promotion status for player {player_id}")
+
+    try:
+        async with get_db_session() as db:
+            result = await player_service.get_promotion_status(db, player_id)
+            return PromotionStatusResponse(**result)
+
+    except ValueError as e:
+        error_msg = str(e)
+        if "not found" in error_msg.lower():
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=error_msg) from e
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=error_msg) from e
+    except Exception as e:
+        flogger.error(f"Error getting promotion status for player {player_id}: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to get promotion status"
+        ) from e
+
+
+@router.put("/{player_id}/promote", response_model=PromoteResponse)
+async def promote_player(player_id: int, player_service: PlayerService = Depends(get_player_service)):
+    """Promote a player to the next tier if eligible."""
+    flogger.info(f"Promoting player {player_id}")
+
+    try:
+        async with get_db_session() as db:
+            result = await player_service.promote_player(db, player_id)
+            return PromoteResponse(**result)
+
+    except ValueError as e:
+        error_msg = str(e)
+        if "not found" in error_msg.lower():
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=error_msg) from e
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=error_msg) from e
+    except Exception as e:
+        flogger.error(f"Error promoting player {player_id}: {e}")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to promote player") from e
+
+
+@router.get("/{player_id}/loadout", response_model=PlayerLoadoutResponse)
+async def get_player_loadout(player_id: int, player_service: PlayerService = Depends(get_player_service)):
+    """Get the active ship loadout for a player, including computed HP and DPS stats."""
+    flogger.debug(f"Getting loadout for player {player_id}")
+
+    try:
+        async with get_db_session() as db:
+            from persist.models.module import Module
+            from persist.models.player_ship import PlayerShip
+            from persist.models.ship import Ship
+            from persist.repositories.item_repository import ItemRepository
+            from sqlalchemy import select
+
+            # 1. Get the player
+            player = await player_service.player_repo.get_by_id(db, player_id)
+            if not player:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Player {player_id} not found")
+
+            # 2. Check for active ship
+            if not player.active_ship_id:
+                return PlayerLoadoutResponse(player_id=player.id, ship_name=None, message="No active ship")
+
+            # 3. Load PlayerShip explicitly by ID (avoid lazy-loading active_ship relationship)
+            result = await db.execute(select(PlayerShip).where(PlayerShip.id == player.active_ship_id))
+            player_ship = result.scalars().first()
+            if not player_ship:
+                return PlayerLoadoutResponse(player_id=player.id, ship_name=None, message="No active ship")
+
+            ship_name = player_ship.ship_name
+
+            # 4. Get static Ship data (base armour, emoji, slot counts)
+            ship_result = await db.execute(select(Ship).where(Ship.name == ship_name))
+            ship = ship_result.scalars().first()
+            base_armour = ship.armour if ship else 0
+            ship_emoji = ship.emoji if ship else None
+
+            # 5. Look up each equipped item by name
+            item_repo = ItemRepository()
+
+            equipped_weapons = player_ship.weapons or []
+            equipped_modules = player_ship.modules or []
+            equipped_turrets = player_ship.turrets or []
+
+            # Build weapon items
+            weapon_items: list[LoadoutWeaponItem] = []
+            total_dps = 0.0
+            for w_name in equipped_weapons:
+                item = await item_repo.get_by_name(db, w_name, item_type="primary_weapon")
+                if item is None:
+                    item = await item_repo.get_by_name(db, w_name)
+                dps = getattr(item, "dps", None) if item else None
+                if dps:
+                    total_dps += dps
+                weapon_items.append(
+                    LoadoutWeaponItem(
+                        name=w_name,
+                        emoji=item.emoji if item else None,
+                        dps=dps,
+                        value=item.value if item else None,
+                    )
+                )
+
+            # Build turret items
+            turret_items: list[LoadoutWeaponItem] = []
+            for t_name in equipped_turrets:
+                item = await item_repo.get_by_name(db, t_name, item_type="turret_weapon")
+                if item is None:
+                    item = await item_repo.get_by_name(db, t_name)
+                dps = getattr(item, "dps", None) if item else None
+                if dps:
+                    total_dps += dps
+                turret_items.append(
+                    LoadoutWeaponItem(
+                        name=t_name,
+                        emoji=item.emoji if item else None,
+                        dps=dps,
+                        value=item.value if item else None,
+                    )
+                )
+
+            # Build module items and compute HP
+            module_items: list[LoadoutModuleItem] = []
+            armor_bonus = 0
+            shield_hp = 0
+            for m_name in equipped_modules:
+                mod_result = await db.execute(select(Module).where(Module.name == m_name))
+                mod = mod_result.scalars().first()
+                if mod is None:
+                    item = await item_repo.get_by_name(db, m_name, item_type="module")
+                    mod = item
+
+                if mod:
+                    extra = mod.extra_atts or {}
+                    # ArmourModule: extra_atts has 'armour' key
+                    if isinstance(extra, dict):
+                        armor_bonus += int(extra.get("armour", 0))
+                        shield_hp += int(extra.get("shield", 0))
+                    module_items.append(
+                        LoadoutModuleItem(
+                            name=m_name,
+                            emoji=mod.emoji,
+                            type=mod.type,
+                            value=mod.value,
+                            tech_level=mod.tech_level,
+                        )
+                    )
+                else:
+                    module_items.append(LoadoutModuleItem(name=m_name))
+
+            armor_hp = base_armour + armor_bonus
+            total_hp = armor_hp + shield_hp
+            total_value = (
+                sum(w.value or 0 for w in weapon_items)
+                + sum(m.value or 0 for m in module_items)
+                + sum(t.value or 0 for t in turret_items)
+            )
+
+            return PlayerLoadoutResponse(
+                player_id=player.id,
+                ship_name=ship_name,
+                ship_emoji=ship_emoji,
+                ship_nickname=player_ship.nickname,
+                armor_hp=armor_hp,
+                shield_hp=shield_hp,
+                total_hp=total_hp,
+                total_dps=round(total_dps, 1),
+                weapons=weapon_items,
+                modules=module_items,
+                turrets=turret_items,
+                total_value=total_value,
+            )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        flogger.error(f"Error getting loadout for player {player_id}: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to get player loadout"
         ) from e
 
 

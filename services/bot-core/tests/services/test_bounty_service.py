@@ -79,9 +79,11 @@ def _make_module(
     name: str = "E2 Exoclad",
     value: int = 1070,
     tech_level: int = 1,
+    type: str = "ArmourModule",
+    extra_atts: dict | None = None,
 ) -> SimpleNamespace:
     """Return a Module-like SimpleNamespace."""
-    return SimpleNamespace(name=name, value=value, tech_level=tech_level)
+    return SimpleNamespace(name=name, value=value, tech_level=tech_level, type=type, extra_atts=extra_atts)
 
 
 def _setup_mock_db_query(mock_db, return_value):
@@ -150,9 +152,7 @@ async def test_select_criminal_excludes_active(service, mock_db):
     active_bounties = [_make_bounty("Alice")]
 
     service.criminal_repo.list_all = AsyncMock(return_value=criminals)
-    service.bounty_repo.get_active_by_guild_and_division = AsyncMock(
-        return_value=active_bounties
-    )
+    service.bounty_repo.get_active_by_guild_and_division = AsyncMock(return_value=active_bounties)
 
     # Run enough times to confirm Alice is never selected
     for _ in range(20):
@@ -168,9 +168,7 @@ async def test_select_criminal_no_available(service, mock_db):
     active_bounties = [_make_bounty("Alice")]
 
     service.criminal_repo.list_all = AsyncMock(return_value=criminals)
-    service.bounty_repo.get_active_by_guild_and_division = AsyncMock(
-        return_value=active_bounties
-    )
+    service.bounty_repo.get_active_by_guild_and_division = AsyncMock(return_value=active_bounties)
 
     result = await service.select_criminal(mock_db, guild_id=1, division="bronze")
 
@@ -322,7 +320,12 @@ async def test_generate_loadout_returns_valid_dict(service, mock_db):
 
     expected_keys = {
         "ship_name",
+        "ship_emoji",
         "ship_value",
+        "ship_armour",
+        "armor_hp",
+        "shield_hp",
+        "total_hp",
         "ship_max_primaries",
         "ship_max_modules",
         "ship_max_turrets",
@@ -363,8 +366,8 @@ async def test_generate_loadout_armour_at_tl_gt_1(service, mock_db):
     with patch.object(service, "find_item_tl", new=AsyncMock(return_value=1)):
         _setup_mock_db_query(mock_db, [ship])
 
-        # generic modules list (for filling remaining slots)
-        generic_mod = _make_module("Generic Module", value=500, tech_level=1)
+        # generic modules list (for filling remaining slots) — use a different type so armour slot isn't blocked
+        generic_mod = _make_module("Generic Module", value=500, tech_level=1, type="CabinModule")
         service.item_repo.get_all_by_tech_level = AsyncMock(return_value=[generic_mod])
 
         with patch.object(
@@ -396,7 +399,7 @@ async def test_generate_loadout_shield_at_tl_gt_3(service, mock_db):
     with patch.object(service, "find_item_tl", new=AsyncMock(return_value=3)):
         _setup_mock_db_query(mock_db, [ship])
 
-        generic_mod = _make_module("Generic", value=500, tech_level=3)
+        generic_mod = _make_module("Generic", value=500, tech_level=3, type="CabinModule")
         service.item_repo.get_all_by_tech_level = AsyncMock(return_value=[generic_mod])
 
         with patch.object(service, "_find_typed_module", new=AsyncMock(side_effect=fake_find_typed_module)):
@@ -412,8 +415,8 @@ async def test_generate_loadout_calculates_total_value(service, mock_db):
     """total_value equals ship.value + sum(weapon values) + sum(module values)."""
     ship = _make_ship("Betty", value=16038, max_primaries=1, max_modules=2)
     weapon = _make_weapon("Micro Gun", value=2577, dps=9.09)
-    module1 = _make_module("E2 Exoclad", value=1070, tech_level=1)
-    armour_mod = _make_module("Armour Plate", value=500, tech_level=1)
+    module1 = _make_module("E2 Exoclad", value=1070, tech_level=1, type="CabinModule")
+    armour_mod = _make_module("Armour Plate", value=500, tech_level=1, type="ArmourModule")
 
     async def _get_all_by_tl(db, tl, item_type=None):
         if item_type == "primary_weapon":
@@ -440,6 +443,133 @@ async def test_generate_loadout_calculates_total_value(service, mock_db):
     assert result["total_value"] == expected_total
 
 
+@pytest.mark.asyncio
+async def test_generate_loadout_module_dict_includes_type(service, mock_db):
+    """Each module in the loadout dict must include a 'type' key."""
+    ship = _make_ship("Betty", value=16038, max_primaries=0, max_modules=2)
+    armour_mod = _make_module("E2 Exoclad", value=1070, tech_level=1, type="ArmourModule")
+    cabin_mod = _make_module("Large Cabin", value=5000, tech_level=1, type="CabinModule")
+
+    service.item_repo.get_all_by_tech_level = AsyncMock(return_value=[cabin_mod])
+
+    with (
+        patch.object(service, "find_item_tl", new=AsyncMock(return_value=1)),
+        patch.object(
+            service,
+            "_find_typed_module",
+            new=AsyncMock(side_effect=lambda db, kw, tl: armour_mod if kw == "armour" else None),
+        ),
+    ):
+        _setup_mock_db_query(mock_db, [ship])
+        result = await service.generate_loadout(mock_db, tech_level=2)
+
+    assert len(result["modules"]) > 0
+    for mod_dict in result["modules"]:
+        assert "type" in mod_dict, f"Module dict missing 'type' key: {mod_dict}"
+        assert "extra_atts" in mod_dict, f"Module dict missing 'extra_atts' key: {mod_dict}"
+
+
+@pytest.mark.asyncio
+async def test_generate_loadout_no_duplicate_types_when_limit_1(service, mock_db):
+    """Only one module of each type with limit=1 may appear (type-class uniqueness)."""
+    # Ship with 4 module slots; armour guaranteed at slot 1
+    ship = _make_ship("Groza", value=251600, max_primaries=0, max_modules=4)
+    armour_mod = _make_module("D'iol", value=51449, tech_level=7, type="ArmourModule")
+    # Pool contains two different ArmourModules — only one should appear
+    armour_mod_2 = _make_module("E2 Exoclad", value=1070, tech_level=1, type="ArmourModule")
+    cabin_mod = _make_module("Large Cabin", value=5000, tech_level=1, type="CabinModule")
+
+    # Generic pool: two armour variants + one cabin (unlimited)
+    service.item_repo.get_all_by_tech_level = AsyncMock(return_value=[armour_mod_2, cabin_mod])
+
+    with (
+        patch.object(service, "find_item_tl", new=AsyncMock(return_value=1)),
+        patch.object(
+            service,
+            "_find_typed_module",
+            new=AsyncMock(side_effect=lambda db, kw, tl: armour_mod if kw == "armour" else None),
+        ),
+    ):
+        _setup_mock_db_query(mock_db, [ship])
+        result = await service.generate_loadout(mock_db, tech_level=2)
+
+    module_types = [m["type"] for m in result["modules"]]
+    armour_count = module_types.count("ArmourModule")
+    assert armour_count == 1, f"Expected exactly 1 ArmourModule, got {armour_count}: {module_types}"
+
+
+@pytest.mark.asyncio
+async def test_generate_loadout_unlimited_type_allows_multiple(service, mock_db):
+    """Modules with limit=-1 (CabinModule) can fill all remaining slots."""
+    # Ship with 3 slots; no guaranteed slots (TL=1, tech_level not > 1 means no armour)
+    ship = _make_ship("Betty", value=16038, max_primaries=0, max_modules=3)
+    cabin_mod = _make_module("Large Cabin", value=5000, tech_level=1, type="CabinModule")
+
+    service.item_repo.get_all_by_tech_level = AsyncMock(return_value=[cabin_mod])
+
+    with (
+        patch.object(service, "find_item_tl", new=AsyncMock(return_value=1)),
+        patch.object(service, "_find_typed_module", new=AsyncMock(return_value=None)),
+    ):
+        _setup_mock_db_query(mock_db, [ship])
+        result = await service.generate_loadout(mock_db, tech_level=1)
+
+    module_types = [m["type"] for m in result["modules"]]
+    cabin_count = module_types.count("CabinModule")
+    assert cabin_count == 3, f"Expected 3 CabinModules (unlimited), got {cabin_count}: {module_types}"
+
+
+@pytest.mark.asyncio
+async def test_generate_loadout_limit_0_type_not_equipped(service, mock_db):
+    """Modules with limit=0 (e.g. JumpDriveModule) must never be equipped."""
+    ship = _make_ship("Betty", value=16038, max_primaries=0, max_modules=3)
+    jump_drive = _make_module("Jump Drive", value=99999, tech_level=1, type="JumpDriveModule")
+    cabin_mod = _make_module("Large Cabin", value=5000, tech_level=1, type="CabinModule")
+
+    service.item_repo.get_all_by_tech_level = AsyncMock(return_value=[jump_drive, cabin_mod])
+
+    with (
+        patch.object(service, "find_item_tl", new=AsyncMock(return_value=1)),
+        patch.object(service, "_find_typed_module", new=AsyncMock(return_value=None)),
+    ):
+        _setup_mock_db_query(mock_db, [ship])
+        result = await service.generate_loadout(mock_db, tech_level=1)
+
+    module_types = [m["type"] for m in result["modules"]]
+    assert "JumpDriveModule" not in module_types, f"JumpDriveModule should never be equipped: {module_types}"
+
+
+@pytest.mark.asyncio
+async def test_generate_loadout_type_tracking_counts_guaranteed_slots(service, mock_db):
+    """Armour/shield guaranteed slots count toward type tracking before generic fill."""
+    # Ship with 2 slots: slot 1 = armour guaranteed, slot 2 = generic fill
+    ship = _make_ship("Betty", value=16038, max_primaries=0, max_modules=2)
+    armour_mod = _make_module("D'iol", value=51449, tech_level=7, type="ArmourModule")
+    # Generic pool: only another ArmourModule — should be blocked by type limit
+    armour_mod_2 = _make_module("E2 Exoclad", value=1070, tech_level=1, type="ArmourModule")
+
+    service.item_repo.get_all_by_tech_level = AsyncMock(return_value=[armour_mod_2])
+
+    with (
+        patch.object(service, "find_item_tl", new=AsyncMock(return_value=1)),
+        patch.object(
+            service,
+            "_find_typed_module",
+            new=AsyncMock(side_effect=lambda db, kw, tl: armour_mod if kw == "armour" else None),
+        ),
+    ):
+        _setup_mock_db_query(mock_db, [ship])
+        result = await service.generate_loadout(mock_db, tech_level=2)
+
+    # Only the guaranteed armour should be equipped; generic fill blocked by limit=1
+    module_types = [m["type"] for m in result["modules"]]
+    assert module_types.count("ArmourModule") == 1, (
+        f"Expected exactly 1 ArmourModule (guaranteed slot already used), got: {module_types}"
+    )
+    # Only 1 module total (second slot couldn't be filled due to type limit)
+    assert len(result["modules"]) == 1, f"Expected 1 module total, got {len(result['modules'])}"
+
+
 # ===========================================================================
 # Tests: spawn_bounty
 # ===========================================================================
@@ -452,6 +582,10 @@ SAMPLE_ROUTE = ["Alpha", "Beta", "Gamma", "Delta"]
 SAMPLE_LOADOUT = {
     "ship_name": "Groza",
     "ship_value": 250000,
+    "ship_armour": 200,
+    "armor_hp": 200,
+    "shield_hp": 0,
+    "total_hp": 200,
     "ship_max_primaries": 2,
     "ship_max_modules": 4,
     "ship_max_turrets": 0,
@@ -543,9 +677,7 @@ async def test_spawn_bounty_route_generation_fails(spawn_service, mock_db):
     spawn_service.criminal_repo.list_all = AsyncMock(return_value=[criminal])
     spawn_service.bounty_repo.get_active_by_guild_and_division = AsyncMock(return_value=[])
     # All attempts fail
-    spawn_service.pathfinding_service.make_route = MagicMock(
-        return_value=PathfindingError.NO_ROUTE_FOUND
-    )
+    spawn_service.pathfinding_service.make_route = MagicMock(return_value=PathfindingError.NO_ROUTE_FOUND)
 
     result = await spawn_service.spawn_bounty(mock_db, guild_id=1, division="bronze", tech_level=3)
 
@@ -665,7 +797,7 @@ async def test_spawn_bounty_reward_calculation(spawn_service, mock_db):
 
 @pytest.mark.asyncio
 async def test_spawn_bounty_end_time_calculation(spawn_service, mock_db):
-    """end_time must be issue_time + timedelta(days=len(route))."""
+    """end_time must be issue_time + timedelta(minutes=480) when no expiry_minutes given."""
     from datetime import timedelta
 
     criminal = _make_criminal("Viper", "terran")
@@ -685,7 +817,8 @@ async def test_spawn_bounty_end_time_calculation(spawn_service, mock_db):
 
     assert len(captured_bounties) == 1
     b = captured_bounties[0]
-    expected_end = b.issue_time + timedelta(days=len(b.route))
+    # Default expiry is 480 minutes (8 hours)
+    expected_end = b.issue_time + timedelta(minutes=480)
     assert b.end_time == expected_end
 
 
@@ -730,9 +863,7 @@ async def test_spawn_bounty_auto_selects_tech_level(spawn_service, mock_db):
         patch("services.bounty_service.pick_random_item_tl", return_value=5) as mock_pick_tl,
         patch.object(spawn_service, "generate_loadout", new=AsyncMock(return_value=SAMPLE_LOADOUT)),
     ):
-        result = await spawn_service.spawn_bounty(
-            mock_db, guild_id=1, division="silver", tech_level=None
-        )
+        result = await spawn_service.spawn_bounty(mock_db, guild_id=1, division="silver", tech_level=None)
 
     # silver division maps to center_tl=5
     mock_pick_tl.assert_called_once_with(5)
@@ -849,9 +980,7 @@ async def test_check_bounty_not_found(check_bounty_setup):
     service.player_repo.get_by_id.return_value = player
     service.bounty_repo.get_active_by_guild_and_division.return_value = [bounty]
 
-    result = await service.check_bounty(
-        mock_db, player_id=1, system_name="Nonexistent", guild_id=1
-    )
+    result = await service.check_bounty(mock_db, player_id=1, system_name="Nonexistent", guild_id=1)
 
     assert result.result == CheckResult.NOT_FOUND
     assert "not in any active bounty route" in result.message
@@ -1008,9 +1137,7 @@ async def test_check_bounty_classic_mode_uses_bronze(service, mock_db):
     await service.check_bounty(mock_db, player_id=1, system_name="Alpha", guild_id=1)
 
     # Should query bronze division regardless of player tier
-    service.bounty_repo.get_active_by_guild_and_division.assert_called_once_with(
-        mock_db, 1, "bronze"
-    )
+    service.bounty_repo.get_active_by_guild_and_division.assert_called_once_with(mock_db, 1, "bronze")
 
 
 # ===========================================================================
@@ -1480,8 +1607,8 @@ async def test_distribute_rewards_classic_mode_no_xp(service, mock_db):
 
     await service.distribute_rewards(mock_db, bounty, [reward])
 
-    assert player.credits == 4000   # credits updated
-    assert player.xp == 0           # XP NOT updated for classic mode
+    assert player.credits == 4000  # credits updated
+    assert player.xp == 0  # XP NOT updated for classic mode
 
 
 @pytest.mark.asyncio
@@ -1751,9 +1878,7 @@ def respawn_service(service) -> BountyService:
         return_value=["Alpha", "Beta", "Gamma", "Delta", "Epsilon"]
     )
     service.pathfinding_service = MagicMock()
-    service.pathfinding_service.make_route = MagicMock(
-        return_value=["Delta", "Epsilon", "Alpha"]
-    )
+    service.pathfinding_service.make_route = MagicMock(return_value=["Delta", "Epsilon", "Alpha"])
     return service
 
 
@@ -1814,3 +1939,431 @@ async def test_respawn_bounty_keeps_criminal(respawn_service, mock_db):
 
     assert result is not None
     assert result.criminal_name == "Big Boss"
+
+
+# ===========================================================================
+# Tests: clear_bounties
+# ===========================================================================
+
+
+class TestClearBounties:
+    """Tests for BountyService.clear_bounties."""
+
+    @pytest.fixture
+    def clear_service(self, mock_db):
+        """BountyService with mock repos for clearing tests."""
+        from services.bounty_service import BountyService
+
+        svc = BountyService()
+        svc.bounty_repo = AsyncMock()
+        return svc
+
+    @pytest.mark.asyncio
+    async def test_clear_all_tiers_returns_summary(self, clear_service, mock_db):
+        """clear_bounties returns correct summary for all tiers."""
+        clear_service.bounty_repo.clear_active_by_guild = AsyncMock(return_value=[1, 2, 3])
+
+        result = await clear_service.clear_bounties(mock_db, guild_id=555)
+
+        assert result["guild_id"] == 555
+        assert result["tier"] is None
+        assert result["cleared_count"] == 3
+        assert result["bounty_ids"] == [1, 2, 3]
+
+    @pytest.mark.asyncio
+    async def test_clear_specific_tier(self, clear_service, mock_db):
+        """clear_bounties filters by tier."""
+        clear_service.bounty_repo.clear_active_by_guild = AsyncMock(return_value=[5])
+
+        result = await clear_service.clear_bounties(mock_db, guild_id=555, tier="bronze")
+
+        assert result["tier"] == "bronze"
+        assert result["cleared_count"] == 1
+        clear_service.bounty_repo.clear_active_by_guild.assert_awaited_once_with(mock_db, 555, "bronze")
+
+    @pytest.mark.asyncio
+    async def test_clear_no_active_bounties(self, clear_service, mock_db):
+        """clear_bounties returns zero counts when no active bounties exist."""
+        clear_service.bounty_repo.clear_active_by_guild = AsyncMock(return_value=[])
+
+        result = await clear_service.clear_bounties(mock_db, guild_id=999)
+
+        assert result["cleared_count"] == 0
+        assert result["bounty_ids"] == []
+        assert result["announcements_deleted"] == 0
+
+    @pytest.mark.asyncio
+    async def test_clear_bounties_calls_gateway_delete_for_each_message(self, clear_service, mock_db):
+        """Bug 5: clear_bounties calls discord-gateway DELETE for each Discord message."""
+        clear_service.bounty_repo.clear_active_by_guild = AsyncMock(return_value=[10, 11])
+
+        # Mock the discord message repo to return a message record
+        mock_msg = MagicMock()
+        mock_msg.message_id = 999888777
+        mock_msg.channel_id = 111222333
+
+        mock_msg_repo = AsyncMock()
+        mock_msg_repo.get_by_guild_type_and_reference = AsyncMock(return_value=mock_msg)
+        mock_msg_repo.delete_by_guild_type_and_reference = AsyncMock(return_value=True)
+
+        captured_deletes: list[str] = []
+
+        class MockHttpxResponse:
+            status_code = 200
+
+        class MockAsyncClient:
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *args):
+                pass
+
+            async def delete(self, url, timeout=10):
+                captured_deletes.append(url)
+                return MockHttpxResponse()
+
+        # DiscordMessageRepository is imported inside the function body via a deferred
+        # import. Patch it at the source module so that DiscordMessageRepository()
+        # returns our mock instance.
+        with (
+            patch(
+                "persist.repositories.discord_message_repository.DiscordMessageRepository",
+                return_value=mock_msg_repo,
+            ),
+            patch("httpx.AsyncClient", MockAsyncClient),
+        ):
+            result = await clear_service.clear_bounties(mock_db, guild_id=555)
+
+        # Two bounty IDs → two gateway DELETE calls
+        assert len(captured_deletes) == 2
+        assert all("999888777" in url for url in captured_deletes)
+        assert result["announcements_deleted"] == 2
+
+    @pytest.mark.asyncio
+    async def test_clear_bounties_gateway_failure_is_non_fatal(self, clear_service, mock_db):
+        """Bug 5: If gateway DELETE fails, clear_bounties still completes and deletes DB records."""
+        clear_service.bounty_repo.clear_active_by_guild = AsyncMock(return_value=[20])
+
+        mock_msg = MagicMock()
+        mock_msg.message_id = 777666555
+
+        mock_msg_repo = AsyncMock()
+        mock_msg_repo.get_by_guild_type_and_reference = AsyncMock(return_value=mock_msg)
+        mock_msg_repo.delete_by_guild_type_and_reference = AsyncMock(return_value=True)
+
+        class FailingAsyncClient:
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *args):
+                pass
+
+            async def delete(self, url, timeout=10):
+                raise ConnectionError("Gateway unreachable")
+
+        with (
+            patch(
+                "persist.repositories.discord_message_repository.DiscordMessageRepository",
+                return_value=mock_msg_repo,
+            ),
+            patch("httpx.AsyncClient", FailingAsyncClient),
+        ):
+            result = await clear_service.clear_bounties(mock_db, guild_id=555)
+
+        # Gateway failed but DB record should still be deleted
+        mock_msg_repo.delete_by_guild_type_and_reference.assert_awaited_once()
+        assert result["cleared_count"] == 1
+
+    @pytest.mark.asyncio
+    async def test_clear_bounties_no_message_record_skips_gateway(self, clear_service, mock_db):
+        """Bug 5: When there is no Discord message record, gateway DELETE is not called."""
+        clear_service.bounty_repo.clear_active_by_guild = AsyncMock(return_value=[30])
+
+        mock_msg_repo = AsyncMock()
+        mock_msg_repo.get_by_guild_type_and_reference = AsyncMock(return_value=None)
+        mock_msg_repo.delete_by_guild_type_and_reference = AsyncMock(return_value=False)
+
+        deleted_urls: list[str] = []
+
+        class TrackingAsyncClient:
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *args):
+                pass
+
+            async def delete(self, url, timeout=10):
+                deleted_urls.append(url)
+                return MagicMock(status_code=200)
+
+        with (
+            patch(
+                "persist.repositories.discord_message_repository.DiscordMessageRepository",
+                return_value=mock_msg_repo,
+            ),
+            patch("httpx.AsyncClient", TrackingAsyncClient),
+        ):
+            result = await clear_service.clear_bounties(mock_db, guild_id=555)
+
+        # No message record → no gateway call
+        assert len(deleted_urls) == 0
+        assert result["cleared_count"] == 1
+
+
+# ===========================================================================
+# Tests: spawn_bounty expiry_minutes parameter
+# ===========================================================================
+
+
+class TestSpawnBountyExpiry:
+    """Tests for BountyService.spawn_bounty with expiry_minutes parameter."""
+
+    @pytest.mark.asyncio
+    async def test_custom_expiry_minutes_used(self, spawn_service, mock_db):
+        """When expiry_minutes provided, end_time = issue_time + timedelta(minutes=expiry)."""
+        from datetime import timedelta
+
+        criminal = _make_criminal("Raider", "terran")
+        spawn_service.criminal_repo.list_all = AsyncMock(return_value=[criminal])
+        spawn_service.bounty_repo.get_active_by_guild_and_division = AsyncMock(return_value=[])
+
+        captured_bounties = []
+
+        async def capture_create(db, bounty):
+            captured_bounties.append(bounty)
+            return SimpleNamespace(id=5, **{k: getattr(bounty, k) for k in vars(bounty) if not k.startswith("_")})
+
+        spawn_service.bounty_repo.create = capture_create
+
+        with patch.object(spawn_service, "generate_loadout", new=AsyncMock(return_value=SAMPLE_LOADOUT)):
+            await spawn_service.spawn_bounty(mock_db, guild_id=1, division="bronze", expiry_minutes=120)
+
+        assert len(captured_bounties) == 1
+        b = captured_bounties[0]
+        expected_end = b.issue_time + timedelta(minutes=120)
+        assert b.end_time == expected_end
+
+    @pytest.mark.asyncio
+    async def test_default_expiry_480_minutes(self, spawn_service, mock_db):
+        """When expiry_minutes not provided, defaults to 480 minutes."""
+        from datetime import timedelta
+
+        criminal = _make_criminal("Bandit", "terran")
+        spawn_service.criminal_repo.list_all = AsyncMock(return_value=[criminal])
+        spawn_service.bounty_repo.get_active_by_guild_and_division = AsyncMock(return_value=[])
+
+        captured_bounties = []
+
+        async def capture_create(db, bounty):
+            captured_bounties.append(bounty)
+            return SimpleNamespace(id=6, **{k: getattr(bounty, k) for k in vars(bounty) if not k.startswith("_")})
+
+        spawn_service.bounty_repo.create = capture_create
+
+        with patch.object(spawn_service, "generate_loadout", new=AsyncMock(return_value=SAMPLE_LOADOUT)):
+            await spawn_service.spawn_bounty(mock_db, guild_id=1, division="bronze", tech_level=3)
+
+        assert len(captured_bounties) == 1
+        b = captured_bounties[0]
+        expected_end = b.issue_time + timedelta(minutes=480)
+        assert b.end_time == expected_end
+
+
+# ===========================================================================
+# Tests: generate_loadout — HP calculation (armor_hp, shield_hp, total_hp)
+# ===========================================================================
+
+
+@pytest.mark.asyncio
+async def test_generate_loadout_hp_no_modules(service, mock_db):
+    """When no HP modules, armor_hp = base armour, shield_hp = 0, total_hp = armor_hp."""
+    ship = _make_ship("Betty", value=16038, max_primaries=0, max_modules=0)
+    # Manually set armour on the ship so we can verify it's picked up
+    ship.armour = 120
+
+    with (
+        patch.object(service, "find_item_tl", new=AsyncMock(return_value=-1)),
+        patch.object(service, "_find_typed_module", new=AsyncMock(return_value=None)),
+    ):
+        _setup_mock_db_query(mock_db, [ship])
+        result = await service.generate_loadout(mock_db, tech_level=2)
+
+    assert result["ship_armour"] == 120
+    assert result["armor_hp"] == 120
+    assert result["shield_hp"] == 0
+    assert result["total_hp"] == 120
+
+
+@pytest.mark.asyncio
+async def test_generate_loadout_hp_with_armour_module(service, mock_db):
+    """ArmourModule extra_atts.armour is added to base armour to get armor_hp."""
+    ship = _make_ship("Betty", value=16038, max_primaries=0, max_modules=1)
+    ship.armour = 100
+    armour_mod = _make_module(
+        "D'iol Armour",
+        value=51449,
+        tech_level=1,
+        type="ArmourModule",
+        extra_atts={"armour": 160},
+    )
+
+    service.item_repo.get_all_by_tech_level = AsyncMock(return_value=[])
+
+    with (
+        patch.object(service, "find_item_tl", new=AsyncMock(return_value=1)),
+        patch.object(
+            service,
+            "_find_typed_module",
+            new=AsyncMock(side_effect=lambda db, kw, tl: armour_mod if kw == "armour" else None),
+        ),
+    ):
+        _setup_mock_db_query(mock_db, [ship])
+        result = await service.generate_loadout(mock_db, tech_level=2)
+
+    assert result["ship_armour"] == 100
+    assert result["armor_hp"] == 100 + 160
+    assert result["shield_hp"] == 0
+    assert result["total_hp"] == 260
+
+
+@pytest.mark.asyncio
+async def test_generate_loadout_hp_with_shield_module(service, mock_db):
+    """ShieldModule extra_atts.shield contributes to shield_hp."""
+    ship = _make_ship("Ghost", value=6000000, max_primaries=0, max_modules=2)
+    ship.armour = 200
+    armour_mod = _make_module(
+        "Armour Plate",
+        value=1070,
+        tech_level=1,
+        type="ArmourModule",
+        extra_atts={"armour": 100},
+    )
+    shield_mod = _make_module(
+        "Particle Shield",
+        value=39331,
+        tech_level=4,
+        type="ShieldModule",
+        extra_atts={"shield": 380},
+    )
+
+    async def fake_find_typed_module(db, kw, tl):
+        if kw == "armour":
+            return armour_mod
+        if kw == "shield":
+            return shield_mod
+        return None
+
+    service.item_repo.get_all_by_tech_level = AsyncMock(return_value=[])
+
+    with (
+        patch.object(service, "find_item_tl", new=AsyncMock(return_value=3)),
+        patch.object(service, "_find_typed_module", new=AsyncMock(side_effect=fake_find_typed_module)),
+    ):
+        _setup_mock_db_query(mock_db, [ship])
+        result = await service.generate_loadout(mock_db, tech_level=4)
+
+    assert result["ship_armour"] == 200
+    assert result["armor_hp"] == 200 + 100  # base + ArmourModule
+    assert result["shield_hp"] == 380
+    assert result["total_hp"] == 300 + 380
+
+
+@pytest.mark.asyncio
+async def test_generate_loadout_hp_with_gamma_shield_module(service, mock_db):
+    """GammaShieldModule extra_atts.shield also contributes to shield_hp."""
+    ship = _make_ship("Ghost", value=6000000, max_primaries=0, max_modules=1)
+    ship.armour = 300
+    gamma_mod = _make_module(
+        "Gamma Shield",
+        value=50000,
+        tech_level=5,
+        type="GammaShieldModule",
+        extra_atts={"shield": 500},
+    )
+
+    service.item_repo.get_all_by_tech_level = AsyncMock(return_value=[gamma_mod])
+
+    with (
+        patch.object(service, "find_item_tl", new=AsyncMock(return_value=5)),
+        patch.object(service, "_find_typed_module", new=AsyncMock(return_value=None)),
+    ):
+        _setup_mock_db_query(mock_db, [ship])
+        result = await service.generate_loadout(mock_db, tech_level=6)
+
+    assert result["armor_hp"] == 300
+    assert result["shield_hp"] == 500
+    assert result["total_hp"] == 800
+
+
+@pytest.mark.asyncio
+async def test_generate_loadout_hp_armour_module_no_extra_atts(service, mock_db):
+    """ArmourModule with extra_atts=None (or missing armour key) contributes 0."""
+    ship = _make_ship("Betty", value=16038, max_primaries=0, max_modules=1)
+    ship.armour = 100
+    armour_mod = _make_module(
+        "Bare Armour",
+        value=500,
+        tech_level=1,
+        type="ArmourModule",
+        extra_atts=None,  # No extra_atts
+    )
+
+    service.item_repo.get_all_by_tech_level = AsyncMock(return_value=[])
+
+    with (
+        patch.object(service, "find_item_tl", new=AsyncMock(return_value=1)),
+        patch.object(
+            service,
+            "_find_typed_module",
+            new=AsyncMock(side_effect=lambda db, kw, tl: armour_mod if kw == "armour" else None),
+        ),
+    ):
+        _setup_mock_db_query(mock_db, [ship])
+        result = await service.generate_loadout(mock_db, tech_level=2)
+
+    # ArmourModule with no extra_atts contributes 0 armour bonus
+    assert result["armor_hp"] == 100
+    assert result["shield_hp"] == 0
+    assert result["total_hp"] == 100
+
+
+@pytest.mark.asyncio
+async def test_generate_loadout_module_extra_atts_in_dict(service, mock_db):
+    """Module dicts in loadout include 'extra_atts' key."""
+    ship = _make_ship("Betty", value=16038, max_primaries=0, max_modules=1)
+    ship.armour = 100
+    armour_mod = _make_module(
+        "D'iol",
+        value=51449,
+        tech_level=1,
+        type="ArmourModule",
+        extra_atts={"armour": 160, "other_stat": 42},
+    )
+
+    service.item_repo.get_all_by_tech_level = AsyncMock(return_value=[])
+
+    with (
+        patch.object(service, "find_item_tl", new=AsyncMock(return_value=1)),
+        patch.object(
+            service,
+            "_find_typed_module",
+            new=AsyncMock(side_effect=lambda db, kw, tl: armour_mod if kw == "armour" else None),
+        ),
+    ):
+        _setup_mock_db_query(mock_db, [ship])
+        result = await service.generate_loadout(mock_db, tech_level=2)
+
+    assert len(result["modules"]) == 1
+    mod_dict = result["modules"][0]
+    assert "extra_atts" in mod_dict
+    assert mod_dict["extra_atts"] == {"armour": 160, "other_stat": 42}
+
+
+@pytest.mark.asyncio
+async def test_generate_loadout_tl0_beginner_has_hp_fields(service, mock_db):
+    """Tech level 0 beginner loadout includes armor_hp, shield_hp, total_hp."""
+    result = await service.generate_loadout(mock_db, tech_level=0)
+
+    assert result["armor_hp"] == 50
+    assert result["shield_hp"] == 0
+    assert result["total_hp"] == 50

@@ -128,9 +128,7 @@ def _configure_config_repo(
     mock_repo.list_all = AsyncMock(return_value=guild_configs)
     mock_repo.get_by_guild_id = AsyncMock(return_value=single_config)
     mock_repo.update_division_temperatures = AsyncMock(return_value=single_config)
-    sys.modules["persist.repositories.config_repository"].ConfigRepository = MagicMock(
-        return_value=mock_repo
-    )
+    sys.modules["persist.repositories.config_repository"].ConfigRepository = MagicMock(return_value=mock_repo)
     return mock_repo
 
 
@@ -359,7 +357,7 @@ class TestDivisionFiltering:
 
     @pytest.mark.asyncio
     async def test_all_three_divisions_decayed_when_no_filter(self):
-        """When no division is specified, all three are decayed."""
+        """When no division is specified, all four divisions are decayed."""
         from utils.executors.temperature_decay_executor import execute_temperature_decay_job
 
         mock_db = AsyncMock()
@@ -368,7 +366,7 @@ class TestDivisionFiltering:
 
         cfg = _make_guild_config(
             guild_id=800,
-            division_temperatures={"bronze": 3.0, "silver": 4.5, "gold": 9.0},
+            division_temperatures={"bronze": 3.0, "silver": 4.5, "gold": 9.0, "platinum": 1.0},
         )
         _configure_config_repo(guild_configs=[cfg])
 
@@ -378,7 +376,8 @@ class TestDivisionFiltering:
         assert "bronze" in gid_result
         assert "silver" in gid_result
         assert "gold" in gid_result
-        assert result["total_decays"] == 3
+        assert "platinum" in gid_result
+        assert result["total_decays"] == 4
 
 
 # ===========================================================================
@@ -398,15 +397,15 @@ class TestBulkMode:
         _configure_db_manager(mock_db)
         _configure_temperature_service_mock()
 
-        cfg1 = _make_guild_config(10, {"bronze": 3.0, "silver": 1.0, "gold": 1.0})
-        cfg2 = _make_guild_config(20, {"bronze": 6.0, "silver": 6.0, "gold": 6.0})
+        cfg1 = _make_guild_config(10, {"bronze": 3.0, "silver": 1.0, "gold": 1.0, "platinum": 1.0})
+        cfg2 = _make_guild_config(20, {"bronze": 6.0, "silver": 6.0, "gold": 6.0, "platinum": 1.0})
         _configure_config_repo(guild_configs=[cfg1, cfg2])
 
         result = await execute_temperature_decay_job("job-bulk", {"job_type": "temperature_decay"})
 
         assert result["status"] == "success"
         assert result["guilds_processed"] == 2
-        assert result["total_decays"] == 6  # 3 divisions x 2 guilds
+        assert result["total_decays"] == 8  # 4 divisions x 2 guilds
         assert 10 in result["results"]
         assert 20 in result["results"]
 
@@ -496,9 +495,9 @@ class TestPersistence:
         saved_temps = call_args.args[2]
 
         assert saved_guild_id == 111
-        assert saved_temps["bronze"] == pytest.approx(2.0)   # 3.0 x 2/3
-        assert saved_temps["silver"] == pytest.approx(1.0)   # floor
-        assert saved_temps["gold"] == pytest.approx(1.0)     # floor
+        assert saved_temps["bronze"] == pytest.approx(2.0)  # 3.0 x 2/3
+        assert saved_temps["silver"] == pytest.approx(1.0)  # floor
+        assert saved_temps["gold"] == pytest.approx(1.0)  # floor
 
     @pytest.mark.asyncio
     async def test_update_called_with_correct_temperatures_multi_guild(self):

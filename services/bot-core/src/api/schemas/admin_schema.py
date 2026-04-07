@@ -7,9 +7,19 @@ class InitializeGuildRequest(BaseModel):
     admin_role_id: int | None = Field(default=None, ge=1)
     starting_credits: int = Field(default=0, ge=0)
     category_id: int | None = None
-    bounty_channel_id: int | None = None
     shop_channel_id: int | None = None
-    general_channel_id: int | None = None
+    bronze_bounty_channel_id: int | None = None
+    silver_bounty_channel_id: int | None = None
+    gold_bounty_channel_id: int | None = None
+    hunting_channel_id: int | None = None
+    discussion_channel_id: int | None = None
+    image_channel_id: int | None = None
+    bounty_hunter_role_id: int | None = None
+    bronze_role_id: int | None = None
+    silver_role_id: int | None = None
+    gold_role_id: int | None = None
+    platinum_bounty_channel_id: int | None = None
+    platinum_role_id: int | None = None
 
 
 class GuildInitializationResponse(BaseModel):
@@ -18,6 +28,11 @@ class GuildInitializationResponse(BaseModel):
     shops_created: int
     config_created: bool
     channels_configured: bool = False
+    bounty_hunter_role_id: int | None = None
+    bronze_role_id: int | None = None
+    silver_role_id: int | None = None
+    gold_role_id: int | None = None
+    platinum_role_id: int | None = None
     message: str
 
 

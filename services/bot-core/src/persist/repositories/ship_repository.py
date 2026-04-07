@@ -27,6 +27,10 @@ class ShipRepository(GenericRepository[Ship]):
         flogger.trace(f"create_or_update() entry: ship_name={ship_name}, raw_keys={list(raw.keys())}")
 
         try:
+            # validate required keys upfront
+            if "name" not in raw:
+                raise ValueError("Missing required key 'name' in data for ship")
+
             # look up existing
             flogger.trace(f"Querying existing ship by name: {ship_name}")
             result = await db.execute(select(self._model).filter_by(name=raw["name"]))

@@ -46,9 +46,7 @@ class TestPickRandomItemTL:
         random.seed(42)
         counts: Counter[int] = Counter(pick_random_item_tl(5) for _ in range(1000))
         most_common_tl, _ = counts.most_common(1)[0]
-        assert most_common_tl == 5, (
-            f"Expected modal TL=5, got TL={most_common_tl}; distribution={counts}"
-        )
+        assert most_common_tl == 5, f"Expected modal TL=5, got TL={most_common_tl}; distribution={counts}"
 
     # -- boundary shop TLs --
 
@@ -172,8 +170,7 @@ class TestRewardPerSysCheck:
         # Rewards should be non-increasing for TL 2-10
         for i in range(len(rewards) - 1):
             assert rewards[i] >= rewards[i + 1], (
-                f"Expected reward[TL{i+2}] >= reward[TL{i+3}], "
-                f"got {rewards[i]} < {rewards[i+1]}"
+                f"Expected reward[TL{i + 2}] >= reward[TL{i + 3}], got {rewards[i]} < {rewards[i + 1]}"
             )
 
     def test_return_type_is_int(self) -> None:
@@ -213,9 +210,7 @@ class TestShipTechLevelForValue:
         thresholds = GameConstants.SHIP_PRICE_THRESHOLDS
         for expected_tl, threshold_value in enumerate(thresholds, start=1):
             result = ship_tech_level_for_value(threshold_value)
-            assert result == expected_tl, (
-                f"value={threshold_value}: expected TL={expected_tl}, got TL={result}"
-            )
+            assert result == expected_tl, f"value={threshold_value}: expected TL={expected_tl}, got TL={result}"
 
     def test_each_threshold_plus_one(self) -> None:
         """One credit above each threshold (except the last) maps to TL+1."""
@@ -224,9 +219,7 @@ class TestShipTechLevelForValue:
             value = thresholds[tl_index] + 1
             expected = tl_index + 2  # next TL
             result = ship_tech_level_for_value(value)
-            assert result == expected, (
-                f"value={value}: expected TL={expected}, got TL={result}"
-            )
+            assert result == expected, f"value={value}: expected TL={expected}, got TL={result}"
 
     def test_near_max_threshold(self) -> None:
         """Value 999 999 999 → TL 10 (at the final threshold)."""

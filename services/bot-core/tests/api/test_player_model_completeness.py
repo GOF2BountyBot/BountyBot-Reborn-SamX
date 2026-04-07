@@ -363,9 +363,7 @@ class TestServiceCreditsFieldFix:
 
         await service.update_player_credits(mock_db, player_id=1, new_credits=800)
 
-        assert player.credits == 800, (
-            f"player.credits must be set to 800 after update, got {player.credits}"
-        )
+        assert player.credits == 800, f"player.credits must be set to 800 after update, got {player.credits}"
 
 
 # ---------------------------------------------------------------------------

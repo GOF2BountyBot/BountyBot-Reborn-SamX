@@ -45,6 +45,7 @@ DEFAULT_SCHEDULER_JOBS: list[dict] = [
         "job_id": "bounty_spawn_default",
         "cron": f"*/{GameConstants.BOUNTY_DELAY_RANDOM_MIN} * * * *",
         "payload": {"job_type": "bounty_spawn"},
+        "jitter": GameConstants.BOUNTY_SPAWN_JITTER,  # seconds of random offset
     },
     {
         "job_id": "shop_refresh_default",
@@ -78,13 +79,17 @@ def register_default_jobs(scheduler) -> None:
             flogger.info(f"⏭️ Default job '{jid}' already registered — skipping")
             continue
         trigger = CronTrigger.from_crontab(job_def["cron"], timezone="UTC")
+        jitter = job_def.get("jitter")
+        if jitter:
+            trigger.jitter = jitter
         scheduler.add_job(
             run_job,
             trigger=trigger,
             args=[jid, job_def["payload"]],
             id=jid,
         )
-        flogger.info(f"📅 Registered default job '{jid}' with cron '{job_def['cron']}'")
+        jitter_info = f", jitter={jitter}s" if jitter else ""
+        flogger.info(f"📅 Registered default job '{jid}' with cron '{job_def['cron']}'{jitter_info}")
 
 
 @asynccontextmanager

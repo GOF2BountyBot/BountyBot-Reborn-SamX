@@ -30,14 +30,12 @@ class TestRaiseTemperature:
     @pytest.mark.parametrize(
         "current_temp, amount, expected",
         [
-            (1.0, None, 2.0),   # default amount (+1)
-            (5.0, 2.0, 7.0),   # explicit amount
+            (1.0, None, 2.0),  # default amount (+1)
+            (5.0, 2.0, 7.0),  # explicit amount
             (0.5, None, 1.5),  # below-floor start with default raise
         ],
     )
-    def test_raise_temperature(
-        self, current_temp: float, amount: float | None, expected: float
-    ) -> None:
+    def test_raise_temperature(self, current_temp: float, amount: float | None, expected: float) -> None:
         if amount is None:
             result = TemperatureService.raise_temperature(current_temp)
         else:
@@ -56,10 +54,10 @@ class TestDecayTemperature:
     @pytest.mark.parametrize(
         "current_temp, expected",
         [
-            (3.0, 2.0),   # 3.0 * 2/3 = 2.0
-            (1.5, 1.0),   # 1.5 * 2/3 = 1.0
-            (1.0, 1.0),   # floor: max(1.0, 1.0 * 2/3) = 1.0
-            (0.5, 1.0),   # floor: max(1.0, 0.5 * 2/3) = 1.0
+            (3.0, 2.0),  # 3.0 * 2/3 = 2.0
+            (1.5, 1.0),  # 1.5 * 2/3 = 1.0
+            (1.0, 1.0),  # floor: max(1.0, 1.0 * 2/3) = 1.0
+            (0.5, 1.0),  # floor: max(1.0, 0.5 * 2/3) = 1.0
             (10.0, 6.7),  # 10.0 * 2/3 = 6.666… → rounds to 6.7
         ],
     )
@@ -86,12 +84,12 @@ class TestGetMaxBounties:
     @pytest.mark.parametrize(
         "temperature, expected",
         [
-            (1.0, 1),   # int(1.0) = 1
-            (2.5, 2),   # int(2.5) = 2
-            (3.0, 3),   # int(3.0) = 3
-            (5.0, 5),   # at the cap
+            (1.0, 1),  # int(1.0) = 1
+            (2.5, 2),  # int(2.5) = 2
+            (3.0, 3),  # int(3.0) = 3
+            (5.0, 5),  # at the cap
             (10.0, 5),  # capped at MAX_BOUNTIES_PER_DIVISION = 5
-            (0.5, 1),   # below floor → max(1, int(0.5)) = max(1, 0) = 1
+            (0.5, 1),  # below floor → max(1, int(0.5)) = max(1, 0) = 1
         ],
     )
     def test_get_max_bounties(self, temperature: float, expected: int) -> None:

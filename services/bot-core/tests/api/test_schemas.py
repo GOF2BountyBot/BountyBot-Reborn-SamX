@@ -1,4 +1,5 @@
 """Tests for Pydantic schemas in the bot-core API."""
+
 from datetime import UTC, datetime
 from uuid import UUID
 
@@ -1083,9 +1084,7 @@ class TestTransferItemRequestSchema:
 
     def test_quantity_zero_raises(self):
         with pytest.raises(ValidationError):
-            TransferItemRequest(
-                from_player_id=1, to_player_id=2, item_type="module", item_name="Shield", quantity=0
-            )
+            TransferItemRequest(from_player_id=1, to_player_id=2, item_type="module", item_name="Shield", quantity=0)
 
     def test_default_quantity_one(self):
         req = TransferItemRequest(from_player_id=1, to_player_id=2, item_type="turret", item_name="Gun")
@@ -1156,10 +1155,23 @@ class TestPlayerResponseSchema:
 
     def test_active_ship_id_set(self):
         resp = PlayerResponse(
-            id=1, user_id=100, guild_id=200, credits=0, lifetime_credits=0,
-            systems_checked=0, bounty_wins=0, xp=0, tier="Bronze", prestige_count=0,
-            duel_wins=0, duel_losses=0, duel_credits_won=0, duel_credits_lost=0,
-            active_ship_id=99, created_at="2026-01-01", updated_at="2026-01-01",
+            id=1,
+            user_id=100,
+            guild_id=200,
+            credits=0,
+            lifetime_credits=0,
+            systems_checked=0,
+            bounty_wins=0,
+            xp=0,
+            tier="Bronze",
+            prestige_count=0,
+            duel_wins=0,
+            duel_losses=0,
+            duel_credits_won=0,
+            duel_credits_lost=0,
+            active_ship_id=99,
+            created_at="2026-01-01",
+            updated_at="2026-01-01",
         )
         assert resp.active_ship_id == 99
 

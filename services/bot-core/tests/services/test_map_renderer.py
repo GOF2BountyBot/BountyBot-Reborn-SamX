@@ -188,14 +188,12 @@ class TestBaseMapCaching:
         renderer = MapRenderer(map_path=_MAP_PATH)
 
         with patch("src.services.map_renderer.Image.open", side_effect=counting_open):
-            renderer.render_route(["Augmenta"], _SAMPLE_COORDS)   # first: triggers open
-            renderer.render_route(["Pan"], _SAMPLE_COORDS)         # second: should use cache
+            renderer.render_route(["Augmenta"], _SAMPLE_COORDS)  # first: triggers open
+            renderer.render_route(["Pan"], _SAMPLE_COORDS)  # second: should use cache
             renderer.render_route(["Nesla", "Augmenta"], _SAMPLE_COORDS)  # third: still cached
 
         # Image.open must have been called exactly once regardless of render count.
-        assert open_call_count == 1, (
-            f"Expected Image.open to be called once, but it was called {open_call_count} times"
-        )
+        assert open_call_count == 1, f"Expected Image.open to be called once, but it was called {open_call_count} times"
 
 
 # ---------------------------------------------------------------------------

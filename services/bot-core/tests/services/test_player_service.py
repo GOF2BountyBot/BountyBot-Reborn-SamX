@@ -157,9 +157,7 @@ class TestGetOrCreatePlayer:
     """Tests for PlayerService.get_or_create_player."""
 
     @pytest.mark.asyncio
-    async def test_returns_existing_player_when_found(
-        self, service, mock_db, mock_user_repo, mock_player_repo
-    ):
+    async def test_returns_existing_player_when_found(self, service, mock_db, mock_user_repo, mock_player_repo):
         """When a player already exists for the guild, return it without creating a new one."""
         user = _make_user()
         player = _make_player()
@@ -190,18 +188,14 @@ class TestGetOrCreatePlayer:
         # Patch _create_starter_loadout so we don't need ship/inventory repos
         service._create_starter_loadout = AsyncMock()
 
-        result = await service.get_or_create_player(
-            mock_db, discord_id=111, guild_id=999, discord_username="TestUser"
-        )
+        result = await service.get_or_create_player(mock_db, discord_id=111, guild_id=999, discord_username="TestUser")
 
         assert result is new_player
         mock_player_repo.add.assert_awaited_once()
         service._create_starter_loadout.assert_awaited_once_with(mock_db, new_player)
 
     @pytest.mark.asyncio
-    async def test_passes_username_to_user_repo(
-        self, service, mock_db, mock_user_repo, mock_player_repo
-    ):
+    async def test_passes_username_to_user_repo(self, service, mock_db, mock_user_repo, mock_player_repo):
         """discord_username is forwarded to user_repo.get_or_create_user."""
         user = _make_user()
         player = _make_player()
@@ -250,9 +244,7 @@ class TestCreateNewPlayer:
     """Tests for PlayerService._create_new_player."""
 
     @pytest.mark.asyncio
-    async def test_creates_player_with_config_credits(
-        self, service, mock_db, mock_config_repo, mock_player_repo
-    ):
+    async def test_creates_player_with_config_credits(self, service, mock_db, mock_config_repo, mock_player_repo):
         """New player receives starting_credits from guild config."""
         user = _make_user()
         config = _make_config(starting_credits=1000)
@@ -288,9 +280,7 @@ class TestCreateNewPlayer:
         assert added_player.credits == 0
 
     @pytest.mark.asyncio
-    async def test_calls_create_starter_loadout(
-        self, service, mock_db, mock_config_repo, mock_player_repo
-    ):
+    async def test_calls_create_starter_loadout(self, service, mock_db, mock_config_repo, mock_player_repo):
         """_create_starter_loadout is called after player is added."""
         user = _make_user()
         mock_config_repo.get_by_guild_id.return_value = _make_config()
@@ -303,9 +293,7 @@ class TestCreateNewPlayer:
         service._create_starter_loadout.assert_awaited_once_with(mock_db, new_player)
 
     @pytest.mark.asyncio
-    async def test_reraises_exception_on_error(
-        self, service, mock_db, mock_config_repo, mock_player_repo
-    ):
+    async def test_reraises_exception_on_error(self, service, mock_db, mock_config_repo, mock_player_repo):
         """Exceptions from player_repo.add propagate out of _create_new_player."""
         user = _make_user()
         mock_config_repo.get_by_guild_id.return_value = _make_config()
@@ -400,13 +388,11 @@ class TestUpdatePlayerXp:
     """Tests for PlayerService.update_player_xp."""
 
     @pytest.mark.asyncio
-    async def test_updates_xp_successfully(self, service, mock_db, mock_player_repo, mock_config_repo):
+    async def test_updates_xp_successfully(self, service, mock_db, mock_player_repo):
         """XP is set on the player object and committed."""
         player = _make_player(xp=0, tier="Bronze")
         player.tier = "Bronze"
         mock_player_repo.get_by_id.return_value = player
-        # No config - skip tier update
-        mock_config_repo.get_by_guild_id.return_value = None
 
         await service.update_player_xp(mock_db, player_id=1, xp=500)
 
@@ -422,47 +408,45 @@ class TestUpdatePlayerXp:
             await service.update_player_xp(mock_db, player_id=7, xp=100)
 
     @pytest.mark.asyncio
-    async def test_clamps_negative_xp_to_zero(self, service, mock_db, mock_player_repo, mock_config_repo):
+    async def test_clamps_negative_xp_to_zero(self, service, mock_db, mock_player_repo):
         """Negative XP is clamped to 0."""
         player = _make_player(xp=100)
         mock_player_repo.get_by_id.return_value = player
-        mock_config_repo.get_by_guild_id.return_value = None
 
         await service.update_player_xp(mock_db, player_id=1, xp=-50)
 
         assert player.xp == 0
 
     @pytest.mark.asyncio
-    async def test_clamps_xp_to_max(self, service, mock_db, mock_player_repo, mock_config_repo):
+    async def test_clamps_xp_to_max(self, service, mock_db, mock_player_repo):
         """XP above 1,000,000 is clamped to 1,000,000."""
         player = _make_player(xp=0)
         mock_player_repo.get_by_id.return_value = player
-        mock_config_repo.get_by_guild_id.return_value = None
 
         await service.update_player_xp(mock_db, player_id=1, xp=9_999_999)
 
         assert player.xp == 1_000_000
 
     @pytest.mark.asyncio
-    async def test_advances_tier_when_xp_threshold_reached(
+    async def test_does_not_advance_tier_when_xp_threshold_reached(
         self, service, mock_db, mock_player_repo, mock_config_repo
     ):
-        """Tier is updated when XP crosses a threshold."""
+        """Tier does NOT auto-advance when XP crosses a threshold (AC-1, AC-11)."""
         player = _make_player(xp=0, tier="Bronze")
         player.tier = "Bronze"
         mock_player_repo.get_by_id.return_value = player
 
+        # Even with config present, setting XP should not change tier
         config = _make_config(xp_thresholds={"Silver": 1000, "Gold": 5000, "Platinum": 15000})
         mock_config_repo.get_by_guild_id.return_value = config
 
         await service.update_player_xp(mock_db, player_id=1, xp=1500)
 
-        assert player.tier == "Silver"
+        # Tier must NOT change — manual promotion required
+        assert player.tier == "Bronze"
 
     @pytest.mark.asyncio
-    async def test_does_not_change_tier_without_config(
-        self, service, mock_db, mock_player_repo, mock_config_repo
-    ):
+    async def test_does_not_change_tier_without_config(self, service, mock_db, mock_player_repo, mock_config_repo):
         """Tier stays unchanged when no guild config is available."""
         player = _make_player(xp=0, tier="Bronze")
         player.tier = "Bronze"
@@ -765,91 +749,147 @@ class TestCreateStarterLoadout:
     """Tests for PlayerService._create_starter_loadout.
 
     _create_starter_loadout uses local imports:
+        from persist.repositories.player_ship_repository import PlayerShipRepository
         from persist.repositories.inventory_repository import InventoryRepository
-        from persist.repositories.ship_repository import ShipRepository
-    We intercept these by pre-populating sys.modules with mock modules.
+    We intercept them by pre-populating sys.modules with mock modules.
     """
 
-    def _make_repo_mocks(self, ship_repo_mock, inv_repo_mock):
-        """Return (mock_ship_module, mock_inv_module) that expose the given mocks as classes."""
+    def _make_player_ship_repo_mock(self, player_ship_repo_mock):
+        """Return a mock module that exposes the given repo mock as PlayerShipRepository."""
         import types as _types
 
-        ship_mod = _types.ModuleType("persist.repositories.ship_repository")
-        ship_mod.ShipRepository = MagicMock(return_value=ship_repo_mock)
+        ps_mod = _types.ModuleType("persist.repositories.player_ship_repository")
+        ps_mod.PlayerShipRepository = MagicMock(return_value=player_ship_repo_mock)
+        return ps_mod
+
+    def _make_inventory_repo_mock(self, inv_repo_mock):
+        """Return a mock module that exposes the given repo mock as InventoryRepository."""
+        import types as _types
 
         inv_mod = _types.ModuleType("persist.repositories.inventory_repository")
         inv_mod.InventoryRepository = MagicMock(return_value=inv_repo_mock)
+        return inv_mod
 
-        return ship_mod, inv_mod
-
-    @pytest.mark.asyncio
-    async def test_creates_betty_with_default_loadout(
-        self, service, mock_db, mock_player_repo
-    ):
-        """ShipRepository.create_or_update is called with Betty ship data."""
-        player = _make_player(player_id=7)
-
-        mock_ship_repo = AsyncMock()
-        mock_inv_repo = AsyncMock()
+    def _make_repo_mocks(self):
+        """Create and return (mock_ps_repo, mock_inv_repo, starter_ship, ps_mod, inv_mod)."""
+        mock_ps_repo = AsyncMock()
         starter_ship = MagicMock()
         starter_ship.id = 42
-        mock_ship_repo.create_or_update.return_value = starter_ship
+        mock_ps_repo.create_or_update.return_value = starter_ship
 
-        ship_mod, inv_mod = self._make_repo_mocks(mock_ship_repo, mock_inv_repo)
+        mock_inv_repo = AsyncMock()
+        mock_inv_repo.add_item.return_value = MagicMock()
 
-        with patch.dict(sys.modules, {
-            "persist.repositories.ship_repository": ship_mod,
-            "persist.repositories.inventory_repository": inv_mod,
-        }):
+        ps_mod = self._make_player_ship_repo_mock(mock_ps_repo)
+        inv_mod = self._make_inventory_repo_mock(mock_inv_repo)
+        return mock_ps_repo, mock_inv_repo, starter_ship, ps_mod, inv_mod
+
+    @pytest.mark.asyncio
+    async def test_creates_betty_with_default_loadout(self, service, mock_db, mock_player_repo):
+        """PlayerShipRepository.create_or_update is called with Betty ship data."""
+        player = _make_player(player_id=7)
+
+        mock_ps_repo, _inv_repo, starter_ship, ps_mod, inv_mod = self._make_repo_mocks()
+        starter_ship.id = 42
+
+        with patch.dict(
+            sys.modules,
+            {
+                "persist.repositories.player_ship_repository": ps_mod,
+                "persist.repositories.inventory_repository": inv_mod,
+            },
+        ):
             await service._create_starter_loadout(mock_db, player)
 
-        mock_ship_repo.create_or_update.assert_awaited_once()
-        call_args = mock_ship_repo.create_or_update.call_args[0]
+        mock_ps_repo.create_or_update.assert_awaited_once()
+        call_args = mock_ps_repo.create_or_update.call_args[0]
         ship_data = call_args[1]
         assert ship_data["ship_name"] == "Betty"
         assert ship_data["player_id"] == 7
         assert ship_data["is_active"] is True
 
     @pytest.mark.asyncio
-    async def test_updates_active_ship_after_creation(
-        self, service, mock_db, mock_player_repo
-    ):
-        """player_repo.update_active_ship is called with the new ship id."""
+    async def test_updates_active_ship_after_creation(self, service, mock_db, mock_player_repo):
+        """player_repo.update_active_ship is called with the new PlayerShip id."""
         player = _make_player(player_id=7)
 
-        mock_ship_repo = AsyncMock()
-        mock_inv_repo = AsyncMock()
-        starter_ship = MagicMock()
+        _ps_repo, _inv_repo, starter_ship, ps_mod, inv_mod = self._make_repo_mocks()
         starter_ship.id = 99
-        mock_ship_repo.create_or_update.return_value = starter_ship
 
-        ship_mod, inv_mod = self._make_repo_mocks(mock_ship_repo, mock_inv_repo)
-
-        with patch.dict(sys.modules, {
-            "persist.repositories.ship_repository": ship_mod,
-            "persist.repositories.inventory_repository": inv_mod,
-        }):
+        with patch.dict(
+            sys.modules,
+            {
+                "persist.repositories.player_ship_repository": ps_mod,
+                "persist.repositories.inventory_repository": inv_mod,
+            },
+        ):
             await service._create_starter_loadout(mock_db, player)
 
         mock_player_repo.update_active_ship.assert_awaited_once_with(mock_db, 7, 99)
 
     @pytest.mark.asyncio
-    async def test_reraises_exception_on_error(
-        self, service, mock_db
-    ):
+    async def test_starter_loadout_includes_weapons_and_modules(self, service, mock_db, mock_player_repo):
+        """Starter ship data includes the correct default weapons and modules."""
+        player = _make_player(player_id=7)
+
+        mock_ps_repo, _inv_repo, _starter_ship, ps_mod, inv_mod = self._make_repo_mocks()
+
+        with patch.dict(
+            sys.modules,
+            {
+                "persist.repositories.player_ship_repository": ps_mod,
+                "persist.repositories.inventory_repository": inv_mod,
+            },
+        ):
+            await service._create_starter_loadout(mock_db, player)
+
+        ship_data = mock_ps_repo.create_or_update.call_args[0][1]
+        assert "Nirai Impulse EX 1" in ship_data["weapons"]
+        assert "E2 Exoclad" in ship_data["modules"]
+        assert "Telta Quickscan" in ship_data["modules"]
+        assert ship_data["turrets"] == []
+
+    @pytest.mark.asyncio
+    async def test_starter_loadout_adds_micro_gun_to_cargo(self, service, mock_db, mock_player_repo):
+        """Micro Gun MK I is added to player cargo inventory after ship creation."""
+        player = _make_player(player_id=7)
+
+        _ps_repo, mock_inv_repo, _starter_ship, ps_mod, inv_mod = self._make_repo_mocks()
+
+        with patch.dict(
+            sys.modules,
+            {
+                "persist.repositories.player_ship_repository": ps_mod,
+                "persist.repositories.inventory_repository": inv_mod,
+            },
+        ):
+            await service._create_starter_loadout(mock_db, player)
+
+        mock_inv_repo.add_item.assert_awaited_once_with(mock_db, 7, "primary_weapon", "Micro Gun MK I", quantity=1)
+
+    @pytest.mark.asyncio
+    async def test_reraises_exception_on_error(self, service, mock_db):
         """Exceptions raised in _create_starter_loadout propagate."""
         player = _make_player(player_id=7)
 
-        mock_ship_repo = AsyncMock()
+        mock_ps_repo = AsyncMock()
+        mock_ps_repo.create_or_update.side_effect = RuntimeError("ship create failed")
+
+        ps_mod = self._make_player_ship_repo_mock(mock_ps_repo)
+
         mock_inv_repo = AsyncMock()
-        mock_ship_repo.create_or_update.side_effect = RuntimeError("ship create failed")
+        inv_mod = self._make_inventory_repo_mock(mock_inv_repo)
 
-        ship_mod, inv_mod = self._make_repo_mocks(mock_ship_repo, mock_inv_repo)
-
-        with patch.dict(sys.modules, {
-            "persist.repositories.ship_repository": ship_mod,
-            "persist.repositories.inventory_repository": inv_mod,
-        }), pytest.raises(RuntimeError, match="ship create failed"):
+        with (
+            patch.dict(
+                sys.modules,
+                {
+                    "persist.repositories.player_ship_repository": ps_mod,
+                    "persist.repositories.inventory_repository": inv_mod,
+                },
+            ),
+            pytest.raises(RuntimeError, match="ship create failed"),
+        ):
             await service._create_starter_loadout(mock_db, player)
 
 
@@ -1132,3 +1172,249 @@ class TestAddXp:
 
         with pytest.raises(ValueError, match="Player 99 not found"):
             await service.add_xp(mock_db, player_id=99, xp_amount=100)
+
+
+# ===========================================================================
+# Tests: get_promotion_status
+# ===========================================================================
+
+
+class TestGetPromotionStatus:
+    """Tests for PlayerService.get_promotion_status."""
+
+    @pytest.mark.asyncio
+    async def test_bronze_player_no_xp_not_eligible(self, service, mock_db, mock_player_repo, mock_config_repo):
+        """Bronze player with 0 XP is not eligible for promotion."""
+        player = _make_player(xp=0, tier="Bronze")
+        mock_player_repo.get_by_id.return_value = player
+        mock_config_repo.get_by_guild_id.return_value = _make_config(
+            xp_thresholds={"Silver": 1000, "Gold": 5000, "Platinum": 15000}
+        )
+
+        result = await service.get_promotion_status(mock_db, player_id=1)
+
+        assert result["player_id"] == 1
+        assert result["current_tier"] == "Bronze"
+        assert result["current_tier_level"] == 1
+        assert result["eligible_tier"] == "Bronze"
+        assert result["next_tier"] == "Silver"
+        assert result["can_promote"] is False
+        assert result["xp"] == 0
+        assert result["xp_threshold_for_next"] == 1000
+        assert result["xp_surplus_for_next"] is None
+
+    @pytest.mark.asyncio
+    async def test_bronze_player_sufficient_xp_eligible(self, service, mock_db, mock_player_repo, mock_config_repo):
+        """Bronze player with 1500 XP is eligible for Silver promotion."""
+        player = _make_player(xp=1500, tier="Bronze")
+        mock_player_repo.get_by_id.return_value = player
+        mock_config_repo.get_by_guild_id.return_value = _make_config(
+            xp_thresholds={"Silver": 1000, "Gold": 5000, "Platinum": 15000}
+        )
+
+        result = await service.get_promotion_status(mock_db, player_id=1)
+
+        assert result["current_tier"] == "Bronze"
+        assert result["eligible_tier"] == "Silver"
+        assert result["next_tier"] == "Silver"
+        assert result["can_promote"] is True
+        assert result["xp_threshold_for_next"] == 1000
+        assert result["xp_surplus_for_next"] == 500  # 1500 - 1000
+
+    @pytest.mark.asyncio
+    async def test_platinum_player_no_next_tier(self, service, mock_db, mock_player_repo, mock_config_repo):
+        """Platinum player has no next tier and cannot promote."""
+        player = _make_player(xp=20000, tier="Platinum")
+        mock_player_repo.get_by_id.return_value = player
+        mock_config_repo.get_by_guild_id.return_value = _make_config(
+            xp_thresholds={"Silver": 1000, "Gold": 5000, "Platinum": 15000}
+        )
+
+        result = await service.get_promotion_status(mock_db, player_id=1)
+
+        assert result["current_tier"] == "Platinum"
+        assert result["next_tier"] is None
+        assert result["can_promote"] is False
+        assert result["xp_threshold_for_next"] is None
+        assert result["xp_surplus_for_next"] is None
+
+    @pytest.mark.asyncio
+    async def test_uses_default_thresholds_when_no_config(self, service, mock_db, mock_player_repo, mock_config_repo):
+        """When no guild config exists, default thresholds are used."""
+        player = _make_player(xp=500, tier="Bronze")
+        mock_player_repo.get_by_id.return_value = player
+        mock_config_repo.get_by_guild_id.return_value = None
+
+        result = await service.get_promotion_status(mock_db, player_id=1)
+
+        assert result["can_promote"] is False
+        assert result["xp_threshold_for_next"] == 1000  # Default Silver threshold
+
+    @pytest.mark.asyncio
+    async def test_raises_when_player_not_found(self, service, mock_db, mock_player_repo):
+        """ValueError raised when player does not exist."""
+        mock_player_repo.get_by_id.return_value = None
+
+        with pytest.raises(ValueError, match="Player 99 not found"):
+            await service.get_promotion_status(mock_db, player_id=99)
+
+    @pytest.mark.asyncio
+    async def test_bronze_player_with_high_xp_eligible_for_silver_not_gold(
+        self, service, mock_db, mock_player_repo, mock_config_repo
+    ):
+        """Bronze player with 20000 XP: eligible_tier=Platinum, but next_tier=Silver, can_promote=True."""
+        player = _make_player(xp=20000, tier="Bronze")
+        mock_player_repo.get_by_id.return_value = player
+        mock_config_repo.get_by_guild_id.return_value = _make_config(
+            xp_thresholds={"Silver": 1000, "Gold": 5000, "Platinum": 15000}
+        )
+
+        result = await service.get_promotion_status(mock_db, player_id=1)
+
+        assert result["current_tier"] == "Bronze"
+        assert result["eligible_tier"] == "Platinum"
+        assert result["next_tier"] == "Silver"
+        assert result["can_promote"] is True  # eligible_level(4) >= next_level(2)
+
+
+# ===========================================================================
+# Tests: promote_player
+# ===========================================================================
+
+
+class TestPromotePlayer:
+    """Tests for PlayerService.promote_player."""
+
+    @pytest.mark.asyncio
+    async def test_promotes_bronze_to_silver_when_eligible(self, service, mock_db, mock_player_repo, mock_config_repo):
+        """Bronze player with 1500 XP promotes to Silver."""
+        player = _make_player(xp=1500, tier="Bronze")
+        mock_player_repo.get_by_id.return_value = player
+        mock_config_repo.get_by_guild_id.return_value = _make_config(
+            xp_thresholds={"Silver": 1000, "Gold": 5000, "Platinum": 15000}
+        )
+
+        result = await service.promote_player(mock_db, player_id=1)
+
+        assert player.tier == "Silver"
+        assert result["old_tier"] == "Bronze"
+        assert result["new_tier"] == "Silver"
+        assert result["xp"] == player.xp
+        mock_db.commit.assert_awaited_once()
+        mock_db.refresh.assert_awaited_once_with(player)
+
+    @pytest.mark.asyncio
+    async def test_promotes_silver_to_gold_when_eligible(self, service, mock_db, mock_player_repo, mock_config_repo):
+        """Silver player with 6000 XP promotes to Gold."""
+        player = _make_player(xp=6000, tier="Silver")
+        mock_player_repo.get_by_id.return_value = player
+        mock_config_repo.get_by_guild_id.return_value = _make_config(
+            xp_thresholds={"Silver": 1000, "Gold": 5000, "Platinum": 15000}
+        )
+
+        result = await service.promote_player(mock_db, player_id=1)
+
+        assert player.tier == "Gold"
+        assert result["old_tier"] == "Silver"
+        assert result["new_tier"] == "Gold"
+
+    @pytest.mark.asyncio
+    async def test_promote_does_not_skip_tier(self, service, mock_db, mock_player_repo, mock_config_repo):
+        """Bronze player with 20000 XP promotes to Silver only (no skipping)."""
+        player = _make_player(xp=20000, tier="Bronze")
+        mock_player_repo.get_by_id.return_value = player
+        mock_config_repo.get_by_guild_id.return_value = _make_config(
+            xp_thresholds={"Silver": 1000, "Gold": 5000, "Platinum": 15000}
+        )
+
+        result = await service.promote_player(mock_db, player_id=1)
+
+        assert player.tier == "Silver"
+        assert result["new_tier"] == "Silver"
+        assert result["eligible_for_next"] is True  # Still eligible for Gold
+        assert result["next_tier"] == "Gold"
+
+    @pytest.mark.asyncio
+    async def test_raises_when_at_platinum(self, service, mock_db, mock_player_repo):
+        """Platinum player cannot promote further."""
+        player = _make_player(xp=20000, tier="Platinum")
+        mock_player_repo.get_by_id.return_value = player
+
+        with pytest.raises(ValueError, match="Already at maximum tier"):
+            await service.promote_player(mock_db, player_id=1)
+
+    @pytest.mark.asyncio
+    async def test_raises_when_not_eligible(self, service, mock_db, mock_player_repo, mock_config_repo):
+        """Bronze player with insufficient XP gets clear error message."""
+        player = _make_player(xp=500, tier="Bronze")
+        mock_player_repo.get_by_id.return_value = player
+        mock_config_repo.get_by_guild_id.return_value = _make_config(
+            xp_thresholds={"Silver": 1000, "Gold": 5000, "Platinum": 15000}
+        )
+
+        with pytest.raises(ValueError, match="Not eligible for promotion"):
+            await service.promote_player(mock_db, player_id=1)
+
+    @pytest.mark.asyncio
+    async def test_error_message_includes_threshold_and_current_xp(
+        self, service, mock_db, mock_player_repo, mock_config_repo
+    ):
+        """Error message includes XP threshold and current XP."""
+        player = _make_player(xp=500, tier="Bronze")
+        mock_player_repo.get_by_id.return_value = player
+        mock_config_repo.get_by_guild_id.return_value = _make_config(
+            xp_thresholds={"Silver": 1000, "Gold": 5000, "Platinum": 15000}
+        )
+
+        with pytest.raises(ValueError, match="1,000"):
+            await service.promote_player(mock_db, player_id=1)
+
+    @pytest.mark.asyncio
+    async def test_raises_when_player_not_found(self, service, mock_db, mock_player_repo):
+        """ValueError raised when player does not exist."""
+        mock_player_repo.get_by_id.return_value = None
+
+        with pytest.raises(ValueError, match="Player 99 not found"):
+            await service.promote_player(mock_db, player_id=99)
+
+    @pytest.mark.asyncio
+    async def test_xp_preserved_after_promotion(self, service, mock_db, mock_player_repo, mock_config_repo):
+        """XP is not modified during promotion (AC-7)."""
+        player = _make_player(xp=2500, tier="Bronze")
+        mock_player_repo.get_by_id.return_value = player
+        mock_config_repo.get_by_guild_id.return_value = _make_config(
+            xp_thresholds={"Silver": 1000, "Gold": 5000, "Platinum": 15000}
+        )
+
+        result = await service.promote_player(mock_db, player_id=1)
+
+        assert result["xp"] == player.xp  # XP unchanged
+        assert player.xp == 2500  # Original XP preserved
+
+    @pytest.mark.asyncio
+    async def test_eligible_for_next_false_when_not_enough_xp(
+        self, service, mock_db, mock_player_repo, mock_config_repo
+    ):
+        """After promoting, eligible_for_next is False if XP doesn't reach the tier after next."""
+        player = _make_player(xp=1500, tier="Bronze")
+        mock_player_repo.get_by_id.return_value = player
+        mock_config_repo.get_by_guild_id.return_value = _make_config(
+            xp_thresholds={"Silver": 1000, "Gold": 5000, "Platinum": 15000}
+        )
+
+        result = await service.promote_player(mock_db, player_id=1)
+
+        assert result["new_tier"] == "Silver"
+        assert result["eligible_for_next"] is False  # 1500 < 5000 (Gold threshold)
+        assert result["next_tier"] == "Gold"
+
+    @pytest.mark.asyncio
+    async def test_uses_default_thresholds_when_no_config(self, service, mock_db, mock_player_repo, mock_config_repo):
+        """When no guild config, default thresholds determine eligibility."""
+        player = _make_player(xp=1200, tier="Bronze")
+        mock_player_repo.get_by_id.return_value = player
+        mock_config_repo.get_by_guild_id.return_value = None
+
+        result = await service.promote_player(mock_db, player_id=1)
+
+        assert result["new_tier"] == "Silver"

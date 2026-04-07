@@ -115,15 +115,18 @@ async def test_remove_deletes_item(db_session: AsyncSession, repo: ShopRepositor
 async def test_create_or_update_creates_new(db_session: AsyncSession, repo: ShopRepository):
     await _create_guild_config(db_session, 5000)
 
-    result = await repo.create_or_update(db_session, {
-        "guild_id": 5000,
-        "tier": "Bronze",
-        "item_type": "weapon",
-        "item_name": "Plasma",
-        "tech_level": 3,
-        "quantity": 2,
-        "price": 300,
-    })
+    result = await repo.create_or_update(
+        db_session,
+        {
+            "guild_id": 5000,
+            "tier": "Bronze",
+            "item_type": "weapon",
+            "item_name": "Plasma",
+            "tech_level": 3,
+            "quantity": 2,
+            "price": 300,
+        },
+    )
 
     assert result.item_name == "Plasma"
     assert result.price == 300
@@ -133,12 +136,15 @@ async def test_create_or_update_updates_existing(db_session: AsyncSession, repo:
     await _create_guild_config(db_session, 6000)
     await _add_shop_item(db_session, repo, 6000, "Bronze", "weapon", "Plasma", price=100)
 
-    result = await repo.create_or_update(db_session, {
-        "guild_id": 6000,
-        "tier": "Bronze",
-        "item_name": "Plasma",
-        "price": 999,
-    })
+    result = await repo.create_or_update(
+        db_session,
+        {
+            "guild_id": 6000,
+            "tier": "Bronze",
+            "item_name": "Plasma",
+            "price": 999,
+        },
+    )
 
     assert result.price == 999
 

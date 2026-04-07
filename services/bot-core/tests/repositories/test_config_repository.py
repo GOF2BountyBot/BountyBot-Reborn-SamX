@@ -27,9 +27,11 @@ from persist.repositories.config_repository import ConfigRepository
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _make_config(**overrides) -> MagicMock:
     """Return a MagicMock with GuildConfig-like attributes."""
     from datetime import UTC, datetime
+
     defaults = dict(
         id=1,
         guild_id=100,
@@ -76,6 +78,7 @@ def _make_scalar_one_result(value) -> MagicMock:
 # Fixtures
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture
 def repo() -> ConfigRepository:
     return ConfigRepository()
@@ -98,6 +101,7 @@ def mock_db() -> AsyncMock:
 # get_by_id – exception path (lines 25-27)
 # ===================================================================
 
+
 class TestGetById:
     @pytest.mark.asyncio
     async def test_get_by_id_exception(self, repo, mock_db):
@@ -110,6 +114,7 @@ class TestGetById:
 # ===================================================================
 # count – exception path (lines 35-40)
 # ===================================================================
+
 
 class TestCount:
     @pytest.mark.asyncio
@@ -130,6 +135,7 @@ class TestCount:
 # list_all – exception path (lines 47-49)
 # ===================================================================
 
+
 class TestListAll:
     @pytest.mark.asyncio
     async def test_list_all_exception(self, repo, mock_db):
@@ -142,6 +148,7 @@ class TestListAll:
 # ===================================================================
 # add – exception path (lines 59-62)
 # ===================================================================
+
 
 class TestAdd:
     @pytest.mark.asyncio
@@ -158,6 +165,7 @@ class TestAdd:
 # ===================================================================
 # create_or_update – inner exception path (lines 82-84)
 # ===================================================================
+
 
 class TestCreateOrUpdate:
     @pytest.mark.asyncio
@@ -177,6 +185,7 @@ class TestCreateOrUpdate:
 # remove – exception path (lines 101-104)
 # ===================================================================
 
+
 class TestRemove:
     @pytest.mark.asyncio
     async def test_remove_exception_triggers_rollback(self, repo, mock_db):
@@ -194,6 +203,7 @@ class TestRemove:
 # get_by_guild_id – exception path (lines 113-115)
 # ===================================================================
 
+
 class TestGetByGuildId:
     @pytest.mark.asyncio
     async def test_get_by_guild_id_exception(self, repo, mock_db):
@@ -206,6 +216,7 @@ class TestGetByGuildId:
 # ===================================================================
 # create_default_config – exception path (lines 149-151)
 # ===================================================================
+
 
 class TestCreateDefaultConfig:
     @pytest.mark.asyncio
@@ -221,6 +232,7 @@ class TestCreateDefaultConfig:
 # update_shop_config – inner rollback + outer exception (lines 178-180)
 # ===================================================================
 
+
 class TestUpdateShopConfig:
     @pytest.mark.asyncio
     async def test_update_shop_config_commit_fail_triggers_rollback(self, repo, mock_db):
@@ -229,10 +241,13 @@ class TestUpdateShopConfig:
         mock_db.commit = AsyncMock(side_effect=Exception("commit fail"))
 
         with pytest.raises(Exception, match="commit fail"):
-            await repo.update_shop_config(mock_db, {
-                "guild_id": 200,
-                "sale_price_factor": 0.5,
-            })
+            await repo.update_shop_config(
+                mock_db,
+                {
+                    "guild_id": 200,
+                    "sale_price_factor": 0.5,
+                },
+            )
 
         mock_db.rollback.assert_awaited()
 
@@ -240,6 +255,7 @@ class TestUpdateShopConfig:
 # ===================================================================
 # reset_to_defaults – exception path (lines 203-205)
 # ===================================================================
+
 
 class TestResetToDefaults:
     @pytest.mark.asyncio
@@ -253,6 +269,7 @@ class TestResetToDefaults:
 # ===================================================================
 # update_admin_role – inner rollback + outer (lines 219-221, 226-228)
 # ===================================================================
+
 
 class TestUpdateAdminRole:
     @pytest.mark.asyncio
@@ -278,6 +295,7 @@ class TestUpdateAdminRole:
 # update_starting_credits – inner rollback + outer (lines 244-246)
 # ===================================================================
 
+
 class TestUpdateStartingCredits:
     @pytest.mark.asyncio
     async def test_update_starting_credits_commit_fail_triggers_rollback(self, repo, mock_db):
@@ -294,6 +312,7 @@ class TestUpdateStartingCredits:
 # ===================================================================
 # update_xp_thresholds – inner rollback + outer (lines 260, 276-278)
 # ===================================================================
+
 
 class TestUpdateXpThresholds:
     @pytest.mark.asyncio
@@ -321,6 +340,7 @@ class TestUpdateXpThresholds:
 # get_config_summary – exception path (lines 320-322)
 # ===================================================================
 
+
 class TestGetConfigSummary:
     @pytest.mark.asyncio
     async def test_get_config_summary_exception(self, repo, mock_db):
@@ -334,6 +354,7 @@ class TestGetConfigSummary:
 # get_all_guild_configs – exception path (lines 339-341)
 # ===================================================================
 
+
 class TestGetAllGuildConfigs:
     @pytest.mark.asyncio
     async def test_get_all_guild_configs_exception(self, repo, mock_db):
@@ -346,6 +367,7 @@ class TestGetAllGuildConfigs:
 # ===================================================================
 # update_division_temperatures – inner rollback + outer (lines 362-384)
 # ===================================================================
+
 
 class TestUpdateDivisionTemperatures:
     @pytest.mark.asyncio
@@ -368,6 +390,7 @@ class TestUpdateDivisionTemperatures:
         full_result = _make_scalars_result([config])
 
         call_count = 0
+
         async def _side_effect(*args, **kwargs):
             nonlocal call_count
             call_count += 1
@@ -377,9 +400,7 @@ class TestUpdateDivisionTemperatures:
 
         mock_db.execute = AsyncMock(side_effect=_side_effect)
 
-        result = await repo.update_division_temperatures(
-            mock_db, guild_id=600, temperatures={"bronze": 2.0}
-        )
+        result = await repo.update_division_temperatures(mock_db, guild_id=600, temperatures={"bronze": 2.0})
 
         assert result is not None
 
@@ -390,9 +411,7 @@ class TestUpdateDivisionTemperatures:
         mock_db.commit = AsyncMock(side_effect=Exception("commit fail"))
 
         with pytest.raises(Exception, match="commit fail"):
-            await repo.update_division_temperatures(
-                mock_db, guild_id=600, temperatures={"bronze": 2.0}
-            )
+            await repo.update_division_temperatures(mock_db, guild_id=600, temperatures={"bronze": 2.0})
 
         mock_db.rollback.assert_awaited()
 
@@ -401,14 +420,13 @@ class TestUpdateDivisionTemperatures:
         mock_db.execute = AsyncMock(side_effect=Exception("temp fail"))
 
         with pytest.raises(Exception, match="temp fail"):
-            await repo.update_division_temperatures(
-                mock_db, guild_id=600, temperatures={}
-            )
+            await repo.update_division_temperatures(mock_db, guild_id=600, temperatures={})
 
 
 # ===================================================================
 # delete_guild_config – exception path (lines 396-398)
 # ===================================================================
+
 
 class TestDeleteGuildConfig:
     @pytest.mark.asyncio

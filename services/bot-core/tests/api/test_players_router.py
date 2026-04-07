@@ -30,12 +30,14 @@ def mock_player_service():
     service.get_players_by_tier = AsyncMock(return_value=[make_mock_player()])
     service.update_player_credits = AsyncMock(return_value=make_mock_player(credits=500))
     service.update_player_xp = AsyncMock(return_value=make_mock_player(xp=100))
-    service.prestige_player = AsyncMock(return_value={
-        "player_id": 1,
-        "prestige_count": 1,
-        "level_before": 10,
-        "division_before": "Elite",
-    })
+    service.prestige_player = AsyncMock(
+        return_value={
+            "player_id": 1,
+            "prestige_count": 1,
+            "level_before": 10,
+            "division_before": "Elite",
+        }
+    )
     service.get_player_statistics = AsyncMock(
         return_value={
             "player_id": 1,
@@ -49,6 +51,29 @@ def mock_player_service():
             "duel_stats": {"wins": 0, "losses": 0, "credits_won": 0, "credits_lost": 0},
             "created_at": "2026-01-01T00:00:00",
             "updated_at": "2026-01-01T00:00:00",
+        }
+    )
+    service.get_promotion_status = AsyncMock(
+        return_value={
+            "player_id": 1,
+            "current_tier": "Bronze",
+            "current_tier_level": 1,
+            "eligible_tier": "Silver",
+            "next_tier": "Silver",
+            "can_promote": True,
+            "xp": 1500,
+            "xp_threshold_for_next": 1000,
+            "xp_surplus_for_next": 500,
+        }
+    )
+    service.promote_player = AsyncMock(
+        return_value={
+            "player_id": 1,
+            "old_tier": "Bronze",
+            "new_tier": "Silver",
+            "xp": 1500,
+            "eligible_for_next": False,
+            "next_tier": "Gold",
         }
     )
     return service
@@ -654,9 +679,7 @@ class TestTransferCredits:
 
     def test_self_transfer_returns_400(self, client, mock_player_service):
         """Service raises ValueError for self-transfer -> 400."""
-        mock_player_service.transfer_credits = AsyncMock(
-            side_effect=ValueError("Cannot transfer credits to yourself")
-        )
+        mock_player_service.transfer_credits = AsyncMock(side_effect=ValueError("Cannot transfer credits to yourself"))
 
         response = client.post(
             "/api/v1/players/transfer",
@@ -683,3 +706,342 @@ class TestTransferCredits:
         )
 
         assert response.status_code == 422
+
+
+# ---------------------------------------------------------------------------
+# TestGetPromotionStatus
+# ---------------------------------------------------------------------------
+
+
+class TestGetPromotionStatus:
+    """Tests for GET /players/{player_id}/promotion-status -> get_promotion_status."""
+
+    def test_get_promotion_status_returns_200(self, client, mock_player_service):
+        """Happy path: returns 200 with promotion status data."""
+        response = client.get("/api/v1/players/1/promotion-status")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["player_id"] == 1
+        assert data["current_tier"] == "Bronze"
+        assert data["can_promote"] is True
+        assert data["next_tier"] == "Silver"
+
+    def test_get_promotion_status_delegates_to_service(self, mock_db_session, client, mock_player_service):
+        """Service delegation: get_promotion_status called with correct player_id."""
+        mock_session, _ = mock_db_session
+
+        client.get("/api/v1/players/42/promotion-status")
+
+        mock_player_service.get_promotion_status.assert_called_once_with(mock_session, 42)
+
+    def test_get_promotion_status_not_found_returns_404(self, client, mock_player_service):
+        """Not found: service raises ValueError with 'not found' -> 404."""
+        mock_player_service.get_promotion_status.side_effect = ValueError("Player 999 not found")
+
+        response = client.get("/api/v1/players/999/promotion-status")
+
+        assert response.status_code == 404
+        assert "999" in response.json()["detail"]
+
+    def test_get_promotion_status_service_exception_returns_500(self, client, mock_player_service):
+        """Server error: service raises Exception -> 500."""
+        mock_player_service.get_promotion_status.side_effect = Exception("db error")
+
+        response = client.get("/api/v1/players/1/promotion-status")
+
+        assert response.status_code == 500
+        assert "Failed to get promotion status" in response.json()["detail"]
+
+    def test_get_promotion_status_response_shape(self, client, mock_player_service):
+        """Response shape: all expected fields present."""
+        response = client.get("/api/v1/players/1/promotion-status")
+
+        data = response.json()
+        expected_keys = {
+            "player_id",
+            "current_tier",
+            "current_tier_level",
+            "eligible_tier",
+            "next_tier",
+            "can_promote",
+            "xp",
+            "xp_threshold_for_next",
+            "xp_surplus_for_next",
+        }
+        assert expected_keys.issubset(data.keys())
+
+    def test_get_promotion_status_platinum_player(self, client, mock_player_service):
+        """Platinum player shows can_promote=False, next_tier=None."""
+        mock_player_service.get_promotion_status.return_value = {
+            "player_id": 1,
+            "current_tier": "Platinum",
+            "current_tier_level": 4,
+            "eligible_tier": "Platinum",
+            "next_tier": None,
+            "can_promote": False,
+            "xp": 20000,
+            "xp_threshold_for_next": None,
+            "xp_surplus_for_next": None,
+        }
+
+        response = client.get("/api/v1/players/1/promotion-status")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["next_tier"] is None
+        assert data["can_promote"] is False
+
+
+# ---------------------------------------------------------------------------
+# TestPromotePlayer
+# ---------------------------------------------------------------------------
+
+
+class TestPromotePlayer:
+    """Tests for PUT /players/{player_id}/promote -> promote_player."""
+
+    def test_promote_player_returns_200(self, client, mock_player_service):
+        """Happy path: valid promotion returns 200 with promote result."""
+        response = client.put("/api/v1/players/1/promote")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["player_id"] == 1
+        assert data["old_tier"] == "Bronze"
+        assert data["new_tier"] == "Silver"
+        assert data["xp"] == 1500
+
+    def test_promote_player_delegates_to_service(self, mock_db_session, client, mock_player_service):
+        """Service delegation: promote_player called with correct player_id."""
+        mock_session, _ = mock_db_session
+
+        client.put("/api/v1/players/7/promote")
+
+        mock_player_service.promote_player.assert_called_once_with(mock_session, 7)
+
+    def test_promote_not_eligible_returns_400(self, client, mock_player_service):
+        """Not eligible: service raises ValueError -> 400."""
+        mock_player_service.promote_player.side_effect = ValueError(
+            "Not eligible for promotion. Need 1,000 XP for Silver, currently have 500"
+        )
+
+        response = client.put("/api/v1/players/1/promote")
+
+        assert response.status_code == 400
+        assert "Not eligible" in response.json()["detail"]
+
+    def test_promote_at_max_tier_returns_400(self, client, mock_player_service):
+        """Already at max tier: service raises ValueError -> 400."""
+        mock_player_service.promote_player.side_effect = ValueError("Already at maximum tier (Platinum)")
+
+        response = client.put("/api/v1/players/1/promote")
+
+        assert response.status_code == 400
+        assert "maximum tier" in response.json()["detail"]
+
+    def test_promote_player_not_found_returns_404(self, client, mock_player_service):
+        """Not found: service raises ValueError with 'not found' -> 404."""
+        mock_player_service.promote_player.side_effect = ValueError("Player 999 not found")
+
+        response = client.put("/api/v1/players/999/promote")
+
+        assert response.status_code == 404
+
+    def test_promote_player_service_exception_returns_500(self, client, mock_player_service):
+        """Server error: service raises Exception -> 500."""
+        mock_player_service.promote_player.side_effect = Exception("unexpected error")
+
+        response = client.put("/api/v1/players/1/promote")
+
+        assert response.status_code == 500
+        assert "Failed to promote player" in response.json()["detail"]
+
+    def test_promote_player_response_shape(self, client, mock_player_service):
+        """Response shape: all expected fields present."""
+        response = client.put("/api/v1/players/1/promote")
+
+        data = response.json()
+        expected_keys = {"player_id", "old_tier", "new_tier", "xp", "eligible_for_next", "next_tier"}
+        assert expected_keys.issubset(data.keys())
+
+    def test_promote_player_eligible_for_next(self, client, mock_player_service):
+        """eligible_for_next is True when XP qualifies for further promotion."""
+        mock_player_service.promote_player.return_value = {
+            "player_id": 1,
+            "old_tier": "Bronze",
+            "new_tier": "Silver",
+            "xp": 20000,
+            "eligible_for_next": True,
+            "next_tier": "Gold",
+        }
+
+        response = client.put("/api/v1/players/1/promote")
+
+        data = response.json()
+        assert data["eligible_for_next"] is True
+        assert data["next_tier"] == "Gold"
+
+
+# ===========================================================================
+# Gap 1: Empty-State / Null-Result Tests — Players
+# ===========================================================================
+
+
+class TestGetPlayerStatisticsNonexistent:
+    """Gap 1: statistics endpoint for a player that does not exist → 404 (not 500)."""
+
+    def test_get_player_statistics_nonexistent_player(self, client, mock_player_service):
+        """GET /players/{id}/statistics for a missing player → 404.
+
+        Previously this could return a 500 if the service raised an unhandled error.
+        The router should catch ValueError and return 404 instead.
+        """
+        mock_player_service.get_player_statistics.side_effect = ValueError("Player 99999 not found")
+
+        response = client.get("/api/v1/players/99999/statistics")
+
+        assert response.status_code == 404
+        data = response.json()
+        assert "99999" in data["detail"] or "not found" in data["detail"].lower()
+
+    def test_get_player_statistics_nonexistent_player_not_500(self, client, mock_player_service):
+        """Confirms a missing player for statistics returns <500 status code."""
+        mock_player_service.get_player_statistics.side_effect = ValueError("Player 77777 not found")
+
+        response = client.get("/api/v1/players/77777/statistics")
+
+        # Must not be an internal server error for a simple "not found" case
+        assert response.status_code != 500
+
+
+class TestGetPromotionStatusNonexistent:
+    """Gap 1: promotion-status endpoint for a player that does not exist → 404 (not 500)."""
+
+    def test_get_promotion_status_nonexistent_player(self, client, mock_player_service):
+        """GET /players/{id}/promotion-status for a missing player → 404.
+
+        Ensures the endpoint does not propagate as a 500 when the player is absent.
+        """
+        mock_player_service.get_promotion_status.side_effect = ValueError("Player 88888 not found")
+
+        response = client.get("/api/v1/players/88888/promotion-status")
+
+        assert response.status_code == 404
+        data = response.json()
+        assert "88888" in data["detail"] or "not found" in data["detail"].lower()
+
+    def test_get_promotion_status_nonexistent_player_not_500(self, client, mock_player_service):
+        """Confirms a missing player for promotion-status returns <500 status code."""
+        mock_player_service.get_promotion_status.side_effect = ValueError("Player 55555 not found")
+
+        response = client.get("/api/v1/players/55555/promotion-status")
+
+        assert response.status_code != 500
+
+
+# ===========================================================================
+# GET /players/{player_id}/loadout
+# ===========================================================================
+
+
+class TestGetPlayerLoadout:
+    """Tests for GET /players/{player_id}/loadout endpoint."""
+
+    def _make_mock_player_ship(
+        self, ship_id=1, ship_name="Betty", nickname=None, weapons=None, modules=None, turrets=None
+    ):
+        from unittest.mock import MagicMock
+
+        ps = MagicMock()
+        ps.id = ship_id
+        ps.ship_name = ship_name
+        ps.nickname = nickname
+        ps.weapons = weapons or ["Nirai Impulse EX 1"]
+        ps.modules = modules or ["E2 Exoclad", "Telta Quickscan"]
+        ps.turrets = turrets or []
+        return ps
+
+    def _make_mock_ship_static(self, name="Betty", armour=200, emoji="🛸"):
+        from unittest.mock import MagicMock
+
+        ship = MagicMock()
+        ship.name = name
+        ship.armour = armour
+        ship.emoji = emoji
+        return ship
+
+    def _make_mock_module(
+        self, name="E2 Exoclad", module_type="ArmourModule", value=1070, tech_level=1, extra_atts=None
+    ):
+        from unittest.mock import MagicMock
+
+        mod = MagicMock()
+        mod.name = name
+        mod.type = module_type
+        mod.value = value
+        mod.tech_level = tech_level
+        mod.emoji = f"<:{name.lower().replace(' ', '')}:123>"
+        mod.extra_atts = extra_atts or {"armour": 40}
+        return mod
+
+    def _make_mock_weapon(self, name="Nirai Impulse EX 1", dps=7.5, value=2500):
+        from unittest.mock import MagicMock
+
+        wpn = MagicMock()
+        wpn.name = name
+        wpn.dps = dps
+        wpn.value = value
+        wpn.emoji = f"<:{name.lower().replace(' ', '')}:456>"
+        return wpn
+
+    def test_loadout_player_not_found_returns_404(self, client, mock_player_service):
+        """GET /players/999/loadout → 404 when player not found."""
+        mock_player_service.player_repo.get_by_id.return_value = None
+
+        response = client.get("/api/v1/players/999/loadout")
+
+        assert response.status_code == 404
+
+    def test_loadout_no_active_ship_returns_no_ship_message(self, client, mock_player_service):
+        """GET /players/1/loadout → 200 with no-ship message when active_ship_id is None."""
+        player = make_mock_player(active_ship_id=None)
+        mock_player_service.player_repo.get_by_id.return_value = player
+
+        response = client.get("/api/v1/players/1/loadout")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["ship_name"] is None
+        assert data["message"] == "No active ship"
+
+    def test_loadout_active_ship_query_is_executed(self, client, mock_player_service, mock_db_session):
+        """GET /players/1/loadout with active ship → endpoint attempts to query the DB for the ship."""
+        from unittest.mock import AsyncMock, MagicMock
+
+        mock_session, _ = mock_db_session
+
+        # Player has an active ship
+        player = make_mock_player(active_ship_id=10)
+        mock_player_service.player_repo.get_by_id.return_value = player
+
+        # Make execute return None (no PlayerShip found) — endpoint falls back to "No active ship"
+        no_result = MagicMock()
+        no_result.scalars.return_value.first.return_value = None
+        mock_session.execute = AsyncMock(return_value=no_result)
+
+        response = client.get("/api/v1/players/1/loadout")
+
+        assert response.status_code == 200
+        data = response.json()
+        # PlayerShip lookup returned None → treated as no active ship
+        assert data["ship_name"] is None
+
+    def test_loadout_server_error_returns_500(self, client, mock_player_service):
+        """GET /players/1/loadout → 500 when unexpected exception occurs."""
+        mock_player_service.player_repo.get_by_id.side_effect = Exception("DB exploded")
+
+        response = client.get("/api/v1/players/1/loadout")
+
+        assert response.status_code == 500
+        assert "Failed to get player loadout" in response.json()["detail"]

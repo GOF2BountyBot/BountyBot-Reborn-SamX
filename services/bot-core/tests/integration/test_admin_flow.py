@@ -142,9 +142,7 @@ async def test_update_guild_config_admin_role(
     _config = await _create_guild_config(db_session, guild_id=8004, admin_role_id=None)
 
     # Update admin role via create_or_update
-    updated = await config_repo.create_or_update(
-        db_session, {"guild_id": 8004, "admin_role_id": 99999}
-    )
+    updated = await config_repo.create_or_update(db_session, {"guild_id": 8004, "admin_role_id": 99999})
 
     assert updated.admin_role_id == 99999
 

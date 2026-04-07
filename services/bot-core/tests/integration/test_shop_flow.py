@@ -162,9 +162,7 @@ async def test_purchase_deducts_player_credits(
     await _create_guild_config(db_session, guild_id=9003)
     user = await _create_user(db_session, user_id=200001)
     player = await _create_player(db_session, user_id=user.id, guild_id=9003, credits=500)
-    shop_item = await _create_shop_item(
-        db_session, guild_id=9003, item_name="Ion Blaster", price=150, quantity=2
-    )
+    shop_item = await _create_shop_item(db_session, guild_id=9003, item_name="Ion Blaster", price=150, quantity=2)
 
     # Manual purchase: deduct credits, add to inventory, reduce shop quantity
     total_cost = shop_item.price * 1
@@ -208,9 +206,7 @@ async def test_purchase_reduces_shop_quantity(
     await _create_guild_config(db_session, guild_id=9005)
     user = await _create_user(db_session, user_id=200003)
     player = await _create_player(db_session, user_id=user.id, guild_id=9005, credits=1000)
-    shop_item = await _create_shop_item(
-        db_session, guild_id=9005, item_name="Micro Missile", price=50, quantity=5
-    )
+    shop_item = await _create_shop_item(db_session, guild_id=9005, item_name="Micro Missile", price=50, quantity=5)
 
     purchase_qty = 2
     await player_repo.update_credits(db_session, player.id, player.credits - shop_item.price * purchase_qty)
@@ -262,9 +258,7 @@ async def test_purchase_rejected_leaves_no_inventory_side_effects(
     await _create_guild_config(db_session, guild_id=9007)
     user = await _create_user(db_session, user_id=200005)
     player = await _create_player(db_session, user_id=user.id, guild_id=9007, credits=10)
-    shop_item = await _create_shop_item(
-        db_session, guild_id=9007, item_name="Heavy Torpedo", price=999, quantity=3
-    )
+    shop_item = await _create_shop_item(db_session, guild_id=9007, item_name="Heavy Torpedo", price=999, quantity=3)
 
     # Guard: do not proceed with purchase if credits are insufficient
     total_cost = shop_item.price

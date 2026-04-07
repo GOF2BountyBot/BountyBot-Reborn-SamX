@@ -166,9 +166,7 @@ class TestEquipItemSuccess:
         - add_equipment called with correct args
         - remove_item called with correct args
         """
-        player_ship = _make_player_ship(
-            player_id=42, ship_name="Sidewinder", weapons=[]
-        )
+        player_ship = _make_player_ship(player_id=42, ship_name="Sidewinder", weapons=[])
         static_ship = _make_static_ship(name="Sidewinder", max_primaries=2)
         game_item = _make_game_item("Pulse Laser")
         inv_item = _make_inventory_item("Pulse Laser", "weapon")
@@ -188,19 +186,13 @@ class TestEquipItemSuccess:
         )
 
         assert result["success"] is True
-        svc.ship_repo.add_equipment.assert_called_once_with(
-            mock_db, 1, "weapons", "Pulse Laser"
-        )
-        svc.inventory_repo.remove_item.assert_called_once_with(
-            mock_db, 42, "weapon", "Pulse Laser", quantity=1
-        )
+        svc.ship_repo.add_equipment.assert_called_once_with(mock_db, 1, "weapons", "Pulse Laser")
+        svc.inventory_repo.remove_item.assert_called_once_with(mock_db, 42, "weapon", "Pulse Laser", quantity=1)
 
     @pytest.mark.asyncio
     async def test_equip_module_to_ship_with_available_module_slot(self, mock_db, svc):
         """Module is equipped when ship has an open module slot."""
-        player_ship = _make_player_ship(
-            player_id=42, ship_name="Sidewinder", modules=[]
-        )
+        player_ship = _make_player_ship(player_id=42, ship_name="Sidewinder", modules=[])
         static_ship = _make_static_ship(name="Sidewinder", max_modules=3)
         game_item = _make_game_item("Shield Generator")
         inv_item = _make_inventory_item("Shield Generator", "module")
@@ -220,19 +212,13 @@ class TestEquipItemSuccess:
         )
 
         assert result["success"] is True
-        svc.ship_repo.add_equipment.assert_called_once_with(
-            mock_db, 1, "modules", "Shield Generator"
-        )
-        svc.inventory_repo.remove_item.assert_called_once_with(
-            mock_db, 42, "module", "Shield Generator", quantity=1
-        )
+        svc.ship_repo.add_equipment.assert_called_once_with(mock_db, 1, "modules", "Shield Generator")
+        svc.inventory_repo.remove_item.assert_called_once_with(mock_db, 42, "module", "Shield Generator", quantity=1)
 
     @pytest.mark.asyncio
     async def test_equip_turret_to_ship_with_available_turret_slot(self, mock_db, svc):
         """Turret is equipped when ship has an open turret slot."""
-        player_ship = _make_player_ship(
-            player_id=42, ship_name="Sidewinder", turrets=[]
-        )
+        player_ship = _make_player_ship(player_id=42, ship_name="Sidewinder", turrets=[])
         static_ship = _make_static_ship(name="Sidewinder", max_turrets=1)
         game_item = _make_game_item("Turreted Beam Laser")
         inv_item = _make_inventory_item("Turreted Beam Laser", "turret")
@@ -252,9 +238,7 @@ class TestEquipItemSuccess:
         )
 
         assert result["success"] is True
-        svc.inventory_repo.remove_item.assert_called_once_with(
-            mock_db, 42, "turret", "Turreted Beam Laser", quantity=1
-        )
+        svc.inventory_repo.remove_item.assert_called_once_with(mock_db, 42, "turret", "Turreted Beam Laser", quantity=1)
 
 
 class TestEquipItemValidationErrors:
@@ -392,9 +376,7 @@ class TestUnequipItemSuccess:
         - remove_equipment called with correct args
         - add_item called with correct inventory_type
         """
-        player_ship = _make_player_ship(
-            player_id=42, ship_name="Sidewinder", weapons=["Pulse Laser"]
-        )
+        player_ship = _make_player_ship(player_id=42, ship_name="Sidewinder", weapons=["Pulse Laser"])
         svc.ship_repo.get_by_id.return_value = player_ship
         svc.ship_repo.remove_equipment.return_value = player_ship
 
@@ -407,19 +389,13 @@ class TestUnequipItemSuccess:
         )
 
         assert result["success"] is True
-        svc.ship_repo.remove_equipment.assert_called_once_with(
-            mock_db, 1, "weapons", "Pulse Laser"
-        )
-        svc.inventory_repo.add_item.assert_called_once_with(
-            mock_db, 42, "weapon", "Pulse Laser", quantity=1
-        )
+        svc.ship_repo.remove_equipment.assert_called_once_with(mock_db, 1, "weapons", "Pulse Laser")
+        svc.inventory_repo.add_item.assert_called_once_with(mock_db, 42, "weapon", "Pulse Laser", quantity=1)
 
     @pytest.mark.asyncio
     async def test_unequip_module_from_ship_success(self, mock_db, svc):
         """Module is removed from ship and added back to inventory with correct type."""
-        player_ship = _make_player_ship(
-            player_id=42, ship_name="Sidewinder", modules=["Shield Generator"]
-        )
+        player_ship = _make_player_ship(player_id=42, ship_name="Sidewinder", modules=["Shield Generator"])
         svc.ship_repo.get_by_id.return_value = player_ship
         svc.ship_repo.remove_equipment.return_value = player_ship
 
@@ -432,16 +408,12 @@ class TestUnequipItemSuccess:
         )
 
         assert result["success"] is True
-        svc.inventory_repo.add_item.assert_called_once_with(
-            mock_db, 42, "module", "Shield Generator", quantity=1
-        )
+        svc.inventory_repo.add_item.assert_called_once_with(mock_db, 42, "module", "Shield Generator", quantity=1)
 
     @pytest.mark.asyncio
     async def test_unequip_turret_from_ship_success(self, mock_db, svc):
         """Turret is unequipped and added to inventory with 'turret' type."""
-        player_ship = _make_player_ship(
-            player_id=42, ship_name="Sidewinder", turrets=["Turreted Beam Laser"]
-        )
+        player_ship = _make_player_ship(player_id=42, ship_name="Sidewinder", turrets=["Turreted Beam Laser"])
         svc.ship_repo.get_by_id.return_value = player_ship
         svc.ship_repo.remove_equipment.return_value = player_ship
 
@@ -454,9 +426,7 @@ class TestUnequipItemSuccess:
         )
 
         assert result["success"] is True
-        svc.inventory_repo.add_item.assert_called_once_with(
-            mock_db, 42, "turret", "Turreted Beam Laser", quantity=1
-        )
+        svc.inventory_repo.add_item.assert_called_once_with(mock_db, 42, "turret", "Turreted Beam Laser", quantity=1)
 
 
 class TestUnequipItemValidationErrors:
@@ -465,9 +435,7 @@ class TestUnequipItemValidationErrors:
     @pytest.mark.asyncio
     async def test_unequip_item_not_on_ship_raises(self, mock_db, svc):
         """ValueError is raised when the item is not equipped on the ship."""
-        player_ship = _make_player_ship(
-            player_id=42, ship_name="Sidewinder", weapons=[]
-        )
+        player_ship = _make_player_ship(player_id=42, ship_name="Sidewinder", weapons=[])
         svc.ship_repo.get_by_id.return_value = player_ship
 
         with pytest.raises(ValueError, match="not equipped"):

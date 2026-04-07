@@ -44,6 +44,12 @@ class PrimaryWeaponRepository(GenericRepository[PrimaryWeapon]):
         flogger.trace(f"create_or_update() entry: weapon_name={weapon_name}")
 
         try:
+            # validate required keys upfront
+            if "name" not in raw:
+                raise ValueError("Missing required key 'name' in data for primary_weapon")
+            if "dps" not in raw:
+                raise ValueError("Missing required key 'dps' in data for primary_weapon")
+
             # common item fields
             item_fields = {
                 "name": raw["name"],

@@ -23,6 +23,7 @@ from types import SimpleNamespace
 #          value, wiki, assets
 # ---------------------------------------------------------------------------
 
+
 def get_seed_ships() -> list[SimpleNamespace]:
     """Return 5 ships sourced from import_data/ship/*.json."""
     return [
@@ -200,6 +201,7 @@ def get_seed_ships() -> list[SimpleNamespace]:
 # Columns (PrimaryWeapon): dps
 # ---------------------------------------------------------------------------
 
+
 def get_seed_primary_weapons() -> list[SimpleNamespace]:
     """Return 5 primary weapons sourced from import_data/primary_weapon/*.json.
 
@@ -292,6 +294,7 @@ def get_seed_primary_weapons() -> list[SimpleNamespace]:
 # Columns (SecondaryWeapon): damage, loading_speed
 # ---------------------------------------------------------------------------
 
+
 def get_seed_secondary_weapons() -> list[SimpleNamespace]:
     """Return 4 secondary weapons sourced from import_data/secondary_weapon/*.json."""
     return [
@@ -369,6 +372,7 @@ def get_seed_secondary_weapons() -> list[SimpleNamespace]:
 # Columns (Weapon): tech_level, extra_atts
 # Columns (TurretWeapon): dps, automatic
 # ---------------------------------------------------------------------------
+
 
 def get_seed_turret_weapons() -> list[SimpleNamespace]:
     """Return 4 turret weapons sourced from import_data/turret_weapon/*.json.
@@ -449,6 +453,7 @@ def get_seed_turret_weapons() -> list[SimpleNamespace]:
 # Columns (Item): id, name, aliases, built_in, emoji, icon, value, wiki, type
 # Columns (Module): tech_level, max_equipped, extra_atts
 # ---------------------------------------------------------------------------
+
 
 def get_seed_modules() -> list[SimpleNamespace]:
     """Return 5 modules sourced from import_data/module/*.json.
@@ -555,6 +560,7 @@ def get_seed_modules() -> list[SimpleNamespace]:
 # Columns: id, name, aliases, built_in, faction, icon, is_player, wiki
 # ---------------------------------------------------------------------------
 
+
 def get_seed_criminals() -> list[SimpleNamespace]:
     """Return 5 criminals sourced from import_data/criminal/*.json."""
     return [
@@ -621,6 +627,7 @@ def get_seed_criminals() -> list[SimpleNamespace]:
 # ---------------------------------------------------------------------------
 # Columns: id, name, aliases, coordinates, faction, neighbours, security, wiki
 # ---------------------------------------------------------------------------
+
 
 def get_seed_systems() -> list[SimpleNamespace]:
     """Return 5 systems sourced from import_data/system/*.json."""

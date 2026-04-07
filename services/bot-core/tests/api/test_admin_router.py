@@ -92,9 +92,7 @@ def _make_transaction_details(player_id=1, item_type="weapon", item_name="Pulse 
 @pytest.fixture
 def mock_inventory_service():
     service = AsyncMock()
-    service.add_item_to_inventory = AsyncMock(
-        return_value=_make_transaction_details()
-    )
+    service.add_item_to_inventory = AsyncMock(return_value=_make_transaction_details())
     return service
 
 
@@ -328,6 +326,7 @@ class TestResetGuild:
         _configure_db_mock(mock_get_db)
         # Ensure ADMIN_USER_IDS is not set
         import os
+
         env_backup = os.environ.pop("ADMIN_USER_IDS", None)
         try:
             response = client.post("/api/v1/admin/guilds/67890/reset?user_id=999")
@@ -337,9 +336,7 @@ class TestResetGuild:
                 os.environ["ADMIN_USER_IDS"] = env_backup
 
     @patch("api.routers.admin.verify_admin_permissions")
-    def test_reset_guild_returns_403_when_verify_admin_permissions_false(
-        self, mock_verify_admin, client
-    ):
+    def test_reset_guild_returns_403_when_verify_admin_permissions_false(self, mock_verify_admin, client):
         """Returns 403 when verify_admin_permissions returns False (mocked at router level)."""
         mock_verify_admin.return_value = False
 
@@ -348,6 +345,122 @@ class TestResetGuild:
         assert response.status_code == 403
         assert "Insufficient permissions" in response.json()["detail"]
         mock_verify_admin.assert_called_once()
+
+    @patch("api.routers.admin.get_db_session")
+    @patch("api.routers.admin.BountyService")
+    def test_reset_guild_clears_active_bounties(
+        self, mock_bounty_svc_cls, mock_get_db, mock_config_service, mock_shop_service
+    ):
+        """Verify BountyService.clear_bounties is called for the guild during reset."""
+        from api.routers.admin import get_config_service, get_shop_service
+        from api.routers.admin import router as admin_router
+
+        _configure_db_mock(mock_get_db)
+
+        mock_bounty_instance = AsyncMock()
+        mock_bounty_instance.clear_bounties = AsyncMock(
+            return_value={"cleared_count": 3, "bounty_ids": [1, 2, 3], "announcements_deleted": 2}
+        )
+        mock_bounty_svc_cls.return_value = mock_bounty_instance
+
+        app = FastAPI()
+        app.include_router(admin_router, prefix="/api/v1")
+        app.dependency_overrides[get_config_service] = lambda: mock_config_service
+        app.dependency_overrides[get_shop_service] = lambda: mock_shop_service
+
+        local_client = TestClient(app)
+        response = local_client.post("/api/v1/admin/guilds/67890/reset?user_id=67890")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["bounties_cleared"] == 3
+        mock_bounty_instance.clear_bounties.assert_awaited_once()
+        call_args = mock_bounty_instance.clear_bounties.call_args
+        # Second positional arg is guild_id
+        assert call_args.args[1] == 67890
+        app.dependency_overrides.clear()
+
+    @patch("api.routers.admin.get_db_session")
+    @patch("api.routers.admin.BountyService")
+    def test_reset_guild_cancels_scheduler_jobs(
+        self, mock_bounty_svc_cls, mock_get_db, mock_config_service, mock_shop_service
+    ):
+        """Verify scheduler jobs for the guild are removed during reset."""
+        from api.routers.admin import get_config_service, get_shop_service
+        from api.routers.admin import router as admin_router
+
+        _configure_db_mock(mock_get_db)
+
+        mock_bounty_instance = AsyncMock()
+        mock_bounty_instance.clear_bounties = AsyncMock(
+            return_value={"cleared_count": 0, "bounty_ids": [], "announcements_deleted": 0}
+        )
+        mock_bounty_svc_cls.return_value = mock_bounty_instance
+
+        # Build a mock scheduler with two jobs — one for guild 67890, one for another guild
+        mock_scheduler = MagicMock()
+        matching_job = MagicMock()
+        matching_job.id = "bounty-spawn-67890"
+        matching_job.args = ["bounty-spawn-67890", {"job_type": "bounty_spawn", "guild_id": 67890}]
+        non_matching_job = MagicMock()
+        non_matching_job.id = "bounty-spawn-11111"
+        non_matching_job.args = ["bounty-spawn-11111", {"job_type": "bounty_spawn", "guild_id": 11111}]
+        mock_scheduler.get_jobs = MagicMock(return_value=[matching_job, non_matching_job])
+        mock_scheduler.remove_job = MagicMock()
+
+        app = FastAPI()
+        app.include_router(admin_router, prefix="/api/v1")
+        app.dependency_overrides[get_config_service] = lambda: mock_config_service
+        app.dependency_overrides[get_shop_service] = lambda: mock_shop_service
+        app.state.scheduler = mock_scheduler
+
+        local_client = TestClient(app)
+        response = local_client.post("/api/v1/admin/guilds/67890/reset?user_id=67890")
+
+        assert response.status_code == 200
+        data = response.json()
+        # Only the matching job (guild 67890) should have been cancelled
+        mock_scheduler.remove_job.assert_called_once_with("bounty-spawn-67890")
+        assert data["jobs_cancelled"] == 1
+        app.dependency_overrides.clear()
+
+    @patch("api.routers.admin.get_db_session")
+    @patch("api.routers.admin.BountyService")
+    def test_reset_guild_cleanup_failure_is_non_fatal(
+        self, mock_bounty_svc_cls, mock_get_db, mock_config_service, mock_shop_service
+    ):
+        """Bounty/scheduler cleanup errors don't break the guild reset — still returns 200."""
+        from api.routers.admin import get_config_service, get_shop_service
+        from api.routers.admin import router as admin_router
+
+        _configure_db_mock(mock_get_db)
+
+        # Make BountyService.clear_bounties raise an exception
+        mock_bounty_instance = AsyncMock()
+        mock_bounty_instance.clear_bounties = AsyncMock(side_effect=RuntimeError("Bounty DB error"))
+        mock_bounty_svc_cls.return_value = mock_bounty_instance
+
+        # Make the scheduler raise on get_jobs
+        mock_scheduler = MagicMock()
+        mock_scheduler.get_jobs = MagicMock(side_effect=RuntimeError("Scheduler unavailable"))
+
+        app = FastAPI()
+        app.include_router(admin_router, prefix="/api/v1")
+        app.dependency_overrides[get_config_service] = lambda: mock_config_service
+        app.dependency_overrides[get_shop_service] = lambda: mock_shop_service
+        app.state.scheduler = mock_scheduler
+
+        local_client = TestClient(app)
+        response = local_client.post("/api/v1/admin/guilds/67890/reset?user_id=67890")
+
+        # Reset must still succeed even though cleanup failed
+        assert response.status_code == 200
+        data = response.json()
+        assert data["guild_id"] == 67890
+        assert "reset successfully" in data["message"]
+        # Core reset operations still ran
+        mock_config_service.reset_to_defaults.assert_awaited_once()
+        app.dependency_overrides.clear()
 
 
 # ===========================================================================
@@ -429,6 +542,7 @@ class TestUninstallBot:
         """When ADMIN_USER_IDS is not set, any user is allowed (dev mode)."""
         _configure_db_mock(mock_get_db)
         import os
+
         env_backup = os.environ.pop("ADMIN_USER_IDS", None)
         try:
             response = client.delete("/api/v1/admin/guilds/67890/uninstall?user_id=999")
@@ -438,9 +552,7 @@ class TestUninstallBot:
                 os.environ["ADMIN_USER_IDS"] = env_backup
 
     @patch("api.routers.admin.verify_admin_permissions")
-    def test_uninstall_bot_returns_403_when_verify_admin_permissions_false(
-        self, mock_verify_admin, client
-    ):
+    def test_uninstall_bot_returns_403_when_verify_admin_permissions_false(self, mock_verify_admin, client):
         """Returns 403 when verify_admin_permissions returns False (mocked at router level)."""
         mock_verify_admin.return_value = False
 
@@ -449,6 +561,74 @@ class TestUninstallBot:
         assert response.status_code == 403
         assert "Insufficient permissions" in response.json()["detail"]
         mock_verify_admin.assert_called_once()
+
+    @patch("api.routers.admin.get_db_session")
+    @patch("api.routers.admin.BountyService")
+    def test_uninstall_bot_cancels_scheduler_jobs_for_guild(
+        self, mock_bounty_svc_cls, mock_get_db, mock_config_service
+    ):
+        """Cancels APScheduler jobs whose payload contains the guild_id."""
+        from api.routers.admin import get_config_service
+        from api.routers.admin import router as admin_router
+        from fastapi import FastAPI
+        from fastapi.testclient import TestClient
+
+        _configure_db_mock(mock_get_db)
+
+        # Mock BountyService to avoid real DB calls in bounty clearing
+        mock_bounty_instance = AsyncMock()
+        mock_bounty_instance.clear_bounties = AsyncMock(
+            return_value={"cleared_count": 0, "bounty_ids": [], "announcements_deleted": 0}
+        )
+        mock_bounty_svc_cls.return_value = mock_bounty_instance
+
+        # Build a mock scheduler with two jobs — one for guild 67890, one for another guild
+        mock_scheduler = MagicMock()
+        matching_job = MagicMock()
+        matching_job.id = "expiry-job-67890"
+        matching_job.args = ["expiry-job-67890", {"job_type": "bounty_expire", "guild_id": 67890}]
+        non_matching_job = MagicMock()
+        non_matching_job.id = "expiry-job-99999"
+        non_matching_job.args = ["expiry-job-99999", {"job_type": "bounty_expire", "guild_id": 99999}]
+        mock_scheduler.get_jobs = MagicMock(return_value=[matching_job, non_matching_job])
+        mock_scheduler.remove_job = MagicMock()
+
+        # Create app with scheduler on state
+        app = FastAPI()
+        app.include_router(admin_router, prefix="/api/v1")
+        app.dependency_overrides[get_config_service] = lambda: mock_config_service
+        app.state.scheduler = mock_scheduler
+
+        local_client = TestClient(app)
+        response = local_client.delete("/api/v1/admin/guilds/67890/uninstall?user_id=67890")
+
+        assert response.status_code == 200
+        data = response.json()
+        # Only the matching job (guild 67890) should have been cancelled
+        mock_scheduler.remove_job.assert_called_once_with("expiry-job-67890")
+        assert data["jobs_cancelled"] == 1
+        app.dependency_overrides.clear()
+
+    @patch("api.routers.admin.get_db_session")
+    @patch("api.routers.admin.BountyService")
+    def test_uninstall_bot_no_scheduler_still_succeeds(
+        self, mock_bounty_svc_cls, mock_get_db, client, mock_config_service
+    ):
+        """When no scheduler is attached to app.state, uninstall still succeeds."""
+        _configure_db_mock(mock_get_db)
+
+        mock_bounty_instance = AsyncMock()
+        mock_bounty_instance.clear_bounties = AsyncMock(
+            return_value={"cleared_count": 0, "bounty_ids": [], "announcements_deleted": 0}
+        )
+        mock_bounty_svc_cls.return_value = mock_bounty_instance
+
+        # client fixture uses a plain FastAPI with no scheduler on state
+        response = client.delete("/api/v1/admin/guilds/67890/uninstall?user_id=67890")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["jobs_cancelled"] == 0
 
 
 # ===========================================================================
@@ -673,9 +853,7 @@ class TestAddInventoryItem:
         """Returns 200 with item details when player exists."""
         _configure_db_mock(mock_get_db)
         mock_inventory_service.add_item_to_inventory = AsyncMock(
-            return_value=_make_transaction_details(
-                player_id=1, item_type="weapon", item_name="Pulse Laser", quantity=2
-            )
+            return_value=_make_transaction_details(player_id=1, item_type="weapon", item_name="Pulse Laser", quantity=2)
         )
         payload = {
             "player_id": 1,
@@ -699,9 +877,7 @@ class TestAddInventoryItem:
         """Defaults quantity to 1 when not provided; quantity_added reflects the added amount."""
         _configure_db_mock(mock_get_db)
         mock_inventory_service.add_item_to_inventory = AsyncMock(
-            return_value=_make_transaction_details(
-                player_id=1, item_type="ship", item_name="Raptor", quantity=1
-            )
+            return_value=_make_transaction_details(player_id=1, item_type="ship", item_name="Raptor", quantity=1)
         )
         payload = {"player_id": 1, "item_type": "ship", "item_name": "Raptor"}
 
@@ -729,9 +905,7 @@ class TestAddInventoryItem:
     def test_add_inventory_item_player_not_found_returns_404(self, mock_get_db, client, mock_inventory_service):
         """Returns 404 when player does not exist (service raises ValueError)."""
         _configure_db_mock(mock_get_db)
-        mock_inventory_service.add_item_to_inventory = AsyncMock(
-            side_effect=ValueError("Player 9999 not found")
-        )
+        mock_inventory_service.add_item_to_inventory = AsyncMock(side_effect=ValueError("Player 9999 not found"))
         payload = {"player_id": 9999, "item_type": "weapon", "item_name": "Pulse Laser"}
 
         response = client.post("/api/v1/admin/players/inventory/add?user_id=67890&guild_id=67890", json=payload)
@@ -743,9 +917,7 @@ class TestAddInventoryItem:
     def test_add_inventory_item_server_error_returns_500(self, mock_get_db, client, mock_inventory_service):
         """Returns 500 when an unexpected exception is raised."""
         _configure_db_mock(mock_get_db)
-        mock_inventory_service.add_item_to_inventory = AsyncMock(
-            side_effect=RuntimeError("DB connection lost")
-        )
+        mock_inventory_service.add_item_to_inventory = AsyncMock(side_effect=RuntimeError("DB connection lost"))
         payload = {"player_id": 1, "item_type": "weapon", "item_name": "Pulse Laser"}
 
         response = client.post("/api/v1/admin/players/inventory/add?user_id=67890&guild_id=67890", json=payload)
@@ -811,10 +983,10 @@ class TestAddInventoryItem:
         mock_inventory_service.add_item_to_inventory.assert_called_once()
         call_args = mock_inventory_service.add_item_to_inventory.call_args
         # call_args[0] is positional args: (db, player_id, item_type, item_name, quantity)
-        assert call_args[0][1] == 42           # player_id
-        assert call_args[0][2] == "module"     # item_type
+        assert call_args[0][1] == 42  # player_id
+        assert call_args[0][2] == "module"  # item_type
         assert call_args[0][3] == "Shield Booster"  # item_name
-        assert call_args[0][4] == 3            # quantity
+        assert call_args[0][4] == 3  # quantity
 
     @patch("api.routers.admin.get_db_session")
     def test_add_inventory_item_persisted_to_db(self, mock_get_db, client, mock_inventory_service):
@@ -824,7 +996,7 @@ class TestAddInventoryItem:
         exactly what the service returned, confirming the item was committed via the service.
         """
         _configure_db_mock(mock_get_db)
-        real_item_name = "Micro Gun MK I"   # actual game asset name from import_data/
+        real_item_name = "Micro Gun MK I"  # actual game asset name from import_data/
         expected_details = _make_transaction_details(
             player_id=7, item_type="weapon", item_name=real_item_name, quantity=1
         )
@@ -1353,3 +1525,68 @@ class TestResetPlayer:
 
         assert response.status_code == 200
         assert "1" in response.json()["message"]
+
+
+# ===========================================================================
+# Gap 2: Cross-Service Side-Effect Tests — Admin
+# ===========================================================================
+
+
+class TestInitializeGuildCreatesShopsForAllTiers:
+    """Gap 2: initialize_guild must create shops for ALL four tiers (Bronze, Silver, Gold, Platinum).
+
+    This verifies the cross-service side-effect: after initializing a guild the shop
+    service is called for every tier, not just a subset.
+    """
+
+    @patch("api.routers.admin.get_db_session")
+    def test_initialize_guild_creates_shops_for_all_tiers(
+        self, mock_get_db, client, mock_config_service, mock_shop_service
+    ):
+        """POST /admin/guilds/initialize → refresh_shop called for Bronze, Silver, Gold, Platinum.
+
+        The endpoint must initialize all 4 tier shops as a side-effect of guild setup.
+        Missing even one tier means players in that tier cannot buy or sell items.
+        """
+        _configure_db_mock(mock_get_db)
+        payload = {"guild_id": 67890, "admin_role_id": 11111, "starting_credits": 500}
+
+        response = client.post("/api/v1/admin/guilds/initialize?user_id=67890", json=payload)
+
+        assert response.status_code == 200
+        data = response.json()
+        # The response must state that exactly 4 shops were created
+        assert data["shops_created"] == 4
+
+        # All 4 tiers must have been passed to refresh_shop
+        assert mock_shop_service.refresh_shop.await_count == 4
+        tiers_called = {call.args[2] for call in mock_shop_service.refresh_shop.call_args_list}
+        assert tiers_called == {"Bronze", "Silver", "Gold", "Platinum"}, (
+            f"Expected all 4 tiers to be initialised, but got: {tiers_called}"
+        )
+
+    @patch("api.routers.admin.get_db_session")
+    def test_initialize_guild_shops_include_bronze_tier(
+        self, mock_get_db, client, mock_config_service, mock_shop_service
+    ):
+        """Bronze tier shop is created during guild initialization."""
+        _configure_db_mock(mock_get_db)
+        payload = {"guild_id": 12345}
+
+        client.post("/api/v1/admin/guilds/initialize?user_id=67890", json=payload)
+
+        tiers_called = [call.args[2] for call in mock_shop_service.refresh_shop.call_args_list]
+        assert "Bronze" in tiers_called
+
+    @patch("api.routers.admin.get_db_session")
+    def test_initialize_guild_shops_include_platinum_tier(
+        self, mock_get_db, client, mock_config_service, mock_shop_service
+    ):
+        """Platinum tier shop is created during guild initialization."""
+        _configure_db_mock(mock_get_db)
+        payload = {"guild_id": 12345}
+
+        client.post("/api/v1/admin/guilds/initialize?user_id=67890", json=payload)
+
+        tiers_called = [call.args[2] for call in mock_shop_service.refresh_shop.call_args_list]
+        assert "Platinum" in tiers_called

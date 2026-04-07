@@ -369,9 +369,7 @@ class TestPurchaseItem:
             await service.purchase_item(mock_db, player_id=99, shop_item_id=10)
 
     @pytest.mark.asyncio
-    async def test_raises_when_shop_item_not_found(
-        self, service, mock_db, mock_player_repo, mock_shop_repo
-    ):
+    async def test_raises_when_shop_item_not_found(self, service, mock_db, mock_player_repo, mock_shop_repo):
         """ValueError raised when shop item does not exist."""
         mock_player_repo.get_by_id.return_value = _make_player()
         mock_shop_repo.get_by_id.return_value = None
@@ -380,9 +378,7 @@ class TestPurchaseItem:
             await service.purchase_item(mock_db, player_id=1, shop_item_id=55)
 
     @pytest.mark.asyncio
-    async def test_raises_when_player_tier_too_low(
-        self, service, mock_db, mock_player_repo, mock_shop_repo
-    ):
+    async def test_raises_when_player_tier_too_low(self, service, mock_db, mock_player_repo, mock_shop_repo):
         """ValueError raised when player cannot access the shop tier."""
         player = _make_player(tier="Bronze")
         shop_item = _make_shop_item(tier="Gold")  # Requires Gold+
@@ -393,9 +389,7 @@ class TestPurchaseItem:
             await service.purchase_item(mock_db, player_id=1, shop_item_id=10)
 
     @pytest.mark.asyncio
-    async def test_raises_when_insufficient_shop_quantity(
-        self, service, mock_db, mock_player_repo, mock_shop_repo
-    ):
+    async def test_raises_when_insufficient_shop_quantity(self, service, mock_db, mock_player_repo, mock_shop_repo):
         """ValueError raised when shop has fewer than requested quantity."""
         player = _make_player(tier="Bronze", credits=5000)
         shop_item = _make_shop_item(tier="Bronze", quantity=1, price=100)
@@ -406,9 +400,7 @@ class TestPurchaseItem:
             await service.purchase_item(mock_db, player_id=1, shop_item_id=10, quantity=5)
 
     @pytest.mark.asyncio
-    async def test_raises_when_insufficient_credits(
-        self, service, mock_db, mock_player_repo, mock_shop_repo
-    ):
+    async def test_raises_when_insufficient_credits(self, service, mock_db, mock_player_repo, mock_shop_repo):
         """ValueError raised when player cannot afford the purchase."""
         player = _make_player(tier="Bronze", credits=50)
         shop_item = _make_shop_item(tier="Bronze", quantity=5, price=200)
@@ -422,7 +414,7 @@ class TestPurchaseItem:
     async def test_removes_shop_item_when_quantity_reaches_zero(
         self, service, mock_db, mock_player_repo, mock_shop_repo
     ):
-        """shop_repo.remove is called when shop quantity hits 0 after purchase."""
+        """db.delete is called when shop quantity hits 0 after purchase."""
         player = _make_player(tier="Bronze", credits=500)
         shop_item = _make_shop_item(tier="Bronze", quantity=1, price=100)
         mock_player_repo.get_by_id.return_value = player
@@ -431,13 +423,11 @@ class TestPurchaseItem:
 
         await service.purchase_item(mock_db, player_id=1, shop_item_id=10, quantity=1)
 
-        mock_shop_repo.remove.assert_awaited_once_with(mock_db, shop_item)
+        mock_db.delete.assert_awaited_once_with(shop_item)
 
     @pytest.mark.asyncio
-    async def test_updates_quantity_when_partial_purchase(
-        self, service, mock_db, mock_player_repo, mock_shop_repo
-    ):
-        """shop_repo.update_quantity is called for partial purchase."""
+    async def test_updates_quantity_when_partial_purchase(self, service, mock_db, mock_player_repo, mock_shop_repo):
+        """Shop item quantity is updated for partial purchase."""
         player = _make_player(tier="Bronze", credits=1000)
         shop_item = _make_shop_item(tier="Bronze", quantity=5, price=100)
         mock_player_repo.get_by_id.return_value = player
@@ -446,7 +436,7 @@ class TestPurchaseItem:
 
         await service.purchase_item(mock_db, player_id=1, shop_item_id=10, quantity=2)
 
-        mock_shop_repo.update_quantity.assert_awaited_once_with(mock_db, 10, 3)
+        assert shop_item.quantity == 3
 
 
 # ===========================================================================
@@ -508,14 +498,10 @@ class TestSellItem:
         mock_player_repo.get_by_id.return_value = _make_player()
 
         with pytest.raises(ValueError, match="Invalid target tier"):
-            await service.sell_item(
-                mock_db, player_id=1, item_type="weapon", item_name="Gun", target_tier="Diamond"
-            )
+            await service.sell_item(mock_db, player_id=1, item_type="weapon", item_name="Gun", target_tier="Diamond")
 
     @pytest.mark.asyncio
-    async def test_raises_when_item_not_in_inventory(
-        self, service, mock_db, mock_player_repo, mock_inventory_repo
-    ):
+    async def test_raises_when_item_not_in_inventory(self, service, mock_db, mock_player_repo, mock_inventory_repo):
         """ValueError raised when player does not own the item."""
         mock_player_repo.get_by_id.return_value = _make_player()
         mock_inventory_repo.get_player_item.return_value = None
@@ -547,9 +533,7 @@ class TestSellItem:
 
         service._get_item_base_price = AsyncMock(return_value=1000)
 
-        result = await service.sell_item(
-            mock_db, player_id=1, item_type="weapon", item_name="Gun", quantity=1
-        )
+        result = await service.sell_item(mock_db, player_id=1, item_type="weapon", item_name="Gun", quantity=1)
 
         assert result["unit_sell_price"] == 1000  # full value, no tax
 
@@ -600,9 +584,7 @@ class TestRefreshShop:
         assert "refresh_time" in result
 
     @pytest.mark.asyncio
-    async def test_creates_default_config_when_none_exists(
-        self, service, mock_db, mock_config_repo, mock_shop_repo
-    ):
+    async def test_creates_default_config_when_none_exists(self, service, mock_db, mock_config_repo, mock_shop_repo):
         """If no config, create_default_config is called."""
         mock_config_repo.get_by_guild_id.return_value = None
         default_config = _make_config()
@@ -615,9 +597,7 @@ class TestRefreshShop:
         mock_config_repo.create_default_config.assert_awaited_once_with(mock_db, 999)
 
     @pytest.mark.asyncio
-    async def test_clears_existing_shop_items_before_refresh(
-        self, service, mock_db, mock_config_repo, mock_shop_repo
-    ):
+    async def test_clears_existing_shop_items_before_refresh(self, service, mock_db, mock_config_repo, mock_shop_repo):
         """clear_shop_tier is always called before generating new items."""
         config = _make_config()
         mock_config_repo.get_by_guild_id.return_value = config
@@ -644,9 +624,7 @@ class TestRefreshShop:
         mock_shop_repo.create_or_update.assert_not_awaited()
 
     @pytest.mark.asyncio
-    async def test_refresh_shop_produces_real_asset_names(
-        self, service, mock_db, mock_config_repo, mock_shop_repo
-    ):
+    async def test_refresh_shop_produces_real_asset_names(self, service, mock_db, mock_config_repo, mock_shop_repo):
         """Shop refresh populates items using real game asset names from the data layer.
 
         The service delegates item selection to _get_random_item_by_tech_level.
@@ -839,9 +817,7 @@ class TestGetRandomItemByTechLevel:
     """Tests for ShopService._get_random_item_by_tech_level (DB-backed)."""
 
     @pytest.mark.asyncio
-    async def test_returns_weapon_name_from_repo(
-        self, service, mock_db, mock_primary_weapon_repo
-    ):
+    async def test_returns_weapon_name_from_repo(self, service, mock_db, mock_primary_weapon_repo):
         """Returns the name of a weapon fetched from the primary_weapon_repo."""
         weapon = _make_db_item("Micro Gun MK I", tech_level=3)
         mock_primary_weapon_repo.list_all = AsyncMock(return_value=[weapon])
@@ -851,9 +827,7 @@ class TestGetRandomItemByTechLevel:
         assert result == "Micro Gun MK I"
 
     @pytest.mark.asyncio
-    async def test_returns_module_name_from_repo(
-        self, service, mock_db, mock_module_repo
-    ):
+    async def test_returns_module_name_from_repo(self, service, mock_db, mock_module_repo):
         """Returns the name of a module fetched from the module_repo."""
         module = _make_db_item("Shield Generator", tech_level=2)
         mock_module_repo.list_all = AsyncMock(return_value=[module])
@@ -863,9 +837,7 @@ class TestGetRandomItemByTechLevel:
         assert result == "Shield Generator"
 
     @pytest.mark.asyncio
-    async def test_returns_turret_name_from_repo(
-        self, service, mock_db, mock_turret_weapon_repo
-    ):
+    async def test_returns_turret_name_from_repo(self, service, mock_db, mock_turret_weapon_repo):
         """Returns the name of a turret fetched from the turret_weapon_repo."""
         turret = _make_db_item("Dual Turret", tech_level=5)
         mock_turret_weapon_repo.list_all = AsyncMock(return_value=[turret])
@@ -875,9 +847,7 @@ class TestGetRandomItemByTechLevel:
         assert result == "Dual Turret"
 
     @pytest.mark.asyncio
-    async def test_returns_ship_name_weighted_by_spawn_rate(
-        self, service, mock_db, mock_ship_repo
-    ):
+    async def test_returns_ship_name_weighted_by_spawn_rate(self, service, mock_db, mock_ship_repo):
         """Returns a ship name; ships are selected by shop_spawn_rate weight."""
         ship = _make_db_item("Viper", shop_spawn_rate=2.5)
         mock_ship_repo.list_all = AsyncMock(return_value=[ship])
@@ -887,9 +857,7 @@ class TestGetRandomItemByTechLevel:
         assert result == "Viper"
 
     @pytest.mark.asyncio
-    async def test_returns_none_when_no_items_at_tech_level(
-        self, service, mock_db, mock_primary_weapon_repo
-    ):
+    async def test_returns_none_when_no_items_at_tech_level(self, service, mock_db, mock_primary_weapon_repo):
         """Returns None when the DB contains no items at the requested tech level."""
         # Return a weapon at tech_level=1, but we request tech_level=9 → no match
         weapon = _make_db_item("Micro Gun MK I", tech_level=1)
@@ -900,9 +868,7 @@ class TestGetRandomItemByTechLevel:
         assert result is None
 
     @pytest.mark.asyncio
-    async def test_returns_none_when_repo_empty(
-        self, service, mock_db, mock_ship_repo
-    ):
+    async def test_returns_none_when_repo_empty(self, service, mock_db, mock_ship_repo):
         """Returns None when the ship repository is empty."""
         mock_ship_repo.list_all = AsyncMock(return_value=[])
 
@@ -974,8 +940,7 @@ class TestAddItemToShop:
         mock_shop_repo.get_shop_item_by_name.return_value = existing
 
         await service._add_item_to_shop(
-            mock_db, guild_id=999, tier="Bronze", item_type="weapon",
-            item_name="Gun", quantity=2, base_price=300
+            mock_db, guild_id=999, tier="Bronze", item_type="weapon", item_name="Gun", quantity=2, base_price=300
         )
 
         mock_shop_repo.update_quantity.assert_awaited_once_with(mock_db, 20, 5)  # 3 + 2
@@ -987,8 +952,7 @@ class TestAddItemToShop:
         mock_shop_repo.get_shop_item_by_name.return_value = None
 
         await service._add_item_to_shop(
-            mock_db, guild_id=999, tier="Silver", item_type="module",
-            item_name="Shield", quantity=1, base_price=500
+            mock_db, guild_id=999, tier="Silver", item_type="module", item_name="Shield", quantity=1, base_price=500
         )
 
         mock_shop_repo.create_or_update.assert_awaited_once()
@@ -1006,8 +970,7 @@ class TestAddItemToShop:
 
         with pytest.raises(RuntimeError, match="lookup failed"):
             await service._add_item_to_shop(
-                mock_db, guild_id=999, tier="Bronze", item_type="weapon",
-                item_name="Gun", quantity=1, base_price=100
+                mock_db, guild_id=999, tier="Bronze", item_type="weapon", item_name="Gun", quantity=1, base_price=100
             )
 
 
@@ -1021,14 +984,11 @@ class TestPurchaseShip:
 
     @pytest.mark.asyncio
     async def test_ship_buy_keep_old_credits_deducted_new_ship_created(
-        self, service, mock_db, mock_player_repo, mock_shop_repo, mock_ship_repo,
-        mock_player_ship_repo
+        self, service, mock_db, mock_player_repo, mock_shop_repo, mock_ship_repo, mock_player_ship_repo
     ):
         """Keep-old path: credits deducted, new ship added, old ship still exists."""
         player = _make_player(guild_id=999, credits=10_000)
-        shop_item = _make_shop_item(
-            item_type="ship", item_name="Hammerhead", price=5000
-        )
+        shop_item = _make_shop_item(item_type="ship", item_name="Hammerhead", price=5000)
         new_ship_static = _make_ship_static(
             name="Hammerhead", value=5000, max_primaries=2, max_modules=2, max_turrets=1
         )
@@ -1039,14 +999,12 @@ class TestPurchaseShip:
         # purchase_ship re-fetches under lock; use same player object so credits is a real int
         mock_player_repo.get_by_id_for_update.return_value = player
         mock_shop_repo.get_by_id.return_value = shop_item
-        mock_ship_repo.get_by_name.side_effect = (
-            lambda db, name: new_ship_static if name == "Hammerhead" else old_ship_static
+        mock_ship_repo.get_by_name.side_effect = lambda db, name: (
+            new_ship_static if name == "Hammerhead" else old_ship_static
         )
         mock_player_ship_repo.get_active_ship.return_value = old_player_ship
 
-        result = await service.purchase_ship(
-            mock_db, player_id=1, shop_item_id=10, sell_old_ship=False
-        )
+        result = await service.purchase_ship(mock_db, player_id=1, shop_item_id=10, sell_old_ship=False)
 
         assert result["item_name"] == "Hammerhead"
         assert result["remaining_credits"] == 5000  # 10000 - 5000
@@ -1057,14 +1015,11 @@ class TestPurchaseShip:
 
     @pytest.mark.asyncio
     async def test_ship_buy_sell_old_credits_adjusted_with_trade_in(
-        self, service, mock_db, mock_player_repo, mock_shop_repo, mock_ship_repo,
-        mock_player_ship_repo
+        self, service, mock_db, mock_player_repo, mock_shop_repo, mock_ship_repo, mock_player_ship_repo
     ):
         """Sell-old path: credits adjusted with trade-in, old ship removed."""
         player = _make_player(guild_id=999, credits=4000)
-        shop_item = _make_shop_item(
-            item_type="ship", item_name="Hammerhead", price=5000
-        )
+        shop_item = _make_shop_item(item_type="ship", item_name="Hammerhead", price=5000)
         new_ship_static = _make_ship_static(
             name="Hammerhead", value=5000, max_primaries=2, max_modules=2, max_turrets=1
         )
@@ -1075,14 +1030,12 @@ class TestPurchaseShip:
         # purchase_ship re-fetches under lock; use same player object so credits is a real int
         mock_player_repo.get_by_id_for_update.return_value = player
         mock_shop_repo.get_by_id.return_value = shop_item
-        mock_ship_repo.get_by_name.side_effect = (
-            lambda db, name: new_ship_static if name == "Hammerhead" else old_ship_static
+        mock_ship_repo.get_by_name.side_effect = lambda db, name: (
+            new_ship_static if name == "Hammerhead" else old_ship_static
         )
         mock_player_ship_repo.get_active_ship.return_value = old_player_ship
 
-        result = await service.purchase_ship(
-            mock_db, player_id=1, shop_item_id=10, sell_old_ship=True
-        )
+        result = await service.purchase_ship(mock_db, player_id=1, shop_item_id=10, sell_old_ship=True)
 
         # 4000 + 2000 (trade-in) - 5000 (new ship) = 1000
         assert result["remaining_credits"] == 1000
@@ -1093,15 +1046,12 @@ class TestPurchaseShip:
 
     @pytest.mark.asyncio
     async def test_ship_buy_item_transfer_within_slot_limits(
-        self, service, mock_db, mock_player_repo, mock_shop_repo, mock_ship_repo,
-        mock_player_ship_repo
+        self, service, mock_db, mock_player_repo, mock_shop_repo, mock_ship_repo, mock_player_ship_repo
     ):
         """Items from old ship transferred to new ship within slot limits."""
         player = _make_player(credits=10_000)
         shop_item = _make_shop_item(item_type="ship", item_name="Raider", price=3000)
-        new_ship_static = _make_ship_static(
-            name="Raider", max_primaries=2, max_modules=1, max_turrets=0
-        )
+        new_ship_static = _make_ship_static(name="Raider", max_primaries=2, max_modules=1, max_turrets=0)
         # Old ship has 2 weapons, 1 module, 0 turrets (all fit in new ship)
         old_player_ship = _make_player_ship(
             ship_name="Crow",
@@ -1114,14 +1064,12 @@ class TestPurchaseShip:
         mock_player_repo.get_by_id.return_value = player
         mock_player_repo.get_by_id_for_update.return_value = player
         mock_shop_repo.get_by_id.return_value = shop_item
-        mock_ship_repo.get_by_name.side_effect = (
-            lambda db, name: new_ship_static if name == "Raider" else old_ship_static
+        mock_ship_repo.get_by_name.side_effect = lambda db, name: (
+            new_ship_static if name == "Raider" else old_ship_static
         )
         mock_player_ship_repo.get_active_ship.return_value = old_player_ship
 
-        result = await service.purchase_ship(
-            mock_db, player_id=1, shop_item_id=10, sell_old_ship=False
-        )
+        result = await service.purchase_ship(mock_db, player_id=1, shop_item_id=10, sell_old_ship=False)
 
         # All 3 items (2 weapons + 1 module) transferred, none unequipped
         assert result["items_transferred"] == 3
@@ -1129,16 +1077,20 @@ class TestPurchaseShip:
 
     @pytest.mark.asyncio
     async def test_ship_buy_overflow_items_unequipped_to_inventory(
-        self, service, mock_db, mock_player_repo, mock_shop_repo, mock_ship_repo,
-        mock_player_ship_repo, mock_inventory_repo
+        self,
+        service,
+        mock_db,
+        mock_player_repo,
+        mock_shop_repo,
+        mock_ship_repo,
+        mock_player_ship_repo,
+        mock_inventory_repo,
     ):
         """Items that don't fit on new ship are unequipped to inventory."""
         player = _make_player(credits=10_000)
         shop_item = _make_shop_item(item_type="ship", item_name="Sparrow", price=2000)
         # New ship has only 1 weapon slot, 0 modules, 0 turrets
-        new_ship_static = _make_ship_static(
-            name="Sparrow", max_primaries=1, max_modules=0, max_turrets=0
-        )
+        new_ship_static = _make_ship_static(name="Sparrow", max_primaries=1, max_modules=0, max_turrets=0)
         # Old ship has 3 weapons (2 overflow), 2 modules (2 overflow)
         old_player_ship = _make_player_ship(
             ship_name="Hammerhead",
@@ -1151,14 +1103,12 @@ class TestPurchaseShip:
         mock_player_repo.get_by_id.return_value = player
         mock_player_repo.get_by_id_for_update.return_value = player
         mock_shop_repo.get_by_id.return_value = shop_item
-        mock_ship_repo.get_by_name.side_effect = (
-            lambda db, name: new_ship_static if name == "Sparrow" else old_ship_static
+        mock_ship_repo.get_by_name.side_effect = lambda db, name: (
+            new_ship_static if name == "Sparrow" else old_ship_static
         )
         mock_player_ship_repo.get_active_ship.return_value = old_player_ship
 
-        result = await service.purchase_ship(
-            mock_db, player_id=1, shop_item_id=10, sell_old_ship=False
-        )
+        result = await service.purchase_ship(mock_db, player_id=1, shop_item_id=10, sell_old_ship=False)
 
         # 1 weapon fits, 2 weapons + 2 modules overflow = 4 items unequipped
         assert result["items_transferred"] == 1
@@ -1168,8 +1118,7 @@ class TestPurchaseShip:
 
     @pytest.mark.asyncio
     async def test_ship_buy_insufficient_credits_no_trade_in_raises(
-        self, service, mock_db, mock_player_repo, mock_shop_repo, mock_ship_repo,
-        mock_player_ship_repo
+        self, service, mock_db, mock_player_repo, mock_shop_repo, mock_ship_repo, mock_player_ship_repo
     ):
         """ValueError raised when player cannot afford new ship (keep-old path)."""
         player = _make_player(credits=1000)
@@ -1182,20 +1131,17 @@ class TestPurchaseShip:
         # Credit check is done under lock; provide player so the ValueError is raised correctly
         mock_player_repo.get_by_id_for_update.return_value = player
         mock_shop_repo.get_by_id.return_value = shop_item
-        mock_ship_repo.get_by_name.side_effect = (
-            lambda db, name: new_ship_static if name == "Hammerhead" else old_ship_static
+        mock_ship_repo.get_by_name.side_effect = lambda db, name: (
+            new_ship_static if name == "Hammerhead" else old_ship_static
         )
         mock_player_ship_repo.get_active_ship.return_value = old_player_ship
 
         with pytest.raises(ValueError, match="Insufficient credits"):
-            await service.purchase_ship(
-                mock_db, player_id=1, shop_item_id=10, sell_old_ship=False
-            )
+            await service.purchase_ship(mock_db, player_id=1, shop_item_id=10, sell_old_ship=False)
 
     @pytest.mark.asyncio
     async def test_ship_buy_insufficient_credits_with_trade_in_raises(
-        self, service, mock_db, mock_player_repo, mock_shop_repo, mock_ship_repo,
-        mock_player_ship_repo
+        self, service, mock_db, mock_player_repo, mock_shop_repo, mock_ship_repo, mock_player_ship_repo
     ):
         """ValueError raised when player + trade-in cannot afford new ship."""
         player = _make_player(credits=100)
@@ -1208,20 +1154,16 @@ class TestPurchaseShip:
         # Credit check is done under lock; provide player so the ValueError is raised correctly
         mock_player_repo.get_by_id_for_update.return_value = player
         mock_shop_repo.get_by_id.return_value = shop_item
-        mock_ship_repo.get_by_name.side_effect = (
-            lambda db, name: new_ship_static if name == "Hammerhead" else old_ship_static
+        mock_ship_repo.get_by_name.side_effect = lambda db, name: (
+            new_ship_static if name == "Hammerhead" else old_ship_static
         )
         mock_player_ship_repo.get_active_ship.return_value = old_player_ship
 
         with pytest.raises(ValueError, match="Insufficient credits"):
-            await service.purchase_ship(
-                mock_db, player_id=1, shop_item_id=10, sell_old_ship=True
-            )
+            await service.purchase_ship(mock_db, player_id=1, shop_item_id=10, sell_old_ship=True)
 
     @pytest.mark.asyncio
-    async def test_buy_non_ship_via_purchase_ship_raises(
-        self, service, mock_db, mock_player_repo, mock_shop_repo
-    ):
+    async def test_buy_non_ship_via_purchase_ship_raises(self, service, mock_db, mock_player_repo, mock_shop_repo):
         """ValueError raised when shop item is not a ship."""
         player = _make_player(credits=10_000)
         shop_item = _make_shop_item(item_type="weapon", item_name="Pulse Laser", price=200)
@@ -1234,15 +1176,12 @@ class TestPurchaseShip:
 
     @pytest.mark.asyncio
     async def test_ship_buy_first_ship_no_active_ship(
-        self, service, mock_db, mock_player_repo, mock_shop_repo, mock_ship_repo,
-        mock_player_ship_repo
+        self, service, mock_db, mock_player_repo, mock_shop_repo, mock_ship_repo, mock_player_ship_repo
     ):
         """First ship purchase succeeds when player has no active ship."""
         player = _make_player(credits=10_000)
         shop_item = _make_shop_item(item_type="ship", item_name="Crow", price=3000)
-        new_ship_static = _make_ship_static(
-            name="Crow", value=3000, max_primaries=2, max_modules=1, max_turrets=0
-        )
+        new_ship_static = _make_ship_static(name="Crow", value=3000, max_primaries=2, max_modules=1, max_turrets=0)
 
         mock_player_repo.get_by_id.return_value = player
         mock_player_repo.get_by_id_for_update.return_value = player
@@ -1251,9 +1190,7 @@ class TestPurchaseShip:
         # No active ship
         mock_player_ship_repo.get_active_ship.return_value = None
 
-        result = await service.purchase_ship(
-            mock_db, player_id=1, shop_item_id=10, sell_old_ship=False
-        )
+        result = await service.purchase_ship(mock_db, player_id=1, shop_item_id=10, sell_old_ship=False)
 
         assert result["item_name"] == "Crow"
         assert result["remaining_credits"] == 7000  # 10000 - 3000
@@ -1262,14 +1199,11 @@ class TestPurchaseShip:
 
     @pytest.mark.asyncio
     async def test_ship_buy_shop_stock_decremented(
-        self, service, mock_db, mock_player_repo, mock_shop_repo, mock_ship_repo,
-        mock_player_ship_repo
+        self, service, mock_db, mock_player_repo, mock_shop_repo, mock_ship_repo, mock_player_ship_repo
     ):
         """Shop stock is decremented after ship purchase."""
         player = _make_player(credits=10_000)
-        shop_item = _make_shop_item(
-            item_type="ship", item_name="Hammerhead", price=5000, quantity=3
-        )
+        shop_item = _make_shop_item(item_type="ship", item_name="Hammerhead", price=5000, quantity=3)
         new_ship_static = _make_ship_static(name="Hammerhead", value=5000)
 
         mock_player_repo.get_by_id.return_value = player
@@ -1285,14 +1219,11 @@ class TestPurchaseShip:
 
     @pytest.mark.asyncio
     async def test_ship_buy_shop_item_removed_when_last_stock(
-        self, service, mock_db, mock_player_repo, mock_shop_repo, mock_ship_repo,
-        mock_player_ship_repo
+        self, service, mock_db, mock_player_repo, mock_shop_repo, mock_ship_repo, mock_player_ship_repo
     ):
         """Shop item removed when last stock is purchased."""
         player = _make_player(credits=10_000)
-        shop_item = _make_shop_item(
-            item_type="ship", item_name="Hammerhead", price=5000, quantity=1
-        )
+        shop_item = _make_shop_item(item_type="ship", item_name="Hammerhead", price=5000, quantity=1)
         new_ship_static = _make_ship_static(name="Hammerhead", value=5000)
 
         mock_player_repo.get_by_id.return_value = player
@@ -1340,9 +1271,7 @@ class TestSellShip:
         mock_player_repo.update_credits.assert_awaited_once_with(mock_db, 1, 4000, commit=False)
 
     @pytest.mark.asyncio
-    async def test_sell_active_ship_raises_value_error(
-        self, service, mock_db, mock_player_repo, mock_player_ship_repo
-    ):
+    async def test_sell_active_ship_raises_value_error(self, service, mock_db, mock_player_repo, mock_player_ship_repo):
         """Attempting to sell the active ship raises ValueError."""
         player = _make_player(guild_id=999, credits=1000)
         active_ship = _make_player_ship(ship_id=100, player_id=1, is_active=True)
@@ -1355,13 +1284,22 @@ class TestSellShip:
 
     @pytest.mark.asyncio
     async def test_sell_ship_clear_equipment_unequips_items_to_inventory(
-        self, service, mock_db, mock_player_repo, mock_player_ship_repo, mock_ship_repo,
-        mock_shop_repo, mock_inventory_repo
+        self,
+        service,
+        mock_db,
+        mock_player_repo,
+        mock_player_ship_repo,
+        mock_ship_repo,
+        mock_shop_repo,
+        mock_inventory_repo,
     ):
         """With clear_equipment=True, all equipped items are moved to inventory before selling."""
         player = _make_player(guild_id=999, credits=500)
         player_ship = _make_player_ship(
-            ship_id=201, player_id=1, ship_name="Hammerhead", is_active=False,
+            ship_id=201,
+            player_id=1,
+            ship_name="Hammerhead",
+            is_active=False,
             weapons=["Gun A", "Gun B"],
             modules=["Shield"],
             turrets=[],
@@ -1374,9 +1312,7 @@ class TestSellShip:
         mock_ship_repo.get_by_name.return_value = ship_static
         mock_shop_repo.get_shop_item_by_name.return_value = None
 
-        result = await service.sell_ship(
-            mock_db, player_id=1, ship_id=201, clear_equipment=True
-        )
+        result = await service.sell_ship(mock_db, player_id=1, ship_id=201, clear_equipment=True)
 
         # 2 weapons + 1 module = 3 items unequipped
         assert result["items_unequipped_to_inventory"] == 3
@@ -1389,7 +1325,9 @@ class TestSellShip:
         """ValueError raised when ship does not belong to the player."""
         player = _make_player(player_id=1, guild_id=999, credits=1000)
         other_players_ship = _make_player_ship(
-            ship_id=300, player_id=99, is_active=False  # owned by player 99
+            ship_id=300,
+            player_id=99,
+            is_active=False,  # owned by player 99
         )
 
         mock_player_repo.get_by_id.return_value = player
@@ -1399,9 +1337,7 @@ class TestSellShip:
             await service.sell_ship(mock_db, player_id=1, ship_id=300)
 
     @pytest.mark.asyncio
-    async def test_sell_ship_not_found_raises(
-        self, service, mock_db, mock_player_repo, mock_player_ship_repo
-    ):
+    async def test_sell_ship_not_found_raises(self, service, mock_db, mock_player_repo, mock_player_ship_repo):
         """ValueError raised when ship ID does not exist."""
         player = _make_player(guild_id=999, credits=1000)
 
@@ -1418,8 +1354,7 @@ class TestSellShip:
         """Selling a ship with no equipment succeeds without inventory changes."""
         player = _make_player(guild_id=999, credits=200)
         player_ship = _make_player_ship(
-            ship_id=202, player_id=1, ship_name="Sparrow", is_active=False,
-            weapons=[], modules=[], turrets=[]
+            ship_id=202, player_id=1, ship_name="Sparrow", is_active=False, weapons=[], modules=[], turrets=[]
         )
         ship_static = _make_ship_static(name="Sparrow", value=1500)
 
@@ -1472,18 +1407,14 @@ class TestSellShip:
         mock_ship_repo.get_by_name.return_value = ship_static
         mock_shop_repo.get_shop_item_by_name.return_value = None
 
-        result = await service.sell_ship(
-            mock_db, player_id=1, ship_id=204, target_tier="Silver"
-        )
+        result = await service.sell_ship(mock_db, player_id=1, ship_id=204, target_tier="Silver")
 
         assert result["target_shop_tier"] == "Silver"
         # Verify the shop repo was asked to create the item
         mock_shop_repo.create_or_update.assert_awaited_once()
 
     @pytest.mark.asyncio
-    async def test_sell_ship_invalid_target_tier_raises(
-        self, service, mock_db, mock_player_repo
-    ):
+    async def test_sell_ship_invalid_target_tier_raises(self, service, mock_db, mock_player_repo):
         """ValueError raised for an invalid target tier."""
         mock_player_repo.get_by_id.return_value = _make_player()
 

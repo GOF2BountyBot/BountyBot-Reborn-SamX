@@ -32,6 +32,10 @@ class SystemRepository(GenericRepository[System]):
         )
 
         try:
+            # validate required keys upfront
+            if "name" not in raw:
+                raise ValueError("Missing required key 'name' in data for system")
+
             # look up existing
             flogger.trace(f"Querying for existing system by name: {system_name}")
             result = await db.execute(select(self._model).filter_by(name=raw["name"]))

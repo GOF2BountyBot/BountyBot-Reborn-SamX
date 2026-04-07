@@ -59,6 +59,26 @@ class BountyCheckRequest(BaseModel):
 
 
 class BountyCheckResponse(BaseModel):
-    result: str  # NOT_FOUND, ALREADY_CHECKED, INCORRECT, CORRECT
+    result: str  # NOT_FOUND, ALREADY_CHECKED, INCORRECT, CORRECT, ON_COOLDOWN
     bounty_id: int | None = None
     message: str = ""
+    new_tier: str | None = None
+
+
+class ClearBountiesResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    guild_id: int
+    tier: str | None = None
+    cleared_count: int
+    bounty_ids: list[int]
+    announcements_deleted: int
+
+
+class AdminSpawnResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    guild_id: int
+    spawned: list[BountyResponse]
+    skipped_tiers: list[str]
+    errors: list[str]

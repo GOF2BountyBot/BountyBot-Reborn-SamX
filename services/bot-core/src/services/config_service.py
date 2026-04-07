@@ -283,11 +283,130 @@ class ConfigService:
 
         return validated_config
 
+    async def get_bounty_config(self, db: AsyncSession, guild_id: int) -> dict[str, Any]:
+        """Get bounty configuration for a guild, with defaults applied."""
+        try:
+            config = await self.config_repo.get_by_guild_id(db, guild_id)
+            if not config:
+                config = await self.config_repo.create_default_config(db, guild_id)
+
+            return {
+                "guild_id": guild_id,
+                "max_bounties_per_tier": config.bounty_max_per_tier or {"bronze": 3, "silver": 3, "gold": 3},
+                "bounty_expiry_minutes": config.bounty_expiry_minutes
+                if config.bounty_expiry_minutes is not None
+                else 480,
+                "bounty_spawn_interval_minutes": (
+                    config.bounty_spawn_interval_minutes if config.bounty_spawn_interval_minutes is not None else 60
+                ),
+                "next_spawn_check_at": (config.next_spawn_check_at.isoformat() if config.next_spawn_check_at else None),
+            }
+
+        except Exception as e:
+            flogger.error(f"Error getting bounty config for guild {guild_id}: {e}")
+            raise
+
+    async def update_bounty_config(self, db: AsyncSession, guild_id: int, updates: dict[str, Any]) -> dict[str, Any]:
+        """Validate and persist bounty configuration for a guild.
+
+        Args:
+            db: Async database session.
+            guild_id: Discord guild ID.
+            updates: Dict with optional keys: max_bounties_per_tier, bounty_expiry_minutes,
+                     bounty_spawn_interval_minutes.
+
+        Returns:
+            Updated bounty config dict.
+        """
+        try:
+            config = await self.config_repo.get_by_guild_id(db, guild_id)
+            if not config:
+                config = await self.config_repo.create_default_config(db, guild_id)
+
+            if "max_bounties_per_tier" in updates and updates["max_bounties_per_tier"] is not None:
+                tier_map = updates["max_bounties_per_tier"]
+                valid_tiers = {"bronze", "silver", "gold"}
+                if not set(tier_map.keys()).issubset(valid_tiers):
+                    invalid = set(tier_map.keys()) - valid_tiers
+                    raise ValueError(f"Invalid tier keys: {invalid}. Must be bronze, silver, or gold.")
+                for tier, val in tier_map.items():
+                    if not isinstance(val, int) or val < 0 or val > 20:
+                        raise ValueError(f"bounty_max_per_tier[{tier!r}] must be an integer between 0 and 20")
+                config.bounty_max_per_tier = tier_map
+
+            if "bounty_expiry_minutes" in updates and updates["bounty_expiry_minutes"] is not None:
+                val = updates["bounty_expiry_minutes"]
+                if val < 10 or val > 10080:
+                    raise ValueError("bounty_expiry_minutes must be between 10 and 10080")
+                config.bounty_expiry_minutes = val
+
+            if "bounty_spawn_interval_minutes" in updates and updates["bounty_spawn_interval_minutes"] is not None:
+                val = updates["bounty_spawn_interval_minutes"]
+                if val < 5 or val > 1440:
+                    raise ValueError("bounty_spawn_interval_minutes must be between 5 and 1440")
+                config.bounty_spawn_interval_minutes = val
+
+            try:
+                await db.commit()
+                await db.refresh(config)
+            except Exception:
+                await db.rollback()
+                raise
+
+            flogger.info(f"Updated bounty config for guild {guild_id}: {updates}")
+            return await self.get_bounty_config(db, guild_id)
+
+        except Exception as e:
+            flogger.error(f"Error updating bounty config for guild {guild_id}: {e}")
+            raise
+
     async def _validate_shop_config(self, config_updates: dict[str, Any]) -> dict[str, Any]:
-        """Validate shop configuration updates."""
+        """Validate shop configuration updates.
+
+        Accepts either the flat ORM field names (e.g. ``ship_count_range``) or
+        the nested schema fields ``item_count_ranges`` / ``quantity_ranges`` that
+        the ``UpdateShopConfigRequest`` Pydantic schema exposes.  Nested forms are
+        unpacked into flat fields before validation so that the repository layer
+        receives the format it expects.
+        """
         validated_updates = config_updates.copy()
 
+        # ------------------------------------------------------------------
+        # Unpack nested schema fields into the flat ORM field names that the
+        # repository understands.
+        # ------------------------------------------------------------------
+
+        # item_count_ranges: {"ships": {"min": 3, "max": 5}, ...}
+        # → ship_count_range, weapon_count_range, module_count_range, turret_count_range
+        _item_key_map = {
+            "ships": "ship_count_range",
+            "weapons": "weapon_count_range",
+            "modules": "module_count_range",
+            "turrets": "turret_count_range",
+        }
+        if "item_count_ranges" in validated_updates:
+            item_ranges = validated_updates.pop("item_count_ranges") or {}
+            for schema_key, orm_field in _item_key_map.items():
+                if schema_key in item_ranges:
+                    validated_updates[orm_field] = item_ranges[schema_key]
+
+        # quantity_ranges: {"ships": {"min": 1, "max": 1}, ...}
+        # → ship_quantity_range, weapon_quantity_range, module_quantity_range, turret_quantity_range
+        _qty_key_map = {
+            "ships": "ship_quantity_range",
+            "weapons": "weapon_quantity_range",
+            "modules": "module_quantity_range",
+            "turrets": "turret_quantity_range",
+        }
+        if "quantity_ranges" in validated_updates:
+            qty_ranges = validated_updates.pop("quantity_ranges") or {}
+            for schema_key, orm_field in _qty_key_map.items():
+                if schema_key in qty_ranges:
+                    validated_updates[orm_field] = qty_ranges[schema_key]
+
+        # ------------------------------------------------------------------
         # Validate tech level probabilities
+        # ------------------------------------------------------------------
         if "tech_level_probabilities" in validated_updates:
             probs = validated_updates["tech_level_probabilities"]
             if not isinstance(probs, dict):
@@ -302,7 +421,9 @@ class ConfigService:
             if abs(total_prob - 1.0) > 0.01:
                 raise ValueError("Probabilities must sum to 1.0")
 
-        # Validate count ranges
+        # ------------------------------------------------------------------
+        # Validate count / quantity range fields (flat ORM names)
+        # ------------------------------------------------------------------
         range_fields = [
             "ship_count_range",
             "weapon_count_range",

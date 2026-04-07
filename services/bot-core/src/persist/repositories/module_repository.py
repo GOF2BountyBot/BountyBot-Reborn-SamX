@@ -47,6 +47,10 @@ class ModuleRepository(GenericRepository[Module]):
         )
 
         try:
+            # validate required keys upfront
+            if "name" not in raw:
+                raise ValueError("Missing required key 'name' in data for module")
+
             item_fields = {
                 "name": raw["name"],
                 "aliases": raw.get("aliases", []),

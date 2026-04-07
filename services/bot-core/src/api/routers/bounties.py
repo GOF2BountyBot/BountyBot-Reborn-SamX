@@ -13,17 +13,23 @@ Handles bounty-related operations including:
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import Response
 from persist.database.manager import get_db_session
+from persist.repositories.bounty_repository import BountyRepository
+from persist.repositories.config_repository import ConfigRepository
+from services.audit_service import AuditService
 from services.bounty_service import BountyService
 from services.map_renderer import MapRenderer
 from services.system_graph_service import SystemGraphService
+from services.temperature_service import TemperatureService
 from shared import bblogger
 
 from api.schemas.bounty_schema import (
+    AdminSpawnResponse,
     BountyCheckRequest,
     BountyCheckResponse,
     BountyCreateRequest,
     BountyPublicResponse,
     BountyResponse,
+    ClearBountiesResponse,
 )
 
 flogger = bblogger.get_logger("bounty-router")
@@ -62,6 +68,8 @@ async def check_bounty(
     service: BountyService = Depends(get_bounty_service),
 ):
     """Check a system against active bounties for a given guild."""
+    from services.bounty_service import CheckResult
+
     flogger.info(
         f"Bounty check request: player_id={request.player_id} system={request.system_name!r} guild_id={guild_id}"
     )
@@ -77,13 +85,21 @@ async def check_bounty(
             result=result.result.value,
             bounty_id=result.bounty_id,
             message=result.message,
+            new_tier=result.new_tier,
         )
+    except HTTPException:
+        raise
     except Exception as e:
         flogger.error(
             f"Bounty check failed: player_id={request.player_id}"
             f" system={request.system_name!r} guild_id={guild_id}: {e}"
         )
-        raise
+        # Return a graceful not-found response rather than propagating as a 500
+        return BountyCheckResponse(
+            result=CheckResult.NOT_FOUND.value,
+            bounty_id=None,
+            message="No active bounties found or an error occurred processing the check.",
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -227,3 +243,172 @@ async def get_bounty_map(
                 raise
 
         return Response(content=_map_cache[cache_key], media_type="image/png")
+
+
+# ---------------------------------------------------------------------------
+# DELETE /bounties/guild/{guild_id}/clear  (admin)
+# ---------------------------------------------------------------------------
+
+
+@router.delete("/guild/{guild_id}/clear", response_model=ClearBountiesResponse)
+async def clear_guild_bounties(
+    guild_id: int,
+    tier: str | None = Query(None, description="Division tier to clear: bronze, silver, or gold"),
+    user_id: int = Query(..., description="Admin Discord user ID for audit log"),
+    service: BountyService = Depends(get_bounty_service),
+):
+    """Clear all active bounties for a guild (admin endpoint).
+
+    Optionally filter by tier. Records an admin audit log entry.
+    """
+    flogger.info(f"Admin clear bounties: guild_id={guild_id} tier={tier} user_id={user_id}")
+    try:
+        async with get_db_session() as db:
+            result = await service.clear_bounties(db, guild_id, tier)
+
+            # Audit log
+            await AuditService.log_action(
+                db,
+                user_id=user_id,
+                action="clear_bounties",
+                guild_id=guild_id,
+                resource_type="bounty",
+                resource_id=str(guild_id),
+                details={"tier": tier, "cleared_count": result["cleared_count"], "bounty_ids": result["bounty_ids"]},
+            )
+
+            return ClearBountiesResponse(
+                guild_id=result["guild_id"],
+                tier=result["tier"],
+                cleared_count=result["cleared_count"],
+                bounty_ids=result["bounty_ids"],
+                announcements_deleted=result["announcements_deleted"],
+            )
+    except HTTPException:
+        raise
+    except Exception as e:
+        flogger.error(f"Error clearing bounties for guild {guild_id}: {e}")
+        raise HTTPException(status_code=500, detail="Failed to clear bounties") from e
+
+
+# ---------------------------------------------------------------------------
+# POST /bounties/guild/{guild_id}/admin-spawn  (admin)
+# ---------------------------------------------------------------------------
+
+
+@router.post("/guild/{guild_id}/admin-spawn", response_model=AdminSpawnResponse)
+async def admin_spawn_bounties(
+    guild_id: int,
+    tier: str | None = Query(None, description="Division tier to spawn: bronze, silver, or gold"),
+    user_id: int = Query(..., description="Admin Discord user ID for audit log"),
+    service: BountyService = Depends(get_bounty_service),
+):
+    """Admin-triggered bounty spawn, respecting per-guild config and temperature.
+
+    For each tier (or the specified tier):
+    1. Load guild config for max per tier, expiry, and temperatures.
+    2. Count active bounties.
+    3. Compute effective_max = min(guild_max, TemperatureService.get_max_bounties(temp)).
+    4. If at capacity: add to skipped_tiers.
+    5. Else: spawn a bounty with the configured expiry.
+    6. Schedule expiry job and post Discord announcement (best-effort, non-fatal).
+    """
+    from utils.executors.bounty_spawn_executor import _announce_bounty, _schedule_expiry_job
+
+    flogger.info(f"Admin spawn bounties: guild_id={guild_id} tier={tier} user_id={user_id}")
+
+    tiers_to_process = [tier] if tier else ["bronze", "silver", "gold"]
+    spawned_bounties: list[BountyResponse] = []
+    skipped_tiers: list[str] = []
+    errors: list[str] = []
+
+    try:
+        async with get_db_session() as db:
+            # Load guild config
+            config_repo = ConfigRepository()
+            config = await config_repo.get_by_guild_id(db, guild_id)
+
+            bounty_max_per_tier: dict[str, int] = (
+                config.bounty_max_per_tier
+                if config and config.bounty_max_per_tier
+                else {"bronze": 3, "silver": 3, "gold": 3}
+            )
+            bounty_expiry_minutes: int = (
+                config.bounty_expiry_minutes if config and config.bounty_expiry_minutes is not None else 480
+            )
+            division_temperatures: dict[str, float] = (
+                config.division_temperatures if config and config.division_temperatures else {}
+            )
+
+            bounty_repo = BountyRepository()
+
+            for t in tiers_to_process:
+                t_lower = t.lower()
+                try:
+                    guild_max = bounty_max_per_tier.get(t_lower, 3)
+                    temp = division_temperatures.get(t_lower, 1.0)
+                    effective_max = min(guild_max, TemperatureService.get_max_bounties(temp))
+
+                    active_count = await bounty_repo.count_active_by_guild_and_division(db, guild_id, t_lower)
+
+                    if active_count >= effective_max:
+                        flogger.debug(
+                            f"Admin spawn: guild={guild_id} tier={t_lower}: "
+                            f"{active_count}/{effective_max} at capacity, skipping"
+                        )
+                        skipped_tiers.append(t_lower)
+                        continue
+
+                    bounty = await service.spawn_bounty(db, guild_id, t_lower, expiry_minutes=bounty_expiry_minutes)
+                    if bounty is None:
+                        errors.append(f"Failed to spawn bounty for tier={t_lower}: no criminals or route available")
+                    else:
+                        spawned_bounties.append(BountyResponse.model_validate(bounty))
+                        flogger.info(f"Admin spawned bounty {bounty.id} for guild={guild_id} tier={t_lower}")
+
+                        # Schedule expiry job (best-effort — non-fatal if it fails)
+                        try:
+                            await _schedule_expiry_job(f"admin-spawn-{guild_id}", bounty)
+                        except Exception as sched_exc:
+                            flogger.warning(
+                                f"Admin spawn: non-fatal failure scheduling expiry for bounty {bounty.id}: {sched_exc}"
+                            )
+
+                        # Post Discord announcement (best-effort — non-fatal if it fails)
+                        try:
+                            await _announce_bounty(f"admin-spawn-{guild_id}", bounty, config, db)
+                        except Exception as ann_exc:
+                            flogger.warning(f"Admin spawn: non-fatal failure announcing bounty {bounty.id}: {ann_exc}")
+
+                except Exception as e:
+                    flogger.error(f"Admin spawn error for guild={guild_id} tier={t_lower}: {e}")
+                    errors.append(f"Error spawning tier={t_lower}: {e}")
+
+            # Audit log
+            await AuditService.log_action(
+                db,
+                user_id=user_id,
+                action="admin_spawn_bounties",
+                guild_id=guild_id,
+                resource_type="bounty",
+                resource_id=str(guild_id),
+                details={
+                    "tier": tier,
+                    "spawned_count": len(spawned_bounties),
+                    "skipped_tiers": skipped_tiers,
+                    "errors": errors,
+                },
+            )
+
+        return AdminSpawnResponse(
+            guild_id=guild_id,
+            spawned=spawned_bounties,
+            skipped_tiers=skipped_tiers,
+            errors=errors,
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        flogger.error(f"Error in admin-spawn for guild {guild_id}: {e}")
+        raise HTTPException(status_code=500, detail="Failed to admin-spawn bounties") from e

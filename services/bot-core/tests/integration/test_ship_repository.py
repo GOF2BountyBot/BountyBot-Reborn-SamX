@@ -113,10 +113,13 @@ async def test_remove_deletes_ship(db_session: AsyncSession, repo: PlayerShipRep
 async def test_create_or_update_creates_new(db_session: AsyncSession, repo: PlayerShipRepository):
     player = await _setup_player(db_session)
 
-    ship = await repo.create_or_update(db_session, {
-        "player_id": player.id,
-        "ship_name": "Cobra",
-    })
+    ship = await repo.create_or_update(
+        db_session,
+        {
+            "player_id": player.id,
+            "ship_name": "Cobra",
+        },
+    )
 
     assert ship.ship_name == "Cobra"
     assert ship.id is not None
@@ -126,12 +129,15 @@ async def test_create_or_update_updates_existing(db_session: AsyncSession, repo:
     player = await _setup_player(db_session)
     original = await _add_ship(db_session, repo, player.id, "Cobra")
 
-    ship = await repo.create_or_update(db_session, {
-        "id": original.id,
-        "player_id": player.id,
-        "ship_name": "Cobra",
-        "nickname": "Striker",
-    })
+    ship = await repo.create_or_update(
+        db_session,
+        {
+            "id": original.id,
+            "player_id": player.id,
+            "ship_name": "Cobra",
+            "nickname": "Striker",
+        },
+    )
 
     assert ship.nickname == "Striker"
 
@@ -216,11 +222,15 @@ async def test_update_loadout(db_session: AsyncSession, repo: PlayerShipReposito
     player = await _setup_player(db_session)
     ship = await _add_ship(db_session, repo, player.id)
 
-    result = await repo.update_loadout(db_session, ship.id, {
-        "weapons": ["Laser", "Missile"],
-        "modules": ["Shield"],
-        "turrets": ["AutoTurret"],
-    })
+    result = await repo.update_loadout(
+        db_session,
+        ship.id,
+        {
+            "weapons": ["Laser", "Missile"],
+            "modules": ["Shield"],
+            "turrets": ["AutoTurret"],
+        },
+    )
 
     assert result.weapons == ["Laser", "Missile"]
     assert result.modules == ["Shield"]
@@ -327,11 +337,15 @@ async def test_get_ships_by_name(db_session: AsyncSession, repo: PlayerShipRepos
 async def test_get_ship_loadout_summary(db_session: AsyncSession, repo: PlayerShipRepository):
     player = await _setup_player(db_session)
     ship = await _add_ship(db_session, repo, player.id, "Falcon", nickname="Beast")
-    await repo.update_loadout(db_session, ship.id, {
-        "weapons": ["Laser", "Missile"],
-        "modules": ["Shield"],
-        "turrets": [],
-    })
+    await repo.update_loadout(
+        db_session,
+        ship.id,
+        {
+            "weapons": ["Laser", "Missile"],
+            "modules": ["Shield"],
+            "turrets": [],
+        },
+    )
 
     summary = await repo.get_ship_loadout_summary(db_session, ship.id)
 

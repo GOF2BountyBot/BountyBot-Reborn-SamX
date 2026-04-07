@@ -26,6 +26,10 @@ class CriminalRepository(GenericRepository[Criminal]):
         flogger.trace(f"create_or_update: entry with raw={raw}")
 
         try:
+            # validate required keys upfront
+            if "name" not in raw:
+                raise ValueError("Missing required key 'name' in data for criminal")
+
             # look up existing
             result = await db.execute(select(self._model).filter_by(name=raw["name"]))
             obj = result.scalars().one_or_none()

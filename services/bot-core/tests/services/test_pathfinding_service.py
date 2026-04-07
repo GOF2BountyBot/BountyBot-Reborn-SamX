@@ -101,10 +101,10 @@ def _build_graph_service(
 #
 
 _MAIN_GRAPH: dict[str, tuple[tuple[int, int], list[str]]] = {
-    "A": ((0, 0),   ["B", "D"]),
-    "B": ((10, 0),  ["A", "C"]),
-    "C": ((20, 0),  ["B", "F"]),
-    "D": ((0, 10),  ["A", "E"]),
+    "A": ((0, 0), ["B", "D"]),
+    "B": ((10, 0), ["A", "C"]),
+    "C": ((20, 0), ["B", "F"]),
+    "D": ((0, 10), ["A", "E"]),
     "E": ((10, 10), ["D", "F"]),
     "F": ((20, 10), ["C", "E"]),
     "G": ((10, 20), []),  # isolated
@@ -135,8 +135,7 @@ def _assert_route_valid(route: list[str], graph_svc: SystemGraphService) -> None
         nxt = route[i + 1]
         neighbours = graph_svc.get_neighbours(current)
         assert nxt in neighbours, (
-            f"Route hop {current!r} → {nxt!r} is not a valid edge. "
-            f"Neighbours of {current!r}: {neighbours}"
+            f"Route hop {current!r} → {nxt!r} is not a valid edge. Neighbours of {current!r}: {neighbours}"
         )
 
 
@@ -371,10 +370,12 @@ class TestEdgeCases:
         assert result is PathfindingError.NO_ROUTE_FOUND
 
     def test_two_connected_nodes(self) -> None:
-        two_graph = _build_graph_service({
-            "P": ((0, 0), ["Q"]),
-            "Q": ((1, 0), ["P"]),
-        })
+        two_graph = _build_graph_service(
+            {
+                "P": ((0, 0), ["Q"]),
+                "Q": ((1, 0), ["P"]),
+            }
+        )
         two_svc = PathfindingService(two_graph)
         assert two_svc.make_route("P", "Q") == ["P", "Q"]
         assert two_svc.make_route("Q", "P") == ["Q", "P"]

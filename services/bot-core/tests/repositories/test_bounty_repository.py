@@ -307,3 +307,81 @@ class TestErrorHandling:
             await repo.delete(mock_db, bounty)
 
         mock_db.rollback.assert_awaited_once()
+
+
+# ---------------------------------------------------------------------------
+# clear_active_by_guild
+# ---------------------------------------------------------------------------
+
+
+class TestClearActiveByGuild:
+    """Tests for BountyRepository.clear_active_by_guild."""
+
+    @pytest.fixture
+    def repo(self):
+        return BountyRepository()
+
+    @pytest.fixture
+    def mock_db(self):
+        db = AsyncMock()
+        db.commit = AsyncMock()
+        db.rollback = AsyncMock()
+        return db
+
+    @pytest.mark.asyncio
+    async def test_clear_all_tiers_returns_ids(self, repo, mock_db):
+        """Without tier filter, clears all active bounties and returns their IDs."""
+        # First execute (SELECT id) returns 2 IDs
+        id_scalars = MagicMock()
+        id_scalars.all = MagicMock(return_value=[1, 2])
+        id_result = MagicMock()
+        id_result.scalars = MagicMock(return_value=id_scalars)
+
+        # Second execute (UPDATE) returns nothing significant
+        update_result = MagicMock()
+
+        mock_db.execute = AsyncMock(side_effect=[id_result, update_result])
+
+        result = await repo.clear_active_by_guild(mock_db, guild_id=1000)
+
+        assert result == [1, 2]
+        mock_db.commit.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_clear_with_tier_filter_returns_ids(self, repo, mock_db):
+        """With tier filter, only bounties of that tier are cleared."""
+        id_scalars = MagicMock()
+        id_scalars.all = MagicMock(return_value=[5, 6])
+        id_result = MagicMock()
+        id_result.scalars = MagicMock(return_value=id_scalars)
+        update_result = MagicMock()
+        mock_db.execute = AsyncMock(side_effect=[id_result, update_result])
+
+        result = await repo.clear_active_by_guild(mock_db, guild_id=1000, tier="bronze")
+
+        assert result == [5, 6]
+        mock_db.commit.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_clear_no_active_bounties_returns_empty(self, repo, mock_db):
+        """When there are no active bounties, returns an empty list without running UPDATE."""
+        id_scalars = MagicMock()
+        id_scalars.all = MagicMock(return_value=[])
+        id_result = MagicMock()
+        id_result.scalars = MagicMock(return_value=id_scalars)
+        mock_db.execute = AsyncMock(return_value=id_result)
+
+        result = await repo.clear_active_by_guild(mock_db, guild_id=999)
+
+        assert result == []
+        mock_db.commit.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_clear_rolls_back_on_error(self, repo, mock_db):
+        """On database error, rollback is called and exception re-raised."""
+        mock_db.execute = AsyncMock(side_effect=Exception("DB failure"))
+
+        with pytest.raises(Exception, match="DB failure"):
+            await repo.clear_active_by_guild(mock_db, guild_id=777)
+
+        mock_db.rollback.assert_awaited_once()

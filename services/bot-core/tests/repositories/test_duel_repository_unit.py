@@ -92,6 +92,7 @@ def mock_db() -> AsyncMock:
 # get_by_id – exception path (lines 30-32)
 # ===================================================================
 
+
 class TestGetById:
     @pytest.mark.asyncio
     async def test_get_by_id_exception(self, repo, mock_db):
@@ -105,6 +106,7 @@ class TestGetById:
 # list_all – exception path (lines 40-45)
 # ===================================================================
 
+
 class TestListAll:
     @pytest.mark.asyncio
     async def test_list_all_exception(self, repo, mock_db):
@@ -117,6 +119,7 @@ class TestListAll:
 # ===================================================================
 # add – exception path with rollback (lines 59-61)
 # ===================================================================
+
 
 class TestAdd:
     @pytest.mark.asyncio
@@ -134,6 +137,7 @@ class TestAdd:
 # remove – exception path with rollback (lines 73-76)
 # ===================================================================
 
+
 class TestRemove:
     @pytest.mark.asyncio
     async def test_remove_exception_triggers_rollback(self, repo, mock_db):
@@ -150,6 +154,7 @@ class TestRemove:
 # get_pending_by_players – exception path (lines 107-111)
 # ===================================================================
 
+
 class TestGetPendingByPlayers:
     @pytest.mark.asyncio
     async def test_get_pending_by_players_exception(self, repo, mock_db):
@@ -162,6 +167,7 @@ class TestGetPendingByPlayers:
 # ===================================================================
 # delete_expired – exception path with rollback (lines 151-153)
 # ===================================================================
+
 
 class TestDeleteExpired:
     @pytest.mark.asyncio
@@ -178,6 +184,7 @@ class TestDeleteExpired:
 # get_active_by_guild – exception path (lines 170-173)
 # ===================================================================
 
+
 class TestGetActiveByGuild:
     @pytest.mark.asyncio
     async def test_get_active_by_guild_exception(self, repo, mock_db):
@@ -190,6 +197,7 @@ class TestGetActiveByGuild:
 # ===================================================================
 # get_pending_by_target – exception path (lines 193-197)
 # ===================================================================
+
 
 class TestGetPendingByTarget:
     @pytest.mark.asyncio

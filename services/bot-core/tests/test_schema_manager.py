@@ -90,6 +90,7 @@ def manager(mock_db_manager):
 # __init__
 # ===================================================================
 
+
 class TestInit:
     def test_stores_db_manager(self, mock_db_manager):
         mgr = SchemaManager(mock_db_manager)
@@ -99,6 +100,7 @@ class TestInit:
 # ===================================================================
 # initialize_database
 # ===================================================================
+
 
 class TestInitializeDatabase:
     @pytest.mark.asyncio
@@ -139,6 +141,7 @@ class TestInitializeDatabase:
 # create_tables_if_not_exist
 # ===================================================================
 
+
 class TestCreateTablesIfNotExist:
     @pytest.mark.asyncio
     async def test_create_tables_success(self, manager):
@@ -159,6 +162,7 @@ class TestCreateTablesIfNotExist:
     @pytest.mark.asyncio
     async def test_create_tables_error_raises(self, manager):
         """Exception during create_all is re-raised."""
+
         @asynccontextmanager
         async def _begin():
             raise Exception("DDL failure")
@@ -173,6 +177,7 @@ class TestCreateTablesIfNotExist:
 # ===================================================================
 # _verify_schema_version
 # ===================================================================
+
 
 class TestVerifySchemaVersion:
     @pytest.mark.asyncio
@@ -214,6 +219,7 @@ class TestVerifySchemaVersion:
 # get_current_version
 # ===================================================================
 
+
 class TestGetCurrentVersion:
     @pytest.mark.asyncio
     async def test_returns_version_string(self, manager, mock_session):
@@ -236,6 +242,7 @@ class TestGetCurrentVersion:
 # ===================================================================
 # get_schema_health_info
 # ===================================================================
+
 
 class TestGetSchemaHealthInfo:
     @pytest.mark.asyncio
@@ -272,6 +279,7 @@ class TestGetSchemaHealthInfo:
 # ===================================================================
 # initialize_schema (module-level factory)
 # ===================================================================
+
 
 class TestInitializeSchema:
     @pytest.mark.asyncio

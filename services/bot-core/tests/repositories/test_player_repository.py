@@ -28,6 +28,7 @@ from persist.repositories.player_repository import PlayerRepository
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _make_player(**overrides) -> MagicMock:
     defaults = dict(
         id=1,
@@ -72,6 +73,7 @@ def _make_scalar_one_result(value) -> MagicMock:
 # Fixtures
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture
 def repo() -> PlayerRepository:
     return PlayerRepository()
@@ -95,6 +97,7 @@ def mock_db() -> AsyncMock:
 # get_by_id – exception path (lines 24-26)
 # ===================================================================
 
+
 class TestGetById:
     @pytest.mark.asyncio
     async def test_get_by_id_exception(self, repo, mock_db):
@@ -106,6 +109,7 @@ class TestGetById:
 # ===================================================================
 # get_by_id_for_update – exception path (lines 35-42)
 # ===================================================================
+
 
 class TestGetByIdForUpdate:
     @pytest.mark.asyncio
@@ -126,6 +130,7 @@ class TestGetByIdForUpdate:
 # count – exception path (lines 50-55)
 # ===================================================================
 
+
 class TestCount:
     @pytest.mark.asyncio
     async def test_count_success(self, repo, mock_db):
@@ -144,6 +149,7 @@ class TestCount:
 # list_all – exception path (lines 62-64)
 # ===================================================================
 
+
 class TestListAll:
     @pytest.mark.asyncio
     async def test_list_all_exception(self, repo, mock_db):
@@ -155,6 +161,7 @@ class TestListAll:
 # ===================================================================
 # add – exception path (lines 74-77)
 # ===================================================================
+
 
 class TestAdd:
     @pytest.mark.asyncio
@@ -170,6 +177,7 @@ class TestAdd:
 # get_by_user_and_guild – exception path (lines 116-119)
 # ===================================================================
 
+
 class TestGetByUserAndGuild:
     @pytest.mark.asyncio
     async def test_get_by_user_and_guild_exception(self, repo, mock_db):
@@ -181,6 +189,7 @@ class TestGetByUserAndGuild:
 # ===================================================================
 # get_players_by_guild – exception path (lines 130-132)
 # ===================================================================
+
 
 class TestGetPlayersByGuild:
     @pytest.mark.asyncio
@@ -194,6 +203,7 @@ class TestGetPlayersByGuild:
 # get_players_by_user – exception path (lines 141-143)
 # ===================================================================
 
+
 class TestGetPlayersByUser:
     @pytest.mark.asyncio
     async def test_get_players_by_user_exception(self, repo, mock_db):
@@ -205,6 +215,7 @@ class TestGetPlayersByUser:
 # ===================================================================
 # update_credits – exception paths (lines 152-154, 178, 183-187)
 # ===================================================================
+
 
 class TestUpdateCredits:
     @pytest.mark.asyncio
@@ -235,6 +246,7 @@ class TestUpdateCredits:
 # update_xp – exception path (lines 178, 183-187)
 # ===================================================================
 
+
 class TestUpdateXp:
     @pytest.mark.asyncio
     async def test_update_xp_exception(self, repo, mock_db):
@@ -247,6 +259,7 @@ class TestUpdateXp:
 # ===================================================================
 # update_tier – exception + validation (lines 202-205)
 # ===================================================================
+
 
 class TestUpdateTier:
     @pytest.mark.asyncio
@@ -266,6 +279,7 @@ class TestUpdateTier:
 # ===================================================================
 # update_active_ship – exception path (lines 242-245)
 # ===================================================================
+
 
 class TestUpdateActiveShip:
     @pytest.mark.asyncio

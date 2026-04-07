@@ -161,6 +161,7 @@ def make_mock_player(**overrides):
 # mirror the corresponding SQLAlchemy model columns.
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture
 def seed_ships():
     """Return 5 Ship-like SimpleNamespace objects from real import_data."""

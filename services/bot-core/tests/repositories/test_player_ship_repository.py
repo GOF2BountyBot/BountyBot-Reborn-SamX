@@ -88,6 +88,7 @@ def mock_db() -> AsyncMock:
 # get_by_id – exception path (lines 25-27)
 # ===================================================================
 
+
 class TestGetById:
     @pytest.mark.asyncio
     async def test_get_by_id_exception(self, repo, mock_db):
@@ -101,6 +102,7 @@ class TestGetById:
 # list_all – exception path (lines 38-40)
 # ===================================================================
 
+
 class TestListAll:
     @pytest.mark.asyncio
     async def test_list_all_exception(self, repo, mock_db):
@@ -113,6 +115,7 @@ class TestListAll:
 # ===================================================================
 # add – exception path with rollback (lines 50-53)
 # ===================================================================
+
 
 class TestAdd:
     @pytest.mark.asyncio
@@ -130,6 +133,7 @@ class TestAdd:
 # remove – exception path with rollback (lines 94-97)
 # ===================================================================
 
+
 class TestRemove:
     @pytest.mark.asyncio
     async def test_remove_exception_triggers_rollback(self, repo, mock_db):
@@ -146,6 +150,7 @@ class TestRemove:
 # get_player_ships – exception path (lines 108-110)
 # ===================================================================
 
+
 class TestGetPlayerShips:
     @pytest.mark.asyncio
     async def test_get_player_ships_exception(self, repo, mock_db):
@@ -158,6 +163,7 @@ class TestGetPlayerShips:
 # ===================================================================
 # get_active_ship – exception path (lines 124-126)
 # ===================================================================
+
 
 class TestGetActiveShip:
     @pytest.mark.asyncio
@@ -172,6 +178,7 @@ class TestGetActiveShip:
 # add_equipment – ValueError path when ship not found (line 204)
 # and the outer exception re-raise (lines 227-229)
 # ===================================================================
+
 
 class TestAddEquipment:
     @pytest.mark.asyncio
@@ -203,6 +210,7 @@ class TestAddEquipment:
 # ===================================================================
 # remove_equipment – exception paths (lines 248-253)
 # ===================================================================
+
 
 class TestRemoveEquipment:
     @pytest.mark.asyncio
@@ -243,6 +251,7 @@ class TestRemoveEquipment:
 # ===================================================================
 # get_ships_by_name – exception path (lines 303-305)
 # ===================================================================
+
 
 class TestGetShipsByName:
     @pytest.mark.asyncio

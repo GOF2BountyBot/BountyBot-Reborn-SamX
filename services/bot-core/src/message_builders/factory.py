@@ -8,6 +8,7 @@ of message-specific payload builders.
 from shared import bblogger
 
 from message_builders.base import MessagePayloadBuilder
+from message_builders.builders.bounty_announcement import BountyAnnouncementBuilder
 from message_builders.builders.time_announcement import TimeAnnouncementBuilder
 
 logger = bblogger.get_logger("message-builder-factory")
@@ -18,7 +19,7 @@ class MessageBuilderFactory:
 
     _builders: dict[str, type[MessagePayloadBuilder]] = {
         "time_announcement": TimeAnnouncementBuilder,
-        # Add more builders as they're created
+        "bounty_announcement": BountyAnnouncementBuilder,
     }
 
     @classmethod

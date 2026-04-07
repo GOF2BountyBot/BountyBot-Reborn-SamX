@@ -9,12 +9,16 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Path, status
 from persist.database.manager import get_db_session
+from persist.repositories.bounty_repository import BountyRepository
 from services.config_service import ConfigService
 from shared import bblogger
 
 from api.schemas.config_schema import (
+    BountyConfigResponse,
+    BountyConfigStatusResponse,
     ConfigValidationResponse,
     GuildConfigResponse,
+    UpdateBountyConfigRequest,
     UpdateConfigRequest,
     UpdateShopConfigRequest,
     UpdateXPThresholdsRequest,
@@ -54,9 +58,19 @@ async def get_guild_config(guild_id: int, config_service: ConfigService = Depend
                 created_at=config["created_at"],
                 updated_at=config["updated_at"],
                 category_id=config.get("category_id"),
-                bounty_channel_id=config.get("bounty_channel_id"),
                 shop_channel_id=config.get("shop_channel_id"),
-                general_channel_id=config.get("general_channel_id"),
+                bronze_bounty_channel_id=config.get("bronze_bounty_channel_id"),
+                silver_bounty_channel_id=config.get("silver_bounty_channel_id"),
+                gold_bounty_channel_id=config.get("gold_bounty_channel_id"),
+                platinum_bounty_channel_id=config.get("platinum_bounty_channel_id"),
+                hunting_channel_id=config.get("hunting_channel_id"),
+                discussion_channel_id=config.get("discussion_channel_id"),
+                image_channel_id=config.get("image_channel_id"),
+                bounty_hunter_role_id=config.get("bounty_hunter_role_id"),
+                bronze_role_id=config.get("bronze_role_id"),
+                silver_role_id=config.get("silver_role_id"),
+                gold_role_id=config.get("gold_role_id"),
+                platinum_role_id=config.get("platinum_role_id"),
             )
 
     except Exception as e:
@@ -91,9 +105,19 @@ async def update_guild_config(
                 created_at=config["created_at"],
                 updated_at=config["updated_at"],
                 category_id=config.get("category_id"),
-                bounty_channel_id=config.get("bounty_channel_id"),
                 shop_channel_id=config.get("shop_channel_id"),
-                general_channel_id=config.get("general_channel_id"),
+                bronze_bounty_channel_id=config.get("bronze_bounty_channel_id"),
+                silver_bounty_channel_id=config.get("silver_bounty_channel_id"),
+                gold_bounty_channel_id=config.get("gold_bounty_channel_id"),
+                platinum_bounty_channel_id=config.get("platinum_bounty_channel_id"),
+                hunting_channel_id=config.get("hunting_channel_id"),
+                discussion_channel_id=config.get("discussion_channel_id"),
+                image_channel_id=config.get("image_channel_id"),
+                bounty_hunter_role_id=config.get("bounty_hunter_role_id"),
+                bronze_role_id=config.get("bronze_role_id"),
+                silver_role_id=config.get("silver_role_id"),
+                gold_role_id=config.get("gold_role_id"),
+                platinum_role_id=config.get("platinum_role_id"),
             )
 
     except ValueError as e:
@@ -130,9 +154,19 @@ async def update_shop_config(
                 created_at=config["created_at"],
                 updated_at=config["updated_at"],
                 category_id=config.get("category_id"),
-                bounty_channel_id=config.get("bounty_channel_id"),
                 shop_channel_id=config.get("shop_channel_id"),
-                general_channel_id=config.get("general_channel_id"),
+                bronze_bounty_channel_id=config.get("bronze_bounty_channel_id"),
+                silver_bounty_channel_id=config.get("silver_bounty_channel_id"),
+                gold_bounty_channel_id=config.get("gold_bounty_channel_id"),
+                platinum_bounty_channel_id=config.get("platinum_bounty_channel_id"),
+                hunting_channel_id=config.get("hunting_channel_id"),
+                discussion_channel_id=config.get("discussion_channel_id"),
+                image_channel_id=config.get("image_channel_id"),
+                bounty_hunter_role_id=config.get("bounty_hunter_role_id"),
+                bronze_role_id=config.get("bronze_role_id"),
+                silver_role_id=config.get("silver_role_id"),
+                gold_role_id=config.get("gold_role_id"),
+                platinum_role_id=config.get("platinum_role_id"),
             )
 
     except ValueError as e:
@@ -164,9 +198,19 @@ async def reset_guild_config(guild_id: int, config_service: ConfigService = Depe
                 created_at=config["created_at"],
                 updated_at=config["updated_at"],
                 category_id=config.get("category_id"),
-                bounty_channel_id=config.get("bounty_channel_id"),
                 shop_channel_id=config.get("shop_channel_id"),
-                general_channel_id=config.get("general_channel_id"),
+                bronze_bounty_channel_id=config.get("bronze_bounty_channel_id"),
+                silver_bounty_channel_id=config.get("silver_bounty_channel_id"),
+                gold_bounty_channel_id=config.get("gold_bounty_channel_id"),
+                platinum_bounty_channel_id=config.get("platinum_bounty_channel_id"),
+                hunting_channel_id=config.get("hunting_channel_id"),
+                discussion_channel_id=config.get("discussion_channel_id"),
+                image_channel_id=config.get("image_channel_id"),
+                bounty_hunter_role_id=config.get("bounty_hunter_role_id"),
+                bronze_role_id=config.get("bronze_role_id"),
+                silver_role_id=config.get("silver_role_id"),
+                gold_role_id=config.get("gold_role_id"),
+                platinum_role_id=config.get("platinum_role_id"),
             )
 
     except Exception as e:
@@ -196,9 +240,19 @@ async def update_admin_role(guild_id: int, role_id: int, config_service: ConfigS
                 created_at=config["created_at"],
                 updated_at=config["updated_at"],
                 category_id=config.get("category_id"),
-                bounty_channel_id=config.get("bounty_channel_id"),
                 shop_channel_id=config.get("shop_channel_id"),
-                general_channel_id=config.get("general_channel_id"),
+                bronze_bounty_channel_id=config.get("bronze_bounty_channel_id"),
+                silver_bounty_channel_id=config.get("silver_bounty_channel_id"),
+                gold_bounty_channel_id=config.get("gold_bounty_channel_id"),
+                platinum_bounty_channel_id=config.get("platinum_bounty_channel_id"),
+                hunting_channel_id=config.get("hunting_channel_id"),
+                discussion_channel_id=config.get("discussion_channel_id"),
+                image_channel_id=config.get("image_channel_id"),
+                bounty_hunter_role_id=config.get("bounty_hunter_role_id"),
+                bronze_role_id=config.get("bronze_role_id"),
+                silver_role_id=config.get("silver_role_id"),
+                gold_role_id=config.get("gold_role_id"),
+                platinum_role_id=config.get("platinum_role_id"),
             )
 
     except ValueError as e:
@@ -210,7 +264,7 @@ async def update_admin_role(guild_id: int, role_id: int, config_service: ConfigS
         ) from e
 
 
-@router.put("/guild/{guild_id}/starting-credits/{credits}", response_model=GuildConfigResponse)
+@router.put("/guild/{guild_id}/starting-credits/{starting_credits}", response_model=GuildConfigResponse)
 async def update_starting_credits(
     guild_id: int, starting_credits: int = Path(..., ge=0), config_service: ConfigService = Depends(get_config_service)
 ):
@@ -232,9 +286,19 @@ async def update_starting_credits(
                 created_at=config["created_at"],
                 updated_at=config["updated_at"],
                 category_id=config.get("category_id"),
-                bounty_channel_id=config.get("bounty_channel_id"),
                 shop_channel_id=config.get("shop_channel_id"),
-                general_channel_id=config.get("general_channel_id"),
+                bronze_bounty_channel_id=config.get("bronze_bounty_channel_id"),
+                silver_bounty_channel_id=config.get("silver_bounty_channel_id"),
+                gold_bounty_channel_id=config.get("gold_bounty_channel_id"),
+                platinum_bounty_channel_id=config.get("platinum_bounty_channel_id"),
+                hunting_channel_id=config.get("hunting_channel_id"),
+                discussion_channel_id=config.get("discussion_channel_id"),
+                image_channel_id=config.get("image_channel_id"),
+                bounty_hunter_role_id=config.get("bounty_hunter_role_id"),
+                bronze_role_id=config.get("bronze_role_id"),
+                silver_role_id=config.get("silver_role_id"),
+                gold_role_id=config.get("gold_role_id"),
+                platinum_role_id=config.get("platinum_role_id"),
             )
 
     except ValueError as e:
@@ -268,9 +332,19 @@ async def update_xp_thresholds(
                 created_at=config["created_at"],
                 updated_at=config["updated_at"],
                 category_id=config.get("category_id"),
-                bounty_channel_id=config.get("bounty_channel_id"),
                 shop_channel_id=config.get("shop_channel_id"),
-                general_channel_id=config.get("general_channel_id"),
+                bronze_bounty_channel_id=config.get("bronze_bounty_channel_id"),
+                silver_bounty_channel_id=config.get("silver_bounty_channel_id"),
+                gold_bounty_channel_id=config.get("gold_bounty_channel_id"),
+                platinum_bounty_channel_id=config.get("platinum_bounty_channel_id"),
+                hunting_channel_id=config.get("hunting_channel_id"),
+                discussion_channel_id=config.get("discussion_channel_id"),
+                image_channel_id=config.get("image_channel_id"),
+                bounty_hunter_role_id=config.get("bounty_hunter_role_id"),
+                bronze_role_id=config.get("bronze_role_id"),
+                silver_role_id=config.get("silver_role_id"),
+                gold_role_id=config.get("gold_role_id"),
+                platinum_role_id=config.get("platinum_role_id"),
             )
 
     except ValueError as e:
@@ -325,6 +399,71 @@ async def get_all_guild_configs(
         flogger.error(f"Error getting all guild configs: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to get guild configurations"
+        ) from e
+
+
+@router.get("/guild/{guild_id}/bounty", response_model=BountyConfigStatusResponse)
+async def get_bounty_config(guild_id: int, config_service: ConfigService = Depends(get_config_service)):
+    """Get bounty configuration and current active bounty counts for a guild."""
+    flogger.debug(f"Getting bounty config for guild {guild_id}")
+
+    try:
+        async with get_db_session() as db:
+            bounty_config = await config_service.get_bounty_config(db, guild_id)
+
+            # Count active bounties per tier
+            bounty_repo = BountyRepository()
+            active_per_tier: dict[str, int] = {}
+            for tier in ["bronze", "silver", "gold", "platinum"]:
+                active_per_tier[tier] = await bounty_repo.count_active_by_guild_and_division(db, guild_id, tier)
+
+            return BountyConfigStatusResponse(
+                guild_id=bounty_config["guild_id"],
+                max_bounties_per_tier=bounty_config["max_bounties_per_tier"],
+                bounty_expiry_minutes=bounty_config["bounty_expiry_minutes"],
+                bounty_spawn_interval_minutes=bounty_config["bounty_spawn_interval_minutes"],
+                next_spawn_check_at=bounty_config.get("next_spawn_check_at"),
+                active_bounties_per_tier=active_per_tier,
+            )
+
+    except Exception as e:
+        flogger.error(f"Error getting bounty config for guild {guild_id}: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to get bounty configuration"
+        ) from e
+
+
+@router.put("/guild/{guild_id}/bounty", response_model=BountyConfigResponse)
+async def update_bounty_config(
+    guild_id: int,
+    request: UpdateBountyConfigRequest,
+    config_service: ConfigService = Depends(get_config_service),
+):
+    """Update bounty configuration for a guild."""
+    flogger.info(f"Updating bounty config for guild {guild_id}")
+
+    try:
+        request.guild_id = guild_id
+
+        async with get_db_session() as db:
+            updates = request.model_dump(exclude_unset=True)
+            updates.pop("guild_id", None)
+            bounty_config = await config_service.update_bounty_config(db, guild_id, updates)
+
+            return BountyConfigResponse(
+                guild_id=bounty_config["guild_id"],
+                max_bounties_per_tier=bounty_config["max_bounties_per_tier"],
+                bounty_expiry_minutes=bounty_config["bounty_expiry_minutes"],
+                bounty_spawn_interval_minutes=bounty_config["bounty_spawn_interval_minutes"],
+                next_spawn_check_at=bounty_config.get("next_spawn_check_at"),
+            )
+
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
+    except Exception as e:
+        flogger.error(f"Error updating bounty config for guild {guild_id}: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to update bounty configuration"
         ) from e
 
 

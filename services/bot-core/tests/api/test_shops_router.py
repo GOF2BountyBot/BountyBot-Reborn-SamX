@@ -5,6 +5,7 @@ tests/api/conftest.py which runs before this module is loaded.
 """
 
 from datetime import datetime
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -792,14 +793,10 @@ class TestPurchaseShip:
         assert data["remaining_credits"] == 5000
 
     @patch("api.routers.shops.get_db_session")
-    def test_purchase_ship_insufficient_credits_returns_400(
-        self, mock_get_db, client, mock_shop_service
-    ):
+    def test_purchase_ship_insufficient_credits_returns_400(self, mock_get_db, client, mock_shop_service):
         """Returns 400 when player cannot afford the ship."""
         _configure_db_mock(mock_get_db)
-        mock_shop_service.purchase_ship.side_effect = ValueError(
-            "Insufficient credits. Cost: 5000, Available: 100"
-        )
+        mock_shop_service.purchase_ship.side_effect = ValueError("Insufficient credits. Cost: 5000, Available: 100")
 
         response = client.post(
             "/api/v1/shops/purchase-ship",
@@ -810,14 +807,10 @@ class TestPurchaseShip:
         assert "Insufficient credits" in response.json()["detail"]
 
     @patch("api.routers.shops.get_db_session")
-    def test_purchase_ship_not_a_ship_returns_400(
-        self, mock_get_db, client, mock_shop_service
-    ):
+    def test_purchase_ship_not_a_ship_returns_400(self, mock_get_db, client, mock_shop_service):
         """Returns 400 when shop item is not a ship."""
         _configure_db_mock(mock_get_db)
-        mock_shop_service.purchase_ship.side_effect = ValueError(
-            "Shop item 10 is not a ship (type=weapon)"
-        )
+        mock_shop_service.purchase_ship.side_effect = ValueError("Shop item 10 is not a ship (type=weapon)")
 
         response = client.post(
             "/api/v1/shops/purchase-ship",
@@ -826,3 +819,202 @@ class TestPurchaseShip:
 
         assert response.status_code == 400
         assert "not a ship" in response.json()["detail"]
+
+
+# ===========================================================================
+# Gap 1: Empty-State / Null-Result Tests — Shops
+# ===========================================================================
+
+
+class TestGetGuildShopEmpty:
+    """Gap 1: Shop endpoints for a guild with no items → proper empty/error responses."""
+
+    @patch("api.routers.shops.get_db_session")
+    def test_get_guild_shop_empty_returns_200_empty_list(self, mock_get_db, client, mock_shop_service):
+        """GET /shops/guild/{id}/tier/Bronze with no shop items → 200 + empty list.
+
+        Verifies that a guild with an empty shop does not produce a 500 error.
+        The endpoint should return an empty JSON array gracefully.
+        """
+        _configure_db_mock(mock_get_db)
+        mock_shop_service.get_shop_items = AsyncMock(return_value=[])
+
+        response = client.get("/api/v1/shops/guild/99999/tier/Bronze")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert isinstance(data, list)
+        assert data == []
+
+    @patch("api.routers.shops.get_db_session")
+    def test_buy_item_shop_empty_returns_proper_error(self, mock_get_db, client, mock_shop_service):
+        """POST /shops/purchase when the shop is empty → 400 (not 500).
+
+        Buying from a shop with no items should raise a ValueError (e.g. item not found)
+        which maps to 400, not a 500 from an unhandled exception.
+        """
+        _configure_db_mock(mock_get_db)
+        mock_shop_service.purchase_item = AsyncMock(side_effect=ValueError("Shop item 9999 not found in guild shop"))
+        payload = {"player_id": 1, "shop_item_id": 9999, "quantity": 1}
+
+        response = client.post("/api/v1/shops/purchase", json=payload)
+
+        # Must be a client error (400), not a server error (500)
+        assert response.status_code == 400
+        assert "not found" in response.json()["detail"].lower() or "shop" in response.json()["detail"].lower()
+
+
+# ===========================================================================
+# Emoji field tests for ShopItemResponse
+# ===========================================================================
+
+
+def _configure_db_mock_with_emoji(mock_get_db, emoji_rows):
+    """Configure mock_get_db to act as an async context manager with emoji query support.
+
+    Args:
+        mock_get_db: The mock for get_db_session
+        emoji_rows: List of (name, emoji) tuples to return from the emoji query
+    """
+    mock_session = AsyncMock()
+
+    # Mock the emoji query result — db.execute returns an iterable of row-like objects.
+    # Use SimpleNamespace so that row.name and row.emoji work correctly.
+    # NOTE: MagicMock(name=...) sets the mock's display name, not an attribute.
+    rows = [SimpleNamespace(name=n, emoji=e) for n, e in emoji_rows]
+    mock_emoji_result = MagicMock()
+    mock_emoji_result.__iter__ = MagicMock(return_value=iter(rows))
+    mock_session.execute = AsyncMock(return_value=mock_emoji_result)
+
+    mock_get_db.return_value.__aenter__ = AsyncMock(return_value=mock_session)
+    mock_get_db.return_value.__aexit__ = AsyncMock(return_value=False)
+    return mock_session
+
+
+class TestEmojiInShopItemResponses:
+    """Tests verifying that emoji is looked up and returned in ShopItemResponse."""
+
+    @patch("api.routers.shops.get_db_session")
+    def test_get_shop_items_returns_emoji_when_found(self, mock_get_db, client, mock_shop_service):
+        """GET /shops/guild/{id}/tier/{tier} returns emoji when Item table has a match.
+
+        Acceptance criteria: emoji field is populated from Item.emoji when the item
+        name matches a record in the Item table.
+        """
+        _configure_db_mock_with_emoji(mock_get_db, [("Pulse Laser", "🔫")])
+
+        response = client.get("/api/v1/shops/guild/67890/tier/Bronze")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert len(data) == 1
+        assert data[0]["emoji"] == "🔫"
+
+    @patch("api.routers.shops.get_db_session")
+    def test_get_shop_items_returns_null_emoji_when_not_found(self, mock_get_db, client, mock_shop_service):
+        """GET /shops/guild/{id}/tier/{tier} returns emoji=null when no Item record exists.
+
+        Acceptance criteria: emoji is None when item_name has no corresponding Item row.
+        """
+        _configure_db_mock_with_emoji(mock_get_db, [])  # No matching items in Item table
+
+        response = client.get("/api/v1/shops/guild/67890/tier/Bronze")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert len(data) == 1
+        assert data[0]["emoji"] is None
+
+    @patch("api.routers.shops.get_db_session")
+    def test_get_shop_items_returns_null_emoji_when_item_emoji_is_none(self, mock_get_db, client, mock_shop_service):
+        """GET /shops/guild/{id}/tier/{tier} returns emoji=null when Item.emoji is null.
+
+        Acceptance criteria: emoji=None propagates when Item record exists but emoji column is null.
+        """
+        _configure_db_mock_with_emoji(mock_get_db, [("Pulse Laser", None)])
+
+        response = client.get("/api/v1/shops/guild/67890/tier/Bronze")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data[0]["emoji"] is None
+
+    @patch("api.routers.shops.get_db_session")
+    def test_get_shop_items_empty_shop_skips_emoji_query(self, mock_get_db, client, mock_shop_service):
+        """GET /shops/guild/{id}/tier/{tier} with empty shop skips emoji DB query.
+
+        Acceptance criteria: when the shop has no items, the emoji query is never executed
+        (no item_names means no DB round-trip).
+        """
+        mock_shop_service.get_shop_items = AsyncMock(return_value=[])
+        mock_session = AsyncMock()
+        mock_get_db.return_value.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_get_db.return_value.__aexit__ = AsyncMock(return_value=False)
+
+        response = client.get("/api/v1/shops/guild/67890/tier/Bronze")
+
+        assert response.status_code == 200
+        assert response.json() == []
+        # The emoji query should NOT have been called since there are no items
+        mock_session.execute.assert_not_called()
+
+    @patch("api.routers.shops.get_db_session")
+    def test_get_items_by_tech_level_returns_emoji_when_found(self, mock_get_db, client, mock_shop_service):
+        """GET /shops/guild/{id}/tier/{tier}/tech-level/{n} returns emoji from Item table.
+
+        Acceptance criteria: the tech-level endpoint also looks up and returns emoji.
+        """
+        _configure_db_mock_with_emoji(mock_get_db, [("Pulse Laser", "⚡")])
+
+        response = client.get("/api/v1/shops/guild/67890/tier/Bronze/tech-level/1")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert len(data) == 1
+        assert data[0]["emoji"] == "⚡"
+
+    @patch("api.routers.shops.get_db_session")
+    def test_get_shop_item_by_id_returns_emoji_when_found(self, mock_get_db, client, mock_shop_service):
+        """GET /shops/item/{id} returns emoji from Item table.
+
+        Acceptance criteria: single item endpoint also looks up and returns emoji.
+        """
+        # The single-item endpoint uses the same iteration pattern as list endpoints.
+        # Use _configure_db_mock_with_emoji since Pulse Laser is the default shop item name.
+        _configure_db_mock_with_emoji(mock_get_db, [("Pulse Laser", "🚀")])
+
+        response = client.get("/api/v1/shops/item/1")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["emoji"] == "🚀"
+
+    @patch("api.routers.shops.get_db_session")
+    def test_get_shop_item_by_id_returns_null_emoji_when_no_item_record(self, mock_get_db, client, mock_shop_service):
+        """GET /shops/item/{id} returns emoji=null when no Item record exists.
+
+        Acceptance criteria: emoji is None when the item name has no matching Item row.
+        """
+        # Empty emoji_rows → no rows in Item table → emoji_map.get returns None
+        _configure_db_mock_with_emoji(mock_get_db, [])
+
+        response = client.get("/api/v1/shops/item/1")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["emoji"] is None
+
+    @patch("api.routers.shops.get_db_session")
+    def test_shop_item_response_schema_includes_emoji_field(self, mock_get_db, client, mock_shop_service):
+        """ShopItemResponse schema includes emoji field with None default.
+
+        Acceptance criteria: emoji field exists in the response JSON structure.
+        """
+        _configure_db_mock_with_emoji(mock_get_db, [("Pulse Laser", "🔫")])
+
+        response = client.get("/api/v1/shops/guild/67890/tier/Bronze")
+
+        assert response.status_code == 200
+        data = response.json()
+        # Verify emoji key exists in the response
+        assert "emoji" in data[0]

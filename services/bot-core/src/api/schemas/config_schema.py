@@ -1,6 +1,6 @@
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 # Response Models
@@ -15,9 +15,19 @@ class GuildConfigResponse(BaseModel):
     created_at: str
     updated_at: str
     category_id: int | None = None
-    bounty_channel_id: int | None = None
     shop_channel_id: int | None = None
-    general_channel_id: int | None = None
+    bronze_bounty_channel_id: int | None = None
+    silver_bounty_channel_id: int | None = None
+    gold_bounty_channel_id: int | None = None
+    hunting_channel_id: int | None = None
+    discussion_channel_id: int | None = None
+    image_channel_id: int | None = None
+    bounty_hunter_role_id: int | None = None
+    bronze_role_id: int | None = None
+    silver_role_id: int | None = None
+    gold_role_id: int | None = None
+    platinum_bounty_channel_id: int | None = None
+    platinum_role_id: int | None = None
 
 
 class ConfigValidationResponse(BaseModel):
@@ -34,9 +44,19 @@ class UpdateConfigRequest(BaseModel):
     sale_price_factor: float | None = Field(None, gt=0, le=1)
     xp_thresholds: dict[str, int] | None = None
     category_id: int | None = None
-    bounty_channel_id: int | None = None
     shop_channel_id: int | None = None
-    general_channel_id: int | None = None
+    bronze_bounty_channel_id: int | None = None
+    silver_bounty_channel_id: int | None = None
+    gold_bounty_channel_id: int | None = None
+    hunting_channel_id: int | None = None
+    discussion_channel_id: int | None = None
+    image_channel_id: int | None = None
+    bounty_hunter_role_id: int | None = None
+    bronze_role_id: int | None = None
+    silver_role_id: int | None = None
+    gold_role_id: int | None = None
+    platinum_bounty_channel_id: int | None = None
+    platinum_role_id: int | None = None
 
 
 class UpdateShopConfigRequest(BaseModel):
@@ -49,3 +69,26 @@ class UpdateShopConfigRequest(BaseModel):
 class UpdateXPThresholdsRequest(BaseModel):
     guild_id: int
     thresholds: dict[str, int] = Field(..., description="XP thresholds for Silver, Gold, and Platinum tiers")
+
+
+class UpdateBountyConfigRequest(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    guild_id: int
+    max_bounties_per_tier: dict[str, int] | None = None
+    bounty_expiry_minutes: int | None = Field(None, ge=10, le=10080)
+    bounty_spawn_interval_minutes: int | None = Field(None, ge=5, le=1440)
+
+
+class BountyConfigResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    guild_id: int
+    max_bounties_per_tier: dict[str, int]
+    bounty_expiry_minutes: int
+    bounty_spawn_interval_minutes: int
+    next_spawn_check_at: str | None = None
+
+
+class BountyConfigStatusResponse(BountyConfigResponse):
+    active_bounties_per_tier: dict[str, int]

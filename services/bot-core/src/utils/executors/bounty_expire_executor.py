@@ -59,6 +59,10 @@ async def execute_bounty_expire_job(job_id: str, payload: dict) -> dict:
             bounty_service = BountyService()
             bounty = await bounty_service.expire_bounty(db, bounty_id)
 
+            if bounty is not None:
+                # Delete the announcement message from Discord + DB (inside the session).
+                await _delete_bounty_announcement(job_id, bounty, db)
+
         if bounty is None:
             flogger.warning(
                 f"BountyExpireJob[{job_id}] expire_bounty returned None "
@@ -130,3 +134,50 @@ async def _announce_expiry(parent_job_id: str, bounty) -> None:
             f"bounty id={bounty.id} to discord-gateway: {e}"
         )
         flogger.trace(traceback.format_exc())
+
+
+# ---------------------------------------------------------------------------
+# Helper: delete bounty announcement Discord message + DB record
+# ---------------------------------------------------------------------------
+
+
+async def _delete_bounty_announcement(parent_job_id: str, bounty, db) -> None:
+    """Delete the bounty's Discord announcement message.
+
+    1. Look up DiscordMessage by guild_id + "bounty_announcement" + bounty.id
+    2. If found, DELETE the message from Discord via gateway
+    3. Delete the DiscordMessage record from the database
+    4. Non-fatal if any step fails
+    """
+    try:
+        from persist.repositories.discord_message_repository import DiscordMessageRepository
+
+        msg_repo = DiscordMessageRepository()
+        discord_msg = await msg_repo.get_by_guild_type_and_reference(
+            db, bounty.guild_id, "bounty_announcement", bounty.id
+        )
+
+        if discord_msg is None:
+            flogger.debug(f"BountyExpireJob[{parent_job_id}] no announcement to delete for bounty {bounty.id}")
+            return
+
+        # Delete from Discord via gateway
+        try:
+            async with httpx.AsyncClient() as client:
+                resp = await client.delete(
+                    f"{_GATEWAY_BASE_URL}/messages/{discord_msg.message_id}",
+                    timeout=10,
+                )
+            # 404 is OK — message may have been manually deleted
+            if resp.status_code not in (200, 204, 404):
+                resp.raise_for_status()
+            flogger.info(f"BountyExpireJob[{parent_job_id}] deleted Discord message {discord_msg.message_id}")
+        except Exception as e:  # pylint: disable=broad-exception-caught
+            flogger.warning(f"BountyExpireJob[{parent_job_id}] failed to delete Discord message: {e}")
+
+        # Delete the DiscordMessage record from DB
+        await msg_repo.delete_by_guild_type_and_reference(db, bounty.guild_id, "bounty_announcement", bounty.id)
+        flogger.info(f"BountyExpireJob[{parent_job_id}] cleaned up announcement record for bounty {bounty.id}")
+
+    except Exception as e:  # pylint: disable=broad-exception-caught
+        flogger.warning(f"BountyExpireJob[{parent_job_id}] failed to delete announcement for bounty {bounty.id}: {e}")

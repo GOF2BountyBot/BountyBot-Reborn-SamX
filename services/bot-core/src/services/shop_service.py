@@ -153,29 +153,29 @@ class ShopService:
             if player.credits < total_cost:
                 raise ValueError(f"Insufficient credits. Cost: {total_cost}, Available: {player.credits}")
 
-            # Perform transaction atomically
-            async with db.begin():
-                # Lock player row and re-check credits under lock
-                player = await self.player_repo.get_by_id_for_update(db, player_id)
-                if not player:
-                    raise ValueError(f"Player {player_id} not found")
-                if player.credits < total_cost:
-                    raise ValueError(f"Insufficient credits. Cost: {total_cost}, Available: {player.credits}")
+            # Lock player row and re-check credits under lock
+            player = await self.player_repo.get_by_id_for_update(db, player_id)
+            if not player:
+                raise ValueError(f"Player {player_id} not found")
+            if player.credits < total_cost:
+                raise ValueError(f"Insufficient credits. Cost: {total_cost}, Available: {player.credits}")
 
-                # Deduct credits from player
-                await self.player_repo.update_credits(db, player_id, player.credits - total_cost, commit=False)
+            # Deduct credits from player
+            player.credits -= total_cost
 
-                # Add item to player inventory
-                await self.inventory_repo.add_item(db, player_id, shop_item.item_type, shop_item.item_name, quantity)
+            # Add item to player inventory
+            await self.inventory_repo.add_item(db, player_id, shop_item.item_type, shop_item.item_name, quantity)
 
-                # Remove item from shop
-                new_shop_quantity = shop_item.quantity - quantity
-                if new_shop_quantity <= 0:
-                    # Remove item entirely if quantity reaches 0
-                    await self.shop_repo.remove(db, shop_item)
-                else:
-                    # Update shop quantity
-                    await self.shop_repo.update_quantity(db, shop_item_id, new_shop_quantity)
+            # Remove item from shop
+            new_shop_quantity = shop_item.quantity - quantity
+            if new_shop_quantity <= 0:
+                # Remove item entirely if quantity reaches 0
+                await db.delete(shop_item)
+            else:
+                shop_item.quantity = new_shop_quantity
+
+            await db.commit()
+            await db.refresh(player)
 
             transaction_details = {
                 "player_id": player_id,
@@ -184,7 +184,7 @@ class ShopService:
                 "quantity": quantity,
                 "unit_price": shop_item.price,
                 "total_cost": total_cost,
-                "remaining_credits": player.credits - total_cost,
+                "remaining_credits": player.credits,
                 "remaining_shop_quantity": new_shop_quantity,
             }
 

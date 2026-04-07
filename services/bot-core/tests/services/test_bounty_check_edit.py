@@ -1,0 +1,508 @@
+"""
+Tests for BountyService._edit_bounty_announcement and its integration
+with check_bounty().
+
+These tests verify:
+1. check_bounty calls _edit_bounty_announcement after INCORRECT results
+2. check_bounty calls _edit_bounty_announcement after CORRECT results
+3. _edit_bounty_announcement looks up the DiscordMessage via the repo
+4. _edit_bounty_announcement skips the HTTP call when no message is found
+5. _edit_bounty_announcement rebuilds the embed with checked-system state
+6. _edit_bounty_announcement is non-fatal (exceptions are caught+logged)
+7. _edit_bounty_announcement sends the correct PUT to the gateway
+"""
+
+from __future__ import annotations
+
+import sys
+import types
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
+
+# ---------------------------------------------------------------------------
+# Guard: ensure shared.bblogger is mocked before importing service code.
+# conftest.py already does this at collection time, but we defend against
+# running this file in isolation.
+# ---------------------------------------------------------------------------
+if "shared" not in sys.modules:
+    _mock_shared = types.ModuleType("shared")
+    _mock_bblogger = types.ModuleType("shared.bblogger")
+    _mock_bblogger.get_logger = MagicMock(return_value=MagicMock())
+    _mock_shared.bblogger = _mock_bblogger
+    sys.modules["shared"] = _mock_shared
+    sys.modules["shared.bblogger"] = _mock_bblogger
+
+from services.bounty_service import BountyService, CheckResult, RewardInfo
+
+# ---------------------------------------------------------------------------
+# Helpers / factory functions
+# ---------------------------------------------------------------------------
+
+
+def _make_player(
+    player_id: int = 1,
+    tier: str = "Bronze",
+    classic_mode: bool = False,
+    bounty_cooldown_end=None,
+    active_ship=None,
+) -> SimpleNamespace:
+    return SimpleNamespace(
+        id=player_id,
+        tier=tier,
+        classic_mode=classic_mode,
+        bounty_cooldown_end=bounty_cooldown_end,
+        active_ship=active_ship,
+    )
+
+
+def _make_active_bounty(
+    bounty_id: int = 10,
+    route: list | None = None,
+    answer: str = "Sol",
+    criminal_name: str = "Zara",
+    criminal_faction: str = "terran",
+    checked: dict | None = None,
+    guild_id: int = 1,
+    division: str = "bronze",
+    tech_level: int = 3,
+    reward: int = 5000,
+    reward_per_sys: int = 500,
+    end_time=None,
+    criminal_ship: dict | None = None,
+) -> SimpleNamespace:
+    if route is None:
+        route = ["Alpha", "Beta", "Gamma", "Sol", "Omega"]
+    if checked is None:
+        checked = {s: -1 for s in route}
+    return SimpleNamespace(
+        id=bounty_id,
+        route=route,
+        answer=answer,
+        criminal_name=criminal_name,
+        criminal_faction=criminal_faction,
+        checked=checked,
+        guild_id=guild_id,
+        division=division,
+        tech_level=tech_level,
+        reward=reward,
+        reward_per_sys=reward_per_sys,
+        end_time=end_time,
+        criminal_ship=criminal_ship,
+    )
+
+
+def _make_discord_message(
+    message_id: int = 99999,
+    channel_id: int = 7777,
+    guild_id: int = 1,
+) -> SimpleNamespace:
+    return SimpleNamespace(
+        id="some-uuid",
+        message_id=message_id,
+        channel_id=channel_id,
+        guild_id=guild_id,
+        message_type="bounty_announcement",
+    )
+
+
+# ---------------------------------------------------------------------------
+# Fixtures
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def service() -> BountyService:
+    """Return a BountyService with all repositories replaced by MagicMocks."""
+    svc = BountyService()
+    svc.bounty_repo = MagicMock()
+    svc.criminal_repo = MagicMock()
+    svc.item_repo = MagicMock()
+    svc.player_repo = MagicMock()
+    return svc
+
+
+@pytest.fixture
+def mock_db() -> AsyncMock:
+    db = AsyncMock()
+    db.commit = AsyncMock()
+    db.refresh = AsyncMock()
+    return db
+
+
+# ---------------------------------------------------------------------------
+# Tests: check_bounty triggers _edit_bounty_announcement
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_check_incorrect_triggers_announcement_edit(service, mock_db):
+    """After an INCORRECT check, _edit_bounty_announcement is called with the bounty."""
+    player = _make_player()
+    bounty = _make_active_bounty(route=["Alpha", "Beta", "Gamma", "Sol", "Omega"], answer="Sol")
+    service.player_repo.get_by_id = AsyncMock(return_value=player)
+    service.bounty_repo.get_active_by_guild_and_division = AsyncMock(return_value=[bounty])
+    service.bounty_repo.update = AsyncMock(return_value=bounty)
+
+    # Patch _edit_bounty_announcement to track calls
+    service._edit_bounty_announcement = AsyncMock()
+
+    result = await service.check_bounty(mock_db, player_id=1, system_name="Alpha", guild_id=1)
+
+    assert result.result == CheckResult.INCORRECT
+    service._edit_bounty_announcement.assert_called_once_with(mock_db, bounty)
+
+
+@pytest.mark.asyncio
+async def test_check_correct_triggers_announcement_edit_win(service, mock_db):
+    """After a CORRECT check with combat win, _edit_bounty_announcement is called."""
+    player = _make_player(classic_mode=True)  # auto-win
+    bounty = _make_active_bounty(answer="Sol")
+    bounty.criminal_ship = {}
+    service.player_repo.get_by_id = AsyncMock(return_value=player)
+    service.bounty_repo.get_active_by_guild_and_division = AsyncMock(return_value=[bounty])
+    service.bounty_repo.update = AsyncMock(return_value=bounty)
+    service.calc_rewards = AsyncMock(
+        return_value=[RewardInfo(player_id=1, credits_earned=1000, xp_earned=50, is_winner=True)]
+    )
+    service.distribute_rewards = AsyncMock(return_value=[])
+
+    service._edit_bounty_announcement = AsyncMock()
+
+    result = await service.check_bounty(mock_db, player_id=1, system_name="Sol", guild_id=1)
+
+    assert result.result == CheckResult.CORRECT
+    assert result.combat_won is True
+    service._edit_bounty_announcement.assert_called_once_with(mock_db, bounty)
+
+
+@pytest.mark.asyncio
+async def test_check_correct_triggers_announcement_edit_loss(service, mock_db):
+    """After a CORRECT check with combat loss (escape), _edit_bounty_announcement is called."""
+    active_ship = SimpleNamespace(ship_name="Betty", armour=50)
+    player = _make_player(active_ship=active_ship, classic_mode=False)
+    bounty = _make_active_bounty(answer="Sol")
+    bounty.criminal_ship = {
+        "ship_name": "Dreadnought",
+        "ship_armour": 500,
+        "weapons": [{"name": "Cannon", "dps": 99}],
+        "turrets": [],
+    }
+
+    mock_fight = SimpleNamespace(winner_name="Dreadnought", loser_name="Betty", is_stalemate=False)
+    service.combat_service = MagicMock()
+    service.combat_service.fight_ships.return_value = mock_fight
+
+    service.player_repo.get_by_id = AsyncMock(return_value=player)
+    service.bounty_repo.get_active_by_guild_and_division = AsyncMock(return_value=[bounty])
+    service.bounty_repo.update = AsyncMock(return_value=bounty)
+    service.escape_bounty = AsyncMock(return_value=(bounty, 5))
+
+    service._edit_bounty_announcement = AsyncMock()
+
+    result = await service.check_bounty(mock_db, player_id=1, system_name="Sol", guild_id=1)
+
+    assert result.result == CheckResult.CORRECT
+    assert result.combat_won is False
+    service._edit_bounty_announcement.assert_called_once_with(mock_db, bounty)
+
+
+# ---------------------------------------------------------------------------
+# Tests: _edit_bounty_announcement internals
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_edit_announcement_looks_up_discord_message(service, mock_db):
+    """_edit_bounty_announcement calls get_by_guild_type_and_reference with correct params."""
+    bounty = _make_active_bounty(bounty_id=42, guild_id=99)
+    discord_msg = _make_discord_message()
+
+    mock_msg_repo = AsyncMock()
+    mock_msg_repo.get_by_guild_type_and_reference = AsyncMock(return_value=discord_msg)
+
+    mock_builder = MagicMock()
+    mock_builder.build_payload = MagicMock(return_value={"embed": {"title": "Zara"}})
+
+    with (
+        patch(
+            "persist.repositories.discord_message_repository.DiscordMessageRepository",
+            return_value=mock_msg_repo,
+        ),
+        patch(
+            "message_builders.builders.bounty_announcement.BountyAnnouncementBuilder",
+            return_value=mock_builder,
+        ),
+        patch("httpx.AsyncClient") as mock_client_cls,
+    ):
+        mock_response = MagicMock()
+        mock_response.raise_for_status = MagicMock()
+        mock_client = AsyncMock()
+        mock_client.put = AsyncMock(return_value=mock_response)
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+        mock_client_cls.return_value = mock_client
+
+        await service._edit_bounty_announcement(mock_db, bounty)
+
+    mock_msg_repo.get_by_guild_type_and_reference.assert_called_once_with(mock_db, 99, "bounty_announcement", 42)
+
+
+@pytest.mark.asyncio
+async def test_edit_announcement_skips_when_no_message_found(service, mock_db):
+    """When no DiscordMessage exists, no HTTP call is made."""
+    bounty = _make_active_bounty(bounty_id=10)
+
+    mock_msg_repo = AsyncMock()
+    mock_msg_repo.get_by_guild_type_and_reference = AsyncMock(return_value=None)
+
+    with (
+        patch(
+            "persist.repositories.discord_message_repository.DiscordMessageRepository",
+            return_value=mock_msg_repo,
+        ),
+        patch("httpx.AsyncClient") as mock_client_cls,
+    ):
+        await service._edit_bounty_announcement(mock_db, bounty)
+
+    # httpx.AsyncClient should NOT have been instantiated when no message is found
+    mock_client_cls.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_edit_announcement_rebuilds_embed_with_checked_systems(service, mock_db):
+    """The builder is called with checked systems translated to the correct format."""
+    bounty = _make_active_bounty(
+        bounty_id=10,
+        route=["Alpha", "Beta", "Sol"],
+        answer="Sol",
+        # Alpha checked by player 7, Sol (answer) found by player 7, Beta unchecked
+        checked={"Alpha": 7, "Beta": -1, "Sol": 7},
+        guild_id=1,
+        division="bronze",
+        tech_level=3,
+        reward=5000,
+    )
+    discord_msg = _make_discord_message()
+
+    mock_msg_repo = AsyncMock()
+    mock_msg_repo.get_by_guild_type_and_reference = AsyncMock(return_value=discord_msg)
+
+    captured_payload_args = {}
+
+    def capture_build(payload_data):
+        captured_payload_args.update(payload_data)
+        return {"embed": {"title": "Zara"}}
+
+    mock_builder = MagicMock()
+    mock_builder.build_payload = MagicMock(side_effect=capture_build)
+
+    with (
+        patch(
+            "persist.repositories.discord_message_repository.DiscordMessageRepository",
+            return_value=mock_msg_repo,
+        ),
+        patch(
+            "message_builders.builders.bounty_announcement.BountyAnnouncementBuilder",
+            return_value=mock_builder,
+        ),
+        patch("httpx.AsyncClient") as mock_client_cls,
+    ):
+        mock_response = MagicMock()
+        mock_response.raise_for_status = MagicMock()
+        mock_client = AsyncMock()
+        mock_client.put = AsyncMock(return_value=mock_response)
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+        mock_client_cls.return_value = mock_client
+
+        await service._edit_bounty_announcement(mock_db, bounty)
+
+    # Verify the builder was called
+    mock_builder.build_payload.assert_called_once()
+
+    # Alpha is checked (not the answer) → "checked"
+    # Sol is the answer and was checked → "found"
+    # Beta is unchecked (checker_id == -1) → not in checked_for_builder
+    checked_for_builder = captured_payload_args.get("checked")
+    assert checked_for_builder is not None
+    assert checked_for_builder.get("Alpha") == "checked"
+    assert checked_for_builder.get("Sol") == "found"
+    assert "Beta" not in checked_for_builder
+
+
+@pytest.mark.asyncio
+async def test_edit_announcement_non_fatal(service, mock_db):
+    """If the HTTP edit fails, the exception is caught and does not propagate."""
+    bounty = _make_active_bounty(bounty_id=10)
+    discord_msg = _make_discord_message()
+
+    mock_msg_repo = AsyncMock()
+    mock_msg_repo.get_by_guild_type_and_reference = AsyncMock(return_value=discord_msg)
+
+    mock_builder = MagicMock()
+    mock_builder.build_payload = MagicMock(return_value={"embed": {"title": "Zara"}})
+
+    with (
+        patch(
+            "persist.repositories.discord_message_repository.DiscordMessageRepository",
+            return_value=mock_msg_repo,
+        ),
+        patch(
+            "message_builders.builders.bounty_announcement.BountyAnnouncementBuilder",
+            return_value=mock_builder,
+        ),
+        patch("httpx.AsyncClient") as mock_client_cls,
+    ):
+        # Make the HTTP client raise an exception
+        mock_client = AsyncMock()
+        mock_client.put = AsyncMock(side_effect=Exception("Connection refused"))
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+        mock_client_cls.return_value = mock_client
+
+        # Must NOT raise — non-fatal
+        await service._edit_bounty_announcement(mock_db, bounty)
+
+
+@pytest.mark.asyncio
+async def test_edit_announcement_sends_put_to_gateway(service, mock_db):
+    """Verifies the PUT request is sent to the correct gateway URL with the right payload."""
+    import os
+
+    bounty = _make_active_bounty(bounty_id=77, guild_id=5)
+    discord_msg = _make_discord_message(message_id=12345)
+
+    mock_msg_repo = AsyncMock()
+    mock_msg_repo.get_by_guild_type_and_reference = AsyncMock(return_value=discord_msg)
+
+    embed_content = {"title": "Zara", "fields": []}
+    mock_builder = MagicMock()
+    mock_builder.build_payload = MagicMock(return_value={"embed": embed_content})
+
+    captured_calls = {}
+
+    with (
+        patch(
+            "persist.repositories.discord_message_repository.DiscordMessageRepository",
+            return_value=mock_msg_repo,
+        ),
+        patch(
+            "message_builders.builders.bounty_announcement.BountyAnnouncementBuilder",
+            return_value=mock_builder,
+        ),
+        patch("httpx.AsyncClient") as mock_client_cls,
+        patch.dict(os.environ, {"DISCORD_GATEWAY_HOST": "test-gateway", "GATEWAY_PORT": "8888"}),
+    ):
+        mock_response = MagicMock()
+        mock_response.raise_for_status = MagicMock()
+        mock_client = AsyncMock()
+
+        async def capture_put(url, json=None, timeout=None):
+            captured_calls["url"] = url
+            captured_calls["json"] = json
+            return mock_response
+
+        mock_client.put = capture_put
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+        mock_client_cls.return_value = mock_client
+
+        await service._edit_bounty_announcement(mock_db, bounty)
+
+    # Verify URL format: http://{host}:{port}/api/v1/channels/{channel_id}/messages/{message_id}
+    assert captured_calls["url"] == "http://test-gateway:8888/api/v1/channels/7777/messages/12345"
+
+    # Verify payload structure
+    payload = captured_calls["json"]
+    assert payload["content"] == embed_content
+    assert payload["message_type"] == "bounty_announcement"
+
+
+# ---------------------------------------------------------------------------
+# Tests: _delete_bounty_announcement in check_bounty
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_check_correct_win_deletes_announcement(service, mock_db):
+    """After CORRECT + combat win (distribute_rewards), _delete_bounty_announcement is called."""
+    player = _make_player(classic_mode=True)  # auto-win
+    bounty = _make_active_bounty(answer="Sol")
+    bounty.criminal_ship = {}
+    service.player_repo.get_by_id = AsyncMock(return_value=player)
+    service.bounty_repo.get_active_by_guild_and_division = AsyncMock(return_value=[bounty])
+    service.bounty_repo.update = AsyncMock(return_value=bounty)
+    service.calc_rewards = AsyncMock(
+        return_value=[RewardInfo(player_id=1, credits_earned=1000, xp_earned=50, is_winner=True)]
+    )
+    service.distribute_rewards = AsyncMock(return_value=[])
+
+    service._edit_bounty_announcement = AsyncMock()
+    service._delete_bounty_announcement = AsyncMock()
+
+    result = await service.check_bounty(mock_db, player_id=1, system_name="Sol", guild_id=1)
+
+    assert result.result == CheckResult.CORRECT
+    assert result.combat_won is True
+    service._delete_bounty_announcement.assert_called_once_with(mock_db, bounty)
+
+
+@pytest.mark.asyncio
+async def test_check_correct_loss_deletes_announcement(service, mock_db):
+    """After CORRECT + combat loss (escape), _delete_bounty_announcement is called."""
+    active_ship = SimpleNamespace(ship_name="Betty", armour=50)
+    player = _make_player(active_ship=active_ship, classic_mode=False)
+    bounty = _make_active_bounty(answer="Sol")
+    bounty.criminal_ship = {
+        "ship_name": "Dreadnought",
+        "ship_armour": 500,
+        "weapons": [{"name": "Cannon", "dps": 99}],
+        "turrets": [],
+    }
+
+    mock_fight = SimpleNamespace(winner_name="Dreadnought", loser_name="Betty", is_stalemate=False)
+    service.combat_service = MagicMock()
+    service.combat_service.fight_ships.return_value = mock_fight
+
+    service.player_repo.get_by_id = AsyncMock(return_value=player)
+    service.bounty_repo.get_active_by_guild_and_division = AsyncMock(return_value=[bounty])
+    service.bounty_repo.update = AsyncMock(return_value=bounty)
+    service.escape_bounty = AsyncMock(return_value=(bounty, 5))
+
+    service._edit_bounty_announcement = AsyncMock()
+    service._delete_bounty_announcement = AsyncMock()
+
+    result = await service.check_bounty(mock_db, player_id=1, system_name="Sol", guild_id=1)
+
+    assert result.result == CheckResult.CORRECT
+    assert result.combat_won is False
+    service._delete_bounty_announcement.assert_called_once_with(mock_db, bounty)
+
+
+@pytest.mark.asyncio
+async def test_delete_announcement_non_fatal(service, mock_db):
+    """If _delete_bounty_announcement raises, check_bounty still returns normally."""
+    player = _make_player(classic_mode=True)  # auto-win
+    bounty = _make_active_bounty(answer="Sol")
+    bounty.criminal_ship = {}
+    service.player_repo.get_by_id = AsyncMock(return_value=player)
+    service.bounty_repo.get_active_by_guild_and_division = AsyncMock(return_value=[bounty])
+    service.bounty_repo.update = AsyncMock(return_value=bounty)
+    service.calc_rewards = AsyncMock(
+        return_value=[RewardInfo(player_id=1, credits_earned=1000, xp_earned=50, is_winner=True)]
+    )
+    service.distribute_rewards = AsyncMock(return_value=[])
+
+    service._edit_bounty_announcement = AsyncMock()
+    # _delete_bounty_announcement itself is non-fatal — but we test that if it
+    # raises (which its internal try/except prevents), check_bounty still returns OK.
+    # We mock it to raise to confirm the outer flow handles it.
+    service._delete_bounty_announcement = AsyncMock(side_effect=Exception("unexpected failure"))
+
+    # Should not raise even when _delete_bounty_announcement fails unexpectedly
+    result = await service.check_bounty(mock_db, player_id=1, system_name="Sol", guild_id=1)
+
+    assert result.result == CheckResult.CORRECT
+    assert result.combat_won is True

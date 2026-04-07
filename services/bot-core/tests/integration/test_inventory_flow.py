@@ -200,7 +200,7 @@ async def test_inventory_summary_by_type(
 
     summary = await inventory_repo.get_inventory_summary(db_session, player.id)
 
-    assert summary["weapon"] == 3   # 2 + 1
+    assert summary["weapon"] == 3  # 2 + 1
     assert summary["module"] == 3
     assert summary["total_items"] == 6
 
@@ -295,9 +295,7 @@ async def test_update_quantity_persists(
     user = await _create_user(db_session, user_id=500011)
     player = await _create_player(db_session, user_id=user.id, guild_id=7011)
 
-    item = await _add_inventory_item(
-        db_session, inventory_repo, player.id, "weapon", "Pulse Rifle", quantity=1
-    )
+    item = await _add_inventory_item(db_session, inventory_repo, player.id, "weapon", "Pulse Rifle", quantity=1)
 
     updated = await inventory_repo.update_quantity(db_session, item.id, 10)
 

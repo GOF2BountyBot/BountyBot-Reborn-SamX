@@ -128,14 +128,18 @@ class ChallengerWinsResolver:
     ) -> FightResults:
         fs1 = FightStats(
             ship_name=ship1_stats.ship_name,
-            raw_hp=ship1_stats.total_hp, raw_dps=100.0,
-            varied_hp=ship1_stats.total_hp, varied_dps=100.0,
+            raw_hp=ship1_stats.total_hp,
+            raw_dps=100.0,
+            varied_hp=ship1_stats.total_hp,
+            varied_dps=100.0,
             ttk=10.0,
         )
         fs2 = FightStats(
             ship_name=ship2_stats.ship_name,
-            raw_hp=ship2_stats.total_hp, raw_dps=1.0,
-            varied_hp=ship2_stats.total_hp, varied_dps=1.0,
+            raw_hp=ship2_stats.total_hp,
+            raw_dps=1.0,
+            varied_hp=ship2_stats.total_hp,
+            varied_dps=1.0,
             ttk=1.0,
         )
         return FightResults(
@@ -159,14 +163,18 @@ class TargetWinsResolver:
     ) -> FightResults:
         fs1 = FightStats(
             ship_name=ship1_stats.ship_name,
-            raw_hp=ship1_stats.total_hp, raw_dps=1.0,
-            varied_hp=ship1_stats.total_hp, varied_dps=1.0,
+            raw_hp=ship1_stats.total_hp,
+            raw_dps=1.0,
+            varied_hp=ship1_stats.total_hp,
+            varied_dps=1.0,
             ttk=1.0,
         )
         fs2 = FightStats(
             ship_name=ship2_stats.ship_name,
-            raw_hp=ship2_stats.total_hp, raw_dps=100.0,
-            varied_hp=ship2_stats.total_hp, varied_dps=100.0,
+            raw_hp=ship2_stats.total_hp,
+            raw_dps=100.0,
+            varied_hp=ship2_stats.total_hp,
+            varied_dps=100.0,
             ttk=10.0,
         )
         return FightResults(
@@ -190,14 +198,18 @@ class StalemateResolver:
     ) -> FightResults:
         fs1 = FightStats(
             ship_name=ship1_stats.ship_name,
-            raw_hp=ship1_stats.total_hp, raw_dps=0.0,
-            varied_hp=ship1_stats.total_hp, varied_dps=0.0,
+            raw_hp=ship1_stats.total_hp,
+            raw_dps=0.0,
+            varied_hp=ship1_stats.total_hp,
+            varied_dps=0.0,
             ttk=None,
         )
         fs2 = FightStats(
             ship_name=ship2_stats.ship_name,
-            raw_hp=ship2_stats.total_hp, raw_dps=0.0,
-            varied_hp=ship2_stats.total_hp, varied_dps=0.0,
+            raw_hp=ship2_stats.total_hp,
+            raw_dps=0.0,
+            varied_hp=ship2_stats.total_hp,
+            varied_dps=0.0,
             ttk=None,
         )
         return FightResults(
@@ -226,7 +238,8 @@ class TestCreateChallenge:
 
         player_repo = AsyncMock()
         player_repo.get_by_id.side_effect = lambda db, pid: {
-            1: challenger, 2: target,
+            1: challenger,
+            2: target,
         }.get(pid)
 
         duel_repo = AsyncMock()
@@ -270,9 +283,7 @@ class TestCreateChallenge:
         challenger = make_player(1, credits=100)
 
         player_repo = AsyncMock()
-        player_repo.get_by_id.side_effect = lambda db, pid: (
-            challenger if pid == 1 else None
-        )
+        player_repo.get_by_id.side_effect = lambda db, pid: challenger if pid == 1 else None
 
         svc = make_service(player_repo=player_repo)
         with pytest.raises(ValueError, match="Target player"):
@@ -286,7 +297,8 @@ class TestCreateChallenge:
 
         player_repo = AsyncMock()
         player_repo.get_by_id.side_effect = lambda db, pid: {
-            1: challenger, 2: target,
+            1: challenger,
+            2: target,
         }.get(pid)
 
         svc = make_service(player_repo=player_repo)
@@ -301,7 +313,8 @@ class TestCreateChallenge:
 
         player_repo = AsyncMock()
         player_repo.get_by_id.side_effect = lambda db, pid: {
-            1: challenger, 2: target,
+            1: challenger,
+            2: target,
         }.get(pid)
 
         svc = make_service(player_repo=player_repo)
@@ -316,7 +329,8 @@ class TestCreateChallenge:
 
         player_repo = AsyncMock()
         player_repo.get_by_id.side_effect = lambda db, pid: {
-            1: challenger, 2: target,
+            1: challenger,
+            2: target,
         }.get(pid)
 
         duel_repo = AsyncMock()
@@ -334,7 +348,8 @@ class TestCreateChallenge:
 
         player_repo = AsyncMock()
         player_repo.get_by_id.side_effect = lambda db, pid: {
-            1: challenger, 2: target,
+            1: challenger,
+            2: target,
         }.get(pid)
 
         duel_repo = AsyncMock()
@@ -371,7 +386,8 @@ class TestAcceptDuel:
         player_repo = AsyncMock()
         # accept_duel uses get_by_id_for_update (locking in sorted ID order: 1 then 2)
         player_repo.get_by_id_for_update.side_effect = lambda db, pid: {
-            1: challenger, 2: target,
+            1: challenger,
+            2: target,
         }.get(pid)
 
         svc = make_service(
@@ -408,7 +424,8 @@ class TestAcceptDuel:
         player_repo = AsyncMock()
         # accept_duel uses get_by_id_for_update (locking in sorted ID order: 1 then 2)
         player_repo.get_by_id_for_update.side_effect = lambda db, pid: {
-            1: challenger, 2: target,
+            1: challenger,
+            2: target,
         }.get(pid)
 
         svc = make_service(
@@ -444,7 +461,8 @@ class TestAcceptDuel:
         player_repo = AsyncMock()
         # accept_duel uses get_by_id_for_update (locking in sorted ID order: 1 then 2)
         player_repo.get_by_id_for_update.side_effect = lambda db, pid: {
-            1: challenger, 2: target,
+            1: challenger,
+            2: target,
         }.get(pid)
 
         svc = make_service(
@@ -494,7 +512,7 @@ class TestAcceptDuel:
     @pytest.mark.asyncio
     async def test_accept_challenger_insufficient_credits_at_accept_time(self):
         """Challenger who spent credits between challenge and accept is rejected."""
-        challenger = make_player(1, credits=0)   # no longer has credits
+        challenger = make_player(1, credits=0)  # no longer has credits
         target = make_player(2, credits=500)
 
         duel = make_duel(duel_id=1, challenger_id=1, target_id=2, stakes=100)
@@ -505,7 +523,8 @@ class TestAcceptDuel:
         player_repo = AsyncMock()
         # accept_duel uses get_by_id_for_update (locking in sorted ID order: 1 then 2)
         player_repo.get_by_id_for_update.side_effect = lambda db, pid: {
-            1: challenger, 2: target,
+            1: challenger,
+            2: target,
         }.get(pid)
 
         svc = make_service(duel_repo=duel_repo, player_repo=player_repo)
@@ -526,7 +545,8 @@ class TestAcceptDuel:
         player_repo = AsyncMock()
         # accept_duel uses get_by_id_for_update (locking in sorted ID order: 1 then 2)
         player_repo.get_by_id_for_update.side_effect = lambda db, pid: {
-            1: challenger, 2: target,
+            1: challenger,
+            2: target,
         }.get(pid)
 
         svc = make_service(duel_repo=duel_repo, player_repo=player_repo)
@@ -549,7 +569,8 @@ class TestAcceptDuel:
         player_repo = AsyncMock()
         # accept_duel uses get_by_id_for_update (locking in sorted ID order: 1 then 2)
         player_repo.get_by_id_for_update.side_effect = lambda db, pid: {
-            1: challenger, 2: target,
+            1: challenger,
+            2: target,
         }.get(pid)
 
         svc = make_service(

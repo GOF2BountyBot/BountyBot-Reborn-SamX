@@ -48,7 +48,7 @@ from services.audit_service import AuditService
 def make_db_session() -> AsyncMock:
     """Return a minimal AsyncSession mock with add, commit, and rollback."""
     db = AsyncMock()
-    db.add = MagicMock()          # add() is synchronous on SQLAlchemy sessions
+    db.add = MagicMock()  # add() is synchronous on SQLAlchemy sessions
     db.commit = AsyncMock()
     db.rollback = AsyncMock()
     return db

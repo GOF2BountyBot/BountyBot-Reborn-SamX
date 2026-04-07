@@ -88,6 +88,7 @@ def mock_db() -> AsyncMock:
 # get_by_id – exception path (lines 24-26)
 # ===================================================================
 
+
 class TestGetById:
     @pytest.mark.asyncio
     async def test_get_by_id_exception(self, repo, mock_db):
@@ -100,6 +101,7 @@ class TestGetById:
 # ===================================================================
 # get_by_name – exception path (lines 35-37)
 # ===================================================================
+
 
 class TestGetByName:
     @pytest.mark.asyncio
@@ -114,6 +116,7 @@ class TestGetByName:
 # count – exception path (lines 44-46)
 # ===================================================================
 
+
 class TestCount:
     @pytest.mark.asyncio
     async def test_count_exception(self, repo, mock_db):
@@ -127,6 +130,7 @@ class TestCount:
 # list_all – exception path (lines 53-55)
 # ===================================================================
 
+
 class TestListAll:
     @pytest.mark.asyncio
     async def test_list_all_exception(self, repo, mock_db):
@@ -139,6 +143,7 @@ class TestListAll:
 # ===================================================================
 # add – exception path with rollback (lines 65-68)
 # ===================================================================
+
 
 class TestAdd:
     @pytest.mark.asyncio
@@ -156,6 +161,7 @@ class TestAdd:
 # remove – exception path with rollback (lines 107-110)
 # ===================================================================
 
+
 class TestRemove:
     @pytest.mark.asyncio
     async def test_remove_exception_triggers_rollback(self, repo, mock_db):
@@ -171,6 +177,7 @@ class TestRemove:
 # ===================================================================
 # get_or_create_user – exception path (lines 128-130)
 # ===================================================================
+
 
 class TestGetOrCreateUser:
     @pytest.mark.asyncio

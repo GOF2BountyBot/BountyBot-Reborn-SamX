@@ -6,7 +6,7 @@ queries, CRUD operations, and division-level filtering.
 """
 
 from shared import bblogger
-from sqlalchemy import and_, func, select
+from sqlalchemy import and_, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from persist.interfaces.repository_interface import IRepository
@@ -133,6 +133,44 @@ class BountyRepository(IRepository[Bounty]):
             return result.scalar_one()
         except Exception as e:
             flogger.error(f"Error counting bounties: {e}")
+            raise
+
+    async def clear_active_by_guild(self, db: AsyncSession, guild_id: int, tier: str | None = None) -> list[int]:
+        """Set all matching active bounties to status='cleared'.
+
+        Args:
+            db: Async database session.
+            guild_id: Discord guild ID.
+            tier: Optional division filter (e.g. 'bronze', 'silver', 'gold').
+                  If None, clears all active bounties for the guild.
+
+        Returns:
+            List of cleared bounty IDs.
+        """
+        try:
+            conditions = [
+                Bounty.guild_id == guild_id,
+                Bounty.status == "active",
+            ]
+            if tier is not None:
+                conditions.append(Bounty.division == tier.lower())
+
+            # Fetch matching IDs first
+            result = await db.execute(select(Bounty.id).where(and_(*conditions)))
+            bounty_ids = list(result.scalars().all())
+
+            if not bounty_ids:
+                return []
+
+            # Bulk update to 'cleared'
+            await db.execute(update(Bounty).where(Bounty.id.in_(bounty_ids)).values(status="cleared"))
+            await db.commit()
+            flogger.info(f"Cleared {len(bounty_ids)} bounties for guild {guild_id} tier={tier}")
+            return bounty_ids
+
+        except Exception as e:
+            flogger.error(f"Error clearing active bounties for guild {guild_id} tier={tier}: {e}")
+            await db.rollback()
             raise
 
     async def count_active_by_guild_and_division(self, db: AsyncSession, guild_id: int, division: str) -> int:

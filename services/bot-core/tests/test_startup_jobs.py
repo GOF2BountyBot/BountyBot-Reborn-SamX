@@ -27,9 +27,7 @@ from unittest.mock import MagicMock
 # tests/api/__init__.py doesn't steal the name "api" from src/api.
 # (Same approach used by tests/api/conftest.py)
 # ---------------------------------------------------------------------------
-_SRC_DIR = _os.path.abspath(
-    _os.path.join(_os.path.dirname(__file__), "..", "src")
-)
+_SRC_DIR = _os.path.abspath(_os.path.join(_os.path.dirname(__file__), "..", "src"))
 if _SRC_DIR not in sys.path:
     sys.path.insert(0, _SRC_DIR)
 elif sys.path[0] != _SRC_DIR:
@@ -256,9 +254,7 @@ class TestDefaultSchedulerJobsConstant:
     def test_each_payload_has_job_type(self):
         """Every job payload contains a 'job_type' key."""
         for job_def in DEFAULT_SCHEDULER_JOBS:
-            assert "job_type" in job_def["payload"], (
-                f"payload missing 'job_type' in {job_def}"
-            )
+            assert "job_type" in job_def["payload"], f"payload missing 'job_type' in {job_def}"
 
     def test_bounty_spawn_payload(self):
         """bounty_spawn_default payload has job_type='bounty_spawn'."""
@@ -293,6 +289,34 @@ class TestDefaultSchedulerJobsConstant:
         job = next(j for j in DEFAULT_SCHEDULER_JOBS if j["job_id"] == "temperature_decay_default")
         assert job["cron"] == "0 * * * *"
 
+    def test_bounty_spawn_has_jitter_key(self):
+        """bounty_spawn_default job definition includes a 'jitter' key."""
+        job = next(j for j in DEFAULT_SCHEDULER_JOBS if j["job_id"] == "bounty_spawn_default")
+        assert "jitter" in job, "bounty_spawn_default is missing the 'jitter' key"
+
+    def test_bounty_spawn_jitter_equals_game_constant(self):
+        """bounty_spawn_default jitter value equals GameConstants.BOUNTY_SPAWN_JITTER."""
+        from services.game_constants import GameConstants
+
+        job = next(j for j in DEFAULT_SCHEDULER_JOBS if j["job_id"] == "bounty_spawn_default")
+        assert job["jitter"] == GameConstants.BOUNTY_SPAWN_JITTER
+
+    def test_bounty_spawn_jitter_is_positive_integer(self):
+        """bounty_spawn_default jitter is a positive integer (seconds)."""
+        job = next(j for j in DEFAULT_SCHEDULER_JOBS if j["job_id"] == "bounty_spawn_default")
+        assert isinstance(job["jitter"], int)
+        assert job["jitter"] > 0
+
+    def test_shop_refresh_has_no_jitter(self):
+        """shop_refresh_default does not define a jitter (deterministic schedule)."""
+        job = next(j for j in DEFAULT_SCHEDULER_JOBS if j["job_id"] == "shop_refresh_default")
+        assert "jitter" not in job
+
+    def test_temperature_decay_has_no_jitter(self):
+        """temperature_decay_default does not define a jitter (deterministic schedule)."""
+        job = next(j for j in DEFAULT_SCHEDULER_JOBS if j["job_id"] == "temperature_decay_default")
+        assert "jitter" not in job
+
 
 # ===========================================================================
 # Tests for register_default_jobs()
@@ -320,10 +344,7 @@ class TestRegisterDefaultJobs:
 
         register_default_jobs(scheduler)
 
-        calls_by_id = {
-            call.kwargs["id"]: call
-            for call in scheduler.add_job.call_args_list
-        }
+        calls_by_id = {call.kwargs["id"]: call for call in scheduler.add_job.call_args_list}
         assert "bounty_spawn_default" in calls_by_id
         call = calls_by_id["bounty_spawn_default"]
         assert call.kwargs["args"] == [
@@ -337,10 +358,7 @@ class TestRegisterDefaultJobs:
 
         register_default_jobs(scheduler)
 
-        calls_by_id = {
-            call.kwargs["id"]: call
-            for call in scheduler.add_job.call_args_list
-        }
+        calls_by_id = {call.kwargs["id"]: call for call in scheduler.add_job.call_args_list}
         assert "shop_refresh_default" in calls_by_id
         call = calls_by_id["shop_refresh_default"]
         assert call.kwargs["args"] == [
@@ -354,10 +372,7 @@ class TestRegisterDefaultJobs:
 
         register_default_jobs(scheduler)
 
-        calls_by_id = {
-            call.kwargs["id"]: call
-            for call in scheduler.add_job.call_args_list
-        }
+        calls_by_id = {call.kwargs["id"]: call for call in scheduler.add_job.call_args_list}
         assert "temperature_decay_default" in calls_by_id
         call = calls_by_id["temperature_decay_default"]
         assert call.kwargs["args"] == [
@@ -385,26 +400,19 @@ class TestRegisterDefaultJobs:
 
     def test_only_missing_jobs_are_added_partial_existing(self):
         """Only the two missing jobs are added when one already exists."""
-        scheduler = _make_mock_scheduler(
-            existing_job_ids=["bounty_spawn_default"]
-        )
+        scheduler = _make_mock_scheduler(existing_job_ids=["bounty_spawn_default"])
 
         register_default_jobs(scheduler)
 
         assert scheduler.add_job.call_count == 2
-        registered_ids = {
-            call.kwargs["id"]
-            for call in scheduler.add_job.call_args_list
-        }
+        registered_ids = {call.kwargs["id"] for call in scheduler.add_job.call_args_list}
         assert "shop_refresh_default" in registered_ids
         assert "temperature_decay_default" in registered_ids
         assert "bounty_spawn_default" not in registered_ids
 
     def test_single_missing_job_added(self):
         """Only the one missing job is added when two already exist."""
-        scheduler = _make_mock_scheduler(
-            existing_job_ids=["bounty_spawn_default", "shop_refresh_default"]
-        )
+        scheduler = _make_mock_scheduler(existing_job_ids=["bounty_spawn_default", "shop_refresh_default"])
 
         register_default_jobs(scheduler)
 
@@ -423,10 +431,7 @@ class TestRegisterDefaultJobs:
         scheduler = _make_mock_scheduler()
         register_default_jobs(scheduler)
 
-        calls_by_id = {
-            call.kwargs["id"]: call
-            for call in scheduler.add_job.call_args_list
-        }
+        calls_by_id = {call.kwargs["id"]: call for call in scheduler.add_job.call_args_list}
         trigger = calls_by_id["bounty_spawn_default"].kwargs["trigger"]
         expected_cron = f"*/{GameConstants.BOUNTY_DELAY_RANDOM_MIN} * * * *"
         assert trigger._expr == expected_cron
@@ -436,10 +441,7 @@ class TestRegisterDefaultJobs:
         scheduler = _make_mock_scheduler()
         register_default_jobs(scheduler)
 
-        calls_by_id = {
-            call.kwargs["id"]: call
-            for call in scheduler.add_job.call_args_list
-        }
+        calls_by_id = {call.kwargs["id"]: call for call in scheduler.add_job.call_args_list}
         trigger = calls_by_id["shop_refresh_default"].kwargs["trigger"]
         assert trigger._expr == "0 */6 * * *"
 
@@ -448,12 +450,45 @@ class TestRegisterDefaultJobs:
         scheduler = _make_mock_scheduler()
         register_default_jobs(scheduler)
 
-        calls_by_id = {
-            call.kwargs["id"]: call
-            for call in scheduler.add_job.call_args_list
-        }
+        calls_by_id = {call.kwargs["id"]: call for call in scheduler.add_job.call_args_list}
         trigger = calls_by_id["temperature_decay_default"].kwargs["trigger"]
         assert trigger._expr == "0 * * * *"
+
+    # ------------------------------------------------------------------
+    # Jitter: bounty_spawn_default trigger must have jitter applied
+    # ------------------------------------------------------------------
+
+    def test_bounty_spawn_trigger_has_jitter_set(self):
+        """register_default_jobs sets trigger.jitter on the bounty_spawn_default trigger."""
+        from services.game_constants import GameConstants
+
+        scheduler = _make_mock_scheduler()
+        register_default_jobs(scheduler)
+
+        calls_by_id = {call.kwargs["id"]: call for call in scheduler.add_job.call_args_list}
+        trigger = calls_by_id["bounty_spawn_default"].kwargs["trigger"]
+        assert hasattr(trigger, "jitter"), "trigger.jitter was not set on bounty_spawn_default"
+        assert trigger.jitter == GameConstants.BOUNTY_SPAWN_JITTER
+
+    def test_shop_refresh_trigger_has_no_jitter(self):
+        """register_default_jobs does NOT set trigger.jitter on shop_refresh_default."""
+        scheduler = _make_mock_scheduler()
+        register_default_jobs(scheduler)
+
+        calls_by_id = {call.kwargs["id"]: call for call in scheduler.add_job.call_args_list}
+        trigger = calls_by_id["shop_refresh_default"].kwargs["trigger"]
+        # jitter attribute should NOT be set on a no-jitter job
+        assert not hasattr(trigger, "jitter"), "trigger.jitter should not be set on shop_refresh_default"
+
+    def test_temperature_decay_trigger_has_no_jitter(self):
+        """register_default_jobs does NOT set trigger.jitter on temperature_decay_default."""
+        scheduler = _make_mock_scheduler()
+        register_default_jobs(scheduler)
+
+        calls_by_id = {call.kwargs["id"]: call for call in scheduler.add_job.call_args_list}
+        trigger = calls_by_id["temperature_decay_default"].kwargs["trigger"]
+        # jitter attribute should NOT be set on a no-jitter job
+        assert not hasattr(trigger, "jitter"), "trigger.jitter should not be set on temperature_decay_default"
 
     # ------------------------------------------------------------------
     # run_job function is passed as the callable
@@ -467,6 +502,5 @@ class TestRegisterDefaultJobs:
         for call in scheduler.add_job.call_args_list:
             # First positional argument to add_job should be run_job
             assert call.args[0] is _MOCK_RUN_JOB, (
-                f"Expected run_job callable but got {call.args[0]} "
-                f"for job '{call.kwargs.get('id')}'"
+                f"Expected run_job callable but got {call.args[0]} for job '{call.kwargs.get('id')}'"
             )

@@ -124,6 +124,7 @@ class GameConstants:
 
     BOUNTY_DELAY_RANDOM_MIN: int = 5
     BOUNTY_DELAY_RANDOM_MAX: int = 7
+    BOUNTY_SPAWN_JITTER: int = 180  # Up to 3 minutes of random offset on each spawn check
 
     # ------------------------------------------------------------------
     # Timers (seconds)
@@ -273,6 +274,7 @@ class GameConstants:
         # Bounty spawn delay
         cls.BOUNTY_DELAY_RANDOM_MIN = _track_int("BOUNTY_DELAY_RANDOM_MIN", 5)
         cls.BOUNTY_DELAY_RANDOM_MAX = _track_int("BOUNTY_DELAY_RANDOM_MAX", 7)
+        cls.BOUNTY_SPAWN_JITTER = _track_int("BOUNTY_SPAWN_JITTER", 180)
 
         # Timers
         cls.GUILD_ACTIVITY_DECAY_INTERVAL = _track_int("GUILD_ACTIVITY_DECAY_INTERVAL", 3600)

@@ -356,3 +356,162 @@ async def test_job_executor_does_not_dispatch_expire_for_bounty_spawn():
 
     mock_expire_fn.assert_not_awaited()
     mock_spawn_fn.assert_awaited_once()
+
+
+# ===========================================================================
+# Tests: _delete_bounty_announcement
+# ===========================================================================
+
+# Pre-register stubs for discord_message_repository used in delete tests.
+_MockDiscordMsgRepo = MagicMock()
+_ensure_stub("persist.repositories.discord_message_repository", DiscordMessageRepository=_MockDiscordMsgRepo)
+
+
+def _make_discord_message(message_id: int = 42000, guild_id: int = 100) -> MagicMock:
+    """Return a mock DiscordMessage-like object."""
+    msg = MagicMock()
+    msg.message_id = message_id
+    msg.guild_id = guild_id
+    return msg
+
+
+def _configure_msg_repo(get_return=None, delete_return=True) -> AsyncMock:
+    """Patch DiscordMessageRepository to return controlled values."""
+    mock_repo = AsyncMock()
+    mock_repo.get_by_guild_type_and_reference = AsyncMock(return_value=get_return)
+    mock_repo.delete_by_guild_type_and_reference = AsyncMock(return_value=delete_return)
+    sys.modules["persist.repositories.discord_message_repository"].DiscordMessageRepository = MagicMock(
+        return_value=mock_repo
+    )
+    return mock_repo
+
+
+@pytest.mark.asyncio
+async def test_expire_deletes_announcement_message():
+    """After expire, _delete_bounty_announcement sends DELETE to Discord and cleans DB record."""
+    from utils.executors.bounty_expire_executor import _delete_bounty_announcement
+
+    mock_db = AsyncMock()
+    bounty = _make_bounty(bounty_id=10, guild_id=100)
+    discord_msg = _make_discord_message(message_id=55555, guild_id=100)
+
+    mock_repo = _configure_msg_repo(get_return=discord_msg)
+
+    captured_calls = {}
+
+    with patch("utils.executors.bounty_expire_executor.httpx.AsyncClient") as mock_cls:
+        mock_client = AsyncMock()
+
+        async def capture_delete(url, timeout=None):
+            captured_calls["url"] = url
+            resp = MagicMock()
+            resp.status_code = 204
+            resp.raise_for_status = MagicMock()
+            return resp
+
+        mock_client.delete = capture_delete
+        mock_cls.return_value.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_cls.return_value.__aexit__ = AsyncMock(return_value=False)
+
+        await _delete_bounty_announcement("parent-job", bounty, mock_db)
+
+    # Discord DELETE was called with the correct message_id URL
+    assert "55555" in captured_calls.get("url", ""), f"Expected message_id 55555 in URL: {captured_calls}"
+    # DB record was deleted
+    mock_repo.delete_by_guild_type_and_reference.assert_awaited_once_with(mock_db, 100, "bounty_announcement", 10)
+
+
+@pytest.mark.asyncio
+async def test_expire_handles_no_announcement_gracefully():
+    """When no DiscordMessage exists, no HTTP DELETE is sent and no error is raised."""
+    from utils.executors.bounty_expire_executor import _delete_bounty_announcement
+
+    mock_db = AsyncMock()
+    bounty = _make_bounty(bounty_id=20, guild_id=200)
+
+    _configure_msg_repo(get_return=None)  # No message found
+
+    with patch("utils.executors.bounty_expire_executor.httpx.AsyncClient") as mock_cls:
+        # Must NOT raise, and httpx must NOT be used
+        await _delete_bounty_announcement("parent-job", bounty, mock_db)
+
+    mock_cls.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_expire_handles_discord_delete_failure():
+    """Discord DELETE returning an error is logged but DB record is still deleted."""
+    from utils.executors.bounty_expire_executor import _delete_bounty_announcement
+
+    mock_db = AsyncMock()
+    bounty = _make_bounty(bounty_id=30, guild_id=300)
+    discord_msg = _make_discord_message(message_id=77777, guild_id=300)
+
+    mock_repo = _configure_msg_repo(get_return=discord_msg)
+
+    with patch("utils.executors.bounty_expire_executor.httpx.AsyncClient") as mock_cls:
+        mock_client = AsyncMock()
+        mock_client.delete = AsyncMock(side_effect=Exception("Connection refused"))
+        mock_cls.return_value.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_cls.return_value.__aexit__ = AsyncMock(return_value=False)
+
+        # Must NOT raise — non-fatal
+        await _delete_bounty_announcement("parent-job", bounty, mock_db)
+
+    # DB record should still be deleted even after Discord failure
+    mock_repo.delete_by_guild_type_and_reference.assert_awaited_once_with(mock_db, 300, "bounty_announcement", 30)
+
+
+@pytest.mark.asyncio
+async def test_expire_handles_discord_404_gracefully():
+    """Discord returning 404 (message already deleted) is treated as success."""
+    from utils.executors.bounty_expire_executor import _delete_bounty_announcement
+
+    mock_db = AsyncMock()
+    bounty = _make_bounty(bounty_id=40, guild_id=400)
+    discord_msg = _make_discord_message(message_id=88888, guild_id=400)
+
+    mock_repo = _configure_msg_repo(get_return=discord_msg)
+
+    with patch("utils.executors.bounty_expire_executor.httpx.AsyncClient") as mock_cls:
+        mock_client = AsyncMock()
+
+        async def return_404(url, timeout=None):
+            resp = MagicMock()
+            resp.status_code = 404
+            resp.raise_for_status = MagicMock(side_effect=Exception("404 Not Found"))
+            return resp
+
+        mock_client.delete = return_404
+        mock_cls.return_value.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_cls.return_value.__aexit__ = AsyncMock(return_value=False)
+
+        # Must NOT raise — 404 is acceptable
+        await _delete_bounty_announcement("parent-job", bounty, mock_db)
+
+    # DB record should still be deleted
+    mock_repo.delete_by_guild_type_and_reference.assert_awaited_once_with(mock_db, 400, "bounty_announcement", 40)
+
+
+@pytest.mark.asyncio
+async def test_execute_job_calls_delete_announcement_on_success():
+    """execute_bounty_expire_job calls _delete_bounty_announcement after expiry inside the db session."""
+    from utils.executors.bounty_expire_executor import execute_bounty_expire_job
+
+    mock_db = AsyncMock()
+    _configure_db_manager(mock_db)
+    bounty = _make_bounty(bounty_id=50, guild_id=500)
+    _configure_bounty_service(bounty)
+
+    mock_delete = AsyncMock()
+    with (
+        patch("utils.executors.bounty_expire_executor._announce_expiry", new=AsyncMock()),
+        patch("utils.executors.bounty_expire_executor._delete_bounty_announcement", new=mock_delete),
+    ):
+        result = await execute_bounty_expire_job(
+            "job-delete-test",
+            {"job_type": "bounty_expire", "bounty_id": 50},
+        )
+
+    assert result["status"] == "success"
+    mock_delete.assert_awaited_once_with("job-delete-test", bounty, mock_db)

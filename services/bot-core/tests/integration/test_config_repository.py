@@ -88,10 +88,13 @@ async def test_remove_deletes_config(db_session: AsyncSession, repo: ConfigRepos
 
 
 async def test_create_or_update_creates_new(db_session: AsyncSession, repo: ConfigRepository):
-    result = await repo.create_or_update(db_session, {
-        "guild_id": 500,
-        "starting_credits": 1000,
-    })
+    result = await repo.create_or_update(
+        db_session,
+        {
+            "guild_id": 500,
+            "starting_credits": 1000,
+        },
+    )
 
     assert result.guild_id == 500
     assert result.starting_credits == 1000
@@ -100,10 +103,13 @@ async def test_create_or_update_creates_new(db_session: AsyncSession, repo: Conf
 async def test_create_or_update_updates_existing(db_session: AsyncSession, repo: ConfigRepository):
     await repo.add(db_session, GuildConfig(guild_id=600, starting_credits=0))
 
-    result = await repo.create_or_update(db_session, {
-        "guild_id": 600,
-        "starting_credits": 2000,
-    })
+    result = await repo.create_or_update(
+        db_session,
+        {
+            "guild_id": 600,
+            "starting_credits": 2000,
+        },
+    )
 
     assert result.guild_id == 600
     assert result.starting_credits == 2000
@@ -151,11 +157,14 @@ async def test_create_default_config(db_session: AsyncSession, repo: ConfigRepos
 async def test_update_shop_config(db_session: AsyncSession, repo: ConfigRepository):
     await repo.create_default_config(db_session, guild_id=900)
 
-    result = await repo.update_shop_config(db_session, {
-        "guild_id": 900,
-        "sale_price_factor": 0.5,
-        "ship_count_range": {"min": 1, "max": 2},
-    })
+    result = await repo.update_shop_config(
+        db_session,
+        {
+            "guild_id": 900,
+            "sale_price_factor": 0.5,
+            "ship_count_range": {"min": 1, "max": 2},
+        },
+    )
 
     assert result.sale_price_factor == 0.5
     assert result.ship_count_range == {"min": 1, "max": 2}
@@ -251,21 +260,29 @@ async def test_update_xp_thresholds_invalid_order(db_session: AsyncSession, repo
     await repo.create_default_config(db_session, guild_id=1900)
 
     with pytest.raises(ValueError, match="ascending order"):
-        await repo.update_xp_thresholds(db_session, guild_id=1900, thresholds={
-            "Silver": 5000,
-            "Gold": 1000,
-            "Platinum": 15000,
-        })
+        await repo.update_xp_thresholds(
+            db_session,
+            guild_id=1900,
+            thresholds={
+                "Silver": 5000,
+                "Gold": 1000,
+                "Platinum": 15000,
+            },
+        )
 
 
 async def test_update_xp_thresholds_missing_tier(db_session: AsyncSession, repo: ConfigRepository):
     await repo.create_default_config(db_session, guild_id=2000)
 
     with pytest.raises(ValueError, match="Invalid threshold"):
-        await repo.update_xp_thresholds(db_session, guild_id=2000, thresholds={
-            "Silver": 500,
-            "Gold": 2000,
-        })
+        await repo.update_xp_thresholds(
+            db_session,
+            guild_id=2000,
+            thresholds={
+                "Silver": 500,
+                "Gold": 2000,
+            },
+        )
 
 
 # -- get_config_summary --------------------------------------------------------

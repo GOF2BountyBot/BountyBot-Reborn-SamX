@@ -31,22 +31,60 @@ Verify all four services are running and connected.
 
 ---
 
-## Phase 1 — Guild Setup & Player Registration
+## Phase 1 — Guild Setup, Channel Infrastructure & Player Registration
 
 ### First-time guild initialisation
 
-- [x] **1.1** `[ADMIN]` `/admin_setup` — "Guild initialized" response; creates GuildConfig + 4 tier shops + "BountyBot Admins" role
-- [x] **1.2** `[ADMIN]` `/admin_config action:View Config` — Shows guild configuration embed (starting credits, admin role, sale price factor, XP thresholds)
-- [x] **1.3** `[ADMIN]` `/admin_config_validate` — Returns "valid: true" with no errors or warnings
+- [ ] **1.1** `[ADMIN]` `/admin_setup` — "Guild initialized" response; creates:
+   - "BountyBot" category with @everyone view denied
+   - `#bronze-bounty-board` channel (read-only for players)
+   - `#silver-bounty-board` channel (read-only for players)
+   - `#gold-bounty-board` channel (read-only for players)
+   - `#shop` channel (read-only for players)
+   - `#bounty-hunting` channel (interactive — slash commands allowed)
+   - `#bounty-discussions` channel (chat only — slash commands disabled)
+   - `#bot-images` channel (hidden from all users, bot-only)
+   - `@Bounty Hunter` role (mentionable)
+   - "BountyBot Admins" role (if no admin_role provided)
+   - GuildConfig + 4 tier shops in database
+   - Confirmation embed lists all channel links and role mentions
+
+### Verify channel infrastructure
+
+- [ ] **1.2** Confirm all 7 text channels exist under the "BountyBot" category in Discord
+- [ ] **1.3** Confirm `@Bounty Hunter` role exists in the guild role list and is mentionable
+- [ ] **1.4** Verify channel permissions:
+   - Users WITHOUT `@Bounty Hunter` role CANNOT see any BountyBot channels
+   - `#bronze-bounty-board`, `#silver-bounty-board`, `#gold-bounty-board`, `#shop` are read-only for `@Bounty Hunter` (cannot type in them)
+   - `#bounty-hunting` allows `@Bounty Hunter` to use slash commands
+   - `#bounty-discussions` allows `@Bounty Hunter` to chat but NOT use slash commands
+   - `#bot-images` is invisible to all users (only bot can see it)
+
+### Verify config
+
+- [ ] **1.5** `[ADMIN]` `/admin_config action:View Config` — Shows guild configuration embed including channel IDs, admin role, starting credits, sale price factor, XP thresholds
+- [ ] **1.6** `[ADMIN]` `/admin_config_validate` — Returns "valid: true" with no errors or warnings
 
 ### Player registration (your account)
 
-- [ ] **1.4** `/profile` — First use: creates User + Player with starter ship "Betty", starter equipment (Micro Gun MK I, Telta Quickscan, E2 Exoclad, IMT Extract 1.3), Bronze tier, 0 XP, starting credits per guild config
-- [ ] **1.5** `/profile` — Second use: identical response, no duplicate player created (idempotent)
+- [ ] **1.7** `/profile` — First use: creates User + Player with starter ship "Betty", starter equipment (Micro Gun MK I, Telta Quickscan, E2 Exoclad, IMT Extract 1.3), Bronze tier, 0 XP, starting credits per guild config. **Also assigns `@Bounty Hunter` role to the user.**
+- [ ] **1.8** Verify BountyBot channels are now visible to you (you have `@Bounty Hunter` role)
+- [ ] **1.9** `/profile` — Second use: identical response, no duplicate player created (idempotent)
+
+### Unregister / re-register cycle
+
+- [ ] **1.10** `/unregister` — Ephemeral "Bounty Hunter role removed. Your player data is preserved." Verify:
+   - `@Bounty Hunter` role removed from your user
+   - BountyBot channels are no longer visible to you
+- [ ] **1.11** `/profile` — Re-assigns `@Bounty Hunter` role; channels visible again; same player data as before
+
+### Unregister edge cases
+
+- [ ] **1.12** `/unregister` when you don't have the role — "You don't have the Bounty Hunter role" message
 
 ### `[2P]` Second player registration
 
-- [ ] **1.6** `[2P]` Player 2 runs `/profile` — Creates their own User + Player with separate state
+- [ ] **1.13** `[2P]` Player 2 runs `/profile` — Creates their own User + Player with separate state; assigns `@Bounty Hunter` role to Player 2
 
 > Note: `/profile` takes no parameters — it always shows the invoking user's profile. There is no way to view another player's profile via `/profile`. Use `/admin_player user:@player action:View Stats` (admin) to inspect other players.
 
@@ -65,7 +103,7 @@ Verify seeded data is accessible via the aboutCog. All of this is read-only.
 
 ### Category listing
 
-- [ ] **2.5** `/list_category category:ship` — Paginated list of all seeded ships
+- [ ] **2.5** `/list_category category:ship` — Paginated list of all seeded ships (capped at 50)
 - [ ] **2.6** `/list_category category:primary_weapon` — Lists primary weapons
 - [ ] **2.7** `/list_category category:secondary_weapon` — Lists secondary weapons
 - [ ] **2.8** `/list_category category:turret_weapon` — Lists turret weapons
@@ -76,7 +114,7 @@ Verify seeded data is accessible via the aboutCog. All of this is read-only.
 
 ### Route planning
 
-- [ ] **2.13** `/make-route start:Wolf-Reiser end:Pan` — Returns numbered route with hop count
+- [ ] **2.13** `/make-route start:Wolf-Reiser end:Pan` — Returns numbered route with hop count and route map image attachment
 - [ ] **2.14** `/make-route start:Pan end:Pan` — Edge case: same start/end system
 
 ---
@@ -85,7 +123,7 @@ Verify seeded data is accessible via the aboutCog. All of this is read-only.
 
 ### View your ships
 
-- [ ] **3.1** `/ships` — Shows your owned ships (starter ship "Betty" should be present, marked as active)
+- [ ] **3.1** `/ships` — Shows your owned ships (starter ship "Betty" should be present, marked as active with green indicator)
 - [ ] **3.2** `/ship ship_id:<your_betty_id>` — Detailed view of your ship: loadout (weapons, modules, turrets), stats
 
 ### Ship operations
@@ -104,9 +142,9 @@ Verify seeded data is accessible via the aboutCog. All of this is read-only.
 
 ### Browse all shops
 
-- [ ] **4.1** `/shops` — Overview of all 4 tier shops (Bronze/Silver/Gold/Platinum) with item counts and lock status
-- [ ] **4.2** `/shop tier:Bronze` — Shows items available at Bronze tier with prices and quantities
-- [ ] **4.3** `/shop tier:Silver` — Should show items (or empty list if player tier too low to view)
+- [ ] **4.1** `/shops` — Overview of all 4 tier shops (Bronze/Silver/Gold/Platinum) with item counts and lock/unlock status based on player tier
+- [ ] **4.2** `/shop tier:Bronze` — Shows items available at Bronze tier with prices, quantities, and tech levels
+- [ ] **4.3** `/shop tier:Silver` — Tier-locked: "insufficient tier" error (player is Bronze at this point)
 - [ ] **4.4** `/shop tier:Bronze item_type:ship` — Filtered to ships only
 
 ### Purchase items
@@ -135,7 +173,7 @@ Verify seeded data is accessible via the aboutCog. All of this is read-only.
 
 ### View inventory
 
-- [ ] **5.1** `/inventory` — Shows all owned items (starter equipment + purchases)
+- [ ] **5.1** `/inventory` — Shows all owned items (starter equipment + purchases), grouped by type
 - [ ] **5.2** `/inventory item_type:weapon` — Filtered to weapons only
 - [ ] **5.3** `/search query:Micro` — Search inventory by partial name; finds "Micro Gun MK I"
 - [ ] **5.4** `/search query:nonexistent` — No results message
@@ -167,38 +205,49 @@ Verify seeded data is accessible via the aboutCog. All of this is read-only.
 
 ## Phase 6 — Bounty Hunting (Core Gameplay)
 
-> Note: There is no admin slash command to force-spawn bounties. Bounties spawn via APScheduler
-> (`bounty_spawn_default` job, every 5 minutes by default). Use `/scheduler_list` to check timing,
-> or wait for auto-spawn. Alternatively, call bot-core API directly to create test bounties.
+> Note: Bounties spawn via APScheduler (`bounty_spawn_default` job, every 5 minutes by default).
+> Use `/scheduler_list` to check timing, or wait for auto-spawn.
+> Alternatively, call bot-core API directly to create test bounties.
 
-### View bounties
+### Wait for bounty spawn
 
-- [ ] **6.1** `/bounties` — Lists active bounties (may be empty if scheduler hasn't fired yet, or "no guilds configured" if setup incomplete)
+- [ ] **6.1** `/bounties` — Lists active bounties (may be empty if scheduler hasn't fired yet)
 - [ ] **6.2** `/bounties division:bronze` — Filter bounties by division
-- [ ] **6.3** `[WAIT]` Wait for bounty_spawn_default to fire — `/bounties` now shows active bounty with criminal name, division, reward, expiry time
+- [ ] **6.3** `[WAIT]` Wait for `bounty_spawn_default` to fire — `/bounties` now shows active bounty with criminal name, division, reward, reward_per_sys, systems checked count, time remaining, and bounty ID
+
+### Verify bounty announcement (redesign feature)
+
+- [ ] **6.4** Check the correct per-division bounty board channel (e.g. `#bronze-bounty-board` for a bronze bounty). Verify:
+   - Rich embed with faction-specific color (Terran=gold, Vossk=teal, Midorian=dark red, Nivelian=blue)
+   - Title: criminal name
+   - Fields: Difficulty (T-level), Reward Pool, Bounty Ends (relative timestamp), Loadout (ship + weapons + modules), Route (system names), Checked Systems ("No systems checked yet")
+   - Footer: faction name
+   - `@Bounty Hunter` role mention above the embed
+- [ ] **6.5** Verify route map image is embedded in the announcement (if route map generation succeeded)
 
 ### Investigate a bounty
 
-- [ ] **6.4** `/route bounty:<bounty_id>` — Shows the bounty's system route with checked/unchecked indicators
-- [ ] **6.5** `/criminal-loadout bounty:<bounty_id>` — Shows criminal's ship, weapons, modules
+- [ ] **6.6** `/route bounty:<bounty_id>` — Shows the bounty's system route with checked/unchecked indicators
+- [ ] **6.7** `/criminal-loadout bounty:<bounty_id>` — Shows criminal's ship, weapons, modules
 
 ### Hunt the bounty
 
-- [ ] **6.6** `/check system:<wrong_system>` — "Incorrect" response
-- [ ] **6.7** `/check system:<same_wrong_system>` — "Already checked" response (same system can't be checked twice)
-- [ ] **6.8** `/check system:<correct_system>` — "Correct!" response; reward credits + XP granted (correct answer = last system in route)
-- [ ] **6.9** `/profile` — Credits and XP increased by bounty reward
-- [ ] **6.10** `/bounties` — Bounty no longer listed (resolved)
+- [ ] **6.8** `/check system:<wrong_system>` — "System Checked" response (incorrect). **Also verify**: the announcement embed in the bounty board channel live-edits to show the checked system with ~~strikethrough~~
+- [ ] **6.9** `/check system:<same_wrong_system>` — "Already checked" response (same system can't be checked twice)
+- [ ] **6.10** `/check system:<correct_system>` — "Bounty Found!" response (correct answer = last system in route); reward credits + XP granted. **Also verify**: the announcement embed edits one final time showing the found system in **bold**
+- [ ] **6.11** `/profile` — Credits and XP increased by bounty reward
+- [ ] **6.12** `/bounties` — Bounty no longer listed (resolved)
+- [ ] **6.13** Verify the announcement message has been **deleted** from the bounty board channel
 
 ### Bounty edge cases
 
-- [ ] **6.11** `/check system:<any_system>` with no active bounties — Error: "No active bounty"
-- [ ] **6.12** `/check system:<system>` immediately after a check — Cooldown message (per-player, per-bounty cooldown enforced server-side)
+- [ ] **6.14** `/check system:<any_system>` with no active bounties — Error: "No active bounty" or "No Bounty"
+- [ ] **6.15** `/check system:<system>` immediately after a check — Cooldown message (per-player cooldown, default 180 seconds)
 
 ### `[2P]` Bounty competition
 
-- [ ] **6.13** `[2P]` `[WAIT]` Both players race to `/check system:<correct>` on same bounty — Only the first correct answer wins
-- [ ] **6.14** Both players `/profile` — Only the winner received credits/XP
+- [ ] **6.16** `[2P]` `[WAIT]` Both players race to `/check system:<correct>` on same bounty — Only the first correct answer wins
+- [ ] **6.17** Both players `/profile` — Only the winner received credits/XP; non-winner contributors may receive partial reward (reward_per_sys * systems they checked)
 
 ---
 
@@ -208,10 +257,10 @@ All duel tests require a second registered player.
 
 ### Challenge and accept
 
-- [ ] **7.1** `[2P]` `/duel-challenge target:@player2 stakes:100` — Duel challenge sent; embed shows both players' ships + stats
+- [ ] **7.1** `[2P]` `/duel-challenge target:@player2 stakes:100` — Duel challenge sent; embed shows both players' mentions, stakes, duel ID, and "Challenge expires in 24 hours"
 - [ ] **7.2** `[2P]` Player 2 runs `/duel-accept duel:<duel_id>` (autocomplete dropdown) — Combat resolves; winner/loser announced with damage breakdown
 - [ ] **7.3** Both players `/profile` — Winner gained credits (stakes); loser lost credits (stakes). Both gained/lost XP
-- [ ] **7.4** Check for stalemate: If both ships have similar stats, result may be "Stalemate!" (no credit transfer)
+- [ ] **7.4** Check for stalemate: If both ships have similar stats, result may be "Stalemate!" (yellow embed, no credit transfer)
 
 ### Challenge and decline
 
@@ -221,10 +270,10 @@ All duel tests require a second registered player.
 ### Duel edge cases
 
 - [ ] **7.7** `/duel-challenge target:@yourself stakes:0` — Error: can't duel yourself
-- [ ] **7.8** `[2P]` `/duel-challenge target:@player2 stakes:0` — Zero-stakes duel (should work)
+- [ ] **7.8** `[2P]` `/duel-challenge target:@player2 stakes:0` — Zero-stakes friendly duel (should work)
 - [ ] **7.9** `[2P]` `/duel-challenge target:@player2 stakes:999999` — Stakes exceed one player's credits; error: insufficient credits
 - [ ] **7.10** `[2P]` Send challenge, then send another while first is pending — Error: already have pending duel (if enforced)
-- [ ] **7.11** `[2P]` `[WAIT]` Send challenge, do NOT accept/decline, wait for expiry (~1 hour) — Challenge auto-expires via duel_expire_executor
+- [ ] **7.11** `[2P]` `[WAIT]` Send challenge, do NOT accept/decline, wait for expiry (~24 hours) — Challenge auto-expires via duel_expire_executor
 
 ---
 
@@ -234,7 +283,7 @@ Use admin commands to fast-track progression testing.
 
 ### XP and tier advancement
 
-Tier thresholds: Bronze (0 XP) -> Silver (1,000 XP) -> Gold (5,000 XP) -> Platinum (15,000 XP)
+Tier thresholds (guild-configurable defaults): Bronze (0 XP) -> Silver (1,000 XP) -> Gold (5,000 XP) -> Platinum (15,000 XP)
 
 - [ ] **8.1** `[ADMIN]` `/admin_player user:@you action:Set XP xp:1500` — Sets XP; confirmation embed shows old/new XP and tier change (Bronze -> Silver)
 - [ ] **8.2** `/profile` — XP shows 1,500; tier shows Silver
@@ -257,13 +306,13 @@ Tier thresholds: Bronze (0 XP) -> Silver (1,000 XP) -> Gold (5,000 XP) -> Platin
 ### Prestige
 
 - [ ] **8.12** `[ADMIN]` `/admin_player user:@you action:Set XP xp:999999` — Max out XP to reach Platinum / level 10
-- [ ] **8.13** `/prestige` (without confirm) — Should show warning or instructions
+- [ ] **8.13** `/prestige` (without confirm) — Should show orange warning embed explaining what prestige does (reset to Bronze, keep ships/credits, gain prestige star)
 - [ ] **8.14** `/prestige confirm:CONFIRM` — Resets level to 0, tier to Bronze, clears inventory; increments prestige_count; preserves ships and lifetime stats
 - [ ] **8.15** `/profile` — Shows prestige count, reset XP/tier, preserved lifetime stats
 
 ### Leaderboard
 
-- [ ] **8.16** `/leaderboard` — Shows top 10 players ranked by XP with tier/credits
+- [ ] **8.16** `/leaderboard` — Shows top 10 players ranked by XP with tier/credits and rank emojis
 - [ ] **8.17** `/leaderboard tier:Silver` — Filtered to Silver-tier players only
 
 ---
@@ -303,7 +352,7 @@ Tier thresholds: Bronze (0 XP) -> Silver (1,000 XP) -> Gold (5,000 XP) -> Platin
 
 ### Configuration management
 
-- [ ] **10.1** `[ADMIN]` `/admin_config action:View Config` — Shows full guild configuration embed
+- [ ] **10.1** `[ADMIN]` `/admin_config action:View Config` — Shows full guild configuration embed (admin role, starting credits, sale price factor, XP thresholds, channel IDs)
 - [ ] **10.2** `[ADMIN]` `/admin_config action:Set Starting Credits starting_credits:5000` — Updates starting credits
 - [ ] **10.3** `[ADMIN]` `/admin_config action:View Config` — Verify starting credits changed to 5,000
 - [ ] **10.4** `[ADMIN]` `/admin_config action:Set Admin Role admin_role:@SomeRole` — Updates admin role
@@ -319,31 +368,34 @@ Tier thresholds: Bronze (0 XP) -> Silver (1,000 XP) -> Gold (5,000 XP) -> Platin
 
 - [ ] **10.9** `[ADMIN]` `/admin_refresh_shop tier:Bronze` — Force refreshes Bronze shop inventory
 - [ ] **10.10** `/shop tier:Bronze` — Verify items have changed
+- [ ] **10.11** Verify shop refresh announcement appears in `#shop` channel with `@Bounty Hunter` role mention
 
 ### Guild statistics
 
-- [ ] **10.11** `[ADMIN]` `/admin_guild_stats` — Shows total players, tier distribution, total/average credits and XP
+- [ ] **10.12** `[ADMIN]` `/admin_guild_stats` — Shows total players, tier distribution, total/average credits and XP
 
 ### Admin permission check
 
-- [ ] **10.12** `[ADMIN]` `/admin_check user:@admin_user` — Shows "has admin rights" with reason (developer/Discord admin/bot role)
-- [ ] **10.13** `[ADMIN]` `/admin_check user:@non_admin_user` — Shows "does not have admin rights"
+- [ ] **10.13** `[ADMIN]` `/admin_check user:@admin_user` — Shows "has admin rights" with reason (developer/Discord admin/bot role)
+- [ ] **10.14** `[ADMIN]` `/admin_check user:@non_admin_user` — Shows "does not have admin rights"
 
 ### Render configuration (blender-service)
 
-- [ ] **10.14** `[ADMIN]` `/render_config action:view` — Shows current blender render settings
-- [ ] **10.15** `[ADMIN]` `/render_config action:set setting:<key> value:<int>` — Updates a render setting
-- [ ] **10.16** `[ADMIN]` `/render_config action:reset` — Resets render settings to defaults
-- [ ] **10.17** `[ADMIN]` `/render_cache_clear` — Clears blender render cache; shows freed_mb
+- [ ] **10.15** `[ADMIN]` `/render_config action:view` — Shows current blender render settings
+- [ ] **10.16** `[ADMIN]` `/render_config action:set setting:<key> value:<int>` — Updates a render setting
+- [ ] **10.17** `[ADMIN]` `/render_config action:reset` — Resets render settings to defaults
+- [ ] **10.18** `[ADMIN]` `/render_cache_clear` — Clears blender render cache; shows freed_mb
 
 ### Destructive operations (test last!)
 
-- [ ] **10.18** `[ADMIN]` `/admin_uninstall` (without confirm) — Shows warning embed with instructions, does NOT delete anything
-- [ ] **10.19** `[ADMIN]` `/admin_uninstall confirm:CONFIRM-DELETE` — **DESTRUCTIVE**: permanently deletes all guild data (config, shops, players, bounties, everything)
-- [ ] **10.20** `/profile` — Player data gone; must re-register
-- [ ] **10.21** `/bounties` — All bounties gone
-- [ ] **10.22** `/shop tier:Bronze` — Shops need re-initialisation
-- [ ] **10.23** `[ADMIN]` `/admin_setup` — Re-initialise after uninstall to continue testing
+- [ ] **10.19** `[ADMIN]` `/admin_uninstall` (without confirm) — Shows red warning embed listing what will be deleted (7 channels, category, @Bounty Hunter role, all DB data). Does NOT delete anything.
+- [ ] **10.20** `[ADMIN]` `/admin_uninstall confirm:CONFIRM-DELETE` — **DESTRUCTIVE**: deletes all 7 BountyBot channels, the BountyBot category, the @Bounty Hunter role, and all guild DB data (config, shops, players, bounties, everything). Shows removed record counts.
+- [ ] **10.21** Verify BountyBot category and all 7 channels are gone from Discord
+- [ ] **10.22** Verify `@Bounty Hunter` role is gone from guild role list
+- [ ] **10.23** `/profile` — Player data gone; must re-register
+- [ ] **10.24** `/bounties` — All bounties gone
+- [ ] **10.25** `/shop tier:Bronze` — Shops need re-initialisation
+- [ ] **10.26** `[ADMIN]` `/admin_setup` — Re-initialise after uninstall; verify all channels, category, and role recreated cleanly
 
 ---
 
@@ -351,7 +403,7 @@ Tier thresholds: Bronze (0 XP) -> Silver (1,000 XP) -> Gold (5,000 XP) -> Platin
 
 ### View jobs
 
-- [ ] **11.1** `[ADMIN]` `/scheduler_list` — Lists all APScheduler jobs with type, trigger, and next run time (bounty_spawn_default, temperature_decay_default, shop_refresh_default)
+- [ ] **11.1** `[ADMIN]` `/scheduler_list` — Lists all APScheduler jobs with type, trigger, and next run time (bounty_spawn_default, temperature_decay_default, shop_refresh_default). Handles 503 if scheduler still starting.
 - [ ] **11.2** `[ADMIN]` `/scheduler_view job_id:bounty_spawn_default` — Shows full job details including payload JSON
 
 ### Update jobs
@@ -369,7 +421,7 @@ Tier thresholds: Bronze (0 XP) -> Silver (1,000 XP) -> Gold (5,000 XP) -> Platin
 ## Phase 12 — Dev Tools `[ADMIN]`
 
 - [ ] **12.1** `[ADMIN]` `/load_data category:ship` — Re-seeds ship data from JSON files; shows file count
-- [ ] **12.2** `[ADMIN]` `/load_data category:All` — Re-seeds all categories
+- [ ] **12.2** `[ADMIN]` `/load_data category:All` — Re-seeds all categories; summarizes results with error counts
 - [ ] **12.3** `[ADMIN]` `/reload_autocomplete` — Force-reloads cached autocomplete data for AboutCog, DevCog, SkinsCog
 
 ---
@@ -400,20 +452,22 @@ These can be tested at any point after Phase 1.
 
 - [ ] **13.13** (Before `/profile`) Try `/bounties` — May fail or return empty (bountyCog does not auto-register)
 - [ ] **13.14** (Before `/profile`) Try `/shop tier:Bronze` — Should auto-register player (shopCog upserts)
+- [ ] **13.15** (Before `/profile`) Try `/unregister` — Should handle gracefully ("You don't have the Bounty Hunter role" or similar)
 
 ---
 
-## Phase 14 — Scheduled Jobs `[WAIT]`
+## Phase 14 — Scheduled Jobs & Announcements `[WAIT]`
 
 These require patience or admin force-triggers.
 
 | # | Job | How to Test | Expected |
 |---|-----|-------------|----------|
-| **14.1** | Bounty auto-spawn | Wait for spawn interval (default 5 min after guild setup), run `/bounties` | New bounty appears without admin intervention |
-| **14.2** | Shop auto-refresh | Wait 6 hours or `[ADMIN]` `/admin_refresh_shop tier:Bronze` | Shop items have rotated |
+| **14.1** | Bounty auto-spawn | Wait for spawn interval (default 5 min), run `/bounties` | New bounty appears; **announcement posted to correct division channel** (`#bronze-bounty-board` / `#silver-bounty-board` / `#gold-bounty-board`) with rich embed and `@Bounty Hunter` mention |
+| **14.2** | Shop auto-refresh | Wait 6 hours or `[ADMIN]` `/admin_refresh_shop tier:Bronze` | Shop items rotated; **announcement posted to `#shop` channel** with `@Bounty Hunter` role mention |
 | **14.3** | Temperature decay | Spawn + resolve multiple bounties in one system, then wait for hourly decay job | System temperature cools over time |
-| **14.4** | `[2P]` Duel expiry | Send `/duel-challenge`, don't respond, wait for `DUEL_PENDING_DURATION` | Challenge auto-expires |
-| **14.5** | Bounty expiry | Wait for bounty to exist past `BOUNTY_LIFETIME` without being solved | Bounty auto-expires |
+| **14.4** | `[2P]` Duel expiry | Send `/duel-challenge`, don't respond, wait for `DUEL_PENDING_DURATION` (~24 hours) | Challenge auto-expires |
+| **14.5** | Bounty expiry | Wait for bounty to exist past `end_time` without being solved | Bounty auto-expires; **announcement message deleted from bounty board channel** |
+| **14.6** | Bounty escape + respawn | Find correct system but lose combat (weak ship vs strong criminal) — criminal escapes | Announcement deleted; criminal respawns with new route after delay (`len(route)` minutes) |
 
 ---
 
@@ -421,31 +475,31 @@ These require patience or admin force-triggers.
 
 | Phase | Total | Passed | Failed | Skipped | Notes |
 |-------|-------|--------|--------|---------|-------|
-| 0 — Health | 4 | | | | Admin-only for /ping and /health |
-| 1 — Setup & Registration | 6 | | | | 1 needs `[2P]` |
+| 0 — Health | 4 | 4 | 0 | 0 | Admin-only for /ping and /health |
+| 1 — Setup, Channels & Registration | 13 | | | | 1 needs `[2P]` |
 | 2 — Game Data | 14 | | | | |
 | 3 — Ship Management | 6 | | | | 2 deferred to after Phase 4 |
 | 4 — Shop | 12 | | | | |
 | 5 — Inventory & Equipment | 15 | | | | 1 needs `[ADMIN]` |
-| 6 — Bounty Hunting | 14 | | | | 2 need `[2P]`, 1 needs `[WAIT]` |
+| 6 — Bounty Hunting | 17 | | | | 2 need `[2P]`, 1 needs `[WAIT]` |
 | 7 — Dueling | 11 | | | | ALL need `[2P]` |
 | 8 — Progression | 17 | | | | ALL need `[ADMIN]` |
 | 9 — Skins & Rendering | 15 | | | | Requires blender-service + GPU |
-| 10 — Admin Ops | 23 | | | | ALL need `[ADMIN]` |
+| 10 — Admin Ops | 26 | | | | ALL need `[ADMIN]` |
 | 11 — Scheduler | 6 | | | | ALL need `[ADMIN]` |
 | 12 — Dev Tools | 3 | | | | ALL need `[ADMIN]` |
-| 13 — Edge Cases | 14 | | | | |
-| 14 — Scheduled Jobs | 5 | | | | 1 needs `[2P]` |
-| **TOTAL** | **165** | | | | |
+| 13 — Edge Cases | 15 | | | | |
+| 14 — Scheduled Jobs | 6 | | | | 1 needs `[2P]` |
+| **TOTAL** | **180** | | | | |
 
 ### Tests requiring a second Discord user: ~15
-`1.6, 6.13, 6.14, 7.1–7.11, 14.4`
+`1.13, 6.16, 6.17, 7.1–7.11, 14.4, 14.6`
 
-### Tests requiring admin permissions: ~60
-`0.1, 0.2, 1.1–1.3, 5.15, 8.1–8.17, 10.1–10.23, 11.1–11.6, 12.1–12.3, 13.1–13.7`
+### Tests requiring admin permissions: ~65
+`0.1, 0.2, 1.1, 1.5, 1.6, 5.15, 8.1–8.17, 10.1–10.26, 11.1–11.6, 12.1–12.3, 13.1–13.7`
 
 ### Tests requiring wait time: ~7
-`6.3, 7.11, 14.1–14.5`
+`6.3, 7.11, 14.1–14.6`
 
 ### Tests requiring blender-service + GPU: ~11
 `9.5–9.15`
@@ -458,7 +512,7 @@ These require patience or admin force-triggers.
 |-----|----------|
 | **healthCog** | `/ping` `[ADMIN]`, `/health` `[ADMIN]` |
 | **aboutCog** | `/about`, `/list_category`, `/make-route` |
-| **playerCog** | `/profile`, `/leaderboard`, `/prestige` |
+| **playerCog** | `/profile`, `/leaderboard`, `/prestige`, `/unregister` |
 | **shipsCog** | `/ships`, `/ship`, `/setactive`, `/nickname` |
 | **shopCog** | `/shops`, `/shop`, `/buy`, `/sell` |
 | **inventoryCog** | `/inventory`, `/search`, `/item`, `/equip`, `/unequip` |
@@ -470,7 +524,46 @@ These require patience or admin force-triggers.
 | **devCog** | `/load_data`, `/reload_autocomplete` |
 | **setupCog** | *(No slash commands — event listeners: `on_guild_join`, `on_guild_remove`)* |
 
-## Appendix B — Skin Test Ship Selection Guide
+## Appendix B — Channel Infrastructure Reference
+
+Created by `/admin_setup` via `ensure_bountybot_infrastructure()`:
+
+| Channel | Permission | Purpose |
+|---------|-----------|---------|
+| `#bronze-bounty-board` | Read-only (players can view, not type) | Bronze division bounty announcements |
+| `#silver-bounty-board` | Read-only | Silver division bounty announcements |
+| `#gold-bounty-board` | Read-only | Gold division bounty announcements |
+| `#shop` | Read-only | Shop refresh announcements |
+| `#bounty-hunting` | Interactive (slash commands + chat) | Gameplay commands |
+| `#bounty-discussions` | Chat-only (NO slash commands) | Player discussion |
+| `#bot-images` | Hidden (bot-only) | Route map image hosting |
+
+**Roles:**
+- `@Bounty Hunter` — Assigned by `/profile`, removed by `/unregister`. Controls visibility of all BountyBot channels.
+- `BountyBot Admins` — Created if no admin role specified. Grants admin command access.
+
+## Appendix C — Bounty Announcement Lifecycle
+
+```
+1. SPAWN (bounty_spawn_executor)
+   └─> Rich embed posted to per-division channel (#bronze/#silver/#gold-bounty-board)
+   └─> @Bounty Hunter role mentioned
+   └─> Route map image uploaded to #bot-images, embedded in announcement
+   └─> Discord message ID persisted to DiscordMessage table
+
+2. LIVE-EDIT (on every /check)
+   └─> Announcement embed updated in-place
+   └─> Checked systems: ~~strikethrough~~
+   └─> Found system: **bold**
+   └─> No re-mention of @Bounty Hunter role
+
+3. DELETE (on complete, escape, or expire)
+   └─> Announcement message deleted from Discord channel
+   └─> DiscordMessage DB record removed
+   └─> Expiry: notification posted with bounty details
+```
+
+## Appendix D — Skin Test Ship Selection Guide
 
 | textureRegions | Example Ships | Test Purpose |
 |---|---|---|
@@ -485,5 +578,5 @@ Available skin names (consistent across skinnable ships):
 
 ---
 
-*Generated: 2026-04-04*
-*Based on code review of 47 live slash commands across 13 cogs*
+*Updated: 2026-04-05*
+*Based on code review of 48 live slash commands across 12 active cogs + redesign audit*

@@ -90,6 +90,12 @@ def _make_mock_http_response(data: dict, status_code: int = 200) -> MagicMock:
 # -------------------------------------------------------------------------
 
 
+def _close_coro(coro):
+    """Close a coroutine to prevent 'never awaited' RuntimeWarning."""
+    coro.close()
+    return MagicMock()
+
+
 @pytest.fixture()
 def admin_cog():
     """Return a fresh AdminCog instance with a mocked http_client."""
@@ -97,6 +103,8 @@ def admin_cog():
     from discord.ext import commands
 
     bot = MagicMock(spec=commands.Bot)
+    bot.loop = MagicMock()
+    bot.loop.create_task = MagicMock(side_effect=_close_coro)
     cog = AdminCog(bot)
     # Replace the real httpx.AsyncClient with a MagicMock
     cog.http_client = MagicMock()
@@ -140,6 +148,7 @@ async def test_render_config_view(admin_cog) -> None:
     assert kwargs.get("ephemeral") is True
     # Verify an embed was sent.
     import discord
+
     assert isinstance(kwargs.get("embed"), discord.Embed)
 
 
@@ -156,9 +165,7 @@ async def test_render_config_set(admin_cog) -> None:
 
     interaction = _make_mock_interaction(is_admin_user=True)
 
-    await admin_cog.render_config.callback(
-        admin_cog, interaction, action="set", setting="max_res_x", value=1920
-    )
+    await admin_cog.render_config.callback(admin_cog, interaction, action="set", setting="max_res_x", value=1920)
 
     admin_cog.http_client.put.assert_called_once()
     call_url = admin_cog.http_client.put.call_args[0][0]
@@ -179,9 +186,7 @@ async def test_render_config_set_missing_args(admin_cog) -> None:
     interaction = _make_mock_interaction(is_admin_user=True)
 
     # Call with setting=None, value=None  (user forgot args)
-    await admin_cog.render_config.callback(
-        admin_cog, interaction, action="set", setting=None, value=None
-    )
+    await admin_cog.render_config.callback(admin_cog, interaction, action="set", setting=None, value=None)
 
     interaction.response.send_message.assert_called_once()
     # http_client.put should NOT have been called
@@ -234,12 +239,13 @@ async def test_render_cache_clear(admin_cog) -> None:
     _, kwargs = interaction.response.send_message.call_args
     assert kwargs.get("ephemeral") is True
     import discord
+
     embed = kwargs.get("embed")
     assert isinstance(embed, discord.Embed)
     # Verify stats are mentioned in embed fields
     field_values = [f.value for f in embed.fields]
-    assert "3" in field_values          # cleared_directories
-    assert "1.0 MB" in field_values     # freed_mb
+    assert "3" in field_values  # cleared_directories
+    assert "1.0 MB" in field_values  # freed_mb
 
 
 # -------------------------------------------------------------------------
@@ -260,7 +266,6 @@ async def test_render_config_requires_admin(admin_cog) -> None:
         mp.setenv("DEVELOPERS", "")
         # Mock the HTTP call to /config/guild to return no admin role
         mock_http_resp = _make_mock_http_response({"admin_role_id": None})
-
 
         async def _fake_get(*_a, **_kw):
             return mock_http_resp

@@ -10,6 +10,7 @@ from httpx import HTTPStatusError as HttpxHTTPStatusError
 from httpx import RequestError as HttpxRequestError
 from httpx import TimeoutException as HttpxTimeoutException
 from shared import bblogger
+from utils.autocomplete_utils import normalize_for_search
 
 flogger = bblogger.get_logger("discord-gateway-SkinsCog")
 api_base = os.environ.get("BOT_API_BASE_URL", "http://bot-core:8000/api/v1")
@@ -302,8 +303,12 @@ class SkinsCog(commands.Cog):
     async def ship_autocomplete(
         self, _interaction: discord.Interaction, current: str
     ) -> list[app_commands.Choice[str]]:
-        txt = current.lower()
-        choices = [app_commands.Choice(name=name, value=name) for name in self._ship_skins if txt in name.lower()]
+        norm_current = normalize_for_search(current)
+        choices = [
+            app_commands.Choice(name=name, value=name)
+            for name in self._ship_skins
+            if norm_current in normalize_for_search(name)
+        ]
         return choices[:25]
 
     async def skin_autocomplete(self, interaction: discord.Interaction, current: str) -> list[app_commands.Choice[str]]:
@@ -317,8 +322,8 @@ class SkinsCog(commands.Cog):
             return []
         if not skins:
             return [app_commands.Choice(name="Default", value="Default")]
-        txt = current.lower()
-        choices = [app_commands.Choice(name=s, value=s) for s in skins if txt in s.lower()]
+        norm_current = normalize_for_search(current)
+        choices = [app_commands.Choice(name=s, value=s) for s in skins if norm_current in normalize_for_search(s)]
         if not choices:
             choices = [app_commands.Choice(name="Default", value="Default")]
         return choices[:25]
@@ -333,11 +338,12 @@ class SkinsCog(commands.Cog):
         Ships without cached render-info are included so the list is never
         artificially truncated to only previously-rendered ships.
         """
-        txt = current.lower()
+        norm_current = normalize_for_search(current)
         choices = [
             app_commands.Choice(name=name, value=name)
             for name in self._ship_skins
-            if txt in name.lower() and self._ship_render_info.get(name, {}).get("skinnable", True)
+            if norm_current in normalize_for_search(name)
+            and self._ship_render_info.get(name, {}).get("skinnable", True)
         ]
         return choices[:25]
 
@@ -692,6 +698,7 @@ class SkinsCog(commands.Cog):
 
         # 2. Resolve the skin overlay image
         skin_bytes: bytes | None = None
+        square_mode: str = "none"
         if image is not None:
             # Custom upload takes priority over pre-made skin selection
             try:
@@ -701,6 +708,22 @@ class SkinsCog(commands.Cog):
                 flogger.error(f"Failed to read uploaded image for {ship}: {e}")
                 await interaction.followup.send("❌ Failed to read the uploaded image.", ephemeral=True)
                 return
+
+            # Check if the image is non-square and prompt user for correction
+            width = getattr(image, "width", None)
+            height = getattr(image, "height", None)
+            if width and height and width != height:
+                view = SquareCheckView(timeout=60)
+                await interaction.followup.send(
+                    f"Your image is **{width}x{height}** (not square). "
+                    "Ship textures require a square image. Choose how to handle it:",
+                    view=view,
+                )
+                await view.wait()
+                if view.result is None:
+                    await interaction.followup.send("❌ Render cancelled.", ephemeral=True)
+                    return
+                square_mode = view.result
         elif skin != "Default":
             skin_bytes = await self._download_skin_image(interaction, ship, skin, render_info)
             if skin_bytes is None:
@@ -727,7 +750,9 @@ class SkinsCog(commands.Cog):
             )
         else:
             # "all" mode — existing behavior (skin as base texture, or no skin for default render)
-            composite_bytes = await self._composite_textures(interaction, ship, ship_path, diffuse_path, skin_bytes)
+            composite_bytes = await self._composite_textures(
+                interaction, ship, ship_path, diffuse_path, skin_bytes, square_mode
+            )
 
         if composite_bytes is None:
             return
@@ -738,7 +763,12 @@ class SkinsCog(commands.Cog):
             render_resp = await self.blender_client.post(
                 "/render/",
                 files={"texture": ("composite.png", composite_bytes, "image/png")},
-                data={"model_path": model_path},
+                data={
+                    "model_path": model_path,
+                    "res_x": "3840",
+                    "res_y": "2160",
+                    "num_samples": "128",
+                },
             )
             render_resp.raise_for_status()
             rendered_bytes = render_resp.content
@@ -962,6 +992,7 @@ class SkinsCog(commands.Cog):
         ship_path: str,
         diffuse_path: str,
         skin_bytes: bytes | None = None,
+        square_mode: str = "none",
     ) -> bytes | None:
         """Call blender-service composite endpoint.
 
@@ -976,7 +1007,7 @@ class SkinsCog(commands.Cog):
         data: dict[str, str] = {
             "ship_path": ship_path,
             "base_texture_path": diffuse_path,
-            "square_mode": "none",
+            "square_mode": square_mode,
             "region_indices": "",
             "disabled_regions": "",
         }

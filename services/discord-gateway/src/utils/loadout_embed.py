@@ -32,7 +32,11 @@ SPACER_NAME = "\u200e"
 
 # Ship-stats suffix heuristic: if the core + total-value string would exceed
 # this length, drop Total Value to avoid a crowded wrap in the Discord client.
-SHIP_STATS_TOTAL_VALUE_THRESHOLD = 200
+# Realistic max core string is ~69–98 chars (armour/handling/hp/dps with 4-5 digit values),
+# and the Total Value suffix is ~29–31 chars, so typical gameplay totals ~100 chars — safely
+# under the 120 threshold.  Only degenerate or future high-stat values trigger the drop.
+# Lowered from 200 (unreachable with game-scale stats) to 120 (reachable with 5-digit+ stats).
+SHIP_STATS_TOTAL_VALUE_THRESHOLD = 120
 
 
 # ---------------------------------------------------------------------------

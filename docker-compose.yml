@@ -17,11 +17,11 @@ services:
       - /etc/timezone:/etc/timezone:ro
       - ./mappings/postgres-data:/var/lib/postgresql
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -d bountydb -U bounty"]
+      test: ["CMD-SHELL", "pg_isready -d bountydb -U bounty && psql -U bounty -d bountydb -c 'SELECT 1' >/dev/null 2>&1"]
       interval: 5s
       timeout: 5s
-      retries: 10
-      start_period: 20s
+      retries: 20
+      start_period: 30s
     ports:
       - "5432:5432"
 

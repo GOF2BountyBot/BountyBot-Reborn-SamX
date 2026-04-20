@@ -9,11 +9,14 @@ use lightweight mocking (≤ 2 mocks each, per project conventions).
 from __future__ import annotations
 
 import os
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, call, patch
 
 import pytest
+from sqlalchemy.exc import OperationalError, ProgrammingError
 from src.persist.database.migration_manager import (
     MigrationManager,
+    _CONNECTION_RETRY_DELAY_SECONDS,
+    _CONNECTION_RETRY_MAX_ATTEMPTS,
     _async_to_sync_url,
     _build_sync_url_from_env,
 )
@@ -183,6 +186,75 @@ class TestEnsureCurrent:
         mock_cmd.upgrade.assert_called_once()
         _cfg, target = mock_cmd.upgrade.call_args[0]
         assert target == "head"
+
+    def test_ensure_current_retries_on_operational_error(self) -> None:
+        """get_current_revision raising OperationalError twice then succeeding: retries and succeeds."""
+        mgr = MigrationManager(SYNC_URL)
+
+        op_error = OperationalError("connection refused", None, None)
+        side_effects = [op_error, op_error, "abc123"]
+
+        with (
+            patch("src.persist.database.migration_manager.command"),
+            patch.object(mgr, "get_current_revision", side_effect=side_effects) as mock_gcr,
+            patch.object(mgr, "get_head_revision", return_value="abc123"),
+            patch("src.persist.database.migration_manager.time.sleep") as mock_sleep,
+        ):
+            mgr.ensure_current()  # must not raise
+
+        assert mock_gcr.call_count == 3
+        # sleep called twice (after attempt 1 and 2)
+        assert mock_sleep.call_count == 2
+        mock_sleep.assert_called_with(_CONNECTION_RETRY_DELAY_SECONDS)
+
+    def test_ensure_current_gives_up_after_max_retries(self) -> None:
+        """get_current_revision always raising OperationalError: exhausts retries and re-raises."""
+        mgr = MigrationManager(SYNC_URL)
+
+        op_error = OperationalError("connection refused", None, None)
+
+        with (
+            patch("src.persist.database.migration_manager.command"),
+            patch.object(mgr, "get_current_revision", side_effect=op_error) as mock_gcr,
+            patch("src.persist.database.migration_manager.time.sleep"),
+        ):
+            with pytest.raises(OperationalError):
+                mgr.ensure_current()
+
+        assert mock_gcr.call_count == _CONNECTION_RETRY_MAX_ATTEMPTS
+
+    def test_ensure_current_does_not_retry_on_other_exceptions(self) -> None:
+        """Non-OperationalError exceptions propagate immediately without retrying."""
+        mgr = MigrationManager(SYNC_URL)
+
+        prog_error = ProgrammingError("syntax error", None, None)
+
+        with (
+            patch("src.persist.database.migration_manager.command"),
+            patch.object(mgr, "get_current_revision", side_effect=prog_error) as mock_gcr,
+            patch("src.persist.database.migration_manager.time.sleep") as mock_sleep,
+        ):
+            with pytest.raises(ProgrammingError):
+                mgr.ensure_current()
+
+        # Called exactly once — no retry for non-OperationalError
+        assert mock_gcr.call_count == 1
+        mock_sleep.assert_not_called()
+
+    def test_ensure_current_succeeds_on_first_attempt_no_retry(self) -> None:
+        """Happy path: get_current_revision succeeds first time; no sleep invoked."""
+        mgr = MigrationManager(SYNC_URL)
+
+        with (
+            patch("src.persist.database.migration_manager.command"),
+            patch.object(mgr, "get_current_revision", return_value="abc123") as mock_gcr,
+            patch.object(mgr, "get_head_revision", return_value="abc123"),
+            patch("src.persist.database.migration_manager.time.sleep") as mock_sleep,
+        ):
+            mgr.ensure_current()
+
+        assert mock_gcr.call_count == 1
+        mock_sleep.assert_not_called()
 
 
 # ---------------------------------------------------------------------------

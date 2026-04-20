@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import io
 import os
+import time
 
 from alembic import command
 from alembic.config import Config
@@ -27,8 +28,16 @@ from alembic.runtime.migration import MigrationContext
 from alembic.script import ScriptDirectory
 from shared import bblogger
 from sqlalchemy import create_engine, pool
+from sqlalchemy.exc import OperationalError
 
 flogger = bblogger.get_logger("migration-manager")
+
+# ---------------------------------------------------------------------------
+# Constants
+# ---------------------------------------------------------------------------
+
+_CONNECTION_RETRY_MAX_ATTEMPTS = 5
+_CONNECTION_RETRY_DELAY_SECONDS = 2.0
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -179,8 +188,30 @@ class MigrationManager:
         latest revision this is a no-op.
         """
         flogger.info("ensure_current: Checking for pending migrations...")
+
+        # Retry get_current_revision to absorb transient DB startup races.
+        # Only OperationalError is retried — other errors indicate real problems.
+        for attempt in range(1, _CONNECTION_RETRY_MAX_ATTEMPTS + 1):
+            try:
+                current_rev = self.get_current_revision()
+                break
+            except OperationalError as e:
+                if attempt < _CONNECTION_RETRY_MAX_ATTEMPTS:
+                    flogger.warning(
+                        f"ensure_current: DB connection failed on attempt {attempt}/"
+                        f"{_CONNECTION_RETRY_MAX_ATTEMPTS}, retrying in "
+                        f"{_CONNECTION_RETRY_DELAY_SECONDS}s: {e.orig if hasattr(e, 'orig') else e}"
+                    )
+                    time.sleep(_CONNECTION_RETRY_DELAY_SECONDS)
+                else:
+                    flogger.error(
+                        f"ensure_current: DB connection failed after "
+                        f"{_CONNECTION_RETRY_MAX_ATTEMPTS} attempts, giving up",
+                        exc_info=True,
+                    )
+                    raise
+
         try:
-            current_rev = self.get_current_revision()
             head_rev = self.get_head_revision()
             if current_rev == head_rev:
                 flogger.info(f"ensure_current: Database already at head revision: {head_rev}")

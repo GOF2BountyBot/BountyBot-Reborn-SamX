@@ -123,7 +123,7 @@ This is constructor injection. Repositories hold no state other than the model c
 | `duel_repository.py` | `DuelRepository` | `DuelRequest` | get_pending_by_guild, get_by_challenger_and_target, expire_old_duels |
 | `inventory_repository.py` | `InventoryRepository` | `PlayerInventory` | get_by_player, get_player_item, get_equipped_items, update_quantity, remove_player_item |
 | `item_repository.py` | `ItemRepository` | `Item` | get_by_type |
-| `module_repository.py` | `ModuleRepository` | `Module` | get_by_module_type, get_by_tech_level |
+| `module_repository.py` | `ModuleRepository` | `Module` | get_by_tech_level (subtype queries use `Item.type` STI discriminator; there is no `module_type` column and no `get_by_module_type` method) |
 | `player_repository.py` | `PlayerRepository` | `Player` | get_by_user_and_guild, get_players_by_guild, get_players_by_user, update_credits (with FOR UPDATE lock variant), update_xp, update_tier, update_active_ship, count |
 | `player_ship_repository.py` | `PlayerShipRepository` | `PlayerShip` | get_by_player, get_by_player_and_ship, update_loadout |
 | `primary_weapon_repository.py` | `PrimaryWeaponRepository` | `PrimaryWeapon` | get_by_tech_level, list_by_tech_range |

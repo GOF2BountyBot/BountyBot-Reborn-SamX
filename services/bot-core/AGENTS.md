@@ -222,7 +222,7 @@ services/bot-core/
 | `guild_shop.py` | `GuildShop` | `Base` | `guild_shops` | Guild shop inventory: item listings with tier requirements |
 | `item.py` | `Item` | `Base` | `item` | **STI root**: all purchasable items; columns: id, name, aliases, built_in, emoji, icon, value, wiki, type |
 | `weapon.py` | `Weapon` | `Item` | `weapon` | STI intermediate: adds tech_level, extra_atts (JSON); `polymorphic_identity='weapon'` |
-| `module.py` | `Module` | `Item` | `module` | Ship module items; adds module_type, tech_level, extra_atts |
+| `module.py` | `Module` | `Item` | `module` | Ship module items; adds tech_level, max_equipped, extra_atts; subtype discrimination via `Item.type` (STI discriminator — no separate `module_type` column) |
 | `primary_weapon.py` | `PrimaryWeapon` | `Weapon` | `primary_weapon` | Primary weapon; adds dps; `polymorphic_identity='primary_weapon'` |
 | `secondary_weapon.py` | `SecondaryWeapon` | `Weapon` | `secondary_weapon` | Secondary weapon; adds dps, ammo; `polymorphic_identity='secondary_weapon'` |
 | `turret_weapon.py` | `TurretWeapon` | `Weapon` | `turret_weapon` | Turret weapon; adds dps; `polymorphic_identity='turret_weapon'` |
@@ -276,7 +276,7 @@ Base (DeclarativeBase)
 | `duel_repository.py` | `DuelRepository` | DuelRequest CRUD + get_pending_by_guild, get_by_challenger_and_target |
 | `inventory_repository.py` | `InventoryRepository` | PlayerInventory CRUD + get_by_player, get_by_player_and_item, get_equipped_items |
 | `item_repository.py` | `ItemRepository` | Item base queries + get_by_type |
-| `module_repository.py` | `ModuleRepository` | Module CRUD + filter by module_type, tech_level |
+| `module_repository.py` | `ModuleRepository` | Module CRUD + filter by tech_level (subtype queries use `Item.type` STI discriminator, not a `module_type` column) |
 | `player_repository.py` | `PlayerRepository` | Player CRUD + get_by_user_and_guild, get_players_by_guild, update_credits, update_xp, update_tier, get_by_id_for_update (FOR UPDATE lock) |
 | `player_ship_repository.py` | `PlayerShipRepository` | PlayerShip CRUD + get_by_player, get_by_player_and_ship |
 | `primary_weapon_repository.py` | `PrimaryWeaponRepository` | PrimaryWeapon CRUD + filter by tech_level |
@@ -473,7 +473,7 @@ JSON files in `import_data/` are the source of truth for game assets. They are l
 | Directory | Model | Notes |
 |---|---|---|
 | `ship/` | `Ship` | One JSON file per ship; includes stats, weapon slots, skin info |
-| `module/` | `Module` | One JSON per module; includes module_type, tech_level |
+| `module/` | `Module` | One JSON per module; includes `type` (STI discriminator, e.g. `ArmourModule`), tech_level |
 | `primary_weapon/` | `PrimaryWeapon` | One JSON per weapon; includes dps, tech_level |
 | `secondary_weapon/` | `SecondaryWeapon` | One JSON per weapon; includes dps, ammo, tech_level |
 | `turret_weapon/` | `TurretWeapon` | One JSON per weapon; includes dps, tech_level |

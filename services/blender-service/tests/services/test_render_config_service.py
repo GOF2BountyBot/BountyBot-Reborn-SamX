@@ -37,9 +37,9 @@ def test_default_config_values(svc: RenderConfigService) -> None:
     assert cfg.min_res_y == 240
     assert cfg.max_samples == 128
     assert cfg.min_samples == 1
-    assert cfg.default_res_x == 1920
-    assert cfg.default_res_y == 1080
-    assert cfg.default_samples == 64
+    assert cfg.default_res_x == 3840
+    assert cfg.default_res_y == 2160
+    assert cfg.default_samples == 128
     assert cfg.max_concurrent_renders == 2
     assert cfg.job_ttl_hours == 1
 
@@ -110,7 +110,7 @@ def test_reset_to_defaults(svc: RenderConfigService) -> None:
     svc.reset()
     # Back to compiled-in defaults (no env vars set).
     assert svc.config.max_res_x == 3840
-    assert svc.config.default_samples == 64
+    assert svc.config.default_samples == 128
 
 
 # ---------------------------------------------------------------------------
@@ -147,4 +147,4 @@ def test_render_config_dataclass_defaults() -> None:
     cfg = RenderConfig()
     assert cfg.max_res_x == 3840
     assert cfg.min_samples == 1
-    assert cfg.default_samples == 64
+    assert cfg.default_samples == 128

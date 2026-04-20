@@ -106,17 +106,27 @@ class RenderService:
     def trim(image: Image.Image) -> Image.Image:
         """Crop image to content by removing transparent/background borders.
 
-        Ports the legacy ``trim()`` function from ``shipRenderer.py``.
-        Original credit: neouyghur — https://stackoverflow.com/a/48605963/11754606
+        For RGBA images (rendered with ``film_transparent = True``), uses the
+        alpha channel directly to detect content.  This preserves anti-aliased
+        edge pixels that would otherwise be discarded by a colour-difference
+        threshold approach.
+
+        For non-RGBA images, falls back to a colour-difference method using
+        pixel (0, 0) as the background reference.
 
         :param Image.Image image: The image to crop.
         :return: The cropped image, or the original if no bounding box is found.
         :rtype: Image.Image
         """
-        bg = Image.new(image.mode, image.size, image.getpixel((0, 0)))
-        diff = ImageChops.difference(image, bg)
-        diff = ImageChops.add(diff, diff, 2.0, -100)
-        bbox = diff.getbbox()
+        if image.mode == "RGBA":
+            # Use the alpha channel: any pixel with alpha > 0 is content.
+            alpha = image.split()[3]
+            bbox = alpha.getbbox()
+        else:
+            # Fallback for RGB/other modes: difference against top-left pixel.
+            bg = Image.new(image.mode, image.size, image.getpixel((0, 0)))
+            diff = ImageChops.difference(image, bg)
+            bbox = diff.getbbox()
         return image.crop(bbox) if bbox else image
 
     async def render_ship(

@@ -27,9 +27,9 @@ class RenderConfig:
     min_samples: int = 1
 
     # Defaults (used when user doesn't specify)
-    default_res_x: int = 1920
-    default_res_y: int = 1080
-    default_samples: int = 64
+    default_res_x: int = 3840
+    default_res_y: int = 2160
+    default_samples: int = 128
 
     # Job queue
     max_concurrent_renders: int = 2
@@ -59,9 +59,9 @@ class RenderConfigService:
         self._config = RenderConfig(
             max_res_x=int(os.getenv("RENDER_MAX_RES_X", "3840")),
             max_res_y=int(os.getenv("RENDER_MAX_RES_Y", "2160")),
-            default_res_x=int(os.getenv("RENDER_DEFAULT_RES_X", "1920")),
-            default_res_y=int(os.getenv("RENDER_DEFAULT_RES_Y", "1080")),
-            default_samples=int(os.getenv("RENDER_DEFAULT_SAMPLES", "64")),
+            default_res_x=int(os.getenv("RENDER_DEFAULT_RES_X", "3840")),
+            default_res_y=int(os.getenv("RENDER_DEFAULT_RES_Y", "2160")),
+            default_samples=int(os.getenv("RENDER_DEFAULT_SAMPLES", "128")),
             max_samples=int(os.getenv("RENDER_MAX_SAMPLES", "128")),
             max_concurrent_renders=int(os.getenv("RENDER_MAX_CONCURRENT", "2")),
         )

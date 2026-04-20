@@ -241,7 +241,10 @@ async def composite_textures(
     needed_masks: set[int] = set(parsed_region_indices) | set(parsed_disabled)
     region_mask_map: dict[int, Image.Image] = {}
     for mask_num in needed_masks:
-        mask_file = ship_dir / f"mask{mask_num}.jpg"
+        # Try .png first (upscaled textures), fall back to .jpg (original assets)
+        mask_file = ship_dir / f"mask{mask_num}.png"
+        if not mask_file.exists():
+            mask_file = ship_dir / f"mask{mask_num}.jpg"
         if mask_file.exists():
             try:
                 mask_img = Image.open(mask_file)

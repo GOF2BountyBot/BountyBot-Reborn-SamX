@@ -44,8 +44,12 @@ from _mtl_utils import patch_all_mtl_blocks
 
 # Camera clip distance — 5000 covers even large models like the Vossk Battlecruiser.
 CAM_CLIP = 5000
-# Default camera lens value (49 instead of 50 to account for chromatic aberration).
-DEFAULT_LENS = 49
+# Camera lens value.  camera_to_view_selected() frames the ship tightly based on
+# the lens already set in cube.blend.  We then override to a shorter focal length
+# to zoom out slightly, adding ~10% margin around the ship.  This prevents edge
+# blur artifacts from anti-aliasing and denoising running out of context at the
+# frame boundary.  The trim() post-process crops the resulting transparent border.
+DEFAULT_LENS = 44
 
 # Path to the render-variables file.  The service passes this via env var so
 # that concurrent renders each get their own temp directory.
@@ -247,26 +251,68 @@ bpy.context.scene.cycles.samples = args.numSamples
 # Use CYCLES engine (EEVEE produces unexpected perspective artefacts).
 ctx.scene.render.engine = "CYCLES"
 
-###### SIMPLE GPU SETUP ######
+# Transparent background + RGBA PNG output.  This ensures the trim() post-process
+# can use the alpha channel to crop precisely, preserving anti-aliased ship edges.
+ctx.scene.render.film_transparent = True
+ctx.scene.render.image_settings.file_format = "PNG"
+ctx.scene.render.image_settings.color_mode = "RGBA"
+
+# Enable denoising for cleaner output at lower sample counts.
+ctx.scene.cycles.use_denoising = True
+ctx.scene.cycles.denoiser = "OPENIMAGEDENOISE"
+
+###### GPU SETUP (OptiX → CUDA → CPU fallback) ######
+_gpu_ready = False
+
+# Prefer OptiX: uses hardware RT cores on RTX GPUs for ray tracing + denoising.
+# NOTE: OptiX requires libnvoptix.so which is NOT available in WSL2 environments.
 try:
-    bpy.context.preferences.addons["cycles"].preferences.compute_device_type = "CUDA"
+    bpy.context.preferences.addons["cycles"].preferences.compute_device_type = "OPTIX"
     bpy.context.preferences.addons["cycles"].preferences.get_devices()
 
-    gpu_found = False
     for device in bpy.context.preferences.addons["cycles"].preferences.devices:
-        if device.type == "CUDA":
+        if device.type == "OPTIX":
             device.use = True
-            gpu_found = True
-            print(f"✓ Using GPU: {device.name}")
+            _gpu_ready = True
+            print(f"✓ Using GPU (OptiX): {device.name}")
 
-    if gpu_found:
+    if _gpu_ready:
         bpy.context.scene.cycles.device = "GPU"
-        print("✓ GPU rendering enabled")
+        ctx.scene.cycles.denoiser = "OPTIX"
+        ctx.scene.cycles.denoising_use_gpu = True
+        print("✓ OptiX rendering + denoising enabled")
     else:
-        print("⚠ No CUDA GPU found, falling back to CPU")
+        raise RuntimeError("No OptiX devices found")
 
-except Exception as _gpu_err:
-    print(f"⚠ GPU setup failed, using CPU: {_gpu_err}")
+except Exception as _optix_err:
+    print(f"⚠ OptiX not available ({_optix_err}), trying CUDA fallback")
+
+# Fall back to CUDA compute with GPU-accelerated OIDN denoising.
+if not _gpu_ready:
+    try:
+        bpy.context.preferences.addons["cycles"].preferences.compute_device_type = "CUDA"
+        bpy.context.preferences.addons["cycles"].preferences.get_devices()
+
+        for device in bpy.context.preferences.addons["cycles"].preferences.devices:
+            if device.type == "CUDA":
+                device.use = True
+                _gpu_ready = True
+                print(f"✓ Using GPU (CUDA): {device.name}")
+
+        if _gpu_ready:
+            bpy.context.scene.cycles.device = "GPU"
+            # OIDN supports GPU-accelerated denoising via its CUDA backend.
+            ctx.scene.cycles.denoising_use_gpu = True
+            print("✓ CUDA rendering + GPU-accelerated OIDN denoising enabled")
+        else:
+            print("⚠ No CUDA GPU found")
+
+    except Exception as _cuda_err:
+        print(f"⚠ CUDA setup failed: {_cuda_err}")
+
+# CPU fallback.
+if not _gpu_ready:
+    print("⚠ No GPU available, falling back to CPU rendering + CPU denoising")
 ###### END GPU SETUP ######
 
 # Set the render output path.

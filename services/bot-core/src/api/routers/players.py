@@ -362,6 +362,10 @@ async def get_player_loadout(
 
     Returns a unified `LoadoutResponse` with `subject_kind="player"`, computed
     HP/DPS stats, per-module effects, and optional cargo (when `include_cargo=true`).
+
+    # NOTE: `include_cargo` is caller-gated. Bot-core trusts the gateway's permission check.
+    # The gateway enforces viewer == owner OR viewer is admin (see playerCog._check_is_admin).
+    # See LOADOUT_EMBED_DESIGN_SPEC.md §10 item 5 (accepted internal-network trust boundary).
     """
     flogger.debug(
         f"Getting loadout for player {player_id}, include_cargo={include_cargo}, "

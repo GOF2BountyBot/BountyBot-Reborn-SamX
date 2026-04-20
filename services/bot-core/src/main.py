@@ -44,7 +44,7 @@ DEFAULT_SCHEDULER_JOBS: list[dict] = [
     {
         "job_id": "bounty_spawn_default",
         "cron": f"*/{GameConstants.BOUNTY_DELAY_RANDOM_MIN} * * * *",
-        "payload": {"job_type": "bounty_spawn"},
+        "payload": {"job_type": "bounty_spawn_orchestrate"},
         "jitter": GameConstants.BOUNTY_SPAWN_JITTER,  # seconds of random offset
     },
     {

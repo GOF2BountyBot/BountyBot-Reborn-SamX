@@ -257,9 +257,9 @@ class TestDefaultSchedulerJobsConstant:
             assert "job_type" in job_def["payload"], f"payload missing 'job_type' in {job_def}"
 
     def test_bounty_spawn_payload(self):
-        """bounty_spawn_default payload has job_type='bounty_spawn'."""
+        """bounty_spawn_default payload has job_type='bounty_spawn_orchestrate' (staggered per-tier flow)."""
         job = next(j for j in DEFAULT_SCHEDULER_JOBS if j["job_id"] == "bounty_spawn_default")
-        assert job["payload"]["job_type"] == "bounty_spawn"
+        assert job["payload"]["job_type"] == "bounty_spawn_orchestrate"
 
     def test_shop_refresh_payload(self):
         """shop_refresh_default payload has job_type='shop_refresh'."""
@@ -339,7 +339,7 @@ class TestRegisterDefaultJobs:
         assert scheduler.add_job.call_count == 3
 
     def test_bounty_spawn_job_added(self):
-        """bounty_spawn_default is added with correct id and payload."""
+        """bounty_spawn_default is added with correct id and payload (orchestrate job type)."""
         scheduler = _make_mock_scheduler()
 
         register_default_jobs(scheduler)
@@ -349,7 +349,7 @@ class TestRegisterDefaultJobs:
         call = calls_by_id["bounty_spawn_default"]
         assert call.kwargs["args"] == [
             "bounty_spawn_default",
-            {"job_type": "bounty_spawn"},
+            {"job_type": "bounty_spawn_orchestrate"},
         ]
 
     def test_shop_refresh_job_added(self):

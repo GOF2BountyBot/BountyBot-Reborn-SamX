@@ -6,7 +6,11 @@ from shared.bblogger import get_logger
 # dispatch job-type specific executor module
 from utils.executors.bounty_expire_executor import execute_bounty_expire_job
 from utils.executors.bounty_respawn_executor import execute_bounty_respawn_job
-from utils.executors.bounty_spawn_executor import execute_bounty_spawn_job
+from utils.executors.bounty_spawn_executor import (
+    execute_bounty_spawn_job,
+    execute_bounty_spawn_one_job,
+    execute_bounty_spawn_orchestrate_job,
+)
 from utils.executors.duel_expire_executor import execute_duel_expire_job
 from utils.executors.shop_refresh_executor import execute_shop_refresh_job
 from utils.executors.temperature_decay_executor import execute_temperature_decay_job
@@ -44,7 +48,17 @@ class JobExecutor:
                 flogger.debug(f"Dispatching shop_refresh for job {job_id}")
                 return await execute_shop_refresh_job(job_id, payload)
 
-            # 3) bounty-spawn jobs
+            # 3) bounty-spawn orchestrate jobs (new per-tier staggered flow)
+            if payload.get("job_type") == "bounty_spawn_orchestrate":
+                flogger.debug(f"Dispatching bounty_spawn_orchestrate for job {job_id}")
+                return await execute_bounty_spawn_orchestrate_job(job_id, payload)
+
+            # 3a) bounty-spawn one-time per-tier jobs
+            if payload.get("job_type") == "bounty_spawn_one":
+                flogger.debug(f"Dispatching bounty_spawn_one for job {job_id}")
+                return await execute_bounty_spawn_one_job(job_id, payload)
+
+            # 3b) bounty-spawn jobs (legacy / admin-spawn path)
             if payload.get("job_type") == "bounty_spawn":
                 flogger.debug(f"Dispatching bounty_spawn for job {job_id}")
                 return await execute_bounty_spawn_job(job_id, payload)

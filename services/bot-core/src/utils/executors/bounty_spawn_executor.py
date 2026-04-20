@@ -1,19 +1,21 @@
-"""Bounty spawn executor — spawns new bounties per division when slots are available.
+"""Bounty spawn executor — orchestrates per-tier staggered bounty spawning.
 
-Invoked by APScheduler via the JobExecutor dispatch.  The executor:
-  1. Queries all guild configs via ConfigRepository.list_all().
-  2. For each guild and each division (Bronze, Silver, Gold), checks the count
-     of currently active bounties.
-  3. Uses TemperatureService.get_max_bounties() to determine the capacity limit
-     (default 5 per division, overridable via BOUNTYBOT_MAX_BOUNTIES_PER_DIVISION).
-  4. When a slot is available, calls BountyService.spawn_bounty() to create a
-     new bounty.
-  5. After each successful spawn, schedules a one-time "bounty_expire" job via
-     the bot-core scheduler REST API to fire at bounty.end_time.
-  6. Posts an announcement to the discord-gateway REST API using the per-division
-     bounty board channel and the BountyAnnouncementBuilder rich embed.
-  7. Optionally uploads a route map PNG to the guild's image channel.
-  8. Persists the Discord message ID in the DiscordMessage table.
+Architecture overview
+---------------------
+The ``bounty_spawn_default`` cron job fires every ``bounty_spawn_interval_minutes``
+(default 5 min, with jitter).  It now acts as an *orchestrator*:
+
+1. ``execute_bounty_spawn_orchestrate_job`` (``bounty_spawn_orchestrate``)
+   Iterates all guilds × all tiers and schedules individual one-time
+   ``bounty_spawn_one`` jobs, each with a randomised fire-time offset so that
+   bounties appear staggered across the interval window rather than all at once.
+
+2. ``execute_bounty_spawn_one_job`` (``bounty_spawn_one``)
+   A single one-time job for one guild × one tier.  At fire time it re-checks
+   capacity, spawns a bounty, schedules expiry, and announces to Discord.
+
+The original ``execute_bounty_spawn_job`` is kept intact for backward
+compatibility with the admin spawn endpoint import.
 
 Imports of service/repository classes are deferred to function scope so that
 the module can be safely imported in test environments without a live database
@@ -26,6 +28,7 @@ import random
 import traceback
 import uuid
 from datetime import UTC, datetime, timedelta
+from random import uniform
 
 import httpx
 from shared.bblogger import get_logger
@@ -36,6 +39,9 @@ flogger = get_logger("bounty-spawn-executor")
 # Supported bounty divisions (matches BountyService / GameConstants)
 # ---------------------------------------------------------------------------
 _BOUNTY_DIVISIONS = ["Bronze", "Silver", "Gold", "Platinum"]
+
+# Default max bounties per tier when config is missing the key.
+DEFAULT_MAX = 3
 
 # ---------------------------------------------------------------------------
 # Service endpoints (configurable via environment variables)
@@ -50,6 +56,35 @@ _GATEWAY_BASE_URL = f"http://{_GATEWAY_HOST}:{_GATEWAY_PORT}/api/v1"
 
 # Default temperature value used when no guild-specific temperature is stored.
 _DEFAULT_TEMPERATURE: float = 5.0
+
+
+def _is_guild_fully_configured(config) -> bool:
+    """Return True only if the guild config has all required channel and role IDs set.
+
+    A guild is eligible for bounty spawning only when ALL of the following
+    attributes on its GuildConfig record are non-null:
+
+    1. bronze_bounty_channel_id
+    2. silver_bounty_channel_id
+    3. gold_bounty_channel_id
+    4. platinum_bounty_channel_id
+    5. bounty_hunter_role_id
+
+    Args:
+        config: GuildConfig object (or any object with the above attributes).
+
+    Returns:
+        True when all five fields are non-null, False otherwise.
+    """
+    return all(
+        [
+            getattr(config, "bronze_bounty_channel_id", None) is not None,
+            getattr(config, "silver_bounty_channel_id", None) is not None,
+            getattr(config, "gold_bounty_channel_id", None) is not None,
+            getattr(config, "platinum_bounty_channel_id", None) is not None,
+            getattr(config, "bounty_hunter_role_id", None) is not None,
+        ]
+    )
 
 
 def _get_division_channel_id(config, division: str) -> int | None:
@@ -95,6 +130,356 @@ def _get_division_role_id(config, division: str) -> int | None:
         return tier_role
     # Fall back to general Bounty Hunter role
     return getattr(config, "bounty_hunter_role_id", None)
+
+
+# ---------------------------------------------------------------------------
+# NEW: Orchestrator — schedules per-tier one-time jobs
+# ---------------------------------------------------------------------------
+
+
+async def execute_bounty_spawn_orchestrate_job(job_id: str, payload: dict) -> dict:
+    """Orchestrate staggered per-tier bounty spawning.
+
+    Called by the ``bounty_spawn_default`` cron job (``bounty_spawn_orchestrate``
+    payload type).  For each guild × tier that still has open capacity, schedules
+    a one-time ``bounty_spawn_one`` job with a randomised fire-time so that
+    announcements are staggered instead of bursting synchronously.
+
+    Design notes
+    ------------
+    - ``next_spawn_check_at`` gate removed per architect recommendation C1.
+      The column remains in GuildConfig but is no longer read or written here.
+      Rationale: per-tier one-time jobs already handle timing; the guild-level
+      gate was redundant and caused unnecessary skips.
+
+    - ``TemperatureService.get_max_bounties()`` cap removed per architect
+      recommendation C3.  Only ``bounty_max_per_tier[tier_lower]`` is used as
+      the cap.  TemperatureService and temperature_decay_executor are preserved
+      for possible future re-enablement.
+
+    Returns
+    -------
+    dict
+        Summary: guilds processed, tiers queued, etc.
+    """
+    # Deferred imports — avoids transitive ORM dependencies at module load time.
+    from persist.database.manager import db_manager
+    from persist.repositories.bounty_repository import BountyRepository
+    from persist.repositories.config_repository import ConfigRepository
+
+    start_ts = datetime.now(UTC)
+    flogger.info(f"BountySpawnOrchestrate[{job_id}] START")
+
+    total_queued = 0
+    guild_results: dict = {}
+
+    try:
+        async with db_manager.get_session() as db:
+            config_repo = ConfigRepository()
+            bounty_repo = BountyRepository()
+
+            guild_configs = await config_repo.list_all(db)
+            if not guild_configs:
+                flogger.info(f"BountySpawnOrchestrate[{job_id}] no guilds configured, nothing to do")
+                return {"status": "success", "guilds_processed": 0, "total_queued": 0}
+
+            for config in guild_configs:
+                gid: int = config.guild_id
+
+                # ----------------------------------------------------------
+                # Eligibility guard: skip guilds that aren't fully configured
+                # ----------------------------------------------------------
+                if not _is_guild_fully_configured(config):
+                    flogger.info(
+                        f"BountySpawnOrchestrate[{job_id}] skipping guild={gid}: "
+                        "guild not fully configured (missing channel/role IDs)"
+                    )
+                    continue
+
+                # NOTE: next_spawn_check_at gate removed per architect C1.
+                # The column remains in GuildConfig for backward compatibility
+                # but is no longer used to gate the orchestrator.
+
+                bounty_max_per_tier: dict[str, int] = getattr(config, "bounty_max_per_tier", None) or {}
+                interval_minutes: int = getattr(config, "bounty_spawn_interval_minutes", None) or 5
+
+                guild_queued = 0
+                tier_results: dict = {}
+
+                for tier in _BOUNTY_DIVISIONS:
+                    tier_lower = tier.lower()
+
+                    # --------------------------------------------------
+                    # Determine max for this tier — if None/0, skip tier
+                    # --------------------------------------------------
+                    max_for_tier: int | None = (bounty_max_per_tier or {}).get(tier_lower, DEFAULT_MAX)
+                    if not max_for_tier:
+                        flogger.trace(
+                            f"BountySpawnOrchestrate[{job_id}] guild={gid} tier={tier_lower}: "
+                            "max_for_tier=0 or missing, tier disabled — skipping"
+                        )
+                        tier_results[tier_lower] = {"queued": 0, "reason": "tier_disabled"}
+                        continue
+
+                    # --------------------------------------------------
+                    # Count active bounties in DB
+                    # --------------------------------------------------
+                    active_count = await bounty_repo.count_active_by_guild_and_division(db, gid, tier_lower)
+
+                    # --------------------------------------------------
+                    # Count already-queued one-time spawn jobs in scheduler
+                    # --------------------------------------------------
+                    from sqlalchemy import text
+
+                    pattern = f"bounty_spawn_{gid}_{tier_lower}_%"
+                    queued_result = await db.execute(
+                        text("SELECT COUNT(*) FROM apscheduler_jobs WHERE id LIKE :pattern"),
+                        {"pattern": pattern},
+                    )
+                    queued_count = queued_result.scalar_one()
+
+                    if active_count + queued_count >= max_for_tier:
+                        flogger.trace(
+                            f"BountySpawnOrchestrate[{job_id}] guild={gid} tier={tier_lower}: "
+                            f"active={active_count} queued={queued_count} max={max_for_tier} — skipping"
+                        )
+                        tier_results[tier_lower] = {
+                            "queued": 0,
+                            "reason": "capacity_full",
+                            "active": active_count,
+                            "queued_jobs": queued_count,
+                        }
+                        continue
+
+                    # --------------------------------------------------
+                    # Compute randomised fire time within the jitter window
+                    # --------------------------------------------------
+                    window_minutes = min(15.0, 0.25 * interval_minutes)
+                    fire_offset = uniform(
+                        max(0.0, interval_minutes - window_minutes),
+                        interval_minutes + window_minutes,
+                    )
+                    fire_time = datetime.now(UTC) + timedelta(minutes=fire_offset)
+
+                    # --------------------------------------------------
+                    # Schedule one-time bounty_spawn_one job
+                    # --------------------------------------------------
+                    spawn_job_id = f"bounty_spawn_{gid}_{tier_lower}_{uuid.uuid4()}"
+                    one_time_payload = {
+                        "job_type": "bounty_spawn_one",
+                        "guild_id": gid,
+                        "tier": tier_lower,
+                    }
+                    body = {
+                        "run_at": fire_time.isoformat(),
+                        "payload": one_time_payload,
+                        "job_id": spawn_job_id,
+                    }
+
+                    try:
+                        async with httpx.AsyncClient() as client:
+                            resp = await client.post(
+                                f"{_SELF_BASE_URL}/jobs",
+                                json=body,
+                                timeout=10,
+                            )
+                        resp.raise_for_status()
+                        guild_queued += 1
+                        total_queued += 1
+                        flogger.info(
+                            f"BountySpawnOrchestrate[{job_id}] queued job={spawn_job_id} "
+                            f"guild={gid} tier={tier_lower} fire_at={fire_time.isoformat()}"
+                        )
+                        tier_results[tier_lower] = {
+                            "queued": 1,
+                            "job_id": spawn_job_id,
+                            "fire_at": fire_time.isoformat(),
+                        }
+                    except Exception as sched_err:  # pylint: disable=broad-exception-caught
+                        flogger.error(
+                            f"BountySpawnOrchestrate[{job_id}] failed to schedule spawn for "
+                            f"guild={gid} tier={tier_lower}: {sched_err}"
+                        )
+                        tier_results[tier_lower] = {"queued": 0, "reason": "schedule_error"}
+
+                guild_results[gid] = {"queued": guild_queued, "tiers": tier_results}
+
+        end_ts = datetime.now(UTC)
+        duration = (end_ts - start_ts).total_seconds()
+        flogger.info(
+            f"BountySpawnOrchestrate[{job_id}] completed: {total_queued} jobs queued "
+            f"across {len(guild_results)} guild(s) in {duration:.2f}s"
+        )
+        return {
+            "status": "success",
+            "guilds_processed": len(guild_results),
+            "total_queued": total_queued,
+            "results": guild_results,
+        }
+
+    except Exception as e:  # pylint: disable=broad-exception-caught
+        flogger.error(f"BountySpawnOrchestrate[{job_id}] failed: {e}")
+        flogger.trace(traceback.format_exc())
+        raise
+
+
+# ---------------------------------------------------------------------------
+# NEW: One-time per-tier executor
+# ---------------------------------------------------------------------------
+
+
+async def execute_bounty_spawn_one_job(job_id: str, payload: dict) -> dict:
+    """Execute a single per-tier bounty spawn at the scheduled fire time.
+
+    Called by one-time APScheduler jobs queued by
+    ``execute_bounty_spawn_orchestrate_job``.  At fire time:
+
+    1. Validates payload fields (guild_id, tier).
+    2. Re-loads guild config and re-checks eligibility.
+    3. Re-checks active bounty count against max_for_tier (handles benign
+       races where another job spawned in the meantime).
+    4. Spawns one bounty, schedules expiry, and announces to Discord.
+
+    Returns
+    -------
+    dict
+        Result summary.
+
+    Raises
+    ------
+    Exception
+        Any unexpected DB / service exception propagates so APScheduler can
+        mark the job as failed (correct behaviour — do not swallow).
+    """
+    # Deferred imports — avoids transitive ORM dependencies at module load time.
+    from persist.database.manager import db_manager
+    from persist.repositories.bounty_repository import BountyRepository
+    from persist.repositories.config_repository import ConfigRepository
+    from services.bounty_service import BountyService
+
+    flogger.info(f"BountySpawnOne[{job_id}] START")
+    flogger.trace(f"BountySpawnOne[{job_id}] payload: {payload}")
+
+    # ------------------------------------------------------------------
+    # 1. Validate payload
+    # ------------------------------------------------------------------
+    guild_id: int | None = payload.get("guild_id")
+    tier: str | None = payload.get("tier")
+
+    if guild_id is None:
+        flogger.warning(f"BountySpawnOne[{job_id}] missing guild_id in payload — aborting")
+        return {"success": False, "reason": "missing_payload"}
+
+    if tier is None:
+        flogger.warning(f"BountySpawnOne[{job_id}] missing tier in payload — aborting")
+        return {"success": False, "reason": "missing_payload"}
+
+    tier_lower = tier.lower()
+
+    async with db_manager.get_session() as db:
+        config_repo = ConfigRepository()
+        bounty_repo = BountyRepository()
+        bounty_service = BountyService()
+
+        # ------------------------------------------------------------------
+        # 2. Load guild config
+        # ------------------------------------------------------------------
+        config = await config_repo.get_by_guild_id(db, guild_id)
+        if config is None:
+            flogger.warning(
+                f"BountySpawnOne[{job_id}] guild={guild_id} tier={tier_lower}: "
+                "guild config not found — aborting"
+            )
+            return {"success": False, "reason": "guild_not_configured"}
+
+        # ------------------------------------------------------------------
+        # 3. Re-check full configuration
+        # ------------------------------------------------------------------
+        if not _is_guild_fully_configured(config):
+            flogger.warning(
+                f"BountySpawnOne[{job_id}] guild={guild_id} tier={tier_lower}: "
+                "guild not fully configured at fire time — aborting"
+            )
+            return {"success": False, "reason": "guild_not_configured"}
+
+        # ------------------------------------------------------------------
+        # 4. Verify tier channel and role are present
+        # ------------------------------------------------------------------
+        division_channel_id = _get_division_channel_id(config, tier_lower)
+        if division_channel_id is None:
+            flogger.warning(
+                f"BountySpawnOne[{job_id}] guild={guild_id} tier={tier_lower}: "
+                "division channel not configured — aborting"
+            )
+            return {"success": False, "reason": "tier_not_configured"}
+
+        division_role_id = _get_division_role_id(config, tier_lower)
+        if division_role_id is None:
+            flogger.warning(
+                f"BountySpawnOne[{job_id}] guild={guild_id} tier={tier_lower}: "
+                "division role not configured — aborting"
+            )
+            return {"success": False, "reason": "tier_not_configured"}
+
+        # ------------------------------------------------------------------
+        # 5. Re-check active count (benign race handling)
+        # ------------------------------------------------------------------
+        active_count = await bounty_repo.count_active_by_guild_and_division(db, guild_id, tier_lower)
+        bounty_max_per_tier: dict = getattr(config, "bounty_max_per_tier", None) or {}
+        max_for_tier: int = (bounty_max_per_tier or {}).get(tier_lower, DEFAULT_MAX) or DEFAULT_MAX
+
+        if active_count >= max_for_tier:
+            # Benign race — another job already filled the slot.  Not a warning.
+            flogger.info(
+                f"BountySpawnOne[{job_id}] guild={guild_id} tier={tier_lower}: "
+                f"capacity reached at fire time ({active_count}/{max_for_tier}) — benign race, skipping"
+            )
+            return {"success": True, "reason": "capacity_reached"}
+
+        # ------------------------------------------------------------------
+        # 6. Spawn the bounty
+        # ------------------------------------------------------------------
+        expiry_minutes: int = getattr(config, "bounty_expiry_minutes", None) or 480
+        spawned_bounty = await bounty_service.spawn_bounty(db, guild_id, tier_lower, expiry_minutes=expiry_minutes)
+
+        if spawned_bounty is None:
+            flogger.warning(
+                f"BountySpawnOne[{job_id}] guild={guild_id} tier={tier_lower}: "
+                "spawn_bounty returned None (no criminals / route failure)"
+            )
+            return {"success": False, "reason": "spawn_failed"}
+
+        flogger.info(
+            f"BountySpawnOne[{job_id}] spawned bounty id={spawned_bounty.id} "
+            f"guild={guild_id} tier={tier_lower} criminal={spawned_bounty.criminal_name}"
+        )
+
+        # ------------------------------------------------------------------
+        # 7. Schedule expiry job (non-fatal)
+        # ------------------------------------------------------------------
+        try:
+            await _schedule_expiry_job(job_id, spawned_bounty)
+        except Exception as expiry_err:  # pylint: disable=broad-exception-caught
+            flogger.error(
+                f"BountySpawnOne[{job_id}] failed to schedule expiry for bounty id={spawned_bounty.id}: {expiry_err}"
+            )
+
+        # ------------------------------------------------------------------
+        # 8. Announce to Discord (non-fatal)
+        # ------------------------------------------------------------------
+        try:
+            await _announce_bounty(job_id, spawned_bounty, config, db)
+        except Exception as ann_err:  # pylint: disable=broad-exception-caught
+            flogger.error(
+                f"BountySpawnOne[{job_id}] failed to announce bounty id={spawned_bounty.id}: {ann_err}"
+            )
+
+        return {"success": True, "bounty_id": spawned_bounty.id, "tier": tier_lower}
+
+
+# ---------------------------------------------------------------------------
+# ORIGINAL: execute_bounty_spawn_job — kept for backward compat + admin spawn
+# ---------------------------------------------------------------------------
 
 
 async def execute_bounty_spawn_job(job_id: str, payload: dict) -> dict:
@@ -195,6 +580,16 @@ async def execute_bounty_spawn_job(job_id: str, payload: dict) -> dict:
                 next_spawn_check_at = getattr(config, "next_spawn_check_at", None)
                 bounty_expiry_minutes: int = getattr(config, "bounty_expiry_minutes", None) or 480
                 division_temperatures: dict[str, float] = getattr(config, "division_temperatures", None) or {}
+
+                # ----------------------------------------------------------
+                # Eligibility guard: skip guilds that aren't fully configured
+                # ----------------------------------------------------------
+                if not _is_guild_fully_configured(config):
+                    flogger.info(
+                        f"BountySpawnJob[{job_id}] skipping guild={gid}: "
+                        "guild not fully configured (missing channel/role IDs)"
+                    )
+                    continue
 
                 # ----------------------------------------------------------
                 # Interval gating: skip guild if next_spawn_check_at is in the future
@@ -373,9 +768,10 @@ async def _announce_bounty(parent_job_id: str, bounty, config, db) -> None:
     Flow:
     1. Determine the target channel from config based on bounty.division.
     2. Optionally upload a route map PNG to config.image_channel_id.
-    3. Build the rich embed payload via BountyAnnouncementBuilder.
-    4. POST the embed to the division bounty board channel.
-    5. Persist the Discord message ID in the DiscordMessage table.
+    3. Look up the criminal's icon URL from the Criminal model (non-fatal).
+    4. Build the rich embed payload via BountyAnnouncementBuilder (with criminal_icon).
+    5. POST the embed to the division bounty board channel.
+    6. Persist the Discord message ID in the DiscordMessage table.
 
     All HTTP failures are non-fatal — errors are logged and the function
     returns without propagating, so a failed announcement never aborts the
@@ -390,6 +786,7 @@ async def _announce_bounty(parent_job_id: str, bounty, config, db) -> None:
     """
     # Deferred imports to match the executor's deferred-import pattern.
     from message_builders.builders.bounty_announcement import BountyAnnouncementBuilder
+    from persist.repositories.criminal_repository import CriminalRepository
     from persist.repositories.discord_message_repository import DiscordMessageRepository
 
     target_channel_id = _get_division_channel_id(config, bounty.division)
@@ -440,7 +837,24 @@ async def _announce_bounty(parent_job_id: str, bounty, config, db) -> None:
             route_map_url = None
 
     # ------------------------------------------------------------------
-    # Step 2: Build rich embed via BountyAnnouncementBuilder
+    # Step 2: Look up criminal icon (non-fatal if not found)
+    # ------------------------------------------------------------------
+    criminal_icon: str | None = None
+    try:
+        criminal_repo = CriminalRepository()
+        criminal = await criminal_repo.get_by_name(db, bounty.criminal_name)
+        if criminal is not None:
+            criminal_icon = getattr(criminal, "icon", None) or None
+            flogger.debug(
+                f"BountySpawnJob[{parent_job_id}] criminal icon for {bounty.criminal_name!r}: {criminal_icon!r}"
+            )
+    except Exception as _icon_exc:  # pylint: disable=broad-exception-caught
+        flogger.debug(
+            f"BountySpawnJob[{parent_job_id}] could not fetch criminal icon for {bounty.criminal_name!r}: {_icon_exc}"
+        )
+
+    # ------------------------------------------------------------------
+    # Step 3: Build rich embed via BountyAnnouncementBuilder
     # ------------------------------------------------------------------
     end_time_unix = int(bounty.end_time.timestamp()) if bounty.end_time else 0
 
@@ -454,7 +868,7 @@ async def _announce_bounty(parent_job_id: str, bounty, config, db) -> None:
             "reward": bounty.reward,
             "route": bounty.route or [],
             "end_time_unix": end_time_unix,
-            "criminal_icon": None,
+            "criminal_icon": criminal_icon,
             "criminal_ship": getattr(bounty, "criminal_ship", None),
             "checked": getattr(bounty, "checked", None),
             "bounty_hunter_role_id": bounty_hunter_role_id,
@@ -472,7 +886,7 @@ async def _announce_bounty(parent_job_id: str, bounty, config, db) -> None:
     }
 
     # ------------------------------------------------------------------
-    # Step 3: POST announcement to the division bounty board channel
+    # Step 4: POST announcement to the division bounty board channel
     # ------------------------------------------------------------------
     discord_message_id: int | None = None
 
@@ -485,7 +899,7 @@ async def _announce_bounty(parent_job_id: str, bounty, config, db) -> None:
             )
         resp.raise_for_status()
         resp_data = resp.json()
-        discord_message_id = resp_data.get("data", {}).get("message_id")
+        discord_message_id = resp_data.get("data", {}).get("id")
         flogger.info(
             f"BountySpawnJob[{parent_job_id}] announced bounty id={bounty.id} "
             f"guild={bounty.guild_id} to channel {target_channel_id} (msg_id={discord_message_id})"
@@ -499,7 +913,7 @@ async def _announce_bounty(parent_job_id: str, bounty, config, db) -> None:
         return
 
     # ------------------------------------------------------------------
-    # Step 4: Persist DiscordMessage record
+    # Step 5: Persist DiscordMessage record
     # ------------------------------------------------------------------
     if discord_message_id is not None:
         try:

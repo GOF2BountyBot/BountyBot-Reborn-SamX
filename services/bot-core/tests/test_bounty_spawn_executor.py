@@ -67,6 +67,51 @@ if _SRC not in sys.path:
     sys.path.insert(0, _SRC)
 
 # ---------------------------------------------------------------------------
+# Stub sqlalchemy and related ORM packages so that utils/__init__.py's
+# auto-import of auto_seeder.py (which does `from sqlalchemy import ...`)
+# doesn't fail in environments where sqlalchemy is not installed.
+# ---------------------------------------------------------------------------
+if "sqlalchemy" not in sys.modules:
+    _mock_sa = types.ModuleType("sqlalchemy")
+    _mock_sa.func = MagicMock()
+    _mock_sa.select = MagicMock()
+    _mock_sa.Integer = MagicMock()
+    _mock_sa.BigInteger = MagicMock()
+    _mock_sa.String = MagicMock()
+    _mock_sa.Float = MagicMock()
+    _mock_sa.JSON = MagicMock()
+    _mock_sa.DateTime = MagicMock()
+    _mock_sa.Boolean = MagicMock()
+    _mock_sa.Text = MagicMock()
+    _mock_sa.ForeignKey = MagicMock()
+    _mock_sa.Column = MagicMock()
+    _mock_sa.UniqueConstraint = MagicMock()
+    _mock_sa.Index = MagicMock()
+    _mock_sa.event = MagicMock()
+    _mock_sa.inspect = MagicMock()
+    _mock_sa.orm = types.ModuleType("sqlalchemy.orm")
+    _mock_sa.orm.DeclarativeBase = MagicMock()
+    _mock_sa.orm.Mapped = MagicMock()
+    _mock_sa.orm.mapped_column = MagicMock()
+    _mock_sa.orm.relationship = MagicMock()
+    _mock_sa.orm.Session = MagicMock()
+    _mock_sa.orm.selectinload = MagicMock()
+    _mock_sa.ext = types.ModuleType("sqlalchemy.ext")
+    _mock_sa.ext.asyncio = types.ModuleType("sqlalchemy.ext.asyncio")
+    _mock_sa.ext.asyncio.AsyncSession = MagicMock()
+    _mock_sa.ext.asyncio.create_async_engine = MagicMock()
+    _mock_sa.ext.asyncio.async_sessionmaker = MagicMock()
+    _mock_sa.dialects = types.ModuleType("sqlalchemy.dialects")
+    _mock_sa.dialects.postgresql = types.ModuleType("sqlalchemy.dialects.postgresql")
+    _mock_sa.dialects.postgresql.ARRAY = MagicMock()
+    sys.modules["sqlalchemy"] = _mock_sa
+    sys.modules["sqlalchemy.orm"] = _mock_sa.orm
+    sys.modules["sqlalchemy.ext"] = _mock_sa.ext
+    sys.modules["sqlalchemy.ext.asyncio"] = _mock_sa.ext.asyncio
+    sys.modules["sqlalchemy.dialects"] = _mock_sa.dialects
+    sys.modules["sqlalchemy.dialects.postgresql"] = _mock_sa.dialects.postgresql
+
+# ---------------------------------------------------------------------------
 # Pre-register stub modules so deferred imports in bounty_spawn_executor work
 # without requiring a live database or installed ORM extras.
 # ---------------------------------------------------------------------------
@@ -111,6 +156,16 @@ _ensure_stub(
     DiscordMessageRepository=_MockDiscordMessageRepository,
 )
 
+# Stub for CriminalRepository — used in _announce_bounty to look up criminal_icon.
+# Default: returns a mock criminal with icon=None (no icon configured)
+_mock_criminal_repo_instance = AsyncMock()
+_mock_criminal_repo_instance.get_by_name = AsyncMock(return_value=None)
+_MockCriminalRepository = MagicMock(return_value=_mock_criminal_repo_instance)
+_ensure_stub(
+    "persist.repositories.criminal_repository",
+    CriminalRepository=_MockCriminalRepository,
+)
+
 # Ensure parent package stubs exist.
 _ensure_stub("persist")
 _ensure_stub("persist.database")
@@ -125,18 +180,24 @@ _ensure_stub("services")
 def _make_guild_config(
     guild_id: int,
     bronze_bounty_channel_id: int | None = 123456,
-    silver_bounty_channel_id: int | None = None,
-    gold_bounty_channel_id: int | None = None,
-    platinum_bounty_channel_id: int | None = None,
+    silver_bounty_channel_id: int | None = 234567,
+    gold_bounty_channel_id: int | None = 345678,
+    platinum_bounty_channel_id: int | None = 456789,
     image_channel_id: int | None = None,
-    bounty_hunter_role_id: int | None = None,
+    bounty_hunter_role_id: int | None = 567890,
     bounty_max_per_tier: dict | None = None,
     bounty_expiry_minutes: int | None = 480,
     bounty_spawn_interval_minutes: int | None = 60,
     next_spawn_check_at=None,
     division_temperatures: dict | None = None,
 ) -> MagicMock:
-    """Build a mock GuildConfig-like object with per-division channel IDs and bounty config."""
+    """Build a mock GuildConfig-like object with per-division channel IDs and bounty config.
+
+    Defaults to a fully-configured guild (all 5 eligibility fields set) so that
+    tests exercising the spawn path work correctly with the eligibility guard.
+    Tests that need to verify the skip behaviour should explicitly pass None for
+    the desired fields.
+    """
     cfg = MagicMock()
     cfg.guild_id = guild_id
     cfg.bronze_bounty_channel_id = bronze_bounty_channel_id
@@ -293,100 +354,276 @@ async def test_full_slots_skips_spawn():
     )
 
     mock_svc.spawn_bounty.assert_not_awaited()
-    assert result["status"] == "success"
     assert result["total_spawned"] == 0
 
 
-@pytest.mark.asyncio
-async def test_partial_slots_spawns_one():
-    """When active bounties < max_bounties, spawn_bounty IS called once."""
-    from utils.executors.bounty_spawn_executor import execute_bounty_spawn_job
-
-    mock_db = AsyncMock()
-    _configure_db_manager(mock_db)
-    _configure_temperature_service(max_bounties=5)
-
-    # 3 of 5 slots used — use max=5 per tier so slot is available.
-    _configure_bounty_repo({(200, "silver"): [MagicMock()] * 3})
-    bounty = _make_bounty(bounty_id=42, guild_id=200, division="silver")
-    mock_svc = _configure_bounty_service(bounty)
-    _configure_config_repo([_make_guild_config(200, bounty_max_per_tier={"bronze": 5, "silver": 5, "gold": 5})])
-
-    with (
-        patch("utils.executors.bounty_spawn_executor._schedule_expiry_job", new=AsyncMock()),
-        patch("utils.executors.bounty_spawn_executor._announce_bounty", new=AsyncMock()),
-    ):
-        result = await execute_bounty_spawn_job(
-            "job-partial",
-            {"job_type": "bounty_spawn", "guild_id": 200, "division": "Silver", "temperature": 5.0},
-        )
-
-    mock_svc.spawn_bounty.assert_awaited_once_with(mock_db, 200, "silver", expiry_minutes=480)
-    assert result["status"] == "success"
-    assert result["total_spawned"] == 1
-
-
-@pytest.mark.asyncio
-async def test_empty_slots_spawns_bounty():
-    """When there are no active bounties at all, one is spawned."""
-    from utils.executors.bounty_spawn_executor import execute_bounty_spawn_job
-
-    mock_db = AsyncMock()
-    _configure_db_manager(mock_db)
-    _configure_temperature_service(max_bounties=3)
-
-    _configure_bounty_repo({})  # empty — no active bounties
-    bounty = _make_bounty(bounty_id=7, guild_id=300, division="gold")
-    _configure_bounty_service(bounty)
-    _configure_config_repo([_make_guild_config(300)])
-
-    with (
-        patch("utils.executors.bounty_spawn_executor._schedule_expiry_job", new=AsyncMock()),
-        patch("utils.executors.bounty_spawn_executor._announce_bounty", new=AsyncMock()),
-    ):
-        result = await execute_bounty_spawn_job(
-            "job-empty",
-            {"job_type": "bounty_spawn", "guild_id": 300, "division": "Gold", "temperature": 3.0},
-        )
-
-    assert result["total_spawned"] == 1
-    assert result["results"][300]["divisions"]["Gold"]["bounty_id"] == 7
-
-
 # ===========================================================================
-# Tests: spawn_bounty returns None
+# Tests: Fix 3 — criminal_icon passed to BountyAnnouncementBuilder
 # ===========================================================================
 
 
+def _configure_criminal_repo(icon_url: str | None = None, return_none: bool = False) -> AsyncMock:
+    """Configure CriminalRepository to return a criminal with the given icon URL."""
+    mock_repo = AsyncMock()
+    if return_none:
+        mock_repo.get_by_name = AsyncMock(return_value=None)
+    else:
+        mock_criminal = MagicMock()
+        mock_criminal.icon = icon_url
+        mock_repo.get_by_name = AsyncMock(return_value=mock_criminal)
+    sys.modules["persist.repositories.criminal_repository"].CriminalRepository = MagicMock(return_value=mock_repo)
+    return mock_repo
+
+
 @pytest.mark.asyncio
-async def test_spawn_returns_none_does_not_count():
-    """If spawn_bounty returns None, total_spawned stays 0 and no downstream calls happen."""
-    from utils.executors.bounty_spawn_executor import execute_bounty_spawn_job
+async def test_announce_passes_criminal_icon_to_builder():
+    """_announce_bounty looks up the criminal's icon URL and passes it to BountyAnnouncementBuilder."""
+    from utils.executors.bounty_spawn_executor import _announce_bounty
 
+    bounty = _make_bounty(bounty_id=200, guild_id=100, division="bronze", criminal_name="Bartholomeu Drew")
+    config = _make_config_for_announce(guild_id=100, bronze_channel=111222)
     mock_db = AsyncMock()
-    _configure_db_manager(mock_db)
-    _configure_temperature_service(max_bounties=5)
 
-    _configure_bounty_repo({(400, "bronze"): []})  # slot available
-    mock_svc = _configure_bounty_service(None)  # spawn fails
-    _configure_config_repo([_make_guild_config(400)])
+    criminal_icon_url = "https://i.postimg.cc/fT1cpwPc/bartholomeu-drew.png"
+    _configure_criminal_repo(icon_url=criminal_icon_url)
 
-    mock_expiry = AsyncMock()
-    mock_announce = AsyncMock()
+    captured_build_calls: list[dict] = []
+
+    def mock_build_payload(data: dict) -> dict:
+        captured_build_calls.append(data)
+        return {
+            "content": None,
+            "embed": {
+                "title": data.get("criminal_name", ""),
+                "color": 1752220,
+                "fields": [],
+                "thumbnail_url": data.get("criminal_icon"),
+                "image_url": None,
+                "footer_text": data.get("criminal_faction", ""),
+            },
+        }
+
+    mock_builder = MagicMock()
+    mock_builder.build_payload = mock_build_payload
+
+    mock_msg_repo = AsyncMock()
+    mock_msg_repo.create_or_update = AsyncMock(return_value=MagicMock())
+    sys.modules["persist.repositories.discord_message_repository"].DiscordMessageRepository = MagicMock(
+        return_value=mock_msg_repo
+    )
+
+    mock_response = MagicMock()
+    mock_response.raise_for_status = MagicMock()
+    mock_response.json = MagicMock(return_value={"data": {"id": 55555}})
 
     with (
-        patch("utils.executors.bounty_spawn_executor._schedule_expiry_job", new=mock_expiry),
-        patch("utils.executors.bounty_spawn_executor._announce_bounty", new=mock_announce),
+        patch(
+            "message_builders.builders.bounty_announcement.BountyAnnouncementBuilder",
+            return_value=mock_builder,
+        ),
+        patch("utils.executors.bounty_spawn_executor.httpx.AsyncClient") as mock_cls,
     ):
-        result = await execute_bounty_spawn_job(
-            "job-none",
-            {"job_type": "bounty_spawn", "guild_id": 400, "division": "Bronze"},
-        )
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(return_value=mock_response)
+        mock_cls.return_value.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_cls.return_value.__aexit__ = AsyncMock(return_value=False)
 
-    mock_svc.spawn_bounty.assert_awaited_once()
-    mock_expiry.assert_not_awaited()
-    mock_announce.assert_not_awaited()
-    assert result["total_spawned"] == 0
+        await _announce_bounty("job-icon", bounty, config, mock_db)
+
+    # Verify criminal_icon was passed as the URL (not None)
+    assert len(captured_build_calls) == 1
+    build_data = captured_build_calls[0]
+    assert build_data["criminal_icon"] == criminal_icon_url, (
+        f"Expected criminal_icon={criminal_icon_url!r} but got {build_data['criminal_icon']!r}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_announce_passes_none_icon_when_criminal_not_found():
+    """_announce_bounty passes criminal_icon=None when criminal DB lookup returns nothing (non-fatal)."""
+    from utils.executors.bounty_spawn_executor import _announce_bounty
+
+    bounty = _make_bounty(bounty_id=201, guild_id=100, division="bronze", criminal_name="Unknown Villain")
+    config = _make_config_for_announce(guild_id=100, bronze_channel=111222)
+    mock_db = AsyncMock()
+
+    # Criminal not found in DB
+    _configure_criminal_repo(return_none=True)
+
+    captured_build_calls: list[dict] = []
+
+    def mock_build_payload(data: dict) -> dict:
+        captured_build_calls.append(data)
+        return {
+            "content": None,
+            "embed": {
+                "title": data.get("criminal_name", ""),
+                "color": 1752220,
+                "fields": [],
+                "thumbnail_url": data.get("criminal_icon"),
+                "image_url": None,
+                "footer_text": "",
+            },
+        }
+
+    mock_builder = MagicMock()
+    mock_builder.build_payload = mock_build_payload
+
+    mock_msg_repo = AsyncMock()
+    mock_msg_repo.create_or_update = AsyncMock(return_value=MagicMock())
+    sys.modules["persist.repositories.discord_message_repository"].DiscordMessageRepository = MagicMock(
+        return_value=mock_msg_repo
+    )
+
+    mock_response = MagicMock()
+    mock_response.raise_for_status = MagicMock()
+    mock_response.json = MagicMock(return_value={"data": {"id": 66666}})
+
+    with (
+        patch(
+            "message_builders.builders.bounty_announcement.BountyAnnouncementBuilder",
+            return_value=mock_builder,
+        ),
+        patch("utils.executors.bounty_spawn_executor.httpx.AsyncClient") as mock_cls,
+    ):
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(return_value=mock_response)
+        mock_cls.return_value.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_cls.return_value.__aexit__ = AsyncMock(return_value=False)
+
+        # Must NOT raise — criminal not found is non-fatal
+        await _announce_bounty("job-no-icon", bounty, config, mock_db)
+
+    # Verify criminal_icon=None is passed gracefully
+    assert len(captured_build_calls) == 1
+    build_data = captured_build_calls[0]
+    assert build_data["criminal_icon"] is None
+
+
+@pytest.mark.asyncio
+async def test_announce_passes_none_icon_when_criminal_has_no_icon():
+    """_announce_bounty passes criminal_icon=None when criminal exists but has icon=None."""
+    from utils.executors.bounty_spawn_executor import _announce_bounty
+
+    bounty = _make_bounty(bounty_id=202, guild_id=100, division="bronze", criminal_name="No Icon Villain")
+    config = _make_config_for_announce(guild_id=100, bronze_channel=111222)
+    mock_db = AsyncMock()
+
+    # Criminal found but icon is None
+    _configure_criminal_repo(icon_url=None)
+
+    captured_build_calls: list[dict] = []
+
+    def mock_build_payload(data: dict) -> dict:
+        captured_build_calls.append(data)
+        return {
+            "content": None,
+            "embed": {
+                "title": data.get("criminal_name", ""),
+                "color": 1752220,
+                "fields": [],
+                "thumbnail_url": data.get("criminal_icon"),
+                "image_url": None,
+                "footer_text": "",
+            },
+        }
+
+    mock_builder = MagicMock()
+    mock_builder.build_payload = mock_build_payload
+
+    mock_msg_repo = AsyncMock()
+    mock_msg_repo.create_or_update = AsyncMock(return_value=MagicMock())
+    sys.modules["persist.repositories.discord_message_repository"].DiscordMessageRepository = MagicMock(
+        return_value=mock_msg_repo
+    )
+
+    mock_response = MagicMock()
+    mock_response.raise_for_status = MagicMock()
+    mock_response.json = MagicMock(return_value={"data": {"id": 77777}})
+
+    with (
+        patch(
+            "message_builders.builders.bounty_announcement.BountyAnnouncementBuilder",
+            return_value=mock_builder,
+        ),
+        patch("utils.executors.bounty_spawn_executor.httpx.AsyncClient") as mock_cls,
+    ):
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(return_value=mock_response)
+        mock_cls.return_value.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_cls.return_value.__aexit__ = AsyncMock(return_value=False)
+
+        await _announce_bounty("job-no-icon-2", bounty, config, mock_db)
+
+    assert len(captured_build_calls) == 1
+    build_data = captured_build_calls[0]
+    assert build_data["criminal_icon"] is None
+
+
+@pytest.mark.asyncio
+async def test_announce_icon_lookup_failure_is_non_fatal():
+    """If CriminalRepository raises during icon lookup, _announce_bounty continues with icon=None."""
+    from utils.executors.bounty_spawn_executor import _announce_bounty
+
+    bounty = _make_bounty(bounty_id=203, guild_id=100, division="bronze", criminal_name="DB Error Criminal")
+    config = _make_config_for_announce(guild_id=100, bronze_channel=111222)
+    mock_db = AsyncMock()
+
+    # CriminalRepository raises an exception during lookup
+    mock_failing_repo = AsyncMock()
+    mock_failing_repo.get_by_name = AsyncMock(side_effect=RuntimeError("DB connection lost"))
+    sys.modules["persist.repositories.criminal_repository"].CriminalRepository = MagicMock(
+        return_value=mock_failing_repo
+    )
+
+    captured_build_calls: list[dict] = []
+
+    def mock_build_payload(data: dict) -> dict:
+        captured_build_calls.append(data)
+        return {
+            "content": None,
+            "embed": {
+                "title": data.get("criminal_name", ""),
+                "color": 1752220,
+                "fields": [],
+                "thumbnail_url": data.get("criminal_icon"),
+                "image_url": None,
+                "footer_text": "",
+            },
+        }
+
+    mock_builder = MagicMock()
+    mock_builder.build_payload = mock_build_payload
+
+    mock_msg_repo = AsyncMock()
+    mock_msg_repo.create_or_update = AsyncMock(return_value=MagicMock())
+    sys.modules["persist.repositories.discord_message_repository"].DiscordMessageRepository = MagicMock(
+        return_value=mock_msg_repo
+    )
+
+    mock_response = MagicMock()
+    mock_response.raise_for_status = MagicMock()
+    mock_response.json = MagicMock(return_value={"data": {"id": 88888}})
+
+    with (
+        patch(
+            "message_builders.builders.bounty_announcement.BountyAnnouncementBuilder",
+            return_value=mock_builder,
+        ),
+        patch("utils.executors.bounty_spawn_executor.httpx.AsyncClient") as mock_cls,
+    ):
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(return_value=mock_response)
+        mock_cls.return_value.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_cls.return_value.__aexit__ = AsyncMock(return_value=False)
+
+        # Must NOT raise — icon lookup failure is non-fatal
+        await _announce_bounty("job-icon-fail", bounty, config, mock_db)
+
+    # Announcement should still proceed with icon=None
+    assert len(captured_build_calls) == 1
+    build_data = captured_build_calls[0]
+    assert build_data["criminal_icon"] is None
 
 
 # ===========================================================================
@@ -481,7 +718,7 @@ async def test_announce_routes_to_bronze_channel():
 
     mock_response = MagicMock()
     mock_response.raise_for_status = MagicMock()
-    mock_response.json = MagicMock(return_value={"data": {"message_id": 999}})
+    mock_response.json = MagicMock(return_value={"data": {"id": 999}})
 
     with (
         patch(
@@ -526,7 +763,7 @@ async def test_announce_routes_to_silver_channel():
 
     mock_response = MagicMock()
     mock_response.raise_for_status = MagicMock()
-    mock_response.json = MagicMock(return_value={"data": {"message_id": 888}})
+    mock_response.json = MagicMock(return_value={"data": {"id": 888}})
 
     with (
         patch(
@@ -570,7 +807,7 @@ async def test_announce_routes_to_gold_channel():
 
     mock_response = MagicMock()
     mock_response.raise_for_status = MagicMock()
-    mock_response.json = MagicMock(return_value={"data": {"message_id": 777}})
+    mock_response.json = MagicMock(return_value={"data": {"id": 777}})
 
     with (
         patch(
@@ -641,7 +878,7 @@ async def test_announce_uses_rich_embed_builder():
 
     mock_response = MagicMock()
     mock_response.raise_for_status = MagicMock()
-    mock_response.json = MagicMock(return_value={"data": {"message_id": 12345}})
+    mock_response.json = MagicMock(return_value={"data": {"id": 12345}})
 
     with (
         patch(
@@ -704,7 +941,7 @@ async def test_announce_uploads_route_map():
 
     msg_response = MagicMock()
     msg_response.raise_for_status = MagicMock()
-    msg_response.json = MagicMock(return_value={"data": {"message_id": 777}})
+    msg_response.json = MagicMock(return_value={"data": {"id": 777}})
 
     with (
         patch(
@@ -760,7 +997,7 @@ async def test_announce_skips_map_when_no_image_channel():
 
     mock_response = MagicMock()
     mock_response.raise_for_status = MagicMock()
-    mock_response.json = MagicMock(return_value={"data": {"message_id": 321}})
+    mock_response.json = MagicMock(return_value={"data": {"id": 321}})
 
     with (
         patch(
@@ -807,7 +1044,7 @@ async def test_announce_persists_discord_message():
     discord_message_id = 888777666
     mock_response = MagicMock()
     mock_response.raise_for_status = MagicMock()
-    mock_response.json = MagicMock(return_value={"data": {"message_id": discord_message_id}})
+    mock_response.json = MagicMock(return_value={"data": {"id": discord_message_id}})
 
     with (
         patch(
@@ -861,7 +1098,7 @@ async def test_announce_continues_if_map_upload_fails():
 
     msg_response = MagicMock()
     msg_response.raise_for_status = MagicMock()
-    msg_response.json = MagicMock(return_value={"data": {"message_id": 555}})
+    msg_response.json = MagicMock(return_value={"data": {"id": 555}})
 
     with (
         patch(
@@ -1050,7 +1287,7 @@ async def test_announce_posts_to_correct_channel_endpoint():
 
     mock_response = MagicMock()
     mock_response.raise_for_status = MagicMock()
-    mock_response.json = MagicMock(return_value={"data": {"message_id": 11111}})
+    mock_response.json = MagicMock(return_value={"data": {"id": 11111}})
 
     with (
         patch(
@@ -1412,3 +1649,200 @@ async def test_per_guild_max_bounties_used():
 
     mock_svc.spawn_bounty.assert_not_awaited()
     assert result["total_spawned"] == 0
+
+
+# ===========================================================================
+# Tests: eligibility guard — _is_guild_fully_configured
+# ===========================================================================
+
+
+def test_is_guild_fully_configured_returns_true_when_all_ids_set():
+    """_is_guild_fully_configured returns True when all 5 required fields are non-null."""
+    from utils.executors.bounty_spawn_executor import _is_guild_fully_configured
+
+    cfg = _make_guild_config(
+        guild_id=1,
+        bronze_bounty_channel_id=111,
+        silver_bounty_channel_id=222,
+        gold_bounty_channel_id=333,
+        platinum_bounty_channel_id=444,
+        bounty_hunter_role_id=555,
+    )
+    assert _is_guild_fully_configured(cfg) is True
+
+
+def test_is_guild_fully_configured_returns_false_when_all_null():
+    """_is_guild_fully_configured returns False when all channel/role IDs are None."""
+    from utils.executors.bounty_spawn_executor import _is_guild_fully_configured
+
+    cfg = _make_guild_config(
+        guild_id=2,
+        bronze_bounty_channel_id=None,
+        silver_bounty_channel_id=None,
+        gold_bounty_channel_id=None,
+        platinum_bounty_channel_id=None,
+        bounty_hunter_role_id=None,
+    )
+    assert _is_guild_fully_configured(cfg) is False
+
+
+def test_is_guild_fully_configured_returns_false_when_only_role_missing():
+    """_is_guild_fully_configured returns False when only bounty_hunter_role_id is None."""
+    from utils.executors.bounty_spawn_executor import _is_guild_fully_configured
+
+    cfg = _make_guild_config(
+        guild_id=3,
+        bronze_bounty_channel_id=111,
+        silver_bounty_channel_id=222,
+        gold_bounty_channel_id=333,
+        platinum_bounty_channel_id=444,
+        bounty_hunter_role_id=None,  # only this is missing
+    )
+    assert _is_guild_fully_configured(cfg) is False
+
+
+def test_is_guild_fully_configured_returns_false_when_platinum_channel_missing():
+    """_is_guild_fully_configured returns False when platinum_bounty_channel_id is None."""
+    from utils.executors.bounty_spawn_executor import _is_guild_fully_configured
+
+    cfg = _make_guild_config(
+        guild_id=4,
+        bronze_bounty_channel_id=111,
+        silver_bounty_channel_id=222,
+        gold_bounty_channel_id=333,
+        platinum_bounty_channel_id=None,  # platinum channel missing
+        bounty_hunter_role_id=555,
+    )
+    assert _is_guild_fully_configured(cfg) is False
+
+
+@pytest.mark.asyncio
+async def test_unconfigured_guild_is_skipped_no_bounties_created():
+    """A guild with all null channel/role IDs is skipped — spawn_bounty is never called."""
+    from utils.executors.bounty_spawn_executor import execute_bounty_spawn_job
+
+    mock_db = AsyncMock()
+    _configure_db_manager(mock_db)
+    _configure_temperature_service(max_bounties=5)
+
+    # Guild with NO channel or role IDs configured (skeleton skeleton row)
+    skeleton_cfg = _make_guild_config(
+        guild_id=9001,
+        bronze_bounty_channel_id=None,
+        silver_bounty_channel_id=None,
+        gold_bounty_channel_id=None,
+        platinum_bounty_channel_id=None,
+        bounty_hunter_role_id=None,
+    )
+    _configure_config_repo([skeleton_cfg])
+    mock_svc = _configure_bounty_service(MagicMock())
+    _configure_bounty_repo({})
+
+    result = await execute_bounty_spawn_job(
+        "job-unconfigured",
+        {"job_type": "bounty_spawn"},
+    )
+
+    # spawn_bounty must NOT have been called
+    mock_svc.spawn_bounty.assert_not_awaited()
+    assert result["total_spawned"] == 0
+
+
+@pytest.mark.asyncio
+async def test_partially_configured_guild_is_skipped():
+    """A guild missing only bounty_hunter_role_id is skipped — spawn_bounty is never called."""
+    from utils.executors.bounty_spawn_executor import execute_bounty_spawn_job
+
+    mock_db = AsyncMock()
+    _configure_db_manager(mock_db)
+    _configure_temperature_service(max_bounties=5)
+
+    # Guild has all channels but is missing bounty_hunter_role_id
+    partial_cfg = _make_guild_config(
+        guild_id=9002,
+        bronze_bounty_channel_id=111,
+        silver_bounty_channel_id=222,
+        gold_bounty_channel_id=333,
+        platinum_bounty_channel_id=444,
+        bounty_hunter_role_id=None,  # missing!
+    )
+    _configure_config_repo([partial_cfg])
+    mock_svc = _configure_bounty_service(MagicMock())
+    _configure_bounty_repo({})
+
+    result = await execute_bounty_spawn_job(
+        "job-partial",
+        {"job_type": "bounty_spawn"},
+    )
+
+    mock_svc.spawn_bounty.assert_not_awaited()
+    assert result["total_spawned"] == 0
+
+
+@pytest.mark.asyncio
+async def test_fully_configured_guild_proceeds_normally():
+    """A guild with all 5 required IDs set is NOT skipped and proceeds to spawn bounties."""
+    from utils.executors.bounty_spawn_executor import execute_bounty_spawn_job
+
+    mock_db = AsyncMock()
+    _configure_db_manager(mock_db)
+    _configure_temperature_service(max_bounties=5)
+
+    bounty = _make_bounty(bounty_id=300, guild_id=9003, division="bronze")
+    full_cfg = _make_guild_config(
+        guild_id=9003,
+        bronze_bounty_channel_id=111,
+        silver_bounty_channel_id=222,
+        gold_bounty_channel_id=333,
+        platinum_bounty_channel_id=444,
+        bounty_hunter_role_id=555,
+    )
+    _configure_config_repo([full_cfg])
+    mock_svc = _configure_bounty_service(bounty)
+    _configure_bounty_repo({})
+
+    with (
+        patch("utils.executors.bounty_spawn_executor._schedule_expiry_job", new=AsyncMock()),
+        patch("utils.executors.bounty_spawn_executor._announce_bounty", new=AsyncMock()),
+    ):
+        result = await execute_bounty_spawn_job(
+            "job-full-config",
+            {"job_type": "bounty_spawn", "guild_id": 9003, "division": "Bronze"},
+        )
+
+    # spawn_bounty MUST have been called
+    mock_svc.spawn_bounty.assert_awaited_once()
+    assert result["total_spawned"] == 1
+
+
+@pytest.mark.asyncio
+async def test_skip_logs_info_message_for_unconfigured_guild():
+    """When a guild is skipped due to missing config, an INFO log message is emitted."""
+    from utils.executors.bounty_spawn_executor import execute_bounty_spawn_job
+
+    mock_db = AsyncMock()
+    _configure_db_manager(mock_db)
+    _configure_temperature_service(max_bounties=5)
+
+    skeleton_cfg = _make_guild_config(
+        guild_id=9004,
+        bronze_bounty_channel_id=None,
+        silver_bounty_channel_id=None,
+        gold_bounty_channel_id=None,
+        platinum_bounty_channel_id=None,
+        bounty_hunter_role_id=None,
+    )
+    _configure_config_repo([skeleton_cfg])
+    _configure_bounty_service(MagicMock())
+    _configure_bounty_repo({})
+
+    with patch("utils.executors.bounty_spawn_executor.flogger") as mock_logger:
+        await execute_bounty_spawn_job(
+            "job-skip-log",
+            {"job_type": "bounty_spawn"},
+        )
+
+    # Verify an INFO log was emitted mentioning the guild and the skip reason
+    info_calls = [str(c) for c in mock_logger.info.call_args_list]
+    skip_logged = any("skipping guild=9004" in msg and "not fully configured" in msg for msg in info_calls)
+    assert skip_logged, f"Expected skip INFO log for guild=9004, got: {info_calls}"

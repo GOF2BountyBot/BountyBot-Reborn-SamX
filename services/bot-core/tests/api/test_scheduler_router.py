@@ -294,6 +294,92 @@ class TestScheduleJob:
         call_kwargs = mock_scheduler.add_job.call_args
         assert call_kwargs is not None
 
+    # -----------------------------------------------------------------------
+    # DEF-001: Client-supplied job_id pass-through
+    # -----------------------------------------------------------------------
+
+    def test_schedule_job_honors_client_supplied_job_id(self, client, mock_scheduler):
+        """DEF-001: When body contains ``job_id``, it is used instead of generating a UUID.
+
+        This is critical for the bounty-spawn orchestrator, which needs its
+        prefixed IDs (``bounty_spawn_{guild_id}_{tier_lower}_{uuid}``) to
+        land in apscheduler_jobs.id so the indexed LIKE query works.
+        """
+        supplied_id = "bounty_spawn_42_bronze_abc123"
+        payload = {
+            "delay_seconds": 60,
+            "payload": {"job_type": "bounty_spawn_one", "guild_id": 42, "tier": "bronze"},
+            "job_id": supplied_id,
+        }
+
+        response = client.post("/api/v1/jobs", json=payload)
+
+        assert response.status_code == 200
+        data = response.json()
+        # Response echoes the supplied ID unchanged.
+        assert data["job_id"] == supplied_id
+        # APScheduler was called with the supplied ID, NOT a UUID.
+        mock_scheduler.add_job.assert_called_once()
+        add_kwargs = mock_scheduler.add_job.call_args.kwargs
+        assert add_kwargs["id"] == supplied_id
+        # args[0] must be the same ID so run_job sees a consistent value
+        assert add_kwargs["args"][0] == supplied_id
+
+    def test_schedule_job_no_job_id_generates_uuid(self, client, mock_scheduler):
+        """Backward compat: when body omits ``job_id``, a UUID is generated as before."""
+        payload = {"delay_seconds": 60, "payload": {}}
+
+        response = client.post("/api/v1/jobs", json=payload)
+
+        assert response.status_code == 200
+        data = response.json()
+        # Generated ID must be a valid UUID.
+        import uuid as _uuid
+
+        parsed = _uuid.UUID(data["job_id"])
+        assert str(parsed) == data["job_id"]
+
+    def test_schedule_job_rejects_reserved_default_job_id(self, client, mock_scheduler):
+        """Defense-in-depth: callers cannot clobber the default recurring job IDs."""
+        payload = {
+            "delay_seconds": 60,
+            "payload": {},
+            "job_id": "bounty_spawn_default",
+        }
+
+        response = client.post("/api/v1/jobs", json=payload)
+
+        assert response.status_code == 400
+        assert "reserved" in response.json()["detail"].lower()
+        mock_scheduler.add_job.assert_not_called()
+
+    def test_schedule_job_rejects_malformed_job_id_with_sql_wildcard(self, client, mock_scheduler):
+        """Defense-in-depth: schema pattern rejects SQL wildcards and other unsafe chars."""
+        payload = {
+            "delay_seconds": 60,
+            "payload": {},
+            "job_id": "bounty_spawn_%",  # SQL wildcard
+        }
+
+        response = client.post("/api/v1/jobs", json=payload)
+
+        # Pydantic validation → 422
+        assert response.status_code == 422
+        mock_scheduler.add_job.assert_not_called()
+
+    def test_schedule_job_rejects_excessively_long_job_id(self, client, mock_scheduler):
+        """Defense-in-depth: schema pattern caps job_id length at 128 chars."""
+        payload = {
+            "delay_seconds": 60,
+            "payload": {},
+            "job_id": "a" * 129,
+        }
+
+        response = client.post("/api/v1/jobs", json=payload)
+
+        assert response.status_code == 422
+        mock_scheduler.add_job.assert_not_called()
+
 
 # ===========================================================================
 # 4. POST /jobs/recurring
@@ -977,3 +1063,76 @@ class TestResetScheduler:
         c = TestClient(test_app, raise_server_exceptions=False)
         response = c.post("/api/v1/reset")
         assert response.status_code == 503
+
+
+# ===========================================================================
+# 11. DEF-001 Integration: orchestrator → router → APScheduler end-to-end
+# ===========================================================================
+
+
+class TestDef001OrchestratorIntegration:
+    """DEF-001: End-to-end integration.
+
+    The bounty-spawn orchestrator POSTs ``{"run_at":..., "payload":..., "job_id": "bounty_spawn_<gid>_<tier>_<uuid>"}``
+    to ``/api/v1/jobs`` and expects that exact ``job_id`` to be stored in
+    ``apscheduler_jobs.id`` so its next-tick LIKE query can find it.
+
+    Before DEF-001 was fixed, ``OneTimeJob`` silently dropped the ``job_id``
+    key and the router generated a random UUID — these tests would have
+    failed.  They lock in the contract at the HTTP boundary.
+    """
+
+    def test_def001_client_supplied_prefixed_id_reaches_add_job(self, client, mock_scheduler):
+        """Orchestrator-style request → scheduler.add_job receives the exact prefixed ID."""
+        supplied_id = "bounty_spawn_9001_bronze_d3b07384-d9a1-4cb6-9f7a-123456789abc"
+        orchestrator_body = {
+            "run_at": "2026-06-01T12:00:00+00:00",
+            "payload": {"job_type": "bounty_spawn_one", "guild_id": 9001, "tier": "bronze"},
+            "job_id": supplied_id,
+        }
+
+        response = client.post("/api/v1/jobs", json=orchestrator_body)
+
+        assert response.status_code == 200
+        assert response.json()["job_id"] == supplied_id
+
+        # The critical assertion: scheduler.add_job was called with id=<prefixed>, NOT a UUID.
+        mock_scheduler.add_job.assert_called_once()
+        add_kwargs = mock_scheduler.add_job.call_args.kwargs
+        assert add_kwargs["id"] == supplied_id
+        # args[0] (the value run_job receives as job_id) is the same prefixed ID
+        # so any downstream lookup / logging by job_id stays consistent.
+        assert add_kwargs["args"][0] == supplied_id
+
+    def test_def001_stored_id_matches_orchestrator_like_pattern(self, client, mock_scheduler):
+        """Stored IDs satisfy the orchestrator's ``bounty_spawn_{gid}_{tier}_%`` LIKE pattern.
+
+        Uses fnmatch as a stand-in for SQL LIKE (``%`` ≈ ``*``) — the same
+        pattern the orchestrator builds in bounty_spawn_executor.py.
+        """
+        import fnmatch
+
+        stored_ids: list[str] = []
+        mock_scheduler.add_job.side_effect = lambda *a, **kw: stored_ids.append(kw["id"])
+
+        # Simulate what the orchestrator POSTs for each of the 4 tiers in a single guild.
+        guild_id = 4242
+        for tier in ("bronze", "silver", "gold", "platinum"):
+            body = {
+                "run_at": "2026-06-01T12:00:00+00:00",
+                "payload": {"job_type": "bounty_spawn_one", "guild_id": guild_id, "tier": tier},
+                # UUID4-shaped suffix — matches what the real orchestrator produces.
+                "job_id": f"bounty_spawn_{guild_id}_{tier}_d3b07384-d9a1-4cb6-9f7a-abcdef012345",
+            }
+            resp = client.post("/api/v1/jobs", json=body)
+            assert resp.status_code == 200, f"tier={tier}: {resp.json()}"
+
+        assert len(stored_ids) == 4
+        # Each tier's LIKE pattern must match exactly one stored ID.
+        for tier in ("bronze", "silver", "gold", "platinum"):
+            glob_pattern = f"bounty_spawn_{guild_id}_{tier}_*"
+            matches = [sid for sid in stored_ids if fnmatch.fnmatch(sid, glob_pattern)]
+            assert len(matches) == 1, (
+                f"LIKE pattern {glob_pattern!r} matched {len(matches)} stored ID(s); expected 1. "
+                "DEF-001 regression — orchestrator's dedup query will not see its own queued jobs."
+            )

@@ -115,9 +115,9 @@ async def execute_shop_refresh_job(job_id: str, payload: dict) -> dict:
                     bulk_results[gid] = tier_results
 
                     # ── Announce shop refresh to discord-gateway ───────────
-                    hunting_channel_id = getattr(config, "hunting_channel_id", None)
+                    shop_channel_id = getattr(config, "shop_channel_id", None)
                     bounty_hunter_role_id = getattr(config, "bounty_hunter_role_id", None)
-                    await _announce_shop_refresh(job_id, gid, hunting_channel_id, bounty_hunter_role_id)
+                    await _announce_shop_refresh(job_id, gid, shop_channel_id, bounty_hunter_role_id)
 
             finally:
                 shop_service.clear_static_cache()
@@ -155,14 +155,16 @@ async def _announce_shop_refresh(
     POSTs to ``POST /api/v1/channels/{channel_id}/messages`` with an
     EmbedPayload as the request body (matching ``MessageCreateRequest`` schema).
 
-    The announcement is posted to the hunting channel (``hunting_channel_id``)
-    so all bounty hunters are notified of the shop restock.
+    The announcement is posted to the shop channel (``shop_channel_id``)
+    so all players are notified of the shop restock.
 
     If ``channel_id`` is None, a warning is logged and the announcement
-    is skipped — no hunting channel has been configured for this guild yet.
+    is skipped — no shop channel has been configured for this guild yet.
 
     If ``bounty_hunter_role_id`` is set, a ``<@&{role_id}>`` mention is
-    prepended to the embed description so role members are notified.
+    placed in ``text_content`` (plain text alongside the embed) so that
+    Discord recognises it as an actual role mention and notifies members.
+    Role mentions inside embed descriptions are NOT parsed by Discord.
 
     Failures are logged but do NOT propagate — a failed announcement is
     non-fatal for the refresh operation.
@@ -170,7 +172,7 @@ async def _announce_shop_refresh(
     if channel_id is None:
         flogger.warning(
             f"ShopRefreshJob[{parent_job_id}] guild={guild_id}: "
-            "hunting_channel_id not configured, skipping announcement"
+            "shop_channel_id not configured, skipping announcement"
         )
         return
 
@@ -178,21 +180,18 @@ async def _announce_shop_refresh(
         "The guild shop has been restocked with new items across all tiers. "
         "Check out the latest offerings and upgrade your loadout!"
     )
-    if bounty_hunter_role_id is not None:
-        description = f"<@&{bounty_hunter_role_id}> {base_description}"
-    else:
-        description = base_description
 
     announcement = {
-        "content": {
+        "content": {  # embed payload
             "title": "🛒 Shop Refreshed!",
-            "description": description,
+            "description": base_description,
             "color": 3447003,  # Blue (#3498DB)
             "fields": [
                 {"name": "Tiers Available", "value": "Bronze · Silver · Gold · Platinum", "inline": False},
             ],
             "footer_text": "Use /shop to browse!",
         },
+        "text_content": f"<@&{bounty_hunter_role_id}>" if bounty_hunter_role_id else None,
         "message_type": "default",
     }
 

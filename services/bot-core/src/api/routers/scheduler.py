@@ -102,9 +102,20 @@ async def get_job(req: Request, job_id: str):
 
 @router.post("/jobs")
 async def schedule_job(req: Request, job: OneTimeJob):
-    job_id = str(uuid.uuid4())
+    # Honor caller-supplied job_id when provided so that callers (e.g. the
+    # bounty-spawn orchestrator) can correlate scheduled jobs via indexed
+    # LIKE queries on apscheduler_jobs.id.  Format validated by the
+    # OneTimeJob schema pattern.  Also guard against clobbering the three
+    # default recurring job IDs.
+    if job.job_id is not None:
+        if job.job_id in _DEFAULT_JOB_IDS:
+            flogger.warning(f"Refusing to schedule job with reserved default ID '{job.job_id}'")
+            raise HTTPException(400, f"job_id '{job.job_id}' is reserved for default recurring jobs")
+        job_id = job.job_id
+    else:
+        job_id = str(uuid.uuid4())
     flogger.info(f"Schedule one-time job endpoint: starting job_id={job_id}")
-    flogger.debug(f"Generated one-time job id={job_id} payload={job}")
+    flogger.debug(f"Using one-time job id={job_id} payload={job}")
     if not job.run_at and job.delay_seconds is None:
         flogger.warning("One-time job request missing both run_at and delay_seconds")
         raise HTTPException(400, "Provide either run_at or delay_seconds")

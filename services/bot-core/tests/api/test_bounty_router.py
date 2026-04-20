@@ -81,13 +81,25 @@ def mock_bounty_service():
 
 
 @pytest.fixture
-def test_app(mock_bounty_service):
+def mock_loadout_response_service():
+    """Mock LoadoutResponseService injected via dep override for bounty loadout tests."""
+    svc = MagicMock()
+    svc.build_bounty_loadout = AsyncMock(return_value=None)
+    return svc
+
+
+@pytest.fixture
+def test_app(mock_bounty_service, mock_loadout_response_service):
     app = FastAPI()
-    from api.routers.bounties import get_bounty_service
+    from api.routers.bounties import (
+        get_bounty_service,
+        get_loadout_response_service,
+    )
     from api.routers.bounties import router as bounties_router
 
     app.include_router(bounties_router, prefix="/api/v1")
     app.dependency_overrides[get_bounty_service] = lambda: mock_bounty_service
+    app.dependency_overrides[get_loadout_response_service] = lambda: mock_loadout_response_service
     yield app
     app.dependency_overrides.clear()
 
@@ -390,39 +402,298 @@ class TestSpawnBounty:
 
 
 class TestGetBountyLoadout:
-    """Tests for GET /api/v1/bounties/{bounty_id}/loadout."""
+    """Tests for GET /api/v1/bounties/{bounty_id}/loadout (unified LoadoutResponse)."""
+
+    @staticmethod
+    def _make_criminal_response(**overrides):
+        from api.schemas.loadout_schema import (
+            EffectItem,
+            LoadoutModuleItem,
+            LoadoutResponse,
+            LoadoutWeaponItem,
+            ShipStats,
+        )
+
+        defaults = dict(
+            subject_kind="criminal",
+            subject_name="Dark Mage",
+            subject_description="Void Syndicate",
+            bounty_id=1,
+            tech_level=3,
+            ship_name="Interceptor",
+            ship_emoji="<:interceptor:1>",
+            ship_icon="https://cdn/interceptor.png",
+            thumbnail_url="https://cdn/darkmage.png",
+            ship_stats=ShipStats(armour=95, cargo=45, handling=60, hp=95, dps=5.2, total_value=1000),
+            weapons=[LoadoutWeaponItem(name="Blaster", emoji="<:b:1>", dps=5.2, value=500)],
+            turrets=[],
+            modules=[
+                LoadoutModuleItem(
+                    name="D'iol",
+                    emoji="<:diol:1>",
+                    type="ArmourModule",
+                    value=500,
+                    tech_level=1,
+                    effects=[EffectItem(label="Armour", value="40")],
+                    combat_tier="combat",
+                ),
+            ],
+            cargo=[],
+            cargo_total_count=0,
+        )
+        defaults.update(overrides)
+        return LoadoutResponse(**defaults)
 
     @patch("api.routers.bounties.get_db_session")
-    def test_get_loadout_success(self, mock_get_db, client, mock_bounty_service):
-        """Returns criminal ship loadout for a valid bounty."""
+    def test_get_loadout_success(self, mock_get_db, client, mock_loadout_response_service):
+        """Returns unified LoadoutResponse with subject_kind='criminal'."""
         _configure_db_mock(mock_get_db)
-        mock_bounty = make_mock_bounty(
-            id=1,
-            criminal_name="Dark Mage",
-            criminal_ship={"name": "Interceptor", "class": "Fighter"},
-            tech_level=3,
-        )
-        mock_bounty_service.bounty_repo.get_by_id = AsyncMock(return_value=mock_bounty)
+        mock_loadout_response_service.build_bounty_loadout.return_value = self._make_criminal_response()
 
         response = client.get("/api/v1/bounties/1/loadout")
 
         assert response.status_code == 200
         data = response.json()
+        assert data["subject_kind"] == "criminal"
+        assert data["subject_name"] == "Dark Mage"
+        assert data["subject_description"] == "Void Syndicate"
         assert data["bounty_id"] == 1
-        assert data["criminal_name"] == "Dark Mage"
-        assert data["criminal_ship"] == {"name": "Interceptor", "class": "Fighter"}
         assert data["tech_level"] == 3
+        assert data["ship_name"] == "Interceptor"
+        # Cargo stats visible for criminal path (always shown)
+        assert data["ship_stats"]["cargo"] == 45
+        # Thumbnail uses criminal icon, not ship icon
+        assert data["thumbnail_url"] == "https://cdn/darkmage.png"
+        # Cargo list always empty (no loot drops yet)
+        assert data["cargo"] == []
+        assert data["cargo_total_count"] == 0
+        # Module includes pre-formatted effects and combat_tier
+        mod = data["modules"][0]
+        assert mod["type"] == "ArmourModule"
+        assert mod["combat_tier"] == "combat"
+        assert mod["effects"] == [{"label": "Armour", "value": "40"}]
 
     @patch("api.routers.bounties.get_db_session")
-    def test_get_loadout_not_found(self, mock_get_db, client, mock_bounty_service):
-        """Returns 404 when bounty does not exist."""
+    def test_get_loadout_not_found(self, mock_get_db, client, mock_loadout_response_service):
+        """Returns 404 when bounty does not exist (service returns None)."""
         _configure_db_mock(mock_get_db)
-        mock_bounty_service.bounty_repo.get_by_id = AsyncMock(return_value=None)
+        mock_loadout_response_service.build_bounty_loadout.return_value = None
 
         response = client.get("/api/v1/bounties/999/loadout")
 
         assert response.status_code == 404
         assert "not found" in response.json()["detail"].lower()
+
+    @patch("api.routers.bounties.get_db_session")
+    def test_get_loadout_missing_criminal_ship_returns_message(
+        self, mock_get_db, client, mock_loadout_response_service
+    ):
+        """When criminal_ship is missing, returns 200 with message."""
+        _configure_db_mock(mock_get_db)
+        mock_loadout_response_service.build_bounty_loadout.return_value = self._make_criminal_response(
+            message="Criminal ship data unavailable",
+            ship_name=None,
+        )
+
+        response = client.get("/api/v1/bounties/1/loadout")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["message"] == "Criminal ship data unavailable"
+        assert data["subject_kind"] == "criminal"
+
+    @patch("api.routers.bounties.get_db_session")
+    def test_get_loadout_server_error_returns_500(
+        self, mock_get_db, client, mock_loadout_response_service
+    ):
+        _configure_db_mock(mock_get_db)
+        mock_loadout_response_service.build_bounty_loadout.side_effect = Exception("boom")
+
+        response = client.get("/api/v1/bounties/1/loadout")
+
+        assert response.status_code == 500
+
+
+# ---------------------------------------------------------------------------
+# LoadoutResponseService — bounty-path unit-level tests
+# ---------------------------------------------------------------------------
+
+
+class TestLoadoutResponseServiceBountyPath:
+    """Unit tests for LoadoutResponseService.build_bounty_loadout."""
+
+    def _make_svc(self, *, bounty, criminal=None, ship=None):
+        from services.loadout_response_service import LoadoutResponseService
+
+        svc = LoadoutResponseService()
+        svc.bounty_repo = MagicMock()
+        svc.bounty_repo.get_by_id = AsyncMock(return_value=bounty)
+        svc.criminal_repo = MagicMock()
+        svc.criminal_repo.get_by_name = AsyncMock(return_value=criminal)
+        svc.item_repo = MagicMock()
+        svc.inventory_repo = MagicMock()
+        svc.player_repo = MagicMock()
+        svc.user_repo = MagicMock()
+
+        async def _execute(stmt):
+            result = MagicMock()
+            result.scalars.return_value.first.return_value = ship
+            return result
+
+        db = MagicMock()
+        db.execute = _execute
+        return svc, db
+
+    async def test_bounty_not_found_returns_none(self):
+        svc, db = self._make_svc(bounty=None)
+        result = await svc.build_bounty_loadout(db, 999)
+        assert result is None
+
+    async def test_bounty_with_no_criminal_ship_returns_message(self):
+        from types import SimpleNamespace
+
+        bounty = SimpleNamespace(
+            id=1,
+            criminal_name="Dark Mage",
+            criminal_faction="Void",
+            tech_level=3,
+            criminal_ship=None,
+        )
+        svc, db = self._make_svc(bounty=bounty)
+        result = await svc.build_bounty_loadout(db, 1)
+
+        assert result is not None
+        assert result.message == "Criminal ship data unavailable"
+        assert result.subject_kind == "criminal"
+        assert result.subject_name == "Dark Mage"
+        assert result.bounty_id == 1
+        assert result.tech_level == 3
+
+    async def test_bounty_happy_path_with_compressor_module(self):
+        """Effective cargo = ship.cargo × CompressorModule multipliers (spec §2.6 step 9)."""
+        from types import SimpleNamespace
+
+        criminal_ship = {
+            "ship_name": "Betty",
+            "ship_emoji": "<:betty:1>",
+            "ship_armour": 95,
+            "total_hp": 120,
+            "weapons": [{"name": "Blaster", "emoji": "<:b:1>", "dps": 5.2, "value": 500}],
+            "turrets": [],
+            "modules": [
+                {
+                    "name": "D'iol",
+                    "emoji": "<:diol:1>",
+                    "type": "ArmourModule",
+                    "value": 500,
+                    "tech_level": 1,
+                    "extra_atts": {"armour": 40},
+                },
+                {
+                    "name": "AutoPacker 2",
+                    "emoji": "<:pack:1>",
+                    "type": "CompressorModule",
+                    "value": 300,
+                    "tech_level": 2,
+                    "extra_atts": {"cargoMultiplier": 1.5},
+                },
+            ],
+        }
+
+        bounty = SimpleNamespace(
+            id=42,
+            criminal_name="Dark Mage",
+            criminal_faction="Void Syndicate",
+            tech_level=3,
+            criminal_ship=criminal_ship,
+        )
+        criminal = SimpleNamespace(icon="https://cdn/darkmage.png")
+        ship = SimpleNamespace(
+            name="Betty", armour=95, cargo=30, handling=60, icon="https://cdn/betty.png",
+            max_primaries=1, max_secondaries=0, max_turrets=0, max_modules=2,
+        )
+
+        svc, db = self._make_svc(bounty=bounty, criminal=criminal, ship=ship)
+        result = await svc.build_bounty_loadout(db, 42)
+
+        assert result is not None
+        assert result.subject_kind == "criminal"
+        assert result.subject_name == "Dark Mage"
+        assert result.subject_description == "Void Syndicate"
+        assert result.bounty_id == 42
+        assert result.tech_level == 3
+        assert result.ship_name == "Betty"
+        assert result.ship_emoji == "<:betty:1>"
+        # Thumbnail uses Criminal.icon, NOT ship icon
+        assert result.thumbnail_url == "https://cdn/darkmage.png"
+        assert result.ship_icon == "https://cdn/betty.png"
+        # Stats
+        assert result.ship_stats.armour == 95
+        assert result.ship_stats.hp == 120  # JSON-provided total_hp
+        # Effective cargo = 30 × 1.5 = 45
+        assert result.ship_stats.cargo == 45
+        assert result.ship_stats.handling == 60
+        assert result.ship_stats.dps == 5.2
+        # Cargo list always empty for criminal path
+        assert result.cargo == []
+        assert result.cargo_total_count == 0
+        # Modules have pre-formatted effects + combat_tier
+        assert len(result.modules) == 2
+        diol = result.modules[0]
+        assert diol.type == "ArmourModule"
+        assert diol.combat_tier == "combat"
+        assert [(e.label, e.value) for e in diol.effects] == [("Armour", "40")]
+        comp = result.modules[1]
+        assert comp.type == "CompressorModule"
+        assert comp.combat_tier == "utility"
+        assert [(e.label, e.value) for e in comp.effects] == [("Cargo Bonus", "×1.5")]
+
+    async def test_bounty_missing_ship_gives_partial_stats(self):
+        """If Ship row is missing, ship_stats still populates from JSON where possible."""
+        from types import SimpleNamespace
+
+        criminal_ship = {
+            "ship_name": "UnknownShip",
+            "ship_armour": 80,
+            "armor_hp": 80,
+            "shield_hp": 20,
+            "weapons": [],
+            "turrets": [],
+            "modules": [],
+        }
+        bounty = SimpleNamespace(
+            id=7, criminal_name="Ghost", criminal_faction=None,
+            tech_level=2, criminal_ship=criminal_ship,
+        )
+        svc, db = self._make_svc(bounty=bounty, criminal=None, ship=None)
+        result = await svc.build_bounty_loadout(db, 7)
+
+        assert result.ship_stats.armour == 80
+        # hp = armor_hp + shield_hp
+        assert result.ship_stats.hp == 100
+        # cargo = 0 when ship missing
+        assert result.ship_stats.cargo == 0
+        # thumbnail_url is None when criminal is missing
+        assert result.thumbnail_url is None
+
+    async def test_bounty_with_no_criminal_row_has_null_thumbnail(self):
+        from types import SimpleNamespace
+
+        criminal_ship = {"ship_name": "X", "weapons": [], "turrets": [], "modules": []}
+        bounty = SimpleNamespace(
+            id=7, criminal_name="Ghost", criminal_faction=None,
+            tech_level=2, criminal_ship=criminal_ship,
+        )
+        ship = SimpleNamespace(
+            name="X", armour=50, cargo=10, handling=40, icon="https://cdn/x.png",
+            max_primaries=0, max_secondaries=0, max_turrets=0, max_modules=0,
+        )
+        svc, db = self._make_svc(bounty=bounty, criminal=None, ship=ship)
+        result = await svc.build_bounty_loadout(db, 7)
+
+        assert result.thumbnail_url is None
+        # Ship icon still populated independently
+        assert result.ship_icon == "https://cdn/x.png"
 
 
 # ===========================================================================

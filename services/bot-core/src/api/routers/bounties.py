@@ -13,10 +13,11 @@ Handles bounty-related operations including:
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import Response
 from persist.database.manager import get_db_session
-from persist.repositories.bounty_repository import BountyRepository
+from persist.repositories.bounty_repository import BountyRepository  # noqa: F401 (kept for backward compat)
 from persist.repositories.config_repository import ConfigRepository
 from services.audit_service import AuditService
 from services.bounty_service import BountyService
+from services.loadout_response_service import LoadoutResponseService
 from services.map_renderer import MapRenderer
 from services.system_graph_service import SystemGraphService
 from shared import bblogger
@@ -32,6 +33,7 @@ from api.schemas.bounty_schema import (
     CombatBonusRequest,
     CombatBonusResponse,
 )
+from api.schemas.loadout_schema import LoadoutResponse
 
 flogger = bblogger.get_logger("bounty-router")
 
@@ -48,6 +50,10 @@ _map_cache: dict[tuple[int, tuple[str, ...]], bytes] = {}
 
 def get_bounty_service() -> BountyService:
     return BountyService()
+
+
+def get_loadout_response_service() -> LoadoutResponseService:
+    return LoadoutResponseService()
 
 
 router = APIRouter(
@@ -266,22 +272,28 @@ async def spawn_bounty(
 # ---------------------------------------------------------------------------
 
 
-@router.get("/{bounty_id}/loadout")
+@router.get("/{bounty_id}/loadout", response_model=LoadoutResponse)
 async def get_bounty_loadout(
     bounty_id: int,
-    service: BountyService = Depends(get_bounty_service),
-):
-    """Get the criminal's ship loadout for a bounty."""
-    async with get_db_session() as db:
-        bounty = await service.bounty_repo.get_by_id(db, bounty_id)
-        if bounty is None:
-            raise HTTPException(status_code=404, detail="Bounty not found")
-        return {
-            "bounty_id": bounty.id,
-            "criminal_name": bounty.criminal_name,
-            "criminal_ship": bounty.criminal_ship,
-            "tech_level": bounty.tech_level,
-        }
+    loadout_service: LoadoutResponseService = Depends(get_loadout_response_service),
+) -> LoadoutResponse:
+    """Get the criminal's ship loadout for a bounty.
+
+    Returns a unified `LoadoutResponse` with `subject_kind="criminal"`, populated
+    with Criminal.icon as the thumbnail and an effective cargo capacity derived
+    from Ship.cargo × CompressorModule multipliers (spec §2.6, §7.11).
+    """
+    try:
+        async with get_db_session() as db:
+            response = await loadout_service.build_bounty_loadout(db, bounty_id)
+            if response is None:
+                raise HTTPException(status_code=404, detail="Bounty not found")
+            return response
+    except HTTPException:
+        raise
+    except Exception as e:
+        flogger.error(f"Error getting bounty loadout {bounty_id}: {e}")
+        raise HTTPException(status_code=500, detail="Failed to get bounty loadout") from e
 
 
 # ---------------------------------------------------------------------------

@@ -7,16 +7,23 @@ loadout management, and active ship selection.
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from persist.database.manager import get_db_session
+from persist.repositories.inventory_repository import InventoryRepository
+from persist.repositories.item_repository import ItemRepository
 from persist.repositories.player_repository import PlayerRepository
+from persist.repositories.player_ship_repository import PlayerShipRepository
 from persist.repositories.ship_repository import ShipRepository
 from services.equipment_service import EquipmentService
 from shared import bblogger
 
 from api.schemas.ships_schema import (
     CreateShipRequest,
+    EquipCheckRequest,
+    EquipCheckResponse,
     EquipItemRequest,
     ShipLoadoutSummaryResponse,
     ShipResponse,
+    TransferShipRequest,
+    TransferShipResponse,
     UnequipItemRequest,
     UpdateLoadoutRequest,
     UpdateNicknameRequest,
@@ -31,6 +38,31 @@ router = APIRouter(
 )
 
 
+# Item type → equipment category mapping
+_ITEM_TYPE_TO_EQUIPMENT_CATEGORY: dict[str, str] = {
+    "PrimaryWeapon": "weapons",
+    "SecondaryWeapon": "weapons",
+    "TurretWeapon": "turrets",
+}
+
+# Module class name prefix to identify modules
+_MODULE_TYPE_SUFFIXES = {"Module"}
+
+
+def _item_type_to_equipment_category(item_type: str) -> str | None:
+    """Map an Item.type value to an equipment category string.
+
+    Returns one of ``"weapons"``, ``"modules"``, ``"turrets"``, or ``None`` if
+    the type is not equippable.
+    """
+    if item_type in _ITEM_TYPE_TO_EQUIPMENT_CATEGORY:
+        return _ITEM_TYPE_TO_EQUIPMENT_CATEGORY[item_type]
+    # Any type ending in "Module" is a module
+    if item_type.endswith("Module"):
+        return "modules"
+    return None
+
+
 # Dependency injection
 async def get_ship_repository():
     return ShipRepository()
@@ -40,18 +72,29 @@ async def get_player_repository():
     return PlayerRepository()
 
 
+async def get_player_ship_repository():
+    return PlayerShipRepository()
+
+
 async def get_equipment_service():
     return EquipmentService()
 
 
+async def get_item_repository():
+    return ItemRepository()
+
+
 @router.get("/player/{player_id}", response_model=list[ShipResponse])
-async def get_player_ships(player_id: int, ship_repo: ShipRepository = Depends(get_ship_repository)):
+async def get_player_ships(
+    player_id: int,
+    player_ship_repo: PlayerShipRepository = Depends(get_player_ship_repository),
+):
     """Get all ships owned by a player."""
     flogger.debug(f"Getting ships for player {player_id}")
 
     try:
         async with get_db_session() as db:
-            ships = await ship_repo.get_player_ships(db, player_id)
+            ships = await player_ship_repo.get_player_ships(db, player_id)
 
             return [
                 ShipResponse(
@@ -288,6 +331,43 @@ async def update_ship_nickname(
         ) from e
 
 
+@router.post("/{ship_id}/equip-check", response_model=EquipCheckResponse)
+async def equip_check(
+    ship_id: int,
+    request: EquipCheckRequest,
+    equipment_service: EquipmentService = Depends(get_equipment_service),
+    item_repo: ItemRepository = Depends(get_item_repository),
+):
+    """Pre-flight check before equipping: auto-detect item type and validate slot/unique constraints.
+
+    Returns one of three statuses:
+    - ``"ok"`` — item can be equipped immediately
+    - ``"slot_full"`` — all slots for this equipment type are occupied (includes equipped items for swap UI)
+    - ``"unique_conflict"`` — a module with the same unique class is already equipped
+    """
+    flogger.info(f"equip-check: player_id={request.player_id}, ship_id={ship_id}, item_name={request.item_name!r}")
+
+    try:
+        async with get_db_session() as db:
+            result = await equipment_service.equip_check(
+                db,
+                player_id=request.player_id,
+                ship_id=ship_id,
+                item_name=request.item_name,
+            )
+            return EquipCheckResponse(**result)
+
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
+    except HTTPException:
+        raise
+    except Exception as e:
+        flogger.error(f"Error in equip-check: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to perform equip check"
+        ) from e
+
+
 @router.post("/{ship_id}/equip", response_model=ShipResponse)
 async def equip_item(
     ship_id: int,
@@ -300,7 +380,8 @@ async def equip_item(
     availability, and inventory possession before moving the item.
     """
     flogger.info(
-        f"Equipping '{request.item_name}' ({request.equipment_type}) for player {request.player_id} on ship {ship_id}"
+        f"Equipping '{request.item_name}' ({request.equipment_type or 'auto'}) "
+        f"for player {request.player_id} on ship {ship_id}"
     )
 
     try:
@@ -350,7 +431,7 @@ async def unequip_item(
     the item is currently equipped before returning it to inventory.
     """
     flogger.info(
-        f"Unequipping '{request.item_name}' ({request.equipment_type}) "
+        f"Unequipping '{request.item_name}' ({request.equipment_type or 'auto'}) "
         f"for player {request.player_id} from ship {ship_id}"
     )
 
@@ -447,3 +528,117 @@ async def delete_ship(ship_id: int, ship_repo: ShipRepository = Depends(get_ship
     except Exception as e:
         flogger.error(f"Error deleting ship {ship_id}: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to delete ship") from e
+
+
+@router.post("/transfer", response_model=TransferShipResponse)
+async def transfer_ship(
+    request: TransferShipRequest,
+    ship_repo: PlayerShipRepository = Depends(get_player_ship_repository),
+    player_repo: PlayerRepository = Depends(get_player_repository),
+):
+    """Transfer a PlayerShip from one player to another.
+
+    Validates:
+    - The ship exists and belongs to from_player
+    - The ship is NOT the from_player's active ship
+    - Both players exist
+
+    Unequips all weapons/modules/turrets to from_player's inventory before transfer.
+    Sets the transferred ship as inactive for to_player.
+    """
+    flogger.info(
+        f"Transferring ship {request.ship_id} from player {request.from_player_id} to player {request.to_player_id}"
+    )
+
+    try:
+        async with get_db_session() as db:
+            # Validate both players exist
+            from_player = await player_repo.get_by_id(db, request.from_player_id)
+            if not from_player:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"Source player {request.from_player_id} not found",
+                )
+
+            to_player = await player_repo.get_by_id(db, request.to_player_id)
+            if not to_player:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"Target player {request.to_player_id} not found",
+                )
+
+            # Validate the ship exists and belongs to from_player
+            ship = await ship_repo.get_by_id(db, request.ship_id)
+            if not ship:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"Ship {request.ship_id} not found",
+                )
+
+            if ship.player_id != request.from_player_id:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Ship {request.ship_id} does not belong to player {request.from_player_id}",
+                )
+
+            # Cannot give away active ship
+            if ship.is_active:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Cannot transfer the active ship. Set another ship as active first.",
+                )
+
+            # Unequip all items back to from_player's inventory
+            inventory_repo = InventoryRepository()
+            items_returned: list[str] = []
+
+            for weapon_name in list(ship.weapons or []):
+                await inventory_repo.add_item(db, request.from_player_id, "weapon", weapon_name, 1)
+                items_returned.append(weapon_name)
+
+            for module_name in list(ship.modules or []):
+                await inventory_repo.add_item(db, request.from_player_id, "module", module_name, 1)
+                items_returned.append(module_name)
+
+            for turret_name in list(ship.turrets or []):
+                await inventory_repo.add_item(db, request.from_player_id, "turret", turret_name, 1)
+                items_returned.append(turret_name)
+
+            # Clear the loadout on the ship
+            ship.weapons = []
+            ship.modules = []
+            ship.turrets = []
+
+            # Transfer ship ownership to to_player (inactive)
+            ship.player_id = request.to_player_id
+            ship.is_active = False
+
+            await db.commit()
+            await db.refresh(ship)
+
+            flogger.info(
+                f"Ship {request.ship_id} ({ship.ship_name}) transferred from player "
+                f"{request.from_player_id} to {request.to_player_id}. "
+                f"Returned {len(items_returned)} items to source inventory."
+            )
+
+            return TransferShipResponse(
+                ship_id=ship.id,
+                ship_name=ship.ship_name,
+                from_player_id=request.from_player_id,
+                to_player_id=request.to_player_id,
+                items_returned_to_source=items_returned,
+                message=(
+                    f"Ship '{ship.ship_name}' transferred from player {request.from_player_id} "
+                    f"to player {request.to_player_id}. "
+                    f"{len(items_returned)} item(s) returned to source inventory."
+                ),
+            )
+
+    except HTTPException:
+        raise
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
+    except Exception as e:
+        flogger.error(f"Error transferring ship {request.ship_id}: {e}")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to transfer ship") from e

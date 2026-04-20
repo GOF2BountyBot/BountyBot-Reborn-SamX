@@ -150,6 +150,79 @@ class TestCreateOrUpdate:
         assert added.message_type == "general"
         assert result is not None
 
+    @pytest.mark.asyncio
+    async def test_create_sets_reference_id_when_provided(self, repo, mock_db):
+        """create_or_update sets reference_id from raw dict when creating a new message."""
+        mock_db.execute = AsyncMock(return_value=_make_one_or_none_result(None))
+
+        raw = {
+            "guild_id": 111,
+            "channel_id": 222,
+            "message_id": 333,
+            "embed_payload": {"title": "Bounty"},
+            "message_type": "bounty_announcement",
+            "reference_id": 42,
+        }
+        await repo.create_or_update(mock_db, raw)
+
+        added = mock_db.add.call_args[0][0]
+        assert added.reference_id == 42
+
+    @pytest.mark.asyncio
+    async def test_create_reference_id_none_when_not_provided(self, repo, mock_db):
+        """create_or_update leaves reference_id as None when not in raw dict."""
+        mock_db.execute = AsyncMock(return_value=_make_one_or_none_result(None))
+
+        raw = {
+            "guild_id": 1,
+            "channel_id": 2,
+            "message_id": 3,
+            "embed_payload": {},
+        }
+        await repo.create_or_update(mock_db, raw)
+
+        added = mock_db.add.call_args[0][0]
+        assert added.reference_id is None
+
+    @pytest.mark.asyncio
+    async def test_update_sets_reference_id_when_provided(self, repo, mock_db):
+        """create_or_update updates reference_id on existing message when raw contains it."""
+        existing = MagicMock()
+        existing.id = 5
+        existing.reference_id = None
+        mock_db.execute = AsyncMock(return_value=_make_one_or_none_result(existing))
+
+        raw = {
+            "guild_id": 111,
+            "channel_id": 222,
+            "message_id": 333,
+            "embed_payload": {"title": "Updated"},
+            "message_type": "bounty_announcement",
+            "reference_id": 99,
+        }
+        await repo.create_or_update(mock_db, raw)
+
+        assert existing.reference_id == 99
+
+    @pytest.mark.asyncio
+    async def test_update_preserves_existing_reference_id_when_not_in_raw(self, repo, mock_db):
+        """create_or_update preserves existing reference_id when raw does not include it."""
+        existing = MagicMock()
+        existing.id = 5
+        existing.reference_id = 77
+        mock_db.execute = AsyncMock(return_value=_make_one_or_none_result(existing))
+
+        raw = {
+            "guild_id": 111,
+            "channel_id": 222,
+            "message_id": 333,
+            "embed_payload": {"title": "Updated"},
+        }
+        await repo.create_or_update(mock_db, raw)
+
+        # raw has no reference_id → existing value is preserved
+        assert existing.reference_id == 77
+
 
 # ---------------------------------------------------------------------------
 # TestGetByCompositeKey

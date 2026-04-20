@@ -2,9 +2,11 @@
 
 Invoked by APScheduler via the JobExecutor dispatch.  The executor:
   1. Extracts ``bounty_id`` from the job payload.
-  2. Calls BountyService.expire_bounty() to set the bounty status to 'expired'.
-  3. Posts an announcement to the discord-gateway REST API so the bot can relay
-     the expiry notification to the appropriate Discord channel.
+  2. Fetches the bounty object (needed for announcement lookup regardless of status).
+  3. Calls BountyService.expire_bounty() to set the bounty status to 'expired'
+     (only succeeds if bounty is still active; returns None for captured/completed etc.).
+  4. Always attempts to delete the Discord announcement message, regardless of
+     whether the bounty was already captured.
 
 Imports of service/repository classes are deferred to function scope so that
 the module can be safely imported in test environments without a live database
@@ -56,84 +58,42 @@ async def execute_bounty_expire_job(job_id: str, payload: dict) -> dict:
 
     try:
         async with db_manager.get_session() as db:
+            from persist.repositories.bounty_repository import BountyRepository
+
             bounty_service = BountyService()
+            bounty_repo = BountyRepository()
+
+            # Fetch the bounty first (regardless of status) so we can delete the announcement.
+            bounty_obj = await bounty_repo.get_by_id(db, bounty_id)
+
+            # Try to expire it (only succeeds if still active; returns None otherwise).
             bounty = await bounty_service.expire_bounty(db, bounty_id)
 
-            if bounty is not None:
-                # Delete the announcement message from Discord + DB (inside the session).
-                await _delete_bounty_announcement(job_id, bounty, db)
+            # Always attempt to delete the announcement, even if bounty was already captured.
+            if bounty_obj is not None:
+                await _delete_bounty_announcement(job_id, bounty_obj, db)
 
-        if bounty is None:
-            flogger.warning(
-                f"BountyExpireJob[{job_id}] expire_bounty returned None "
-                f"for bounty_id={bounty_id} (not found or wrong status)"
-            )
+        if bounty_obj is None:
+            flogger.warning(f"BountyExpireJob[{job_id}] bounty {bounty_id} not found in database")
             return {"status": "skipped", "bounty_id": bounty_id}
 
-        flogger.info(f"BountyExpireJob[{job_id}] bounty id={bounty.id} ({bounty.criminal_name}) expired")
-
-        # Announce expiry to discord-gateway (non-fatal if it fails).
-        await _announce_expiry(job_id, bounty)
+        if bounty is None:
+            flogger.info(
+                f"BountyExpireJob[{job_id}] expire_bounty returned None for bounty_id={bounty_id} "
+                f"(already captured/completed); announcement deleted"
+            )
+        else:
+            flogger.info(f"BountyExpireJob[{job_id}] bounty id={bounty.id} ({bounty.criminal_name}) expired")
 
         end_ts = datetime.now(UTC)
         duration = (end_ts - start_ts).total_seconds()
         flogger.info(f"BountyExpireJob[{job_id}] completed in {duration:.2f}s")
-        return {"status": "success", "bounty_id": bounty.id}
+        return {"status": "success", "bounty_id": bounty_id}
 
     except Exception as e:  # pylint: disable=broad-exception-caught
         flogger.error(f"BountyExpireJob[{job_id}] failed: {e}")
         flogger.trace(traceback.format_exc())
         raise
-
-
-# ---------------------------------------------------------------------------
-# Helper: announce bounty expiry to discord-gateway
-# ---------------------------------------------------------------------------
-
-
-async def _announce_expiry(parent_job_id: str, bounty) -> None:
-    """POST a bounty expiry announcement to the discord-gateway messages endpoint.
-
-    The gateway routes the message to the correct Discord channel.
-    Failures are logged but do NOT propagate — a failed announcement is
-    non-fatal for the expiry operation.
-    """
-    announcement = {
-        "guild_id": bounty.guild_id,
-        "message_type": "bounty_expire",
-        "content": {
-            "bounty_id": bounty.id,
-            "division": bounty.division,
-            "criminal_name": bounty.criminal_name,
-            "criminal_faction": bounty.criminal_faction,
-            "reward": bounty.reward,
-            "tech_level": bounty.tech_level,
-        },
-    }
-
-    try:
-        flogger.debug(
-            f"BountyExpireJob[{parent_job_id}] posting bounty expiry announcement "
-            f"to discord-gateway (bounty_id={bounty.id})"
-        )
-        async with httpx.AsyncClient() as client:
-            resp = await client.post(
-                f"{_GATEWAY_BASE_URL}/messages",
-                json=announcement,
-                timeout=10,
-            )
-        resp.raise_for_status()
-        flogger.debug(
-            f"BountyExpireJob[{parent_job_id}] received HTTP {resp.status_code} "
-            f"from discord-gateway for bounty id={bounty.id}"
-        )
-        flogger.info(f"BountyExpireJob[{parent_job_id}] announced expiry of bounty id={bounty.id} to discord-gateway")
-    except Exception as e:  # pylint: disable=broad-exception-caught
-        flogger.error(
-            f"BountyExpireJob[{parent_job_id}] failed to announce expiry of "
-            f"bounty id={bounty.id} to discord-gateway: {e}"
-        )
-        flogger.trace(traceback.format_exc())
 
 
 # ---------------------------------------------------------------------------
@@ -161,11 +121,13 @@ async def _delete_bounty_announcement(parent_job_id: str, bounty, db) -> None:
             flogger.debug(f"BountyExpireJob[{parent_job_id}] no announcement to delete for bounty {bounty.id}")
             return
 
-        # Delete from Discord via gateway
+        # Delete from Discord via gateway using channel-specific endpoint (more reliable —
+        # does not require a guild-wide channel scan to find the message).
         try:
+            channel_id = discord_msg.channel_id
             async with httpx.AsyncClient() as client:
                 resp = await client.delete(
-                    f"{_GATEWAY_BASE_URL}/messages/{discord_msg.message_id}",
+                    f"{_GATEWAY_BASE_URL}/channels/{channel_id}/messages/{discord_msg.message_id}",
                     timeout=10,
                 )
             # 404 is OK — message may have been manually deleted

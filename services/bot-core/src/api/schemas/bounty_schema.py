@@ -60,9 +60,42 @@ class BountyCheckRequest(BaseModel):
 
 class BountyCheckResponse(BaseModel):
     result: str  # NOT_FOUND, ALREADY_CHECKED, INCORRECT, CORRECT, ON_COOLDOWN
+    # bronze: "correct" (auto-captured), silver+: "correct" (combat_win), "correct" (combat_loss)
     bounty_id: int | None = None
     message: str = ""
     new_tier: str | None = None
+    # Division / criminal metadata
+    division: str | None = None
+    criminal_name: str | None = None
+    reward: int | None = None
+    # Combat result fields (present when combat occurred)
+    combat_result: dict | None = None  # FightResults serialized as dict
+    combat_won: bool | None = None  # True/False when combat occurred, None otherwise
+    # Bronze-specific fields
+    bonus_won: bool = False  # True if bronze player won the optional combat bonus
+    total_reward: int | None = None  # Final reward (may be 2x for bronze combat win)
+    criminal_ship: dict | None = None  # Criminal ship data; returned for bronze so cog can offer bonus duel
+    # Recently spotted: criminal was at this system 1-2 stops ago
+    recently_spotted: bool = False
+    # Cooldown timestamp (Unix): when the cooldown expires (populated on ON_COOLDOWN results)
+    cooldown_until: int | None = None
+
+
+class CombatBonusRequest(BaseModel):
+    """Request body for POST /bounties/combat-bonus (Bronze division only)."""
+
+    player_id: int
+    base_reward: int
+    criminal_ship: dict  # The criminal's ship/loadout data to fight against
+
+
+class CombatBonusResponse(BaseModel):
+    """Response for POST /bounties/combat-bonus."""
+
+    won: bool
+    bonus_credits: int  # 0 if lost, base_reward if won (total payout becomes 2x)
+    combat_result: dict
+    message: str
 
 
 class ClearBountiesResponse(BaseModel):

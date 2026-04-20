@@ -38,6 +38,40 @@ from services.system_graph_service import SystemGraphService
 flogger = bblogger.get_logger("bounty-service")
 
 
+def _serialize_fight_results(fight_results) -> dict | None:
+    """Serialize a FightResults dataclass to a plain dict for API responses.
+
+    Returns None if fight_results is None.
+
+    Args:
+        fight_results: FightResults instance (or None).
+
+    Returns:
+        Dict representation suitable for JSON serialization, or None.
+    """
+    if fight_results is None:
+        return None
+
+    def _stats_to_dict(fs) -> dict:
+        return {
+            "ship_name": fs.ship_name,
+            "raw_hp": fs.raw_hp,
+            "raw_dps": fs.raw_dps,
+            "varied_hp": fs.varied_hp,
+            "varied_dps": fs.varied_dps,
+            "ttk": fs.ttk,
+        }
+
+    return {
+        "winner_name": fight_results.winner_name,
+        "loser_name": fight_results.loser_name,
+        "is_stalemate": fight_results.is_stalemate,
+        "ship1_stats": _stats_to_dict(fight_results.ship1_stats),
+        "ship2_stats": _stats_to_dict(fight_results.ship2_stats),
+        "variance_percent": fight_results.variance_percent,
+    }
+
+
 class CheckResult(enum.Enum):
     """Result codes for the bounty check mechanic."""
 
@@ -59,6 +93,20 @@ class CheckResponse:
     distance_to_answer: int | None = None
     combat_won: bool | None = None  # None if no combat, True/False if combat occurred
     new_tier: str | None = None  # If the player's tier changed after this check
+    # Division / criminal metadata (populated on CORRECT results)
+    division: str | None = None
+    criminal_name: str | None = None
+    reward: int | None = None
+    # Combat result details
+    combat_result: dict | None = None  # FightResults serialized as dict
+    # Bronze-specific fields
+    bonus_won: bool = False  # True if bronze player won the optional combat bonus
+    total_reward: int | None = None  # Final reward earned (may be 2x for bronze win)
+    criminal_ship: dict | None = None  # Criminal ship data; returned for bronze so cog can offer bonus
+    # Recently spotted: criminal was at this system 1-2 stops ago
+    recently_spotted: bool = False
+    # Cooldown timestamp (Unix): when the cooldown expires (populated on ON_COOLDOWN results)
+    cooldown_until: int | None = None
 
 
 @dataclass
@@ -540,6 +588,46 @@ class BountyService:
 
         return None
 
+    async def _reset_bounty_checks(self, db: AsyncSession, bounty) -> None:
+        """Reset a bounty after a combat loss (Silver+): clear all checks, pick new location.
+
+        When a Silver/Gold/Platinum player loses combat, the bounty "escapes" within
+        its current route. All checked systems are cleared and a new correct location
+        is randomly selected from the existing route. The bounty remains active so
+        other players can continue hunting.
+
+        Args:
+            db:     Async database session.
+            bounty: Active Bounty ORM instance to reset.
+        """
+        route = bounty.route  # list of system names
+        # Clear all checked entries — every system is unchecked (-1)
+        bounty.checked = {sys: -1 for sys in route}
+        # Pick a new correct location randomly from the route
+        bounty.answer = random.choice(route)
+        await self.bounty_repo.update(db, bounty)
+        flogger.info(f"Bounty {bounty.id}: checks reset after combat loss. New answer: {bounty.answer!r}")
+
+    async def _award_combat_bonus(self, db: AsyncSession, player_id: int, bonus_credits: int) -> None:
+        """Award a combat bonus to a bronze-division player.
+
+        Called when a Bronze player wins the optional post-capture combat.
+        Awards ``bonus_credits`` (equal to the base reward) to the player,
+        effectively doubling their total payout.
+
+        Args:
+            db:            Async database session.
+            player_id:     ID of the player to award.
+            bonus_credits: Credits to add (should equal the base bounty reward).
+        """
+        player = await self.player_repo.get_by_id(db, player_id)
+        if player is None:
+            flogger.warning(f"Cannot award combat bonus: player {player_id} not found")
+            return
+        player.credits += bonus_credits
+        player.lifetime_credits += bonus_credits
+        flogger.info(f"Awarded {bonus_credits:,} combat bonus to player {player_id}")
+
     # ------------------------------------------------------------------
     # Bounty Spawning
     # ------------------------------------------------------------------
@@ -672,10 +760,13 @@ class BountyService:
 
         # Step 2: Determine tech level
         if tech_level is None:
-            # Division TL centers: bronze=2, silver=5, gold=8
-            division_tl_map = {"bronze": 2, "silver": 5, "gold": 8}
+            # Division TL centers: bronze=1, silver=5, gold=8, platinum=9
+            division_tl_map = {"bronze": 1, "silver": 5, "gold": 8, "platinum": 9}
             center_tl = division_tl_map.get(division, 5)
             tech_level = pick_random_item_tl(center_tl)
+            # Enforce per-division TL cap so new players are never overwhelmed
+            max_tl = GameConstants.DIVISION_MAX_TL.get(division, 10)
+            tech_level = min(tech_level, max_tl)
 
         # Step 3: Generate route (up to 3 attempts)
         await self.graph_service.load_graph(db)
@@ -777,9 +868,11 @@ class BountyService:
         now = datetime.now(UTC)
         if player.bounty_cooldown_end and player.bounty_cooldown_end > now:
             remaining = (player.bounty_cooldown_end - now).total_seconds()
+            cooldown_until = int(player.bounty_cooldown_end.timestamp())
             return CheckResponse(
                 result=CheckResult.ON_COOLDOWN,
                 message=f"On cooldown for {int(remaining)} more seconds",
+                cooldown_until=cooldown_until,
             )
 
         # Step 3: Determine player's division
@@ -814,84 +907,142 @@ class BountyService:
 
             # Check if this is the answer
             if bounty.answer == system_name:
-                # CORRECT — found the criminal! Now resolve combat.
+                # CORRECT — found the criminal!
                 await self.bounty_repo.update(db, bounty)
 
                 flogger.info(f"Player {player_id} found {bounty.criminal_name} at {system_name} (bounty {bounty.id})")
 
-                # Determine if combat happens
-                duel_won = False
+                # ------------------------------------------------------------------
+                # Division-based combat gating
+                # ------------------------------------------------------------------
+                # Bronze (and classic mode): auto-capture + optional bonus combat
+                # Silver / Gold / Platinum: mandatory combat gate
+                # ------------------------------------------------------------------
+                is_bronze = division == "bronze" or player.classic_mode
+
+                # Load player ship (used for all non-classic-mode cases)
+                player_ship = None
+                if hasattr(player, "active_ship_id") and player.active_ship_id is not None:
+                    from persist.models.player_ship import PlayerShip
+
+                    player_ship = await db.get(PlayerShip, player.active_ship_id)
+                else:
+                    # Fallback for SimpleNamespace test objects that expose active_ship directly
+                    player_ship = getattr(player, "active_ship", None)
+
+                _no_ship = player_ship is None
+
+                # Build loadouts for combat (always — used for both bronze bonus and silver+ gate)
+                from services.loadout_builder import LoadoutBuilder
+
                 fight_results = None
+                player_loadout = await LoadoutBuilder.from_player(db, player_id)
+                criminal_loadout = LoadoutBuilder.from_criminal_ship(bounty.criminal_ship or {})
 
-                # Use active_ship_id (column) when available to avoid lazy-loading the
-                # relationship outside the greenlet context (MissingGreenlet error).
-                # Fall back to player.active_ship for SimpleNamespace-based test objects
-                # that do not carry active_ship_id.
-                if hasattr(player, "active_ship_id"):
-                    _no_ship = player.active_ship_id is None
-                else:
-                    _no_ship = getattr(player, "active_ship", None) is None
-
-                if player.classic_mode or _no_ship:
-                    # Classic mode or no ship → auto-win
-                    duel_won = True
-                else:
-                    # Load the player's ship explicitly to avoid lazy-loading
-                    player_ship = None
-                    if hasattr(player, "active_ship_id") and player.active_ship_id is not None:
-                        from persist.models.player_ship import PlayerShip
-
-                        player_ship = await db.get(PlayerShip, player.active_ship_id)
-                    else:
-                        # Fallback for SimpleNamespace test objects that expose active_ship directly
-                        player_ship = getattr(player, "active_ship", None)
-                    # Build loadouts and fight
-                    player_loadout = self._build_player_loadout(player, player_ship)
-                    criminal_loadout = self._build_criminal_loadout(bounty.criminal_ship or {})
-                    fight_results = self.combat_service.fight_ships(player_loadout, criminal_loadout)
-                    # Stalemate counts as player win (legacy behavior)
-                    duel_won = (fight_results.winner_name == player_loadout.ship_name) or fight_results.is_stalemate
-
-                if duel_won:
-                    # Player wins → distribute rewards
+                if is_bronze:
+                    # -----------------------------------------------------------
+                    # BRONZE: Auto-capture always succeeds.
+                    # Also run combat simulation to determine optional bonus.
+                    # -----------------------------------------------------------
                     tier_before = player.tier
                     rewards = await self.calc_rewards(db, bounty)
                     await self.distribute_rewards(db, bounty, rewards)
+
+                    # Base reward for the winner
+                    winner_reward = next((r.credits_earned for r in rewards if r.is_winner), 0)
+
+                    # Run optional combat bonus (skip if no ship — still auto-win)
+                    bonus_won = False
+                    total_reward = winner_reward
+                    if not _no_ship:
+                        fight_results = self.combat_service.fight_ships(player_loadout, criminal_loadout)
+                        combat_player_won = (
+                            fight_results.winner_name == player_loadout.ship_name
+                        ) or fight_results.is_stalemate
+                        if combat_player_won:
+                            bonus_won = True
+                            total_reward = winner_reward * 2
+                            await self._award_combat_bonus(db, player_id, winner_reward)
+                    else:
+                        # No ship → no combat bonus possible
+                        fight_results = None
+
                     await db.commit()
                     await db.refresh(player)
                     tier_after = player.tier
-                    await self._edit_bounty_announcement(db, bounty)
-                    try:
-                        await self._delete_bounty_announcement(db, bounty)
-                    except Exception as _del_exc:  # pylint: disable=broad-exception-caught
-                        flogger.warning(f"Non-fatal: failed to delete announcement for bounty {bounty.id}: {_del_exc}")
+                    await self._edit_bounty_announcement(db, bounty, captured=True)
+
+                    bonus_msg = " (2x combat bonus!)" if bonus_won else ""
                     return CheckResponse(
                         result=CheckResult.CORRECT,
                         bounty_id=bounty.id,
-                        message=f"Defeated {bounty.criminal_name}! Bounty completed.",
+                        message=f"Bounty captured! +{total_reward:,}cr{bonus_msg}",
                         combat_won=True,
                         new_tier=tier_after if tier_after != tier_before else None,
-                    )
-                else:
-                    # Player loses → bounty escapes
-                    await self.escape_bounty(db, bounty.id)
-                    await db.commit()
-                    await db.refresh(player)
-                    await self._edit_bounty_announcement(db, bounty)
-                    try:
-                        await self._delete_bounty_announcement(db, bounty)
-                    except Exception as _del_exc:  # pylint: disable=broad-exception-caught
-                        flogger.warning(f"Non-fatal: failed to delete announcement for bounty {bounty.id}: {_del_exc}")
-                    return CheckResponse(
-                        result=CheckResult.CORRECT,
-                        bounty_id=bounty.id,
-                        message=f"{bounty.criminal_name} escaped! They will respawn shortly.",
-                        combat_won=False,
+                        division=division,
+                        criminal_name=bounty.criminal_name,
+                        reward=winner_reward,
+                        combat_result=_serialize_fight_results(fight_results) if fight_results else None,
+                        bonus_won=bonus_won,
+                        total_reward=total_reward,
+                        criminal_ship=bounty.criminal_ship,
                     )
 
+                else:
+                    # -----------------------------------------------------------
+                    # SILVER / GOLD / PLATINUM: Mandatory combat gate.
+                    # Win (or stalemate) → capture + distribute rewards.
+                    # Lose → reset checks (clear all checked, pick new answer).
+                    # -----------------------------------------------------------
+                    if _no_ship:
+                        # No ship → treat same as auto-win (player can't fight)
+                        duel_won = True
+                        fight_results = None
+                    else:
+                        fight_results = self.combat_service.fight_ships(player_loadout, criminal_loadout)
+                        # Stalemate counts as player win for bounties
+                        duel_won = (fight_results.winner_name == player_loadout.ship_name) or fight_results.is_stalemate
+
+                    if duel_won:
+                        tier_before = player.tier
+                        rewards = await self.calc_rewards(db, bounty)
+                        await self.distribute_rewards(db, bounty, rewards)
+                        winner_reward = next((r.credits_earned for r in rewards if r.is_winner), 0)
+                        await db.commit()
+                        await db.refresh(player)
+                        tier_after = player.tier
+                        await self._edit_bounty_announcement(db, bounty, captured=True)
+                        return CheckResponse(
+                            result=CheckResult.CORRECT,
+                            bounty_id=bounty.id,
+                            message=f"Combat victory! Defeated {bounty.criminal_name}! +{winner_reward:,}cr",
+                            combat_won=True,
+                            new_tier=tier_after if tier_after != tier_before else None,
+                            division=division,
+                            criminal_name=bounty.criminal_name,
+                            reward=winner_reward,
+                            combat_result=_serialize_fight_results(fight_results) if fight_results else None,
+                        )
+                    else:
+                        # LOSS: Criminal escapes checks — reset bounty location
+                        await self._reset_bounty_checks(db, bounty)
+                        await db.commit()
+                        await db.refresh(player)
+                        await self._edit_bounty_announcement(db, bounty)
+                        return CheckResponse(
+                            result=CheckResult.CORRECT,
+                            bounty_id=bounty.id,
+                            message=f"{bounty.criminal_name} defeated you in combat and escaped!",
+                            combat_won=False,
+                            division=division,
+                            criminal_name=bounty.criminal_name,
+                            combat_result=_serialize_fight_results(fight_results) if fight_results else None,
+                        )
+
             # INCORRECT — system was in the route but not the answer
-            # Check for proximity hint
+            # Check for proximity hint and recently_spotted
             proximity_hint = False
+            recently_spotted = False
             distance = None
             try:
                 answer_idx = bounty.route.index(bounty.answer)
@@ -900,6 +1051,9 @@ class BountyService:
                 close_threshold = getattr(GameConstants, "CLOSE_BOUNTY_THRESHOLD", 4)
                 if 0 < distance < close_threshold:
                     proximity_hint = True
+                # recently_spotted: criminal was here 1-2 stops ago (answer is 1-2 stops ahead)
+                if 1 <= distance <= 2:
+                    recently_spotted = True
             except (ValueError, IndexError):
                 pass
 
@@ -908,12 +1062,19 @@ class BountyService:
             await db.refresh(player)
             await self._edit_bounty_announcement(db, bounty)
             flogger.debug(f"Player {player_id} checked {system_name} on bounty {bounty.id}: incorrect")
+
+            if recently_spotted:
+                inc_message = f"{bounty.criminal_name} was recently spotted here! They're close..."
+            else:
+                inc_message = f"No sign of {bounty.criminal_name} at {system_name}"
+
             return CheckResponse(
                 result=CheckResult.INCORRECT,
                 bounty_id=bounty.id,
-                message=f"No sign of {bounty.criminal_name} at {system_name}",
+                message=inc_message,
                 proximity_hint=proximity_hint,
                 distance_to_answer=distance,
+                recently_spotted=recently_spotted,
             )
 
         # System not found in any active bounty
@@ -926,20 +1087,23 @@ class BountyService:
     # Bounty Announcement Live-Edit
     # ------------------------------------------------------------------
 
-    async def _edit_bounty_announcement(self, db: AsyncSession, bounty: Bounty) -> None:
+    async def _edit_bounty_announcement(self, db: AsyncSession, bounty: Bounty, captured: bool = False) -> None:
         """Edit the bounty's Discord announcement to reflect updated checked systems.
 
         Non-fatal — if the message lookup or edit fails, logs a warning and continues.
 
         Args:
-            db:     Async database session.
-            bounty: The bounty whose announcement should be updated.
+            db:       Async database session.
+            bounty:   The bounty whose announcement should be updated.
+            captured: When True, passes ``captured=True`` to the builder so the embed
+                      shows the "CAPTURED" state (green color, updated title, etc.).
         """
         try:
             import os
 
             import httpx
             from message_builders.builders.bounty_announcement import BountyAnnouncementBuilder
+            from persist.repositories.criminal_repository import CriminalRepository
             from persist.repositories.discord_message_repository import DiscordMessageRepository
 
             msg_repo = DiscordMessageRepository()
@@ -951,18 +1115,53 @@ class BountyService:
                 flogger.debug(f"No announcement message found for bounty {bounty.id}, skipping edit")
                 return
 
+            # Look up the criminal's icon (non-fatal if not found)
+            criminal_icon: str | None = None
+            try:
+                criminal_repo = CriminalRepository()
+                criminal = await criminal_repo.get_by_name(db, bounty.criminal_name)
+                if criminal is not None:
+                    criminal_icon = getattr(criminal, "icon", None) or None
+                    flogger.debug(
+                        f"_edit_bounty_announcement: criminal icon for {bounty.criminal_name!r}: {criminal_icon!r}"
+                    )
+            except Exception as _icon_exc:  # pylint: disable=broad-exception-caught
+                flogger.debug(
+                    f"_edit_bounty_announcement: could not fetch criminal icon for "
+                    f"{bounty.criminal_name!r}: {_icon_exc}"
+                )
+
             # Rebuild the embed with updated checked systems
             builder = BountyAnnouncementBuilder()
 
-            # Translate bounty.checked (player IDs / -1) → builder format ("checked" / "found")
+            # Translate bounty.checked (player IDs / -1) → builder format
+            # Status values: "found", "recently_spotted", or "checked"
+            # "recently_spotted": criminal was at this system 1-2 stops before the answer
             checked_for_builder: dict[str, str] = {}
+            answer_idx: int | None = None
+            if bounty.checked and bounty.route and bounty.answer:
+                try:
+                    answer_idx = bounty.route.index(bounty.answer)
+                except (ValueError, IndexError):
+                    answer_idx = None
+
             if bounty.checked:
                 for system_name, checker_id in bounty.checked.items():
                     if checker_id != -1:  # -1 means unchecked
                         if system_name == bounty.answer:
                             checked_for_builder[system_name] = "found"
                         else:
-                            checked_for_builder[system_name] = "checked"
+                            # Check if this system is 1-2 stops before the answer
+                            is_recently_spotted = False
+                            if answer_idx is not None and bounty.route:
+                                try:
+                                    sys_idx = bounty.route.index(system_name)
+                                    distance = answer_idx - sys_idx
+                                    if 1 <= distance <= 2:
+                                        is_recently_spotted = True
+                                except (ValueError, IndexError):
+                                    pass
+                            checked_for_builder[system_name] = "recently_spotted" if is_recently_spotted else "checked"
 
             embed_data = builder.build_payload(
                 {
@@ -973,10 +1172,12 @@ class BountyService:
                     "reward": bounty.reward,
                     "route": bounty.route or [],
                     "end_time_unix": int(bounty.end_time.timestamp()) if bounty.end_time else 0,
+                    "criminal_icon": criminal_icon,
                     "criminal_ship": bounty.criminal_ship,
                     "checked": checked_for_builder if checked_for_builder else None,
                     "bounty_hunter_role_id": None,  # Don't re-mention on edits
                     "route_map_url": None,  # Image URL already set in the original message
+                    "captured": captured,
                 }
             )
 
@@ -1021,6 +1222,12 @@ class BountyService:
             msg_repo = DiscordMessageRepository()
             discord_msg = await msg_repo.get_by_guild_type_and_reference(
                 db, bounty.guild_id, "bounty_announcement", bounty.id
+            )
+
+            flogger.debug(
+                f"_delete_bounty_announcement: bounty_id={bounty.id}, "
+                f"message_found={discord_msg is not None}, "
+                f"reference_id={getattr(discord_msg, 'reference_id', None) if discord_msg else None}"
             )
 
             if discord_msg is None:

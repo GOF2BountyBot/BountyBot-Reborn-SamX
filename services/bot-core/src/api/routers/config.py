@@ -11,6 +11,7 @@ from fastapi import APIRouter, Depends, HTTPException, Path, status
 from persist.database.manager import get_db_session
 from persist.repositories.bounty_repository import BountyRepository
 from services.config_service import ConfigService
+from services.exceptions import GuildNotConfiguredError
 from shared import bblogger
 
 from api.schemas.config_schema import (
@@ -40,7 +41,7 @@ async def get_config_service():
 
 @router.get("/guild/{guild_id}", response_model=GuildConfigResponse)
 async def get_guild_config(guild_id: int, config_service: ConfigService = Depends(get_config_service)):
-    """Get guild configuration, creating default if none exists."""
+    """Get guild configuration. Returns 404 if guild has not been set up via /admin_setup."""
     flogger.debug(f"Getting config for guild {guild_id}")
 
     try:
@@ -73,6 +74,12 @@ async def get_guild_config(guild_id: int, config_service: ConfigService = Depend
                 platinum_role_id=config.get("platinum_role_id"),
             )
 
+    except GuildNotConfiguredError as e:
+        flogger.warning(f"Guild {guild_id} not configured: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Guild {guild_id} has not been configured. An admin must run /admin_setup first.",
+        ) from e
     except Exception as e:
         flogger.error(f"Error getting guild config: {e}")
         raise HTTPException(
@@ -316,6 +323,8 @@ async def update_xp_thresholds(
 ):
     """Update XP thresholds for tier advancement."""
     flogger.info(f"Updating XP thresholds for guild {guild_id}")
+    # Ensure body guild_id matches path (defensive — matches other config endpoints)
+    request.guild_id = guild_id
 
     try:
         async with get_db_session() as db:
@@ -426,6 +435,12 @@ async def get_bounty_config(guild_id: int, config_service: ConfigService = Depen
                 active_bounties_per_tier=active_per_tier,
             )
 
+    except GuildNotConfiguredError as e:
+        flogger.warning(f"Guild {guild_id} not configured: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Guild {guild_id} has not been configured. An admin must run /admin_setup first.",
+        ) from e
     except Exception as e:
         flogger.error(f"Error getting bounty config for guild {guild_id}: {e}")
         raise HTTPException(
@@ -458,6 +473,12 @@ async def update_bounty_config(
                 next_spawn_check_at=bounty_config.get("next_spawn_check_at"),
             )
 
+    except GuildNotConfiguredError as e:
+        flogger.warning(f"Guild {guild_id} not configured: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Guild {guild_id} has not been configured. An admin must run /admin_setup first.",
+        ) from e
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
     except Exception as e:

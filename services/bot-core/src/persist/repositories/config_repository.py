@@ -206,8 +206,7 @@ class ConfigRepository(IRepository[GuildConfig]):
         try:
             config = await self.get_by_guild_id(db, guild_id)
             if not config:
-                # Create config if it doesn't exist
-                config = await self.create_default_config(db, guild_id)
+                raise ValueError(f"Config not found for guild {guild_id}")
 
             config.admin_role_id = role_id
             try:
@@ -232,7 +231,7 @@ class ConfigRepository(IRepository[GuildConfig]):
 
             config = await self.get_by_guild_id(db, guild_id)
             if not config:
-                config = await self.create_default_config(db, guild_id)
+                raise ValueError(f"Config not found for guild {guild_id}")
 
             config.starting_credits = new_credits
             try:
@@ -254,7 +253,7 @@ class ConfigRepository(IRepository[GuildConfig]):
         try:
             config = await self.get_by_guild_id(db, guild_id)
             if not config:
-                config = await self.create_default_config(db, guild_id)
+                raise ValueError(f"Config not found for guild {guild_id}")
 
             # Validate thresholds
             required_tiers = ["Silver", "Gold", "Platinum"]
@@ -377,7 +376,8 @@ class ConfigRepository(IRepository[GuildConfig]):
         try:
             config = await self.get_by_guild_id(db, guild_id)
             if not config:
-                config = await self.create_default_config(db, guild_id)
+                flogger.warning(f"update_division_temperatures: no config for guild {guild_id}, skipping")
+                return None  # type: ignore[return-value]
 
             config.division_temperatures = temperatures
             try:

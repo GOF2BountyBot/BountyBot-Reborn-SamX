@@ -74,22 +74,29 @@ class BountyAnnouncementBuilder(MessagePayloadBuilder):
         checked: dict | None = data.get("checked")
         bounty_hunter_role_id: int | None = data.get("bounty_hunter_role_id")
         route_map_url: str | None = data.get("route_map_url")
+        captured: bool = data.get("captured", False)
 
-        color = FACTION_COLORS.get(criminal_faction.lower(), _DEFAULT_COLOR)
+        color = 3066993 if captured else FACTION_COLORS.get(criminal_faction.lower(), _DEFAULT_COLOR)  # Green: 0x2ECC71
 
         content = f"<@&{bounty_hunter_role_id}>" if bounty_hunter_role_id is not None else None
+
+        ship_field_value, loadout_field_value = self._build_ship_and_loadout_fields(criminal_ship)
+
+        bounty_ends_value = "**Captured**" if captured else f"<t:{end_time_unix}:R>"
+        title = f"✅ {criminal_name} — CAPTURED" if captured else criminal_name
 
         fields = [
             {"name": "Difficulty", "value": f"T{tech_level}", "inline": True},
             {"name": "Reward Pool", "value": f"{reward:,} credits", "inline": True},
-            {"name": "Bounty Ends", "value": f"<t:{end_time_unix}:R>", "inline": True},
-            {"name": "Loadout", "value": self._build_loadout_value(criminal_ship, criminal_name), "inline": False},
+            {"name": "Bounty Ends", "value": bounty_ends_value, "inline": True},
+            {"name": "Ship", "value": ship_field_value, "inline": False},
+            {"name": "Loadout", "value": loadout_field_value, "inline": False},
             {"name": "Route", "value": self._build_route_value(route, checked), "inline": False},
             {"name": "Checked Systems", "value": self._build_checked_systems_value(checked), "inline": False},
         ]
 
         embed: dict[str, Any] = {
-            "title": criminal_name,
+            "title": title,
             "color": color,
             "thumbnail_url": criminal_icon,
             "fields": fields,
@@ -128,15 +135,16 @@ class BountyAnnouncementBuilder(MessagePayloadBuilder):
     # Private helpers
     # ------------------------------------------------------------------
 
-    def _build_loadout_value(self, criminal_ship: dict | None, criminal_name: str) -> str:
-        """Build the Loadout field value string."""
-        if criminal_ship is None:
-            return "*No loadout data available*"
+    def _build_ship_and_loadout_fields(self, criminal_ship: dict | None) -> tuple[str, str]:
+        """Build the Ship and Loadout field values as separate strings.
 
-        lines: list[str] = []
+        Returns:
+            A tuple of (ship_field_value, loadout_field_value).
+        """
+        if criminal_ship is None:
+            return "*No ship data available*", "*No loadout data available*"
 
         ship_name = criminal_ship.get("ship_name", "Unknown")
-        ship_emoji = criminal_ship.get("ship_emoji") or ""
         weapons: list[dict] = criminal_ship.get("weapons") or []
         modules: list[dict] = criminal_ship.get("modules") or []
         turrets: list[dict] = criminal_ship.get("turrets") or []
@@ -156,55 +164,62 @@ class BountyAnnouncementBuilder(MessagePayloadBuilder):
         rounded = round(total_dps, 1)
         dps_str = str(int(rounded)) if rounded == int(rounded) else f"{rounded:.1f}"
 
-        # Build HP display string
+        # Build Ship field: "**ShipName** — Armor: X | Shield: Y | Total HP: Z | DPS: N"
         if shield_hp and shield_hp > 0:
-            hp_str = f"Armor: {armor_hp} | Shield: {shield_hp} | Total HP: {total_hp}"
+            stats_str = f"Armor: {armor_hp} | Shield: {shield_hp} | Total HP: {total_hp} | DPS: {dps_str}"
         else:
-            hp_str = f"HP: {armor_hp}"
+            stats_str = f"Armor: {armor_hp} | Total HP: {total_hp} | DPS: {dps_str}"
+        ship_field_value = f"**{ship_name}** — {stats_str}"
 
-        header_parts = []
-        if ship_emoji:
-            header_parts.append(ship_emoji)
-        header_parts.append(f"**{ship_name}**")
-        header_parts.append(f"— {hp_str} | DPS: {dps_str}")
-        lines.append(" ".join(header_parts))
+        # Build Loadout field: bold category headers, item names only (no emoji), blank lines between sections
+        loadout_sections: list[str] = []
 
-        for weapon in weapons:
-            w_name = weapon.get("name", "")
-            w_emoji = weapon.get("emoji") or ""
-            if w_emoji:
-                lines.append(f"{w_emoji} {w_name}")
-            else:
-                lines.append(w_name)
+        if weapons:
+            section_lines = ["**Primary Weapons**"]
+            for weapon in weapons:
+                w_name = weapon.get("name", "")
+                w_emoji = weapon.get("emoji") or ""
+                section_lines.append(f"{w_name} {w_emoji}".rstrip() if w_emoji else w_name)
+            loadout_sections.append("\n".join(section_lines))
 
-        for module in modules:
-            m_name = module.get("name", "")
-            m_emoji = module.get("emoji") or ""
-            if m_emoji:
-                lines.append(f"{m_emoji} {m_name}")
-            else:
-                lines.append(m_name)
+        if turrets:
+            section_lines = ["**Turrets**"]
+            for turret in turrets:
+                t_name = turret.get("name", "")
+                t_emoji = turret.get("emoji") or ""
+                section_lines.append(f"{t_name} {t_emoji}".rstrip() if t_emoji else t_name)
+            loadout_sections.append("\n".join(section_lines))
 
-        for turret in turrets:
-            t_name = turret.get("name", "")
-            t_emoji = turret.get("emoji") or ""
-            if t_emoji:
-                lines.append(f"{t_emoji} {t_name}")
-            else:
-                lines.append(t_name)
+        if modules:
+            section_lines = ["**Modules**"]
+            for module in modules:
+                m_name = module.get("name", "")
+                m_emoji = module.get("emoji") or ""
+                section_lines.append(f"{m_name} {m_emoji}".rstrip() if m_emoji else m_name)
+            loadout_sections.append("\n".join(section_lines))
 
-        lines.append(f"Use `/criminal-loadout {criminal_name}` for full details")
-        return "\n".join(lines)
+        loadout_field_value = "*No equipment*" if not loadout_sections else "\n\n".join(loadout_sections)
+
+        return ship_field_value, loadout_field_value
 
     def _build_route_value(self, route: list[str], checked: dict | None) -> str:
-        """Build the Route field value string."""
+        """Build the Route field value string.
+
+        Status values in checked:
+          "checked"          → ~~system~~ (strikethrough only)
+          "recently_spotted" → **~~system~~** (bold AND strikethrough)
+          "found"            → **system** (bold only)
+          anything else      → system (plain)
+        """
         if not checked:
             return ", ".join(route)
 
         parts = []
         for system in route:
             status = checked.get(system)
-            if status == "checked":
+            if status == "recently_spotted":
+                parts.append(f"**~~{system}~~**")
+            elif status == "checked":
                 parts.append(f"~~{system}~~")
             elif status == "found":
                 parts.append(f"**{system}**")
@@ -218,9 +233,10 @@ class BountyAnnouncementBuilder(MessagePayloadBuilder):
             return "> *No systems checked yet*"
 
         checked_systems = [s for s, v in checked.items() if v == "checked"]
+        recently_spotted_systems = [s for s, v in checked.items() if v == "recently_spotted"]
         found_systems = [s for s, v in checked.items() if v == "found"]
 
-        if not checked_systems and not found_systems:
+        if not checked_systems and not recently_spotted_systems and not found_systems:
             return "> *No systems checked yet*"
 
         lines: list[str] = []
@@ -228,6 +244,10 @@ class BountyAnnouncementBuilder(MessagePayloadBuilder):
         if checked_systems:
             strikethrough_parts = " ".join(f"~~{s}~~" for s in checked_systems)
             lines.append(f"> {strikethrough_parts}")
+
+        if recently_spotted_systems:
+            recently_parts = " ".join(f"**~~{s}~~**" for s in recently_spotted_systems)
+            lines.append(f"> {recently_parts}")
 
         for system in found_systems:
             lines.append(f"> **{system}**")

@@ -82,3 +82,43 @@ class SystemHealthResponse(BaseModel):
     total_guilds: int
     shop_items_count: int
     system_status: str
+
+
+# Admin inventory management request/response schemas
+
+
+class AdminGiveItemRequest(BaseModel):
+    guild_id: int = Field(ge=1)
+    user_id: int = Field(ge=1)
+    item_name: str = Field(max_length=256)
+    item_type: str = Field(pattern="^(weapon|module|turret)$")
+    quantity: int = Field(gt=0, default=1)
+
+
+class AdminRemoveItemRequest(BaseModel):
+    guild_id: int = Field(ge=1)
+    user_id: int = Field(ge=1)
+    item_name: str = Field(max_length=256)
+    item_type: str = Field(pattern="^(weapon|module|turret)$")
+    quantity: int = Field(gt=0, default=1)
+
+
+class AdminGiveShipRequest(BaseModel):
+    guild_id: int = Field(ge=1)
+    user_id: int = Field(ge=1)
+    ship_name: str = Field(max_length=256)
+
+
+class AdminRemoveShipRequest(BaseModel):
+    guild_id: int = Field(ge=1)
+    user_id: int = Field(ge=1)
+    ship_name: str = Field(max_length=256)
+
+
+# Ship transfer schema (for player /give ship)
+
+
+class TransferShipRequest(BaseModel):
+    from_player_id: int = Field(ge=1)
+    to_player_id: int = Field(ge=1)
+    ship_id: int = Field(ge=1)

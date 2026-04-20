@@ -19,7 +19,6 @@ from services.audit_service import AuditService
 from services.bounty_service import BountyService
 from services.map_renderer import MapRenderer
 from services.system_graph_service import SystemGraphService
-from services.temperature_service import TemperatureService
 from shared import bblogger
 
 from api.schemas.bounty_schema import (
@@ -30,6 +29,8 @@ from api.schemas.bounty_schema import (
     BountyPublicResponse,
     BountyResponse,
     ClearBountiesResponse,
+    CombatBonusRequest,
+    CombatBonusResponse,
 )
 
 flogger = bblogger.get_logger("bounty-router")
@@ -86,6 +87,16 @@ async def check_bounty(
             bounty_id=result.bounty_id,
             message=result.message,
             new_tier=result.new_tier,
+            division=result.division,
+            criminal_name=result.criminal_name,
+            reward=result.reward,
+            combat_result=result.combat_result,
+            combat_won=result.combat_won,
+            bonus_won=result.bonus_won,
+            total_reward=result.total_reward,
+            criminal_ship=result.criminal_ship,
+            recently_spotted=result.recently_spotted,
+            cooldown_until=result.cooldown_until,
         )
     except HTTPException:
         raise
@@ -100,6 +111,71 @@ async def check_bounty(
             bounty_id=None,
             message="No active bounties found or an error occurred processing the check.",
         )
+
+
+# ---------------------------------------------------------------------------
+# POST /bounties/combat-bonus  (Bronze division optional post-capture duel)
+# ---------------------------------------------------------------------------
+
+
+@router.post("/combat-bonus", response_model=CombatBonusResponse)
+async def combat_bonus(
+    request: CombatBonusRequest,
+    service: BountyService = Depends(get_bounty_service),
+):
+    """Run optional post-capture combat for a Bronze-division player.
+
+    Called when a Bronze player wants to attempt the 2x bonus duel after
+    their bounty was auto-captured. The criminal ship data is provided by
+    the caller (from the capture response's ``criminal_ship`` field).
+
+    Win → awards ``base_reward`` additional credits (total becomes 2x).
+    Lose → no penalty (player keeps the base reward already awarded).
+    """
+    from services.bounty_service import _serialize_fight_results
+    from services.combat_service import CombatService
+    from services.loadout_builder import LoadoutBuilder
+
+    flogger.info(f"Combat bonus request: player_id={request.player_id} base_reward={request.base_reward}")
+    try:
+        async with get_db_session() as db:
+            # Build loadouts
+            player_loadout = await LoadoutBuilder.from_player(db, request.player_id)
+            criminal_loadout = LoadoutBuilder.from_criminal_ship(request.criminal_ship)
+
+            # Run combat
+            combat_svc = CombatService()
+            fight_results = combat_svc.fight_ships(player_loadout, criminal_loadout)
+
+            # Determine outcome (stalemate = player wins for bounties)
+            won = fight_results.is_stalemate or (fight_results.winner_name == player_loadout.ship_name)
+            bonus_credits = 0
+
+            if won:
+                # Award bonus credits directly to the player
+                player = await service.player_repo.get_by_id(db, request.player_id)
+                if player is not None:
+                    player.credits += request.base_reward
+                    player.lifetime_credits += request.base_reward
+                    await db.commit()
+                    bonus_credits = request.base_reward
+
+            combat_dict = _serialize_fight_results(fight_results) or {}
+            if won:
+                msg = f"Combat victory! +{bonus_credits:,}cr bonus (2x total)!"
+            else:
+                loser = fight_results.loser_name or player_loadout.ship_name
+                msg = f"Combat loss — {loser} was defeated. You keep the base reward."
+            flogger.info(f"Combat bonus result: player_id={request.player_id} won={won} bonus_credits={bonus_credits}")
+            return CombatBonusResponse(
+                won=won,
+                bonus_credits=bonus_credits,
+                combat_result=combat_dict,
+                message=msg,
+            )
+    except Exception as e:
+        flogger.error(f"Combat bonus failed: player_id={request.player_id}: {e}")
+        raise
 
 
 # ---------------------------------------------------------------------------
@@ -140,6 +216,7 @@ async def get_bounty_route(
         return {
             "bounty_id": bounty.id,
             "criminal_name": bounty.criminal_name,
+            "division": bounty.division,
             "route": bounty.route,
             "checked": bounty.checked,
             "status": bounty.status,
@@ -303,21 +380,18 @@ async def admin_spawn_bounties(
     user_id: int = Query(..., description="Admin Discord user ID for audit log"),
     service: BountyService = Depends(get_bounty_service),
 ):
-    """Admin-triggered bounty spawn, respecting per-guild config and temperature.
+    """Admin-triggered bounty spawn — bypasses max-bounty cap.
 
     For each tier (or the specified tier):
-    1. Load guild config for max per tier, expiry, and temperatures.
-    2. Count active bounties.
-    3. Compute effective_max = min(guild_max, TemperatureService.get_max_bounties(temp)).
-    4. If at capacity: add to skipped_tiers.
-    5. Else: spawn a bounty with the configured expiry.
-    6. Schedule expiry job and post Discord announcement (best-effort, non-fatal).
+    1. Load guild config for expiry settings.
+    2. Spawn a bounty with the configured expiry (ignores active count / max cap).
+    3. Schedule expiry job and post Discord announcement (best-effort, non-fatal).
     """
     from utils.executors.bounty_spawn_executor import _announce_bounty, _schedule_expiry_job
 
     flogger.info(f"Admin spawn bounties: guild_id={guild_id} tier={tier} user_id={user_id}")
 
-    tiers_to_process = [tier] if tier else ["bronze", "silver", "gold"]
+    tiers_to_process = [tier] if tier else ["bronze", "silver", "gold", "platinum"]
     spawned_bounties: list[BountyResponse] = []
     skipped_tiers: list[str] = []
     errors: list[str] = []
@@ -328,37 +402,13 @@ async def admin_spawn_bounties(
             config_repo = ConfigRepository()
             config = await config_repo.get_by_guild_id(db, guild_id)
 
-            bounty_max_per_tier: dict[str, int] = (
-                config.bounty_max_per_tier
-                if config and config.bounty_max_per_tier
-                else {"bronze": 3, "silver": 3, "gold": 3}
-            )
             bounty_expiry_minutes: int = (
                 config.bounty_expiry_minutes if config and config.bounty_expiry_minutes is not None else 480
             )
-            division_temperatures: dict[str, float] = (
-                config.division_temperatures if config and config.division_temperatures else {}
-            )
-
-            bounty_repo = BountyRepository()
 
             for t in tiers_to_process:
                 t_lower = t.lower()
                 try:
-                    guild_max = bounty_max_per_tier.get(t_lower, 3)
-                    temp = division_temperatures.get(t_lower, 1.0)
-                    effective_max = min(guild_max, TemperatureService.get_max_bounties(temp))
-
-                    active_count = await bounty_repo.count_active_by_guild_and_division(db, guild_id, t_lower)
-
-                    if active_count >= effective_max:
-                        flogger.debug(
-                            f"Admin spawn: guild={guild_id} tier={t_lower}: "
-                            f"{active_count}/{effective_max} at capacity, skipping"
-                        )
-                        skipped_tiers.append(t_lower)
-                        continue
-
                     bounty = await service.spawn_bounty(db, guild_id, t_lower, expiry_minutes=bounty_expiry_minutes)
                     if bounty is None:
                         errors.append(f"Failed to spawn bounty for tier={t_lower}: no criminals or route available")

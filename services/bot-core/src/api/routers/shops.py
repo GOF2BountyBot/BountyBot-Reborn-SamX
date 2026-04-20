@@ -10,6 +10,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from persist.database.manager import get_db_session
 from persist.models.item import Item
+from services.exceptions import GuildNotConfiguredError
 from services.shop_service import ShopService
 from shared import bblogger
 from sqlalchemy import select
@@ -74,6 +75,12 @@ async def get_shop_items(
                 for item in items
             ]
 
+    except GuildNotConfiguredError as e:
+        flogger.warning(f"Guild not configured for shop access: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Guild not configured; admin must run /admin_setup",
+        ) from e
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
     except Exception as e:

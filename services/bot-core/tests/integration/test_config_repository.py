@@ -212,11 +212,15 @@ async def test_update_admin_role(db_session: AsyncSession, repo: ConfigRepositor
     assert result.admin_role_id == 555
 
 
-async def test_update_admin_role_creates_config_if_missing(db_session: AsyncSession, repo: ConfigRepository):
-    result = await repo.update_admin_role(db_session, guild_id=1400, role_id=777)
+async def test_update_admin_role_raises_when_config_missing(db_session: AsyncSession, repo: ConfigRepository):
+    """update_admin_role MUST NOT silently auto-create a config row.
 
-    assert result.guild_id == 1400
-    assert result.admin_role_id == 777
+    As of the guild-not-configured guard, admin-setup is the only path that
+    creates a `guild_configs` row; all other repository mutations must raise
+    if the row is absent.
+    """
+    with pytest.raises(ValueError, match="Config not found for guild 1400"):
+        await repo.update_admin_role(db_session, guild_id=1400, role_id=777)
 
 
 # -- update_starting_credits --------------------------------------------------
@@ -237,11 +241,15 @@ async def test_update_starting_credits_negative_raises(db_session: AsyncSession,
         await repo.update_starting_credits(db_session, guild_id=1600, new_credits=-100)
 
 
-async def test_update_starting_credits_creates_config_if_missing(db_session: AsyncSession, repo: ConfigRepository):
-    result = await repo.update_starting_credits(db_session, guild_id=1700, new_credits=1000)
+async def test_update_starting_credits_raises_when_config_missing(db_session: AsyncSession, repo: ConfigRepository):
+    """update_starting_credits MUST NOT silently auto-create a config row.
 
-    assert result.guild_id == 1700
-    assert result.starting_credits == 1000
+    As of the guild-not-configured guard, admin-setup is the only path that
+    creates a `guild_configs` row; all other repository mutations must raise
+    if the row is absent.
+    """
+    with pytest.raises(ValueError, match="Config not found for guild 1700"):
+        await repo.update_starting_credits(db_session, guild_id=1700, new_credits=1000)
 
 
 # -- update_xp_thresholds -----------------------------------------------------

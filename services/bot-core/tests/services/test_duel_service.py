@@ -36,11 +36,15 @@ if "sqlalchemy_utils" not in sys.modules:
     _sqla_utils.UUIDType = MagicMock()
     sys.modules["sqlalchemy_utils"] = _sqla_utils
 
+from unittest.mock import patch
+
 from services.duel_service import DuelService
+from services.loadout_builder import LoadoutBuilder
 from src.services.combat_models import (
     CombatStats,
     FightResults,
     FightStats,
+    ShipLoadout,
 )
 from src.services.combat_service import CombatService
 
@@ -80,6 +84,11 @@ def make_active_ship(ship_name: str, armour: int = 100) -> MagicMock:
     ship.ship_name = ship_name
     ship.armour = armour
     return ship
+
+
+def make_ship_loadout(ship_name: str, base_armour: int = 100) -> ShipLoadout:
+    """Create a minimal ShipLoadout for testing duel combat."""
+    return ShipLoadout(ship_name=ship_name, base_armour=base_armour)
 
 
 def make_duel(
@@ -396,7 +405,12 @@ class TestAcceptDuel:
             combat_service=CombatService(resolver=ChallengerWinsResolver()),
         )
 
-        result = await svc.accept_duel(db=None, duel_id=1)
+        # LoadoutBuilder.from_player now needs DB; mock it to return deterministic loadouts
+        async def mock_from_player(db, player_id):
+            return make_ship_loadout("ChallengerShip" if player_id == 1 else "TargetShip")
+
+        with patch.object(LoadoutBuilder, "from_player", side_effect=mock_from_player):
+            result = await svc.accept_duel(db=None, duel_id=1)
 
         assert result["credits_transferred"] == 200
         assert challenger.credits == 1200
@@ -434,7 +448,11 @@ class TestAcceptDuel:
             combat_service=CombatService(resolver=TargetWinsResolver()),
         )
 
-        result = await svc.accept_duel(db=None, duel_id=2)
+        async def mock_from_player(db, player_id):
+            return make_ship_loadout("ChallengerShip" if player_id == 1 else "TargetShip")
+
+        with patch.object(LoadoutBuilder, "from_player", side_effect=mock_from_player):
+            result = await svc.accept_duel(db=None, duel_id=2)
 
         assert result["credits_transferred"] == 100
         assert target.credits == 600
@@ -471,7 +489,11 @@ class TestAcceptDuel:
             combat_service=CombatService(resolver=StalemateResolver()),
         )
 
-        result = await svc.accept_duel(db=None, duel_id=3)
+        async def mock_from_player(db, player_id):
+            return make_ship_loadout("ShipA" if player_id == 1 else "ShipB")
+
+        with patch.object(LoadoutBuilder, "from_player", side_effect=mock_from_player):
+            result = await svc.accept_duel(db=None, duel_id=3)
 
         fight = result["fight_results"]
         assert fight.is_stalemate is True
@@ -579,7 +601,12 @@ class TestAcceptDuel:
             combat_service=CombatService(),  # real, 0% variance applied
         )
 
-        result = await svc.accept_duel(db=None, duel_id=4)
+        # LoadoutBuilder.from_player needs DB access; mock it to return 0-DPS unarmed ships
+        async def mock_from_player(db, player_id):
+            return make_ship_loadout("Unarmed", base_armour=100)  # 0 weapons → 0 DPS
+
+        with patch.object(LoadoutBuilder, "from_player", side_effect=mock_from_player):
+            result = await svc.accept_duel(db=None, duel_id=4)
 
         # Two ships with 0 DPS → stalemate
         fight = result["fight_results"]

@@ -14,6 +14,11 @@ import os
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from persist.database.manager import get_db_session
+from persist.models.player_ship import PlayerShip
+from persist.repositories.inventory_repository import InventoryRepository
+from persist.repositories.player_repository import PlayerRepository
+from persist.repositories.player_ship_repository import PlayerShipRepository
+from persist.repositories.ship_repository import ShipRepository
 from services.audit_service import AuditService
 from services.bounty_service import BountyService
 from services.config_service import ConfigService
@@ -24,6 +29,10 @@ from shared import bblogger
 
 from api.schemas.admin_schema import (
     AddInventoryItemRequest,
+    AdminGiveItemRequest,
+    AdminGiveShipRequest,
+    AdminRemoveItemRequest,
+    AdminRemoveShipRequest,
     GuildInitializationResponse,
     InitializeGuildRequest,
     RefreshShopRequest,
@@ -726,3 +735,325 @@ async def get_guild_statistics(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to get guild statistics"
         ) from e
+
+
+@router.post("/give-item")
+async def admin_give_item(
+    request: AdminGiveItemRequest,
+    admin_user_id: int,
+    inventory_service: InventoryService = Depends(get_inventory_service),
+):
+    """Give an item directly to a player's inventory (no credit cost). Requires admin permissions."""
+    if not await verify_admin_permissions(request.guild_id, admin_user_id):
+        raise HTTPException(status_code=403, detail="Admin permissions required")
+
+    flogger.info(
+        f"Admin giving {request.quantity}x {request.item_name} ({request.item_type}) "
+        f"to user {request.user_id} in guild {request.guild_id}"
+    )
+
+    try:
+        async with get_db_session() as db:
+            # Resolve Discord user_id → player_id
+            player_repo = PlayerRepository()
+            from persist.repositories.user_repository import UserRepository
+
+            user_repo = UserRepository()
+            user = await user_repo.get_by_discord_id(db, request.user_id)
+            if not user:
+                raise HTTPException(status_code=404, detail=f"User {request.user_id} not found")
+
+            player = await player_repo.get_by_user_and_guild(db, user.id, request.guild_id)
+            if not player:
+                raise HTTPException(
+                    status_code=404, detail=f"Player not found for user {request.user_id} in guild {request.guild_id}"
+                )
+
+            transaction_details = await inventory_service.add_item_to_inventory(
+                db,
+                player.id,
+                request.item_type,
+                request.item_name,
+                request.quantity,
+            )
+
+            await AuditService.log_action(
+                db,
+                user_id=admin_user_id,
+                action="admin_give_item",
+                guild_id=request.guild_id,
+                resource_type="inventory",
+                resource_id=str(player.id),
+                details={
+                    "player_id": player.id,
+                    "item_name": request.item_name,
+                    "item_type": request.item_type,
+                    "quantity": request.quantity,
+                },
+            )
+
+            return {
+                **transaction_details,
+                "message": (
+                    f"Gave {request.quantity}x {request.item_name} to player {player.id} in guild {request.guild_id}"
+                ),
+            }
+
+    except HTTPException:
+        raise
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
+    except Exception as e:
+        flogger.error(f"Error giving item to player: {e}")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to give item") from e
+
+
+@router.post("/remove-item")
+async def admin_remove_item(
+    request: AdminRemoveItemRequest,
+    admin_user_id: int,
+    inventory_service: InventoryService = Depends(get_inventory_service),
+):
+    """Remove an item from a player's inventory. Requires admin permissions."""
+    if not await verify_admin_permissions(request.guild_id, admin_user_id):
+        raise HTTPException(status_code=403, detail="Admin permissions required")
+
+    flogger.info(
+        f"Admin removing {request.quantity}x {request.item_name} ({request.item_type}) "
+        f"from user {request.user_id} in guild {request.guild_id}"
+    )
+
+    try:
+        async with get_db_session() as db:
+            # Resolve Discord user_id → player_id
+            player_repo = PlayerRepository()
+            from persist.repositories.user_repository import UserRepository
+
+            user_repo = UserRepository()
+            user = await user_repo.get_by_discord_id(db, request.user_id)
+            if not user:
+                raise HTTPException(status_code=404, detail=f"User {request.user_id} not found")
+
+            player = await player_repo.get_by_user_and_guild(db, user.id, request.guild_id)
+            if not player:
+                raise HTTPException(
+                    status_code=404, detail=f"Player not found for user {request.user_id} in guild {request.guild_id}"
+                )
+
+            transaction_details = await inventory_service.remove_item_from_inventory(
+                db,
+                player.id,
+                request.item_type,
+                request.item_name,
+                request.quantity,
+            )
+
+            await AuditService.log_action(
+                db,
+                user_id=admin_user_id,
+                action="admin_remove_item",
+                guild_id=request.guild_id,
+                resource_type="inventory",
+                resource_id=str(player.id),
+                details={
+                    "player_id": player.id,
+                    "item_name": request.item_name,
+                    "item_type": request.item_type,
+                    "quantity": request.quantity,
+                },
+            )
+
+            return {
+                **transaction_details,
+                "message": (
+                    f"Removed {request.quantity}x {request.item_name} "
+                    f"from player {player.id} in guild {request.guild_id}"
+                ),
+            }
+
+    except HTTPException:
+        raise
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
+    except Exception as e:
+        flogger.error(f"Error removing item from player: {e}")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to remove item") from e
+
+
+@router.post("/give-ship")
+async def admin_give_ship(
+    request: AdminGiveShipRequest,
+    admin_user_id: int,
+):
+    """Give a ship to a player (starts inactive with empty loadout). Requires admin permissions."""
+    if not await verify_admin_permissions(request.guild_id, admin_user_id):
+        raise HTTPException(status_code=403, detail="Admin permissions required")
+
+    flogger.info(f"Admin giving ship {request.ship_name} to user {request.user_id} in guild {request.guild_id}")
+
+    try:
+        async with get_db_session() as db:
+            # Validate the ship exists in game data
+            ship_repo = ShipRepository()
+            game_ship = await ship_repo.get_by_name(db, request.ship_name)
+            if not game_ship:
+                raise HTTPException(status_code=404, detail=f"Ship '{request.ship_name}' does not exist in game data")
+
+            # Resolve Discord user_id → player_id
+            player_repo = PlayerRepository()
+            from persist.repositories.user_repository import UserRepository
+
+            user_repo = UserRepository()
+            user = await user_repo.get_by_discord_id(db, request.user_id)
+            if not user:
+                raise HTTPException(status_code=404, detail=f"User {request.user_id} not found")
+
+            player = await player_repo.get_by_user_and_guild(db, user.id, request.guild_id)
+            if not player:
+                raise HTTPException(
+                    status_code=404, detail=f"Player not found for user {request.user_id} in guild {request.guild_id}"
+                )
+
+            # Create the PlayerShip record (inactive, empty loadout)
+            player_ship_repo = PlayerShipRepository()
+            new_ship = PlayerShip(
+                player_id=player.id,
+                ship_name=request.ship_name,
+                is_active=False,
+                weapons=[],
+                modules=[],
+                turrets=[],
+            )
+            created_ship = await player_ship_repo.add(db, new_ship)
+
+            await AuditService.log_action(
+                db,
+                user_id=admin_user_id,
+                action="admin_give_ship",
+                guild_id=request.guild_id,
+                resource_type="player_ship",
+                resource_id=str(created_ship.id),
+                details={
+                    "player_id": player.id,
+                    "ship_name": request.ship_name,
+                    "ship_id": created_ship.id,
+                },
+            )
+
+            return {
+                "player_id": player.id,
+                "ship_id": created_ship.id,
+                "ship_name": created_ship.ship_name,
+                "is_active": created_ship.is_active,
+                "message": f"Gave ship '{request.ship_name}' to player {player.id} in guild {request.guild_id}",
+            }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        flogger.error(f"Error giving ship to player: {e}")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to give ship") from e
+
+
+@router.post("/remove-ship")
+async def admin_remove_ship(
+    request: AdminRemoveShipRequest,
+    admin_user_id: int,
+):
+    """Remove a ship from a player. Unequips all items first. Cannot remove only active ship.
+    Requires admin permissions.
+    """
+    if not await verify_admin_permissions(request.guild_id, admin_user_id):
+        raise HTTPException(status_code=403, detail="Admin permissions required")
+
+    flogger.info(f"Admin removing ship {request.ship_name} from user {request.user_id} in guild {request.guild_id}")
+
+    try:
+        async with get_db_session() as db:
+            # Resolve Discord user_id → player_id
+            player_repo = PlayerRepository()
+            from persist.repositories.user_repository import UserRepository
+
+            user_repo = UserRepository()
+            user = await user_repo.get_by_discord_id(db, request.user_id)
+            if not user:
+                raise HTTPException(status_code=404, detail=f"User {request.user_id} not found")
+
+            player = await player_repo.get_by_user_and_guild(db, user.id, request.guild_id)
+            if not player:
+                raise HTTPException(
+                    status_code=404, detail=f"Player not found for user {request.user_id} in guild {request.guild_id}"
+                )
+
+            # Find the ship by name owned by this player
+            player_ship_repo = PlayerShipRepository()
+            ships = await player_ship_repo.get_ships_by_name(db, player.id, request.ship_name)
+            if not ships:
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"Player does not own a ship named '{request.ship_name}'",
+                )
+
+            # Target the first matching ship
+            ship = ships[0]
+
+            # Check if this is the active ship — only block if it's the ONLY ship
+            all_ships = await player_ship_repo.get_player_ships(db, player.id)
+            if ship.is_active and len(all_ships) == 1:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Cannot remove the player's only active ship",
+                )
+
+            # Unequip all items back to inventory
+            inventory_repo = InventoryRepository()
+            items_returned = []
+
+            for weapon_name in list(ship.weapons or []):
+                await inventory_repo.add_item(db, player.id, "weapon", weapon_name, 1)
+                items_returned.append(weapon_name)
+
+            for module_name in list(ship.modules or []):
+                await inventory_repo.add_item(db, player.id, "module", module_name, 1)
+                items_returned.append(module_name)
+
+            for turret_name in list(ship.turrets or []):
+                await inventory_repo.add_item(db, player.id, "turret", turret_name, 1)
+                items_returned.append(turret_name)
+
+            # Delete the ship
+            await player_ship_repo.remove(db, ship)
+
+            await AuditService.log_action(
+                db,
+                user_id=admin_user_id,
+                action="admin_remove_ship",
+                guild_id=request.guild_id,
+                resource_type="player_ship",
+                resource_id=str(ship.id),
+                details={
+                    "player_id": player.id,
+                    "ship_name": request.ship_name,
+                    "ship_id": ship.id,
+                    "items_returned": items_returned,
+                },
+            )
+
+            return {
+                "player_id": player.id,
+                "ship_id": ship.id,
+                "ship_name": ship.ship_name,
+                "items_returned_to_inventory": items_returned,
+                "message": (
+                    f"Removed ship '{request.ship_name}' from player {player.id} in guild {request.guild_id}. "
+                    f"{len(items_returned)} item(s) returned to inventory."
+                ),
+            }
+
+    except HTTPException:
+        raise
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
+    except Exception as e:
+        flogger.error(f"Error removing ship from player: {e}")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to remove ship") from e

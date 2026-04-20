@@ -61,6 +61,48 @@ class TestTechLevels:
 
 
 # ---------------------------------------------------------------------------
+# Division Max TL
+# ---------------------------------------------------------------------------
+
+
+class TestDivisionMaxTL:
+    def test_division_max_tl_is_dict(self) -> None:
+        assert isinstance(GameConstants.DIVISION_MAX_TL, dict)
+
+    def test_bronze_max_tl(self) -> None:
+        """Bronze is capped at TL 2 so new Betty-class players can compete."""
+        assert GameConstants.DIVISION_MAX_TL["bronze"] == 2
+
+    def test_silver_max_tl(self) -> None:
+        assert GameConstants.DIVISION_MAX_TL["silver"] == 5
+
+    def test_gold_max_tl(self) -> None:
+        assert GameConstants.DIVISION_MAX_TL["gold"] == 8
+
+    def test_platinum_max_tl(self) -> None:
+        assert GameConstants.DIVISION_MAX_TL["platinum"] == 10
+
+    def test_all_expected_divisions_present(self) -> None:
+        expected = {"bronze", "silver", "gold", "platinum"}
+        assert set(GameConstants.DIVISION_MAX_TL.keys()) == expected
+
+    def test_bronze_cap_lower_than_silver(self) -> None:
+        assert GameConstants.DIVISION_MAX_TL["bronze"] < GameConstants.DIVISION_MAX_TL["silver"]
+
+    def test_silver_cap_lower_than_gold(self) -> None:
+        assert GameConstants.DIVISION_MAX_TL["silver"] < GameConstants.DIVISION_MAX_TL["gold"]
+
+    def test_gold_cap_lower_than_platinum(self) -> None:
+        assert GameConstants.DIVISION_MAX_TL["gold"] < GameConstants.DIVISION_MAX_TL["platinum"]
+
+    def test_all_caps_within_valid_tl_range(self) -> None:
+        for div, cap in GameConstants.DIVISION_MAX_TL.items():
+            assert GameConstants.MIN_TECH_LEVEL <= cap <= GameConstants.MAX_TECH_LEVEL, (
+                f"Division {div!r} cap {cap} outside valid TL range"
+            )
+
+
+# ---------------------------------------------------------------------------
 # Divisions
 # ---------------------------------------------------------------------------
 

@@ -53,6 +53,7 @@ class DiscordMessageRepository(GenericRepository[DiscordMessage]):
             if existing:
                 existing.embed_payload = raw["embed_payload"]
                 existing.message_type = raw.get("message_type", "general")
+                existing.reference_id = raw.get("reference_id", existing.reference_id)
                 existing.updated_at = datetime.now(UTC)
                 await db.commit()
                 await db.refresh(existing)
@@ -68,6 +69,7 @@ class DiscordMessageRepository(GenericRepository[DiscordMessage]):
                 message_id=message_id,
                 embed_payload=raw["embed_payload"],
                 message_type=raw.get("message_type", "general"),
+                reference_id=raw.get("reference_id"),
             )
             db.add(message)
             await db.commit()

@@ -150,6 +150,19 @@ class TestGetGuildConfig:
         assert response.status_code == 500
         assert "Failed to get guild configuration" in response.json()["detail"]
 
+    @patch("api.routers.config.get_db_session")
+    def test_get_guild_config_not_configured_returns_404(self, mock_get_db, client, mock_config_service):
+        """Returns 404 with friendly message when guild not configured (no auto-create)."""
+        from services.config_service import GuildNotConfiguredError
+
+        _configure_db_mock(mock_get_db)
+        mock_config_service.get_guild_config.side_effect = GuildNotConfiguredError(guild_id=67890)
+
+        response = client.get("/api/v1/config/guild/67890")
+
+        assert response.status_code == 404
+        assert "admin_setup" in response.json()["detail"].lower() or "not been configured" in response.json()["detail"]
+
 
 # ===========================================================================
 # 2. PUT /config/guild/{guild_id}

@@ -558,3 +558,78 @@ class TestCreateOrUpdate:
         """create_or_update must raise ValueError for an empty dict."""
         with pytest.raises(ValueError, match="Missing required key 'name' in data for item"):
             await repo.create_or_update(mock_db, {})
+
+
+# ---------------------------------------------------------------------------
+# get_by_name_any_type tests
+# ---------------------------------------------------------------------------
+
+
+class TestGetByNameAnyType:
+    """Tests for ItemRepository.get_by_name_any_type()."""
+
+    @pytest.mark.asyncio
+    async def test_returns_item_when_found(self, repo, mock_db):
+        """Returns the base Item row when the name is found in the item table."""
+        expected_item = MagicMock()
+        expected_item.id = 99
+        expected_item.name = "D'iol"
+        expected_item.type = "ArmourModule"
+
+        result_mock = MagicMock()
+        result_mock.scalars.return_value.one_or_none.return_value = expected_item
+        mock_db.execute = AsyncMock(return_value=result_mock)
+
+        result = await repo.get_by_name_any_type(mock_db, "D'iol")
+
+        assert result is expected_item
+        assert result.type == "ArmourModule"
+        mock_db.execute.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_returns_none_when_not_found(self, repo, mock_db):
+        """Returns None when no item with that name exists."""
+        result_mock = MagicMock()
+        result_mock.scalars.return_value.one_or_none.return_value = None
+        mock_db.execute = AsyncMock(return_value=result_mock)
+
+        result = await repo.get_by_name_any_type(mock_db, "Nonexistent Item")
+
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_primary_weapon_has_correct_type(self, repo, mock_db):
+        """Returns item with PrimaryWeapon type when querying a weapon."""
+        weapon_item = MagicMock()
+        weapon_item.id = 42
+        weapon_item.name = "Pulse Laser"
+        weapon_item.type = "PrimaryWeapon"
+
+        result_mock = MagicMock()
+        result_mock.scalars.return_value.one_or_none.return_value = weapon_item
+        mock_db.execute = AsyncMock(return_value=result_mock)
+
+        result = await repo.get_by_name_any_type(mock_db, "Pulse Laser")
+
+        assert result is weapon_item
+        assert result.type == "PrimaryWeapon"
+
+    @pytest.mark.asyncio
+    async def test_queries_item_table_not_all_models(self, repo, mock_db):
+        """get_by_name_any_type queries only the base Item table (one execute call)."""
+        result_mock = MagicMock()
+        result_mock.scalars.return_value.one_or_none.return_value = None
+        mock_db.execute = AsyncMock(return_value=result_mock)
+
+        await repo.get_by_name_any_type(mock_db, "Some Item")
+
+        # Only ONE execute call — just the Item table, not all model tables
+        assert mock_db.execute.await_count == 1
+
+    @pytest.mark.asyncio
+    async def test_raises_on_db_error(self, repo, mock_db):
+        """Propagates database exceptions."""
+        mock_db.execute = AsyncMock(side_effect=RuntimeError("DB error"))
+
+        with pytest.raises(RuntimeError, match="DB error"):
+            await repo.get_by_name_any_type(mock_db, "Any Item")

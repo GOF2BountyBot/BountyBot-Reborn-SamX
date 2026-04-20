@@ -50,6 +50,15 @@ class GameConstants:
     MIN_TECH_LEVEL: int = 1
     MAX_TECH_LEVEL: int = 10
 
+    # Maximum tech level for criminal loadouts per division.
+    # Bronze is capped low to ensure new players with Betty can compete.
+    DIVISION_MAX_TL: dict[str, int] = {
+        "bronze": 2,  # Betty-class only (TL 0-2)
+        "silver": 5,  # Mid-tier ships
+        "gold": 8,  # High-tier ships
+        "platinum": 10,  # No effective cap
+    }
+
     # ------------------------------------------------------------------
     # Divisions
     # ------------------------------------------------------------------

@@ -92,12 +92,18 @@ def mock_equipment_service():
 @pytest.fixture
 def test_app(mock_ship_repo, mock_player_repo, mock_equipment_service):
     app = FastAPI()
-    from api.routers.ships import get_equipment_service, get_player_repository, get_ship_repository
+    from api.routers.ships import (
+        get_equipment_service,
+        get_player_repository,
+        get_player_ship_repository,
+        get_ship_repository,
+    )
     from api.routers.ships import router as ships_router
 
     app.include_router(ships_router, prefix="/api/v1")
     app.dependency_overrides[get_ship_repository] = lambda: mock_ship_repo
     app.dependency_overrides[get_player_repository] = lambda: mock_player_repo
+    app.dependency_overrides[get_player_ship_repository] = lambda: mock_ship_repo
     app.dependency_overrides[get_equipment_service] = lambda: mock_equipment_service
     yield app
     app.dependency_overrides.clear()
@@ -504,12 +510,12 @@ class TestEquipItem:
 
         assert response.status_code == 422
 
-    def test_equip_item_missing_equipment_type_returns_422(self, client):
-        """Returns 422 when equipment_type is missing."""
+    def test_equip_item_without_equipment_type_is_accepted(self, client, mock_equipment_service):
+        """equipment_type is now optional — request without it should succeed (200)."""
         payload = {"player_id": 1, "item_name": "Pulse Laser"}
         response = client.post("/api/v1/ships/1/equip", json=payload)
 
-        assert response.status_code == 422
+        assert response.status_code == 200
 
 
 class TestUnequipItem:
@@ -546,6 +552,13 @@ class TestUnequipItem:
         response = client.post("/api/v1/ships/1/unequip", json=payload)
 
         assert response.status_code == 422
+
+    def test_unequip_item_without_equipment_type_is_accepted(self, client, mock_equipment_service):
+        """equipment_type is now optional — request without it should succeed (200)."""
+        payload = {"player_id": 1, "item_name": "Pulse Laser"}
+        response = client.post("/api/v1/ships/1/unequip", json=payload)
+
+        assert response.status_code == 200
 
     def test_unequip_item_modules_type(self, client, mock_equipment_service):
         """Unequips a module type item successfully."""
@@ -752,3 +765,189 @@ class TestGetShipLoadoutServerError:
         data = response.json()
         assert "detail" in data
         assert "Failed to get ship loadout" in data["detail"]
+
+
+# ===========================================================================
+# Tests for POST /ships/{ship_id}/equip-check
+# ===========================================================================
+
+
+@pytest.fixture
+def mock_equip_check_equipment_service():
+    """Mock EquipmentService with equip_check method for equip-check tests."""
+    svc = AsyncMock()
+    svc.equip_check = AsyncMock(
+        return_value={
+            "status": "ok",
+            "equipment_type": "weapons",
+            "item_type": "PrimaryWeapon",
+        }
+    )
+    svc.equip_item = AsyncMock(return_value={"success": True, "ship": make_mock_ship(), "message": "equipped"})
+    svc.unequip_item = AsyncMock(return_value={"success": True, "ship": make_mock_ship(), "message": "unequipped"})
+    return svc
+
+
+@pytest.fixture
+def equip_check_test_app(mock_ship_repo, mock_player_repo, mock_equip_check_equipment_service):
+    app = FastAPI()
+    from api.routers.ships import get_equipment_service, get_item_repository, get_player_repository, get_ship_repository
+    from api.routers.ships import router as ships_router
+
+    app.include_router(ships_router, prefix="/api/v1")
+    app.dependency_overrides[get_ship_repository] = lambda: mock_ship_repo
+    app.dependency_overrides[get_player_repository] = lambda: mock_player_repo
+    app.dependency_overrides[get_equipment_service] = lambda: mock_equip_check_equipment_service
+    app.dependency_overrides[get_item_repository] = lambda: AsyncMock()
+    yield app
+    app.dependency_overrides.clear()
+
+
+@pytest.fixture
+def equip_check_client(equip_check_test_app):
+    return TestClient(equip_check_test_app)
+
+
+@pytest.fixture(autouse=False)
+def _patch_equip_check_db(mock_db_session, monkeypatch, equip_check_test_app):
+    """Patch get_db_session for equip-check tests."""
+    _, mock_cm = mock_db_session
+    monkeypatch.setattr("api.routers.ships.get_db_session", lambda: mock_cm)
+
+
+class TestEquipCheckEndpoint:
+    """Tests for POST /ships/{ship_id}/equip-check."""
+
+    @pytest.fixture(autouse=True)
+    def patch_db(self, mock_db_session, monkeypatch):
+        _, mock_cm = mock_db_session
+        monkeypatch.setattr("api.routers.ships.get_db_session", lambda: mock_cm)
+
+    def test_equip_check_ok_status(self, equip_check_client, mock_equip_check_equipment_service):
+        """Returns status=ok when item can be equipped."""
+        payload = {"player_id": 1, "item_name": "Pulse Laser"}
+        response = equip_check_client.post("/api/v1/ships/1/equip-check", json=payload)
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["status"] == "ok"
+        assert data["equipment_type"] == "weapons"
+        assert data["item_type"] == "PrimaryWeapon"
+        mock_equip_check_equipment_service.equip_check.assert_called_once()
+
+    def test_equip_check_slot_full(self, equip_check_client, mock_equip_check_equipment_service):
+        """Returns status=slot_full when all slots are occupied."""
+        mock_equip_check_equipment_service.equip_check = AsyncMock(
+            return_value={
+                "status": "slot_full",
+                "equipment_type": "weapons",
+                "item_type": "PrimaryWeapon",
+                "max_slots": 2,
+                "equipped_items": [{"name": "Pulse Laser", "emoji": ""}, {"name": "Burst Laser", "emoji": ""}],
+            }
+        )
+        payload = {"player_id": 1, "item_name": "New Cannon"}
+        response = equip_check_client.post("/api/v1/ships/1/equip-check", json=payload)
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["status"] == "slot_full"
+        assert data["max_slots"] == 2
+        assert len(data["equipped_items"]) == 2
+        assert data["equipped_items"][0]["name"] == "Pulse Laser"
+
+    def test_equip_check_unique_conflict(self, equip_check_client, mock_equip_check_equipment_service):
+        """Returns status=unique_conflict when a unique module class is already equipped."""
+        mock_equip_check_equipment_service.equip_check = AsyncMock(
+            return_value={
+                "status": "unique_conflict",
+                "equipment_type": "modules",
+                "item_type": "ArmourModule",
+                "module_class": "ArmourModule",
+                "max_equipped": 1,
+                "conflicting_item": {"name": "D'iol", "emoji": ""},
+            }
+        )
+        payload = {"player_id": 1, "item_name": "E2 Exoclad"}
+        response = equip_check_client.post("/api/v1/ships/1/equip-check", json=payload)
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["status"] == "unique_conflict"
+        assert data["module_class"] == "ArmourModule"
+        assert data["max_equipped"] == 1
+        assert data["conflicting_item"]["name"] == "D'iol"
+
+    def test_equip_check_item_not_found_returns_400(self, equip_check_client, mock_equip_check_equipment_service):
+        """Returns 400 when equipment service raises ValueError (item not found)."""
+        mock_equip_check_equipment_service.equip_check = AsyncMock(
+            side_effect=ValueError("Item 'Unknown' not found in game data")
+        )
+        payload = {"player_id": 1, "item_name": "Unknown"}
+        response = equip_check_client.post("/api/v1/ships/1/equip-check", json=payload)
+
+        assert response.status_code == 400
+        data = response.json()
+        assert "detail" in data
+        assert "Unknown" in data["detail"]
+
+    def test_equip_check_server_error_returns_500(self, equip_check_client, mock_equip_check_equipment_service):
+        """Returns 500 when equipment service raises an unexpected exception."""
+        mock_equip_check_equipment_service.equip_check = AsyncMock(side_effect=RuntimeError("DB crash"))
+        payload = {"player_id": 1, "item_name": "Pulse Laser"}
+        response = equip_check_client.post("/api/v1/ships/1/equip-check", json=payload)
+
+        assert response.status_code == 500
+        data = response.json()
+        assert "detail" in data
+        assert "equip check" in data["detail"].lower()
+
+    def test_equip_check_missing_player_id_returns_422(self, equip_check_client):
+        """Returns 422 when player_id is missing."""
+        payload = {"item_name": "Pulse Laser"}
+        response = equip_check_client.post("/api/v1/ships/1/equip-check", json=payload)
+
+        assert response.status_code == 422
+
+    def test_equip_check_missing_item_name_returns_422(self, equip_check_client):
+        """Returns 422 when item_name is missing."""
+        payload = {"player_id": 1}
+        response = equip_check_client.post("/api/v1/ships/1/equip-check", json=payload)
+
+        assert response.status_code == 422
+
+
+class TestEquipItemAutoDetect:
+    """Tests for POST /ships/{ship_id}/equip with optional equipment_type."""
+
+    def test_equip_item_without_equipment_type_accepted(self, client, mock_equipment_service):
+        """Equip without equipment_type is accepted (optional field)."""
+        payload = {"player_id": 1, "item_name": "Pulse Laser"}
+        response = client.post("/api/v1/ships/1/equip", json=payload)
+
+        assert response.status_code == 200
+
+    def test_equip_item_with_explicit_equipment_type_still_works(self, client, mock_equipment_service):
+        """Equip with explicit equipment_type still works as before."""
+        payload = {"player_id": 1, "equipment_type": "weapons", "item_name": "Pulse Laser"}
+        response = client.post("/api/v1/ships/1/equip", json=payload)
+
+        assert response.status_code == 200
+
+
+class TestUnequipItemAutoDetect:
+    """Tests for POST /ships/{ship_id}/unequip with optional equipment_type."""
+
+    def test_unequip_item_without_equipment_type_accepted(self, client, mock_equipment_service):
+        """Unequip without equipment_type is accepted (optional field)."""
+        payload = {"player_id": 1, "item_name": "Pulse Laser"}
+        response = client.post("/api/v1/ships/1/unequip", json=payload)
+
+        assert response.status_code == 200
+
+    def test_unequip_item_with_explicit_equipment_type_still_works(self, client, mock_equipment_service):
+        """Unequip with explicit equipment_type still works as before."""
+        payload = {"player_id": 1, "equipment_type": "weapons", "item_name": "Pulse Laser"}
+        response = client.post("/api/v1/ships/1/unequip", json=payload)
+
+        assert response.status_code == 200

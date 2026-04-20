@@ -49,6 +49,34 @@ class ItemRepository(GenericRepository[Item]):
         return list(self._TYPE_MAP.values())
 
     # ------------------------------------------------------------------
+    # get_by_name_any_type
+    # ------------------------------------------------------------------
+
+    async def get_by_name_any_type(self, db: AsyncSession, name: str) -> Any | None:
+        """Look up an item by name across all item types, returning the base Item record.
+
+        This is the lightweight version of :meth:`get_by_name` that only queries
+        the base ``item`` table.  It is useful when you only need the discriminator
+        ``type`` column (e.g. ``"ArmourModule"``, ``"PrimaryWeapon"``) to determine
+        what kind of item a given name belongs to.
+
+        Returns the :class:`Item` row (with its ``type`` attribute populated) or
+        ``None`` if no matching item exists.
+        """
+        flogger.trace(f"get_by_name_any_type entry: name={name!r}")
+        try:
+            result = await db.execute(select(Item).filter_by(name=name))
+            obj = result.scalars().one_or_none()
+            if obj is not None:
+                flogger.trace(f"get_by_name_any_type exit: found item id={obj.id}, type={obj.type!r}")
+            else:
+                flogger.trace(f"get_by_name_any_type exit: no item found for name={name!r}")
+            return obj
+        except Exception as e:
+            flogger.error(f"Error in get_by_name_any_type with name={name!r}: {e}")
+            raise
+
+    # ------------------------------------------------------------------
     # get_by_name
     # ------------------------------------------------------------------
 

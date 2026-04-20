@@ -16,8 +16,8 @@ from persist.repositories.duel_repository import DuelRepository
 from persist.repositories.player_repository import PlayerRepository
 from shared import bblogger
 
-from services.combat_models import ShipLoadout
 from services.combat_service import CombatService
+from services.loadout_builder import LoadoutBuilder
 
 flogger = bblogger.get_logger("duel-service")
 
@@ -190,9 +190,9 @@ class DuelService:
             )
             raise ValueError(f"Target has insufficient credits at accept-time: has {target.credits}, needs {stakes}.")
 
-        # Build minimal ship loadouts
-        challenger_loadout = self._build_loadout(challenger)
-        target_loadout = self._build_loadout(target)
+        # Build full ship loadouts (weapons, turrets, modules) from DB
+        challenger_loadout = await LoadoutBuilder.from_player(db, challenger.id)
+        target_loadout = await LoadoutBuilder.from_player(db, target.id)
 
         # Resolve combat
         fight_results = self.combat_service.fight_ships(challenger_loadout, target_loadout)
@@ -340,34 +340,3 @@ class DuelService:
         updated = await self.duel_repo.update_status(db, duel_id, "expired")
         flogger.info(f"Duel {duel_id} expired.")
         return updated
-
-    # ------------------------------------------------------------------
-    # Internal helpers
-    # ------------------------------------------------------------------
-
-    def _build_loadout(self, player) -> ShipLoadout:
-        """Build a minimal ShipLoadout from a player's active ship.
-
-        For Phase 3, only ship_name and base_armour are used. Full loadout
-        assembly with equipped weapons/modules is a Phase 4 concern.
-
-        If the player has no active ship, a default unarmed loadout is used.
-
-        Args:
-            player: Player ORM instance.
-
-        Returns:
-            ShipLoadout with minimal fields populated.
-        """
-        if player.active_ship is not None:
-            ship = player.active_ship
-            ship_name = getattr(ship, "ship_name", None) or getattr(ship, "name", "Unknown")
-            base_armour = getattr(ship, "armour", 100)
-        else:
-            ship_name = "Unarmed"
-            base_armour = 100
-
-        return ShipLoadout(
-            ship_name=ship_name,
-            base_armour=base_armour,
-        )

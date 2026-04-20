@@ -383,26 +383,23 @@ class TestUpdateDivisionTemperatures:
         mock_db.commit.assert_awaited()
 
     @pytest.mark.asyncio
-    async def test_update_division_temperatures_creates_if_missing(self, repo, mock_db):
-        # First call to get_by_guild_id returns None, subsequent calls for create_default return config
+    async def test_update_division_temperatures_returns_none_if_missing(self, repo, mock_db):
+        """update_division_temperatures MUST NOT silently auto-create a config row.
+
+        Guild-not-configured guard policy: only /admin_setup creates config
+        rows. update_division_temperatures is called from the temperature_decay
+        executor which iterates all configured guilds; if the config somehow
+        disappeared mid-iteration, the method logs and returns None so the
+        executor can keep processing other guilds rather than crash.
+        """
         empty_result = _make_scalars_result([])
-        config = _make_config(guild_id=600)
-        full_result = _make_scalars_result([config])
-
-        call_count = 0
-
-        async def _side_effect(*args, **kwargs):
-            nonlocal call_count
-            call_count += 1
-            if call_count == 1:
-                return empty_result
-            return full_result
-
-        mock_db.execute = AsyncMock(side_effect=_side_effect)
+        mock_db.execute = AsyncMock(return_value=empty_result)
 
         result = await repo.update_division_temperatures(mock_db, guild_id=600, temperatures={"bronze": 2.0})
 
-        assert result is not None
+        assert result is None
+        # Commit must not happen — nothing was changed
+        mock_db.commit.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_update_division_temperatures_commit_fail_triggers_rollback(self, repo, mock_db):

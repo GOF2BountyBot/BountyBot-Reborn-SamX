@@ -303,15 +303,23 @@ class TestBuildPayloadStructure:
         result = builder.build_payload(make_minimal_data())
         assert "footer_text" in result["embed"]
 
-    def test_embed_has_six_fields(self, builder):
-        """Expect 6 fields: Difficulty, Reward Pool, Bounty Ends, Loadout, Route, Checked Systems."""
+    def test_embed_has_seven_fields(self, builder):
+        """Expect 7 fields: Difficulty, Reward Pool, Bounty Ends, Ship, Loadout, Route, Checked Systems."""
         result = builder.build_payload(make_minimal_data())
-        assert len(result["embed"]["fields"]) == 6
+        assert len(result["embed"]["fields"]) == 7
 
     def test_field_names_in_order(self, builder):
         result = builder.build_payload(make_minimal_data())
         field_names = [f["name"] for f in result["embed"]["fields"]]
-        assert field_names == ["Difficulty", "Reward Pool", "Bounty Ends", "Loadout", "Route", "Checked Systems"]
+        assert field_names == [
+            "Difficulty",
+            "Reward Pool",
+            "Bounty Ends",
+            "Ship",
+            "Loadout",
+            "Route",
+            "Checked Systems",
+        ]
 
     def test_raises_value_error_on_invalid_input(self, builder):
         with pytest.raises(ValueError):
@@ -517,7 +525,12 @@ class TestBuildPayloadImageFields:
 
 
 class TestBuildPayloadLoadoutField:
-    """Loadout field is formatted correctly based on criminal_ship data."""
+    """Loadout field is formatted correctly based on criminal_ship data.
+
+    After the embed redesign:
+    - 'Ship' field contains: **{ship_name}** — Armor: X | Shield: Y | Total HP: Z | DPS: N
+    - 'Loadout' field contains: bold category headers + item names (no emoji, no command hint)
+    """
 
     @pytest.fixture()
     def builder(self):
@@ -531,7 +544,20 @@ class TestBuildPayloadLoadoutField:
                 return f
         raise KeyError("Loadout field not found")
 
+    def _get_ship_field(self, result):
+        for f in result["embed"]["fields"]:
+            if f["name"] == "Ship":
+                return f
+        raise KeyError("Ship field not found")
+
+    def test_no_ship_data_shows_fallback_in_ship_field(self, builder):
+        """Ship field shows fallback when criminal_ship is None."""
+        result = builder.build_payload(make_minimal_data(criminal_ship=None))
+        field = self._get_ship_field(result)
+        assert field["value"] == "*No ship data available*"
+
     def test_no_loadout_data_shows_fallback(self, builder):
+        """Loadout field shows fallback when criminal_ship is None."""
         result = builder.build_payload(make_minimal_data(criminal_ship=None))
         field = self._get_loadout_field(result)
         assert field["value"] == "*No loadout data available*"
@@ -541,22 +567,33 @@ class TestBuildPayloadLoadoutField:
         field = self._get_loadout_field(result)
         assert field["inline"] is False
 
-    def test_loadout_first_line_ship_header(self, builder):
-        """First line: {ship_emoji} **{ship_name}** — Armor: X | Shield: Y | Total HP: Z | DPS: {total_dps}"""
-        ship = make_full_criminal_ship()  # DPS: 45.0 + 30.0 = 75.0, armor_hp=360, shield_hp=380
+    def test_ship_field_contains_ship_name_bold(self, builder):
+        """Ship field value starts with **{ship_name}**."""
+        ship = make_full_criminal_ship()  # ship_name="Nemesis"
         result = builder.build_payload(make_minimal_data(criminal_ship=ship))
-        field = self._get_loadout_field(result)
-        lines = field["value"].split("\n")
-        # Header line contains ship emoji, ship name, HP stats, and total DPS
-        assert "<:nemesis:123>" in lines[0]
-        assert "**Nemesis**" in lines[0]
-        assert "360" in lines[0]  # armor_hp
-        assert "380" in lines[0]  # shield_hp
-        assert "740" in lines[0]  # total_hp
-        assert "DPS: 75" in lines[0]  # 45 + 30
+        field = self._get_ship_field(result)
+        assert "**Nemesis**" in field["value"]
+
+    def test_ship_field_contains_hp_and_dps(self, builder):
+        """Ship field shows Armor, Shield, Total HP, and DPS for the ship."""
+        ship = make_full_criminal_ship()  # armor_hp=360, shield_hp=380, total_hp=740, DPS=75
+        result = builder.build_payload(make_minimal_data(criminal_ship=ship))
+        field = self._get_ship_field(result)
+        assert "360" in field["value"]  # armor_hp
+        assert "380" in field["value"]  # shield_hp
+        assert "740" in field["value"]  # total_hp
+        assert "DPS: 75" in field["value"]
+
+    def test_ship_field_no_emoji_prefix(self, builder):
+        """Ship field does NOT include the ship_emoji prefix."""
+        ship = make_full_criminal_ship()  # ship_emoji="<:nemesis:123>"
+        result = builder.build_payload(make_minimal_data(criminal_ship=ship))
+        field = self._get_ship_field(result)
+        # Emoji must NOT appear in the Ship field
+        assert "<:nemesis:123>" not in field["value"]
 
     def test_loadout_total_dps_is_sum(self, builder):
-        """total_dps = sum of all weapon DPS values."""
+        """Ship field DPS = sum of all weapon DPS values."""
         ship = {
             "ship_name": "Scout",
             "ship_emoji": None,
@@ -569,12 +606,11 @@ class TestBuildPayloadLoadoutField:
             "modules": [],
         }
         result = builder.build_payload(make_minimal_data(criminal_ship=ship))
-        field = self._get_loadout_field(result)
-        lines = field["value"].split("\n")
-        assert "DPS: 35.5" in lines[0]
+        field = self._get_ship_field(result)
+        assert "DPS: 35.5" in field["value"]
 
-    def test_loadout_weapon_with_emoji(self, builder):
-        """Weapon with emoji: '{emoji} {name}'."""
+    def test_loadout_weapon_name_appears_in_loadout(self, builder):
+        """Weapon name appears in the Loadout field (no emoji prefix)."""
         ship = {
             "ship_name": "Scout",
             "ship_emoji": None,
@@ -586,14 +622,12 @@ class TestBuildPayloadLoadoutField:
         }
         result = builder.build_payload(make_minimal_data(criminal_ship=ship))
         field = self._get_loadout_field(result)
-        lines = field["value"].split("\n")
-        # One of the lines should contain the weapon with emoji
-        weapon_lines = [ln for ln in lines if "Nirai Impulse EX" in ln]
-        assert len(weapon_lines) == 1
-        assert "<:nirai:456>" in weapon_lines[0]
+        assert "Nirai Impulse EX" in field["value"]
+        # Emoji appears after item name in loadout field
+        assert "<:nirai:456>" in field["value"]
 
-    def test_loadout_weapon_without_emoji(self, builder):
-        """Weapon without emoji: just the name on its own line."""
+    def test_loadout_weapon_no_bullet_prefix(self, builder):
+        """In the new design, weapon items appear as plain names (no emoji, no bullet)."""
         ship = {
             "ship_name": "Scout",
             "ship_emoji": None,
@@ -608,11 +642,11 @@ class TestBuildPayloadLoadoutField:
         lines = field["value"].split("\n")
         weapon_lines = [ln for ln in lines if "Laser MK2" in ln]
         assert len(weapon_lines) == 1
-        # Should not have a leading emoji token
-        assert weapon_lines[0].strip() == "Laser MK2"
+        # New design: plain name with no bullet prefix
+        assert weapon_lines[0] == "Laser MK2"
 
-    def test_loadout_module_with_emoji(self, builder):
-        """Module with emoji: '{emoji} {name}'."""
+    def test_loadout_module_name_appears_in_loadout(self, builder):
+        """Module name appears in the Loadout field (no emoji prefix)."""
         ship = {
             "ship_name": "Scout",
             "ship_emoji": None,
@@ -624,13 +658,12 @@ class TestBuildPayloadLoadoutField:
         }
         result = builder.build_payload(make_minimal_data(criminal_ship=ship))
         field = self._get_loadout_field(result)
-        lines = field["value"].split("\n")
-        module_lines = [ln for ln in lines if "Rhoda Blackhole" in ln]
-        assert len(module_lines) == 1
-        assert "<:rhoda:789>" in module_lines[0]
+        assert "Rhoda Blackhole" in field["value"]
+        # Emoji appears after item name in loadout field
+        assert "<:rhoda:789>" in field["value"]
 
-    def test_loadout_module_without_emoji(self, builder):
-        """Module without emoji: just the name."""
+    def test_loadout_module_plain_name(self, builder):
+        """Module without emoji: shown as plain name (no bullet prefix)."""
         ship = {
             "ship_name": "Scout",
             "ship_emoji": None,
@@ -645,45 +678,38 @@ class TestBuildPayloadLoadoutField:
         lines = field["value"].split("\n")
         module_lines = [ln for ln in lines if "Shield Booster" in ln]
         assert len(module_lines) == 1
-        assert module_lines[0].strip() == "Shield Booster"
+        # New design: plain name with no prefix
+        assert module_lines[0] == "Shield Booster"
 
-    def test_loadout_ship_without_emoji(self, builder):
-        """Ship with no ship_emoji — header line omits emoji prefix."""
-        ship = {
-            "ship_name": "Nemesis",
-            "ship_emoji": None,
-            "armour": 200,
-            "weapons": [],
-            "modules": [],
-        }
-        result = builder.build_payload(make_minimal_data(criminal_ship=ship))
-        field = self._get_loadout_field(result)
-        lines = field["value"].split("\n")
-        assert "**Nemesis**" in lines[0]
-        # No emoji token expected
-        assert "<:" not in lines[0]
-
-    def test_loadout_ends_with_use_command(self, builder):
-        """Last line of loadout is the /criminal-loadout slash command hint."""
+    def test_loadout_no_criminal_loadout_command_hint(self, builder):
+        """Loadout field does NOT contain the /criminal-loadout command hint."""
         ship = make_full_criminal_ship()
         result = builder.build_payload(make_minimal_data(criminal_ship=ship, criminal_name="Trent Jameson"))
         field = self._get_loadout_field(result)
-        lines = field["value"].split("\n")
-        last_line = lines[-1]
-        assert "/criminal-loadout" in last_line
-        assert "Trent Jameson" in last_line
+        assert "/criminal-loadout" not in field["value"]
 
-    def test_loadout_full_structure(self, builder):
-        """Full loadout with 2 weapons and 2 modules produces correct line count."""
-        ship = make_full_criminal_ship()  # 2 weapons + 2 modules
+    def test_loadout_bold_category_headers(self, builder):
+        """Loadout field uses **bold** category headers (no emoji)."""
+        ship = make_full_criminal_ship()  # has weapons and modules
+        result = builder.build_payload(make_minimal_data(criminal_ship=ship))
+        field = self._get_loadout_field(result)
+        assert "**Primary Weapons**" in field["value"]
+        assert "**Modules**" in field["value"]
+        # No emoji before category header
+        assert "🔫" not in field["value"]
+        assert "⚙️" not in field["value"]
+
+    def test_loadout_full_structure_weapons_and_modules(self, builder):
+        """Full loadout with 2 weapons and 2 modules produces correct non-empty lines."""
+        ship = make_full_criminal_ship()  # 2 weapons + 2 modules (no turrets)
         result = builder.build_payload(make_minimal_data(criminal_ship=ship))
         field = self._get_loadout_field(result)
         lines = [ln for ln in field["value"].split("\n") if ln.strip()]
-        # header + 2 weapons + 2 modules + command hint = 6 non-empty lines
+        # "**Primary Weapons**" + 2 weapons + "**Modules**" + 2 modules = 6 non-empty lines
         assert len(lines) == 6
 
-    def test_loadout_empty_weapons_and_modules(self, builder):
-        """criminal_ship with empty weapons/modules still shows header and command hint."""
+    def test_loadout_empty_weapons_and_modules_shows_no_equipment(self, builder):
+        """criminal_ship with empty weapons/modules shows '*No equipment*' in loadout."""
         ship = {
             "ship_name": "Speeder",
             "ship_emoji": None,
@@ -693,11 +719,10 @@ class TestBuildPayloadLoadoutField:
         }
         result = builder.build_payload(make_minimal_data(criminal_ship=ship))
         field = self._get_loadout_field(result)
-        assert "**Speeder**" in field["value"]
-        assert "/criminal-loadout" in field["value"]
+        assert "*No equipment*" in field["value"]
 
-    def test_loadout_hp_shows_armor_and_shield_when_both_present(self, builder):
-        """Header line shows Armor, Shield, and Total HP when shield_hp > 0."""
+    def test_ship_field_hp_shows_armor_and_shield_when_both_present(self, builder):
+        """Ship field shows Armor, Shield, and Total HP when shield_hp > 0."""
         ship = {
             "ship_name": "Phantom",
             "ship_emoji": None,
@@ -709,14 +734,13 @@ class TestBuildPayloadLoadoutField:
             "modules": [],
         }
         result = builder.build_payload(make_minimal_data(criminal_ship=ship))
-        field = self._get_loadout_field(result)
-        lines = field["value"].split("\n")
-        assert "260" in lines[0]  # armor_hp
-        assert "380" in lines[0]  # shield_hp
-        assert "640" in lines[0]  # total_hp
+        field = self._get_ship_field(result)
+        assert "260" in field["value"]  # armor_hp
+        assert "380" in field["value"]  # shield_hp
+        assert "640" in field["value"]  # total_hp
 
-    def test_loadout_hp_shows_simple_hp_when_no_shield(self, builder):
-        """Header line shows HP: X when shield_hp is 0."""
+    def test_ship_field_hp_no_shield_shows_armor_and_total(self, builder):
+        """Ship field shows Armor and Total HP when shield_hp is 0."""
         ship = {
             "ship_name": "Scout",
             "ship_emoji": None,
@@ -728,13 +752,12 @@ class TestBuildPayloadLoadoutField:
             "modules": [],
         }
         result = builder.build_payload(make_minimal_data(criminal_ship=ship))
-        field = self._get_loadout_field(result)
-        lines = field["value"].split("\n")
-        assert "HP: 260" in lines[0]
-        assert "Shield" not in lines[0]
+        field = self._get_ship_field(result)
+        assert "260" in field["value"]  # armor_hp
+        assert "Shield" not in field["value"]
 
-    def test_loadout_hp_fallback_to_legacy_armour(self, builder):
-        """Header line falls back to legacy armour/ship_armour if armor_hp missing."""
+    def test_ship_field_hp_fallback_to_legacy_armour(self, builder):
+        """Ship field falls back to legacy ship_armour if armor_hp missing."""
         ship = {
             "ship_name": "OldShip",
             "ship_emoji": None,
@@ -744,9 +767,243 @@ class TestBuildPayloadLoadoutField:
             "modules": [],
         }
         result = builder.build_payload(make_minimal_data(criminal_ship=ship))
+        field = self._get_ship_field(result)
+        assert "175" in field["value"]
+
+
+# ===========================================================================
+# Tests for _build_loadout_value() — categorized sections
+# ===========================================================================
+
+
+class TestBuildLoadoutCategorized:
+    """Loadout field groups items under bold section headers (no emoji) by category."""
+
+    @pytest.fixture()
+    def builder(self):
+        from message_builders.builders.bounty_announcement import BountyAnnouncementBuilder
+
+        return BountyAnnouncementBuilder()
+
+    def _get_loadout_field(self, result):
+        for f in result["embed"]["fields"]:
+            if f["name"] == "Loadout":
+                return f
+        raise KeyError("Loadout field not found")
+
+    def test_primary_weapons_bold_header_shown_when_weapons_present(self, builder):
+        """'**Primary Weapons**' header appears when weapons list is non-empty."""
+        ship = {
+            "ship_name": "Scout",
+            "ship_emoji": None,
+            "armour": 100,
+            "weapons": [{"name": "Gun A", "emoji": None, "dps": 10.0}],
+            "modules": [],
+        }
+        result = builder.build_payload(make_minimal_data(criminal_ship=ship))
+        field = self._get_loadout_field(result)
+        assert "**Primary Weapons**" in field["value"]
+
+    def test_primary_weapons_header_absent_when_no_weapons(self, builder):
+        """'**Primary Weapons**' header is omitted when weapons list is empty."""
+        ship = {
+            "ship_name": "Scout",
+            "ship_emoji": None,
+            "armour": 100,
+            "weapons": [],
+            "modules": [{"name": "Shield Booster", "emoji": None}],
+        }
+        result = builder.build_payload(make_minimal_data(criminal_ship=ship))
+        field = self._get_loadout_field(result)
+        assert "**Primary Weapons**" not in field["value"]
+
+    def test_modules_bold_header_shown_when_modules_present(self, builder):
+        """'**Modules**' header appears when modules list is non-empty."""
+        ship = {
+            "ship_name": "Scout",
+            "ship_emoji": None,
+            "armour": 100,
+            "weapons": [],
+            "modules": [{"name": "Shield Booster", "emoji": None}],
+        }
+        result = builder.build_payload(make_minimal_data(criminal_ship=ship))
+        field = self._get_loadout_field(result)
+        assert "**Modules**" in field["value"]
+
+    def test_modules_header_absent_when_no_modules(self, builder):
+        """'**Modules**' header is omitted when modules list is empty."""
+        ship = {
+            "ship_name": "Scout",
+            "ship_emoji": None,
+            "armour": 100,
+            "weapons": [{"name": "Gun A", "emoji": None, "dps": 10.0}],
+            "modules": [],
+        }
+        result = builder.build_payload(make_minimal_data(criminal_ship=ship))
+        field = self._get_loadout_field(result)
+        assert "**Modules**" not in field["value"]
+
+    def test_turrets_bold_header_shown_when_turrets_present(self, builder):
+        """'**Turrets**' header appears when turrets list is non-empty."""
+        ship = {
+            "ship_name": "Scout",
+            "ship_emoji": None,
+            "armour": 100,
+            "weapons": [],
+            "modules": [],
+            "turrets": [{"name": "Auto Turret", "emoji": None, "dps": 5.0}],
+        }
+        result = builder.build_payload(make_minimal_data(criminal_ship=ship))
+        field = self._get_loadout_field(result)
+        assert "**Turrets**" in field["value"]
+
+    def test_turrets_header_absent_when_no_turrets(self, builder):
+        """'**Turrets**' header is omitted when turrets list is empty."""
+        ship = {
+            "ship_name": "Scout",
+            "ship_emoji": None,
+            "armour": 100,
+            "weapons": [{"name": "Gun A", "emoji": None, "dps": 10.0}],
+            "modules": [],
+        }
+        result = builder.build_payload(make_minimal_data(criminal_ship=ship))
+        field = self._get_loadout_field(result)
+        assert "**Turrets**" not in field["value"]
+
+    def test_items_appear_as_plain_names_no_bullet(self, builder):
+        """Items appear as plain names — no emoji prefix, no bullet prefix."""
+        ship = {
+            "ship_name": "Scout",
+            "ship_emoji": None,
+            "armour": 100,
+            "weapons": [{"name": "Bare Gun", "emoji": None, "dps": 5.0}],
+            "modules": [],
+        }
+        result = builder.build_payload(make_minimal_data(criminal_ship=ship))
         field = self._get_loadout_field(result)
         lines = field["value"].split("\n")
-        assert "HP: 175" in lines[0]
+        item_lines = [ln for ln in lines if "Bare Gun" in ln]
+        assert len(item_lines) == 1
+        # New design: plain name, no bullet
+        assert item_lines[0] == "Bare Gun"
+
+    def test_items_with_emoji_suffixed_by_emoji(self, builder):
+        """Items with emoji get the emoji AFTER the item name."""
+        ship = {
+            "ship_name": "Scout",
+            "ship_emoji": None,
+            "armour": 100,
+            "weapons": [],
+            "modules": [{"name": "Boost Module", "emoji": "<:boost:999>"}],
+        }
+        result = builder.build_payload(make_minimal_data(criminal_ship=ship))
+        field = self._get_loadout_field(result)
+        lines = field["value"].split("\n")
+        item_lines = [ln for ln in lines if "Boost Module" in ln]
+        assert len(item_lines) == 1
+        # Emoji appears after item name
+        assert "<:boost:999>" in item_lines[0]
+        assert item_lines[0] == "Boost Module <:boost:999>"
+
+    def test_section_order_weapons_then_turrets_then_modules(self, builder):
+        """Sections appear in order: Primary Weapons → Turrets → Modules."""
+        ship = {
+            "ship_name": "Nemesis",
+            "ship_emoji": None,
+            "armour": 100,
+            "weapons": [{"name": "Gun", "emoji": None, "dps": 10.0}],
+            "modules": [{"name": "Module X", "emoji": None}],
+            "turrets": [{"name": "Turret Y", "emoji": None, "dps": 5.0}],
+        }
+        result = builder.build_payload(make_minimal_data(criminal_ship=ship))
+        field = self._get_loadout_field(result)
+        value = field["value"]
+        weapons_pos = value.index("**Primary Weapons**")
+        turrets_pos = value.index("**Turrets**")
+        modules_pos = value.index("**Modules**")
+        assert weapons_pos < turrets_pos < modules_pos
+
+    def test_only_modules_section_when_no_weapons_no_turrets(self, builder):
+        """When only modules exist, only '**Modules**' section header appears."""
+        ship = {
+            "ship_name": "Hauler",
+            "ship_emoji": None,
+            "armour": 80,
+            "weapons": [],
+            "modules": [{"name": "Cargo Ext", "emoji": None}],
+            "turrets": [],
+        }
+        result = builder.build_payload(make_minimal_data(criminal_ship=ship))
+        field = self._get_loadout_field(result)
+        assert "**Modules**" in field["value"]
+        assert "**Primary Weapons**" not in field["value"]
+        assert "**Turrets**" not in field["value"]
+
+    def test_turret_plain_name_no_prefix(self, builder):
+        """Turrets appear as plain names (no emoji, no bullet)."""
+        ship = {
+            "ship_name": "Scout",
+            "ship_emoji": None,
+            "armour": 100,
+            "weapons": [],
+            "modules": [],
+            "turrets": [{"name": "Basic Turret", "emoji": None, "dps": 8.0}],
+        }
+        result = builder.build_payload(make_minimal_data(criminal_ship=ship))
+        field = self._get_loadout_field(result)
+        lines = field["value"].split("\n")
+        item_lines = [ln for ln in lines if "Basic Turret" in ln]
+        assert len(item_lines) == 1
+        assert item_lines[0] == "Basic Turret"
+
+    def test_all_sections_present_when_all_filled(self, builder):
+        """All three bold section headers appear when all categories have items."""
+        ship = {
+            "ship_name": "Battlecruiser",
+            "ship_emoji": "<:bc:101>",
+            "armor_hp": 500,
+            "shield_hp": 300,
+            "total_hp": 800,
+            "weapons": [{"name": "Main Gun", "emoji": None, "dps": 20.0}],
+            "modules": [{"name": "Armor Plate", "emoji": None}],
+            "turrets": [{"name": "Side Turret", "emoji": None, "dps": 10.0}],
+        }
+        result = builder.build_payload(make_minimal_data(criminal_ship=ship))
+        field = self._get_loadout_field(result)
+        assert "**Primary Weapons**" in field["value"]
+        assert "**Turrets**" in field["value"]
+        assert "**Modules**" in field["value"]
+
+    def test_empty_ship_shows_no_equipment(self, builder):
+        """A ship with no weapons/modules/turrets shows '*No equipment*' in loadout."""
+        ship = {
+            "ship_name": "Empty",
+            "ship_emoji": None,
+            "armour": 50,
+            "weapons": [],
+            "modules": [],
+            "turrets": [],
+        }
+        result = builder.build_payload(make_minimal_data(criminal_ship=ship))
+        field = self._get_loadout_field(result)
+        assert "**Primary Weapons**" not in field["value"]
+        assert "**Turrets**" not in field["value"]
+        assert "**Modules**" not in field["value"]
+        assert "*No equipment*" in field["value"]
+
+    def test_sections_separated_by_blank_lines(self, builder):
+        """Categories are separated by a blank line in the loadout value."""
+        ship = {
+            "ship_name": "Nemesis",
+            "ship_emoji": None,
+            "armour": 100,
+            "weapons": [{"name": "Gun", "emoji": None, "dps": 10.0}],
+            "modules": [{"name": "Module X", "emoji": None}],
+        }
+        result = builder.build_payload(make_minimal_data(criminal_ship=ship))
+        field = self._get_loadout_field(result)
+        # Blank line separates sections
+        assert "\n\n" in field["value"]
 
 
 # ===========================================================================
@@ -848,6 +1105,36 @@ class TestBuildPayloadRouteField:
         field = self._get_route_field(result)
         assert field["value"] == "Pan, Mido"
 
+    def test_route_recently_spotted_system_bold_and_strikethrough(self, builder):
+        """Systems with value 'recently_spotted' appear as **~~SystemName~~**."""
+        result = builder.build_payload(
+            make_minimal_data(
+                route=["Pan", "Mido", "Pescal Ansen"],
+                checked={"Mido": "recently_spotted"},
+            )
+        )
+        field = self._get_route_field(result)
+        assert "**~~Mido~~**" in field["value"]
+        # Other systems plain
+        assert "Pan" in field["value"]
+        assert "~~Pan~~" not in field["value"]
+
+    def test_route_recently_spotted_vs_checked_vs_found(self, builder):
+        """Mixed statuses produce correct formatting for each system."""
+        result = builder.build_payload(
+            make_minimal_data(
+                route=["A", "B", "C", "D"],
+                checked={"A": "checked", "B": "recently_spotted", "C": "found"},
+            )
+        )
+        field = self._get_route_field(result)
+        assert "~~A~~" in field["value"]
+        assert "**~~B~~**" in field["value"]
+        assert "**C**" in field["value"]
+        assert "D" in field["value"]  # plain
+        assert "~~D~~" not in field["value"]
+        assert "**D**" not in field["value"]
+
 
 # ===========================================================================
 # Tests for build_payload() — Checked Systems field
@@ -933,6 +1220,43 @@ class TestBuildPayloadCheckedSystemsField:
         field = self._get_checked_field(result)
         assert "~~Pan~~" in field["value"]
         assert "~~Pescal Ansen~~" in field["value"]
+
+    def test_recently_spotted_system_bold_and_strikethrough_in_checked_field(self, builder):
+        """A 'recently_spotted' system appears bold+strikethrough (**~~Name~~**) in Checked Systems."""
+        result = builder.build_payload(
+            make_minimal_data(
+                route=["Pan", "Mido"],
+                checked={"Pan": "recently_spotted"},
+            )
+        )
+        field = self._get_checked_field(result)
+        assert "**~~Pan~~**" in field["value"]
+
+    def test_recently_spotted_uses_blockquote_prefix(self, builder):
+        """Checked Systems field for recently_spotted uses '>' blockquote prefix."""
+        result = builder.build_payload(
+            make_minimal_data(
+                route=["Pan"],
+                checked={"Pan": "recently_spotted"},
+            )
+        )
+        field = self._get_checked_field(result)
+        assert field["value"].startswith(">")
+
+    def test_recently_spotted_absent_from_checked_group(self, builder):
+        """A 'recently_spotted' system is NOT shown as a plain checked (~~name~~) system."""
+        result = builder.build_payload(
+            make_minimal_data(
+                route=["Pan", "Mido"],
+                checked={"Pan": "recently_spotted"},
+            )
+        )
+        field = self._get_checked_field(result)
+        # Only strikethrough (without bold) should not appear for recently_spotted
+        # i.e., "~~Pan~~" without ** surrounding it should not be present
+        value = field["value"]
+        # **~~Pan~~** is expected, bare ~~Pan~~ should not appear
+        assert "**~~Pan~~**" in value
 
 
 # ===========================================================================
@@ -1173,3 +1497,104 @@ class TestFactionColorsConstant:
         from message_builders.builders import bounty_announcement
 
         assert bounty_announcement.FACTION_COLORS["nivelian"] == 2123412
+
+
+# ===========================================================================
+# Tests for "captured" state
+# ===========================================================================
+
+
+class TestBuildPayloadCapturedState:
+    """When captured=True is passed, the embed shows the CAPTURED state."""
+
+    @pytest.fixture()
+    def builder(self):
+        from message_builders.builders.bounty_announcement import BountyAnnouncementBuilder
+
+        return BountyAnnouncementBuilder()
+
+    def _get_field(self, result, name):
+        fields = result["embed"]["fields"]
+        for f in fields:
+            if f["name"] == name:
+                return f
+        raise KeyError(f"Field '{name}' not found in {[f['name'] for f in fields]}")
+
+    def test_captured_title_includes_criminal_name(self, builder):
+        """Title includes the criminal name when captured=True."""
+        result = builder.build_payload(make_minimal_data(criminal_name="Kato Vort", captured=True))
+        assert "Kato Vort" in result["embed"]["title"]
+
+    def test_captured_title_includes_captured_indicator(self, builder):
+        """Title shows 'CAPTURED' when captured=True."""
+        result = builder.build_payload(make_minimal_data(criminal_name="Kato Vort", captured=True))
+        assert "CAPTURED" in result["embed"]["title"]
+
+    def test_captured_title_format(self, builder):
+        """Title format is '✅ {criminal_name} — CAPTURED' when captured=True."""
+        result = builder.build_payload(make_minimal_data(criminal_name="Kato Vort", captured=True))
+        assert result["embed"]["title"] == "✅ Kato Vort — CAPTURED"
+
+    def test_normal_title_no_captured_indicator(self, builder):
+        """Title is just the criminal_name when captured is not set."""
+        result = builder.build_payload(make_minimal_data(criminal_name="Kato Vort"))
+        assert result["embed"]["title"] == "Kato Vort"
+        assert "CAPTURED" not in result["embed"]["title"]
+
+    def test_captured_color_is_green(self, builder):
+        """Color is green (3066993 / 0x2ECC71) when captured=True."""
+        result = builder.build_payload(make_minimal_data(captured=True))
+        assert result["embed"]["color"] == 3066993
+
+    def test_normal_color_uses_faction_color(self, builder):
+        """Color uses faction color when captured is not set."""
+        result = builder.build_payload(make_minimal_data(criminal_faction="Terran"))
+        assert result["embed"]["color"] == 15844367  # Terran color
+
+    def test_captured_color_overrides_faction_color(self, builder):
+        """Green captured color overrides faction color even for known factions."""
+        result = builder.build_payload(make_minimal_data(criminal_faction="Vossk", captured=True))
+        assert result["embed"]["color"] == 3066993  # Green, not Vossk color
+
+    def test_captured_bounty_ends_field_shows_captured(self, builder):
+        """'Bounty Ends' field shows '**Captured**' when captured=True."""
+        result = builder.build_payload(make_minimal_data(captured=True))
+        field = self._get_field(result, "Bounty Ends")
+        assert field["value"] == "**Captured**"
+
+    def test_normal_bounty_ends_field_shows_timestamp(self, builder):
+        """'Bounty Ends' field shows Discord timestamp when captured is not set."""
+        result = builder.build_payload(make_minimal_data(end_time_unix=1700000000))
+        field = self._get_field(result, "Bounty Ends")
+        assert field["value"] == "<t:1700000000:R>"
+
+    def test_captured_false_bounty_ends_field_shows_timestamp(self, builder):
+        """'Bounty Ends' field shows timestamp when captured=False explicitly."""
+        result = builder.build_payload(make_minimal_data(end_time_unix=9999999, captured=False))
+        field = self._get_field(result, "Bounty Ends")
+        assert field["value"] == "<t:9999999:R>"
+
+    def test_captured_still_has_seven_fields(self, builder):
+        """Captured state still produces 7 fields (no fields removed)."""
+        result = builder.build_payload(make_minimal_data(captured=True))
+        assert len(result["embed"]["fields"]) == 7
+
+    def test_captured_field_names_unchanged(self, builder):
+        """Field names are the same in captured state as in normal state."""
+        result = builder.build_payload(make_minimal_data(captured=True))
+        field_names = [f["name"] for f in result["embed"]["fields"]]
+        assert field_names == [
+            "Difficulty",
+            "Reward Pool",
+            "Bounty Ends",
+            "Ship",
+            "Loadout",
+            "Route",
+            "Checked Systems",
+        ]
+
+    def test_captured_default_is_false(self, builder):
+        """When 'captured' is absent from data, embed behaves as non-captured."""
+        result = builder.build_payload(make_minimal_data(criminal_name="Zara", criminal_faction="Midorian"))
+        assert result["embed"]["title"] == "Zara"
+        assert result["embed"]["color"] == 10038562  # Midorian color

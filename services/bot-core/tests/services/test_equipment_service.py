@@ -122,11 +122,16 @@ def mock_db() -> AsyncMock:
     return AsyncMock()
 
 
+def _make_base_item(name: str = "Pulse Laser", item_type: str = "PrimaryWeapon") -> SimpleNamespace:
+    """Minimal base item (from get_by_name_any_type)."""
+    return SimpleNamespace(name=name, type=item_type)
+
+
 @pytest.fixture
 def svc() -> EquipmentService:
     """EquipmentService with all repositories replaced by AsyncMocks.
 
-    This is *mock 2* — a single consolidated mock that replaces all four
+    This is *mock 2* — a single consolidated mock that replaces all five
     repos so individual tests need only configure the relevant methods.
     """
     service = EquipmentService.__new__(EquipmentService)
@@ -134,11 +139,13 @@ def svc() -> EquipmentService:
     service.ship_repo = AsyncMock()
     service.inventory_repo = AsyncMock()
     service.item_repo = AsyncMock()
+    service.module_repo = AsyncMock()
     service.ship_data_repo = AsyncMock()
 
     # Default: nothing found (tests override what they need)
     service.ship_repo.get_by_id = AsyncMock(return_value=None)
     service.item_repo.get_by_name = AsyncMock(return_value=None)
+    service.item_repo.get_by_name_any_type = AsyncMock(return_value=None)
     service.inventory_repo.get_player_item = AsyncMock(return_value=None)
     service.ship_data_repo.get_by_name = AsyncMock(return_value=None)
     service.ship_repo.add_equipment = AsyncMock()
@@ -196,10 +203,13 @@ class TestEquipItemSuccess:
         static_ship = _make_static_ship(name="Sidewinder", max_modules=3)
         game_item = _make_game_item("Shield Generator")
         inv_item = _make_inventory_item("Shield Generator", "module")
+        # CabinModule has unlimited equip limit (-1)
+        base_item = _make_base_item("Shield Generator", "CabinModule")
 
         svc.ship_repo.get_by_id.return_value = player_ship
         svc.ship_data_repo.get_by_name.return_value = static_ship
         svc.item_repo.get_by_name.return_value = game_item
+        svc.item_repo.get_by_name_any_type.return_value = base_item
         svc.inventory_repo.get_player_item.return_value = inv_item
         svc.ship_repo.add_equipment.return_value = player_ship
 
@@ -468,6 +478,10 @@ class TestUnequipItemValidationErrors:
     @pytest.mark.asyncio
     async def test_unequip_with_invalid_equipment_type_raises(self, mock_db, svc):
         """ValueError is raised for an unrecognised equipment_type."""
+        # Ship must exist and belong to player so we reach the equipment_type validation
+        player_ship = _make_player_ship(player_id=42, ship_name="Sidewinder")
+        svc.ship_repo.get_by_id.return_value = player_ship
+
         with pytest.raises(ValueError, match="Invalid equipment_type"):
             await svc.unequip_item(
                 mock_db,
@@ -519,3 +533,467 @@ class TestHelperMethods:
         svc_instance = EquipmentService.__new__(EquipmentService)
         with pytest.raises(ValueError):
             svc_instance._map_equipment_type_to_inventory_type("shields")
+
+
+# ---------------------------------------------------------------------------
+# Auto-detection tests
+# ---------------------------------------------------------------------------
+
+
+class TestEquipItemAutoDetect:
+    """Tests for equipment_type auto-detection."""
+
+    @pytest.mark.asyncio
+    async def test_equip_weapon_auto_detected_from_primary_weapon_type(self, mock_db, svc):
+        """When equipment_type=None, auto-detects 'weapons' from PrimaryWeapon item type."""
+        player_ship = _make_player_ship(player_id=42, ship_name="Sidewinder", weapons=[])
+        static_ship = _make_static_ship(name="Sidewinder", max_primaries=2)
+        base_item = _make_base_item("Pulse Laser", "PrimaryWeapon")
+        game_item = _make_game_item("Pulse Laser")
+        inv_item = _make_inventory_item("Pulse Laser", "weapon")
+
+        svc.ship_repo.get_by_id.return_value = player_ship
+        svc.ship_data_repo.get_by_name.return_value = static_ship
+        svc.item_repo.get_by_name_any_type.return_value = base_item
+        svc.item_repo.get_by_name.return_value = game_item
+        svc.inventory_repo.get_player_item.return_value = inv_item
+        svc.ship_repo.add_equipment.return_value = player_ship
+
+        result = await svc.equip_item(
+            mock_db,
+            player_id=42,
+            ship_id=1,
+            item_name="Pulse Laser",
+            # No equipment_type — auto-detect
+        )
+
+        assert result["success"] is True
+        svc.ship_repo.add_equipment.assert_called_once_with(mock_db, 1, "weapons", "Pulse Laser")
+
+    @pytest.mark.asyncio
+    async def test_equip_turret_auto_detected_from_turret_weapon_type(self, mock_db, svc):
+        """When equipment_type=None, auto-detects 'turrets' from TurretWeapon item type."""
+        player_ship = _make_player_ship(player_id=42, ship_name="Sidewinder", turrets=[])
+        static_ship = _make_static_ship(name="Sidewinder", max_turrets=1)
+        base_item = _make_base_item("Berger AGT 20mm", "TurretWeapon")
+        game_item = _make_game_item("Berger AGT 20mm")
+        inv_item = _make_inventory_item("Berger AGT 20mm", "turret")
+
+        svc.ship_repo.get_by_id.return_value = player_ship
+        svc.ship_data_repo.get_by_name.return_value = static_ship
+        svc.item_repo.get_by_name_any_type.return_value = base_item
+        svc.item_repo.get_by_name.return_value = game_item
+        svc.inventory_repo.get_player_item.return_value = inv_item
+        svc.ship_repo.add_equipment.return_value = player_ship
+
+        result = await svc.equip_item(
+            mock_db,
+            player_id=42,
+            ship_id=1,
+            item_name="Berger AGT 20mm",
+        )
+
+        assert result["success"] is True
+        svc.ship_repo.add_equipment.assert_called_once_with(mock_db, 1, "turrets", "Berger AGT 20mm")
+
+    @pytest.mark.asyncio
+    async def test_equip_module_auto_detected_from_module_suffix(self, mock_db, svc):
+        """When equipment_type=None, auto-detects 'modules' from ArmourModule type suffix."""
+        player_ship = _make_player_ship(player_id=42, ship_name="Sidewinder", modules=[])
+        static_ship = _make_static_ship(name="Sidewinder", max_modules=3)
+        base_item = _make_base_item("D'iol", "ArmourModule")
+        game_item = _make_game_item("D'iol")
+        inv_item = _make_inventory_item("D'iol", "module")
+
+        svc.ship_repo.get_by_id.return_value = player_ship
+        svc.ship_data_repo.get_by_name.return_value = static_ship
+        svc.item_repo.get_by_name_any_type.return_value = base_item
+        svc.item_repo.get_by_name.return_value = game_item
+        svc.inventory_repo.get_player_item.return_value = inv_item
+        svc.ship_repo.add_equipment.return_value = player_ship
+
+        result = await svc.equip_item(
+            mock_db,
+            player_id=42,
+            ship_id=1,
+            item_name="D'iol",
+        )
+
+        assert result["success"] is True
+        svc.ship_repo.add_equipment.assert_called_once_with(mock_db, 1, "modules", "D'iol")
+
+    @pytest.mark.asyncio
+    async def test_equip_auto_detect_item_not_found_raises(self, mock_db, svc):
+        """Auto-detect raises ValueError when item not in game data."""
+        player_ship = _make_player_ship(player_id=42, ship_name="Sidewinder")
+        svc.ship_repo.get_by_id.return_value = player_ship
+        svc.item_repo.get_by_name_any_type.return_value = None
+
+        with pytest.raises(ValueError, match="not found in game data"):
+            await svc.equip_item(
+                mock_db,
+                player_id=42,
+                ship_id=1,
+                item_name="FakeItem",
+            )
+
+
+class TestUnequipItemAutoDetect:
+    """Tests for equipment_type auto-detection in unequip."""
+
+    @pytest.mark.asyncio
+    async def test_unequip_weapon_auto_detected(self, mock_db, svc):
+        """When equipment_type=None for unequip, searches equipped slots."""
+        player_ship = _make_player_ship(player_id=42, ship_name="Sidewinder", weapons=["Pulse Laser"])
+        base_item = _make_base_item("Pulse Laser", "PrimaryWeapon")
+
+        svc.ship_repo.get_by_id.return_value = player_ship
+        svc.item_repo.get_by_name_any_type.return_value = base_item
+        svc.ship_repo.remove_equipment.return_value = player_ship
+
+        result = await svc.unequip_item(
+            mock_db,
+            player_id=42,
+            ship_id=1,
+            item_name="Pulse Laser",
+        )
+
+        assert result["success"] is True
+        svc.ship_repo.remove_equipment.assert_called_once_with(mock_db, 1, "weapons", "Pulse Laser")
+
+    @pytest.mark.asyncio
+    async def test_unequip_auto_detect_fallback_to_slot_scan(self, mock_db, svc):
+        """When item lookup fails, fallback scans equipped slots to find it."""
+        player_ship = _make_player_ship(player_id=42, ship_name="Sidewinder", modules=["Mystery Module"])
+
+        svc.ship_repo.get_by_id.return_value = player_ship
+        # Item not in item table
+        svc.item_repo.get_by_name_any_type.return_value = None
+        svc.ship_repo.remove_equipment.return_value = player_ship
+
+        result = await svc.unequip_item(
+            mock_db,
+            player_id=42,
+            ship_id=1,
+            item_name="Mystery Module",
+        )
+
+        assert result["success"] is True
+        svc.ship_repo.remove_equipment.assert_called_once_with(mock_db, 1, "modules", "Mystery Module")
+
+    @pytest.mark.asyncio
+    async def test_unequip_auto_detect_item_not_in_any_slot_raises(self, mock_db, svc):
+        """When item not found in any slot, raises ValueError."""
+        player_ship = _make_player_ship(player_id=42, ship_name="Sidewinder", weapons=[], modules=[], turrets=[])
+
+        svc.ship_repo.get_by_id.return_value = player_ship
+        svc.item_repo.get_by_name_any_type.return_value = None
+
+        with pytest.raises(ValueError, match="not found in any equipped slot"):
+            await svc.unequip_item(
+                mock_db,
+                player_id=42,
+                ship_id=1,
+                item_name="Ghost Item",
+            )
+
+
+# ---------------------------------------------------------------------------
+# MODULE_EQUIP_LIMITS enforcement tests
+# ---------------------------------------------------------------------------
+
+
+class TestModuleEquipLimits:
+    """Tests for MODULE_EQUIP_LIMITS enforcement during equip."""
+
+    @pytest.mark.asyncio
+    async def test_equip_unique_module_when_slot_empty_succeeds(self, mock_db, svc):
+        """Unique module (limit=1) can be equipped when no conflict exists."""
+        player_ship = _make_player_ship(player_id=42, ship_name="Sidewinder", modules=[])
+        static_ship = _make_static_ship(name="Sidewinder", max_modules=3)
+        base_item = _make_base_item("D'iol", "ArmourModule")
+        game_item = _make_game_item("D'iol")
+        inv_item = _make_inventory_item("D'iol", "module")
+
+        svc.ship_repo.get_by_id.return_value = player_ship
+        svc.ship_data_repo.get_by_name.return_value = static_ship
+        svc.item_repo.get_by_name.return_value = game_item
+        svc.item_repo.get_by_name_any_type.return_value = base_item
+        svc.inventory_repo.get_player_item.return_value = inv_item
+        svc.ship_repo.add_equipment.return_value = player_ship
+
+        result = await svc.equip_item(
+            mock_db,
+            player_id=42,
+            ship_id=1,
+            equipment_type="modules",
+            item_name="D'iol",
+        )
+
+        assert result["success"] is True
+
+    @pytest.mark.asyncio
+    async def test_equip_unique_module_when_same_class_equipped_raises(self, mock_db, svc):
+        """Equipping a second ArmourModule raises ValueError (limit=1)."""
+        # Already has D'iol (ArmourModule) equipped
+        player_ship = _make_player_ship(player_id=42, ship_name="Sidewinder", modules=["D'iol"])
+        static_ship = _make_static_ship(name="Sidewinder", max_modules=3)
+        new_armour = _make_game_item("E2 Exoclad")
+        inv_item = _make_inventory_item("E2 Exoclad", "module")
+        # Both are ArmourModule
+        armour_item_type = _make_base_item("D'iol", "ArmourModule")
+        new_armour_type = _make_base_item("E2 Exoclad", "ArmourModule")
+
+        svc.ship_repo.get_by_id.return_value = player_ship
+        svc.ship_data_repo.get_by_name.return_value = static_ship
+        svc.item_repo.get_by_name.return_value = new_armour
+        svc.inventory_repo.get_player_item.return_value = inv_item
+
+        # get_by_name_any_type: first call for "E2 Exoclad" (limit check), then "D'iol" (conflict scan)
+        svc.item_repo.get_by_name_any_type.side_effect = [
+            new_armour_type,  # called in _validate_module_equip_limit for the new item
+            armour_item_type,  # called in _find_conflicting_module for "D'iol"
+        ]
+
+        with pytest.raises(ValueError, match="ArmourModule"):
+            await svc.equip_item(
+                mock_db,
+                player_id=42,
+                ship_id=1,
+                equipment_type="modules",
+                item_name="E2 Exoclad",
+            )
+
+        svc.ship_repo.add_equipment.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_equip_unlimited_module_no_limit_check(self, mock_db, svc):
+        """CabinModule has unlimited equip limit (-1) — can equip multiple."""
+        player_ship = _make_player_ship(player_id=42, ship_name="Sidewinder", modules=["Cabin1"])
+        static_ship = _make_static_ship(name="Sidewinder", max_modules=3)
+        game_item = _make_game_item("Cabin2")
+        inv_item = _make_inventory_item("Cabin2", "module")
+        # CabinModule has limit=-1 (unlimited)
+        cabin_item = _make_base_item("Cabin2", "CabinModule")
+
+        svc.ship_repo.get_by_id.return_value = player_ship
+        svc.ship_data_repo.get_by_name.return_value = static_ship
+        svc.item_repo.get_by_name.return_value = game_item
+        svc.item_repo.get_by_name_any_type.return_value = cabin_item
+        svc.inventory_repo.get_player_item.return_value = inv_item
+        svc.ship_repo.add_equipment.return_value = player_ship
+
+        result = await svc.equip_item(
+            mock_db,
+            player_id=42,
+            ship_id=1,
+            equipment_type="modules",
+            item_name="Cabin2",
+        )
+
+        assert result["success"] is True
+
+    @pytest.mark.asyncio
+    async def test_equip_module_with_zero_limit_raises(self, mock_db, svc):
+        """Module with limit=0 (JumpDriveModule) cannot be equipped."""
+        player_ship = _make_player_ship(player_id=42, ship_name="Sidewinder", modules=[])
+        static_ship = _make_static_ship(name="Sidewinder", max_modules=3)
+        game_item = _make_game_item("Jump Drive Mk1")
+        inv_item = _make_inventory_item("Jump Drive Mk1", "module")
+        # JumpDriveModule has limit=0
+        jump_item = _make_base_item("Jump Drive Mk1", "JumpDriveModule")
+
+        svc.ship_repo.get_by_id.return_value = player_ship
+        svc.ship_data_repo.get_by_name.return_value = static_ship
+        svc.item_repo.get_by_name.return_value = game_item
+        svc.item_repo.get_by_name_any_type.return_value = jump_item
+        svc.inventory_repo.get_player_item.return_value = inv_item
+
+        with pytest.raises(ValueError, match="limit=0"):
+            await svc.equip_item(
+                mock_db,
+                player_id=42,
+                ship_id=1,
+                equipment_type="modules",
+                item_name="Jump Drive Mk1",
+            )
+
+
+# ---------------------------------------------------------------------------
+# equip_check tests
+# ---------------------------------------------------------------------------
+
+
+class TestEquipCheck:
+    """Tests for EquipmentService.equip_check()."""
+
+    @pytest.mark.asyncio
+    async def test_equip_check_ok_status(self, mock_db, svc):
+        """Returns status='ok' when item can be equipped."""
+        player_ship = _make_player_ship(player_id=42, ship_name="Sidewinder", weapons=[])
+        static_ship = _make_static_ship(name="Sidewinder", max_primaries=2)
+        base_item = _make_base_item("Pulse Laser", "PrimaryWeapon")
+        inv_item = _make_inventory_item("Pulse Laser", "weapon")
+
+        svc.ship_repo.get_by_id.return_value = player_ship
+        svc.ship_data_repo.get_by_name.return_value = static_ship
+        svc.item_repo.get_by_name_any_type.return_value = base_item
+        svc.inventory_repo.get_player_item.return_value = inv_item
+
+        result = await svc.equip_check(mock_db, player_id=42, ship_id=1, item_name="Pulse Laser")
+
+        assert result["status"] == "ok"
+        assert result["equipment_type"] == "weapons"
+        assert result["item_type"] == "PrimaryWeapon"
+
+    @pytest.mark.asyncio
+    async def test_equip_check_slot_full_returns_equipped_items(self, mock_db, svc):
+        """Returns status='slot_full' with equipped items list when all slots used."""
+        player_ship = _make_player_ship(player_id=42, ship_name="Sidewinder", weapons=["Gun A", "Gun B"])
+        static_ship = _make_static_ship(name="Sidewinder", max_primaries=2)
+        base_item = _make_base_item("Gun C", "PrimaryWeapon")
+        inv_item = _make_inventory_item("Gun C", "weapon")
+
+        svc.ship_repo.get_by_id.return_value = player_ship
+        svc.ship_data_repo.get_by_name.return_value = static_ship
+        svc.item_repo.get_by_name_any_type.return_value = base_item
+        svc.inventory_repo.get_player_item.return_value = inv_item
+
+        result = await svc.equip_check(mock_db, player_id=42, ship_id=1, item_name="Gun C")
+
+        assert result["status"] == "slot_full"
+        assert result["max_slots"] == 2
+        assert len(result["equipped_items"]) == 2
+        names = [e["name"] for e in result["equipped_items"]]
+        assert "Gun A" in names
+        assert "Gun B" in names
+
+    @pytest.mark.asyncio
+    async def test_equip_check_unique_conflict_for_armour_module(self, mock_db, svc):
+        """Returns status='unique_conflict' when ArmourModule already equipped."""
+        # D'iol (ArmourModule) is already equipped
+        player_ship = _make_player_ship(player_id=42, ship_name="Sidewinder", modules=["D'iol"])
+        static_ship = _make_static_ship(name="Sidewinder", max_modules=3)
+        new_armour = _make_base_item("E2 Exoclad", "ArmourModule")
+        existing_armour = _make_base_item("D'iol", "ArmourModule")
+        inv_item = _make_inventory_item("E2 Exoclad", "module")
+
+        svc.ship_repo.get_by_id.return_value = player_ship
+        svc.ship_data_repo.get_by_name.return_value = static_ship
+        svc.inventory_repo.get_player_item.return_value = inv_item
+
+        # get_by_name_any_type: first for E2 Exoclad, then for D'iol (conflict scan)
+        svc.item_repo.get_by_name_any_type.side_effect = [new_armour, existing_armour]
+
+        result = await svc.equip_check(mock_db, player_id=42, ship_id=1, item_name="E2 Exoclad")
+
+        assert result["status"] == "unique_conflict"
+        assert result["module_class"] == "ArmourModule"
+        assert result["max_equipped"] == 1
+        assert result["conflicting_item"]["name"] == "D'iol"
+
+    @pytest.mark.asyncio
+    async def test_equip_check_item_not_found_raises(self, mock_db, svc):
+        """Raises ValueError when item not found in game data."""
+        svc.item_repo.get_by_name_any_type.return_value = None
+
+        with pytest.raises(ValueError, match="not found in game data"):
+            await svc.equip_check(mock_db, player_id=42, ship_id=1, item_name="Nonexistent")
+
+    @pytest.mark.asyncio
+    async def test_equip_check_not_equippable_type_raises(self, mock_db, svc):
+        """Raises ValueError when item type is not equippable."""
+        # Ship item type is not equippable via /equip
+        base_item = _make_base_item("Eagle", "Ship")
+        svc.item_repo.get_by_name_any_type.return_value = base_item
+
+        with pytest.raises(ValueError, match="not equippable"):
+            await svc.equip_check(mock_db, player_id=42, ship_id=1, item_name="Eagle")
+
+    @pytest.mark.asyncio
+    async def test_equip_check_player_does_not_own_item_raises(self, mock_db, svc):
+        """Raises ValueError when player does not own the item."""
+        player_ship = _make_player_ship(player_id=42, ship_name="Sidewinder", weapons=[])
+        static_ship = _make_static_ship(name="Sidewinder", max_primaries=2)
+        base_item = _make_base_item("Pulse Laser", "PrimaryWeapon")
+
+        svc.ship_repo.get_by_id.return_value = player_ship
+        svc.ship_data_repo.get_by_name.return_value = static_ship
+        svc.item_repo.get_by_name_any_type.return_value = base_item
+        svc.inventory_repo.get_player_item.return_value = None
+
+        with pytest.raises(ValueError, match="not found in player"):
+            await svc.equip_check(mock_db, player_id=42, ship_id=1, item_name="Pulse Laser")
+
+    @pytest.mark.asyncio
+    async def test_equip_check_unlimited_module_ok(self, mock_db, svc):
+        """CabinModule has unlimited limit — equip_check returns ok even with one equipped."""
+        player_ship = _make_player_ship(player_id=42, ship_name="Sidewinder", modules=["Cabin1"])
+        static_ship = _make_static_ship(name="Sidewinder", max_modules=3)
+        base_item = _make_base_item("Cabin2", "CabinModule")
+        inv_item = _make_inventory_item("Cabin2", "module")
+
+        svc.ship_repo.get_by_id.return_value = player_ship
+        svc.ship_data_repo.get_by_name.return_value = static_ship
+        svc.inventory_repo.get_player_item.return_value = inv_item
+
+        # get_by_name_any_type called once for the initial lookup
+        svc.item_repo.get_by_name_any_type.return_value = base_item
+
+        result = await svc.equip_check(mock_db, player_id=42, ship_id=1, item_name="Cabin2")
+
+        assert result["status"] == "ok"
+
+
+# ---------------------------------------------------------------------------
+# get_by_name_any_type integration test (module-level function test)
+# ---------------------------------------------------------------------------
+
+
+class TestItemTypeMappingHelpers:
+    """Tests for the module-level helper functions."""
+
+    def test_primary_weapon_maps_to_weapons(self):
+        from services.equipment_service import _item_type_to_equipment_category
+
+        assert _item_type_to_equipment_category("PrimaryWeapon") == "weapons"
+
+    def test_secondary_weapon_maps_to_weapons(self):
+        from services.equipment_service import _item_type_to_equipment_category
+
+        assert _item_type_to_equipment_category("SecondaryWeapon") == "weapons"
+
+    def test_turret_weapon_maps_to_turrets(self):
+        from services.equipment_service import _item_type_to_equipment_category
+
+        assert _item_type_to_equipment_category("TurretWeapon") == "turrets"
+
+    def test_armour_module_maps_to_modules(self):
+        from services.equipment_service import _item_type_to_equipment_category
+
+        assert _item_type_to_equipment_category("ArmourModule") == "modules"
+
+    def test_unknown_suffix_maps_to_none(self):
+        from services.equipment_service import _item_type_to_equipment_category
+
+        assert _item_type_to_equipment_category("SomethingElse") is None
+
+    def test_item_type_to_inventory_type_weapons(self):
+        from services.equipment_service import _item_type_to_inventory_type
+
+        assert _item_type_to_inventory_type("PrimaryWeapon") == "weapon"
+
+    def test_item_type_to_inventory_type_modules(self):
+        from services.equipment_service import _item_type_to_inventory_type
+
+        assert _item_type_to_inventory_type("ArmourModule") == "module"
+
+    def test_item_type_to_inventory_type_turrets(self):
+        from services.equipment_service import _item_type_to_inventory_type
+
+        assert _item_type_to_inventory_type("TurretWeapon") == "turret"
+
+    def test_item_type_to_inventory_type_unknown_returns_none(self):
+        from services.equipment_service import _item_type_to_inventory_type
+
+        assert _item_type_to_inventory_type("Ship") is None

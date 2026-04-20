@@ -293,13 +293,14 @@ class TestGetBountyRoute:
 
     @patch("api.routers.bounties.get_db_session")
     def test_get_route_success(self, mock_get_db, client, mock_bounty_service):
-        """Returns route and checked status for a valid bounty."""
+        """Returns route, checked status, and division for a valid bounty."""
         _configure_db_mock(mock_get_db)
         mock_bounty = make_mock_bounty(
             id=1,
             route=["Sol", "Proxima", "Tau Ceti"],
             checked={"Sol": 1},
             status="active",
+            division="bronze",
         )
         mock_bounty_service.bounty_repo.get_by_id = AsyncMock(return_value=mock_bounty)
 
@@ -312,6 +313,21 @@ class TestGetBountyRoute:
         assert data["route"] == ["Sol", "Proxima", "Tau Ceti"]
         assert data["checked"] == {"Sol": 1}
         assert data["status"] == "active"
+        # Division is now included in the route response
+        assert data["division"] == "bronze"
+
+    @patch("api.routers.bounties.get_db_session")
+    def test_get_route_includes_division(self, mock_get_db, client, mock_bounty_service):
+        """Route response includes the bounty division for tier display."""
+        _configure_db_mock(mock_get_db)
+        mock_bounty = make_mock_bounty(id=5, division="platinum", route=["A", "B"])
+        mock_bounty_service.bounty_repo.get_by_id = AsyncMock(return_value=mock_bounty)
+
+        response = client.get("/api/v1/bounties/5/route")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["division"] == "platinum"
 
     @patch("api.routers.bounties.get_db_session")
     def test_get_route_not_found(self, mock_get_db, client, mock_bounty_service):
@@ -517,14 +533,10 @@ class TestAdminSpawnBounties:
 
     @patch("api.routers.bounties.get_db_session")
     @patch("api.routers.bounties.AuditService")
-    @patch("api.routers.bounties.TemperatureService")
     @patch("api.routers.bounties.ConfigRepository")
-    @patch("api.routers.bounties.BountyRepository")
     def test_admin_spawn_with_available_slot(
         self,
-        mock_br_cls,
         mock_cr_cls,
-        mock_temp_svc,
         mock_audit,
         mock_get_db,
         admin_client,
@@ -533,21 +545,13 @@ class TestAdminSpawnBounties:
         """Returns 200 with spawned bounties when slots are available."""
         _configure_db_mock(mock_get_db)
         mock_audit.log_action = AsyncMock()
-        mock_temp_svc.get_max_bounties = MagicMock(return_value=5)
 
-        # Config with sufficient capacity
+        # Config with expiry setting
         mock_config = MagicMock()
-        mock_config.bounty_max_per_tier = {"bronze": 3, "silver": 3, "gold": 3}
         mock_config.bounty_expiry_minutes = 480
-        mock_config.division_temperatures = {"bronze": 1.0, "silver": 1.0, "gold": 1.0}
         mock_cr = AsyncMock()
         mock_cr.get_by_guild_id = AsyncMock(return_value=mock_config)
         mock_cr_cls.return_value = mock_cr
-
-        # Bounty repo reports 0 active
-        mock_br = AsyncMock()
-        mock_br.count_active_by_guild_and_division = AsyncMock(return_value=0)
-        mock_br_cls.return_value = mock_br
 
         response = admin_client.post("/api/v1/bounties/guild/67890/admin-spawn?tier=bronze&user_id=999")
 
@@ -559,59 +563,49 @@ class TestAdminSpawnBounties:
 
     @patch("api.routers.bounties.get_db_session")
     @patch("api.routers.bounties.AuditService")
-    @patch("api.routers.bounties.TemperatureService")
     @patch("api.routers.bounties.ConfigRepository")
-    @patch("api.routers.bounties.BountyRepository")
-    def test_admin_spawn_at_capacity_skips(
+    def test_admin_spawn_bypasses_cap(
         self,
-        mock_br_cls,
         mock_cr_cls,
-        mock_temp_svc,
         mock_audit,
         mock_get_db,
         admin_client,
         mock_bounty_service_for_admin,
     ):
-        """Returns skipped_tiers when guild is at capacity."""
+        """Admin spawn bypasses the max-bounty cap — spawns even when many bounties are active.
+
+        The old capacity check was removed; admin-spawn always attempts to spawn regardless
+        of how many active bounties already exist.
+        """
         _configure_db_mock(mock_get_db)
         mock_audit.log_action = AsyncMock()
-        # get_max_bounties returns 5, so effective_max = min(3, 5) = 3
-        mock_temp_svc.get_max_bounties = MagicMock(return_value=5)
 
         mock_config = MagicMock()
-        mock_config.bounty_max_per_tier = {"bronze": 3, "silver": 3, "gold": 3}
         mock_config.bounty_expiry_minutes = 480
-        mock_config.division_temperatures = {"bronze": 5.0}
         mock_cr = AsyncMock()
         mock_cr.get_by_guild_id = AsyncMock(return_value=mock_config)
         mock_cr_cls.return_value = mock_cr
 
-        # Bounty repo reports 3 active (at capacity: 3 >= min(3, 5) = 3)
-        mock_br = AsyncMock()
-        mock_br.count_active_by_guild_and_division = AsyncMock(return_value=3)
-        mock_br_cls.return_value = mock_br
-
+        # Even though service.spawn_bounty returns a bounty (simulating many active),
+        # admin-spawn does not skip — it spawns unconditionally.
         response = admin_client.post("/api/v1/bounties/guild/67890/admin-spawn?tier=bronze&user_id=999")
 
         assert response.status_code == 200
         data = response.json()
-        assert "bronze" in data["skipped_tiers"], f"Expected bronze in skipped_tiers, got: {data}"
-        assert data["spawned"] == []
+        # Bronze was NOT skipped — admin bypasses the cap
+        assert "bronze" not in data["skipped_tiers"], f"Expected bronze NOT in skipped_tiers, got: {data}"
+        assert len(data["spawned"]) == 1
 
     @patch("api.routers.bounties.get_db_session")
     @patch("api.routers.bounties.AuditService")
-    @patch("api.routers.bounties.TemperatureService")
     @patch("api.routers.bounties.ConfigRepository")
-    @patch("api.routers.bounties.BountyRepository")
     @patch("utils.executors.bounty_spawn_executor._announce_bounty")
     @patch("utils.executors.bounty_spawn_executor._schedule_expiry_job")
     def test_admin_spawn_calls_announce_and_schedule(
         self,
         mock_schedule,
         mock_announce,
-        mock_br_cls,
         mock_cr_cls,
-        mock_temp_svc,
         mock_audit,
         mock_get_db,
         admin_client,
@@ -622,21 +616,14 @@ class TestAdminSpawnBounties:
         """
         _configure_db_mock(mock_get_db)
         mock_audit.log_action = AsyncMock()
-        mock_temp_svc.get_max_bounties = MagicMock(return_value=5)
         mock_schedule.return_value = None
         mock_announce.return_value = None
 
         mock_config = MagicMock()
-        mock_config.bounty_max_per_tier = {"bronze": 3, "silver": 3, "gold": 3}
         mock_config.bounty_expiry_minutes = 480
-        mock_config.division_temperatures = {"bronze": 1.0}
         mock_cr = AsyncMock()
         mock_cr.get_by_guild_id = AsyncMock(return_value=mock_config)
         mock_cr_cls.return_value = mock_cr
-
-        mock_br = AsyncMock()
-        mock_br.count_active_by_guild_and_division = AsyncMock(return_value=0)
-        mock_br_cls.return_value = mock_br
 
         response = admin_client.post("/api/v1/bounties/guild/67890/admin-spawn?tier=bronze&user_id=999")
 
@@ -649,18 +636,14 @@ class TestAdminSpawnBounties:
 
     @patch("api.routers.bounties.get_db_session")
     @patch("api.routers.bounties.AuditService")
-    @patch("api.routers.bounties.TemperatureService")
     @patch("api.routers.bounties.ConfigRepository")
-    @patch("api.routers.bounties.BountyRepository")
     @patch("utils.executors.bounty_spawn_executor._announce_bounty")
     @patch("utils.executors.bounty_spawn_executor._schedule_expiry_job")
     def test_admin_spawn_announce_failure_is_non_fatal(
         self,
         mock_schedule,
         mock_announce,
-        mock_br_cls,
         mock_cr_cls,
-        mock_temp_svc,
         mock_audit,
         mock_get_db,
         admin_client,
@@ -669,21 +652,14 @@ class TestAdminSpawnBounties:
         """Bug 7: If _announce_bounty raises, the admin-spawn still returns 200 (best-effort)."""
         _configure_db_mock(mock_get_db)
         mock_audit.log_action = AsyncMock()
-        mock_temp_svc.get_max_bounties = MagicMock(return_value=5)
         mock_schedule.return_value = None
         mock_announce.side_effect = RuntimeError("Gateway unreachable")
 
         mock_config = MagicMock()
-        mock_config.bounty_max_per_tier = {"bronze": 3}
         mock_config.bounty_expiry_minutes = 480
-        mock_config.division_temperatures = {"bronze": 1.0}
         mock_cr = AsyncMock()
         mock_cr.get_by_guild_id = AsyncMock(return_value=mock_config)
         mock_cr_cls.return_value = mock_cr
-
-        mock_br = AsyncMock()
-        mock_br.count_active_by_guild_and_division = AsyncMock(return_value=0)
-        mock_br_cls.return_value = mock_br
 
         response = admin_client.post("/api/v1/bounties/guild/67890/admin-spawn?tier=bronze&user_id=999")
 
@@ -691,6 +667,43 @@ class TestAdminSpawnBounties:
         assert response.status_code == 200
         data = response.json()
         assert len(data["spawned"]) == 1
+
+    @patch("api.routers.bounties.get_db_session")
+    @patch("api.routers.bounties.AuditService")
+    @patch("api.routers.bounties.ConfigRepository")
+    @patch("utils.executors.bounty_spawn_executor._announce_bounty")
+    @patch("utils.executors.bounty_spawn_executor._schedule_expiry_job")
+    def test_admin_spawn_with_none_config_still_attempts_announce(
+        self,
+        mock_schedule,
+        mock_announce,
+        mock_cr_cls,
+        mock_audit,
+        mock_get_db,
+        admin_client,
+        mock_bounty_service_for_admin,
+    ):
+        """When guild config is None (unconfigured guild), admin-spawn still calls _announce_bounty
+        (which handles the None case gracefully by returning early with a warning).
+        This ensures no exception is raised and spawn still returns 200.
+        """
+        _configure_db_mock(mock_get_db)
+        mock_audit.log_action = AsyncMock()
+        mock_schedule.return_value = None
+        mock_announce.return_value = None
+
+        # Config is None — guild not configured
+        mock_cr = AsyncMock()
+        mock_cr.get_by_guild_id = AsyncMock(return_value=None)
+        mock_cr_cls.return_value = mock_cr
+
+        response = admin_client.post("/api/v1/bounties/guild/67890/admin-spawn?tier=bronze&user_id=999")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert len(data["spawned"]) == 1
+        # _announce_bounty is called even when config is None (it handles None config internally)
+        mock_announce.assert_awaited_once()
 
 
 # ===========================================================================
@@ -783,3 +796,308 @@ class TestExpireBountyDeletesDiscordMessage:
         assert data["cleared_count"] == 2
         # Verify clear_bounties was actually called (triggering the side effect)
         mock_bounty_service_for_admin.clear_bounties.assert_awaited_once()
+
+
+# ===========================================================================
+# New field: BountyCheckResponse with division/combat/bonus fields
+# ===========================================================================
+
+
+class TestCheckBountyNewFields:
+    """Tests that new combat fields are included in the check response."""
+
+    @patch("api.routers.bounties.get_db_session")
+    def test_check_bounty_correct_includes_division(self, mock_get_db, client, mock_bounty_service):
+        """The check response includes division when result is correct."""
+        _configure_db_mock(mock_get_db)
+        from services.bounty_service import CheckResponse, CheckResult
+
+        mock_bounty_service.check_bounty = AsyncMock(
+            return_value=CheckResponse(
+                result=CheckResult.CORRECT,
+                bounty_id=1,
+                message="Bounty captured! +500cr",
+                division="bronze",
+                criminal_name="Viper",
+                reward=500,
+                total_reward=1000,
+                bonus_won=True,
+                criminal_ship={"ship_name": "Bandit", "ship_armour": 80},
+            )
+        )
+
+        response = client.post(
+            "/api/v1/bounties/check?guild_id=67890",
+            json={"player_id": 42, "system_name": "Sol"},
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["result"] == "correct"
+        assert data["division"] == "bronze"
+        assert data["criminal_name"] == "Viper"
+        assert data["reward"] == 500
+        assert data["total_reward"] == 1000
+        assert data["bonus_won"] is True
+        assert data["criminal_ship"]["ship_name"] == "Bandit"
+
+    @patch("api.routers.bounties.get_db_session")
+    def test_check_bounty_includes_combat_result(self, mock_get_db, client, mock_bounty_service):
+        """The check response includes combat_result dict when combat occurred."""
+        _configure_db_mock(mock_get_db)
+        from services.bounty_service import CheckResponse, CheckResult
+
+        mock_bounty_service.check_bounty = AsyncMock(
+            return_value=CheckResponse(
+                result=CheckResult.CORRECT,
+                bounty_id=2,
+                message="Combat victory! +800cr",
+                division="silver",
+                criminal_name="Crusher",
+                reward=800,
+                combat_won=True,
+                combat_result={
+                    "winner_name": "Betty",
+                    "loser_name": "Crusher",
+                    "is_stalemate": False,
+                    "ship1_stats": {"ship_name": "Betty"},
+                    "ship2_stats": {"ship_name": "Crusher"},
+                    "variance_percent": 0.05,
+                },
+            )
+        )
+
+        response = client.post(
+            "/api/v1/bounties/check?guild_id=67890",
+            json={"player_id": 42, "system_name": "Sol"},
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["combat_result"]["winner_name"] == "Betty"
+        assert data["combat_result"]["is_stalemate"] is False
+        assert data["division"] == "silver"
+        assert data["combat_won"] is True
+
+    @patch("api.routers.bounties.get_db_session")
+    def test_check_bounty_silver_loss_no_reward(self, mock_get_db, client, mock_bounty_service):
+        """Silver loss has no reward and combat_won=False."""
+        _configure_db_mock(mock_get_db)
+        from services.bounty_service import CheckResponse, CheckResult
+
+        mock_bounty_service.check_bounty = AsyncMock(
+            return_value=CheckResponse(
+                result=CheckResult.CORRECT,
+                bounty_id=3,
+                message="Crusher defeated you in combat and escaped!",
+                division="silver",
+                criminal_name="Crusher",
+                combat_won=False,
+                reward=None,
+                combat_result={
+                    "winner_name": "Crusher",
+                    "loser_name": "Betty",
+                    "is_stalemate": False,
+                    "ship1_stats": {},
+                    "ship2_stats": {},
+                    "variance_percent": 0.05,
+                },
+            )
+        )
+
+        response = client.post(
+            "/api/v1/bounties/check?guild_id=67890",
+            json={"player_id": 42, "system_name": "Sol"},
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["combat_won"] is False
+        assert data["reward"] is None
+        assert data["bonus_won"] is False
+
+
+# ===========================================================================
+# Tests: POST /bounties/combat-bonus
+# ===========================================================================
+
+
+class TestCombatBonusEndpoint:
+    """Tests for POST /api/v1/bounties/combat-bonus."""
+
+    @pytest.fixture
+    def mock_bounty_service_with_player(self):
+        service = AsyncMock()
+        service.bounty_repo = AsyncMock()
+        service.player_repo = AsyncMock()
+        return service
+
+    @pytest.fixture
+    def test_app_combat(self, mock_bounty_service):
+        app = FastAPI()
+        from api.routers.bounties import get_bounty_service
+        from api.routers.bounties import router as bounties_router
+
+        app.include_router(bounties_router, prefix="/api/v1")
+        app.dependency_overrides[get_bounty_service] = lambda: mock_bounty_service
+        yield app
+        app.dependency_overrides.clear()
+
+    @pytest.fixture
+    def combat_client(self, test_app_combat):
+        return TestClient(test_app_combat)
+
+    @patch("api.routers.bounties.get_db_session")
+    @patch("services.loadout_builder.LoadoutBuilder")
+    @patch("services.combat_service.CombatService")
+    def test_combat_bonus_win(self, mock_combat_cls, mock_lb_cls, mock_get_db, combat_client, mock_bounty_service):
+        """Player wins combat bonus → returns won=True, bonus_credits=base_reward."""
+        from types import SimpleNamespace
+
+        _configure_db_mock(mock_get_db)
+
+        # Mock loadout builder
+        player_loadout = MagicMock()
+        player_loadout.ship_name = "Betty"
+        mock_lb_cls.from_player = AsyncMock(return_value=player_loadout)
+        mock_lb_cls.from_criminal_ship = MagicMock(return_value=MagicMock(ship_name="Bandit"))
+
+        # Mock combat service
+        mock_combat = MagicMock()
+        fight_stats1 = SimpleNamespace(
+            ship_name="Betty", raw_hp=200, raw_dps=10.0, varied_hp=195, varied_dps=10.5, ttk=18.57
+        )
+        fight_stats2 = SimpleNamespace(
+            ship_name="Bandit", raw_hp=100, raw_dps=5.0, varied_hp=98, varied_dps=5.1, ttk=38.2
+        )
+        mock_fight = MagicMock()
+        mock_fight.winner_name = "Betty"
+        mock_fight.loser_name = "Bandit"
+        mock_fight.is_stalemate = False
+        mock_fight.ship1_stats = fight_stats1
+        mock_fight.ship2_stats = fight_stats2
+        mock_fight.variance_percent = 0.05
+        mock_combat.fight_ships.return_value = mock_fight
+        mock_combat_cls.return_value = mock_combat
+
+        # Mock player in DB
+        mock_player = MagicMock()
+        mock_player.credits = 1000
+        mock_player.lifetime_credits = 5000
+        mock_bounty_service.player_repo.get_by_id = AsyncMock(return_value=mock_player)
+
+        response = combat_client.post(
+            "/api/v1/bounties/combat-bonus",
+            json={
+                "player_id": 42,
+                "base_reward": 500,
+                "criminal_ship": {"ship_name": "Bandit", "ship_armour": 80, "weapons": [], "turrets": []},
+            },
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["won"] is True
+        assert data["bonus_credits"] == 500
+        assert "2x" in data["message"] or "bonus" in data["message"].lower()
+        assert "combat_result" in data
+
+    @patch("api.routers.bounties.get_db_session")
+    @patch("services.loadout_builder.LoadoutBuilder")
+    @patch("services.combat_service.CombatService")
+    def test_combat_bonus_loss(self, mock_combat_cls, mock_lb_cls, mock_get_db, combat_client, mock_bounty_service):
+        """Player loses combat bonus → returns won=False, bonus_credits=0."""
+        from types import SimpleNamespace
+
+        _configure_db_mock(mock_get_db)
+
+        player_loadout = MagicMock()
+        player_loadout.ship_name = "Betty"
+        mock_lb_cls.from_player = AsyncMock(return_value=player_loadout)
+        mock_lb_cls.from_criminal_ship = MagicMock(return_value=MagicMock(ship_name="Overlord"))
+
+        mock_combat = MagicMock()
+        fight_stats1 = SimpleNamespace(
+            ship_name="Betty", raw_hp=100, raw_dps=5.0, varied_hp=98, varied_dps=5.1, ttk=10.0
+        )
+        fight_stats2 = SimpleNamespace(
+            ship_name="Overlord", raw_hp=1000, raw_dps=99.0, varied_hp=999, varied_dps=99.0, ttk=19.6
+        )
+        mock_fight = MagicMock()
+        mock_fight.winner_name = "Overlord"
+        mock_fight.loser_name = "Betty"
+        mock_fight.is_stalemate = False
+        mock_fight.ship1_stats = fight_stats1
+        mock_fight.ship2_stats = fight_stats2
+        mock_fight.variance_percent = 0.05
+        mock_combat.fight_ships.return_value = mock_fight
+        mock_combat_cls.return_value = mock_combat
+
+        mock_bounty_service.player_repo.get_by_id = AsyncMock(return_value=None)
+
+        response = combat_client.post(
+            "/api/v1/bounties/combat-bonus",
+            json={
+                "player_id": 42,
+                "base_reward": 500,
+                "criminal_ship": {"ship_name": "Overlord", "ship_armour": 1000, "weapons": [], "turrets": []},
+            },
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["won"] is False
+        assert data["bonus_credits"] == 0
+        assert "combat_result" in data
+
+    @patch("api.routers.bounties.get_db_session")
+    @patch("services.loadout_builder.LoadoutBuilder")
+    @patch("services.combat_service.CombatService")
+    def test_combat_bonus_stalemate_counts_as_win(
+        self, mock_combat_cls, mock_lb_cls, mock_get_db, combat_client, mock_bounty_service
+    ):
+        """Stalemate in combat-bonus endpoint counts as player win."""
+        from types import SimpleNamespace
+
+        _configure_db_mock(mock_get_db)
+
+        player_loadout = MagicMock()
+        player_loadout.ship_name = "Betty"
+        mock_lb_cls.from_player = AsyncMock(return_value=player_loadout)
+        mock_lb_cls.from_criminal_ship = MagicMock(return_value=MagicMock(ship_name="Raider"))
+
+        mock_combat = MagicMock()
+        fight_stats1 = SimpleNamespace(
+            ship_name="Betty", raw_hp=100, raw_dps=0.0, varied_hp=100, varied_dps=0.0, ttk=None
+        )
+        fight_stats2 = SimpleNamespace(
+            ship_name="Raider", raw_hp=100, raw_dps=0.0, varied_hp=100, varied_dps=0.0, ttk=None
+        )
+        mock_fight = MagicMock()
+        mock_fight.winner_name = None
+        mock_fight.loser_name = None
+        mock_fight.is_stalemate = True
+        mock_fight.ship1_stats = fight_stats1
+        mock_fight.ship2_stats = fight_stats2
+        mock_fight.variance_percent = 0.0
+        mock_combat.fight_ships.return_value = mock_fight
+        mock_combat_cls.return_value = mock_combat
+
+        mock_player = MagicMock()
+        mock_player.credits = 500
+        mock_player.lifetime_credits = 1000
+        mock_bounty_service.player_repo.get_by_id = AsyncMock(return_value=mock_player)
+
+        response = combat_client.post(
+            "/api/v1/bounties/combat-bonus",
+            json={
+                "player_id": 42,
+                "base_reward": 300,
+                "criminal_ship": {"ship_name": "Raider", "ship_armour": 100, "weapons": [], "turrets": []},
+            },
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["won"] is True
+        assert data["bonus_credits"] == 300

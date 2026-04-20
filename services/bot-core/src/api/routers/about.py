@@ -1,5 +1,5 @@
 from collections.abc import AsyncGenerator
-from pathlib import PurePosixPath
+from pathlib import Path, PurePosixPath
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -370,12 +370,25 @@ async def get_ship_render_info(
                 detail="Ship is not skinnable",
             )
 
+        def _resolve_asset_path(path: str | None) -> str | None:
+            """Try the original path; if it doesn't exist, try with .png extension."""
+            if path is None:
+                return None
+            p = Path(path)
+            if p.exists():
+                return path
+            # Try .png fallback (upscaled textures replaced .bmp/.jpg with .png)
+            png_path = p.with_suffix(".png")
+            if png_path.exists():
+                return str(png_path)
+            return path  # return original even if not found (let caller handle)
+
         assets: list[str] = ship.assets or []
 
         # Extract file paths from the assets list
         mtl_path: str | None = next((a for a in assets if a.endswith(".mtl")), None)
         skin_base_path: str | None = next((a for a in assets if "skinBase" in a), None)
-        diffuse_path: str | None = next((a for a in assets if "_diffuse" in a), None)
+        diffuse_path: str | None = _resolve_asset_path(next((a for a in assets if "_diffuse" in a), None))
 
         # Collect mask files (mask1.jpg, mask2.jpg …) ordered numerically
         import re
@@ -384,10 +397,13 @@ async def get_ship_render_info(
             m = re.search(r"mask(\d+)", path)
             return int(m.group(1)) if m else 0
 
-        mask_paths: list[str] = sorted(
-            [a for a in assets if re.search(r"mask\d+", a)],
-            key=_mask_sort_key,
-        )
+        mask_paths: list[str] = [
+            _resolve_asset_path(p) or p
+            for p in sorted(
+                [a for a in assets if re.search(r"mask\d+", a)],
+                key=_mask_sort_key,
+            )
+        ]
 
         # Derive the bbship directory from the model path (parent directory)
         bbship_dir: str | None = None
@@ -405,7 +421,7 @@ async def get_ship_render_info(
             "model_path": ship.model,
             "mtl_path": mtl_path,
             "skin_base_path": skin_base_path,
-            "norm_spec_path": ship.norm_spec,
+            "norm_spec_path": _resolve_asset_path(ship.norm_spec),
             "diffuse_path": diffuse_path,
             "mask_paths": mask_paths,
             "compatible_skins": ship.compatible_skins or {},

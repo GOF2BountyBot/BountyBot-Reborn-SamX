@@ -37,6 +37,23 @@ if "shared" not in sys.modules:
 from services.bounty_service import BountyService, CheckResult, RewardInfo
 
 # ---------------------------------------------------------------------------
+# Module-level autouse fixture: patch LoadoutBuilder.from_player
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture(autouse=True)
+def _mock_loadout_builder_from_player():
+    """Auto-mock LoadoutBuilder.from_player so check_bounty tests don't need real DB calls."""
+    from services.combat_models import ShipLoadout
+
+    with patch(
+        "services.loadout_builder.LoadoutBuilder.from_player",
+        new=AsyncMock(return_value=ShipLoadout(ship_name="Unarmed", base_armour=100)),
+    ):
+        yield
+
+
+# ---------------------------------------------------------------------------
 # Helpers / factory functions
 # ---------------------------------------------------------------------------
 
@@ -156,7 +173,7 @@ async def test_check_incorrect_triggers_announcement_edit(service, mock_db):
 
 @pytest.mark.asyncio
 async def test_check_correct_triggers_announcement_edit_win(service, mock_db):
-    """After a CORRECT check with combat win, _edit_bounty_announcement is called."""
+    """After a CORRECT check with combat win, _edit_bounty_announcement is called with captured=True."""
     player = _make_player(classic_mode=True)  # auto-win
     bounty = _make_active_bounty(answer="Sol")
     bounty.criminal_ship = {}
@@ -174,14 +191,15 @@ async def test_check_correct_triggers_announcement_edit_win(service, mock_db):
 
     assert result.result == CheckResult.CORRECT
     assert result.combat_won is True
-    service._edit_bounty_announcement.assert_called_once_with(mock_db, bounty)
+    service._edit_bounty_announcement.assert_called_once_with(mock_db, bounty, captured=True)
 
 
 @pytest.mark.asyncio
 async def test_check_correct_triggers_announcement_edit_loss(service, mock_db):
-    """After a CORRECT check with combat loss (escape), _edit_bounty_announcement is called."""
+    """After a CORRECT check with combat loss (Silver player reset), _edit_bounty_announcement is called."""
     active_ship = SimpleNamespace(ship_name="Betty", armour=50)
-    player = _make_player(active_ship=active_ship, classic_mode=False)
+    # Use Silver tier so mandatory combat gate applies (loss triggers _reset_bounty_checks)
+    player = _make_player(active_ship=active_ship, classic_mode=False, tier="Silver")
     bounty = _make_active_bounty(answer="Sol")
     bounty.criminal_ship = {
         "ship_name": "Dreadnought",
@@ -190,14 +208,23 @@ async def test_check_correct_triggers_announcement_edit_loss(service, mock_db):
         "turrets": [],
     }
 
-    mock_fight = SimpleNamespace(winner_name="Dreadnought", loser_name="Betty", is_stalemate=False)
+    _fs1 = SimpleNamespace(ship_name="Betty", raw_hp=50, raw_dps=0.0, varied_hp=50, varied_dps=0.0, ttk=None)
+    _fs2 = SimpleNamespace(ship_name="Dreadnought", raw_hp=500, raw_dps=99.0, varied_hp=499, varied_dps=99.0, ttk=None)
+    mock_fight = SimpleNamespace(
+        winner_name="Dreadnought",
+        loser_name="Betty",
+        is_stalemate=False,
+        ship1_stats=_fs1,
+        ship2_stats=_fs2,
+        variance_percent=0.05,
+    )
     service.combat_service = MagicMock()
     service.combat_service.fight_ships.return_value = mock_fight
 
     service.player_repo.get_by_id = AsyncMock(return_value=player)
     service.bounty_repo.get_active_by_guild_and_division = AsyncMock(return_value=[bounty])
     service.bounty_repo.update = AsyncMock(return_value=bounty)
-    service.escape_bounty = AsyncMock(return_value=(bounty, 5))
+    service._reset_bounty_checks = AsyncMock()
 
     service._edit_bounty_announcement = AsyncMock()
 
@@ -206,6 +233,116 @@ async def test_check_correct_triggers_announcement_edit_loss(service, mock_db):
     assert result.result == CheckResult.CORRECT
     assert result.combat_won is False
     service._edit_bounty_announcement.assert_called_once_with(mock_db, bounty)
+
+
+# ---------------------------------------------------------------------------
+# Tests: capture path — edit with captured=True, no delete
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_check_correct_win_edits_with_captured_flag(service, mock_db):
+    """After CORRECT + combat win (bronze auto-capture), _edit_bounty_announcement is called with captured=True.
+
+    New lifecycle: capture → EDIT to 'Captured!' state (no DELETE).
+    The DELETE happens only when the expiry timer fires.
+    """
+    player = _make_player(classic_mode=True)  # auto-win (bronze)
+    bounty = _make_active_bounty(answer="Sol")
+    bounty.criminal_ship = {}
+    service.player_repo.get_by_id = AsyncMock(return_value=player)
+    service.bounty_repo.get_active_by_guild_and_division = AsyncMock(return_value=[bounty])
+    service.bounty_repo.update = AsyncMock(return_value=bounty)
+    service.calc_rewards = AsyncMock(
+        return_value=[RewardInfo(player_id=1, credits_earned=1000, xp_earned=50, is_winner=True)]
+    )
+    service.distribute_rewards = AsyncMock(return_value=[])
+
+    service._edit_bounty_announcement = AsyncMock()
+
+    result = await service.check_bounty(mock_db, player_id=1, system_name="Sol", guild_id=1)
+
+    assert result.result == CheckResult.CORRECT
+    assert result.combat_won is True
+    # Must call edit with captured=True
+    service._edit_bounty_announcement.assert_called_once_with(mock_db, bounty, captured=True)
+
+
+@pytest.mark.asyncio
+async def test_check_correct_win_does_not_delete_announcement(service, mock_db):
+    """After CORRECT + combat win, _delete_bounty_announcement is NOT called.
+
+    The announcement is kept (showing 'CAPTURED') until the expiry timer fires.
+    """
+    player = _make_player(classic_mode=True)  # auto-win (bronze)
+    bounty = _make_active_bounty(answer="Sol")
+    bounty.criminal_ship = {}
+    service.player_repo.get_by_id = AsyncMock(return_value=player)
+    service.bounty_repo.get_active_by_guild_and_division = AsyncMock(return_value=[bounty])
+    service.bounty_repo.update = AsyncMock(return_value=bounty)
+    service.calc_rewards = AsyncMock(
+        return_value=[RewardInfo(player_id=1, credits_earned=1000, xp_earned=50, is_winner=True)]
+    )
+    service.distribute_rewards = AsyncMock(return_value=[])
+
+    service._edit_bounty_announcement = AsyncMock()
+    service._delete_bounty_announcement = AsyncMock()
+
+    result = await service.check_bounty(mock_db, player_id=1, system_name="Sol", guild_id=1)
+
+    assert result.result == CheckResult.CORRECT
+    # _delete_bounty_announcement must NOT be called on capture
+    service._delete_bounty_announcement.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_check_correct_silver_win_edits_with_captured_flag(service, mock_db):
+    """After CORRECT + Silver combat win, _edit_bounty_announcement is called with captured=True.
+
+    The autouse fixture mocks LoadoutBuilder.from_player to return ShipLoadout(ship_name="Unarmed").
+    So the mock fight must use winner_name="Unarmed" to simulate a player win.
+    """
+    active_ship = SimpleNamespace(ship_name="Unarmed", armour=100)
+    player = _make_player(active_ship=active_ship, classic_mode=False, tier="Silver")
+    bounty = _make_active_bounty(answer="Sol")
+    bounty.criminal_ship = {
+        "ship_name": "Betty",
+        "ship_armour": 50,
+        "weapons": [],
+        "turrets": [],
+    }
+
+    _fs1 = SimpleNamespace(ship_name="Unarmed", raw_hp=100, raw_dps=0.0, varied_hp=100, varied_dps=0.0, ttk=None)
+    _fs2 = SimpleNamespace(ship_name="Betty", raw_hp=50, raw_dps=0.0, varied_hp=50, varied_dps=0.0, ttk=None)
+    mock_fight = SimpleNamespace(
+        winner_name="Unarmed",  # player loadout ship_name (see autouse mock)
+        loser_name="Betty",
+        is_stalemate=False,
+        ship1_stats=_fs1,
+        ship2_stats=_fs2,
+        variance_percent=0.05,
+    )
+    service.combat_service = MagicMock()
+    service.combat_service.fight_ships.return_value = mock_fight
+
+    service.player_repo.get_by_id = AsyncMock(return_value=player)
+    service.bounty_repo.get_active_by_guild_and_division = AsyncMock(return_value=[bounty])
+    service.bounty_repo.update = AsyncMock(return_value=bounty)
+    service.calc_rewards = AsyncMock(
+        return_value=[RewardInfo(player_id=1, credits_earned=5000, xp_earned=250, is_winner=True)]
+    )
+    service.distribute_rewards = AsyncMock(return_value=[])
+
+    service._edit_bounty_announcement = AsyncMock()
+    service._delete_bounty_announcement = AsyncMock()
+
+    result = await service.check_bounty(mock_db, player_id=1, system_name="Sol", guild_id=1)
+
+    assert result.result == CheckResult.CORRECT
+    assert result.combat_won is True
+    # Must call edit with captured=True — no delete
+    service._edit_bounty_announcement.assert_called_once_with(mock_db, bounty, captured=True)
+    service._delete_bounty_announcement.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
@@ -273,12 +410,16 @@ async def test_edit_announcement_skips_when_no_message_found(service, mock_db):
 @pytest.mark.asyncio
 async def test_edit_announcement_rebuilds_embed_with_checked_systems(service, mock_db):
     """The builder is called with checked systems translated to the correct format."""
+    # Alpha is 3 stops before Sol (distance=3), so it's "checked" not "recently_spotted"
+    # Gamma is 1 stop before Sol, so it would be "recently_spotted"
     bounty = _make_active_bounty(
         bounty_id=10,
-        route=["Alpha", "Beta", "Sol"],
+        route=["Alpha", "Beta", "Gamma", "Delta", "Sol"],
         answer="Sol",
-        # Alpha checked by player 7, Sol (answer) found by player 7, Beta unchecked
-        checked={"Alpha": 7, "Beta": -1, "Sol": 7},
+        # Alpha checked by player 7 (3 stops before Sol → plain "checked"),
+        # Sol (answer) found by player 7,
+        # Beta unchecked
+        checked={"Alpha": 7, "Beta": -1, "Gamma": -1, "Delta": -1, "Sol": 7},
         guild_id=1,
         division="bronze",
         tech_level=3,
@@ -322,13 +463,84 @@ async def test_edit_announcement_rebuilds_embed_with_checked_systems(service, mo
     # Verify the builder was called
     mock_builder.build_payload.assert_called_once()
 
-    # Alpha is checked (not the answer) → "checked"
+    # Alpha is checked 3+ stops before the answer → "checked" (not recently_spotted)
     # Sol is the answer and was checked → "found"
-    # Beta is unchecked (checker_id == -1) → not in checked_for_builder
+    # Beta/Gamma/Delta are unchecked (checker_id == -1) → not in checked_for_builder
     checked_for_builder = captured_payload_args.get("checked")
     assert checked_for_builder is not None
     assert checked_for_builder.get("Alpha") == "checked"
     assert checked_for_builder.get("Sol") == "found"
+    assert "Beta" not in checked_for_builder
+    assert "Gamma" not in checked_for_builder
+    assert "Delta" not in checked_for_builder
+
+
+@pytest.mark.asyncio
+async def test_edit_announcement_rebuilds_embed_with_recently_spotted(service, mock_db):
+    """Systems 1-2 stops before the answer are marked as recently_spotted in the builder."""
+    # Gamma is 1 stop before Sol → recently_spotted
+    # Delta is 2 stops before Sol → recently_spotted
+    # Alpha is 4 stops before Sol → checked (not recently_spotted)
+    bounty = _make_active_bounty(
+        bounty_id=11,
+        route=["Alpha", "Beta", "Gamma", "Delta", "Sol"],
+        answer="Sol",
+        # Alpha: 4 stops before → plain "checked"
+        # Gamma: 2 stops before → "recently_spotted"
+        # Delta: 1 stop before → "recently_spotted"
+        # Sol: found → "found"
+        checked={"Alpha": 7, "Beta": -1, "Gamma": 7, "Delta": 7, "Sol": 7},
+        guild_id=1,
+        division="silver",
+        tech_level=5,
+        reward=10000,
+    )
+    discord_msg = _make_discord_message()
+
+    mock_msg_repo = AsyncMock()
+    mock_msg_repo.get_by_guild_type_and_reference = AsyncMock(return_value=discord_msg)
+
+    captured_payload_args = {}
+
+    def capture_build(payload_data):
+        captured_payload_args.update(payload_data)
+        return {"embed": {"title": "Zara"}}
+
+    mock_builder = MagicMock()
+    mock_builder.build_payload = MagicMock(side_effect=capture_build)
+
+    with (
+        patch(
+            "persist.repositories.discord_message_repository.DiscordMessageRepository",
+            return_value=mock_msg_repo,
+        ),
+        patch(
+            "message_builders.builders.bounty_announcement.BountyAnnouncementBuilder",
+            return_value=mock_builder,
+        ),
+        patch("httpx.AsyncClient") as mock_client_cls,
+    ):
+        mock_response = MagicMock()
+        mock_response.raise_for_status = MagicMock()
+        mock_client = AsyncMock()
+        mock_client.put = AsyncMock(return_value=mock_response)
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+        mock_client_cls.return_value = mock_client
+
+        await service._edit_bounty_announcement(mock_db, bounty)
+
+    checked_for_builder = captured_payload_args.get("checked")
+    assert checked_for_builder is not None
+    # Alpha is 4 stops before Sol → plain "checked"
+    assert checked_for_builder.get("Alpha") == "checked"
+    # Gamma is 2 stops before Sol → "recently_spotted"
+    assert checked_for_builder.get("Gamma") == "recently_spotted"
+    # Delta is 1 stop before Sol → "recently_spotted"
+    assert checked_for_builder.get("Delta") == "recently_spotted"
+    # Sol is the answer → "found"
+    assert checked_for_builder.get("Sol") == "found"
+    # Beta is unchecked → not in dict
     assert "Beta" not in checked_for_builder
 
 
@@ -421,39 +633,18 @@ async def test_edit_announcement_sends_put_to_gateway(service, mock_db):
 
 
 # ---------------------------------------------------------------------------
-# Tests: _delete_bounty_announcement in check_bounty
+# Tests: combat loss path still only edits (no delete, no captured flag)
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_check_correct_win_deletes_announcement(service, mock_db):
-    """After CORRECT + combat win (distribute_rewards), _delete_bounty_announcement is called."""
-    player = _make_player(classic_mode=True)  # auto-win
-    bounty = _make_active_bounty(answer="Sol")
-    bounty.criminal_ship = {}
-    service.player_repo.get_by_id = AsyncMock(return_value=player)
-    service.bounty_repo.get_active_by_guild_and_division = AsyncMock(return_value=[bounty])
-    service.bounty_repo.update = AsyncMock(return_value=bounty)
-    service.calc_rewards = AsyncMock(
-        return_value=[RewardInfo(player_id=1, credits_earned=1000, xp_earned=50, is_winner=True)]
-    )
-    service.distribute_rewards = AsyncMock(return_value=[])
-
-    service._edit_bounty_announcement = AsyncMock()
-    service._delete_bounty_announcement = AsyncMock()
-
-    result = await service.check_bounty(mock_db, player_id=1, system_name="Sol", guild_id=1)
-
-    assert result.result == CheckResult.CORRECT
-    assert result.combat_won is True
-    service._delete_bounty_announcement.assert_called_once_with(mock_db, bounty)
-
-
-@pytest.mark.asyncio
-async def test_check_correct_loss_deletes_announcement(service, mock_db):
-    """After CORRECT + combat loss (escape), _delete_bounty_announcement is called."""
+async def test_check_correct_loss_edits_announcement_no_captured_flag(service, mock_db):
+    """After CORRECT + combat loss (Silver player reset), _edit_bounty_announcement is called
+    WITHOUT captured=True — the bounty escapes and stays active.
+    """
     active_ship = SimpleNamespace(ship_name="Betty", armour=50)
-    player = _make_player(active_ship=active_ship, classic_mode=False)
+    # Silver tier: mandatory combat gate
+    player = _make_player(active_ship=active_ship, classic_mode=False, tier="Silver")
     bounty = _make_active_bounty(answer="Sol")
     bounty.criminal_ship = {
         "ship_name": "Dreadnought",
@@ -462,14 +653,23 @@ async def test_check_correct_loss_deletes_announcement(service, mock_db):
         "turrets": [],
     }
 
-    mock_fight = SimpleNamespace(winner_name="Dreadnought", loser_name="Betty", is_stalemate=False)
+    _fs1 = SimpleNamespace(ship_name="Betty", raw_hp=50, raw_dps=0.0, varied_hp=50, varied_dps=0.0, ttk=None)
+    _fs2 = SimpleNamespace(ship_name="Dreadnought", raw_hp=500, raw_dps=99.0, varied_hp=499, varied_dps=99.0, ttk=None)
+    mock_fight = SimpleNamespace(
+        winner_name="Dreadnought",
+        loser_name="Betty",
+        is_stalemate=False,
+        ship1_stats=_fs1,
+        ship2_stats=_fs2,
+        variance_percent=0.05,
+    )
     service.combat_service = MagicMock()
     service.combat_service.fight_ships.return_value = mock_fight
 
     service.player_repo.get_by_id = AsyncMock(return_value=player)
     service.bounty_repo.get_active_by_guild_and_division = AsyncMock(return_value=[bounty])
     service.bounty_repo.update = AsyncMock(return_value=bounty)
-    service.escape_bounty = AsyncMock(return_value=(bounty, 5))
+    service._reset_bounty_checks = AsyncMock()
 
     service._edit_bounty_announcement = AsyncMock()
     service._delete_bounty_announcement = AsyncMock()
@@ -478,31 +678,97 @@ async def test_check_correct_loss_deletes_announcement(service, mock_db):
 
     assert result.result == CheckResult.CORRECT
     assert result.combat_won is False
-    service._delete_bounty_announcement.assert_called_once_with(mock_db, bounty)
+    # On Silver+ loss: bounty stays active, edit called WITHOUT captured flag
+    service._edit_bounty_announcement.assert_called_once_with(mock_db, bounty)
+    service._delete_bounty_announcement.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# Tests: _edit_bounty_announcement passes captured flag to builder
+# ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_delete_announcement_non_fatal(service, mock_db):
-    """If _delete_bounty_announcement raises, check_bounty still returns normally."""
-    player = _make_player(classic_mode=True)  # auto-win
-    bounty = _make_active_bounty(answer="Sol")
-    bounty.criminal_ship = {}
-    service.player_repo.get_by_id = AsyncMock(return_value=player)
-    service.bounty_repo.get_active_by_guild_and_division = AsyncMock(return_value=[bounty])
-    service.bounty_repo.update = AsyncMock(return_value=bounty)
-    service.calc_rewards = AsyncMock(
-        return_value=[RewardInfo(player_id=1, credits_earned=1000, xp_earned=50, is_winner=True)]
-    )
-    service.distribute_rewards = AsyncMock(return_value=[])
+async def test_edit_announcement_passes_captured_true_to_builder(service, mock_db):
+    """When captured=True is passed, the builder receives captured=True in the data dict."""
+    bounty = _make_active_bounty(bounty_id=10, guild_id=1)
+    discord_msg = _make_discord_message()
 
-    service._edit_bounty_announcement = AsyncMock()
-    # _delete_bounty_announcement itself is non-fatal — but we test that if it
-    # raises (which its internal try/except prevents), check_bounty still returns OK.
-    # We mock it to raise to confirm the outer flow handles it.
-    service._delete_bounty_announcement = AsyncMock(side_effect=Exception("unexpected failure"))
+    mock_msg_repo = AsyncMock()
+    mock_msg_repo.get_by_guild_type_and_reference = AsyncMock(return_value=discord_msg)
 
-    # Should not raise even when _delete_bounty_announcement fails unexpectedly
-    result = await service.check_bounty(mock_db, player_id=1, system_name="Sol", guild_id=1)
+    captured_payload_args = {}
 
-    assert result.result == CheckResult.CORRECT
-    assert result.combat_won is True
+    def capture_build(payload_data):
+        captured_payload_args.update(payload_data)
+        return {"embed": {"title": "✅ Zara — CAPTURED"}}
+
+    mock_builder = MagicMock()
+    mock_builder.build_payload = MagicMock(side_effect=capture_build)
+
+    with (
+        patch(
+            "persist.repositories.discord_message_repository.DiscordMessageRepository",
+            return_value=mock_msg_repo,
+        ),
+        patch(
+            "message_builders.builders.bounty_announcement.BountyAnnouncementBuilder",
+            return_value=mock_builder,
+        ),
+        patch("httpx.AsyncClient") as mock_client_cls,
+    ):
+        mock_response = MagicMock()
+        mock_response.raise_for_status = MagicMock()
+        mock_client = AsyncMock()
+        mock_client.put = AsyncMock(return_value=mock_response)
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+        mock_client_cls.return_value = mock_client
+
+        await service._edit_bounty_announcement(mock_db, bounty, captured=True)
+
+    # captured=True must be passed to the builder
+    assert captured_payload_args.get("captured") is True
+
+
+@pytest.mark.asyncio
+async def test_edit_announcement_passes_captured_false_by_default(service, mock_db):
+    """When captured is not passed, the builder receives captured=False."""
+    bounty = _make_active_bounty(bounty_id=11, guild_id=1)
+    discord_msg = _make_discord_message()
+
+    mock_msg_repo = AsyncMock()
+    mock_msg_repo.get_by_guild_type_and_reference = AsyncMock(return_value=discord_msg)
+
+    captured_payload_args = {}
+
+    def capture_build(payload_data):
+        captured_payload_args.update(payload_data)
+        return {"embed": {"title": "Zara"}}
+
+    mock_builder = MagicMock()
+    mock_builder.build_payload = MagicMock(side_effect=capture_build)
+
+    with (
+        patch(
+            "persist.repositories.discord_message_repository.DiscordMessageRepository",
+            return_value=mock_msg_repo,
+        ),
+        patch(
+            "message_builders.builders.bounty_announcement.BountyAnnouncementBuilder",
+            return_value=mock_builder,
+        ),
+        patch("httpx.AsyncClient") as mock_client_cls,
+    ):
+        mock_response = MagicMock()
+        mock_response.raise_for_status = MagicMock()
+        mock_client = AsyncMock()
+        mock_client.put = AsyncMock(return_value=mock_response)
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+        mock_client_cls.return_value = mock_client
+
+        await service._edit_bounty_announcement(mock_db, bounty)
+
+    # captured should be False when not specified
+    assert captured_payload_args.get("captured") is False

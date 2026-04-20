@@ -152,43 +152,75 @@ def _make_loadout_response(
     bounty_id=1,
     criminal_name="BlackViper",
     tech_level=2,
-    criminal_ship=None,
+    ship_name="Viper MkII",
+    ship_stats=None,
+    weapons=None,
+    modules=None,
+    turrets=None,
+    message=None,
 ):
-    """Return a minimal loadout response dict."""
-    if criminal_ship is None:
-        criminal_ship = {
-            "ship_name": "Viper MkII",
-            "ship_emoji": "",
-            "ship_armour": 150,
-            "armor_hp": 310,
-            "shield_hp": 380,
-            "total_hp": 690,
-            "weapons": [
-                {"name": "Pulse Laser", "emoji": "", "dps": 10},
-                {"name": "Beam Laser", "emoji": "", "dps": 15},
-            ],
-            "modules": [
-                {
-                    "name": "D'iol Armour",
-                    "emoji": "",
-                    "type": "ArmourModule",
-                    "extra_atts": {"armour": 160},
-                },
-                {
-                    "name": "Particle Shield",
-                    "emoji": "",
-                    "type": "ShieldModule",
-                    "extra_atts": {"shield": 380},
-                },
-            ],
-            "turrets": [],
+    """Return a minimal unified LoadoutResponse dict (subject_kind='criminal')."""
+    if ship_stats is None:
+        ship_stats = {
+            "armour": 150,
+            "cargo": 45,
+            "handling": 60,
+            "hp": 690,
+            "dps": 25.0,
+            "total_value": 1000,
+            "max_primaries": 2,
+            "max_secondaries": 0,
+            "max_turrets": 0,
+            "max_modules": 2,
         }
-    return {
+    if weapons is None:
+        weapons = [
+            {"name": "Pulse Laser", "emoji": "<:pl:1>", "dps": 10.0, "value": 500},
+            {"name": "Beam Laser", "emoji": "<:bl:1>", "dps": 15.0, "value": 700},
+        ]
+    if modules is None:
+        modules = [
+            {
+                "name": "D'iol Armour",
+                "emoji": "<:diol:1>",
+                "type": "ArmourModule",
+                "value": 500,
+                "tech_level": 1,
+                "effects": [{"label": "Armour", "value": "160"}],
+                "combat_tier": "combat",
+            },
+            {
+                "name": "Particle Shield",
+                "emoji": "<:ps:1>",
+                "type": "ShieldModule",
+                "value": 800,
+                "tech_level": 1,
+                "effects": [{"label": "Shield", "value": "380"}],
+                "combat_tier": "combat",
+            },
+        ]
+    if turrets is None:
+        turrets = []
+    resp = {
+        "subject_kind": "criminal",
+        "subject_name": criminal_name,
+        "subject_description": "Void Syndicate",
         "bounty_id": bounty_id,
-        "criminal_name": criminal_name,
-        "criminal_ship": criminal_ship,
         "tech_level": tech_level,
+        "ship_name": ship_name,
+        "ship_emoji": "<:viper:1>",
+        "ship_icon": "https://cdn/ship.png",
+        "thumbnail_url": "https://cdn/criminal.png",
+        "ship_stats": ship_stats,
+        "weapons": weapons,
+        "turrets": turrets,
+        "modules": modules,
+        "cargo": [],
+        "cargo_total_count": 0,
     }
+    if message is not None:
+        resp["message"] = message
+    return resp
 
 
 # ---------------------------------------------------------------------------
@@ -729,10 +761,10 @@ class TestRouteCommand:
 
 
 class TestCriminalLoadoutCommand:
-    """Tests for the /criminal-loadout slash command."""
+    """Tests for the /criminal-loadout slash command (shared embed builder consumer)."""
 
-    def test_criminal_loadout_displays_ship_weapons_modules(self, mock_bounty_cog, make_mock_response):
-        """/criminal-loadout should display ship name, weapons, and modules."""
+    def test_criminal_loadout_sends_embed_public(self, mock_bounty_cog, make_mock_response):
+        """Happy path: response sent public (not ephemeral) with shared embed."""
         interaction = _create_mock_interaction()
         resp = make_mock_response(_make_loadout_response())
         mock_bounty_cog.http_client.get = AsyncMock(return_value=resp)
@@ -742,11 +774,66 @@ class TestCriminalLoadoutCommand:
         interaction.response.defer.assert_awaited_once_with(thinking=True)
         interaction.followup.send.assert_awaited_once()
         call_kwargs = interaction.followup.send.call_args[1]
+        # Success path is public (no ephemeral flag)
+        assert call_kwargs.get("ephemeral") is not True
         assert "embed" in call_kwargs
+
+    def test_criminal_loadout_embed_has_sections(self, mock_bounty_cog, make_mock_response):
+        """Embed contains Active Ship + Ship Stats + Primary Weapons + Modules + Cargo Hold fields."""
+        interaction = _create_mock_interaction()
+        resp = make_mock_response(_make_loadout_response())
+        mock_bounty_cog.http_client.get = AsyncMock(return_value=resp)
+
+        asyncio.run(mock_bounty_cog.criminal_loadout.callback(mock_bounty_cog, interaction, "1"))
+
+        embed = interaction.followup.send.call_args[1]["embed"]
+        names = [f.name for f in embed.fields]
+        assert "Active Ship" in names
+        assert "Ship Stats" in names
+        assert any(n.startswith("Primary Weapons") for n in names)
+        assert any(n.startswith("Modules") for n in names)
+        # Criminal path ALWAYS shows Cargo Hold <0/M>
+        assert any(n.startswith("Cargo Hold") for n in names)
+
+    def test_criminal_loadout_cargo_hold_shows_capacity(self, mock_bounty_cog, make_mock_response):
+        """Cargo Hold header format is '<0/M>' where M = ship_stats.cargo."""
+        interaction = _create_mock_interaction()
+        resp = make_mock_response(_make_loadout_response())  # default cargo=45
+        mock_bounty_cog.http_client.get = AsyncMock(return_value=resp)
+
+        asyncio.run(mock_bounty_cog.criminal_loadout.callback(mock_bounty_cog, interaction, "1"))
+
+        embed = interaction.followup.send.call_args[1]["embed"]
+        cargo_field = next(f for f in embed.fields if f.name.startswith("Cargo Hold"))
+        assert cargo_field.name == "Cargo Hold <0/45>"
+
+    def test_criminal_loadout_thumbnail_is_criminal_icon(self, mock_bounty_cog, make_mock_response):
+        """Thumbnail uses Criminal.icon (thumbnail_url), not ship_icon."""
+        interaction = _create_mock_interaction()
+        resp = make_mock_response(_make_loadout_response())
+        mock_bounty_cog.http_client.get = AsyncMock(return_value=resp)
+
+        asyncio.run(mock_bounty_cog.criminal_loadout.callback(mock_bounty_cog, interaction, "1"))
+
+        embed = interaction.followup.send.call_args[1]["embed"]
+        assert embed.thumbnail.url == "https://cdn/criminal.png"
+
+    def test_criminal_loadout_missing_criminal_ship_sends_ephemeral_error(
+        self, mock_bounty_cog, make_mock_response
+    ):
+        """message='Criminal ship data unavailable' → red error embed, ephemeral."""
+        interaction = _create_mock_interaction()
+        data = _make_loadout_response(message="Criminal ship data unavailable")
+        resp = make_mock_response(data)
+        mock_bounty_cog.http_client.get = AsyncMock(return_value=resp)
+
+        asyncio.run(mock_bounty_cog.criminal_loadout.callback(mock_bounty_cog, interaction, "1"))
+
+        call_kwargs = interaction.followup.send.call_args[1]
+        # Errors always ephemeral
+        assert call_kwargs.get("ephemeral") is True
         embed = call_kwargs["embed"]
-        # Ship name should be in the embed
-        field_names = [f.name for f in embed.fields]
-        assert any("Ship" in name for name in field_names)
+        assert "Criminal ship data unavailable" in (embed.description or "")
 
     def test_criminal_loadout_invalid_bounty_string_shows_error(self, mock_bounty_cog):
         """/criminal-loadout with non-numeric bounty string should show error."""
@@ -788,80 +875,22 @@ class TestCriminalLoadoutCommand:
         assert call_kwargs[1].get("ephemeral", False)
         assert "error occurred" in call_kwargs[0][0].lower()
 
-    def test_criminal_loadout_displays_armor_and_shield_hp(self, mock_bounty_cog, make_mock_response):
-        """/criminal-loadout should show Armor HP, Shield HP, and Total HP when shield present."""
+    def test_criminal_loadout_ship_stats_includes_hp_and_dps(self, mock_bounty_cog, make_mock_response):
+        """Ship Stats field includes HP, Armour, Handling, DPS (but NOT cargo)."""
         interaction = _create_mock_interaction()
-        criminal_ship = {
-            "ship_name": "Viper MkII",
-            "ship_emoji": "",
-            "ship_armour": 150,
-            "armor_hp": 310,
-            "shield_hp": 380,
-            "total_hp": 690,
-            "weapons": [],
-            "modules": [],
-            "turrets": [],
-        }
-        resp = make_mock_response(_make_loadout_response(criminal_ship=criminal_ship))
+        resp = make_mock_response(_make_loadout_response())
         mock_bounty_cog.http_client.get = AsyncMock(return_value=resp)
 
         asyncio.run(mock_bounty_cog.criminal_loadout.callback(mock_bounty_cog, interaction, "1"))
 
-        interaction.followup.send.assert_awaited_once()
         embed = interaction.followup.send.call_args[1]["embed"]
-        # Ship field should contain Armor HP, Shield HP, Total HP
-        ship_field = next(f for f in embed.fields if "Ship" in f.name)
-        assert "310" in ship_field.value  # armor_hp
-        assert "380" in ship_field.value  # shield_hp
-        assert "690" in ship_field.value  # total_hp
-
-    def test_criminal_loadout_displays_base_hp_when_no_shield(self, mock_bounty_cog, make_mock_response):
-        """/criminal-loadout should show just HP when shield_hp is 0."""
-        interaction = _create_mock_interaction()
-        criminal_ship = {
-            "ship_name": "Betty",
-            "ship_emoji": "",
-            "ship_armour": 120,
-            "armor_hp": 280,
-            "shield_hp": 0,
-            "total_hp": 280,
-            "weapons": [],
-            "modules": [],
-            "turrets": [],
-        }
-        resp = make_mock_response(_make_loadout_response(criminal_ship=criminal_ship))
-        mock_bounty_cog.http_client.get = AsyncMock(return_value=resp)
-
-        asyncio.run(mock_bounty_cog.criminal_loadout.callback(mock_bounty_cog, interaction, "1"))
-
-        interaction.followup.send.assert_awaited_once()
-        embed = interaction.followup.send.call_args[1]["embed"]
-        ship_field = next(f for f in embed.fields if "Ship" in f.name)
-        assert "280" in ship_field.value
-        # Should NOT say "Shield HP" or "Total HP" when shield is 0
-        assert "Shield HP" not in ship_field.value
-
-    def test_criminal_loadout_falls_back_to_ship_armour_if_no_hp_fields(self, mock_bounty_cog, make_mock_response):
-        """/criminal-loadout with legacy loadout (no armor_hp) falls back to ship_armour."""
-        interaction = _create_mock_interaction()
-        criminal_ship = {
-            "ship_name": "OldShip",
-            "ship_emoji": "",
-            "ship_armour": 250,
-            # No armor_hp / shield_hp / total_hp keys
-            "weapons": [],
-            "modules": [],
-            "turrets": [],
-        }
-        resp = make_mock_response(_make_loadout_response(criminal_ship=criminal_ship))
-        mock_bounty_cog.http_client.get = AsyncMock(return_value=resp)
-
-        asyncio.run(mock_bounty_cog.criminal_loadout.callback(mock_bounty_cog, interaction, "1"))
-
-        interaction.followup.send.assert_awaited_once()
-        embed = interaction.followup.send.call_args[1]["embed"]
-        ship_field = next(f for f in embed.fields if "Ship" in f.name)
-        assert "250" in ship_field.value
+        stats_field = next(f for f in embed.fields if f.name == "Ship Stats")
+        v = stats_field.value
+        assert "Armour: **150**" in v
+        assert "HP: **690**" in v
+        assert "DPS: **25**" in v
+        # Cargo value of 45 must NOT appear in Ship Stats (it's in the Cargo Hold header)
+        assert "Cargo" not in v
 
 
 # ---------------------------------------------------------------------------

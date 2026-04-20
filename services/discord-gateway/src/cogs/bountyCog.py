@@ -7,6 +7,7 @@ from discord import app_commands
 from discord.ext import commands
 from shared import bblogger
 from utils.autocomplete_utils import normalize_for_search
+from utils.loadout_embed import build_loadout_embed, build_loadout_error_embed
 from utils.timestamp_utils import iso_to_discord_ts
 
 # Set up logger
@@ -250,15 +251,6 @@ class BountyCog(commands.Cog):
         except Exception as e:  # pylint: disable=broad-exception-caught
             flogger.error(f"/check error: guild={interaction.guild_id} user={interaction.user.id} error={e}")
             await interaction.followup.send("⚠️ An error occurred while checking the system.", ephemeral=True)
-
-    @staticmethod
-    def _format_loadout_item(item) -> str:
-        """Format a loadout item dict as 'emoji name' or '• name'."""
-        if isinstance(item, str):
-            return f"• {item}"
-        name = item.get("name", str(item))
-        emoji = item.get("emoji") or ""
-        return f"{emoji} {name}" if emoji else f"• {name}"
 
     @staticmethod
     def _format_combat_summary(combat: dict) -> str:
@@ -645,8 +637,8 @@ class BountyCog(commands.Cog):
     @app_commands.describe(bounty="Select a bounty or enter bounty ID")
     @app_commands.autocomplete(bounty=bounty_autocomplete)
     async def criminal_loadout(self, interaction: discord.Interaction, bounty: str):
-        """Show criminal loadout."""
-        await interaction.response.defer(thinking=True)
+        """Show criminal loadout using the shared embed builder."""
+        await interaction.response.defer(thinking=True)  # always public
         flogger.info(
             f"/criminal-loadout invoked: guild={interaction.guild_id} user={interaction.user.id} bounty={bounty}"
         )
@@ -668,64 +660,21 @@ class BountyCog(commands.Cog):
             resp.raise_for_status()
             data = resp.json()
 
-            criminal_name = data.get("criminal_name", "Unknown")
-            criminal_ship = data.get("criminal_ship") or {}
-            tech_level = data.get("tech_level", 1)
+            # Error path (e.g. "Criminal ship data unavailable") — always ephemeral.
+            if data.get("message"):
+                embed = build_loadout_error_embed(
+                    title=f"Loadout — {data.get('subject_name', 'Unknown')}",
+                    description=data["message"],
+                )
+                await interaction.followup.send(embed=embed, ephemeral=True)
+                return
 
-            ship_name = criminal_ship.get("ship_name", "Unknown Ship")
-            ship_emoji = criminal_ship.get("ship_emoji") or ""
-            weapons = criminal_ship.get("weapons", [])
-            modules = criminal_ship.get("modules", [])
-            turrets = criminal_ship.get("turrets", [])
-
-            # Use computed HP fields when available, fall back to legacy ship_armour
-            armor_hp = criminal_ship.get("armor_hp")
-            shield_hp = criminal_ship.get("shield_hp", 0)
-            total_hp = criminal_ship.get("total_hp")
-            if armor_hp is None:
-                armor_hp = criminal_ship.get("ship_armour", 0)
-                shield_hp = 0
-                total_hp = armor_hp
-
-            total_dps = sum(w.get("dps", 0) for w in weapons) + sum(t.get("dps", 0) for t in turrets)
-            rounded_dps = round(total_dps, 1)
-            dps_str = str(int(rounded_dps)) if rounded_dps == int(rounded_dps) else f"{rounded_dps:.1f}"
-
-            ship_display = f"{ship_emoji} {ship_name}" if ship_emoji else ship_name
-
-            # Build HP display string
-            if shield_hp and shield_hp > 0:
-                hp_display = f"Armor HP: **{armor_hp}** | Shield HP: **{shield_hp}** | Total HP: **{total_hp}**"
-            else:
-                hp_display = f"HP: **{armor_hp}**"
-
-            embed = discord.Embed(
-                title=f"🚀 Loadout — {criminal_name}",
-                description=f"Bounty #{bounty_id} | Tech Level: **T{tech_level}**",
-                color=discord.Color.dark_red(),
-            )
-
-            embed.add_field(name="🛸 Ship", value=f"{ship_display}\n{hp_display} | DPS: **{dps_str}**", inline=False)
-
-            if weapons:
-                weapons_str = "\n".join(self._format_loadout_item(w) for w in weapons)
-                embed.add_field(name="🔫 Primary Weapons", value=weapons_str, inline=False)
-
-            if turrets:
-                turrets_str = "\n".join(self._format_loadout_item(t) for t in turrets)
-                embed.add_field(name="🔫 Turrets", value=turrets_str, inline=False)
-
-            if modules:
-                modules_str = "\n".join(self._format_loadout_item(m) for m in modules)
-                embed.add_field(name="⚙️ Modules", value=modules_str, inline=False)
-
-            if not weapons and not turrets and not modules:
-                embed.add_field(name="Equipment", value="*No equipment*", inline=False)
-
+            # Criminal path always public; cargo header always shown (viewer_is_owner_or_admin=True).
+            embed = build_loadout_embed(data, viewer_is_owner_or_admin=True)
             await interaction.followup.send(embed=embed)
             flogger.info(
                 f"/criminal-loadout success: guild={interaction.guild_id} user={interaction.user.id}"
-                f" bounty_id={bounty_id} criminal={criminal_name}"
+                f" bounty_id={bounty_id} criminal={data.get('subject_name')}"
             )
 
         except httpx.HTTPStatusError as e:

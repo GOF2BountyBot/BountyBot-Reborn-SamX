@@ -5,6 +5,7 @@ import httpx
 from discord import app_commands
 from discord.ext import commands
 from shared import bblogger
+from utils.autocomplete_utils import normalize_for_search
 from utils.timestamp_utils import iso_to_discord_ts
 
 # Set up logger
@@ -13,6 +14,23 @@ flogger = bblogger.get_logger("discord-gateway-ShipsCog")
 # Define any environment variables or constants here
 api_base = os.environ.get("BOT_API_BASE_URL", "http://bot-core:8000/api/v1")
 flogger.debug(f"shipsCog loading with API_BASE_URL: {api_base}")
+
+# Message shown when the guild hasn't been set up via /admin_setup
+_GUILD_NOT_CONFIGURED_MSG = (
+    "⚠️ This server hasn't been set up yet. An admin must run `/admin_setup` "
+    "to initialize BountyBot before you can use this command."
+)
+
+
+def _is_guild_not_configured(exc: httpx.HTTPStatusError) -> bool:
+    """Return True if the HTTPStatusError is a 'guild not configured' 400 response."""
+    if exc.response.status_code != 400:
+        return False
+    try:
+        detail = exc.response.json().get("detail", "")
+        return "not configured" in detail.lower() or "admin_setup" in detail.lower()
+    except Exception:  # pylint: disable=broad-exception-caught
+        return False
 
 
 class ShipsCog(commands.Cog):
@@ -25,13 +43,21 @@ class ShipsCog(commands.Cog):
         await self.http_client.aclose()
 
     async def _get_player_id(self, user_id: int, guild_id: int) -> int | None:
-        """Helper to get player ID from Discord user ID."""
+        """Helper to get player ID from Discord user ID.
+
+        Re-raises httpx.HTTPStatusError for guild-not-configured responses so callers
+        can surface a user-friendly message.
+        """
         try:
-            user_data = {"discord_id": user_id, "guild_id": guild_id, "discord_username": "temp"}
+            user_data = {"discord_id": user_id, "guild_id": guild_id, "discord_username": None}
 
             resp = await self.http_client.post(f"{api_base}/players/", json=user_data, timeout=5)
             resp.raise_for_status()
             return resp.json()["id"]
+        except httpx.HTTPStatusError as e:
+            if _is_guild_not_configured(e):
+                raise
+            return None
         except Exception:  # pylint: disable=broad-exception-caught
             return None
 
@@ -118,11 +144,14 @@ class ShipsCog(commands.Cog):
             )
 
         except httpx.HTTPStatusError as e:
-            flogger.error(
-                f"/ships API error: status={e.response.status_code}, guild={interaction.guild_id}, "
-                f"user={interaction.user.id}, error={e}"
-            )
-            await interaction.followup.send(f"❌ API Error: {e}", ephemeral=True)
+            if _is_guild_not_configured(e):
+                await interaction.followup.send(_GUILD_NOT_CONFIGURED_MSG, ephemeral=True)
+            else:
+                flogger.error(
+                    f"/ships API error: status={e.response.status_code}, guild={interaction.guild_id}, "
+                    f"user={interaction.user.id}, error={e}"
+                )
+                await interaction.followup.send(f"❌ API Error: {e}", ephemeral=True)
         except Exception as e:  # pylint: disable=broad-exception-caught
             flogger.error(f"/ships failed: guild={interaction.guild_id}, user={interaction.user.id}, error={e}")
             await interaction.followup.send("⚠️ An error occurred while fetching ships.", ephemeral=True)
@@ -227,12 +256,63 @@ class ShipsCog(commands.Cog):
             )
             await interaction.followup.send("⚠️ An error occurred while fetching ship details.", ephemeral=True)
 
+    async def setactive_autocomplete(
+        self, interaction: discord.Interaction, current: str
+    ) -> list[app_commands.Choice[str]]:
+        """Autocomplete for /setactive — shows the player's owned ships."""
+        try:
+            # Resolve player ID
+            user_data = {
+                "discord_id": interaction.user.id,
+                "guild_id": interaction.guild_id,
+                "discord_username": None,
+            }
+            player_resp = await self.http_client.post(f"{api_base}/players/", json=user_data, timeout=3)
+            player_resp.raise_for_status()
+            player_id = player_resp.json().get("id")
+            if not player_id:
+                return []
+
+            # Fetch the player's ships
+            ships_resp = await self.http_client.get(f"{api_base}/ships/player/{player_id}", timeout=3)
+            ships_resp.raise_for_status()
+            ships = ships_resp.json()
+
+            norm_current = normalize_for_search(current)
+            choices = []
+            for ship in ships:
+                ship_name = ship.get("ship_name", "")
+                nickname = ship.get("nickname") or ""
+                ship_id_val = ship.get("id")
+                if not ship_name or ship_id_val is None:
+                    continue
+                # Build display label: "ShipName" or "ShipName (Nickname)"
+                label = f"{ship_name} ({nickname})" if nickname else ship_name
+                if ship.get("is_active"):
+                    label = f"🟢 {label}"
+                if norm_current in normalize_for_search(label):
+                    choices.append(app_commands.Choice(name=label[:100], value=str(ship_id_val)))
+            return choices[:25]
+        except Exception:  # pylint: disable=broad-exception-caught
+            return []
+
     @app_commands.command(name="setactive", description="Set a ship as your active ship")
-    @app_commands.describe(ship_id="ID of the ship to set as active")
-    async def setactive(self, interaction: discord.Interaction, ship_id: int):
+    @app_commands.describe(ship_id="ID of the ship to set as active (select from list or enter ID)")
+    @app_commands.autocomplete(ship_id=setactive_autocomplete)
+    async def setactive(self, interaction: discord.Interaction, ship_id: str):
         """Set active ship."""
         flogger.info(f"/setactive: guild={interaction.guild_id}, user={interaction.user.id}, ship_id={ship_id}")
         await interaction.response.defer(thinking=True)
+
+        # Validate that ship_id is a valid integer (user may type freeform or pick from autocomplete)
+        try:
+            ship_id_int = int(ship_id)
+        except (ValueError, TypeError):
+            await interaction.followup.send(
+                "❌ Invalid ship ID. Please select from the dropdown or enter a numeric ID.",
+                ephemeral=True,
+            )
+            return
 
         try:
             flogger.debug(f"/setactive: resolving player for user={interaction.user.id}")
@@ -243,13 +323,13 @@ class ShipsCog(commands.Cog):
                 return
 
             # Set active ship
-            flogger.debug(f"/setactive: setting ship_id={ship_id} as active for player_id={player_id}")
+            flogger.debug(f"/setactive: setting ship_id={ship_id_int} as active for player_id={player_id}")
             resp = await self.http_client.put(
-                f"{api_base}/ships/{ship_id}/set-active", params={"player_id": player_id}, timeout=10
+                f"{api_base}/ships/{ship_id_int}/set-active", params={"player_id": player_id}, timeout=10
             )
             resp.raise_for_status()
             ship = resp.json()
-            flogger.debug(f"/setactive: ship set active - ship_id={ship_id}, ship_name={ship.get('ship_name')}")
+            flogger.debug(f"/setactive: ship set active - ship_id={ship_id_int}, ship_name={ship.get('ship_name')}")
 
             # Success message
             ship_name = ship["ship_name"]
@@ -267,25 +347,25 @@ class ShipsCog(commands.Cog):
             await interaction.followup.send(embed=embed)
             flogger.info(
                 f"/setactive success: guild={interaction.guild_id}, user={interaction.user.id}, "
-                f"ship_id={ship_id}, ship_name={ship.get('ship_name')}"
+                f"ship_id={ship_id_int}, ship_name={ship.get('ship_name')}"
             )
 
         except httpx.HTTPStatusError as e:
             if e.response.status_code == 400:
-                flogger.debug(f"/setactive validation failed: ship_id={ship_id}, guild={interaction.guild_id}")
+                flogger.debug(f"/setactive validation failed: ship_id={ship_id_int}, guild={interaction.guild_id}")
                 await interaction.followup.send("❌ Invalid ship or you don't own this ship.", ephemeral=True)
             elif e.response.status_code == 404:
-                flogger.debug(f"/setactive not found: ship_id={ship_id}, guild={interaction.guild_id}")
+                flogger.debug(f"/setactive not found: ship_id={ship_id_int}, guild={interaction.guild_id}")
                 await interaction.followup.send("❌ Ship not found.", ephemeral=True)
             else:
                 flogger.error(
-                    f"/setactive API error: status={e.response.status_code}, ship_id={ship_id}, "
+                    f"/setactive API error: status={e.response.status_code}, ship_id={ship_id_int}, "
                     f"guild={interaction.guild_id}, user={interaction.user.id}, error={e}"
                 )
                 await interaction.followup.send(f"❌ API Error: {e}", ephemeral=True)
         except Exception as e:  # pylint: disable=broad-exception-caught
             flogger.error(
-                f"/setactive failed: ship_id={ship_id}, guild={interaction.guild_id}, "
+                f"/setactive failed: ship_id={ship_id_int}, guild={interaction.guild_id}, "
                 f"user={interaction.user.id}, error={e}"
             )
             await interaction.followup.send("⚠️ An error occurred while setting active ship.", ephemeral=True)

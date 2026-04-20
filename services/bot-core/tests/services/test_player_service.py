@@ -158,16 +158,19 @@ class TestGetOrCreatePlayer:
 
     @pytest.mark.asyncio
     async def test_returns_existing_player_when_found(self, service, mock_db, mock_user_repo, mock_player_repo):
-        """When a player already exists for the guild, return it without creating a new one."""
-        user = _make_user()
+        """When a player already exists for the guild, return it without creating a new one.
+
+        New behavior: player lookup comes BEFORE user_repo call.
+        Existing players are returned immediately without touching user_repo or config_repo.
+        """
         player = _make_player()
-        mock_user_repo.get_or_create_user.return_value = user
         mock_player_repo.get_by_user_and_guild.return_value = player
 
         result = await service.get_or_create_player(mock_db, discord_id=111, guild_id=999)
 
         assert result is player
-        mock_user_repo.get_or_create_user.assert_awaited_once_with(mock_db, 111, None)
+        # In the new implementation, user_repo is NOT called for existing players
+        mock_user_repo.get_or_create_user.assert_not_awaited()
         mock_player_repo.get_by_user_and_guild.assert_awaited_once_with(mock_db, 111, 999)
         mock_player_repo.add.assert_not_awaited()
 
@@ -195,40 +198,57 @@ class TestGetOrCreatePlayer:
         service._create_starter_loadout.assert_awaited_once_with(mock_db, new_player)
 
     @pytest.mark.asyncio
-    async def test_passes_username_to_user_repo(self, service, mock_db, mock_user_repo, mock_player_repo):
-        """discord_username is forwarded to user_repo.get_or_create_user."""
+    async def test_passes_username_to_user_repo(
+        self, service, mock_db, mock_user_repo, mock_player_repo, mock_config_repo
+    ):
+        """discord_username is forwarded to user_repo.get_or_create_user for NEW player creation.
+
+        New behavior: username is used when creating a new player (no existing player found).
+        """
         user = _make_user()
-        player = _make_player()
+        config = _make_config(starting_credits=500)
+        new_player = _make_player(player_id=42)
+
         mock_user_repo.get_or_create_user.return_value = user
-        mock_player_repo.get_by_user_and_guild.return_value = player
+        mock_player_repo.get_by_user_and_guild.return_value = None  # no existing player
+        mock_config_repo.get_by_guild_id.return_value = config
+        mock_player_repo.add.return_value = new_player
+        service._create_starter_loadout = AsyncMock()
 
         await service.get_or_create_player(mock_db, discord_id=111, guild_id=999, discord_username="Alice")
 
         mock_user_repo.get_or_create_user.assert_awaited_once_with(mock_db, 111, "Alice")
 
     @pytest.mark.asyncio
-    async def test_uses_zero_credits_when_no_config(
+    async def test_raises_guild_not_configured_when_no_config(
         self, service, mock_db, mock_user_repo, mock_player_repo, mock_config_repo
     ):
-        """When no guild config exists, new player gets 0 starting credits."""
-        user = _make_user()
-        mock_user_repo.get_or_create_user.return_value = user
+        """When no guild config exists, GuildNotConfiguredError is raised (no auto-create).
+
+        This replaces the old behavior that created a player with 0 credits.
+        """
+        from services.config_service import GuildNotConfiguredError
+
         mock_player_repo.get_by_user_and_guild.return_value = None
         mock_config_repo.get_by_guild_id.return_value = None
 
-        created_player = _make_player(credits=0)
-        mock_player_repo.add.return_value = created_player
-        service._create_starter_loadout = AsyncMock()
+        with pytest.raises(GuildNotConfiguredError) as exc_info:
+            await service.get_or_create_player(mock_db, discord_id=111, guild_id=999)
 
-        await service.get_or_create_player(mock_db, discord_id=111, guild_id=999)
-
-        # Verify a Player was added with credits=0
-        added_player = mock_player_repo.add.call_args[0][1]
-        assert added_player.credits == 0
+        assert exc_info.value.guild_id == 999
+        mock_player_repo.add.assert_not_awaited()
 
     @pytest.mark.asyncio
-    async def test_re_raises_exception_from_user_repo(self, service, mock_db, mock_user_repo):
-        """Exceptions from user_repo bubble up."""
+    async def test_re_raises_exception_from_user_repo(
+        self, service, mock_db, mock_user_repo, mock_player_repo, mock_config_repo
+    ):
+        """Exceptions from user_repo bubble up when creating new player."""
+        from services.config_service import GuildNotConfiguredError
+
+        # New player path: config check passes, then user_repo is called
+        config = _make_config(starting_credits=0)
+        mock_player_repo.get_by_user_and_guild.return_value = None
+        mock_config_repo.get_by_guild_id.return_value = config
         mock_user_repo.get_or_create_user.side_effect = RuntimeError("DB down")
 
         with pytest.raises(RuntimeError, match="DB down"):

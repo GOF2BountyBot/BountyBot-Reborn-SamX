@@ -1,3 +1,4 @@
+import contextlib
 import os
 
 import discord
@@ -5,6 +6,7 @@ import httpx
 from discord import app_commands
 from discord.ext import commands
 from shared import bblogger
+from utils.autocomplete_utils import normalize_for_search
 
 # Set up logger
 flogger = bblogger.get_logger("discord-gateway-ShopCog")
@@ -12,6 +14,23 @@ flogger = bblogger.get_logger("discord-gateway-ShopCog")
 # Define any environment variables or constants here
 api_base = os.environ.get("BOT_API_BASE_URL", "http://bot-core:8000/api/v1")
 flogger.debug(f"shopCog loading with API_BASE_URL: {api_base}")
+
+# Message shown when the guild hasn't been set up via /admin_setup
+_GUILD_NOT_CONFIGURED_MSG = (
+    "⚠️ This server hasn't been set up yet. An admin must run `/admin_setup` "
+    "to initialize BountyBot before you can use this command."
+)
+
+
+def _is_guild_not_configured(exc: httpx.HTTPStatusError) -> bool:
+    """Return True if the HTTPStatusError is a 'guild not configured' 400 response."""
+    if exc.response.status_code != 400:
+        return False
+    try:
+        detail = exc.response.json().get("detail", "")
+        return "not configured" in detail.lower() or "admin_setup" in detail.lower()
+    except Exception:  # pylint: disable=broad-exception-caught
+        return False
 
 
 class ShopCog(commands.Cog):
@@ -26,13 +45,21 @@ class ShopCog(commands.Cog):
         await self.http_client.aclose()
 
     async def _get_player_data(self, user_id: int, guild_id: int) -> dict | None:
-        """Helper to get player data from Discord user ID."""
+        """Helper to get player data from Discord user ID.
+
+        Returns None on any error, OR raises GuildNotConfigured sentinel
+        string "GUILD_NOT_CONFIGURED" so callers can surface the right message.
+        """
         try:
-            user_data = {"discord_id": user_id, "guild_id": guild_id, "discord_username": "temp"}
+            user_data = {"discord_id": user_id, "guild_id": guild_id, "discord_username": None}
 
             resp = await self.http_client.post(f"{api_base}/players/", json=user_data, timeout=5)
             resp.raise_for_status()
             return resp.json()
+        except httpx.HTTPStatusError as e:
+            if _is_guild_not_configured(e):
+                raise
+            return None
         except Exception:  # pylint: disable=broad-exception-caught
             return None
 
@@ -40,18 +67,22 @@ class ShopCog(commands.Cog):
         self, _interaction: discord.Interaction, current: str
     ) -> list[app_commands.Choice[str]]:
         """Autocomplete for tier selection."""
+        norm_current = normalize_for_search(current)
         return [
-            app_commands.Choice(name=tier, value=tier) for tier in self._valid_tiers if current.lower() in tier.lower()
+            app_commands.Choice(name=tier, value=tier)
+            for tier in self._valid_tiers
+            if norm_current in normalize_for_search(tier)
         ]
 
     async def item_type_autocomplete(
         self, _interaction: discord.Interaction, current: str
     ) -> list[app_commands.Choice[str]]:
         """Autocomplete for item type selection."""
+        norm_current = normalize_for_search(current)
         return [
             app_commands.Choice(name=item_type.title(), value=item_type)
             for item_type in self._valid_item_types
-            if current.lower() in item_type.lower()
+            if norm_current in normalize_for_search(item_type)
         ]
 
     @app_commands.command(name="shop", description="Browse the guild shop")
@@ -176,7 +207,10 @@ class ShopCog(commands.Cog):
             flogger.debug(f"/shop {tier} by {interaction.user} in guild {interaction.guild_id}")
 
         except httpx.HTTPStatusError as e:
-            await interaction.followup.send(f"❌ API Error: {e}", ephemeral=True)
+            if _is_guild_not_configured(e):
+                await interaction.followup.send(_GUILD_NOT_CONFIGURED_MSG, ephemeral=True)
+            else:
+                await interaction.followup.send(f"❌ API Error: {e}", ephemeral=True)
         except Exception as e:  # pylint: disable=broad-exception-caught
             flogger.error(f"Error in /shop: {e}")
             await interaction.followup.send("⚠️ An error occurred while fetching shop items.", ephemeral=True)
@@ -191,6 +225,7 @@ class ShopCog(commands.Cog):
             if not player:
                 return []
             player_tier_idx = self._valid_tiers.index(player["tier"])
+            norm_current = normalize_for_search(current)
             choices: list[app_commands.Choice[int]] = []
             for tier_idx in range(player_tier_idx + 1):
                 tier = self._valid_tiers[tier_idx]
@@ -201,7 +236,7 @@ class ShopCog(commands.Cog):
                     continue
                 for item in resp.json():
                     label = f"{item['item_name']} ({item['price']:,}cr) [{tier}]"
-                    if current.lower() in label.lower():
+                    if norm_current in normalize_for_search(label):
                         choices.append(app_commands.Choice(name=label[:100], value=item["id"]))
             return choices[:25]
         except Exception:  # pylint: disable=broad-exception-caught
@@ -257,10 +292,16 @@ class ShopCog(commands.Cog):
                 )
                 return
 
-            # Make purchase
-            purchase_data = {"player_id": player["id"], "shop_item_id": item_id, "quantity": quantity}
+            # Make purchase — ships go to hangar, other items go to inventory
+            is_ship = shop_item.get("item_type") == "ship"
 
-            resp = await self.http_client.post(f"{api_base}/shops/purchase", json=purchase_data, timeout=10)
+            if is_ship:
+                purchase_data = {"player_id": player["id"], "shop_item_id": item_id, "sell_old_ship": False}
+                resp = await self.http_client.post(f"{api_base}/shops/purchase-ship", json=purchase_data, timeout=10)
+            else:
+                purchase_data = {"player_id": player["id"], "shop_item_id": item_id, "quantity": quantity}
+                resp = await self.http_client.post(f"{api_base}/shops/purchase", json=purchase_data, timeout=10)
+
             resp.raise_for_status()
             transaction = resp.json()
 
@@ -276,7 +317,8 @@ class ShopCog(commands.Cog):
             embed.add_field(name="Total Cost", value=f"{transaction['total_cost']:,} credits", inline=True)
             embed.add_field(name="Remaining Credits", value=f"{transaction['remaining_credits']:,}", inline=True)
 
-            embed.set_footer(text="Items added to your inventory!")
+            footer_text = "Ship added to your hangar!" if is_ship else "Items added to your inventory!"
+            embed.set_footer(text=footer_text)
 
             await interaction.followup.send(embed=embed)
             flogger.info(
@@ -285,7 +327,9 @@ class ShopCog(commands.Cog):
             )
 
         except httpx.HTTPStatusError as e:
-            if e.response.status_code == 400:
+            if _is_guild_not_configured(e):
+                await interaction.followup.send(_GUILD_NOT_CONFIGURED_MSG, ephemeral=True)
+            elif e.response.status_code == 400:
                 # Try to get the error message from the response
                 try:
                     error_detail = e.response.json().get("detail", "Invalid request")
@@ -300,10 +344,36 @@ class ShopCog(commands.Cog):
             flogger.error(f"Error in /buy: {e}")
             await interaction.followup.send("⚠️ An error occurred while processing purchase.", ephemeral=True)
 
+    # Mapping from internal item_type values to sell-compatible type strings
+    _SELL_TYPE_MAP = {
+        "ship": "ship",
+        "module": "module",
+        "weapon": "weapon",
+        "turret": "turret",
+        "primary_weapon": "weapon",
+        "secondary_weapon": "weapon",
+        "turret_weapon": "turret",
+    }
+
+    # Human-readable labels for item types
+    _ITEM_TYPE_LABELS = {
+        "ship": "Ship",
+        "module": "Module",
+        "primary_weapon": "Primary Weapon",
+        "secondary_weapon": "Secondary Weapon",
+        "turret_weapon": "Turret Weapon",
+        "weapon": "Weapon",
+        "turret": "Turret",
+    }
+
     async def sell_item_autocomplete(
         self, interaction: discord.Interaction, current: str
     ) -> list[app_commands.Choice[str]]:
-        """Live autocomplete for inventory items the player can sell."""
+        """Live autocomplete for inventory items the player can sell.
+
+        Fetches player's full inventory and filters by item_type if provided.
+        Display format: "Item Name (Type)" — value is the item_name.
+        """
         try:
             player = await self._get_player_data(interaction.user.id, interaction.guild_id)
             if not player:
@@ -312,32 +382,61 @@ class ShopCog(commands.Cog):
             if resp.status_code != 200:
                 return []
             items = resp.json()
+
+            # Get the current item_type filter from the interaction namespace
+            item_type_filter: str | None = None
+            with contextlib.suppress(AttributeError):
+                item_type_filter = interaction.namespace.item_type or None
+
+            norm_current = normalize_for_search(current)
             choices: list[app_commands.Choice[str]] = []
-            for item in items:
-                name = item.get("item_name", "")
-                qty = item.get("quantity", 1)
-                label = f"{name} x{qty}" if qty > 1 else name
-                if current.lower() in label.lower():
+            for inv_item in items:
+                name = inv_item.get("item_name", "")
+                raw_type = inv_item.get("item_type", "")
+
+                # Filter by item_type if one was provided
+                if item_type_filter:
+                    sell_type = self._SELL_TYPE_MAP.get(raw_type, raw_type)
+                    if sell_type != item_type_filter and raw_type != item_type_filter:
+                        continue
+
+                type_label = self._ITEM_TYPE_LABELS.get(raw_type, raw_type.replace("_", " ").title())
+                label = f"{name} ({type_label})"
+                if norm_current in normalize_for_search(label):
                     choices.append(app_commands.Choice(name=label[:100], value=name))
             return choices[:25]
         except Exception:  # pylint: disable=broad-exception-caught
             return []
 
+    async def _resolve_sell_item_type(self, player_id: int, item_name: str) -> str | None:
+        """Look up the item_type for a named item in the player's inventory."""
+        try:
+            resp = await self.http_client.get(f"{api_base}/inventory/player/{player_id}", timeout=5)
+            if resp.status_code != 200:
+                return None
+            for inv_item in resp.json():
+                if inv_item.get("item_name") == item_name:
+                    raw_type = inv_item.get("item_type", "")
+                    return self._SELL_TYPE_MAP.get(raw_type, raw_type)
+            return None
+        except Exception:  # pylint: disable=broad-exception-caught
+            return None
+
     @app_commands.command(name="sell", description="Sell an item back to the shop")
     @app_commands.describe(
-        item_name="Name of the item to sell",
-        item_type="Type of the item (ship, weapon, module, turret)",
+        item_type="Filter by item type (optional: ship, weapon, module, turret)",
+        item="Item to sell — pick from your inventory",
         quantity="Quantity to sell (default: 1)",
         target_tier="Shop tier to sell to (default: Bronze)",
     )
     @app_commands.autocomplete(
-        item_name=sell_item_autocomplete, item_type=item_type_autocomplete, target_tier=tier_autocomplete
+        item=sell_item_autocomplete, item_type=item_type_autocomplete, target_tier=tier_autocomplete
     )
     async def sell(
         self,
         interaction: discord.Interaction,
-        item_name: str,
-        item_type: str,
+        item: str,
+        item_type: str | None = None,
         quantity: int = 1,
         target_tier: str = "Bronze",
     ):
@@ -349,7 +448,7 @@ class ShopCog(commands.Cog):
                 await interaction.followup.send("❌ Quantity must be positive.", ephemeral=True)
                 return
 
-            if item_type not in self._valid_item_types:
+            if item_type is not None and item_type not in self._valid_item_types:
                 await interaction.followup.send(
                     f"❌ Invalid item type. Valid types: {', '.join(self._valid_item_types)}", ephemeral=True
                 )
@@ -367,11 +466,22 @@ class ShopCog(commands.Cog):
                 await interaction.followup.send("❌ Player not found.", ephemeral=True)
                 return
 
+            # If item_type was not provided, auto-detect it from the player's inventory
+            resolved_item_type = item_type
+            if not resolved_item_type:
+                resolved_item_type = await self._resolve_sell_item_type(player["id"], item)
+                if not resolved_item_type:
+                    await interaction.followup.send(
+                        f"❌ Could not determine item type for **{item}**. Please specify the item type manually.",
+                        ephemeral=True,
+                    )
+                    return
+
             # Make sell request
             sell_data = {
                 "player_id": player["id"],
-                "item_type": item_type,
-                "item_name": item_name,
+                "item_type": resolved_item_type,
+                "item_name": item,
                 "quantity": quantity,
                 "target_tier": target_tier,
             }
@@ -383,20 +493,22 @@ class ShopCog(commands.Cog):
             # Success message
             embed = discord.Embed(
                 title="✅ Sale Successful!",
-                description=f"You sold **{quantity}x {item_name}** to the {target_tier} shop",
+                description=f"You sold **{quantity}x {item}** to the {target_tier} shop",
                 color=discord.Color.green(),
             )
 
-            embed.add_field(name="Item Type", value=item_type.title(), inline=True)
+            embed.add_field(name="Item Type", value=resolved_item_type.title(), inline=True)
             embed.add_field(name="Quantity", value=str(quantity), inline=True)
             embed.add_field(name="Total Value", value=f"{transaction['total_value']:,} credits", inline=True)
             embed.add_field(name="New Credits", value=f"{transaction['remaining_credits']:,}", inline=True)
 
             await interaction.followup.send(embed=embed)
-            flogger.info(f"Player {player['id']} sold {quantity}x {item_name} for {transaction['total_value']} credits")
+            flogger.info(f"Player {player['id']} sold {quantity}x {item} for {transaction['total_value']} credits")
 
         except httpx.HTTPStatusError as e:
-            if e.response.status_code == 400:
+            if _is_guild_not_configured(e):
+                await interaction.followup.send(_GUILD_NOT_CONFIGURED_MSG, ephemeral=True)
+            elif e.response.status_code == 400:
                 try:
                     error_detail = e.response.json().get("detail", "Invalid request")
                     await interaction.followup.send(f"❌ {error_detail}", ephemeral=True)

@@ -584,17 +584,19 @@ class TestRefreshShop:
         assert "refresh_time" in result
 
     @pytest.mark.asyncio
-    async def test_creates_default_config_when_none_exists(self, service, mock_db, mock_config_repo, mock_shop_repo):
-        """If no config, create_default_config is called."""
+    async def test_raises_guild_not_configured_when_none_exists(
+        self, service, mock_db, mock_config_repo, mock_shop_repo
+    ):
+        """If no config, GuildNotConfiguredError is raised (no auto-create)."""
+        from services.config_service import GuildNotConfiguredError
+
         mock_config_repo.get_by_guild_id.return_value = None
-        default_config = _make_config()
-        mock_config_repo.create_default_config.return_value = default_config
 
-        service._get_random_item_by_tech_level = AsyncMock(return_value=None)  # Skip item creation
+        with pytest.raises(GuildNotConfiguredError) as exc_info:
+            await service.refresh_shop(mock_db, guild_id=999, tier="Bronze", force_tech_level=1)
 
-        await service.refresh_shop(mock_db, guild_id=999, tier="Bronze", force_tech_level=1)
-
-        mock_config_repo.create_default_config.assert_awaited_once_with(mock_db, 999)
+        assert exc_info.value.guild_id == 999
+        mock_config_repo.create_default_config.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_clears_existing_shop_items_before_refresh(self, service, mock_db, mock_config_repo, mock_shop_repo):

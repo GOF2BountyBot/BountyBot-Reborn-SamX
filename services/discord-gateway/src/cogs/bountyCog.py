@@ -1,3 +1,4 @@
+import asyncio
 import os
 
 import discord
@@ -5,6 +6,7 @@ import httpx
 from discord import app_commands
 from discord.ext import commands
 from shared import bblogger
+from utils.autocomplete_utils import normalize_for_search
 from utils.timestamp_utils import iso_to_discord_ts
 
 # Set up logger
@@ -14,7 +16,24 @@ flogger = bblogger.get_logger("discord-gateway-BountyCog")
 api_base = os.environ.get("BOT_API_BASE_URL", "http://bot-core:8000/api/v1")
 flogger.debug(f"bountyCog loading with API_BASE_URL: {api_base}")
 
-_VALID_DIVISIONS = ["bronze", "silver", "gold"]
+_VALID_DIVISIONS = ["bronze", "silver", "gold", "platinum"]
+
+# Message shown when the guild hasn't been set up via /admin_setup
+_GUILD_NOT_CONFIGURED_MSG = (
+    "⚠️ This server hasn't been set up yet. An admin must run `/admin_setup` "
+    "to initialize BountyBot before you can use this command."
+)
+
+
+def _is_guild_not_configured(exc: httpx.HTTPStatusError) -> bool:
+    """Return True if the HTTPStatusError is a 'guild not configured' 400 response."""
+    if exc.response.status_code != 400:
+        return False
+    try:
+        detail = exc.response.json().get("detail", "")
+        return "not configured" in detail.lower() or "admin_setup" in detail.lower()
+    except Exception:  # pylint: disable=broad-exception-caught
+        return False
 
 
 class BountyCog(commands.Cog):
@@ -31,35 +50,44 @@ class BountyCog(commands.Cog):
         await self.http_client.aclose()
 
     async def _preload_data(self):
-        """Preload star system names at startup for autocomplete."""
+        """Preload star system names at startup for autocomplete (with retries)."""
         await self.bot.wait_until_ready()
-        try:
-            flogger.info("BountyCog: Starting preload of system data...")
-            resp = await self.http_client.get(f"{api_base}/about/categories/system/objects", timeout=10)
-            resp.raise_for_status()
-            systems = resp.json()
-            self._systems = [s.get("name", "") for s in systems if s.get("name")]
-            flogger.info(f"BountyCog: Preloaded {len(self._systems)} system names")
-        except httpx.TimeoutException as e:
-            flogger.warning(f"BountyCog: Timeout preloading systems: {e}")
-            self._systems = []
-        except httpx.HTTPStatusError as e:
-            flogger.warning(f"BountyCog: HTTP error preloading systems: {e.response.status_code}")
-            self._systems = []
-        except httpx.RequestError as e:
-            flogger.warning(f"BountyCog: Request error preloading systems: {e}")
-            self._systems = []
-        except Exception as e:  # pylint: disable=broad-exception-caught
-            flogger.warning(f"BountyCog: Unexpected error preloading systems: {e}")
-            self._systems = []
+        delays = [5, 10, 20, 40, 60]
+        for attempt, delay in enumerate(delays, start=1):
+            try:
+                flogger.info("BountyCog: Starting preload of system data (attempt %d/%d)...", attempt, len(delays))
+                resp = await self.http_client.get(f"{api_base}/about/categories/system/objects", timeout=10)
+                resp.raise_for_status()
+                systems = resp.json()
+                self._systems = [s.get("name", "") for s in systems if s.get("name")]
+                flogger.info("BountyCog: Preloaded %d system names", len(self._systems))
+                return  # Success — exit
+            except (httpx.TimeoutException, httpx.RequestError, httpx.HTTPStatusError) as e:
+                flogger.warning(
+                    "BountyCog: Preload attempt %d/%d failed: %s — retrying in %ds", attempt, len(delays), e, delay
+                )
+                await asyncio.sleep(delay)
+            except Exception as e:  # pylint: disable=broad-exception-caught
+                flogger.warning("BountyCog: Unexpected error on preload attempt %d/%d: %s", attempt, len(delays), e)
+                await asyncio.sleep(delay)
+        flogger.error("BountyCog: All preload attempts exhausted. System autocomplete will be empty.")
+        self._systems = []
 
     async def _get_player_id(self, user_id: int, guild_id: int) -> int | None:
-        """Resolve a Discord user ID to a game player ID via the upsert endpoint."""
+        """Resolve a Discord user ID to a game player ID via the upsert endpoint.
+
+        Re-raises httpx.HTTPStatusError for guild-not-configured responses so callers
+        can surface a user-friendly message.
+        """
         try:
-            user_data = {"discord_id": user_id, "guild_id": guild_id, "discord_username": "temp"}
+            user_data = {"discord_id": user_id, "guild_id": guild_id, "discord_username": None}
             resp = await self.http_client.post(f"{api_base}/players/", json=user_data, timeout=5)
             resp.raise_for_status()
             return resp.json().get("id")
+        except httpx.HTTPStatusError as e:
+            if _is_guild_not_configured(e):
+                raise
+            return None
         except Exception:  # pylint: disable=broad-exception-caught
             return None
 
@@ -73,18 +101,22 @@ class BountyCog(commands.Cog):
         current: str,
     ) -> list[app_commands.Choice[str]]:
         """Autocomplete for division selection."""
+        norm_current = normalize_for_search(current)
         return [
             app_commands.Choice(name=div.title(), value=div)
             for div in _VALID_DIVISIONS
-            if current.lower() in div.lower()
+            if norm_current in normalize_for_search(div)
         ]
 
     async def system_autocomplete(
         self, _interaction: discord.Interaction, current: str
     ) -> list[app_commands.Choice[str]]:
         """Autocomplete for star system names — includes ALL systems (game balance)."""
+        norm_current = normalize_for_search(current)
         return [
-            app_commands.Choice(name=name, value=name) for name in self._systems if current.lower() in name.lower()
+            app_commands.Choice(name=name, value=name)
+            for name in self._systems
+            if norm_current in normalize_for_search(name)
         ][:25]
 
     async def bounty_autocomplete(
@@ -99,12 +131,13 @@ class BountyCog(commands.Cog):
             )
             resp.raise_for_status()
             bounties = resp.json()
+            norm_current = normalize_for_search(current)
             choices = []
             for b in bounties:
                 label = (
                     f"{b['criminal_name']} ({b['division'].title()}, T{b.get('tech_level', '?')}) — {b['reward']:,}cr"
                 )
-                if current.lower() in label.lower():
+                if norm_current in normalize_for_search(label):
                     choices.append(app_commands.Choice(name=label[:100], value=str(b["id"])))
             return choices[:25]
         except Exception:  # pylint: disable=broad-exception-caught
@@ -149,10 +182,19 @@ class BountyCog(commands.Cog):
 
             # Handle on_cooldown as ephemeral message (not an embed)
             if result == "on_cooldown":
-                await interaction.followup.send(f"⏱️ {message}", ephemeral=True)
+                cooldown_until = data.get("cooldown_until")
+                if cooldown_until:
+                    await interaction.followup.send(
+                        f"⏱️ You can check again <t:{cooldown_until}:R>",
+                        ephemeral=True,
+                    )
+                else:
+                    await interaction.followup.send(f"⏱️ {message}", ephemeral=True)
                 return
 
-            embed = self._build_check_embed(result, system, message)
+            # Inject system_name so _build_check_embed can reference it
+            data["system_name"] = system
+            embed = self._build_check_embed(data)
             await interaction.followup.send(embed=embed)
             flogger.info(
                 f"/check success: guild={interaction.guild_id} user={interaction.user.id}"
@@ -192,7 +234,9 @@ class BountyCog(commands.Cog):
                     flogger.warning(f"Failed to update tier role: {e}")
 
         except httpx.HTTPStatusError as e:
-            if e.response.status_code == 429:
+            if _is_guild_not_configured(e):
+                await interaction.followup.send(_GUILD_NOT_CONFIGURED_MSG, ephemeral=True)
+            elif e.response.status_code == 429:
                 await interaction.followup.send(
                     "⏱️ You are on cooldown. Please wait before checking again.",
                     ephemeral=True,
@@ -216,22 +260,163 @@ class BountyCog(commands.Cog):
         emoji = item.get("emoji") or ""
         return f"{emoji} {name}" if emoji else f"• {name}"
 
-    def _build_check_embed(self, result: str, system: str, message: str) -> discord.Embed:
-        """Build an embed for the /check command based on result."""
+    @staticmethod
+    def _format_combat_summary(combat: dict) -> str:
+        """Format combat results into a readable embed field."""
+        s1 = combat.get("ship1_stats", {})
+        s2 = combat.get("ship2_stats", {})
+
+        lines = []
+        # Player stats
+        lines.append(f"**Your Ship** ({s1.get('ship_name', '?')})")
+        lines.append(f"HP: {s1.get('raw_hp', 0)} → {s1.get('varied_hp', 0)} | DPS: {s1.get('raw_dps', 0):.1f}")
+        ttk1 = s1.get("ttk")
+        lines.append(f"Time to Kill: {f'{ttk1:.1f}s' if ttk1 is not None else '∞'}")
+        lines.append("")
+        # Criminal stats
+        lines.append(f"**Criminal Ship** ({s2.get('ship_name', '?')})")
+        lines.append(f"HP: {s2.get('raw_hp', 0)} → {s2.get('varied_hp', 0)} | DPS: {s2.get('raw_dps', 0):.1f}")
+        ttk2 = s2.get("ttk")
+        lines.append(f"Time to Kill: {f'{ttk2:.1f}s' if ttk2 is not None else '∞'}")
+
+        if combat.get("is_stalemate"):
+            lines.append("\n**Result:** Stalemate")
+
+        return "\n".join(lines)
+
+    def _build_check_embed(self, data: dict) -> discord.Embed:
+        """Build an embed for the /check command based on the full response data dict."""
+        result = data.get("result", "")
+        system = data.get("system_name", "")
+        message = data.get("message", "")
+
         if result == "correct":
+            combat_won = data.get("combat_won")
+            criminal_name = data.get("criminal_name", "Unknown")
+
+            if combat_won is False:
+                # Criminal escaped after combat loss — checks have been reset
+                embed = discord.Embed(
+                    title="💀 Combat Defeat!",
+                    description=(
+                        f"**{criminal_name}** defeated you and escaped!\n"
+                        "All system checks have been reset — the hunt continues!"
+                    ),
+                    color=discord.Color.dark_red(),
+                )
+                if message:
+                    embed.add_field(name="Result", value=message, inline=False)
+                combat = data.get("combat_result")
+                if combat:
+                    embed.add_field(
+                        name="⚔️ Combat Summary",
+                        value=self._format_combat_summary(combat),
+                        inline=False,
+                    )
+            else:
+                # Successful capture (bronze with/without bonus, or silver/gold/platinum win)
+                embed = discord.Embed(
+                    title="🎯 Bounty Captured!",
+                    description=f"**{criminal_name}** has been captured!",
+                    color=discord.Color.green(),
+                )
+                reward = data.get("reward", 0)
+                total_reward = data.get("total_reward", reward)
+                bonus_won = data.get("bonus_won", False)
+
+                if bonus_won:
+                    embed.add_field(
+                        name="💰 Reward",
+                        value=f"**{total_reward:,}** credits (2× combat bonus!)",
+                        inline=False,
+                    )
+                else:
+                    embed.add_field(name="💰 Reward", value=f"**{reward:,}** credits", inline=False)
+
+                # Show combat stats if available
+                combat = data.get("combat_result")
+                if combat:
+                    embed.add_field(
+                        name="⚔️ Combat Summary",
+                        value=self._format_combat_summary(combat),
+                        inline=False,
+                    )
+                if message:
+                    embed.add_field(name="Result", value=message, inline=False)
+        elif result == "captured":
+            # Backward-compatible handler: treated same as correct+combat_won=True (Bronze capture)
             embed = discord.Embed(
-                title="🎯 Bounty Found!",
-                description=f"**{system}** — Bounty found! Combat initiated!",
+                title="🎯 Bounty Captured!",
+                description=f"**{data.get('criminal_name', 'Unknown')}** has been captured!",
                 color=discord.Color.green(),
             )
-            if message:
-                embed.add_field(name="Result", value=message, inline=False)
-        elif result == "incorrect":
+            reward = data.get("reward", 0)
+            total_reward = data.get("total_reward", reward)
+            bonus_won = data.get("bonus_won", False)
+
+            if bonus_won:
+                embed.add_field(
+                    name="💰 Reward",
+                    value=f"**{total_reward:,}** credits (2× combat bonus!)",
+                    inline=False,
+                )
+            else:
+                embed.add_field(name="💰 Reward", value=f"**{reward:,}** credits", inline=False)
+
+            combat = data.get("combat_result")
+            if combat:
+                embed.add_field(
+                    name="⚔️ Combat Summary",
+                    value=self._format_combat_summary(combat),
+                    inline=False,
+                )
+        elif result == "combat_win":
+            # Backward-compatible handler: treated same as correct+combat_won=True (Silver+ capture)
             embed = discord.Embed(
-                title="❌ System Checked",
-                description=f"**{system}** — System checked, bounty not here.",
-                color=discord.Color.red(),
+                title="⚔️ Combat Victory!",
+                description=f"You defeated **{data.get('criminal_name', 'Unknown')}** in combat!",
+                color=discord.Color.green(),
             )
+            reward = data.get("reward", 0)
+            embed.add_field(name="💰 Reward", value=f"**{reward:,}** credits", inline=False)
+            combat = data.get("combat_result")
+            if combat:
+                embed.add_field(
+                    name="⚔️ Combat Summary",
+                    value=self._format_combat_summary(combat),
+                    inline=False,
+                )
+        elif result == "combat_loss":
+            # Kept for backward compatibility (not returned by current bot-core but may exist in future)
+            embed = discord.Embed(
+                title="💀 Combat Defeat!",
+                description=(
+                    f"**{data.get('criminal_name', 'Unknown')}** defeated you and escaped!\n"
+                    "All system checks have been reset — the hunt continues!"
+                ),
+                color=discord.Color.dark_red(),
+            )
+            combat = data.get("combat_result")
+            if combat:
+                embed.add_field(
+                    name="⚔️ Combat Summary",
+                    value=self._format_combat_summary(combat),
+                    inline=False,
+                )
+        elif result == "incorrect":
+            recently_spotted = data.get("recently_spotted", False)
+            if recently_spotted:
+                embed = discord.Embed(
+                    title="👀 Recently Spotted!",
+                    description=f"**{system}** — The target was recently here. They're close!",
+                    color=discord.Color.orange(),
+                )
+            else:
+                embed = discord.Embed(
+                    title="❌ System Checked",
+                    description=f"**{system}** — System checked, bounty not here.",
+                    color=discord.Color.red(),
+                )
             if message:
                 embed.add_field(name="Intel", value=message, inline=False)
         elif result == "already_checked":
@@ -255,8 +440,13 @@ class BountyCog(commands.Cog):
     @check.error
     async def check_error(self, interaction: discord.Interaction, error: app_commands.AppCommandError):
         flogger.exception("Error in /check", exc_info=error)
-        if not interaction.response.is_done():
-            await interaction.response.send_message("⚠️ An error occurred.", ephemeral=True)
+        try:
+            if not interaction.response.is_done():
+                await interaction.response.send_message("⚠️ An error occurred.", ephemeral=True)
+            else:
+                await interaction.followup.send("⚠️ An error occurred.", ephemeral=True)
+        except Exception:  # pylint: disable=broad-exception-caught
+            pass  # Interaction fully expired, nothing we can do
 
     # ------------------------------------------------------------------
     # /bounties [division]
@@ -340,11 +530,14 @@ class BountyCog(commands.Cog):
             )
 
         except httpx.HTTPStatusError as e:
-            flogger.error(
-                f"/bounties API error: guild={interaction.guild_id} user={interaction.user.id}"
-                f" status={e.response.status_code}"
-            )
-            await interaction.followup.send(f"❌ API Error: {e}", ephemeral=True)
+            if _is_guild_not_configured(e):
+                await interaction.followup.send(_GUILD_NOT_CONFIGURED_MSG, ephemeral=True)
+            else:
+                flogger.error(
+                    f"/bounties API error: guild={interaction.guild_id} user={interaction.user.id}"
+                    f" status={e.response.status_code}"
+                )
+                await interaction.followup.send(f"❌ API Error: {e}", ephemeral=True)
         except Exception as e:  # pylint: disable=broad-exception-caught
             flogger.error(f"/bounties error: guild={interaction.guild_id} user={interaction.user.id} error={e}")
             await interaction.followup.send("⚠️ An error occurred while fetching bounties.", ephemeral=True)
@@ -388,10 +581,12 @@ class BountyCog(commands.Cog):
             route_systems = data.get("route", [])
             checked = data.get("checked", {})
             status = data.get("status", "active")
+            division = data.get("division") or ""
+            division_str = f" | Tier: **{division.title()}**" if division else ""
 
             embed = discord.Embed(
                 title=f"🗺️ Route — {criminal_name}",
-                description=f"Bounty #{bounty_id} | Status: **{status.title()}**",
+                description=f"Bounty #{bounty_id} | Status: **{status.title()}**{division_str}",
                 color=discord.Color.blurple(),
             )
 

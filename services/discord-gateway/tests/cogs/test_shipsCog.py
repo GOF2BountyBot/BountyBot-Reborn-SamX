@@ -51,7 +51,6 @@ for _mod in ["discord", "discord.ext", "discord.ext.commands", "discord.app_comm
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "src"))
 
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -60,10 +59,14 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "src"))
 def _evict_discord_modules():
     """Remove cached discord/source modules so they re-import with real discord."""
     to_evict = [
-        k for k in sys.modules
-        if k == "discord" or k.startswith("discord.")
-        or k in ("api", "bot", "utils") or k.startswith("api.")
-        or k.startswith("utils.") or k.startswith("cogs.")
+        k
+        for k in sys.modules
+        if k == "discord"
+        or k.startswith("discord.")
+        or k in ("api", "bot", "utils")
+        or k.startswith("api.")
+        or k.startswith("utils.")
+        or k.startswith("cogs.")
     ]
     for k in to_evict:
         sys.modules.pop(k, None)
@@ -83,8 +86,16 @@ def _create_mock_interaction(user_id=111111111, guild_id=987654321):
     return interaction
 
 
-def _make_ship(ship_id=1, ship_name="Eagle", is_active=True, nickname=None,
-               weapons=None, modules=None, turrets=None, created_at="2024-01-01T00:00:00"):
+def _make_ship(
+    ship_id=1,
+    ship_name="Eagle",
+    is_active=True,
+    nickname=None,
+    weapons=None,
+    modules=None,
+    turrets=None,
+    created_at="2024-01-01T00:00:00",
+):
     """Return a minimal ship dict."""
     return {
         "id": ship_id,
@@ -197,9 +208,8 @@ class TestGetPlayerIdHelper:
     def test_get_player_id_api_error_returns_none(self, mock_ships_cog):
         """_get_player_id should return None on API error."""
         import httpx
-        mock_ships_cog.http_client.post = AsyncMock(
-            side_effect=httpx.HTTPError("connection error")
-        )
+
+        mock_ships_cog.http_client.post = AsyncMock(side_effect=httpx.HTTPError("connection error"))
 
         result = asyncio.run(mock_ships_cog._get_player_id(111111111, 987654321))
         assert result is None
@@ -218,10 +228,12 @@ class TestShipsCommand:
         interaction = _create_mock_interaction()
 
         player_resp = make_mock_response({"id": 1})
-        ships_resp = make_mock_response([
-            _make_ship(1, "Eagle", is_active=True),
-            _make_ship(2, "Hawk", is_active=False),
-        ])
+        ships_resp = make_mock_response(
+            [
+                _make_ship(1, "Eagle", is_active=True),
+                _make_ship(2, "Hawk", is_active=False),
+            ]
+        )
 
         mock_ships_cog.http_client.post = AsyncMock(return_value=player_resp)
         mock_ships_cog.http_client.get = AsyncMock(return_value=ships_resp)
@@ -255,9 +267,7 @@ class TestShipsCommand:
         interaction = _create_mock_interaction()
 
         # _get_player_id will return None
-        mock_ships_cog.http_client.post = AsyncMock(
-            side_effect=RuntimeError("player error")
-        )
+        mock_ships_cog.http_client.post = AsyncMock(side_effect=RuntimeError("player error"))
 
         asyncio.run(mock_ships_cog.ships.callback(mock_ships_cog, interaction))
 
@@ -279,9 +289,7 @@ class TestShipsCommand:
         mock_ships_cog.http_client.post = AsyncMock(return_value=player_resp)
         mock_ships_cog.http_client.get = AsyncMock(return_value=ships_resp)
 
-        asyncio.run(mock_ships_cog.ships.callback(
-            mock_ships_cog, interaction, user=other_user
-        ))
+        asyncio.run(mock_ships_cog.ships.callback(mock_ships_cog, interaction, user=other_user))
 
         interaction.followup.send.assert_awaited_once()
         call_kwargs = interaction.followup.send.call_args[1]
@@ -293,10 +301,7 @@ class TestShipsCommand:
 
         player_resp = make_mock_response({"id": 1})
 
-        many_ships = [
-            _make_ship(i, f"Ship{i}", is_active=(i == 1))
-            for i in range(1, 13)
-        ]
+        many_ships = [_make_ship(i, f"Ship{i}", is_active=(i == 1)) for i in range(1, 13)]
         ships_resp = make_mock_response(many_ships)
 
         mock_ships_cog.http_client.post = AsyncMock(return_value=player_resp)
@@ -309,6 +314,7 @@ class TestShipsCommand:
     def test_ships_http_status_error(self, mock_ships_cog, make_mock_response):
         """ships should handle HTTPStatusError gracefully."""
         import httpx
+
         interaction = _create_mock_interaction()
 
         player_resp = make_mock_response({"id": 1})
@@ -337,9 +343,7 @@ class TestShipsCommand:
         player_resp = make_mock_response({"id": 1})
 
         mock_ships_cog.http_client.post = AsyncMock(return_value=player_resp)
-        mock_ships_cog.http_client.get = AsyncMock(
-            side_effect=RuntimeError("network error")
-        )
+        mock_ships_cog.http_client.get = AsyncMock(side_effect=RuntimeError("network error"))
 
         asyncio.run(mock_ships_cog.ships.callback(mock_ships_cog, interaction))
 
@@ -352,9 +356,11 @@ class TestShipsCommand:
         interaction = _create_mock_interaction()
 
         player_resp = make_mock_response({"id": 1})
-        ships_resp = make_mock_response([
-            _make_ship(1, "Eagle", is_active=True, nickname="StarHunter"),
-        ])
+        ships_resp = make_mock_response(
+            [
+                _make_ship(1, "Eagle", is_active=True, nickname="StarHunter"),
+            ]
+        )
 
         mock_ships_cog.http_client.post = AsyncMock(return_value=player_resp)
         mock_ships_cog.http_client.get = AsyncMock(return_value=ships_resp)
@@ -446,6 +452,7 @@ class TestCogSetup:
         mock_bot.add_cog.assert_called_once()
         added_arg = mock_bot.add_cog.call_args[0][0]
         from cogs.shipsCog import ShipsCog
+
         assert isinstance(added_arg, ShipsCog)
 
 
@@ -462,20 +469,26 @@ class TestShipCommand:
         interaction = _create_mock_interaction()
 
         # Ship detail response
-        ship_resp = make_mock_response(_make_ship(
-            ship_id=1, ship_name="Eagle", is_active=True,
-            nickname="StarHunter",
-        ))
+        ship_resp = make_mock_response(
+            _make_ship(
+                ship_id=1,
+                ship_name="Eagle",
+                is_active=True,
+                nickname="StarHunter",
+            )
+        )
 
         # Player lookup
         player_resp = make_mock_response({"id": 1})
 
         # Loadout response
-        loadout_resp = make_mock_response(_make_loadout(
-            weapons=["Laser", "Plasma"],
-            modules=["Shield"],
-            turrets=["Flak"],
-        ))
+        loadout_resp = make_mock_response(
+            _make_loadout(
+                weapons=["Laser", "Plasma"],
+                modules=["Shield"],
+                turrets=["Flak"],
+            )
+        )
 
         mock_ships_cog.http_client.get = AsyncMock(side_effect=[ship_resp, loadout_resp])
         mock_ships_cog.http_client.post = AsyncMock(return_value=player_resp)
@@ -491,15 +504,24 @@ class TestShipCommand:
         """ship should display correct embed for inactive ship without nickname."""
         interaction = _create_mock_interaction()
 
-        ship_resp = make_mock_response(_make_ship(
-            ship_id=2, ship_name="Hawk", is_active=False, nickname=None,
-        ))
+        ship_resp = make_mock_response(
+            _make_ship(
+                ship_id=2,
+                ship_name="Hawk",
+                is_active=False,
+                nickname=None,
+            )
+        )
 
         player_resp = make_mock_response({"id": 1})
 
-        loadout_resp = make_mock_response(_make_loadout(
-            weapons=[], modules=[], turrets=[],
-        ))
+        loadout_resp = make_mock_response(
+            _make_loadout(
+                weapons=[],
+                modules=[],
+                turrets=[],
+            )
+        )
 
         mock_ships_cog.http_client.get = AsyncMock(side_effect=[ship_resp, loadout_resp])
         mock_ships_cog.http_client.post = AsyncMock(return_value=player_resp)
@@ -534,6 +556,7 @@ class TestShipCommand:
     def test_ship_http_status_error_404(self, mock_ships_cog):
         """ship should show 'not found' on 404 HTTPStatusError."""
         import httpx
+
         interaction = _create_mock_interaction()
 
         error_response = MagicMock()
@@ -556,6 +579,7 @@ class TestShipCommand:
     def test_ship_http_status_error_500(self, mock_ships_cog):
         """ship should show API error on non-404 HTTPStatusError."""
         import httpx
+
         interaction = _create_mock_interaction()
 
         error_response = MagicMock()
@@ -579,9 +603,7 @@ class TestShipCommand:
         """ship should handle generic exceptions gracefully."""
         interaction = _create_mock_interaction()
 
-        mock_ships_cog.http_client.get = AsyncMock(
-            side_effect=RuntimeError("unexpected")
-        )
+        mock_ships_cog.http_client.get = AsyncMock(side_effect=RuntimeError("unexpected"))
 
         asyncio.run(mock_ships_cog.ship.callback(mock_ships_cog, interaction, ship_id=1))
 
@@ -598,9 +620,13 @@ class TestShipCommand:
         player_resp = make_mock_response({"id": 1})
 
         many_weapons = [f"Weapon{i}" for i in range(15)]
-        loadout_resp = make_mock_response(_make_loadout(
-            weapons=many_weapons, modules=[], turrets=[],
-        ))
+        loadout_resp = make_mock_response(
+            _make_loadout(
+                weapons=many_weapons,
+                modules=[],
+                turrets=[],
+            )
+        )
 
         mock_ships_cog.http_client.get = AsyncMock(side_effect=[ship_resp, loadout_resp])
         mock_ships_cog.http_client.post = AsyncMock(return_value=player_resp)
@@ -619,9 +645,13 @@ class TestShipCommand:
         player_resp = make_mock_response({"id": 1})
 
         many_modules = [f"Module{i}" for i in range(12)]
-        loadout_resp = make_mock_response(_make_loadout(
-            weapons=["Laser"], modules=many_modules, turrets=[],
-        ))
+        loadout_resp = make_mock_response(
+            _make_loadout(
+                weapons=["Laser"],
+                modules=many_modules,
+                turrets=[],
+            )
+        )
 
         mock_ships_cog.http_client.get = AsyncMock(side_effect=[ship_resp, loadout_resp])
         mock_ships_cog.http_client.post = AsyncMock(return_value=player_resp)
@@ -638,9 +668,13 @@ class TestShipCommand:
         player_resp = make_mock_response({"id": 1})
 
         many_turrets = [f"Turret{i}" for i in range(11)]
-        loadout_resp = make_mock_response(_make_loadout(
-            weapons=[], modules=[], turrets=many_turrets,
-        ))
+        loadout_resp = make_mock_response(
+            _make_loadout(
+                weapons=[],
+                modules=[],
+                turrets=many_turrets,
+            )
+        )
 
         mock_ships_cog.http_client.get = AsyncMock(side_effect=[ship_resp, loadout_resp])
         mock_ships_cog.http_client.post = AsyncMock(return_value=player_resp)
@@ -663,12 +697,14 @@ class TestSetActiveCommand:
         interaction = _create_mock_interaction()
 
         player_resp = make_mock_response({"id": 1})
-        set_resp = make_mock_response({
-            "id": 5,
-            "ship_name": "Eagle",
-            "nickname": None,
-            "is_active": True,
-        })
+        set_resp = make_mock_response(
+            {
+                "id": 5,
+                "ship_name": "Eagle",
+                "nickname": None,
+                "is_active": True,
+            }
+        )
 
         mock_ships_cog.http_client.post = AsyncMock(return_value=player_resp)
         mock_ships_cog.http_client.put = AsyncMock(return_value=set_resp)
@@ -685,12 +721,14 @@ class TestSetActiveCommand:
         interaction = _create_mock_interaction()
 
         player_resp = make_mock_response({"id": 1})
-        set_resp = make_mock_response({
-            "id": 5,
-            "ship_name": "Eagle",
-            "nickname": "StarHunter",
-            "is_active": True,
-        })
+        set_resp = make_mock_response(
+            {
+                "id": 5,
+                "ship_name": "Eagle",
+                "nickname": "StarHunter",
+                "is_active": True,
+            }
+        )
 
         mock_ships_cog.http_client.post = AsyncMock(return_value=player_resp)
         mock_ships_cog.http_client.put = AsyncMock(return_value=set_resp)
@@ -705,9 +743,7 @@ class TestSetActiveCommand:
         """setactive should send error when player is not found."""
         interaction = _create_mock_interaction()
 
-        mock_ships_cog.http_client.post = AsyncMock(
-            side_effect=RuntimeError("player error")
-        )
+        mock_ships_cog.http_client.post = AsyncMock(side_effect=RuntimeError("player error"))
 
         asyncio.run(mock_ships_cog.setactive.callback(mock_ships_cog, interaction, ship_id=5))
 
@@ -719,6 +755,7 @@ class TestSetActiveCommand:
     def test_setactive_http_status_error_400(self, mock_ships_cog, make_mock_response):
         """setactive should show invalid ship on 400 HTTPStatusError."""
         import httpx
+
         interaction = _create_mock_interaction()
 
         player_resp = make_mock_response({"id": 1})
@@ -744,6 +781,7 @@ class TestSetActiveCommand:
     def test_setactive_http_status_error_404(self, mock_ships_cog, make_mock_response):
         """setactive should show 'not found' on 404 HTTPStatusError."""
         import httpx
+
         interaction = _create_mock_interaction()
 
         player_resp = make_mock_response({"id": 1})
@@ -769,6 +807,7 @@ class TestSetActiveCommand:
     def test_setactive_http_status_error_500(self, mock_ships_cog, make_mock_response):
         """setactive should show API error on non-400/404 HTTPStatusError."""
         import httpx
+
         interaction = _create_mock_interaction()
 
         player_resp = make_mock_response({"id": 1})
@@ -798,9 +837,7 @@ class TestSetActiveCommand:
         player_resp = make_mock_response({"id": 1})
 
         mock_ships_cog.http_client.post = AsyncMock(return_value=player_resp)
-        mock_ships_cog.http_client.put = AsyncMock(
-            side_effect=RuntimeError("unexpected")
-        )
+        mock_ships_cog.http_client.put = AsyncMock(side_effect=RuntimeError("unexpected"))
 
         asyncio.run(mock_ships_cog.setactive.callback(mock_ships_cog, interaction, ship_id=5))
 
@@ -829,20 +866,20 @@ class TestNicknameCommand:
         player_resp = make_mock_response({"id": 1})
 
         # Nickname update
-        nick_resp = make_mock_response({
-            "id": 1,
-            "ship_name": "Eagle",
-            "nickname": "NewName",
-            "is_active": True,
-        })
+        nick_resp = make_mock_response(
+            {
+                "id": 1,
+                "ship_name": "Eagle",
+                "nickname": "NewName",
+                "is_active": True,
+            }
+        )
 
         mock_ships_cog.http_client.get = AsyncMock(return_value=ship_resp)
         mock_ships_cog.http_client.post = AsyncMock(return_value=player_resp)
         mock_ships_cog.http_client.put = AsyncMock(return_value=nick_resp)
 
-        asyncio.run(mock_ships_cog.nickname.callback(
-            mock_ships_cog, interaction, ship_id=1, nickname="NewName"
-        ))
+        asyncio.run(mock_ships_cog.nickname.callback(mock_ships_cog, interaction, ship_id=1, nickname="NewName"))
 
         interaction.response.defer.assert_awaited_once_with(thinking=True)
         interaction.followup.send.assert_awaited_once()
@@ -855,20 +892,20 @@ class TestNicknameCommand:
 
         ship_resp = make_mock_response(_make_ship(ship_id=1, is_active=False))
         player_resp = make_mock_response({"id": 1})
-        nick_resp = make_mock_response({
-            "id": 1,
-            "ship_name": "Eagle",
-            "nickname": "MyShip",
-            "is_active": False,
-        })
+        nick_resp = make_mock_response(
+            {
+                "id": 1,
+                "ship_name": "Eagle",
+                "nickname": "MyShip",
+                "is_active": False,
+            }
+        )
 
         mock_ships_cog.http_client.get = AsyncMock(return_value=ship_resp)
         mock_ships_cog.http_client.post = AsyncMock(return_value=player_resp)
         mock_ships_cog.http_client.put = AsyncMock(return_value=nick_resp)
 
-        asyncio.run(mock_ships_cog.nickname.callback(
-            mock_ships_cog, interaction, ship_id=1, nickname="MyShip"
-        ))
+        asyncio.run(mock_ships_cog.nickname.callback(mock_ships_cog, interaction, ship_id=1, nickname="MyShip"))
 
         interaction.followup.send.assert_awaited_once()
         call_kwargs = interaction.followup.send.call_args[1]
@@ -880,9 +917,7 @@ class TestNicknameCommand:
 
         long_name = "A" * 51
 
-        asyncio.run(mock_ships_cog.nickname.callback(
-            mock_ships_cog, interaction, ship_id=1, nickname=long_name
-        ))
+        asyncio.run(mock_ships_cog.nickname.callback(mock_ships_cog, interaction, ship_id=1, nickname=long_name))
 
         interaction.followup.send.assert_awaited_once()
         call_args = interaction.followup.send.call_args
@@ -902,9 +937,7 @@ class TestNicknameCommand:
         mock_ships_cog.http_client.get = AsyncMock(return_value=ship_resp)
         mock_ships_cog.http_client.post = AsyncMock(return_value=player_resp)
 
-        asyncio.run(mock_ships_cog.nickname.callback(
-            mock_ships_cog, interaction, ship_id=1, nickname="Test"
-        ))
+        asyncio.run(mock_ships_cog.nickname.callback(mock_ships_cog, interaction, ship_id=1, nickname="Test"))
 
         interaction.followup.send.assert_awaited_once()
         call_args = interaction.followup.send.call_args
@@ -914,6 +947,7 @@ class TestNicknameCommand:
     def test_nickname_http_status_error_404(self, mock_ships_cog):
         """nickname should show 'not found' on 404 HTTPStatusError."""
         import httpx
+
         interaction = _create_mock_interaction()
 
         error_response = MagicMock()
@@ -926,9 +960,7 @@ class TestNicknameCommand:
 
         mock_ships_cog.http_client.get = AsyncMock(side_effect=http_error)
 
-        asyncio.run(mock_ships_cog.nickname.callback(
-            mock_ships_cog, interaction, ship_id=999, nickname="Test"
-        ))
+        asyncio.run(mock_ships_cog.nickname.callback(mock_ships_cog, interaction, ship_id=999, nickname="Test"))
 
         interaction.followup.send.assert_awaited_once()
         call_args = interaction.followup.send.call_args
@@ -938,6 +970,7 @@ class TestNicknameCommand:
     def test_nickname_http_status_error_500(self, mock_ships_cog):
         """nickname should show API error on non-404 HTTPStatusError."""
         import httpx
+
         interaction = _create_mock_interaction()
 
         error_response = MagicMock()
@@ -950,9 +983,7 @@ class TestNicknameCommand:
 
         mock_ships_cog.http_client.get = AsyncMock(side_effect=http_error)
 
-        asyncio.run(mock_ships_cog.nickname.callback(
-            mock_ships_cog, interaction, ship_id=1, nickname="Test"
-        ))
+        asyncio.run(mock_ships_cog.nickname.callback(mock_ships_cog, interaction, ship_id=1, nickname="Test"))
 
         interaction.followup.send.assert_awaited_once()
         call_args = interaction.followup.send.call_args
@@ -963,13 +994,9 @@ class TestNicknameCommand:
         """nickname should handle generic exceptions gracefully."""
         interaction = _create_mock_interaction()
 
-        mock_ships_cog.http_client.get = AsyncMock(
-            side_effect=RuntimeError("unexpected")
-        )
+        mock_ships_cog.http_client.get = AsyncMock(side_effect=RuntimeError("unexpected"))
 
-        asyncio.run(mock_ships_cog.nickname.callback(
-            mock_ships_cog, interaction, ship_id=1, nickname="Test"
-        ))
+        asyncio.run(mock_ships_cog.nickname.callback(mock_ships_cog, interaction, ship_id=1, nickname="Test"))
 
         interaction.followup.send.assert_awaited_once()
         call_args = interaction.followup.send.call_args
@@ -1029,19 +1056,21 @@ class TestShipsCommandAdditionalBranches:
         interaction = _create_mock_interaction()
 
         player_resp = make_mock_response({"id": 1})
-        ships_resp = make_mock_response([
-            {
-                "id": 1,
-                "ship_name": "Eagle",
-                "is_active": True,
-                "nickname": None,
-                "weapons": None,
-                "modules": None,
-                "turrets": None,
-                "created_at": "2024-01-01T00:00:00",
-                "player_id": 1,
-            }
-        ])
+        ships_resp = make_mock_response(
+            [
+                {
+                    "id": 1,
+                    "ship_name": "Eagle",
+                    "is_active": True,
+                    "nickname": None,
+                    "weapons": None,
+                    "modules": None,
+                    "turrets": None,
+                    "created_at": "2024-01-01T00:00:00",
+                    "player_id": 1,
+                }
+            ]
+        )
 
         mock_ships_cog.http_client.post = AsyncMock(return_value=player_resp)
         mock_ships_cog.http_client.get = AsyncMock(return_value=ships_resp)
@@ -1058,10 +1087,7 @@ class TestShipsCommandAdditionalBranches:
 
         player_resp = make_mock_response({"id": 1})
 
-        ten_ships = [
-            _make_ship(i, f"Ship{i}", is_active=(i == 1))
-            for i in range(1, 11)
-        ]
+        ten_ships = [_make_ship(i, f"Ship{i}", is_active=(i == 1)) for i in range(1, 11)]
         ships_resp = make_mock_response(ten_ships)
 
         mock_ships_cog.http_client.post = AsyncMock(return_value=player_resp)
@@ -1117,9 +1143,7 @@ class TestShipsPermissionChecks:
 
         # Patch _check_is_admin to return True (user is admin)
         with patch("cogs.adminCog._check_is_admin", new=AsyncMock(return_value=True)):
-            asyncio.run(mock_ships_cog.ships.callback(
-                mock_ships_cog, interaction, user=other_user
-            ))
+            asyncio.run(mock_ships_cog.ships.callback(mock_ships_cog, interaction, user=other_user))
 
         interaction.followup.send.assert_awaited_once()
         call_kwargs = interaction.followup.send.call_args[1]
@@ -1137,14 +1161,131 @@ class TestShipsPermissionChecks:
 
         # Patch _check_is_admin to return False (user is NOT admin)
         with patch("cogs.adminCog._check_is_admin", new=AsyncMock(return_value=False)):
-            asyncio.run(mock_ships_cog.ships.callback(
-                mock_ships_cog, interaction, user=other_user
-            ))
+            asyncio.run(mock_ships_cog.ships.callback(mock_ships_cog, interaction, user=other_user))
 
         interaction.followup.send.assert_awaited_once()
         call_args = interaction.followup.send.call_args
         assert call_args[1].get("ephemeral", False)
         assert "admin" in call_args[0][0].lower()
+
+
+# ---------------------------------------------------------------------------
+# Setactive autocomplete
+# ---------------------------------------------------------------------------
+
+
+class TestSetactiveAutocomplete:
+    """Tests for the setactive_autocomplete method."""
+
+    def test_setactive_autocomplete_returns_player_ships(self, mock_ships_cog, make_mock_response):
+        """setactive_autocomplete should list player's ships as choices."""
+        interaction = _create_mock_interaction()
+
+        player_resp = make_mock_response({"id": 1})
+        ships_resp = make_mock_response(
+            [
+                _make_ship(1, "Eagle", is_active=True),
+                _make_ship(2, "Mako", is_active=False),
+            ]
+        )
+        mock_ships_cog.http_client.post = AsyncMock(return_value=player_resp)
+        mock_ships_cog.http_client.get = AsyncMock(return_value=ships_resp)
+
+        choices = asyncio.run(mock_ships_cog.setactive_autocomplete(interaction, ""))
+
+        assert len(choices) == 2
+        # Active ship should have 🟢 prefix
+        active_choice = next((c for c in choices if c.value == "1"), None)
+        assert active_choice is not None
+        assert "🟢" in active_choice.name
+
+    def test_setactive_autocomplete_filters_by_current_input(self, mock_ships_cog, make_mock_response):
+        """setactive_autocomplete should filter ships by current input."""
+        interaction = _create_mock_interaction()
+
+        player_resp = make_mock_response({"id": 1})
+        ships_resp = make_mock_response(
+            [
+                _make_ship(1, "Eagle", is_active=False),
+                _make_ship(2, "Mako", is_active=False),
+                _make_ship(3, "Viper", is_active=False),
+            ]
+        )
+        mock_ships_cog.http_client.post = AsyncMock(return_value=player_resp)
+        mock_ships_cog.http_client.get = AsyncMock(return_value=ships_resp)
+
+        choices = asyncio.run(mock_ships_cog.setactive_autocomplete(interaction, "Ma"))
+
+        names = [c.name for c in choices]
+        assert any("Mako" in n for n in names)
+        assert not any("Eagle" in n for n in names)
+        assert not any("Viper" in n for n in names)
+
+    def test_setactive_autocomplete_shows_nickname(self, mock_ships_cog, make_mock_response):
+        """setactive_autocomplete should show nickname in choice label."""
+        interaction = _create_mock_interaction()
+
+        player_resp = make_mock_response({"id": 1})
+        ship_with_nick = _make_ship(1, "Eagle", is_active=False, nickname="StarHunter")
+        ships_resp = make_mock_response([ship_with_nick])
+        mock_ships_cog.http_client.post = AsyncMock(return_value=player_resp)
+        mock_ships_cog.http_client.get = AsyncMock(return_value=ships_resp)
+
+        choices = asyncio.run(mock_ships_cog.setactive_autocomplete(interaction, ""))
+
+        assert len(choices) == 1
+        assert "StarHunter" in choices[0].name
+
+    def test_setactive_autocomplete_returns_empty_on_api_failure(self, mock_ships_cog):
+        """setactive_autocomplete should return [] on API failure."""
+        interaction = _create_mock_interaction()
+        mock_ships_cog.http_client.post = AsyncMock(side_effect=RuntimeError("fail"))
+
+        choices = asyncio.run(mock_ships_cog.setactive_autocomplete(interaction, ""))
+
+        assert choices == []
+
+
+# ---------------------------------------------------------------------------
+# Setactive — invalid ship_id validation
+# ---------------------------------------------------------------------------
+
+
+class TestSetactiveInvalidShipId:
+    """Tests for the /setactive invalid ship_id handling."""
+
+    def test_setactive_invalid_non_numeric_string_shows_error(self, mock_ships_cog):
+        """setactive should show error message for non-numeric ship_id."""
+        interaction = _create_mock_interaction()
+
+        asyncio.run(mock_ships_cog.setactive.callback(mock_ships_cog, interaction, ship_id="not-a-number"))
+
+        interaction.followup.send.assert_awaited_once()
+        call_args = interaction.followup.send.call_args
+        assert call_args[1].get("ephemeral", False)
+        assert "invalid" in call_args[0][0].lower()
+
+    def test_setactive_numeric_string_is_accepted(self, mock_ships_cog, make_mock_response):
+        """setactive should accept a numeric string like '5' (from autocomplete value)."""
+        interaction = _create_mock_interaction()
+
+        player_resp = make_mock_response({"id": 1})
+        set_resp = make_mock_response(
+            {
+                "id": 5,
+                "ship_name": "Eagle",
+                "nickname": None,
+                "is_active": True,
+            }
+        )
+        mock_ships_cog.http_client.post = AsyncMock(return_value=player_resp)
+        mock_ships_cog.http_client.put = AsyncMock(return_value=set_resp)
+
+        asyncio.run(mock_ships_cog.setactive.callback(mock_ships_cog, interaction, ship_id="5"))
+
+        interaction.followup.send.assert_awaited_once()
+        call_kwargs = interaction.followup.send.call_args[1]
+        assert "embed" in call_kwargs
 
 
 if __name__ == "__main__":

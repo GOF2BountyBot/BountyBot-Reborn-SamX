@@ -590,11 +590,12 @@ class ShopService:
             if force_tech_level is not None and (force_tech_level < 1 or force_tech_level > 9):
                 raise ValueError("Tech level must be between 1 and 9")
 
-            # Get guild configuration
+            # Get guild configuration — fail if guild hasn't been set up
             config = await self.config_repo.get_by_guild_id(db, guild_id)
             if not config:
-                # Create default config if none exists
-                config = await self.config_repo.create_default_config(db, guild_id)
+                from services.exceptions import GuildNotConfiguredError
+
+                raise GuildNotConfiguredError(guild_id)
 
             # Clear existing shop items for this tier
             await self.shop_repo.clear_shop_tier(db, guild_id, tier)

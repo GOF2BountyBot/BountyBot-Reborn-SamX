@@ -4,7 +4,7 @@ import asyncio
 import os
 import sys
 import types
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -276,12 +276,68 @@ class TestPreloadData:
         assert mock_bounty_cog._systems == ["Sol", "Alpha Centauri", "Proxima"]
 
     def test_preload_data_handles_api_failure_gracefully(self, mock_bounty_cog):
-        """_preload_data should set _systems to [] on API failure."""
+        """_preload_data should set _systems to [] after all retries exhausted."""
         mock_bounty_cog.http_client.get = AsyncMock(side_effect=RuntimeError("connection refused"))
 
-        asyncio.run(mock_bounty_cog._preload_data())
+        # Patch asyncio.sleep so retries don't actually wait
+        with patch("cogs.bountyCog.asyncio.sleep", new=AsyncMock()) as mock_sleep:
+            asyncio.run(mock_bounty_cog._preload_data())
 
         assert mock_bounty_cog._systems == []
+        # Should have slept 5 times (once per retry attempt)
+        assert mock_sleep.call_count == 5
+
+    def test_preload_data_retries_on_timeout(self, mock_bounty_cog, make_mock_response):
+        """_preload_data should retry on TimeoutException and succeed on 2nd attempt."""
+        import httpx
+
+        systems_data = [{"name": "Sol", "id": 1}]
+        success_resp = make_mock_response(systems_data)
+
+        timeout_exc = httpx.TimeoutException("timeout")
+        mock_bounty_cog.http_client.get = AsyncMock(side_effect=[timeout_exc, success_resp])
+
+        with patch("cogs.bountyCog.asyncio.sleep", new=AsyncMock()) as mock_sleep:
+            asyncio.run(mock_bounty_cog._preload_data())
+
+        assert mock_bounty_cog._systems == ["Sol"]
+        # Should have slept once after the first failure
+        assert mock_sleep.call_count == 1
+
+    def test_preload_data_retries_correct_delays(self, mock_bounty_cog):
+        """_preload_data should use exponential backoff delays [5, 10, 20, 40, 60]."""
+        mock_bounty_cog.http_client.get = AsyncMock(side_effect=RuntimeError("error"))
+
+        with patch("cogs.bountyCog.asyncio.sleep", new=AsyncMock()) as mock_sleep:
+            asyncio.run(mock_bounty_cog._preload_data())
+
+        expected_delays = [5, 10, 20, 40, 60]
+        actual_delays = [call.args[0] for call in mock_sleep.call_args_list]
+        assert actual_delays == expected_delays
+
+    def test_preload_data_logs_warning_on_retry(self, mock_bounty_cog):
+        """_preload_data should log a warning on each failed attempt."""
+        mock_bounty_cog.http_client.get = AsyncMock(side_effect=RuntimeError("boom"))
+
+        with patch("cogs.bountyCog.asyncio.sleep", new=AsyncMock()):
+            asyncio.run(mock_bounty_cog._preload_data())
+
+        # Should have logged a warning for each attempt and an error at the end
+        assert _module_logger.warning.call_count == 5
+        assert _module_logger.error.call_count >= 1
+
+    def test_preload_data_returns_immediately_on_success(self, mock_bounty_cog, make_mock_response):
+        """_preload_data should return after first successful attempt, not retry."""
+        systems_data = [{"name": "Sol", "id": 1}]
+        resp = make_mock_response(systems_data)
+        mock_bounty_cog.http_client.get = AsyncMock(return_value=resp)
+
+        with patch("cogs.bountyCog.asyncio.sleep", new=AsyncMock()) as mock_sleep:
+            asyncio.run(mock_bounty_cog._preload_data())
+
+        assert mock_bounty_cog._systems == ["Sol"]
+        # No sleep should occur on first-attempt success
+        mock_sleep.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
@@ -638,6 +694,34 @@ class TestRouteCommand:
         assert call_kwargs[1].get("ephemeral", False)
         assert "error occurred" in call_kwargs[0][0].lower()
 
+    def test_route_shows_division_in_description(self, mock_bounty_cog, make_mock_response):
+        """/route should show the bounty's division (tier) in the embed description."""
+        interaction = _create_mock_interaction()
+        route_data = _make_route_response(route=["Alpha", "Beta"])
+        route_data["division"] = "gold"
+        resp = make_mock_response(route_data)
+        mock_bounty_cog.http_client.get = AsyncMock(return_value=resp)
+
+        asyncio.run(mock_bounty_cog.route.callback(mock_bounty_cog, interaction, "1"))
+
+        interaction.followup.send.assert_awaited_once()
+        embed = interaction.followup.send.call_args[1]["embed"]
+        assert "Gold" in embed.description
+
+    def test_route_no_division_in_description_when_not_present(self, mock_bounty_cog, make_mock_response):
+        """/route description should not include tier when division is absent."""
+        interaction = _create_mock_interaction()
+        route_data = _make_route_response(route=["A", "B"])
+        # No division key in response
+        resp = make_mock_response(route_data)
+        mock_bounty_cog.http_client.get = AsyncMock(return_value=resp)
+
+        asyncio.run(mock_bounty_cog.route.callback(mock_bounty_cog, interaction, "1"))
+
+        interaction.followup.send.assert_awaited_once()
+        embed = interaction.followup.send.call_args[1]["embed"]
+        assert "Tier:" not in embed.description
+
 
 # ---------------------------------------------------------------------------
 # /criminal-loadout command
@@ -789,14 +873,15 @@ class TestDivisionAutocomplete:
     """Tests for division_autocomplete."""
 
     def test_autocomplete_empty_current_returns_all_divisions(self, mock_bounty_cog):
-        """division_autocomplete with empty string should return all 3 divisions."""
+        """division_autocomplete with empty string should return all 4 divisions."""
         interaction = _create_mock_interaction()
         result = asyncio.run(mock_bounty_cog.division_autocomplete(interaction, ""))
-        assert len(result) == 3
+        assert len(result) == 4
         names = [c.name for c in result]
         assert "Bronze" in names
         assert "Silver" in names
         assert "Gold" in names
+        assert "Platinum" in names
 
     def test_autocomplete_partial_match_filters(self, mock_bounty_cog):
         """division_autocomplete with partial string should filter."""
@@ -933,3 +1018,825 @@ class TestBountiesNoTimestampsInBadLocations:
             f"Discord timestamp found in /bounties embed author: {author_text!r}. "
             "Timestamps in author fields render as raw text."
         )
+
+
+# ===========================================================================
+# _format_combat_summary — unit tests
+# ===========================================================================
+
+
+def _make_combat_result(
+    s1_name="Betty",
+    s1_raw_hp=95,
+    s1_varied_hp=93,
+    s1_raw_dps=5.2,
+    s1_ttk=18.2,
+    s2_name="Pirate Bob",
+    s2_raw_hp=120,
+    s2_varied_hp=118,
+    s2_raw_dps=6.0,
+    s2_ttk=15.8,
+    is_stalemate=False,
+    winner_name="Betty",
+    loser_name="Pirate Bob",
+):
+    """Build a minimal combat_result dict."""
+    return {
+        "winner_name": winner_name,
+        "loser_name": loser_name,
+        "is_stalemate": is_stalemate,
+        "ship1_stats": {
+            "ship_name": s1_name,
+            "raw_hp": s1_raw_hp,
+            "varied_hp": s1_varied_hp,
+            "raw_dps": s1_raw_dps,
+            "ttk": s1_ttk,
+        },
+        "ship2_stats": {
+            "ship_name": s2_name,
+            "raw_hp": s2_raw_hp,
+            "varied_hp": s2_varied_hp,
+            "raw_dps": s2_raw_dps,
+            "ttk": s2_ttk,
+        },
+        "variance_percent": 0.05,
+    }
+
+
+class TestFormatCombatSummary:
+    """Unit tests for BountyCog._format_combat_summary()."""
+
+    @pytest.fixture(autouse=True)
+    def _import_cog(self, mock_bounty_cog):
+        """Ensure cog is imported for static method access."""
+        self.cog = mock_bounty_cog
+
+    def test_contains_player_ship_name(self):
+        """Summary should include the player ship name."""
+        combat = _make_combat_result(s1_name="StarFighter")
+        result = self.cog._format_combat_summary(combat)
+        assert "StarFighter" in result
+
+    def test_contains_criminal_ship_name(self):
+        """Summary should include the criminal ship name."""
+        combat = _make_combat_result(s2_name="DeathBringer")
+        result = self.cog._format_combat_summary(combat)
+        assert "DeathBringer" in result
+
+    def test_contains_player_hp_values(self):
+        """Summary should include raw_hp and varied_hp for player ship."""
+        combat = _make_combat_result(s1_raw_hp=200, s1_varied_hp=195)
+        result = self.cog._format_combat_summary(combat)
+        assert "200" in result
+        assert "195" in result
+
+    def test_contains_criminal_hp_values(self):
+        """Summary should include raw_hp and varied_hp for criminal ship."""
+        combat = _make_combat_result(s2_raw_hp=300, s2_varied_hp=290)
+        result = self.cog._format_combat_summary(combat)
+        assert "300" in result
+        assert "290" in result
+
+    def test_contains_player_dps(self):
+        """Summary should include DPS for player ship formatted to 1 decimal."""
+        combat = _make_combat_result(s1_raw_dps=12.5)
+        result = self.cog._format_combat_summary(combat)
+        assert "12.5" in result
+
+    def test_contains_criminal_dps(self):
+        """Summary should include DPS for criminal ship formatted to 1 decimal."""
+        combat = _make_combat_result(s2_raw_dps=8.3)
+        result = self.cog._format_combat_summary(combat)
+        assert "8.3" in result
+
+    def test_contains_player_ttk(self):
+        """Summary should show time to kill for player ship."""
+        combat = _make_combat_result(s1_ttk=18.2)
+        result = self.cog._format_combat_summary(combat)
+        assert "18.2s" in result
+
+    def test_contains_criminal_ttk(self):
+        """Summary should show time to kill for criminal ship."""
+        combat = _make_combat_result(s2_ttk=15.8)
+        result = self.cog._format_combat_summary(combat)
+        assert "15.8s" in result
+
+    def test_ttk_none_shown_as_infinity(self):
+        """When ttk is None (can never kill), summary should show '∞'."""
+        combat = _make_combat_result(s1_ttk=None, s2_ttk=None)
+        result = self.cog._format_combat_summary(combat)
+        assert "∞" in result
+
+    def test_stalemate_shows_stalemate_result(self):
+        """When is_stalemate is True, summary should include 'Stalemate'."""
+        combat = _make_combat_result(is_stalemate=True)
+        result = self.cog._format_combat_summary(combat)
+        assert "Stalemate" in result
+
+    def test_no_stalemate_text_when_not_stalemate(self):
+        """When is_stalemate is False, summary should NOT include 'Stalemate'."""
+        combat = _make_combat_result(is_stalemate=False)
+        result = self.cog._format_combat_summary(combat)
+        assert "Stalemate" not in result
+
+    def test_empty_combat_dict_returns_string(self):
+        """_format_combat_summary with an empty dict should return a string (no crash)."""
+        result = self.cog._format_combat_summary({})
+        assert isinstance(result, str)
+        # Should show '?' for unknown ship names
+        assert "?" in result
+
+    def test_missing_ship_stats_uses_defaults(self):
+        """When ship_stats dicts are missing, defaults (0, '?') should be used."""
+        combat = {"is_stalemate": False}
+        result = self.cog._format_combat_summary(combat)
+        # HP/DPS defaults to 0
+        assert "0" in result
+        # Ship name defaults to '?'
+        assert "?" in result
+
+    def test_both_ships_labelled(self):
+        """Summary should label 'Your Ship' and 'Criminal Ship'."""
+        combat = _make_combat_result()
+        result = self.cog._format_combat_summary(combat)
+        assert "Your Ship" in result
+        assert "Criminal Ship" in result
+
+
+# ===========================================================================
+# _build_check_embed — new result types
+# ===========================================================================
+
+
+class TestBuildCheckEmbedNewResultTypes:
+    """Tests for _build_check_embed() with the new combat result types."""
+
+    @pytest.fixture(autouse=True)
+    def _import_cog(self, mock_bounty_cog):
+        self.cog = mock_bounty_cog
+
+    def _call(self, data: dict):
+        """Call _build_check_embed with given data dict."""
+        return self.cog._build_check_embed(data)
+
+    # --- "captured" (Bronze) ---
+
+    def test_captured_bonus_won_green_embed(self):
+        """'captured' with bonus_won=True should produce a green embed."""
+        import discord
+
+        embed = self._call(
+            {
+                "result": "captured",
+                "criminal_name": "Pirate Bob",
+                "reward": 500,
+                "total_reward": 1000,
+                "bonus_won": True,
+                "combat_result": None,
+            }
+        )
+        assert embed.color == discord.Color.green()
+
+    def test_captured_bonus_won_shows_2x_reward(self):
+        """'captured' with bonus_won=True should show total_reward with '2×' label."""
+        embed = self._call(
+            {
+                "result": "captured",
+                "criminal_name": "Pirate Bob",
+                "reward": 500,
+                "total_reward": 1000,
+                "bonus_won": True,
+                "combat_result": None,
+            }
+        )
+        reward_field = next(f for f in embed.fields if "Reward" in f.name)
+        assert "1,000" in reward_field.value
+        assert "2×" in reward_field.value
+
+    def test_captured_no_bonus_shows_base_reward_only(self):
+        """'captured' with bonus_won=False should show base reward without 2× label."""
+        embed = self._call(
+            {
+                "result": "captured",
+                "criminal_name": "Pirate Bob",
+                "reward": 500,
+                "total_reward": 500,
+                "bonus_won": False,
+                "combat_result": None,
+            }
+        )
+        reward_field = next(f for f in embed.fields if "Reward" in f.name)
+        assert "500" in reward_field.value
+        assert "2×" not in reward_field.value
+
+    def test_captured_with_combat_result_shows_combat_summary(self):
+        """'captured' with combat_result should include a Combat Summary field."""
+        combat = _make_combat_result()
+        embed = self._call(
+            {
+                "result": "captured",
+                "criminal_name": "Pirate Bob",
+                "reward": 500,
+                "total_reward": 500,
+                "bonus_won": False,
+                "combat_result": combat,
+            }
+        )
+        field_names = [f.name for f in embed.fields]
+        assert any("Combat Summary" in n for n in field_names)
+
+    def test_captured_without_combat_result_no_combat_summary(self):
+        """'captured' without combat_result should NOT include a Combat Summary field."""
+        embed = self._call(
+            {
+                "result": "captured",
+                "criminal_name": "Pirate Bob",
+                "reward": 500,
+                "total_reward": 500,
+                "bonus_won": False,
+                "combat_result": None,
+            }
+        )
+        field_names = [f.name for f in embed.fields]
+        assert not any("Combat Summary" in n for n in field_names)
+
+    def test_captured_title_says_bounty_captured(self):
+        """'captured' embed title should be '🎯 Bounty Captured!'."""
+        embed = self._call({"result": "captured", "criminal_name": "Pirate Bob", "reward": 500, "bonus_won": False})
+        assert "Bounty Captured" in embed.title
+
+    def test_captured_description_includes_criminal_name(self):
+        """'captured' embed description should mention the criminal name."""
+        embed = self._call({"result": "captured", "criminal_name": "Warlord Kane", "reward": 500, "bonus_won": False})
+        assert "Warlord Kane" in embed.description
+
+    # --- "combat_win" (Silver+) ---
+
+    def test_combat_win_green_embed(self):
+        """'combat_win' should produce a green embed."""
+        import discord
+
+        embed = self._call(
+            {
+                "result": "combat_win",
+                "division": "silver",
+                "criminal_name": "Pirate Bob",
+                "reward": 2000,
+                "combat_result": None,
+            }
+        )
+        assert embed.color == discord.Color.green()
+
+    def test_combat_win_title(self):
+        """'combat_win' embed title should say 'Combat Victory!'."""
+        embed = self._call(
+            {"result": "combat_win", "criminal_name": "Pirate Bob", "reward": 2000, "combat_result": None}
+        )
+        assert "Combat Victory" in embed.title
+
+    def test_combat_win_shows_reward(self):
+        """'combat_win' should show the reward amount."""
+        embed = self._call(
+            {"result": "combat_win", "criminal_name": "Pirate Bob", "reward": 2000, "combat_result": None}
+        )
+        reward_field = next(f for f in embed.fields if "Reward" in f.name)
+        assert "2,000" in reward_field.value
+
+    def test_combat_win_description_includes_criminal_name(self):
+        """'combat_win' description should mention the criminal name."""
+        embed = self._call(
+            {"result": "combat_win", "criminal_name": "Shadow Wing", "reward": 3000, "combat_result": None}
+        )
+        assert "Shadow Wing" in embed.description
+
+    def test_combat_win_with_combat_result_shows_summary(self):
+        """'combat_win' with combat_result should include Combat Summary field."""
+        combat = _make_combat_result()
+        embed = self._call(
+            {"result": "combat_win", "criminal_name": "Pirate Bob", "reward": 2000, "combat_result": combat}
+        )
+        field_names = [f.name for f in embed.fields]
+        assert any("Combat Summary" in n for n in field_names)
+
+    def test_combat_win_without_combat_result_no_summary(self):
+        """'combat_win' without combat_result should NOT include Combat Summary field."""
+        embed = self._call(
+            {"result": "combat_win", "criminal_name": "Pirate Bob", "reward": 2000, "combat_result": None}
+        )
+        field_names = [f.name for f in embed.fields]
+        assert not any("Combat Summary" in n for n in field_names)
+
+    # --- "combat_loss" (Silver+) ---
+
+    def test_combat_loss_dark_red_embed(self):
+        """'combat_loss' should produce a dark_red embed."""
+        import discord
+
+        embed = self._call(
+            {
+                "result": "combat_loss",
+                "division": "silver",
+                "criminal_name": "Pirate Bob",
+                "combat_result": None,
+            }
+        )
+        assert embed.color == discord.Color.dark_red()
+
+    def test_combat_loss_title(self):
+        """'combat_loss' embed title should say 'Combat Defeat!'."""
+        embed = self._call({"result": "combat_loss", "criminal_name": "Pirate Bob", "combat_result": None})
+        assert "Combat Defeat" in embed.title
+
+    def test_combat_loss_description_includes_criminal_name(self):
+        """'combat_loss' description should mention the criminal and note reset."""
+        embed = self._call({"result": "combat_loss", "criminal_name": "Iron Fist", "combat_result": None})
+        assert "Iron Fist" in embed.description
+        assert "reset" in embed.description.lower()
+
+    def test_combat_loss_with_combat_result_shows_summary(self):
+        """'combat_loss' with combat_result should include Combat Summary field."""
+        combat = _make_combat_result()
+        embed = self._call({"result": "combat_loss", "criminal_name": "Pirate Bob", "combat_result": combat})
+        field_names = [f.name for f in embed.fields]
+        assert any("Combat Summary" in n for n in field_names)
+
+    def test_combat_loss_without_combat_result_no_summary(self):
+        """'combat_loss' without combat_result should NOT include Combat Summary field."""
+        embed = self._call({"result": "combat_loss", "criminal_name": "Pirate Bob", "combat_result": None})
+        field_names = [f.name for f in embed.fields]
+        assert not any("Combat Summary" in n for n in field_names)
+
+    def test_combat_loss_no_reward_field(self):
+        """'combat_loss' should NOT include a Reward field (player earned nothing)."""
+        embed = self._call({"result": "combat_loss", "criminal_name": "Pirate Bob", "combat_result": None})
+        field_names = [f.name for f in embed.fields]
+        assert not any("Reward" in n for n in field_names)
+
+    # --- legacy result types still work ---
+
+    def test_existing_correct_result_still_works(self):
+        """Legacy 'correct' result should still return a green embed."""
+        import discord
+
+        embed = self._call({"result": "correct", "system_name": "Sol", "message": "Found!"})
+        assert embed.color == discord.Color.green()
+
+    def test_existing_incorrect_result_still_works(self):
+        """Legacy 'incorrect' result should still return a red embed."""
+        import discord
+
+        embed = self._call({"result": "incorrect", "system_name": "Sol", "message": "Not here."})
+        assert embed.color == discord.Color.red()
+
+    def test_existing_already_checked_result_still_works(self):
+        """Legacy 'already_checked' result should still return a yellow embed."""
+        import discord
+
+        embed = self._call({"result": "already_checked", "system_name": "Sol", "message": "Already done."})
+        assert embed.color == discord.Color.yellow()
+
+    def test_existing_unknown_result_still_works(self):
+        """Unknown result type should fall back to orange embed."""
+        import discord
+
+        embed = self._call({"result": "some_unknown_result", "system_name": "Sol", "message": ""})
+        assert embed.color == discord.Color.orange()
+
+
+# ===========================================================================
+# /check command — new combat result types end-to-end
+# ===========================================================================
+
+
+class TestCheckCommandCombatResults:
+    """Tests for /check command with new combat result types."""
+
+    @pytest.fixture(autouse=True)
+    def _patch_player_id(self, mock_bounty_cog):
+        """Patch _get_player_id to return a valid game player ID."""
+        mock_bounty_cog._get_player_id = AsyncMock(return_value=42)
+
+    def _make_full_check_response(self, **kwargs):
+        """Build a complete check response dict with sensible defaults."""
+        base = {
+            "result": "captured",
+            "division": "bronze",
+            "criminal_name": "Pirate Bob",
+            "reward": 500,
+            "total_reward": 500,
+            "bonus_won": False,
+            "combat_result": None,
+            "message": "",
+        }
+        base.update(kwargs)
+        return base
+
+    def test_check_captured_bonus_won_sends_green_embed(self, mock_bounty_cog, make_mock_response):
+        """/check with result='captured' and bonus_won=True sends green embed."""
+        import discord
+
+        interaction = _create_mock_interaction()
+        resp = make_mock_response(
+            self._make_full_check_response(
+                result="captured",
+                bonus_won=True,
+                total_reward=1000,
+                reward=500,
+            )
+        )
+        mock_bounty_cog.http_client.post = AsyncMock(return_value=resp)
+
+        asyncio.run(mock_bounty_cog.check.callback(mock_bounty_cog, interaction, "Alpha"))
+
+        interaction.followup.send.assert_awaited_once()
+        embed = interaction.followup.send.call_args[1]["embed"]
+        assert embed.color == discord.Color.green()
+
+
+# ===========================================================================
+# Tests: _build_check_embed — result="correct" with combat_won field
+# (The primary fix: bronze/silver/gold/platinum captures all return result="correct")
+# ===========================================================================
+
+
+class TestBuildCheckEmbedCorrectResultWithCombatWon:
+    """Tests for _build_check_embed() with result='correct' and combat_won field.
+
+    Bot-core always returns result='correct' for a successful system check.
+    The combat_won field distinguishes:
+    - combat_won=True (or None): capture succeeded
+    - combat_won=False: player lost, criminal escaped
+    """
+
+    @pytest.fixture(autouse=True)
+    def _import_cog(self, mock_bounty_cog):
+        self.cog = mock_bounty_cog
+
+    def _call(self, data: dict):
+        """Call _build_check_embed with given data dict."""
+        return self.cog._build_check_embed(data)
+
+    # --- combat_won=True: Successful capture ---
+
+    def test_correct_combat_won_true_green_embed(self):
+        """result='correct' + combat_won=True → green embed (capture succeeded)."""
+        import discord
+
+        embed = self._call(
+            {
+                "result": "correct",
+                "criminal_name": "Pirate Bob",
+                "reward": 1000,
+                "combat_won": True,
+            }
+        )
+        assert embed.color == discord.Color.green()
+
+    def test_correct_combat_won_true_title_says_bounty_captured(self):
+        """result='correct' + combat_won=True → title contains 'Bounty Captured'."""
+        embed = self._call(
+            {
+                "result": "correct",
+                "criminal_name": "Pirate Bob",
+                "reward": 1000,
+                "combat_won": True,
+            }
+        )
+        assert "Bounty Captured" in embed.title
+
+    def test_correct_combat_won_true_description_includes_criminal_name(self):
+        """result='correct' + combat_won=True → description mentions criminal."""
+        embed = self._call(
+            {
+                "result": "correct",
+                "criminal_name": "Iron Fist",
+                "reward": 2000,
+                "combat_won": True,
+            }
+        )
+        assert "Iron Fist" in embed.description
+
+    def test_correct_combat_won_true_shows_base_reward(self):
+        """result='correct' + combat_won=True, no bonus → shows base reward only."""
+        embed = self._call(
+            {
+                "result": "correct",
+                "criminal_name": "Pirate Bob",
+                "reward": 1500,
+                "combat_won": True,
+                "bonus_won": False,
+            }
+        )
+        reward_field = next(f for f in embed.fields if "Reward" in f.name)
+        assert "1,500" in reward_field.value
+        assert "2×" not in reward_field.value
+
+    def test_correct_combat_won_true_with_bonus_shows_doubled_reward(self):
+        """result='correct' + combat_won=True + bonus_won=True → shows total_reward with 2× label."""
+        embed = self._call(
+            {
+                "result": "correct",
+                "criminal_name": "Pirate Bob",
+                "reward": 500,
+                "total_reward": 1000,
+                "combat_won": True,
+                "bonus_won": True,
+            }
+        )
+        reward_field = next(f for f in embed.fields if "Reward" in f.name)
+        assert "1,000" in reward_field.value
+        assert "2×" in reward_field.value
+
+    def test_correct_combat_won_true_with_combat_result_shows_summary(self):
+        """result='correct' + combat_won=True + combat_result → shows Combat Summary field."""
+        combat = _make_combat_result()
+        embed = self._call(
+            {
+                "result": "correct",
+                "criminal_name": "Pirate Bob",
+                "reward": 1000,
+                "combat_won": True,
+                "combat_result": combat,
+            }
+        )
+        field_names = [f.name for f in embed.fields]
+        assert any("Combat Summary" in n for n in field_names)
+
+    def test_correct_combat_won_true_without_combat_result_no_summary(self):
+        """result='correct' + combat_won=True, no combat_result → no Combat Summary field."""
+        embed = self._call(
+            {
+                "result": "correct",
+                "criminal_name": "Pirate Bob",
+                "reward": 1000,
+                "combat_won": True,
+                "combat_result": None,
+            }
+        )
+        field_names = [f.name for f in embed.fields]
+        assert not any("Combat Summary" in n for n in field_names)
+
+    # --- combat_won=False: Criminal escaped ---
+
+    def test_correct_combat_won_false_dark_red_embed(self):
+        """result='correct' + combat_won=False → dark_red embed (player lost)."""
+        import discord
+
+        embed = self._call(
+            {
+                "result": "correct",
+                "criminal_name": "Iron Fist",
+                "combat_won": False,
+            }
+        )
+        assert embed.color == discord.Color.dark_red()
+
+    def test_correct_combat_won_false_title_says_combat_defeat(self):
+        """result='correct' + combat_won=False → title contains 'Combat Defeat'."""
+        embed = self._call(
+            {
+                "result": "correct",
+                "criminal_name": "Iron Fist",
+                "combat_won": False,
+            }
+        )
+        assert "Combat Defeat" in embed.title
+
+    def test_correct_combat_won_false_description_includes_criminal_name(self):
+        """result='correct' + combat_won=False → description mentions criminal."""
+        embed = self._call(
+            {
+                "result": "correct",
+                "criminal_name": "Shadow Wing",
+                "combat_won": False,
+            }
+        )
+        assert "Shadow Wing" in embed.description
+
+    def test_correct_combat_won_false_description_mentions_reset(self):
+        """result='correct' + combat_won=False → description mentions checks reset."""
+        embed = self._call(
+            {
+                "result": "correct",
+                "criminal_name": "Iron Fist",
+                "combat_won": False,
+            }
+        )
+        assert "reset" in embed.description.lower()
+
+    def test_correct_combat_won_false_no_reward_field(self):
+        """result='correct' + combat_won=False → no Reward field shown."""
+        embed = self._call(
+            {
+                "result": "correct",
+                "criminal_name": "Iron Fist",
+                "combat_won": False,
+            }
+        )
+        field_names = [f.name for f in embed.fields]
+        assert not any("Reward" in n for n in field_names)
+
+    def test_correct_combat_won_false_with_combat_result_shows_summary(self):
+        """result='correct' + combat_won=False + combat_result → shows Combat Summary field."""
+        combat = _make_combat_result()
+        embed = self._call(
+            {
+                "result": "correct",
+                "criminal_name": "Iron Fist",
+                "combat_won": False,
+                "combat_result": combat,
+            }
+        )
+        field_names = [f.name for f in embed.fields]
+        assert any("Combat Summary" in n for n in field_names)
+
+    def test_correct_combat_won_false_without_combat_result_no_summary(self):
+        """result='correct' + combat_won=False, no combat_result → no Combat Summary."""
+        embed = self._call(
+            {
+                "result": "correct",
+                "criminal_name": "Iron Fist",
+                "combat_won": False,
+                "combat_result": None,
+            }
+        )
+        field_names = [f.name for f in embed.fields]
+        assert not any("Combat Summary" in n for n in field_names)
+
+    # --- combat_won=None (missing): No combat → treat as successful capture ---
+
+    def test_correct_no_combat_won_field_shows_green_embed(self):
+        """result='correct' without combat_won → defaults to capture (green embed)."""
+        import discord
+
+        embed = self._call(
+            {
+                "result": "correct",
+                "criminal_name": "Pirate Bob",
+                "reward": 1000,
+            }
+        )
+        assert embed.color == discord.Color.green()
+
+    def test_correct_no_combat_won_shows_reward_field(self):
+        """result='correct' without combat_won → shows Reward field."""
+        embed = self._call(
+            {
+                "result": "correct",
+                "criminal_name": "Pirate Bob",
+                "reward": 1000,
+            }
+        )
+        field_names = [f.name for f in embed.fields]
+        assert any("Reward" in n for n in field_names)
+
+
+# ===========================================================================
+# Tests: autocomplete functions with normalize_for_search
+# ===========================================================================
+
+
+class TestBountyCogAutocompleteNormalization:
+    """Tests for autocomplete functions using normalize_for_search."""
+
+    @pytest.fixture(autouse=True)
+    def _import_cog(self, mock_bounty_cog):
+        self.cog = mock_bounty_cog
+
+    def test_division_autocomplete_matches_ascii_input(self):
+        """division_autocomplete should match ASCII input as before."""
+        choices = asyncio.run(self.cog.division_autocomplete(MagicMock(), "bron"))
+        assert any(c.value == "bronze" for c in choices)
+
+    def test_system_autocomplete_matches_accented_name(self):
+        """system_autocomplete should match unaccented input against accented system names."""
+        self.cog._systems = ["Behén", "N'saan", "Alpha Centauri"]
+        choices = asyncio.run(self.cog.system_autocomplete(MagicMock(), "behen"))
+        assert any(c.name == "Behén" for c in choices)
+
+    def test_system_autocomplete_preserves_original_name_in_choices(self):
+        """system_autocomplete should preserve accented names in Choice.name."""
+        self.cog._systems = ["Behén", "Normal"]
+        choices = asyncio.run(self.cog.system_autocomplete(MagicMock(), "behen"))
+        # Choice.name should be original with accent; value should also be original
+        assert all(c.name == c.value for c in choices)
+        matching = [c for c in choices if c.name == "Behén"]
+        assert len(matching) == 1
+
+    def test_division_autocomplete_empty_query_returns_all(self):
+        """division_autocomplete with empty query should return all divisions."""
+        choices = asyncio.run(self.cog.division_autocomplete(MagicMock(), ""))
+        assert len(choices) == 4
+
+    def test_system_autocomplete_no_match_returns_empty(self):
+        """system_autocomplete with unmatched query returns empty list."""
+        self.cog._systems = ["Alpha", "Beta"]
+        choices = asyncio.run(self.cog.system_autocomplete(MagicMock(), "zzzzz"))
+        assert choices == []
+
+
+# ===========================================================================
+# Tests: /check — cooldown_until timestamp and recently_spotted
+# ===========================================================================
+
+
+class TestCheckCommandCooldownAndRecentlySpotted:
+    """Tests for cooldown_until and recently_spotted handling in /check."""
+
+    @pytest.fixture(autouse=True)
+    def _patch_player_id(self, mock_bounty_cog):
+        mock_bounty_cog._get_player_id = AsyncMock(return_value=42)
+
+    def _make_on_cooldown_response(self, cooldown_until=None, message="On cooldown"):
+        return {
+            "result": "on_cooldown",
+            "message": message,
+            "cooldown_until": cooldown_until,
+        }
+
+    def test_on_cooldown_with_cooldown_until_uses_discord_timestamp(self, mock_bounty_cog, make_mock_response):
+        """When result=on_cooldown and cooldown_until is set, message uses <t:X:R> format."""
+        interaction = _create_mock_interaction()
+        resp = make_mock_response(self._make_on_cooldown_response(cooldown_until=1700000000))
+        mock_bounty_cog.http_client.post = AsyncMock(return_value=resp)
+
+        asyncio.run(mock_bounty_cog.check.callback(mock_bounty_cog, interaction, "Sol"))
+
+        interaction.followup.send.assert_awaited_once()
+        sent_msg = interaction.followup.send.call_args[0][0]
+        assert "<t:1700000000:R>" in sent_msg
+        assert "check again" in sent_msg.lower()
+
+    def test_on_cooldown_without_cooldown_until_falls_back_to_message(self, mock_bounty_cog, make_mock_response):
+        """When result=on_cooldown with no cooldown_until, fallback to the message string."""
+        interaction = _create_mock_interaction()
+        resp = make_mock_response(
+            self._make_on_cooldown_response(cooldown_until=None, message="On cooldown for 60 more seconds")
+        )
+        mock_bounty_cog.http_client.post = AsyncMock(return_value=resp)
+
+        asyncio.run(mock_bounty_cog.check.callback(mock_bounty_cog, interaction, "Sol"))
+
+        interaction.followup.send.assert_awaited_once()
+        sent_msg = interaction.followup.send.call_args[0][0]
+        assert "60 more seconds" in sent_msg
+
+    def test_recently_spotted_incorrect_shows_orange_embed(self, mock_bounty_cog, make_mock_response):
+        """When result=incorrect and recently_spotted=True, embed is orange with 'Recently Spotted' title."""
+        import discord
+
+        interaction = _create_mock_interaction()
+        resp = make_mock_response(
+            {
+                "result": "incorrect",
+                "message": "Recently spotted here!",
+                "recently_spotted": True,
+            }
+        )
+        mock_bounty_cog.http_client.post = AsyncMock(return_value=resp)
+
+        asyncio.run(mock_bounty_cog.check.callback(mock_bounty_cog, interaction, "Alpha"))
+
+        interaction.followup.send.assert_awaited_once()
+        embed = interaction.followup.send.call_args[1]["embed"]
+        assert embed.color == discord.Color.orange()
+        assert "Recently Spotted" in embed.title
+
+    def test_recently_spotted_false_shows_red_embed(self, mock_bounty_cog, make_mock_response):
+        """When result=incorrect and recently_spotted=False, embed is red (standard)."""
+        import discord
+
+        interaction = _create_mock_interaction()
+        resp = make_mock_response(
+            {
+                "result": "incorrect",
+                "message": "No sign of criminal",
+                "recently_spotted": False,
+            }
+        )
+        mock_bounty_cog.http_client.post = AsyncMock(return_value=resp)
+
+        asyncio.run(mock_bounty_cog.check.callback(mock_bounty_cog, interaction, "Alpha"))
+
+        interaction.followup.send.assert_awaited_once()
+        embed = interaction.followup.send.call_args[1]["embed"]
+        assert embed.color == discord.Color.red()
+
+    def test_recently_spotted_missing_defaults_to_false(self, mock_bounty_cog, make_mock_response):
+        """When recently_spotted key is absent, embed defaults to red (not recently spotted)."""
+        import discord
+
+        interaction = _create_mock_interaction()
+        resp = make_mock_response(
+            {
+                "result": "incorrect",
+                "message": "No sign of criminal",
+            }
+        )
+        mock_bounty_cog.http_client.post = AsyncMock(return_value=resp)
+
+        asyncio.run(mock_bounty_cog.check.callback(mock_bounty_cog, interaction, "Alpha"))
+
+        interaction.followup.send.assert_awaited_once()
+        embed = interaction.followup.send.call_args[1]["embed"]
+        assert embed.color == discord.Color.red()

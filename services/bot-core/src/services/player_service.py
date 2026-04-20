@@ -12,6 +12,7 @@ from persist.models.user import User
 from persist.repositories.config_repository import ConfigRepository
 from persist.repositories.player_repository import PlayerRepository
 from persist.repositories.user_repository import UserRepository
+from services.exceptions import GuildNotConfiguredError
 from shared import bblogger
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -40,17 +41,28 @@ class PlayerService:
 
         This is the main entry point for player management when a user
         first interacts with the bot in a guild.
+
+        Raises GuildNotConfiguredError if no guild_configs row exists
+        (i.e. /admin_setup has not been run for this guild).
         """
         try:
+            # Check if player already exists for this guild (before config check to avoid
+            # penalising guilds where a player was created before this guard was added).
+            existing_player = await self.player_repo.get_by_user_and_guild(db, discord_id, guild_id)
+            if existing_player:
+                flogger.debug(f"Found existing player {existing_player.id} for user {discord_id} in guild {guild_id}")
+                return existing_player
+
+            # New player path — guild must have a config row first.
+            config = await self.config_repo.get_by_guild_id(db, guild_id)
+            if not config:
+                flogger.warning(
+                    f"Cannot create player for user {discord_id} in guild {guild_id}: guild not configured"
+                )
+                raise GuildNotConfiguredError(guild_id)
+
             # Ensure user exists
             user = await self.user_repo.get_or_create_user(db, discord_id, discord_username)
-
-            # Check if player exists for this guild
-            player = await self.player_repo.get_by_user_and_guild(db, discord_id, guild_id)
-
-            if player:
-                flogger.debug(f"Found existing player {player.id} for user {discord_id} in guild {guild_id}")
-                return player
 
             # Create new player with starter configuration
             player = await self._create_new_player(db, user, guild_id)
@@ -58,6 +70,8 @@ class PlayerService:
 
             return player
 
+        except GuildNotConfiguredError:
+            raise
         except Exception as e:
             flogger.error(f"Error getting/creating player for user {discord_id} in guild {guild_id}: {e}")
             raise

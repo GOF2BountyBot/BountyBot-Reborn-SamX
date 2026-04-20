@@ -10,10 +10,14 @@ from typing import Any
 from persist.repositories.config_repository import ConfigRepository
 from persist.repositories.player_repository import PlayerRepository
 from persist.repositories.shop_repository import ShopRepository
+from services.exceptions import GuildNotConfiguredError
 from shared import bblogger
 from sqlalchemy.ext.asyncio import AsyncSession
 
 flogger = bblogger.get_logger("config-service")
+
+# Re-export so callers can import from either config_service or exceptions
+__all__ = ["ConfigService", "GuildNotConfiguredError"]
 
 
 class ConfigService:
@@ -23,17 +27,21 @@ class ConfigService:
         self.shop_repo = ShopRepository()
 
     async def get_guild_config(self, db: AsyncSession, guild_id: int) -> dict[str, Any]:
-        """Get guild configuration, creating default if none exists."""
+        """Get guild configuration.
+
+        Raises GuildNotConfiguredError if no config exists (no auto-create).
+        """
         try:
             config = await self.config_repo.get_by_guild_id(db, guild_id)
 
             if not config:
-                # Create default configuration
-                config = await self.config_repo.create_default_config(db, guild_id)
-                flogger.info(f"Created default config for guild {guild_id}")
+                flogger.warning(f"Guild {guild_id} has no config row (admin_setup not run)")
+                raise GuildNotConfiguredError(guild_id)
 
             return await self.config_repo.get_config_summary(db, guild_id)
 
+        except GuildNotConfiguredError:
+            raise
         except Exception as e:
             flogger.error(f"Error getting guild config for {guild_id}: {e}")
             raise
@@ -284,11 +292,15 @@ class ConfigService:
         return validated_config
 
     async def get_bounty_config(self, db: AsyncSession, guild_id: int) -> dict[str, Any]:
-        """Get bounty configuration for a guild, with defaults applied."""
+        """Get bounty configuration for a guild.
+
+        Raises GuildNotConfiguredError if no config exists (no auto-create).
+        """
         try:
             config = await self.config_repo.get_by_guild_id(db, guild_id)
             if not config:
-                config = await self.config_repo.create_default_config(db, guild_id)
+                flogger.warning(f"Guild {guild_id} has no config row (admin_setup not run)")
+                raise GuildNotConfiguredError(guild_id)
 
             return {
                 "guild_id": guild_id,
@@ -302,6 +314,8 @@ class ConfigService:
                 "next_spawn_check_at": (config.next_spawn_check_at.isoformat() if config.next_spawn_check_at else None),
             }
 
+        except GuildNotConfiguredError:
+            raise
         except Exception as e:
             flogger.error(f"Error getting bounty config for guild {guild_id}: {e}")
             raise
@@ -317,11 +331,15 @@ class ConfigService:
 
         Returns:
             Updated bounty config dict.
+
+        Raises:
+            GuildNotConfiguredError if no config row exists.
         """
         try:
             config = await self.config_repo.get_by_guild_id(db, guild_id)
             if not config:
-                config = await self.config_repo.create_default_config(db, guild_id)
+                flogger.warning(f"Guild {guild_id} has no config row (admin_setup not run)")
+                raise GuildNotConfiguredError(guild_id)
 
             if "max_bounties_per_tier" in updates and updates["max_bounties_per_tier"] is not None:
                 tier_map = updates["max_bounties_per_tier"]
@@ -356,6 +374,8 @@ class ConfigService:
             flogger.info(f"Updated bounty config for guild {guild_id}: {updates}")
             return await self.get_bounty_config(db, guild_id)
 
+        except GuildNotConfiguredError:
+            raise
         except Exception as e:
             flogger.error(f"Error updating bounty config for guild {guild_id}: {e}")
             raise

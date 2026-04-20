@@ -134,15 +134,17 @@ class TestGetGuildConfig:
         mock_config_repo.create_default_config.assert_not_awaited()
 
     @pytest.mark.asyncio
-    async def test_creates_default_config_when_absent(self, service, mock_db, mock_config_repo):
-        """When no config exists, create_default_config is called."""
+    async def test_raises_guild_not_configured_when_absent(self, service, mock_db, mock_config_repo):
+        """When no config exists, GuildNotConfiguredError is raised (no auto-create)."""
+        from services.config_service import GuildNotConfiguredError
+
         mock_config_repo.get_by_guild_id.return_value = None
-        mock_config_repo.create_default_config.return_value = _make_config()
-        mock_config_repo.get_config_summary.return_value = {"guild_id": 999}
 
-        await service.get_guild_config(mock_db, guild_id=999)
+        with pytest.raises(GuildNotConfiguredError) as exc_info:
+            await service.get_guild_config(mock_db, guild_id=999)
 
-        mock_config_repo.create_default_config.assert_awaited_once_with(mock_db, 999)
+        assert exc_info.value.guild_id == 999
+        mock_config_repo.create_default_config.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_re_raises_exception(self, service, mock_db, mock_config_repo):
@@ -874,21 +876,17 @@ class TestGetBountyConfig:
         assert result["next_spawn_check_at"] == ts.isoformat()
 
     @pytest.mark.asyncio
-    async def test_creates_default_config_when_not_found(self, service, mock_db, mock_config_repo):
-        """Creates default config when guild has no config."""
-        from unittest.mock import MagicMock
+    async def test_raises_guild_not_configured_when_not_found(self, service, mock_db, mock_config_repo):
+        """Raises GuildNotConfiguredError when guild has no config (no auto-create)."""
+        from services.config_service import GuildNotConfiguredError
+
         mock_config_repo.get_by_guild_id.return_value = None
-        default_cfg = MagicMock()
-        default_cfg.bounty_max_per_tier = None
-        default_cfg.bounty_expiry_minutes = None
-        default_cfg.bounty_spawn_interval_minutes = None
-        default_cfg.next_spawn_check_at = None
-        mock_config_repo.create_default_config.return_value = default_cfg
 
-        result = await service.get_bounty_config(mock_db, guild_id=3000)
+        with pytest.raises(GuildNotConfiguredError) as exc_info:
+            await service.get_bounty_config(mock_db, guild_id=3000)
 
-        mock_config_repo.create_default_config.assert_awaited_once()
-        assert result["guild_id"] == 3000
+        assert exc_info.value.guild_id == 3000
+        mock_config_repo.create_default_config.assert_not_awaited()
 
 
 # ===========================================================================

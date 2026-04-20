@@ -2,9 +2,11 @@ import os
 
 import discord
 import httpx
+from cogs.adminCog import _check_is_admin
 from discord import app_commands
 from discord.ext import commands
 from shared import bblogger
+from utils.loadout_embed import build_loadout_embed, build_loadout_error_embed
 from utils.timestamp_utils import iso_to_discord_ts
 
 # Set up logger
@@ -413,110 +415,69 @@ class PlayerCog(commands.Cog):
             flogger.error(f"/promote error: guild={interaction.guild_id}, user={interaction.user.id}, error={e}")
             await interaction.followup.send("⚠️ An error occurred.", ephemeral=True)
 
-    @app_commands.command(name="loadout", description="View your active ship loadout")
-    @app_commands.describe(player="Player to view loadout for (default: yourself)")
-    async def loadout(self, interaction: discord.Interaction, player: discord.Member | None = None):
-        """Display the active ship loadout for a player."""
+    @app_commands.command(name="loadout", description="View an active ship loadout")
+    @app_commands.describe(
+        player="Player to view loadout for (default: yourself)",
+        public="Make the response visible to everyone (default: False — only you see it)",
+    )
+    async def loadout(
+        self,
+        interaction: discord.Interaction,
+        player: discord.Member | None = None,
+        public: bool = False,
+    ):
+        """Display the active ship loadout for a player using the shared embed builder."""
         target = player or interaction.user
-        flogger.info(f"/loadout: guild={interaction.guild_id}, user={interaction.user.id}, target={target.id}")
-        await interaction.response.defer(thinking=True)
+        flogger.info(
+            f"/loadout: guild={interaction.guild_id}, user={interaction.user.id}, "
+            f"target={target.id}, public={public}"
+        )
+        # Errors always stay ephemeral regardless of `public`; success follows `public`.
+        await interaction.response.defer(thinking=True, ephemeral=not public)
 
         try:
-            # Resolve target Discord user to a game player_id
+            # 1) Resolve target Discord user → bot-core player_id.
             user_data = {
                 "discord_id": target.id,
                 "guild_id": interaction.guild_id,
-                "discord_username": str(target),
+                "discord_username": None,  # preserve existing username; only /profile updates it
             }
             resp = await self.http_client.post(f"{api_base}/players/", json=user_data, timeout=10)
             resp.raise_for_status()
-            player_data = resp.json()
-            player_id = player_data["id"]
+            player_id = resp.json()["id"]
 
-            # Fetch loadout from bot-core; include cargo only for self-view
-            is_self_view = player is None
-            loadout_params = {"include_cargo": "true"} if is_self_view else {}
+            # 2) Determine cargo visibility (self-view OR admin viewing another).
+            is_self_view = player is None or player.id == interaction.user.id
+            show_cargo = is_self_view or (not is_self_view and await _check_is_admin(interaction))
+
+            # 3) Fetch unified LoadoutResponse.
+            params = {
+                "include_cargo": "true" if show_cargo else "false",
+                "viewer_discord_id": str(target.id),
+            }
             loadout_resp = await self.http_client.get(
-                f"{api_base}/players/{player_id}/loadout", params=loadout_params, timeout=10
+                f"{api_base}/players/{player_id}/loadout", params=params, timeout=10
             )
             loadout_resp.raise_for_status()
             data = loadout_resp.json()
 
-            # Handle "no active ship" case
-            if data.get("ship_name") is None:
-                await interaction.followup.send(f"❌ {target.display_name} has no active ship.", ephemeral=True)
+            # 4) Override subject_name with the live Discord display_name so renames
+            #    show up immediately (bot-core only knows the username at last /profile).
+            data["subject_name"] = target.display_name
+            data["subject_mention"] = f"<@{target.id}>"
+
+            # 5) Build embed (handles message / no-active-ship internally → red error embed).
+            embed = build_loadout_embed(data, viewer_is_owner_or_admin=show_cargo)
+
+            # Errors (response.message set) must always be ephemeral, regardless of `public`.
+            if data.get("message"):
+                await interaction.followup.send(embed=embed, ephemeral=True)
                 return
 
-            ship_name = data.get("ship_name", "Unknown Ship")
-            ship_emoji = data.get("ship_emoji") or ""
-            ship_nickname = data.get("ship_nickname")
-            armor_hp = data.get("armor_hp", 0)
-            shield_hp = data.get("shield_hp", 0)
-            total_hp = data.get("total_hp", 0)
-            total_dps = data.get("total_dps", 0)
-            weapons = data.get("weapons", [])
-            modules = data.get("modules", [])
-            turrets = data.get("turrets", [])
-            total_value = data.get("total_value", 0)
-
-            # Build title: use ship nickname if set, otherwise ship name
-            title_name = ship_nickname or ship_name
-            embed = discord.Embed(
-                title=f"Loadout — {target.display_name}",
-                description=f"Active Ship: **{ship_emoji} {title_name}**"
-                if ship_emoji
-                else f"Active Ship: **{title_name}**",
-                color=discord.Color.blurple(),
-            )
-
-            # Format DPS display
-            rounded_dps = round(total_dps, 1) if total_dps else 0
-            dps_str = str(int(rounded_dps)) if rounded_dps == int(rounded_dps) else f"{rounded_dps:.1f}"
-
-            # HP display
-            if shield_hp and shield_hp > 0:
-                hp_display = f"Armor HP: **{armor_hp}** | Shield HP: **{shield_hp}** | Total HP: **{total_hp}**"
-            else:
-                hp_display = f"HP: **{armor_hp}**"
-
-            embed.add_field(
-                name="Ship Stats",
-                value=f"{hp_display} | DPS: **{dps_str}**",
-                inline=False,
-            )
-
-            if weapons:
-                weapons_str = "\n".join(self._format_loadout_item(w) for w in weapons)
-                embed.add_field(name="Primary Weapons", value=weapons_str, inline=False)
-
-            if turrets:
-                turrets_str = "\n".join(self._format_loadout_item(t) for t in turrets)
-                embed.add_field(name="Turrets", value=turrets_str, inline=False)
-
-            if modules:
-                modules_str = "\n".join(self._format_loadout_item(m) for m in modules)
-                embed.add_field(name="Modules", value=modules_str, inline=False)
-
-            if not weapons and not turrets and not modules:
-                embed.add_field(name="Equipment", value="*No equipment*", inline=False)
-
-            # Show cargo only for self-view
-            cargo = data.get("cargo", [])
-            if cargo:
-                cargo_lines = []
-                for item in cargo:
-                    emoji = item.get("emoji") or ""
-                    prefix = f"{emoji} " if emoji else "• "
-                    qty = item.get("quantity", 1)
-                    qty_str = f" (x{qty})" if qty > 1 else ""
-                    cargo_lines.append(f"{prefix}{item['item_name']}{qty_str}")
-                embed.add_field(name="Cargo Hold", value="\n".join(cargo_lines), inline=False)
-
-            embed.set_footer(text=f"Total Value: {total_value:,} credits | Player ID: {player_id}")
-
-            await interaction.followup.send(embed=embed)
+            await interaction.followup.send(embed=embed, ephemeral=not public)
             flogger.info(
-                f"/loadout success: guild={interaction.guild_id}, user={interaction.user.id}, target={target.id}"
+                f"/loadout success: guild={interaction.guild_id}, user={interaction.user.id}, "
+                f"target={target.id}, public={public}"
             )
 
         except httpx.HTTPStatusError as e:
@@ -527,27 +488,18 @@ class PlayerCog(commands.Cog):
             if _is_guild_not_configured(e):
                 await interaction.followup.send(_GUILD_NOT_CONFIGURED_MSG, ephemeral=True)
             elif e.response.status_code == 404:
-                await interaction.followup.send("❌ Player not found.", ephemeral=True)
+                await interaction.followup.send(
+                    embed=build_loadout_error_embed(
+                        title=f"Loadout — {target.display_name}",
+                        description="Player not found.",
+                    ),
+                    ephemeral=True,
+                )
             else:
                 await interaction.followup.send(f"❌ API Error: {e}", ephemeral=True)
         except Exception as e:  # pylint: disable=broad-exception-caught
             flogger.error(f"/loadout error: guild={interaction.guild_id}, user={interaction.user.id}, error={e}")
             await interaction.followup.send("⚠️ An error occurred while fetching the loadout.", ephemeral=True)
-
-    def _format_loadout_item(self, item: dict) -> str:
-        """Format a loadout item (weapon, module, or turret) for display."""
-        emoji = item.get("emoji") or ""
-        name = item.get("name", "Unknown")
-        dps = item.get("dps")
-        value = item.get("value")
-        parts = [f"{emoji} **{name}**" if emoji else f"**{name}**"]
-        if dps is not None:
-            rounded = round(dps, 1)
-            dps_str = str(int(rounded)) if rounded == int(rounded) else f"{rounded:.1f}"
-            parts.append(f"DPS: {dps_str}")
-        if value is not None:
-            parts.append(f"Value: {value:,}")
-        return " | ".join(parts)
 
     @loadout.error
     async def loadout_error(self, interaction: discord.Interaction, error: app_commands.AppCommandError):

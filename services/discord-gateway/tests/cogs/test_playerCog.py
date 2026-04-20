@@ -4,7 +4,7 @@ import asyncio
 import os
 import sys
 import types
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -1833,35 +1833,61 @@ class TestProfileJoinedTimestampLocation:
 
 
 # ---------------------------------------------------------------------------
-# /loadout command tests
+# /loadout command tests (unified LoadoutResponse + shared embed builder)
 # ---------------------------------------------------------------------------
 
 
-def _make_loadout_data(ship_name="Betty", ship_emoji="🛸", shield_hp=0):
-    """Return a minimal loadout dict."""
-    return {
+def _make_player_loadout_response(**overrides):
+    """Return a minimal unified-schema LoadoutResponse dict from bot-core."""
+    data = {
+        "subject_kind": "player",
+        "subject_name": "Alice",
+        "subject_mention": "<@12345>",
         "player_id": 1,
-        "ship_name": ship_name,
-        "ship_emoji": ship_emoji,
+        "user_discord_id": 12345,
+        "ship_name": "Betty",
         "ship_nickname": None,
-        "armor_hp": 200,
-        "shield_hp": shield_hp,
-        "total_hp": 200 + shield_hp,
-        "total_dps": 7.5,
-        "weapons": [{"name": "Nirai Impulse EX 1", "emoji": "<:niraiimpulseex1:123>", "dps": 7.5, "value": 2500}],
-        "modules": [
-            {"name": "E2 Exoclad", "emoji": "<:e2exoclad:456>", "type": "ArmourModule", "value": 1070, "tech_level": 1}
+        "ship_emoji": "🛸",
+        "ship_icon": "https://cdn/betty.png",
+        "thumbnail_url": "https://cdn/betty.png",
+        "ship_stats": {
+            "armour": 200,
+            "cargo": 20,
+            "handling": 50,
+            "hp": 200,
+            "dps": 7.5,
+            "total_value": 3570,
+            "max_primaries": 1,
+            "max_secondaries": 0,
+            "max_turrets": 0,
+            "max_modules": 2,
+        },
+        "weapons": [
+            {"name": "Nirai Impulse EX 1", "emoji": "<:ni:1>", "dps": 7.5, "value": 2500}
         ],
         "turrets": [],
-        "total_value": 3570,
+        "modules": [
+            {
+                "name": "E2 Exoclad",
+                "emoji": "<:e2:1>",
+                "type": "ArmourModule",
+                "value": 1070,
+                "tech_level": 1,
+                "effects": [{"label": "Armour", "value": "40"}],
+                "combat_tier": "combat",
+            }
+        ],
+        "cargo": [],
+        "cargo_total_count": 0,
     }
+    data.update(overrides)
+    return data
 
 
 class TestLoadoutCommand:
-    """Tests for the /loadout slash command."""
+    """Tests for the /loadout slash command (shared builder consumer)."""
 
     def _setup_loadout(self, cog, player_data, loadout_data):
-        """Wire up mock HTTP responses for the /loadout command."""
         player_resp = MagicMock()
         player_resp.status_code = 200
         player_resp.json.return_value = player_data
@@ -1875,188 +1901,190 @@ class TestLoadoutCommand:
         cog.http_client.post = AsyncMock(return_value=player_resp)
         cog.http_client.get = AsyncMock(return_value=loadout_resp)
 
-    def test_loadout_success_self(self, mock_player_cog):
-        """loadout sends embed for invoker's own loadout."""
+    def test_loadout_success_self_default_ephemeral(self, mock_player_cog):
+        """Self-view with default public=False → defer+followup are ephemeral."""
         interaction = _create_mock_interaction()
-        player_data = _make_player_data()
-        loadout_data = _make_loadout_data()
-        self._setup_loadout(mock_player_cog, player_data, loadout_data)
+        self._setup_loadout(mock_player_cog, _make_player_data(), _make_player_loadout_response())
 
         asyncio.run(mock_player_cog.loadout.callback(mock_player_cog, interaction, player=None))
 
-        interaction.response.defer.assert_awaited_once()
-        interaction.followup.send.assert_awaited_once()
+        # defer called with ephemeral=True
+        defer_kwargs = interaction.response.defer.call_args[1]
+        assert defer_kwargs.get("ephemeral") is True
+
+        # followup ephemeral=True
+        send_kwargs = interaction.followup.send.call_args[1]
+        assert send_kwargs.get("ephemeral") is True
+
+    def test_loadout_public_true_sends_non_ephemeral(self, mock_player_cog):
+        """public=True → defer non-ephemeral, followup non-ephemeral."""
+        interaction = _create_mock_interaction()
+        self._setup_loadout(mock_player_cog, _make_player_data(), _make_player_loadout_response())
+
+        asyncio.run(mock_player_cog.loadout.callback(mock_player_cog, interaction, player=None, public=True))
+
+        defer_kwargs = interaction.response.defer.call_args[1]
+        assert defer_kwargs.get("ephemeral") is False
+        send_kwargs = interaction.followup.send.call_args[1]
+        assert send_kwargs.get("ephemeral") is False
+
+    def test_loadout_title_uses_live_display_name(self, mock_player_cog):
+        """Embed title uses interaction user.display_name, NOT the bot-core subject_name."""
+        interaction = _create_mock_interaction()
+        interaction.user.display_name = "LiveDisplayName"
+        self._setup_loadout(mock_player_cog, _make_player_data(), _make_player_loadout_response())
+
+        asyncio.run(mock_player_cog.loadout.callback(mock_player_cog, interaction, player=None))
+
         embed = interaction.followup.send.call_args[1]["embed"]
-        assert "Loadout" in embed.title
+        assert embed.title == "Loadout — LiveDisplayName"
 
-    def test_loadout_success_with_shield(self, mock_player_cog):
-        """loadout shows shield HP when shield_hp > 0."""
+    def test_loadout_description_is_user_mention(self, mock_player_cog):
+        """Description is overwritten to the live Discord mention."""
         interaction = _create_mock_interaction()
-        player_data = _make_player_data()
-        loadout_data = _make_loadout_data(shield_hp=50)
-        self._setup_loadout(mock_player_cog, player_data, loadout_data)
+        self._setup_loadout(mock_player_cog, _make_player_data(), _make_player_loadout_response())
 
         asyncio.run(mock_player_cog.loadout.callback(mock_player_cog, interaction, player=None))
 
         embed = interaction.followup.send.call_args[1]["embed"]
-        ship_field = next((f for f in embed.fields if "Ship Stats" in f.name), None)
-        assert ship_field is not None
-        assert "Shield HP" in ship_field.value
+        # Description is <@user.id> mention of the target
+        assert embed.description == f"<@{interaction.user.id}>"
 
-    def test_loadout_no_active_ship(self, mock_player_cog):
-        """loadout sends ephemeral message when player has no active ship."""
+    def test_loadout_no_active_ship_sends_ephemeral_error_embed(self, mock_player_cog):
+        """'No active ship' response → red error embed, always ephemeral."""
         interaction = _create_mock_interaction()
-        player_data = _make_player_data()
-        no_ship_data = {"player_id": 1, "ship_name": None, "message": "No active ship"}
+        no_ship_resp = _make_player_loadout_response(message="No active ship")
 
-        player_resp = MagicMock()
-        player_resp.json.return_value = player_data
-        player_resp.raise_for_status = MagicMock()
+        self._setup_loadout(mock_player_cog, _make_player_data(), no_ship_resp)
 
-        loadout_resp = MagicMock()
-        loadout_resp.json.return_value = no_ship_data
-        loadout_resp.raise_for_status = MagicMock()
+        asyncio.run(
+            mock_player_cog.loadout.callback(mock_player_cog, interaction, player=None, public=True)
+        )
 
-        mock_player_cog.http_client.post = AsyncMock(return_value=player_resp)
-        mock_player_cog.http_client.get = AsyncMock(return_value=loadout_resp)
+        send_kwargs = interaction.followup.send.call_args[1]
+        # Errors always ephemeral regardless of public=True
+        assert send_kwargs.get("ephemeral") is True
+        embed = send_kwargs["embed"]
+        assert "No active ship" in (embed.description or "")
+
+    def test_loadout_self_view_passes_include_cargo_true(self, mock_player_cog):
+        """Self-view must pass include_cargo=true to bot-core."""
+        interaction = _create_mock_interaction()
+        self._setup_loadout(mock_player_cog, _make_player_data(), _make_player_loadout_response())
 
         asyncio.run(mock_player_cog.loadout.callback(mock_player_cog, interaction, player=None))
 
-        interaction.followup.send.assert_awaited_once()
-        call_kwargs = interaction.followup.send.call_args[1]
-        assert call_kwargs.get("ephemeral") is True
+        get_call = mock_player_cog.http_client.get.call_args_list[0]
+        params = get_call[1].get("params", {})
+        assert params.get("include_cargo") == "true"
 
-    def test_loadout_http_404_shows_not_found(self, mock_player_cog):
-        """loadout sends 404 error message on HTTPStatusError."""
+    def test_loadout_other_player_non_admin_passes_include_cargo_false(self, mock_player_cog):
+        """Other-player view as non-admin must pass include_cargo=false."""
+        interaction = _create_mock_interaction()
+        other = MagicMock()
+        other.id = 999
+        other.display_name = "Other"
+        other.__str__ = MagicMock(return_value="Other#0000")
+
+        self._setup_loadout(mock_player_cog, _make_player_data(), _make_player_loadout_response())
+
+        # Patch _check_is_admin to return False (non-admin)
+        with patch("cogs.playerCog._check_is_admin", AsyncMock(return_value=False)):
+            asyncio.run(
+                mock_player_cog.loadout.callback(mock_player_cog, interaction, player=other)
+            )
+
+        get_call = mock_player_cog.http_client.get.call_args_list[0]
+        params = get_call[1].get("params", {})
+        assert params.get("include_cargo") == "false"
+
+    def test_loadout_other_player_admin_passes_include_cargo_true(self, mock_player_cog):
+        """Other-player view as admin must pass include_cargo=true."""
+        interaction = _create_mock_interaction()
+        other = MagicMock()
+        other.id = 999
+        other.display_name = "Other"
+        other.__str__ = MagicMock(return_value="Other#0000")
+
+        self._setup_loadout(mock_player_cog, _make_player_data(), _make_player_loadout_response())
+
+        with patch("cogs.playerCog._check_is_admin", AsyncMock(return_value=True)):
+            asyncio.run(
+                mock_player_cog.loadout.callback(mock_player_cog, interaction, player=other)
+            )
+
+        get_call = mock_player_cog.http_client.get.call_args_list[0]
+        params = get_call[1].get("params", {})
+        assert params.get("include_cargo") == "true"
+
+    def test_loadout_viewer_discord_id_param_included(self, mock_player_cog):
+        """viewer_discord_id query param is the target user's Discord ID."""
+        interaction = _create_mock_interaction()
+        self._setup_loadout(mock_player_cog, _make_player_data(), _make_player_loadout_response())
+
+        asyncio.run(mock_player_cog.loadout.callback(mock_player_cog, interaction, player=None))
+
+        get_call = mock_player_cog.http_client.get.call_args_list[0]
+        params = get_call[1].get("params", {})
+        assert params.get("viewer_discord_id") == str(interaction.user.id)
+
+    def test_loadout_profile_post_does_not_overwrite_username(self, mock_player_cog):
+        """POST to /players/ sends discord_username=None to avoid overwriting."""
+        interaction = _create_mock_interaction()
+        self._setup_loadout(mock_player_cog, _make_player_data(), _make_player_loadout_response())
+
+        asyncio.run(mock_player_cog.loadout.callback(mock_player_cog, interaction, player=None))
+
+        post_call = mock_player_cog.http_client.post.call_args_list[0]
+        body = post_call[1].get("json", {})
+        assert body.get("discord_username") is None
+
+    def test_loadout_http_404_sends_ephemeral(self, mock_player_cog):
+        """404 HTTPStatusError → ephemeral error message."""
         import httpx
 
         interaction = _create_mock_interaction()
 
         mock_response = MagicMock()
         mock_response.status_code = 404
-        error = httpx.HTTPStatusError("Not found", request=MagicMock(), response=mock_response)
+        mock_response.json = MagicMock(return_value={"detail": "not found"})
+        err = httpx.HTTPStatusError("Not found", request=MagicMock(), response=mock_response)
 
-        # post succeeds, get raises 404
         player_resp = MagicMock()
         player_resp.json.return_value = _make_player_data()
         player_resp.raise_for_status = MagicMock()
         mock_player_cog.http_client.post = AsyncMock(return_value=player_resp)
-        mock_player_cog.http_client.get = AsyncMock(side_effect=error)
+        mock_player_cog.http_client.get = AsyncMock(side_effect=err)
 
-        asyncio.run(mock_player_cog.loadout.callback(mock_player_cog, interaction, player=None))
+        asyncio.run(
+            mock_player_cog.loadout.callback(mock_player_cog, interaction, player=None, public=True)
+        )
+
+        send_kwargs = interaction.followup.send.call_args[1]
+        # Errors always ephemeral
+        assert send_kwargs.get("ephemeral") is True
+
+    def test_loadout_generic_exception_sends_ephemeral_warning(self, mock_player_cog):
+        """Unexpected exception → ephemeral warning."""
+        interaction = _create_mock_interaction()
+        mock_player_cog.http_client.post = AsyncMock(side_effect=Exception("boom"))
+
+        asyncio.run(
+            mock_player_cog.loadout.callback(mock_player_cog, interaction, player=None, public=True)
+        )
 
         interaction.followup.send.assert_awaited_once()
-        call_args = interaction.followup.send.call_args
-        assert "not found" in str(call_args).lower() or call_args[1].get("ephemeral") is True
-
-    def test_loadout_generic_exception_sends_warning(self, mock_player_cog):
-        """loadout sends warning message on unexpected exception."""
-        interaction = _create_mock_interaction()
-        mock_player_cog.http_client.post = AsyncMock(side_effect=Exception("network failure"))
-
-        asyncio.run(mock_player_cog.loadout.callback(mock_player_cog, interaction, player=None))
-
-        interaction.followup.send.assert_awaited_once()
-        call_args = interaction.followup.send.call_args
-        assert "⚠️" in str(call_args)
-
-    def test_loadout_weapons_shown_in_embed(self, mock_player_cog):
-        """Embed has Primary Weapons field when weapons are equipped."""
-        interaction = _create_mock_interaction()
-        player_data = _make_player_data()
-        loadout_data = _make_loadout_data()
-        self._setup_loadout(mock_player_cog, player_data, loadout_data)
-
-        asyncio.run(mock_player_cog.loadout.callback(mock_player_cog, interaction, player=None))
-
-        embed = interaction.followup.send.call_args[1]["embed"]
-        field_names = [f.name for f in embed.fields]
-        assert any("Weapon" in name for name in field_names)
-
-    def test_loadout_modules_shown_in_embed(self, mock_player_cog):
-        """Embed has Modules field when modules are equipped."""
-        interaction = _create_mock_interaction()
-        player_data = _make_player_data()
-        loadout_data = _make_loadout_data()
-        self._setup_loadout(mock_player_cog, player_data, loadout_data)
-
-        asyncio.run(mock_player_cog.loadout.callback(mock_player_cog, interaction, player=None))
-
-        embed = interaction.followup.send.call_args[1]["embed"]
-        field_names = [f.name for f in embed.fields]
-        assert any("Module" in name for name in field_names)
-
-    def test_loadout_no_equipment_shows_fallback(self, mock_player_cog):
-        """Embed shows 'No equipment' when no weapons/modules/turrets equipped."""
-        interaction = _create_mock_interaction()
-        player_data = _make_player_data()
-        loadout_data = {
-            "player_id": 1,
-            "ship_name": "Betty",
-            "ship_emoji": "🛸",
-            "ship_nickname": None,
-            "armor_hp": 200,
-            "shield_hp": 0,
-            "total_hp": 200,
-            "total_dps": 0,
-            "weapons": [],
-            "modules": [],
-            "turrets": [],
-            "total_value": 0,
-        }
-        self._setup_loadout(mock_player_cog, player_data, loadout_data)
-
-        asyncio.run(mock_player_cog.loadout.callback(mock_player_cog, interaction, player=None))
-
-        embed = interaction.followup.send.call_args[1]["embed"]
-        field_names = [f.name for f in embed.fields]
-        assert "Equipment" in field_names
-
-    def test_loadout_footer_contains_total_value(self, mock_player_cog):
-        """Embed footer contains total value."""
-        interaction = _create_mock_interaction()
-        player_data = _make_player_data()
-        loadout_data = _make_loadout_data()
-        self._setup_loadout(mock_player_cog, player_data, loadout_data)
-
-        asyncio.run(mock_player_cog.loadout.callback(mock_player_cog, interaction, player=None))
-
-        embed = interaction.followup.send.call_args[1]["embed"]
-        footer_text = embed.footer.text if embed.footer and embed.footer.text else ""
-        assert "Total Value" in footer_text or "3,570" in footer_text
+        call_kwargs = interaction.followup.send.call_args[1]
+        assert call_kwargs.get("ephemeral") is True
 
 
-# ---------------------------------------------------------------------------
-# /loadout cargo hold tests
-# ---------------------------------------------------------------------------
+class TestLoadoutEmbedContent:
+    """Tests that the embed produced by /loadout carries the expected sections."""
 
-
-class TestLoadoutCargoHold:
-    """Tests for cargo hold display in the /loadout slash command."""
-
-    def _make_loadout_with_cargo(self, cargo=None):
-        """Return a minimal loadout dict that includes a cargo field."""
-        data = {
-            "player_id": 1,
-            "ship_name": "Betty",
-            "ship_emoji": "🛸",
-            "ship_nickname": None,
-            "armor_hp": 200,
-            "shield_hp": 0,
-            "total_hp": 200,
-            "total_dps": 7.5,
-            "weapons": [{"name": "Nirai Impulse EX 1", "emoji": "⚡", "dps": 7.5, "value": 2500}],
-            "modules": [],
-            "turrets": [],
-            "total_value": 2500,
-            "cargo": cargo if cargo is not None else [],
-        }
-        return data
-
-    def _setup_loadout(self, cog, player_data, loadout_data):
+    def _setup(self, cog, loadout_data):
         player_resp = MagicMock()
         player_resp.status_code = 200
-        player_resp.json.return_value = player_data
+        player_resp.json.return_value = _make_player_data()
         player_resp.raise_for_status = MagicMock()
 
         loadout_resp = MagicMock()
@@ -2067,203 +2095,82 @@ class TestLoadoutCargoHold:
         cog.http_client.post = AsyncMock(return_value=player_resp)
         cog.http_client.get = AsyncMock(return_value=loadout_resp)
 
-    def test_self_view_passes_include_cargo_true(self, mock_player_cog):
-        """Self-view loadout (player=None) must call API with include_cargo=true."""
+    def test_active_ship_field_present(self, mock_player_cog):
         interaction = _create_mock_interaction()
-        player_data = _make_player_data()
-        loadout_data = self._make_loadout_with_cargo(cargo=[])
-        self._setup_loadout(mock_player_cog, player_data, loadout_data)
-
-        asyncio.run(mock_player_cog.loadout.callback(mock_player_cog, interaction, player=None))
-
-        # The GET call for loadout should have include_cargo=true in params
-        get_calls = mock_player_cog.http_client.get.call_args_list
-        # Find the loadout GET call (not stats or other calls)
-        loadout_call = get_calls[0]
-        call_kwargs = loadout_call[1] if loadout_call[1] else {}
-        params = call_kwargs.get("params", {})
-        assert params.get("include_cargo") == "true", (
-            f"Expected include_cargo='true' in params for self-view, got: {params}"
-        )
-
-    def test_other_player_view_does_not_pass_include_cargo(self, mock_player_cog):
-        """Viewing another player's loadout must NOT include include_cargo param."""
-        interaction = _create_mock_interaction()
-        # Simulate another player being provided
-        other_player = MagicMock()
-        other_player.id = 999888777
-        other_player.display_name = "OtherPlayer"
-        other_player.__str__ = MagicMock(return_value="OtherPlayer#0001")
-
-        player_data = _make_player_data()
-        loadout_data = self._make_loadout_with_cargo(cargo=[])
-        self._setup_loadout(mock_player_cog, player_data, loadout_data)
-
-        asyncio.run(mock_player_cog.loadout.callback(mock_player_cog, interaction, player=other_player))
-
-        get_calls = mock_player_cog.http_client.get.call_args_list
-        loadout_call = get_calls[0]
-        call_kwargs = loadout_call[1] if loadout_call[1] else {}
-        params = call_kwargs.get("params", {})
-        # include_cargo should be absent or empty
-        assert not params.get("include_cargo"), f"Expected no include_cargo for other-player view, got: {params}"
-
-    def test_cargo_section_shown_for_self_view_with_items(self, mock_player_cog):
-        """Self-view with cargo items → embed contains 'Cargo Hold' field."""
-        interaction = _create_mock_interaction()
-        player_data = _make_player_data()
-        cargo_items = [
-            {"item_name": "Nirai Impulse EX 1", "item_type": "weapon", "quantity": 2, "emoji": "⚡"},
-            {"item_name": "E2 Exoclad", "item_type": "module", "quantity": 1, "emoji": None},
-        ]
-        loadout_data = self._make_loadout_with_cargo(cargo=cargo_items)
-        self._setup_loadout(mock_player_cog, player_data, loadout_data)
+        self._setup(mock_player_cog, _make_player_loadout_response())
 
         asyncio.run(mock_player_cog.loadout.callback(mock_player_cog, interaction, player=None))
 
         embed = interaction.followup.send.call_args[1]["embed"]
         field_names = [f.name for f in embed.fields]
-        assert "Cargo Hold" in field_names, f"Expected 'Cargo Hold' field; fields: {field_names}"
+        assert "Active Ship" in field_names
+        assert "Ship Stats" in field_names
 
-    def test_cargo_section_not_shown_when_empty(self, mock_player_cog):
-        """Self-view with empty cargo → no 'Cargo Hold' field in embed."""
+    def test_weapons_section_header_with_n_over_m(self, mock_player_cog):
         interaction = _create_mock_interaction()
-        player_data = _make_player_data()
-        loadout_data = self._make_loadout_with_cargo(cargo=[])
-        self._setup_loadout(mock_player_cog, player_data, loadout_data)
+        self._setup(mock_player_cog, _make_player_loadout_response())
 
         asyncio.run(mock_player_cog.loadout.callback(mock_player_cog, interaction, player=None))
 
         embed = interaction.followup.send.call_args[1]["embed"]
-        field_names = [f.name for f in embed.fields]
-        assert "Cargo Hold" not in field_names, f"Unexpected 'Cargo Hold' when cargo is empty; fields: {field_names}"
+        field = next(f for f in embed.fields if f.name.startswith("Primary Weapons"))
+        # 1 weapon, max_primaries=1
+        assert field.name == "Primary Weapons <1/1>"
 
-    def test_cargo_field_contains_item_names(self, mock_player_cog):
-        """Cargo hold field value contains the item names."""
+    def test_modules_section_header_with_n_over_m(self, mock_player_cog):
         interaction = _create_mock_interaction()
-        player_data = _make_player_data()
-        cargo_items = [
-            {"item_name": "Blast Rifle", "item_type": "weapon", "quantity": 1, "emoji": "🔫"},
-        ]
-        loadout_data = self._make_loadout_with_cargo(cargo=cargo_items)
-        self._setup_loadout(mock_player_cog, player_data, loadout_data)
+        self._setup(mock_player_cog, _make_player_loadout_response())
 
         asyncio.run(mock_player_cog.loadout.callback(mock_player_cog, interaction, player=None))
 
         embed = interaction.followup.send.call_args[1]["embed"]
-        cargo_field = next((f for f in embed.fields if f.name == "Cargo Hold"), None)
+        field = next(f for f in embed.fields if f.name.startswith("Modules"))
+        assert field.name == "Modules <1/2>"
+
+    def test_cargo_hold_shown_for_self_view(self, mock_player_cog):
+        """Self-view → Cargo Hold header always rendered (empty shows 'Empty')."""
+        interaction = _create_mock_interaction()
+        self._setup(mock_player_cog, _make_player_loadout_response())
+
+        asyncio.run(mock_player_cog.loadout.callback(mock_player_cog, interaction, player=None))
+
+        embed = interaction.followup.send.call_args[1]["embed"]
+        cargo_field = next((f for f in embed.fields if f.name.startswith("Cargo Hold")), None)
         assert cargo_field is not None
-        assert "Blast Rifle" in cargo_field.value
+        # Capacity from ship_stats.cargo=20
+        assert cargo_field.name == "Cargo Hold <0/20>"
 
-    def test_cargo_field_shows_quantity_when_more_than_one(self, mock_player_cog):
-        """Cargo item with quantity > 1 shows (xN) suffix."""
+    def test_cargo_hidden_for_non_admin_other_view(self, mock_player_cog):
+        """Non-admin viewing another player → no Cargo Hold section."""
         interaction = _create_mock_interaction()
-        player_data = _make_player_data()
-        cargo_items = [
-            {"item_name": "Rapid Cannon", "item_type": "turret", "quantity": 3, "emoji": None},
-        ]
-        loadout_data = self._make_loadout_with_cargo(cargo=cargo_items)
-        self._setup_loadout(mock_player_cog, player_data, loadout_data)
+        other = MagicMock()
+        other.id = 999
+        other.display_name = "Other"
+        other.__str__ = MagicMock(return_value="Other#0000")
+
+        self._setup(mock_player_cog, _make_player_loadout_response())
+
+        with patch("cogs.playerCog._check_is_admin", AsyncMock(return_value=False)):
+            asyncio.run(mock_player_cog.loadout.callback(mock_player_cog, interaction, player=other))
+
+        embed = interaction.followup.send.call_args[1]["embed"]
+        names = [f.name for f in embed.fields]
+        assert not any(n.startswith("Cargo Hold") for n in names)
+
+    def test_no_footer_no_timestamp(self, mock_player_cog):
+        """New embed has no footer and no timestamp (spec §3.1)."""
+        interaction = _create_mock_interaction()
+        self._setup(mock_player_cog, _make_player_loadout_response())
 
         asyncio.run(mock_player_cog.loadout.callback(mock_player_cog, interaction, player=None))
 
         embed = interaction.followup.send.call_args[1]["embed"]
-        cargo_field = next((f for f in embed.fields if f.name == "Cargo Hold"), None)
-        assert cargo_field is not None
-        assert "(x3)" in cargo_field.value
+        assert embed.footer.text is None
+        assert embed.timestamp is None
 
-    def test_cargo_field_no_quantity_suffix_for_single_item(self, mock_player_cog):
-        """Cargo item with quantity=1 does NOT show (x1) suffix."""
-        interaction = _create_mock_interaction()
-        player_data = _make_player_data()
-        cargo_items = [
-            {"item_name": "Shield Module", "item_type": "module", "quantity": 1, "emoji": "🛡️"},
-        ]
-        loadout_data = self._make_loadout_with_cargo(cargo=cargo_items)
-        self._setup_loadout(mock_player_cog, player_data, loadout_data)
 
-        asyncio.run(mock_player_cog.loadout.callback(mock_player_cog, interaction, player=None))
-
-        embed = interaction.followup.send.call_args[1]["embed"]
-        cargo_field = next((f for f in embed.fields if f.name == "Cargo Hold"), None)
-        assert cargo_field is not None
-        assert "(x1)" not in cargo_field.value
-
-    def test_cargo_field_uses_emoji_prefix_when_present(self, mock_player_cog):
-        """Cargo item with emoji uses emoji as prefix instead of bullet '•'."""
-        interaction = _create_mock_interaction()
-        player_data = _make_player_data()
-        cargo_items = [
-            {"item_name": "Plasma Pistol", "item_type": "weapon", "quantity": 1, "emoji": "⚡"},
-        ]
-        loadout_data = self._make_loadout_with_cargo(cargo=cargo_items)
-        self._setup_loadout(mock_player_cog, player_data, loadout_data)
-
-        asyncio.run(mock_player_cog.loadout.callback(mock_player_cog, interaction, player=None))
-
-        embed = interaction.followup.send.call_args[1]["embed"]
-        cargo_field = next((f for f in embed.fields if f.name == "Cargo Hold"), None)
-        assert cargo_field is not None
-        # emoji prefix should appear before item name
-        assert "⚡" in cargo_field.value
-        assert "•" not in cargo_field.value
-
-    def test_cargo_field_uses_bullet_when_no_emoji(self, mock_player_cog):
-        """Cargo item without emoji uses bullet '•' as prefix."""
-        interaction = _create_mock_interaction()
-        player_data = _make_player_data()
-        cargo_items = [
-            {"item_name": "Unknown Module", "item_type": "module", "quantity": 1, "emoji": None},
-        ]
-        loadout_data = self._make_loadout_with_cargo(cargo=cargo_items)
-        self._setup_loadout(mock_player_cog, player_data, loadout_data)
-
-        asyncio.run(mock_player_cog.loadout.callback(mock_player_cog, interaction, player=None))
-
-        embed = interaction.followup.send.call_args[1]["embed"]
-        cargo_field = next((f for f in embed.fields if f.name == "Cargo Hold"), None)
-        assert cargo_field is not None
-        assert "•" in cargo_field.value
-
-    def test_cargo_hidden_when_viewing_other_player(self, mock_player_cog):
-        """Viewing another player's loadout → cargo section not shown even if API returned it."""
-        interaction = _create_mock_interaction()
-        other_player = MagicMock()
-        other_player.id = 999888777
-        other_player.display_name = "OtherPlayer"
-        other_player.__str__ = MagicMock(return_value="OtherPlayer#0001")
-
-        player_data = _make_player_data()
-        # Even if loadout data has cargo (shouldn't happen, but defensively tested)
-        cargo_items = [
-            {"item_name": "Secret Item", "item_type": "module", "quantity": 1, "emoji": None},
-        ]
-        loadout_data = self._make_loadout_with_cargo(cargo=cargo_items)
-
-        player_resp = MagicMock()
-        player_resp.status_code = 200
-        player_resp.json.return_value = player_data
-        player_resp.raise_for_status = MagicMock()
-
-        loadout_resp = MagicMock()
-        loadout_resp.status_code = 200
-        loadout_resp.json.return_value = loadout_data
-        loadout_resp.raise_for_status = MagicMock()
-
-        mock_player_cog.http_client.post = AsyncMock(return_value=player_resp)
-        mock_player_cog.http_client.get = AsyncMock(return_value=loadout_resp)
-
-        asyncio.run(mock_player_cog.loadout.callback(mock_player_cog, interaction, player=other_player))
-
-        # API was called without include_cargo
-        get_calls = mock_player_cog.http_client.get.call_args_list
-        loadout_call = get_calls[0]
-        call_kwargs = loadout_call[1] if loadout_call[1] else {}
-        params = call_kwargs.get("params", {})
-        assert not params.get("include_cargo"), "Other-player view must not request cargo"
-
+class TestLoadoutErrorHandler:
     def test_loadout_error_handler_response_not_done(self, mock_player_cog):
-        """loadout_error should send message when response is not done."""
         interaction = _create_mock_interaction()
         interaction.response.is_done = MagicMock(return_value=False)
         error = MagicMock()
@@ -2275,7 +2182,6 @@ class TestLoadoutCargoHold:
         assert call_kwargs.get("ephemeral", False)
 
     def test_loadout_error_handler_response_already_done(self, mock_player_cog):
-        """loadout_error should NOT send message if response is already done."""
         interaction = _create_mock_interaction()
         interaction.response.is_done = MagicMock(return_value=True)
         error = MagicMock()
@@ -2283,6 +2189,7 @@ class TestLoadoutCargoHold:
         asyncio.run(mock_player_cog.loadout_error(interaction, error))
 
         interaction.response.send_message.assert_not_awaited()
+
 
 
 if __name__ == "__main__":

@@ -1045,3 +1045,396 @@ class TestGetPlayerLoadout:
 
         assert response.status_code == 500
         assert "Failed to get player loadout" in response.json()["detail"]
+
+    def test_loadout_without_include_cargo_has_empty_cargo(self, client, mock_player_service):
+        """GET /players/1/loadout without include_cargo → cargo field is empty list."""
+        player = make_mock_player(active_ship_id=None)
+        mock_player_service.player_repo.get_by_id.return_value = player
+
+        response = client.get("/api/v1/players/1/loadout")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert "cargo" in data
+        assert data["cargo"] == []
+
+    def test_loadout_cargo_field_present_by_default(self, client, mock_player_service):
+        """GET /players/1/loadout response always includes cargo field in schema."""
+        player = make_mock_player(active_ship_id=None)
+        mock_player_service.player_repo.get_by_id.return_value = player
+
+        response = client.get("/api/v1/players/1/loadout")
+
+        assert response.status_code == 200
+        data = response.json()
+        # cargo field must always be present in the response
+        assert "cargo" in data
+
+
+class TestGetPlayerLoadoutWithCargo:
+    """Tests for GET /players/{player_id}/loadout?include_cargo=true (cargo hold)."""
+
+    def test_loadout_include_cargo_false_returns_empty_cargo(self, client, mock_player_service):
+        """include_cargo=false → cargo list is empty even if player has inventory items."""
+        player = make_mock_player(active_ship_id=None)
+        mock_player_service.player_repo.get_by_id.return_value = player
+
+        response = client.get("/api/v1/players/1/loadout?include_cargo=false")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["cargo"] == []
+
+    def test_loadout_include_cargo_true_no_active_ship_still_returns_empty_cargo(self, client, mock_player_service):
+        """include_cargo=true but no active ship → cargo is empty (early return path)."""
+        player = make_mock_player(active_ship_id=None)
+        mock_player_service.player_repo.get_by_id.return_value = player
+
+        response = client.get("/api/v1/players/1/loadout?include_cargo=true")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["ship_name"] is None
+        assert data["message"] == "No active ship"
+        # cargo field must always be present
+        assert "cargo" in data
+
+    def _make_active_ship_db_responses(self, mock_session, player_ship, ship_static):
+        """Helper: wire up mock_session.execute to return player_ship then ship_static."""
+        from unittest.mock import AsyncMock, MagicMock
+
+        player_ship_result = MagicMock()
+        player_ship_result.scalars.return_value.first.return_value = player_ship
+
+        ship_result = MagicMock()
+        ship_result.scalars.return_value.first.return_value = ship_static
+
+        mock_session.execute = AsyncMock(side_effect=[player_ship_result, ship_result])
+
+    def _make_player_ship(self):
+        from unittest.mock import MagicMock
+
+        player_ship = MagicMock()
+        player_ship.id = 10
+        player_ship.ship_name = "Betty"
+        player_ship.nickname = None
+        player_ship.weapons = []
+        player_ship.modules = []
+        player_ship.turrets = []
+        return player_ship
+
+    def _make_ship_static(self):
+        from unittest.mock import MagicMock
+
+        ship_static = MagicMock()
+        ship_static.name = "Betty"
+        ship_static.armour = 200
+        ship_static.emoji = "🛸"
+        return ship_static
+
+    def test_loadout_with_cargo_returns_items(self, client, mock_player_service, mock_db_session):
+        """include_cargo=true with active ship & inventory → cargo list populated."""
+        from unittest.mock import AsyncMock, MagicMock
+
+        mock_session, _ = mock_db_session
+
+        # Player with an active ship
+        player = make_mock_player(active_ship_id=10)
+        mock_player_service.player_repo.get_by_id.return_value = player
+
+        player_ship = self._make_player_ship()
+        ship_static = self._make_ship_static()
+        self._make_active_ship_db_responses(mock_session, player_ship, ship_static)
+
+        # Inventory items
+        inv_item_1 = MagicMock()
+        inv_item_1.item_name = "Nirai Impulse EX 1"
+        inv_item_1.item_type = "weapon"
+        inv_item_1.quantity = 2
+
+        inv_item_2 = MagicMock()
+        inv_item_2.item_name = "E2 Exoclad"
+        inv_item_2.item_type = "module"
+        inv_item_2.quantity = 1
+
+        game_item_with_emoji = MagicMock()
+        game_item_with_emoji.emoji = "⚡"
+
+        # Patch at the source module level (deferred imports)
+        mock_item_repo = MagicMock()
+        mock_item_repo.get_by_name = AsyncMock(return_value=game_item_with_emoji)
+
+        mock_inv_repo = MagicMock()
+        mock_inv_repo.get_player_items = AsyncMock(return_value=[inv_item_1, inv_item_2])
+
+        from unittest.mock import patch
+
+        with (
+            patch("persist.repositories.item_repository.ItemRepository", return_value=mock_item_repo),
+            patch("persist.repositories.inventory_repository.InventoryRepository", return_value=mock_inv_repo),
+        ):
+            response = client.get("/api/v1/players/1/loadout?include_cargo=true")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert len(data["cargo"]) == 2
+
+        # Check cargo item names
+        cargo_names = [c["item_name"] for c in data["cargo"]]
+        assert "Nirai Impulse EX 1" in cargo_names
+        assert "E2 Exoclad" in cargo_names
+
+    def test_loadout_cargo_item_schema(self, client, mock_player_service, mock_db_session):
+        """include_cargo=true → cargo items have correct schema fields."""
+        from unittest.mock import AsyncMock, MagicMock, patch
+
+        mock_session, _ = mock_db_session
+
+        player = make_mock_player(active_ship_id=10)
+        mock_player_service.player_repo.get_by_id.return_value = player
+
+        player_ship = self._make_player_ship()
+        ship_static = self._make_ship_static()
+        self._make_active_ship_db_responses(mock_session, player_ship, ship_static)
+
+        inv_item = MagicMock()
+        inv_item.item_name = "Blast Rifle"
+        inv_item.item_type = "weapon"
+        inv_item.quantity = 3
+
+        game_item = MagicMock()
+        game_item.emoji = "🔫"
+
+        mock_item_repo = MagicMock()
+        mock_item_repo.get_by_name = AsyncMock(return_value=game_item)
+
+        mock_inv_repo = MagicMock()
+        mock_inv_repo.get_player_items = AsyncMock(return_value=[inv_item])
+
+        with (
+            patch("persist.repositories.item_repository.ItemRepository", return_value=mock_item_repo),
+            patch("persist.repositories.inventory_repository.InventoryRepository", return_value=mock_inv_repo),
+        ):
+            response = client.get("/api/v1/players/1/loadout?include_cargo=true")
+
+        assert response.status_code == 200
+        data = response.json()
+        cargo = data["cargo"]
+        assert len(cargo) == 1
+
+        item = cargo[0]
+        assert item["item_name"] == "Blast Rifle"
+        assert item["item_type"] == "weapon"
+        assert item["quantity"] == 3
+        assert "emoji" in item
+
+    def test_loadout_cargo_item_no_game_item_emoji_is_none(self, client, mock_player_service, mock_db_session):
+        """include_cargo=true → cargo item emoji is None when item has no matching game item."""
+        from unittest.mock import AsyncMock, MagicMock, patch
+
+        mock_session, _ = mock_db_session
+
+        player = make_mock_player(active_ship_id=10)
+        mock_player_service.player_repo.get_by_id.return_value = player
+
+        player_ship = self._make_player_ship()
+        ship_static = self._make_ship_static()
+        self._make_active_ship_db_responses(mock_session, player_ship, ship_static)
+
+        inv_item = MagicMock()
+        inv_item.item_name = "Unknown Item"
+        inv_item.item_type = "module"
+        inv_item.quantity = 1
+
+        mock_item_repo = MagicMock()
+        mock_item_repo.get_by_name = AsyncMock(return_value=None)
+
+        mock_inv_repo = MagicMock()
+        mock_inv_repo.get_player_items = AsyncMock(return_value=[inv_item])
+
+        with (
+            patch("persist.repositories.item_repository.ItemRepository", return_value=mock_item_repo),
+            patch("persist.repositories.inventory_repository.InventoryRepository", return_value=mock_inv_repo),
+        ):
+            response = client.get("/api/v1/players/1/loadout?include_cargo=true")
+
+        assert response.status_code == 200
+        data = response.json()
+        cargo = data["cargo"]
+        assert len(cargo) == 1
+        assert cargo[0]["emoji"] is None
+
+    def test_loadout_cargo_empty_when_no_inventory(self, client, mock_player_service, mock_db_session):
+        """include_cargo=true but player has no inventory items → cargo is empty list."""
+        from unittest.mock import AsyncMock, MagicMock, patch
+
+        mock_session, _ = mock_db_session
+
+        player = make_mock_player(active_ship_id=10)
+        mock_player_service.player_repo.get_by_id.return_value = player
+
+        player_ship = self._make_player_ship()
+        ship_static = self._make_ship_static()
+        self._make_active_ship_db_responses(mock_session, player_ship, ship_static)
+
+        mock_item_repo = MagicMock()
+        mock_item_repo.get_by_name = AsyncMock(return_value=None)
+
+        mock_inv_repo = MagicMock()
+        mock_inv_repo.get_player_items = AsyncMock(return_value=[])
+
+        with (
+            patch("persist.repositories.item_repository.ItemRepository", return_value=mock_item_repo),
+            patch("persist.repositories.inventory_repository.InventoryRepository", return_value=mock_inv_repo),
+        ):
+            response = client.get("/api/v1/players/1/loadout?include_cargo=true")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["cargo"] == []
+
+    def test_loadout_cargo_quantity_preserved(self, client, mock_player_service, mock_db_session):
+        """Cargo item quantity > 1 is correctly preserved in response."""
+        from unittest.mock import AsyncMock, MagicMock, patch
+
+        mock_session, _ = mock_db_session
+
+        player = make_mock_player(active_ship_id=10)
+        mock_player_service.player_repo.get_by_id.return_value = player
+
+        player_ship = self._make_player_ship()
+        ship_static = self._make_ship_static()
+        self._make_active_ship_db_responses(mock_session, player_ship, ship_static)
+
+        inv_item = MagicMock()
+        inv_item.item_name = "Rapid Fire Cannon"
+        inv_item.item_type = "turret"
+        inv_item.quantity = 5
+
+        mock_item_repo = MagicMock()
+        mock_item_repo.get_by_name = AsyncMock(return_value=None)
+
+        mock_inv_repo = MagicMock()
+        mock_inv_repo.get_player_items = AsyncMock(return_value=[inv_item])
+
+        with (
+            patch("persist.repositories.item_repository.ItemRepository", return_value=mock_item_repo),
+            patch("persist.repositories.inventory_repository.InventoryRepository", return_value=mock_inv_repo),
+        ):
+            response = client.get("/api/v1/players/1/loadout?include_cargo=true")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["cargo"][0]["quantity"] == 5
+
+
+# ---------------------------------------------------------------------------
+# TestCooldownReset
+# ---------------------------------------------------------------------------
+
+
+class TestCooldownReset:
+    """Tests for PUT /players/{guild_id}/{user_id}/cooldown/reset."""
+
+    def _make_user(self, user_id=42, discord_id=99999):
+        from unittest.mock import MagicMock
+
+        u = MagicMock()
+        u.id = user_id
+        u.discord_id = discord_id
+        return u
+
+    def _make_player_obj(self, player_id=7, bounty_cooldown_end=None):
+        from unittest.mock import MagicMock
+
+        p = MagicMock()
+        p.id = player_id
+        p.bounty_cooldown_end = bounty_cooldown_end
+        return p
+
+    def test_reset_cooldown_success_returns_200(self, client, mock_db_session):
+        """Happy path: user and player found → cooldown reset → 200."""
+        from unittest.mock import AsyncMock, MagicMock, patch
+
+        mock_session, _ = mock_db_session
+
+        user = self._make_user()
+        player = self._make_player_obj()
+
+        mock_user_repo = MagicMock()
+        mock_user_repo.get_by_id = AsyncMock(return_value=user)
+        mock_player_repo = MagicMock()
+        mock_player_repo.get_by_user_and_guild = AsyncMock(return_value=player)
+
+        with (
+            patch("persist.repositories.user_repository.UserRepository", return_value=mock_user_repo),
+            patch("persist.repositories.player_repository.PlayerRepository", return_value=mock_player_repo),
+        ):
+            response = client.put("/api/v1/players/12345/99999/cooldown/reset")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["status"] == "success"
+        assert "player" in data["message"].lower()
+
+    def test_reset_cooldown_sets_cooldown_to_none(self, client, mock_db_session):
+        """Cooldown reset sets bounty_cooldown_end to None on the player object."""
+        from unittest.mock import AsyncMock, MagicMock, patch
+        from datetime import UTC, datetime, timedelta
+
+        mock_session, _ = mock_db_session
+
+        future = datetime.now(UTC) + timedelta(seconds=120)
+        user = self._make_user()
+        player = self._make_player_obj(bounty_cooldown_end=future)
+
+        mock_user_repo = MagicMock()
+        mock_user_repo.get_by_id = AsyncMock(return_value=user)
+        mock_player_repo = MagicMock()
+        mock_player_repo.get_by_user_and_guild = AsyncMock(return_value=player)
+
+        with (
+            patch("persist.repositories.user_repository.UserRepository", return_value=mock_user_repo),
+            patch("persist.repositories.player_repository.PlayerRepository", return_value=mock_player_repo),
+        ):
+            client.put("/api/v1/players/12345/99999/cooldown/reset")
+
+        assert player.bounty_cooldown_end is None
+
+    def test_reset_cooldown_user_not_found_returns_404(self, client, mock_db_session):
+        """Returns 404 when Discord user is not found."""
+        from unittest.mock import AsyncMock, MagicMock, patch
+
+        mock_session, _ = mock_db_session
+
+        mock_user_repo = MagicMock()
+        mock_user_repo.get_by_id = AsyncMock(return_value=None)
+        mock_player_repo = MagicMock()
+
+        with (
+            patch("persist.repositories.user_repository.UserRepository", return_value=mock_user_repo),
+            patch("persist.repositories.player_repository.PlayerRepository", return_value=mock_player_repo),
+        ):
+            response = client.put("/api/v1/players/12345/99999/cooldown/reset")
+
+        assert response.status_code == 404
+
+    def test_reset_cooldown_player_not_found_returns_404(self, client, mock_db_session):
+        """Returns 404 when player is not found for the given user+guild."""
+        from unittest.mock import AsyncMock, MagicMock, patch
+
+        mock_session, _ = mock_db_session
+
+        user = self._make_user()
+        mock_user_repo = MagicMock()
+        mock_user_repo.get_by_id = AsyncMock(return_value=user)
+        mock_player_repo = MagicMock()
+        mock_player_repo.get_by_user_and_guild = AsyncMock(return_value=None)
+
+        with (
+            patch("persist.repositories.user_repository.UserRepository", return_value=mock_user_repo),
+            patch("persist.repositories.player_repository.PlayerRepository", return_value=mock_player_repo),
+        ):
+            response = client.put("/api/v1/players/12345/99999/cooldown/reset")
+
+        assert response.status_code == 404

@@ -5,6 +5,7 @@ import httpx
 from discord import app_commands
 from discord.ext import commands
 from shared import bblogger
+from utils.autocomplete_utils import normalize_for_search
 
 # Set up logger
 flogger = bblogger.get_logger("discord-gateway-InventoryCog")
@@ -12,6 +13,228 @@ flogger = bblogger.get_logger("discord-gateway-InventoryCog")
 # Define any environment variables or constants here
 api_base = os.environ.get("BOT_API_BASE_URL", "http://bot-core:8000/api/v1")
 flogger.debug(f"inventoryCog loading with API_BASE_URL: {api_base}")
+
+# Message shown when the guild hasn't been set up via /admin_setup
+_GUILD_NOT_CONFIGURED_MSG = (
+    "⚠️ This server hasn't been set up yet. An admin must run `/admin_setup` "
+    "to initialize BountyBot before you can use this command."
+)
+
+
+def _is_guild_not_configured(exc: httpx.HTTPStatusError) -> bool:
+    """Return True if the HTTPStatusError is a 'guild not configured' 400 response."""
+    if exc.response.status_code != 400:
+        return False
+    try:
+        detail = exc.response.json().get("detail", "")
+        return "not configured" in detail.lower() or "admin_setup" in detail.lower()
+    except Exception:  # pylint: disable=broad-exception-caught
+        return False
+
+
+# ---------------------------------------------------------------------------
+# Discord UI Views for swap interactions
+# ---------------------------------------------------------------------------
+
+
+class WeaponSwapView(discord.ui.View):
+    """Select menu view for choosing which weapon/turret to swap out.
+
+    Presented when all weapon/turret slots are full and the player wants
+    to equip a new item.  Lets them pick which equipped item to replace.
+    """
+
+    def __init__(
+        self,
+        http_client: httpx.AsyncClient,
+        ship_id: int,
+        player_id: int,
+        new_item_name: str,
+        equipment_type: str,
+        equipped_items: list[dict],
+        *,
+        timeout: float = 60.0,
+    ) -> None:
+        super().__init__(timeout=timeout)
+        self.http_client = http_client
+        self.ship_id = ship_id
+        self.player_id = player_id
+        self.new_item_name = new_item_name
+        self.equipment_type = equipment_type
+        self.equipped_items = equipped_items
+        self.result: str | None = None  # "swapped" | "cancelled" | None (timeout)
+
+        # Build the select menu options from equipped items
+        options = [
+            discord.SelectOption(label=item["name"], value=item["name"])
+            for item in equipped_items[:25]  # Discord limit: 25 options
+        ]
+        select = discord.ui.Select(
+            placeholder="Choose an item to swap out…",
+            options=options,
+            custom_id="weapon_swap_select",
+        )
+        select.callback = self._on_select
+        self.add_item(select)
+
+        # Cancel button
+        cancel_btn = discord.ui.Button(
+            label="Cancel",
+            style=discord.ButtonStyle.secondary,
+            custom_id="weapon_swap_cancel",
+        )
+        cancel_btn.callback = self._on_cancel
+        self.add_item(cancel_btn)
+
+    async def _on_select(self, interaction: discord.Interaction) -> None:
+        """Called when the user selects an item to swap out."""
+        old_item_name = interaction.data["values"][0]
+        await interaction.response.defer(thinking=True)
+
+        try:
+            # Unequip old item
+            await self.http_client.post(
+                f"{api_base}/ships/{self.ship_id}/unequip",
+                json={
+                    "player_id": self.player_id,
+                    "equipment_type": self.equipment_type,
+                    "item_name": old_item_name,
+                },
+                timeout=10,
+            )
+
+            # Equip new item
+            equip_resp = await self.http_client.post(
+                f"{api_base}/ships/{self.ship_id}/equip",
+                json={
+                    "player_id": self.player_id,
+                    "equipment_type": self.equipment_type,
+                    "item_name": self.new_item_name,
+                },
+                timeout=10,
+            )
+            equip_resp.raise_for_status()
+            ship_data = equip_resp.json()
+
+            embed = discord.Embed(
+                title="🔄 Items Swapped",
+                description=(f"**{old_item_name}** was unequipped and **{self.new_item_name}** was equipped."),
+                color=discord.Color.green(),
+            )
+            ship_display = ship_data.get("nickname") or ship_data.get("ship_name", "Unknown")
+            embed.add_field(name="Ship", value=ship_display, inline=True)
+
+            self.result = "swapped"
+            self.stop()
+            await interaction.followup.send(embed=embed)
+
+        except Exception as exc:  # pylint: disable=broad-exception-caught
+            flogger.error(f"WeaponSwapView swap error: {exc}")
+            self.result = "error"
+            self.stop()
+            await interaction.followup.send("⚠️ An error occurred during the swap.", ephemeral=True)
+
+    async def _on_cancel(self, interaction: discord.Interaction) -> None:
+        """Called when the user clicks Cancel."""
+        self.result = "cancelled"
+        self.stop()
+        await interaction.response.send_message("❌ Swap cancelled.", ephemeral=True)
+
+    async def on_timeout(self) -> None:
+        flogger.debug("WeaponSwapView timed out")
+
+
+class UniqueModuleSwapView(discord.ui.View):
+    """Buttons for swapping a unique module.
+
+    Presented when a module with an equip limit of 1 is already equipped
+    and the player wants to equip a different module of the same class.
+    """
+
+    def __init__(
+        self,
+        http_client: httpx.AsyncClient,
+        ship_id: int,
+        player_id: int,
+        new_item_name: str,
+        old_item_name: str,
+        equipment_type: str = "modules",
+        *,
+        timeout: float = 60.0,
+    ) -> None:
+        super().__init__(timeout=timeout)
+        self.http_client = http_client
+        self.ship_id = ship_id
+        self.player_id = player_id
+        self.new_item_name = new_item_name
+        self.old_item_name = old_item_name
+        self.equipment_type = equipment_type
+        self.result: str | None = None  # "swapped" | "cancelled" | None (timeout)
+
+    @discord.ui.button(label="Swap", style=discord.ButtonStyle.primary, custom_id="unique_swap_confirm")
+    async def swap_button(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        """Perform the swap on confirmation."""
+        _ = button
+        await interaction.response.defer(thinking=True)
+
+        try:
+            # Unequip old module
+            await self.http_client.post(
+                f"{api_base}/ships/{self.ship_id}/unequip",
+                json={
+                    "player_id": self.player_id,
+                    "equipment_type": self.equipment_type,
+                    "item_name": self.old_item_name,
+                },
+                timeout=10,
+            )
+
+            # Equip new module
+            equip_resp = await self.http_client.post(
+                f"{api_base}/ships/{self.ship_id}/equip",
+                json={
+                    "player_id": self.player_id,
+                    "equipment_type": self.equipment_type,
+                    "item_name": self.new_item_name,
+                },
+                timeout=10,
+            )
+            equip_resp.raise_for_status()
+            ship_data = equip_resp.json()
+
+            embed = discord.Embed(
+                title="🔄 Module Swapped",
+                description=(f"**{self.old_item_name}** was replaced with **{self.new_item_name}**."),
+                color=discord.Color.green(),
+            )
+            ship_display = ship_data.get("nickname") or ship_data.get("ship_name", "Unknown")
+            embed.add_field(name="Ship", value=ship_display, inline=True)
+
+            self.result = "swapped"
+            self.stop()
+            await interaction.followup.send(embed=embed)
+
+        except Exception as exc:  # pylint: disable=broad-exception-caught
+            flogger.error(f"UniqueModuleSwapView swap error: {exc}")
+            self.result = "error"
+            self.stop()
+            await interaction.followup.send("⚠️ An error occurred during the module swap.", ephemeral=True)
+
+    @discord.ui.button(label="Cancel", style=discord.ButtonStyle.secondary, custom_id="unique_swap_cancel")
+    async def cancel_button(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        """Cancel the swap."""
+        _ = button
+        self.result = "cancelled"
+        self.stop()
+        await interaction.response.send_message("❌ Module swap cancelled.", ephemeral=True)
+
+    async def on_timeout(self) -> None:
+        flogger.debug("UniqueModuleSwapView timed out")
+
+
+# ---------------------------------------------------------------------------
+# Cog
+# ---------------------------------------------------------------------------
 
 
 class InventoryCog(commands.Cog):
@@ -24,13 +247,21 @@ class InventoryCog(commands.Cog):
         await self.http_client.aclose()
 
     async def _get_player_id(self, user_id: int, guild_id: int) -> int | None:
-        """Helper to get player ID from Discord user ID."""
+        """Helper to get player ID from Discord user ID.
+
+        Re-raises httpx.HTTPStatusError for guild-not-configured responses so callers
+        can surface a user-friendly message.
+        """
         try:
-            user_data = {"discord_id": user_id, "guild_id": guild_id, "discord_username": "temp"}
+            user_data = {"discord_id": user_id, "guild_id": guild_id, "discord_username": None}
 
             resp = await self.http_client.post(f"{api_base}/players/", json=user_data, timeout=5)
             resp.raise_for_status()
             return resp.json()["id"]
+        except httpx.HTTPStatusError as e:
+            if _is_guild_not_configured(e):
+                raise
+            return None
         except Exception:  # pylint: disable=broad-exception-caught
             return None
 
@@ -134,7 +365,10 @@ class InventoryCog(commands.Cog):
             flogger.debug(f"/inventory by {interaction.user} for {target_user} in guild {interaction.guild_id}")
 
         except httpx.HTTPStatusError as e:
-            await interaction.followup.send(f"❌ API Error: {e}", ephemeral=True)
+            if _is_guild_not_configured(e):
+                await interaction.followup.send(_GUILD_NOT_CONFIGURED_MSG, ephemeral=True)
+            else:
+                await interaction.followup.send(f"❌ API Error: {e}", ephemeral=True)
         except Exception as e:  # pylint: disable=broad-exception-caught
             flogger.error(f"Error in /inventory: {e}")
             await interaction.followup.send("⚠️ An error occurred while fetching inventory.", ephemeral=True)
@@ -194,7 +428,10 @@ class InventoryCog(commands.Cog):
             flogger.debug(f"/search '{query}' by {interaction.user} in guild {interaction.guild_id}")
 
         except httpx.HTTPStatusError as e:
-            await interaction.followup.send(f"❌ API Error: {e}", ephemeral=True)
+            if _is_guild_not_configured(e):
+                await interaction.followup.send(_GUILD_NOT_CONFIGURED_MSG, ephemeral=True)
+            else:
+                await interaction.followup.send(f"❌ API Error: {e}", ephemeral=True)
         except Exception as e:  # pylint: disable=broad-exception-caught
             flogger.error(f"Error in /search: {e}")
             await interaction.followup.send("⚠️ An error occurred while searching inventory.", ephemeral=True)
@@ -250,13 +487,6 @@ class InventoryCog(commands.Cog):
             flogger.error(f"Error in /item: {e}")
             await interaction.followup.send("⚠️ An error occurred while fetching item information.", ephemeral=True)
 
-    # Mapping from user-facing equipment type to API equipment_type field
-    _EQUIPMENT_TYPE_MAP = {
-        "weapon": "weapons",
-        "module": "modules",
-        "turret": "turrets",
-    }
-
     async def _get_active_ship(self, player_id: int) -> dict | None:
         """Helper to fetch the player's active ship. Returns ship dict or None."""
         try:
@@ -270,24 +500,111 @@ class InventoryCog(commands.Cog):
         except Exception:  # pylint: disable=broad-exception-caught
             return None
 
+    async def equip_autocomplete(
+        self, interaction: discord.Interaction, current: str
+    ) -> list[app_commands.Choice[str]]:
+        """Autocomplete for /equip — shows equippable items from the player's cargo/inventory."""
+        try:
+            # Resolve player ID
+            user_data = {
+                "discord_id": interaction.user.id,
+                "guild_id": interaction.guild_id,
+                "discord_username": None,
+            }
+            player_resp = await self.http_client.post(f"{api_base}/players/", json=user_data, timeout=3)
+            player_resp.raise_for_status()
+            player_id = player_resp.json().get("id")
+            if not player_id:
+                return []
+
+            # Fetch player inventory (cargo items — weapons, modules, turrets)
+            inv_resp = await self.http_client.get(f"{api_base}/inventory/player/{player_id}", timeout=3)
+            inv_resp.raise_for_status()
+            items = inv_resp.json()
+
+            # Filter to equippable item types (weapon, module, turret) and match current input
+            norm_current = normalize_for_search(current)
+            choices = []
+            seen: set[str] = set()
+            for item in items:
+                item_type = item.get("item_type", "")
+                item_name = item.get("item_name", "")
+                if (
+                    item_type in ("weapon", "module", "turret")
+                    and item_name
+                    and item_name not in seen
+                    and norm_current in normalize_for_search(item_name)
+                ):
+                    seen.add(item_name)
+                    choices.append(app_commands.Choice(name=item_name, value=item_name))
+            return choices[:25]
+        except Exception:  # pylint: disable=broad-exception-caught
+            return []
+
+    async def unequip_autocomplete(
+        self, interaction: discord.Interaction, current: str
+    ) -> list[app_commands.Choice[str]]:
+        """Autocomplete for /unequip — shows items currently equipped on the player's active ship."""
+        try:
+            # Resolve player ID
+            user_data = {
+                "discord_id": interaction.user.id,
+                "guild_id": interaction.guild_id,
+                "discord_username": None,
+            }
+            player_resp = await self.http_client.post(f"{api_base}/players/", json=user_data, timeout=3)
+            player_resp.raise_for_status()
+            player_id = player_resp.json().get("id")
+            if not player_id:
+                return []
+
+            # Fetch the player's active ship
+            ships_resp = await self.http_client.get(f"{api_base}/ships/player/{player_id}", timeout=3)
+            ships_resp.raise_for_status()
+            ships = ships_resp.json()
+            active_ship = next((s for s in ships if s.get("is_active")), None)
+            if not active_ship:
+                return []
+
+            ship_id = active_ship["id"]
+
+            # Fetch the ship's full loadout
+            loadout_resp = await self.http_client.get(f"{api_base}/ships/{ship_id}/loadout", timeout=3)
+            loadout_resp.raise_for_status()
+            loadout = loadout_resp.json()
+
+            # Collect all equipped items (weapons + modules + turrets)
+            equipped: list[str] = []
+            equipped.extend(loadout.get("weapons") or [])
+            equipped.extend(loadout.get("modules") or [])
+            equipped.extend(loadout.get("turrets") or [])
+
+            norm_current = normalize_for_search(current)
+            choices = []
+            seen: set[str] = set()
+            for item_name in equipped:
+                if item_name and item_name not in seen and norm_current in normalize_for_search(item_name):
+                    seen.add(item_name)
+                    choices.append(app_commands.Choice(name=item_name, value=item_name))
+            return choices[:25]
+        except Exception:  # pylint: disable=broad-exception-caught
+            return []
+
     @app_commands.command(name="equip", description="Equip an item from your inventory onto your active ship")
-    @app_commands.describe(item_name="Name of the item to equip", equipment_type="Type of equipment slot")
-    @app_commands.choices(
-        equipment_type=[
-            app_commands.Choice(name="Weapon", value="weapon"),
-            app_commands.Choice(name="Module", value="module"),
-            app_commands.Choice(name="Turret", value="turret"),
-        ]
-    )
+    @app_commands.describe(item_name="Name of the item to equip")
+    @app_commands.autocomplete(item_name=equip_autocomplete)
     async def equip(
         self,
         interaction: discord.Interaction,
         item_name: str,
-        equipment_type: str,
     ):
-        """Equip an item onto the player's active ship."""
+        """Equip an item onto the player's active ship.
+
+        Calls the equip-check endpoint first to auto-detect the item type
+        and handle slot-full / unique-conflict scenarios with swap UIs.
+        """
         flogger.info(f"/equip: guild={interaction.guild_id}, user={interaction.user.id}")
-        flogger.debug(f"/equip params: item_name={item_name}, equipment_type={equipment_type}")
+        flogger.debug(f"/equip params: item_name={item_name}")
         await interaction.response.defer(thinking=True)
 
         try:
@@ -304,44 +621,107 @@ class InventoryCog(commands.Cog):
                 return
 
             ship_id = active_ship["id"]
-            api_equipment_type = self._EQUIPMENT_TYPE_MAP.get(equipment_type, equipment_type)
 
-            resp = await self.http_client.post(
-                f"{api_base}/ships/{ship_id}/equip",
-                json={
-                    "player_id": player_id,
-                    "equipment_type": api_equipment_type,
-                    "item_name": item_name,
-                },
+            # Step 1: Pre-flight check (auto-detects type, checks slots/unique limits)
+            check_resp = await self.http_client.post(
+                f"{api_base}/ships/{ship_id}/equip-check",
+                json={"player_id": player_id, "item_name": item_name},
                 timeout=10,
             )
-            resp.raise_for_status()
-            ship_data = resp.json()
+            check_resp.raise_for_status()
+            check_data = check_resp.json()
+            status = check_data["status"]
+            equipment_type = check_data.get("equipment_type")
 
-            embed = discord.Embed(
-                title="⚙️ Item Equipped",
-                description=f"**{item_name}** has been equipped to your ship!",
-                color=discord.Color.green(),
-            )
-            embed.add_field(
-                name="Ship", value=ship_data.get("nickname") or ship_data.get("ship_name", "Unknown"), inline=True
-            )
-            embed.add_field(name="Slot", value=equipment_type.title(), inline=True)
+            if status == "ok":
+                # Step 2a: Can equip directly
+                equip_resp = await self.http_client.post(
+                    f"{api_base}/ships/{ship_id}/equip",
+                    json={
+                        "player_id": player_id,
+                        "equipment_type": equipment_type,
+                        "item_name": item_name,
+                    },
+                    timeout=10,
+                )
+                equip_resp.raise_for_status()
+                ship_data = equip_resp.json()
 
-            weapons = ship_data.get("weapons") or []
-            modules = ship_data.get("modules") or []
-            turrets = ship_data.get("turrets") or []
-            loadout_text = (
-                f"Weapons: {', '.join(weapons) or 'None'}\n"
-                f"Modules: {', '.join(modules) or 'None'}\n"
-                f"Turrets: {', '.join(turrets) or 'None'}"
-            )
-            embed.add_field(name="Current Loadout", value=loadout_text, inline=False)
+                embed = discord.Embed(
+                    title="⚙️ Item Equipped",
+                    description=f"**{item_name}** has been equipped to your ship!",
+                    color=discord.Color.green(),
+                )
+                embed.add_field(
+                    name="Ship",
+                    value=ship_data.get("nickname") or ship_data.get("ship_name", "Unknown"),
+                    inline=True,
+                )
+                embed.add_field(name="Slot", value=(equipment_type or "auto").title(), inline=True)
 
-            await interaction.followup.send(embed=embed)
-            flogger.debug(
-                f"/equip {item_name} ({equipment_type}) by {interaction.user} in guild {interaction.guild_id}"
-            )
+                weapons = ship_data.get("weapons") or []
+                modules = ship_data.get("modules") or []
+                turrets = ship_data.get("turrets") or []
+                loadout_text = (
+                    f"Weapons: {', '.join(weapons) or 'None'}\n"
+                    f"Modules: {', '.join(modules) or 'None'}\n"
+                    f"Turrets: {', '.join(turrets) or 'None'}"
+                )
+                embed.add_field(name="Current Loadout", value=loadout_text, inline=False)
+                await interaction.followup.send(embed=embed)
+
+            elif status == "slot_full":
+                # Step 2b: Slots are full — show swap select menu
+                equipped_items = check_data.get("equipped_items", [])
+                max_slots = check_data.get("max_slots", len(equipped_items))
+
+                embed = discord.Embed(
+                    title="🔄 Slot Full — Choose an item to swap",
+                    description=(
+                        f"All **{equipment_type}** slots are full ({max_slots}/{max_slots}).\n"
+                        f"Select an item below to replace with **{item_name}**."
+                    ),
+                    color=discord.Color.orange(),
+                )
+                view = WeaponSwapView(
+                    http_client=self.http_client,
+                    ship_id=ship_id,
+                    player_id=player_id,
+                    new_item_name=item_name,
+                    equipment_type=equipment_type,
+                    equipped_items=equipped_items,
+                )
+                await interaction.followup.send(embed=embed, view=view)
+
+            elif status == "unique_conflict":
+                # Step 2c: Unique module conflict — show Swap/Cancel buttons
+                conflicting_item = check_data.get("conflicting_item", {})
+                old_name = conflicting_item.get("name", "Unknown")
+                module_class = check_data.get("module_class", "")
+
+                embed = discord.Embed(
+                    title="🔄 Unique Module Conflict",
+                    description=(
+                        f"You already have **{old_name}** equipped (class: {module_class}).\n"
+                        f"Only 1 module of this class can be equipped at a time.\n\n"
+                        f"Swap **{old_name}** → **{item_name}**?"
+                    ),
+                    color=discord.Color.orange(),
+                )
+                view = UniqueModuleSwapView(
+                    http_client=self.http_client,
+                    ship_id=ship_id,
+                    player_id=player_id,
+                    new_item_name=item_name,
+                    old_item_name=old_name,
+                    equipment_type=equipment_type or "modules",
+                )
+                await interaction.followup.send(embed=embed, view=view)
+
+            else:
+                await interaction.followup.send(f"❌ Unexpected equip-check status: {status!r}", ephemeral=True)
+
+            flogger.debug(f"/equip {item_name} (status={status}) by {interaction.user} in guild {interaction.guild_id}")
 
         except httpx.HTTPStatusError as e:
             if e.response.status_code == 400:
@@ -359,23 +739,19 @@ class InventoryCog(commands.Cog):
             await interaction.followup.send("⚠️ An error occurred while equipping the item.", ephemeral=True)
 
     @app_commands.command(name="unequip", description="Unequip an item from your active ship to inventory")
-    @app_commands.describe(item_name="Name of the item to unequip", equipment_type="Type of equipment slot")
-    @app_commands.choices(
-        equipment_type=[
-            app_commands.Choice(name="Weapon", value="weapon"),
-            app_commands.Choice(name="Module", value="module"),
-            app_commands.Choice(name="Turret", value="turret"),
-        ]
-    )
+    @app_commands.describe(item_name="Name of the item to unequip")
+    @app_commands.autocomplete(item_name=unequip_autocomplete)
     async def unequip(
         self,
         interaction: discord.Interaction,
         item_name: str,
-        equipment_type: str,
     ):
-        """Unequip an item from the player's active ship."""
+        """Unequip an item from the player's active ship.
+
+        equipment_type is auto-detected from the item name.
+        """
         flogger.info(f"/unequip: guild={interaction.guild_id}, user={interaction.user.id}")
-        flogger.debug(f"/unequip params: item_name={item_name}, equipment_type={equipment_type}")
+        flogger.debug(f"/unequip params: item_name={item_name}")
         await interaction.response.defer(thinking=True)
 
         try:
@@ -392,14 +768,13 @@ class InventoryCog(commands.Cog):
                 return
 
             ship_id = active_ship["id"]
-            api_equipment_type = self._EQUIPMENT_TYPE_MAP.get(equipment_type, equipment_type)
 
             resp = await self.http_client.post(
                 f"{api_base}/ships/{ship_id}/unequip",
                 json={
                     "player_id": player_id,
-                    "equipment_type": api_equipment_type,
                     "item_name": item_name,
+                    # No equipment_type — auto-detected by bot-core
                 },
                 timeout=10,
             )
@@ -414,12 +789,9 @@ class InventoryCog(commands.Cog):
             embed.add_field(
                 name="Ship", value=ship_data.get("nickname") or ship_data.get("ship_name", "Unknown"), inline=True
             )
-            embed.add_field(name="Slot", value=equipment_type.title(), inline=True)
 
             await interaction.followup.send(embed=embed)
-            flogger.debug(
-                f"/unequip {item_name} ({equipment_type}) by {interaction.user} in guild {interaction.guild_id}"
-            )
+            flogger.debug(f"/unequip {item_name} by {interaction.user} in guild {interaction.guild_id}")
 
         except httpx.HTTPStatusError as e:
             if e.response.status_code == 400:
@@ -445,6 +817,271 @@ class InventoryCog(commands.Cog):
             "turret": discord.Color.purple(),
         }
         return type_colors.get(item_type, discord.Color.default())
+
+    # ---------------------------------------------------------------------------
+    # /give command — player-to-player transfers
+    # ---------------------------------------------------------------------------
+
+    async def give_item_autocomplete(
+        self, interaction: discord.Interaction, current: str
+    ) -> list[app_commands.Choice[str]]:
+        """Autocomplete for /give item — shows player's inventory items with type labels."""
+        try:
+            user_data = {
+                "discord_id": interaction.user.id,
+                "guild_id": interaction.guild_id,
+                "discord_username": None,
+            }
+            player_resp = await self.http_client.post(f"{api_base}/players/", json=user_data, timeout=3)
+            player_resp.raise_for_status()
+            player_id = player_resp.json().get("id")
+            if not player_id:
+                return []
+
+            inv_resp = await self.http_client.get(f"{api_base}/inventory/player/{player_id}", timeout=3)
+            inv_resp.raise_for_status()
+            items = inv_resp.json()
+
+            norm_current = normalize_for_search(current)
+            choices = []
+            seen: set[str] = set()
+            for item in items:
+                item_name = item.get("item_name", "")
+                item_type = item.get("item_type", "")
+                key = f"{item_name}|{item_type}"
+                if item_name and key not in seen and norm_current in normalize_for_search(item_name):
+                    seen.add(key)
+                    label = f"{item_name} [{item_type}]"
+                    # value encodes "item_name::item_type" for parsing
+                    choices.append(app_commands.Choice(name=label[:100], value=f"{item_name}::{item_type}"))
+            return choices[:25]
+        except Exception:  # pylint: disable=broad-exception-caught
+            return []
+
+    async def give_ship_autocomplete(
+        self, interaction: discord.Interaction, current: str
+    ) -> list[app_commands.Choice[str]]:
+        """Autocomplete for /give ship — shows player's non-active ships."""
+        try:
+            user_data = {
+                "discord_id": interaction.user.id,
+                "guild_id": interaction.guild_id,
+                "discord_username": None,
+            }
+            player_resp = await self.http_client.post(f"{api_base}/players/", json=user_data, timeout=3)
+            player_resp.raise_for_status()
+            player_id = player_resp.json().get("id")
+            if not player_id:
+                return []
+
+            ships_resp = await self.http_client.get(f"{api_base}/ships/player/{player_id}", timeout=3)
+            ships_resp.raise_for_status()
+            ships = ships_resp.json()
+
+            norm_current = normalize_for_search(current)
+            choices = []
+            for ship in ships:
+                if ship.get("is_active"):
+                    continue  # cannot give away active ship
+                ship_name = ship.get("ship_name", "")
+                ship_id = ship.get("id")
+                if ship_name and norm_current in normalize_for_search(ship_name):
+                    label = ship.get("nickname") or ship_name
+                    choices.append(app_commands.Choice(name=label[:100], value=str(ship_id)))
+            return choices[:25]
+        except Exception:  # pylint: disable=broad-exception-caught
+            return []
+
+    @app_commands.command(name="give", description="Give credits, an item, or a ship to another player")
+    @app_commands.describe(
+        target="The player to give to",
+        give_type="What to give: credits, item, or ship",
+        amount="Amount of credits to give (for credits only)",
+        item="Item to give — use autocomplete to pick from your inventory",
+        ship="Ship to give — use autocomplete to pick a non-active ship",
+    )
+    @app_commands.choices(
+        give_type=[
+            app_commands.Choice(name="Credits", value="credits"),
+            app_commands.Choice(name="Item", value="item"),
+            app_commands.Choice(name="Ship", value="ship"),
+        ]
+    )
+    @app_commands.rename(give_type="type")
+    @app_commands.autocomplete(item=give_item_autocomplete, ship=give_ship_autocomplete)
+    async def give(
+        self,
+        interaction: discord.Interaction,
+        target: discord.Member,
+        give_type: str,
+        amount: int | None = None,
+        item: str | None = None,
+        ship: str | None = None,
+    ):
+        """Give credits, an item, or a ship to another player in the same guild."""
+        flogger.info(f"/give: guild={interaction.guild_id} user={interaction.user.id} type={give_type}")
+        await interaction.response.defer(thinking=True, ephemeral=True)
+
+        try:
+            # Cannot give to self
+            if target.id == interaction.user.id:
+                await interaction.followup.send("❌ You cannot give to yourself.", ephemeral=True)
+                return
+
+            # Resolve both players
+            source_player_resp = await self.http_client.post(
+                f"{api_base}/players/",
+                json={"discord_id": interaction.user.id, "guild_id": interaction.guild_id, "discord_username": None},
+                timeout=5,
+            )
+            source_player_resp.raise_for_status()
+            source_player = source_player_resp.json()
+
+            target_player_resp = await self.http_client.post(
+                f"{api_base}/players/",
+                json={"discord_id": target.id, "guild_id": interaction.guild_id, "discord_username": None},
+                timeout=5,
+            )
+            target_player_resp.raise_for_status()
+            target_player = target_player_resp.json()
+
+            if give_type == "credits":
+                if amount is None or amount <= 0:
+                    await interaction.followup.send("❌ Please provide a positive credits amount.", ephemeral=True)
+                    return
+
+                if source_player["credits"] < amount:
+                    await interaction.followup.send(
+                        f"❌ You only have {source_player['credits']:,} credits.", ephemeral=True
+                    )
+                    return
+
+                transfer_resp = await self.http_client.post(
+                    f"{api_base}/players/transfer",
+                    json={
+                        "source_player_id": source_player["id"],
+                        "target_player_id": target_player["id"],
+                        "amount": amount,
+                    },
+                    timeout=10,
+                )
+                if transfer_resp.status_code == 400:
+                    detail = transfer_resp.json().get("detail", "Transfer failed.")
+                    await interaction.followup.send(f"❌ {detail}", ephemeral=True)
+                    return
+                transfer_resp.raise_for_status()
+
+                embed = discord.Embed(
+                    title="💰 Credits Given",
+                    description=f"You gave **{amount:,}** credits to {target.mention}.",
+                    color=discord.Color.gold(),
+                )
+                embed.add_field(
+                    name="Your Remaining Credits", value=f"{source_player['credits'] - amount:,}", inline=True
+                )
+                await interaction.followup.send(embed=embed, ephemeral=True)
+
+            elif give_type == "item":
+                if not item:
+                    await interaction.followup.send("❌ Please select an item to give.", ephemeral=True)
+                    return
+
+                # Parse item name and type from autocomplete value ("name::type")
+                if "::" in item:
+                    item_name, item_type = item.split("::", 1)
+                else:
+                    item_name = item
+                    item_type = "weapon"  # fallback
+
+                transfer_resp = await self.http_client.post(
+                    f"{api_base}/inventory/transfer",
+                    json={
+                        "from_player_id": source_player["id"],
+                        "to_player_id": target_player["id"],
+                        "item_type": item_type,
+                        "item_name": item_name,
+                        "quantity": 1,
+                    },
+                    timeout=10,
+                )
+                if transfer_resp.status_code == 400:
+                    detail = transfer_resp.json().get("detail", "Transfer failed.")
+                    await interaction.followup.send(f"❌ {detail}", ephemeral=True)
+                    return
+                transfer_resp.raise_for_status()
+
+                embed = discord.Embed(
+                    title="📦 Item Given",
+                    description=f"You gave **{item_name}** to {target.mention}.",
+                    color=discord.Color.green(),
+                )
+                embed.add_field(name="Item Type", value=item_type.title(), inline=True)
+                await interaction.followup.send(embed=embed, ephemeral=True)
+
+            elif give_type == "ship":
+                if not ship:
+                    await interaction.followup.send("❌ Please select a ship to give.", ephemeral=True)
+                    return
+
+                # ship value is the ship ID (int as string)
+                try:
+                    ship_id = int(ship)
+                except ValueError:
+                    await interaction.followup.send("❌ Invalid ship selection.", ephemeral=True)
+                    return
+
+                transfer_resp = await self.http_client.post(
+                    f"{api_base}/ships/transfer",
+                    json={
+                        "from_player_id": source_player["id"],
+                        "to_player_id": target_player["id"],
+                        "ship_id": ship_id,
+                    },
+                    timeout=10,
+                )
+                if transfer_resp.status_code == 400:
+                    detail = transfer_resp.json().get("detail", "Transfer failed.")
+                    await interaction.followup.send(f"❌ {detail}", ephemeral=True)
+                    return
+                if transfer_resp.status_code == 404:
+                    detail = transfer_resp.json().get("detail", "Ship not found.")
+                    await interaction.followup.send(f"❌ {detail}", ephemeral=True)
+                    return
+                transfer_resp.raise_for_status()
+                result = transfer_resp.json()
+
+                embed = discord.Embed(
+                    title="🚀 Ship Given",
+                    description=f"You gave **{result.get('ship_name', 'Unknown')}** to {target.mention}.",
+                    color=discord.Color.blue(),
+                )
+                items_returned = result.get("items_returned_to_source", [])
+                if items_returned:
+                    embed.add_field(
+                        name="Items Returned to You",
+                        value=", ".join(items_returned[:10]) + ("..." if len(items_returned) > 10 else ""),
+                        inline=False,
+                    )
+                await interaction.followup.send(embed=embed, ephemeral=True)
+
+            else:
+                await interaction.followup.send(f"❌ Unknown give type: {give_type}", ephemeral=True)
+
+            flogger.info(
+                f"/give {give_type} success: guild={interaction.guild_id} from={interaction.user.id} to={target.id}"
+            )
+
+        except httpx.HTTPStatusError as e:
+            await interaction.followup.send(f"❌ API Error: {e}", ephemeral=True)
+        except Exception as e:  # pylint: disable=broad-exception-caught
+            flogger.error(f"Error in /give: {e}")
+            await interaction.followup.send("⚠️ An error occurred.", ephemeral=True)
+
+    @give.error
+    async def give_error(self, interaction: discord.Interaction, error: app_commands.AppCommandError):
+        flogger.exception("Error in /give", exc_info=error)
+        if not interaction.response.is_done():
+            await interaction.response.send_message("⚠️ An error occurred.", ephemeral=True)
 
     @inventory.error
     async def inventory_error(self, interaction: discord.Interaction, error: app_commands.AppCommandError):

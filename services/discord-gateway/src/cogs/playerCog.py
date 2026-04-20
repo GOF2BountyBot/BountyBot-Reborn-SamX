@@ -14,6 +14,23 @@ flogger = bblogger.get_logger("discord-gateway-PlayerCog")
 api_base = os.environ.get("BOT_API_BASE_URL", "http://bot-core:8000/api/v1")
 flogger.debug(f"playerCog loading with API_BASE_URL: {api_base}")
 
+# Message shown when the guild hasn't been set up via /admin_setup
+_GUILD_NOT_CONFIGURED_MSG = (
+    "⚠️ This server hasn't been set up yet. An admin must run `/admin_setup` "
+    "to initialize BountyBot before you can use this command."
+)
+
+
+def _is_guild_not_configured(exc: httpx.HTTPStatusError) -> bool:
+    """Return True if the HTTPStatusError is a 'guild not configured' 400 response."""
+    if exc.response.status_code != 400:
+        return False
+    try:
+        detail = exc.response.json().get("detail", "")
+        return "not configured" in detail.lower() or "admin_setup" in detail.lower()
+    except Exception:  # pylint: disable=broad-exception-caught
+        return False
+
 
 class PlayerCog(commands.Cog):
     def __init__(self, bot: commands.Bot):
@@ -150,7 +167,9 @@ class PlayerCog(commands.Cog):
                 f"/profile HTTP error: guild={interaction.guild_id}, user={interaction.user.id}, "
                 f"status={e.response.status_code}"
             )
-            if e.response.status_code == 404:
+            if _is_guild_not_configured(e):
+                await interaction.followup.send(_GUILD_NOT_CONFIGURED_MSG, ephemeral=True)
+            elif e.response.status_code == 404:
                 await interaction.followup.send("❌ Player profile not found.", ephemeral=True)
             else:
                 await interaction.followup.send(f"❌ API Error: {e}", ephemeral=True)
@@ -301,7 +320,9 @@ class PlayerCog(commands.Cog):
                 f"/prestige HTTP error: guild={interaction.guild_id}, user={interaction.user.id}, "
                 f"status={e.response.status_code}"
             )
-            if e.response.status_code == 400:
+            if _is_guild_not_configured(e):
+                await interaction.followup.send(_GUILD_NOT_CONFIGURED_MSG, ephemeral=True)
+            elif e.response.status_code == 400:
                 try:
                     detail = e.response.json().get("detail", "Level too low to prestige.")
                 except Exception:  # pylint: disable=broad-exception-caught
@@ -372,7 +393,9 @@ class PlayerCog(commands.Cog):
                 f"/promote HTTP error: guild={interaction.guild_id}, user={interaction.user.id}, "
                 f"status={e.response.status_code}"
             )
-            if e.response.status_code == 400:
+            if _is_guild_not_configured(e):
+                await interaction.followup.send(_GUILD_NOT_CONFIGURED_MSG, ephemeral=True)
+            elif e.response.status_code == 400:
                 try:
                     detail = e.response.json().get("detail", "Cannot promote at this time.")
                 except Exception:  # pylint: disable=broad-exception-caught
@@ -410,8 +433,12 @@ class PlayerCog(commands.Cog):
             player_data = resp.json()
             player_id = player_data["id"]
 
-            # Fetch loadout from bot-core
-            loadout_resp = await self.http_client.get(f"{api_base}/players/{player_id}/loadout", timeout=10)
+            # Fetch loadout from bot-core; include cargo only for self-view
+            is_self_view = player is None
+            loadout_params = {"include_cargo": "true"} if is_self_view else {}
+            loadout_resp = await self.http_client.get(
+                f"{api_base}/players/{player_id}/loadout", params=loadout_params, timeout=10
+            )
             loadout_resp.raise_for_status()
             data = loadout_resp.json()
 
@@ -435,7 +462,7 @@ class PlayerCog(commands.Cog):
             # Build title: use ship nickname if set, otherwise ship name
             title_name = ship_nickname or ship_name
             embed = discord.Embed(
-                title=f"🚀 Loadout — {target.display_name}",
+                title=f"Loadout — {target.display_name}",
                 description=f"Active Ship: **{ship_emoji} {title_name}**"
                 if ship_emoji
                 else f"Active Ship: **{title_name}**",
@@ -453,25 +480,37 @@ class PlayerCog(commands.Cog):
                 hp_display = f"HP: **{armor_hp}**"
 
             embed.add_field(
-                name="🛸 Ship Stats",
+                name="Ship Stats",
                 value=f"{hp_display} | DPS: **{dps_str}**",
                 inline=False,
             )
 
             if weapons:
                 weapons_str = "\n".join(self._format_loadout_item(w) for w in weapons)
-                embed.add_field(name="🔫 Primary Weapons", value=weapons_str, inline=False)
+                embed.add_field(name="Primary Weapons", value=weapons_str, inline=False)
 
             if turrets:
                 turrets_str = "\n".join(self._format_loadout_item(t) for t in turrets)
-                embed.add_field(name="🔫 Turrets", value=turrets_str, inline=False)
+                embed.add_field(name="Turrets", value=turrets_str, inline=False)
 
             if modules:
                 modules_str = "\n".join(self._format_loadout_item(m) for m in modules)
-                embed.add_field(name="⚙️ Modules", value=modules_str, inline=False)
+                embed.add_field(name="Modules", value=modules_str, inline=False)
 
             if not weapons and not turrets and not modules:
                 embed.add_field(name="Equipment", value="*No equipment*", inline=False)
+
+            # Show cargo only for self-view
+            cargo = data.get("cargo", [])
+            if cargo:
+                cargo_lines = []
+                for item in cargo:
+                    emoji = item.get("emoji") or ""
+                    prefix = f"{emoji} " if emoji else "• "
+                    qty = item.get("quantity", 1)
+                    qty_str = f" (x{qty})" if qty > 1 else ""
+                    cargo_lines.append(f"{prefix}{item['item_name']}{qty_str}")
+                embed.add_field(name="Cargo Hold", value="\n".join(cargo_lines), inline=False)
 
             embed.set_footer(text=f"Total Value: {total_value:,} credits | Player ID: {player_id}")
 
@@ -485,7 +524,9 @@ class PlayerCog(commands.Cog):
                 f"/loadout HTTP error: guild={interaction.guild_id}, user={interaction.user.id}, "
                 f"status={e.response.status_code}"
             )
-            if e.response.status_code == 404:
+            if _is_guild_not_configured(e):
+                await interaction.followup.send(_GUILD_NOT_CONFIGURED_MSG, ephemeral=True)
+            elif e.response.status_code == 404:
                 await interaction.followup.send("❌ Player not found.", ephemeral=True)
             else:
                 await interaction.followup.send(f"❌ API Error: {e}", ephemeral=True)
@@ -516,15 +557,15 @@ class PlayerCog(commands.Cog):
 
     @app_commands.command(name="unregister", description="Remove your Bounty Hunter role (keeps your player data)")
     async def unregister(self, interaction: discord.Interaction):
-        """Remove the Bounty Hunter role from the user. Does NOT delete player data."""
+        """Remove the Bounty Hunter role(s) from the user. Does NOT delete player data."""
         await interaction.response.defer(thinking=True, ephemeral=True)
 
         try:
             config_resp = await self.http_client.get(f"{api_base}/config/guild/{interaction.guild_id}", timeout=5)
             config_resp.raise_for_status()
             config = config_resp.json()
-            bh_role_id = config.get("bounty_hunter_role_id")
 
+            bh_role_id = config.get("bounty_hunter_role_id")
             if not bh_role_id:
                 await interaction.followup.send("⚠️ No Bounty Hunter role is configured for this guild.", ephemeral=True)
                 return
@@ -536,20 +577,44 @@ class PlayerCog(commands.Cog):
                 await interaction.followup.send("⚠️ Bounty Hunter role not found in this guild.", ephemeral=True)
                 return
 
-            if role not in interaction.user.roles:
+            # Collect all BH-related role IDs from config (generic + 4 tier roles)
+            tier_role_ids: list[int] = [
+                rid
+                for rid in [
+                    config.get("bronze_role_id"),
+                    config.get("silver_role_id"),
+                    config.get("gold_role_id"),
+                    config.get("platinum_role_id"),
+                ]
+                if rid is not None
+            ]
+
+            # Build list of roles the user actually has
+            roles_to_remove: list[discord.Role] = []
+            if role in interaction.user.roles:
+                roles_to_remove.append(role)
+            for tier_id in tier_role_ids:
+                tier_role = guild.get_role(tier_id)
+                if tier_role is not None and tier_role in interaction.user.roles:
+                    roles_to_remove.append(tier_role)
+
+            if not roles_to_remove:
                 await interaction.followup.send(
-                    "ℹ️ You don't have the Bounty Hunter role.",  # noqa: RUF001
+                    "ℹ️ You don't have the Bounty Hunter role.",
                     ephemeral=True,
                 )
                 return
 
-            await interaction.user.remove_roles(role, reason="Player unregistered from BountyBot")
+            await interaction.user.remove_roles(*roles_to_remove, reason="Player unregistered from BountyBot")
+            removed_names = ", ".join(f"@{r.name}" for r in roles_to_remove)
             await interaction.followup.send(
-                "✅ Bounty Hunter role removed. Your player data is preserved — use `/profile` to re-register anytime.",
+                f"✅ Bounty Hunter role(s) removed: {removed_names}. "
+                "Your player data is preserved — use `/profile` to re-register anytime.",
                 ephemeral=True,
             )
+            removed_ids = [r.id for r in roles_to_remove]
             flogger.info(
-                f"/unregister: removed Bounty Hunter role from user {interaction.user.id} "
+                f"/unregister: removed roles {removed_ids} from user {interaction.user.id} "
                 f"in guild {interaction.guild_id}"
             )
 

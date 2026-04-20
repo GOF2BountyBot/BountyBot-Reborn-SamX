@@ -130,6 +130,13 @@ class LoadoutModuleItem(BaseModel):
     tech_level: int | None = None
 
 
+class CargoItem(BaseModel):
+    item_name: str
+    item_type: str  # "weapon", "module", "turret"
+    quantity: int
+    emoji: str | None = None
+
+
 class PlayerLoadoutResponse(BaseModel):
     player_id: int
     ship_name: str | None = None
@@ -144,3 +151,4 @@ class PlayerLoadoutResponse(BaseModel):
     turrets: list[LoadoutWeaponItem] = Field(default_factory=list)
     total_value: int | None = None
     message: str | None = None
+    cargo: list[CargoItem] = Field(default_factory=list)

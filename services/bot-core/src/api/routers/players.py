@@ -8,11 +8,13 @@ must be done via REST API.
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from persist.database.manager import get_db_session
+from services.exceptions import GuildNotConfiguredError
 from services.player_service import PlayerService
 from shared import bblogger
 from sqlalchemy.exc import IntegrityError
 
 from api.schemas.players_schema import (
+    CargoItem,
     CreatePlayerRequest,
     LoadoutModuleItem,
     LoadoutWeaponItem,
@@ -80,6 +82,12 @@ async def create_or_get_player(
                 updated_at=player.updated_at.isoformat(),
             )
 
+    except GuildNotConfiguredError as e:
+        flogger.warning(f"Guild not configured for player creation: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Guild not configured; admin must run /admin_setup",
+        ) from e
     except ValueError as e:
         flogger.warning(f"Validation error creating/getting player: {e}")
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
@@ -342,9 +350,13 @@ async def promote_player(player_id: int, player_service: PlayerService = Depends
 
 
 @router.get("/{player_id}/loadout", response_model=PlayerLoadoutResponse)
-async def get_player_loadout(player_id: int, player_service: PlayerService = Depends(get_player_service)):
+async def get_player_loadout(
+    player_id: int,
+    include_cargo: bool = False,
+    player_service: PlayerService = Depends(get_player_service),
+):
     """Get the active ship loadout for a player, including computed HP and DPS stats."""
-    flogger.debug(f"Getting loadout for player {player_id}")
+    flogger.debug(f"Getting loadout for player {player_id}, include_cargo={include_cargo}")
 
     try:
         async with get_db_session() as db:
@@ -458,6 +470,28 @@ async def get_player_loadout(player_id: int, player_service: PlayerService = Dep
                 + sum(t.value or 0 for t in turret_items)
             )
 
+            # Build cargo list if requested
+            cargo_items: list[CargoItem] = []
+            if include_cargo:
+                from persist.repositories.inventory_repository import InventoryRepository
+
+                inventory_repo = InventoryRepository()
+                inventory_items = await inventory_repo.get_player_items(db, player_id)
+                for inv_item in inventory_items:
+                    # Look up item emoji from the item repository
+                    item_emoji = None
+                    game_item = await item_repo.get_by_name(db, inv_item.item_name)
+                    if game_item:
+                        item_emoji = game_item.emoji
+                    cargo_items.append(
+                        CargoItem(
+                            item_name=inv_item.item_name,
+                            item_type=inv_item.item_type,
+                            quantity=inv_item.quantity,
+                            emoji=item_emoji,
+                        )
+                    )
+
             return PlayerLoadoutResponse(
                 player_id=player.id,
                 ship_name=ship_name,
@@ -471,6 +505,7 @@ async def get_player_loadout(player_id: int, player_service: PlayerService = Dep
                 modules=module_items,
                 turrets=turret_items,
                 total_value=total_value,
+                cargo=cargo_items,
             )
 
     except HTTPException:
@@ -480,6 +515,50 @@ async def get_player_loadout(player_id: int, player_service: PlayerService = Dep
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to get player loadout"
         ) from e
+
+
+@router.put("/{guild_id}/{user_id}/cooldown/reset")
+async def reset_player_cooldown(
+    guild_id: int,
+    user_id: int,
+    player_service: PlayerService = Depends(get_player_service),
+):
+    """Reset the bounty check cooldown for a player identified by guild_id and Discord user_id.
+
+    Used by admins to immediately unblock a player's cooldown.
+    """
+    flogger.info(f"Resetting bounty cooldown for user {user_id} in guild {guild_id}")
+
+    try:
+        async with get_db_session() as db:
+            # Resolve by guild + discord user → player
+            from persist.repositories.player_repository import PlayerRepository as _PlayerRepo
+            from persist.repositories.user_repository import UserRepository
+
+            user_repo = UserRepository()
+            player_repo = _PlayerRepo()
+
+            user = await user_repo.get_by_id(db, user_id)
+            if not user:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"User {user_id} not found")
+
+            player = await player_repo.get_by_user_and_guild(db, user.id, guild_id)
+            if not player:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"Player not found for user {user_id} in guild {guild_id}",
+                )
+
+            player.bounty_cooldown_end = None
+            await db.commit()
+            flogger.info(f"Cooldown reset for player {player.id} (user {user_id} guild {guild_id})")
+            return {"status": "success", "message": f"Cooldown reset for player {player.id}"}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        flogger.error(f"Error resetting cooldown for user {user_id} in guild {guild_id}: {e}")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to reset cooldown") from e
 
 
 @router.post("/transfer", response_model=TransferCreditsResponse)

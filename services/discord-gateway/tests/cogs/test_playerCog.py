@@ -837,11 +837,23 @@ class TestProfileNoTimestampsInBadLocations:
 # ---------------------------------------------------------------------------
 
 
-def _make_config_resp(bh_role_id: int | None):
+def _make_config_resp(
+    bh_role_id: int | None,
+    bronze_role_id: int | None = 111222001,
+    silver_role_id: int | None = 111222002,
+    gold_role_id: int | None = 111222003,
+    platinum_role_id: int | None = 111222004,
+):
     """Return a mock HTTP response for GET /config/guild/{id}."""
     resp = MagicMock()
     resp.raise_for_status = MagicMock()
-    resp.json.return_value = {"bounty_hunter_role_id": bh_role_id}
+    resp.json.return_value = {
+        "bounty_hunter_role_id": bh_role_id,
+        "bronze_role_id": bronze_role_id,
+        "silver_role_id": silver_role_id,
+        "gold_role_id": gold_role_id,
+        "platinum_role_id": platinum_role_id,
+    }
     return resp
 
 
@@ -876,12 +888,13 @@ class TestProfileRoleAssignment:
     """Tests for Bounty Hunter role assignment logic added to /profile."""
 
     def test_profile_assigns_bounty_hunter_role_on_first_use(self, mock_player_cog):
-        """After player creation, config is fetched, role found, user doesn't have it → add_roles called."""
+        """After player creation, config is fetched, BH + tier roles found, user has none → add_roles called."""
         interaction = _create_interaction_with_roles(existing_roles=[])
 
         player_data = _make_player_data(tier="Bronze")
         stats_data = _make_stats_data()
         bh_role_id = 999888777
+        bronze_role_id = 111222001
 
         player_resp = MagicMock()
         player_resp.raise_for_status = MagicMock()
@@ -892,12 +905,21 @@ class TestProfileRoleAssignment:
         stats_resp.json.return_value = stats_data
 
         promo_resp = _make_promo_resp()
-        config_resp = _make_config_resp(bh_role_id)
+        config_resp = _make_config_resp(bh_role_id, bronze_role_id=bronze_role_id,
+                                        silver_role_id=None, gold_role_id=None, platinum_role_id=None)
 
-        # guild.get_role returns a role mock that is NOT in user's roles list
-        mock_role = MagicMock()
-        mock_role.id = bh_role_id
-        interaction.guild.get_role = MagicMock(return_value=mock_role)
+        # guild.get_role returns distinct role mocks for each ID
+        mock_bh_role = MagicMock()
+        mock_bh_role.id = bh_role_id
+        mock_bh_role.name = "Bounty Hunter"
+        mock_bronze_role = MagicMock()
+        mock_bronze_role.id = bronze_role_id
+        mock_bronze_role.name = "Bounty Hunter Bronze"
+
+        def _get_role(role_id):
+            return {bh_role_id: mock_bh_role, bronze_role_id: mock_bronze_role}.get(role_id)
+
+        interaction.guild.get_role = MagicMock(side_effect=_get_role)
 
         # GET is called 3 times: stats, promotion-status, config
         mock_player_cog.http_client.post = AsyncMock(return_value=player_resp)
@@ -907,8 +929,11 @@ class TestProfileRoleAssignment:
 
         # Profile embed was still sent
         interaction.followup.send.assert_awaited_once()
-        # add_roles was called with the role
-        interaction.user.add_roles.assert_awaited_once_with(mock_role, reason="BountyBot player registration")
+        # add_roles was called once — with BH role + Bronze tier role
+        interaction.user.add_roles.assert_awaited_once()
+        added_args = interaction.user.add_roles.call_args[0]
+        added_ids = {r.id for r in added_args}
+        assert added_ids == {bh_role_id, bronze_role_id}
 
     def test_profile_skips_role_if_already_assigned(self, mock_player_cog):
         """User already has the Bounty Hunter role → add_roles NOT called."""
@@ -946,7 +971,7 @@ class TestProfileRoleAssignment:
         interaction.user.add_roles.assert_not_awaited()
 
     def test_profile_skips_role_if_config_has_no_role_id(self, mock_player_cog):
-        """bounty_hunter_role_id is None → no role assignment attempted."""
+        """All role IDs None in config → no role assignment attempted."""
         interaction = _create_interaction_with_roles(existing_roles=[])
 
         player_data = _make_player_data(tier="Bronze")
@@ -961,7 +986,9 @@ class TestProfileRoleAssignment:
         stats_resp.json.return_value = stats_data
 
         promo_resp = _make_promo_resp()
-        config_resp = _make_config_resp(None)  # no role configured
+        # No BH role or tier roles configured at all
+        config_resp = _make_config_resp(None, bronze_role_id=None, silver_role_id=None,
+                                        gold_role_id=None, platinum_role_id=None)
 
         mock_player_cog.http_client.post = AsyncMock(return_value=player_resp)
         mock_player_cog.http_client.get = AsyncMock(side_effect=[stats_resp, promo_resp, config_resp])
@@ -970,7 +997,7 @@ class TestProfileRoleAssignment:
 
         # Profile embed still sent
         interaction.followup.send.assert_awaited_once()
-        # add_roles should NOT be called
+        # add_roles should NOT be called since no roles configured
         interaction.user.add_roles.assert_not_awaited()
 
     def test_profile_works_normally_if_role_assignment_fails(self, mock_player_cog):
@@ -1058,21 +1085,52 @@ class TestUnregisterCommand:
     """Tests for the /unregister slash command."""
 
     def test_unregister_removes_role_successfully(self, mock_player_cog):
-        """Happy path: role exists, user has it → removed, confirmation sent."""
+        """Happy path: user has all 5 BH roles → all removed, confirmation sent."""
         bh_role_id = 999888777
-        mock_role = MagicMock()
-        mock_role.id = bh_role_id
+        bronze_id, silver_id, gold_id, platinum_id = 111222001, 111222002, 111222003, 111222004
 
-        interaction = _create_interaction_with_roles(existing_roles=[mock_role])
-        interaction.guild.get_role = MagicMock(return_value=mock_role)
+        mock_bh_role = MagicMock()
+        mock_bh_role.id = bh_role_id
+        mock_bh_role.name = "Bounty Hunter"
+        mock_bronze = MagicMock()
+        mock_bronze.id = bronze_id
+        mock_bronze.name = "Bounty Hunter Bronze"
+        mock_silver = MagicMock()
+        mock_silver.id = silver_id
+        mock_silver.name = "Bounty Hunter Silver"
+        mock_gold = MagicMock()
+        mock_gold.id = gold_id
+        mock_gold.name = "Bounty Hunter Gold"
+        mock_platinum = MagicMock()
+        mock_platinum.id = platinum_id
+        mock_platinum.name = "Bounty Hunter Platinum"
 
-        config_resp = _make_config_resp(bh_role_id)
+        all_roles = [mock_bh_role, mock_bronze, mock_silver, mock_gold, mock_platinum]
+        interaction = _create_interaction_with_roles(existing_roles=all_roles)
+
+        def _get_role(role_id):
+            return {
+                bh_role_id: mock_bh_role,
+                bronze_id: mock_bronze,
+                silver_id: mock_silver,
+                gold_id: mock_gold,
+                platinum_id: mock_platinum,
+            }.get(role_id)
+
+        interaction.guild.get_role = MagicMock(side_effect=_get_role)
+
+        config_resp = _make_config_resp(bh_role_id, bronze_id, silver_id, gold_id, platinum_id)
         mock_player_cog.http_client.get = AsyncMock(return_value=config_resp)
 
         asyncio.run(mock_player_cog.unregister.callback(mock_player_cog, interaction))
 
         interaction.response.defer.assert_awaited_once_with(thinking=True, ephemeral=True)
-        interaction.user.remove_roles.assert_awaited_once_with(mock_role, reason="Player unregistered from BountyBot")
+        # remove_roles must be called once with all 5 role args
+        interaction.user.remove_roles.assert_awaited_once()
+        call_args_pos = interaction.user.remove_roles.call_args[0]
+        assert len(call_args_pos) == 5, f"Expected 5 roles to be removed, got {len(call_args_pos)}"
+        removed_ids = {r.id for r in call_args_pos}
+        assert removed_ids == {bh_role_id, bronze_id, silver_id, gold_id, platinum_id}
         interaction.followup.send.assert_awaited_once()
         call_args = interaction.followup.send.call_args
         msg = call_args[0][0]
@@ -1096,9 +1154,10 @@ class TestUnregisterCommand:
         interaction.user.remove_roles.assert_not_awaited()
 
     def test_unregister_role_not_found_in_guild(self, mock_player_cog):
-        """Role ID exists in config but guild.get_role() returns None → warning."""
+        """bh_role_id exists in config but guild.get_role() returns None → warning."""
         bh_role_id = 999888777
         interaction = _create_interaction_with_roles(existing_roles=[])
+        # guild.get_role returns None for all lookups
         interaction.guild.get_role = MagicMock(return_value=None)
 
         config_resp = _make_config_resp(bh_role_id)
@@ -1114,16 +1173,36 @@ class TestUnregisterCommand:
         interaction.user.remove_roles.assert_not_awaited()
 
     def test_unregister_user_doesnt_have_role(self, mock_player_cog):
-        """User doesn't have the Bounty Hunter role → info message sent."""
+        """User has NONE of the Bounty Hunter roles → info message sent, remove_roles not called."""
         bh_role_id = 999888777
-        mock_role = MagicMock()
-        mock_role.id = bh_role_id
+        bronze_id, silver_id, gold_id, platinum_id = 111222001, 111222002, 111222003, 111222004
+
+        mock_bh_role = MagicMock()
+        mock_bh_role.id = bh_role_id
+        mock_bronze = MagicMock()
+        mock_bronze.id = bronze_id
+        mock_silver = MagicMock()
+        mock_silver.id = silver_id
+        mock_gold = MagicMock()
+        mock_gold.id = gold_id
+        mock_platinum = MagicMock()
+        mock_platinum.id = platinum_id
 
         # User has NO roles
         interaction = _create_interaction_with_roles(existing_roles=[])
-        interaction.guild.get_role = MagicMock(return_value=mock_role)
 
-        config_resp = _make_config_resp(bh_role_id)
+        def _get_role(role_id):
+            return {
+                bh_role_id: mock_bh_role,
+                bronze_id: mock_bronze,
+                silver_id: mock_silver,
+                gold_id: mock_gold,
+                platinum_id: mock_platinum,
+            }.get(role_id)
+
+        interaction.guild.get_role = MagicMock(side_effect=_get_role)
+
+        config_resp = _make_config_resp(bh_role_id, bronze_id, silver_id, gold_id, platinum_id)
         mock_player_cog.http_client.get = AsyncMock(return_value=config_resp)
 
         asyncio.run(mock_player_cog.unregister.callback(mock_player_cog, interaction))
@@ -1131,7 +1210,7 @@ class TestUnregisterCommand:
         interaction.followup.send.assert_awaited_once()
         call_args = interaction.followup.send.call_args
         msg = call_args[0][0]
-        assert "ℹ️" in msg or "don't have" in msg.lower() or "doesn't have" in msg.lower() or "not have" in msg.lower()  # noqa: RUF001
+        assert "ℹ️" in msg or "don't have" in msg.lower() or "doesn't have" in msg.lower() or "not have" in msg.lower()
         assert call_args[1].get("ephemeral", False)
         interaction.user.remove_roles.assert_not_awaited()
 
@@ -1140,12 +1219,16 @@ class TestUnregisterCommand:
         bh_role_id = 999888777
         mock_role = MagicMock()
         mock_role.id = bh_role_id
+        mock_role.name = "Bounty Hunter"
 
         interaction = _create_interaction_with_roles(existing_roles=[mock_role])
         interaction.guild.get_role = MagicMock(return_value=mock_role)
         interaction.user.remove_roles = AsyncMock(side_effect=RuntimeError("Missing Permissions"))
 
-        config_resp = _make_config_resp(bh_role_id)
+        # No tier roles configured for simplicity
+        config_resp = _make_config_resp(
+            bh_role_id, bronze_role_id=None, silver_role_id=None, gold_role_id=None, platinum_role_id=None
+        )
         mock_player_cog.http_client.get = AsyncMock(return_value=config_resp)
 
         asyncio.run(mock_player_cog.unregister.callback(mock_player_cog, interaction))
@@ -1200,6 +1283,181 @@ class TestUnregisterCommand:
         asyncio.run(mock_player_cog.unregister_error(interaction, error))
 
         interaction.response.send_message.assert_not_awaited()
+
+    def test_unregister_removes_only_roles_user_has(self, mock_player_cog):
+        """User has @Bounty Hunter + @BH-Bronze → only those 2 roles removed."""
+        bh_role_id = 999888777
+        bronze_id = 111222001
+        silver_id = 111222002
+        gold_id = 111222003
+        platinum_id = 111222004
+
+        mock_bh_role = MagicMock()
+        mock_bh_role.id = bh_role_id
+        mock_bh_role.name = "Bounty Hunter"
+        mock_bronze = MagicMock()
+        mock_bronze.id = bronze_id
+        mock_bronze.name = "Bounty Hunter Bronze"
+        mock_silver = MagicMock()
+        mock_silver.id = silver_id
+        mock_silver.name = "Bounty Hunter Silver"
+        mock_gold = MagicMock()
+        mock_gold.id = gold_id
+        mock_gold.name = "Bounty Hunter Gold"
+        mock_platinum = MagicMock()
+        mock_platinum.id = platinum_id
+        mock_platinum.name = "Bounty Hunter Platinum"
+
+        # User only has BH + Bronze
+        interaction = _create_interaction_with_roles(existing_roles=[mock_bh_role, mock_bronze])
+
+        def _get_role(role_id):
+            return {
+                bh_role_id: mock_bh_role,
+                bronze_id: mock_bronze,
+                silver_id: mock_silver,
+                gold_id: mock_gold,
+                platinum_id: mock_platinum,
+            }.get(role_id)
+
+        interaction.guild.get_role = MagicMock(side_effect=_get_role)
+        config_resp = _make_config_resp(bh_role_id, bronze_id, silver_id, gold_id, platinum_id)
+        mock_player_cog.http_client.get = AsyncMock(return_value=config_resp)
+
+        asyncio.run(mock_player_cog.unregister.callback(mock_player_cog, interaction))
+
+        interaction.user.remove_roles.assert_awaited_once()
+        removed_args = interaction.user.remove_roles.call_args[0]
+        assert len(removed_args) == 2, f"Expected 2 roles removed, got {len(removed_args)}"
+        removed_ids = {r.id for r in removed_args}
+        assert removed_ids == {bh_role_id, bronze_id}
+
+    def test_unregister_tier_role_id_none_in_config(self, mock_player_cog):
+        """Config has some tier role IDs as None → only configured roles considered (no error)."""
+        bh_role_id = 999888777
+        bronze_id = 111222001
+
+        mock_bh_role = MagicMock()
+        mock_bh_role.id = bh_role_id
+        mock_bh_role.name = "Bounty Hunter"
+        mock_bronze = MagicMock()
+        mock_bronze.id = bronze_id
+        mock_bronze.name = "Bounty Hunter Bronze"
+
+        # User has BH + Bronze; silver/gold/platinum are None in config
+        interaction = _create_interaction_with_roles(existing_roles=[mock_bh_role, mock_bronze])
+
+        def _get_role(role_id):
+            return {bh_role_id: mock_bh_role, bronze_id: mock_bronze}.get(role_id)
+
+        interaction.guild.get_role = MagicMock(side_effect=_get_role)
+
+        config_resp = _make_config_resp(bh_role_id, bronze_id, None, None, None)
+        mock_player_cog.http_client.get = AsyncMock(return_value=config_resp)
+
+        asyncio.run(mock_player_cog.unregister.callback(mock_player_cog, interaction))
+
+        # Should succeed without error, removing BH + Bronze
+        interaction.user.remove_roles.assert_awaited_once()
+        removed_args = interaction.user.remove_roles.call_args[0]
+        removed_ids = {r.id for r in removed_args}
+        assert removed_ids == {bh_role_id, bronze_id}
+        # Success message sent
+        interaction.followup.send.assert_awaited_once()
+        msg = interaction.followup.send.call_args[0][0]
+        assert "✅" in msg or "removed" in msg.lower()
+
+    # ------------------------------------------------------------------
+    # Adversarial edge cases (Q18 / Q19 coverage)
+    # ------------------------------------------------------------------
+
+    def test_unregister_user_has_only_tier_role_no_generic_bh_role(self, mock_player_cog):
+        """Q18 / Adversarial: User has ONLY a tier role (e.g. BH-Bronze) but NOT
+        the generic @Bounty Hunter role (a degenerate state that can happen via admin
+        manipulation or a prior A.14-style bug).
+
+        The code must still detect and remove the tier role without erroring.
+        The 'role in user.roles' guard for the generic BH role should not prevent
+        tier-role cleanup.
+        """
+        bh_role_id = 999888777
+        bronze_id = 111222001
+
+        mock_bh_role = MagicMock()
+        mock_bh_role.id = bh_role_id
+        mock_bh_role.name = "Bounty Hunter"
+        mock_bronze = MagicMock()
+        mock_bronze.id = bronze_id
+        mock_bronze.name = "Bounty Hunter Bronze"
+
+        # User has ONLY the tier role — no generic BH role
+        interaction = _create_interaction_with_roles(existing_roles=[mock_bronze])
+
+        def _get_role(role_id):
+            return {bh_role_id: mock_bh_role, bronze_id: mock_bronze}.get(role_id)
+
+        interaction.guild.get_role = MagicMock(side_effect=_get_role)
+
+        # Config returns both bh_role_id and bronze_role_id
+        config_resp = _make_config_resp(bh_role_id, bronze_role_id=bronze_id,
+                                        silver_role_id=None, gold_role_id=None, platinum_role_id=None)
+        mock_player_cog.http_client.get = AsyncMock(return_value=config_resp)
+
+        asyncio.run(mock_player_cog.unregister.callback(mock_player_cog, interaction))
+
+        # remove_roles must be called — the tier role should be removed even without the generic BH role
+        interaction.user.remove_roles.assert_awaited_once()
+        removed_args = interaction.user.remove_roles.call_args[0]
+        removed_ids = {r.id for r in removed_args}
+        assert bronze_id in removed_ids, (
+            "Tier-only user must have their tier role removed even without generic @Bounty Hunter role"
+        )
+        # bh_role should NOT be in the remove list since user doesn't have it
+        assert bh_role_id not in removed_ids
+
+        # Success message should list the removed tier role
+        interaction.followup.send.assert_awaited_once()
+        msg = interaction.followup.send.call_args[0][0]
+        assert "✅" in msg or "removed" in msg.lower()
+
+    def test_unregister_all_tier_ids_none_and_user_has_no_bh_role(self, mock_player_cog):
+        """Q19 / Adversarial: Config has all tier_role_ids = None AND user has no
+        generic BH role either. The 'you don't have the role' short-circuit must
+        still fire cleanly — no exception, no double-send, no remove_roles call.
+        """
+        bh_role_id = 999888777
+
+        mock_bh_role = MagicMock()
+        mock_bh_role.id = bh_role_id
+        mock_bh_role.name = "Bounty Hunter"
+
+        # User has NO BH-related roles at all
+        interaction = _create_interaction_with_roles(existing_roles=[])
+        interaction.guild.get_role = MagicMock(return_value=mock_bh_role)
+
+        # Config: bh_role_id set but ALL tier IDs are None
+        config_resp = _make_config_resp(
+            bh_role_id,
+            bronze_role_id=None,
+            silver_role_id=None,
+            gold_role_id=None,
+            platinum_role_id=None,
+        )
+        mock_player_cog.http_client.get = AsyncMock(return_value=config_resp)
+
+        asyncio.run(mock_player_cog.unregister.callback(mock_player_cog, interaction))
+
+        # Must NOT call remove_roles — nothing to remove
+        interaction.user.remove_roles.assert_not_awaited()
+
+        # Must send exactly one message — the "you don't have the role" info message
+        interaction.followup.send.assert_awaited_once()
+        call_args = interaction.followup.send.call_args
+        msg = call_args[0][0]
+        assert "ℹ️" in msg or "don't have" in msg.lower() or "not have" in msg.lower(), (
+            f"Expected 'you don't have the role' message, got: {msg!r}"
+        )
+        assert call_args[1].get("ephemeral", False)
 
 
 # ---------------------------------------------------------------------------
@@ -1766,6 +2024,265 @@ class TestLoadoutCommand:
         embed = interaction.followup.send.call_args[1]["embed"]
         footer_text = embed.footer.text if embed.footer and embed.footer.text else ""
         assert "Total Value" in footer_text or "3,570" in footer_text
+
+
+# ---------------------------------------------------------------------------
+# /loadout cargo hold tests
+# ---------------------------------------------------------------------------
+
+
+class TestLoadoutCargoHold:
+    """Tests for cargo hold display in the /loadout slash command."""
+
+    def _make_loadout_with_cargo(self, cargo=None):
+        """Return a minimal loadout dict that includes a cargo field."""
+        data = {
+            "player_id": 1,
+            "ship_name": "Betty",
+            "ship_emoji": "🛸",
+            "ship_nickname": None,
+            "armor_hp": 200,
+            "shield_hp": 0,
+            "total_hp": 200,
+            "total_dps": 7.5,
+            "weapons": [{"name": "Nirai Impulse EX 1", "emoji": "⚡", "dps": 7.5, "value": 2500}],
+            "modules": [],
+            "turrets": [],
+            "total_value": 2500,
+            "cargo": cargo if cargo is not None else [],
+        }
+        return data
+
+    def _setup_loadout(self, cog, player_data, loadout_data):
+        player_resp = MagicMock()
+        player_resp.status_code = 200
+        player_resp.json.return_value = player_data
+        player_resp.raise_for_status = MagicMock()
+
+        loadout_resp = MagicMock()
+        loadout_resp.status_code = 200
+        loadout_resp.json.return_value = loadout_data
+        loadout_resp.raise_for_status = MagicMock()
+
+        cog.http_client.post = AsyncMock(return_value=player_resp)
+        cog.http_client.get = AsyncMock(return_value=loadout_resp)
+
+    def test_self_view_passes_include_cargo_true(self, mock_player_cog):
+        """Self-view loadout (player=None) must call API with include_cargo=true."""
+        interaction = _create_mock_interaction()
+        player_data = _make_player_data()
+        loadout_data = self._make_loadout_with_cargo(cargo=[])
+        self._setup_loadout(mock_player_cog, player_data, loadout_data)
+
+        asyncio.run(mock_player_cog.loadout.callback(mock_player_cog, interaction, player=None))
+
+        # The GET call for loadout should have include_cargo=true in params
+        get_calls = mock_player_cog.http_client.get.call_args_list
+        # Find the loadout GET call (not stats or other calls)
+        loadout_call = get_calls[0]
+        call_kwargs = loadout_call[1] if loadout_call[1] else {}
+        params = call_kwargs.get("params", {})
+        assert params.get("include_cargo") == "true", (
+            f"Expected include_cargo='true' in params for self-view, got: {params}"
+        )
+
+    def test_other_player_view_does_not_pass_include_cargo(self, mock_player_cog):
+        """Viewing another player's loadout must NOT include include_cargo param."""
+        interaction = _create_mock_interaction()
+        # Simulate another player being provided
+        other_player = MagicMock()
+        other_player.id = 999888777
+        other_player.display_name = "OtherPlayer"
+        other_player.__str__ = MagicMock(return_value="OtherPlayer#0001")
+
+        player_data = _make_player_data()
+        loadout_data = self._make_loadout_with_cargo(cargo=[])
+        self._setup_loadout(mock_player_cog, player_data, loadout_data)
+
+        asyncio.run(mock_player_cog.loadout.callback(mock_player_cog, interaction, player=other_player))
+
+        get_calls = mock_player_cog.http_client.get.call_args_list
+        loadout_call = get_calls[0]
+        call_kwargs = loadout_call[1] if loadout_call[1] else {}
+        params = call_kwargs.get("params", {})
+        # include_cargo should be absent or empty
+        assert not params.get("include_cargo"), f"Expected no include_cargo for other-player view, got: {params}"
+
+    def test_cargo_section_shown_for_self_view_with_items(self, mock_player_cog):
+        """Self-view with cargo items → embed contains 'Cargo Hold' field."""
+        interaction = _create_mock_interaction()
+        player_data = _make_player_data()
+        cargo_items = [
+            {"item_name": "Nirai Impulse EX 1", "item_type": "weapon", "quantity": 2, "emoji": "⚡"},
+            {"item_name": "E2 Exoclad", "item_type": "module", "quantity": 1, "emoji": None},
+        ]
+        loadout_data = self._make_loadout_with_cargo(cargo=cargo_items)
+        self._setup_loadout(mock_player_cog, player_data, loadout_data)
+
+        asyncio.run(mock_player_cog.loadout.callback(mock_player_cog, interaction, player=None))
+
+        embed = interaction.followup.send.call_args[1]["embed"]
+        field_names = [f.name for f in embed.fields]
+        assert "Cargo Hold" in field_names, f"Expected 'Cargo Hold' field; fields: {field_names}"
+
+    def test_cargo_section_not_shown_when_empty(self, mock_player_cog):
+        """Self-view with empty cargo → no 'Cargo Hold' field in embed."""
+        interaction = _create_mock_interaction()
+        player_data = _make_player_data()
+        loadout_data = self._make_loadout_with_cargo(cargo=[])
+        self._setup_loadout(mock_player_cog, player_data, loadout_data)
+
+        asyncio.run(mock_player_cog.loadout.callback(mock_player_cog, interaction, player=None))
+
+        embed = interaction.followup.send.call_args[1]["embed"]
+        field_names = [f.name for f in embed.fields]
+        assert "Cargo Hold" not in field_names, f"Unexpected 'Cargo Hold' when cargo is empty; fields: {field_names}"
+
+    def test_cargo_field_contains_item_names(self, mock_player_cog):
+        """Cargo hold field value contains the item names."""
+        interaction = _create_mock_interaction()
+        player_data = _make_player_data()
+        cargo_items = [
+            {"item_name": "Blast Rifle", "item_type": "weapon", "quantity": 1, "emoji": "🔫"},
+        ]
+        loadout_data = self._make_loadout_with_cargo(cargo=cargo_items)
+        self._setup_loadout(mock_player_cog, player_data, loadout_data)
+
+        asyncio.run(mock_player_cog.loadout.callback(mock_player_cog, interaction, player=None))
+
+        embed = interaction.followup.send.call_args[1]["embed"]
+        cargo_field = next((f for f in embed.fields if f.name == "Cargo Hold"), None)
+        assert cargo_field is not None
+        assert "Blast Rifle" in cargo_field.value
+
+    def test_cargo_field_shows_quantity_when_more_than_one(self, mock_player_cog):
+        """Cargo item with quantity > 1 shows (xN) suffix."""
+        interaction = _create_mock_interaction()
+        player_data = _make_player_data()
+        cargo_items = [
+            {"item_name": "Rapid Cannon", "item_type": "turret", "quantity": 3, "emoji": None},
+        ]
+        loadout_data = self._make_loadout_with_cargo(cargo=cargo_items)
+        self._setup_loadout(mock_player_cog, player_data, loadout_data)
+
+        asyncio.run(mock_player_cog.loadout.callback(mock_player_cog, interaction, player=None))
+
+        embed = interaction.followup.send.call_args[1]["embed"]
+        cargo_field = next((f for f in embed.fields if f.name == "Cargo Hold"), None)
+        assert cargo_field is not None
+        assert "(x3)" in cargo_field.value
+
+    def test_cargo_field_no_quantity_suffix_for_single_item(self, mock_player_cog):
+        """Cargo item with quantity=1 does NOT show (x1) suffix."""
+        interaction = _create_mock_interaction()
+        player_data = _make_player_data()
+        cargo_items = [
+            {"item_name": "Shield Module", "item_type": "module", "quantity": 1, "emoji": "🛡️"},
+        ]
+        loadout_data = self._make_loadout_with_cargo(cargo=cargo_items)
+        self._setup_loadout(mock_player_cog, player_data, loadout_data)
+
+        asyncio.run(mock_player_cog.loadout.callback(mock_player_cog, interaction, player=None))
+
+        embed = interaction.followup.send.call_args[1]["embed"]
+        cargo_field = next((f for f in embed.fields if f.name == "Cargo Hold"), None)
+        assert cargo_field is not None
+        assert "(x1)" not in cargo_field.value
+
+    def test_cargo_field_uses_emoji_prefix_when_present(self, mock_player_cog):
+        """Cargo item with emoji uses emoji as prefix instead of bullet '•'."""
+        interaction = _create_mock_interaction()
+        player_data = _make_player_data()
+        cargo_items = [
+            {"item_name": "Plasma Pistol", "item_type": "weapon", "quantity": 1, "emoji": "⚡"},
+        ]
+        loadout_data = self._make_loadout_with_cargo(cargo=cargo_items)
+        self._setup_loadout(mock_player_cog, player_data, loadout_data)
+
+        asyncio.run(mock_player_cog.loadout.callback(mock_player_cog, interaction, player=None))
+
+        embed = interaction.followup.send.call_args[1]["embed"]
+        cargo_field = next((f for f in embed.fields if f.name == "Cargo Hold"), None)
+        assert cargo_field is not None
+        # emoji prefix should appear before item name
+        assert "⚡" in cargo_field.value
+        assert "•" not in cargo_field.value
+
+    def test_cargo_field_uses_bullet_when_no_emoji(self, mock_player_cog):
+        """Cargo item without emoji uses bullet '•' as prefix."""
+        interaction = _create_mock_interaction()
+        player_data = _make_player_data()
+        cargo_items = [
+            {"item_name": "Unknown Module", "item_type": "module", "quantity": 1, "emoji": None},
+        ]
+        loadout_data = self._make_loadout_with_cargo(cargo=cargo_items)
+        self._setup_loadout(mock_player_cog, player_data, loadout_data)
+
+        asyncio.run(mock_player_cog.loadout.callback(mock_player_cog, interaction, player=None))
+
+        embed = interaction.followup.send.call_args[1]["embed"]
+        cargo_field = next((f for f in embed.fields if f.name == "Cargo Hold"), None)
+        assert cargo_field is not None
+        assert "•" in cargo_field.value
+
+    def test_cargo_hidden_when_viewing_other_player(self, mock_player_cog):
+        """Viewing another player's loadout → cargo section not shown even if API returned it."""
+        interaction = _create_mock_interaction()
+        other_player = MagicMock()
+        other_player.id = 999888777
+        other_player.display_name = "OtherPlayer"
+        other_player.__str__ = MagicMock(return_value="OtherPlayer#0001")
+
+        player_data = _make_player_data()
+        # Even if loadout data has cargo (shouldn't happen, but defensively tested)
+        cargo_items = [
+            {"item_name": "Secret Item", "item_type": "module", "quantity": 1, "emoji": None},
+        ]
+        loadout_data = self._make_loadout_with_cargo(cargo=cargo_items)
+
+        player_resp = MagicMock()
+        player_resp.status_code = 200
+        player_resp.json.return_value = player_data
+        player_resp.raise_for_status = MagicMock()
+
+        loadout_resp = MagicMock()
+        loadout_resp.status_code = 200
+        loadout_resp.json.return_value = loadout_data
+        loadout_resp.raise_for_status = MagicMock()
+
+        mock_player_cog.http_client.post = AsyncMock(return_value=player_resp)
+        mock_player_cog.http_client.get = AsyncMock(return_value=loadout_resp)
+
+        asyncio.run(mock_player_cog.loadout.callback(mock_player_cog, interaction, player=other_player))
+
+        # API was called without include_cargo
+        get_calls = mock_player_cog.http_client.get.call_args_list
+        loadout_call = get_calls[0]
+        call_kwargs = loadout_call[1] if loadout_call[1] else {}
+        params = call_kwargs.get("params", {})
+        assert not params.get("include_cargo"), "Other-player view must not request cargo"
+
+    def test_loadout_error_handler_response_not_done(self, mock_player_cog):
+        """loadout_error should send message when response is not done."""
+        interaction = _create_mock_interaction()
+        interaction.response.is_done = MagicMock(return_value=False)
+        error = MagicMock()
+
+        asyncio.run(mock_player_cog.loadout_error(interaction, error))
+
+        interaction.response.send_message.assert_awaited_once()
+        call_kwargs = interaction.response.send_message.call_args[1]
+        assert call_kwargs.get("ephemeral", False)
+
+    def test_loadout_error_handler_response_already_done(self, mock_player_cog):
+        """loadout_error should NOT send message if response is already done."""
+        interaction = _create_mock_interaction()
+        interaction.response.is_done = MagicMock(return_value=True)
+        error = MagicMock()
+
+        asyncio.run(mock_player_cog.loadout_error(interaction, error))
+
+        interaction.response.send_message.assert_not_awaited()
 
 
 if __name__ == "__main__":

@@ -12,11 +12,11 @@ from persist.models.user import User
 from persist.repositories.config_repository import ConfigRepository
 from persist.repositories.player_repository import PlayerRepository
 from persist.repositories.user_repository import UserRepository
-from services.exceptions import GuildNotConfiguredError
 from shared import bblogger
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from services.division_service import DivisionService
+from services.exceptions import GuildNotConfiguredError
 from services.game_constants import GameConstants
 from services.game_maths import calculate_user_level
 

@@ -13,7 +13,6 @@ Handles bounty-related operations including:
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import Response
 from persist.database.manager import get_db_session
-from persist.repositories.bounty_repository import BountyRepository  # noqa: F401 (kept for backward compat)
 from persist.repositories.config_repository import ConfigRepository
 from services.audit_service import AuditService
 from services.bounty_service import BountyService

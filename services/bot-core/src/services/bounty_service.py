@@ -83,7 +83,7 @@ class CheckResult(enum.Enum):
 
 
 @dataclass
-class CheckResponse:
+class CheckResponse:  # pylint: disable=too-many-instance-attributes
     """Response object returned by :meth:`BountyService.check_bounty`."""
 
     result: CheckResult
@@ -1103,7 +1103,7 @@ class BountyService:
 
             import httpx
             from message_builders.builders.bounty_announcement import BountyAnnouncementBuilder
-            from persist.repositories.criminal_repository import CriminalRepository
+            from persist.repositories.criminal_repository import CriminalRepository  # noqa: F811  pylint: disable=reimported,redefined-outer-name
             from persist.repositories.discord_message_repository import DiscordMessageRepository
 
             msg_repo = DiscordMessageRepository()

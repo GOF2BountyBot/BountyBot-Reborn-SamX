@@ -63,7 +63,7 @@ def is_admin():
     return app_commands.check(predicate)
 
 
-class AdminCog(commands.Cog):
+class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
     def __init__(self, bot: commands.Bot):
         self.bot = bot
         self._valid_tiers = ["Bronze", "Silver", "Gold", "Platinum"]
@@ -1237,7 +1237,7 @@ class AdminCog(commands.Cog):
                     return
 
                 # Client-side pre-validation: ascending order
-                if not (silver < gold < platinum):
+                if not silver < gold < platinum:
                     await interaction.followup.send(
                         "❌ Thresholds must be in strictly ascending order: silver < gold < platinum.", ephemeral=True
                     )

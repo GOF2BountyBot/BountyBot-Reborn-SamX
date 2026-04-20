@@ -397,7 +397,7 @@ class ShopCog(commands.Cog):
                 # Filter by item_type if one was provided
                 if item_type_filter:
                     sell_type = self._SELL_TYPE_MAP.get(raw_type, raw_type)
-                    if sell_type != item_type_filter and raw_type != item_type_filter:
+                    if item_type_filter not in (sell_type, raw_type):
                         continue
 
                 type_label = self._ITEM_TYPE_LABELS.get(raw_type, raw_type.replace("_", " ").title())

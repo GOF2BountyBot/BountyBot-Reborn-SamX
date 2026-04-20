@@ -210,3 +210,8 @@ old-refs
 .log
 *.log
 **/*.log
+
+# Local working artifacts (not committed)
+scripts/
+benchmarking/
+kv-quant-benchmarks.zip

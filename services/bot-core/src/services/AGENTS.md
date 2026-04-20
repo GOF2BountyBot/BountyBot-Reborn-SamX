@@ -95,10 +95,15 @@ Uses: `PlayerRepository`, `PlayerShipRepository`, `InventoryRepository`, `Equipm
 
 ### config_service.py — `ConfigService`
 
-Guild configuration management:
-- `get_or_create_config(db, guild_id)` — returns config with sensible defaults if none exists
-- `update_config(db, guild_id, updates)` — updates fields; returns updated config
+Guild configuration management (no auto-create — `/admin_setup` is the only path that creates a `guild_configs` row):
+- `get_guild_config(db, guild_id)` — returns config summary; raises `GuildNotConfiguredError` if absent
+- `get_bounty_config(db, guild_id)` — returns bounty config; raises `GuildNotConfiguredError` if absent
+- `update_bounty_config(db, guild_id, updates)` — updates bounty fields; raises `GuildNotConfiguredError` if absent
+- `create_or_update_config(db, config_data)` — the admin_setup creation path; always creates/updates
+- `reset_to_defaults(db, guild_id)` — admin reset; wipes existing config and recreates defaults
 - Provides starting_credits, channel IDs, and other per-guild settings to other services
+
+Custom exception: `services.exceptions.GuildNotConfiguredError` (carries `guild_id` attribute).
 
 Uses: `ConfigRepository`
 

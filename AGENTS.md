@@ -407,4 +407,51 @@ Additional executors (triggered on demand or by other jobs):
 
 ---
 
-*Last updated: 2026-03-16*
+## Docker & Discord Operational Reference
+
+### Docker Access
+
+All commands require `sudo docker`. Containers:
+
+| Container | Port | Exec curl base |
+|-----------|------|----------------|
+| `bountybot-bot-core` | 8000 | `sudo docker exec bountybot-bot-core curl -s http://localhost:8000/api/v1/...` |
+| `bountybot-discord-gateway` | 7999 | `sudo docker exec bountybot-discord-gateway curl -s http://localhost:7999/api/v1/...` |
+| `bountybot-blender-service` | 8001 | `sudo docker exec bountybot-blender-service curl -s http://localhost:8001/api/v1/...` |
+| `bountybot-db` | 5432 | `sudo docker exec bountybot-db psql -U <user> -d <db>` |
+
+Logs: `sudo docker logs bountybot-<service> --tail N 2>&1`
+
+### Dev Discord Server
+
+| Entity | ID |
+|--------|----|
+| Dev server (guild) | `1490693399307616276` |
+| Owner/main account | `402296276617527306` |
+| Alt-user (normal perms) | `970691862035841048` |
+| Bot user | `1379827884851593256` (BountyBot-SamX) |
+
+### Key Discord Gateway API Endpoints (for testing/verification)
+
+```
+GET  /api/v1/guilds                                    — List all guilds
+GET  /api/v1/guilds/{guild_id}/channels                — List guild channels
+GET  /api/v1/guilds/{guild_id}/roles                   — List guild roles
+GET  /api/v1/guilds/{guild_id}/members                 — List guild members
+GET  /api/v1/guilds/{guild_id}/categories              — List guild categories
+GET  /api/v1/channels/{channel_id}/messages?limit=N    — List channel messages (newest first)
+GET  /api/v1/messages/{message_id}                     — Get specific message
+```
+
+### Key Bot-Core API Endpoints (for testing/verification)
+
+```
+GET  /api/v1/config/guild/{guild_id}                   — Guild config (channels, roles, settings)
+GET  /api/v1/players/{guild_id}/{user_id}              — Player state
+GET  /api/v1/bounties/guild/{guild_id}                 — Active bounties
+GET  /api/v1/health                                    — Health check
+```
+
+---
+
+*Last updated: 2026-04-10*

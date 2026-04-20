@@ -304,7 +304,7 @@ async def _get_player_id(self, user_id: int, guild_id: int) -> int | None:
         user_data = {
             "discord_id": user_id,
             "guild_id": guild_id,
-            "discord_username": "temp"  # upsert — creates if not exists
+            "discord_username": None,  # None = don't update username; pass real username only from /profile
         }
         resp = await self.http_client.post(f"{api_base}/players/", json=user_data, timeout=5)
         resp.raise_for_status()
@@ -313,7 +313,35 @@ async def _get_player_id(self, user_id: int, guild_id: int) -> int | None:
         return None
 ```
 
-This uses the `POST /api/v1/players/` upsert endpoint — it creates the player if they don't exist.
+**Key semantics:**
+
+- `discord_username: None` — preserves the existing username stored by `/profile`; it does **not** overwrite it. Only `playerCog`'s `/profile` command should pass the real username via `str(interaction.user)`.
+- **No implicit auto-create** — the guild must already be configured via `/admin_setup`. If the guild is not configured, `POST /api/v1/players/` returns a `400 "Guild not configured"` error. Cogs should catch this with the `_is_guild_not_configured(error)` helper (see shopCog/bountyCog for the pattern):
+
+```python
+def _is_guild_not_configured(exc: httpx.HTTPStatusError) -> bool:
+    """Return True if the HTTPStatusError is a 'guild not configured' 400 response."""
+    if exc.response.status_code != 400:
+        return False
+    try:
+        detail = exc.response.json().get("detail", "")
+        return "not configured" in detail.lower() or "admin_setup" in detail.lower()
+    except Exception:  # pylint: disable=broad-exception-caught
+        return False
+```
+
+Usage in a command's error handler:
+
+```python
+except httpx.HTTPStatusError as e:
+    if _is_guild_not_configured(e):
+        await interaction.followup.send(
+            "❌ This server has not been set up yet. Ask an admin to run `/admin_setup` first.",
+            ephemeral=True,
+        )
+        return
+    raise
+```
 
 ---
 

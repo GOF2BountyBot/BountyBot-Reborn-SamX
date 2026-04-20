@@ -148,7 +148,7 @@ When a model has two relationships to the same target, **always specify `foreign
 | `turret_weapon.py` | `TurretWeapon` | `turret_weapon` | id (FK→weapon.id), dps |
 | `player.py` | `Player` | `players` | id, user_id (FK→users.id), guild_id, credits, lifetime_credits, xp, tier, prestige_count, duel_wins/losses/credits_won/lost, bounty_wins, systems_checked, xp_surplus, guild_transfer_cooldown, classic_mode, bounty_cooldown_end, active_ship_id (FK→player_ships.id), created_at, updated_at |
 | `player_inventory.py` | `PlayerInventory` | `player_inventories` | id, player_id (FK→players.id), item_name, item_type, quantity, location |
-| `player_ship.py` | `PlayerShip` | `player_ships` | id, player_id (FK→players.id), ship_name, nickname, primary_weapons (JSON), secondary_weapons (JSON), turret_weapons (JSON), modules (JSON), created_at |
+| `player_ship.py` | `PlayerShip` | `player_ships` | id, player_id (FK→players.id), ship_name, nickname, is_active, weapons (JSON), modules (JSON), turrets (JSON), created_at |
 | `schema_version.py` | `SchemaVersion` | `schema` | id, version_num, description, applied_at |
 | `ship.py` | `Ship` | `ship` | id, name, aliases (ARRAY), armour, built_in, cargo, compatible_skins (JSON), emoji, icon, manufacturer, handling, shop_spawn_rate, skinnable, max_modules, max_primaries, max_secondaries, max_turrets, builtin_modules (ARRAY), texture_regions, save_due, model, norm_spec, value, wiki, assets (ARRAY) |
 | `system.py` | `System` | `system` | id, name, connections (JSON/ARRAY), faction, position_x, position_y |

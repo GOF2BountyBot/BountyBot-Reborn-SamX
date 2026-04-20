@@ -566,15 +566,15 @@ class TestEnsureBountyBotInfrastructure:
         assert bh_ow.view_channel is False, "bot-images @Bounty Hunter must have view_channel=False"
 
     # ------------------------------------------------------------------
-    # Test 11: #bounty-hunting channel is slash-command-only (send_messages=False)
+    # Test 11: #bounty-hunting channel allows players full interactive access
     # ------------------------------------------------------------------
 
-    def test_hunting_channel_send_messages_false_for_bounty_hunter(self):
+    def test_hunting_channel_allows_players_full_interactive_access(self):
         """
-        #bounty-hunting must be slash-command-only.
+        #bounty-hunting must allow full player interaction: view, send, history, slash commands.
 
-        @Bounty Hunter overwrite: view_channel=True, send_messages=False,
-        use_application_commands=True.
+        @Bounty Hunter overwrite: view_channel=True, send_messages=True,
+        read_message_history=True, use_application_commands=True.
         """
         import discord
 
@@ -604,9 +604,10 @@ class TestEnsureBountyBotInfrastructure:
         bh_ow = hunting_ow[new_role]
         assert isinstance(bh_ow, discord.PermissionOverwrite)
         assert bh_ow.view_channel is True, "#bounty-hunting @Bounty Hunter must have view_channel=True"
-        assert bh_ow.send_messages is False, (
-            "#bounty-hunting @Bounty Hunter must have send_messages=False (slash-command-only)"
+        assert bh_ow.send_messages is True, (
+            "#bounty-hunting @Bounty Hunter must have send_messages=True (full interactive access)"
         )
+        assert bh_ow.read_message_history is True, "#bounty-hunting @Bounty Hunter must have read_message_history=True"
         assert bh_ow.use_application_commands is True, (
             "#bounty-hunting @Bounty Hunter must have use_application_commands=True"
         )
@@ -713,6 +714,204 @@ class TestEnsureBountyBotInfrastructure:
             assert isinstance(dr_ow, discord.PermissionOverwrite)
             assert dr_ow.view_channel is False, f"@everyone view_channel must be False in {factory_fn.__name__}"
             assert dr_ow.send_messages is False, f"@everyone send_messages must be False in {factory_fn.__name__}"
+
+    # ------------------------------------------------------------------
+    # Tests for per-channel @Bounty Hunter overwrite values
+    # ------------------------------------------------------------------
+
+    def test_read_only_overwrites_bounty_hunter_permissions(self):
+        """
+        _read_only_overwrites: @Bounty Hunter must have
+        view_channel=True, send_messages=False, read_message_history=True,
+        use_application_commands=False (board / shop channels are purely read-only).
+        """
+        import discord
+        from utils.guild_setup import _read_only_overwrites
+
+        guild = _make_guild()
+        role = _make_role(role_id=555)
+
+        ow = _read_only_overwrites(guild, role)
+
+        assert role in ow, "@Bounty Hunter must be in _read_only_overwrites"
+        bh_ow = ow[role]
+        assert isinstance(bh_ow, discord.PermissionOverwrite)
+        assert bh_ow.view_channel is True, "read-only: view_channel must be True"
+        assert bh_ow.send_messages is False, "read-only: send_messages must be False"
+        assert bh_ow.read_message_history is True, "read-only: read_message_history must be True"
+        assert bh_ow.use_application_commands is False, "read-only: use_application_commands must be False"
+
+    def test_hunting_overwrites_bounty_hunter_permissions(self):
+        """
+        _hunting_overwrites: @Bounty Hunter must have
+        view_channel=True, send_messages=True, read_message_history=True,
+        use_application_commands=True (#bounty-hunting is the full player-use channel).
+        """
+        import discord
+        from utils.guild_setup import _hunting_overwrites
+
+        guild = _make_guild()
+        role = _make_role(role_id=555)
+
+        ow = _hunting_overwrites(guild, role)
+
+        assert role in ow, "@Bounty Hunter must be in _hunting_overwrites"
+        bh_ow = ow[role]
+        assert isinstance(bh_ow, discord.PermissionOverwrite)
+        assert bh_ow.view_channel is True, "hunting: view_channel must be True"
+        assert bh_ow.send_messages is True, "hunting: send_messages must be True"
+        assert bh_ow.read_message_history is True, "hunting: read_message_history must be True"
+        assert bh_ow.use_application_commands is True, "hunting: use_application_commands must be True"
+
+    def test_discussion_overwrites_bounty_hunter_permissions(self):
+        """
+        _discussion_overwrites: @Bounty Hunter must have
+        view_channel=True, send_messages=True, read_message_history=True,
+        use_application_commands=False (#bounty-discussions is chat-only, no slash cmds).
+        """
+        import discord
+        from utils.guild_setup import _discussion_overwrites
+
+        guild = _make_guild()
+        role = _make_role(role_id=555)
+
+        ow = _discussion_overwrites(guild, role)
+
+        assert role in ow, "@Bounty Hunter must be in _discussion_overwrites"
+        bh_ow = ow[role]
+        assert isinstance(bh_ow, discord.PermissionOverwrite)
+        assert bh_ow.view_channel is True, "discussion: view_channel must be True"
+        assert bh_ow.send_messages is True, "discussion: send_messages must be True"
+        assert bh_ow.read_message_history is True, "discussion: read_message_history must be True"
+        assert bh_ow.use_application_commands is False, "discussion: use_application_commands must be False"
+
+    def test_image_overwrites_bounty_hunter_permissions(self):
+        """
+        _image_overwrites: @Bounty Hunter must have
+        view_channel=False, send_messages=False (#bot-images is hidden from humans).
+        """
+        import discord
+        from utils.guild_setup import _image_overwrites
+
+        guild = _make_guild()
+        role = _make_role(role_id=555)
+
+        ow = _image_overwrites(guild, role)
+
+        assert role in ow, "@Bounty Hunter must be in _image_overwrites"
+        bh_ow = ow[role]
+        assert isinstance(bh_ow, discord.PermissionOverwrite)
+        assert bh_ow.view_channel is False, "bot-images: view_channel must be False"
+        assert bh_ow.send_messages is False, "bot-images: send_messages must be False"
+
+    def test_image_overwrites_bounty_hunter_inherits_history_and_app_cmds(self):
+        """
+        Q5 / Adversarial: @Bounty Hunter in #bot-images must have
+        read_message_history=None and use_application_commands=None (inherited).
+
+        Explicitly setting these to False would create a redundant overwrite entry
+        that may cause confusing audit log noise. The spec says: 'None (inherit)'.
+        """
+        import discord
+        from utils.guild_setup import _image_overwrites
+
+        guild = _make_guild()
+        role = _make_role(role_id=555)
+
+        ow = _image_overwrites(guild, role)
+
+        bh_ow = ow[role]
+        assert isinstance(bh_ow, discord.PermissionOverwrite)
+        assert bh_ow.read_message_history is None, (
+            "bot-images: read_message_history must be None (inherit) per spec — "
+            f"got {bh_ow.read_message_history!r}"
+        )
+        assert bh_ow.use_application_commands is None, (
+            "bot-images: use_application_commands must be None (inherit) per spec — "
+            f"got {bh_ow.use_application_commands!r}"
+        )
+
+    def test_full_permission_matrix_for_all_8_channels(self):
+        """
+        Integration-style test: build all 8 channel overwrites and verify
+        the full @Bounty Hunter permission matrix in one shot.
+
+        Channel         | view | send | read_history | use_app_cmds
+        ----------------+------+------+--------------+-------------
+        bronze-board    | True | False| True         | False
+        silver-board    | True | False| True         | False
+        gold-board      | True | False| True         | False
+        platinum-board  | True | False| True         | False
+        shop            | True | False| True         | False
+        bounty-hunting  | True | True | True         | True
+        bounty-discuss  | True | True | True         | False
+        bot-images      | False| False| (None)       | (None)
+        """
+        import discord
+
+        guild = _make_guild()
+        new_role = _make_role(role_id=555)
+        tier_roles = _make_tier_role_side_effects(base_id=556)
+        guild.create_role = AsyncMock(side_effect=[new_role, *tier_roles])
+
+        new_cat = _make_category(cat_id=111)
+        guild.create_category.return_value = new_cat
+
+        channels = _make_8_channel_side_effects()
+        guild.create_text_channel = AsyncMock(side_effect=channels)
+
+        from utils.guild_setup import ensure_bountybot_infrastructure
+
+        asyncio.run(ensure_bountybot_infrastructure(guild))
+
+        channel_calls = guild.create_text_channel.call_args_list
+        assert len(channel_calls) == 8
+
+        # Expected matrix: (view, send, read_history, use_app_cmds)
+        # None means "not set / inherit" — we don't assert those
+        expected = [
+            # 0: bronze-bounty-board
+            (True, False, True, False),
+            # 1: silver-bounty-board
+            (True, False, True, False),
+            # 2: gold-bounty-board
+            (True, False, True, False),
+            # 3: platinum-bounties
+            (True, False, True, False),
+            # 4: shop
+            (True, False, True, False),
+            # 5: bounty-hunting
+            (True, True, True, True),
+            # 6: bounty-discussions
+            (True, True, True, False),
+            # 7: bot-images  (view=False, send=False; history/app_cmds left None)
+            (False, False, None, None),
+        ]
+
+        for idx, (exp_view, exp_send, exp_history, exp_app_cmds) in enumerate(expected):
+            ch_name = _CHANNEL_NAMES[idx]
+            call = channel_calls[idx]
+            ow = call.kwargs.get("overwrites", {})
+
+            assert new_role in ow, f"@Bounty Hunter must be in overwrites for #{ch_name}"
+            bh_ow = ow[new_role]
+            assert isinstance(bh_ow, discord.PermissionOverwrite)
+
+            assert bh_ow.view_channel is exp_view, (
+                f"#{ch_name}: expected view_channel={exp_view}, got {bh_ow.view_channel}"
+            )
+            assert bh_ow.send_messages is exp_send, (
+                f"#{ch_name}: expected send_messages={exp_send}, got {bh_ow.send_messages}"
+            )
+            if exp_history is not None:
+                assert bh_ow.read_message_history is exp_history, (
+                    f"#{ch_name}: expected read_message_history={exp_history}, got {bh_ow.read_message_history}"
+                )
+            if exp_app_cmds is not None:
+                assert bh_ow.use_application_commands is exp_app_cmds, (
+                    f"#{ch_name}: expected use_application_commands={exp_app_cmds}, "
+                    f"got {bh_ow.use_application_commands}"
+                )
 
     # ------------------------------------------------------------------
     # Tier role tests

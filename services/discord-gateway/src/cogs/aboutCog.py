@@ -6,6 +6,7 @@ import httpx
 from discord import app_commands
 from discord.ext import commands
 from shared import bblogger
+from utils.autocomplete_utils import normalize_for_search
 from utils.embed_converter import EmbedConverter  # <- grid-builder for 2-col layout
 
 # Set up logger
@@ -95,10 +96,11 @@ class AboutCog(commands.Cog):
         self, _interaction: discord.Interaction, current: str
     ) -> list[app_commands.Choice[str]]:
         """Autocomplete for category selection"""
+        norm_current = normalize_for_search(current)
         choices = [
             app_commands.Choice(name=cat.replace("_", " ").title(), value=cat)
             for cat in self._categories
-            if current.lower() in cat.lower()
+            if norm_current in normalize_for_search(cat)
         ]
         return choices[:25]
 
@@ -106,11 +108,12 @@ class AboutCog(commands.Cog):
         self, _interaction: discord.Interaction, current: str
     ) -> list[app_commands.Choice[str]]:
         """Autocomplete for system name selection using preloaded data."""
+        norm_current = normalize_for_search(current)
         systems = self._objects_by_category.get("system", [])
         choices = [
             app_commands.Choice(name=obj["name"], value=obj["name"])
             for obj in systems
-            if current.lower() in obj.get("name", "").lower()
+            if norm_current in normalize_for_search(obj.get("name", ""))
         ]
         return choices[:25]
 
@@ -122,11 +125,12 @@ class AboutCog(commands.Cog):
         if not category or category not in self._objects_by_category:
             return []
 
+        norm_current = normalize_for_search(current)
         objects = self._objects_by_category[category]
         choices: list[app_commands.Choice[str]] = []
         for obj in objects:
             name = obj.get("name", "")
-            if current.lower() in name.lower():
+            if norm_current in normalize_for_search(name):
                 choices.append(app_commands.Choice(name=name, value=name))
 
         return choices[:25]

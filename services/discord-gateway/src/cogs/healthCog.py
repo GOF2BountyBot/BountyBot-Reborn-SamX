@@ -23,6 +23,7 @@ class HealthCog(commands.Cog):
         await self.http_client.aclose()
 
     @app_commands.command(name="ping", description="Pong + latency")
+    @app_commands.default_permissions(administrator=True)
     @is_admin()
     async def ping(self, interaction: discord.Interaction):
         latency_ms = round(self.bot.latency * 1000)
@@ -48,6 +49,7 @@ class HealthCog(commands.Cog):
                 pass
 
     @app_commands.command(name="health", description="Check the health of the BountyBot API service.")
+    @app_commands.default_permissions(administrator=True)
     @is_admin()
     async def health(self, interaction: discord.Interaction):
         """Calls the /health endpoint and reports status."""

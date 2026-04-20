@@ -38,6 +38,12 @@ def _make_mock_logger(*_args, **_kwargs):
     return logger
 
 
+def _close_coro(coro):
+    """Close a coroutine to prevent 'never awaited' RuntimeWarning."""
+    coro.close()
+    return MagicMock()
+
+
 _mock_bblogger.get_logger = MagicMock(side_effect=_make_mock_logger)
 
 sys.modules["shared"] = _mock_shared
@@ -97,6 +103,8 @@ def mock_bot():
     bot = DiscordMockUtils.create_mock_bot(user_id=123456789, username="TestBot")
     bot.add_cog = AsyncMock()
     bot.tree = MagicMock()
+    bot.loop = MagicMock()
+    bot.loop.create_task = MagicMock(side_effect=_close_coro)
     return bot
 
 
@@ -386,6 +394,7 @@ class TestAdminConfigBounty:
                 max_bronze=5,
                 max_silver=None,
                 max_gold=None,
+                max_platinum=None,
                 expiry_minutes=600,
                 spawn_interval=None,
             )
@@ -397,8 +406,8 @@ class TestAdminConfigBounty:
         assert "config/guild" in call_url
         assert "bounty" in call_url
 
-    def test_config_bounty_update_payload_contains_non_none_fields(self, mock_admin_cog):
-        """Update payload should only include non-None fields."""
+    def test_config_bounty_update_payload_uses_nested_tier_dict(self, mock_admin_cog):
+        """Update payload must use max_bounties_per_tier nested dict, not flat max_bronze etc."""
         interaction = _create_mock_interaction()
         interaction.user = _create_mock_user()
 
@@ -412,6 +421,7 @@ class TestAdminConfigBounty:
                 max_bronze=5,
                 max_silver=None,
                 max_gold=None,
+                max_platinum=None,
                 expiry_minutes=600,
                 spawn_interval=None,
             )
@@ -419,10 +429,126 @@ class TestAdminConfigBounty:
 
         call_kwargs = mock_admin_cog.http_client.put.call_args[1]
         payload = call_kwargs.get("json", {})
-        # max_bronze and expiry_minutes were provided
-        assert "max_bronze" in payload or any("bronze" in str(k).lower() for k in payload)
-        # max_silver was None — should not appear as a key with None value
-        assert payload.get("max_silver") is None or "max_silver" not in payload
+        # Flat fields must NOT be present
+        assert "max_bronze" not in payload
+        assert "max_silver" not in payload
+        assert "max_gold" not in payload
+        assert "max_platinum" not in payload
+        # Nested dict must be present with only bronze (which was set)
+        assert "max_bounties_per_tier" in payload
+        assert payload["max_bounties_per_tier"]["bronze"] == 5
+        assert "silver" not in payload["max_bounties_per_tier"]
+        # expiry_minutes is a top-level field
+        assert payload["bounty_expiry_minutes"] == 600
+
+    def test_config_bounty_update_payload_omits_tier_dict_when_no_tiers_given(self, mock_admin_cog):
+        """If no tier values are provided, max_bounties_per_tier must not appear in payload."""
+        interaction = _create_mock_interaction()
+        interaction.user = _create_mock_user()
+
+        mock_admin_cog.http_client.put = AsyncMock(return_value=_make_bounty_config_put_response())
+
+        asyncio.run(
+            mock_admin_cog.admin_config_bounty.callback(
+                mock_admin_cog,
+                interaction,
+                action="update",
+                max_bronze=None,
+                max_silver=None,
+                max_gold=None,
+                max_platinum=None,
+                expiry_minutes=600,
+                spawn_interval=None,
+            )
+        )
+
+        call_kwargs = mock_admin_cog.http_client.put.call_args[1]
+        payload = call_kwargs.get("json", {})
+        assert "max_bounties_per_tier" not in payload
+        assert payload["bounty_expiry_minutes"] == 600
+
+    def test_config_bounty_update_platinum_tier(self, mock_admin_cog):
+        """max_platinum param is sent inside max_bounties_per_tier nested dict."""
+        interaction = _create_mock_interaction()
+        interaction.user = _create_mock_user()
+
+        mock_admin_cog.http_client.put = AsyncMock(return_value=_make_bounty_config_put_response())
+
+        asyncio.run(
+            mock_admin_cog.admin_config_bounty.callback(
+                mock_admin_cog,
+                interaction,
+                action="update",
+                max_bronze=None,
+                max_silver=None,
+                max_gold=None,
+                max_platinum=2,
+                expiry_minutes=None,
+                spawn_interval=None,
+            )
+        )
+
+        call_kwargs = mock_admin_cog.http_client.put.call_args[1]
+        payload = call_kwargs.get("json", {})
+        assert "max_bounties_per_tier" in payload
+        assert payload["max_bounties_per_tier"]["platinum"] == 2
+        assert "bronze" not in payload["max_bounties_per_tier"]
+
+    def test_config_bounty_update_all_tiers_nested_dict(self, mock_admin_cog):
+        """All four tiers provided → max_bounties_per_tier contains all four keys."""
+        interaction = _create_mock_interaction()
+        interaction.user = _create_mock_user()
+
+        mock_admin_cog.http_client.put = AsyncMock(return_value=_make_bounty_config_put_response())
+
+        asyncio.run(
+            mock_admin_cog.admin_config_bounty.callback(
+                mock_admin_cog,
+                interaction,
+                action="update",
+                max_bronze=3,
+                max_silver=3,
+                max_gold=3,
+                max_platinum=1,
+                expiry_minutes=None,
+                spawn_interval=None,
+            )
+        )
+
+        call_kwargs = mock_admin_cog.http_client.put.call_args[1]
+        payload = call_kwargs.get("json", {})
+        assert "max_bounties_per_tier" in payload
+        tiers = payload["max_bounties_per_tier"]
+        assert tiers["bronze"] == 3
+        assert tiers["silver"] == 3
+        assert tiers["gold"] == 3
+        assert tiers["platinum"] == 1
+
+    def test_config_bounty_update_spawn_interval_top_level(self, mock_admin_cog):
+        """spawn_interval param maps to bounty_spawn_interval_minutes as a top-level field."""
+        interaction = _create_mock_interaction()
+        interaction.user = _create_mock_user()
+
+        mock_admin_cog.http_client.put = AsyncMock(return_value=_make_bounty_config_put_response())
+
+        asyncio.run(
+            mock_admin_cog.admin_config_bounty.callback(
+                mock_admin_cog,
+                interaction,
+                action="update",
+                max_bronze=None,
+                max_silver=None,
+                max_gold=None,
+                max_platinum=None,
+                expiry_minutes=None,
+                spawn_interval=30,
+            )
+        )
+
+        call_kwargs = mock_admin_cog.http_client.put.call_args[1]
+        payload = call_kwargs.get("json", {})
+        assert payload["bounty_spawn_interval_minutes"] == 30
+        assert "max_bounties_per_tier" not in payload
 
     def test_config_bounty_view_api_error(self, mock_admin_cog):
         """API error in view → ephemeral error message."""

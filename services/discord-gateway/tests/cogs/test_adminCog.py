@@ -48,6 +48,12 @@ for _mod in ["discord", "discord.ext", "discord.ext.commands", "discord.app_comm
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "src"))
 
 
+def _close_coro(coro):
+    """Close a coroutine to prevent 'never awaited' RuntimeWarning."""
+    coro.close()
+    return MagicMock()
+
+
 @pytest.fixture
 def mock_bot():
     """Create a mock Discord bot for adminCog testing."""
@@ -56,6 +62,8 @@ def mock_bot():
     bot.tree = MagicMock()
     bot.get_member = MagicMock()
     bot.flogger = MagicMock()
+    bot.loop = MagicMock()
+    bot.loop.create_task = MagicMock(side_effect=_close_coro)
     return bot
 
 
@@ -1473,6 +1481,543 @@ class TestAdminConfigBountyNoTimestampsInBadLocations:
             f"Discord timestamp found in admin embed author: {author_text!r}. "
             "Timestamps in author fields render as raw text."
         )
+
+
+# ===========================================================================
+# Bug A.15: admin_config "view" and admin_player "view_stats" — timestamps
+#            must appear in embed fields (not footer) so Discord renders them
+# ===========================================================================
+
+
+class TestAdminConfigViewTimestamps:
+    """Bug A.15 — <t:...> timestamps must appear in embed fields, not footer text."""
+
+    def _make_config_data(self):
+        return {
+            "guild_id": 987654321,
+            "configured": True,
+            "admin_role_configured": True,
+            "starting_credits": 500,
+            "sale_price_factor": 0.5,
+            "created_at": "2024-01-01T00:00:00",
+            "updated_at": "2024-06-01T12:00:00",
+            "xp_thresholds": {"Silver": 1000, "Gold": 5000, "Platinum": 20000},
+        }
+
+    def test_admin_config_view_timestamps_in_field(self, mock_admin_cog):
+        """admin_config view: embed must have a field containing <t: timestamp markers."""
+        interaction = _create_mock_interaction()
+        interaction.guild_id = 987654321
+
+        cfg_resp = MagicMock()
+        cfg_resp.raise_for_status = MagicMock()
+        cfg_resp.json.return_value = self._make_config_data()
+        mock_admin_cog.http_client.get = AsyncMock(return_value=cfg_resp)
+
+        asyncio.run(mock_admin_cog.admin_config.callback(mock_admin_cog, interaction, "view", None, None))
+
+        interaction.followup.send.assert_awaited_once()
+        call_kwargs = interaction.followup.send.call_args[1]
+        embed = call_kwargs.get("embed")
+        assert embed is not None, "Expected an embed to be sent"
+
+        # At least one field value must contain a Discord timestamp
+        field_values = [f.value for f in embed.fields]
+        has_ts_in_fields = any("<t:" in (v or "") for v in field_values)
+        assert has_ts_in_fields, f"Expected <t: timestamp in at least one embed field. Field values: {field_values}"
+
+    def test_admin_config_view_footer_has_no_timestamps(self, mock_admin_cog):
+        """admin_config view: embed footer must NOT contain a <t: Discord timestamp."""
+        interaction = _create_mock_interaction()
+        interaction.guild_id = 987654321
+
+        cfg_resp = MagicMock()
+        cfg_resp.raise_for_status = MagicMock()
+        cfg_resp.json.return_value = self._make_config_data()
+        mock_admin_cog.http_client.get = AsyncMock(return_value=cfg_resp)
+
+        asyncio.run(mock_admin_cog.admin_config.callback(mock_admin_cog, interaction, "view", None, None))
+
+        call_kwargs = interaction.followup.send.call_args[1]
+        embed = call_kwargs.get("embed")
+        assert embed is not None
+
+        footer = embed.footer
+        footer_text = ""
+        if footer is not None:
+            try:
+                footer_text = str(footer.text or "")
+            except AttributeError:
+                footer_text = str(footer)
+
+        assert "<t:" not in footer_text, (
+            f"Discord timestamp found in embed footer: {footer_text!r}. "
+            "Timestamps in footers render as raw text — move them to fields."
+        )
+
+
+class TestAdminPlayerViewStatsTimestamps:
+    """Bug A.15 — admin_player view_stats created_at timestamp must be in a field."""
+
+    def test_admin_player_view_stats_created_at_in_field(self, mock_admin_cog):
+        """admin_player view_stats: embed must have a field containing the created_at timestamp."""
+        interaction = _create_mock_interaction()
+        interaction.guild_id = 987654321
+        user = _create_mock_user(user_id=111111111, name="Test User")
+
+        player_resp = MagicMock()
+        player_resp.raise_for_status = MagicMock()
+        player_resp.json.return_value = {
+            "id": 1,
+            "discord_id": 111111111,
+            "guild_id": 987654321,
+            "tier": "Bronze",
+            "xp": 100,
+            "credits": 500,
+            "lifetime_credits": 500,
+            "prestige_count": 0,
+            "created_at": "2024-01-01T00:00:00",
+        }
+
+        stats_resp = MagicMock()
+        stats_resp.raise_for_status = MagicMock()
+        stats_resp.json.return_value = {"total_games": 5, "total_victory": 2, "total_defeat": 3}
+
+        mock_admin_cog.http_client.post = AsyncMock(return_value=player_resp)
+        mock_admin_cog.http_client.get = AsyncMock(return_value=stats_resp)
+
+        asyncio.run(mock_admin_cog.admin_player.callback(mock_admin_cog, interaction, user, "view_stats", None, None))
+
+        interaction.followup.send.assert_awaited_once()
+        call_kwargs = interaction.followup.send.call_args[1]
+        embed = call_kwargs.get("embed")
+        assert embed is not None, "Expected an embed to be sent"
+
+        # The created_at timestamp should appear in an embed field
+        field_values = [f.value for f in embed.fields]
+        has_ts_in_fields = any("<t:" in (v or "") for v in field_values)
+        assert has_ts_in_fields, (
+            f"Expected <t: timestamp in at least one embed field for created_at. Field values: {field_values}"
+        )
+
+    def test_admin_player_view_stats_footer_has_no_timestamps(self, mock_admin_cog):
+        """admin_player view_stats: embed footer must NOT contain a <t: Discord timestamp."""
+        interaction = _create_mock_interaction()
+        interaction.guild_id = 987654321
+        user = _create_mock_user(user_id=111111111, name="Test User")
+
+        player_resp = MagicMock()
+        player_resp.raise_for_status = MagicMock()
+        player_resp.json.return_value = {
+            "id": 1,
+            "discord_id": 111111111,
+            "guild_id": 987654321,
+            "tier": "Bronze",
+            "xp": 100,
+            "credits": 500,
+            "lifetime_credits": 500,
+            "prestige_count": 0,
+            "created_at": "2024-01-01T00:00:00",
+        }
+
+        stats_resp = MagicMock()
+        stats_resp.raise_for_status = MagicMock()
+        stats_resp.json.return_value = {"total_games": 5, "total_victory": 2, "total_defeat": 3}
+
+        mock_admin_cog.http_client.post = AsyncMock(return_value=player_resp)
+        mock_admin_cog.http_client.get = AsyncMock(return_value=stats_resp)
+
+        asyncio.run(mock_admin_cog.admin_player.callback(mock_admin_cog, interaction, user, "view_stats", None, None))
+
+        call_kwargs = interaction.followup.send.call_args[1]
+        embed = call_kwargs.get("embed")
+        assert embed is not None
+
+        footer = embed.footer
+        footer_text = ""
+        if footer is not None:
+            try:
+                footer_text = str(footer.text or "")
+            except AttributeError:
+                footer_text = str(footer)
+
+        assert "<t:" not in footer_text, (
+            f"Discord timestamp found in embed footer: {footer_text!r}. "
+            "Timestamps in footers render as raw text — move them to fields."
+        )
+
+
+# ===========================================================================
+# New tests for render-config autocomplete + Platinum tier choices
+# ===========================================================================
+
+
+class TestPreloadRenderSettings:
+    """Tests for _preload_render_settings method."""
+
+    def test_render_settings_initialized_empty(self, mock_admin_cog):
+        """_render_settings should start empty on init."""
+        assert mock_admin_cog._render_settings == []
+
+    def test_preload_creates_task_on_init(self, mock_bot):
+        """__init__ should schedule _preload_render_settings as a task."""
+        sys.modules["shared"] = _mock_shared
+        sys.modules["shared.bblogger"] = _mock_bblogger
+        _evict_discord_modules()
+        from cogs.adminCog import AdminCog
+
+        cog = AdminCog(mock_bot)
+        _ = cog  # use the cog
+        mock_bot.loop.create_task.assert_called_once()
+
+    def test_preload_success_populates_settings(self, mock_admin_cog):
+        """_preload_render_settings should populate _render_settings on success."""
+        render_config_data = {
+            "max_res_x": 3840,
+            "max_res_y": 2160,
+            "min_res_x": 352,
+            "min_res_y": 240,
+            "max_samples": 128,
+            "min_samples": 1,
+            "default_res_x": 1920,
+            "default_res_y": 1080,
+            "default_samples": 64,
+            "max_concurrent_renders": 2,
+            "job_ttl_hours": 1,
+        }
+        mock_resp = MagicMock()
+        mock_resp.raise_for_status = MagicMock()
+        mock_resp.json.return_value = render_config_data
+        mock_admin_cog.http_client.get = AsyncMock(return_value=mock_resp)
+        mock_admin_cog.bot.wait_until_ready = AsyncMock()
+
+        asyncio.run(mock_admin_cog._preload_render_settings())
+
+        assert mock_admin_cog._render_settings == list(render_config_data.keys())
+        assert len(mock_admin_cog._render_settings) == 11
+
+    def test_preload_retries_on_failure_then_succeeds(self, mock_admin_cog):
+        """_preload_render_settings should retry up to 3 times and succeed on 2nd attempt."""
+        render_config_data = {"max_res_x": 3840, "default_samples": 64}
+        success_resp = MagicMock()
+        success_resp.raise_for_status = MagicMock()
+        success_resp.json.return_value = render_config_data
+
+        # First call raises, second call succeeds
+        mock_admin_cog.http_client.get = AsyncMock(side_effect=[Exception("timeout"), success_resp])
+        mock_admin_cog.bot.wait_until_ready = AsyncMock()
+
+        with patch("cogs.adminCog.asyncio.sleep", new=AsyncMock()) as mock_sleep:
+            asyncio.run(mock_admin_cog._preload_render_settings())
+
+        # Should have slept once (after first failure)
+        mock_sleep.assert_awaited_once_with(5)
+        # Settings populated from successful 2nd attempt
+        assert mock_admin_cog._render_settings == list(render_config_data.keys())
+
+    def test_preload_all_3_attempts_fail_leaves_empty(self, mock_admin_cog):
+        """_preload_render_settings should leave _render_settings empty after all 3 failures."""
+        mock_admin_cog.http_client.get = AsyncMock(side_effect=Exception("connection refused"))
+        mock_admin_cog.bot.wait_until_ready = AsyncMock()
+
+        with patch("cogs.adminCog.asyncio.sleep", new=AsyncMock()):
+            asyncio.run(mock_admin_cog._preload_render_settings())
+
+        # Settings should remain empty after all attempts fail
+        assert mock_admin_cog._render_settings == []
+
+    def test_preload_uses_blender_api_base_url_env(self, mock_admin_cog):
+        """_preload_render_settings should use BLENDER_API_BASE_URL env var."""
+        render_config_data = {"max_res_x": 3840}
+        mock_resp = MagicMock()
+        mock_resp.raise_for_status = MagicMock()
+        mock_resp.json.return_value = render_config_data
+        mock_admin_cog.http_client.get = AsyncMock(return_value=mock_resp)
+        mock_admin_cog.bot.wait_until_ready = AsyncMock()
+
+        custom_url = "http://custom-blender:9001/api/v1"
+        with patch.dict(os.environ, {"BLENDER_API_BASE_URL": custom_url}):
+            asyncio.run(mock_admin_cog._preload_render_settings())
+
+        call_url = mock_admin_cog.http_client.get.call_args[0][0]
+        assert call_url == f"{custom_url}/config/render"
+
+    def test_preload_uses_default_blender_url_when_env_missing(self, mock_admin_cog):
+        """_preload_render_settings should fall back to default blender URL when env var absent."""
+        render_config_data = {"default_samples": 64}
+        mock_resp = MagicMock()
+        mock_resp.raise_for_status = MagicMock()
+        mock_resp.json.return_value = render_config_data
+        mock_admin_cog.http_client.get = AsyncMock(return_value=mock_resp)
+        mock_admin_cog.bot.wait_until_ready = AsyncMock()
+
+        env_without_blender = {k: v for k, v in os.environ.items() if k != "BLENDER_API_BASE_URL"}
+        with patch.dict(os.environ, env_without_blender, clear=True):
+            asyncio.run(mock_admin_cog._preload_render_settings())
+
+        call_url = mock_admin_cog.http_client.get.call_args[0][0]
+        assert "blender-service:8001" in call_url
+        assert call_url.endswith("/config/render")
+
+
+class TestRenderSettingAutocomplete:
+    """Tests for render_setting_autocomplete method."""
+
+    def test_autocomplete_returns_all_when_current_empty(self, mock_admin_cog):
+        """Autocomplete should return all settings when current is empty."""
+        mock_admin_cog._render_settings = ["max_res_x", "max_res_y", "min_res_x", "default_samples"]
+        interaction = _create_mock_interaction()
+
+        result = asyncio.run(mock_admin_cog.render_setting_autocomplete(interaction, ""))
+
+        assert len(result) == 4
+        assert all(hasattr(c, "name") and hasattr(c, "value") for c in result)
+
+    def test_autocomplete_filters_by_current(self, mock_admin_cog):
+        """Autocomplete should filter settings by current input (case-insensitive)."""
+        mock_admin_cog._render_settings = ["max_res_x", "max_res_y", "min_res_x", "default_samples"]
+        interaction = _create_mock_interaction()
+
+        result = asyncio.run(mock_admin_cog.render_setting_autocomplete(interaction, "max"))
+
+        names = [c.name for c in result]
+        assert "max_res_x" in names
+        assert "max_res_y" in names
+        assert "min_res_x" not in names
+        assert "default_samples" not in names
+
+    def test_autocomplete_case_insensitive(self, mock_admin_cog):
+        """Autocomplete should filter case-insensitively."""
+        mock_admin_cog._render_settings = ["max_res_x", "default_samples"]
+        interaction = _create_mock_interaction()
+
+        result = asyncio.run(mock_admin_cog.render_setting_autocomplete(interaction, "MAX"))
+
+        names = [c.name for c in result]
+        assert "max_res_x" in names
+
+    def test_autocomplete_returns_empty_when_no_match(self, mock_admin_cog):
+        """Autocomplete returns empty list when no settings match."""
+        mock_admin_cog._render_settings = ["max_res_x", "min_res_y"]
+        interaction = _create_mock_interaction()
+
+        result = asyncio.run(mock_admin_cog.render_setting_autocomplete(interaction, "xyz_nonexistent"))
+
+        assert result == []
+
+    def test_autocomplete_returns_empty_when_render_settings_not_preloaded(self, mock_admin_cog):
+        """Autocomplete returns empty list when _render_settings is not yet populated."""
+        mock_admin_cog._render_settings = []
+        interaction = _create_mock_interaction()
+
+        result = asyncio.run(mock_admin_cog.render_setting_autocomplete(interaction, "max"))
+
+        assert result == []
+
+    def test_autocomplete_caps_results_at_25(self, mock_admin_cog):
+        """Autocomplete should cap results at 25 (Discord limit)."""
+        mock_admin_cog._render_settings = [f"setting_{i}" for i in range(30)]
+        interaction = _create_mock_interaction()
+
+        result = asyncio.run(mock_admin_cog.render_setting_autocomplete(interaction, "setting"))
+
+        assert len(result) == 25
+
+    def test_autocomplete_choice_name_and_value_match(self, mock_admin_cog):
+        """Autocomplete choices should have matching name and value (both are the setting key)."""
+        mock_admin_cog._render_settings = ["max_res_x", "job_ttl_hours"]
+        interaction = _create_mock_interaction()
+
+        result = asyncio.run(mock_admin_cog.render_setting_autocomplete(interaction, ""))
+
+        for choice in result:
+            assert choice.name == choice.value
+
+
+class TestPlatinumTierChoices:
+    """Tests that Platinum is included in tier choices for clear/spawn bounty commands."""
+
+    def test_admin_clear_bounties_includes_platinum_choice(self, mock_admin_cog):
+        """admin_clear_bounties @app_commands.choices should include Platinum."""
+        cmd = mock_admin_cog.admin_clear_bounties
+        # Find the choices for 'tier' from the command's extras (app_commands stores these)
+        # We verify at the command level by inspecting decorated choices
+        choices_param = None
+        for param in cmd._params.values():
+            if hasattr(param, "choices") and param.choices:
+                choices_param = param.choices
+                break
+
+        assert choices_param is not None, "No choices found on admin_clear_bounties command parameters"
+        choice_values = [c.value for c in choices_param]
+        assert "platinum" in choice_values, f"Platinum not in clear_bounties tier choices: {choice_values}"
+
+    def test_admin_spawn_bounty_includes_platinum_choice(self, mock_admin_cog):
+        """admin_spawn_bounty @app_commands.choices should include Platinum."""
+        cmd = mock_admin_cog.admin_spawn_bounty
+        choices_param = None
+        for param in cmd._params.values():
+            if hasattr(param, "choices") and param.choices:
+                choices_param = param.choices
+                break
+
+        assert choices_param is not None, "No choices found on admin_spawn_bounty command parameters"
+        choice_values = [c.value for c in choices_param]
+        assert "platinum" in choice_values, f"Platinum not in spawn_bounty tier choices: {choice_values}"
+
+    def test_admin_clear_bounties_all_4_tiers_present(self, mock_admin_cog):
+        """admin_clear_bounties should have Bronze/Silver/Gold/Platinum choices."""
+        cmd = mock_admin_cog.admin_clear_bounties
+        choices_param = None
+        for param in cmd._params.values():
+            if hasattr(param, "choices") and param.choices:
+                choices_param = param.choices
+                break
+
+        assert choices_param is not None
+        choice_values = {c.value for c in choices_param}
+        assert {"bronze", "silver", "gold", "platinum"} == choice_values
+
+    def test_admin_spawn_bounty_all_4_tiers_present(self, mock_admin_cog):
+        """admin_spawn_bounty should have Bronze/Silver/Gold/Platinum choices."""
+        cmd = mock_admin_cog.admin_spawn_bounty
+        choices_param = None
+        for param in cmd._params.values():
+            if hasattr(param, "choices") and param.choices:
+                choices_param = param.choices
+                break
+
+        assert choices_param is not None
+        choice_values = {c.value for c in choices_param}
+        assert {"bronze", "silver", "gold", "platinum"} == choice_values
+
+    def test_admin_clear_bounties_platinum_tier_accepted(self, mock_admin_cog):
+        """admin_clear_bounties should accept platinum tier value and call API."""
+        interaction = _create_mock_interaction()
+        interaction.guild_id = 987654321
+
+        clear_resp = MagicMock()
+        clear_resp.raise_for_status = MagicMock()
+        clear_resp.json.return_value = {"cleared_count": 2, "announcements_deleted": 2}
+        mock_admin_cog.http_client.delete = AsyncMock(return_value=clear_resp)
+
+        asyncio.run(mock_admin_cog.admin_clear_bounties.callback(mock_admin_cog, interaction, "CONFIRM", "platinum"))
+
+        # Should have called the API with platinum tier
+        call_kwargs = mock_admin_cog.http_client.delete.call_args[1]
+        assert call_kwargs["params"].get("tier") == "platinum"
+        interaction.followup.send.assert_awaited_once()
+
+    def test_admin_spawn_bounty_platinum_tier_accepted(self, mock_admin_cog):
+        """admin_spawn_bounty should accept platinum tier value and call API."""
+        interaction = _create_mock_interaction()
+        interaction.guild_id = 987654321
+
+        spawn_resp = MagicMock()
+        spawn_resp.raise_for_status = MagicMock()
+        spawn_resp.json.return_value = {"spawned": [], "skipped_tiers": [], "errors": []}
+        mock_admin_cog.http_client.post = AsyncMock(return_value=spawn_resp)
+
+        asyncio.run(mock_admin_cog.admin_spawn_bounty.callback(mock_admin_cog, interaction, "platinum"))
+
+        # Should have called the API with platinum tier
+        call_kwargs = mock_admin_cog.http_client.post.call_args[1]
+        assert call_kwargs["params"].get("tier") == "platinum"
+        interaction.followup.send.assert_awaited_once()
+
+
+class TestAdminCooldownReset:
+    """Tests for /admin_cooldown_reset command."""
+
+    def test_cooldown_reset_success(self, mock_admin_cog):
+        """Successful cooldown reset returns success message."""
+        interaction = _create_mock_interaction()
+        interaction.guild_id = 12345
+        user = _create_mock_user(user_id=99999, name="TestPlayer")
+
+        resp = MagicMock()
+        resp.status_code = 200
+        resp.raise_for_status = MagicMock()
+        resp.json.return_value = {"status": "success", "message": "Cooldown reset for player 7"}
+        mock_admin_cog.http_client.put = AsyncMock(return_value=resp)
+
+        asyncio.run(mock_admin_cog.admin_cooldown_reset.callback(mock_admin_cog, interaction, user))
+
+        interaction.response.defer.assert_awaited_once()
+        interaction.followup.send.assert_awaited_once()
+        call_kwargs = interaction.followup.send.call_args[1]
+        assert call_kwargs.get("ephemeral") is True
+        sent_msg = interaction.followup.send.call_args[0][0]
+        assert "✅" in sent_msg
+
+    def test_cooldown_reset_calls_correct_endpoint(self, mock_admin_cog):
+        """admin_cooldown_reset calls PUT /players/{guild_id}/{user_id}/cooldown/reset."""
+        interaction = _create_mock_interaction()
+        interaction.guild_id = 55555
+        user = _create_mock_user(user_id=77777)
+
+        resp = MagicMock()
+        resp.status_code = 200
+        resp.raise_for_status = MagicMock()
+        resp.json.return_value = {"status": "success", "message": "Cooldown reset for player 7"}
+        mock_admin_cog.http_client.put = AsyncMock(return_value=resp)
+
+        asyncio.run(mock_admin_cog.admin_cooldown_reset.callback(mock_admin_cog, interaction, user))
+
+        call_url = mock_admin_cog.http_client.put.call_args[0][0]
+        assert "/players/55555/77777/cooldown/reset" in call_url
+
+    def test_cooldown_reset_player_not_found_returns_error(self, mock_admin_cog):
+        """admin_cooldown_reset shows 'Player not found' when API returns 404."""
+        interaction = _create_mock_interaction()
+        interaction.guild_id = 12345
+        user = _create_mock_user(user_id=99999)
+
+        resp = MagicMock()
+        resp.status_code = 404
+        resp.raise_for_status = MagicMock()
+        mock_admin_cog.http_client.put = AsyncMock(return_value=resp)
+
+        asyncio.run(mock_admin_cog.admin_cooldown_reset.callback(mock_admin_cog, interaction, user))
+
+        interaction.followup.send.assert_awaited_once()
+        sent_msg = interaction.followup.send.call_args[0][0]
+        assert "❌" in sent_msg
+        assert "not found" in sent_msg.lower()
+
+    def test_cooldown_reset_api_error_shows_error_message(self, mock_admin_cog):
+        """admin_cooldown_reset shows error when API fails (non-404 HTTP error)."""
+        import httpx
+
+        interaction = _create_mock_interaction()
+        interaction.guild_id = 12345
+        user = _create_mock_user(user_id=99999)
+
+        err_resp = MagicMock()
+        err_resp.status_code = 500
+        mock_admin_cog.http_client.put = AsyncMock(
+            side_effect=httpx.HTTPStatusError("Server error", request=MagicMock(), response=err_resp)
+        )
+
+        asyncio.run(mock_admin_cog.admin_cooldown_reset.callback(mock_admin_cog, interaction, user))
+
+        interaction.followup.send.assert_awaited_once()
+        sent_msg = interaction.followup.send.call_args[0][0]
+        assert "❌" in sent_msg
+
+    def test_cooldown_reset_generic_exception_shows_warning(self, mock_admin_cog):
+        """admin_cooldown_reset shows warning message on unexpected exception."""
+        interaction = _create_mock_interaction()
+        interaction.guild_id = 12345
+        user = _create_mock_user(user_id=99999)
+
+        mock_admin_cog.http_client.put = AsyncMock(side_effect=Exception("Unexpected!"))
+
+        asyncio.run(mock_admin_cog.admin_cooldown_reset.callback(mock_admin_cog, interaction, user))
+
+        interaction.followup.send.assert_awaited_once()
+        sent_msg = interaction.followup.send.call_args[0][0]
+        assert "⚠️" in sent_msg
 
 
 if __name__ == "__main__":

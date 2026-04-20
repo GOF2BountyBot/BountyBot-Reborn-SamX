@@ -53,6 +53,12 @@ for _mod in ["discord", "discord.ext", "discord.ext.commands", "discord.app_comm
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "src"))
 
 
+def _close_coro(coro):
+    """Close a coroutine to prevent 'never awaited' RuntimeWarning."""
+    coro.close()
+    return MagicMock()
+
+
 @pytest.fixture
 def mock_bot():
     """Create a mock Discord bot for adminCog testing."""
@@ -61,6 +67,8 @@ def mock_bot():
     bot.tree = MagicMock()
     bot.get_member = MagicMock()
     bot.flogger = MagicMock()
+    bot.loop = MagicMock()
+    bot.loop.create_task = MagicMock(side_effect=_close_coro)
     return bot
 
 

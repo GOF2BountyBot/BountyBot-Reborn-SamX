@@ -9,6 +9,7 @@ from httpx import HTTPStatusError as HttpxHTTPStatusError
 from httpx import RequestError as HttpxRequestError
 from httpx import TimeoutException as HttpxTimeoutException
 from shared import bblogger
+from utils.autocomplete_utils import normalize_for_search
 
 flogger = bblogger.get_logger("discord-gateway-DevCog")
 api_base = os.environ.get("BOT_API_BASE_URL", "http://bot-core:8000/api/v1")
@@ -47,10 +48,14 @@ class DevCog(commands.Cog):
         self, _interaction: discord.Interaction, current: str
     ) -> list[app_commands.Choice[str]]:
         # include a virtual "All" option
+        norm_current = normalize_for_search(current)
         choices = ["All", *self._categories]
-        return [app_commands.Choice(name=cat, value=cat) for cat in choices if current.lower() in cat.lower()][:25]
+        return [
+            app_commands.Choice(name=cat, value=cat) for cat in choices if norm_current in normalize_for_search(cat)
+        ][:25]
 
     @app_commands.command(name="load_data", description="Trigger a JSON → DB load for a given category")
+    @app_commands.default_permissions(administrator=True)
     @is_admin()
     @app_commands.describe(category="Choose a data category")
     @app_commands.autocomplete(category=category_autocomplete)
@@ -103,6 +108,7 @@ class DevCog(commands.Cog):
             await interaction.followup.send(f"⚠️ Unexpected error: {err_str}", ephemeral=True)
 
     @app_commands.command(name="reload_autocomplete", description="Force-reload all autocomplete data in other cogs")
+    @app_commands.default_permissions(administrator=True)
     @is_admin()
     async def reload_autocomplete(self, interaction: discord.Interaction):
         """Call each cog's preload method so you don't have to restart."""

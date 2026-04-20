@@ -36,7 +36,7 @@ def _read_only_overwrites(
     Channel overwrite for read-only bounty-board / shop channels.
 
     @everyone:     view=DENY, send=DENY
-    Bounty Hunter: view=ALLOW, send=DENY
+    Bounty Hunter: view=ALLOW, send=DENY, read_history=ALLOW, use_app_cmds=DENY
     Bot:           view=ALLOW, send=ALLOW, manage_messages=ALLOW
     """
     ow: dict = {
@@ -54,6 +54,8 @@ def _read_only_overwrites(
         ow[bounty_hunter_role] = discord.PermissionOverwrite(
             view_channel=True,
             send_messages=False,
+            read_message_history=True,
+            use_application_commands=False,
         )
     return ow
 
@@ -66,7 +68,7 @@ def _hunting_overwrites(
     Channel overwrite for #bounty-hunting.
 
     @everyone:     view=DENY, send=DENY
-    Bounty Hunter: view=ALLOW, send=DENY, use_application_commands=ALLOW
+    Bounty Hunter: view=ALLOW, send=ALLOW, read_history=ALLOW, use_app_cmds=ALLOW
     Bot:           view=ALLOW, send=ALLOW, manage_messages=ALLOW
     """
     ow: dict = {
@@ -83,7 +85,8 @@ def _hunting_overwrites(
     if bounty_hunter_role is not None:
         ow[bounty_hunter_role] = discord.PermissionOverwrite(
             view_channel=True,
-            send_messages=False,
+            send_messages=True,
+            read_message_history=True,
             use_application_commands=True,
         )
     return ow
@@ -97,7 +100,7 @@ def _discussion_overwrites(
     Channel overwrite for #bounty-discussions.
 
     @everyone:     view=DENY, send=DENY
-    Bounty Hunter: view=ALLOW, send=ALLOW, use_application_commands=DENY
+    Bounty Hunter: view=ALLOW, send=ALLOW, read_history=ALLOW, use_app_cmds=DENY
     Bot:           view=ALLOW, send=ALLOW, manage_messages=ALLOW
     """
     ow: dict = {
@@ -115,6 +118,7 @@ def _discussion_overwrites(
         ow[bounty_hunter_role] = discord.PermissionOverwrite(
             view_channel=True,
             send_messages=True,
+            read_message_history=True,
             use_application_commands=False,
         )
     return ow

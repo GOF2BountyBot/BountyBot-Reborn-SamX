@@ -8,6 +8,7 @@ from cogs.adminCog import is_admin
 from discord import app_commands
 from discord.ext import commands
 from shared import bblogger
+from utils.autocomplete_utils import normalize_for_search
 
 # Set up logger
 flogger = bblogger.get_logger("discord-gateway-SchedulerCog")
@@ -39,13 +40,14 @@ class SchedulerCog(commands.Cog):
             resp = await self.http_client.get(f"{api_base}/jobs", timeout=5)
             resp.raise_for_status()
             jobs = resp.json()
+            norm_current = normalize_for_search(current)
             choices = []
             for job in jobs:
                 job_id = job.get("id", "")
                 trigger = job.get("trigger", "")
                 # Build a readable label: "<short_id> (<trigger>)"
                 label = f"{job_id[:32]} ({trigger[:40]})" if trigger else job_id[:72]
-                if current.lower() in label.lower():
+                if norm_current in normalize_for_search(label):
                     choices.append(app_commands.Choice(name=label[:100], value=job_id))
             return choices[:25]
         except Exception:  # pylint: disable=broad-exception-caught
@@ -56,6 +58,7 @@ class SchedulerCog(commands.Cog):
     # ------------------------------------------------------------------
 
     @app_commands.command(name="scheduler_list", description="[ADMIN] List all scheduled jobs")
+    @app_commands.default_permissions(administrator=True)
     @is_admin()
     async def scheduler_list(self, interaction: discord.Interaction):
         """List all currently scheduled APScheduler jobs relevant to this guild."""
@@ -132,6 +135,7 @@ class SchedulerCog(commands.Cog):
     # ------------------------------------------------------------------
 
     @app_commands.command(name="scheduler_view", description="[ADMIN] View details of a specific scheduled job")
+    @app_commands.default_permissions(administrator=True)
     @app_commands.describe(job_id="The ID of the job to view")
     @app_commands.autocomplete(job_id=job_id_autocomplete)
     @is_admin()
@@ -209,6 +213,7 @@ class SchedulerCog(commands.Cog):
     # ------------------------------------------------------------------
 
     @app_commands.command(name="scheduler_update", description="[ADMIN] Update a scheduled job's payload")
+    @app_commands.default_permissions(administrator=True)
     @app_commands.describe(
         job_id="The ID of the job to update",
         payload_json='New payload as a JSON string (e.g. {"job_type": "bounty_spawn"})',
@@ -290,6 +295,7 @@ class SchedulerCog(commands.Cog):
     # ------------------------------------------------------------------
 
     @app_commands.command(name="scheduler_delete", description="[ADMIN] Delete a specific scheduled job")
+    @app_commands.default_permissions(administrator=True)
     @app_commands.describe(job_id="The ID of the job to delete")
     @app_commands.autocomplete(job_id=job_id_autocomplete)
     @is_admin()
@@ -352,6 +358,7 @@ class SchedulerCog(commands.Cog):
         name="admin_reset_scheduler",
         description="[ADMIN] Wipe all scheduled jobs and re-register the 3 default recurring jobs",
     )
+    @app_commands.default_permissions(administrator=True)
     @is_admin()
     async def admin_reset_scheduler(self, interaction: discord.Interaction):
         """Remove all scheduled jobs and re-register the default recurring jobs."""
@@ -410,6 +417,7 @@ class SchedulerCog(commands.Cog):
         name="admin_clear_scheduler",
         description="[ADMIN] Delete all one-time scheduled jobs scoped to this guild",
     )
+    @app_commands.default_permissions(administrator=True)
     @is_admin()
     async def admin_clear_scheduler(self, interaction: discord.Interaction):
         """Delete all one-time jobs associated with the invoking guild."""

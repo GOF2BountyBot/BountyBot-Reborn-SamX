@@ -1,3 +1,4 @@
+import asyncio
 import os
 from typing import Literal
 
@@ -6,6 +7,7 @@ import httpx
 from discord import app_commands
 from discord.ext import commands
 from shared import bblogger
+from utils.autocomplete_utils import normalize_for_search
 from utils.guild_setup import ensure_bountybot_infrastructure
 from utils.timestamp_utils import iso_to_discord_ts
 
@@ -65,19 +67,55 @@ class AdminCog(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
         self._valid_tiers = ["Bronze", "Silver", "Gold", "Platinum"]
+        self._render_settings: list[str] = []
         self.http_client = httpx.AsyncClient(timeout=httpx.Timeout(10.0))
+        bot.loop.create_task(self._preload_render_settings())
         flogger.debug("AdminCog initialized")
 
     async def cog_unload(self):
         await self.http_client.aclose()
 
+    async def _preload_render_settings(self):
+        """Preload valid render config setting names from blender-service."""
+        blender_base = os.getenv("BLENDER_API_BASE_URL", "http://blender-service:8001/api/v1")
+        await self.bot.wait_until_ready()
+        for attempt in range(3):
+            try:
+                resp = await self.http_client.get(f"{blender_base}/config/render", timeout=10)
+                resp.raise_for_status()
+                self._render_settings = list(resp.json().keys())
+                flogger.info(f"Preloaded {len(self._render_settings)} render config settings")
+                return
+            except Exception as exc:  # pylint: disable=broad-exception-caught
+                wait = 5 * (2**attempt)
+                flogger.warning(
+                    f"Failed to preload render settings (attempt {attempt + 1}/3): {exc}, retrying in {wait}s"
+                )
+                await asyncio.sleep(wait)
+        flogger.error("Failed to preload render settings after 3 attempts")
+
+    async def render_setting_autocomplete(
+        self, _interaction: discord.Interaction, current: str
+    ) -> list[app_commands.Choice[str]]:
+        """Autocomplete for render config setting names."""
+        norm_current = normalize_for_search(current)
+        return [
+            app_commands.Choice(name=s, value=s)
+            for s in self._render_settings
+            if norm_current in normalize_for_search(s)
+        ][:25]
+
     async def tier_autocomplete(
         self, _interaction: discord.Interaction, current: str
     ) -> list[app_commands.Choice[str]]:
         """Autocomplete for shop tiers."""
-        return [app_commands.Choice(name=t, value=t) for t in self._valid_tiers if current.lower() in t.lower()]
+        norm_current = normalize_for_search(current)
+        return [
+            app_commands.Choice(name=t, value=t) for t in self._valid_tiers if norm_current in normalize_for_search(t)
+        ]
 
     @app_commands.command(name="admin_check", description="[ADMIN] Check if a user has bot-admin rights and why")
+    @app_commands.default_permissions(administrator=True)
     @app_commands.describe(user="The user to check")
     @is_admin()
     async def admin_check(self, interaction: discord.Interaction, user: discord.User):
@@ -123,6 +161,7 @@ class AdminCog(commands.Cog):
         await interaction.followup.send(msg, ephemeral=True)
 
     @app_commands.command(name="admin_setup", description="[ADMIN] Initialize the bot for this guild")
+    @app_commands.default_permissions(administrator=True)
     @app_commands.describe(
         admin_role="Role that should have admin permissions for the bot (required)",
         starting_credits="Starting credits for new players (default: 0)",
@@ -222,6 +261,7 @@ class AdminCog(commands.Cog):
             await interaction.followup.send("⚠️ An error occurred during guild initialization.", ephemeral=True)
 
     @app_commands.command(name="admin_player", description="[ADMIN] Manage player data")
+    @app_commands.default_permissions(administrator=True)
     @app_commands.describe(
         user="Player to manage",
         action="Action to perform",
@@ -270,7 +310,12 @@ class AdminCog(commands.Cog):
                 embed.add_field(name="Lifetime Credits", value=f"{player['lifetime_credits']:,}", inline=True)
                 embed.add_field(name="Prestige Count", value=str(player["prestige_count"]), inline=True)
                 embed.set_thumbnail(url=user.display_avatar.url)
-                embed.set_footer(text=f"Created: {iso_to_discord_ts(player['created_at'], 'D')}")
+                embed.add_field(
+                    name="Registered",
+                    value=iso_to_discord_ts(player["created_at"], "D"),
+                    inline=False,
+                )
+                embed.set_footer(text="Player data managed by BountyBot")
 
                 await interaction.followup.send(embed=embed, ephemeral=True)
 
@@ -382,6 +427,7 @@ class AdminCog(commands.Cog):
             await interaction.followup.send("⚠️ An error occurred while managing player.", ephemeral=True)
 
     @app_commands.command(name="admin_refresh_shop", description="[ADMIN] Force refresh a shop")
+    @app_commands.default_permissions(administrator=True)
     @app_commands.describe(tier="Shop tier to refresh", force_tech_level="Force all items to specific tech level (1-9)")
     @app_commands.autocomplete(tier=tier_autocomplete)
     @is_admin()
@@ -428,6 +474,7 @@ class AdminCog(commands.Cog):
             await interaction.followup.send("⚠️ An error occurred while refreshing shop.", ephemeral=True)
 
     @app_commands.command(name="admin_guild_stats", description="[ADMIN] View guild statistics")
+    @app_commands.default_permissions(administrator=True)
     @is_admin()
     async def admin_guild_stats(self, interaction: discord.Interaction):
         """View comprehensive guild statistics."""
@@ -463,6 +510,7 @@ class AdminCog(commands.Cog):
             await interaction.followup.send("⚠️ An error occurred while fetching guild statistics.", ephemeral=True)
 
     @app_commands.command(name="admin_config", description="[ADMIN] View or update guild configuration")
+    @app_commands.default_permissions(administrator=True)
     @app_commands.describe(
         action="Configuration action to perform",
         starting_credits="Starting credits for new players",
@@ -508,10 +556,15 @@ class AdminCog(commands.Cog):
                     f"Platinum: {thresholds['Platinum']:,}"
                 )
                 embed.add_field(name="XP Thresholds", value=threshold_text, inline=True)
-                embed.set_footer(
-                    text=f"Created: {iso_to_discord_ts(cfg['created_at'], 'D')} | "
-                    f"Updated: {iso_to_discord_ts(cfg['updated_at'], 'D')}"
+                embed.add_field(
+                    name="Timestamps",
+                    value=(
+                        f"Created: {iso_to_discord_ts(cfg['created_at'], 'D')}\n"
+                        f"Updated: {iso_to_discord_ts(cfg['updated_at'], 'D')}"
+                    ),
+                    inline=False,
                 )
+                embed.set_footer(text="Use /admin_config action:Set ... to update")
 
                 await interaction.followup.send(embed=embed, ephemeral=True)
 
@@ -552,6 +605,7 @@ class AdminCog(commands.Cog):
             await interaction.followup.send("⚠️ An error occurred while managing configuration.", ephemeral=True)
 
     @app_commands.command(name="admin_uninstall", description="[ADMIN] Completely remove all bot data from this guild")
+    @app_commands.default_permissions(administrator=True)
     @app_commands.describe(confirm="Type CONFIRM-DELETE to confirm (this is IRREVERSIBLE)")
     @is_admin()
     async def admin_uninstall(
@@ -684,6 +738,7 @@ class AdminCog(commands.Cog):
             await interaction.followup.send("⚠️ An error occurred during uninstall.", ephemeral=True)
 
     @app_commands.command(name="admin_config_shop", description="[ADMIN] Update shop configuration")
+    @app_commands.default_permissions(administrator=True)
     @app_commands.describe(
         ship_count_min="Minimum number of ship types in shop",
         ship_count_max="Maximum number of ship types in shop",
@@ -790,6 +845,7 @@ class AdminCog(commands.Cog):
             await interaction.followup.send("⚠️ An error occurred while updating shop configuration.", ephemeral=True)
 
     @app_commands.command(name="admin_config_validate", description="[ADMIN] Validate guild configuration")
+    @app_commands.default_permissions(administrator=True)
     @is_admin()
     async def admin_config_validate(self, interaction: discord.Interaction):
         """Validate the current guild configuration."""
@@ -847,12 +903,14 @@ class AdminCog(commands.Cog):
     # ------------------------------------------------------------------
 
     @app_commands.command(name="render_config", description="[ADMIN] View/update blender render settings")
+    @app_commands.default_permissions(administrator=True)
     @app_commands.describe(
         action="Action to perform: view current config, set a value, or reset to defaults",
         setting="Setting name to update (required for 'set' action)",
         value="New integer value (required for 'set' action)",
     )
     @is_admin()
+    @app_commands.autocomplete(setting=render_setting_autocomplete)
     async def render_config(
         self,
         interaction: discord.Interaction,
@@ -901,6 +959,7 @@ class AdminCog(commands.Cog):
                 await interaction.response.send_message("⚠️ An error occurred.", ephemeral=True)
 
     @app_commands.command(name="render_cache_clear", description="[ADMIN] Clear blender render cache (/tmp)")
+    @app_commands.default_permissions(administrator=True)
     @is_admin()
     async def render_cache_clear(self, interaction: discord.Interaction) -> None:
         """Admin command to clear blender-service temp render files."""
@@ -932,6 +991,7 @@ class AdminCog(commands.Cog):
     # ------------------------------------------------------------------
 
     @app_commands.command(name="admin_clear_bounties", description="[ADMIN] Clear active bounties for this guild")
+    @app_commands.default_permissions(administrator=True)
     @is_admin()
     @app_commands.describe(
         tier="Tier to clear (omit for all tiers)",
@@ -942,6 +1002,7 @@ class AdminCog(commands.Cog):
             app_commands.Choice(name="Bronze", value="bronze"),
             app_commands.Choice(name="Silver", value="silver"),
             app_commands.Choice(name="Gold", value="gold"),
+            app_commands.Choice(name="Platinum", value="platinum"),
         ]
     )
     async def admin_clear_bounties(self, interaction: discord.Interaction, confirm: str, tier: str | None = None):
@@ -985,12 +1046,14 @@ class AdminCog(commands.Cog):
             await interaction.followup.send("⚠️ An error occurred while clearing bounties.", ephemeral=True)
 
     @app_commands.command(name="admin_config_bounty", description="[ADMIN] View or update bounty configuration")
+    @app_commands.default_permissions(administrator=True)
     @is_admin()
     @app_commands.describe(
         action="View current config or update settings",
         max_bronze="Max active bounties for Bronze tier (0-20)",
         max_silver="Max active bounties for Silver tier (0-20)",
         max_gold="Max active bounties for Gold tier (0-20)",
+        max_platinum="Max active bounties for Platinum tier (0-20)",
         expiry_minutes="Bounty expiry time in minutes (10-10080)",
         spawn_interval="Spawn check interval in minutes (5-1440)",
     )
@@ -1007,6 +1070,7 @@ class AdminCog(commands.Cog):
         max_bronze: int | None = None,
         max_silver: int | None = None,
         max_gold: int | None = None,
+        max_platinum: int | None = None,
         expiry_minutes: int | None = None,
         spawn_interval: int | None = None,
     ):
@@ -1052,13 +1116,21 @@ class AdminCog(commands.Cog):
                 await interaction.followup.send(embed=embed, ephemeral=True)
 
             elif action == "update":
-                payload: dict = {}
+                payload: dict = {"guild_id": interaction.guild_id}
+
+                # Build max_bounties_per_tier nested dict only with provided tiers
+                tier_updates: dict[str, int] = {}
                 if max_bronze is not None:
-                    payload["max_bronze"] = max_bronze
+                    tier_updates["bronze"] = max_bronze
                 if max_silver is not None:
-                    payload["max_silver"] = max_silver
+                    tier_updates["silver"] = max_silver
                 if max_gold is not None:
-                    payload["max_gold"] = max_gold
+                    tier_updates["gold"] = max_gold
+                if max_platinum is not None:
+                    tier_updates["platinum"] = max_platinum
+                if tier_updates:
+                    payload["max_bounties_per_tier"] = tier_updates
+
                 if expiry_minutes is not None:
                     payload["bounty_expiry_minutes"] = expiry_minutes
                 if spawn_interval is not None:
@@ -1080,7 +1152,8 @@ class AdminCog(commands.Cog):
                         value=(
                             f"Bronze: {max_per_tier.get('bronze', '?')} | "
                             f"Silver: {max_per_tier.get('silver', '?')} | "
-                            f"Gold: {max_per_tier.get('gold', '?')}"
+                            f"Gold: {max_per_tier.get('gold', '?')} | "
+                            f"Platinum: {max_per_tier.get('platinum', '?')}"
                         ),
                         inline=False,
                     )
@@ -1104,6 +1177,7 @@ class AdminCog(commands.Cog):
             await interaction.followup.send("⚠️ An error occurred while managing bounty configuration.", ephemeral=True)
 
     @app_commands.command(name="admin_config_xp", description="[ADMIN] View or update XP tier thresholds")
+    @app_commands.default_permissions(administrator=True)
     @is_admin()
     @app_commands.describe(
         action="View current thresholds or update them",
@@ -1169,7 +1243,10 @@ class AdminCog(commands.Cog):
                     )
                     return
 
-                payload = {"thresholds": {"Silver": silver, "Gold": gold, "Platinum": platinum}}
+                payload = {
+                    "guild_id": interaction.guild_id,
+                    "thresholds": {"Silver": silver, "Gold": gold, "Platinum": platinum},
+                }
                 resp = await self.http_client.put(
                     f"{api_base}/config/guild/{interaction.guild_id}/xp-thresholds",
                     json=payload,
@@ -1207,6 +1284,7 @@ class AdminCog(commands.Cog):
             await interaction.followup.send("⚠️ An error occurred while managing XP thresholds.", ephemeral=True)
 
     @app_commands.command(name="admin_spawn_bounty", description="[ADMIN] Manually trigger a bounty spawn")
+    @app_commands.default_permissions(administrator=True)
     @is_admin()
     @app_commands.describe(tier="Tier to spawn for (omit for all tiers)")
     @app_commands.choices(
@@ -1214,6 +1292,7 @@ class AdminCog(commands.Cog):
             app_commands.Choice(name="Bronze", value="bronze"),
             app_commands.Choice(name="Silver", value="silver"),
             app_commands.Choice(name="Gold", value="gold"),
+            app_commands.Choice(name="Platinum", value="platinum"),
         ]
     )
     async def admin_spawn_bounty(self, interaction: discord.Interaction, tier: str | None = None):
@@ -1267,6 +1346,59 @@ class AdminCog(commands.Cog):
             flogger.error(f"Error in /admin_spawn_bounty: {e}")
             await interaction.followup.send("⚠️ An error occurred while spawning bounties.", ephemeral=True)
 
+    # ------------------------------------------------------------------
+    # /admin_cooldown_reset <user>
+    # ------------------------------------------------------------------
+
+    @app_commands.command(
+        name="admin_cooldown_reset",
+        description="Reset a player's bounty check cooldown immediately",
+    )
+    @app_commands.default_permissions(administrator=True)
+    @app_commands.describe(user="The Discord member whose cooldown should be reset")
+    @is_admin()
+    async def admin_cooldown_reset(self, interaction: discord.Interaction, user: discord.Member):
+        """Reset a player's bounty cooldown."""
+        await interaction.response.defer(thinking=True, ephemeral=True)
+        flogger.info(
+            f"/admin_cooldown_reset invoked: guild={interaction.guild_id} admin={interaction.user.id} target={user.id}"
+        )
+
+        try:
+            resp = await self.http_client.put(
+                f"{api_base}/players/{interaction.guild_id}/{user.id}/cooldown/reset",
+                timeout=10,
+            )
+            if resp.status_code == 404:
+                await interaction.followup.send(
+                    f"❌ Player not found for {user.mention}. They may not have played yet.",
+                    ephemeral=True,
+                )
+                return
+            resp.raise_for_status()
+            data = resp.json()
+            await interaction.followup.send(
+                f"✅ {data.get('message', 'Cooldown reset successfully')} for {user.mention}.",
+                ephemeral=True,
+            )
+            flogger.info(f"/admin_cooldown_reset success: guild={interaction.guild_id} target={user.id}")
+
+        except httpx.HTTPStatusError as e:
+            flogger.error(
+                f"/admin_cooldown_reset API error: guild={interaction.guild_id} "
+                f"target={user.id} status={e.response.status_code}"
+            )
+            await interaction.followup.send(f"❌ API Error: {e}", ephemeral=True)
+        except Exception as e:  # pylint: disable=broad-exception-caught
+            flogger.error(f"/admin_cooldown_reset error: {e}")
+            await interaction.followup.send("⚠️ An error occurred while resetting the cooldown.", ephemeral=True)
+
+    @admin_cooldown_reset.error
+    async def admin_cooldown_reset_error(self, interaction: discord.Interaction, error: app_commands.AppCommandError):
+        flogger.exception("Error in /admin_cooldown_reset", exc_info=error)
+        if not interaction.response.is_done():
+            await interaction.response.send_message("⚠️ An error occurred.", ephemeral=True)
+
     # Error handlers
     @admin_setup.error
     async def admin_setup_error(self, interaction: discord.Interaction, error: app_commands.AppCommandError):
@@ -1289,6 +1421,366 @@ class AdminCog(commands.Cog):
             flogger.exception("Error in /admin_player", exc_info=error)
             if not interaction.response.is_done():
                 await interaction.response.send_message("⚠️ An error occurred.", ephemeral=True)
+
+    # ------------------------------------------------------------------
+    # Admin inventory management commands
+    # ------------------------------------------------------------------
+
+    async def item_name_autocomplete(
+        self, _interaction: discord.Interaction, current: str
+    ) -> list[app_commands.Choice[str]]:
+        """Autocomplete for item names from game data (weapons, modules, turrets)."""
+        try:
+            norm_current = normalize_for_search(current)
+            choices: list[app_commands.Choice[str]] = []
+            seen: set[str] = set()
+
+            # Query game data for weapons, modules, turrets
+            for category in ("primary_weapon", "secondary_weapon", "turret_weapon", "module"):
+                resp = await self.http_client.get(f"{api_base}/data/{category}", timeout=5)
+                if resp.status_code != 200:
+                    continue
+                for item in resp.json():
+                    name = item.get("name", "")
+                    if name and name not in seen and norm_current in normalize_for_search(name):
+                        seen.add(name)
+                        choices.append(app_commands.Choice(name=name, value=name))
+                if len(choices) >= 25:
+                    break
+            return choices[:25]
+        except Exception:  # pylint: disable=broad-exception-caught
+            return []
+
+    async def game_ship_autocomplete(
+        self, _interaction: discord.Interaction, current: str
+    ) -> list[app_commands.Choice[str]]:
+        """Autocomplete for ship names from game data (for give-ship)."""
+        try:
+            norm_current = normalize_for_search(current)
+            resp = await self.http_client.get(f"{api_base}/about/ships", timeout=5)
+            if resp.status_code != 200:
+                return []
+            ships = resp.json()
+            choices = [
+                app_commands.Choice(name=s["name"], value=s["name"])
+                for s in ships
+                if norm_current in normalize_for_search(s.get("name", ""))
+            ]
+            return choices[:25]
+        except Exception:  # pylint: disable=broad-exception-caught
+            return []
+
+    @app_commands.command(name="admin_give_item", description="[ADMIN] Give an item directly to a player's inventory")
+    @app_commands.default_permissions(administrator=True)
+    @app_commands.describe(
+        user="Target player",
+        item_name="Item to give (autocomplete from game data)",
+        item_type="Type of item",
+        quantity="Number of items to give (default: 1)",
+    )
+    @app_commands.choices(
+        item_type=[
+            app_commands.Choice(name="Weapon", value="weapon"),
+            app_commands.Choice(name="Module", value="module"),
+            app_commands.Choice(name="Turret", value="turret"),
+        ]
+    )
+    @app_commands.autocomplete(item_name=item_name_autocomplete)
+    @is_admin()
+    async def admin_give_item(
+        self,
+        interaction: discord.Interaction,
+        user: discord.User,
+        item_name: str,
+        item_type: str,
+        quantity: int = 1,
+    ):
+        """Give an item directly to a player's inventory (no credit cost)."""
+        await interaction.response.defer(thinking=True, ephemeral=True)
+        try:
+            payload = {
+                "guild_id": interaction.guild_id,
+                "user_id": user.id,
+                "item_name": item_name,
+                "item_type": item_type,
+                "quantity": quantity,
+            }
+            resp = await self.http_client.post(
+                f"{api_base}/admin/give-item",
+                json=payload,
+                params={"admin_user_id": interaction.user.id},
+                timeout=10,
+            )
+            if resp.status_code == 404:
+                detail = resp.json().get("detail", "Player or item not found.")
+                await interaction.followup.send(f"❌ {detail}", ephemeral=True)
+                return
+            if resp.status_code == 400:
+                detail = resp.json().get("detail", "Invalid request.")
+                await interaction.followup.send(f"❌ {detail}", ephemeral=True)
+                return
+            resp.raise_for_status()
+            result = resp.json()
+
+            embed = discord.Embed(
+                title="✅ Item Given",
+                description=result.get("message", "Item given successfully."),
+                color=discord.Color.green(),
+            )
+            embed.add_field(name="Item", value=item_name, inline=True)
+            embed.add_field(name="Type", value=item_type.title(), inline=True)
+            embed.add_field(name="Quantity", value=str(quantity), inline=True)
+            embed.add_field(name="Player", value=user.mention, inline=True)
+            embed.add_field(name="New Total", value=str(result.get("new_total_quantity", "?")), inline=True)
+            await interaction.followup.send(embed=embed, ephemeral=True)
+            flogger.info(
+                f"Admin {interaction.user} gave {quantity}x {item_name} to {user} in guild {interaction.guild_id}"
+            )
+
+        except httpx.HTTPStatusError as e:
+            await interaction.followup.send(f"❌ API Error: {e}", ephemeral=True)
+        except Exception as e:  # pylint: disable=broad-exception-caught
+            flogger.error(f"Error in /admin_give_item: {e}")
+            await interaction.followup.send("⚠️ An error occurred while giving item.", ephemeral=True)
+
+    @admin_give_item.error
+    async def admin_give_item_error(self, interaction: discord.Interaction, error: app_commands.AppCommandError):
+        flogger.exception("Error in /admin_give_item", exc_info=error)
+        if not interaction.response.is_done():
+            await interaction.response.send_message("⚠️ An error occurred.", ephemeral=True)
+
+    @app_commands.command(name="admin_remove_item", description="[ADMIN] Remove an item from a player's inventory")
+    @app_commands.default_permissions(administrator=True)
+    @app_commands.describe(
+        user="Target player",
+        item_name="Item to remove (autocomplete from game data)",
+        item_type="Type of item",
+        quantity="Number of items to remove (default: 1)",
+    )
+    @app_commands.choices(
+        item_type=[
+            app_commands.Choice(name="Weapon", value="weapon"),
+            app_commands.Choice(name="Module", value="module"),
+            app_commands.Choice(name="Turret", value="turret"),
+        ]
+    )
+    @app_commands.autocomplete(item_name=item_name_autocomplete)
+    @is_admin()
+    async def admin_remove_item(
+        self,
+        interaction: discord.Interaction,
+        user: discord.User,
+        item_name: str,
+        item_type: str,
+        quantity: int = 1,
+    ):
+        """Remove an item from a player's inventory."""
+        await interaction.response.defer(thinking=True, ephemeral=True)
+        try:
+            payload = {
+                "guild_id": interaction.guild_id,
+                "user_id": user.id,
+                "item_name": item_name,
+                "item_type": item_type,
+                "quantity": quantity,
+            }
+            resp = await self.http_client.post(
+                f"{api_base}/admin/remove-item",
+                json=payload,
+                params={"admin_user_id": interaction.user.id},
+                timeout=10,
+            )
+            if resp.status_code == 404:
+                detail = resp.json().get("detail", "Player or item not found.")
+                await interaction.followup.send(f"❌ {detail}", ephemeral=True)
+                return
+            if resp.status_code == 400:
+                detail = resp.json().get("detail", "Invalid request.")
+                await interaction.followup.send(f"❌ {detail}", ephemeral=True)
+                return
+            resp.raise_for_status()
+            result = resp.json()
+
+            embed = discord.Embed(
+                title="✅ Item Removed",
+                description=result.get("message", "Item removed successfully."),
+                color=discord.Color.orange(),
+            )
+            embed.add_field(name="Item", value=item_name, inline=True)
+            embed.add_field(name="Type", value=item_type.title(), inline=True)
+            embed.add_field(name="Quantity Removed", value=str(quantity), inline=True)
+            embed.add_field(name="Player", value=user.mention, inline=True)
+            embed.add_field(name="Remaining", value=str(result.get("new_quantity", 0)), inline=True)
+            await interaction.followup.send(embed=embed, ephemeral=True)
+            flogger.info(
+                f"Admin {interaction.user} removed {quantity}x {item_name} from {user} in guild {interaction.guild_id}"
+            )
+
+        except httpx.HTTPStatusError as e:
+            await interaction.followup.send(f"❌ API Error: {e}", ephemeral=True)
+        except Exception as e:  # pylint: disable=broad-exception-caught
+            flogger.error(f"Error in /admin_remove_item: {e}")
+            await interaction.followup.send("⚠️ An error occurred while removing item.", ephemeral=True)
+
+    @admin_remove_item.error
+    async def admin_remove_item_error(self, interaction: discord.Interaction, error: app_commands.AppCommandError):
+        flogger.exception("Error in /admin_remove_item", exc_info=error)
+        if not interaction.response.is_done():
+            await interaction.response.send_message("⚠️ An error occurred.", ephemeral=True)
+
+    @app_commands.command(name="admin_give_ship", description="[ADMIN] Give a ship to a player")
+    @app_commands.default_permissions(administrator=True)
+    @app_commands.describe(
+        user="Target player",
+        ship_name="Name of the ship to give (autocomplete from game data)",
+    )
+    @app_commands.autocomplete(ship_name=game_ship_autocomplete)
+    @is_admin()
+    async def admin_give_ship(
+        self,
+        interaction: discord.Interaction,
+        user: discord.User,
+        ship_name: str,
+    ):
+        """Give a ship to a player. Ship starts inactive with empty loadout."""
+        await interaction.response.defer(thinking=True, ephemeral=True)
+        try:
+            payload = {
+                "guild_id": interaction.guild_id,
+                "user_id": user.id,
+                "ship_name": ship_name,
+            }
+            resp = await self.http_client.post(
+                f"{api_base}/admin/give-ship",
+                json=payload,
+                params={"admin_user_id": interaction.user.id},
+                timeout=10,
+            )
+            if resp.status_code == 404:
+                detail = resp.json().get("detail", "Player or ship not found.")
+                await interaction.followup.send(f"❌ {detail}", ephemeral=True)
+                return
+            if resp.status_code == 400:
+                detail = resp.json().get("detail", "Invalid request.")
+                await interaction.followup.send(f"❌ {detail}", ephemeral=True)
+                return
+            resp.raise_for_status()
+            result = resp.json()
+
+            embed = discord.Embed(
+                title="✅ Ship Given",
+                description=result.get("message", "Ship given successfully."),
+                color=discord.Color.green(),
+            )
+            embed.add_field(name="Ship", value=ship_name, inline=True)
+            embed.add_field(name="Ship ID", value=str(result.get("ship_id", "?")), inline=True)
+            embed.add_field(name="Player", value=user.mention, inline=True)
+            embed.add_field(name="Status", value="Inactive (empty loadout)", inline=True)
+            await interaction.followup.send(embed=embed, ephemeral=True)
+            flogger.info(f"Admin {interaction.user} gave ship {ship_name} to {user} in guild {interaction.guild_id}")
+
+        except httpx.HTTPStatusError as e:
+            await interaction.followup.send(f"❌ API Error: {e}", ephemeral=True)
+        except Exception as e:  # pylint: disable=broad-exception-caught
+            flogger.error(f"Error in /admin_give_ship: {e}")
+            await interaction.followup.send("⚠️ An error occurred while giving ship.", ephemeral=True)
+
+    @admin_give_ship.error
+    async def admin_give_ship_error(self, interaction: discord.Interaction, error: app_commands.AppCommandError):
+        flogger.exception("Error in /admin_give_ship", exc_info=error)
+        if not interaction.response.is_done():
+            await interaction.response.send_message("⚠️ An error occurred.", ephemeral=True)
+
+    async def player_ship_autocomplete(
+        self, interaction: discord.Interaction, current: str
+    ) -> list[app_commands.Choice[str]]:
+        """Autocomplete for remove-ship — shows ships owned by the target player."""
+        try:
+            # We can only show ships for a generic autocomplete since we don't know the target user
+            # until the command is submitted. Show all ships from game data as fallback.
+            norm_current = normalize_for_search(current)
+            resp = await self.http_client.get(f"{api_base}/about/ships", timeout=5)
+            if resp.status_code != 200:
+                return []
+            ships = resp.json()
+            choices = [
+                app_commands.Choice(name=s["name"], value=s["name"])
+                for s in ships
+                if norm_current in normalize_for_search(s.get("name", ""))
+            ]
+            return choices[:25]
+        except Exception:  # pylint: disable=broad-exception-caught
+            return []
+
+    @app_commands.command(name="admin_remove_ship", description="[ADMIN] Remove a ship from a player")
+    @app_commands.default_permissions(administrator=True)
+    @app_commands.describe(
+        user="Target player",
+        ship_name="Name of the ship to remove",
+    )
+    @app_commands.autocomplete(ship_name=player_ship_autocomplete)
+    @is_admin()
+    async def admin_remove_ship(
+        self,
+        interaction: discord.Interaction,
+        user: discord.User,
+        ship_name: str,
+    ):
+        """Remove a ship from a player. Unequips all items first. Cannot remove only active ship."""
+        await interaction.response.defer(thinking=True, ephemeral=True)
+        try:
+            payload = {
+                "guild_id": interaction.guild_id,
+                "user_id": user.id,
+                "ship_name": ship_name,
+            }
+            resp = await self.http_client.post(
+                f"{api_base}/admin/remove-ship",
+                json=payload,
+                params={"admin_user_id": interaction.user.id},
+                timeout=10,
+            )
+            if resp.status_code == 404:
+                detail = resp.json().get("detail", "Player or ship not found.")
+                await interaction.followup.send(f"❌ {detail}", ephemeral=True)
+                return
+            if resp.status_code == 400:
+                detail = resp.json().get("detail", "Invalid request.")
+                await interaction.followup.send(f"❌ {detail}", ephemeral=True)
+                return
+            resp.raise_for_status()
+            result = resp.json()
+
+            items_returned = result.get("items_returned_to_inventory", [])
+            embed = discord.Embed(
+                title="✅ Ship Removed",
+                description=result.get("message", "Ship removed successfully."),
+                color=discord.Color.orange(),
+            )
+            embed.add_field(name="Ship", value=ship_name, inline=True)
+            embed.add_field(name="Player", value=user.mention, inline=True)
+            if items_returned:
+                embed.add_field(
+                    name="Items Returned to Inventory",
+                    value=", ".join(items_returned[:10]) + ("..." if len(items_returned) > 10 else ""),
+                    inline=False,
+                )
+            await interaction.followup.send(embed=embed, ephemeral=True)
+            flogger.info(
+                f"Admin {interaction.user} removed ship {ship_name} from {user} in guild {interaction.guild_id}"
+            )
+
+        except httpx.HTTPStatusError as e:
+            await interaction.followup.send(f"❌ API Error: {e}", ephemeral=True)
+        except Exception as e:  # pylint: disable=broad-exception-caught
+            flogger.error(f"Error in /admin_remove_ship: {e}")
+            await interaction.followup.send("⚠️ An error occurred while removing ship.", ephemeral=True)
+
+    @admin_remove_ship.error
+    async def admin_remove_ship_error(self, interaction: discord.Interaction, error: app_commands.AppCommandError):
+        flogger.exception("Error in /admin_remove_ship", exc_info=error)
+        if not interaction.response.is_done():
+            await interaction.response.send_message("⚠️ An error occurred.", ephemeral=True)
 
 
 async def setup(bot: commands.Bot):

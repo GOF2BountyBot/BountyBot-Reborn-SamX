@@ -5,6 +5,7 @@ import httpx
 from discord import app_commands
 from discord.ext import commands
 from shared import bblogger
+from utils.autocomplete_utils import normalize_for_search
 from utils.timestamp_utils import iso_to_discord_ts
 
 # Set up logger
@@ -40,12 +41,13 @@ class DuelCog(commands.Cog):
             )
             resp.raise_for_status()
             duels = resp.json()
+            norm_current = normalize_for_search(current)
             choices = []
             for d in duels:
                 duel_id = d["id"]
                 stakes = d.get("stakes", 0)
                 label = f"Duel #{duel_id} — {stakes:,}cr stakes" if stakes else f"Duel #{duel_id} — friendly duel"
-                if current.lower() in label.lower():
+                if norm_current in normalize_for_search(label):
                     choices.append(app_commands.Choice(name=label[:100], value=str(duel_id)))
             return choices[:25]
         except Exception:  # pylint: disable=broad-exception-caught

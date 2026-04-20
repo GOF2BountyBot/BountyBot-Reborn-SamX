@@ -38,6 +38,12 @@ def _make_mock_logger(*_args, **_kwargs):
     return logger
 
 
+def _close_coro(coro):
+    """Close a coroutine to prevent 'never awaited' RuntimeWarning."""
+    coro.close()
+    return MagicMock()
+
+
 _mock_bblogger.get_logger = MagicMock(side_effect=_make_mock_logger)
 
 sys.modules["shared"] = _mock_shared
@@ -97,6 +103,8 @@ def mock_bot():
     bot = DiscordMockUtils.create_mock_bot(user_id=123456789, username="TestBot")
     bot.add_cog = AsyncMock()
     bot.tree = MagicMock()
+    bot.loop = MagicMock()
+    bot.loop.create_task = MagicMock(side_effect=_close_coro)
     return bot
 
 

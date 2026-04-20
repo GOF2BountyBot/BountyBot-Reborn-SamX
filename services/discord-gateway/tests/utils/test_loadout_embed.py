@@ -1032,3 +1032,55 @@ class TestShipStatsTotalValueHeuristic:
         assert "Total Value: **9,999,999**" in value, (
             "Total Value should be present for all game-realistic stat values"
         )
+
+
+# ---------------------------------------------------------------------------
+# Cargo quantity edge cases (DEF-007 fix verification)
+# ---------------------------------------------------------------------------
+
+
+class TestCargoQuantityEdgeCases:
+    """Verifies the DEF-007 fix: _format_cargo_line handles zero/negative/None
+    quantity explicitly rather than using `or 1` coercion.
+
+    Design choice: quantity=None → 1 (legacy fallback); quantity<=0 → render
+    name-only (no count suffix), treated as 0 items visible but not silently
+    coerced to 1. The item is still shown so the player can see it exists.
+    """
+
+    def test_none_quantity_defaults_to_one(self):
+        """Missing quantity key defaults to 1 (backward-compat for legacy payloads)."""
+        from utils.loadout_embed import _format_cargo_line
+
+        line = _format_cargo_line({"item_name": "Widget", "item_type": "misc", "emoji": None})
+        # No quantity key → defaults to 1 → shown without (xN) suffix
+        assert "Widget" in line
+        assert "(x1)" not in line  # quantity=1 never shows the suffix
+
+    def test_zero_quantity_renders_name_only_no_coercion(self):
+        """quantity=0 renders the item name without any count suffix.
+
+        After the DEF-007 fix, 0 is no longer silently coerced to 1.
+        The item still appears (it's in the cargo), but without a count suffix.
+        """
+        from utils.loadout_embed import _format_cargo_line
+
+        line = _format_cargo_line({"item_name": "Widget", "item_type": "misc", "quantity": 0, "emoji": None})
+        assert "Widget" in line  # item is still shown
+        assert "(x" not in line  # no quantity suffix for 0
+
+    def test_negative_quantity_renders_name_only(self):
+        """Negative quantity renders the item name without a count suffix (defensive)."""
+        from utils.loadout_embed import _format_cargo_line
+
+        line = _format_cargo_line({"item_name": "Bug", "item_type": "misc", "quantity": -3, "emoji": None})
+        assert "Bug" in line
+        assert "(x" not in line  # negative quantity does not produce a suffix
+
+    def test_positive_quantity_above_one_shows_count(self):
+        """Normal quantity > 1 still renders (xN) suffix as before."""
+        from utils.loadout_embed import _format_cargo_line
+
+        line = _format_cargo_line({"item_name": "Credits", "item_type": "misc", "quantity": 5, "emoji": None})
+        assert "Credits" in line
+        assert "(x5)" in line

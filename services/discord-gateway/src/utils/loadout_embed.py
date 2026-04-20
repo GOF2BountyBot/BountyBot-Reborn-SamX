@@ -214,10 +214,21 @@ def _format_module_line(module: dict) -> str:
 
 
 def _format_cargo_line(item: dict) -> str:
-    """Format a cargo line as ':emoji: Item Name (xN)' or '• Item Name (xN)'."""
+    """Format a cargo line as ':emoji: Item Name (xN)' or '• Item Name (xN)'.
+
+    Quantity handling:
+    - None → default to 1 (legacy/missing field fallback).
+    - 0 or negative → treated as 0; no (xN) suffix is shown.
+      Design choice: zero/negative-quantity items are rendered as name-only
+      (same visual as a single item) rather than being silently coerced to 1.
+      This avoids the previous `or 1` coercion where `quantity=0` was treated
+      as if 1 unit were present (DEF-007 fix).
+    """
     name = item.get("item_name") or "Unknown"
     emoji = item.get("emoji")
-    quantity = item.get("quantity") or 1
+    quantity = item.get("quantity")
+    if quantity is None:
+        quantity = 1  # explicit default for missing field
     prefix = f"{emoji} " if emoji else "• "
     if quantity > 1:
         return f"{prefix}{name} (x{quantity})"

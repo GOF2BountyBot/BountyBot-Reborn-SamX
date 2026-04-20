@@ -142,7 +142,7 @@ When a model has two relationships to the same target, **always specify `foreign
 | `guild_shop.py` | `GuildShop` | `guild_shops` | id, guild_id, item_name, item_type, tier_required, price, quantity |
 | `item.py` | `Item` | `item` | id, name, aliases (ARRAY), built_in, emoji, icon, value, wiki, type |
 | `weapon.py` | `Weapon` | `weapon` | id (FK→item.id), tech_level, extra_atts (JSON) |
-| `module.py` | `Module` | `module` | id (FK→item.id), module_type, tech_level, extra_atts (JSON) |
+| `module.py` | `Module` | `module` | id (FK→item.id), tech_level, max_equipped, extra_atts (JSON); module subtype is the STI discriminator stored in `Item.type` (e.g. `ArmourModule`, `ShieldModule`) — there is no separate `module_type` column |
 | `primary_weapon.py` | `PrimaryWeapon` | `primary_weapon` | id (FK→weapon.id), dps |
 | `secondary_weapon.py` | `SecondaryWeapon` | `secondary_weapon` | id (FK→weapon.id), dps, ammo |
 | `turret_weapon.py` | `TurretWeapon` | `turret_weapon` | id (FK→weapon.id), dps |

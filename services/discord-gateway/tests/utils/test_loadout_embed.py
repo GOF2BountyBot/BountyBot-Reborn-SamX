@@ -631,15 +631,160 @@ class TestTruncationStrategy:
             cargo_total_count=1,
         )
         embed = build_loadout_embed(resp, viewer_is_owner_or_admin=True)
-        # Find cargo section text (header or content)
-        cargo_text = " ".join(
-            f.value for f in embed.fields if f.name.startswith("Cargo Hold") or (
-                f.name == SPACER_NAME and "… and" in f.value
-            )
-        )
         # Either the huge item is included (truncated to 1024) or the section shows suffix
         # The key invariant is that it doesn't crash
         assert len(embed.fields) <= MAX_FIELDS
+
+    def test_utility_dropped_before_combat_fewer_utility_in_output(self):
+        """Spec §7.2 tier-2: utility modules drop before combat modules.
+
+        Construct a response with many long-named utility modules and a small number
+        of combat modules where truncation definitely fires. Assert that:
+        - Fewer utility module names appear in the output than combat module names.
+        - The embed stays within the 6000-char budget.
+        - At least one combat module is preserved.
+
+        This covers the utility-dropping loop (loadout_embed.py lines 388-396) and
+        verifies that combat modules are protected.
+        """
+        # 15 utility modules with very long names to exhaust the 5800-char embed budget.
+        # Budget breakdown: ~5800 available; Active Ship + Ship Stats ~200 chars;
+        # modules section must exceed ~5600 chars to trigger truncation.
+        # Each utility line needs > 370 chars → use 360-char base name.
+        long_util_name = "U" * 360
+        utility_modules = [
+            {
+                "name": f"{long_util_name}{i}",
+                "emoji": None,
+                "type": "CabinModule",   # MODULE_COMBAT_TIER["CabinModule"] == "utility"
+                "effects": [{"label": "Crew", "value": str(i)}],
+                "combat_tier": "utility",
+            }
+            for i in range(15)
+        ]
+        # 5 short-named combat modules that will survive once utilities are dropped
+        combat_modules = [
+            {
+                "name": f"ArmourMod{i}",
+                "emoji": None,
+                "type": "ArmourModule",  # MODULE_COMBAT_TIER["ArmourModule"] == "combat"
+                "effects": [{"label": "Armour", "value": "160"}],
+                "combat_tier": "combat",
+            }
+            for i in range(5)
+        ]
+
+        resp = _make_player_response(
+            modules=utility_modules + combat_modules,
+            ship_stats={
+                "armour": 100, "cargo": 10, "handling": 50, "hp": 200,
+                "dps": 10, "total_value": 1000,
+                "max_primaries": 2, "max_secondaries": 0, "max_turrets": 0,
+                "max_modules": 20,
+            },
+        )
+
+        embed = build_loadout_embed(resp, viewer_is_owner_or_admin=False)
+
+        # Budget invariant
+        total = len(embed.title or "") + len(embed.description or "")
+        total += sum(len(f.name) + len(f.value) for f in embed.fields)
+        assert total <= MAX_EMBED_TOTAL
+
+        # Collect all text from the modules section fields
+        all_text = " ".join(f.value for f in embed.fields)
+
+        # Count utility vs combat module names visible and dropped in output
+        utility_visible = sum(1 for i in range(15) if f"{long_util_name}{i}" in all_text)
+        combat_visible = sum(1 for i in range(5) if f"ArmourMod{i}" in all_text)
+        utility_dropped = 15 - utility_visible
+        combat_dropped = 5 - combat_visible
+
+        # Truncation must have fired (at least one utility was dropped)
+        assert utility_dropped >= 1, "No utility module was dropped — truncation may not have fired"
+        # All combat modules must be preserved (they are short and budget permits them)
+        assert combat_visible == 5, (
+            f"Expected all 5 combat modules to survive but only {combat_visible} visible"
+        )
+        # More utility modules were dropped than combat modules (utility dropped first)
+        assert utility_dropped > combat_dropped, (
+            f"Expected more utility drops ({utility_dropped}) than combat drops ({combat_dropped}) "
+            "— utility-first truncation was not applied correctly"
+        )
+
+    def test_all_utility_dropped_then_combat_modules_start_dropping(self):
+        """Spec §7.2 tier-3: when all utility modules are dropped and budget still exceeded,
+        combat modules start dropping next.
+
+        This covers the combat-tier dropping loop (loadout_embed.py lines 399-410) —
+        the path that was 0% covered.
+
+        Strategy: fill the budget with 20 utility modules AND 10 combat modules, all
+        with 360-char names so the combined total far exceeds the 5800-char budget.
+        All utilities must be dropped first; then the combat loop fires to drop enough
+        combat modules to bring the total under budget.
+        """
+        # 20 utility + 20 combat, all with 360-char names to overwhelm the budget.
+        # Budget = 5800 chars. 20 utility alone = ~7800 chars >> budget → all must drop.
+        # After dropping all utility, 20 combat = ~7800 chars → still > budget → some drop.
+        long_name = "M" * 360  # 360 chars each
+        utility_modules = [
+            {
+                "name": f"{long_name}U{i:02d}",
+                "emoji": None,
+                "type": "ScannerModule",  # MODULE_COMBAT_TIER["ScannerModule"] == "utility"
+                "effects": [],
+                "combat_tier": "utility",
+            }
+            for i in range(20)
+        ]
+        combat_modules = [
+            {
+                "name": f"{long_name}C{i:02d}",
+                "emoji": None,
+                "type": "ArmourModule",  # MODULE_COMBAT_TIER["ArmourModule"] == "combat"
+                "effects": [{"label": "Armour", "value": "160"}],
+                "combat_tier": "combat",
+            }
+            for i in range(20)
+        ]
+
+        resp = _make_player_response(
+            modules=utility_modules + combat_modules,
+            ship_stats={
+                "armour": 100, "cargo": 10, "handling": 50, "hp": 200,
+                "dps": 10, "total_value": 1000,
+                "max_primaries": 0, "max_secondaries": 0, "max_turrets": 0,
+                "max_modules": 40,
+            },
+        )
+
+        embed = build_loadout_embed(resp, viewer_is_owner_or_admin=False)
+
+        # Budget invariant: never exceed 6000 chars
+        total = len(embed.title or "") + len(embed.description or "")
+        total += sum(len(f.name) + len(f.value) for f in embed.fields)
+        assert total <= MAX_EMBED_TOTAL
+
+        all_text = " ".join(f.value for f in embed.fields)
+
+        # ALL utility modules must have been dropped (there is no room for them)
+        utility_visible = sum(1 for i in range(20) if f"{long_name}U{i:02d}" in all_text)
+        assert utility_visible == 0, (
+            f"{utility_visible} utility modules still visible — all should have been dropped "
+            "before the combat-module cascade could fire"
+        )
+
+        # At least some combat modules must also have been dropped (combat cascade fired)
+        # This asserts that lines 399-410 of loadout_embed.py were exercised.
+        combat_visible = sum(1 for i in range(20) if f"{long_name}C{i:02d}" in all_text)
+        assert combat_visible < 20, (
+            "All 20 combat modules still visible — expected some to be dropped by cascade. "
+            "Lines 399-410 (combat module dropping loop) were not exercised."
+        )
+
+        # Truncation suffix must appear
+        assert "… and" in all_text, "Expected truncation suffix '… and N more' in output"
 
 
 # ---------------------------------------------------------------------------

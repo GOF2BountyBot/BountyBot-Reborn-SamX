@@ -115,40 +115,7 @@ class PromoteResponse(BaseModel):
     next_tier: str | None = None
 
 
-class LoadoutWeaponItem(BaseModel):
-    name: str
-    emoji: str | None = None
-    dps: float | None = None
-    value: int | None = None
-
-
-class LoadoutModuleItem(BaseModel):
-    name: str
-    emoji: str | None = None
-    type: str | None = None
-    value: int | None = None
-    tech_level: int | None = None
-
-
-class CargoItem(BaseModel):
-    item_name: str
-    item_type: str  # "weapon", "module", "turret"
-    quantity: int
-    emoji: str | None = None
-
-
-class PlayerLoadoutResponse(BaseModel):
-    player_id: int
-    ship_name: str | None = None
-    ship_emoji: str | None = None
-    ship_nickname: str | None = None
-    armor_hp: int | None = None
-    shield_hp: int | None = None
-    total_hp: int | None = None
-    total_dps: float | None = None
-    weapons: list[LoadoutWeaponItem] = Field(default_factory=list)
-    modules: list[LoadoutModuleItem] = Field(default_factory=list)
-    turrets: list[LoadoutWeaponItem] = Field(default_factory=list)
-    total_value: int | None = None
-    message: str | None = None
-    cargo: list[CargoItem] = Field(default_factory=list)
+# LoadoutWeaponItem, LoadoutModuleItem, CargoItem, PlayerLoadoutResponse moved to
+# api/schemas/loadout_schema.py as part of the loadout embed redesign (see spec §2.1).
+# The unified LoadoutResponse schema is now shared between /players/{id}/loadout and
+# /bounties/{id}/loadout endpoints.

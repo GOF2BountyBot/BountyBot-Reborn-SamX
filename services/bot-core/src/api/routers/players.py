@@ -9,16 +9,14 @@ must be done via REST API.
 from fastapi import APIRouter, Depends, HTTPException, status
 from persist.database.manager import get_db_session
 from services.exceptions import GuildNotConfiguredError
+from services.loadout_response_service import LoadoutResponseService
 from services.player_service import PlayerService
 from shared import bblogger
 from sqlalchemy.exc import IntegrityError
 
+from api.schemas.loadout_schema import LoadoutResponse
 from api.schemas.players_schema import (
-    CargoItem,
     CreatePlayerRequest,
-    LoadoutModuleItem,
-    LoadoutWeaponItem,
-    PlayerLoadoutResponse,
     PlayerResponse,
     PlayerStatisticsResponse,
     PrestigeResponse,
@@ -42,6 +40,10 @@ router = APIRouter(
 # Dependency injection
 async def get_player_service():
     return PlayerService()
+
+
+async def get_loadout_response_service() -> LoadoutResponseService:
+    return LoadoutResponseService()
 
 
 @router.post("/", response_model=PlayerResponse, status_code=status.HTTP_201_CREATED)
@@ -349,164 +351,34 @@ async def promote_player(player_id: int, player_service: PlayerService = Depends
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to promote player") from e
 
 
-@router.get("/{player_id}/loadout", response_model=PlayerLoadoutResponse)
+@router.get("/{player_id}/loadout", response_model=LoadoutResponse)
 async def get_player_loadout(
     player_id: int,
     include_cargo: bool = False,
-    player_service: PlayerService = Depends(get_player_service),
-):
-    """Get the active ship loadout for a player, including computed HP and DPS stats."""
-    flogger.debug(f"Getting loadout for player {player_id}, include_cargo={include_cargo}")
+    viewer_discord_id: int | None = None,
+    loadout_service: LoadoutResponseService = Depends(get_loadout_response_service),
+) -> LoadoutResponse:
+    """Get the active ship loadout for a player.
+
+    Returns a unified `LoadoutResponse` with `subject_kind="player"`, computed
+    HP/DPS stats, per-module effects, and optional cargo (when `include_cargo=true`).
+    """
+    flogger.debug(
+        f"Getting loadout for player {player_id}, include_cargo={include_cargo}, "
+        f"viewer_discord_id={viewer_discord_id}"
+    )
 
     try:
         async with get_db_session() as db:
-            from persist.models.module import Module
-            from persist.models.player_ship import PlayerShip
-            from persist.models.ship import Ship
-            from persist.repositories.item_repository import ItemRepository
-            from sqlalchemy import select
-
-            # 1. Get the player
-            player = await player_service.player_repo.get_by_id(db, player_id)
-            if not player:
+            response = await loadout_service.build_player_loadout(
+                db,
+                player_id,
+                include_cargo=include_cargo,
+                viewer_discord_id=viewer_discord_id,
+            )
+            if response is None:
                 raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Player {player_id} not found")
-
-            # 2. Check for active ship
-            if not player.active_ship_id:
-                return PlayerLoadoutResponse(player_id=player.id, ship_name=None, message="No active ship")
-
-            # 3. Load PlayerShip explicitly by ID (avoid lazy-loading active_ship relationship)
-            result = await db.execute(select(PlayerShip).where(PlayerShip.id == player.active_ship_id))
-            player_ship = result.scalars().first()
-            if not player_ship:
-                return PlayerLoadoutResponse(player_id=player.id, ship_name=None, message="No active ship")
-
-            ship_name = player_ship.ship_name
-
-            # 4. Get static Ship data (base armour, emoji, slot counts)
-            ship_result = await db.execute(select(Ship).where(Ship.name == ship_name))
-            ship = ship_result.scalars().first()
-            base_armour = ship.armour if ship else 0
-            ship_emoji = ship.emoji if ship else None
-
-            # 5. Look up each equipped item by name
-            item_repo = ItemRepository()
-
-            equipped_weapons = player_ship.weapons or []
-            equipped_modules = player_ship.modules or []
-            equipped_turrets = player_ship.turrets or []
-
-            # Build weapon items
-            weapon_items: list[LoadoutWeaponItem] = []
-            total_dps = 0.0
-            for w_name in equipped_weapons:
-                item = await item_repo.get_by_name(db, w_name, item_type="primary_weapon")
-                if item is None:
-                    item = await item_repo.get_by_name(db, w_name)
-                dps = getattr(item, "dps", None) if item else None
-                if dps:
-                    total_dps += dps
-                weapon_items.append(
-                    LoadoutWeaponItem(
-                        name=w_name,
-                        emoji=item.emoji if item else None,
-                        dps=dps,
-                        value=item.value if item else None,
-                    )
-                )
-
-            # Build turret items
-            turret_items: list[LoadoutWeaponItem] = []
-            for t_name in equipped_turrets:
-                item = await item_repo.get_by_name(db, t_name, item_type="turret_weapon")
-                if item is None:
-                    item = await item_repo.get_by_name(db, t_name)
-                dps = getattr(item, "dps", None) if item else None
-                if dps:
-                    total_dps += dps
-                turret_items.append(
-                    LoadoutWeaponItem(
-                        name=t_name,
-                        emoji=item.emoji if item else None,
-                        dps=dps,
-                        value=item.value if item else None,
-                    )
-                )
-
-            # Build module items and compute HP
-            module_items: list[LoadoutModuleItem] = []
-            armor_bonus = 0
-            shield_hp = 0
-            for m_name in equipped_modules:
-                mod_result = await db.execute(select(Module).where(Module.name == m_name))
-                mod = mod_result.scalars().first()
-                if mod is None:
-                    item = await item_repo.get_by_name(db, m_name, item_type="module")
-                    mod = item
-
-                if mod:
-                    extra = mod.extra_atts or {}
-                    # ArmourModule: extra_atts has 'armour' key
-                    if isinstance(extra, dict):
-                        armor_bonus += int(extra.get("armour", 0))
-                        shield_hp += int(extra.get("shield", 0))
-                    module_items.append(
-                        LoadoutModuleItem(
-                            name=m_name,
-                            emoji=mod.emoji,
-                            type=mod.type,
-                            value=mod.value,
-                            tech_level=mod.tech_level,
-                        )
-                    )
-                else:
-                    module_items.append(LoadoutModuleItem(name=m_name))
-
-            armor_hp = base_armour + armor_bonus
-            total_hp = armor_hp + shield_hp
-            total_value = (
-                sum(w.value or 0 for w in weapon_items)
-                + sum(m.value or 0 for m in module_items)
-                + sum(t.value or 0 for t in turret_items)
-            )
-
-            # Build cargo list if requested
-            cargo_items: list[CargoItem] = []
-            if include_cargo:
-                from persist.repositories.inventory_repository import InventoryRepository
-
-                inventory_repo = InventoryRepository()
-                inventory_items = await inventory_repo.get_player_items(db, player_id)
-                for inv_item in inventory_items:
-                    # Look up item emoji from the item repository
-                    item_emoji = None
-                    game_item = await item_repo.get_by_name(db, inv_item.item_name)
-                    if game_item:
-                        item_emoji = game_item.emoji
-                    cargo_items.append(
-                        CargoItem(
-                            item_name=inv_item.item_name,
-                            item_type=inv_item.item_type,
-                            quantity=inv_item.quantity,
-                            emoji=item_emoji,
-                        )
-                    )
-
-            return PlayerLoadoutResponse(
-                player_id=player.id,
-                ship_name=ship_name,
-                ship_emoji=ship_emoji,
-                ship_nickname=player_ship.nickname,
-                armor_hp=armor_hp,
-                shield_hp=shield_hp,
-                total_hp=total_hp,
-                total_dps=round(total_dps, 1),
-                weapons=weapon_items,
-                modules=module_items,
-                turrets=turret_items,
-                total_value=total_value,
-                cargo=cargo_items,
-            )
+            return response
 
     except HTTPException:
         raise

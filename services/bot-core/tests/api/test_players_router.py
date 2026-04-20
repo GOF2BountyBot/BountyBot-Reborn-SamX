@@ -941,391 +941,602 @@ class TestGetPromotionStatusNonexistent:
 
 
 # ===========================================================================
-# GET /players/{player_id}/loadout
+# GET /players/{player_id}/loadout — unified LoadoutResponse schema
 # ===========================================================================
 
 
+@pytest.fixture
+def mock_loadout_response_service():
+    """Mock LoadoutResponseService injected via FastAPI dependency override."""
+    from unittest.mock import AsyncMock, MagicMock
+
+    service = MagicMock()
+    service.build_player_loadout = AsyncMock()
+    return service
+
+
+@pytest.fixture
+def loadout_test_app(mock_loadout_response_service, mock_player_service):
+    """App that overrides both PlayerService and LoadoutResponseService dependencies."""
+    from api.routers.players import (
+        get_loadout_response_service as _get_loadout_rs,
+    )
+
+    app = FastAPI()
+    app.include_router(_players_router, prefix="/api/v1")
+    app.dependency_overrides[_get_player_service] = lambda: mock_player_service
+    app.dependency_overrides[_get_loadout_rs] = lambda: mock_loadout_response_service
+    yield app
+    app.dependency_overrides.clear()
+
+
+@pytest.fixture
+def loadout_client(loadout_test_app):
+    return TestClient(loadout_test_app)
+
+
 class TestGetPlayerLoadout:
-    """Tests for GET /players/{player_id}/loadout endpoint."""
+    """Tests for GET /players/{player_id}/loadout — unified schema."""
 
-    def _make_mock_player_ship(
-        self, ship_id=1, ship_name="Betty", nickname=None, weapons=None, modules=None, turrets=None
-    ):
-        from unittest.mock import MagicMock
+    @staticmethod
+    def _make_player_response(**overrides):
+        """Build a minimal valid LoadoutResponse dict (as the service would return)."""
+        from api.schemas.loadout_schema import LoadoutResponse
 
-        ps = MagicMock()
-        ps.id = ship_id
-        ps.ship_name = ship_name
-        ps.nickname = nickname
-        ps.weapons = weapons or ["Nirai Impulse EX 1"]
-        ps.modules = modules or ["E2 Exoclad", "Telta Quickscan"]
-        ps.turrets = turrets or []
-        return ps
+        defaults = dict(subject_kind="player", subject_name="Alice", player_id=1)
+        defaults.update(overrides)
+        return LoadoutResponse(**defaults)
 
-    def _make_mock_ship_static(self, name="Betty", armour=200, emoji="🛸"):
-        from unittest.mock import MagicMock
+    def test_loadout_player_not_found_returns_404(self, loadout_client, mock_loadout_response_service):
+        """Service returns None → router raises 404."""
+        mock_loadout_response_service.build_player_loadout.return_value = None
 
-        ship = MagicMock()
-        ship.name = name
-        ship.armour = armour
-        ship.emoji = emoji
-        return ship
-
-    def _make_mock_module(
-        self, name="E2 Exoclad", module_type="ArmourModule", value=1070, tech_level=1, extra_atts=None
-    ):
-        from unittest.mock import MagicMock
-
-        mod = MagicMock()
-        mod.name = name
-        mod.type = module_type
-        mod.value = value
-        mod.tech_level = tech_level
-        mod.emoji = f"<:{name.lower().replace(' ', '')}:123>"
-        mod.extra_atts = extra_atts or {"armour": 40}
-        return mod
-
-    def _make_mock_weapon(self, name="Nirai Impulse EX 1", dps=7.5, value=2500):
-        from unittest.mock import MagicMock
-
-        wpn = MagicMock()
-        wpn.name = name
-        wpn.dps = dps
-        wpn.value = value
-        wpn.emoji = f"<:{name.lower().replace(' ', '')}:456>"
-        return wpn
-
-    def test_loadout_player_not_found_returns_404(self, client, mock_player_service):
-        """GET /players/999/loadout → 404 when player not found."""
-        mock_player_service.player_repo.get_by_id.return_value = None
-
-        response = client.get("/api/v1/players/999/loadout")
+        response = loadout_client.get("/api/v1/players/999/loadout")
 
         assert response.status_code == 404
+        assert "999" in response.json()["detail"]
 
-    def test_loadout_no_active_ship_returns_no_ship_message(self, client, mock_player_service):
-        """GET /players/1/loadout → 200 with no-ship message when active_ship_id is None."""
-        player = make_mock_player(active_ship_id=None)
-        mock_player_service.player_repo.get_by_id.return_value = player
+    def test_loadout_no_active_ship_returns_no_ship_message(self, loadout_client, mock_loadout_response_service):
+        """Service returns message='No active ship' → 200 with that message."""
+        mock_loadout_response_service.build_player_loadout.return_value = self._make_player_response(
+            message="No active ship"
+        )
 
-        response = client.get("/api/v1/players/1/loadout")
+        response = loadout_client.get("/api/v1/players/1/loadout")
 
         assert response.status_code == 200
         data = response.json()
-        assert data["ship_name"] is None
         assert data["message"] == "No active ship"
-
-    def test_loadout_active_ship_query_is_executed(self, client, mock_player_service, mock_db_session):
-        """GET /players/1/loadout with active ship → endpoint attempts to query the DB for the ship."""
-        from unittest.mock import AsyncMock, MagicMock
-
-        mock_session, _ = mock_db_session
-
-        # Player has an active ship
-        player = make_mock_player(active_ship_id=10)
-        mock_player_service.player_repo.get_by_id.return_value = player
-
-        # Make execute return None (no PlayerShip found) — endpoint falls back to "No active ship"
-        no_result = MagicMock()
-        no_result.scalars.return_value.first.return_value = None
-        mock_session.execute = AsyncMock(return_value=no_result)
-
-        response = client.get("/api/v1/players/1/loadout")
-
-        assert response.status_code == 200
-        data = response.json()
-        # PlayerShip lookup returned None → treated as no active ship
         assert data["ship_name"] is None
+        assert data["subject_kind"] == "player"
 
-    def test_loadout_server_error_returns_500(self, client, mock_player_service):
-        """GET /players/1/loadout → 500 when unexpected exception occurs."""
-        mock_player_service.player_repo.get_by_id.side_effect = Exception("DB exploded")
+    def test_loadout_server_error_returns_500(self, loadout_client, mock_loadout_response_service):
+        """Service raises → router returns 500."""
+        mock_loadout_response_service.build_player_loadout.side_effect = Exception("DB exploded")
 
-        response = client.get("/api/v1/players/1/loadout")
+        response = loadout_client.get("/api/v1/players/1/loadout")
 
         assert response.status_code == 500
         assert "Failed to get player loadout" in response.json()["detail"]
 
-    def test_loadout_without_include_cargo_has_empty_cargo(self, client, mock_player_service):
-        """GET /players/1/loadout without include_cargo → cargo field is empty list."""
-        player = make_mock_player(active_ship_id=None)
-        mock_player_service.player_repo.get_by_id.return_value = player
+    def test_loadout_delegates_with_include_cargo_false(self, loadout_client, mock_loadout_response_service):
+        """include_cargo is passed to the service (default false)."""
+        mock_loadout_response_service.build_player_loadout.return_value = self._make_player_response()
 
-        response = client.get("/api/v1/players/1/loadout")
+        loadout_client.get("/api/v1/players/1/loadout")
+
+        call = mock_loadout_response_service.build_player_loadout.call_args
+        assert call.kwargs["include_cargo"] is False
+
+    def test_loadout_delegates_with_include_cargo_true(self, loadout_client, mock_loadout_response_service):
+        mock_loadout_response_service.build_player_loadout.return_value = self._make_player_response()
+
+        loadout_client.get("/api/v1/players/1/loadout?include_cargo=true")
+
+        call = mock_loadout_response_service.build_player_loadout.call_args
+        assert call.kwargs["include_cargo"] is True
+
+    def test_loadout_passes_viewer_discord_id_to_service(self, loadout_client, mock_loadout_response_service):
+        """viewer_discord_id query param is passed to the service verbatim."""
+        mock_loadout_response_service.build_player_loadout.return_value = self._make_player_response()
+
+        loadout_client.get("/api/v1/players/1/loadout?viewer_discord_id=402296276617527306")
+
+        call = mock_loadout_response_service.build_player_loadout.call_args
+        assert call.kwargs["viewer_discord_id"] == 402296276617527306
+
+    def test_loadout_viewer_discord_id_optional(self, loadout_client, mock_loadout_response_service):
+        """viewer_discord_id is optional — omitting it passes None to the service."""
+        mock_loadout_response_service.build_player_loadout.return_value = self._make_player_response()
+
+        loadout_client.get("/api/v1/players/1/loadout")
+
+        call = mock_loadout_response_service.build_player_loadout.call_args
+        assert call.kwargs["viewer_discord_id"] is None
+
+
+class TestLoadoutResponseShape:
+    """The new endpoint returns the unified LoadoutResponse schema (spec §2.1)."""
+
+    @staticmethod
+    def _make_full_response(**overrides):
+        from api.schemas.loadout_schema import (
+            EffectItem,
+            LoadoutModuleItem,
+            LoadoutResponse,
+            LoadoutWeaponItem,
+            ShipStats,
+        )
+
+        defaults = dict(
+            subject_kind="player",
+            subject_name="Alice",
+            subject_mention="<@123>",
+            player_id=1,
+            user_discord_id=123,
+            ship_name="Wraith",
+            ship_nickname="Betty",
+            ship_icon="https://cdn/wraith.png",
+            ship_emoji="<:wraith:1>",
+            thumbnail_url="https://cdn/wraith.png",
+            ship_stats=ShipStats(
+                armour=95,
+                cargo=20,
+                handling=60,
+                hp=320,
+                dps=42.5,
+                total_value=15000,
+                max_primaries=2,
+                max_secondaries=0,
+                max_turrets=0,
+                max_modules=4,
+            ),
+            weapons=[
+                LoadoutWeaponItem(name="Pulse Laser", emoji="<:pulse:1>", dps=12.0, value=1000),
+            ],
+            turrets=[],
+            modules=[
+                LoadoutModuleItem(
+                    name="D'iol",
+                    emoji="<:diol:1>",
+                    type="ArmourModule",
+                    value=500,
+                    tech_level=1,
+                    effects=[EffectItem(label="Armour", value="40")],
+                    combat_tier="combat",
+                ),
+                LoadoutModuleItem(
+                    name="AutoPacker",
+                    emoji="<:pack:1>",
+                    type="CompressorModule",
+                    value=300,
+                    tech_level=2,
+                    effects=[EffectItem(label="Cargo Bonus", value="×1.25")],
+                    combat_tier="utility",
+                ),
+            ],
+            cargo=[],
+            cargo_total_count=0,
+        )
+        defaults.update(overrides)
+        return LoadoutResponse(**defaults)
+
+    def test_full_response_shape(self, loadout_client, mock_loadout_response_service):
+        mock_loadout_response_service.build_player_loadout.return_value = self._make_full_response()
+
+        response = loadout_client.get("/api/v1/players/1/loadout")
 
         assert response.status_code == 200
         data = response.json()
-        assert "cargo" in data
+        # Discriminator
+        assert data["subject_kind"] == "player"
+        assert data["subject_name"] == "Alice"
+        assert data["subject_mention"] == "<@123>"
+        # Identity
+        assert data["player_id"] == 1
+        assert data["user_discord_id"] == 123
+        # Ship
+        assert data["ship_name"] == "Wraith"
+        assert data["ship_nickname"] == "Betty"
+        assert data["ship_icon"] == "https://cdn/wraith.png"
+        assert data["thumbnail_url"] == "https://cdn/wraith.png"
+        # Stats
+        assert data["ship_stats"]["armour"] == 95
+        assert data["ship_stats"]["cargo"] == 20
+        assert data["ship_stats"]["handling"] == 60
+        assert data["ship_stats"]["hp"] == 320
+        assert data["ship_stats"]["dps"] == 42.5
+        assert data["ship_stats"]["total_value"] == 15000
+        assert data["ship_stats"]["max_primaries"] == 2
+        assert data["ship_stats"]["max_modules"] == 4
+
+    def test_module_includes_effects_and_combat_tier(self, loadout_client, mock_loadout_response_service):
+        """Each LoadoutModuleItem carries an ordered effects list and a combat_tier tag."""
+        mock_loadout_response_service.build_player_loadout.return_value = self._make_full_response()
+
+        response = loadout_client.get("/api/v1/players/1/loadout")
+
+        data = response.json()
+        modules = data["modules"]
+        assert len(modules) == 2
+
+        armour_mod = modules[0]
+        assert armour_mod["type"] == "ArmourModule"
+        assert armour_mod["combat_tier"] == "combat"
+        assert armour_mod["effects"] == [{"label": "Armour", "value": "40"}]
+
+        compressor = modules[1]
+        assert compressor["type"] == "CompressorModule"
+        assert compressor["combat_tier"] == "utility"
+        assert compressor["effects"] == [{"label": "Cargo Bonus", "value": "×1.25"}]
+
+    def test_weapons_have_dps_and_value(self, loadout_client, mock_loadout_response_service):
+        mock_loadout_response_service.build_player_loadout.return_value = self._make_full_response()
+
+        response = loadout_client.get("/api/v1/players/1/loadout")
+
+        weapons = response.json()["weapons"]
+        assert len(weapons) == 1
+        assert weapons[0]["name"] == "Pulse Laser"
+        assert weapons[0]["dps"] == 12.0
+        assert weapons[0]["value"] == 1000
+
+    def test_empty_cargo_defaults(self, loadout_client, mock_loadout_response_service):
+        """When include_cargo=False (default), response has cargo=[] and cargo_total_count=0."""
+        mock_loadout_response_service.build_player_loadout.return_value = self._make_full_response()
+
+        response = loadout_client.get("/api/v1/players/1/loadout")
+
+        data = response.json()
         assert data["cargo"] == []
+        assert data["cargo_total_count"] == 0
 
-    def test_loadout_cargo_field_present_by_default(self, client, mock_player_service):
-        """GET /players/1/loadout response always includes cargo field in schema."""
-        player = make_mock_player(active_ship_id=None)
-        mock_player_service.player_repo.get_by_id.return_value = player
+    def test_response_always_includes_cargo_field(self, loadout_client, mock_loadout_response_service):
+        """The cargo field is always present in the schema even when empty."""
+        mock_loadout_response_service.build_player_loadout.return_value = self._make_full_response()
 
-        response = client.get("/api/v1/players/1/loadout")
+        response = loadout_client.get("/api/v1/players/1/loadout")
 
-        assert response.status_code == 200
         data = response.json()
-        # cargo field must always be present in the response
         assert "cargo" in data
+        assert "cargo_total_count" in data
 
 
 class TestGetPlayerLoadoutWithCargo:
-    """Tests for GET /players/{player_id}/loadout?include_cargo=true (cargo hold)."""
+    """Tests for GET /players/{player_id}/loadout?include_cargo=true."""
 
-    def test_loadout_include_cargo_false_returns_empty_cargo(self, client, mock_player_service):
-        """include_cargo=false → cargo list is empty even if player has inventory items."""
-        player = make_mock_player(active_ship_id=None)
-        mock_player_service.player_repo.get_by_id.return_value = player
+    @staticmethod
+    def _make_response_with_cargo(**overrides):
+        from api.schemas.loadout_schema import CargoItem, LoadoutResponse
 
-        response = client.get("/api/v1/players/1/loadout?include_cargo=false")
+        defaults = dict(
+            subject_kind="player",
+            subject_name="Alice",
+            player_id=1,
+            ship_name="Wraith",
+            cargo=[
+                CargoItem(item_name="Nirai Impulse EX 1", item_type="weapon", quantity=2, emoji="⚡"),
+                CargoItem(item_name="E2 Exoclad", item_type="module", quantity=1, emoji="🛡️"),
+            ],
+            cargo_total_count=3,
+        )
+        defaults.update(overrides)
+        return LoadoutResponse(**defaults)
 
-        assert response.status_code == 200
-        data = response.json()
-        assert data["cargo"] == []
+    def test_include_cargo_true_populates_cargo(self, loadout_client, mock_loadout_response_service):
+        mock_loadout_response_service.build_player_loadout.return_value = self._make_response_with_cargo()
 
-    def test_loadout_include_cargo_true_no_active_ship_still_returns_empty_cargo(self, client, mock_player_service):
-        """include_cargo=true but no active ship → cargo is empty (early return path)."""
-        player = make_mock_player(active_ship_id=None)
-        mock_player_service.player_repo.get_by_id.return_value = player
-
-        response = client.get("/api/v1/players/1/loadout?include_cargo=true")
-
-        assert response.status_code == 200
-        data = response.json()
-        assert data["ship_name"] is None
-        assert data["message"] == "No active ship"
-        # cargo field must always be present
-        assert "cargo" in data
-
-    def _make_active_ship_db_responses(self, mock_session, player_ship, ship_static):
-        """Helper: wire up mock_session.execute to return player_ship then ship_static."""
-        from unittest.mock import AsyncMock, MagicMock
-
-        player_ship_result = MagicMock()
-        player_ship_result.scalars.return_value.first.return_value = player_ship
-
-        ship_result = MagicMock()
-        ship_result.scalars.return_value.first.return_value = ship_static
-
-        mock_session.execute = AsyncMock(side_effect=[player_ship_result, ship_result])
-
-    def _make_player_ship(self):
-        from unittest.mock import MagicMock
-
-        player_ship = MagicMock()
-        player_ship.id = 10
-        player_ship.ship_name = "Betty"
-        player_ship.nickname = None
-        player_ship.weapons = []
-        player_ship.modules = []
-        player_ship.turrets = []
-        return player_ship
-
-    def _make_ship_static(self):
-        from unittest.mock import MagicMock
-
-        ship_static = MagicMock()
-        ship_static.name = "Betty"
-        ship_static.armour = 200
-        ship_static.emoji = "🛸"
-        return ship_static
-
-    def test_loadout_with_cargo_returns_items(self, client, mock_player_service, mock_db_session):
-        """include_cargo=true with active ship & inventory → cargo list populated."""
-        from unittest.mock import AsyncMock, MagicMock
-
-        mock_session, _ = mock_db_session
-
-        # Player with an active ship
-        player = make_mock_player(active_ship_id=10)
-        mock_player_service.player_repo.get_by_id.return_value = player
-
-        player_ship = self._make_player_ship()
-        ship_static = self._make_ship_static()
-        self._make_active_ship_db_responses(mock_session, player_ship, ship_static)
-
-        # Inventory items
-        inv_item_1 = MagicMock()
-        inv_item_1.item_name = "Nirai Impulse EX 1"
-        inv_item_1.item_type = "weapon"
-        inv_item_1.quantity = 2
-
-        inv_item_2 = MagicMock()
-        inv_item_2.item_name = "E2 Exoclad"
-        inv_item_2.item_type = "module"
-        inv_item_2.quantity = 1
-
-        game_item_with_emoji = MagicMock()
-        game_item_with_emoji.emoji = "⚡"
-
-        # Patch at the source module level (deferred imports)
-        mock_item_repo = MagicMock()
-        mock_item_repo.get_by_name = AsyncMock(return_value=game_item_with_emoji)
-
-        mock_inv_repo = MagicMock()
-        mock_inv_repo.get_player_items = AsyncMock(return_value=[inv_item_1, inv_item_2])
-
-        from unittest.mock import patch
-
-        with (
-            patch("persist.repositories.item_repository.ItemRepository", return_value=mock_item_repo),
-            patch("persist.repositories.inventory_repository.InventoryRepository", return_value=mock_inv_repo),
-        ):
-            response = client.get("/api/v1/players/1/loadout?include_cargo=true")
+        response = loadout_client.get("/api/v1/players/1/loadout?include_cargo=true")
 
         assert response.status_code == 200
         data = response.json()
-        assert len(data["cargo"]) == 2
-
-        # Check cargo item names
-        cargo_names = [c["item_name"] for c in data["cargo"]]
-        assert "Nirai Impulse EX 1" in cargo_names
-        assert "E2 Exoclad" in cargo_names
-
-    def test_loadout_cargo_item_schema(self, client, mock_player_service, mock_db_session):
-        """include_cargo=true → cargo items have correct schema fields."""
-        from unittest.mock import AsyncMock, MagicMock, patch
-
-        mock_session, _ = mock_db_session
-
-        player = make_mock_player(active_ship_id=10)
-        mock_player_service.player_repo.get_by_id.return_value = player
-
-        player_ship = self._make_player_ship()
-        ship_static = self._make_ship_static()
-        self._make_active_ship_db_responses(mock_session, player_ship, ship_static)
-
-        inv_item = MagicMock()
-        inv_item.item_name = "Blast Rifle"
-        inv_item.item_type = "weapon"
-        inv_item.quantity = 3
-
-        game_item = MagicMock()
-        game_item.emoji = "🔫"
-
-        mock_item_repo = MagicMock()
-        mock_item_repo.get_by_name = AsyncMock(return_value=game_item)
-
-        mock_inv_repo = MagicMock()
-        mock_inv_repo.get_player_items = AsyncMock(return_value=[inv_item])
-
-        with (
-            patch("persist.repositories.item_repository.ItemRepository", return_value=mock_item_repo),
-            patch("persist.repositories.inventory_repository.InventoryRepository", return_value=mock_inv_repo),
-        ):
-            response = client.get("/api/v1/players/1/loadout?include_cargo=true")
-
-        assert response.status_code == 200
-        data = response.json()
+        assert data["cargo_total_count"] == 3
         cargo = data["cargo"]
-        assert len(cargo) == 1
+        assert len(cargo) == 2
+        names = {c["item_name"] for c in cargo}
+        assert names == {"Nirai Impulse EX 1", "E2 Exoclad"}
 
-        item = cargo[0]
+    def test_cargo_item_schema_fields_present(self, loadout_client, mock_loadout_response_service):
+        from api.schemas.loadout_schema import CargoItem, LoadoutResponse
+
+        mock_loadout_response_service.build_player_loadout.return_value = LoadoutResponse(
+            subject_kind="player",
+            subject_name="Alice",
+            player_id=1,
+            cargo=[CargoItem(item_name="Blast Rifle", item_type="weapon", quantity=3, emoji="🔫")],
+            cargo_total_count=3,
+        )
+
+        response = loadout_client.get("/api/v1/players/1/loadout?include_cargo=true")
+
+        item = response.json()["cargo"][0]
         assert item["item_name"] == "Blast Rifle"
         assert item["item_type"] == "weapon"
         assert item["quantity"] == 3
-        assert "emoji" in item
+        assert item["emoji"] == "🔫"
 
-    def test_loadout_cargo_item_no_game_item_emoji_is_none(self, client, mock_player_service, mock_db_session):
-        """include_cargo=true → cargo item emoji is None when item has no matching game item."""
-        from unittest.mock import AsyncMock, MagicMock, patch
+    def test_cargo_emoji_null_when_missing(self, loadout_client, mock_loadout_response_service):
+        from api.schemas.loadout_schema import CargoItem, LoadoutResponse
 
-        mock_session, _ = mock_db_session
+        mock_loadout_response_service.build_player_loadout.return_value = LoadoutResponse(
+            subject_kind="player",
+            subject_name="Alice",
+            player_id=1,
+            cargo=[CargoItem(item_name="Unknown", item_type="module", quantity=1)],
+            cargo_total_count=1,
+        )
 
-        player = make_mock_player(active_ship_id=10)
-        mock_player_service.player_repo.get_by_id.return_value = player
+        response = loadout_client.get("/api/v1/players/1/loadout?include_cargo=true")
 
-        player_ship = self._make_player_ship()
-        ship_static = self._make_ship_static()
-        self._make_active_ship_db_responses(mock_session, player_ship, ship_static)
+        assert response.json()["cargo"][0]["emoji"] is None
 
-        inv_item = MagicMock()
-        inv_item.item_name = "Unknown Item"
-        inv_item.item_type = "module"
-        inv_item.quantity = 1
+    def test_include_cargo_false_returns_empty_cargo(self, loadout_client, mock_loadout_response_service):
+        from api.schemas.loadout_schema import LoadoutResponse
 
-        mock_item_repo = MagicMock()
-        mock_item_repo.get_by_name = AsyncMock(return_value=None)
+        # Simulate service honoring include_cargo=false by returning empty cargo list.
+        mock_loadout_response_service.build_player_loadout.return_value = LoadoutResponse(
+            subject_kind="player", subject_name="Alice", player_id=1, cargo=[], cargo_total_count=0
+        )
 
-        mock_inv_repo = MagicMock()
-        mock_inv_repo.get_player_items = AsyncMock(return_value=[inv_item])
-
-        with (
-            patch("persist.repositories.item_repository.ItemRepository", return_value=mock_item_repo),
-            patch("persist.repositories.inventory_repository.InventoryRepository", return_value=mock_inv_repo),
-        ):
-            response = client.get("/api/v1/players/1/loadout?include_cargo=true")
+        response = loadout_client.get("/api/v1/players/1/loadout?include_cargo=false")
 
         assert response.status_code == 200
-        data = response.json()
-        cargo = data["cargo"]
-        assert len(cargo) == 1
-        assert cargo[0]["emoji"] is None
+        assert response.json()["cargo"] == []
 
-    def test_loadout_cargo_empty_when_no_inventory(self, client, mock_player_service, mock_db_session):
-        """include_cargo=true but player has no inventory items → cargo is empty list."""
-        from unittest.mock import AsyncMock, MagicMock, patch
 
-        mock_session, _ = mock_db_session
+# ---------------------------------------------------------------------------
+# LoadoutResponseService — unit-level tests (exercise business logic directly)
+# ---------------------------------------------------------------------------
 
-        player = make_mock_player(active_ship_id=10)
-        mock_player_service.player_repo.get_by_id.return_value = player
 
-        player_ship = self._make_player_ship()
-        ship_static = self._make_ship_static()
-        self._make_active_ship_db_responses(mock_session, player_ship, ship_static)
+class TestLoadoutResponseServicePlayerPath:
+    """Integration-lite tests for LoadoutResponseService.build_player_loadout."""
 
-        mock_item_repo = MagicMock()
-        mock_item_repo.get_by_name = AsyncMock(return_value=None)
+    def _make_service_with_repos(self, *, player, player_ship, ship, module_factory, user=None):
+        """Build a LoadoutResponseService with its repos stubbed to deterministic values.
 
-        mock_inv_repo = MagicMock()
-        mock_inv_repo.get_player_items = AsyncMock(return_value=[])
+        `module_factory(name)` returns a mock Module-like object (or None).
+        `ship` may be a SimpleNamespace or None.
+        """
+        from unittest.mock import AsyncMock, MagicMock
 
-        with (
-            patch("persist.repositories.item_repository.ItemRepository", return_value=mock_item_repo),
-            patch("persist.repositories.inventory_repository.InventoryRepository", return_value=mock_inv_repo),
-        ):
-            response = client.get("/api/v1/players/1/loadout?include_cargo=true")
+        from services.loadout_response_service import LoadoutResponseService
 
-        assert response.status_code == 200
-        data = response.json()
-        assert data["cargo"] == []
+        svc = LoadoutResponseService()
+        svc.player_repo = MagicMock()
+        svc.player_repo.get_by_id = AsyncMock(return_value=player)
 
-    def test_loadout_cargo_quantity_preserved(self, client, mock_player_service, mock_db_session):
-        """Cargo item quantity > 1 is correctly preserved in response."""
-        from unittest.mock import AsyncMock, MagicMock, patch
+        svc.user_repo = MagicMock()
+        svc.user_repo.get_by_id = AsyncMock(return_value=user)
 
-        mock_session, _ = mock_db_session
+        svc.item_repo = MagicMock()
+        svc.item_repo.get_by_name = AsyncMock(return_value=None)
 
-        player = make_mock_player(active_ship_id=10)
-        mock_player_service.player_repo.get_by_id.return_value = player
+        svc.inventory_repo = MagicMock()
+        svc.inventory_repo.get_player_items = AsyncMock(return_value=[])
 
-        player_ship = self._make_player_ship()
-        ship_static = self._make_ship_static()
-        self._make_active_ship_db_responses(mock_session, player_ship, ship_static)
+        svc.bounty_repo = MagicMock()
+        svc.criminal_repo = MagicMock()
 
-        inv_item = MagicMock()
-        inv_item.item_name = "Rapid Fire Cannon"
-        inv_item.item_type = "turret"
-        inv_item.quantity = 5
+        # Build a db session whose execute() dispatches based on the statement type.
+        from sqlalchemy.sql.elements import BinaryExpression  # noqa: F401
 
-        mock_item_repo = MagicMock()
-        mock_item_repo.get_by_name = AsyncMock(return_value=None)
+        async def _execute(stmt):
+            # Crude but deterministic: read the table name from the statement text
+            from persist.models.module import Module as ModuleModel
+            from persist.models.player_ship import PlayerShip as PlayerShipModel
+            from persist.models.ship import Ship as ShipModel
 
-        mock_inv_repo = MagicMock()
-        mock_inv_repo.get_player_items = AsyncMock(return_value=[inv_item])
+            result = MagicMock()
+            model = stmt.column_descriptions[0]["entity"] if stmt.column_descriptions else None
+            if model is PlayerShipModel:
+                result.scalars.return_value.first.return_value = player_ship
+            elif model is ShipModel:
+                result.scalars.return_value.first.return_value = ship
+            elif model is ModuleModel:
+                # Pull name from the WHERE clause via right side of the comparison
+                try:
+                    name = stmt.whereclause.right.value
+                except Exception:
+                    name = None
+                result.scalars.return_value.first.return_value = module_factory(name)
+            else:
+                result.scalars.return_value.first.return_value = None
+            return result
 
-        with (
-            patch("persist.repositories.item_repository.ItemRepository", return_value=mock_item_repo),
-            patch("persist.repositories.inventory_repository.InventoryRepository", return_value=mock_inv_repo),
-        ):
-            response = client.get("/api/v1/players/1/loadout?include_cargo=true")
+        db = MagicMock()
+        db.execute = _execute
+        return svc, db
 
-        assert response.status_code == 200
-        data = response.json()
-        assert data["cargo"][0]["quantity"] == 5
+    async def test_player_not_found_returns_none(self):
+        from unittest.mock import AsyncMock, MagicMock
+
+        from services.loadout_response_service import LoadoutResponseService
+
+        svc = LoadoutResponseService()
+        svc.player_repo = MagicMock()
+        svc.player_repo.get_by_id = AsyncMock(return_value=None)
+
+        result = await svc.build_player_loadout(MagicMock(), 999, include_cargo=False)
+        assert result is None
+
+    async def test_player_no_active_ship_returns_message(self):
+        from unittest.mock import AsyncMock, MagicMock
+
+        from services.loadout_response_service import LoadoutResponseService
+
+        player = MagicMock()
+        player.id = 1
+        player.user_id = 42
+        player.active_ship_id = None
+
+        user = MagicMock()
+        user.discord_username = "Alice"
+
+        svc = LoadoutResponseService()
+        svc.player_repo = MagicMock()
+        svc.player_repo.get_by_id = AsyncMock(return_value=player)
+        svc.user_repo = MagicMock()
+        svc.user_repo.get_by_id = AsyncMock(return_value=user)
+
+        result = await svc.build_player_loadout(MagicMock(), 1, include_cargo=False)
+        assert result is not None
+        assert result.message == "No active ship"
+        assert result.subject_name == "Alice"
+        assert result.subject_kind == "player"
+
+    async def test_viewer_discord_id_populates_mention(self):
+        from unittest.mock import AsyncMock, MagicMock
+
+        from services.loadout_response_service import LoadoutResponseService
+
+        player = MagicMock()
+        player.id = 1
+        player.user_id = 42
+        player.active_ship_id = None
+
+        svc = LoadoutResponseService()
+        svc.player_repo = MagicMock()
+        svc.player_repo.get_by_id = AsyncMock(return_value=player)
+        svc.user_repo = MagicMock()
+        svc.user_repo.get_by_id = AsyncMock(return_value=None)
+
+        result = await svc.build_player_loadout(
+            MagicMock(), 1, include_cargo=False, viewer_discord_id=999
+        )
+        assert result.subject_mention == "<@999>"
+
+    async def test_full_loadout_with_modules_populates_effects(self):
+        """End-to-end: modules are resolved, effects pre-formatted, combat_tier set."""
+        from types import SimpleNamespace
+        from unittest.mock import AsyncMock
+
+        player = SimpleNamespace(id=1, user_id=42, active_ship_id=10)
+        user = SimpleNamespace(discord_username="Alice")
+
+        player_ship = SimpleNamespace(
+            id=10, ship_name="Wraith", nickname="Betty",
+            weapons=["Pulse Laser"], modules=["D'iol", "AutoPacker 2"], turrets=[],
+        )
+        ship = SimpleNamespace(
+            name="Wraith", armour=95, cargo=20, emoji="<:wraith:1>", icon="https://cdn/wraith.png",
+            handling=60, max_primaries=2, max_secondaries=0, max_turrets=0, max_modules=4,
+        )
+
+        def module_factory(name):
+            if name == "D'iol":
+                return SimpleNamespace(
+                    name="D'iol", emoji="<:diol:1>", type="ArmourModule",
+                    value=500, tech_level=1, extra_atts={"armour": 40},
+                )
+            if name == "AutoPacker 2":
+                return SimpleNamespace(
+                    name="AutoPacker 2", emoji="<:pack:1>", type="CompressorModule",
+                    value=300, tech_level=2, extra_atts={"cargoMultiplier": 1.25},
+                )
+            return None
+
+        svc, db = self._make_service_with_repos(
+            player=player, player_ship=player_ship, ship=ship,
+            module_factory=module_factory, user=user,
+        )
+        # Pulse Laser needs to resolve via ItemRepository
+        svc.item_repo.get_by_name = AsyncMock(
+            return_value=SimpleNamespace(emoji="<:pulse:1>", dps=12.0, value=1000)
+        )
+
+        result = await svc.build_player_loadout(db, 1, include_cargo=False)
+
+        assert result is not None
+        assert result.subject_kind == "player"
+        assert result.subject_name == "Alice"
+        assert result.ship_name == "Wraith"
+        assert result.ship_nickname == "Betty"
+        assert result.ship_icon == "https://cdn/wraith.png"
+        assert result.thumbnail_url == "https://cdn/wraith.png"
+        assert result.ship_stats.armour == 95
+        # Effective cargo = base 20 × 1.25 (CompressorModule) = 25
+        assert result.ship_stats.cargo == 25
+        assert result.ship_stats.handling == 60
+        # HP = base 95 + armour bonus 40 + shield 0 = 135
+        assert result.ship_stats.hp == 135
+        # DPS = 12.0 (only weapon)
+        assert result.ship_stats.dps == 12.0
+        # Total value = 1000 (pulse) + 500 + 300 = 1800
+        assert result.ship_stats.total_value == 1800
+        assert result.ship_stats.max_primaries == 2
+        assert result.ship_stats.max_modules == 4
+
+        # Module effects
+        assert len(result.modules) == 2
+        diol = result.modules[0]
+        assert diol.type == "ArmourModule"
+        assert diol.combat_tier == "combat"
+        assert [(e.label, e.value) for e in diol.effects] == [("Armour", "40")]
+        compressor = result.modules[1]
+        assert compressor.type == "CompressorModule"
+        assert compressor.combat_tier == "utility"
+        assert [(e.label, e.value) for e in compressor.effects] == [("Cargo Bonus", "×1.25")]
+
+    async def test_include_cargo_false_returns_empty_cargo(self):
+        from types import SimpleNamespace
+        from unittest.mock import AsyncMock, MagicMock
+
+        player = SimpleNamespace(id=1, user_id=42, active_ship_id=None)
+        svc = self._make_service_with_repos(
+            player=player, player_ship=None, ship=None, module_factory=lambda _: None, user=None
+        )[0]
+        svc.inventory_repo.get_player_items = AsyncMock(return_value=[SimpleNamespace(
+            item_name="X", item_type="weapon", quantity=1,
+        )])
+
+        result = await svc.build_player_loadout(MagicMock(), 1, include_cargo=False)
+        assert result.cargo == []
+        assert result.cargo_total_count == 0
+        # inventory_repo NOT called because active_ship_id is None → early return anyway
+        svc.inventory_repo.get_player_items.assert_not_called()
+
+    async def test_unknown_module_type_renders_name_only(self):
+        """Spec §2.5: unknown module type → empty effects list, still in response."""
+        from types import SimpleNamespace
+        from unittest.mock import AsyncMock
+
+        player = SimpleNamespace(id=1, user_id=42, active_ship_id=10)
+        user = SimpleNamespace(discord_username="Alice")
+        player_ship = SimpleNamespace(
+            id=10, ship_name="Wraith", nickname=None, weapons=[], modules=["FutureMod"], turrets=[],
+        )
+        ship = SimpleNamespace(
+            name="Wraith", armour=100, cargo=10, emoji=None, icon=None,
+            handling=50, max_primaries=1, max_secondaries=0, max_turrets=0, max_modules=1,
+        )
+
+        def module_factory(name):
+            if name == "FutureMod":
+                return SimpleNamespace(
+                    name="FutureMod", emoji="<:fm:1>", type="SomeFutureModule",
+                    value=100, tech_level=1, extra_atts={"unknown_key": 42},
+                )
+            return None
+
+        svc, db = self._make_service_with_repos(
+            player=player, player_ship=player_ship, ship=ship,
+            module_factory=module_factory, user=user,
+        )
+        svc.item_repo.get_by_name = AsyncMock(return_value=None)
+
+        result = await svc.build_player_loadout(db, 1, include_cargo=False)
+        mod = result.modules[0]
+        assert mod.type == "SomeFutureModule"
+        assert mod.effects == []
+        # Unknown types default to combat tier (fail-safe visible)
+        assert mod.combat_tier == "combat"
+
+
+# ---------------------------------------------------------------------------
+# End of loadout test section
+# ---------------------------------------------------------------------------
+
 
 
 # ---------------------------------------------------------------------------

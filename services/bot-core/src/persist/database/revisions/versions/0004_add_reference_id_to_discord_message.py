@@ -19,17 +19,41 @@ branch_labels: str | None = None
 depends_on: str | None = None
 
 
+def column_exists(table_name, column_name):
+    """Check if a column exists in a table (for idempotent migrations)."""
+    bind = op.get_bind()
+    result = bind.execute(
+        sa.text("SELECT 1 FROM information_schema.columns WHERE table_name = :table AND column_name = :col"),
+        {"table": table_name, "col": column_name},
+    )
+    return result.fetchone() is not None
+
+
+def index_exists(index_name):
+    """Check if an index exists (for idempotent migrations)."""
+    bind = op.get_bind()
+    result = bind.execute(
+        sa.text("SELECT 1 FROM pg_indexes WHERE indexname = :idx"),
+        {"idx": index_name},
+    )
+    return result.fetchone() is not None
+
+
 def upgrade() -> None:
     """Add reference_id column and composite index to discord_message."""
-    op.add_column("discord_message", sa.Column("reference_id", sa.BigInteger(), nullable=True))
-    op.create_index(
-        "ix_discord_message_reference",
-        "discord_message",
-        ["guild_id", "message_type", "reference_id"],
-    )
+    if not column_exists("discord_message", "reference_id"):
+        op.add_column("discord_message", sa.Column("reference_id", sa.BigInteger(), nullable=True))
+    if not index_exists("ix_discord_message_reference"):
+        op.create_index(
+            "ix_discord_message_reference",
+            "discord_message",
+            ["guild_id", "message_type", "reference_id"],
+        )
 
 
 def downgrade() -> None:
     """Drop the composite index and reference_id column from discord_message."""
-    op.drop_index("ix_discord_message_reference", table_name="discord_message")
-    op.drop_column("discord_message", "reference_id")
+    if index_exists("ix_discord_message_reference"):
+        op.drop_index("ix_discord_message_reference", table_name="discord_message")
+    if column_exists("discord_message", "reference_id"):
+        op.drop_column("discord_message", "reference_id")

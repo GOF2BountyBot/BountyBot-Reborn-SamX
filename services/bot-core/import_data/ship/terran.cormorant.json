@@ -47,11 +47,11 @@
   "assets": [
     "/app/data/game-objects/items/ships/Terran/Cormorant.bbship/Cor_Full.mtl",
     "/app/data/game-objects/items/ships/Terran/Cormorant.bbship/Cor_Full.obj",
-    "/app/data/game-objects/items/ships/Terran/Cormorant.bbship/mask1.jpg",
-    "/app/data/game-objects/items/ships/Terran/Cormorant.bbship/mask2.jpg",
-    "/app/data/game-objects/items/ships/Terran/Cormorant.bbship/ship_036_terran_diffuse.bmp",
-    "/app/data/game-objects/items/ships/Terran/Cormorant.bbship/ship_036_terran_normal_specular.bmp",
+    "/app/data/game-objects/items/ships/Terran/Cormorant.bbship/mask1.png",
+    "/app/data/game-objects/items/ships/Terran/Cormorant.bbship/mask2.png",
+    "/app/data/game-objects/items/ships/Terran/Cormorant.bbship/ship_036_terran_diffuse.png",
+    "/app/data/game-objects/items/ships/Terran/Cormorant.bbship/ship_036_terran_normal_specular.png",
     "/app/data/game-objects/items/ships/Terran/Cormorant.bbship/skinBase.png"
   ],
-  "normSpec": "/app/data/game-objects/items/ships/Terran/Cormorant.bbship/ship_036_terran_normal_specular.bmp"
+  "normSpec": "/app/data/game-objects/items/ships/Terran/Cormorant.bbship/ship_036_terran_normal_specular.png"
 }

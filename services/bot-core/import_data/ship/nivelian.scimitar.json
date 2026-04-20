@@ -45,12 +45,12 @@
   "value": 5800000,
   "wiki": "https://galaxyonfire.fandom.com/wiki/Scimitar",
   "assets": [
-    "/app/data/game-objects/items/ships/Nivelian/Scimitar.bbship/mask1.jpg",
+    "/app/data/game-objects/items/ships/Nivelian/Scimitar.bbship/mask1.png",
     "/app/data/game-objects/items/ships/Nivelian/Scimitar.bbship/Scimitar_Full.mtl",
     "/app/data/game-objects/items/ships/Nivelian/Scimitar.bbship/Scimitar_Full.obj",
     "/app/data/game-objects/items/ships/Nivelian/Scimitar.bbship/skinBase.png",
-    "/app/data/game-objects/items/ships/Nivelian/Scimitar.bbship/sn_ship_049_boss_nivelian_diffuse.bmp",
-    "/app/data/game-objects/items/ships/Nivelian/Scimitar.bbship/sn_ship_049_boss_nivelian_normal_specular.bmp"
+    "/app/data/game-objects/items/ships/Nivelian/Scimitar.bbship/sn_ship_049_boss_nivelian_diffuse.png",
+    "/app/data/game-objects/items/ships/Nivelian/Scimitar.bbship/sn_ship_049_boss_nivelian_normal_specular.png"
   ],
-  "normSpec": "/app/data/game-objects/items/ships/Nivelian/Scimitar.bbship/sn_ship_049_boss_nivelian_normal_specular.bmp"
+  "normSpec": "/app/data/game-objects/items/ships/Nivelian/Scimitar.bbship/sn_ship_049_boss_nivelian_normal_specular.png"
 }

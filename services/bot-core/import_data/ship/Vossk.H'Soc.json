@@ -49,10 +49,10 @@
   "assets": [
     "/app/data/game-objects/items/ships/Vossk/H'Soc.bbship/H'Soc_Full.mtl",
     "/app/data/game-objects/items/ships/Vossk/H'Soc.bbship/H'Soc_Full.obj",
-    "/app/data/game-objects/items/ships/Vossk/H'Soc.bbship/mask1.jpg",
-    "/app/data/game-objects/items/ships/Vossk/H'Soc.bbship/ship_009_vossk_diffuse.bmp",
-    "/app/data/game-objects/items/ships/Vossk/H'Soc.bbship/ship_009_vossk_normal_specular.bmp",
+    "/app/data/game-objects/items/ships/Vossk/H'Soc.bbship/mask1.png",
+    "/app/data/game-objects/items/ships/Vossk/H'Soc.bbship/ship_009_vossk_diffuse.png",
+    "/app/data/game-objects/items/ships/Vossk/H'Soc.bbship/ship_009_vossk_normal_specular.png",
     "/app/data/game-objects/items/ships/Vossk/H'Soc.bbship/skinBase.png"
   ],
-  "normSpec": "/app/data/game-objects/items/ships/Vossk/H'Soc.bbship/ship_009_vossk_normal_specular.bmp"
+  "normSpec": "/app/data/game-objects/items/ships/Vossk/H'Soc.bbship/ship_009_vossk_normal_specular.png"
 }

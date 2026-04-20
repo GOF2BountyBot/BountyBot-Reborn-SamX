@@ -39,13 +39,13 @@
   "value": 8115900,
   "wiki": "https://galaxyonfire.fandom.com/wiki/VoidX",
   "assets": [
-    "/app/data/game-objects/items/ships/Void/VoidX.bbship/mask1.jpg",
-    "/app/data/game-objects/items/ships/Void/VoidX.bbship/mask2.jpg",
-    "/app/data/game-objects/items/ships/Void/VoidX.bbship/ship_008_void_diffuse.bmp",
-    "/app/data/game-objects/items/ships/Void/VoidX.bbship/ship_008_void_normal_specular.bmp",
+    "/app/data/game-objects/items/ships/Void/VoidX.bbship/mask1.png",
+    "/app/data/game-objects/items/ships/Void/VoidX.bbship/mask2.png",
+    "/app/data/game-objects/items/ships/Void/VoidX.bbship/ship_008_void_diffuse.png",
+    "/app/data/game-objects/items/ships/Void/VoidX.bbship/ship_008_void_normal_specular.png",
     "/app/data/game-objects/items/ships/Void/VoidX.bbship/skinBase.png",
     "/app/data/game-objects/items/ships/Void/VoidX.bbship/VoidXFull.mtl",
     "/app/data/game-objects/items/ships/Void/VoidX.bbship/VoidXFull.obj"
   ],
-  "normSpec": "/app/data/game-objects/items/ships/Void/VoidX.bbship/ship_008_void_normal_specular.bmp"
+  "normSpec": "/app/data/game-objects/items/ships/Void/VoidX.bbship/ship_008_void_normal_specular.png"
 }

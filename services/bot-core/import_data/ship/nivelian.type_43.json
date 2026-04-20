@@ -50,11 +50,11 @@
   "assets": [
     "/app/data/game-objects/items/ships/Nivelian/Type 43.bbship/43_Full.mtl",
     "/app/data/game-objects/items/ships/Nivelian/Type 43.bbship/43_Full.obj",
-    "/app/data/game-objects/items/ships/Nivelian/Type 43.bbship/mask1.jpg",
-    "/app/data/game-objects/items/ships/Nivelian/Type 43.bbship/mask2.jpg",
-    "/app/data/game-objects/items/ships/Nivelian/Type 43.bbship/ship_012_nivelian_diffuse.bmp",
-    "/app/data/game-objects/items/ships/Nivelian/Type 43.bbship/ship_012_nivelian_normal_specular.bmp",
+    "/app/data/game-objects/items/ships/Nivelian/Type 43.bbship/mask1.png",
+    "/app/data/game-objects/items/ships/Nivelian/Type 43.bbship/mask2.png",
+    "/app/data/game-objects/items/ships/Nivelian/Type 43.bbship/ship_012_nivelian_diffuse.png",
+    "/app/data/game-objects/items/ships/Nivelian/Type 43.bbship/ship_012_nivelian_normal_specular.png",
     "/app/data/game-objects/items/ships/Nivelian/Type 43.bbship/skinBase.png"
   ],
-  "normSpec": "/app/data/game-objects/items/ships/Nivelian/Type 43.bbship/ship_012_nivelian_normal_specular.bmp"
+  "normSpec": "/app/data/game-objects/items/ships/Nivelian/Type 43.bbship/ship_012_nivelian_normal_specular.png"
 }

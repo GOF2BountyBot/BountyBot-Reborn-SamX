@@ -45,13 +45,13 @@
   "value": 2488400,
   "wiki": "https://galaxyonfire.fandom.com/wiki/Veteran",
   "assets": [
-    "/app/data/game-objects/items/ships/Terran/Veteran.bbship/mask1.jpg",
-    "/app/data/game-objects/items/ships/Terran/Veteran.bbship/mask2.jpg",
-    "/app/data/game-objects/items/ships/Terran/Veteran.bbship/ship_028_terran_diffuse.bmp",
-    "/app/data/game-objects/items/ships/Terran/Veteran.bbship/ship_028_terran_normal_specular.bmp",
+    "/app/data/game-objects/items/ships/Terran/Veteran.bbship/mask1.png",
+    "/app/data/game-objects/items/ships/Terran/Veteran.bbship/mask2.png",
+    "/app/data/game-objects/items/ships/Terran/Veteran.bbship/ship_028_terran_diffuse.png",
+    "/app/data/game-objects/items/ships/Terran/Veteran.bbship/ship_028_terran_normal_specular.png",
     "/app/data/game-objects/items/ships/Terran/Veteran.bbship/skinBase.png",
     "/app/data/game-objects/items/ships/Terran/Veteran.bbship/Veteran_Full.mtl",
     "/app/data/game-objects/items/ships/Terran/Veteran.bbship/Veteran_Full.obj"
   ],
-  "normSpec": "/app/data/game-objects/items/ships/Terran/Veteran.bbship/ship_028_terran_normal_specular.bmp"
+  "normSpec": "/app/data/game-objects/items/ships/Terran/Veteran.bbship/ship_028_terran_normal_specular.png"
 }

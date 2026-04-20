@@ -45,13 +45,13 @@
   "value": 316400,
   "wiki": "https://galaxyonfire.fandom.com/wiki/Tyrion",
   "assets": [
-    "/app/data/game-objects/items/ships/Pirate/Tyrion.bbship/mask1.jpg",
-    "/app/data/game-objects/items/ships/Pirate/Tyrion.bbship/mask2.jpg",
-    "/app/data/game-objects/items/ships/Pirate/Tyrion.bbship/ship_025_pirates_diffuse.bmp",
-    "/app/data/game-objects/items/ships/Pirate/Tyrion.bbship/ship_025_pirates_normal_specular.bmp",
+    "/app/data/game-objects/items/ships/Pirate/Tyrion.bbship/mask1.png",
+    "/app/data/game-objects/items/ships/Pirate/Tyrion.bbship/mask2.png",
+    "/app/data/game-objects/items/ships/Pirate/Tyrion.bbship/ship_025_pirates_diffuse.png",
+    "/app/data/game-objects/items/ships/Pirate/Tyrion.bbship/ship_025_pirates_normal_specular.png",
     "/app/data/game-objects/items/ships/Pirate/Tyrion.bbship/skinBase.png",
     "/app/data/game-objects/items/ships/Pirate/Tyrion.bbship/Tyrion_Full.mtl",
     "/app/data/game-objects/items/ships/Pirate/Tyrion.bbship/Tyrion_Full.obj"
   ],
-  "normSpec": "/app/data/game-objects/items/ships/Pirate/Tyrion.bbship/ship_025_pirates_normal_specular.bmp"
+  "normSpec": "/app/data/game-objects/items/ships/Pirate/Tyrion.bbship/ship_025_pirates_normal_specular.png"
 }

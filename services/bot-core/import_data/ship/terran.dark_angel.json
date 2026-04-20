@@ -50,9 +50,9 @@
   "assets": [
     "/app/data/game-objects/items/ships/Terran/Dark Angel.bbship/Dark_Full.mtl",
     "/app/data/game-objects/items/ships/Terran/Dark Angel.bbship/Dark_Full.obj",
-    "/app/data/game-objects/items/ships/Terran/Dark Angel.bbship/ship_062_prototype_diffuse.bmp",
-    "/app/data/game-objects/items/ships/Terran/Dark Angel.bbship/ship_062_prototype_normal_specular.bmp",
+    "/app/data/game-objects/items/ships/Terran/Dark Angel.bbship/ship_062_prototype_diffuse.png",
+    "/app/data/game-objects/items/ships/Terran/Dark Angel.bbship/ship_062_prototype_normal_specular.png",
     "/app/data/game-objects/items/ships/Terran/Dark Angel.bbship/skinBase.png"
   ],
-  "normSpec": "/app/data/game-objects/items/ships/Terran/Dark Angel.bbship/ship_062_prototype_normal_specular.bmp"
+  "normSpec": "/app/data/game-objects/items/ships/Terran/Dark Angel.bbship/ship_062_prototype_normal_specular.png"
 }

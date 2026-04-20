@@ -48,11 +48,11 @@
   "value": 105000,
   "wiki": "https://galaxyonfire.fandom.com/wiki/Vol_Noor",
   "assets": [
-    "/app/data/game-objects/items/ships/Grey/Vol Noor.bbship/ship_042_retro_diffuse.bmp",
-    "/app/data/game-objects/items/ships/Grey/Vol Noor.bbship/ship_042_retro_normal_specular.bmp",
+    "/app/data/game-objects/items/ships/Grey/Vol Noor.bbship/ship_042_retro_diffuse.png",
+    "/app/data/game-objects/items/ships/Grey/Vol Noor.bbship/ship_042_retro_normal_specular.png",
     "/app/data/game-objects/items/ships/Grey/Vol Noor.bbship/skinBase.png",
     "/app/data/game-objects/items/ships/Grey/Vol Noor.bbship/Vol_Full.mtl",
     "/app/data/game-objects/items/ships/Grey/Vol Noor.bbship/Vol_Full.obj"
   ],
-  "normSpec": "/app/data/game-objects/items/ships/Grey/Vol Noor.bbship/ship_042_retro_normal_specular.bmp"
+  "normSpec": "/app/data/game-objects/items/ships/Grey/Vol Noor.bbship/ship_042_retro_normal_specular.png"
 }

@@ -54,11 +54,11 @@
   "assets": [
     "/app/data/game-objects/items/ships/Midorian/Berger CrossXT.bbship/Berger_CrossXT_Full.mtl",
     "/app/data/game-objects/items/ships/Midorian/Berger CrossXT.bbship/Berger_CrossXT_Full.obj",
-    "/app/data/game-objects/items/ships/Midorian/Berger CrossXT.bbship/mask1.jpg",
-    "/app/data/game-objects/items/ships/Midorian/Berger CrossXT.bbship/mask2.jpg",
-    "/app/data/game-objects/items/ships/Midorian/Berger CrossXT.bbship/ship_030_midorian_diffuse.bmp",
-    "/app/data/game-objects/items/ships/Midorian/Berger CrossXT.bbship/ship_030_midorian_normal_specular.bmp",
+    "/app/data/game-objects/items/ships/Midorian/Berger CrossXT.bbship/mask1.png",
+    "/app/data/game-objects/items/ships/Midorian/Berger CrossXT.bbship/mask2.png",
+    "/app/data/game-objects/items/ships/Midorian/Berger CrossXT.bbship/ship_030_midorian_diffuse.png",
+    "/app/data/game-objects/items/ships/Midorian/Berger CrossXT.bbship/ship_030_midorian_normal_specular.png",
     "/app/data/game-objects/items/ships/Midorian/Berger CrossXT.bbship/skinBase.png"
   ],
-  "normSpec": "/app/data/game-objects/items/ships/Midorian/Berger CrossXT.bbship/ship_030_midorian_normal_specular.bmp"
+  "normSpec": "/app/data/game-objects/items/ships/Midorian/Berger CrossXT.bbship/ship_030_midorian_normal_specular.png"
 }

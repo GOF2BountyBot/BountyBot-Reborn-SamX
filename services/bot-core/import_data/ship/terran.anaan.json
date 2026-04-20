@@ -47,11 +47,11 @@
   "assets": [
     "/app/data/game-objects/items/ships/Terran/Anaan.bbship/Anaan_Full.mtl",
     "/app/data/game-objects/items/ships/Terran/Anaan.bbship/Anaan_Full.obj",
-    "/app/data/game-objects/items/ships/Terran/Anaan.bbship/mask1.jpg",
-    "/app/data/game-objects/items/ships/Terran/Anaan.bbship/mask2.jpg",
-    "/app/data/game-objects/items/ships/Terran/Anaan.bbship/ship_007_terran_diffuse.bmp",
-    "/app/data/game-objects/items/ships/Terran/Anaan.bbship/ship_007_terran_normal_specular.bmp",
+    "/app/data/game-objects/items/ships/Terran/Anaan.bbship/mask1.png",
+    "/app/data/game-objects/items/ships/Terran/Anaan.bbship/mask2.png",
+    "/app/data/game-objects/items/ships/Terran/Anaan.bbship/ship_007_terran_diffuse.png",
+    "/app/data/game-objects/items/ships/Terran/Anaan.bbship/ship_007_terran_normal_specular.png",
     "/app/data/game-objects/items/ships/Terran/Anaan.bbship/skinBase.png"
   ],
-  "normSpec": "/app/data/game-objects/items/ships/Terran/Anaan.bbship/ship_007_terran_normal_specular.bmp"
+  "normSpec": "/app/data/game-objects/items/ships/Terran/Anaan.bbship/ship_007_terran_normal_specular.png"
 }

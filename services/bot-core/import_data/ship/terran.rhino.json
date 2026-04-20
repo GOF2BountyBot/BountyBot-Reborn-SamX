@@ -45,12 +45,12 @@
   "value": 700000,
   "wiki": "https://galaxyonfire.fandom.com/wiki/Rhino",
   "assets": [
-    "/app/data/game-objects/items/ships/Terran/Rhino.bbship/mask1.jpg",
+    "/app/data/game-objects/items/ships/Terran/Rhino.bbship/mask1.png",
     "/app/data/game-objects/items/ships/Terran/Rhino.bbship/Rhino_Full.mtl",
     "/app/data/game-objects/items/ships/Terran/Rhino.bbship/Rhino_Full.obj",
     "/app/data/game-objects/items/ships/Terran/Rhino.bbship/skinBase.png",
-    "/app/data/game-objects/items/ships/Terran/Rhino.bbship/sn_ship_051_dropship_terran_diffuse.bmp",
-    "/app/data/game-objects/items/ships/Terran/Rhino.bbship/sn_ship_051_dropship_terran_normal_specular.bmp"
+    "/app/data/game-objects/items/ships/Terran/Rhino.bbship/sn_ship_051_dropship_terran_diffuse.png",
+    "/app/data/game-objects/items/ships/Terran/Rhino.bbship/sn_ship_051_dropship_terran_normal_specular.png"
   ],
-  "normSpec": "/app/data/game-objects/items/ships/Terran/Rhino.bbship/sn_ship_051_dropship_terran_normal_specular.bmp"
+  "normSpec": "/app/data/game-objects/items/ships/Terran/Rhino.bbship/sn_ship_051_dropship_terran_normal_specular.png"
 }

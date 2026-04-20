@@ -55,10 +55,10 @@
     "/app/data/game-objects/items/ships/Kaamo Club/Groza Mk II.bbship/GROZa SKINS.xcf",
     "/app/data/game-objects/items/ships/Kaamo Club/Groza Mk II.bbship/Groza_Full.mtl",
     "/app/data/game-objects/items/ships/Kaamo Club/Groza Mk II.bbship/Groza_Full.obj",
-    "/app/data/game-objects/items/ships/Kaamo Club/Groza Mk II.bbship/mask1.jpg",
+    "/app/data/game-objects/items/ships/Kaamo Club/Groza Mk II.bbship/mask1.png",
     "/app/data/game-objects/items/ships/Kaamo Club/Groza Mk II.bbship/skinBase.png",
-    "/app/data/game-objects/items/ships/Kaamo Club/Groza Mk II.bbship/sn_ship_055_modified_diffuse.bmp",
-    "/app/data/game-objects/items/ships/Kaamo Club/Groza Mk II.bbship/sn_ship_055_modified_normal_specular.bmp"
+    "/app/data/game-objects/items/ships/Kaamo Club/Groza Mk II.bbship/sn_ship_055_modified_diffuse.png",
+    "/app/data/game-objects/items/ships/Kaamo Club/Groza Mk II.bbship/sn_ship_055_modified_normal_specular.png"
   ],
-  "normSpec": "/app/data/game-objects/items/ships/Kaamo Club/Groza Mk II.bbship/sn_ship_055_modified_normal_specular.bmp"
+  "normSpec": "/app/data/game-objects/items/ships/Kaamo Club/Groza Mk II.bbship/sn_ship_055_modified_normal_specular.png"
 }

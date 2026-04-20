@@ -48,8 +48,8 @@
     "/app/data/game-objects/items/ships/Most Wanted/Amboss.bbship/Amboss_Full.mtl",
     "/app/data/game-objects/items/ships/Most Wanted/Amboss.bbship/Amboss_Full.obj",
     "/app/data/game-objects/items/ships/Most Wanted/Amboss.bbship/skinBase.png",
-    "/app/data/game-objects/items/ships/Most Wanted/Amboss.bbship/sn_ship_045_most_wanted_normal_specular.bmp",
-    "/app/data/game-objects/items/ships/Most Wanted/Amboss.bbship/sn_ship_048_most_wanted_diffuse.bmp"
+    "/app/data/game-objects/items/ships/Most Wanted/Amboss.bbship/sn_ship_045_most_wanted_normal_specular.png",
+    "/app/data/game-objects/items/ships/Most Wanted/Amboss.bbship/sn_ship_048_most_wanted_diffuse.png"
   ],
-  "normSpec": "/app/data/game-objects/items/ships/Most Wanted/Amboss.bbship/sn_ship_045_most_wanted_normal_specular.bmp"
+  "normSpec": "/app/data/game-objects/items/ships/Most Wanted/Amboss.bbship/sn_ship_045_most_wanted_normal_specular.png"
 }

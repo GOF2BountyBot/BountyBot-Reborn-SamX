@@ -46,12 +46,12 @@
   "value": 700000,
   "wiki": "https://galaxyonfire.fandom.com/wiki/Freighter",
   "assets": [
-    "/app/data/game-objects/items/ships/Nivelian/Cargo_Nivelian.bbship/cargo_nivelian_diffuse.bmp",
+    "/app/data/game-objects/items/ships/Nivelian/Cargo_Nivelian.bbship/cargo_nivelian_diffuse.png",
     "/app/data/game-objects/items/ships/Nivelian/Cargo_Nivelian.bbship/Cargo_Nivelian_Full.mtl",
     "/app/data/game-objects/items/ships/Nivelian/Cargo_Nivelian.bbship/Cargo_Nivelian_Full.obj",
-    "/app/data/game-objects/items/ships/Nivelian/Cargo_Nivelian.bbship/cargo_nivelian_normal_specular.bmp",
-    "/app/data/game-objects/items/ships/Nivelian/Cargo_Nivelian.bbship/mask1.jpg",
+    "/app/data/game-objects/items/ships/Nivelian/Cargo_Nivelian.bbship/cargo_nivelian_normal_specular.png",
+    "/app/data/game-objects/items/ships/Nivelian/Cargo_Nivelian.bbship/mask1.png",
     "/app/data/game-objects/items/ships/Nivelian/Cargo_Nivelian.bbship/skinBase.png"
   ],
-  "normSpec": "/app/data/game-objects/items/ships/Nivelian/Cargo_Nivelian.bbship/cargo_nivelian_normal_specular.bmp"
+  "normSpec": "/app/data/game-objects/items/ships/Nivelian/Cargo_Nivelian.bbship/cargo_nivelian_normal_specular.png"
 }

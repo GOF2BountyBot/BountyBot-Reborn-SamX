@@ -45,13 +45,13 @@
   "value": 100100,
   "wiki": "https://galaxyonfire.fandom.com/wiki/Taipan",
   "assets": [
-    "/app/data/game-objects/items/ships/Terran/Taipan.bbship/mask1.jpg",
-    "/app/data/game-objects/items/ships/Terran/Taipan.bbship/mask2.jpg",
-    "/app/data/game-objects/items/ships/Terran/Taipan.bbship/ship_027_terran_diffuse.bmp",
-    "/app/data/game-objects/items/ships/Terran/Taipan.bbship/ship_027_terran_normal_specular.bmp",
+    "/app/data/game-objects/items/ships/Terran/Taipan.bbship/mask1.png",
+    "/app/data/game-objects/items/ships/Terran/Taipan.bbship/mask2.png",
+    "/app/data/game-objects/items/ships/Terran/Taipan.bbship/ship_027_terran_diffuse.png",
+    "/app/data/game-objects/items/ships/Terran/Taipan.bbship/ship_027_terran_normal_specular.png",
     "/app/data/game-objects/items/ships/Terran/Taipan.bbship/skinBase.png",
     "/app/data/game-objects/items/ships/Terran/Taipan.bbship/Taipan_Full.mtl",
     "/app/data/game-objects/items/ships/Terran/Taipan.bbship/Taipan_Full.obj"
   ],
-  "normSpec": "/app/data/game-objects/items/ships/Terran/Taipan.bbship/ship_027_terran_normal_specular.bmp"
+  "normSpec": "/app/data/game-objects/items/ships/Terran/Taipan.bbship/ship_027_terran_normal_specular.png"
 }

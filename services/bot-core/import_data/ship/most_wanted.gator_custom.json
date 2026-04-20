@@ -50,10 +50,10 @@
   "assets": [
     "/app/data/game-objects/items/ships/Most Wanted/Gator Custom.bbship/Gator_Full.mtl",
     "/app/data/game-objects/items/ships/Most Wanted/Gator Custom.bbship/Gator_Full.obj",
-    "/app/data/game-objects/items/ships/Most Wanted/Gator Custom.bbship/mask1.jpg",
+    "/app/data/game-objects/items/ships/Most Wanted/Gator Custom.bbship/mask1.png",
     "/app/data/game-objects/items/ships/Most Wanted/Gator Custom.bbship/skinBase.png",
-    "/app/data/game-objects/items/ships/Most Wanted/Gator Custom.bbship/sn_ship_047_most_wanted_diffuse.bmp",
-    "/app/data/game-objects/items/ships/Most Wanted/Gator Custom.bbship/sn_ship_047_most_wanted_normal_specular.bmp"
+    "/app/data/game-objects/items/ships/Most Wanted/Gator Custom.bbship/sn_ship_047_most_wanted_diffuse.png",
+    "/app/data/game-objects/items/ships/Most Wanted/Gator Custom.bbship/sn_ship_047_most_wanted_normal_specular.png"
   ],
-  "normSpec": "/app/data/game-objects/items/ships/Most Wanted/Gator Custom.bbship/sn_ship_047_most_wanted_normal_specular.bmp"
+  "normSpec": "/app/data/game-objects/items/ships/Most Wanted/Gator Custom.bbship/sn_ship_047_most_wanted_normal_specular.png"
 }

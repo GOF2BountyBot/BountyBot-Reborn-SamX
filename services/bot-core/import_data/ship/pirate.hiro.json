@@ -47,9 +47,9 @@
   "assets": [
     "/app/data/game-objects/items/ships/Pirate/Hiro.bbship/Hiro_Full.mtl",
     "/app/data/game-objects/items/ships/Pirate/Hiro.bbship/Hiro_Full.obj",
-    "/app/data/game-objects/items/ships/Pirate/Hiro.bbship/mask1.jpg",
-    "/app/data/game-objects/items/ships/Pirate/Hiro.bbship/mask2.jpg",
-    "/app/data/game-objects/items/ships/Pirate/Hiro.bbship/ship_002_pirates_diffuse.bmp",
+    "/app/data/game-objects/items/ships/Pirate/Hiro.bbship/mask1.png",
+    "/app/data/game-objects/items/ships/Pirate/Hiro.bbship/mask2.png",
+    "/app/data/game-objects/items/ships/Pirate/Hiro.bbship/ship_002_pirates_diffuse.png",
     "/app/data/game-objects/items/ships/Pirate/Hiro.bbship/skinBase.png"
   ]
 }

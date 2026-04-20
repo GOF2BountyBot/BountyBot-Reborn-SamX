@@ -45,13 +45,13 @@
   "value": 2500000,
   "wiki": "https://galaxyonfire.fandom.com/wiki/Typhon",
   "assets": [
-    "/app/data/game-objects/items/ships/Deep Science/Typhon.bbship/mask1.jpg",
+    "/app/data/game-objects/items/ships/Deep Science/Typhon.bbship/mask1.png",
     "/app/data/game-objects/items/ships/Deep Science/Typhon.bbship/skinBase.png",
     "/app/data/game-objects/items/ships/Deep Science/Typhon.bbship/SkinBase.xcf",
     "/app/data/game-objects/items/ships/Deep Science/Typhon.bbship/Typhon_Full.mtl",
     "/app/data/game-objects/items/ships/Deep Science/Typhon.bbship/Typhon_Full.obj",
-    "/app/data/game-objects/items/ships/Deep Science/Typhon.bbship/v_ship_038_deep_science_diffuse.bmp",
-    "/app/data/game-objects/items/ships/Deep Science/Typhon.bbship/v_ship_038_deep_science_normal_specular.bmp"
+    "/app/data/game-objects/items/ships/Deep Science/Typhon.bbship/v_ship_038_deep_science_diffuse.png",
+    "/app/data/game-objects/items/ships/Deep Science/Typhon.bbship/v_ship_038_deep_science_normal_specular.png"
   ],
-  "normSpec": "/app/data/game-objects/items/ships/Deep Science/Typhon.bbship/v_ship_038_deep_science_normal_specular.bmp"
+  "normSpec": "/app/data/game-objects/items/ships/Deep Science/Typhon.bbship/v_ship_038_deep_science_normal_specular.png"
 }

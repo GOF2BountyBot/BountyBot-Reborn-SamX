@@ -47,11 +47,11 @@
   "assets": [
     "/app/data/game-objects/items/ships/Terran/Furious.bbship/Furious_Full.mtl",
     "/app/data/game-objects/items/ships/Terran/Furious.bbship/Furious_Full.obj",
-    "/app/data/game-objects/items/ships/Terran/Furious.bbship/mask1.jpg",
-    "/app/data/game-objects/items/ships/Terran/Furious.bbship/mask2.jpg",
-    "/app/data/game-objects/items/ships/Terran/Furious.bbship/ship_033_terran_diffuse.bmp",
-    "/app/data/game-objects/items/ships/Terran/Furious.bbship/ship_033_terran_normal_specular.bmp",
+    "/app/data/game-objects/items/ships/Terran/Furious.bbship/mask1.png",
+    "/app/data/game-objects/items/ships/Terran/Furious.bbship/mask2.png",
+    "/app/data/game-objects/items/ships/Terran/Furious.bbship/ship_033_terran_diffuse.png",
+    "/app/data/game-objects/items/ships/Terran/Furious.bbship/ship_033_terran_normal_specular.png",
     "/app/data/game-objects/items/ships/Terran/Furious.bbship/skinBase.png"
   ],
-  "normSpec": "/app/data/game-objects/items/ships/Terran/Furious.bbship/ship_033_terran_normal_specular.bmp"
+  "normSpec": "/app/data/game-objects/items/ships/Terran/Furious.bbship/ship_033_terran_normal_specular.png"
 }

@@ -47,10 +47,10 @@
   "assets": [
     "/app/data/game-objects/items/ships/Midorian/Hector.bbship/Hector_Full.mtl",
     "/app/data/game-objects/items/ships/Midorian/Hector.bbship/Hector_Full.obj",
-    "/app/data/game-objects/items/ships/Midorian/Hector.bbship/mask1.jpg",
-    "/app/data/game-objects/items/ships/Midorian/Hector.bbship/ship_006_midorian_diffuse.bmp",
-    "/app/data/game-objects/items/ships/Midorian/Hector.bbship/ship_006_midorian_normal_specular.bmp",
+    "/app/data/game-objects/items/ships/Midorian/Hector.bbship/mask1.png",
+    "/app/data/game-objects/items/ships/Midorian/Hector.bbship/ship_006_midorian_diffuse.png",
+    "/app/data/game-objects/items/ships/Midorian/Hector.bbship/ship_006_midorian_normal_specular.png",
     "/app/data/game-objects/items/ships/Midorian/Hector.bbship/skinBase.png"
   ],
-  "normSpec": "/app/data/game-objects/items/ships/Midorian/Hector.bbship/ship_006_midorian_normal_specular.bmp"
+  "normSpec": "/app/data/game-objects/items/ships/Midorian/Hector.bbship/ship_006_midorian_normal_specular.png"
 }

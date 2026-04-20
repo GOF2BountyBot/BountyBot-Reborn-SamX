@@ -46,11 +46,11 @@
   "value": 700000,
   "wiki": "https://galaxyonfire.fandom.com/wiki/Freighter",
   "assets": [
-    "/app/data/game-objects/items/ships/Midorian/Cargo_Midorian.bbship/cargo_midorian_diffuse.bmp",
+    "/app/data/game-objects/items/ships/Midorian/Cargo_Midorian.bbship/cargo_midorian_diffuse.png",
     "/app/data/game-objects/items/ships/Midorian/Cargo_Midorian.bbship/Cargo_Midorian_Full.mtl",
     "/app/data/game-objects/items/ships/Midorian/Cargo_Midorian.bbship/Cargo_Midorian_Full.obj",
     "/app/data/game-objects/items/ships/Midorian/Cargo_Midorian.bbship/marble.png",
-    "/app/data/game-objects/items/ships/Midorian/Cargo_Midorian.bbship/mask1.jpg",
+    "/app/data/game-objects/items/ships/Midorian/Cargo_Midorian.bbship/mask1.png",
     "/app/data/game-objects/items/ships/Midorian/Cargo_Midorian.bbship/skinBase.png"
   ]
 }

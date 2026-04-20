@@ -20,13 +20,13 @@
   "value": 94500,
   "wiki": "https://galaxyonfire.fandom.com/wiki/Salvéhn",
   "assets": [
-    "/app/data/game-objects/items/ships/Nivelian/Salvéhn.bbship/mask1.jpg",
-    "/app/data/game-objects/items/ships/Nivelian/Salvéhn.bbship/mask2.jpg",
+    "/app/data/game-objects/items/ships/Nivelian/Salvéhn.bbship/mask1.png",
+    "/app/data/game-objects/items/ships/Nivelian/Salvéhn.bbship/mask2.png",
     "/app/data/game-objects/items/ships/Nivelian/Salvéhn.bbship/Salv_Full.mtl",
     "/app/data/game-objects/items/ships/Nivelian/Salvéhn.bbship/Salv_Full.obj",
-    "/app/data/game-objects/items/ships/Nivelian/Salvéhn.bbship/ship_031_nivelian_diffuse.bmp",
-    "/app/data/game-objects/items/ships/Nivelian/Salvéhn.bbship/ship_031_nivelian_normal_specular.bmp",
+    "/app/data/game-objects/items/ships/Nivelian/Salvéhn.bbship/ship_031_nivelian_diffuse.png",
+    "/app/data/game-objects/items/ships/Nivelian/Salvéhn.bbship/ship_031_nivelian_normal_specular.png",
     "/app/data/game-objects/items/ships/Nivelian/Salvéhn.bbship/skinBase.png"
   ],
-  "normSpec": "/app/data/game-objects/items/ships/Nivelian/Salvéhn.bbship/ship_031_nivelian_normal_specular.bmp"
+  "normSpec": "/app/data/game-objects/items/ships/Nivelian/Salvéhn.bbship/ship_031_nivelian_normal_specular.png"
 }

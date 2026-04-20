@@ -45,13 +45,13 @@
   "value": 19500,
   "wiki": "https://galaxyonfire.fandom.com/wiki/Wasp",
   "assets": [
-    "/app/data/game-objects/items/ships/Pirate/Wasp.bbship/mask1.jpg",
-    "/app/data/game-objects/items/ships/Pirate/Wasp.bbship/mask2.jpg",
-    "/app/data/game-objects/items/ships/Pirate/Wasp.bbship/ship_032_pirates_diffuse.bmp",
-    "/app/data/game-objects/items/ships/Pirate/Wasp.bbship/ship_032_pirates_normal_specular.bmp",
+    "/app/data/game-objects/items/ships/Pirate/Wasp.bbship/mask1.png",
+    "/app/data/game-objects/items/ships/Pirate/Wasp.bbship/mask2.png",
+    "/app/data/game-objects/items/ships/Pirate/Wasp.bbship/ship_032_pirates_diffuse.png",
+    "/app/data/game-objects/items/ships/Pirate/Wasp.bbship/ship_032_pirates_normal_specular.png",
     "/app/data/game-objects/items/ships/Pirate/Wasp.bbship/skinBase.png",
     "/app/data/game-objects/items/ships/Pirate/Wasp.bbship/Wasp_Full.mtl",
     "/app/data/game-objects/items/ships/Pirate/Wasp.bbship/Wasp_Full.obj"
   ],
-  "normSpec": "/app/data/game-objects/items/ships/Pirate/Wasp.bbship/ship_032_pirates_normal_specular.bmp"
+  "normSpec": "/app/data/game-objects/items/ships/Pirate/Wasp.bbship/ship_032_pirates_normal_specular.png"
 }

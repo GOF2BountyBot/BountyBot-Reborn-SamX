@@ -45,13 +45,13 @@
   "value": 1450000,
   "wiki": "https://galaxyonfire.fandom.com/wiki/Phantom",
   "assets": [
-    "/app/data/game-objects/items/ships/Terran/Phantom.bbship/mask1.jpg",
-    "/app/data/game-objects/items/ships/Terran/Phantom.bbship/mask2.jpg",
+    "/app/data/game-objects/items/ships/Terran/Phantom.bbship/mask1.png",
+    "/app/data/game-objects/items/ships/Terran/Phantom.bbship/mask2.png",
     "/app/data/game-objects/items/ships/Terran/Phantom.bbship/Phantom_Full.mtl",
     "/app/data/game-objects/items/ships/Terran/Phantom.bbship/Phantom_Full.obj",
-    "/app/data/game-objects/items/ships/Terran/Phantom.bbship/ship_010_terran_diffuse.bmp",
-    "/app/data/game-objects/items/ships/Terran/Phantom.bbship/ship_010_terran_normal_specular.bmp",
+    "/app/data/game-objects/items/ships/Terran/Phantom.bbship/ship_010_terran_diffuse.png",
+    "/app/data/game-objects/items/ships/Terran/Phantom.bbship/ship_010_terran_normal_specular.png",
     "/app/data/game-objects/items/ships/Terran/Phantom.bbship/skinBase.png"
   ],
-  "normSpec": "/app/data/game-objects/items/ships/Terran/Phantom.bbship/ship_010_terran_normal_specular.bmp"
+  "normSpec": "/app/data/game-objects/items/ships/Terran/Phantom.bbship/ship_010_terran_normal_specular.png"
 }

@@ -44,11 +44,11 @@
     "/app/data/game-objects/items/ships/Most Wanted/Blue Fyre.bbship/BF SKINS.xcf",
     "/app/data/game-objects/items/ships/Most Wanted/Blue Fyre.bbship/Blue_Fyre_Full.mtl",
     "/app/data/game-objects/items/ships/Most Wanted/Blue Fyre.bbship/Blue_Fyre_Full.obj",
-    "/app/data/game-objects/items/ships/Most Wanted/Blue Fyre.bbship/mask1.jpg",
-    "/app/data/game-objects/items/ships/Most Wanted/Blue Fyre.bbship/mask2.jpg",
+    "/app/data/game-objects/items/ships/Most Wanted/Blue Fyre.bbship/mask1.png",
+    "/app/data/game-objects/items/ships/Most Wanted/Blue Fyre.bbship/mask2.png",
     "/app/data/game-objects/items/ships/Most Wanted/Blue Fyre.bbship/skinBase.png",
-    "/app/data/game-objects/items/ships/Most Wanted/Blue Fyre.bbship/sn_ship_046_most_wanted_diffuse.bmp",
-    "/app/data/game-objects/items/ships/Most Wanted/Blue Fyre.bbship/sn_ship_046_most_wanted_normal_specular.bmp"
+    "/app/data/game-objects/items/ships/Most Wanted/Blue Fyre.bbship/sn_ship_046_most_wanted_diffuse.png",
+    "/app/data/game-objects/items/ships/Most Wanted/Blue Fyre.bbship/sn_ship_046_most_wanted_normal_specular.png"
   ],
-  "normSpec": "/app/data/game-objects/items/ships/Most Wanted/Blue Fyre.bbship/sn_ship_046_most_wanted_normal_specular.bmp"
+  "normSpec": "/app/data/game-objects/items/ships/Most Wanted/Blue Fyre.bbship/sn_ship_046_most_wanted_normal_specular.png"
 }

@@ -45,13 +45,13 @@
   "value": 125400,
   "wiki": "https://galaxyonfire.fandom.com/wiki/Teneta",
   "assets": [
-    "/app/data/game-objects/items/ships/Terran/Teneta.bbship/mask1.jpg",
-    "/app/data/game-objects/items/ships/Terran/Teneta.bbship/mask2.jpg",
-    "/app/data/game-objects/items/ships/Terran/Teneta.bbship/ship_001_terran_diffuse.bmp",
-    "/app/data/game-objects/items/ships/Terran/Teneta.bbship/ship_001_terran_normal_specular.bmp",
+    "/app/data/game-objects/items/ships/Terran/Teneta.bbship/mask1.png",
+    "/app/data/game-objects/items/ships/Terran/Teneta.bbship/mask2.png",
+    "/app/data/game-objects/items/ships/Terran/Teneta.bbship/ship_001_terran_diffuse.png",
+    "/app/data/game-objects/items/ships/Terran/Teneta.bbship/ship_001_terran_normal_specular.png",
     "/app/data/game-objects/items/ships/Terran/Teneta.bbship/skinBase.png",
     "/app/data/game-objects/items/ships/Terran/Teneta.bbship/Teneta_Full.mtl",
     "/app/data/game-objects/items/ships/Terran/Teneta.bbship/Teneta_Full.obj"
   ],
-  "normSpec": "/app/data/game-objects/items/ships/Terran/Teneta.bbship/ship_001_terran_normal_specular.bmp"
+  "normSpec": "/app/data/game-objects/items/ships/Terran/Teneta.bbship/ship_001_terran_normal_specular.png"
 }

@@ -47,10 +47,10 @@
   "value": 7250000,
   "wiki": "https://galaxyonfire.fandom.com/wiki/S%27Kanarr",
   "assets": [
-    "/app/data/game-objects/items/ships/Vossk/S'Kanarr.bbship/mask1.jpg",
+    "/app/data/game-objects/items/ships/Vossk/S'Kanarr.bbship/mask1.png",
     "/app/data/game-objects/items/ships/Vossk/S'Kanarr.bbship/S'Kanarr_Full.mtl",
     "/app/data/game-objects/items/ships/Vossk/S'Kanarr.bbship/S'Kanarr_Full.obj",
     "/app/data/game-objects/items/ships/Vossk/S'Kanarr.bbship/skinBase.png",
-    "/app/data/game-objects/items/ships/Vossk/S'Kanarr.bbship/v_ship_039_vossk_diffuse.bmp"
+    "/app/data/game-objects/items/ships/Vossk/S'Kanarr.bbship/v_ship_039_vossk_diffuse.png"
   ]
 }

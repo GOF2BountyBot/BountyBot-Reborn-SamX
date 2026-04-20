@@ -47,11 +47,11 @@
   "assets": [
     "/app/data/game-objects/items/ships/Terran/Hera.bbship/Hera_Full.mtl",
     "/app/data/game-objects/items/ships/Terran/Hera.bbship/Hera_Full.obj",
-    "/app/data/game-objects/items/ships/Terran/Hera.bbship/mask1.jpg",
-    "/app/data/game-objects/items/ships/Terran/Hera.bbship/mask2.jpg",
-    "/app/data/game-objects/items/ships/Terran/Hera.bbship/ship_026_terran_diffuse.bmp",
-    "/app/data/game-objects/items/ships/Terran/Hera.bbship/ship_026_terran_normal_specular.bmp",
+    "/app/data/game-objects/items/ships/Terran/Hera.bbship/mask1.png",
+    "/app/data/game-objects/items/ships/Terran/Hera.bbship/mask2.png",
+    "/app/data/game-objects/items/ships/Terran/Hera.bbship/ship_026_terran_diffuse.png",
+    "/app/data/game-objects/items/ships/Terran/Hera.bbship/ship_026_terran_normal_specular.png",
     "/app/data/game-objects/items/ships/Terran/Hera.bbship/skinBase.png"
   ],
-  "normSpec": "/app/data/game-objects/items/ships/Terran/Hera.bbship/ship_026_terran_normal_specular.bmp"
+  "normSpec": "/app/data/game-objects/items/ships/Terran/Hera.bbship/ship_026_terran_normal_specular.png"
 }

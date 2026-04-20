@@ -49,12 +49,12 @@
   "assets": [
     "/app/data/game-objects/items/ships/Kaamo Club/Berger Cross Special.bbship/BCS_Full.mtl",
     "/app/data/game-objects/items/ships/Kaamo Club/Berger Cross Special.bbship/BCS_Full.obj",
-    "/app/data/game-objects/items/ships/Kaamo Club/Berger Cross Special.bbship/mask1.jpg",
+    "/app/data/game-objects/items/ships/Kaamo Club/Berger Cross Special.bbship/mask1.png",
     "/app/data/game-objects/items/ships/Kaamo Club/Berger Cross Special.bbship/skinBase.png",
-    "/app/data/game-objects/items/ships/Kaamo Club/Berger Cross Special.bbship/sn_ship_056_modified_diffuse.bmp",
-    "/app/data/game-objects/items/ships/Kaamo Club/Berger Cross Special.bbship/sn_ship_056_modified_normal_specular.bmp",
-    "/app/data/game-objects/items/ships/Kaamo Club/Berger Cross Special.bbship/old/mask1.jpg",
+    "/app/data/game-objects/items/ships/Kaamo Club/Berger Cross Special.bbship/sn_ship_056_modified_diffuse.png",
+    "/app/data/game-objects/items/ships/Kaamo Club/Berger Cross Special.bbship/sn_ship_056_modified_normal_specular.png",
+    "/app/data/game-objects/items/ships/Kaamo Club/Berger Cross Special.bbship/old/mask1.png",
     "/app/data/game-objects/items/ships/Kaamo Club/Berger Cross Special.bbship/old/skinBase.png"
   ],
-  "normSpec": "/app/data/game-objects/items/ships/Kaamo Club/Berger Cross Special.bbship/sn_ship_056_modified_normal_specular.bmp"
+  "normSpec": "/app/data/game-objects/items/ships/Kaamo Club/Berger Cross Special.bbship/sn_ship_056_modified_normal_specular.png"
 }

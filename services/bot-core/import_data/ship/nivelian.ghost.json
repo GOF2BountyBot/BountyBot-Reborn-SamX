@@ -47,11 +47,11 @@
   "assets": [
     "/app/data/game-objects/items/ships/Nivelian/Ghost.bbship/Ghost_Full.mtl",
     "/app/data/game-objects/items/ships/Nivelian/Ghost.bbship/Ghost_Full.obj",
-    "/app/data/game-objects/items/ships/Nivelian/Ghost.bbship/mask1.jpg",
-    "/app/data/game-objects/items/ships/Nivelian/Ghost.bbship/ship_061_elite_nivelian_prototype_diffuse.bmp",
-    "/app/data/game-objects/items/ships/Nivelian/Ghost.bbship/ship_061_elite_nivelian_prototype_normal_specular.bmp",
+    "/app/data/game-objects/items/ships/Nivelian/Ghost.bbship/mask1.png",
+    "/app/data/game-objects/items/ships/Nivelian/Ghost.bbship/ship_061_elite_nivelian_prototype_diffuse.png",
+    "/app/data/game-objects/items/ships/Nivelian/Ghost.bbship/ship_061_elite_nivelian_prototype_normal_specular.png",
     "/app/data/game-objects/items/ships/Nivelian/Ghost.bbship/skinBase-new.png",
     "/app/data/game-objects/items/ships/Nivelian/Ghost.bbship/skinBase.png"
   ],
-  "normSpec": "/app/data/game-objects/items/ships/Nivelian/Ghost.bbship/ship_061_elite_nivelian_prototype_normal_specular.bmp"
+  "normSpec": "/app/data/game-objects/items/ships/Nivelian/Ghost.bbship/ship_061_elite_nivelian_prototype_normal_specular.png"
 }

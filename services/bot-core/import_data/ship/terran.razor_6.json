@@ -45,13 +45,13 @@
   "value": 294900,
   "wiki": "https://galaxyonfire.fandom.com/wiki/Razor_6",
   "assets": [
-    "/app/data/game-objects/items/ships/Terran/Razor 6.bbship/mask1.jpg",
-    "/app/data/game-objects/items/ships/Terran/Razor 6.bbship/mask2.jpg",
+    "/app/data/game-objects/items/ships/Terran/Razor 6.bbship/mask1.png",
+    "/app/data/game-objects/items/ships/Terran/Razor 6.bbship/mask2.png",
     "/app/data/game-objects/items/ships/Terran/Razor 6.bbship/Razor_Full.mtl",
     "/app/data/game-objects/items/ships/Terran/Razor 6.bbship/Razor_Full.obj",
-    "/app/data/game-objects/items/ships/Terran/Razor 6.bbship/ship_034_terran_diffuse.bmp",
-    "/app/data/game-objects/items/ships/Terran/Razor 6.bbship/ship_034_terran_normal_specular.bmp",
+    "/app/data/game-objects/items/ships/Terran/Razor 6.bbship/ship_034_terran_diffuse.png",
+    "/app/data/game-objects/items/ships/Terran/Razor 6.bbship/ship_034_terran_normal_specular.png",
     "/app/data/game-objects/items/ships/Terran/Razor 6.bbship/skinBase.png"
   ],
-  "normSpec": "/app/data/game-objects/items/ships/Terran/Razor 6.bbship/ship_034_terran_normal_specular.bmp"
+  "normSpec": "/app/data/game-objects/items/ships/Terran/Razor 6.bbship/ship_034_terran_normal_specular.png"
 }

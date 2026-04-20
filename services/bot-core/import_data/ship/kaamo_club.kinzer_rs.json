@@ -48,13 +48,13 @@
   "assets": [
     "/app/data/game-objects/items/ships/Kaamo Club/Kinzer RS.bbship/Kinzer_Full.mtl",
     "/app/data/game-objects/items/ships/Kaamo Club/Kinzer RS.bbship/Kinzer_Full.obj",
-    "/app/data/game-objects/items/ships/Kaamo Club/Kinzer RS.bbship/mask1.jpg",
-    "/app/data/game-objects/items/ships/Kaamo Club/Kinzer RS.bbship/mask2.jpg",
-    "/app/data/game-objects/items/ships/Kaamo Club/Kinzer RS.bbship/mask3.jpg",
+    "/app/data/game-objects/items/ships/Kaamo Club/Kinzer RS.bbship/mask1.png",
+    "/app/data/game-objects/items/ships/Kaamo Club/Kinzer RS.bbship/mask2.png",
+    "/app/data/game-objects/items/ships/Kaamo Club/Kinzer RS.bbship/mask3.png",
     "/app/data/game-objects/items/ships/Kaamo Club/Kinzer RS.bbship/skinBase.png",
-    "/app/data/game-objects/items/ships/Kaamo Club/Kinzer RS.bbship/sn_ship_057_modified_diffuse.bmp",
-    "/app/data/game-objects/items/ships/Kaamo Club/Kinzer RS.bbship/sn_ship_057_modified_normal_specular.bmp",
+    "/app/data/game-objects/items/ships/Kaamo Club/Kinzer RS.bbship/sn_ship_057_modified_diffuse.png",
+    "/app/data/game-objects/items/ships/Kaamo Club/Kinzer RS.bbship/sn_ship_057_modified_normal_specular.png",
     "/app/data/game-objects/items/ships/Kaamo Club/Kinzer RS.bbship/sn_ship_057_modified_normal_specular.png"
   ],
-  "normSpec": "/app/data/game-objects/items/ships/Kaamo Club/Kinzer RS.bbship/sn_ship_057_modified_normal_specular.bmp"
+  "normSpec": "/app/data/game-objects/items/ships/Kaamo Club/Kinzer RS.bbship/sn_ship_057_modified_normal_specular.png"
 }

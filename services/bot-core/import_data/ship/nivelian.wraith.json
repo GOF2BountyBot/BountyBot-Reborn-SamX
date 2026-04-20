@@ -45,11 +45,11 @@
   "value": 1750000,
   "wiki": "https://galaxyonfire.fandom.com/wiki/Wraith",
   "assets": [
-    "/app/data/game-objects/items/ships/Nivelian/Wraith.bbship/ship_043_retro_diffuse.bmp",
-    "/app/data/game-objects/items/ships/Nivelian/Wraith.bbship/ship_043_retro_normal_specular.bmp",
+    "/app/data/game-objects/items/ships/Nivelian/Wraith.bbship/ship_043_retro_diffuse.png",
+    "/app/data/game-objects/items/ships/Nivelian/Wraith.bbship/ship_043_retro_normal_specular.png",
     "/app/data/game-objects/items/ships/Nivelian/Wraith.bbship/skinBase.png",
     "/app/data/game-objects/items/ships/Nivelian/Wraith.bbship/Wraith_Full.mtl",
     "/app/data/game-objects/items/ships/Nivelian/Wraith.bbship/Wraith_Full.obj"
   ],
-  "normSpec": "/app/data/game-objects/items/ships/Nivelian/Wraith.bbship/ship_043_retro_normal_specular.bmp"
+  "normSpec": "/app/data/game-objects/items/ships/Nivelian/Wraith.bbship/ship_043_retro_normal_specular.png"
 }

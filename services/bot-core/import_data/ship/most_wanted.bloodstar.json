@@ -47,10 +47,10 @@
   "assets": [
     "/app/data/game-objects/items/ships/Most Wanted/Bloodstar.bbship/BloodstarFull.mtl",
     "/app/data/game-objects/items/ships/Most Wanted/Bloodstar.bbship/BloodstarFull.obj",
-    "/app/data/game-objects/items/ships/Most Wanted/Bloodstar.bbship/mask1.jpg",
+    "/app/data/game-objects/items/ships/Most Wanted/Bloodstar.bbship/mask1.png",
     "/app/data/game-objects/items/ships/Most Wanted/Bloodstar.bbship/skinBase.png",
-    "/app/data/game-objects/items/ships/Most Wanted/Bloodstar.bbship/sn_cargo_midorian_wrecked_normal_specular.bmp",
-    "/app/data/game-objects/items/ships/Most Wanted/Bloodstar.bbship/sn_ship_045_most_wanted_diffuse.bmp"
+    "/app/data/game-objects/items/ships/Most Wanted/Bloodstar.bbship/sn_cargo_midorian_wrecked_normal_specular.png",
+    "/app/data/game-objects/items/ships/Most Wanted/Bloodstar.bbship/sn_ship_045_most_wanted_diffuse.png"
   ],
-  "normSpec": "/app/data/game-objects/items/ships/Most Wanted/Bloodstar.bbship/sn_cargo_midorian_wrecked_normal_specular.bmp"
+  "normSpec": "/app/data/game-objects/items/ships/Most Wanted/Bloodstar.bbship/sn_cargo_midorian_wrecked_normal_specular.png"
 }

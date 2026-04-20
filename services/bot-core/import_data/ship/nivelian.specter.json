@@ -48,12 +48,12 @@
   "value": 30000000,
   "wiki": "https://galaxyonfire.fandom.com/wiki/Specter",
   "assets": [
-    "/app/data/game-objects/items/ships/Nivelian/Specter.bbship/mask1.jpg",
+    "/app/data/game-objects/items/ships/Nivelian/Specter.bbship/mask1.png",
     "/app/data/game-objects/items/ships/Nivelian/Specter.bbship/skinBase.png",
-    "/app/data/game-objects/items/ships/Nivelian/Specter.bbship/sn_ship_044_elite_nivelian_diffuse.bmp",
-    "/app/data/game-objects/items/ships/Nivelian/Specter.bbship/sn_ship_044_elite_nivelian_normal_specular.bmp",
+    "/app/data/game-objects/items/ships/Nivelian/Specter.bbship/sn_ship_044_elite_nivelian_diffuse.png",
+    "/app/data/game-objects/items/ships/Nivelian/Specter.bbship/sn_ship_044_elite_nivelian_normal_specular.png",
     "/app/data/game-objects/items/ships/Nivelian/Specter.bbship/Specter_Full.mtl",
     "/app/data/game-objects/items/ships/Nivelian/Specter.bbship/Specter_Full.obj"
   ],
-  "normSpec": "/app/data/game-objects/items/ships/Nivelian/Specter.bbship/sn_ship_044_elite_nivelian_normal_specular.bmp"
+  "normSpec": "/app/data/game-objects/items/ships/Nivelian/Specter.bbship/sn_ship_044_elite_nivelian_normal_specular.png"
 }

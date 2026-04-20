@@ -47,10 +47,10 @@
   "assets": [
     "/app/data/game-objects/items/ships/Kaamo Club/Darkzov.bbship/Darkzov_Full.mtl",
     "/app/data/game-objects/items/ships/Kaamo Club/Darkzov.bbship/Darkzov_Full.obj",
-    "/app/data/game-objects/items/ships/Kaamo Club/Darkzov.bbship/mask1.jpg",
+    "/app/data/game-objects/items/ships/Kaamo Club/Darkzov.bbship/mask1.png",
     "/app/data/game-objects/items/ships/Kaamo Club/Darkzov.bbship/skinBase.png",
-    "/app/data/game-objects/items/ships/Kaamo Club/Darkzov.bbship/sn_ship_060_modified_diffuse.bmp",
-    "/app/data/game-objects/items/ships/Kaamo Club/Darkzov.bbship/sn_ship_060_modified_normal_specular.bmp"
+    "/app/data/game-objects/items/ships/Kaamo Club/Darkzov.bbship/sn_ship_060_modified_diffuse.png",
+    "/app/data/game-objects/items/ships/Kaamo Club/Darkzov.bbship/sn_ship_060_modified_normal_specular.png"
   ],
-  "normSpec": "/app/data/game-objects/items/ships/Kaamo Club/Darkzov.bbship/sn_ship_060_modified_normal_specular.bmp"
+  "normSpec": "/app/data/game-objects/items/ships/Kaamo Club/Darkzov.bbship/sn_ship_060_modified_normal_specular.png"
 }

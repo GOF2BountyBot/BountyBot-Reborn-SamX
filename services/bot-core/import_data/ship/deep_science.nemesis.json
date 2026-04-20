@@ -45,13 +45,13 @@
   "value": 6800000,
   "wiki": "https://galaxyonfire.fandom.com/wiki/Nemesis_(ship)",
   "assets": [
-    "/app/data/game-objects/items/ships/Deep Science/Nemesis.bbship/mask1.jpg",
+    "/app/data/game-objects/items/ships/Deep Science/Nemesis.bbship/mask1.png",
     "/app/data/game-objects/items/ships/Deep Science/Nemesis.bbship/Nemesis_Full.mtl",
     "/app/data/game-objects/items/ships/Deep Science/Nemesis.bbship/Nemesis_Full.obj",
     "/app/data/game-objects/items/ships/Deep Science/Nemesis.bbship/skinBase.png",
     "/app/data/game-objects/items/ships/Deep Science/Nemesis.bbship/skinBase.xcf",
-    "/app/data/game-objects/items/ships/Deep Science/Nemesis.bbship/v_ship_040_deep_science_diffuse.bmp",
-    "/app/data/game-objects/items/ships/Deep Science/Nemesis.bbship/v_ship_040_deep_science_normal_specular.bmp"
+    "/app/data/game-objects/items/ships/Deep Science/Nemesis.bbship/v_ship_040_deep_science_diffuse.png",
+    "/app/data/game-objects/items/ships/Deep Science/Nemesis.bbship/v_ship_040_deep_science_normal_specular.png"
   ],
-  "normSpec": "/app/data/game-objects/items/ships/Deep Science/Nemesis.bbship/v_ship_040_deep_science_normal_specular.bmp"
+  "normSpec": "/app/data/game-objects/items/ships/Deep Science/Nemesis.bbship/v_ship_040_deep_science_normal_specular.png"
 }

@@ -47,10 +47,10 @@
   "assets": [
     "/app/data/game-objects/items/ships/Nivelian/Hatsuyuki.bbship/Hatsuyuki_Full.mtl",
     "/app/data/game-objects/items/ships/Nivelian/Hatsuyuki.bbship/Hatsuyuki_Full.obj",
-    "/app/data/game-objects/items/ships/Nivelian/Hatsuyuki.bbship/mask1.jpg",
-    "/app/data/game-objects/items/ships/Nivelian/Hatsuyuki.bbship/ship_018_nivelian_diffuse.bmp",
-    "/app/data/game-objects/items/ships/Nivelian/Hatsuyuki.bbship/ship_018_nivelian_normal_specular.bmp",
+    "/app/data/game-objects/items/ships/Nivelian/Hatsuyuki.bbship/mask1.png",
+    "/app/data/game-objects/items/ships/Nivelian/Hatsuyuki.bbship/ship_018_nivelian_diffuse.png",
+    "/app/data/game-objects/items/ships/Nivelian/Hatsuyuki.bbship/ship_018_nivelian_normal_specular.png",
     "/app/data/game-objects/items/ships/Nivelian/Hatsuyuki.bbship/skinBase.png"
   ],
-  "normSpec": "/app/data/game-objects/items/ships/Nivelian/Hatsuyuki.bbship/ship_018_nivelian_normal_specular.bmp"
+  "normSpec": "/app/data/game-objects/items/ships/Nivelian/Hatsuyuki.bbship/ship_018_nivelian_normal_specular.png"
 }

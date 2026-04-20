@@ -45,10 +45,10 @@
   "value": 700000,
   "wiki": "https://galaxyonfire.fandom.com/wiki/Freighter",
   "assets": [
-    "/app/data/game-objects/items/ships/Vossk/Cargo_Vossk.bbship/cargo_vossk_diffuse.bmp",
+    "/app/data/game-objects/items/ships/Vossk/Cargo_Vossk.bbship/cargo_vossk_diffuse.png",
     "/app/data/game-objects/items/ships/Vossk/Cargo_Vossk.bbship/Cargo_Vossk_Full.mtl",
     "/app/data/game-objects/items/ships/Vossk/Cargo_Vossk.bbship/Cargo_Vossk_Full.obj",
-    "/app/data/game-objects/items/ships/Vossk/Cargo_Vossk.bbship/mask1.jpg",
+    "/app/data/game-objects/items/ships/Vossk/Cargo_Vossk.bbship/mask1.png",
     "/app/data/game-objects/items/ships/Vossk/Cargo_Vossk.bbship/skinBase.png"
   ]
 }

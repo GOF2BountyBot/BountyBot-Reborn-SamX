@@ -49,10 +49,10 @@
   "assets": [
     "/app/data/game-objects/items/ships/Vossk/K'Suuk.bbship/K'Suuk_Full.mtl",
     "/app/data/game-objects/items/ships/Vossk/K'Suuk.bbship/K'Suuk_Full.obj",
-    "/app/data/game-objects/items/ships/Vossk/K'Suuk.bbship/mask1.jpg",
+    "/app/data/game-objects/items/ships/Vossk/K'Suuk.bbship/mask1.png",
     "/app/data/game-objects/items/ships/Vossk/K'Suuk.bbship/skinBase.png",
-    "/app/data/game-objects/items/ships/Vossk/K'Suuk.bbship/v_ship_041_vossk_diffuse.bmp",
-    "/app/data/game-objects/items/ships/Vossk/K'Suuk.bbship/v_ship_041_vossk_normal_specular.bmp"
+    "/app/data/game-objects/items/ships/Vossk/K'Suuk.bbship/v_ship_041_vossk_diffuse.png",
+    "/app/data/game-objects/items/ships/Vossk/K'Suuk.bbship/v_ship_041_vossk_normal_specular.png"
   ],
-  "normSpec": "/app/data/game-objects/items/ships/Vossk/K'Suuk.bbship/v_ship_041_vossk_normal_specular.bmp"
+  "normSpec": "/app/data/game-objects/items/ships/Vossk/K'Suuk.bbship/v_ship_041_vossk_normal_specular.png"
 }

@@ -45,13 +45,13 @@
   "value": 1654800,
   "wiki": "https://galaxyonfire.fandom.com/wiki/Ward",
   "assets": [
-    "/app/data/game-objects/items/ships/Terran/Ward.bbship/mask1.jpg",
-    "/app/data/game-objects/items/ships/Terran/Ward.bbship/mask2.jpg",
-    "/app/data/game-objects/items/ships/Terran/Ward.bbship/ship_017_terran_diffuse.bmp",
-    "/app/data/game-objects/items/ships/Terran/Ward.bbship/ship_017_terran_normal_specular.bmp",
+    "/app/data/game-objects/items/ships/Terran/Ward.bbship/mask1.png",
+    "/app/data/game-objects/items/ships/Terran/Ward.bbship/mask2.png",
+    "/app/data/game-objects/items/ships/Terran/Ward.bbship/ship_017_terran_diffuse.png",
+    "/app/data/game-objects/items/ships/Terran/Ward.bbship/ship_017_terran_normal_specular.png",
     "/app/data/game-objects/items/ships/Terran/Ward.bbship/skinBase.png",
     "/app/data/game-objects/items/ships/Terran/Ward.bbship/Ward_Full.mtl",
     "/app/data/game-objects/items/ships/Terran/Ward.bbship/Ward_Full.obj"
   ],
-  "normSpec": "/app/data/game-objects/items/ships/Terran/Ward.bbship/ship_017_terran_normal_specular.bmp"
+  "normSpec": "/app/data/game-objects/items/ships/Terran/Ward.bbship/ship_017_terran_normal_specular.png"
 }

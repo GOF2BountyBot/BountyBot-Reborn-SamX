@@ -5,6 +5,7 @@ import httpx
 from discord import app_commands
 from discord.ext import commands
 from shared import bblogger
+from utils.autocomplete_helpers import player_inventory_autocomplete
 from utils.autocomplete_utils import normalize_for_search
 
 # Set up logger
@@ -436,9 +437,43 @@ class InventoryCog(commands.Cog):
             flogger.error(f"Error in /search: {e}")
             await interaction.followup.send("⚠️ An error occurred while searching inventory.", ephemeral=True)
 
+    async def item_autocomplete(self, interaction: discord.Interaction, current: str) -> list[app_commands.Choice[str]]:
+        """Autocomplete for /item — shows items in the invoking player's inventory.
+
+        If the user has already chosen an ``item_type`` value, we scope results
+        to that type; otherwise all inventory items are returned.
+        """
+        # Scope to the already-chosen item_type (if any) so the dropdown is relevant.
+        item_type_filter: str | None = None
+        try:
+            namespace = getattr(interaction, "namespace", None)
+            if namespace is not None:
+                selected_type = getattr(namespace, "item_type", None)
+                if selected_type:
+                    item_type_filter = selected_type
+        except Exception:  # pylint: disable=broad-exception-caught
+            item_type_filter = None
+
+        return await player_inventory_autocomplete(
+            self.http_client,
+            api_base,
+            interaction,
+            current,
+            item_type_filter=item_type_filter,
+        )
+
     @app_commands.command(name="item", description="Get detailed information about a specific item")
     @app_commands.describe(
         item_name="Name of the item to check", item_type="Type of the item (ship, weapon, module, turret)"
+    )
+    @app_commands.autocomplete(item_name=item_autocomplete)
+    @app_commands.choices(
+        item_type=[
+            app_commands.Choice(name="Ship", value="ship"),
+            app_commands.Choice(name="Weapon", value="weapon"),
+            app_commands.Choice(name="Module", value="module"),
+            app_commands.Choice(name="Turret", value="turret"),
+        ]
     )
     async def item(self, interaction: discord.Interaction, item_name: str, item_type: str):
         """Get detailed item information including inventory count."""

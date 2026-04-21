@@ -6,12 +6,13 @@ This file provides detailed guidance for AI agents working on utility modules in
 
 ## Overview
 
-This directory contains **5 utility modules** shared across cogs and REST routers. They provide:
+This directory contains **7 utility modules** shared across cogs and REST routers. They provide:
 - Bidirectional conversion between Discord objects and JSON/API payloads
 - Discord exception → HTTP exception mapping
 - Permission evaluation and flag registry
 - Embed formatting utilities
 - Command validation and cooldown management
+- Autocomplete normalization and shared autocomplete helpers
 
 These modules contain **no business logic** — they are pure conversion and validation utilities.
 
@@ -21,11 +22,66 @@ These modules contain **no business logic** — they are pure conversion and val
 
 | File | Key Classes/Functions | Consumer |
 |------|-----------------------|----------|
+| `autocomplete_utils.py` | `normalize_for_search()` | Cogs — accent/apostrophe/hyphen-insensitive string normalization for autocomplete filters |
+| `autocomplete_helpers.py` | `resolve_player_id()`, `player_ships_autocomplete()`, `player_inventory_autocomplete()` | Cogs — shared autocomplete logic for player-scoped ships and inventory items |
 | `command_utils.py` | `CommandValidator`, `CommandHandler`, `get_command_handler()` | `bot.py`, prefix commands |
 | `discord_converters.py` | `GuildConverter`, `ChannelConverter`, `RoleConverter`, `UserConverter`, `MessageConverter`, `PermissionConverter` | REST routers |
 | `discord_helpers.py` | `resolve_bot()`, `get_entity_or_404()`, `handle_discord_exception()`, `normalize_emoji()`, `tag_to_dict()`, `tags_to_edit_payload()` | REST routers |
 | `embed_converter.py` | `EmbedConverter` | Cogs, REST routers, `discord_converters.py` |
 | `permission_utils.py` | `PERMISSION_FLAGS`, `calculate_effective_permissions()`, `check_permission()`, `evaluate_user_guild_permissions()`, etc. | REST routers |
+
+---
+
+## `autocomplete_helpers.py`
+
+### Purpose
+Centralises autocomplete logic shared by multiple cogs (player-scoped ship lookup
+and inventory lookup). Previously duplicated across `shipsCog.setactive_autocomplete`
+and would have been duplicated again for `/ship`/`/nickname`/`/item`; now a
+single source of truth.
+
+### Key properties
+- **Silent degradation.** Every helper returns `[]` on any error — Discord
+  autocomplete has no user-visible error surface.
+- **Short timeout (3s default).** Keystroke-triggered, so snappy responses
+  matter more than completeness.
+- **No module-level state.** All helpers accept the caller's `httpx.AsyncClient`
+  so tests can substitute a mocked client without monkeypatching.
+
+### Functions
+
+```python
+from utils.autocomplete_helpers import (
+    resolve_player_id,
+    player_ships_autocomplete,
+    player_inventory_autocomplete,
+)
+
+# Upsert-style player ID lookup (returns None on any failure)
+player_id = await resolve_player_id(
+    http_client, api_base, user_id, guild_id, timeout=3.0
+)
+
+# Player-scoped ship choices; value=str(id), label uses 🟢 for active ship
+choices = await player_ships_autocomplete(
+    http_client, api_base, interaction, current,
+    exclude_active=False,  # set True in flows that forbid active ship
+)
+
+# Player-scoped inventory choices; label formatted 'Name (Type) xN' (qty >1)
+choices = await player_inventory_autocomplete(
+    http_client, api_base, interaction, current,
+    item_type_filter="weapon",  # optional; scope to a specific item_type
+)
+```
+
+### Consumers
+- `shipsCog`: `/ship`, `/nickname`, `/setactive` (all delegate to `player_ships_autocomplete`)
+- `inventoryCog`: `/item` (delegates to `player_inventory_autocomplete`)
+
+Migration of `/equip`/`/unequip`/`/give` autocompletes to this helper is
+deferred — keep their existing inline implementations unless a targeted
+refactor is scoped.
 
 ---
 

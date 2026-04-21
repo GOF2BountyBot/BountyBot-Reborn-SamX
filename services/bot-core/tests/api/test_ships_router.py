@@ -4,12 +4,36 @@ Import path setup and sqlalchemy_utils mocking are handled by
 tests/api/conftest.py which runs before this module is loaded.
 """
 
-from datetime import datetime
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+
+
+def make_real_player_ship(**overrides):
+    """Create a REAL PlayerShip ORM instance with deterministic defaults.
+
+    Used by A.28 regression tests to ensure router response assembly reads
+    PlayerShip-shaped attributes (player_id, nickname, is_active, weapons,
+    modules, turrets, ship_name) and not Ship-seed-data fields.
+    """
+    from persist.models.player_ship import PlayerShip
+
+    defaults = dict(
+        id=1,
+        player_id=1,
+        ship_name="Niode",
+        nickname=None,
+        is_active=False,
+        weapons=["Pulse Laser"],
+        modules=["Shield Generator"],
+        turrets=[],
+        created_at=datetime(2026, 1, 1, tzinfo=UTC),
+    )
+    defaults.update(overrides)
+    return PlayerShip(**defaults)
 
 
 def make_mock_ship(**overrides):
@@ -90,7 +114,24 @@ def mock_equipment_service():
 
 
 @pytest.fixture
-def test_app(mock_ship_repo, mock_player_repo, mock_equipment_service):
+def mock_ship_definition_repo():
+    """Mock ShipRepository (ship definitions / seed data).
+
+    This repo should NOT be called by any PlayerShip-shaped handler.
+    It exposes only Ship-definition-shaped methods; if a router regression
+    re-injects ShipRepository where PlayerShipRepository is needed, tests
+    will surface the bug as AttributeError rather than false-greening on
+    the mock_ship_repo fixture.
+    """
+    repo = AsyncMock(spec=["get_by_id", "get_by_name", "list_all", "create_or_update", "remove"])
+    # Deliberately do NOT configure PlayerShip-only methods (get_active_ship,
+    # set_active_ship, update_loadout, update_nickname, get_ship_loadout_summary,
+    # get_player_ships). Any call to those on this mock will raise AttributeError.
+    return repo
+
+
+@pytest.fixture
+def test_app(mock_ship_repo, mock_ship_definition_repo, mock_player_repo, mock_equipment_service):
     app = FastAPI()
     from api.routers.ships import (
         get_equipment_service,
@@ -101,7 +142,11 @@ def test_app(mock_ship_repo, mock_player_repo, mock_equipment_service):
     from api.routers.ships import router as ships_router
 
     app.include_router(ships_router, prefix="/api/v1")
-    app.dependency_overrides[get_ship_repository] = lambda: mock_ship_repo
+    # NOTE: get_ship_repository override uses a Ship-definition-shaped mock,
+    # NOT the PlayerShip-shaped mock_ship_repo. This ensures regressions
+    # that mis-inject ShipRepository in PlayerShip handlers surface as test
+    # failures (AttributeError on missing PlayerShip methods). See A.28.
+    app.dependency_overrides[get_ship_repository] = lambda: mock_ship_definition_repo
     app.dependency_overrides[get_player_repository] = lambda: mock_player_repo
     app.dependency_overrides[get_player_ship_repository] = lambda: mock_ship_repo
     app.dependency_overrides[get_equipment_service] = lambda: mock_equipment_service
@@ -789,13 +834,26 @@ def mock_equip_check_equipment_service():
 
 
 @pytest.fixture
-def equip_check_test_app(mock_ship_repo, mock_player_repo, mock_equip_check_equipment_service):
+def equip_check_test_app(
+    mock_ship_repo,
+    mock_ship_definition_repo,
+    mock_player_repo,
+    mock_equip_check_equipment_service,
+):
     app = FastAPI()
-    from api.routers.ships import get_equipment_service, get_item_repository, get_player_repository, get_ship_repository
+    from api.routers.ships import (
+        get_equipment_service,
+        get_item_repository,
+        get_player_repository,
+        get_player_ship_repository,
+        get_ship_repository,
+    )
     from api.routers.ships import router as ships_router
 
     app.include_router(ships_router, prefix="/api/v1")
-    app.dependency_overrides[get_ship_repository] = lambda: mock_ship_repo
+    # See test_app fixture for the DI-split rationale (A.28 regression guard).
+    app.dependency_overrides[get_ship_repository] = lambda: mock_ship_definition_repo
+    app.dependency_overrides[get_player_ship_repository] = lambda: mock_ship_repo
     app.dependency_overrides[get_player_repository] = lambda: mock_player_repo
     app.dependency_overrides[get_equipment_service] = lambda: mock_equip_check_equipment_service
     app.dependency_overrides[get_item_repository] = lambda: AsyncMock()
@@ -951,3 +1009,227 @@ class TestUnequipItemAutoDetect:
         response = client.post("/api/v1/ships/1/unequip", json=payload)
 
         assert response.status_code == 200
+
+
+# ===========================================================================
+# A.28 regression coverage — real PlayerShip objects, PlayerShipRepository DI
+# ===========================================================================
+#
+# These tests intentionally use REAL PlayerShip ORM instances (not MagicMock
+# with arbitrary attributes). They verify the router assembles ShipResponse
+# from PlayerShip-shaped attributes, and that the PlayerShipRepository is the
+# dependency actually invoked (not ShipRepository). Each test keeps to ≤ 2
+# mocks per project standards.
+
+
+class TestA28PlayerShipShape:
+    """Regression suite for A.28: ships router must use PlayerShipRepository."""
+
+    def test_get_ship_returns_player_ship_fields(self, client, mock_ship_repo):
+        """GET /ships/{id} populates every ShipResponse field from a real PlayerShip."""
+        real_ship = make_real_player_ship(
+            id=42,
+            player_id=7,
+            ship_name="Niode",
+            nickname="Nightingale",
+            is_active=True,
+            weapons=["Pulse Laser", "Burst Laser"],
+            modules=["Shield Generator"],
+            turrets=["Auto Turret"],
+        )
+        mock_ship_repo.get_by_id = AsyncMock(return_value=real_ship)
+
+        response = client.get("/api/v1/ships/42")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["id"] == 42
+        assert data["player_id"] == 7
+        assert data["ship_name"] == "Niode"
+        assert data["nickname"] == "Nightingale"
+        assert data["is_active"] is True
+        assert data["weapons"] == ["Pulse Laser", "Burst Laser"]
+        assert data["modules"] == ["Shield Generator"]
+        assert data["turrets"] == ["Auto Turret"]
+        assert data["created_at"].startswith("2026-01-01")
+        # Verify the PlayerShipRepository was used
+        mock_ship_repo.get_by_id.assert_called_once()
+
+    def test_get_active_ship_uses_player_ship_repository(self, client, mock_ship_repo):
+        """GET /ships/player/{id}/active must call PlayerShipRepository.get_active_ship."""
+        real_ship = make_real_player_ship(id=11, player_id=3, is_active=True)
+        mock_ship_repo.get_active_ship = AsyncMock(return_value=real_ship)
+
+        response = client.get("/api/v1/ships/player/3/active")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["id"] == 11
+        assert data["player_id"] == 3
+        assert data["is_active"] is True
+        mock_ship_repo.get_active_ship.assert_called_once()
+
+    def test_set_active_ship_persists_active_flag(self, client, mock_ship_repo, mock_player_repo):
+        """PUT /ships/{id}/set-active round-trips is_active=True on a real PlayerShip."""
+        real_ship = make_real_player_ship(id=5, player_id=9, is_active=True)
+        mock_ship_repo.set_active_ship = AsyncMock(return_value=real_ship)
+
+        response = client.put("/api/v1/ships/5/set-active?player_id=9")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["id"] == 5
+        assert data["player_id"] == 9
+        assert data["is_active"] is True
+        mock_ship_repo.set_active_ship.assert_called_once()
+
+    def test_update_nickname_updates_player_ship(self, client, mock_ship_repo):
+        """PUT /ships/{id}/nickname returns updated nickname from real PlayerShip."""
+        real_ship = make_real_player_ship(id=8, player_id=2, nickname="StarHunter")
+        mock_ship_repo.update_nickname = AsyncMock(return_value=real_ship)
+
+        response = client.put("/api/v1/ships/8/nickname", json={"nickname": "StarHunter"})
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["id"] == 8
+        assert data["nickname"] == "StarHunter"
+        mock_ship_repo.update_nickname.assert_called_once()
+
+    def test_update_loadout_returns_updated_weapons_modules_turrets(self, client, mock_ship_repo):
+        """PUT /ships/{id}/loadout reflects changes in all three JSON array fields."""
+        real_ship = make_real_player_ship(
+            id=3,
+            player_id=4,
+            weapons=["Multi-cannon"],
+            modules=["Booster", "Reactor"],
+            turrets=["Beam Turret"],
+        )
+        mock_ship_repo.update_loadout = AsyncMock(return_value=real_ship)
+
+        payload = {
+            "weapons": ["Multi-cannon"],
+            "modules": ["Booster", "Reactor"],
+            "turrets": ["Beam Turret"],
+        }
+        response = client.put("/api/v1/ships/3/loadout", json=payload)
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["weapons"] == ["Multi-cannon"]
+        assert data["modules"] == ["Booster", "Reactor"]
+        assert data["turrets"] == ["Beam Turret"]
+        mock_ship_repo.update_loadout.assert_called_once()
+
+    def test_delete_active_ship_rejected_with_400(self, client, mock_ship_repo):
+        """DELETE /ships/{id} on an active PlayerShip returns 400 with guard message."""
+        active_ship = make_real_player_ship(id=99, player_id=6, is_active=True)
+        mock_ship_repo.get_by_id = AsyncMock(return_value=active_ship)
+
+        response = client.delete("/api/v1/ships/99")
+
+        assert response.status_code == 400
+        data = response.json()
+        assert "active" in data["detail"].lower()
+        mock_ship_repo.remove.assert_not_called()
+
+    def test_delete_inactive_ship_succeeds(self, client, mock_ship_repo):
+        """DELETE /ships/{id} on a non-active PlayerShip returns 200 and calls repo.remove."""
+        inactive_ship = make_real_player_ship(id=100, player_id=6, is_active=False)
+        mock_ship_repo.get_by_id = AsyncMock(return_value=inactive_ship)
+
+        response = client.delete("/api/v1/ships/100")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert "100" in data["message"]
+        mock_ship_repo.remove.assert_called_once()
+        # Repo.remove should receive the PlayerShip instance we returned
+        call_args = mock_ship_repo.remove.call_args
+        assert call_args[0][1] is inactive_ship
+
+    def test_create_ship_creates_player_ship(self, client, mock_ship_repo, mock_player_repo):
+        """POST /ships/ calls PlayerShipRepository.create_or_update and returns PlayerShip shape."""
+        real_ship = make_real_player_ship(
+            id=55,
+            player_id=12,
+            ship_name="Cobra MkIII",
+            weapons=["Pulse Laser"],
+            modules=[],
+            turrets=[],
+        )
+        mock_ship_repo.create_or_update = AsyncMock(return_value=real_ship)
+
+        payload = {
+            "player_id": 12,
+            "ship_name": "Cobra MkIII",
+            "nickname": None,
+            "weapons": ["Pulse Laser"],
+            "modules": [],
+            "turrets": [],
+        }
+        response = client.post("/api/v1/ships/", json=payload)
+
+        assert response.status_code == 201
+        data = response.json()
+        assert data["id"] == 55
+        assert data["player_id"] == 12
+        assert data["ship_name"] == "Cobra MkIII"
+        # Both deps should have been exercised (player existence + player-ship create)
+        mock_player_repo.get_by_id.assert_called_once()
+        mock_ship_repo.create_or_update.assert_called_once()
+
+    def test_get_ship_loadout_returns_player_ship_fields(self, client, mock_ship_repo):
+        """GET /ships/{id}/loadout must call PlayerShipRepository.get_ship_loadout_summary
+        and surface PlayerShip-shaped data (is_active, nickname, per-category counts).
+
+        A.28 regression guard for route #7: if the route is reverted to use
+        ShipRepository, the mock_ship_definition_repo (which does NOT define
+        get_ship_loadout_summary) will raise AttributeError and fail this test.
+        The summary dict is derived from a real PlayerShip ORM instance so the
+        assertions are coupled to the real field shape, not arbitrary mock data.
+        """
+        real_ship = make_real_player_ship(
+            id=77,
+            player_id=13,
+            ship_name="Niode",
+            nickname="Peregrine",
+            is_active=True,
+            weapons=["Pulse Laser", "Burst Laser"],
+            modules=["Shield Generator"],
+            turrets=["Auto Turret"],
+        )
+        # Build the summary from the real PlayerShip's fields — this is the
+        # exact shape PlayerShipRepository.get_ship_loadout_summary produces.
+        mock_ship_repo.get_ship_loadout_summary = AsyncMock(
+            return_value={
+                "ship_id": real_ship.id,
+                "ship_name": real_ship.ship_name,
+                "nickname": real_ship.nickname,
+                "is_active": real_ship.is_active,
+                "weapons": real_ship.weapons,
+                "modules": real_ship.modules,
+                "turrets": real_ship.turrets,
+                "weapons_count": len(real_ship.weapons),
+                "modules_count": len(real_ship.modules),
+                "turrets_count": len(real_ship.turrets),
+            }
+        )
+
+        response = client.get("/api/v1/ships/77/loadout")
+
+        assert response.status_code == 200
+        data = response.json()
+        # Verify PlayerShip-shaped fields round-trip through the router
+        assert data["ship_id"] == 77
+        assert data["ship_name"] == "Niode"
+        assert data["nickname"] == "Peregrine"
+        assert data["is_active"] is True
+        assert data["weapons"] == ["Pulse Laser", "Burst Laser"]
+        assert data["modules"] == ["Shield Generator"]
+        assert data["turrets"] == ["Auto Turret"]
+        assert data["weapons_count"] == 2
+        assert data["modules_count"] == 1
+        assert data["turrets_count"] == 1
+        # PlayerShipRepository is the dependency that must be invoked
+        mock_ship_repo.get_ship_loadout_summary.assert_called_once()

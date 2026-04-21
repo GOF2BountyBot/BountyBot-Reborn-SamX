@@ -119,13 +119,16 @@ async def get_player_ships(
 
 
 @router.get("/{ship_id}", response_model=ShipResponse)
-async def get_ship(ship_id: int, ship_repo: ShipRepository = Depends(get_ship_repository)):
+async def get_ship(
+    ship_id: int,
+    player_ship_repo: PlayerShipRepository = Depends(get_player_ship_repository),
+):
     """Get a specific ship by ID."""
     flogger.debug(f"Getting ship {ship_id}")
 
     try:
         async with get_db_session() as db:
-            ship = await ship_repo.get_by_id(db, ship_id)
+            ship = await player_ship_repo.get_by_id(db, ship_id)
             if not ship:
                 raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Ship {ship_id} not found")
 
@@ -151,7 +154,7 @@ async def get_ship(ship_id: int, ship_repo: ShipRepository = Depends(get_ship_re
 @router.post("/", response_model=ShipResponse, status_code=status.HTTP_201_CREATED)
 async def create_ship(
     request: CreateShipRequest,
-    ship_repo: ShipRepository = Depends(get_ship_repository),
+    player_ship_repo: PlayerShipRepository = Depends(get_player_ship_repository),
     player_repo: PlayerRepository = Depends(get_player_repository),
 ):
     """Create a new ship for a player."""
@@ -168,7 +171,7 @@ async def create_ship(
 
             # Create ship
             ship_data = request.model_dump()
-            ship = await ship_repo.create_or_update(db, ship_data)
+            ship = await player_ship_repo.create_or_update(db, ship_data)
 
             return ShipResponse(
                 id=ship.id,
@@ -190,13 +193,16 @@ async def create_ship(
 
 
 @router.get("/player/{player_id}/active", response_model=ShipResponse | None)
-async def get_active_ship(player_id: int, ship_repo: ShipRepository = Depends(get_ship_repository)):
+async def get_active_ship(
+    player_id: int,
+    player_ship_repo: PlayerShipRepository = Depends(get_player_ship_repository),
+):
     """Get the active ship for a player."""
     flogger.debug(f"Getting active ship for player {player_id}")
 
     try:
         async with get_db_session() as db:
-            ship = await ship_repo.get_active_ship(db, player_id)
+            ship = await player_ship_repo.get_active_ship(db, player_id)
 
             if not ship:
                 return None
@@ -224,7 +230,7 @@ async def get_active_ship(player_id: int, ship_repo: ShipRepository = Depends(ge
 async def set_active_ship(
     ship_id: int,
     player_id: int,
-    ship_repo: ShipRepository = Depends(get_ship_repository),
+    player_ship_repo: PlayerShipRepository = Depends(get_player_ship_repository),
     player_repo: PlayerRepository = Depends(get_player_repository),
 ):
     """Set a ship as the active ship for a player."""
@@ -232,7 +238,7 @@ async def set_active_ship(
 
     try:
         async with get_db_session() as db:
-            ship = await ship_repo.set_active_ship(db, player_id, ship_id)
+            ship = await player_ship_repo.set_active_ship(db, player_id, ship_id)
 
             # Update player's active ship reference
             await player_repo.update_active_ship(db, player_id, ship_id)
@@ -260,7 +266,9 @@ async def set_active_ship(
 
 @router.put("/{ship_id}/loadout", response_model=ShipResponse)
 async def update_ship_loadout(
-    ship_id: int, request: UpdateLoadoutRequest, ship_repo: ShipRepository = Depends(get_ship_repository)
+    ship_id: int,
+    request: UpdateLoadoutRequest,
+    player_ship_repo: PlayerShipRepository = Depends(get_player_ship_repository),
 ):
     """Update a ship's equipment loadout."""
     flogger.info(f"Updating loadout for ship {ship_id}")
@@ -276,7 +284,7 @@ async def update_ship_loadout(
             if request.turrets is not None:
                 loadout_updates["turrets"] = request.turrets
 
-            ship = await ship_repo.update_loadout(db, ship_id, loadout_updates)
+            ship = await player_ship_repo.update_loadout(db, ship_id, loadout_updates)
 
             return ShipResponse(
                 id=ship.id,
@@ -301,14 +309,16 @@ async def update_ship_loadout(
 
 @router.put("/{ship_id}/nickname", response_model=ShipResponse)
 async def update_ship_nickname(
-    ship_id: int, request: UpdateNicknameRequest, ship_repo: ShipRepository = Depends(get_ship_repository)
+    ship_id: int,
+    request: UpdateNicknameRequest,
+    player_ship_repo: PlayerShipRepository = Depends(get_player_ship_repository),
 ):
     """Update a ship's nickname."""
     flogger.info(f"Updating nickname for ship {ship_id}: {request.nickname}")
 
     try:
         async with get_db_session() as db:
-            ship = await ship_repo.update_nickname(db, ship_id, request.nickname)
+            ship = await player_ship_repo.update_nickname(db, ship_id, request.nickname)
 
             return ShipResponse(
                 id=ship.id,
@@ -471,13 +481,16 @@ async def unequip_item(
 
 
 @router.get("/{ship_id}/loadout", response_model=ShipLoadoutSummaryResponse)
-async def get_ship_loadout(ship_id: int, ship_repo: ShipRepository = Depends(get_ship_repository)):
+async def get_ship_loadout(
+    ship_id: int,
+    player_ship_repo: PlayerShipRepository = Depends(get_player_ship_repository),
+):
     """Get detailed loadout information for a ship."""
     flogger.debug(f"Getting loadout for ship {ship_id}")
 
     try:
         async with get_db_session() as db:
-            loadout = await ship_repo.get_ship_loadout_summary(db, ship_id)
+            loadout = await player_ship_repo.get_ship_loadout_summary(db, ship_id)
 
             return ShipLoadoutSummaryResponse(
                 ship_id=loadout["ship_id"],
@@ -502,13 +515,16 @@ async def get_ship_loadout(ship_id: int, ship_repo: ShipRepository = Depends(get
 
 
 @router.delete("/{ship_id}")
-async def delete_ship(ship_id: int, ship_repo: ShipRepository = Depends(get_ship_repository)):
+async def delete_ship(
+    ship_id: int,
+    player_ship_repo: PlayerShipRepository = Depends(get_player_ship_repository),
+):
     """Delete a ship."""
     flogger.warning(f"Deleting ship {ship_id}")
 
     try:
         async with get_db_session() as db:
-            ship = await ship_repo.get_by_id(db, ship_id)
+            ship = await player_ship_repo.get_by_id(db, ship_id)
             if not ship:
                 raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Ship {ship_id} not found")
 
@@ -519,7 +535,7 @@ async def delete_ship(ship_id: int, ship_repo: ShipRepository = Depends(get_ship
                     detail="Cannot delete active ship. Set another ship as active first.",
                 )
 
-            await ship_repo.remove(db, ship)
+            await player_ship_repo.remove(db, ship)
 
             return {"message": f"Ship {ship_id} deleted successfully"}
 

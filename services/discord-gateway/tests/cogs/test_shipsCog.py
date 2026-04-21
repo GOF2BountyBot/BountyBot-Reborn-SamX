@@ -493,7 +493,7 @@ class TestShipCommand:
         mock_ships_cog.http_client.get = AsyncMock(side_effect=[ship_resp, loadout_resp])
         mock_ships_cog.http_client.post = AsyncMock(return_value=player_resp)
 
-        asyncio.run(mock_ships_cog.ship.callback(mock_ships_cog, interaction, ship_id=1))
+        asyncio.run(mock_ships_cog.ship.callback(mock_ships_cog, interaction, ship_id="1"))
 
         interaction.response.defer.assert_awaited_once_with(thinking=True)
         interaction.followup.send.assert_awaited_once()
@@ -526,7 +526,7 @@ class TestShipCommand:
         mock_ships_cog.http_client.get = AsyncMock(side_effect=[ship_resp, loadout_resp])
         mock_ships_cog.http_client.post = AsyncMock(return_value=player_resp)
 
-        asyncio.run(mock_ships_cog.ship.callback(mock_ships_cog, interaction, ship_id=2))
+        asyncio.run(mock_ships_cog.ship.callback(mock_ships_cog, interaction, ship_id="2"))
 
         interaction.followup.send.assert_awaited_once()
         call_kwargs = interaction.followup.send.call_args[1]
@@ -546,7 +546,7 @@ class TestShipCommand:
         mock_ships_cog.http_client.get = AsyncMock(return_value=ship_resp)
         mock_ships_cog.http_client.post = AsyncMock(return_value=player_resp)
 
-        asyncio.run(mock_ships_cog.ship.callback(mock_ships_cog, interaction, ship_id=1))
+        asyncio.run(mock_ships_cog.ship.callback(mock_ships_cog, interaction, ship_id="1"))
 
         interaction.followup.send.assert_awaited_once()
         call_args = interaction.followup.send.call_args
@@ -569,7 +569,7 @@ class TestShipCommand:
 
         mock_ships_cog.http_client.get = AsyncMock(side_effect=http_error)
 
-        asyncio.run(mock_ships_cog.ship.callback(mock_ships_cog, interaction, ship_id=999))
+        asyncio.run(mock_ships_cog.ship.callback(mock_ships_cog, interaction, ship_id="999"))
 
         interaction.followup.send.assert_awaited_once()
         call_args = interaction.followup.send.call_args
@@ -592,7 +592,7 @@ class TestShipCommand:
 
         mock_ships_cog.http_client.get = AsyncMock(side_effect=http_error)
 
-        asyncio.run(mock_ships_cog.ship.callback(mock_ships_cog, interaction, ship_id=1))
+        asyncio.run(mock_ships_cog.ship.callback(mock_ships_cog, interaction, ship_id="1"))
 
         interaction.followup.send.assert_awaited_once()
         call_args = interaction.followup.send.call_args
@@ -605,7 +605,7 @@ class TestShipCommand:
 
         mock_ships_cog.http_client.get = AsyncMock(side_effect=RuntimeError("unexpected"))
 
-        asyncio.run(mock_ships_cog.ship.callback(mock_ships_cog, interaction, ship_id=1))
+        asyncio.run(mock_ships_cog.ship.callback(mock_ships_cog, interaction, ship_id="1"))
 
         interaction.followup.send.assert_awaited_once()
         call_args = interaction.followup.send.call_args
@@ -631,7 +631,7 @@ class TestShipCommand:
         mock_ships_cog.http_client.get = AsyncMock(side_effect=[ship_resp, loadout_resp])
         mock_ships_cog.http_client.post = AsyncMock(return_value=player_resp)
 
-        asyncio.run(mock_ships_cog.ship.callback(mock_ships_cog, interaction, ship_id=1))
+        asyncio.run(mock_ships_cog.ship.callback(mock_ships_cog, interaction, ship_id="1"))
 
         interaction.followup.send.assert_awaited_once()
         call_kwargs = interaction.followup.send.call_args[1]
@@ -656,7 +656,7 @@ class TestShipCommand:
         mock_ships_cog.http_client.get = AsyncMock(side_effect=[ship_resp, loadout_resp])
         mock_ships_cog.http_client.post = AsyncMock(return_value=player_resp)
 
-        asyncio.run(mock_ships_cog.ship.callback(mock_ships_cog, interaction, ship_id=1))
+        asyncio.run(mock_ships_cog.ship.callback(mock_ships_cog, interaction, ship_id="1"))
 
         interaction.followup.send.assert_awaited_once()
 
@@ -679,7 +679,7 @@ class TestShipCommand:
         mock_ships_cog.http_client.get = AsyncMock(side_effect=[ship_resp, loadout_resp])
         mock_ships_cog.http_client.post = AsyncMock(return_value=player_resp)
 
-        asyncio.run(mock_ships_cog.ship.callback(mock_ships_cog, interaction, ship_id=1))
+        asyncio.run(mock_ships_cog.ship.callback(mock_ships_cog, interaction, ship_id="1"))
 
         interaction.followup.send.assert_awaited_once()
 
@@ -879,7 +879,7 @@ class TestNicknameCommand:
         mock_ships_cog.http_client.post = AsyncMock(return_value=player_resp)
         mock_ships_cog.http_client.put = AsyncMock(return_value=nick_resp)
 
-        asyncio.run(mock_ships_cog.nickname.callback(mock_ships_cog, interaction, ship_id=1, nickname="NewName"))
+        asyncio.run(mock_ships_cog.nickname.callback(mock_ships_cog, interaction, ship_id="1", nickname="NewName"))
 
         interaction.response.defer.assert_awaited_once_with(thinking=True)
         interaction.followup.send.assert_awaited_once()
@@ -905,7 +905,7 @@ class TestNicknameCommand:
         mock_ships_cog.http_client.post = AsyncMock(return_value=player_resp)
         mock_ships_cog.http_client.put = AsyncMock(return_value=nick_resp)
 
-        asyncio.run(mock_ships_cog.nickname.callback(mock_ships_cog, interaction, ship_id=1, nickname="MyShip"))
+        asyncio.run(mock_ships_cog.nickname.callback(mock_ships_cog, interaction, ship_id="1", nickname="MyShip"))
 
         interaction.followup.send.assert_awaited_once()
         call_kwargs = interaction.followup.send.call_args[1]
@@ -917,7 +917,7 @@ class TestNicknameCommand:
 
         long_name = "A" * 51
 
-        asyncio.run(mock_ships_cog.nickname.callback(mock_ships_cog, interaction, ship_id=1, nickname=long_name))
+        asyncio.run(mock_ships_cog.nickname.callback(mock_ships_cog, interaction, ship_id="1", nickname=long_name))
 
         interaction.followup.send.assert_awaited_once()
         call_args = interaction.followup.send.call_args
@@ -937,7 +937,7 @@ class TestNicknameCommand:
         mock_ships_cog.http_client.get = AsyncMock(return_value=ship_resp)
         mock_ships_cog.http_client.post = AsyncMock(return_value=player_resp)
 
-        asyncio.run(mock_ships_cog.nickname.callback(mock_ships_cog, interaction, ship_id=1, nickname="Test"))
+        asyncio.run(mock_ships_cog.nickname.callback(mock_ships_cog, interaction, ship_id="1", nickname="Test"))
 
         interaction.followup.send.assert_awaited_once()
         call_args = interaction.followup.send.call_args
@@ -960,7 +960,7 @@ class TestNicknameCommand:
 
         mock_ships_cog.http_client.get = AsyncMock(side_effect=http_error)
 
-        asyncio.run(mock_ships_cog.nickname.callback(mock_ships_cog, interaction, ship_id=999, nickname="Test"))
+        asyncio.run(mock_ships_cog.nickname.callback(mock_ships_cog, interaction, ship_id="999", nickname="Test"))
 
         interaction.followup.send.assert_awaited_once()
         call_args = interaction.followup.send.call_args
@@ -983,7 +983,7 @@ class TestNicknameCommand:
 
         mock_ships_cog.http_client.get = AsyncMock(side_effect=http_error)
 
-        asyncio.run(mock_ships_cog.nickname.callback(mock_ships_cog, interaction, ship_id=1, nickname="Test"))
+        asyncio.run(mock_ships_cog.nickname.callback(mock_ships_cog, interaction, ship_id="1", nickname="Test"))
 
         interaction.followup.send.assert_awaited_once()
         call_args = interaction.followup.send.call_args
@@ -996,7 +996,7 @@ class TestNicknameCommand:
 
         mock_ships_cog.http_client.get = AsyncMock(side_effect=RuntimeError("unexpected"))
 
-        asyncio.run(mock_ships_cog.nickname.callback(mock_ships_cog, interaction, ship_id=1, nickname="Test"))
+        asyncio.run(mock_ships_cog.nickname.callback(mock_ships_cog, interaction, ship_id="1", nickname="Test"))
 
         interaction.followup.send.assert_awaited_once()
         call_args = interaction.followup.send.call_args
@@ -1286,6 +1286,122 @@ class TestSetactiveInvalidShipId:
         interaction.followup.send.assert_awaited_once()
         call_kwargs = interaction.followup.send.call_args[1]
         assert "embed" in call_kwargs
+
+
+# ---------------------------------------------------------------------------
+# A.29 new autocomplete coverage: /ship and /nickname
+# ---------------------------------------------------------------------------
+
+
+class TestShipAutocomplete:
+    """Tests for the new ship_autocomplete method (used by /ship and /nickname)."""
+
+    def test_ship_autocomplete_returns_player_ships_with_active_prefix(self, mock_ships_cog, make_mock_response):
+        """ship_autocomplete should list ships with 🟢 prefix on active + str value."""
+        interaction = _create_mock_interaction()
+
+        player_resp = make_mock_response({"id": 1})
+        ships_resp = make_mock_response(
+            [
+                _make_ship(7, "Eagle", is_active=True),
+                _make_ship(8, "Mako", is_active=False),
+            ]
+        )
+        mock_ships_cog.http_client.post = AsyncMock(return_value=player_resp)
+        mock_ships_cog.http_client.get = AsyncMock(return_value=ships_resp)
+
+        choices = asyncio.run(mock_ships_cog.ship_autocomplete(interaction, ""))
+
+        assert len(choices) == 2
+        active_choice = next((c for c in choices if c.value == "7"), None)
+        assert active_choice is not None
+        assert active_choice.value == "7"  # values are strings per the design
+        assert "🟢" in active_choice.name
+
+        inactive_choice = next((c for c in choices if c.value == "8"), None)
+        assert inactive_choice is not None
+        assert not inactive_choice.name.startswith("🟢")
+
+    def test_ship_autocomplete_returns_empty_on_failure(self, mock_ships_cog):
+        """ship_autocomplete should return [] on API failure (no error surface)."""
+        interaction = _create_mock_interaction()
+        mock_ships_cog.http_client.post = AsyncMock(side_effect=RuntimeError("boom"))
+
+        choices = asyncio.run(mock_ships_cog.ship_autocomplete(interaction, ""))
+
+        assert choices == []
+
+
+class TestShipCommandStrParamHandling:
+    """Tests for /ship — ship_id parameter is now str (was int)."""
+
+    def test_ship_accepts_numeric_string(self, mock_ships_cog, make_mock_response):
+        """/ship with '42' (str) should call bot-core with /api/v1/ships/42."""
+        interaction = _create_mock_interaction()
+
+        ship_resp = make_mock_response(_make_ship(ship_id=42, is_active=True))
+        player_resp = make_mock_response({"id": 1})
+        loadout_resp = make_mock_response(_make_loadout())
+
+        mock_ships_cog.http_client.get = AsyncMock(side_effect=[ship_resp, loadout_resp])
+        mock_ships_cog.http_client.post = AsyncMock(return_value=player_resp)
+
+        asyncio.run(mock_ships_cog.ship.callback(mock_ships_cog, interaction, ship_id="42"))
+
+        # Verify the first GET hit /api/v1/ships/42 (int path)
+        first_get_call = mock_ships_cog.http_client.get.call_args_list[0]
+        url = first_get_call[0][0]
+        assert url.endswith("/ships/42"), f"expected .../ships/42, got {url}"
+
+    def test_ship_rejects_non_numeric_string(self, mock_ships_cog):
+        """/ship with non-numeric ship_id shows a friendly error and does not call API."""
+        interaction = _create_mock_interaction()
+        mock_ships_cog.http_client.get = AsyncMock()
+        mock_ships_cog.http_client.post = AsyncMock()
+
+        asyncio.run(mock_ships_cog.ship.callback(mock_ships_cog, interaction, ship_id="notanumber"))
+
+        interaction.followup.send.assert_awaited_once()
+        call_args = interaction.followup.send.call_args
+        assert "invalid" in call_args[0][0].lower()
+        assert call_args[1].get("ephemeral", False)
+        mock_ships_cog.http_client.get.assert_not_called()
+
+
+class TestNicknameCommandStrParamHandling:
+    """Tests for /nickname — ship_id parameter is now str (was int)."""
+
+    def test_nickname_accepts_numeric_string(self, mock_ships_cog, make_mock_response):
+        """/nickname with '42' (str) should call bot-core with /api/v1/ships/42."""
+        interaction = _create_mock_interaction()
+
+        ship_resp = make_mock_response(_make_ship(ship_id=42, is_active=True))
+        player_resp = make_mock_response({"id": 1})
+        nick_resp = make_mock_response({"id": 42, "ship_name": "Eagle", "nickname": "MyShip", "is_active": True})
+
+        mock_ships_cog.http_client.get = AsyncMock(return_value=ship_resp)
+        mock_ships_cog.http_client.post = AsyncMock(return_value=player_resp)
+        mock_ships_cog.http_client.put = AsyncMock(return_value=nick_resp)
+
+        asyncio.run(mock_ships_cog.nickname.callback(mock_ships_cog, interaction, ship_id="42", nickname="MyShip"))
+
+        # Verify the ship lookup used the parsed int in the path
+        get_call = mock_ships_cog.http_client.get.call_args
+        url = get_call[0][0]
+        assert url.endswith("/ships/42")
+
+    def test_nickname_rejects_non_numeric_string(self, mock_ships_cog):
+        """/nickname with non-numeric ship_id shows friendly error and no API call."""
+        interaction = _create_mock_interaction()
+        mock_ships_cog.http_client.get = AsyncMock()
+
+        asyncio.run(mock_ships_cog.nickname.callback(mock_ships_cog, interaction, ship_id="bogus", nickname="Test"))
+
+        interaction.followup.send.assert_awaited_once()
+        call_args = interaction.followup.send.call_args
+        assert "invalid" in call_args[0][0].lower()
+        assert call_args[1].get("ephemeral", False)
+        mock_ships_cog.http_client.get.assert_not_called()
 
 
 if __name__ == "__main__":

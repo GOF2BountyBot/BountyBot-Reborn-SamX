@@ -1768,5 +1768,66 @@ class TestUnequipAutocomplete:
         assert choices == []
 
 
+# ---------------------------------------------------------------------------
+# A.29: /item autocomplete
+# ---------------------------------------------------------------------------
+
+
+class TestItemAutocomplete:
+    """Tests for the new item_autocomplete method on /item."""
+
+    def test_item_autocomplete_returns_inventory_items_with_type_and_qty(self, mock_inventory_cog, make_mock_response):
+        """item_autocomplete labels results as 'Name (Type) x<qty>' (qty only when >1)."""
+        interaction = _create_mock_interaction()
+        # No item_type pre-selected in the slash namespace.
+        interaction.namespace = MagicMock()
+        interaction.namespace.item_type = None
+
+        player_resp = make_mock_response({"id": 1})
+        items_resp = make_mock_response(
+            [
+                _make_inventory_item("Pulse Laser", "weapon", 3),
+                _make_inventory_item("Shield Booster", "module", 1),
+            ]
+        )
+        mock_inventory_cog.http_client.post = AsyncMock(return_value=player_resp)
+        mock_inventory_cog.http_client.get = AsyncMock(return_value=items_resp)
+
+        choices = asyncio.run(mock_inventory_cog.item_autocomplete(interaction, ""))
+
+        assert len(choices) == 2
+        names = [c.name for c in choices]
+        # Quantity suffix present when >1
+        assert any("Pulse Laser" in n and "Weapon" in n and "x3" in n for n in names)
+        # No quantity suffix when ==1
+        assert any("Shield Booster" in n and "Module" in n and "x1" not in n for n in names)
+        # Value is the raw item_name (not the label) for downstream API calls
+        values = [c.value for c in choices]
+        assert "Pulse Laser" in values
+        assert "Shield Booster" in values
+
+    def test_item_autocomplete_filters_by_selected_item_type(self, mock_inventory_cog, make_mock_response):
+        """When item_type is already picked, autocomplete only returns that type."""
+        interaction = _create_mock_interaction()
+        interaction.namespace = MagicMock()
+        interaction.namespace.item_type = "weapon"
+
+        player_resp = make_mock_response({"id": 1})
+        items_resp = make_mock_response(
+            [
+                _make_inventory_item("Pulse Laser", "weapon", 1),
+                _make_inventory_item("Shield Booster", "module", 1),
+            ]
+        )
+        mock_inventory_cog.http_client.post = AsyncMock(return_value=player_resp)
+        mock_inventory_cog.http_client.get = AsyncMock(return_value=items_resp)
+
+        choices = asyncio.run(mock_inventory_cog.item_autocomplete(interaction, ""))
+
+        values = [c.value for c in choices]
+        assert "Pulse Laser" in values
+        assert "Shield Booster" not in values
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

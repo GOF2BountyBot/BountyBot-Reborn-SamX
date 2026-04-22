@@ -28,6 +28,9 @@ sys.modules["shared.bblogger"] = _mock_bblogger
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "src"))
 
 from utils.autocomplete_helpers import (
+    _CURRENTLY_EQUIPPABLE_INVENTORY_TYPES,
+    player_equippable_autocomplete,
+    player_equipped_autocomplete,
     player_inventory_autocomplete,
     player_ships_autocomplete,
     resolve_player_id,
@@ -187,6 +190,172 @@ class TestPlayerInventoryAutocomplete:
         choices = asyncio.run(player_inventory_autocomplete(client, API_BASE, _make_interaction(), ""))
 
         assert choices == []
+
+
+class TestPlayerEquippableAutocomplete:
+    """Tests for player_equippable_autocomplete (A.37 new helper)."""
+
+    def test_excludes_equipped_items(self):
+        """Items already equipped on the active ship are filtered out."""
+        interaction = _make_interaction()
+        client = AsyncMock()
+
+        inv_resp = _make_response([
+            {"item_name": "Pulse Laser", "item_type": "primary_weapon", "quantity": 1},
+            {"item_name": "Shield Gen", "item_type": "module", "quantity": 1},
+            {"item_name": "Big Cannon", "item_type": "primary_weapon", "quantity": 1},
+        ])
+        ships_resp = _make_response([
+            {
+                "id": 1,
+                "ship_name": "Betty",
+                "is_active": True,
+                "weapons": ["Pulse Laser"],  # already equipped
+                "modules": [],
+                "turrets": [],
+                "secondary_weapons": [],
+            }
+        ])
+        player_resp = _make_response({"id": 1})
+
+        client.post = AsyncMock(return_value=player_resp)
+        client.get = AsyncMock(side_effect=[inv_resp, ships_resp])
+
+        choices = asyncio.run(player_equippable_autocomplete(client, API_BASE, interaction, ""))
+
+        names = {c.value for c in choices}
+        assert "Pulse Laser" not in names, "equipped item should be excluded"
+        assert "Shield Gen" in names
+        assert "Big Cannon" in names
+
+    def test_excludes_secondary_weapon_today(self):
+        """Items with item_type='secondary_weapon' are filtered out by _CURRENTLY_EQUIPPABLE_INVENTORY_TYPES."""
+        interaction = _make_interaction()
+        client = AsyncMock()
+
+        inv_resp = _make_response([
+            {"item_name": "Primary Gun", "item_type": "primary_weapon", "quantity": 1},
+            {"item_name": "Seeker Missile", "item_type": "secondary_weapon", "quantity": 1},
+        ])
+        ships_resp = _make_response([
+            {
+                "id": 1, "ship_name": "Betty", "is_active": True,
+                "weapons": [], "modules": [], "turrets": [], "secondary_weapons": [],
+            }
+        ])
+        player_resp = _make_response({"id": 1})
+        client.post = AsyncMock(return_value=player_resp)
+        client.get = AsyncMock(side_effect=[inv_resp, ships_resp])
+
+        choices = asyncio.run(player_equippable_autocomplete(client, API_BASE, interaction, ""))
+
+        names = {c.value for c in choices}
+        assert "Seeker Missile" not in names, "secondary_weapon must be excluded today"
+        assert "Primary Gun" in names
+
+    def test_returns_empty_on_api_error(self):
+        """Returns [] on any API failure."""
+        interaction = _make_interaction()
+        client = AsyncMock()
+        client.post = AsyncMock(side_effect=RuntimeError("boom"))
+
+        choices = asyncio.run(player_equippable_autocomplete(client, API_BASE, interaction, ""))
+        assert choices == []
+
+    def test_constants_exclude_secondary_weapon(self):
+        """_CURRENTLY_EQUIPPABLE_INVENTORY_TYPES must not contain 'secondary_weapon' today."""
+        assert "secondary_weapon" not in _CURRENTLY_EQUIPPABLE_INVENTORY_TYPES
+        # ship is also excluded from equippable (has its own slot flow)
+        assert "ship" not in _CURRENTLY_EQUIPPABLE_INVENTORY_TYPES
+        # These should be present:
+        assert "primary_weapon" in _CURRENTLY_EQUIPPABLE_INVENTORY_TYPES
+        assert "turret_weapon" in _CURRENTLY_EQUIPPABLE_INVENTORY_TYPES
+        assert "module" in _CURRENTLY_EQUIPPABLE_INVENTORY_TYPES
+
+
+class TestPlayerEquippedAutocomplete:
+    """Tests for player_equipped_autocomplete (A.37 new helper)."""
+
+    def test_includes_all_slots(self):
+        """Equipped items from weapons, modules, turrets, secondary_weapons all returned."""
+        interaction = _make_interaction()
+        client = AsyncMock()
+
+        player_resp = _make_response({"id": 1})
+        ships_resp = _make_response([
+            {
+                "id": 1,
+                "ship_name": "Betty",
+                "is_active": True,
+                "weapons": ["Pulse Laser"],
+                "modules": ["Shield Gen"],
+                "turrets": ["Beam Turret"],
+                "secondary_weapons": [],
+            }
+        ])
+        client.post = AsyncMock(return_value=player_resp)
+        client.get = AsyncMock(return_value=ships_resp)
+
+        choices = asyncio.run(player_equipped_autocomplete(client, API_BASE, interaction, ""))
+
+        names = {c.value for c in choices}
+        assert "Pulse Laser" in names
+        assert "Shield Gen" in names
+        assert "Beam Turret" in names
+
+    def test_returns_empty_when_no_active_ship(self):
+        """Returns [] when player has no active ship."""
+        interaction = _make_interaction()
+        client = AsyncMock()
+
+        player_resp = _make_response({"id": 1})
+        ships_resp = _make_response([
+            {
+                "id": 1, "ship_name": "Betty", "is_active": False,
+                "weapons": [], "modules": [], "turrets": [], "secondary_weapons": [],
+            }
+        ])
+        client.post = AsyncMock(return_value=player_resp)
+        client.get = AsyncMock(return_value=ships_resp)
+
+        choices = asyncio.run(player_equipped_autocomplete(client, API_BASE, interaction, ""))
+        assert choices == []
+
+    def test_returns_empty_on_api_error(self):
+        """Returns [] on any API failure."""
+        interaction = _make_interaction()
+        client = AsyncMock()
+        client.post = AsyncMock(side_effect=RuntimeError("boom"))
+
+        choices = asyncio.run(player_equipped_autocomplete(client, API_BASE, interaction, ""))
+        assert choices == []
+
+    def test_filters_by_current_input(self):
+        """Only items matching the current search term are returned."""
+        interaction = _make_interaction()
+        client = AsyncMock()
+
+        player_resp = _make_response({"id": 1})
+        ships_resp = _make_response([
+            {
+                "id": 1,
+                "ship_name": "Betty",
+                "is_active": True,
+                "weapons": ["Pulse Laser", "Micro Gun"],
+                "modules": ["Shield Gen"],
+                "turrets": [],
+                "secondary_weapons": [],
+            }
+        ])
+        client.post = AsyncMock(return_value=player_resp)
+        client.get = AsyncMock(return_value=ships_resp)
+
+        choices = asyncio.run(player_equipped_autocomplete(client, API_BASE, interaction, "Pulse"))
+
+        names = {c.value for c in choices}
+        assert "Pulse Laser" in names
+        assert "Micro Gun" not in names
+        assert "Shield Gen" not in names
 
 
 if __name__ == "__main__":

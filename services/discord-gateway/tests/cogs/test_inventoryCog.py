@@ -1618,52 +1618,61 @@ class TestEquipAutocomplete:
     """Tests for the equip_autocomplete method."""
 
     def test_equip_autocomplete_returns_equippable_items(self, mock_inventory_cog, make_mock_response):
-        """equip_autocomplete should return weapon/module/turret items from inventory."""
+        """equip_autocomplete should return primary_weapon/module/turret_weapon items.
+        A.35/A.36 fix: uses concrete item types, not generic aliases.
+        """
         interaction = _create_mock_interaction()
 
         player_resp = make_mock_response({"id": 1})
         items_resp = make_mock_response(
             [
-                _make_inventory_item("LaserCannon", "weapon", 1),
+                _make_inventory_item("LaserCannon", "primary_weapon", 1),  # concrete type
                 _make_inventory_item("ShieldModule", "module", 1),
-                _make_inventory_item("BigGun", "turret", 1),
+                _make_inventory_item("BigGun", "turret_weapon", 1),  # concrete type
                 # Ship should not appear
                 {"id": 9, "item_name": "Eagle", "item_type": "ship", "quantity": 1},
             ]
         )
+        # Mock both POST (player ID) and GET (inventory, active ship)
         mock_inventory_cog.http_client.post = AsyncMock(return_value=player_resp)
-        mock_inventory_cog.http_client.get = AsyncMock(return_value=items_resp)
+        active_ship_resp = make_mock_response(
+            [{"id": 1, "ship_name": "Betty", "is_active": True, "weapons": [], "modules": [], "turrets": [], "secondary_weapons": []}]
+        )
+        mock_inventory_cog.http_client.get = AsyncMock(side_effect=[items_resp, active_ship_resp])
 
         choices = asyncio.run(mock_inventory_cog.equip_autocomplete(interaction, ""))
 
         names = [c.name for c in choices]
-        assert "LaserCannon" in names
-        assert "ShieldModule" in names
-        assert "BigGun" in names
+        assert any("LaserCannon" in n for n in names), f"LaserCannon not found in {names}"
+        assert any("ShieldModule" in n for n in names), f"ShieldModule not found in {names}"
+        assert any("BigGun" in n for n in names), f"BigGun not found in {names}"
         # Ships should not appear in equip autocomplete
-        assert "Eagle" not in names
+        assert not any("Eagle" in n for n in names)
 
     def test_equip_autocomplete_filters_by_current_input(self, mock_inventory_cog, make_mock_response):
-        """equip_autocomplete should filter choices by current input."""
+        """equip_autocomplete should filter choices by current input (using concrete types)."""
         interaction = _create_mock_interaction()
 
         player_resp = make_mock_response({"id": 1})
         items_resp = make_mock_response(
             [
-                _make_inventory_item("LaserCannon", "weapon", 1),
-                _make_inventory_item("PlasmaCannon", "weapon", 1),
+                _make_inventory_item("LaserCannon", "primary_weapon", 1),
+                _make_inventory_item("PlasmaCannon", "primary_weapon", 1),
                 _make_inventory_item("ShieldModule", "module", 1),
             ]
         )
+        active_ship_resp = make_mock_response(
+            [{"id": 1, "ship_name": "Betty", "is_active": True, "weapons": [], "modules": [], "turrets": [], "secondary_weapons": []}]
+        )
         mock_inventory_cog.http_client.post = AsyncMock(return_value=player_resp)
-        mock_inventory_cog.http_client.get = AsyncMock(return_value=items_resp)
+        mock_inventory_cog.http_client.get = AsyncMock(side_effect=[items_resp, active_ship_resp])
 
         choices = asyncio.run(mock_inventory_cog.equip_autocomplete(interaction, "Cannon"))
 
         names = [c.name for c in choices]
-        assert "LaserCannon" in names
-        assert "PlasmaCannon" in names
-        assert "ShieldModule" not in names
+        assert any("LaserCannon" in n for n in names)
+        assert any("PlasmaCannon" in n for n in names)
+        assert not any("ShieldModule" in n for n in names)
 
     def test_equip_autocomplete_returns_empty_on_api_failure(self, mock_inventory_cog):
         """equip_autocomplete should return [] when API call fails."""

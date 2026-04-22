@@ -1,6 +1,28 @@
 # AGENTS.md - services
 
-Business logic layer for bot-core. All 17 service modules live here.
+Business logic layer for bot-core. All 17 service modules live here + 1 normalizer helper.
+
+---
+
+## Item-Type Vocabulary & Normalizer Contract (A.36 fix, 2026-04-22)
+
+**Storage invariant**: `player_inventories.item_type` and `guild_shops.item_type` always store
+**concrete types** only: `ship`, `primary_weapon`, `secondary_weapon`, `turret_weapon`, `module`.
+Generic aliases (`weapon`, `turret`) are NEVER persisted.
+
+**Normalizer module**: `_item_type_normalizer.py` provides:
+```python
+expand_item_type_to_concrete(item_type, *, context: Literal["catalog", "playable"]) -> tuple[str, ...]
+```
+- `context="catalog"` — returns all concrete types including `secondary_weapon` (for browsing)
+- `context="playable"` — returns only `GameConstants.CURRENTLY_ENABLED_TYPES` (surface-gated)
+- Raises `InvalidItemTypeError` (subclass of `ValueError`) for unknown types or disabled concrete types
+
+**Surface gating**: `GameConstants.CURRENTLY_ENABLED_TYPES` is the SINGLE lever controlling
+secondary-weapon exposure. To enable secondary weapons: add `"secondary_weapon"` to this frozenset.
+
+**Write-site rule**: all calls to `inventory_repo.add_item()` MUST use concrete types.
+Use `equipment_service.item_discriminator_to_concrete_type(item.type)` to resolve from STI discriminator.
 
 ---
 

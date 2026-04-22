@@ -24,9 +24,10 @@ class PlayerShip(Base):
     is_active: Mapped[bool] = mapped_column(Boolean, default=False)
 
     # Equipment loadouts (stored as JSON arrays of item names)
-    weapons: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)  # Array of equipped weapon names
+    weapons: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)  # Array of equipped primary weapon names
     modules: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)  # Array of equipped module names
-    turrets: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)  # Array of equipped turret names
+    turrets: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)  # Array of equipped turret weapon names
+    secondary_weapons: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)  # Equipped secondary weapons
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(UTC))
 
@@ -44,6 +45,11 @@ class PlayerShip(Base):
 
     def get_equipped_count(self, equipment_type: str) -> int:
         """Get the count of equipped items of a specific type."""
-        equipment_map = {"weapons": self.weapons, "modules": self.modules, "turrets": self.turrets}
+        equipment_map = {
+            "weapons": self.weapons,
+            "secondary_weapons": self.secondary_weapons,
+            "modules": self.modules,
+            "turrets": self.turrets,
+        }
         equipment_list = equipment_map.get(equipment_type, [])
         return len(equipment_list) if equipment_list else 0

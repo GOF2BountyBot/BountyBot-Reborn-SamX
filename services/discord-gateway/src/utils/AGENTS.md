@@ -4,6 +4,24 @@ This file provides detailed guidance for AI agents working on utility modules in
 
 ---
 
+## New Autocomplete Helpers (A.37, 2026-04-22)
+
+`autocomplete_helpers.py` now exports two new helpers:
+
+- **`player_equippable_autocomplete`** — items in player inventory that can be equipped
+  (item_type in `_CURRENTLY_EQUIPPABLE_INVENTORY_TYPES`, not already on active ship)
+- **`player_equipped_autocomplete`** — items currently equipped on the active ship
+  (all slots: weapons, modules, turrets, secondary_weapons)
+
+**Surface gating constant** `_CURRENTLY_EQUIPPABLE_INVENTORY_TYPES` mirrors
+`GameConstants.CURRENTLY_ENABLED_TYPES` (minus "ship"). Currently:
+`{"primary_weapon", "turret_weapon", "module"}` — secondary_weapon excluded.
+
+When secondary weapons ship: update BOTH this constant AND bot-core's
+`GameConstants.CURRENTLY_ENABLED_TYPES` in the same PR.
+
+---
+
 ## Overview
 
 This directory contains **7 utility modules** shared across cogs and REST routers. They provide:

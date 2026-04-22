@@ -11,10 +11,19 @@ Public helpers:
     - :func:`resolve_player_id` — upsert-style player lookup
     - :func:`player_ships_autocomplete` — choices of the invoking player's ships
     - :func:`player_inventory_autocomplete` — choices of the player's inventory items
+    - :func:`player_equippable_autocomplete` — items in inventory NOT yet equipped (A.37)
+    - :func:`player_equipped_autocomplete` — items currently equipped on active ship (A.37)
 
 These helpers are pure functions (no module-level state) and accept the
 caller's ``httpx.AsyncClient`` so tests can substitute their own client
 without monkeypatching.
+
+A.38 surface gating:
+    ``_CURRENTLY_EQUIPPABLE_INVENTORY_TYPES`` mirrors
+    ``GameConstants.CURRENTLY_ENABLED_TYPES`` (minus "ship") from bot-core.
+    Both must be updated together when secondary weapons are enabled.
+    Cross-reference: services/bot-core/src/services/game_constants.py
+        GameConstants.CURRENTLY_ENABLED_TYPES
 """
 
 from __future__ import annotations
@@ -27,6 +36,12 @@ from utils.autocomplete_utils import normalize_for_search
 
 # Discord hard limit on autocomplete choice count.
 _MAX_CHOICES = 25
+
+# Concrete item types that can be equipped via the user-facing /equip surface TODAY.
+# Mirrors bot-core GameConstants.CURRENTLY_ENABLED_TYPES minus "ship".
+# Cross-reference: services/bot-core/src/services/game_constants.py
+# When secondary weapons ship: add "secondary_weapon" here AND update bot-core's constant.
+_CURRENTLY_EQUIPPABLE_INVENTORY_TYPES: frozenset[str] = frozenset({"primary_weapon", "turret_weapon", "module"})
 
 
 async def resolve_player_id(
@@ -176,6 +191,145 @@ async def player_inventory_autocomplete(
             if norm_current in normalize_for_search(label):
                 seen.add(item_name)
                 choices.append(app_commands.Choice(name=label[:100], value=item_name))
+        return choices[:_MAX_CHOICES]
+    except Exception:  # pylint: disable=broad-exception-caught
+        return []
+
+
+async def player_equippable_autocomplete(
+    http_client: httpx.AsyncClient,
+    api_base: str,
+    interaction: discord.Interaction,
+    current: str,
+    *,
+    timeout: float = 3.0,
+) -> list[app_commands.Choice[str]]:
+    """Return Discord autocomplete choices of items the player can equip.
+
+    An item is "equippable" if:
+    - Its ``item_type`` is in ``_CURRENTLY_EQUIPPABLE_INVENTORY_TYPES`` (i.e.
+      primary_weapon, turret_weapon, or module — NOT secondary_weapon or ship today).
+    - It is NOT already equipped on the player's active ship.
+
+    Value format : ``item_name``
+    Label format : ``"ItemName (TypeLabel) xN"`` (quantity suffix when > 1)
+    Filter       : accent/apostrophe-insensitive substring match.
+
+    Args:
+        http_client: ``httpx.AsyncClient`` for API calls.
+        api_base: bot-core API base URL.
+        interaction: Discord interaction.
+        current: Partial text typed by the user; empty matches all.
+        timeout: Per-request timeout in seconds.
+
+    Returns:
+        Up to 25 matching choices, or ``[]`` on any error.
+    """
+    try:
+        player_id = await resolve_player_id(
+            http_client, api_base, interaction.user.id, interaction.guild_id, timeout=timeout
+        )
+        if not player_id:
+            return []
+
+        # Fetch inventory and active ship
+        inv_resp = await http_client.get(f"{api_base}/inventory/player/{player_id}", timeout=timeout)
+        inv_resp.raise_for_status()
+        items = inv_resp.json()
+
+        ships_resp = await http_client.get(f"{api_base}/ships/player/{player_id}", timeout=timeout)
+        ships_resp.raise_for_status()
+        ships = ships_resp.json()
+        active_ship = next((s for s in ships if s.get("is_active")), None)
+
+        # Build set of already-equipped item names
+        equipped_names: set[str] = set()
+        if active_ship:
+            equipped_names.update(active_ship.get("weapons") or [])
+            equipped_names.update(active_ship.get("modules") or [])
+            equipped_names.update(active_ship.get("turrets") or [])
+            equipped_names.update(active_ship.get("secondary_weapons") or [])
+
+        norm_current = normalize_for_search(current)
+        choices: list[app_commands.Choice[str]] = []
+        seen: set[str] = set()
+        for item in items:
+            item_name = item.get("item_name") or ""
+            item_type = item.get("item_type") or ""
+            quantity = item.get("quantity") or 0
+            if not item_name or item_name in seen:
+                continue
+            if item_type not in _CURRENTLY_EQUIPPABLE_INVENTORY_TYPES:
+                continue
+            if item_name in equipped_names:
+                continue
+            qty_suffix = f" x{quantity}" if quantity and quantity > 1 else ""
+            label = f"{item_name} ({item_type.title()}){qty_suffix}"
+            if norm_current in normalize_for_search(label):
+                seen.add(item_name)
+                choices.append(app_commands.Choice(name=label[:100], value=item_name))
+        return choices[:_MAX_CHOICES]
+    except Exception:  # pylint: disable=broad-exception-caught
+        return []
+
+
+async def player_equipped_autocomplete(
+    http_client: httpx.AsyncClient,
+    api_base: str,
+    interaction: discord.Interaction,
+    current: str,
+    *,
+    timeout: float = 3.0,
+) -> list[app_commands.Choice[str]]:
+    """Return Discord autocomplete choices of items currently equipped on the active ship.
+
+    Includes weapons, modules, turrets, and secondary_weapons (all slots).
+    Reads are NOT gated — if a secondary_weapon is somehow equipped, it is shown.
+
+    Value format : ``item_name``
+    Label format : ``item_name``
+    Filter       : accent/apostrophe-insensitive substring match.
+
+    Args:
+        http_client: ``httpx.AsyncClient`` for API calls.
+        api_base: bot-core API base URL.
+        interaction: Discord interaction.
+        current: Partial text typed by the user; empty matches all.
+        timeout: Per-request timeout in seconds.
+
+    Returns:
+        Up to 25 matching choices, or ``[]`` on any error.
+    """
+    try:
+        player_id = await resolve_player_id(
+            http_client, api_base, interaction.user.id, interaction.guild_id, timeout=timeout
+        )
+        if not player_id:
+            return []
+
+        ships_resp = await http_client.get(f"{api_base}/ships/player/{player_id}", timeout=timeout)
+        ships_resp.raise_for_status()
+        ships = ships_resp.json()
+        active_ship = next((s for s in ships if s.get("is_active")), None)
+        if not active_ship:
+            return []
+
+        # Collect all equipped items from all slots
+        equipped: list[str] = []
+        equipped.extend(active_ship.get("weapons") or [])
+        equipped.extend(active_ship.get("modules") or [])
+        equipped.extend(active_ship.get("turrets") or [])
+        equipped.extend(active_ship.get("secondary_weapons") or [])
+
+        norm_current = normalize_for_search(current)
+        choices: list[app_commands.Choice[str]] = []
+        seen: set[str] = set()
+        for item_name in equipped:
+            if not item_name or item_name in seen:
+                continue
+            if norm_current in normalize_for_search(item_name):
+                seen.add(item_name)
+                choices.append(app_commands.Choice(name=item_name, value=item_name))
         return choices[:_MAX_CHOICES]
     except Exception:  # pylint: disable=broad-exception-caught
         return []

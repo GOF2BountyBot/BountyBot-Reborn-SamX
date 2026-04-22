@@ -9,14 +9,14 @@ use lightweight mocking (≤ 2 mocks each, per project conventions).
 from __future__ import annotations
 
 import os
-from unittest.mock import MagicMock, call, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 from sqlalchemy.exc import OperationalError, ProgrammingError
 from src.persist.database.migration_manager import (
-    MigrationManager,
     _CONNECTION_RETRY_DELAY_SECONDS,
     _CONNECTION_RETRY_MAX_ATTEMPTS,
+    MigrationManager,
     _async_to_sync_url,
     _build_sync_url_from_env,
 )
@@ -216,10 +216,9 @@ class TestEnsureCurrent:
         with (
             patch("src.persist.database.migration_manager.command"),
             patch.object(mgr, "get_current_revision", side_effect=op_error) as mock_gcr,
-            patch("src.persist.database.migration_manager.time.sleep"),
+            patch("src.persist.database.migration_manager.time.sleep"),pytest.raises(OperationalError)
         ):
-            with pytest.raises(OperationalError):
-                mgr.ensure_current()
+            mgr.ensure_current()
 
         assert mock_gcr.call_count == _CONNECTION_RETRY_MAX_ATTEMPTS
 
@@ -232,10 +231,9 @@ class TestEnsureCurrent:
         with (
             patch("src.persist.database.migration_manager.command"),
             patch.object(mgr, "get_current_revision", side_effect=prog_error) as mock_gcr,
-            patch("src.persist.database.migration_manager.time.sleep") as mock_sleep,
+            patch("src.persist.database.migration_manager.time.sleep") as mock_sleep,pytest.raises(ProgrammingError)
         ):
-            with pytest.raises(ProgrammingError):
-                mgr.ensure_current()
+            mgr.ensure_current()
 
         # Called exactly once — no retry for non-OperationalError
         assert mock_gcr.call_count == 1

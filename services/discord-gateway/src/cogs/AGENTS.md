@@ -4,6 +4,33 @@ This file provides detailed guidance for AI agents working on Discord cogs in th
 
 ---
 
+## A.35/A.37 Pattern: /inventory Choice + /equip Autocomplete (2026-04-22)
+
+### /inventory item_type Choice (A.35)
+
+`inventoryCog.inventory` now uses `@app_commands.choices(item_type=[...])` with
+4 generic value choices: `ship`, `weapon`, `module`, `turret`. The server normalizes
+these to concrete types. Do NOT pass concrete types in the choices — keep generic.
+
+### /equip autocomplete filter (A.37)
+
+The inline `equip_autocomplete` in `inventoryCog.py` now filters items by
+`_CURRENTLY_EQUIPPABLE_INVENTORY_TYPES` (from `utils/autocomplete_helpers.py`) using
+concrete item types: `{"primary_weapon", "turret_weapon", "module"}`. The function
+also excludes already-equipped items by fetching the active ship.
+
+`unequip_autocomplete` now includes `secondary_weapons` slot in its loadout scan
+(for future compatibility).
+
+### Surface gating principle
+
+Cogs must gate secondary weapons using `_CURRENTLY_EQUIPPABLE_INVENTORY_TYPES`
+from `utils/autocomplete_helpers.py`. This constant mirrors
+`GameConstants.CURRENTLY_ENABLED_TYPES` (minus "ship") in bot-core.
+Both must be updated together when secondary weapons are enabled.
+
+---
+
 ## Overview
 
 This directory contains all **Discord bot cogs** — modular collections of slash commands and event listeners. Cogs are the primary way users interact with the BountyBot game through Discord.

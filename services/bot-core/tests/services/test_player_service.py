@@ -243,7 +243,6 @@ class TestGetOrCreatePlayer:
         self, service, mock_db, mock_user_repo, mock_player_repo, mock_config_repo
     ):
         """Exceptions from user_repo bubble up when creating new player."""
-        from services.config_service import GuildNotConfiguredError
 
         # New player path: config check passes, then user_repo is called
         config = _make_config(starting_credits=0)

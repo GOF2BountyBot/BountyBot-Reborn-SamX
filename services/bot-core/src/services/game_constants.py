@@ -173,6 +173,37 @@ class GameConstants:
     DUEL_CLOAK_CHANCE: int = 20  # %
 
     # ------------------------------------------------------------------
+    # Item Type Vocabulary
+    # ------------------------------------------------------------------
+
+    # All concrete item types present in the data model (used for browsing/catalog).
+    CATALOG_ITEM_TYPES: frozenset[str] = frozenset(
+        {"ship", "primary_weapon", "secondary_weapon", "turret_weapon", "module"}
+    )
+
+    # All concrete item types the data model has slots for (must match CATALOG_ITEM_TYPES
+    # once all mechanics are enabled; currently identical).
+    PLAYABLE_ITEM_TYPES: frozenset[str] = frozenset(
+        {"ship", "primary_weapon", "secondary_weapon", "turret_weapon", "module"}
+    )
+
+    # Concrete item types exposed on the user-facing economy/equip surface TODAY.
+    # secondary_weapon is excluded until secondary-weapon mechanics ship.
+    # To enable secondary weapons: add "secondary_weapon" to this set.
+    # This is the SINGLE lever that gates secondary-weapon exposure across all
+    # economy/loadout flows — no scattered if-branches needed.
+    CURRENTLY_ENABLED_TYPES: frozenset[str] = frozenset({"ship", "primary_weapon", "turret_weapon", "module"})
+
+    # Generic alias → concrete type expansion (catalog-flavoured; includes all types).
+    # Playable-flavoured expansion is derived at runtime by filtering against CURRENTLY_ENABLED_TYPES.
+    GENERIC_TO_CONCRETE_EXPANSION: dict[str, tuple[str, ...]] = {
+        "ship": ("ship",),
+        "module": ("module",),
+        "weapon": ("primary_weapon", "secondary_weapon", "turret_weapon"),
+        "turret": ("turret_weapon",),
+    }
+
+    # ------------------------------------------------------------------
     # Inventory
     # ------------------------------------------------------------------
 

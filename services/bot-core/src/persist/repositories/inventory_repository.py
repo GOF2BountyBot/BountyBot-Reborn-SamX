@@ -5,6 +5,8 @@ Handles database operations for PlayerInventory entities including
 item management, quantity tracking, and inventory queries.
 """
 
+from collections.abc import Sequence
+
 from shared import bblogger
 from sqlalchemy import and_, delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -109,6 +111,57 @@ class InventoryRepository(IRepository[PlayerInventory]):
             return list(result.scalars().all())
         except Exception as e:
             flogger.error(f"Error getting items for player {player_id}: {e}")
+            raise
+
+    async def get_player_items_by_types(
+        self, db: AsyncSession, player_id: int, item_types: Sequence[str]
+    ) -> list[PlayerInventory]:
+        """Get all inventory items for a player filtered by a set of concrete types.
+
+        Designed for use after generic alias expansion (e.g. ``"weapon"`` →
+        ``["primary_weapon", "turret_weapon"]``).  The repository always receives
+        concrete types — generic aliases must be expanded by the service layer
+        before calling this method.
+        """
+        try:
+            query = (
+                select(PlayerInventory)
+                .where(
+                    and_(
+                        PlayerInventory.player_id == player_id,
+                        PlayerInventory.item_type.in_(item_types),
+                    )
+                )
+                .order_by(PlayerInventory.item_type, PlayerInventory.item_name)
+            )
+            result = await db.execute(query)
+            return list(result.scalars().all())
+        except Exception as e:
+            flogger.error(f"Error getting items by types {item_types} for player {player_id}: {e}")
+            raise
+
+    async def get_player_item_by_types(
+        self, db: AsyncSession, player_id: int, item_types: Sequence[str], item_name: str
+    ) -> PlayerInventory | None:
+        """Get a specific named item from player's inventory, matching any of the given concrete types.
+
+        Returns the first matching row or ``None``.  Used when a generic alias
+        (e.g. ``"weapon"``) has been expanded to multiple concrete types and we
+        need to find a particular item regardless of its exact concrete type.
+        """
+        try:
+            result = await db.execute(
+                select(PlayerInventory).where(
+                    and_(
+                        PlayerInventory.player_id == player_id,
+                        PlayerInventory.item_type.in_(item_types),
+                        PlayerInventory.item_name == item_name,
+                    )
+                )
+            )
+            return result.scalars().first()
+        except Exception as e:
+            flogger.error(f"Error getting item '{item_name}' by types {item_types} for player {player_id}: {e}")
             raise
 
     async def get_player_item(

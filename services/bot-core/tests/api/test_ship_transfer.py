@@ -22,6 +22,7 @@ def make_mock_player_ship(**overrides):
         weapons=["Pulse Laser"],
         modules=["Shield Gen"],
         turrets=[],
+        secondary_weapons=[],
         created_at=datetime(2026, 1, 1),
     )
     defaults.update(overrides)
@@ -86,14 +87,16 @@ def client(test_app):
 class TestShipTransfer:
     """Tests for POST /api/v1/ships/transfer."""
 
+    @patch("api.routers.ships.ItemRepository")
     @patch("api.routers.ships.InventoryRepository")
     @patch("api.routers.ships.get_db_session")
     def test_transfer_ship_success(
-        self, mock_get_db, mock_inv_repo_cls, client, mock_player_ship_repo, mock_player_repo
+        self, mock_get_db, mock_inv_repo_cls, mock_item_repo_cls, client, mock_player_ship_repo, mock_player_repo
     ):
         """Returns 200 with transfer details on success.
 
         Verifies: ship exists, belongs to from_player, is not active, items returned.
+        A.36 regression guard: verifies concrete types used in add_item calls.
         """
         mock_session = _configure_db_mock(mock_get_db)
         # from_player is player 10, to_player is player 20
@@ -109,6 +112,23 @@ class TestShipTransfer:
         mock_inv_repo.add_item = AsyncMock()
         mock_inv_repo_cls.return_value = mock_inv_repo
 
+        # Mock ItemRepository to resolve concrete types
+        mock_item_repo = AsyncMock()
+        def _make_item_mock(type_str: str):
+            m = MagicMock()
+            m.type = type_str
+            return m
+
+        async def _get_by_name_any_type(db, name):
+            if name == "Pulse Laser":
+                return _make_item_mock("PrimaryWeapon")
+            if name == "Shield Gen":
+                return _make_item_mock("ShieldModule")
+            return None
+
+        mock_item_repo.get_by_name_any_type = _get_by_name_any_type
+        mock_item_repo_cls.return_value = mock_item_repo
+
         mock_session.commit = AsyncMock()
         mock_session.refresh = AsyncMock()
 
@@ -123,6 +143,11 @@ class TestShipTransfer:
         assert "items_returned_to_source" in data
         assert "Pulse Laser" in data["items_returned_to_source"]
         assert "Shield Gen" in data["items_returned_to_source"]
+        # A.36 regression guard: verify CONCRETE types used in add_item calls
+        add_calls = mock_inv_repo.add_item.call_args_list
+        item_types_used = {call.args[2] for call in add_calls if len(call.args) >= 3}
+        assert "weapon" not in item_types_used, "generic alias 'weapon' must not be written"
+        assert "turret" not in item_types_used, "generic alias 'turret' must not be written"
 
     @patch("api.routers.ships.InventoryRepository")
     @patch("api.routers.ships.get_db_session")

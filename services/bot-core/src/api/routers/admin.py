@@ -16,12 +16,14 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from persist.database.manager import get_db_session
 from persist.models.player_ship import PlayerShip
 from persist.repositories.inventory_repository import InventoryRepository
+from persist.repositories.item_repository import ItemRepository
 from persist.repositories.player_repository import PlayerRepository
 from persist.repositories.player_ship_repository import PlayerShipRepository
 from persist.repositories.ship_repository import ShipRepository
 from services.audit_service import AuditService
 from services.bounty_service import BountyService
 from services.config_service import ConfigService
+from services.equipment_service import item_discriminator_to_concrete_type
 from services.inventory_service import InventoryService
 from services.player_service import PlayerService
 from services.shop_service import ShopService
@@ -1005,21 +1007,36 @@ async def admin_remove_ship(
                     detail="Cannot remove the player's only active ship",
                 )
 
-            # Unequip all items back to inventory
+            # Unequip all items back to inventory using concrete item types.
+            # We resolve each item's concrete type via the ItemRepository STI discriminator
+            # to avoid writing generic aliases (weapon, turret) to the DB.
             inventory_repo = InventoryRepository()
+            item_repo = ItemRepository()
             items_returned = []
 
-            for weapon_name in list(ship.weapons or []):
-                await inventory_repo.add_item(db, player.id, "weapon", weapon_name, 1)
-                items_returned.append(weapon_name)
-
-            for module_name in list(ship.modules or []):
-                await inventory_repo.add_item(db, player.id, "module", module_name, 1)
-                items_returned.append(module_name)
-
-            for turret_name in list(ship.turrets or []):
-                await inventory_repo.add_item(db, player.id, "turret", turret_name, 1)
-                items_returned.append(turret_name)
+            all_slots = [
+                list(ship.weapons or []),
+                list(ship.modules or []),
+                list(ship.turrets or []),
+                list(ship.secondary_weapons or []),
+            ]
+            for slot_items in all_slots:
+                for item_name in slot_items:
+                    base = await item_repo.get_by_name_any_type(db, item_name)
+                    if not base:
+                        flogger.warning(
+                            f"admin_remove_ship: item '{item_name}' not found in item table; skipping"
+                        )
+                        continue
+                    concrete = item_discriminator_to_concrete_type(base.type)
+                    if not concrete:
+                        flogger.warning(
+                            f"admin_remove_ship: cannot map discriminator '{base.type}' "
+                            f"for item '{item_name}'; skipping"
+                        )
+                        continue
+                    await inventory_repo.add_item(db, player.id, concrete, item_name, 1)
+                    items_returned.append(item_name)
 
             # Delete the ship
             await player_ship_repo.remove(db, ship)

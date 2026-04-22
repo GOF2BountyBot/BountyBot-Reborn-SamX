@@ -4,6 +4,22 @@ Database connection management, migrations, and related utilities for bot-core.
 
 ---
 
+## Alembic Revision Flattening (2026-04-22)
+
+Revisions 0002–0007 have been **collapsed into 0001_initial_schema.py**. The
+single remaining revision creates all tables from current ORM metadata via
+`Base.metadata.sorted_tables`, which automatically includes the
+`player_ships.secondary_weapons JSON` column added in A.38.
+
+**IMPORTANT**: This migration requires a fresh database (no previous
+`alembic_version` row). If upgrading an existing deployment without a DB wipe,
+stamp the version manually before startup:
+```sql
+UPDATE alembic_version SET version_num = '0001';
+```
+
+---
+
 ## Overview
 
 This directory contains the full database infrastructure:

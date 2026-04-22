@@ -16,33 +16,66 @@ from persist.repositories.ship_repository import ShipRepository
 from shared import bblogger
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from services.exceptions import InvalidItemTypeError
 from services.game_constants import GameConstants
 
 flogger = bblogger.get_logger("equipment-service")
 
-# Valid equipment types
-VALID_EQUIPMENT_TYPES = {"weapons", "modules", "turrets"}
+# Valid equipment types (includes secondary_weapons for data-model completeness;
+# UX surface gates secondary_weapon via GameConstants.CURRENTLY_ENABLED_TYPES)
+VALID_EQUIPMENT_TYPES = {"weapons", "secondary_weapons", "modules", "turrets"}
 
-# Map equipment_type → ship slot field
+# Map equipment_type → ship slot field name
 _SLOT_MAP: dict[str, str] = {
     "weapons": "max_primaries",
+    "secondary_weapons": "max_secondaries",
     "modules": "max_modules",
     "turrets": "max_turrets",
 }
 
-# Map equipment_type → inventory item_type
+# Map equipment_type → concrete inventory item_type (A.36 fix: concrete, not generic)
 _INVENTORY_TYPE_MAP: dict[str, str] = {
-    "weapons": "weapon",
+    "weapons": "primary_weapon",       # was "weapon" — now concrete
+    "secondary_weapons": "secondary_weapon",
     "modules": "module",
-    "turrets": "turret",
+    "turrets": "turret_weapon",        # was "turret" — now concrete
 }
 
-# Map Item.type values → equipment_category
+# Map Item.type STI discriminator → equipment_category
 _ITEM_TYPE_TO_EQUIPMENT_CATEGORY: dict[str, str] = {
     "PrimaryWeapon": "weapons",
-    "SecondaryWeapon": "weapons",
+    "SecondaryWeapon": "secondary_weapons",  # was "weapons" — now routes to correct slot
     "TurretWeapon": "turrets",
 }
+
+# Map Item.type STI discriminator → concrete inventory item_type string.
+# Used by write-site fixers (admin.py, ships.py, shop_service.py) to avoid
+# persisting generic aliases.
+_ITEM_TYPE_TO_CONCRETE_INVENTORY_TYPE: dict[str, str] = {
+    "PrimaryWeapon": "primary_weapon",
+    "SecondaryWeapon": "secondary_weapon",
+    "TurretWeapon": "turret_weapon",
+}
+
+
+def item_discriminator_to_concrete_type(discriminator: str) -> str | None:
+    """Map an ``Item.type`` STI discriminator string to a concrete inventory item_type.
+
+    Returns one of ``"primary_weapon"``, ``"secondary_weapon"``,
+    ``"turret_weapon"``, ``"module"``, ``"ship"``, or ``None`` if the
+    discriminator is unrecognised.
+
+    Used by write-site helpers (admin_remove_ship, transfer_ship, sell_ship,
+    purchase_ship overflow) to resolve the concrete item_type from the STI
+    table without storing generic aliases.
+    """
+    if discriminator in _ITEM_TYPE_TO_CONCRETE_INVENTORY_TYPE:
+        return _ITEM_TYPE_TO_CONCRETE_INVENTORY_TYPE[discriminator]
+    if discriminator.endswith("Module"):
+        return "module"
+    if discriminator == "Ship":
+        return "ship"
+    return None
 
 
 def _item_type_to_equipment_category(item_type: str) -> str | None:
@@ -58,9 +91,10 @@ def _item_type_to_equipment_category(item_type: str) -> str | None:
 
 
 def _item_type_to_inventory_type(item_type: str) -> str | None:
-    """Convert an ``Item.type`` string to an inventory item_type string.
+    """Convert an ``Item.type`` string to a concrete inventory item_type string.
 
-    Returns one of ``"weapon"``, ``"module"``, ``"turret"``, or ``None``.
+    Returns one of ``"primary_weapon"``, ``"secondary_weapon"``,
+    ``"turret_weapon"``, ``"module"``, or ``None``.
     """
     category = _item_type_to_equipment_category(item_type)
     if category is None:
@@ -122,6 +156,14 @@ class EquipmentService:
                 self._validate_equipment_type(equipment_type)
             flogger.trace(f"Resolved equipment_type: {equipment_type}")
 
+            # Defense-in-depth: reject secondary_weapon equip when gated off.
+            # The cog-side filter also prevents this, but we enforce it here too.
+            _sec_gated = equipment_type == "secondary_weapons" and (
+                "secondary_weapon" not in GameConstants.CURRENTLY_ENABLED_TYPES
+            )
+            if _sec_gated:
+                raise InvalidItemTypeError("Secondary weapons are not currently enabled")
+
             # 2. Ship exists and belongs to player
             ship = await self._get_owned_ship(db, player_id, ship_id)
 
@@ -160,7 +202,7 @@ class EquipmentService:
                 "message": f"Successfully equipped '{item_name}' on ship {ship_id}",
             }
 
-        except ValueError:
+        except (ValueError, InvalidItemTypeError):
             raise
         except Exception as e:
             flogger.error(f"Unexpected error equipping item: {e}")
@@ -239,7 +281,7 @@ class EquipmentService:
                 "message": f"Successfully unequipped '{item_name}' from ship {ship_id}",
             }
 
-        except ValueError:
+        except (ValueError, InvalidItemTypeError):
             raise
         except Exception as e:
             flogger.error(f"Unexpected error unequipping item: {e}")
@@ -275,6 +317,14 @@ class EquipmentService:
         equipment_category = _item_type_to_equipment_category(item_type_str)
         if equipment_category is None:
             raise ValueError(f"Item '{item_name}' (type={item_type_str!r}) is not equippable")
+
+        # Defense-in-depth: reject secondary_weapon equip when gated off.
+        _sec_gated = (
+            equipment_category == "secondary_weapons"
+            and "secondary_weapon" not in GameConstants.CURRENTLY_ENABLED_TYPES
+        )
+        if _sec_gated:
+            raise InvalidItemTypeError("Secondary weapons are not currently enabled")
 
         # 2. Ship exists and belongs to player
         ship = await self._get_owned_ship(db, player_id, ship_id)
@@ -375,7 +425,12 @@ class EquipmentService:
     def _get_equipment_list(self, ship: Any, equipment_type: str) -> list[str]:
         """Return the list of equipped items for the given slot type."""
         flogger.trace(f"Retrieving equipment list: ship_id={ship.id}, equipment_type={equipment_type}")
-        attr_map = {"weapons": ship.weapons, "modules": ship.modules, "turrets": ship.turrets}
+        attr_map = {
+            "weapons": ship.weapons,
+            "secondary_weapons": getattr(ship, "secondary_weapons", None),
+            "modules": ship.modules,
+            "turrets": ship.turrets,
+        }
         raw = attr_map.get(equipment_type)
         result = list(raw) if raw else []
         flogger.trace(f"Equipment list for {equipment_type}: {result}")
@@ -413,12 +468,8 @@ class EquipmentService:
             ValueError: if item not found in game data.
         """
         flogger.trace(f"Validating item exists in game data: item_name={item_name}, inventory_type={inventory_type}")
-        game_type_map = {
-            "weapon": "primary_weapon",
-            "module": "module",
-            "turret": "turret_weapon",
-        }
-        game_item_type = game_type_map.get(inventory_type, inventory_type)
+        # _INVENTORY_TYPE_MAP now returns concrete types; pass through directly
+        game_item_type = inventory_type
         flogger.trace(f"Mapped inventory_type to game_item_type: {inventory_type} -> {game_item_type}")
         item = await self.item_repo.get_by_name(db, item_name, item_type=game_item_type)
         if not item:
@@ -529,10 +580,11 @@ class EquipmentService:
     def _find_item_in_equipped_slots(self, ship: Any, item_name: str) -> str | None:
         """Search all equipped slots on a ship for the given item name.
 
-        Returns the equipment category (``"weapons"``, ``"modules"``, ``"turrets"``)
-        containing the item, or ``None`` if not found in any slot.
+        Returns the equipment category (``"weapons"``, ``"secondary_weapons"``,
+        ``"modules"``, ``"turrets"``) containing the item, or ``None`` if not
+        found in any slot.
         """
-        for category in ("weapons", "modules", "turrets"):
+        for category in ("weapons", "secondary_weapons", "modules", "turrets"):
             if item_name in self._get_equipment_list(ship, category):
                 return category
         return None

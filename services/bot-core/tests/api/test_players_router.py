@@ -1590,8 +1590,8 @@ class TestCooldownReset:
 
     def test_reset_cooldown_sets_cooldown_to_none(self, client, mock_db_session):
         """Cooldown reset sets bounty_cooldown_end to None on the player object."""
-        from unittest.mock import AsyncMock, MagicMock, patch
         from datetime import UTC, datetime, timedelta
+        from unittest.mock import AsyncMock, MagicMock, patch
 
         mock_session, _ = mock_db_session
 

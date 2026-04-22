@@ -7,7 +7,6 @@ must display a user-friendly ephemeral message instead of crashing or
 showing a stack trace.
 """
 
-import asyncio
 import os
 import sys
 import types
@@ -130,7 +129,6 @@ class TestShopCogGuildNotConfigured:
     @pytest.mark.asyncio
     async def test_shop_command_guild_not_configured(self, cog):
         """'/shop' sends friendly message when POST /players/ returns 400 not-configured."""
-        import httpx
 
         interaction = _make_mock_interaction()
         interaction.response.defer = AsyncMock()
@@ -159,7 +157,6 @@ class TestShopCogGuildNotConfigured:
     async def test_is_guild_not_configured_false_for_other_400(self, cog):
         """_is_guild_not_configured returns False for unrelated 400 errors."""
         import httpx
-
         from cogs.shopCog import _is_guild_not_configured
 
         mock_response = MagicMock()
@@ -172,7 +169,6 @@ class TestShopCogGuildNotConfigured:
     async def test_is_guild_not_configured_false_for_404(self, cog):
         """_is_guild_not_configured returns False for 404 errors."""
         import httpx
-
         from cogs.shopCog import _is_guild_not_configured
 
         mock_response = MagicMock()

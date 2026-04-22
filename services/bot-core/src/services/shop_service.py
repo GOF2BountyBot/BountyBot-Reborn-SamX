@@ -16,6 +16,7 @@ from persist.models.guild_shop import GuildShop
 from persist.models.player_ship import PlayerShip
 from persist.repositories.config_repository import ConfigRepository
 from persist.repositories.inventory_repository import InventoryRepository
+from persist.repositories.item_repository import ItemRepository
 from persist.repositories.module_repository import ModuleRepository
 from persist.repositories.player_repository import PlayerRepository
 from persist.repositories.player_ship_repository import PlayerShipRepository
@@ -27,7 +28,22 @@ from persist.repositories.turret_weapon_repository import TurretWeaponRepository
 from shared import bblogger
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from services._item_type_normalizer import expand_item_type_to_concrete
+from services.exceptions import InvalidItemTypeError
+from services.game_constants import GameConstants
+
 flogger = bblogger.get_logger("shop-service")
+
+# Map concrete item_type → GuildConfig key used by get_count_range() / get_quantity_range().
+# These config keys are generic (legacy) and GuildConfig hasn't been updated yet.
+# When GuildConfig gains a "secondary_weapon" key, add it here.
+_CONCRETE_TO_CONFIG_KEY: dict[str, str] = {
+    "ship": "ship",
+    "primary_weapon": "weapon",
+    "module": "module",
+    "turret_weapon": "turret",
+    # secondary_weapon → future: "secondary_weapon"
+}
 
 
 class ShopService:
@@ -36,6 +52,7 @@ class ShopService:
         self.config_repo = ConfigRepository()
         self.player_repo = PlayerRepository()
         self.inventory_repo = InventoryRepository()
+        self.item_repo = ItemRepository()
         self.ship_repo = ShipRepository()
         self.player_ship_repo = PlayerShipRepository()
         self.primary_weapon_repo = PrimaryWeaponRepository()
@@ -51,9 +68,8 @@ class ShopService:
         # Price lookup cache: item_name → value
         self._price_cache: dict[str, int] | None = None
 
-    # Valid tiers and item types
+    # Valid tiers
     VALID_TIERS = ["Bronze", "Silver", "Gold", "Platinum"]
-    VALID_ITEM_TYPES = ["ship", "weapon", "module", "turret"]
 
     async def preload_static_data(self, db: AsyncSession) -> None:
         """Pre-load all static game item data into memory.
@@ -95,26 +111,35 @@ class ShopService:
     async def get_shop_items(
         self, db: AsyncSession, guild_id: int, tier: str, item_type: str | None = None
     ) -> list[GuildShop]:
-        """
-        Get shop items for a specific guild tier.
-        Optionally filter by item type.
+        """Get shop items for a specific guild tier, optionally filtered by item type.
+
+        *item_type* may be a concrete type (``"primary_weapon"``) or a generic
+        alias (``"weapon"``).  Generic aliases are expanded to all
+        currently-enabled concrete types.  Unknown types raise
+        ``InvalidItemTypeError`` (mapped to HTTP 422 by the router).
         """
         try:
             if tier not in self.VALID_TIERS:
                 raise ValueError(f"Invalid tier: {tier}")
 
-            if item_type and item_type not in self.VALID_ITEM_TYPES:
-                raise ValueError(f"Invalid item type: {item_type}")
-
             # Check if shop needs refresh
             await self._check_and_refresh_shop(db, guild_id, tier)
 
             # Get shop items
-            items = await self.shop_repo.get_shop_items(db, guild_id, tier, item_type)
+            if item_type is None:
+                items = await self.shop_repo.get_shop_items(db, guild_id, tier)
+            else:
+                concrete_types = expand_item_type_to_concrete(item_type, context="playable")
+                if len(concrete_types) == 1:
+                    items = await self.shop_repo.get_shop_items(db, guild_id, tier, concrete_types[0])
+                else:
+                    items = await self.shop_repo.get_shop_items_by_types(db, guild_id, tier, concrete_types)
 
             flogger.debug(f"Retrieved {len(items)} items from {tier} shop in guild {guild_id}")
             return items
 
+        except (InvalidItemTypeError, ValueError):
+            raise
         except Exception as e:
             flogger.error(f"Error getting shop items for guild {guild_id}, tier {tier}: {e}")
             raise
@@ -273,20 +298,25 @@ class ShopService:
                     weapons=[],
                     modules=[],
                     turrets=[],
+                    secondary_weapons=[],
                 )
                 db.add(new_player_ship)
                 await db.flush()  # Get the new ship's ID
 
-                # b. Transfer equipped items from old ship to new ship
+                # b. Transfer equipped items from old ship to new ship.
+                # Overflow items are returned to inventory using concrete item types
+                # (resolved via ItemRepository STI discriminator).
                 items_transferred: dict[str, list[str]] = {
                     "weapons": [],
                     "modules": [],
                     "turrets": [],
+                    "secondary_weapons": [],
                 }
                 items_unequipped: dict[str, list[str]] = {
                     "weapons": [],
                     "modules": [],
                     "turrets": [],
+                    "secondary_weapons": [],
                 }
 
                 if old_player_ship:
@@ -295,17 +325,12 @@ class ShopService:
                         "weapons": new_ship_static.max_primaries,
                         "modules": new_ship_static.max_modules,
                         "turrets": new_ship_static.max_turrets,
-                    }
-                    inventory_type_map = {
-                        "weapons": "weapon",
-                        "modules": "module",
-                        "turrets": "turret",
+                        "secondary_weapons": getattr(new_ship_static, "max_secondaries", 0),
                     }
 
-                    for equip_type in ("weapons", "modules", "turrets"):
+                    for equip_type in ("weapons", "modules", "turrets", "secondary_weapons"):
                         old_items: list[str] = list(getattr(old_player_ship, equip_type) or [])
                         max_slots = slot_limits[equip_type]
-                        inv_type = inventory_type_map[equip_type]
 
                         # Items that fit on new ship
                         fitting = old_items[:max_slots]
@@ -314,14 +339,25 @@ class ShopService:
                         items_transferred[equip_type] = fitting
                         items_unequipped[equip_type] = overflow
 
-                        # Unequip overflow items to inventory
+                        # Unequip overflow items to inventory using concrete type via STI discriminator
                         for item_name in overflow:
-                            await self.inventory_repo.add_item(db, player_id, inv_type, item_name, 1)
+                            base = await self.item_repo.get_by_name_any_type(db, item_name)
+                            if base:
+                                from services.equipment_service import item_discriminator_to_concrete_type
+                                concrete = item_discriminator_to_concrete_type(base.type)
+                                if concrete:
+                                    await self.inventory_repo.add_item(db, player_id, concrete, item_name, 1)
+                                    continue
+                            # Fallback: use the equipment-type's natural inventory type
+                            from services.equipment_service import _INVENTORY_TYPE_MAP as _EQUIP_INV_MAP
+                            fallback_type = _EQUIP_INV_MAP.get(equip_type, "module")
+                            await self.inventory_repo.add_item(db, player_id, fallback_type, item_name, 1)
 
                     # Apply transferred loadout to new ship
                     new_player_ship.weapons = items_transferred["weapons"]
                     new_player_ship.modules = items_transferred["modules"]
                     new_player_ship.turrets = items_transferred["turrets"]
+                    new_player_ship.secondary_weapons = items_transferred["secondary_weapons"]
 
                 # c. Handle old ship trade-in
                 if sell_old_ship and old_player_ship:
@@ -359,8 +395,8 @@ class ShopService:
                 else:
                     await self.shop_repo.update_quantity(db, shop_item_id, new_shop_quantity)
 
-            total_overflow = sum(len(v) for v in items_unequipped.values())
-            total_transferred = sum(len(v) for v in items_transferred.values())
+            total_overflow = sum(len(v) for v in items_unequipped.values()) if old_player_ship else 0
+            total_transferred = sum(len(v) for v in items_transferred.values()) if old_player_ship else 0
 
             transaction_details = {
                 "player_id": player_id,
@@ -407,15 +443,21 @@ class ShopService:
             if not player:
                 raise ValueError(f"Player {player_id} not found")
 
-            # Validate inputs
-            if item_type not in self.VALID_ITEM_TYPES:
-                raise ValueError(f"Invalid item type: {item_type}")
+            # Validate item_type — must be a single concrete type (sells are writes)
+            concrete_types = expand_item_type_to_concrete(item_type, context="playable")
+            if len(concrete_types) != 1:
+                raise InvalidItemTypeError(
+                    f"Sell operations require a concrete item type; "
+                    f"got generic alias '{item_type}' which expands to multiple types. "
+                    f"Use one of: {concrete_types}"
+                )
+            concrete_type = concrete_types[0]
 
             if target_tier not in self.VALID_TIERS:
                 raise ValueError(f"Invalid target tier: {target_tier}")
 
-            # Check if player has the item
-            inventory_item = await self.inventory_repo.get_player_item(db, player_id, item_type, item_name)
+            # Check if player has the item (exact match on concrete type)
+            inventory_item = await self.inventory_repo.get_player_item(db, player_id, concrete_type, item_name)
             if not inventory_item or inventory_item.quantity < quantity:
                 available = inventory_item.quantity if inventory_item else 0
                 raise ValueError(f"Insufficient item quantity. Available: {available}, Requested: {quantity}")
@@ -432,20 +474,20 @@ class ShopService:
                 if not player:
                     raise ValueError(f"Player {player_id} not found")
 
-                # Remove item from player inventory
-                await self.inventory_repo.remove_item(db, player_id, item_type, item_name, quantity)
+                # Remove item from player inventory (using concrete type)
+                await self.inventory_repo.remove_item(db, player_id, concrete_type, item_name, quantity)
 
                 # Add credits to player
                 await self.player_repo.update_credits(db, player_id, player.credits + total_sell_value, commit=False)
 
-                # Add item to target shop
+                # Add item to target shop (using concrete type)
                 await self._add_item_to_shop(
-                    db, player.guild_id, target_tier, item_type, item_name, quantity, base_price
+                    db, player.guild_id, target_tier, concrete_type, item_name, quantity, base_price
                 )
 
             transaction_details = {
                 "player_id": player_id,
-                "item_type": item_type,
+                "item_type": concrete_type,
                 "item_name": item_name,
                 "quantity": quantity,
                 "unit_sell_price": unit_sell_price,
@@ -454,9 +496,14 @@ class ShopService:
                 "target_shop_tier": target_tier,
             }
 
-            flogger.info(f"Player {player_id} sold {quantity}x {item_name} for {total_sell_value} credits")
+            flogger.info(
+                f"Player {player_id} sold {quantity}x {item_name} ({concrete_type}) "
+                f"for {total_sell_value} credits"
+            )
             return transaction_details
 
+        except (InvalidItemTypeError, ValueError):
+            raise
         except Exception as e:
             flogger.error(f"Error selling item {item_name} for player {player_id}: {e}")
             raise
@@ -511,11 +558,7 @@ class ShopService:
                 "weapons": [],
                 "modules": [],
                 "turrets": [],
-            }
-            inventory_type_map = {
-                "weapons": "weapon",
-                "modules": "module",
-                "turrets": "turret",
+                "secondary_weapons": [],
             }
 
             async with db.begin():
@@ -525,12 +568,23 @@ class ShopService:
                     raise ValueError(f"Player {player_id} not found")
 
                 if clear_equipment:
-                    # Unequip all items to player inventory before selling ship
-                    for equip_type in ("weapons", "modules", "turrets"):
+                    # Unequip all items to player inventory before selling ship.
+                    # Resolve concrete types via STI discriminator to avoid generic aliases.
+                    from services.equipment_service import _INVENTORY_TYPE_MAP as _EQUIP_INV_MAP
+                    from services.equipment_service import item_discriminator_to_concrete_type
+                    for equip_type in ("weapons", "modules", "turrets", "secondary_weapons"):
                         equipped: list[str] = list(getattr(player_ship, equip_type) or [])
-                        inv_type = inventory_type_map[equip_type]
                         for item_name in equipped:
-                            await self.inventory_repo.add_item(db, player_id, inv_type, item_name, 1)
+                            base = await self.item_repo.get_by_name_any_type(db, item_name)
+                            if base:
+                                concrete = item_discriminator_to_concrete_type(base.type)
+                                if concrete:
+                                    await self.inventory_repo.add_item(db, player_id, concrete, item_name, 1)
+                                    items_unequipped[equip_type].append(item_name)
+                                    continue
+                            # Fallback to equipment_service's natural concrete type map
+                            fallback = _EQUIP_INV_MAP.get(equip_type, "module")
+                            await self.inventory_repo.add_item(db, player_id, fallback, item_name, 1)
                             items_unequipped[equip_type].append(item_name)
 
                 # Credit player with ship's full value (no tax)
@@ -603,12 +657,21 @@ class ShopService:
             # Determine tech level
             shop_tech_level = force_tech_level if force_tech_level else random.randint(1, 9)
 
-            # Generate new shop inventory
+            # Generate new shop inventory.
+            # Use concrete item types derived from CURRENTLY_ENABLED_TYPES to avoid
+            # writing generic aliases to guild_shops.item_type.
+            # Only types that have a GuildConfig count_range key are generated;
+            # secondary_weapon is excluded until mechanics ship (no config key yet).
+            _generation_types = tuple(
+                t for t in GameConstants.CURRENTLY_ENABLED_TYPES if t in _CONCRETE_TO_CONFIG_KEY
+            )
             generated_items = []
 
-            for item_type in self.VALID_ITEM_TYPES:
-                count_range = config.get_count_range(item_type)
-                quantity_range = config.get_quantity_range(item_type)
+            for concrete_type in _generation_types:
+                config_key = _CONCRETE_TO_CONFIG_KEY[concrete_type]
+                count_range = config.get_count_range(config_key)
+                quantity_range = config.get_quantity_range(config_key)
+                item_type = concrete_type  # alias for _get_random_item_by_tech_level
 
                 item_count = random.randint(count_range["min"], count_range["max"])
 
@@ -699,11 +762,14 @@ class ShopService:
         return max(1, shop_tech_level - 2)
 
     async def _get_random_item_by_tech_level(self, db: AsyncSession, item_type: str, tech_level: int) -> str | None:
-        """Get a random item name by type and tech level.
+        """Get a random item name by (concrete) type and tech level.
+
+        Accepts both concrete types (``"primary_weapon"``, ``"turret_weapon"``)
+        and the legacy generic aliases (``"weapon"``, ``"turret"``) for backward
+        compatibility with callers that haven't been migrated.
 
         Uses the in-memory static cache if available (populated by
-        :meth:`preload_static_data`), otherwise falls back to direct
-        DB queries.
+        :meth:`preload_static_data`), otherwise falls back to direct DB queries.
         """
         if item_type == "ship":
             all_ships = (
@@ -715,7 +781,7 @@ class ShopService:
             chosen = random.choices(all_ships, weights=weights, k=1)[0]
             return chosen.name
 
-        if item_type == "weapon":
+        if item_type in ("weapon", "primary_weapon"):
             all_weapons = (
                 self._static_cache["weapon"]
                 if self._static_cache is not None
@@ -731,7 +797,7 @@ class ShopService:
             items = [m for m in all_modules if m.tech_level == tech_level]
             return random.choice(items).name if items else None
 
-        if item_type == "turret":
+        if item_type in ("turret", "turret_weapon"):
             all_turrets = (
                 self._static_cache["turret"]
                 if self._static_cache is not None

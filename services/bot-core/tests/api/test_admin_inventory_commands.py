@@ -60,6 +60,7 @@ def make_mock_player_ship(**overrides):
         weapons=["Pulse Laser"],
         modules=["Shield Gen"],
         turrets=[],
+        secondary_weapons=[],
         created_at=datetime(2026, 1, 1),
     )
     defaults.update(overrides)
@@ -473,15 +474,21 @@ class TestAdminRemoveShip:
     @patch("api.routers.admin.PlayerRepository")
     @patch("api.routers.admin.PlayerShipRepository")
     @patch("api.routers.admin.InventoryRepository")
+    @patch("api.routers.admin.ItemRepository")
     def test_remove_ship_success(
         self,
+        mock_item_repo_cls,
         mock_inv_repo_cls,
         mock_player_ship_repo_cls,
         mock_player_repo_cls,
         mock_get_db,
         client,
     ):
-        """Returns 200 and returns items to inventory on successful removal."""
+        """Returns 200 and returns items to inventory on successful removal.
+
+        A.36 regression guard: verifies that items are returned to inventory
+        with CONCRETE item types (primary_weapon, module) not generic aliases.
+        """
         _configure_db_mock(mock_get_db)
 
         mock_user_repo = AsyncMock()
@@ -502,6 +509,24 @@ class TestAdminRemoveShip:
         mock_inv_repo.add_item = AsyncMock()
         mock_inv_repo_cls.return_value = mock_inv_repo
 
+        # Mock ItemRepository to return items with concrete STI discriminators
+        mock_item_repo = AsyncMock()
+
+        def _make_item_mock(type_str: str):
+            m = MagicMock()
+            m.type = type_str
+            return m
+
+        async def _get_by_name_any_type(db, name):
+            if name == "Pulse Laser":
+                return _make_item_mock("PrimaryWeapon")
+            if name == "Shield Gen":
+                return _make_item_mock("ShieldModule")
+            return None
+
+        mock_item_repo.get_by_name_any_type = _get_by_name_any_type
+        mock_item_repo_cls.return_value = mock_item_repo
+
         payload = {
             "guild_id": 67890,
             "user_id": 111222333,
@@ -518,6 +543,13 @@ class TestAdminRemoveShip:
         # Should have returned weapons + modules
         assert "Pulse Laser" in data["items_returned_to_inventory"]
         assert "Shield Gen" in data["items_returned_to_inventory"]
+        # A.36 regression guard: verify CONCRETE types used in add_item calls
+        add_item_calls = mock_inv_repo.add_item.call_args_list
+        item_types_used = {call.args[2] for call in add_item_calls if len(call.args) >= 3}
+        assert "weapon" not in item_types_used, "generic alias 'weapon' must not be written"
+        assert "turret" not in item_types_used, "generic alias 'turret' must not be written"
+        assert "primary_weapon" in item_types_used, "PrimaryWeapon must map to concrete 'primary_weapon'"
+        assert "module" in item_types_used, "ShieldModule must map to concrete 'module'"
 
     @patch("api.routers.admin.get_db_session")
     @patch("api.routers.admin.PlayerRepository")

@@ -10,6 +10,7 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from persist.database.manager import get_db_session
+from services.exceptions import InvalidItemTypeError
 from services.inventory_service import InventoryService
 from shared import bblogger
 
@@ -61,8 +62,10 @@ async def get_player_inventory(
                 for item in items
             ]
 
+    except InvalidItemTypeError as e:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(e)) from e
     except ValueError as e:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e)) from e
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
     except Exception as e:
         flogger.error(f"Error getting inventory for player {player_id}: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to get inventory") from e
@@ -88,8 +91,10 @@ async def get_inventory_summary(player_id: int, inventory_service: InventoryServ
                 total_items=summary["total_items"],
             )
 
+    except InvalidItemTypeError as e:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(e)) from e
     except ValueError as e:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e)) from e
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
     except Exception as e:
         flogger.error(f"Error getting inventory summary for player {player_id}: {e}")
         raise HTTPException(
@@ -119,6 +124,8 @@ async def add_item_to_inventory(
                 transaction_time=result["transaction_time"],
             )
 
+    except InvalidItemTypeError as e:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(e)) from e
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
     except Exception as e:
@@ -150,6 +157,8 @@ async def remove_item_from_inventory(
                 transaction_time=None,  # Remove operations don't have acquisition time
             )
 
+    except InvalidItemTypeError as e:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(e)) from e
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
     except Exception as e:
@@ -177,6 +186,8 @@ async def transfer_item_between_players(
 
             return result
 
+    except InvalidItemTypeError as e:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(e)) from e
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
     except Exception as e:
@@ -207,8 +218,10 @@ async def search_inventory(
                 for item in items
             ]
 
+    except InvalidItemTypeError as e:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(e)) from e
     except ValueError as e:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e)) from e
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
     except Exception as e:
         flogger.error(f"Error searching inventory: {e}")
         raise HTTPException(

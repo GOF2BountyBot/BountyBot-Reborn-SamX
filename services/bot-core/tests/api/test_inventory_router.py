@@ -160,15 +160,29 @@ class TestGetPlayerInventory:
         assert call_args.args[2] == "weapon" or call_args.kwargs.get("item_type") == "weapon"
 
     @patch("api.routers.inventory.get_db_session")
-    def test_get_player_inventory_value_error_returns_404(self, mock_get_db, client, mock_inventory_service):
-        """Returns 404 when service raises ValueError (player not found)."""
+    def test_get_player_inventory_value_error_returns_400(self, mock_get_db, client, mock_inventory_service):
+        """Returns 400 when service raises ValueError (player not found, etc.).
+        A.33 fix: was 404 (wrong); correct code for validation errors is 400.
+        """
         _configure_db_mock(mock_get_db)
         mock_inventory_service.get_player_inventory.side_effect = ValueError("Player not found")
 
         response = client.get("/api/v1/inventory/player/999")
 
-        assert response.status_code == 404
+        assert response.status_code == 400
         assert "Player not found" in response.json()["detail"]
+
+    @patch("api.routers.inventory.get_db_session")
+    def test_get_player_inventory_invalid_item_type_returns_422(self, mock_get_db, client, mock_inventory_service):
+        """Returns 422 when service raises InvalidItemTypeError (A.33 fix)."""
+        from services.exceptions import InvalidItemTypeError
+        _configure_db_mock(mock_get_db)
+        mock_inventory_service.get_player_inventory.side_effect = InvalidItemTypeError("Unknown type 'foo'")
+
+        response = client.get("/api/v1/inventory/player/1?item_type=foo")
+
+        assert response.status_code == 422
+        assert "foo" in response.json()["detail"]
 
     @patch("api.routers.inventory.get_db_session")
     def test_get_player_inventory_server_error_returns_500(self, mock_get_db, client, mock_inventory_service):
@@ -209,14 +223,14 @@ class TestGetInventorySummary:
         assert data["total_items"] == 4
 
     @patch("api.routers.inventory.get_db_session")
-    def test_get_inventory_summary_value_error_returns_404(self, mock_get_db, client, mock_inventory_service):
-        """Returns 404 when service raises ValueError."""
+    def test_get_inventory_summary_value_error_returns_400(self, mock_get_db, client, mock_inventory_service):
+        """Returns 400 when service raises ValueError. A.33 fix: was 404."""
         _configure_db_mock(mock_get_db)
         mock_inventory_service.get_inventory_summary.side_effect = ValueError("Player not found")
 
         response = client.get("/api/v1/inventory/player/999/summary")
 
-        assert response.status_code == 404
+        assert response.status_code == 400
         assert "Player not found" in response.json()["detail"]
 
     @patch("api.routers.inventory.get_db_session")
@@ -285,6 +299,31 @@ class TestAddItemToInventory:
 
         assert response.status_code == 500
         assert "Failed to add item to inventory" in response.json()["detail"]
+
+    @patch("api.routers.inventory.get_db_session")
+    def test_add_item_invalid_item_type_service_error_returns_422(self, mock_get_db, client, mock_inventory_service):
+        """Returns 422 (not 400) when service raises InvalidItemTypeError on write (DEF-IVF-001 fix).
+
+        This covers the case where a generic alias (e.g. 'weapon') is passed to a write
+        endpoint — the service rejects it with InvalidItemTypeError, and the router must
+        map it to 422 (Unprocessable Entity), not 400 (Bad Request).
+        """
+        from services.exceptions import InvalidItemTypeError
+
+        _configure_db_mock(mock_get_db)
+        mock_inventory_service.add_item_to_inventory.side_effect = InvalidItemTypeError(
+            "Write operations require a concrete item type; got generic alias 'weapon'"
+        )
+
+        response = client.post(
+            "/api/v1/inventory/add",
+            json={"player_id": 1, "item_type": "weapon", "item_name": "Pulse Laser", "quantity": 1},
+        )
+
+        assert response.status_code == 422, (
+            f"Expected 422 for InvalidItemTypeError on write, got {response.status_code}"
+        )
+        assert "concrete item type" in response.json()["detail"]
 
     @patch("api.routers.inventory.get_db_session")
     def test_add_item_invalid_item_type_returns_422(self, mock_get_db, client, mock_inventory_service):
@@ -386,6 +425,26 @@ class TestRemoveItemFromInventory:
         assert "Failed to remove item from inventory" in response.json()["detail"]
 
     @patch("api.routers.inventory.get_db_session")
+    def test_remove_item_invalid_item_type_service_error_returns_422(self, mock_get_db, client, mock_inventory_service):
+        """Returns 422 (not 400) when service raises InvalidItemTypeError on remove write (DEF-IVF-001 fix)."""
+        from services.exceptions import InvalidItemTypeError
+
+        _configure_db_mock(mock_get_db)
+        mock_inventory_service.remove_item_from_inventory.side_effect = InvalidItemTypeError(
+            "Write operations require a concrete item type; got generic alias 'weapon'"
+        )
+
+        response = client.post(
+            "/api/v1/inventory/remove",
+            json={"player_id": 1, "item_type": "weapon", "item_name": "Pulse Laser", "quantity": 1},
+        )
+
+        assert response.status_code == 422, (
+            f"Expected 422 for InvalidItemTypeError on remove, got {response.status_code}"
+        )
+        assert "concrete item type" in response.json()["detail"]
+
+    @patch("api.routers.inventory.get_db_session")
     def test_remove_item_delegates_to_service_with_correct_args(self, mock_get_db, client, mock_inventory_service):
         """Service is called with the correct arguments from the request."""
         _configure_db_mock(mock_get_db)
@@ -477,6 +536,34 @@ class TestTransferItemBetweenPlayers:
         assert "Failed to transfer item" in response.json()["detail"]
 
     @patch("api.routers.inventory.get_db_session")
+    def test_transfer_item_invalid_item_type_service_error_returns_422(
+        self, mock_get_db, client, mock_inventory_service
+    ):
+        """Returns 422 (not 400) when service raises InvalidItemTypeError on transfer write (DEF-IVF-001 fix)."""
+        from services.exceptions import InvalidItemTypeError
+
+        _configure_db_mock(mock_get_db)
+        mock_inventory_service.transfer_item_between_players.side_effect = InvalidItemTypeError(
+            "Write operations require a concrete item type; got generic alias 'weapon'"
+        )
+
+        response = client.post(
+            "/api/v1/inventory/transfer",
+            json={
+                "from_player_id": 1,
+                "to_player_id": 2,
+                "item_type": "weapon",
+                "item_name": "Pulse Laser",
+                "quantity": 1,
+            },
+        )
+
+        assert response.status_code == 422, (
+            f"Expected 422 for InvalidItemTypeError on transfer, got {response.status_code}"
+        )
+        assert "concrete item type" in response.json()["detail"]
+
+    @patch("api.routers.inventory.get_db_session")
     def test_transfer_item_delegates_to_service_with_correct_args(self, mock_get_db, client, mock_inventory_service):
         """Service is called with the correct args from the request body."""
         _configure_db_mock(mock_get_db)
@@ -555,14 +642,14 @@ class TestSearchInventory:
         assert call_args.args[2] == "Eagle" or call_args.kwargs.get("q") == "Eagle"
 
     @patch("api.routers.inventory.get_db_session")
-    def test_search_inventory_value_error_returns_404(self, mock_get_db, client, mock_inventory_service):
-        """Returns 404 when service raises ValueError (player not found)."""
+    def test_search_inventory_value_error_returns_400(self, mock_get_db, client, mock_inventory_service):
+        """Returns 400 when service raises ValueError (player not found). A.33 fix: was 404."""
         _configure_db_mock(mock_get_db)
         mock_inventory_service.search_inventory.side_effect = ValueError("Player not found")
 
         response = client.get("/api/v1/inventory/player/999/search?q=laser")
 
-        assert response.status_code == 404
+        assert response.status_code == 400
         assert "Player not found" in response.json()["detail"]
 
     @patch("api.routers.inventory.get_db_session")

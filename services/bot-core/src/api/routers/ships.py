@@ -12,7 +12,7 @@ from persist.repositories.item_repository import ItemRepository
 from persist.repositories.player_repository import PlayerRepository
 from persist.repositories.player_ship_repository import PlayerShipRepository
 from persist.repositories.ship_repository import ShipRepository
-from services.equipment_service import EquipmentService
+from services.equipment_service import EquipmentService, item_discriminator_to_concrete_type
 from shared import bblogger
 
 from api.schemas.ships_schema import (
@@ -604,26 +604,42 @@ async def transfer_ship(
                     detail="Cannot transfer the active ship. Set another ship as active first.",
                 )
 
-            # Unequip all items back to from_player's inventory
+            # Unequip all items back to from_player's inventory using concrete item types.
+            # Resolve each item's concrete type via the ItemRepository STI discriminator
+            # to avoid writing generic aliases (weapon, turret) to the DB.
             inventory_repo = InventoryRepository()
+            item_repo_local = ItemRepository()
             items_returned: list[str] = []
 
-            for weapon_name in list(ship.weapons or []):
-                await inventory_repo.add_item(db, request.from_player_id, "weapon", weapon_name, 1)
-                items_returned.append(weapon_name)
-
-            for module_name in list(ship.modules or []):
-                await inventory_repo.add_item(db, request.from_player_id, "module", module_name, 1)
-                items_returned.append(module_name)
-
-            for turret_name in list(ship.turrets or []):
-                await inventory_repo.add_item(db, request.from_player_id, "turret", turret_name, 1)
-                items_returned.append(turret_name)
+            all_slots = [
+                list(ship.weapons or []),
+                list(ship.modules or []),
+                list(ship.turrets or []),
+                list(ship.secondary_weapons or []),
+            ]
+            for slot_items in all_slots:
+                for item_name in slot_items:
+                    base = await item_repo_local.get_by_name_any_type(db, item_name)
+                    if not base:
+                        flogger.warning(
+                            f"transfer_ship: item '{item_name}' not found in item table; skipping"
+                        )
+                        continue
+                    concrete = item_discriminator_to_concrete_type(base.type)
+                    if not concrete:
+                        flogger.warning(
+                            f"transfer_ship: cannot map discriminator '{base.type}' "
+                            f"for item '{item_name}'; skipping"
+                        )
+                        continue
+                    await inventory_repo.add_item(db, request.from_player_id, concrete, item_name, 1)
+                    items_returned.append(item_name)
 
             # Clear the loadout on the ship
             ship.weapons = []
             ship.modules = []
             ship.turrets = []
+            ship.secondary_weapons = []
 
             # Transfer ship ownership to to_player (inactive)
             ship.player_id = request.to_player_id

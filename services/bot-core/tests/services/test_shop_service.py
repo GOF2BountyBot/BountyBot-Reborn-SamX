@@ -31,6 +31,7 @@ if "sqlalchemy_utils" not in sys.modules:
     _mock_sqla_utils.UUIDType = MagicMock()
     sys.modules["sqlalchemy_utils"] = _mock_sqla_utils
 
+from services.exceptions import InvalidItemTypeError
 from services.shop_service import ShopService
 
 # ---------------------------------------------------------------------------
@@ -122,6 +123,7 @@ def _make_player_ship(
     ps.weapons = weapons if weapons is not None else []
     ps.modules = modules if modules is not None else []
     ps.turrets = turrets if turrets is not None else []
+    ps.secondary_weapons = []
     return ps
 
 
@@ -244,6 +246,15 @@ def mock_player_ship_repo() -> AsyncMock:
 
 
 @pytest.fixture
+def mock_item_repo() -> AsyncMock:
+    """Mock ItemRepository — used by write-site concrete type resolution."""
+    repo = AsyncMock()
+    # Default: return None (no item found; tests can override per-item)
+    repo.get_by_name_any_type = AsyncMock(return_value=None)
+    return repo
+
+
+@pytest.fixture
 def service(
     mock_shop_repo,
     mock_config_repo,
@@ -255,12 +266,14 @@ def service(
     mock_secondary_weapon_repo,
     mock_turret_weapon_repo,
     mock_module_repo,
+    mock_item_repo,
 ) -> ShopService:
     svc = ShopService()
     svc.shop_repo = mock_shop_repo
     svc.config_repo = mock_config_repo
     svc.player_repo = mock_player_repo
     svc.inventory_repo = mock_inventory_repo
+    svc.item_repo = mock_item_repo
     svc.ship_repo = mock_ship_repo
     svc.player_ship_repo = mock_player_ship_repo
     svc.primary_weapon_repo = mock_primary_weapon_repo
@@ -298,19 +311,24 @@ class TestGetShopItems:
 
     @pytest.mark.asyncio
     async def test_raises_for_invalid_item_type_filter(self, service, mock_db):
-        """ValueError raised for an unrecognised item type filter."""
-        with pytest.raises(ValueError, match="Invalid item type"):
+        """InvalidItemTypeError raised for an unrecognised item type filter (A.33 fix)."""
+        service._check_and_refresh_shop = AsyncMock()
+        with pytest.raises(InvalidItemTypeError):
             await service.get_shop_items(mock_db, guild_id=999, tier="Bronze", item_type="banana")
 
     @pytest.mark.asyncio
     async def test_passes_item_type_filter_to_repo(self, service, mock_db, mock_shop_repo):
-        """item_type filter is forwarded to the repository."""
+        """item_type filter is forwarded to the repository using concrete type (A.36 fix)."""
         service._check_and_refresh_shop = AsyncMock()
         mock_shop_repo.get_shop_items.return_value = []
 
+        # "weapon" generic alias expands to ("primary_weapon", "turret_weapon") today;
+        # service should call get_shop_items_by_types for multi-type expansion
+        mock_shop_repo.get_shop_items_by_types = AsyncMock(return_value=[])
         await service.get_shop_items(mock_db, guild_id=999, tier="Silver", item_type="weapon")
 
-        mock_shop_repo.get_shop_items.assert_awaited_once_with(mock_db, 999, "Silver", "weapon")
+        # "weapon" expands to 2+ concrete types → should use get_shop_items_by_types
+        mock_shop_repo.get_shop_items_by_types.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_all_valid_tiers_accepted(self, service, mock_db, mock_shop_repo):
@@ -465,11 +483,11 @@ class TestSellItem:
         service._get_item_base_price = AsyncMock(return_value=500)
 
         result = await service.sell_item(
-            mock_db, player_id=1, item_type="weapon", item_name="Micro Gun MK I", quantity=1
+            mock_db, player_id=1, item_type="primary_weapon", item_name="Micro Gun MK I", quantity=1
         )
 
         assert result["player_id"] == 1
-        assert result["item_type"] == "weapon"
+        assert result["item_type"] == "primary_weapon"  # concrete type (A.36 fix)
         assert result["item_name"] == "Micro Gun MK I"
         assert result["quantity"] == 1
         assert result["unit_sell_price"] == 500  # full value, no tax
@@ -482,15 +500,23 @@ class TestSellItem:
         mock_player_repo.get_by_id.return_value = None
 
         with pytest.raises(ValueError, match="Player 7 not found"):
-            await service.sell_item(mock_db, player_id=7, item_type="weapon", item_name="Gun")
+            await service.sell_item(mock_db, player_id=7, item_type="primary_weapon", item_name="Gun")
 
     @pytest.mark.asyncio
     async def test_raises_for_invalid_item_type(self, service, mock_db, mock_player_repo):
-        """ValueError raised for unrecognised item type."""
+        """InvalidItemTypeError raised for unrecognised item type (A.33 fix)."""
         mock_player_repo.get_by_id.return_value = _make_player()
 
-        with pytest.raises(ValueError, match="Invalid item type"):
+        with pytest.raises(InvalidItemTypeError):
             await service.sell_item(mock_db, player_id=1, item_type="banana", item_name="Gun")
+
+    @pytest.mark.asyncio
+    async def test_raises_for_generic_alias_on_sell(self, service, mock_db, mock_player_repo):
+        """InvalidItemTypeError raised when generic alias is passed to sell (A.36 fix)."""
+        mock_player_repo.get_by_id.return_value = _make_player()
+
+        with pytest.raises(InvalidItemTypeError, match="concrete item type"):
+            await service.sell_item(mock_db, player_id=1, item_type="weapon", item_name="Gun")
 
     @pytest.mark.asyncio
     async def test_raises_for_invalid_target_tier(self, service, mock_db, mock_player_repo):
@@ -498,7 +524,7 @@ class TestSellItem:
         mock_player_repo.get_by_id.return_value = _make_player()
 
         with pytest.raises(ValueError, match="Invalid target tier"):
-            await service.sell_item(mock_db, player_id=1, item_type="weapon", item_name="Gun", target_tier="Diamond")
+            await service.sell_item(mock_db, player_id=1, item_type="primary_weapon", item_name="Gun", target_tier="Diamond")
 
     @pytest.mark.asyncio
     async def test_raises_when_item_not_in_inventory(self, service, mock_db, mock_player_repo, mock_inventory_repo):
@@ -507,7 +533,7 @@ class TestSellItem:
         mock_inventory_repo.get_player_item.return_value = None
 
         with pytest.raises(ValueError, match="Insufficient item quantity"):
-            await service.sell_item(mock_db, player_id=1, item_type="weapon", item_name="Missing Gun")
+            await service.sell_item(mock_db, player_id=1, item_type="primary_weapon", item_name="Missing Gun")
 
     @pytest.mark.asyncio
     async def test_raises_when_insufficient_inventory_quantity(
@@ -518,7 +544,7 @@ class TestSellItem:
         mock_inventory_repo.get_player_item.return_value = _make_inventory_item(quantity=1)
 
         with pytest.raises(ValueError, match="Insufficient item quantity"):
-            await service.sell_item(mock_db, player_id=1, item_type="weapon", item_name="Gun", quantity=5)
+            await service.sell_item(mock_db, player_id=1, item_type="primary_weapon", item_name="Gun", quantity=5)
 
     @pytest.mark.asyncio
     async def test_sell_item_uses_full_value_no_tax(
@@ -533,7 +559,7 @@ class TestSellItem:
 
         service._get_item_base_price = AsyncMock(return_value=1000)
 
-        result = await service.sell_item(mock_db, player_id=1, item_type="weapon", item_name="Gun", quantity=1)
+        result = await service.sell_item(mock_db, player_id=1, item_type="primary_weapon", item_name="Gun", quantity=1)
 
         assert result["unit_sell_price"] == 1000  # full value, no tax
 
@@ -1087,8 +1113,9 @@ class TestPurchaseShip:
         mock_ship_repo,
         mock_player_ship_repo,
         mock_inventory_repo,
+        mock_item_repo,
     ):
-        """Items that don't fit on new ship are unequipped to inventory."""
+        """Items that don't fit on new ship are unequipped to inventory with concrete types (A.36 fix)."""
         player = _make_player(credits=10_000)
         shop_item = _make_shop_item(item_type="ship", item_name="Sparrow", price=2000)
         # New ship has only 1 weapon slot, 0 modules, 0 turrets
@@ -1110,6 +1137,21 @@ class TestPurchaseShip:
         )
         mock_player_ship_repo.get_active_ship.return_value = old_player_ship
 
+        # Set up item_repo to return items with concrete STI discriminators
+        def _make_item_mock(type_str: str):
+            m = MagicMock()
+            m.type = type_str
+            return m
+
+        async def _get_by_name_any_type(db, name):
+            if name in ("Gun A", "Gun B", "Gun C"):
+                return _make_item_mock("PrimaryWeapon")
+            if name in ("Shield X", "Shield Y"):
+                return _make_item_mock("ShieldModule")
+            return None
+
+        mock_item_repo.get_by_name_any_type.side_effect = _get_by_name_any_type
+
         result = await service.purchase_ship(mock_db, player_id=1, shop_item_id=10, sell_old_ship=False)
 
         # 1 weapon fits, 2 weapons + 2 modules overflow = 4 items unequipped
@@ -1117,6 +1159,11 @@ class TestPurchaseShip:
         assert result["items_unequipped_to_inventory"] == 4
         # inventory_repo.add_item called 4 times for the overflow items
         assert mock_inventory_repo.add_item.await_count == 4
+        # A.36 regression guard: verify CONCRETE types used
+        add_calls = mock_inventory_repo.add_item.call_args_list
+        item_types_used = {call.args[2] for call in add_calls if len(call.args) >= 3}
+        assert "weapon" not in item_types_used, "generic alias 'weapon' must not be written"
+        assert "turret" not in item_types_used, "generic alias 'turret' must not be written"
 
     @pytest.mark.asyncio
     async def test_ship_buy_insufficient_credits_no_trade_in_raises(
@@ -1294,8 +1341,9 @@ class TestSellShip:
         mock_ship_repo,
         mock_shop_repo,
         mock_inventory_repo,
+        mock_item_repo,
     ):
-        """With clear_equipment=True, all equipped items are moved to inventory before selling."""
+        """With clear_equipment=True, all equipped items are moved to inventory with concrete types (A.36 fix)."""
         player = _make_player(guild_id=999, credits=500)
         player_ship = _make_player_ship(
             ship_id=201,
@@ -1314,11 +1362,31 @@ class TestSellShip:
         mock_ship_repo.get_by_name.return_value = ship_static
         mock_shop_repo.get_shop_item_by_name.return_value = None
 
+        # Set up item_repo to return items with concrete STI discriminators
+        def _make_item_mock(type_str: str):
+            m = MagicMock()
+            m.type = type_str
+            return m
+
+        async def _get_by_name_any_type(db, name):
+            if name in ("Gun A", "Gun B"):
+                return _make_item_mock("PrimaryWeapon")
+            if name == "Shield":
+                return _make_item_mock("ShieldModule")
+            return None
+
+        mock_item_repo.get_by_name_any_type.side_effect = _get_by_name_any_type
+
         result = await service.sell_ship(mock_db, player_id=1, ship_id=201, clear_equipment=True)
 
         # 2 weapons + 1 module = 3 items unequipped
         assert result["items_unequipped_to_inventory"] == 3
         assert mock_inventory_repo.add_item.await_count == 3
+        # A.36 regression guard: verify CONCRETE types used
+        add_calls = mock_inventory_repo.add_item.call_args_list
+        item_types_used = {call.args[2] for call in add_calls if len(call.args) >= 3}
+        assert "weapon" not in item_types_used, "generic alias 'weapon' must not be written"
+        assert "turret" not in item_types_used, "generic alias 'turret' must not be written"
 
     @pytest.mark.asyncio
     async def test_sell_ship_not_belonging_to_player_raises(

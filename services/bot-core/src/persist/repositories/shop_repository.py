@@ -5,6 +5,8 @@ Handles database operations for GuildShop entities including
 tier-based shop management, item queries, and inventory operations.
 """
 
+from collections.abc import Sequence
+
 from shared import bblogger
 from sqlalchemy import and_, delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -116,6 +118,32 @@ class ShopRepository(IRepository[GuildShop]):
             return list(result.scalars().all())
         except Exception as e:
             flogger.error(f"Error getting shop items for guild {guild_id}, tier {tier}: {e}")
+            raise
+
+    async def get_shop_items_by_types(
+        self, db: AsyncSession, guild_id: int, tier: str, item_types: Sequence[str]
+    ) -> list[GuildShop]:
+        """Get shop items filtered by a set of concrete item types.
+
+        Used after generic alias expansion to fetch multiple concrete types in
+        a single query.  Repositories always receive concrete types.
+        """
+        try:
+            query = (
+                select(GuildShop)
+                .where(
+                    and_(
+                        GuildShop.guild_id == guild_id,
+                        GuildShop.tier == tier,
+                        GuildShop.item_type.in_(item_types),
+                    )
+                )
+                .order_by(GuildShop.item_type, GuildShop.item_name)
+            )
+            result = await db.execute(query)
+            return list(result.scalars().all())
+        except Exception as e:
+            flogger.error(f"Error getting shop items by types {item_types} for guild {guild_id} tier {tier}: {e}")
             raise
 
     async def get_shop_item_by_name(

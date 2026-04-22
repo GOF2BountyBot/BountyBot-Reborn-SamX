@@ -60,12 +60,14 @@ def _make_player_ship(
     ship.weapons = list(weapons) if weapons is not None else []
     ship.modules = list(modules) if modules is not None else []
     ship.turrets = list(turrets) if turrets is not None else []
+    ship.secondary_weapons = []
     ship.created_at = datetime(2026, 1, 1, tzinfo=UTC)
 
     # Delegate to the real PlayerShip logic
     def _get_equipped_count(equipment_type: str) -> int:
         mapping = {
             "weapons": ship.weapons,
+            "secondary_weapons": ship.secondary_weapons,
             "modules": ship.modules,
             "turrets": ship.turrets,
         }
@@ -81,6 +83,7 @@ def _make_static_ship(
     max_primaries: int = 2,
     max_modules: int = 3,
     max_turrets: int = 1,
+    max_secondaries: int = 0,
 ) -> SimpleNamespace:
     """Build a simple namespace that mimics the Ship static model."""
     return SimpleNamespace(
@@ -88,6 +91,7 @@ def _make_static_ship(
         max_primaries=max_primaries,
         max_modules=max_modules,
         max_turrets=max_turrets,
+        max_secondaries=max_secondaries,
     )
 
 
@@ -176,7 +180,7 @@ class TestEquipItemSuccess:
         player_ship = _make_player_ship(player_id=42, ship_name="Sidewinder", weapons=[])
         static_ship = _make_static_ship(name="Sidewinder", max_primaries=2)
         game_item = _make_game_item("Pulse Laser")
-        inv_item = _make_inventory_item("Pulse Laser", "weapon")
+        inv_item = _make_inventory_item("Pulse Laser", "primary_weapon")  # A.36: concrete type
 
         svc.ship_repo.get_by_id.return_value = player_ship
         svc.ship_data_repo.get_by_name.return_value = static_ship
@@ -194,7 +198,8 @@ class TestEquipItemSuccess:
 
         assert result["success"] is True
         svc.ship_repo.add_equipment.assert_called_once_with(mock_db, 1, "weapons", "Pulse Laser")
-        svc.inventory_repo.remove_item.assert_called_once_with(mock_db, 42, "weapon", "Pulse Laser", quantity=1)
+        # A.36 fix: remove_item now called with concrete type "primary_weapon", not generic "weapon"
+        svc.inventory_repo.remove_item.assert_called_once_with(mock_db, 42, "primary_weapon", "Pulse Laser", quantity=1)
 
     @pytest.mark.asyncio
     async def test_equip_module_to_ship_with_available_module_slot(self, mock_db, svc):
@@ -231,7 +236,7 @@ class TestEquipItemSuccess:
         player_ship = _make_player_ship(player_id=42, ship_name="Sidewinder", turrets=[])
         static_ship = _make_static_ship(name="Sidewinder", max_turrets=1)
         game_item = _make_game_item("Turreted Beam Laser")
-        inv_item = _make_inventory_item("Turreted Beam Laser", "turret")
+        inv_item = _make_inventory_item("Turreted Beam Laser", "turret_weapon")  # A.36: concrete type
 
         svc.ship_repo.get_by_id.return_value = player_ship
         svc.ship_data_repo.get_by_name.return_value = static_ship
@@ -248,7 +253,8 @@ class TestEquipItemSuccess:
         )
 
         assert result["success"] is True
-        svc.inventory_repo.remove_item.assert_called_once_with(mock_db, 42, "turret", "Turreted Beam Laser", quantity=1)
+        # A.36 fix: remove_item now called with concrete type "turret_weapon", not generic "turret"
+        svc.inventory_repo.remove_item.assert_called_once_with(mock_db, 42, "turret_weapon", "Turreted Beam Laser", quantity=1)
 
 
 class TestEquipItemValidationErrors:
@@ -400,7 +406,8 @@ class TestUnequipItemSuccess:
 
         assert result["success"] is True
         svc.ship_repo.remove_equipment.assert_called_once_with(mock_db, 1, "weapons", "Pulse Laser")
-        svc.inventory_repo.add_item.assert_called_once_with(mock_db, 42, "weapon", "Pulse Laser", quantity=1)
+        # A.36 fix: add_item now called with concrete type "primary_weapon", not generic "weapon"
+        svc.inventory_repo.add_item.assert_called_once_with(mock_db, 42, "primary_weapon", "Pulse Laser", quantity=1)
 
     @pytest.mark.asyncio
     async def test_unequip_module_from_ship_success(self, mock_db, svc):
@@ -422,7 +429,7 @@ class TestUnequipItemSuccess:
 
     @pytest.mark.asyncio
     async def test_unequip_turret_from_ship_success(self, mock_db, svc):
-        """Turret is unequipped and added to inventory with 'turret' type."""
+        """Turret is unequipped and added to inventory with concrete 'turret_weapon' type (A.36 fix)."""
         player_ship = _make_player_ship(player_id=42, ship_name="Sidewinder", turrets=["Turreted Beam Laser"])
         svc.ship_repo.get_by_id.return_value = player_ship
         svc.ship_repo.remove_equipment.return_value = player_ship
@@ -436,7 +443,8 @@ class TestUnequipItemSuccess:
         )
 
         assert result["success"] is True
-        svc.inventory_repo.add_item.assert_called_once_with(mock_db, 42, "turret", "Turreted Beam Laser", quantity=1)
+        # A.36 fix: add_item now called with concrete "turret_weapon", not generic "turret"
+        svc.inventory_repo.add_item.assert_called_once_with(mock_db, 42, "turret_weapon", "Turreted Beam Laser", quantity=1)
 
 
 class TestUnequipItemValidationErrors:
@@ -513,16 +521,18 @@ class TestHelperMethods:
         assert svc_instance._map_equipment_type_to_slot("turrets") == "max_turrets"
 
     def test_map_equipment_type_to_inventory_type_weapons(self):
+        """A.36 fix: weapons slot now maps to concrete 'primary_weapon', not generic 'weapon'."""
         svc_instance = EquipmentService.__new__(EquipmentService)
-        assert svc_instance._map_equipment_type_to_inventory_type("weapons") == "weapon"
+        assert svc_instance._map_equipment_type_to_inventory_type("weapons") == "primary_weapon"
 
     def test_map_equipment_type_to_inventory_type_modules(self):
         svc_instance = EquipmentService.__new__(EquipmentService)
         assert svc_instance._map_equipment_type_to_inventory_type("modules") == "module"
 
     def test_map_equipment_type_to_inventory_type_turrets(self):
+        """A.36 fix: turrets slot now maps to concrete 'turret_weapon', not generic 'turret'."""
         svc_instance = EquipmentService.__new__(EquipmentService)
-        assert svc_instance._map_equipment_type_to_inventory_type("turrets") == "turret"
+        assert svc_instance._map_equipment_type_to_inventory_type("turrets") == "turret_weapon"
 
     def test_invalid_equipment_type_raises_for_slot_map(self):
         svc_instance = EquipmentService.__new__(EquipmentService)
@@ -958,10 +968,11 @@ class TestItemTypeMappingHelpers:
 
         assert _item_type_to_equipment_category("PrimaryWeapon") == "weapons"
 
-    def test_secondary_weapon_maps_to_weapons(self):
+    def test_secondary_weapon_maps_to_secondary_weapons(self):
+        """A.38 fix: SecondaryWeapon now routes to 'secondary_weapons' slot, not 'weapons'."""
         from services.equipment_service import _item_type_to_equipment_category
 
-        assert _item_type_to_equipment_category("SecondaryWeapon") == "weapons"
+        assert _item_type_to_equipment_category("SecondaryWeapon") == "secondary_weapons"
 
     def test_turret_weapon_maps_to_turrets(self):
         from services.equipment_service import _item_type_to_equipment_category
@@ -979,9 +990,10 @@ class TestItemTypeMappingHelpers:
         assert _item_type_to_equipment_category("SomethingElse") is None
 
     def test_item_type_to_inventory_type_weapons(self):
+        """A.36 fix: PrimaryWeapon now maps to concrete 'primary_weapon', not generic 'weapon'."""
         from services.equipment_service import _item_type_to_inventory_type
 
-        assert _item_type_to_inventory_type("PrimaryWeapon") == "weapon"
+        assert _item_type_to_inventory_type("PrimaryWeapon") == "primary_weapon"
 
     def test_item_type_to_inventory_type_modules(self):
         from services.equipment_service import _item_type_to_inventory_type
@@ -989,11 +1001,110 @@ class TestItemTypeMappingHelpers:
         assert _item_type_to_inventory_type("ArmourModule") == "module"
 
     def test_item_type_to_inventory_type_turrets(self):
+        """A.36 fix: TurretWeapon now maps to concrete 'turret_weapon', not generic 'turret'."""
         from services.equipment_service import _item_type_to_inventory_type
 
-        assert _item_type_to_inventory_type("TurretWeapon") == "turret"
+        assert _item_type_to_inventory_type("TurretWeapon") == "turret_weapon"
 
     def test_item_type_to_inventory_type_unknown_returns_none(self):
         from services.equipment_service import _item_type_to_inventory_type
 
         assert _item_type_to_inventory_type("Ship") is None
+
+
+# ---------------------------------------------------------------------------
+# Secondary weapons slot routing tests (A.38 spec §12.2)
+# ---------------------------------------------------------------------------
+
+
+class TestSecondaryWeaponSlotRouting:
+    """Tests for secondary_weapons slot routing and A.38 surface gate.
+
+    Spec §12.2: test_equip_secondary_weapon_routes_to_secondary_weapons_slot
+                test_equip_secondary_weapon_rejected_when_gated
+    """
+
+    @pytest.mark.asyncio
+    async def test_equip_secondary_weapon_rejected_when_gated(self, mock_db, svc):
+        """Default CURRENTLY_ENABLED_TYPES excludes secondary_weapon → InvalidItemTypeError."""
+        from services.exceptions import InvalidItemTypeError
+        from services.game_constants import GameConstants
+
+        assert "secondary_weapon" not in GameConstants.CURRENTLY_ENABLED_TYPES
+
+        # Item is resolved as SecondaryWeapon via item_repo
+        base_item = _make_base_item("Seeker Missile", "SecondaryWeapon")
+        svc.item_repo.get_by_name_any_type.return_value = base_item
+        player_ship = _make_player_ship(player_id=42, ship_name="Betty")
+        svc.ship_repo.get_by_id.return_value = player_ship
+
+        with pytest.raises(InvalidItemTypeError, match="not currently enabled"):
+            await svc.equip_check(mock_db, player_id=42, ship_id=1, item_name="Seeker Missile")
+
+    @pytest.mark.asyncio
+    async def test_equip_secondary_weapon_routes_to_secondary_weapons_slot(self, mock_db, svc, monkeypatch):
+        """When secondary_weapon is enabled (monkeypatched), equip routes to secondary_weapons slot."""
+        from services.game_constants import GameConstants
+
+        # Enable secondary_weapon via monkeypatch
+        monkeypatch.setattr(
+            GameConstants,
+            "CURRENTLY_ENABLED_TYPES",
+            GameConstants.CURRENTLY_ENABLED_TYPES | {"secondary_weapon"},
+        )
+
+        base_item = _make_base_item("Seeker Missile", "SecondaryWeapon")
+        player_ship = _make_player_ship(
+            player_id=42, ship_name="Betty", weapons=[], modules=[], turrets=[]
+        )
+        player_ship.secondary_weapons = []
+        static_ship = _make_static_ship(name="Betty", max_primaries=2, max_modules=4, max_turrets=1)
+        static_ship.max_secondaries = 2
+
+        inv_item = _make_inventory_item("Seeker Missile", "secondary_weapon")
+
+        svc.item_repo.get_by_name_any_type.return_value = base_item
+        svc.item_repo.get_by_name.return_value = base_item
+        svc.ship_repo.get_by_id.return_value = player_ship
+        svc.ship_data_repo.get_by_name.return_value = static_ship
+        svc.inventory_repo.get_player_item.return_value = inv_item
+        svc.ship_repo.add_equipment.return_value = player_ship
+
+        # equip_check should not raise and should return status="ok" with equipment_type="secondary_weapons"
+        result = await svc.equip_check(mock_db, player_id=42, ship_id=1, item_name="Seeker Missile")
+        assert result["status"] == "ok"
+        assert result["equipment_type"] == "secondary_weapons"
+
+
+# ---------------------------------------------------------------------------
+# item_discriminator_to_concrete_type tests (write-site helper)
+# ---------------------------------------------------------------------------
+
+
+class TestItemDiscriminatorToConcrete:
+    """Tests for item_discriminator_to_concrete_type (write-site type resolver)."""
+
+    def test_primary_weapon(self):
+        from services.equipment_service import item_discriminator_to_concrete_type
+        assert item_discriminator_to_concrete_type("PrimaryWeapon") == "primary_weapon"
+
+    def test_secondary_weapon(self):
+        from services.equipment_service import item_discriminator_to_concrete_type
+        assert item_discriminator_to_concrete_type("SecondaryWeapon") == "secondary_weapon"
+
+    def test_turret_weapon(self):
+        from services.equipment_service import item_discriminator_to_concrete_type
+        assert item_discriminator_to_concrete_type("TurretWeapon") == "turret_weapon"
+
+    def test_module_subclasses(self):
+        from services.equipment_service import item_discriminator_to_concrete_type
+        for module_type in ("ArmourModule", "ShieldModule", "CabinModule", "BoosterModule"):
+            assert item_discriminator_to_concrete_type(module_type) == "module", f"Failed for {module_type}"
+
+    def test_ship(self):
+        from services.equipment_service import item_discriminator_to_concrete_type
+        assert item_discriminator_to_concrete_type("Ship") == "ship"
+
+    def test_unknown_returns_none(self):
+        from services.equipment_service import item_discriminator_to_concrete_type
+        assert item_discriminator_to_concrete_type("SomethingUnknown") is None

@@ -3,6 +3,18 @@
 Revision ID: 0001
 Revises: (none)
 Create Date: 2026-03-15
+
+FLATTENED 2026-04-22: Revisions 0002-0007 have been collapsed into this single
+revision.  This migration now creates the complete end-state schema (including
+player_ships.secondary_weapons JSON column added in A.38).  Because upgrade()
+is driven by Base.metadata.sorted_tables it automatically includes all columns
+present in the current ORM models — no separate ADD COLUMN steps needed.
+
+REQUIRES FRESH DATABASE: If your alembic_version table contains a revision
+other than None/empty, stamp it manually before startup:
+    UPDATE alembic_version SET version_num = '0001';
+Or wipe the database and let MigrationManager.ensure_current() apply this
+migration from scratch.
 """
 
 import os

@@ -268,8 +268,16 @@ class InventoryCog(commands.Cog):
 
     @app_commands.command(name="inventory", description="View your inventory")
     @app_commands.describe(
-        item_type="Filter by item type (ship, weapon, module, turret)",
+        item_type="Filter by item type",
         user="View another user's inventory (admin only)",
+    )
+    @app_commands.choices(
+        item_type=[
+            app_commands.Choice(name="Ship", value="ship"),
+            app_commands.Choice(name="Weapon", value="weapon"),
+            app_commands.Choice(name="Module", value="module"),
+            app_commands.Choice(name="Turret", value="turret"),
+        ]
     )
     async def inventory(
         self, interaction: discord.Interaction, item_type: str | None = None, user: discord.User | None = None
@@ -557,21 +565,39 @@ class InventoryCog(commands.Cog):
             inv_resp.raise_for_status()
             items = inv_resp.json()
 
-            # Filter to equippable item types (weapon, module, turret) and match current input
+            # Filter to equippable item types using concrete types that match
+            # _CURRENTLY_EQUIPPABLE_INVENTORY_TYPES (mirrors bot-core CURRENTLY_ENABLED_TYPES
+            # minus "ship").  See utils/autocomplete_helpers.py for the constant.
+            from utils.autocomplete_helpers import _CURRENTLY_EQUIPPABLE_INVENTORY_TYPES
+
             norm_current = normalize_for_search(current)
             choices = []
             seen: set[str] = set()
+
+            # Fetch active ship to exclude already-equipped items
+            active_ship = await self._get_active_ship(player_id)
+            equipped_names: set[str] = set()
+            if active_ship:
+                equipped_names.update(active_ship.get("weapons") or [])
+                equipped_names.update(active_ship.get("modules") or [])
+                equipped_names.update(active_ship.get("turrets") or [])
+                equipped_names.update(active_ship.get("secondary_weapons") or [])
+
             for item in items:
                 item_type = item.get("item_type", "")
                 item_name = item.get("item_name", "")
                 if (
-                    item_type in ("weapon", "module", "turret")
+                    item_type in _CURRENTLY_EQUIPPABLE_INVENTORY_TYPES
                     and item_name
                     and item_name not in seen
+                    and item_name not in equipped_names
                     and norm_current in normalize_for_search(item_name)
                 ):
                     seen.add(item_name)
-                    choices.append(app_commands.Choice(name=item_name, value=item_name))
+                    qty = item.get("quantity") or 0
+                    qty_suffix = f" x{qty}" if qty and qty > 1 else ""
+                    label = f"{item_name} ({item_type.title()}){qty_suffix}"
+                    choices.append(app_commands.Choice(name=label[:100], value=item_name))
             return choices[:25]
         except Exception:  # pylint: disable=broad-exception-caught
             return []
@@ -608,11 +634,12 @@ class InventoryCog(commands.Cog):
             loadout_resp.raise_for_status()
             loadout = loadout_resp.json()
 
-            # Collect all equipped items (weapons + modules + turrets)
+            # Collect all equipped items (weapons + modules + turrets + secondary_weapons)
             equipped: list[str] = []
             equipped.extend(loadout.get("weapons") or [])
             equipped.extend(loadout.get("modules") or [])
             equipped.extend(loadout.get("turrets") or [])
+            equipped.extend(loadout.get("secondary_weapons") or [])
 
             norm_current = normalize_for_search(current)
             choices = []

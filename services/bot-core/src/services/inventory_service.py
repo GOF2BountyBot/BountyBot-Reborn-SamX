@@ -3,6 +3,14 @@ Inventory Service for the BountyBot inventory system.
 
 Handles business logic for inventory management including
 item storage, quantity tracking, and inventory operations.
+
+Vocabulary contract (A.36):
+- The database stores CONCRETE item types: ship, primary_weapon, secondary_weapon,
+  turret_weapon, module.  Generic aliases (weapon, turret) are NEVER persisted.
+- This service accepts both generic aliases and concrete types on READ paths
+  (expansion via _item_type_normalizer).
+- WRITE paths (add_item_to_inventory, remove_item_from_inventory) require a
+  single concrete type — generic aliases are rejected with InvalidItemTypeError.
 """
 
 from typing import Any
@@ -17,6 +25,9 @@ from persist.repositories.turret_weapon_repository import TurretWeaponRepository
 from shared import bblogger
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from services._item_type_normalizer import expand_item_type_to_concrete
+from services.exceptions import InvalidItemTypeError
+
 flogger = bblogger.get_logger("inventory-service")
 
 
@@ -30,14 +41,17 @@ class InventoryService:
         self.turret_weapon_repo = TurretWeaponRepository()
         self.module_repo = ModuleRepository()
 
-    # Valid item types
-    VALID_ITEM_TYPES = ["ship", "weapon", "module", "turret"]
-
     async def get_player_inventory(
         self, db: AsyncSession, player_id: int, item_type: str | None = None
     ) -> list[dict[str, Any]]:
         """
         Get a player's inventory, optionally filtered by item type.
+
+        *item_type* may be a concrete type (``"primary_weapon"``) or a generic
+        alias (``"weapon"``).  Generic aliases are expanded via the normalizer to
+        all currently-enabled concrete types.  An unknown or disabled type raises
+        ``InvalidItemTypeError`` (mapped to HTTP 422 by the router).
+
         Returns formatted inventory data with item details.
         """
         try:
@@ -46,11 +60,15 @@ class InventoryService:
             if not player:
                 raise ValueError(f"Player {player_id} not found")
 
-            if item_type and item_type not in self.VALID_ITEM_TYPES:
-                raise ValueError(f"Invalid item type: {item_type}")
-
             # Get inventory items
-            items = await self.inventory_repo.get_player_items(db, player_id, item_type)
+            if item_type is None:
+                items = await self.inventory_repo.get_player_items(db, player_id)
+            else:
+                concrete_types = expand_item_type_to_concrete(item_type, context="playable")
+                if len(concrete_types) == 1:
+                    items = await self.inventory_repo.get_player_items(db, player_id, concrete_types[0])
+                else:
+                    items = await self.inventory_repo.get_player_items_by_types(db, player_id, concrete_types)
 
             # Format items for response
             formatted_items = []
@@ -68,6 +86,8 @@ class InventoryService:
             flogger.debug(f"Retrieved {len(formatted_items)} inventory items for player {player_id}")
             return formatted_items
 
+        except (InvalidItemTypeError, ValueError):
+            raise
         except Exception as e:
             flogger.error(f"Error getting inventory for player {player_id}: {e}")
             raise
@@ -77,12 +97,23 @@ class InventoryService:
     ) -> dict[str, Any]:
         """
         Add items to a player's inventory.
+
+        *item_type* MUST be a concrete type.  Generic aliases are rejected with
+        ``InvalidItemTypeError`` — callers must resolve the concrete type before
+        calling this method.
+
         Returns transaction details.
         """
         try:
-            # Validate inputs
-            if item_type not in self.VALID_ITEM_TYPES:
-                raise ValueError(f"Invalid item type: {item_type}")
+            # Validate that item_type is a single concrete type (no generic aliases on writes)
+            concrete_types = expand_item_type_to_concrete(item_type, context="playable")
+            if len(concrete_types) != 1:
+                raise InvalidItemTypeError(
+                    f"Write operations require a concrete item type; "
+                    f"got generic alias '{item_type}' which expands to multiple types. "
+                    f"Use one of: {concrete_types}"
+                )
+            concrete_type = concrete_types[0]
 
             if quantity <= 0:
                 raise ValueError("Quantity must be positive")
@@ -93,24 +124,26 @@ class InventoryService:
                 raise ValueError(f"Player {player_id} not found")
 
             # Validate item exists in static data
-            if not await self._validate_item_exists(db, item_name, item_type):
-                raise ValueError(f"Item {item_name} does not exist or is not of type {item_type}")
+            if not await self._validate_item_exists(db, item_name, concrete_type):
+                raise ValueError(f"Item {item_name} does not exist or is not of type {concrete_type}")
 
-            # Add item to inventory
-            inventory_item = await self.inventory_repo.add_item(db, player_id, item_type, item_name, quantity)
+            # Add item to inventory using the concrete type
+            inventory_item = await self.inventory_repo.add_item(db, player_id, concrete_type, item_name, quantity)
 
             transaction_details = {
                 "player_id": player_id,
-                "item_type": item_type,
+                "item_type": concrete_type,
                 "item_name": item_name,
                 "quantity_added": quantity,
                 "new_total_quantity": inventory_item.quantity,
                 "transaction_time": inventory_item.acquired_at.isoformat(),
             }
 
-            flogger.info(f"Added {quantity}x {item_name} to player {player_id} inventory")
+            flogger.info(f"Added {quantity}x {item_name} ({concrete_type}) to player {player_id} inventory")
             return transaction_details
 
+        except (InvalidItemTypeError, ValueError):
+            raise
         except Exception as e:
             flogger.error(f"Error adding item to inventory: {e}")
             raise
@@ -120,12 +153,22 @@ class InventoryService:
     ) -> dict[str, Any]:
         """
         Remove items from a player's inventory.
+
+        *item_type* MUST be a concrete type on write paths.  Generic aliases are
+        rejected with ``InvalidItemTypeError``.
+
         Returns transaction details.
         """
         try:
-            # Validate inputs
-            if item_type not in self.VALID_ITEM_TYPES:
-                raise ValueError(f"Invalid item type: {item_type}")
+            # Validate that item_type is a single concrete type (no generic aliases on writes)
+            concrete_types = expand_item_type_to_concrete(item_type, context="playable")
+            if len(concrete_types) != 1:
+                raise InvalidItemTypeError(
+                    f"Write operations require a concrete item type; "
+                    f"got generic alias '{item_type}' which expands to multiple types. "
+                    f"Use one of: {concrete_types}"
+                )
+            concrete_type = concrete_types[0]
 
             if quantity <= 0:
                 raise ValueError("Quantity must be positive")
@@ -135,8 +178,8 @@ class InventoryService:
             if not player:
                 raise ValueError(f"Player {player_id} not found")
 
-            # Check if player has the item
-            existing_item = await self.inventory_repo.get_player_item(db, player_id, item_type, item_name)
+            # Check if player has the item (exact match on concrete type)
+            existing_item = await self.inventory_repo.get_player_item(db, player_id, concrete_type, item_name)
 
             if not existing_item:
                 raise ValueError(f"Player does not have {item_name} in inventory")
@@ -147,14 +190,14 @@ class InventoryService:
             old_quantity = existing_item.quantity
 
             # Remove item from inventory
-            await self.inventory_repo.remove_item(db, player_id, item_type, item_name, quantity)
+            await self.inventory_repo.remove_item(db, player_id, concrete_type, item_name, quantity)
 
             # Get updated item (or None if completely removed)
-            updated_item = await self.inventory_repo.get_player_item(db, player_id, item_type, item_name)
+            updated_item = await self.inventory_repo.get_player_item(db, player_id, concrete_type, item_name)
 
             transaction_details = {
                 "player_id": player_id,
-                "item_type": item_type,
+                "item_type": concrete_type,
                 "item_name": item_name,
                 "quantity_removed": quantity,
                 "old_quantity": old_quantity,
@@ -162,9 +205,11 @@ class InventoryService:
                 "item_completely_removed": updated_item is None,
             }
 
-            flogger.info(f"Removed {quantity}x {item_name} from player {player_id} inventory")
+            flogger.info(f"Removed {quantity}x {item_name} ({concrete_type}) from player {player_id} inventory")
             return transaction_details
 
+        except (InvalidItemTypeError, ValueError):
+            raise
         except Exception as e:
             flogger.error(f"Error removing item from inventory: {e}")
             raise
@@ -216,6 +261,8 @@ class InventoryService:
             flogger.info(f"Transferred {quantity}x {item_name} from player {from_player_id} to {to_player_id}")
             return transfer_details
 
+        except (InvalidItemTypeError, ValueError):
+            raise
         except Exception as e:
             flogger.error(f"Error transferring item between players: {e}")
             raise
@@ -302,7 +349,7 @@ class InventoryService:
                 equipment_type_key = "weapons"
             elif item_type_lower == "secondary_weapon":
                 max_slots = ship_details["max_secondaries"]
-                equipment_type_key = "weapons"  # secondary weapons share the weapons slot key
+                equipment_type_key = "secondary_weapons"
             elif item_type_lower in ("turret", "turret_weapon"):
                 max_slots = ship_details["max_turrets"]
                 equipment_type_key = "turrets"
@@ -430,10 +477,19 @@ class InventoryService:
         return False
 
     async def get_player_item_count(self, db: AsyncSession, player_id: int, item_type: str, item_name: str) -> int:
-        """Get the quantity of a specific item a player owns."""
+        """Get the quantity of a specific item a player owns.
+
+        *item_type* may be a concrete type or a generic alias.  The lookup
+        checks all concrete types the alias expands to, returning the quantity
+        of the first matching row.  This fixes A.36 (quantity 0 for owned items
+        when generic aliases were passed).
+        """
         try:
-            item = await self.inventory_repo.get_player_item(db, player_id, item_type, item_name)
+            concrete_types = expand_item_type_to_concrete(item_type, context="playable")
+            item = await self.inventory_repo.get_player_item_by_types(db, player_id, concrete_types, item_name)
             return item.quantity if item else 0
+        except InvalidItemTypeError:
+            raise
         except Exception as e:
             flogger.error(f"Error getting item count for player {player_id}: {e}")
             raise

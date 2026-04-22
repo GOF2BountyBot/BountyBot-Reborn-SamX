@@ -708,9 +708,72 @@ class BountyService:
             except Exception as e:
                 flogger.warning(f"Non-fatal: failed to delete announcements for guild {guild_id}: {e}")
 
+        # A.11: Clean up any scheduled bounty_expire / bounty_respawn jobs that
+        # reference the bounties we just cleared. Orphaned jobs would otherwise
+        # fire against already-cleared bounties (non-fatal downstream but noisy).
+        # We use the scheduler REST API rather than querying apscheduler_jobs
+        # directly, matching the HTTP-boundary pattern already used for gateway
+        # announcements above. Failures here are non-fatal — the DB clear and
+        # announcement cleanup remain authoritative.
+        scheduler_jobs_deleted = 0
+        if bounty_ids:
+            executor_host = os.getenv("EXECUTOR_HOST", "bot-core")
+            executor_port = os.getenv("EXECUTOR_PORT", "8000")
+            scheduler_url = f"http://{executor_host}:{executor_port}/api/v1"
+            bounty_id_set = set(bounty_ids)
+
+            try:
+                async with httpx.AsyncClient() as client:
+                    list_resp = await client.get(f"{scheduler_url}/jobs", timeout=10)
+                    if list_resp.status_code == 200:
+                        for job in list_resp.json():
+                            try:
+                                args = job.get("args") or []
+                                if len(args) < 2 or not isinstance(args[1], dict):
+                                    continue
+                                payload = args[1]
+                                job_type = payload.get("job_type")
+                                if job_type not in ("bounty_expire", "bounty_respawn"):
+                                    continue
+                                if payload.get("bounty_id") not in bounty_id_set:
+                                    continue
+
+                                job_id = job.get("id")
+                                del_resp = await client.delete(
+                                    f"{scheduler_url}/jobs/{job_id}",
+                                    timeout=10,
+                                )
+                                # 404 is acceptable — job already fired or
+                                # was removed concurrently.
+                                if del_resp.status_code in (200, 204):
+                                    scheduler_jobs_deleted += 1
+                                    flogger.info(
+                                        f"Deleted scheduler job {job_id} "
+                                        f"(type={job_type}, bounty_id={payload.get('bounty_id')}, "
+                                        f"guild_id={guild_id})"
+                                    )
+                                elif del_resp.status_code == 404:
+                                    # Silent — expected for already-fired jobs.
+                                    pass
+                                else:
+                                    flogger.warning(
+                                        f"Non-fatal: scheduler returned {del_resp.status_code} "
+                                        f"deleting job {job_id} for bounty {payload.get('bounty_id')}"
+                                    )
+                            except Exception as job_exc:  # pylint: disable=broad-exception-caught
+                                flogger.warning(f"Non-fatal: failed to process scheduler job during cleanup: {job_exc}")
+                    else:
+                        flogger.warning(
+                            f"Non-fatal: scheduler list returned {list_resp.status_code} "
+                            f"during clear_bounties for guild {guild_id}"
+                        )
+            except Exception as e:  # pylint: disable=broad-exception-caught
+                flogger.warning(f"Non-fatal: scheduler cleanup failed for guild {guild_id}: {e}")
+
         flogger.info(
             f"Cleared {len(bounty_ids)} bounties for guild {guild_id} tier={tier}, "
-            f"deleted {announcements_deleted} announcements"
+            f"deleted {announcements_deleted} announcements, "
+            f"removed {scheduler_jobs_deleted} scheduler jobs"
         )
         return {
             "guild_id": guild_id,
@@ -718,6 +781,7 @@ class BountyService:
             "cleared_count": len(bounty_ids),
             "bounty_ids": bounty_ids,
             "announcements_deleted": announcements_deleted,
+            "scheduler_jobs_deleted": scheduler_jobs_deleted,
         }
 
     async def spawn_bounty(
@@ -1103,7 +1167,9 @@ class BountyService:
 
             import httpx
             from message_builders.builders.bounty_announcement import BountyAnnouncementBuilder
-            from persist.repositories.criminal_repository import CriminalRepository  # noqa: F811  pylint: disable=reimported,redefined-outer-name
+            from persist.repositories.criminal_repository import (
+                CriminalRepository,
+            )
             from persist.repositories.discord_message_repository import DiscordMessageRepository
 
             msg_repo = DiscordMessageRepository()

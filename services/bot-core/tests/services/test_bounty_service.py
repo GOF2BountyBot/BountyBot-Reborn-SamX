@@ -2574,6 +2574,275 @@ class TestClearBounties:
 
 
 # ===========================================================================
+# Tests: clear_bounties scheduler-job cleanup (A.11 regression coverage)
+# ===========================================================================
+
+
+class _SchedulerMockAsyncClient:
+    """Reusable httpx.AsyncClient stand-in driven by a scripted job list.
+
+    The test supplies ``jobs_by_host`` (keyed by URL prefix) or a simple
+    ``jobs`` list via the ``scripted`` attribute that the fixture sets
+    before instantiation.
+    """
+
+    scripted_jobs: list = []
+    delete_status_map: dict = {}
+    deleted_ids: list = []
+    deleted_urls: list = []
+    list_url: str | None = None
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *args):
+        return False
+
+    async def get(self, url, timeout=10):
+        _SchedulerMockAsyncClient.list_url = url
+        resp = MagicMock()
+        resp.status_code = 200
+        resp.json = MagicMock(return_value=list(_SchedulerMockAsyncClient.scripted_jobs))
+        return resp
+
+    async def delete(self, url, timeout=10):
+        _SchedulerMockAsyncClient.deleted_urls.append(url)
+        # Extract the job ID from the tail of the URL.
+        job_id = url.rsplit("/", 1)[-1]
+        _SchedulerMockAsyncClient.deleted_ids.append(job_id)
+        status = _SchedulerMockAsyncClient.delete_status_map.get(job_id, 200)
+        resp = MagicMock()
+        resp.status_code = status
+        return resp
+
+
+def _reset_scheduler_mock(jobs, delete_status_map=None):
+    """Reset the class-level state on the scheduler mock."""
+    _SchedulerMockAsyncClient.scripted_jobs = list(jobs)
+    _SchedulerMockAsyncClient.delete_status_map = delete_status_map or {}
+    _SchedulerMockAsyncClient.deleted_ids = []
+    _SchedulerMockAsyncClient.deleted_urls = []
+    _SchedulerMockAsyncClient.list_url = None
+
+
+class TestClearBountiesSchedulerCleanup:
+    """A.11 regression: clear_bounties removes orphaned bounty_expire +
+    bounty_respawn scheduler jobs linked to the cleared bounties.
+
+    These tests mock only the outbound HTTP client and the discord-message
+    repository (the two existing HTTP boundaries). Everything else uses
+    real objects so the orchestration logic is genuinely exercised.
+    """
+
+    @pytest.fixture
+    def clear_service(self, mock_db):
+        """BountyService with mock bounty_repo for clear_bounties tests."""
+        from services.bounty_service import BountyService
+
+        svc = BountyService()
+        svc.bounty_repo = AsyncMock()
+        return svc
+
+    @pytest.fixture
+    def no_messages_repo(self):
+        """DiscordMessageRepository stand-in that reports no announcements."""
+        repo = AsyncMock()
+        repo.get_by_guild_type_and_reference = AsyncMock(return_value=None)
+        repo.delete_by_guild_type_and_reference = AsyncMock(return_value=False)
+        return repo
+
+    @pytest.mark.asyncio
+    async def test_clear_bounties_deletes_linked_expire_jobs(self, clear_service, mock_db, no_messages_repo):
+        """3 cleared bounties → 3 matching bounty_expire jobs → 3 DELETEs."""
+        clear_service.bounty_repo.clear_active_by_guild = AsyncMock(return_value=[10, 11, 12])
+
+        jobs = [
+            {"id": "job-A", "args": [None, {"job_type": "bounty_expire", "bounty_id": 10}]},
+            {"id": "job-B", "args": [None, {"job_type": "bounty_expire", "bounty_id": 11}]},
+            {"id": "job-C", "args": [None, {"job_type": "bounty_expire", "bounty_id": 12}]},
+        ]
+        _reset_scheduler_mock(jobs)
+
+        with (
+            patch(
+                "persist.repositories.discord_message_repository.DiscordMessageRepository",
+                return_value=no_messages_repo,
+            ),
+            patch("httpx.AsyncClient", _SchedulerMockAsyncClient),
+        ):
+            result = await clear_service.clear_bounties(mock_db, guild_id=555)
+
+        assert result["scheduler_jobs_deleted"] == 3
+        assert sorted(_SchedulerMockAsyncClient.deleted_ids) == ["job-A", "job-B", "job-C"]
+
+    @pytest.mark.asyncio
+    async def test_clear_bounties_deletes_linked_respawn_jobs(self, clear_service, mock_db, no_messages_repo):
+        """Q1=B: both bounty_expire AND bounty_respawn jobs are removed."""
+        clear_service.bounty_repo.clear_active_by_guild = AsyncMock(return_value=[20, 21])
+
+        jobs = [
+            {"id": "exp-1", "args": [None, {"job_type": "bounty_expire", "bounty_id": 20}]},
+            {"id": "exp-2", "args": [None, {"job_type": "bounty_expire", "bounty_id": 21}]},
+            {"id": "rsp-1", "args": [None, {"job_type": "bounty_respawn", "bounty_id": 20}]},
+            {"id": "rsp-2", "args": [None, {"job_type": "bounty_respawn", "bounty_id": 21}]},
+        ]
+        _reset_scheduler_mock(jobs)
+
+        with (
+            patch(
+                "persist.repositories.discord_message_repository.DiscordMessageRepository",
+                return_value=no_messages_repo,
+            ),
+            patch("httpx.AsyncClient", _SchedulerMockAsyncClient),
+        ):
+            result = await clear_service.clear_bounties(mock_db, guild_id=555)
+
+        assert result["scheduler_jobs_deleted"] == 4
+        assert set(_SchedulerMockAsyncClient.deleted_ids) == {"exp-1", "exp-2", "rsp-1", "rsp-2"}
+
+    @pytest.mark.asyncio
+    async def test_clear_bounties_ignores_unrelated_scheduler_jobs(self, clear_service, mock_db, no_messages_repo):
+        """Jobs of unrelated types or with non-matching bounty_ids are left alone."""
+        clear_service.bounty_repo.clear_active_by_guild = AsyncMock(return_value=[100])
+
+        jobs = [
+            {"id": "refresh", "args": [None, {"job_type": "shop_refresh", "guild_id": 555}]},
+            {"id": "time", "args": [None, {"job_type": "time_announcement", "guild_id": 555}]},
+            # bounty_expire but a DIFFERENT bounty — must not be deleted
+            {"id": "other-bounty", "args": [None, {"job_type": "bounty_expire", "bounty_id": 9999}]},
+            # Missing args shape — must be tolerated
+            {"id": "malformed", "args": []},
+        ]
+        _reset_scheduler_mock(jobs)
+
+        with (
+            patch(
+                "persist.repositories.discord_message_repository.DiscordMessageRepository",
+                return_value=no_messages_repo,
+            ),
+            patch("httpx.AsyncClient", _SchedulerMockAsyncClient),
+        ):
+            result = await clear_service.clear_bounties(mock_db, guild_id=555)
+
+        assert result["scheduler_jobs_deleted"] == 0
+        assert _SchedulerMockAsyncClient.deleted_ids == []
+
+    @pytest.mark.asyncio
+    async def test_clear_bounties_ignores_already_fired_jobs_404(self, clear_service, mock_db, no_messages_repo):
+        """A DELETE that returns 404 is treated as already-fired, not an error.
+
+        In addition to the count check, this test asserts the 404 path is
+        log-SILENT at WARNING/ERROR level: an already-fired job is an
+        expected outcome, not a fault.
+        """
+        from services import bounty_service as bounty_service_module
+
+        clear_service.bounty_repo.clear_active_by_guild = AsyncMock(return_value=[30, 31])
+
+        jobs = [
+            {"id": "live", "args": [None, {"job_type": "bounty_expire", "bounty_id": 30}]},
+            {"id": "stale", "args": [None, {"job_type": "bounty_expire", "bounty_id": 31}]},
+        ]
+        _reset_scheduler_mock(jobs, delete_status_map={"stale": 404})
+
+        # Replace only warning/error so we can assert no spurious emissions
+        # are produced by the 404 path. The module-level ``flogger`` is
+        # already a MagicMock (see tests/conftest.py), so scoped attribute
+        # replacement gives us a clean call ledger.
+        warning_mock = MagicMock()
+        error_mock = MagicMock()
+        with (
+            patch(
+                "persist.repositories.discord_message_repository.DiscordMessageRepository",
+                return_value=no_messages_repo,
+            ),
+            patch("httpx.AsyncClient", _SchedulerMockAsyncClient),
+            patch.object(bounty_service_module.flogger, "warning", warning_mock),
+            patch.object(bounty_service_module.flogger, "error", error_mock),
+        ):
+            result = await clear_service.clear_bounties(mock_db, guild_id=555)
+
+        # Only the 200 counts; the 404 is silent-success.
+        assert result["scheduler_jobs_deleted"] == 1
+        assert set(_SchedulerMockAsyncClient.deleted_ids) == {"live", "stale"}
+
+        # 404-specific silence: no WARNING or ERROR should reference the
+        # stale job or its 404 status.  (We do NOT assert zero warnings
+        # overall, because clear_bounties may emit unrelated warnings
+        # under exotic test states; we scope the check to the 404 path.)
+        def _mentions_404_path(call) -> bool:
+            if not call.args:
+                return False
+            msg = call.args[0] if isinstance(call.args[0], str) else ""
+            return "404" in msg or ("stale" in msg and "scheduler" in msg.lower())
+
+        offending_warnings = [c for c in warning_mock.call_args_list if _mentions_404_path(c)]
+        offending_errors = [c for c in error_mock.call_args_list if _mentions_404_path(c)]
+        assert offending_warnings == [], f"404 path must be log-silent at WARNING; got: {offending_warnings}"
+        assert offending_errors == [], f"404 path must be log-silent at ERROR; got: {offending_errors}"
+
+    @pytest.mark.asyncio
+    async def test_clear_bounties_graceful_when_scheduler_down(self, clear_service, mock_db, no_messages_repo):
+        """If the scheduler API is unreachable, the DB clear still succeeds."""
+        clear_service.bounty_repo.clear_active_by_guild = AsyncMock(return_value=[40])
+
+        class UnreachableClient:
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *args):
+                return False
+
+            async def get(self, url, timeout=10):
+                raise ConnectionError("scheduler unreachable")
+
+            async def delete(self, url, timeout=10):
+                raise AssertionError("delete must not run when list fails")
+
+        with (
+            patch(
+                "persist.repositories.discord_message_repository.DiscordMessageRepository",
+                return_value=no_messages_repo,
+            ),
+            patch("httpx.AsyncClient", UnreachableClient),
+        ):
+            result = await clear_service.clear_bounties(mock_db, guild_id=555)
+
+        assert result["cleared_count"] == 1
+        assert result["scheduler_jobs_deleted"] == 0
+
+    @pytest.mark.asyncio
+    async def test_clear_bounties_tier_filter_only_deletes_matching_tier_jobs(
+        self, clear_service, mock_db, no_messages_repo
+    ):
+        """tier='bronze' clears only bronze bounties; only those jobs get deleted."""
+        # Repository filters to bronze-only (bounties 1 and 2).
+        clear_service.bounty_repo.clear_active_by_guild = AsyncMock(return_value=[1, 2])
+
+        jobs = [
+            {"id": "b1", "args": [None, {"job_type": "bounty_expire", "bounty_id": 1}]},
+            {"id": "b2", "args": [None, {"job_type": "bounty_expire", "bounty_id": 2}]},
+            # bounty 3 is silver — not in bronze clear set; must not be deleted.
+            {"id": "s3", "args": [None, {"job_type": "bounty_expire", "bounty_id": 3}]},
+        ]
+        _reset_scheduler_mock(jobs)
+
+        with (
+            patch(
+                "persist.repositories.discord_message_repository.DiscordMessageRepository",
+                return_value=no_messages_repo,
+            ),
+            patch("httpx.AsyncClient", _SchedulerMockAsyncClient),
+        ):
+            result = await clear_service.clear_bounties(mock_db, guild_id=555, tier="bronze")
+
+        assert result["tier"] == "bronze"
+        assert result["scheduler_jobs_deleted"] == 2
+        assert set(_SchedulerMockAsyncClient.deleted_ids) == {"b1", "b2"}
+        assert "s3" not in _SchedulerMockAsyncClient.deleted_ids
+
+
+# ===========================================================================
 # Tests: spawn_bounty expiry_minutes parameter
 # ===========================================================================
 

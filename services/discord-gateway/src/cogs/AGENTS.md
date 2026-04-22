@@ -30,6 +30,22 @@ for fn in os.listdir("src/cogs"):
 - Any `*.py` file in `src/cogs/` is loaded **unless** the filename contains `template`, `disabled`, or `test`
 - `templateCog.py` and `testCog.py` are **never loaded** in production or test runs
 - No manual registration in `bot.py` is needed — just create the file and the `setup()` function
+- **Subdirectories are NOT walked** — the loader only inspects entries ending in `.py` from `os.listdir("src/cogs")`. The `_shared/` subdirectory is therefore never loaded as a cog (see below).
+
+---
+
+## `_shared/` — Cog-Adjacent Helpers
+
+The `_shared/` subdirectory holds helper modules that are **game-layer** (consumed by cogs, not by `utils/`) but are **not themselves cogs**. Examples: `loadout_embed.py` (Discord embed builder for loadouts) and `embed_pagination.py` (continuation-field helper for `/list_category`).
+
+Why here and not under `utils/`?
+- `utils/` is reserved for game-agnostic helpers — if the game layer is replaced, `utils/` stays.
+- Everything in `cogs/` (including `_shared/`) is part of the game layer and is removed together.
+- The leading underscore is a Python convention signalling "private-but-colocated" and, together with the auto-loader's `.py` extension filter, prevents accidental cog loading.
+
+## Alias Commands: `/register` ↔ `/profile`
+
+The `/register` slash command in `playerCog.py` is a **full behavioural alias** for `/profile` — identical embed output, identical side effects (player upsert, role assignment). Both commands delegate to a single private handler `_display_profile(interaction)`. The only difference between the two public commands is the slash-command name users see in Discord, and each wrapper logs its own name for usage-frequency analysis. When adding other aliases in the future, follow the same pattern: keep the work in a shared `_display_*` method and let each `@app_commands.command(...)` wrapper do only `flogger.info(...)` + delegate.
 
 ---
 

@@ -63,6 +63,9 @@ Core bounty system business logic:
 - `check_system(db, bounty_id, user_id, system_name)` — records a system check; returns proximity hints
 - `expire_bounty(db, bounty_id)` — marks bounty as expired; optionally schedules respawn
 - `resolve_bounty(db, bounty_id, winner_user_id)` — awards credits and XP to winner via PlayerService
+- `clear_bounties(db, guild_id, tier=None)` — admin soft-clear; also cleans up Discord announcements AND any orphaned `bounty_expire` / `bounty_respawn` scheduler jobs linked to the cleared bounty IDs (A.11). Scheduler cleanup runs via HTTP to the scheduler API **after** the DB commit, mirroring the announcement-cleanup pattern: scheduler-side failures are non-fatal and logged as warnings. Return dict includes `scheduler_jobs_deleted` for observability.
+
+**Scheduler-cleanup pattern** (A.11): orphaned jobs are located by payload content (`args[1]["job_type"]` ∈ {`bounty_expire`, `bounty_respawn`} AND `args[1]["bounty_id"]` in cleared set) rather than by deterministic job IDs, because bounty job IDs are random UUIDs. 404 responses on DELETE are treated as already-fired and NOT logged.
 
 Uses: `CriminalRepository`, `BountyRepository`, `PathfindingService`, `SystemGraphService`, `PlayerService`, `TemperatureService`
 

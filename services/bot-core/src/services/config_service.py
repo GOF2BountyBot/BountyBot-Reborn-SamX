@@ -10,9 +10,10 @@ from typing import Any
 from persist.repositories.config_repository import ConfigRepository
 from persist.repositories.player_repository import PlayerRepository
 from persist.repositories.shop_repository import ShopRepository
-from services.exceptions import GuildNotConfiguredError
 from shared import bblogger
 from sqlalchemy.ext.asyncio import AsyncSession
+
+from services.exceptions import GuildNotConfiguredError
 
 flogger = bblogger.get_logger("config-service")
 
@@ -343,10 +344,10 @@ class ConfigService:
 
             if "max_bounties_per_tier" in updates and updates["max_bounties_per_tier"] is not None:
                 tier_map = updates["max_bounties_per_tier"]
-                valid_tiers = {"bronze", "silver", "gold"}
+                valid_tiers = {"bronze", "silver", "gold", "platinum"}
                 if not set(tier_map.keys()).issubset(valid_tiers):
                     invalid = set(tier_map.keys()) - valid_tiers
-                    raise ValueError(f"Invalid tier keys: {invalid}. Must be bronze, silver, or gold.")
+                    raise ValueError(f"Invalid tier keys: {invalid}. Must be bronze, silver, gold, or platinum.")
                 for tier, val in tier_map.items():
                     if not isinstance(val, int) or val < 0 or val > 20:
                         raise ValueError(f"bounty_max_per_tier[{tier!r}] must be an integer between 0 and 20")

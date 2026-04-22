@@ -3,11 +3,11 @@ import os
 
 import discord
 import httpx
+from cogs._shared.loadout_embed import build_loadout_embed, build_loadout_error_embed
 from discord import app_commands
 from discord.ext import commands
 from shared import bblogger
 from utils.autocomplete_utils import normalize_for_search
-from utils.loadout_embed import build_loadout_embed, build_loadout_error_embed
 from utils.timestamp_utils import iso_to_discord_ts
 
 # Set up logger

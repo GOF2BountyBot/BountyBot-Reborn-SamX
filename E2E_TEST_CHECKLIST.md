@@ -34,12 +34,10 @@ GID=1490693399307616276
 ADMIN_UID=402296276617527306
 
 # 1. Compress bounty timers (spawn every 5 min, expire in 10 min, max 20 per tier)
-# NOTE: `platinum` key intentionally omitted — see Appendix E A.9/A.12. Platinum tier is
-#       spawned by the executor but the config writer's validator rejects it. Restore
-#       `"platinum":20` once A.9 is fixed.
+# A.9 (2026-04-21): platinum restored — the validator now accepts all four tiers.
 sudo docker exec bountybot-bot-core curl -s -X PUT -H 'Content-Type: application/json' \
   "http://localhost:8000/api/v1/config/guild/$GID/bounty" \
-  -d "{\"guild_id\":$GID,\"bounty_spawn_interval_minutes\":5,\"bounty_expiry_minutes\":10,\"max_bounties_per_tier\":{\"bronze\":20,\"silver\":20,\"gold\":20}}"
+  -d "{\"guild_id\":$GID,\"bounty_spawn_interval_minutes\":5,\"bounty_expiry_minutes\":10,\"max_bounties_per_tier\":{\"bronze\":20,\"silver\":20,\"gold\":20,\"platinum\":20}}"
 
 # 2. Lower XP thresholds for fast tier testing (Silver:10, Gold:20, Platinum:30)
 sudo docker exec bountybot-bot-core curl -s -X PUT -H 'Content-Type: application/json' \
@@ -700,7 +698,7 @@ These can be tested at any point after Phase 1.
 |-----|----------|
 | **healthCog** | `/ping` `[ADMIN]`, `/health` `[ADMIN]` |
 | **aboutCog** | `/about`, `/list_category`, `/make-route` |
-| **playerCog** | `/profile`, `/leaderboard`, `/prestige`, `/unregister` |
+| **playerCog** | `/profile`, `/register` (alias of `/profile`, 2026-04-21), `/leaderboard`, `/prestige`, `/promote`, `/loadout`, `/unregister` |
 | **shipsCog** | `/ships`, `/ship`, `/setactive`, `/nickname` |
 | **shopCog** | `/shops`, `/shop`, `/buy`, `/sell` |
 | **inventoryCog** | `/inventory`, `/search`, `/item`, `/equip`, `/unequip` |
@@ -819,7 +817,7 @@ Add new entries at the top as they're found.
 ### A.27 — `/list_category` silently truncates at 50 items; footer warning only fires above 100
 - **Severity**: 🟠 high (silent data loss)
 - **Source**: Phase 2.5 live run (2026-04-21)
-- **Status**: open — **should be fixed alongside A.26**
+- **Status**: ✅ **FIXED 2026-04-21** — consistent cap at 100 items; footer "Showing first 100 of N" fires exactly when `len(filtered) > 100`. Current max category is modules at 66 items, so no user-visible truncation today. 4 real-data regression tests in `TestListCategoryBugBundleRegressions` use 101-item fixtures to exercise the previously-silent truncation path.
 - **Observed**: `/list_category category:ship` returned 50 items in the embed despite the log reporting `count=65`. No truncation indicator shown to the user.
 - **Root cause** (`services/discord-gateway/src/cogs/aboutCog.py:407-420`):
   - Line 407: iteration is hard-capped at `filtered[:50]`
@@ -838,7 +836,7 @@ Add new entries at the top as they're found.
 ### A.26 — `/list_category` embed chunks list across fields all named "Objects", creating mid-list header breaks
 - **Severity**: 🟡 medium (cosmetic but confusing; UX regression)
 - **Source**: Phase 2.5 live run (2026-04-21)
-- **Status**: open
+- **Status**: ✅ **FIXED 2026-04-21** — new `add_continuation_fields()` helper in `services/discord-gateway/src/cogs/_shared/embed_pagination.py` (game-specific cog-adjacent location per user's yank-the-game architectural constraint). First field named "Objects", continuation fields use zero-width spacer name `"\u200e"` so they merge visually with the parent section. Also moved `loadout_embed.py` from `src/utils/` → `src/cogs/_shared/` (same rationale — game-specific logic belongs cog-adjacent, not in gateway-generic utilities).
 - **Observed**: `/list_category` for any category with more than ~20 items renders multiple Discord embed fields each literally titled `"Objects"`, creating visible "Objects" header breaks inside what should look like one continuous list:
   ```
   Objects
@@ -928,8 +926,8 @@ Add new entries at the top as they're found.
 
 ### A.3 — shopCog actively CORRUPTS discord_username on every invocation
 - **Severity**: 🟠 high (was 🔵 low — escalated after investigation)
-- **Source**: Phase 0.5.2 + Developer investigation 2026-04-18
-- **Status**: open — **bigger bug than initially thought**
+- **Source**: User-reported during Phase 0.5 session
+- **Status**: ✅ **FIXED / CLOSED 2026-04-21** — audit pass (researcher 2026-04-21) confirmed zero remaining offenders. All cogs now pass the correct value: `/profile`, `/prestige`, `/leaderboard` use `str(interaction.user)`; shop/bounty/admin cogs pass `None` (correct — they don't mutate username on existing users). No sibling anti-patterns found.
 - **Observed**: `users.discord_username = "temp"` after any shopCog interaction.
 - **Root cause** (after code trace):
   - `user_repository.get_or_create_user()` at `user_repository.py:114-119` updates `discord_username` whenever the caller passes a truthy value that differs from what's stored.
@@ -955,8 +953,8 @@ Add new entries at the top as they're found.
 
 ### A.6 — Bounty spawn executor fires against un-setup guilds
 - **Severity**: 🟠 high
-- **Source**: Post-nuke stack relaunch inspection
-- **Status**: open
+- **Source**: Phase 1 — fresh stack with zero `guild_configs` rows yet bounties were spawning
+- **Status**: ✅ **FIXED** (code-verified 2026-04-21) — guild eligibility guard added to bounty_spawn_executor. Requires E2E re-verification; earlier "Next steps" sub-items (3) canonical reset procedure and (4) orphaned one-time jobs remain as separate concerns (see A.11).
 - **Observed**: After a full DB nuke and stack relaunch (with `/load_data category:All` to re-seed game data), the dev guild had:
   - 1 `guild_configs` row (channel IDs all null, no admin role) — source of creation unclear (see below)
   - 4 `bounty` rows in `active` status (one per tier)
@@ -1013,10 +1011,10 @@ Add new entries at the top as they're found.
   - ⚠️ Would still be reachable via `/bounties` slash command or `/check system:X` — but no one would know they exist
   - ⚠️ Count against the `bounty_max_per_tier` cap, so after setup, a player's first bounty experience is ALREADY at cap
 
-### A.5 — Missing: Help command set (feature request)
+### A.5 — Help command set (feature request)
 - **Severity**: 🟡 medium (feature gap, not a bug)
 - **Source**: User-reported during Phase 0.5 session
-- **Status**: open (feature request, post-E2E)
+- **Status**: ✅ **FIXED** — `helpCog.py` implemented; `/help` + `/admin_help` live-verified 2026-04-21 across Phases 0.5.4–0.5.8, 2.5.1–2.5.17
 - **Observed**: No discoverable `/help` command exists. Users currently must know command names ahead of time or browse Discord's autocomplete (which exposes ALL commands including admin — see A.4).
 - **Expected**: Two-tier help system:
   - **`/help`** — user-facing; lists and describes non-admin commands only: `/profile`, `/bounties`, `/check`, `/ships`, `/ship`, `/shop`, `/buy`, `/sell`, `/inventory`, `/search`, `/item`, `/equip`, `/unequip`, `/duel-challenge`, `/duel-accept`, `/duel-reject`, `/about`, `/list_category`, `/make-route`, `/leaderboard`, `/prestige`, `/unregister`, `/nickname`, `/setactive`, `/criminal-loadout`, `/route`
@@ -1030,9 +1028,9 @@ Add new entries at the top as they're found.
 - **Next step** (deferred post-E2E): Create new `helpCog.py` in `services/discord-gateway/src/cogs/` implementing both commands. Reference existing command descriptions from each cog's `@app_commands.command(description=...)`.
 
 ### A.4 — Admin slash commands visible to non-admin users in autocomplete
-- **Severity**: 🟠 high
+- **Severity**: 🟠 high → 🟢 low (scope narrowed)
 - **Source**: User-reported during Phase 0.5 session
-- **Status**: open (needs follow-up audit)
+- **Status**: ✅ **LARGELY FIXED 2026-04-21** — Phase 1.5 live-verified all admin-gated commands except `/ping` are correctly hidden from non-admin Alt account. Scope narrowed from ~10 leaking commands down to 1. Remaining leak is tracked separately as **A.20** (`/ping` still visible despite matching decorator pattern).
 - **Observed**: Commands gated by `@is_admin()` still appear in the slash-command dropdown for non-admin users. When a non-admin attempts to invoke, they get an ephemeral "permission denied" error — but the commands are discoverable/visible in the first place.
 - **Expected**: Admin-only commands should be invisible (or at least hidden by default) to users without admin permissions — via Discord's `default_permissions` / `default_member_permissions` on the app command decorators.
 - **Impact**: Information leakage (shows non-admins what admin tools exist), clutter in the slash-command UI, and poor UX (users can attempt commands they can't use).
@@ -1042,7 +1040,7 @@ Add new entries at the top as they're found.
 ### A.9 — Bounty config validator rejects `platinum` tier while spawner produces platinum bounties
 - **Severity**: 🟠 high (internal inconsistency — writer/reader tier lists disagree)
 - **Source**: Session Setup during Phase 1 (2026-04-19)
-- **Status**: open (deferred post-E2E)
+- **Status**: ✅ **FIXED 2026-04-21** — `"platinum"` added to `valid_tiers` set in `config_service.py`; 4 regression tests in `TestUpdateBountyConfigPlatinumTier`. A.12 (sibling doc entry) also resolved — Session Setup script in checklist restored to include `"platinum":20`.
 - **Observed**: `PUT /api/v1/config/guild/{gid}/bounty` with `max_bounties_per_tier={bronze:20,silver:20,gold:20,platinum:20}` returns HTTP 400: `"Invalid tier keys: {'platinum'}. Must be bronze, silver, or gold."`. However, the same endpoint's GET response reports `active_bounties_per_tier` with all four tiers (`bronze`, `silver`, `gold`, `platinum`), and `bounty_spawn_executor` **does** spawn platinum-tier bounties (confirmed: bounty id=4, `division='platinum'`, `criminal_name='Nombur Telénah'`).
 - **Expected**: Writer validator and reader / spawner must agree on the canonical tier list. Either (a) accept `platinum` in `max_bounties_per_tier` (likely correct — platinum is a real tier with its own channel, role, and shop), or (b) if platinum caps are intentionally controlled elsewhere, document it and drop `platinum` from `active_bounties_per_tier` output + stop spawning platinum bounties.
 - **Impact**:
@@ -1093,7 +1091,7 @@ Add new entries at the top as they're found.
 ### A.11 — Cleared bounties leave zombie expire jobs in APScheduler
 - **Severity**: 🟡 medium (log noise + potential false-positive errors; not data corruption)
 - **Source**: Phase 1 cleanup operation — `/admin_clear_bounties confirm:CONFIRM` (2026-04-19)
-- **Status**: observed during E2E; partially overlaps with A.6 "Next steps #4" (orphaned one-time jobs)
+- **Status**: ✅ **FIXED 2026-04-21** — `BountyService.clear_bounties()` now cleans up both `bounty_expire` AND `bounty_respawn` orphan jobs (Q1=B user decision). Filter matches `bounty_id` in payload; 6 regression tests in `TestClearBountiesSchedulerCleanup` cover happy path, 404 already-fired silent success, scheduler-down graceful failure, and tier-filter isolation. `executors/AGENTS.md` updated to lock in the `bounty_id` payload-shape contract. **Orthogonal gap surfaced (separate issue)**: `BountyService.escape_bounty()` writes `bounty.respawn_time` to the DB but no code currently schedules a respawn job from it — flagged for future investigation.
 - **Observed**: `/admin_clear_bounties` soft-cleared 4 bounties (`status='cleared'`) and deleted their Discord announcements, but the 4 corresponding `bounty_expire` one-time jobs remained in the APScheduler store:
   ```
   e83b1baf-...  next=+8h  (was bounty id=1)
@@ -1108,8 +1106,8 @@ Add new entries at the top as they're found.
 
 ### A.16 — Postgres startup race breaks stack on fresh DB volume
 - **Severity**: 🟠 high (infra; blocks fresh-env bring-up every time)
-- **Source**: Phase 1 rebuild attempt (2026-04-19)
-- **Status**: **FIXED in code** (needs rebuild to apply); see "Fix" below
+- **Source**: Phase 1 — every fresh stack bring-up on a new DB volume
+- **Status**: ✅ **VERIFIED FIXED 2026-04-21** — stack rebuilt from scratch 2026-04-20; retry logic in migration_manager.py confirmed in code; fresh-boot verified clean during Phase 0 cleanliness check.
 - **Observed**: After wiping `mappings/postgres-data/` and running `docker compose up -d`, bot-core crashed during `MigrationManager.ensure_current()` with `psycopg2.OperationalError: connection to server at "db" (172.19.0.2), port 5432 failed: Connection refused`. The ENTRYPOINT chains migration → `python main.py` with `&&`, then backgrounds the whole chain with a trailing `& tail -f /dev/null`. When migration fails, the whole chain aborts silently; `tail` keeps the container alive → Docker reports `unhealthy` → gateway + blender (both `depends_on: bot-core: service_healthy`) never leave the `Created` state.
 - **Root causes** (three compounding):
   1. **PG healthcheck too weak**: original `pg_isready -d bountydb -U bounty` passes as soon as the Postgres listener socket is open. During first-boot `initdb` on a wiped volume, there's a 1–3 second gap where `pg_isready` returns success but authenticated logins still get `Connection refused`.
@@ -1128,8 +1126,8 @@ Add new entries at the top as they're found.
 
 ### A.12 — Checklist Session Setup script contains the A.9 platinum bug
 - **Severity**: 🟢 low (doc-only)
-- **Source**: Phase 1 Session Setup run (2026-04-19)
-- **Status**: open (doc fix)
+- **Source**: Phase 1 Session Setup (2026-04-19)
+- **Status**: ✅ **FIXED 2026-04-21** (tied to A.9 resolution) — Session Setup script restored to include `"platinum":20`; A.9 validator now accepts it.
 - **Observed**: The `max_bounties_per_tier` payload in the "Session Setup (Run Once at Start)" block at the top of this document includes `"platinum":20`, which fails validation per A.9. Users following the checklist verbatim will see a 400 error on that one call.
 - **Expected**: Until A.9 is resolved, the Session Setup script should use only `bronze/silver/gold` keys, with a note linking to A.9. Once A.9 is fixed, restore platinum.
 - **Next step** (during E2E close-out): Edit the Session Setup block in this document to drop `platinum` from the payload and add a 1-line inline note pointing to A.9.
@@ -1139,8 +1137,8 @@ Add new entries at the top as they're found.
 
 ### A.22 — Bounty spawns across all 4 tiers are synchronized (should be randomized)
 - **Severity**: 🟡 medium (gameplay UX — loses the "surprise" of bounties appearing at different times)
-- **Source**: Observed during Phase 2 testing (2026-04-19)
-- **Status**: open
+- **Source**: Phase 1 observation
+- **Status**: ✅ **FIXED** (code-verified 2026-04-21) — per-tier spawn jobs now randomized; awaits E2E re-verification during Phase 7
 - **Observed**: When `bounty_spawn_default` executor fires, bounties for all 4 tiers (Bronze/Silver/Gold/Platinum) pop at the exact same moment. Expected behavior: each tier should spawn independently on a staggered/randomized cadence within the configured spawn interval, so players checking different boards see bounties appear at different times.
 - **Likely location**: `services/bot-core/src/utils/executors/bounty_spawn_executor.py` — probably iterates all tiers in a single executor invocation instead of per-tier jobs or randomized per-tier delays.
 - **Possible fix approaches**:
@@ -1151,8 +1149,8 @@ Add new entries at the top as they're found.
 
 ### A.21 — Shop refresh announcement posted to wrong channel + role mention inside embed (won't ping)
 - **Severity**: 🟡 medium (broken notification UX)
-- **Source**: Observed during Phase 2 testing (2026-04-19)
-- **Status**: open
+- **Source**: Phase 1 live observation
+- **Status**: ✅ **FIXED** (code-verified 2026-04-21) — posts to `shop_channel_id` with role mention in `text_content` (pings correctly); awaits E2E re-verification during Phase 4
 - **Observed**: When `shop_refresh` executor fires and announces the refresh:
   1. Posted to `#bounty-hunting` instead of `#shop`
   2. The role mention (`@Bounty Hunter` or tier role) is embedded *inside* the embed body, not as plain text preceding the embed. Discord only triggers role notifications for mentions in the plain message content, not inside embed fields. Result: the role is visually mentioned but no one actually gets pinged.
@@ -1177,8 +1175,8 @@ Add new entries at the top as they're found.
 
 ### A.19 — Checklist references /register but the command is /profile
 - **Severity**: 🟢 low (doc/UX)
-- **Source**: Phase 1.2 live run (2026-04-19)
-- **Status**: open (doc fix OR optional alias addition)
+- **Source**: Phase 1 item 1.7 runs
+- **Status**: ✅ **FIXED 2026-04-21** — alias addition path taken. New `/register` slash command added in `playerCog.py` delegating to shared `_display_profile()` handler. Both `/register` and `/profile` are fully interchangeable. 4 regression tests in `TestRegisterAlias`.
 - **Observed**: Checklist click 1.2 says "Main runs `/register`" but no `/register` command exists. The registering UX is `/profile`, which creates-or-gets the player on first invocation. User confirmed `/register` was never implemented as an alias.
 - **Decision needed**:
   - (a) Update checklist click 1.2 to say `/profile` — faster, matches current UX

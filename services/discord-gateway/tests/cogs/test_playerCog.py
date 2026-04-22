@@ -905,8 +905,9 @@ class TestProfileRoleAssignment:
         stats_resp.json.return_value = stats_data
 
         promo_resp = _make_promo_resp()
-        config_resp = _make_config_resp(bh_role_id, bronze_role_id=bronze_role_id,
-                                        silver_role_id=None, gold_role_id=None, platinum_role_id=None)
+        config_resp = _make_config_resp(
+            bh_role_id, bronze_role_id=bronze_role_id, silver_role_id=None, gold_role_id=None, platinum_role_id=None
+        )
 
         # guild.get_role returns distinct role mocks for each ID
         mock_bh_role = MagicMock()
@@ -987,8 +988,9 @@ class TestProfileRoleAssignment:
 
         promo_resp = _make_promo_resp()
         # No BH role or tier roles configured at all
-        config_resp = _make_config_resp(None, bronze_role_id=None, silver_role_id=None,
-                                        gold_role_id=None, platinum_role_id=None)
+        config_resp = _make_config_resp(
+            None, bronze_role_id=None, silver_role_id=None, gold_role_id=None, platinum_role_id=None
+        )
 
         mock_player_cog.http_client.post = AsyncMock(return_value=player_resp)
         mock_player_cog.http_client.get = AsyncMock(side_effect=[stats_resp, promo_resp, config_resp])
@@ -1399,8 +1401,9 @@ class TestUnregisterCommand:
         interaction.guild.get_role = MagicMock(side_effect=_get_role)
 
         # Config returns both bh_role_id and bronze_role_id
-        config_resp = _make_config_resp(bh_role_id, bronze_role_id=bronze_id,
-                                        silver_role_id=None, gold_role_id=None, platinum_role_id=None)
+        config_resp = _make_config_resp(
+            bh_role_id, bronze_role_id=bronze_id, silver_role_id=None, gold_role_id=None, platinum_role_id=None
+        )
         mock_player_cog.http_client.get = AsyncMock(return_value=config_resp)
 
         asyncio.run(mock_player_cog.unregister.callback(mock_player_cog, interaction))
@@ -1862,9 +1865,7 @@ def _make_player_loadout_response(**overrides):
             "max_turrets": 0,
             "max_modules": 2,
         },
-        "weapons": [
-            {"name": "Nirai Impulse EX 1", "emoji": "<:ni:1>", "dps": 7.5, "value": 2500}
-        ],
+        "weapons": [{"name": "Nirai Impulse EX 1", "emoji": "<:ni:1>", "dps": 7.5, "value": 2500}],
         "turrets": [],
         "modules": [
             {
@@ -1957,9 +1958,7 @@ class TestLoadoutCommand:
 
         self._setup_loadout(mock_player_cog, _make_player_data(), no_ship_resp)
 
-        asyncio.run(
-            mock_player_cog.loadout.callback(mock_player_cog, interaction, player=None, public=True)
-        )
+        asyncio.run(mock_player_cog.loadout.callback(mock_player_cog, interaction, player=None, public=True))
 
         send_kwargs = interaction.followup.send.call_args[1]
         # Errors always ephemeral regardless of public=True
@@ -1990,9 +1989,7 @@ class TestLoadoutCommand:
 
         # Patch _check_is_admin to return False (non-admin)
         with patch("cogs.playerCog._check_is_admin", AsyncMock(return_value=False)):
-            asyncio.run(
-                mock_player_cog.loadout.callback(mock_player_cog, interaction, player=other)
-            )
+            asyncio.run(mock_player_cog.loadout.callback(mock_player_cog, interaction, player=other))
 
         get_call = mock_player_cog.http_client.get.call_args_list[0]
         params = get_call[1].get("params", {})
@@ -2009,9 +2006,7 @@ class TestLoadoutCommand:
         self._setup_loadout(mock_player_cog, _make_player_data(), _make_player_loadout_response())
 
         with patch("cogs.playerCog._check_is_admin", AsyncMock(return_value=True)):
-            asyncio.run(
-                mock_player_cog.loadout.callback(mock_player_cog, interaction, player=other)
-            )
+            asyncio.run(mock_player_cog.loadout.callback(mock_player_cog, interaction, player=other))
 
         get_call = mock_player_cog.http_client.get.call_args_list[0]
         params = get_call[1].get("params", {})
@@ -2056,9 +2051,7 @@ class TestLoadoutCommand:
         mock_player_cog.http_client.post = AsyncMock(return_value=player_resp)
         mock_player_cog.http_client.get = AsyncMock(side_effect=err)
 
-        asyncio.run(
-            mock_player_cog.loadout.callback(mock_player_cog, interaction, player=None, public=True)
-        )
+        asyncio.run(mock_player_cog.loadout.callback(mock_player_cog, interaction, player=None, public=True))
 
         send_kwargs = interaction.followup.send.call_args[1]
         # Errors always ephemeral
@@ -2069,9 +2062,7 @@ class TestLoadoutCommand:
         interaction = _create_mock_interaction()
         mock_player_cog.http_client.post = AsyncMock(side_effect=Exception("boom"))
 
-        asyncio.run(
-            mock_player_cog.loadout.callback(mock_player_cog, interaction, player=None, public=True)
-        )
+        asyncio.run(mock_player_cog.loadout.callback(mock_player_cog, interaction, player=None, public=True))
 
         interaction.followup.send.assert_awaited_once()
         call_kwargs = interaction.followup.send.call_args[1]
@@ -2190,6 +2181,120 @@ class TestLoadoutErrorHandler:
 
         interaction.response.send_message.assert_not_awaited()
 
+
+# ---------------------------------------------------------------------------
+# /register alias (A.19 regression)
+# ---------------------------------------------------------------------------
+
+
+class TestRegisterAlias:
+    """A.19: /register is a full behavioural alias for /profile.
+
+    Both commands must produce the same embed shape, invoke the same shared
+    handler, and send ``discord_username`` on the player upsert.
+    """
+
+    def test_register_happy_path_matches_profile(self, mock_player_cog):
+        """/register on a Bronze player yields the same embed shape as /profile."""
+        interaction = _create_mock_interaction()
+
+        player_data = _make_player_data(tier="Bronze", prestige_count=0)
+        stats_data = _make_stats_data()
+
+        player_resp = MagicMock()
+        player_resp.status_code = 200
+        player_resp.json.return_value = player_data
+        player_resp.raise_for_status = MagicMock()
+
+        stats_resp = MagicMock()
+        stats_resp.status_code = 200
+        stats_resp.json.return_value = stats_data
+        stats_resp.raise_for_status = MagicMock()
+
+        mock_player_cog.http_client.post = AsyncMock(return_value=player_resp)
+        mock_player_cog.http_client.get = AsyncMock(return_value=stats_resp)
+
+        asyncio.run(mock_player_cog.register.callback(mock_player_cog, interaction))
+
+        interaction.response.defer.assert_awaited_once_with(thinking=True)
+        interaction.followup.send.assert_awaited_once()
+        call_kwargs = interaction.followup.send.call_args[1]
+        assert "embed" in call_kwargs
+
+    def test_register_delegates_to_shared_handler(self, mock_player_cog):
+        """Both /profile and /register go through the same _display_profile handler."""
+        interaction_p = _create_mock_interaction()
+        interaction_r = _create_mock_interaction()
+
+        with patch.object(mock_player_cog, "_display_profile", new=AsyncMock()) as mock_handler:
+            asyncio.run(mock_player_cog.profile.callback(mock_player_cog, interaction_p))
+            asyncio.run(mock_player_cog.register.callback(mock_player_cog, interaction_r))
+
+            assert mock_handler.await_count == 2
+            # First call came from /profile, second from /register.
+            first_arg_p = mock_handler.await_args_list[0][0][0]
+            first_arg_r = mock_handler.await_args_list[1][0][0]
+            assert first_arg_p is interaction_p
+            assert first_arg_r is interaction_r
+
+    def test_register_404_behaves_same_as_profile(self, mock_player_cog):
+        """/register must handle a 404 from player upsert identically to /profile."""
+        import httpx
+
+        interaction = _create_mock_interaction()
+
+        error_response = MagicMock()
+        error_response.status_code = 404
+        http_error = httpx.HTTPStatusError(
+            "404 Not Found",
+            request=MagicMock(),
+            response=error_response,
+        )
+
+        mock_player_cog.http_client.post = AsyncMock(side_effect=http_error)
+
+        asyncio.run(mock_player_cog.register.callback(mock_player_cog, interaction))
+
+        interaction.followup.send.assert_awaited_once()
+        call_kwargs = interaction.followup.send.call_args
+        # Ephemeral so only the invoker sees the error.
+        assert call_kwargs[1].get("ephemeral", False)
+        msg = call_kwargs[0][0]
+        assert "not found" in msg.lower() or "profile" in msg.lower()
+
+    def test_register_sends_discord_username_on_upsert(self, mock_player_cog):
+        """A.3-style invariant: /register posts ``discord_username = str(user)``."""
+        interaction = _create_mock_interaction()
+
+        player_data = _make_player_data(tier="Bronze", prestige_count=0)
+        stats_data = _make_stats_data()
+
+        player_resp = MagicMock()
+        player_resp.status_code = 200
+        player_resp.json.return_value = player_data
+        player_resp.raise_for_status = MagicMock()
+
+        stats_resp = MagicMock()
+        stats_resp.status_code = 200
+        stats_resp.json.return_value = stats_data
+        stats_resp.raise_for_status = MagicMock()
+
+        mock_player_cog.http_client.post = AsyncMock(return_value=player_resp)
+        mock_player_cog.http_client.get = AsyncMock(return_value=stats_resp)
+
+        asyncio.run(mock_player_cog.register.callback(mock_player_cog, interaction))
+
+        # Find the POST to /players/ — the first positional arg is the URL,
+        # and the json= kwarg carries the upsert payload.
+        post_calls = mock_player_cog.http_client.post.await_args_list
+        players_post = next(call for call in post_calls if "/players/" in call[0][0])
+        body = players_post[1]["json"]
+        assert body["discord_id"] == interaction.user.id
+        assert body["guild_id"] == interaction.guild_id
+        # discord_username must be the live str(user), NOT None (preserves
+        # the A.3 behaviour that username writes only happen on /profile and
+        # now also /register, since /register is a full alias).
+        assert body["discord_username"] == str(interaction.user)
 
 
 if __name__ == "__main__":

@@ -60,10 +60,14 @@ import discord
 def _evict_discord_modules():
     """Remove cached discord/source modules so they re-import with real discord."""
     to_evict = [
-        k for k in sys.modules
-        if k == "discord" or k.startswith("discord.")
-        or k in ("api", "bot", "utils") or k.startswith("api.")
-        or k.startswith("utils.") or k.startswith("cogs.")
+        k
+        for k in sys.modules
+        if k == "discord"
+        or k.startswith("discord.")
+        or k in ("api", "bot", "utils")
+        or k.startswith("api.")
+        or k.startswith("utils.")
+        or k.startswith("cogs.")
     ]
     for k in to_evict:
         sys.modules.pop(k, None)
@@ -174,6 +178,7 @@ class TestAboutCogInitialization:
         _evict_discord_modules()
 
         from cogs.aboutCog import AboutCog
+
         _ = AboutCog(mock_bot)
 
         # The bot.loop.create_task should have been called once
@@ -226,9 +231,7 @@ class TestPreloadData:
         weapon_resp.raise_for_status = MagicMock()
         weapon_resp.json.return_value = weapon_objects
 
-        mock_about_cog.http_client.get = AsyncMock(
-            side_effect=[categories_resp, ship_resp, module_resp, weapon_resp]
-        )
+        mock_about_cog.http_client.get = AsyncMock(side_effect=[categories_resp, ship_resp, module_resp, weapon_resp])
         # wait_until_ready returns immediately
         mock_about_cog.bot.wait_until_ready = AsyncMock()
 
@@ -241,9 +244,8 @@ class TestPreloadData:
     def test_preload_data_api_failure(self, mock_about_cog):
         """_preload_data should handle API failure gracefully."""
         import httpx
-        mock_about_cog.http_client.get = AsyncMock(
-            side_effect=httpx.HTTPError("connection refused")
-        )
+
+        mock_about_cog.http_client.get = AsyncMock(side_effect=httpx.HTTPError("connection refused"))
         mock_about_cog.bot.wait_until_ready = AsyncMock()
 
         # Should not raise — failure is caught internally
@@ -267,11 +269,10 @@ class TestPreloadData:
 
         # Module category fails
         import httpx
+
         module_error = httpx.HTTPError("timeout")
 
-        mock_about_cog.http_client.get = AsyncMock(
-            side_effect=[categories_resp, ship_resp, module_error]
-        )
+        mock_about_cog.http_client.get = AsyncMock(side_effect=[categories_resp, ship_resp, module_error])
         mock_about_cog.bot.wait_until_ready = AsyncMock()
 
         asyncio.run(mock_about_cog._preload_data())
@@ -343,9 +344,7 @@ class TestObjectAutocomplete:
 
     def test_object_autocomplete_no_category(self, mock_about_cog):
         """object_autocomplete with no category in namespace returns empty."""
-        mock_about_cog._objects_by_category = {
-            "ship": [{"name": "Eagle"}, {"name": "Hawk"}]
-        }
+        mock_about_cog._objects_by_category = {"ship": [{"name": "Eagle"}, {"name": "Hawk"}]}
         interaction = _create_mock_interaction()
         # namespace has no category attribute
         interaction.namespace = MagicMock(spec=[])
@@ -356,9 +355,7 @@ class TestObjectAutocomplete:
 
     def test_object_autocomplete_valid_category(self, mock_about_cog):
         """object_autocomplete should return objects for selected category."""
-        mock_about_cog._objects_by_category = {
-            "ship": [{"name": "Eagle"}, {"name": "Hawk"}, {"name": "Falcon"}]
-        }
+        mock_about_cog._objects_by_category = {"ship": [{"name": "Eagle"}, {"name": "Hawk"}, {"name": "Falcon"}]}
         interaction = _create_mock_interaction()
         interaction.namespace = MagicMock()
         interaction.namespace.category = "ship"
@@ -369,9 +366,7 @@ class TestObjectAutocomplete:
 
     def test_object_autocomplete_partial_match(self, mock_about_cog):
         """object_autocomplete should filter by partial match."""
-        mock_about_cog._objects_by_category = {
-            "ship": [{"name": "Eagle"}, {"name": "Hawk"}, {"name": "Falcon"}]
-        }
+        mock_about_cog._objects_by_category = {"ship": [{"name": "Eagle"}, {"name": "Hawk"}, {"name": "Falcon"}]}
         interaction = _create_mock_interaction()
         interaction.namespace = MagicMock()
         interaction.namespace.category = "ship"
@@ -396,9 +391,7 @@ class TestAboutCommand:
 
         # Set up preloaded categories
         mock_about_cog._categories = ["ship"]
-        mock_about_cog._objects_by_category = {
-            "ship": [{"name": "Eagle", "aliases": []}]
-        }
+        mock_about_cog._objects_by_category = {"ship": [{"name": "Eagle", "aliases": []}]}
 
         obj_resp = MagicMock()
         obj_resp.raise_for_status = MagicMock()
@@ -427,9 +420,7 @@ class TestAboutCommand:
             mock_embed = MagicMock(spec=discord.Embed)
             mock_converter.payload_to_grid_embed.return_value = mock_embed
 
-            asyncio.run(mock_about_cog.about.callback(
-                mock_about_cog, interaction, "ship", "Eagle"
-            ))
+            asyncio.run(mock_about_cog.about.callback(mock_about_cog, interaction, "ship", "Eagle"))
 
         interaction.response.defer.assert_awaited_once_with(thinking=True)
         interaction.followup.send.assert_awaited_once()
@@ -437,6 +428,7 @@ class TestAboutCommand:
     def test_about_object_not_found_404(self, mock_about_cog):
         """about should send ephemeral error when object is not found."""
         import httpx
+
         interaction = _create_mock_interaction()
 
         mock_about_cog._categories = ["ship"]
@@ -444,14 +436,10 @@ class TestAboutCommand:
 
         error_response = MagicMock()
         error_response.status_code = 404
-        http_error = httpx.HTTPStatusError(
-            "404 Not Found", request=MagicMock(), response=error_response
-        )
+        http_error = httpx.HTTPStatusError("404 Not Found", request=MagicMock(), response=error_response)
         mock_about_cog.http_client.get = AsyncMock(side_effect=http_error)
 
-        asyncio.run(mock_about_cog.about.callback(
-            mock_about_cog, interaction, "ship", "NonExistentShip"
-        ))
+        asyncio.run(mock_about_cog.about.callback(mock_about_cog, interaction, "ship", "NonExistentShip"))
 
         interaction.followup.send.assert_awaited_once()
         call_kwargs = interaction.followup.send.call_args
@@ -461,6 +449,7 @@ class TestAboutCommand:
     def test_about_api_error_non_404(self, mock_about_cog):
         """about should handle non-404 API errors gracefully."""
         import httpx
+
         interaction = _create_mock_interaction()
 
         mock_about_cog._categories = ["ship"]
@@ -468,14 +457,10 @@ class TestAboutCommand:
 
         error_response = MagicMock()
         error_response.status_code = 500
-        http_error = httpx.HTTPStatusError(
-            "500 Server Error", request=MagicMock(), response=error_response
-        )
+        http_error = httpx.HTTPStatusError("500 Server Error", request=MagicMock(), response=error_response)
         mock_about_cog.http_client.get = AsyncMock(side_effect=http_error)
 
-        asyncio.run(mock_about_cog.about.callback(
-            mock_about_cog, interaction, "ship", "Eagle"
-        ))
+        asyncio.run(mock_about_cog.about.callback(mock_about_cog, interaction, "ship", "Eagle"))
 
         interaction.followup.send.assert_awaited_once()
         call_kwargs = interaction.followup.send.call_args
@@ -488,13 +473,9 @@ class TestAboutCommand:
         mock_about_cog._categories = ["ship"]
         mock_about_cog._objects_by_category = {"ship": []}
 
-        mock_about_cog.http_client.get = AsyncMock(
-            side_effect=RuntimeError("network failure")
-        )
+        mock_about_cog.http_client.get = AsyncMock(side_effect=RuntimeError("network failure"))
 
-        asyncio.run(mock_about_cog.about.callback(
-            mock_about_cog, interaction, "ship", "Eagle"
-        ))
+        asyncio.run(mock_about_cog.about.callback(mock_about_cog, interaction, "ship", "Eagle"))
 
         interaction.followup.send.assert_awaited_once()
         call_kwargs = interaction.followup.send.call_args
@@ -505,9 +486,7 @@ class TestAboutCommand:
         interaction = _create_mock_interaction()
 
         mock_about_cog._categories = ["ship"]
-        mock_about_cog._objects_by_category = {
-            "ship": [{"name": "Eagle", "aliases": ["Eagleship", "TheEagle"]}]
-        }
+        mock_about_cog._objects_by_category = {"ship": [{"name": "Eagle", "aliases": ["Eagleship", "TheEagle"]}]}
 
         obj_resp = MagicMock()
         obj_resp.raise_for_status = MagicMock()
@@ -520,9 +499,7 @@ class TestAboutCommand:
             mock_embed = MagicMock(spec=discord.Embed)
             mock_converter.payload_to_grid_embed.return_value = mock_embed
 
-            asyncio.run(mock_about_cog.about.callback(
-                mock_about_cog, interaction, "ship", "TheEagle"
-            ))
+            asyncio.run(mock_about_cog.about.callback(mock_about_cog, interaction, "ship", "TheEagle"))
 
         # Should have called the API with the canonical name "Eagle"
         mock_about_cog.http_client.get.assert_awaited()
@@ -546,9 +523,7 @@ class TestListCategoryCommand:
             "ship": [{"name": "Eagle", "emoji": "🚀"}, {"name": "Hawk", "emoji": None}]
         }
 
-        asyncio.run(mock_about_cog.list_category.callback(
-            mock_about_cog, interaction, "ship"
-        ))
+        asyncio.run(mock_about_cog.list_category.callback(mock_about_cog, interaction, "ship"))
 
         interaction.response.defer.assert_awaited_once_with(thinking=True)
         interaction.followup.send.assert_awaited_once()
@@ -561,9 +536,7 @@ class TestListCategoryCommand:
 
         mock_about_cog._objects_by_category = {}
 
-        asyncio.run(mock_about_cog.list_category.callback(
-            mock_about_cog, interaction, "unknown_category"
-        ))
+        asyncio.run(mock_about_cog.list_category.callback(mock_about_cog, interaction, "unknown_category"))
 
         interaction.followup.send.assert_awaited_once()
         call_kwargs = interaction.followup.send.call_args
@@ -576,9 +549,7 @@ class TestListCategoryCommand:
 
         mock_about_cog._objects_by_category = {"ship": []}
 
-        asyncio.run(mock_about_cog.list_category.callback(
-            mock_about_cog, interaction, "ship"
-        ))
+        asyncio.run(mock_about_cog.list_category.callback(mock_about_cog, interaction, "ship"))
 
         interaction.followup.send.assert_awaited_once()
         call_kwargs = interaction.followup.send.call_args
@@ -606,6 +577,7 @@ class TestCogSetup:
         mock_bot.add_cog.assert_called_once()
         added_arg = mock_bot.add_cog.call_args[0][0]
         from cogs.aboutCog import AboutCog
+
         assert isinstance(added_arg, AboutCog)
 
 
@@ -835,9 +807,7 @@ class TestCreateObjectEmbed:
             **_make_object_data("Eagle", "criminal", 72),
             "icon": "https://example.com/timeout.png",
         }
-        mock_about_cog.http_client.head = AsyncMock(
-            side_effect=RuntimeError("connection timeout")
-        )
+        mock_about_cog.http_client.head = AsyncMock(side_effect=RuntimeError("connection timeout"))
 
         result = asyncio.run(mock_about_cog._create_object_embed(obj_data))
         assert result is not None
@@ -982,9 +952,7 @@ class TestObjectAutocompleteExtraBranches:
 
     def test_object_autocomplete_invalid_category(self, mock_about_cog):
         """object_autocomplete with category not in cache returns empty."""
-        mock_about_cog._objects_by_category = {
-            "ship": [{"name": "Eagle"}]
-        }
+        mock_about_cog._objects_by_category = {"ship": [{"name": "Eagle"}]}
         interaction = _create_mock_interaction()
         interaction.namespace = MagicMock()
         interaction.namespace.category = "nonexistent"
@@ -994,9 +962,7 @@ class TestObjectAutocompleteExtraBranches:
 
     def test_object_autocomplete_limits_to_25(self, mock_about_cog):
         """object_autocomplete should return at most 25 results."""
-        mock_about_cog._objects_by_category = {
-            "ship": [{"name": f"Ship_{i}"} for i in range(30)]
-        }
+        mock_about_cog._objects_by_category = {"ship": [{"name": f"Ship_{i}"} for i in range(30)]}
         interaction = _create_mock_interaction()
         interaction.namespace = MagicMock()
         interaction.namespace.category = "ship"
@@ -1018,13 +984,10 @@ class TestListCategoryExtraBranches:
         interaction = _create_mock_interaction()
 
         # Create objects with long names that will exceed the 1024-char limit
-        objects = [{"name": f"VeryLongObjectName_{'x' * 80}_{i:03d}", "emoji": None}
-                   for i in range(20)]
+        objects = [{"name": f"VeryLongObjectName_{'x' * 80}_{i:03d}", "emoji": None} for i in range(20)]
         mock_about_cog._objects_by_category = {"ship": objects}
 
-        asyncio.run(mock_about_cog.list_category.callback(
-            mock_about_cog, interaction, "ship"
-        ))
+        asyncio.run(mock_about_cog.list_category.callback(mock_about_cog, interaction, "ship"))
 
         interaction.followup.send.assert_awaited_once()
         call_kwargs = interaction.followup.send.call_args[1]
@@ -1038,9 +1001,7 @@ class TestListCategoryExtraBranches:
         objects = [{"name": f"Obj{i}", "emoji": None} for i in range(101)]
         mock_about_cog._objects_by_category = {"ship": objects}
 
-        asyncio.run(mock_about_cog.list_category.callback(
-            mock_about_cog, interaction, "ship"
-        ))
+        asyncio.run(mock_about_cog.list_category.callback(mock_about_cog, interaction, "ship"))
 
         interaction.followup.send.assert_awaited_once()
         call_kwargs = interaction.followup.send.call_args[1]
@@ -1057,9 +1018,7 @@ class TestListCategoryExtraBranches:
         ]
         mock_about_cog._objects_by_category = {"ship": objects}
 
-        asyncio.run(mock_about_cog.list_category.callback(
-            mock_about_cog, interaction, "ship"
-        ))
+        asyncio.run(mock_about_cog.list_category.callback(mock_about_cog, interaction, "ship"))
 
         interaction.followup.send.assert_awaited_once()
 
@@ -1069,13 +1028,9 @@ class TestListCategoryExtraBranches:
 
         # Make _objects_by_category raise when accessed via __contains__
         mock_about_cog._objects_by_category = MagicMock()
-        mock_about_cog._objects_by_category.__contains__ = MagicMock(
-            side_effect=RuntimeError("unexpected error")
-        )
+        mock_about_cog._objects_by_category.__contains__ = MagicMock(side_effect=RuntimeError("unexpected error"))
 
-        asyncio.run(mock_about_cog.list_category.callback(
-            mock_about_cog, interaction, "ship"
-        ))
+        asyncio.run(mock_about_cog.list_category.callback(mock_about_cog, interaction, "ship"))
 
         interaction.followup.send.assert_awaited_once()
         call_kwargs = interaction.followup.send.call_args
@@ -1107,9 +1062,7 @@ class TestAboutCommandExtraBranches:
             mc.embed_to_payload.return_value = MagicMock()
             mc.payload_to_grid_embed.return_value = MagicMock(spec=discord.Embed)
 
-            asyncio.run(mock_about_cog.about.callback(
-                mock_about_cog, interaction, "ship", "Eagle"
-            ))
+            asyncio.run(mock_about_cog.about.callback(mock_about_cog, interaction, "ship", "Eagle"))
 
         interaction.followup.send.assert_awaited_once()
 
@@ -1118,9 +1071,7 @@ class TestAboutCommandExtraBranches:
         interaction = _create_mock_interaction()
 
         mock_about_cog._categories = ["ship"]
-        mock_about_cog._objects_by_category = {
-            "ship": [{"name": "Eagle", "aliases": ["Hawk"]}]
-        }
+        mock_about_cog._objects_by_category = {"ship": [{"name": "Eagle", "aliases": ["Hawk"]}]}
 
         obj_resp = MagicMock()
         obj_resp.raise_for_status = MagicMock()
@@ -1131,9 +1082,7 @@ class TestAboutCommandExtraBranches:
             mc.embed_to_payload.return_value = MagicMock()
             mc.payload_to_grid_embed.return_value = MagicMock(spec=discord.Embed)
 
-            asyncio.run(mock_about_cog.about.callback(
-                mock_about_cog, interaction, "ship", "Eagle"
-            ))
+            asyncio.run(mock_about_cog.about.callback(mock_about_cog, interaction, "ship", "Eagle"))
 
         call_args = mock_about_cog.http_client.get.call_args
         assert "Eagle" in call_args[0][0]
@@ -1192,9 +1141,7 @@ class TestSystemAutocomplete:
 
     def test_system_autocomplete_limits_to_25(self, mock_about_cog):
         """system_autocomplete returns at most 25 results."""
-        mock_about_cog._objects_by_category = {
-            "system": [{"name": f"System_{i}"} for i in range(30)]
-        }
+        mock_about_cog._objects_by_category = {"system": [{"name": f"System_{i}"} for i in range(30)]}
         interaction = _create_mock_interaction()
 
         result = asyncio.run(mock_about_cog.system_autocomplete(interaction, ""))
@@ -1222,9 +1169,7 @@ class TestMakeRouteCommand:
         }
         mock_about_cog.http_client.get = AsyncMock(return_value=route_resp)
 
-        asyncio.run(mock_about_cog.make_route.callback(
-            mock_about_cog, interaction, "Sol", "Beta"
-        ))
+        asyncio.run(mock_about_cog.make_route.callback(mock_about_cog, interaction, "Sol", "Beta"))
 
         interaction.response.defer.assert_awaited_once_with(thinking=True)
         interaction.followup.send.assert_awaited_once()
@@ -1243,9 +1188,7 @@ class TestMakeRouteCommand:
         }
         mock_about_cog.http_client.get = AsyncMock(return_value=route_resp)
 
-        asyncio.run(mock_about_cog.make_route.callback(
-            mock_about_cog, interaction, "Sol", "Beta"
-        ))
+        asyncio.run(mock_about_cog.make_route.callback(mock_about_cog, interaction, "Sol", "Beta"))
 
         call_kwargs = interaction.followup.send.call_args[1]
         embed = call_kwargs["embed"]
@@ -1255,18 +1198,15 @@ class TestMakeRouteCommand:
     def test_make_route_no_route_found_404(self, mock_about_cog):
         """make_route should send ephemeral error when route is not found (404)."""
         import httpx
+
         interaction = _create_mock_interaction()
 
         error_response = MagicMock()
         error_response.status_code = 404
-        http_error = httpx.HTTPStatusError(
-            "404 Not Found", request=MagicMock(), response=error_response
-        )
+        http_error = httpx.HTTPStatusError("404 Not Found", request=MagicMock(), response=error_response)
         mock_about_cog.http_client.get = AsyncMock(side_effect=http_error)
 
-        asyncio.run(mock_about_cog.make_route.callback(
-            mock_about_cog, interaction, "Sol", "Nowhere"
-        ))
+        asyncio.run(mock_about_cog.make_route.callback(mock_about_cog, interaction, "Sol", "Nowhere"))
 
         interaction.followup.send.assert_awaited_once()
         call_kwargs = interaction.followup.send.call_args
@@ -1276,18 +1216,15 @@ class TestMakeRouteCommand:
     def test_make_route_too_long_400(self, mock_about_cog):
         """make_route should send ephemeral error when route is too long (400)."""
         import httpx
+
         interaction = _create_mock_interaction()
 
         error_response = MagicMock()
         error_response.status_code = 400
-        http_error = httpx.HTTPStatusError(
-            "400 Bad Request", request=MagicMock(), response=error_response
-        )
+        http_error = httpx.HTTPStatusError("400 Bad Request", request=MagicMock(), response=error_response)
         mock_about_cog.http_client.get = AsyncMock(side_effect=http_error)
 
-        asyncio.run(mock_about_cog.make_route.callback(
-            mock_about_cog, interaction, "A", "Z"
-        ))
+        asyncio.run(mock_about_cog.make_route.callback(mock_about_cog, interaction, "A", "Z"))
 
         interaction.followup.send.assert_awaited_once()
         call_kwargs = interaction.followup.send.call_args
@@ -1297,18 +1234,15 @@ class TestMakeRouteCommand:
     def test_make_route_api_error_non_404_non_400(self, mock_about_cog):
         """make_route should handle non-404/400 HTTP errors gracefully."""
         import httpx
+
         interaction = _create_mock_interaction()
 
         error_response = MagicMock()
         error_response.status_code = 500
-        http_error = httpx.HTTPStatusError(
-            "500 Server Error", request=MagicMock(), response=error_response
-        )
+        http_error = httpx.HTTPStatusError("500 Server Error", request=MagicMock(), response=error_response)
         mock_about_cog.http_client.get = AsyncMock(side_effect=http_error)
 
-        asyncio.run(mock_about_cog.make_route.callback(
-            mock_about_cog, interaction, "A", "B"
-        ))
+        asyncio.run(mock_about_cog.make_route.callback(mock_about_cog, interaction, "A", "B"))
 
         interaction.followup.send.assert_awaited_once()
         call_kwargs = interaction.followup.send.call_args
@@ -1318,13 +1252,9 @@ class TestMakeRouteCommand:
         """make_route should handle generic exceptions gracefully."""
         interaction = _create_mock_interaction()
 
-        mock_about_cog.http_client.get = AsyncMock(
-            side_effect=RuntimeError("network failure")
-        )
+        mock_about_cog.http_client.get = AsyncMock(side_effect=RuntimeError("network failure"))
 
-        asyncio.run(mock_about_cog.make_route.callback(
-            mock_about_cog, interaction, "A", "B"
-        ))
+        asyncio.run(mock_about_cog.make_route.callback(mock_about_cog, interaction, "A", "B"))
 
         interaction.followup.send.assert_awaited_once()
         call_kwargs = interaction.followup.send.call_args
@@ -1339,9 +1269,7 @@ class TestMakeRouteCommand:
         route_resp.json.return_value = {"route": ["Sol", "Alpha"], "hops": 1}
         mock_about_cog.http_client.get = AsyncMock(return_value=route_resp)
 
-        asyncio.run(mock_about_cog.make_route.callback(
-            mock_about_cog, interaction, "Sol", "Alpha"
-        ))
+        asyncio.run(mock_about_cog.make_route.callback(mock_about_cog, interaction, "Sol", "Alpha"))
 
         # make_route makes 2 GET calls: /systems/route (first) and /systems/route/map (second).
         # Verify the first call is the route endpoint with the correct start/end params.
@@ -1373,9 +1301,7 @@ class TestListCategoryFilters:
             ]
         }
 
-        asyncio.run(mock_about_cog.list_category.callback(
-            mock_about_cog, interaction, "ship", tech_level=1
-        ))
+        asyncio.run(mock_about_cog.list_category.callback(mock_about_cog, interaction, "ship", tech_level=1))
 
         interaction.followup.send.assert_awaited_once()
         call_kwargs = interaction.followup.send.call_args[1]
@@ -1396,9 +1322,7 @@ class TestListCategoryFilters:
             ]
         }
 
-        asyncio.run(mock_about_cog.list_category.callback(
-            mock_about_cog, interaction, "ship", manufacturer="AcmeCorp"
-        ))
+        asyncio.run(mock_about_cog.list_category.callback(mock_about_cog, interaction, "ship", manufacturer="AcmeCorp"))
 
         interaction.followup.send.assert_awaited_once()
         call_kwargs = interaction.followup.send.call_args[1]
@@ -1418,9 +1342,11 @@ class TestListCategoryFilters:
             ]
         }
 
-        asyncio.run(mock_about_cog.list_category.callback(
-            mock_about_cog, interaction, "ship", tech_level=1, manufacturer="AcmeCorp"
-        ))
+        asyncio.run(
+            mock_about_cog.list_category.callback(
+                mock_about_cog, interaction, "ship", tech_level=1, manufacturer="AcmeCorp"
+            )
+        )
 
         interaction.followup.send.assert_awaited_once()
         call_kwargs = interaction.followup.send.call_args[1]
@@ -1439,9 +1365,7 @@ class TestListCategoryFilters:
             ]
         }
 
-        asyncio.run(mock_about_cog.list_category.callback(
-            mock_about_cog, interaction, "ship"
-        ))
+        asyncio.run(mock_about_cog.list_category.callback(mock_about_cog, interaction, "ship"))
 
         interaction.followup.send.assert_awaited_once()
         call_kwargs = interaction.followup.send.call_args[1]
@@ -1457,9 +1381,7 @@ class TestListCategoryFilters:
             ]
         }
 
-        asyncio.run(mock_about_cog.list_category.callback(
-            mock_about_cog, interaction, "ship", tech_level=5
-        ))
+        asyncio.run(mock_about_cog.list_category.callback(mock_about_cog, interaction, "ship", tech_level=5))
 
         interaction.followup.send.assert_awaited_once()
         call_kwargs = interaction.followup.send.call_args
@@ -1476,15 +1398,98 @@ class TestListCategoryFilters:
             ]
         }
 
-        asyncio.run(mock_about_cog.list_category.callback(
-            mock_about_cog, interaction, "ship", manufacturer="acmecorp"
-        ))
+        asyncio.run(mock_about_cog.list_category.callback(mock_about_cog, interaction, "ship", manufacturer="acmecorp"))
 
         interaction.followup.send.assert_awaited_once()
         call_kwargs = interaction.followup.send.call_args[1]
         assert "embed" in call_kwargs
         embed = call_kwargs["embed"]
         assert "1" in embed.description  # only Eagle matches
+
+
+# ---------------------------------------------------------------------------
+# A.26 / A.27 regression coverage — /list_category header dedup + truncation
+# ---------------------------------------------------------------------------
+
+
+class TestListCategoryBugBundleRegressions:
+    """A.26 + A.27: duplicate "Objects" field headers and silent truncation.
+
+    Uses a real ``discord.Embed`` through the real call path so the fixes
+    are exercised end-to-end (no mocking of embed internals).
+    """
+
+    def test_list_category_no_duplicate_objects_field_names(self, mock_about_cog):
+        """A.26: splitting into multiple fields must NOT repeat the "Objects" header."""
+        from cogs._shared.embed_pagination import SPACER_NAME
+
+        interaction = _create_mock_interaction()
+        # Names long enough to force a 1024-char split into ≥2 fields.
+        objects = [{"name": f"VeryLongObjectName_{'x' * 80}_{i:03d}", "emoji": None} for i in range(20)]
+        mock_about_cog._objects_by_category = {"ship": objects}
+
+        asyncio.run(mock_about_cog.list_category.callback(mock_about_cog, interaction, "ship"))
+
+        interaction.followup.send.assert_awaited_once()
+        embed = interaction.followup.send.call_args[1]["embed"]
+        objects_named_fields = [f for f in embed.fields if f.name == "Objects"]
+        assert len(objects_named_fields) == 1, f"Expected exactly ONE 'Objects' header, got {len(objects_named_fields)}"
+        # Everything beyond the first header must be a zero-width spacer.
+        content_fields = [f for f in embed.fields if f.name in ("Objects", SPACER_NAME)]
+        assert len(content_fields) >= 2, "Dataset should have forced a 1024-char split into ≥2 fields"
+        for f in content_fields[1:]:
+            assert f.name == SPACER_NAME
+
+    def test_list_category_101_items_triggers_truncation_footer(self, mock_about_cog):
+        """A.27: passing 101 items must render 100 and set a truncation footer."""
+        interaction = _create_mock_interaction()
+        objects = [{"name": f"Obj{i:03d}", "emoji": None} for i in range(101)]
+        mock_about_cog._objects_by_category = {"ship": objects}
+
+        asyncio.run(mock_about_cog.list_category.callback(mock_about_cog, interaction, "ship"))
+
+        interaction.followup.send.assert_awaited_once()
+        embed = interaction.followup.send.call_args[1]["embed"]
+        # Footer advertises the honest truncation ratio.
+        assert embed.footer is not None and embed.footer.text is not None
+        assert embed.footer.text == "Showing first 100 of 101 objects"
+        # And only the first 100 actually appear in the rendered content.
+        rendered = "\n".join(f.value for f in embed.fields)
+        assert "Obj099" in rendered
+        assert "Obj100" not in rendered
+
+    def test_list_category_100_items_exact_cap_no_footer(self, mock_about_cog):
+        """A.27: exactly-100 items are NOT truncated → no footer spam."""
+        interaction = _create_mock_interaction()
+        objects = [{"name": f"Obj{i:03d}", "emoji": None} for i in range(100)]
+        mock_about_cog._objects_by_category = {"ship": objects}
+
+        asyncio.run(mock_about_cog.list_category.callback(mock_about_cog, interaction, "ship"))
+
+        interaction.followup.send.assert_awaited_once()
+        embed = interaction.followup.send.call_args[1]["embed"]
+        # No truncation footer when exactly at the cap.
+        footer_text = embed.footer.text if embed.footer else None
+        assert not (footer_text and "Showing first" in footer_text), (
+            f"Unexpected truncation footer at exactly-100 items: {footer_text!r}"
+        )
+
+    def test_list_category_66_modules_renders_all_no_truncation(self, mock_about_cog):
+        """A.27: current max real-world category (modules, 66 items) is below cap."""
+        interaction = _create_mock_interaction()
+        objects = [{"name": f"Module{i:02d}", "emoji": None} for i in range(66)]
+        mock_about_cog._objects_by_category = {"module": objects}
+
+        asyncio.run(mock_about_cog.list_category.callback(mock_about_cog, interaction, "module"))
+
+        interaction.followup.send.assert_awaited_once()
+        embed = interaction.followup.send.call_args[1]["embed"]
+        footer_text = embed.footer.text if embed.footer else None
+        assert not (footer_text and "Showing first" in footer_text)
+        rendered = "\n".join(f.value for f in embed.fields)
+        # Every one of the 66 modules is present.
+        for i in range(66):
+            assert f"Module{i:02d}" in rendered
 
 
 if __name__ == "__main__":

@@ -840,6 +840,7 @@ class TestGetBountyConfig:
     async def test_returns_config_with_defaults(self, service, mock_db, mock_config_repo):
         """Returns bounty config with default values when config exists but fields are None."""
         from unittest.mock import MagicMock
+
         cfg = MagicMock()
         cfg.bounty_max_per_tier = None
         cfg.bounty_expiry_minutes = None
@@ -860,6 +861,7 @@ class TestGetBountyConfig:
         """Returns explicitly set bounty config values."""
         from datetime import UTC, datetime
         from unittest.mock import MagicMock
+
         ts = datetime(2026, 5, 1, 12, 0, 0, tzinfo=UTC)
         cfg = MagicMock()
         cfg.bounty_max_per_tier = {"bronze": 5, "silver": 5, "gold": 5}
@@ -901,6 +903,7 @@ class TestUpdateBountyConfig:
     async def test_update_expiry_minutes(self, service, mock_db, mock_config_repo):
         """Updates bounty_expiry_minutes on the config."""
         from unittest.mock import AsyncMock, MagicMock
+
         cfg = MagicMock()
         cfg.bounty_max_per_tier = {"bronze": 3, "silver": 3, "gold": 3}
         cfg.bounty_expiry_minutes = 480
@@ -919,6 +922,7 @@ class TestUpdateBountyConfig:
     async def test_update_max_per_tier_valid(self, service, mock_db, mock_config_repo):
         """Updates bounty_max_per_tier with valid values."""
         from unittest.mock import AsyncMock, MagicMock
+
         cfg = MagicMock()
         cfg.bounty_max_per_tier = {"bronze": 3, "silver": 3, "gold": 3}
         cfg.bounty_expiry_minutes = 480
@@ -937,18 +941,89 @@ class TestUpdateBountyConfig:
     async def test_invalid_tier_key_raises(self, service, mock_db, mock_config_repo):
         """Raises ValueError for unknown tier keys."""
         from unittest.mock import MagicMock
+
         cfg = MagicMock()
         mock_config_repo.get_by_guild_id.return_value = cfg
 
         with pytest.raises(ValueError, match="Invalid tier keys"):
             await service.update_bounty_config(
-                mock_db, guild_id=1000, updates={"max_bounties_per_tier": {"platinum": 3}}
+                mock_db, guild_id=1000, updates={"max_bounties_per_tier": {"diamond": 3}}
+            )
+
+
+class TestUpdateBountyConfigPlatinumTier:
+    """Regression tests for A.9 — platinum tier acceptance in max_bounties_per_tier."""
+
+    @pytest.mark.asyncio
+    async def test_update_bounty_config_accepts_platinum(self, service, mock_db, mock_config_repo):
+        """A.9: `platinum` is accepted as a valid tier key."""
+        from unittest.mock import AsyncMock, MagicMock
+
+        cfg = MagicMock()
+        cfg.bounty_max_per_tier = {"bronze": 3, "silver": 3, "gold": 3, "platinum": 3}
+        cfg.bounty_expiry_minutes = 480
+        cfg.bounty_spawn_interval_minutes = 60
+        cfg.next_spawn_check_at = None
+        mock_config_repo.get_by_guild_id.return_value = cfg
+        mock_db.commit = AsyncMock()
+        mock_db.refresh = AsyncMock()
+
+        await service.update_bounty_config(mock_db, guild_id=1000, updates={"max_bounties_per_tier": {"platinum": 10}})
+
+        assert cfg.bounty_max_per_tier == {"platinum": 10}
+
+    @pytest.mark.asyncio
+    async def test_update_bounty_config_accepts_mixed_with_platinum(self, service, mock_db, mock_config_repo):
+        """A.9: mixed-tier payload including platinum persists correctly."""
+        from unittest.mock import AsyncMock, MagicMock
+
+        cfg = MagicMock()
+        cfg.bounty_max_per_tier = {"bronze": 3, "silver": 3, "gold": 3, "platinum": 3}
+        cfg.bounty_expiry_minutes = 480
+        cfg.bounty_spawn_interval_minutes = 60
+        cfg.next_spawn_check_at = None
+        mock_config_repo.get_by_guild_id.return_value = cfg
+        mock_db.commit = AsyncMock()
+        mock_db.refresh = AsyncMock()
+
+        new_tiers = {"bronze": 5, "silver": 10, "gold": 15, "platinum": 20}
+        await service.update_bounty_config(mock_db, guild_id=1000, updates={"max_bounties_per_tier": new_tiers})
+
+        assert cfg.bounty_max_per_tier == new_tiers
+
+    @pytest.mark.asyncio
+    async def test_update_bounty_config_rejects_unknown_tier_mentions_platinum_in_error(
+        self, service, mock_db, mock_config_repo
+    ):
+        """A.9 regression: error message must list `platinum` (guards against 3-tier wording)."""
+        from unittest.mock import MagicMock
+
+        cfg = MagicMock()
+        mock_config_repo.get_by_guild_id.return_value = cfg
+
+        with pytest.raises(ValueError, match="platinum"):
+            await service.update_bounty_config(
+                mock_db, guild_id=1000, updates={"max_bounties_per_tier": {"diamond": 5}}
+            )
+
+    @pytest.mark.asyncio
+    async def test_update_bounty_config_platinum_out_of_range(self, service, mock_db, mock_config_repo):
+        """A.9: range bounds still apply to platinum — 21 is rejected."""
+        from unittest.mock import MagicMock
+
+        cfg = MagicMock()
+        mock_config_repo.get_by_guild_id.return_value = cfg
+
+        with pytest.raises(ValueError, match="between 0 and 20"):
+            await service.update_bounty_config(
+                mock_db, guild_id=1000, updates={"max_bounties_per_tier": {"platinum": 21}}
             )
 
     @pytest.mark.asyncio
     async def test_tier_value_out_of_range_raises(self, service, mock_db, mock_config_repo):
         """Raises ValueError when tier value > 20."""
         from unittest.mock import MagicMock
+
         cfg = MagicMock()
         mock_config_repo.get_by_guild_id.return_value = cfg
 
@@ -961,22 +1036,20 @@ class TestUpdateBountyConfig:
     async def test_expiry_out_of_range_raises(self, service, mock_db, mock_config_repo):
         """Raises ValueError when expiry_minutes out of allowed range."""
         from unittest.mock import MagicMock
+
         cfg = MagicMock()
         mock_config_repo.get_by_guild_id.return_value = cfg
 
         with pytest.raises(ValueError, match="bounty_expiry_minutes must be between"):
-            await service.update_bounty_config(
-                mock_db, guild_id=1000, updates={"bounty_expiry_minutes": 5}
-            )
+            await service.update_bounty_config(mock_db, guild_id=1000, updates={"bounty_expiry_minutes": 5})
 
     @pytest.mark.asyncio
     async def test_spawn_interval_out_of_range_raises(self, service, mock_db, mock_config_repo):
         """Raises ValueError when spawn_interval_minutes out of range."""
         from unittest.mock import MagicMock
+
         cfg = MagicMock()
         mock_config_repo.get_by_guild_id.return_value = cfg
 
         with pytest.raises(ValueError, match="bounty_spawn_interval_minutes must be between"):
-            await service.update_bounty_config(
-                mock_db, guild_id=1000, updates={"bounty_spawn_interval_minutes": 2000}
-            )
+            await service.update_bounty_config(mock_db, guild_id=1000, updates={"bounty_spawn_interval_minutes": 2000})

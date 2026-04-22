@@ -3,6 +3,7 @@ import os
 
 import discord
 import httpx
+from cogs._shared.embed_pagination import DEFAULT_LIST_CAP, add_continuation_fields
 from discord import app_commands
 from discord.ext import commands
 from shared import bblogger
@@ -402,22 +403,26 @@ class AboutCog(commands.Cog):
                 color=discord.Color.blue(),
             )
 
-            # Group objects into fields to avoid hitting embed limits
-            objects_text = ""
-            for obj in filtered[:50]:
+            # Pre-format each line (emoji + name).  The pagination helper
+            # handles the 1024-char field-split and the 100-item cap so that
+            # A.26 (duplicate "Objects" headers) and A.27 (silent truncation)
+            # are both prevented by construction.
+            total_count = len(filtered)
+            lines = []
+            for obj in filtered[:DEFAULT_LIST_CAP]:
                 name = obj.get("name", "Unknown")
                 emoji = obj.get("emoji", "")
-                line = f"{emoji} {name}\n" if emoji else f"{name}\n"
-                if len(objects_text + line) > 1024:
-                    embed.add_field(name="Objects", value=objects_text, inline=False)
-                    objects_text = line
-                else:
-                    objects_text += line
+                lines.append(f"{emoji} {name}" if emoji else name)
 
-            if objects_text:
-                embed.add_field(name="Objects", value=objects_text, inline=False)
-            if len(filtered) > 100:
-                embed.set_footer(text=f"Showing first 100 of {len(filtered)} objects")
+            add_continuation_fields(
+                embed,
+                header_name="Objects",
+                lines=lines,
+                cap=DEFAULT_LIST_CAP,
+            )
+
+            if total_count > DEFAULT_LIST_CAP:
+                embed.set_footer(text=f"Showing first {DEFAULT_LIST_CAP} of {total_count} objects")
 
             await interaction.followup.send(embed=embed)
             flogger.info(

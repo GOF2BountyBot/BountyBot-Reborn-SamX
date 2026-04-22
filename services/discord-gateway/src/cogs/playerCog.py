@@ -2,11 +2,11 @@ import os
 
 import discord
 import httpx
+from cogs._shared.loadout_embed import build_loadout_embed, build_loadout_error_embed
 from cogs.adminCog import _check_is_admin
 from discord import app_commands
 from discord.ext import commands
 from shared import bblogger
-from utils.loadout_embed import build_loadout_embed, build_loadout_error_embed
 from utils.timestamp_utils import iso_to_discord_ts
 
 # Set up logger
@@ -47,6 +47,22 @@ class PlayerCog(commands.Cog):
     async def profile(self, interaction: discord.Interaction):
         """Display player profile with statistics."""
         flogger.info(f"/profile: guild={interaction.guild_id}, user={interaction.user.id}")
+        await self._display_profile(interaction)
+
+    @app_commands.command(name="register", description="Register as a player (alias of /profile)")
+    async def register(self, interaction: discord.Interaction):
+        """Alias for /profile — registers the player and displays their profile embed."""
+        flogger.info(f"/register: guild={interaction.guild_id}, user={interaction.user.id}")
+        await self._display_profile(interaction)
+
+    async def _display_profile(self, interaction: discord.Interaction) -> None:
+        """Shared handler for /profile and /register.
+
+        Both public commands are full behavioural aliases — identical side
+        effects (player upsert, role assignment) and identical embed output.
+        Only the slash-command name differs, and each wrapper logs its own
+        name for usage-frequency analysis.
+        """
         await interaction.response.defer(thinking=True)
 
         try:
@@ -429,8 +445,7 @@ class PlayerCog(commands.Cog):
         """Display the active ship loadout for a player using the shared embed builder."""
         target = player or interaction.user
         flogger.info(
-            f"/loadout: guild={interaction.guild_id}, user={interaction.user.id}, "
-            f"target={target.id}, public={public}"
+            f"/loadout: guild={interaction.guild_id}, user={interaction.user.id}, target={target.id}, public={public}"
         )
         # Errors always stay ephemeral regardless of `public`; success follows `public`.
         await interaction.response.defer(thinking=True, ephemeral=not public)
@@ -519,9 +534,7 @@ class PlayerCog(commands.Cog):
 
             bh_role_id = config.get("bounty_hunter_role_id")
             if not bh_role_id:
-                await interaction.followup.send(
-                    "⚠️ No Bounty Hunter role is configured for this guild.", ephemeral=True
-                )
+                await interaction.followup.send("⚠️ No Bounty Hunter role is configured for this guild.", ephemeral=True)
                 return
 
             guild = interaction.guild
@@ -589,6 +602,12 @@ class PlayerCog(commands.Cog):
     @profile.error
     async def profile_error(self, interaction: discord.Interaction, error: app_commands.AppCommandError):
         flogger.exception("Error in /profile", exc_info=error)
+        if not interaction.response.is_done():
+            await interaction.response.send_message("⚠️ An error occurred.", ephemeral=True)
+
+    @register.error
+    async def register_error(self, interaction: discord.Interaction, error: app_commands.AppCommandError):
+        flogger.exception("Error in /register", exc_info=error)
         if not interaction.response.is_done():
             await interaction.response.send_message("⚠️ An error occurred.", ephemeral=True)
 

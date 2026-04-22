@@ -135,14 +135,17 @@ resp.raise_for_status()
 ### bounty_respawn_executor.py
 
 **Function**: `execute_bounty_respawn_job(job_id, payload)`  
-**Triggered by**: One-time job scheduled after expiry (if respawn is configured)  
+**Triggered by**: One-time job scheduled when a bounty is marked `escaped` (see `BountyService.escape_bounty()` which computes `respawn_time`; the scheduling call site is currently in the gateway / admin flow, not bot-core itself).  
 **Payload fields**:
-- `guild_id` — target guild
-- `division` — target division
+- `bounty_id` (int, required) — the escaped bounty's ID. This is the ONLY field the executor reads.
 
 **Flow**:
-1. Triggers a single bounty spawn for the given guild+division
-2. Internally delegates to `BountyService.spawn_bounty()`
+1. Extracts `bounty_id` from payload (returns `{"status": "error"}` if missing).
+2. Calls `BountyService.respawn_bounty(db, bounty_id)` — regenerates the A* route and answer while keeping the same criminal, resets status to `active`.
+3. Returns `{"status": "skipped"}` if `respawn_bounty()` returns `None` (bounty not found, wrong status, or route-generation failure).
+4. Announces the respawn to discord-gateway via `POST {GATEWAY_BASE_URL}/messages` (non-fatal if it fails).
+
+**Payload-shape contract consumed by A.11 cleanup**: `BountyService.clear_bounties()` filters scheduled jobs by `payload["job_type"] == "bounty_respawn"` AND `payload["bounty_id"]` ∈ `{cleared_bounty_ids}`. Any future scheduler call site that writes a `bounty_respawn` job MUST include `bounty_id` in the payload to remain discoverable by that cleanup pass.
 
 ---
 

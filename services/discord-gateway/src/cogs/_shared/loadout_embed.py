@@ -279,9 +279,7 @@ def _apply_truncation_strategy(
     # Compute initial total cost (headers + spacers + all lines).
     weapon_header = _build_section_header("Primary Weapons", len(weapons), max_primaries)
     module_header = _build_section_header("Modules", len(modules), max_modules)
-    cargo_header = _build_section_header(
-        "Cargo Hold", cargo_total_count, cargo_capacity
-    )
+    cargo_header = _build_section_header("Cargo Hold", cargo_total_count, cargo_capacity)
 
     # Approximate cost per section: header len + spacer len + lines len + newlines
     def _section_cost(header: str, lines: list[str]) -> int:

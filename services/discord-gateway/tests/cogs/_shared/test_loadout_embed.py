@@ -14,8 +14,21 @@ Covers:
 
 from __future__ import annotations
 
+import sys
+
+# Re-assert real discord before importing.  Other test files mutate
+# sys.modules["discord"] at import time; we need the real module both for
+# the helper's own ``import discord`` and for ``discord.Color.red()`` etc.
+# used in assertions below.
+_conftest = sys.modules.get("tests.conftest") or sys.modules.get("conftest")
+if _conftest is not None:
+    sys.modules["discord"] = _conftest._REAL_DISCORD
+    sys.modules["discord.ext"] = _conftest._REAL_DISCORD_EXT
+    sys.modules["discord.ext.commands"] = _conftest._REAL_DISCORD_EXT_COMMANDS
+    sys.modules.pop("cogs._shared.loadout_embed", None)
+
 import discord
-from utils.loadout_embed import (
+from cogs._shared.loadout_embed import (
     MAX_EMBED_TOTAL,
     MAX_FIELD_VALUE,
     MAX_FIELDS,
@@ -247,11 +260,11 @@ class TestShipStatsField:
         (threshold=120, suffix=~31 chars, so core must exceed 89 chars).
         These stat values are unrealistic for gameplay but deterministically trigger the drop.
         """
-        from utils.loadout_embed import SHIP_STATS_TOTAL_VALUE_THRESHOLD, _format_ship_stats_field
+        from cogs._shared.loadout_embed import SHIP_STATS_TOTAL_VALUE_THRESHOLD, _format_ship_stats_field
 
         resp = {
             "ship_stats": {
-                "armour": 10**15,       # 16-digit: pads core significantly
+                "armour": 10**15,  # 16-digit: pads core significantly
                 "handling": 10**15,
                 "hp": 10**15,
                 "dps": float(10**15),
@@ -262,8 +275,7 @@ class TestShipStatsField:
 
         # The drop MUST have fired — Total Value must not appear
         assert "Total Value" not in value, (
-            f"Total Value should have been dropped: core={value!r}, "
-            f"threshold={SHIP_STATS_TOTAL_VALUE_THRESHOLD}"
+            f"Total Value should have been dropped: core={value!r}, threshold={SHIP_STATS_TOTAL_VALUE_THRESHOLD}"
         )
         # Core stats must still be present
         assert "Armour:" in value
@@ -451,9 +463,9 @@ class TestContinuationField:
 
         # Expect at least one continuation field: first keeps the real header,
         # subsequent ones use SPACER_NAME.
-        mod_fields = [f for f in embed.fields if f.name.startswith("Modules") or (
-            f.name == SPACER_NAME and "Mod" in f.value
-        )]
+        mod_fields = [
+            f for f in embed.fields if f.name.startswith("Modules") or (f.name == SPACER_NAME and "Mod" in f.value)
+        ]
         assert len(mod_fields) >= 2
         # First is the real header
         assert mod_fields[0].name == "Modules <20/20>"
@@ -491,8 +503,7 @@ class TestTruncationStrategy:
         """Build a response where items dominate the budget so truncation kicks in."""
         long_name = "X" * 200  # hefty line length
         weapons = [
-            {"name": f"{long_name}-w{i}", "emoji": "<:w:1>", "dps": 10, "value": 100}
-            for i in range(weapon_count)
+            {"name": f"{long_name}-w{i}", "emoji": "<:w:1>", "dps": 10, "value": 100} for i in range(weapon_count)
         ]
         utility_modules = [
             {
@@ -524,8 +535,12 @@ class TestTruncationStrategy:
             cargo=cargo,
             cargo_total_count=cargo_count,
             ship_stats={
-                "armour": 100, "cargo": 30, "handling": 50,
-                "hp": 200, "dps": 10, "total_value": 1000,
+                "armour": 100,
+                "cargo": 30,
+                "handling": 50,
+                "hp": 200,
+                "dps": 10,
+                "total_value": 1000,
                 "max_primaries": weapon_count,
                 "max_secondaries": 0,
                 "max_turrets": 0,
@@ -535,9 +550,7 @@ class TestTruncationStrategy:
 
     def test_total_length_stays_under_6000(self):
         """Heavy response must keep total embed length under Discord's 6000 limit."""
-        resp = self._make_heavy_response(
-            weapon_count=10, utility_count=15, combat_count=10, cargo_count=30
-        )
+        resp = self._make_heavy_response(weapon_count=10, utility_count=15, combat_count=10, cargo_count=30)
         embed = build_loadout_embed(resp, viewer_is_owner_or_admin=True)
         total = len(embed.title or "") + len(embed.description or "")
         total += sum(len(f.name) + len(f.value) for f in embed.fields)
@@ -546,12 +559,17 @@ class TestTruncationStrategy:
     def test_cargo_truncated_first(self):
         """Cargo section gets '… and N more' when it cannot fit."""
         resp = self._make_heavy_response(
-            weapon_count=2, utility_count=2, combat_count=2, cargo_count=50,
+            weapon_count=2,
+            utility_count=2,
+            combat_count=2,
+            cargo_count=50,
         )
         embed = build_loadout_embed(resp, viewer_is_owner_or_admin=True)
-        cargo_fields = [f for f in embed.fields if f.name.startswith("Cargo Hold") or (
-            f.name == SPACER_NAME and "… and" in f.value and "item" in f.value
-        )]
+        cargo_fields = [
+            f
+            for f in embed.fields
+            if f.name.startswith("Cargo Hold") or (f.name == SPACER_NAME and "… and" in f.value and "item" in f.value)
+        ]
         # Expect truncation suffix somewhere in cargo section (first matching field)
         cargo_text = "\n".join(f.value for f in cargo_fields)
         assert "… and" in cargo_text
@@ -559,7 +577,10 @@ class TestTruncationStrategy:
     def test_field_count_under_limit(self):
         """Embed field count must never exceed MAX_FIELDS."""
         resp = self._make_heavy_response(
-            weapon_count=20, utility_count=20, combat_count=20, cargo_count=40,
+            weapon_count=20,
+            utility_count=20,
+            combat_count=20,
+            cargo_count=40,
         )
         embed = build_loadout_embed(resp, viewer_is_owner_or_admin=True)
         assert len(embed.fields) <= MAX_FIELDS
@@ -598,9 +619,15 @@ class TestTruncationStrategy:
         resp = _make_player_response(
             modules=utility_modules + combat_modules,
             ship_stats={
-                "armour": 100, "cargo": 10, "handling": 50, "hp": 200,
-                "dps": 10, "total_value": 1000,
-                "max_primaries": 0, "max_secondaries": 0, "max_turrets": 0,
+                "armour": 100,
+                "cargo": 10,
+                "handling": 50,
+                "hp": 200,
+                "dps": 10,
+                "total_value": 1000,
+                "max_primaries": 0,
+                "max_secondaries": 0,
+                "max_turrets": 0,
                 "max_modules": 23,
             },
         )
@@ -612,10 +639,10 @@ class TestTruncationStrategy:
 
         # Find all field values for module section
         module_text = " ".join(
-            f.value for f in embed.fields
-            if f.name.startswith("Modules") or (f.name == SPACER_NAME and any(
-                kw in f.value for kw in ["util", "combat", "U" * 10]
-            ))
+            f.value
+            for f in embed.fields
+            if f.name.startswith("Modules")
+            or (f.name == SPACER_NAME and any(kw in f.value for kw in ["util", "combat", "U" * 10]))
         )
         # At least one combat module name must be visible
         assert any(f"combat{i}" in module_text for i in range(3)), (
@@ -656,7 +683,7 @@ class TestTruncationStrategy:
             {
                 "name": f"{long_util_name}{i}",
                 "emoji": None,
-                "type": "CabinModule",   # MODULE_COMBAT_TIER["CabinModule"] == "utility"
+                "type": "CabinModule",  # MODULE_COMBAT_TIER["CabinModule"] == "utility"
                 "effects": [{"label": "Crew", "value": str(i)}],
                 "combat_tier": "utility",
             }
@@ -677,9 +704,15 @@ class TestTruncationStrategy:
         resp = _make_player_response(
             modules=utility_modules + combat_modules,
             ship_stats={
-                "armour": 100, "cargo": 10, "handling": 50, "hp": 200,
-                "dps": 10, "total_value": 1000,
-                "max_primaries": 2, "max_secondaries": 0, "max_turrets": 0,
+                "armour": 100,
+                "cargo": 10,
+                "handling": 50,
+                "hp": 200,
+                "dps": 10,
+                "total_value": 1000,
+                "max_primaries": 2,
+                "max_secondaries": 0,
+                "max_turrets": 0,
                 "max_modules": 20,
             },
         )
@@ -703,9 +736,7 @@ class TestTruncationStrategy:
         # Truncation must have fired (at least one utility was dropped)
         assert utility_dropped >= 1, "No utility module was dropped — truncation may not have fired"
         # All combat modules must be preserved (they are short and budget permits them)
-        assert combat_visible == 5, (
-            f"Expected all 5 combat modules to survive but only {combat_visible} visible"
-        )
+        assert combat_visible == 5, f"Expected all 5 combat modules to survive but only {combat_visible} visible"
         # More utility modules were dropped than combat modules (utility dropped first)
         assert utility_dropped > combat_dropped, (
             f"Expected more utility drops ({utility_dropped}) than combat drops ({combat_dropped}) "
@@ -752,9 +783,15 @@ class TestTruncationStrategy:
         resp = _make_player_response(
             modules=utility_modules + combat_modules,
             ship_stats={
-                "armour": 100, "cargo": 10, "handling": 50, "hp": 200,
-                "dps": 10, "total_value": 1000,
-                "max_primaries": 0, "max_secondaries": 0, "max_turrets": 0,
+                "armour": 100,
+                "cargo": 10,
+                "handling": 50,
+                "hp": 200,
+                "dps": 10,
+                "total_value": 1000,
+                "max_primaries": 0,
+                "max_secondaries": 0,
+                "max_turrets": 0,
                 "max_modules": 40,
             },
         )
@@ -804,7 +841,7 @@ class TestAdversarialEdgeCases:
         """quantity=0 silently becomes 1 in _format_cargo_line (defensive: '0 or 1 = 1').
         Document and verify the actual behavior (DEF-007).
         """
-        from utils.loadout_embed import _format_cargo_line
+        from cogs._shared.loadout_embed import _format_cargo_line
 
         line = _format_cargo_line({"item_name": "Widget", "item_type": "misc", "quantity": 0, "emoji": None})
         # quantity=0 → `0 or 1 = 1` → rendered without (xN) suffix
@@ -813,12 +850,12 @@ class TestAdversarialEdgeCases:
 
     def test_cargo_quantity_negative_same_as_zero(self):
         """Negative quantity follows the same `or 1` path as zero."""
-        from utils.loadout_embed import _format_cargo_line
+        from cogs._shared.loadout_embed import _format_cargo_line
 
         line = _format_cargo_line({"item_name": "Bug", "item_type": "misc", "quantity": -5, "emoji": None})
         assert "Bug" in line
         # -5 is falsy-ish but -5 `or 1` = -5 (non-zero), so (x-5) would appear
-        # Actually: in Python, -5 is truthy, so -5 or 1 = -5; 
+        # Actually: in Python, -5 is truthy, so -5 or 1 = -5;
         # then condition `if quantity > 1` is False for -5, so no suffix
         assert "(-5)" not in line  # no negative display
 
@@ -984,7 +1021,7 @@ class TestShipStatsTotalValueHeuristic:
         threshold is never reached by normal gameplay values (max realistic core is ~98
         chars). However the drop path must be verified directly for correctness.
         """
-        from utils.loadout_embed import SHIP_STATS_TOTAL_VALUE_THRESHOLD, _format_ship_stats_field
+        from cogs._shared.loadout_embed import SHIP_STATS_TOTAL_VALUE_THRESHOLD, _format_ship_stats_field
 
         # Build a core that is exactly > THRESHOLD - len(suffix)
         # suffix is ' | Total Value: **999,999,999**' = ~31 chars
@@ -1017,7 +1054,7 @@ class TestShipStatsTotalValueHeuristic:
         This documents the known behavior: the threshold NEVER fires for normal
         ship stats (armour ~2–9999, handling ~1–100, HP ~95–50000, DPS ~0–1000).
         """
-        from utils.loadout_embed import _format_ship_stats_field
+        from cogs._shared.loadout_embed import _format_ship_stats_field
 
         resp = {
             "ship_stats": {
@@ -1029,9 +1066,7 @@ class TestShipStatsTotalValueHeuristic:
             }
         }
         _, value = _format_ship_stats_field(resp)
-        assert "Total Value: **9,999,999**" in value, (
-            "Total Value should be present for all game-realistic stat values"
-        )
+        assert "Total Value: **9,999,999**" in value, "Total Value should be present for all game-realistic stat values"
 
 
 # ---------------------------------------------------------------------------
@@ -1050,7 +1085,7 @@ class TestCargoQuantityEdgeCases:
 
     def test_none_quantity_defaults_to_one(self):
         """Missing quantity key defaults to 1 (backward-compat for legacy payloads)."""
-        from utils.loadout_embed import _format_cargo_line
+        from cogs._shared.loadout_embed import _format_cargo_line
 
         line = _format_cargo_line({"item_name": "Widget", "item_type": "misc", "emoji": None})
         # No quantity key → defaults to 1 → shown without (xN) suffix
@@ -1063,7 +1098,7 @@ class TestCargoQuantityEdgeCases:
         After the DEF-007 fix, 0 is no longer silently coerced to 1.
         The item still appears (it's in the cargo), but without a count suffix.
         """
-        from utils.loadout_embed import _format_cargo_line
+        from cogs._shared.loadout_embed import _format_cargo_line
 
         line = _format_cargo_line({"item_name": "Widget", "item_type": "misc", "quantity": 0, "emoji": None})
         assert "Widget" in line  # item is still shown
@@ -1071,7 +1106,7 @@ class TestCargoQuantityEdgeCases:
 
     def test_negative_quantity_renders_name_only(self):
         """Negative quantity renders the item name without a count suffix (defensive)."""
-        from utils.loadout_embed import _format_cargo_line
+        from cogs._shared.loadout_embed import _format_cargo_line
 
         line = _format_cargo_line({"item_name": "Bug", "item_type": "misc", "quantity": -3, "emoji": None})
         assert "Bug" in line
@@ -1079,7 +1114,7 @@ class TestCargoQuantityEdgeCases:
 
     def test_positive_quantity_above_one_shows_count(self):
         """Normal quantity > 1 still renders (xN) suffix as before."""
-        from utils.loadout_embed import _format_cargo_line
+        from cogs._shared.loadout_embed import _format_cargo_line
 
         line = _format_cargo_line({"item_name": "Credits", "item_type": "misc", "quantity": 5, "emoji": None})
         assert "Credits" in line

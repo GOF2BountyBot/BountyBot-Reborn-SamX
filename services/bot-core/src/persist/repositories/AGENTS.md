@@ -170,6 +170,37 @@ Game data repositories implement `create_or_update(db, raw: dict)` to support id
 
 ---
 
+## InventoryRepository Notes (post-A.36)
+
+`get_inventory_summary(db, player_id)` returns a dict with **concrete type keys**:
+
+```python
+{
+    "ship": int,
+    "primary_weapon": int,
+    "secondary_weapon": int,
+    "turret_weapon": int,
+    "module": int,
+    "total_items": int,
+}
+```
+
+Post-A.36, `player_inventories.item_type` stores only concrete types — generic aliases
+(`"weapon"`, `"turret"`) are never persisted. The summary dict was updated to match
+(DEF-A42-001 fix, 2026-04-22).
+
+Callers that display a human-readable summary should aggregate concrete types into
+display buckets on their side. The Discord cog uses these 4 display buckets:
+
+| Display Bucket | Concrete Types Summed |
+|---|---|
+| Ships | `summary["ship"]` |
+| Weapons | `summary["primary_weapon"] + summary["secondary_weapon"]` |
+| Modules | `summary["module"]` |
+| Turrets | `summary["turret_weapon"]` |
+
+---
+
 ## How to Add a New Repository
 
 1. **Create the file** `persist/repositories/<name>_repository.py`:

@@ -273,3 +273,37 @@ class TestGetInventorySummary:
 
         with pytest.raises(Exception, match="summary fail"):
             await repo.get_inventory_summary(mock_db, player_id=10)
+
+    @pytest.mark.asyncio
+    async def test_get_inventory_summary_concrete_types_counted(self, repo, mock_db):
+        """Regression guard (DEF-A42-001 / A.36): concrete item types are counted correctly.
+
+        Post-A.36, player_inventories.item_type stores concrete types only.
+        get_inventory_summary() must aggregate using concrete keys, not generic aliases.
+
+        This test was staged by the tester to expose the DEF-A42-001 bug where the
+        summary dict used generic alias keys ('weapon', 'turret') and silently returned
+        0 for all weapon and turret rows (which store 'primary_weapon', 'turret_weapon').
+        """
+        # Mock inventory rows with concrete types (as A.36 mandates)
+        items = [
+            _make_inventory(item_type="primary_weapon", item_name="Micro Gun MK I", quantity=2),
+            _make_inventory(item_type="turret_weapon", item_name="Raptor Turret", quantity=1),
+            _make_inventory(item_type="module", item_name="Nano Repair Kit", quantity=3),
+            _make_inventory(item_type="ship", item_name="Betty", quantity=1),
+        ]
+        mock_db.execute = AsyncMock(return_value=_make_scalars_result(items))
+
+        summary = await repo.get_inventory_summary(mock_db, player_id=10)
+
+        # Concrete type keys — not generic aliases
+        assert summary["primary_weapon"] == 2, "primary_weapon must be counted (not under 'weapon')"
+        assert summary["turret_weapon"] == 1, "turret_weapon must be counted (not under 'turret')"
+        assert summary["module"] == 3
+        assert summary["ship"] == 1
+        assert summary["secondary_weapon"] == 0  # not present but key must exist
+        assert summary["total_items"] == 7  # 2 + 1 + 3 + 1
+
+        # Verify the old generic alias keys are NOT present in the response
+        assert "weapon" not in summary, "'weapon' generic alias must NOT be a summary key (A.36)"
+        assert "turret" not in summary, "'turret' generic alias must NOT be a summary key (A.36)"

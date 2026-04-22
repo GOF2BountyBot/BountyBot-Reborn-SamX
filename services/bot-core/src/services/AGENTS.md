@@ -24,6 +24,18 @@ secondary-weapon exposure. To enable secondary weapons: add `"secondary_weapon"`
 **Write-site rule**: all calls to `inventory_repo.add_item()` MUST use concrete types.
 Use `equipment_service.item_discriminator_to_concrete_type(item.type)` to resolve from STI discriminator.
 
+### /sell — Server-side type and tier resolution (A.42/A.42b/A.42c, 2026-04-22)
+
+`ShopService.sell_item(db, player_id, item_name, quantity)` no longer accepts `item_type` or `target_tier` parameters:
+
+- **A.42b**: `item_type` is resolved internally by calling `inventory_repo.get_player_items_by_name(db, player_id, item_name)`. The concrete type comes from the player's inventory row — no generic alias is ever passed to a write path.
+- **A.42c**: `target_tier` always equals `player.tier` (read from the fetched player record). Items always land in the player's current tier shop, consistent with `/buy` tier-gating.
+- **Cross-type collision guard**: if `get_player_items_by_name` returns rows with two different `item_type` values for the same item_name, `InvalidItemTypeError` is raised with a helpful message. This is impossible with the current catalog (146 items, all distinct names) but guarded defensively.
+
+`SellRequest` schema (`shops_schema.py`) now has only `player_id`, `item_name`, and `quantity` fields. Extra fields (e.g. stale client sending `item_type` or `target_tier`) are silently ignored by Pydantic default behavior (no `extra='forbid'`).
+
+`InventoryRepository.get_player_items_by_name(db, player_id, item_name)` — new method added to support this flow. Returns all inventory rows for a player matching the given item_name (regardless of concrete type).
+
 ---
 
 ## Service Layer Purpose
@@ -252,7 +264,7 @@ Multi-tier shop system:
 - `generate_shop_stock(db, guild_id)` — generates a new shop with `SHOP_DEFAULT_*_NUM` items per category; items are tier-appropriate for the guild's player base
 - `refresh_shop(db, guild_id)` — clears current stock, calls `generate_shop_stock()`; called by `shop_refresh_executor`
 - `buy_item(db, player_id, item_name, guild_id)` — validates tier eligibility, deducts credits, adds item to inventory
-- `sell_item(db, player_id, item_name)` — sells item back for a fraction of its value
+- `sell_item(db, player_id, item_name, quantity=1)` — sells item back for a fraction of its value
 
 Uses: `ShopRepository`, `ShipRepository`, `PrimaryWeaponRepository`, `SecondaryWeaponRepository`, `TurretWeaponRepository`, `ModuleRepository`, `PlayerRepository`, `InventoryRepository`, `PlayerShipRepository`, `ConfigRepository`
 

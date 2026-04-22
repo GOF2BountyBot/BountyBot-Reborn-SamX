@@ -196,6 +196,7 @@ def mock_player_repo() -> AsyncMock:
 def mock_inventory_repo() -> AsyncMock:
     repo = AsyncMock()
     repo.get_player_item = AsyncMock(return_value=None)
+    repo.get_player_items_by_name = AsyncMock(return_value=[])  # A.42b: used by sell_item
     repo.add_item = AsyncMock()
     repo.remove_item = AsyncMock()
     return repo
@@ -463,36 +464,49 @@ class TestPurchaseItem:
 
 
 class TestSellItem:
-    """Tests for ShopService.sell_item."""
+    """Tests for ShopService.sell_item.
+
+    A.42b: sell_item no longer accepts item_type or target_tier.
+    - item_type is resolved from inventory row by item_name.
+    - target_tier always matches player.tier (A.42c).
+    """
 
     @pytest.mark.asyncio
     async def test_successful_sell_returns_transaction_details(
         self, service, mock_db, mock_player_repo, mock_inventory_repo, mock_shop_repo
     ):
-        """Returns transaction details on a successful sale at full value (no tax)."""
-        player = _make_player(guild_id=999, credits=500)
-        inventory_item = _make_inventory_item(quantity=2)
+        """Happy-path: /sell Micro Gun MK I → concrete item_type resolved, lands in player.tier shop.
 
+        Acceptance criterion (A.42 regression): player with primary_weapon in inventory
+        can sell by item_name only. Response item_type is the concrete 'primary_weapon'
+        (not the generic 'weapon' that _SELL_TYPE_MAP used to downgrade to).
+        """
+        player = _make_player(guild_id=999, credits=500, tier="Bronze")
+        inventory_item = _make_inventory_item(quantity=2, item_type="primary_weapon")
         mock_player_repo.get_by_id.return_value = player
         # sell_item re-fetches under lock; use same player object so credits is a real int
         mock_player_repo.get_by_id_for_update.return_value = player
-        mock_inventory_repo.get_player_item.return_value = inventory_item
+        mock_inventory_repo.get_player_items_by_name.return_value = [inventory_item]
         mock_shop_repo.get_shop_item_by_name.return_value = None  # No existing shop item
 
         # Mock _get_item_base_price to return a deterministic value
         service._get_item_base_price = AsyncMock(return_value=500)
 
         result = await service.sell_item(
-            mock_db, player_id=1, item_type="primary_weapon", item_name="Micro Gun MK I", quantity=1
+            mock_db, player_id=1, item_name="Micro Gun MK I", quantity=1
         )
 
         assert result["player_id"] == 1
-        assert result["item_type"] == "primary_weapon"  # concrete type (A.36 fix)
+        assert result["item_type"] == "primary_weapon"  # concrete type, NOT the generic 'weapon' (A.42 fix)
         assert result["item_name"] == "Micro Gun MK I"
         assert result["quantity"] == 1
         assert result["unit_sell_price"] == 500  # full value, no tax
         assert result["total_sell_value"] == 500
         assert result["new_credits"] == 1000  # 500 + 500
+        assert result["target_shop_tier"] == "Bronze"  # player.tier, not a param (A.42c)
+
+        # Verify inventory lookup was by name (not by type)
+        mock_inventory_repo.get_player_items_by_name.assert_awaited_once_with(mock_db, 1, "Micro Gun MK I")
 
     @pytest.mark.asyncio
     async def test_raises_when_player_not_found(self, service, mock_db, mock_player_repo):
@@ -500,40 +514,16 @@ class TestSellItem:
         mock_player_repo.get_by_id.return_value = None
 
         with pytest.raises(ValueError, match="Player 7 not found"):
-            await service.sell_item(mock_db, player_id=7, item_type="primary_weapon", item_name="Gun")
-
-    @pytest.mark.asyncio
-    async def test_raises_for_invalid_item_type(self, service, mock_db, mock_player_repo):
-        """InvalidItemTypeError raised for unrecognised item type (A.33 fix)."""
-        mock_player_repo.get_by_id.return_value = _make_player()
-
-        with pytest.raises(InvalidItemTypeError):
-            await service.sell_item(mock_db, player_id=1, item_type="banana", item_name="Gun")
-
-    @pytest.mark.asyncio
-    async def test_raises_for_generic_alias_on_sell(self, service, mock_db, mock_player_repo):
-        """InvalidItemTypeError raised when generic alias is passed to sell (A.36 fix)."""
-        mock_player_repo.get_by_id.return_value = _make_player()
-
-        with pytest.raises(InvalidItemTypeError, match="concrete item type"):
-            await service.sell_item(mock_db, player_id=1, item_type="weapon", item_name="Gun")
-
-    @pytest.mark.asyncio
-    async def test_raises_for_invalid_target_tier(self, service, mock_db, mock_player_repo):
-        """ValueError raised for unrecognised target tier."""
-        mock_player_repo.get_by_id.return_value = _make_player()
-
-        with pytest.raises(ValueError, match="Invalid target tier"):
-            await service.sell_item(mock_db, player_id=1, item_type="primary_weapon", item_name="Gun", target_tier="Diamond")
+            await service.sell_item(mock_db, player_id=7, item_name="Gun")
 
     @pytest.mark.asyncio
     async def test_raises_when_item_not_in_inventory(self, service, mock_db, mock_player_repo, mock_inventory_repo):
-        """ValueError raised when player does not own the item."""
+        """ValueError raised when player does not own the item (empty inventory lookup)."""
         mock_player_repo.get_by_id.return_value = _make_player()
-        mock_inventory_repo.get_player_item.return_value = None
+        mock_inventory_repo.get_player_items_by_name.return_value = []  # not found
 
-        with pytest.raises(ValueError, match="Insufficient item quantity"):
-            await service.sell_item(mock_db, player_id=1, item_type="primary_weapon", item_name="Missing Gun")
+        with pytest.raises(ValueError, match="not found in player"):
+            await service.sell_item(mock_db, player_id=1, item_name="Missing Gun")
 
     @pytest.mark.asyncio
     async def test_raises_when_insufficient_inventory_quantity(
@@ -541,10 +531,30 @@ class TestSellItem:
     ):
         """ValueError raised when player has fewer than requested quantity."""
         mock_player_repo.get_by_id.return_value = _make_player()
-        mock_inventory_repo.get_player_item.return_value = _make_inventory_item(quantity=1)
+        inventory_item = _make_inventory_item(quantity=1, item_type="primary_weapon")
+        mock_inventory_repo.get_player_items_by_name.return_value = [inventory_item]
 
         with pytest.raises(ValueError, match="Insufficient item quantity"):
-            await service.sell_item(mock_db, player_id=1, item_type="primary_weapon", item_name="Gun", quantity=5)
+            await service.sell_item(mock_db, player_id=1, item_name="Gun", quantity=5)
+
+    @pytest.mark.asyncio
+    async def test_raises_for_cross_type_name_collision(
+        self, service, mock_db, mock_player_repo, mock_inventory_repo
+    ):
+        """InvalidItemTypeError raised when item_name appears under multiple concrete types.
+
+        This is an impossible scenario with the current item catalog (verified: 146 items,
+        146 distinct names, zero cross-type name collisions), but the service guards
+        defensively to preserve the invariant that sells are always unambiguous writes.
+        """
+        mock_player_repo.get_by_id.return_value = _make_player()
+        # Mock two rows for the same item_name but different concrete types
+        row_a = _make_inventory_item(quantity=1, item_type="primary_weapon", item_name="AmbiguousItem")
+        row_b = _make_inventory_item(quantity=1, item_type="turret_weapon", item_name="AmbiguousItem")
+        mock_inventory_repo.get_player_items_by_name.return_value = [row_a, row_b]
+
+        with pytest.raises(InvalidItemTypeError, match="Ambiguous item"):
+            await service.sell_item(mock_db, player_id=1, item_name="AmbiguousItem")
 
     @pytest.mark.asyncio
     async def test_sell_item_uses_full_value_no_tax(
@@ -554,14 +564,36 @@ class TestSellItem:
         player = _make_player(credits=0)
         mock_player_repo.get_by_id.return_value = player
         mock_player_repo.get_by_id_for_update.return_value = player
-        mock_inventory_repo.get_player_item.return_value = _make_inventory_item(quantity=1)
+        inventory_item = _make_inventory_item(quantity=1, item_type="primary_weapon")
+        mock_inventory_repo.get_player_items_by_name.return_value = [inventory_item]
         mock_shop_repo.get_shop_item_by_name.return_value = None
 
         service._get_item_base_price = AsyncMock(return_value=1000)
 
-        result = await service.sell_item(mock_db, player_id=1, item_type="primary_weapon", item_name="Gun", quantity=1)
+        result = await service.sell_item(mock_db, player_id=1, item_name="Gun", quantity=1)
 
         assert result["unit_sell_price"] == 1000  # full value, no tax
+
+    @pytest.mark.asyncio
+    async def test_sell_item_uses_player_tier_as_target_shop(
+        self, service, mock_db, mock_player_repo, mock_inventory_repo, mock_shop_repo
+    ):
+        """target_shop_tier in result always matches player.tier (A.42c — no param accepted).
+
+        Verifies that a Gold-tier player's item lands in the Gold shop, not Bronze default.
+        """
+        player = _make_player(credits=100, tier="Gold")
+        mock_player_repo.get_by_id.return_value = player
+        mock_player_repo.get_by_id_for_update.return_value = player
+        inventory_item = _make_inventory_item(quantity=1, item_type="module")
+        mock_inventory_repo.get_player_items_by_name.return_value = [inventory_item]
+        mock_shop_repo.get_shop_item_by_name.return_value = None
+
+        service._get_item_base_price = AsyncMock(return_value=200)
+
+        result = await service.sell_item(mock_db, player_id=1, item_name="Shield Module")
+
+        assert result["target_shop_tier"] == "Gold"  # player.tier, not "Bronze" default (A.42c)
 
 
 # ===========================================================================
@@ -678,9 +710,12 @@ class TestRefreshShop:
         service._get_item_base_price = AsyncMock(return_value=500)
         created_items = []
 
+        item_types_written = []
+
         async def _fake_create_or_update(db, item_data):
             shop_item = _make_shop_item(item_name=item_data["item_name"])
             created_items.append(item_data["item_name"])
+            item_types_written.append(item_data["item_type"])
             return shop_item
 
         mock_shop_repo.create_or_update = _fake_create_or_update
@@ -692,6 +727,16 @@ class TestRefreshShop:
         # Every generated item name is a real game asset name (not a placeholder)
         for name in created_items:
             assert name in real_item_names, f"Unexpected item name in shop: {name!r}"
+
+        # DEF-A42-002 / A.36 regression guard: item_type written to guild_shops must ALWAYS
+        # be a concrete type — never a generic alias ('weapon', 'turret').
+        _VALID_CONCRETE_TYPES = {"ship", "primary_weapon", "secondary_weapon", "turret_weapon", "module"}
+        for t in item_types_written:
+            assert t in _VALID_CONCRETE_TYPES, (
+                f"generic alias '{t}' written to guild_shops.item_type — A.36 regression"
+            )
+        assert "weapon" not in item_types_written, "generic alias 'weapon' must NOT be written to guild_shops"
+        assert "turret" not in item_types_written, "generic alias 'turret' must NOT be written to guild_shops"
 
 
 # ===========================================================================

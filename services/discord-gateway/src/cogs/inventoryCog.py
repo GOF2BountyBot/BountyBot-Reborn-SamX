@@ -333,11 +333,14 @@ class InventoryCog(commands.Cog):
 
             embed = discord.Embed(title=title, color=discord.Color.blue())
 
-            # Add summary as description
+            # Add summary as description.
+            # Post-A.36 the summary API returns concrete type keys; aggregate here for display.
+            # Use .get(..., 0) defensively in case of partial or stale responses.
+            weapons_count = summary.get("primary_weapon", 0) + summary.get("secondary_weapon", 0)
             summary_text = (
-                f"**Total Items:** {summary['total_items']}\n"
-                f"Ships: {summary['ship']} | Weapons: {summary['weapon']} | "
-                f"Modules: {summary['module']} | Turrets: {summary['turret']}"
+                f"**Total Items:** {summary.get('total_items', 0)}\n"
+                f"Ships: {summary.get('ship', 0)} | Weapons: {weapons_count} | "
+                f"Modules: {summary.get('module', 0)} | Turrets: {summary.get('turret_weapon', 0)}"
             )
             embed.description = summary_text
 

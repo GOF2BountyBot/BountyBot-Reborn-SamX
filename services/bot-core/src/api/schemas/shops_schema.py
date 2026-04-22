@@ -30,10 +30,8 @@ class PurchaseRequest(BaseModel):
 
 class SellRequest(BaseModel):
     player_id: int
-    item_type: str = Field(pattern="^(ship|weapon|module|turret)$")
     item_name: str
     quantity: int = Field(gt=0, default=1)
-    target_tier: str = Field(default="Bronze", pattern="^(Bronze|Silver|Gold|Platinum)$")
 
 
 class TransactionResponse(BaseModel):

@@ -164,6 +164,30 @@ class InventoryRepository(IRepository[PlayerInventory]):
             flogger.error(f"Error getting item '{item_name}' by types {item_types} for player {player_id}: {e}")
             raise
 
+    async def get_player_items_by_name(
+        self, db: AsyncSession, player_id: int, item_name: str
+    ) -> list[PlayerInventory]:
+        """Get all inventory rows for a player matching a given item_name across all concrete types.
+
+        Used by ``ShopService.sell_item`` (A.42b) to resolve the concrete item_type
+        from the player's inventory by name.  Returns all matching rows so the caller
+        can detect cross-type name collisions (impossible in the current catalog, but
+        checked defensively).
+        """
+        try:
+            result = await db.execute(
+                select(PlayerInventory).where(
+                    and_(
+                        PlayerInventory.player_id == player_id,
+                        PlayerInventory.item_name == item_name,
+                    )
+                )
+            )
+            return list(result.scalars().all())
+        except Exception as e:
+            flogger.error(f"Error getting items by name '{item_name}' for player {player_id}: {e}")
+            raise
+
     async def get_player_item(
         self, db: AsyncSession, player_id: int, item_type: str, item_name: str
     ) -> PlayerInventory | None:
@@ -290,11 +314,28 @@ class InventoryRepository(IRepository[PlayerInventory]):
             raise
 
     async def get_inventory_summary(self, db: AsyncSession, player_id: int) -> dict:
-        """Get a summary of player's inventory by item type."""
+        """Get a summary of player's inventory by item type.
+
+        Post-A.36: player_inventories.item_type stores concrete types only
+        (ship, primary_weapon, secondary_weapon, turret_weapon, module).
+        Generic aliases (weapon, turret) are never persisted.
+
+        Returns a dict keyed by concrete type with total_items as the grand total.
+        Callers that display a human-readable summary should aggregate on their side,
+        e.g. Weapons = primary_weapon + secondary_weapon.
+        """
         try:
             items = await self.get_player_items(db, player_id)
 
-            summary = {"ship": 0, "weapon": 0, "module": 0, "turret": 0, "total_items": 0}
+            # Keys are concrete item types (A.36 storage invariant — no generic aliases in DB)
+            summary = {
+                "ship": 0,
+                "primary_weapon": 0,
+                "secondary_weapon": 0,
+                "turret_weapon": 0,
+                "module": 0,
+                "total_items": 0,
+            }
 
             for item in items:
                 if item.item_type in summary:

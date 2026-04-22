@@ -99,13 +99,20 @@ def _make_inventory_item(item_name="LaserCannon", item_type="weapon", quantity=1
 
 
 def _make_summary(total_items=3, ship=1, weapon=1, module=1, turret=0):
-    """Return a minimal inventory summary dict."""
+    """Return a minimal inventory summary dict with concrete type keys.
+
+    Post-A.36 (DEF-A42-001 fix), the API returns concrete type keys.
+    The 'weapon' and 'turret' parameters are mapped to 'primary_weapon' and
+    'turret_weapon' respectively, matching the real API response shape.
+    Secondary weapons default to 0.
+    """
     return {
         "total_items": total_items,
         "ship": ship,
-        "weapon": weapon,
+        "primary_weapon": weapon,      # concrete key (was 'weapon')
+        "secondary_weapon": 0,         # always 0 in test fixtures (not yet enabled)
+        "turret_weapon": turret,       # concrete key (was 'turret')
         "module": module,
-        "turret": turret,
     }
 
 

@@ -175,15 +175,19 @@ async def purchase_ship(request: ShipPurchaseRequest, shop_service: ShopService 
 
 @router.post("/sell", response_model=TransactionResponse)
 async def sell_item(request: SellRequest, shop_service: ShopService = Depends(get_shop_service)):
-    """Sell an item back to a shop."""
+    """Sell an item back to the player's current tier shop.
+
+    item_type is resolved from the player's inventory by item_name (A.42b).
+    target_tier always matches the player's current tier (A.42c).
+    """
     flogger.info(
-        f"Player {request.player_id} selling {request.quantity}x {request.item_name} to {request.target_tier} shop"
+        f"Player {request.player_id} selling {request.quantity}x {request.item_name}"
     )
 
     try:
         async with get_db_session() as db:
             transaction = await shop_service.sell_item(
-                db, request.player_id, request.item_type, request.item_name, request.quantity, request.target_tier
+                db, request.player_id, request.item_name, request.quantity
             )
 
             return TransactionResponse(

@@ -303,17 +303,19 @@ async def test_get_item_count_by_type(db_session: AsyncSession, repo: InventoryR
 
 async def test_get_inventory_summary(db_session: AsyncSession, repo: InventoryRepository):
     player = await _setup_player(db_session)
-    db_session.add(PlayerInventory(player_id=player.id, item_type="weapon", item_name="A", quantity=3))
+    # Post-A.36: player_inventories.item_type stores concrete types only — never generic aliases
+    db_session.add(PlayerInventory(player_id=player.id, item_type="primary_weapon", item_name="A", quantity=3))
     db_session.add(PlayerInventory(player_id=player.id, item_type="module", item_name="B", quantity=2))
     db_session.add(PlayerInventory(player_id=player.id, item_type="ship", item_name="C", quantity=1))
     await db_session.commit()
 
     summary = await repo.get_inventory_summary(db_session, player.id)
 
-    assert summary["weapon"] == 3
+    # Assertions use concrete type keys (A.36 storage invariant: no generic aliases in DB)
+    assert summary["primary_weapon"] == 3
     assert summary["module"] == 2
     assert summary["ship"] == 1
-    assert summary["turret"] == 0
+    assert summary["turret_weapon"] == 0
     assert summary["total_items"] == 6  # 3 + 2 + 1
 
 

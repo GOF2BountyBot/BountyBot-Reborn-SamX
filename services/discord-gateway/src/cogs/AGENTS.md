@@ -22,6 +22,39 @@ also excludes already-equipped items by fetching the active ship.
 `unequip_autocomplete` now includes `secondary_weapons` slot in its loadout scan
 (for future compatibility).
 
+### /sell follows the same server-side resolution pattern (A.42/A.42b/A.42c, 2026-04-22)
+
+`shopCog.sell` no longer has `item_type` or `target_tier` parameters on the slash command:
+
+- **A.42**: `_SELL_TYPE_MAP` was **removed** — it caused a vocab-downgrade bug by mapping concrete types (e.g. `primary_weapon`) back to generic aliases (`weapon`) before POSTing to the API. The backend rejects generic aliases on write paths with `InvalidItemTypeError → HTTP 422`.
+- **A.42b**: No `item_type` param. The cog POSTs `{player_id, item_name, quantity}` only. The server resolves concrete type from the player's inventory row by item_name.
+- **A.42c**: No `target_tier` param. Items always land in the player's current tier shop (server reads `player.tier`), consistent with `/buy` tier-gating.
+
+`sell_item_autocomplete` no longer reads `interaction.namespace.item_type` — there is no item_type filter on `/sell`. The autocomplete simply shows all items in the player's inventory with `"Name (Type)"` labels.
+
+`_ITEM_TYPE_LABELS` remains on the cog (for displaying the resolved type in the success embed), but only contains concrete type labels (`primary_weapon`, `turret_weapon`, etc.) — no generic aliases (`weapon`, `turret`).
+
+There is no `_resolve_sell_item_type` helper method on the cog — type resolution was moved entirely to the server.
+
+### /inventory summary display (DEF-A42-001 fix, 2026-04-22)
+
+Post-A.36, `GET /api/v1/inventory/player/{id}/summary` returns **concrete type keys**
+(`primary_weapon`, `secondary_weapon`, `turret_weapon`, `module`, `ship`, `total_items`).
+Generic alias keys (`weapon`, `turret`) no longer appear in the response.
+
+`inventoryCog.py` (around line 337) aggregates concrete types into 4 display buckets:
+
+| Display Bucket | Source |
+|---|---|
+| Ships | `summary.get("ship", 0)` |
+| Weapons | `summary.get("primary_weapon", 0) + summary.get("secondary_weapon", 0)` |
+| Modules | `summary.get("module", 0)` |
+| Turrets | `summary.get("turret_weapon", 0)` |
+
+Use `.get(key, 0)` everywhere when reading summary keys — defensive against stale
+or partial API responses. Do NOT read `summary["weapon"]` or `summary["turret"]`
+— these keys no longer exist in the response.
+
 ### Surface gating principle
 
 Cogs must gate secondary weapons using `_CURRENTLY_EQUIPPABLE_INVENTORY_TYPES`

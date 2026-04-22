@@ -59,7 +59,7 @@ def mock_shop_service():
     service.sell_item = AsyncMock(
         return_value={
             "player_id": 1,
-            "item_type": "weapon",
+            "item_type": "primary_weapon",
             "item_name": "Pulse Laser",
             "quantity": 1,
             "total_sell_value": 50,
@@ -302,18 +302,24 @@ class TestPurchaseItem:
 
 
 class TestSellItem:
-    """Tests for POST /api/v1/shops/sell."""
+    """Tests for POST /api/v1/shops/sell.
+
+    A.42b: SellRequest no longer accepts item_type or target_tier.
+    The server resolves item_type from inventory and uses player.tier as target_tier.
+    """
 
     @patch("api.routers.shops.get_db_session")
     def test_sell_item_happy_path(self, mock_get_db, client, mock_shop_service):
-        """Returns 200 with a TransactionResponse on a successful sale."""
+        """Returns 200 with a TransactionResponse on a successful sale (A.42 regression test).
+
+        Payload: player_id + item_name + quantity only (no item_type, no target_tier).
+        Verifies that the concrete item_type returned is primary_weapon (not the generic 'weapon').
+        """
         _configure_db_mock(mock_get_db)
         payload = {
             "player_id": 1,
-            "item_type": "weapon",
             "item_name": "Pulse Laser",
             "quantity": 1,
-            "target_tier": "Bronze",
         }
 
         response = client.post("/api/v1/shops/sell", json=payload)
@@ -321,7 +327,7 @@ class TestSellItem:
         assert response.status_code == 200
         data = response.json()
         assert data["player_id"] == 1
-        assert data["item_type"] == "weapon"
+        assert data["item_type"] == "primary_weapon"  # concrete type — not generic 'weapon'
         assert data["item_name"] == "Pulse Laser"
         assert data["quantity"] == 1
         assert data["total_value"] == 50
@@ -335,10 +341,8 @@ class TestSellItem:
         mock_shop_service.sell_item.side_effect = ValueError("Item not in inventory")
         payload = {
             "player_id": 1,
-            "item_type": "weapon",
             "item_name": "Nonexistent",
             "quantity": 1,
-            "target_tier": "Bronze",
         }
 
         response = client.post("/api/v1/shops/sell", json=payload)
@@ -353,10 +357,8 @@ class TestSellItem:
         mock_shop_service.sell_item.side_effect = RuntimeError("DB crashed")
         payload = {
             "player_id": 1,
-            "item_type": "weapon",
             "item_name": "Pulse Laser",
             "quantity": 1,
-            "target_tier": "Bronze",
         }
 
         response = client.post("/api/v1/shops/sell", json=payload)
@@ -364,50 +366,68 @@ class TestSellItem:
         assert response.status_code == 500
         assert "Failed to process sale" in response.json()["detail"]
 
-    def test_sell_item_invalid_item_type_returns_422(self, client, mock_shop_service):
-        """Returns 422 when item_type does not match pattern."""
+    def test_sell_item_stale_client_sends_item_type_is_ignored(self, client, mock_shop_service):
+        """Stale client sending item_type is gracefully ignored (extra fields silently dropped by Pydantic).
+
+        A.42b contract: Pydantic does NOT raise 422 for extra fields by default
+        (model_config does not set extra='forbid'). Unknown fields are silently ignored.
+        This documents the chosen behavior so future agents do not inadvertently change it.
+        """
+        # A stale client that still sends the old item_type and target_tier fields
         payload = {
             "player_id": 1,
-            "item_type": "spaceship",  # not in pattern
-            "item_name": "X-Wing",
-            "quantity": 1,
-            "target_tier": "Bronze",
-        }
-
-        response = client.post("/api/v1/shops/sell", json=payload)
-
-        assert response.status_code == 422
-
-    def test_sell_item_invalid_target_tier_returns_422(self, client, mock_shop_service):
-        """Returns 422 when target_tier does not match pattern."""
-        payload = {
-            "player_id": 1,
-            "item_type": "weapon",
             "item_name": "Pulse Laser",
             "quantity": 1,
-            "target_tier": "Diamond",  # not in pattern
+            "item_type": "weapon",       # stale field — silently ignored
+            "target_tier": "Bronze",     # stale field — silently ignored
         }
 
-        response = client.post("/api/v1/shops/sell", json=payload)
-
-        assert response.status_code == 422
-
-    def test_sell_item_default_quantity_and_tier(self, client, mock_shop_service):
-        """Accepts minimal payload using default quantity=1 and target_tier=Bronze."""
-        payload = {
-            "player_id": 1,
-            "item_type": "weapon",
-            "item_name": "Pulse Laser",
-        }
-
-        # Will trigger the mock without DB patching only to validate schema.
-        # The request goes through schema validation before hitting the handler.
-        # We only need to verify it reaches the endpoint (mock may raise, that's fine).
         with patch("api.routers.shops.get_db_session") as mock_get_db:
             _configure_db_mock(mock_get_db)
             response = client.post("/api/v1/shops/sell", json=payload)
-            # Schema should be valid; service mock returns 200
+            # Must be 200 — stale fields are NOT rejected by the schema
             assert response.status_code == 200
+
+    def test_sell_item_default_quantity(self, client, mock_shop_service):
+        """Accepts minimal payload (player_id + item_name only) using default quantity=1."""
+        payload = {
+            "player_id": 1,
+            "item_name": "Pulse Laser",
+        }
+
+        with patch("api.routers.shops.get_db_session") as mock_get_db:
+            _configure_db_mock(mock_get_db)
+            response = client.post("/api/v1/shops/sell", json=payload)
+            assert response.status_code == 200
+
+    def test_sell_item_invalid_quantity_zero_returns_422(self, client, mock_shop_service):
+        """Returns 422 when quantity is 0 (must be gt=0)."""
+        payload = {
+            "player_id": 1,
+            "item_name": "Pulse Laser",
+            "quantity": 0,
+        }
+
+        response = client.post("/api/v1/shops/sell", json=payload)
+        assert response.status_code == 422
+
+    @patch("api.routers.shops.get_db_session")
+    def test_sell_item_invalid_item_type_error_returns_422(self, mock_get_db, client, mock_shop_service):
+        """Returns 422 when the service raises InvalidItemTypeError (e.g. cross-type collision)."""
+        from services.exceptions import InvalidItemTypeError as _ITE
+
+        _configure_db_mock(mock_get_db)
+        mock_shop_service.sell_item.side_effect = _ITE("Ambiguous item 'X': found under multiple types")
+        payload = {
+            "player_id": 1,
+            "item_name": "X",
+            "quantity": 1,
+        }
+
+        response = client.post("/api/v1/shops/sell", json=payload)
+
+        assert response.status_code == 422
+        assert "Ambiguous item" in response.json()["detail"]
 
 
 # ===========================================================================

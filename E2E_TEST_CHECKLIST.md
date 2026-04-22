@@ -127,7 +127,7 @@ Verify all four services are running and connected.
 
 ### First-time guild initialisation
 
-- [x] **1.1** `[ADMIN]` `/admin_setup` — "Guild initialized" response; creates: ✅ PASS 2026-04-21 (see A.10 for checklist-vs-reality deltas); re-verified 2026-04-22 on fresh rebuild — same result, surfaced A.30 (gateway list endpoints return `category_id: null` for child channels)
+- [x] **1.1** `[ADMIN]` `/admin_setup` — "Guild initialized" response; creates: *(Re-verified 2026-04-22 PM post-wipe/rebuild: all 8 channels + 6 roles + category + GuildConfig + 4 tier shops (12/11/10/10 = 43 items) created correctly. A.30 still observed — gateway channel list returns `category_id: null` despite DB category_id populated. A.10 doc-drift still unaddressed.)*
    - "BountyBot" category with @everyone view denied
    - `#bronze-bounty-board` channel (read-only for players)
    - `#silver-bounty-board` channel (read-only for players)
@@ -151,49 +151,46 @@ Verify all four services are running and connected.
 
 ### Verify channel infrastructure
 
-- [x] **1.2** Confirm all 7 text channels exist under the "BountyBot" category in Discord ✅ PASS 2026-04-22 (implicit — Alt unregister/re-register cycle showed all 7 player-visible channels appearing/disappearing together under the category)
-- [x] **1.3** Confirm `@Bounty Hunter` role exists in the guild role list and is mentionable ✅ PASS 2026-04-22 (all 5 bounty roles present and mentionable per user visual check: @Bounty Hunter + 4 tier roles — Bronze/Silver/Gold/Platinum)
-- [~] **1.4** Verify channel permissions:
-   - Users WITHOUT `@Bounty Hunter` role CANNOT see any BountyBot channels ✅ PASS 2026-04-22 (Alt unregister removed visibility of all BountyBot channels; re-register restored them)
-   - `#bronze-bounty-board`, `#silver-bounty-board`, `#gold-bounty-board`, `#shop` are read-only for `@Bounty Hunter` — NOT YET VERIFIED (visual check deferred)
-   - `#bounty-hunting` allows `@Bounty Hunter` to use slash commands — NOT YET VERIFIED (implicitly verified whenever Alt runs slash commands in this channel in later phases)
+- [x] **1.2** Confirm all 7 text channels exist under the "BountyBot" category in Discord ✅ Re-verified 2026-04-22 PM (visual confirm; gateway API still reports `category_id: null` per A.30 but DB category_id is populated)
+- [x] **1.3** Confirm `@Bounty Hunter` role exists in the guild role list and is mentionable ✅ Re-verified 2026-04-22 PM (plus 4 tier roles — Bronze/Silver/Gold/Platinum — all mentionable per roles API)
+- [~] **1.4** Verify channel permissions: *(Partially verified 2026-04-22 PM via Alt unregister/re-register cycle)*
+   - Users WITHOUT `@Bounty Hunter` role CANNOT see any BountyBot channels ✅ Alt's unregister showed channel visibility loss; re-register restored
+   - `#bronze-bounty-board`, `#silver-bounty-board`, `#gold-bounty-board`, `#shop` are read-only for `@Bounty Hunter` (cannot type in them) — NOT YET VERIFIED (visual check deferred)
+   - `#bounty-hunting` allows `@Bounty Hunter` to use slash commands — ✅ implicitly verified (Alt ran multiple slash commands without being blocked)
    - `#bounty-discussions` allows `@Bounty Hunter` to chat but NOT use slash commands — NOT YET VERIFIED (visual check deferred)
-   - `#bot-images` is invisible to all users (only bot can see it) — NOT YET VERIFIED (Main can see it as Administrator per 1.8 note; Alt's view of #bot-images post-registration is worth confirming if Alt's not Admin)
+   - `#bot-images` is invisible to all users (only bot can see it) — NOT YET VERIFIED (Main sees it as Admin; Alt's view pending)
 
 ### Verify config
 
-- [x] **1.5** `[ADMIN]` `/admin_config action:View Config` — Shows guild configuration embed including channel IDs, admin role, starting credits, sale price factor, XP thresholds ✅ PASS 2026-04-21 (Starting Credits 999,999,999; Sale Factor 80%; XP Silver:10 Gold:20 Platinum:30 all reflect Session Setup)
-- [x] **1.6** `[ADMIN]` `/admin_config_validate` — Returns "valid: true" with no errors or warnings ✅ PASS 2026-04-21
+- [x] **1.5** `[ADMIN]` `/admin_config action:View Config` — ✅ Re-verified 2026-04-22 PM: shows credits=999,999,999, sale_factor=80%, XP thresholds=Silver:10/Gold:20/Platinum:30, admin role ✅, configured ✅. Matches Session Setup exactly. (Note: does NOT include channel IDs in the embed — only role + numeric config. Documentation drift.)
+- [x] **1.6** `[ADMIN]` `/admin_config_validate` — ✅ Re-verified 2026-04-22 PM: 0 errors, 0 warnings. **Observation**: embed shows `guild bb-temp` as display name — possible placeholder text where actual guild name should render.
 
 ### Player registration (your account)
 
-- [x] **1.7** `/profile` — First use: creates User + Player with starter ship "Betty" (active, `is_active=true`), equipped loadout: `Nirai Impulse EX 1` (primary weapon), `E2 Exoclad` (module), `Telta Quickscan` (module); inventory/cargo contains `Micro Gun MK I` (unequipped spare primary). Bronze tier, 0 XP, starting credits per guild config. **Also assigns `@Bounty Hunter` + `@Bounty Hunter Bronze` roles to the user.** [Note: secondary weapons not yet implemented; no turret on starter.] ✅ PASS 2026-04-22 (playerCog refactor verified — all DB rows match, roles assigned, embed fields correct, credits=999,999,999 from Session Setup)
-- [x] **1.8** Verify BountyBot channels are now visible to you (you have `@Bounty Hunter` role) ✅ PASS 2026-04-21 (all 7 player-visible channels + `#platinum-bounties` present; `#bot-images` also visible to Main — expected, since Discord's Administrator permission bypasses channel-level view denials; non-admin users will not see it)
-- [x] **1.9** `/profile` — Second use: identical response, no duplicate player created (idempotent) ✅ PASS 2026-04-22 (embed identical; all 4 table counts unchanged: users=1, players=1, player_ships=1, player_inventories=1)
+- [x] **1.7** `/profile` — ✅ Re-verified 2026-04-22 PM: Main (discord_id=402296276617527306, username=samx.ai) created as PID 1. Betty active ship with weapons=["Nirai Impulse EX 1"], modules=["E2 Exoclad","Telta Quickscan"], turrets=[], secondary_weapons=NULL. Inventory: Micro Gun MK I qty=1. Bronze/0 XP/999,999,999 credits. **Observation**: `secondary_weapons` field is NULL not [] — may matter for Phase 5 equip logic; monitor.
+- [x] **1.8** Verify BountyBot channels are now visible to you (you have `@Bounty Hunter` role) ✅ Re-verified 2026-04-22 PM (Main + Alt both see all 7 player-visible channels; #bot-images Admin-only via Main client)
+- [x] **1.9** `/profile` — Second use: identical response, no duplicate player created (idempotent) ✅ Re-verified 2026-04-22 PM: same PID 1, row counts stable at 1/1/1/1
 
 ### Unregister / re-register cycle
 
-- [x] **1.10** `/unregister` — Ephemeral "Bounty Hunter role(s) removed: @Bounty Hunter, @Bounty Hunter Bronze. Your player data is preserved." Verify:
-   - Both `@Bounty Hunter` and tier role (Bronze) removed from your user (A.14)
-   - BountyBot channels are no longer visible to you
-   ✅ PASS 2026-04-21 (exact ephemeral match; both roles stripped from Main; player data preserved — all 4 tables still = 1 row each; single clean INFO log line)
-- [x] **1.11** `/profile` — Re-assigns both roles; channels visible again; same player data as before ✅ PASS 2026-04-22 (both roles re-assigned; PID 1 preserved; 999,999,999 credits unchanged; no duplicate rows)
+- [x] **1.10** `/unregister` — ✅ Re-verified 2026-04-22 PM: "Bounty Hunter role(s) removed: @Bounty Hunter, @Bounty Hunter Bronze. Your player data is preserved." Both roles stripped; DB counts preserved at 1/1/1/1; Main had only @everyone after.
+- [x] **1.11** `/profile` — ✅ Re-verified 2026-04-22 PM: re-register restores same PID 1, both tier+hunter roles restored; no new DB rows.
 
 ### Unregister edge cases
 
-- [x] **1.12** `/unregister` when you don't have the role — "You don't have the Bounty Hunter role" message ✅ PASS 2026-04-21 (exact ephemeral "ℹ️ You don't have the Bounty Hunter role."; no DB mutations; no errors. Confirms that the configured-guild path handles the noop correctly — A.25 is specifically about the unconfigured-guild path.)
+- [x] **1.12** `/unregister` when you don't have the role — ✅ Re-verified 2026-04-22 PM: "ℹ️ You don't have the Bounty Hunter role." — graceful, informational tone. **Important clarification**: registered-then-unregistered user takes this no-role path cleanly, whereas **never-registered** user still hits generic error (A.25). A.25 scope narrower than originally thought.
 
 ### `[2P]` Second player registration
 
-- [x] **1.13** `[2P]` Player 2 runs `/profile` — Creates their own User + Player with separate state; assigns `@Bounty Hunter` + `@Bounty Hunter Bronze` roles to Player 2 ✅ PASS 2026-04-22 (Alt ran `/register` which is a full alias — creates PID 2, separate Betty ship + Micro Gun MK I inventory; both Bounty Hunter roles assigned; Main's PID 1 data untouched)
+- [x] **1.13** `[2P]` Player 2 runs `/profile` — ✅ Re-verified 2026-04-22 PM: Alt (discord_id=970691862035841048, username=general_failure.) created as PID 2 with own Betty (PID2 ship row), own Micro Gun MK I in inventory, own credits/XP; both tier+hunter roles assigned to Alt. Counts stable at 2/2/2/2.
 
 ### `/register` alias (A.19 closure verification — NEW 2026-04-22)
 
-- [x] **1.14** `/register` — Alt (or any registered user) runs `/register` after Phase 1 setup. Expected: identical embed to `/profile` (same Tier/XP/Credits/PlayerID/etc.). No new DB row created, no role change. Verify `users/players` counts unchanged post-invocation. ✅ PASS 2026-04-22 (A.19 closure — Alt used `/register` as first-time entry, produced embed identical in shape to `/profile`; full alias behaviour confirmed with no discernible difference between the two commands)
+- [x] **1.14** `/register` — ✅ Re-verified 2026-04-22 PM: Alt ran `/register` immediately after `/profile`; returned identical embed (PID 2, Bronze, 0 XP, 999,999,999 credits); zero DB mutations (counts stable at 2/2/2/2); no role change. **A.19 closed.**
 
 ### A.9 platinum validator closure verification (NEW 2026-04-22)
 
-- [x] **1.15** Session Setup platinum payload — AFTER `/admin_setup` completes, orchestrator runs: `PUT /api/v1/config/guild/{gid}/bounty` with `max_bounties_per_tier={"bronze":20,"silver":20,"gold":20,"platinum":20}`. Expected: HTTP 200 + response includes all 4 tier entries (previously returned 400 with "Must be bronze, silver, or gold" — see A.9). ✅ PASS 2026-04-22 (A.9 closure confirmed; HTTP 200, response body includes `platinum: 20` alongside bronze/silver/gold)
+- [x] **1.15** Session Setup platinum payload — AFTER `/admin_setup` completes, orchestrator runs: `PUT /api/v1/config/guild/{gid}/bounty` with `max_bounties_per_tier={"bronze":20,"silver":20,"gold":20,"platinum":20}`. Expected: HTTP 200 + response includes all 4 tier entries (previously returned 400 with "Must be bronze, silver, or gold" — see A.9). ✅ Re-verified 2026-04-22 PM post-wipe: all 3 Session Setup endpoints returned 200 with platinum included. **A.9 closed.**
 
 > Note: `/profile` takes no parameters — it always shows the invoking user's profile. `/register` is a full alias of `/profile` — identical behavior, interchangeable. There is no way to view another player's profile via either. Use `/admin_player user:@player action:View Stats` (admin) to inspect other players.
 
@@ -203,16 +200,16 @@ Verify all four services are running and connected.
 
 > ⚠️ **Run AFTER Phase 1** — the alt account must be registered (has `@Bounty Hunter` role) but must NOT have admin permissions.
 
-- [x] **1.5.1** (Non-admin) `/admin_setup` — Command should be invisible in slash menu (A.4 hiding) ✅ PASS 2026-04-21 (not in Alt's autocomplete)
-- [x] **1.5.2** (Non-admin) `/admin_player user:@someone action:View Stats` — Invisible ✅ PASS 2026-04-21
-- [x] **1.5.3** (Non-admin) `/admin_config action:View Config` — Invisible ✅ PASS 2026-04-21
-- [x] **1.5.4** (Non-admin) `/scheduler_list` — Invisible ✅ PASS 2026-04-21
-- [x] **1.5.5** (Non-admin) `/health` — Invisible ✅ PASS 2026-04-21
-- [~] **1.5.6** (Non-admin) `/ping` — Invisible (note: A.20 — was previously visible; verify fix still working) ⚠️ 2026-04-21 still visible/invokable to Alt; runtime `is_admin()` rejects with "An error occurred." — **A.20 updated** (scope narrowed from 2 commands leaking to just `/ping`)
-- [x] **1.5.7** (Non-admin) `/load_data category:ship` — Invisible ✅ PASS 2026-04-21
-- [x] **1.5.8** (Non-admin) `/admin_help` — Invisible (validates A.4 decorator on `/admin_help`) ✅ PASS 2026-04-21
-- [x] **1.5.9** (Non-admin) Open the slash-command menu and start typing `/admin` — autocomplete does NOT surface any `admin_*`, `scheduler_*`, `ping`, `health`, `load_data`, `reload_autocomplete`, `render_config`, or `render_cache_clear` entries. `/admin_help` itself must also be absent. ✅ PASS 2026-04-21 (empty dropdown on `/admin ` for Alt)
-- [x] **1.5.10** (Non-admin) `/help` — Still works and still shows only the 8 user categories (no Admin — * categories leak) ✅ PASS 2026-04-21 (all 8 correct categories; no admin-category entries. Footer line "Admins: use /admin_help to see admin commands" shown to non-admin — awaiting user decision on logging)
+- [ ] **1.5.1** (Non-admin) `/admin_setup` — Command should be invisible in slash menu (A.4 hiding) *(Reset 2026-04-22 post-wipe; Alt needs to be re-registered in Phase 1 first)*
+- [ ] **1.5.2** (Non-admin) `/admin_player user:@someone action:View Stats` — Invisible *(Reset 2026-04-22 post-wipe)*
+- [ ] **1.5.3** (Non-admin) `/admin_config action:View Config` — Invisible *(Reset 2026-04-22 post-wipe)*
+- [ ] **1.5.4** (Non-admin) `/scheduler_list` — Invisible *(Reset 2026-04-22 post-wipe)*
+- [ ] **1.5.5** (Non-admin) `/health` — Invisible *(Reset 2026-04-22 post-wipe)*
+- [~] **1.5.6** (Non-admin) `/ping` — Invisible (note: A.20 — was previously visible; verify fix still working) *(Reset 2026-04-22 post-wipe; A.20 still open — /ping visible to non-admins; runtime guard rejects but visibility leak remains)*
+- [ ] **1.5.7** (Non-admin) `/load_data category:ship` — Invisible *(Reset 2026-04-22 post-wipe)*
+- [ ] **1.5.8** (Non-admin) `/admin_help` — Invisible (validates A.4 decorator on `/admin_help`) *(Reset 2026-04-22 post-wipe)*
+- [ ] **1.5.9** (Non-admin) Open the slash-command menu and start typing `/admin` — autocomplete does NOT surface any `admin_*`, `scheduler_*`, `ping`, `health`, `load_data`, `reload_autocomplete`, `render_config`, or `render_cache_clear` entries. `/admin_help` itself must also be absent. *(Reset 2026-04-22 post-wipe)*
+- [ ] **1.5.10** (Non-admin) `/help` — Still works and still shows only the 8 user categories (no Admin — * categories leak) *(Reset 2026-04-22 post-wipe)*
 
 ---
 
@@ -295,10 +292,10 @@ Validates the `/help` and `/admin_help` commands end-to-end as a discoverability
 
 ### View your ships
 
-- [x] **3.1** `/ships` — Shows your owned ships (starter ship "Betty" should be present, marked as active with green indicator) ✅ PASS 2026-04-22 (Alt: Total ships=1, Betty ID=2, 🟢 ACTIVE, Loadout W:1 M:2 T:0)
-- [~] **3.2** `/ship ship_id:<your_betty_id>` — Detailed view of your ship: loadout (weapons, modules, turrets), stats ✅ A.28 CLOSURE VERIFIED 2026-04-22 (no 500 error; embed rendered correctly: Betty details, Weapons(1) Nirai Impulse EX 1, Modules(2) E2 Exoclad + Telta Quickscan) — but **surfaced A.34a + A.34b** (green-dot leak in autocomplete + embed style mismatch vs `/loadout`)
-- [~] **3.3** `/nickname ship_id:<your_ship_id> nickname:MyBetty` — Sets custom nickname; visible in `/ships` ✅ PASS 2026-04-22 (nickname "MyBetty" set on Alt's ship id=2; persisted to DB, visible in subsequent `/ship` as `🟢 Betty "MyBetty"`) — but **surfaced A.34c** (green-dot leak in `/nickname` autocomplete, same helper as A.34a)
-- [x] **3.4** `/nickname ship_id:<your_ship_id> nickname:<51+ char string>` — Error: nickname too long ✅ PASS 2026-04-22 ("❌ Nickname must be 50 characters or less.")
+- [x] **3.1** `/ships` — ✅ Re-verified 2026-04-22 PM on Alt: Betty shown with 🟢 ACTIVE indicator, Ship ID 2, W:1/M:2/T:0 loadout summary. **A.28 re-verified closed.**
+- [~] **3.2** `/ship ship_id:<your_betty_id>` — ✅ Re-verified 2026-04-22 PM on Alt (ship_id:2): shows Nirai Impulse EX 1 in Weapons, E2 Exoclad + Telta Quickscan in Modules. **A.28 closed.** **A.34a/b/c remain OPEN** — plus new **B.3** observation: embed shows `Type: Betty` (should be `Class:` or omitted since title already shows ship name).
+- [~] **3.3** `/nickname ship_id:<your_ship_id> nickname:MyBetty` — Sets custom nickname; visible in `/ships` *(Reset 2026-04-22 post-wipe; A.34c remains OPEN — same helper as A.34a)*
+- [ ] **3.4** `/nickname ship_id:<your_ship_id> nickname:<51+ char string>` — Error: nickname too long *(Reset 2026-04-22 post-wipe)*
 
 ### Set active ship (tested after buying a second ship in Phase 4)
 
@@ -312,14 +309,14 @@ Validates the `/help` and `/admin_help` commands end-to-end as a discoverability
 ### Browse all shops
 
 - [ ] **4.1** `/shops` — Overview of all 4 tier shops (Bronze/Silver/Gold/Platinum) with item counts and lock/unlock status based on player tier
-- [ ] **4.2** `/shop tier:Bronze` — Shows items available at Bronze tier with prices, quantities, and tech levels
-- [ ] **4.3** `/shop tier:Silver` — Tier-locked: "insufficient tier" error (player is Bronze at this point)
-- [ ] **4.4** `/shop tier:Bronze item_type:ship` — Filtered to ships only
+- [x] **4.2** `/shop tier:Bronze` — ✅ Re-verified 2026-04-22 PM on Alt: 14 items shown (5 ships / 3 primary / 2 turret / 4 modules); prices and quantities correct. Turrets confirmed present at Bronze (PE Ambipolar-5, Matador TS). **A.38 closed** — zero secondary_weapon entries across all shop tiers verified via 5 shop_refresh cycles. **B.6 observation**: success embed says `Item Type: Primary_Weapon` (capitalized + underscore leaking from DB concrete type — cosmetic only).
+- [x] **4.3** `/shop tier:Silver` — ✅ Re-verified 2026-04-22 PM: "🔒 You need to be Silver tier to access this shop. Your current tier: Bronze" — tier gate works correctly.
+- [x] **4.4** `/shop tier:Gold` (and Platinum) — ✅ Re-verified 2026-04-22 PM: both higher-tier shops correctly return tier-gate errors for Bronze player. 4-tier gating (including new Platinum) fully working.
 
 ### Purchase items
 
-- [ ] **4.5** `/buy item_id:<affordable_item_id> quantity:1` — Purchase an item; credits deducted, confirmation embed
-- [ ] **4.6** `/profile` — Verify credits decreased by item price
+- [x] **4.5** `/buy item_id:<affordable_item_id> quantity:1` — ✅ Re-verified 2026-04-22 PM on Alt: bought Mimung Blaster (item_id=224) for 369,763 credits; success embed shows new credits 999,630,236; inventory row added as concrete `primary_weapon`.
+- [ ] **4.6** `/profile` — Verify credits decreased by item price *(implied via /buy success message; explicit /profile recheck pending)*
 - [ ] **4.7** `/inventory` — Verify purchased item appears
 
 ### Purchase error cases
@@ -329,8 +326,8 @@ Validates the `/help` and `/admin_help` commands end-to-end as a discoverability
 
 ### Sell items
 
-- [ ] **4.10** `/sell item_name:<owned_item> item_type:weapon quantity:1 target_tier:Bronze` — Sell an item; credits increase (refund = value * sale_price_factor), item removed from inventory
-- [ ] **4.11** `/sell item_name:<item_you_dont_own> item_type:weapon` — Error: item not in inventory
+- [~] **4.10** `/sell item_name:<owned_item> quantity:1` — ❌ 2026-04-22 PM: Alt ran `/sell item:"Micro Gun MK I"` and received raw `API Error: Client error '422 Unprocessable Entity'`. Root cause: **A.42** — `shopCog._SELL_TYPE_MAP` downgraded concrete `primary_weapon` to generic alias `"weapon"` which the A.36-bundle router correctly rejects at write paths. Fix bundle committed 2026-04-22 PM: `item_type` and `target_tier` parameters removed from `/sell`; server resolves concrete type from inventory row by name; sells always land in player's current tier shop. Re-test after rebuild.
+- [ ] **4.11** `/sell item_name:<item_you_dont_own>` — Error: item not in inventory
 
 ### Now complete Phase 3 ship management
 
@@ -342,22 +339,22 @@ Validates the `/help` and `/admin_help` commands end-to-end as a discoverability
 
 ### View inventory
 
-- [x] **5.1** `/inventory` — Shows all owned items (starter equipment + purchases), grouped by type ✅ PASS 2026-04-22 (Alt: Total Items 1, "Primary_Weapons (1) • Micro Gun MK I"; note group label "Primary_Weapons" has underscore preserved from DB `item_type` — cosmetic polish opportunity, tracked informally)
-- [~] **5.2** `/inventory item_type:weapon` — Filtered to weapons only ❌ FAIL 2026-04-22 → **A.36 logged** (double bug: service vocabulary vs DB vocabulary mismatch; `weapon` returns empty list, `Weapon` returns raw 404 to user). Also **A.35** (`item_type` should be auto-populated dropdown, not free text) and **A.33** (404 used for invalid input instead of 422/400).
-- [x] **5.3** `/search query:Micro` — Search inventory by partial name; finds "Micro Gun MK I" ✅ PASS 2026-04-22 ("🔍 Search Results for 'Micro' / Found 1 matching items / Primary_Weapons • Micro Gun MK I")
+- [x] **5.1** `/inventory` — ✅ Re-verified 2026-04-22 PM on Alt: shows "Primary_Weapons (1) • Micro Gun MK I". **Important caveat**: summary line showed "Ships: 0 | Weapons: 0 | Modules: 0 | Turrets: 0" despite 1 primary_weapon — this was **D1 latent defect exposed by A.36** (`inventory_repository.get_inventory_summary()` initialized aggregation dict with generic alias keys). Fix committed 2026-04-22 PM as part of A.42 bundle. Re-test after rebuild.
+- [x] **5.2** `/inventory item_type:Weapon` — ✅ Re-verified 2026-04-22 PM on Alt: Choice dropdown worked (`Weapon` option selected), backend filtered correctly, returned "Primary_Weapons (1) • Micro Gun MK I". **A.33/A.35 closed.** **A.36 (read path) closed.** Empty filter case also verified via `/inventory item_type:Module` which gracefully returned "📭 No items found in General_Failure's inventory (module)."
+- [x] **5.3** `/search query:Micro` — ✅ Re-verified 2026-04-22 PM on Alt: "Found 1 matching items / Primary_Weapons / • Micro Gun MK I"
 - [ ] **5.4** `/search query:nonexistent` — No results message
-- [~] **5.5** `/item item_name:Micro Gun MK I item_type:weapon` — Shows quantity owned ❌ FAIL 2026-04-22 → **A.36 scope expanded** (Alt: got "Quantity Owned: 0, Status: Not Owned" despite actually owning 1x; verified via DB + API probe. Same vocabulary-mismatch root cause as A.36's `/inventory` manifestation — passing `weapon` to repo that exact-matches against `primary_weapon` in DB. Severity bumped 🟡 → 🟠.)
+- [~] **5.5** `/item item_name:Micro Gun MK I item_type:Weapon` — ✅ Re-verified 2026-04-22 PM on Alt: "📦 Micro Gun MK I / Type: Weapon / Quantity Owned: 1 / Status: ✅ Owned". **A.36 closed.** **But A.39 surfaced**: mismatched `item_type` (e.g. specifying Ship for a weapon) returns "Not Owned" rather than helpful cross-type error. User deferred A.39 to post-release (remove `item_type` param + use item emoji in title).
 
 ### Equip weapons/modules
 
-- [ ] **5.6** `/equip item_name:<weapon_name> equipment_type:Weapon` — Equip a weapon to active ship
+- [x] **5.6** `/equip item_name:<weapon_name>` (no equipment_type param) — ✅ Re-verified 2026-04-22 PM on Alt: `/equip item_name:"Micro Gun MK I"` triggered swap flow (1/1 slot full); swapped Nirai Impulse out for Micro Gun. Server-side Item-STI resolution routed to correct `weapons` slot. **A.37 closed.** Bonus: swap-flow UI works cleanly. **B.4 observation**: swap-confirmation dropdown lacks clear "select to swap" affordance (minor).
 - [ ] **5.7** `/ship ship_id:<active_ship_id>` — Confirm weapon appears in loadout
-- [ ] **5.8** `/equip item_name:<module_name> equipment_type:Module` — Equip a module to active ship
-- [ ] **5.9** `/equip item_name:<turret_name> equipment_type:Turret` — Equip a turret (if ship has turret slots)
+- [ ] **5.8** `/equip item_name:<module_name>` (no equipment_type param) — Equip a module to active ship
+- [ ] **5.9** `/equip item_name:<turret_name>` (no equipment_type param) — Equip a turret (if ship has turret slots)
 
 ### Unequip
 
-- [ ] **5.10** `/unequip item_name:<weapon_name> equipment_type:Weapon` — Remove weapon from ship
+- [x] **5.10** `/unequip item_name:<weapon_name>` (no equipment_type param) — ✅ Re-verified 2026-04-22 PM on Alt: after swap, `/unequip item_name:"Micro Gun MK I"` worked; equipped-item autocomplete showed the currently-equipped item only. **A.37 closed.** Restored original starter loadout (Nirai Impulse EX 1 re-equipped via `/equip`).
 - [ ] **5.11** `/ship ship_id:<active_ship_id>` — Confirm weapon no longer in loadout
 
 ### Equipment error cases
@@ -780,10 +777,52 @@ Add new entries at the top as they're found.
 
 ---
 
+### Cosmetic observation batch B.1–B.6 (2026-04-22 PM, all 🔵 low)
+- **B.1** `/admin_config_validate` shows `guild bb-temp` as display-name placeholder where actual guild name should render
+- **B.2** `player_ships.secondary_weapons` column is `NULL` (not `[]`) on starter Betty — new column added in A.36 bundle not backfilled to empty-array default in `seed_loadout` code path. Harmless so far but may trip future equip logic if the code expects a list
+- **B.3** `/ship` detail embed shows redundant `Type: Betty` field (Betty is the ship name, not its type); should be `Class:` or omitted (name already in title)
+- **B.4** Equip swap-flow dropdown lacks clear "select to swap" affordance — works, but minor discoverability gap
+- **B.5** `/sell` success message would show `Item Type: Primary_Weapon` (DB concrete type with underscore + raw capitalization leaking) — now fixed indirectly by A.42 since `item_type` no longer in the response contract. **Verify after rebuild.**
+- **B.6** `/buy` success embed shows `Item Type: Primary_Weapon` (same DB-concrete-type leak pattern as B.5 but on buy path). Cosmetic only.
+
+### A.42 — `/sell` vocab-downgrade defect (latent A.36 miss) + UX parameter cleanup
+- **Severity**: 🟠 medium (user-visible HTTP 422 on every `/sell` invocation; UX redesign bundled)
+- **Source**: 2026-04-22 Phase 4.10 Alt test — raw `API Error: Client error '422 Unprocessable Entity'` surfaced during first live /sell attempt post-A.36 bundle
+- **Status**: ✅ **FIXED 2026-04-22 PM** in follow-up bundle (commit pending after rebuild + live re-test)
+- **Root cause**: A.36 bundle established "writes persist concrete types only" rule and added `InvalidItemTypeError → HTTP 422` guards on write paths. Bundle tests covered `/buy`, `/equip`, `/unequip`, admin writes — but missed `/sell`. The cog (`shopCog._SELL_TYPE_MAP`) was independently designed to **downgrade** concrete types (`primary_weapon`) to generic aliases (`weapon`) before POST. Backend sell endpoint then rejected the alias correctly, but raw 422 leaked to user.
+- **Additional scope per user decision**: bundle also removes `item_type` and `target_tier` params from `/sell` entirely — `/sell` now takes only `item:<inventory item>` and `quantity`. Server resolves concrete type from inventory row by name (consistent with A.37 `/equip`/`/unequip` redesign). Items always land in player's current tier shop (consistent with `/buy` tier-gating: "you sell where you can buy").
+- **Changes in fix**:
+  - `shopCog.py`: removed `_SELL_TYPE_MAP`, removed `_resolve_sell_item_type()`, dropped `item_type` + `target_tier` slash command parameters; simplified POST payload
+  - `shops_schema.SellRequest`: removed `item_type` and `target_tier` fields
+  - `shops.py` router + `shop_service.sell_item()`: new 4-arg signature (no item_type, no target_tier); resolves concrete type from `inventory_repo.get_player_items_by_name()` (new helper); reads `target_tier` internally from `player.tier`
+  - New cross-type collision guard (raises `InvalidItemTypeError` if same inventory name exists with two different concrete types for one player — currently impossible per 146/146 catalog name uniqueness)
+  - Added regression test exercising the full happy path
+- **Discovered during A.42 QA**: **D1 latent defect in `inventory_repository.get_inventory_summary()`** — summary aggregation dict initialized with generic alias keys (`"weapon"`, `"turret"`); A.36 made DB rows always concrete-typed; result = weapon/turret counts permanently 0 in `/inventory` summary. Bundled into A.42 fix. Retroactively this is why Alt's `/inventory` showed "Ships: 0 | Weapons: 0 | Modules: 0 | Turrets: 0" despite owning 1 primary_weapon.
+
+### A.41 — Shop generation tier-balance enhancement (probabilistic zero-turret shops at initial setup)
+- **Severity**: 🔵 low (enhancement candidate; not a bug)
+- **Source**: 2026-04-22 during A.40 false-positive investigation
+- **Status**: OPEN (enhancement)
+- **Observation**: `/admin_setup`'s initial shop generation and each subsequent `shop_refresh` run produce tier-specific shop stock via probabilistic per-category draws. Initial Setup's random roll may legitimately produce 0 turret_weapon rows in a given tier. 5 forced `shop_refresh` cycles showed turrets appear in ~25% of tier-slots (5 of 20), which is statistically plausible but may confuse end-users who see empty turret categories post-setup and report "turrets don't work". Secondary weapons were correctly absent from all 6 generation cycles (A.38 gating verified).
+- **Proposed enhancement**: Guarantee ≥1 of each `CURRENTLY_ENABLED_TYPES` category per tier at initial shop generation (post-refresh can remain probabilistic). Would eliminate the "surprising empty category" UX without changing overall stock balance.
+
+### A.40 — WITHDRAWN (false positive: RNG-light turret placement, not a bug)
+- **Severity**: n/a
+- **Source**: 2026-04-22 shop composition DB query after admin_setup
+- **Status**: WITHDRAWN 2026-04-22 — initial observation of "0 turret_weapon rows in any tier" was RNG coincidence, not a systemic defect. 5 forced `shop_refresh` cycles showed turrets generating normally across tiers. Enhancement opportunity logged as A.41. No code change needed.
+
+### A.39 — `/item` UX cleanup bundle (deferred post-release per user decision)
+- **Severity**: 🔵 low (UX redesign; functional command works correctly)
+- **Source**: 2026-04-22 Phase 5.5 Alt test — user specified bundle during live testing
+- **Status**: DEFERRED post-release (user decision 2026-04-22)
+- **Scope**:
+  - **A.39.1** — Remove `item_type` parameter from `/item` command. Backend resolves concrete type from `item_name` via Item STI lookup. Consistent with A.36/A.37 pattern applied to `/equip`/`/unequip` and A.42 applied to `/sell`. Cross-type name collisions are architecturally impossible (146 items, 146 distinct names in catalog).
+  - **A.39.2** — `/item` embed title should include item emoji (e.g. `:m6a3wolverine: Micro Gun MK I`) instead of generic `📦`. Pattern parity with `/inventory` and `/search` embeds which already show per-item emojis.
+
 ### A.38 — Secondary weapons leak into economy/loadout flows (should be catalog-only until mechanics defined)
 - **Severity**: 🟡 medium (correctness gap — unplayable item category appears in shops/inventory/give/etc.)
 - **Source**: User-specified 2026-04-22 during A.36 design discussion
-- **Status**: open
+- **Status**: ✅ **FIXED 2026-04-22** in commit `3ad15b8` — `CURRENTLY_ENABLED_TYPES = {primary_weapon, turret_weapon, module, ship}` in `game_constants.py` excludes secondary_weapon; shop generation filters candidate pool; cog dropdowns expand generic "Weapon" through this gate; admin commands consistent. Data model fully supports secondary_weapon (player_ships.secondary_weapons column added). Re-verification via E2E items 4.2, 4.4, 5.6, 5.9, 6.1-6.11 post-wipe.
 - **Design intent**: Secondary weapons have defined seed data (30 items) and should remain browsable via `/about category:secondary_weapon` and `/list_category category:secondary_weapon` for future-feature visibility, BUT they should not appear in:
   - `/shop` listings (shop_service.generate_shop_stock must exclude them)
   - `/buy` / `/sell` / `/give` flows
@@ -802,7 +841,7 @@ Add new entries at the top as they're found.
 ### A.37 — `/equip` and `/unequip` parameter redesign: auto-deduce `item_type`, scope `item_name` autocomplete to the relevant item set
 - **Severity**: 🟡 medium (UX redesign; related to A.36 vocabulary issues but distinct design concern)
 - **Source**: User-specified 2026-04-22 during Phase 5.5 triage
-- **Status**: open
+- **Status**: ✅ **FIXED 2026-04-22** in commit `3ad15b8` — `/equip` and `/unequip` drop `equipment_type` parameter; server-side resolves concrete type from selected item_name via Item STI lookup. Two new autocomplete helpers (`player_equippable_autocomplete` scopes to owned-but-unequipped; `player_equipped_autocomplete` scopes to items currently equipped on active ship) added to `utils/autocomplete_helpers.py`. Re-verification via E2E items 5.6-5.14 post-wipe.
 - **Current state** (code at `services/discord-gateway/src/cogs/inventoryCog.py`):
   - `/equip` takes `item_name` (free-text with some autocomplete) + `equipment_type` (required user choice: Weapon/Module/Turret)
   - `/unequip` has same signature
@@ -829,7 +868,7 @@ Add new entries at the top as they're found.
 ### A.36 — Inventory API vocabulary mismatch breaks `/inventory` filter AND `/item` lookup (service vocabulary vs DB vocabulary)
 - **Severity**: 🟠 high (two user-facing features silently produce wrong results; one leaks raw 404 URL)
 - **Source**: Phase 5.2 `/inventory item_type:Weapon` + Phase 5.5 `/item item_name:Micro Gun MK I item_type:weapon` (2026-04-22, Alt)
-- **Status**: open
+- **Status**: ✅ **FIXED 2026-04-22** in commit `3ad15b8` — New normalizer module `_item_type_normalizer.py` with `expand_item_type_to_concrete(item_type, context)` function; reads accept generic aliases (expand to IN-clause against concrete types); writes require concrete (fail-fast via `InvalidItemTypeError`). Write-site corruption fixed at `admin.py:1013-1021` (now `admin.py:1026-1054`) and `ships.py:612-620` via ItemRepository STI discriminator lookup. Re-verification via E2E items 5.2, 5.5, 5.6-5.14, 4.x, 6.x post-wipe.
 - **Observed**:
   - `/inventory item_type:Weapon` → raw API error: `❌ API Error: Client error '404 Not Found' for url '.../inventory/player/2?item_type=Weapon'`
   - `/item item_name:Micro Gun MK I item_type:weapon` → returns **"Quantity Owned: 0, Status: Not Owned"** despite DB row showing player 2 owns 1 Micro Gun MK I (verified: `SELECT ... FROM player_inventories WHERE player_id=2` → `item_type=primary_weapon, quantity=1`)
@@ -855,7 +894,7 @@ Add new entries at the top as they're found.
 ### A.35 — `/inventory` `item_type` param is free-text instead of auto-populated dropdown (UX)
 - **Severity**: 🔵 low (UX gap; user-reported 2026-04-22)
 - **Source**: Phase 5.2 `/inventory item_type:Weapon` (Alt observation)
-- **Status**: open
+- **Status**: ✅ **FIXED 2026-04-22** in commit `3ad15b8` — `/inventory` cog now uses `app_commands.Choice` decorator with Ship/Weapon/Module/Turret matching `/item`'s existing pattern. Re-verification via E2E item 5.2 post-wipe.
 - **Observed**: The `/inventory` command's `item_type` parameter accepts free text. Related commands (`/item`) already use `app_commands.Choice` to constrain the user's input (`Ship`, `Weapon`, `Module`, `Turret`). This inconsistency plus the free-text field is what allowed A.36 to surface.
 - **Fix direction**: mirror `/item`'s pattern — add `app_commands.Choice` decorator on the `item_type` param. Bundle with A.36's cog-side fix as a single change.
 - **Takeaway**: Low-risk consistency fix. Will implicitly prevent the case-sensitivity leg of A.36.
@@ -877,7 +916,7 @@ Add new entries at the top as they're found.
 ### A.33 — Rationalization defense: 404 used for "invalid input" responses across `/inventory` endpoint (possibly others)
 - **Severity**: 🔵 low (HTTP semantics)
 - **Source**: A.36 investigation (2026-04-22)
-- **Status**: open
+- **Status**: ✅ **FIXED 2026-04-22** in commit `3ad15b8` — `InvalidItemTypeError(ValueError)` raised by services, mapped to HTTP 422 via explicit router-level clause (placed before existing `ValueError → 400` catches). All three write endpoints covered (/inventory/add, /inventory/remove, /inventory/transfer). Re-verification implicit in A.35/A.36 closure checks.
 - **Observed**: `/inventory/player/{id}?item_type=Weapon` returns HTTP 404 with body `{"detail": "Invalid item type: Weapon"}`. A 404 is semantically "resource not found" — but the resource (player 2) exists; what's invalid is the query parameter. HTTP 422 (Unprocessable Entity) or 400 (Bad Request) would be correct.
 - **Likely root cause**: `inventory_service.py:49-50` raises `ValueError` which FastAPI maps to 404 by default. A proper `HTTPException(status_code=422)` would be more truthful.
 - **Fix direction**: audit `inventory_service.py`, `shop_service.py`, and other services for `ValueError("Invalid ...")` patterns; replace with `HTTPException(status_code=422, detail=...)` for consistency

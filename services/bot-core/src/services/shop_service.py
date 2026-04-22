@@ -427,15 +427,20 @@ class ShopService:
         self,
         db: AsyncSession,
         player_id: int,
-        item_type: str,
         item_name: str,
         quantity: int = 1,
-        target_tier: str = "Bronze",
     ) -> dict[str, Any]:
-        """
-        Sell an item back to the shop.
+        """Sell an item back to the shop.
 
-        Items are added to the specified tier shop and player receives credits.
+        item_type is resolved from the player's inventory row by item_name (A.42b).
+        Items always land in the player's current tier shop (consistent with /buy
+        tier-gating — A.42c).
+
+        Raises:
+            ValueError: If player not found, item not in inventory, or insufficient quantity.
+            InvalidItemTypeError: If multiple inventory rows match item_name with different
+                concrete types (cross-type name collision — impossible in current catalog,
+                but guarded defensively).
         """
         try:
             # Get player and validate
@@ -443,23 +448,34 @@ class ShopService:
             if not player:
                 raise ValueError(f"Player {player_id} not found")
 
-            # Validate item_type — must be a single concrete type (sells are writes)
-            concrete_types = expand_item_type_to_concrete(item_type, context="playable")
-            if len(concrete_types) != 1:
-                raise InvalidItemTypeError(
-                    f"Sell operations require a concrete item type; "
-                    f"got generic alias '{item_type}' which expands to multiple types. "
-                    f"Use one of: {concrete_types}"
-                )
-            concrete_type = concrete_types[0]
-
+            # Items always land in the player's current tier shop (consistent with /buy tier-gating)
+            target_tier = player.tier
             if target_tier not in self.VALID_TIERS:
-                raise ValueError(f"Invalid target tier: {target_tier}")
+                raise ValueError(f"Invalid player tier: {target_tier}")
 
-            # Check if player has the item (exact match on concrete type)
-            inventory_item = await self.inventory_repo.get_player_item(db, player_id, concrete_type, item_name)
-            if not inventory_item or inventory_item.quantity < quantity:
-                available = inventory_item.quantity if inventory_item else 0
+            # Resolve concrete item_type from the player's inventory by item_name (A.42b).
+            # Writes must use a single concrete type (never a generic alias).
+            all_matching = await self.inventory_repo.get_player_items_by_name(db, player_id, item_name)
+            if not all_matching:
+                raise ValueError(f"Item '{item_name}' not found in player {player_id}'s inventory")
+
+            # Guard: cross-type name collision is impossible in the current catalog (verified:
+            # 146 items, 146 distinct names, zero cross-type name collisions), but defensively
+            # checked here.  If two rows exist for the same name with different concrete types,
+            # we cannot safely pick one without ambiguity.
+            unique_types = {row.item_type for row in all_matching}
+            if len(unique_types) > 1:
+                raise InvalidItemTypeError(
+                    f"Ambiguous item '{item_name}': found in inventory under multiple concrete types "
+                    f"{sorted(unique_types)}. Cannot determine which to sell. This should not occur "
+                    f"with the current item catalog; please report this as a data integrity issue."
+                )
+            concrete_type = next(iter(unique_types))
+
+            # Sum quantities across all rows with the same name+type (should be exactly 1 row)
+            inventory_item = all_matching[0]
+            if inventory_item.quantity < quantity:
+                available = inventory_item.quantity
                 raise ValueError(f"Insufficient item quantity. Available: {available}, Requested: {quantity}")
 
             # Calculate item price from static item data (full value, no sell tax)

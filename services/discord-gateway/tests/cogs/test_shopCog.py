@@ -959,11 +959,16 @@ class TestBuyCommandBranches:
 # ---------------------------------------------------------------------------
 
 
-def _make_sell_transaction(total_value=250, remaining_credits=1250):
-    """Return a minimal sell transaction dict."""
+def _make_sell_transaction(total_value=250, remaining_credits=1250, item_type="primary_weapon"):
+    """Return a minimal sell transaction dict.
+
+    Includes item_type so cog-side embed rendering (which displays the item type label
+    via _ITEM_TYPE_LABELS) is exercised in tests — DEF-A42-003 fix.
+    """
     return {
         "total_value": total_value,
         "remaining_credits": remaining_credits,
+        "item_type": item_type,
     }
 
 
@@ -971,26 +976,48 @@ class TestSellCommand:
     """Tests for the /sell slash command."""
 
     def test_sell_happy_path(self, mock_shop_cog, make_mock_response):
-        """sell should display success embed on valid sale."""
+        """A.42 regression: /sell Micro Gun MK I posts item_name only; no item_type or target_tier.
+
+        The cog sends only {player_id, item_name, quantity} and the server resolves
+        item_type from inventory and target_tier from player.tier (A.42b + A.42c).
+        Also verifies that the success embed correctly displays the concrete type label
+        returned by the server (DEF-A42-003 fix).
+        """
         interaction = _create_mock_interaction()
 
         player_resp = make_mock_response(_make_player_data(tier="Bronze", credits=1000))
-        sell_resp = make_mock_response(_make_sell_transaction(250, 1250))
+        sell_resp = make_mock_response(_make_sell_transaction(250, 1250, item_type="primary_weapon"))
 
         mock_shop_cog.http_client.post = AsyncMock(side_effect=[player_resp, sell_resp])
 
-        asyncio.run(mock_shop_cog.sell.callback(mock_shop_cog, interaction, "LaserCannon", "weapon", 1, "Bronze"))
+        asyncio.run(mock_shop_cog.sell.callback(mock_shop_cog, interaction, "Micro Gun MK I", 1))
 
         interaction.response.defer.assert_awaited_once_with(thinking=True)
         interaction.followup.send.assert_awaited_once()
         send_kwargs = interaction.followup.send.call_args[1]
         assert "embed" in send_kwargs
 
+        # Verify the embed's Item Type field shows the correct human-readable label (DEF-A42-003)
+        embed = send_kwargs["embed"]
+        item_type_field = next((f for f in embed.fields if f.name == "Item Type"), None)
+        assert item_type_field is not None, "Success embed must contain an 'Item Type' field"
+        assert item_type_field.value == "Primary Weapon", (
+            f"Expected 'Primary Weapon' label for primary_weapon concrete type, got: {item_type_field.value!r}"
+        )
+
+        # Verify POST payload has only player_id, item_name, quantity — no item_type, no target_tier
+        sell_call = mock_shop_cog.http_client.post.call_args_list[1]
+        sent_json = sell_call[1]["json"]
+        assert "item_name" in sent_json
+        assert "quantity" in sent_json
+        assert "item_type" not in sent_json
+        assert "target_tier" not in sent_json
+
     def test_sell_invalid_quantity_zero(self, mock_shop_cog):
         """sell should reject quantity of zero."""
         interaction = _create_mock_interaction()
 
-        asyncio.run(mock_shop_cog.sell.callback(mock_shop_cog, interaction, "LaserCannon", "weapon", 0, "Bronze"))
+        asyncio.run(mock_shop_cog.sell.callback(mock_shop_cog, interaction, "LaserCannon", 0))
 
         interaction.followup.send.assert_awaited_once()
         call_kwargs = interaction.followup.send.call_args
@@ -1001,34 +1028,12 @@ class TestSellCommand:
         """sell should reject negative quantity."""
         interaction = _create_mock_interaction()
 
-        asyncio.run(mock_shop_cog.sell.callback(mock_shop_cog, interaction, "LaserCannon", "weapon", -3, "Bronze"))
+        asyncio.run(mock_shop_cog.sell.callback(mock_shop_cog, interaction, "LaserCannon", -3))
 
         interaction.followup.send.assert_awaited_once()
         call_kwargs = interaction.followup.send.call_args
         assert call_kwargs[1].get("ephemeral", False)
         assert "Quantity" in call_kwargs[0][0]
-
-    def test_sell_invalid_item_type(self, mock_shop_cog):
-        """sell should reject invalid item type."""
-        interaction = _create_mock_interaction()
-
-        asyncio.run(mock_shop_cog.sell.callback(mock_shop_cog, interaction, "LaserCannon", "invalid_type", 1, "Bronze"))
-
-        interaction.followup.send.assert_awaited_once()
-        call_kwargs = interaction.followup.send.call_args
-        assert call_kwargs[1].get("ephemeral", False)
-        assert "Invalid item type" in call_kwargs[0][0]
-
-    def test_sell_invalid_tier(self, mock_shop_cog):
-        """sell should reject invalid tier."""
-        interaction = _create_mock_interaction()
-
-        asyncio.run(mock_shop_cog.sell.callback(mock_shop_cog, interaction, "LaserCannon", "weapon", 1, "Diamond"))
-
-        interaction.followup.send.assert_awaited_once()
-        call_kwargs = interaction.followup.send.call_args
-        assert call_kwargs[1].get("ephemeral", False)
-        assert "Invalid tier" in call_kwargs[0][0]
 
     def test_sell_player_not_found(self, mock_shop_cog):
         """sell should send error when player not found."""
@@ -1036,7 +1041,7 @@ class TestSellCommand:
 
         mock_shop_cog.http_client.post = AsyncMock(side_effect=RuntimeError("player error"))
 
-        asyncio.run(mock_shop_cog.sell.callback(mock_shop_cog, interaction, "LaserCannon", "weapon", 1, "Bronze"))
+        asyncio.run(mock_shop_cog.sell.callback(mock_shop_cog, interaction, "LaserCannon", 1))
 
         interaction.followup.send.assert_awaited_once()
         call_kwargs = interaction.followup.send.call_args
@@ -1058,7 +1063,7 @@ class TestSellCommand:
 
         mock_shop_cog.http_client.post = AsyncMock(side_effect=[player_resp, http_error])
 
-        asyncio.run(mock_shop_cog.sell.callback(mock_shop_cog, interaction, "LaserCannon", "weapon", 1, "Bronze"))
+        asyncio.run(mock_shop_cog.sell.callback(mock_shop_cog, interaction, "LaserCannon", 1))
 
         interaction.followup.send.assert_awaited_once()
         call_kwargs = interaction.followup.send.call_args
@@ -1080,7 +1085,7 @@ class TestSellCommand:
 
         mock_shop_cog.http_client.post = AsyncMock(side_effect=[player_resp, http_error])
 
-        asyncio.run(mock_shop_cog.sell.callback(mock_shop_cog, interaction, "LaserCannon", "weapon", 1, "Bronze"))
+        asyncio.run(mock_shop_cog.sell.callback(mock_shop_cog, interaction, "LaserCannon", 1))
 
         interaction.followup.send.assert_awaited_once()
         call_kwargs = interaction.followup.send.call_args
@@ -1101,7 +1106,7 @@ class TestSellCommand:
 
         mock_shop_cog.http_client.post = AsyncMock(side_effect=[player_resp, http_error])
 
-        asyncio.run(mock_shop_cog.sell.callback(mock_shop_cog, interaction, "LaserCannon", "weapon", 1, "Bronze"))
+        asyncio.run(mock_shop_cog.sell.callback(mock_shop_cog, interaction, "LaserCannon", 1))
 
         interaction.followup.send.assert_awaited_once()
         call_kwargs = interaction.followup.send.call_args
@@ -1116,7 +1121,7 @@ class TestSellCommand:
 
         mock_shop_cog.http_client.post = AsyncMock(side_effect=[player_resp, RuntimeError("boom")])
 
-        asyncio.run(mock_shop_cog.sell.callback(mock_shop_cog, interaction, "LaserCannon", "weapon", 1, "Bronze"))
+        asyncio.run(mock_shop_cog.sell.callback(mock_shop_cog, interaction, "LaserCannon", 1))
 
         interaction.followup.send.assert_awaited_once()
         call_kwargs = interaction.followup.send.call_args
@@ -1132,108 +1137,11 @@ class TestSellCommand:
 
         mock_shop_cog.http_client.post = AsyncMock(side_effect=[player_resp, sell_resp])
 
-        asyncio.run(mock_shop_cog.sell.callback(mock_shop_cog, interaction, "ShieldModule", "module", 3, "Silver"))
+        asyncio.run(mock_shop_cog.sell.callback(mock_shop_cog, interaction, "ShieldModule", 3))
 
         interaction.followup.send.assert_awaited_once()
         send_kwargs = interaction.followup.send.call_args[1]
         assert "embed" in send_kwargs
-
-    def test_sell_item_type_optional_auto_detect_success(self, mock_shop_cog, make_mock_response):
-        """sell without item_type should auto-detect type from player's inventory."""
-        interaction = _create_mock_interaction()
-
-        player_resp = make_mock_response(_make_player_data(tier="Bronze", credits=1000))
-        inventory_resp = make_mock_response(
-            [
-                {"item_name": "LaserCannon", "item_type": "primary_weapon", "quantity": 1},
-            ]
-        )
-        sell_resp = make_mock_response(_make_sell_transaction(250, 1250))
-
-        # Post calls: player upsert, sell request
-        mock_shop_cog.http_client.post = AsyncMock(side_effect=[player_resp, sell_resp])
-        # Get calls: resolve item type (inventory), then none
-        mock_shop_cog.http_client.get = AsyncMock(return_value=inventory_resp)
-
-        asyncio.run(
-            mock_shop_cog.sell.callback(
-                mock_shop_cog,
-                interaction,
-                "LaserCannon",  # no item_type provided
-            )
-        )
-
-        interaction.followup.send.assert_awaited_once()
-        send_kwargs = interaction.followup.send.call_args[1]
-        assert "embed" in send_kwargs
-
-        # Should have mapped primary_weapon → weapon in sell request
-        sell_call = mock_shop_cog.http_client.post.call_args_list[1]
-        assert sell_call[1]["json"]["item_type"] == "weapon"
-
-    def test_sell_item_type_optional_auto_detect_not_found(self, mock_shop_cog, make_mock_response):
-        """sell without item_type where item not in inventory should show error."""
-        interaction = _create_mock_interaction()
-
-        player_resp = make_mock_response(_make_player_data(tier="Bronze", credits=1000))
-        inventory_resp = make_mock_response([])  # empty inventory
-
-        mock_shop_cog.http_client.post = AsyncMock(return_value=player_resp)
-        mock_shop_cog.http_client.get = AsyncMock(return_value=inventory_resp)
-
-        asyncio.run(
-            mock_shop_cog.sell.callback(
-                mock_shop_cog,
-                interaction,
-                "LaserCannon",  # no item_type, not in inventory
-            )
-        )
-
-        interaction.followup.send.assert_awaited_once()
-        call_kwargs = interaction.followup.send.call_args
-        assert call_kwargs[1].get("ephemeral", False)
-        assert "Could not determine item type" in call_kwargs[0][0]
-
-    def test_sell_item_type_optional_auto_detect_api_error(self, mock_shop_cog, make_mock_response):
-        """sell auto-detect item type where inventory API fails should show error."""
-        interaction = _create_mock_interaction()
-
-        player_resp = make_mock_response(_make_player_data(tier="Bronze", credits=1000))
-
-        mock_shop_cog.http_client.post = AsyncMock(return_value=player_resp)
-        mock_shop_cog.http_client.get = AsyncMock(side_effect=RuntimeError("inventory error"))
-
-        asyncio.run(mock_shop_cog.sell.callback(mock_shop_cog, interaction, "LaserCannon"))
-
-        interaction.followup.send.assert_awaited_once()
-        call_kwargs = interaction.followup.send.call_args
-        assert call_kwargs[1].get("ephemeral", False)
-        assert "Could not determine item type" in call_kwargs[0][0]
-
-    def test_sell_item_type_none_valid(self, mock_shop_cog, make_mock_response):
-        """sell with item_type=None (not provided) and valid inventory lookup should succeed."""
-        interaction = _create_mock_interaction()
-
-        player_resp = make_mock_response(_make_player_data(tier="Silver", credits=5000))
-        inventory_resp = make_mock_response(
-            [
-                {"item_name": "Betty", "item_type": "ship", "quantity": 1},
-            ]
-        )
-        sell_resp = make_mock_response(_make_sell_transaction(3000, 8000))
-
-        mock_shop_cog.http_client.post = AsyncMock(side_effect=[player_resp, sell_resp])
-        mock_shop_cog.http_client.get = AsyncMock(return_value=inventory_resp)
-
-        asyncio.run(mock_shop_cog.sell.callback(mock_shop_cog, interaction, "Betty"))
-
-        interaction.followup.send.assert_awaited_once()
-        send_kwargs = interaction.followup.send.call_args[1]
-        assert "embed" in send_kwargs
-
-        # Should have resolved ship → ship
-        sell_call = mock_shop_cog.http_client.post.call_args_list[1]
-        assert sell_call[1]["json"]["item_type"] == "ship"
 
 
 # ---------------------------------------------------------------------------
@@ -1242,7 +1150,11 @@ class TestSellCommand:
 
 
 class TestSellItemAutocomplete:
-    """Tests for the updated sell_item_autocomplete (with item_type filter and '(Type)' labels)."""
+    """Tests for the updated sell_item_autocomplete (A.42b — no item_type filter, '(Type)' labels).
+
+    The autocomplete no longer accepts an item_type filter parameter — server-side resolution
+    handles type detection. Display format is still 'Name (Type)'.
+    """
 
     def _make_inventory_items(self):
         """Return a sample inventory list."""
@@ -1253,11 +1165,9 @@ class TestSellItemAutocomplete:
             {"item_name": "Raptor Turret", "item_type": "turret_weapon", "quantity": 3},
         ]
 
-    def test_sell_autocomplete_no_filter_returns_all(self, mock_shop_cog, make_mock_response):
-        """sell_item_autocomplete without item_type filter returns all items."""
+    def test_sell_autocomplete_returns_all(self, mock_shop_cog, make_mock_response):
+        """sell_item_autocomplete returns all inventory items (no type filter)."""
         interaction = _create_mock_interaction()
-        interaction.namespace = MagicMock()
-        interaction.namespace.item_type = None
 
         player_resp = make_mock_response(_make_player_data())
         inventory_resp = make_mock_response(self._make_inventory_items())
@@ -1268,45 +1178,9 @@ class TestSellItemAutocomplete:
         result = asyncio.run(mock_shop_cog.sell_item_autocomplete(interaction, ""))
         assert len(result) == 4
 
-    def test_sell_autocomplete_with_weapon_filter(self, mock_shop_cog, make_mock_response):
-        """sell_item_autocomplete with item_type='weapon' filter should return weapons only."""
-        interaction = _create_mock_interaction()
-        interaction.namespace = MagicMock()
-        interaction.namespace.item_type = "weapon"
-
-        player_resp = make_mock_response(_make_player_data())
-        inventory_resp = make_mock_response(self._make_inventory_items())
-
-        mock_shop_cog.http_client.post = AsyncMock(return_value=player_resp)
-        mock_shop_cog.http_client.get = AsyncMock(return_value=inventory_resp)
-
-        result = asyncio.run(mock_shop_cog.sell_item_autocomplete(interaction, ""))
-        # Only LaserCannon (primary_weapon → weapon) should be returned
-        assert len(result) == 1
-        assert result[0].value == "LaserCannon"
-
-    def test_sell_autocomplete_with_turret_filter(self, mock_shop_cog, make_mock_response):
-        """sell_item_autocomplete with item_type='turret' filter should return turret weapons."""
-        interaction = _create_mock_interaction()
-        interaction.namespace = MagicMock()
-        interaction.namespace.item_type = "turret"
-
-        player_resp = make_mock_response(_make_player_data())
-        inventory_resp = make_mock_response(self._make_inventory_items())
-
-        mock_shop_cog.http_client.post = AsyncMock(return_value=player_resp)
-        mock_shop_cog.http_client.get = AsyncMock(return_value=inventory_resp)
-
-        result = asyncio.run(mock_shop_cog.sell_item_autocomplete(interaction, ""))
-        # Only Raptor Turret (turret_weapon → turret) should be returned
-        assert len(result) == 1
-        assert result[0].value == "Raptor Turret"
-
     def test_sell_autocomplete_display_format_includes_type(self, mock_shop_cog, make_mock_response):
         """sell_item_autocomplete should display 'Name (Type)' format."""
         interaction = _create_mock_interaction()
-        interaction.namespace = MagicMock()
-        interaction.namespace.item_type = None
 
         player_resp = make_mock_response(_make_player_data())
         inventory_resp = make_mock_response(
@@ -1326,8 +1200,6 @@ class TestSellItemAutocomplete:
     def test_sell_autocomplete_primary_weapon_label(self, mock_shop_cog, make_mock_response):
         """sell_item_autocomplete should show 'Primary Weapon' for primary_weapon type."""
         interaction = _create_mock_interaction()
-        interaction.namespace = MagicMock()
-        interaction.namespace.item_type = None
 
         player_resp = make_mock_response(_make_player_data())
         inventory_resp = make_mock_response(
@@ -1343,26 +1215,6 @@ class TestSellItemAutocomplete:
         assert len(result) == 1
         assert result[0].name == "Nirai Impulse EX 1 (Primary Weapon)"
         assert result[0].value == "Nirai Impulse EX 1"
-
-    def test_sell_autocomplete_no_namespace_attribute(self, mock_shop_cog, make_mock_response):
-        """sell_item_autocomplete should not crash when namespace.item_type raises AttributeError."""
-        interaction = _create_mock_interaction()
-        # Simulate interaction.namespace raising AttributeError on item_type access
-        namespace_mock = MagicMock(spec=[])  # spec=[] means no attributes — all attr access raises AttributeError
-        interaction.namespace = namespace_mock
-
-        player_resp = make_mock_response(_make_player_data())
-        inventory_resp = make_mock_response(
-            [
-                {"item_name": "LaserCannon", "item_type": "primary_weapon", "quantity": 1},
-            ]
-        )
-
-        mock_shop_cog.http_client.post = AsyncMock(return_value=player_resp)
-        mock_shop_cog.http_client.get = AsyncMock(return_value=inventory_resp)
-
-        result = asyncio.run(mock_shop_cog.sell_item_autocomplete(interaction, ""))
-        assert len(result) == 1
 
     def test_sell_autocomplete_player_not_found_returns_empty(self, mock_shop_cog):
         """sell_item_autocomplete should return [] when player lookup fails."""
@@ -1399,8 +1251,6 @@ class TestSellItemAutocomplete:
     def test_sell_autocomplete_filters_by_current_text(self, mock_shop_cog, make_mock_response):
         """sell_item_autocomplete should filter results by current text."""
         interaction = _create_mock_interaction()
-        interaction.namespace = MagicMock()
-        interaction.namespace.item_type = None
 
         player_resp = make_mock_response(_make_player_data())
         inventory_resp = make_mock_response(self._make_inventory_items())
@@ -1412,130 +1262,14 @@ class TestSellItemAutocomplete:
         assert len(result) == 1
         assert result[0].value == "Betty"
 
-    def test_sell_autocomplete_with_ship_filter(self, mock_shop_cog, make_mock_response):
-        """sell_item_autocomplete with item_type='ship' filter should return ships only."""
-        interaction = _create_mock_interaction()
-        interaction.namespace = MagicMock()
-        interaction.namespace.item_type = "ship"
-
-        player_resp = make_mock_response(_make_player_data())
-        inventory_resp = make_mock_response(self._make_inventory_items())
-
-        mock_shop_cog.http_client.post = AsyncMock(return_value=player_resp)
-        mock_shop_cog.http_client.get = AsyncMock(return_value=inventory_resp)
-
-        result = asyncio.run(mock_shop_cog.sell_item_autocomplete(interaction, ""))
-        assert len(result) == 1
-        assert result[0].value == "Betty"
-
 
 # ---------------------------------------------------------------------------
-# _resolve_sell_item_type helper
-# ---------------------------------------------------------------------------
-
-
-class TestResolveSellItemType:
-    """Tests for the _resolve_sell_item_type helper."""
-
-    def test_resolve_primary_weapon_maps_to_weapon(self, mock_shop_cog, make_mock_response):
-        """primary_weapon in inventory should map to 'weapon' sell type."""
-        inventory_resp = make_mock_response(
-            [
-                {"item_name": "LaserCannon", "item_type": "primary_weapon", "quantity": 1},
-            ]
-        )
-        mock_shop_cog.http_client.get = AsyncMock(return_value=inventory_resp)
-
-        result = asyncio.run(mock_shop_cog._resolve_sell_item_type(1, "LaserCannon"))
-        assert result == "weapon"
-
-    def test_resolve_secondary_weapon_maps_to_weapon(self, mock_shop_cog, make_mock_response):
-        """secondary_weapon in inventory should map to 'weapon' sell type."""
-        inventory_resp = make_mock_response(
-            [
-                {"item_name": "Missile", "item_type": "secondary_weapon", "quantity": 1},
-            ]
-        )
-        mock_shop_cog.http_client.get = AsyncMock(return_value=inventory_resp)
-
-        result = asyncio.run(mock_shop_cog._resolve_sell_item_type(1, "Missile"))
-        assert result == "weapon"
-
-    def test_resolve_turret_weapon_maps_to_turret(self, mock_shop_cog, make_mock_response):
-        """turret_weapon in inventory should map to 'turret' sell type."""
-        inventory_resp = make_mock_response(
-            [
-                {"item_name": "Raptor Turret", "item_type": "turret_weapon", "quantity": 1},
-            ]
-        )
-        mock_shop_cog.http_client.get = AsyncMock(return_value=inventory_resp)
-
-        result = asyncio.run(mock_shop_cog._resolve_sell_item_type(1, "Raptor Turret"))
-        assert result == "turret"
-
-    def test_resolve_ship_maps_to_ship(self, mock_shop_cog, make_mock_response):
-        """ship in inventory should map to 'ship' sell type."""
-        inventory_resp = make_mock_response(
-            [
-                {"item_name": "Betty", "item_type": "ship", "quantity": 1},
-            ]
-        )
-        mock_shop_cog.http_client.get = AsyncMock(return_value=inventory_resp)
-
-        result = asyncio.run(mock_shop_cog._resolve_sell_item_type(1, "Betty"))
-        assert result == "ship"
-
-    def test_resolve_item_not_in_inventory_returns_none(self, mock_shop_cog, make_mock_response):
-        """Item not found in inventory should return None."""
-        inventory_resp = make_mock_response([])
-        mock_shop_cog.http_client.get = AsyncMock(return_value=inventory_resp)
-
-        result = asyncio.run(mock_shop_cog._resolve_sell_item_type(1, "NonExistentItem"))
-        assert result is None
-
-    def test_resolve_api_error_returns_none(self, mock_shop_cog):
-        """API error should return None."""
-        mock_shop_cog.http_client.get = AsyncMock(side_effect=RuntimeError("error"))
-
-        result = asyncio.run(mock_shop_cog._resolve_sell_item_type(1, "LaserCannon"))
-        assert result is None
-
-    def test_resolve_non_200_response_returns_none(self, mock_shop_cog, make_mock_response):
-        """Non-200 inventory response should return None."""
-        error_resp = make_mock_response([], status_code=500)
-        mock_shop_cog.http_client.get = AsyncMock(return_value=error_resp)
-
-        result = asyncio.run(mock_shop_cog._resolve_sell_item_type(1, "LaserCannon"))
-        assert result is None
-
-
-# ---------------------------------------------------------------------------
-# sell command — type mapping class attributes
+# sell command — type label class attribute (_ITEM_TYPE_LABELS only, no _SELL_TYPE_MAP)
 # ---------------------------------------------------------------------------
 
 
 class TestSellTypeMappings:
-    """Tests for the _SELL_TYPE_MAP and _ITEM_TYPE_LABELS class attributes."""
-
-    def test_sell_type_map_primary_weapon(self, mock_shop_cog):
-        """primary_weapon should map to weapon."""
-        assert mock_shop_cog._SELL_TYPE_MAP["primary_weapon"] == "weapon"
-
-    def test_sell_type_map_secondary_weapon(self, mock_shop_cog):
-        """secondary_weapon should map to weapon."""
-        assert mock_shop_cog._SELL_TYPE_MAP["secondary_weapon"] == "weapon"
-
-    def test_sell_type_map_turret_weapon(self, mock_shop_cog):
-        """turret_weapon should map to turret."""
-        assert mock_shop_cog._SELL_TYPE_MAP["turret_weapon"] == "turret"
-
-    def test_sell_type_map_ship(self, mock_shop_cog):
-        """ship should map to ship."""
-        assert mock_shop_cog._SELL_TYPE_MAP["ship"] == "ship"
-
-    def test_sell_type_map_module(self, mock_shop_cog):
-        """module should map to module."""
-        assert mock_shop_cog._SELL_TYPE_MAP["module"] == "module"
+    """Tests for the _ITEM_TYPE_LABELS class attribute (A.42: _SELL_TYPE_MAP was removed)."""
 
     def test_item_type_labels_ship(self, mock_shop_cog):
         """ship label should be 'Ship'."""
@@ -1544,6 +1278,26 @@ class TestSellTypeMappings:
     def test_item_type_labels_primary_weapon(self, mock_shop_cog):
         """primary_weapon label should be 'Primary Weapon'."""
         assert mock_shop_cog._ITEM_TYPE_LABELS["primary_weapon"] == "Primary Weapon"
+
+    def test_item_type_labels_turret_weapon(self, mock_shop_cog):
+        """turret_weapon label should be 'Turret Weapon'."""
+        assert mock_shop_cog._ITEM_TYPE_LABELS["turret_weapon"] == "Turret Weapon"
+
+    def test_item_type_labels_module(self, mock_shop_cog):
+        """module label should be 'Module'."""
+        assert mock_shop_cog._ITEM_TYPE_LABELS["module"] == "Module"
+
+    def test_sell_type_map_removed(self, mock_shop_cog):
+        """_SELL_TYPE_MAP must no longer exist on the cog (A.42 fix).
+
+        The vocab-downgrade bug was caused by _SELL_TYPE_MAP mapping
+        concrete types (primary_weapon, turret_weapon) back to generic
+        aliases (weapon, turret) before POSTing to the API.
+        """
+        assert not hasattr(mock_shop_cog, "_SELL_TYPE_MAP"), (
+            "_SELL_TYPE_MAP was removed in A.42 because it caused the vocab-downgrade bug. "
+            "If it was re-added, revert immediately."
+        )
 
 
 # ---------------------------------------------------------------------------

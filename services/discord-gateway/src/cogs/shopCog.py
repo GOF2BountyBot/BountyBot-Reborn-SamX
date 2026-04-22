@@ -1,4 +1,3 @@
-import contextlib
 import os
 
 import discord
@@ -344,26 +343,13 @@ class ShopCog(commands.Cog):
             flogger.error(f"Error in /buy: {e}")
             await interaction.followup.send("⚠️ An error occurred while processing purchase.", ephemeral=True)
 
-    # Mapping from internal item_type values to sell-compatible type strings
-    _SELL_TYPE_MAP = {
-        "ship": "ship",
-        "module": "module",
-        "weapon": "weapon",
-        "turret": "turret",
-        "primary_weapon": "weapon",
-        "secondary_weapon": "weapon",
-        "turret_weapon": "turret",
-    }
-
-    # Human-readable labels for item types
+    # Human-readable labels for item types (concrete types only — no generic aliases)
     _ITEM_TYPE_LABELS = {
         "ship": "Ship",
         "module": "Module",
         "primary_weapon": "Primary Weapon",
         "secondary_weapon": "Secondary Weapon",
         "turret_weapon": "Turret Weapon",
-        "weapon": "Weapon",
-        "turret": "Turret",
     }
 
     async def sell_item_autocomplete(
@@ -371,8 +357,9 @@ class ShopCog(commands.Cog):
     ) -> list[app_commands.Choice[str]]:
         """Live autocomplete for inventory items the player can sell.
 
-        Fetches player's full inventory and filters by item_type if provided.
+        Fetches player's full inventory and returns matching items.
         Display format: "Item Name (Type)" — value is the item_name.
+        item_type is resolved server-side; no type filter exposed in autocomplete.
         """
         try:
             player = await self._get_player_data(interaction.user.id, interaction.guild_id)
@@ -383,22 +370,11 @@ class ShopCog(commands.Cog):
                 return []
             items = resp.json()
 
-            # Get the current item_type filter from the interaction namespace
-            item_type_filter: str | None = None
-            with contextlib.suppress(AttributeError):
-                item_type_filter = interaction.namespace.item_type or None
-
             norm_current = normalize_for_search(current)
             choices: list[app_commands.Choice[str]] = []
             for inv_item in items:
                 name = inv_item.get("item_name", "")
                 raw_type = inv_item.get("item_type", "")
-
-                # Filter by item_type if one was provided
-                if item_type_filter:
-                    sell_type = self._SELL_TYPE_MAP.get(raw_type, raw_type)
-                    if item_type_filter not in (sell_type, raw_type):
-                        continue
 
                 type_label = self._ITEM_TYPE_LABELS.get(raw_type, raw_type.replace("_", " ").title())
                 label = f"{name} ({type_label})"
@@ -408,56 +384,29 @@ class ShopCog(commands.Cog):
         except Exception:  # pylint: disable=broad-exception-caught
             return []
 
-    async def _resolve_sell_item_type(self, player_id: int, item_name: str) -> str | None:
-        """Look up the item_type for a named item in the player's inventory."""
-        try:
-            resp = await self.http_client.get(f"{api_base}/inventory/player/{player_id}", timeout=5)
-            if resp.status_code != 200:
-                return None
-            for inv_item in resp.json():
-                if inv_item.get("item_name") == item_name:
-                    raw_type = inv_item.get("item_type", "")
-                    return self._SELL_TYPE_MAP.get(raw_type, raw_type)
-            return None
-        except Exception:  # pylint: disable=broad-exception-caught
-            return None
-
     @app_commands.command(name="sell", description="Sell an item back to the shop")
     @app_commands.describe(
-        item_type="Filter by item type (optional: ship, weapon, module, turret)",
         item="Item to sell — pick from your inventory",
         quantity="Quantity to sell (default: 1)",
-        target_tier="Shop tier to sell to (default: Bronze)",
     )
-    @app_commands.autocomplete(
-        item=sell_item_autocomplete, item_type=item_type_autocomplete, target_tier=tier_autocomplete
-    )
+    @app_commands.autocomplete(item=sell_item_autocomplete)
     async def sell(
         self,
         interaction: discord.Interaction,
         item: str,
-        item_type: str | None = None,
         quantity: int = 1,
-        target_tier: str = "Bronze",
     ):
-        """Sell item back to shop."""
+        """Sell item back to shop.
+
+        The server resolves item_type from the player's inventory by item_name.
+        The item is always routed to the player's current tier shop (consistent
+        with /buy tier-gating — A.42b/A.42c).
+        """
         await interaction.response.defer(thinking=True)
 
         try:
             if quantity <= 0:
                 await interaction.followup.send("❌ Quantity must be positive.", ephemeral=True)
-                return
-
-            if item_type is not None and item_type not in self._valid_item_types:
-                await interaction.followup.send(
-                    f"❌ Invalid item type. Valid types: {', '.join(self._valid_item_types)}", ephemeral=True
-                )
-                return
-
-            if target_tier not in self._valid_tiers:
-                await interaction.followup.send(
-                    f"❌ Invalid tier. Valid tiers: {', '.join(self._valid_tiers)}", ephemeral=True
-                )
                 return
 
             # Get player data
@@ -466,24 +415,11 @@ class ShopCog(commands.Cog):
                 await interaction.followup.send("❌ Player not found.", ephemeral=True)
                 return
 
-            # If item_type was not provided, auto-detect it from the player's inventory
-            resolved_item_type = item_type
-            if not resolved_item_type:
-                resolved_item_type = await self._resolve_sell_item_type(player["id"], item)
-                if not resolved_item_type:
-                    await interaction.followup.send(
-                        f"❌ Could not determine item type for **{item}**. Please specify the item type manually.",
-                        ephemeral=True,
-                    )
-                    return
-
-            # Make sell request
+            # Make sell request — no item_type or target_tier; server resolves both
             sell_data = {
                 "player_id": player["id"],
-                "item_type": resolved_item_type,
                 "item_name": item,
                 "quantity": quantity,
-                "target_tier": target_tier,
             }
 
             resp = await self.http_client.post(f"{api_base}/shops/sell", json=sell_data, timeout=10)
@@ -493,11 +429,14 @@ class ShopCog(commands.Cog):
             # Success message
             embed = discord.Embed(
                 title="✅ Sale Successful!",
-                description=f"You sold **{quantity}x {item}** to the {target_tier} shop",
+                description=f"You sold **{quantity}x {item}**",
                 color=discord.Color.green(),
             )
 
-            embed.add_field(name="Item Type", value=resolved_item_type.title(), inline=True)
+            item_type_label = self._ITEM_TYPE_LABELS.get(
+                transaction.get("item_type", ""), transaction.get("item_type", "").replace("_", " ").title()
+            )
+            embed.add_field(name="Item Type", value=item_type_label, inline=True)
             embed.add_field(name="Quantity", value=str(quantity), inline=True)
             embed.add_field(name="Total Value", value=f"{transaction['total_value']:,} credits", inline=True)
             embed.add_field(name="New Credits", value=f"{transaction['remaining_credits']:,}", inline=True)

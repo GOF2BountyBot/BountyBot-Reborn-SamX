@@ -189,18 +189,25 @@ async def test_inventory_summary_by_type(
     db_session: AsyncSession,
     inventory_repo: InventoryRepository,
 ):
-    """The inventory summary correctly aggregates quantities per item type."""
+    """The inventory summary correctly aggregates quantities per item type.
+
+    Post-A.36: player_inventories.item_type stores concrete types only.
+    Summary keys must be concrete types (primary_weapon, turret_weapon, etc.),
+    never generic aliases (weapon, turret).
+    """
     await _create_guild_config(db_session, guild_id=7006)
     user = await _create_user(db_session, user_id=500006)
     player = await _create_player(db_session, user_id=user.id, guild_id=7006)
 
-    await _add_inventory_item(db_session, inventory_repo, player.id, "weapon", "Blaster Mk1", quantity=2)
-    await _add_inventory_item(db_session, inventory_repo, player.id, "weapon", "Blaster Mk2", quantity=1)
+    # Use concrete types (A.36 storage invariant)
+    await _add_inventory_item(db_session, inventory_repo, player.id, "primary_weapon", "Blaster Mk1", quantity=2)
+    await _add_inventory_item(db_session, inventory_repo, player.id, "primary_weapon", "Blaster Mk2", quantity=1)
     await _add_inventory_item(db_session, inventory_repo, player.id, "module", "Hull Plating", quantity=3)
 
     summary = await inventory_repo.get_inventory_summary(db_session, player.id)
 
-    assert summary["weapon"] == 3  # 2 + 1
+    # Assertions use concrete type keys (not generic aliases)
+    assert summary["primary_weapon"] == 3  # 2 + 1
     assert summary["module"] == 3
     assert summary["total_items"] == 6
 

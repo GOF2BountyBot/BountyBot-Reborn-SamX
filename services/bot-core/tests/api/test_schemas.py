@@ -1620,29 +1620,37 @@ class TestPurchaseRequestSchema:
 
 
 class TestSellRequestSchema:
-    """Tests for SellRequest."""
+    """Tests for SellRequest (A.42b: item_type and target_tier removed).
+
+    The new schema only requires player_id and item_name.
+    item_type and target_tier are resolved server-side.
+    """
 
     def test_valid_construction(self):
-        req = SellRequest(player_id=1, item_type="ship", item_name="Falcon")
-        assert req.quantity == 1
-        assert req.target_tier == "Bronze"
+        """Minimal valid payload: player_id + item_name only."""
+        req = SellRequest(player_id=1, item_name="Falcon")
+        assert req.quantity == 1  # default
 
-    def test_valid_target_tiers(self):
-        for tier in ["Bronze", "Silver", "Gold", "Platinum"]:
-            req = SellRequest(player_id=1, item_type="weapon", item_name="Laser", target_tier=tier)
-            assert req.target_tier == tier
+    def test_valid_with_quantity(self):
+        """Accepts optional quantity."""
+        req = SellRequest(player_id=1, item_name="Laser", quantity=3)
+        assert req.quantity == 3
 
-    def test_invalid_item_type_raises(self):
-        with pytest.raises(ValidationError):
-            SellRequest(player_id=1, item_type="misc", item_name="X")
+    def test_stale_extra_fields_silently_ignored(self):
+        """Stale item_type and target_tier fields are silently ignored (not rejected).
 
-    def test_invalid_target_tier_raises(self):
-        with pytest.raises(ValidationError):
-            SellRequest(player_id=1, item_type="ship", item_name="Falcon", target_tier="Diamond")
+        Documents the chosen contract for backward compatibility with stale clients.
+        """
+        # Pydantic default: extra fields are ignored (not forbidden).
+        req = SellRequest(player_id=1, item_name="Falcon", **{"item_type": "ship", "target_tier": "Bronze"})
+        assert req.player_id == 1
+        assert req.item_name == "Falcon"
+        assert not hasattr(req, "item_type")
+        assert not hasattr(req, "target_tier")
 
     def test_quantity_zero_raises(self):
         with pytest.raises(ValidationError):
-            SellRequest(player_id=1, item_type="module", item_name="Shield", quantity=0)
+            SellRequest(player_id=1, item_name="Shield", quantity=0)
 
 
 class TestTransactionResponseSchema:

@@ -206,7 +206,7 @@ python run_migration.py upgrade head
 
 | Table | Model | Notes |
 |-------|-------|-------|
-| `admin_audit_log` | AdminAuditLog | Audit trail for all admin mutations |
+| `admin_audit_logs` | AdminAuditLog | Audit trail for all admin mutations |
 | `bounty` | Bounty | Active bounties on criminals |
 | `criminal` | Criminal | NPC criminal definitions |
 | `discord_message` | DiscordMessage | Persistent Discord message references |
@@ -286,12 +286,12 @@ Additional executors (triggered on demand or by other jobs):
 | bounties | `/bounties` | Bounty CRUD and lifecycle |
 | config | `/config` | Guild configuration |
 | data | `/data` | Game data lookups |
-| discord_message | `/discord-messages` | Discord message persistence |
+| discord_message | `/discord-message` | Discord message persistence |
 | duels | `/duels` | Duel challenge lifecycle |
 | health | `/health` | Health check |
 | inventory | `/inventory` | Player inventory management |
 | players | `/players` | Player game state |
-| scheduler | `/scheduler` | APScheduler job management |
+| scheduler | `/jobs` | APScheduler job management (router file: `scheduler.py`, tag: `job-scheduler`) |
 | ships | `/ships` | Ship definitions |
 | shops | `/shops` | Guild shop management |
 | systems | `/systems` | Star system graph |

@@ -179,8 +179,14 @@ class TestShopCogInitialization:
         assert mock_shop_cog._valid_tiers == ["Bronze", "Silver", "Gold", "Platinum"]
 
     def test_valid_item_types_initialized(self, mock_shop_cog):
-        """ShopCog should have valid item types list."""
-        assert mock_shop_cog._valid_item_types == ["ship", "weapon", "module", "turret"]
+        """ShopCog should have valid item types list with concrete vocab (A.46 fix)."""
+        assert mock_shop_cog._valid_item_types == [
+            "ship",
+            "primary_weapon",
+            "secondary_weapon",
+            "turret_weapon",
+            "module",
+        ]
 
 
 # ---------------------------------------------------------------------------
@@ -256,17 +262,45 @@ class TestTierAutocomplete:
         assert result[0].name == "Bronze"
 
     def test_item_type_autocomplete_empty_current(self, mock_shop_cog):
-        """item_type_autocomplete with empty string should return all types."""
+        """item_type_autocomplete with empty string should return all 5 concrete types."""
         interaction = _create_mock_interaction()
         result = asyncio.run(mock_shop_cog.item_type_autocomplete(interaction, ""))
-        assert len(result) == 4
+        assert len(result) == 5
 
     def test_item_type_autocomplete_partial_match(self, mock_shop_cog):
         """item_type_autocomplete with partial string should filter."""
         interaction = _create_mock_interaction()
-        result = asyncio.run(mock_shop_cog.item_type_autocomplete(interaction, "wea"))
-        assert len(result) == 1
-        assert result[0].value == "weapon"
+        # "weapon" matches "primary_weapon", "secondary_weapon", "turret_weapon"
+        result = asyncio.run(mock_shop_cog.item_type_autocomplete(interaction, "weapon"))
+        assert len(result) == 3
+        values = {c.value for c in result}
+        assert values == {"primary_weapon", "secondary_weapon", "turret_weapon"}
+
+    def test_item_type_autocomplete_uses_concrete_vocab(self, mock_shop_cog):
+        """item_type_autocomplete choice values are exactly the 5 concrete item types (A.46 fix).
+
+        Verifies that:
+        - The choice VALUE set is the canonical 5-element concrete vocab.
+        - Display names contain no underscores (human-readable labels).
+        - No legacy alias values ('weapon', 'turret') are present.
+        """
+        interaction = _create_mock_interaction()
+        result = asyncio.run(mock_shop_cog.item_type_autocomplete(interaction, ""))
+
+        values = {c.value for c in result}
+        assert values == {"ship", "primary_weapon", "secondary_weapon", "turret_weapon", "module"}, (
+            f"Expected exactly the 5 concrete item type values, got: {values}"
+        )
+
+        # Display names must be human-readable (no underscores)
+        for choice in result:
+            assert "_" not in choice.name, (
+                f"Display name '{choice.name}' contains an underscore — use replace('_', ' ').title()"
+            )
+
+        # Legacy alias values must NOT appear
+        legacy_aliases = {"weapon", "turret"}
+        assert not values & legacy_aliases, f"Legacy alias values found in choices: {values & legacy_aliases}"
 
 
 # ---------------------------------------------------------------------------

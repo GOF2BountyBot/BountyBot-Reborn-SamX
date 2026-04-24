@@ -54,9 +54,7 @@ def _make_db_session(*, player_ship=None, ship=None, module_factory=None):
                 name = stmt.whereclause.right.value
             except Exception:
                 name = None
-            result.scalars.return_value.first.return_value = (
-                module_factory(name) if module_factory else None
-            )
+            result.scalars.return_value.first.return_value = module_factory(name) if module_factory else None
         else:
             result.scalars.return_value.first.return_value = None
         return result
@@ -204,9 +202,7 @@ class TestBuildPlayerLoadout:
         svc = _make_svc(player=player, user=user)
         # item_repo.get_by_name is used by _build_weapon_items (max 2 mocks — reuse svc)
         svc.item_repo = MagicMock()
-        svc.item_repo.get_by_name = AsyncMock(
-            return_value=SimpleNamespace(emoji="<:pulse:1>", dps=12.0, value=1000)
-        )
+        svc.item_repo.get_by_name = AsyncMock(return_value=SimpleNamespace(emoji="<:pulse:1>", dps=12.0, value=1000))
 
         db = _make_db_session(
             player_ship=player_ship,
@@ -301,8 +297,12 @@ class TestBuildPlayerLoadout:
         player = _player()
         user = _user()
         ps = SimpleNamespace(
-            id=10, ship_name="Wraith", nickname=None,
-            weapons=[], modules=["AutoPacker 2"], turrets=[],
+            id=10,
+            ship_name="Wraith",
+            nickname=None,
+            weapons=[],
+            modules=["AutoPacker 2"],
+            turrets=[],
         )
         ship = _ship()  # base cargo=20
 

@@ -79,6 +79,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 # Per-test isolation fixture
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture(autouse=True)
 def _restore_real_discord():
     """
@@ -104,9 +105,11 @@ def _restore_real_discord():
     sys.modules["discord.ext.commands"] = _cm._REAL_DISCORD_EXT_COMMANDS
     # Reload discord_mock_utils so create_discord_not_found() uses real discord
     import tests.mocks.discord_mock_utils as _dmu_mod
+
     importlib.reload(_dmu_mod)
     # Force the users router to re-bind its 'discord' global to real discord
     from api.routers import users as _users_mod
+
     importlib.reload(_users_mod)
     yield
 
@@ -121,7 +124,7 @@ def create_mock_user(user_id=111111111):
         bot=False,
         system=False,
         created_at=datetime(2024, 1, 1),
-        public_flags=0
+        public_flags=0,
     )
 
 
@@ -144,7 +147,7 @@ def create_mock_member(member_id=111111111, guild_id=987654321):
         premium_since=None,
         pending=False,
         voice=None,
-        guild_permissions=MagicMock(value=0)
+        guild_permissions=MagicMock(value=0),
     )
 
 
@@ -157,13 +160,11 @@ def mock_bot():
     mock_member.edit = AsyncMock()
     mock_guild = MagicMock()
     mock_guild.id = 987654321
-    mock_guild.get_member = MagicMock(
-        side_effect=lambda x: mock_member if x == 111111111 else None
-    )
+    mock_guild.get_member = MagicMock(side_effect=lambda x: mock_member if x == 111111111 else None)
     mock_guild.fetch_member = AsyncMock(
-        side_effect=lambda x: mock_member if x == 111111111 else (
-            _ for _ in ()
-        ).throw(DiscordMockUtils.create_discord_not_found())
+        side_effect=lambda x: (
+            mock_member if x == 111111111 else (_ for _ in ()).throw(DiscordMockUtils.create_discord_not_found())
+        )
     )
 
     bot.guilds = [mock_guild]
@@ -181,9 +182,11 @@ def users_test_app(mock_bot):
     app = FastAPI(title="Discord Gateway API Test")
     app.state.bot = mock_bot
 
-    with patch("api.routers.users.resolve_bot", new_callable=AsyncMock) as mock_resolve, \
-         patch("api.routers.users.handle_discord_exception", new_callable=AsyncMock) as mock_handle, \
-         patch("api.routers.users.UserConverter") as mock_user_converter:
+    with (
+        patch("api.routers.users.resolve_bot", new_callable=AsyncMock) as mock_resolve,
+        patch("api.routers.users.handle_discord_exception", new_callable=AsyncMock) as mock_handle,
+        patch("api.routers.users.UserConverter") as mock_user_converter,
+    ):
 
         async def mock_resolve_bot(request):
             return mock_bot
@@ -193,6 +196,7 @@ def users_test_app(mock_bot):
 
         # UserConverter.user_to_payload returns a User schema object
         from api.schemas.user_schemas import User as UserSchema
+
         _mock_user_payload = UserSchema(
             id=111111111,
             username="test-user",
@@ -207,6 +211,7 @@ def users_test_app(mock_bot):
 
         # UserConverter.member_to_payload returns a Member schema object
         from api.schemas.user_schemas import Member as MemberSchema
+
         _mock_member_payload = MemberSchema(
             user=_mock_user_payload,
             guild_id=987654321,
@@ -222,6 +227,7 @@ def users_test_app(mock_bot):
         mock_user_converter.member_to_payload.return_value = _mock_member_payload
 
         from api.routers.users import router
+
         app.include_router(router, prefix="/api/v1")
 
         yield app
@@ -338,13 +344,18 @@ class TestErrorHandling:
     def test_handle_discord_exception(self, users_client):
         """Users endpoints should handle Discord exceptions gracefully."""
         from fastapi import HTTPException as FastAPIHTTPException
-        with patch("api.routers.users.resolve_bot", side_effect=Exception("Test Discord error")), \
-             patch("api.routers.users.handle_discord_exception",
-                   side_effect=FastAPIHTTPException(status_code=500, detail="Internal server error")):
+
+        with (
+            patch("api.routers.users.resolve_bot", side_effect=Exception("Test Discord error")),
+            patch(
+                "api.routers.users.handle_discord_exception",
+                side_effect=FastAPIHTTPException(status_code=500, detail="Internal server error"),
+            ),
+        ):
             response = users_client.get("/api/v1/users/111111111")
             assert response.status_code == 500
             assert "internal server error" in response.json()["detail"].lower()
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     pytest.main([__file__])

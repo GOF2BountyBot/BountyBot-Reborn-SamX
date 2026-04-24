@@ -109,9 +109,9 @@ def _make_summary(total_items=3, ship=1, weapon=1, module=1, turret=0):
     return {
         "total_items": total_items,
         "ship": ship,
-        "primary_weapon": weapon,      # concrete key (was 'weapon')
-        "secondary_weapon": 0,         # always 0 in test fixtures (not yet enabled)
-        "turret_weapon": turret,       # concrete key (was 'turret')
+        "primary_weapon": weapon,  # concrete key (was 'weapon')
+        "secondary_weapon": 0,  # always 0 in test fixtures (not yet enabled)
+        "turret_weapon": turret,  # concrete key (was 'turret')
         "module": module,
     }
 
@@ -1643,7 +1643,17 @@ class TestEquipAutocomplete:
         # Mock both POST (player ID) and GET (inventory, active ship)
         mock_inventory_cog.http_client.post = AsyncMock(return_value=player_resp)
         active_ship_resp = make_mock_response(
-            [{"id": 1, "ship_name": "Betty", "is_active": True, "weapons": [], "modules": [], "turrets": [], "secondary_weapons": []}]
+            [
+                {
+                    "id": 1,
+                    "ship_name": "Betty",
+                    "is_active": True,
+                    "weapons": [],
+                    "modules": [],
+                    "turrets": [],
+                    "secondary_weapons": [],
+                }
+            ]
         )
         mock_inventory_cog.http_client.get = AsyncMock(side_effect=[items_resp, active_ship_resp])
 
@@ -1669,7 +1679,17 @@ class TestEquipAutocomplete:
             ]
         )
         active_ship_resp = make_mock_response(
-            [{"id": 1, "ship_name": "Betty", "is_active": True, "weapons": [], "modules": [], "turrets": [], "secondary_weapons": []}]
+            [
+                {
+                    "id": 1,
+                    "ship_name": "Betty",
+                    "is_active": True,
+                    "weapons": [],
+                    "modules": [],
+                    "turrets": [],
+                    "secondary_weapons": [],
+                }
+            ]
         )
         mock_inventory_cog.http_client.post = AsyncMock(return_value=player_resp)
         mock_inventory_cog.http_client.get = AsyncMock(side_effect=[items_resp, active_ship_resp])
@@ -1843,6 +1863,242 @@ class TestItemAutocomplete:
         values = [c.value for c in choices]
         assert "Pulse Laser" in values
         assert "Shield Booster" not in values
+
+
+class TestInventoryCogA46Choices:
+    """A.46: validates that /inventory and /item commands use concrete vocab choices."""
+
+    def test_inventory_command_choices_are_concrete_vocab(self, mock_inventory_cog):
+        """A.46: /inventory item_type choices must be the 5-value concrete set.
+
+        Introspects the 'inventory' command's app_commands.Choice list and asserts
+        the values match exactly: ship, primary_weapon, secondary_weapon, turret_weapon, module.
+        Mock budget: 0.
+        """
+        # Find the 'inventory' command on the cog
+        inventory_cmd = None
+        for cmd in mock_inventory_cog.__cog_app_commands__:
+            if cmd.name == "inventory":
+                inventory_cmd = cmd
+                break
+        assert inventory_cmd is not None, "Could not find 'inventory' command on InventoryCog"
+
+        # Extract choices from the item_type parameter
+        item_type_param = None
+        for param in inventory_cmd.parameters:
+            if param.name == "item_type":
+                item_type_param = param
+                break
+        assert item_type_param is not None, "Could not find 'item_type' parameter on /inventory"
+
+        choice_values = {c.value for c in (item_type_param.choices or [])}
+        expected = {"ship", "primary_weapon", "secondary_weapon", "turret_weapon", "module"}
+        assert choice_values == expected, (
+            f"/inventory item_type choices mismatch. Expected {expected}, got {choice_values}"
+        )
+
+    def test_item_command_choices_are_concrete_vocab(self, mock_inventory_cog):
+        """A.46: /item item_type choices must be the 5-value concrete set.
+
+        Mock budget: 0.
+        """
+        item_cmd = None
+        for cmd in mock_inventory_cog.__cog_app_commands__:
+            if cmd.name == "item":
+                item_cmd = cmd
+                break
+        assert item_cmd is not None, "Could not find 'item' command on InventoryCog"
+
+        item_type_param = None
+        for param in item_cmd.parameters:
+            if param.name == "item_type":
+                item_type_param = param
+                break
+        assert item_type_param is not None, "Could not find 'item_type' parameter on /item"
+
+        choice_values = {c.value for c in (item_type_param.choices or [])}
+        expected = {"ship", "primary_weapon", "secondary_weapon", "turret_weapon", "module"}
+        assert choice_values == expected, f"/item item_type choices mismatch. Expected {expected}, got {choice_values}"
+
+    def test_give_item_freehand_input_returns_friendly_error(self, mock_inventory_cog):
+        """A.46 (reject freehand path): /give with an item value that lacks '::' separator
+        returns a friendly error without making any API call.
+
+        Mock budget: 1 (http_client.post for player resolution).
+        """
+        _evict_discord_modules()
+
+        interaction = _create_mock_interaction()
+        # Mock player lookups for source and target
+        source_player_resp = MagicMock()
+        source_player_resp.status_code = 200
+        source_player_resp.raise_for_status = MagicMock()
+        source_player_resp.json = MagicMock(return_value={"id": 1, "credits": 500})
+
+        target_player_resp = MagicMock()
+        target_player_resp.status_code = 200
+        target_player_resp.raise_for_status = MagicMock()
+        target_player_resp.json = MagicMock(return_value={"id": 2, "credits": 200})
+
+        mock_inventory_cog.http_client.post = AsyncMock(side_effect=[source_player_resp, target_player_resp])
+        mock_inventory_cog.http_client.get = AsyncMock()
+
+        target = _create_mock_interaction(user_id=222222222).user
+
+        import asyncio
+
+        asyncio.run(
+            mock_inventory_cog.give.callback(
+                mock_inventory_cog,
+                interaction,
+                target=target,
+                give_type="item",
+                amount=None,
+                item="NoSeparatorItem",  # freehand — no "::" separator
+                ship=None,
+            )
+        )
+
+        # Should have sent the friendly "pick from autocomplete" error
+        interaction.followup.send.assert_awaited()
+        args, kwargs = interaction.followup.send.call_args
+        msg = args[0] if args else kwargs.get("content", "")
+        assert "autocomplete" in msg.lower() or "pick" in msg.lower(), (
+            f"Expected friendly autocomplete error, got: {msg}"
+        )
+        # HTTP transfer endpoint (POST /inventory/transfer) should NOT have been called.
+        # The give flow makes exactly 2 POST calls for player resolution (source + target),
+        # then rejects freehand input before making the 3rd POST to /inventory/transfer.
+        # GAP-A-005 fix: assert .post count (not .get which is never called in this path).
+        assert mock_inventory_cog.http_client.post.await_count == 2, (
+            f"Expected exactly 2 POST calls (player resolution only), "
+            f"got {mock_inventory_cog.http_client.post.await_count}"
+        )
+
+
+class TestGiveItem422Handling:
+    """GAP-A-002: Validates that the /give item path translates 422 responses into
+    user-friendly messages instead of leaking raw API error text.
+    """
+
+    def test_give_item_secondary_weapon_422_shows_friendly_message(self, mock_inventory_cog):
+        """GAP-A-002: When the server returns 422 with a detail containing 'secondary_weapon'
+        (or 'not currently available'), the cog should render a friendly error message,
+        not the raw 'API Error: ...' text.
+
+        Mock budget: 1 (http_client.post with side_effect for 3 sequential calls).
+        """
+        _evict_discord_modules()
+
+        import httpx
+
+        interaction = _create_mock_interaction()
+
+        # Player resolution responses (calls 1 and 2)
+        source_player_resp = MagicMock()
+        source_player_resp.status_code = 200
+        source_player_resp.raise_for_status = MagicMock()
+        source_player_resp.json = MagicMock(return_value={"id": 1, "credits": 500})
+
+        target_player_resp = MagicMock()
+        target_player_resp.status_code = 200
+        target_player_resp.raise_for_status = MagicMock()
+        target_player_resp.json = MagicMock(return_value={"id": 2, "credits": 200})
+
+        # Transfer response (call 3): 422 from bot-core with secondary_weapon detail
+        transfer_422_resp = MagicMock()
+        transfer_422_resp.status_code = 422
+        transfer_422_resp.json = MagicMock(return_value={"detail": "secondary_weapon is not currently available"})
+        # raise_for_status should NOT be called for 422 because the cog checks status code first
+        transfer_422_resp.raise_for_status = MagicMock(
+            side_effect=httpx.HTTPStatusError(
+                "422 Unprocessable Entity",
+                request=MagicMock(),
+                response=transfer_422_resp,
+            )
+        )
+
+        mock_inventory_cog.http_client.post = AsyncMock(
+            side_effect=[source_player_resp, target_player_resp, transfer_422_resp]
+        )
+
+        target = _create_mock_interaction(user_id=222222222).user
+
+        asyncio.run(
+            mock_inventory_cog.give.callback(
+                mock_inventory_cog,
+                interaction,
+                target=target,
+                give_type="item",
+                amount=None,
+                item="secondary_weapon_item::secondary_weapon",  # valid autocomplete format
+                ship=None,
+            )
+        )
+
+        # The followup message should be user-friendly, not raw API error text
+        interaction.followup.send.assert_awaited()
+        args, kwargs = interaction.followup.send.call_args
+        msg = args[0] if args else kwargs.get("content", "")
+        assert "API Error" not in msg, f"Expected friendly message, got raw API error: {msg!r}"
+        assert "secondary" in msg.lower() or "not currently available" in msg.lower(), (
+            f"Expected message about secondary weapons being unavailable, got: {msg!r}"
+        )
+
+    def test_give_item_generic_422_shows_generic_friendly_message(self, mock_inventory_cog):
+        """GAP-A-002: A 422 with a non-secondary_weapon detail still gets a generic
+        friendly message rather than raw 'API Error:' text.
+
+        Mock budget: 1 (http_client.post with side_effect).
+        """
+        _evict_discord_modules()
+
+        interaction = _create_mock_interaction()
+
+        source_player_resp = MagicMock()
+        source_player_resp.status_code = 200
+        source_player_resp.raise_for_status = MagicMock()
+        source_player_resp.json = MagicMock(return_value={"id": 1, "credits": 500})
+
+        target_player_resp = MagicMock()
+        target_player_resp.status_code = 200
+        target_player_resp.raise_for_status = MagicMock()
+        target_player_resp.json = MagicMock(return_value={"id": 2, "credits": 200})
+
+        # Generic 422 (schema validation failure, not secondary_weapon-specific)
+        transfer_422_resp = MagicMock()
+        transfer_422_resp.status_code = 422
+        transfer_422_resp.json = MagicMock(
+            return_value={"detail": [{"msg": "Input should be a valid string", "type": "string_type"}]}
+        )
+        transfer_422_resp.raise_for_status = MagicMock()
+
+        mock_inventory_cog.http_client.post = AsyncMock(
+            side_effect=[source_player_resp, target_player_resp, transfer_422_resp]
+        )
+
+        target = _create_mock_interaction(user_id=222222222).user
+
+        asyncio.run(
+            mock_inventory_cog.give.callback(
+                mock_inventory_cog,
+                interaction,
+                target=target,
+                give_type="item",
+                amount=None,
+                item="some_item::primary_weapon",
+                ship=None,
+            )
+        )
+
+        interaction.followup.send.assert_awaited()
+        args, kwargs = interaction.followup.send.call_args
+        msg = args[0] if args else kwargs.get("content", "")
+        assert "API Error" not in msg, f"Expected friendly message, got raw API error: {msg!r}"
+        # Generic 422 should still produce a friendly message
+        assert "valid" in msg.lower() or "not valid" in msg.lower() or "autocomplete" in msg.lower(), (
+            f"Expected generic friendly message about invalid item type, got: {msg!r}"
+        )
 
 
 if __name__ == "__main__":

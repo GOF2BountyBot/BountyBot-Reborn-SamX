@@ -1,4 +1,5 @@
 """Tests for base Pydantic schemas used across the Discord Gateway API."""
+
 from datetime import UTC, datetime
 
 import pytest
@@ -15,6 +16,7 @@ from pydantic import BaseModel, ValidationError
 
 class MockResourceModel(BaseModel):
     """Mock resource model for testing factory functions."""
+
     id: int
     name: str
 
@@ -59,9 +61,7 @@ class TestPaginatedResponse:
 
     def test_paginated_response_with_values(self):
         """PaginatedResponse should accept explicit pagination values."""
-        resp = PaginatedResponse(
-            status="ok", total_count=100, page=2, page_size=10, has_more=True
-        )
+        resp = PaginatedResponse(status="ok", total_count=100, page=2, page_size=10, has_more=True)
         assert resp.total_count == 100
         assert resp.page == 2
         assert resp.page_size == 10
@@ -146,28 +146,14 @@ class TestCreateResourceListResponse:
         """Factory-created class should validate data as a list of resources."""
         ListResponseClass = create_resource_list_response("ship", MockResourceModel)
         ships = [MockResourceModel(id=1, name="Falcon"), MockResourceModel(id=2, name="X-Wing")]
-        resp = ListResponseClass(
-            status="ok",
-            data=ships,
-            total_count=2,
-            page=1,
-            page_size=10,
-            has_more=False
-        )
+        resp = ListResponseClass(status="ok", data=ships, total_count=2, page=1, page_size=10, has_more=False)
         assert len(resp.data) == 2
         assert resp.data[0].name == "Falcon"
 
     def test_create_resource_list_response_has_pagination_fields(self):
         """Factory-created class should have pagination fields from PaginatedResponse."""
         ListResponseClass = create_resource_list_response("ship", MockResourceModel)
-        resp = ListResponseClass(
-            status="ok",
-            data=[],
-            total_count=100,
-            page=2,
-            page_size=10,
-            has_more=True
-        )
+        resp = ListResponseClass(status="ok", data=[], total_count=100, page=2, page_size=10, has_more=True)
         assert resp.total_count == 100
         assert resp.page == 2
         assert resp.page_size == 10

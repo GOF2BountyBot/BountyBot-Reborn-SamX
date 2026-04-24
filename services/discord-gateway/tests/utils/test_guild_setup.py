@@ -823,8 +823,7 @@ class TestEnsureBountyBotInfrastructure:
         bh_ow = ow[role]
         assert isinstance(bh_ow, discord.PermissionOverwrite)
         assert bh_ow.read_message_history is None, (
-            "bot-images: read_message_history must be None (inherit) per spec — "
-            f"got {bh_ow.read_message_history!r}"
+            f"bot-images: read_message_history must be None (inherit) per spec — got {bh_ow.read_message_history!r}"
         )
         assert bh_ow.use_application_commands is None, (
             "bot-images: use_application_commands must be None (inherit) per spec — "

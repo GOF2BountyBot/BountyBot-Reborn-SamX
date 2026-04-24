@@ -1024,9 +1024,7 @@ async def admin_remove_ship(
                 for item_name in slot_items:
                     base = await item_repo.get_by_name_any_type(db, item_name)
                     if not base:
-                        flogger.warning(
-                            f"admin_remove_ship: item '{item_name}' not found in item table; skipping"
-                        )
+                        flogger.warning(f"admin_remove_ship: item '{item_name}' not found in item table; skipping")
                         continue
                     concrete = item_discriminator_to_concrete_type(base.type)
                     if not concrete:

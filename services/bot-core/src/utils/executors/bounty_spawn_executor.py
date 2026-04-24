@@ -387,8 +387,7 @@ async def execute_bounty_spawn_one_job(job_id: str, payload: dict) -> dict:
         config = await config_repo.get_by_guild_id(db, guild_id)
         if config is None:
             flogger.warning(
-                f"BountySpawnOne[{job_id}] guild={guild_id} tier={tier_lower}: "
-                "guild config not found — aborting"
+                f"BountySpawnOne[{job_id}] guild={guild_id} tier={tier_lower}: guild config not found — aborting"
             )
             return {"success": False, "reason": "guild_not_configured"}
 
@@ -416,8 +415,7 @@ async def execute_bounty_spawn_one_job(job_id: str, payload: dict) -> dict:
         division_role_id = _get_division_role_id(config, tier_lower)
         if division_role_id is None:
             flogger.warning(
-                f"BountySpawnOne[{job_id}] guild={guild_id} tier={tier_lower}: "
-                "division role not configured — aborting"
+                f"BountySpawnOne[{job_id}] guild={guild_id} tier={tier_lower}: division role not configured — aborting"
             )
             return {"success": False, "reason": "tier_not_configured"}
 
@@ -470,9 +468,7 @@ async def execute_bounty_spawn_one_job(job_id: str, payload: dict) -> dict:
         try:
             await _announce_bounty(job_id, spawned_bounty, config, db)
         except Exception as ann_err:  # pylint: disable=broad-exception-caught
-            flogger.error(
-                f"BountySpawnOne[{job_id}] failed to announce bounty id={spawned_bounty.id}: {ann_err}"
-            )
+            flogger.error(f"BountySpawnOne[{job_id}] failed to announce bounty id={spawned_bounty.id}: {ann_err}")
 
         return {"success": True, "bounty_id": spawned_bounty.id, "tier": tier_lower}
 

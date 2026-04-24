@@ -255,6 +255,7 @@ def _configure_bounty_repo(active_count_map: dict | None = None, count_return: i
     mock_repo = AsyncMock()
 
     if active_count_map is not None:
+
         async def _count(db, guild_id, division):
             return active_count_map.get((guild_id, division), 0)
 
@@ -1057,7 +1058,7 @@ def test_job_id_format():
 
     assert job_id.startswith(f"bounty_spawn_{guild_id}_{tier_lower}_")
     # Verify UUID suffix is valid
-    suffix = job_id[len(f"bounty_spawn_{guild_id}_{tier_lower}_"):]
+    suffix = job_id[len(f"bounty_spawn_{guild_id}_{tier_lower}_") :]
     parsed = uuid.UUID(suffix)
     assert str(parsed) == suffix
 

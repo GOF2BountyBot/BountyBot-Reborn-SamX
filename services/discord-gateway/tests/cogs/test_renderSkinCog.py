@@ -63,10 +63,14 @@ def _close_coro(coro):
 
 def _evict_discord_modules():
     to_evict = [
-        k for k in sys.modules
-        if k == "discord" or k.startswith("discord.")
-        or k in ("api", "bot", "utils") or k.startswith("api.")
-        or k.startswith("utils.") or k.startswith("cogs.")
+        k
+        for k in sys.modules
+        if k == "discord"
+        or k.startswith("discord.")
+        or k in ("api", "bot", "utils")
+        or k.startswith("api.")
+        or k.startswith("utils.")
+        or k.startswith("cogs.")
     ]
     for k in to_evict:
         sys.modules.pop(k, None)
@@ -98,6 +102,7 @@ def mock_bot():
 def mock_cog(mock_bot):
     _evict_discord_modules()
     from cogs.skinsCog import SkinsCog
+
     cog = SkinsCog(mock_bot)
     # Pre-populate ship data
     cog._ship_skins = {
@@ -189,6 +194,7 @@ class TestFormatDownloadView:
     def _make_view(self, cog, texture_bytes: bytes = b"PNG_DATA", render_bytes: bytes | None = None):
         _evict_discord_modules()
         from cogs.skinsCog import FormatDownloadView
+
         return FormatDownloadView(cog, texture_bytes, "TestShip", timeout=120, render_bytes=render_bytes)
 
     def test_format_download_view_etc1(self, mock_cog):
@@ -286,9 +292,7 @@ class TestSkinnableShipAutocomplete:
         mock_cog._ship_skins["Not Skinnable"] = []
         mock_cog._ship_render_info["Not Skinnable"] = {"skinnable": False}
 
-        choices = asyncio.run(
-            mock_cog.skinnable_ship_autocomplete(MagicMock(), "")
-        )
+        choices = asyncio.run(mock_cog.skinnable_ship_autocomplete(MagicMock(), ""))
         names = [c.name for c in choices]
 
         assert "Skinnable Ship" in names
@@ -296,27 +300,21 @@ class TestSkinnableShipAutocomplete:
 
     def test_skinnable_autocomplete_filter_by_text(self, mock_cog):
         """skinnable_ship_autocomplete filters by current text."""
-        choices = asyncio.run(
-            mock_cog.skinnable_ship_autocomplete(MagicMock(), "skin")
-        )
+        choices = asyncio.run(mock_cog.skinnable_ship_autocomplete(MagicMock(), "skin"))
         assert len(choices) == 1
         assert choices[0].name == "Skinnable Ship"
 
     def test_skinnable_autocomplete_includes_uncached_ships(self, mock_cog):
         """Ships without cached render-info are included (assumed skinnable)."""
         mock_cog._ship_render_info = {}
-        choices = asyncio.run(
-            mock_cog.skinnable_ship_autocomplete(MagicMock(), "")
-        )
+        choices = asyncio.run(mock_cog.skinnable_ship_autocomplete(MagicMock(), ""))
         # Should return all ships from _ship_skins (both included by default)
         assert len(choices) == 2
 
     def test_skinnable_autocomplete_partial_cache(self, mock_cog):
         """Ships not yet in render_info cache still appear in autocomplete."""
         # _ship_render_info only has "Skinnable Ship" but _ship_skins has both
-        choices = asyncio.run(
-            mock_cog.skinnable_ship_autocomplete(MagicMock(), "")
-        )
+        choices = asyncio.run(mock_cog.skinnable_ship_autocomplete(MagicMock(), ""))
         names = [c.name for c in choices]
         # Both should appear — "Plain Ship" has no render_info so defaults to skinnable=True
         assert "Skinnable Ship" in names
@@ -349,9 +347,7 @@ class TestRenderSkinCommand:
         mock_cog.http_client.get = AsyncMock(return_value=mock_resp)
 
         asyncio.run(
-            mock_cog.render_skin.callback(
-                mock_cog, interaction=interaction, ship="Unknown Ship", autoskin=True
-            )
+            mock_cog.render_skin.callback(mock_cog, interaction=interaction, ship="Unknown Ship", autoskin=True)
         )
 
         interaction.response.defer.assert_called_once()
@@ -366,16 +362,10 @@ class TestRenderSkinCommand:
         mock_resp.status_code = 404
         mock_cog.http_client = MagicMock()
         mock_cog.http_client.get = AsyncMock(
-            side_effect=httpx.HTTPStatusError(
-                "not found", request=MagicMock(), response=mock_resp
-            )
+            side_effect=httpx.HTTPStatusError("not found", request=MagicMock(), response=mock_resp)
         )
 
-        asyncio.run(
-            mock_cog.render_skin.callback(
-                mock_cog, interaction=interaction, ship="Ghost Ship", autoskin=False
-            )
-        )
+        asyncio.run(mock_cog.render_skin.callback(mock_cog, interaction=interaction, ship="Ghost Ship", autoskin=False))
 
         interaction.response.defer.assert_called_once()
         interaction.followup.send.assert_called()
@@ -394,11 +384,7 @@ class TestRenderSkinCommand:
         mock_cog.http_client = MagicMock()
         mock_cog.http_client.get = AsyncMock(return_value=mock_resp)
 
-        asyncio.run(
-            mock_cog.render_skin.callback(
-                mock_cog, interaction=interaction, ship="Rock Ship", autoskin=False
-            )
-        )
+        asyncio.run(mock_cog.render_skin.callback(mock_cog, interaction=interaction, ship="Rock Ship", autoskin=False))
 
         interaction.response.defer.assert_called_once()
         interaction.followup.send.assert_called()
@@ -451,11 +437,7 @@ class TestMakeSkinTextureCommand:
         mock_cog.blender_client = MagicMock()
         mock_cog.blender_client.post = AsyncMock(return_value=composite_resp)
 
-        asyncio.run(
-            mock_cog.make_skin_texture.callback(
-                mock_cog, interaction=interaction, ship="Skinnable Ship"
-            )
-        )
+        asyncio.run(mock_cog.make_skin_texture.callback(mock_cog, interaction=interaction, ship="Skinnable Ship"))
 
         interaction.response.defer.assert_called_once()
         # Composite should have been called

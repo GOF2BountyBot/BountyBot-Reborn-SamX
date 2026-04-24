@@ -1,4 +1,5 @@
 """Tests for thread Pydantic schemas."""
+
 import pytest
 from api.schemas.channel_schemas import (
     Thread,
@@ -19,6 +20,7 @@ VALID_THREAD = {
     "created_at": "2021-01-01T00:00:00Z",
 }
 
+
 class TestThread:
     def test_valid_instantiation(self):
         thread = Thread(**VALID_THREAD)
@@ -29,6 +31,7 @@ class TestThread:
         with pytest.raises(ValidationError):
             Thread()  # missing all fields
 
+
 class TestThreadCreateRequest:
     def test_valid_instantiation_defaults(self):
         req = ThreadCreateRequest(name="New Thread")
@@ -36,11 +39,7 @@ class TestThreadCreateRequest:
         assert req.type == "public_thread"
 
     def test_valid_with_all_fields(self):
-        req = ThreadCreateRequest(
-            name="T",
-            auto_archive_duration=60,
-            type="private_thread"
-        )
+        req = ThreadCreateRequest(name="T", auto_archive_duration=60, type="private_thread")
         assert req.auto_archive_duration == 60
         assert req.type == "private_thread"
 
@@ -56,6 +55,7 @@ class TestThreadCreateRequest:
         with pytest.raises(ValidationError):
             ThreadCreateRequest(name="T", type=123)
 
+
 class TestThreadUpdateRequest:
     def test_valid_instantiation(self):
         req = ThreadUpdateRequest(name="X", archived=True, locked=True)
@@ -68,6 +68,7 @@ class TestThreadUpdateRequest:
         assert req.archived is None
         assert req.locked is None
 
+
 class TestThreadResponse:
     def test_serialization(self):
         resp = ThreadResponse(status="ok", data=VALID_THREAD)
@@ -75,6 +76,7 @@ class TestThreadResponse:
         assert result["status"] == "ok"
         assert result["data"]["id"] == 1
         assert result["data"]["name"] == "Test Thread"
+
 
 class TestThreadListResponse:
     def test_list_response_defaults(self):

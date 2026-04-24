@@ -77,6 +77,7 @@ _mock_discord.ForumChannel = _MockForumChannel
 # Per-test isolation fixture
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture(autouse=True)
 def _restore_real_discord():
     """
@@ -89,9 +90,11 @@ def _restore_real_discord():
     sys.modules["discord.ext.commands"] = _cm._REAL_DISCORD_EXT_COMMANDS
     # Reload discord_mock_utils so create_discord_not_found() uses real discord
     import tests.mocks.discord_mock_utils as _dmu_mod
+
     importlib.reload(_dmu_mod)
     # Force the tags router to re-bind its 'discord' global to real discord
     from api.routers import tags as _tags_mod
+
     importlib.reload(_tags_mod)
     yield
 
@@ -154,11 +157,13 @@ def tags_test_app(mock_bot):
     app = FastAPI(title="Discord Gateway API Test")
     app.state.bot = mock_bot
 
-    with patch("api.routers.tags.resolve_bot", new_callable=AsyncMock) as mock_resolve, \
-         patch("api.routers.tags.handle_discord_exception", new_callable=AsyncMock) as mock_handle, \
-         patch("api.routers.tags.ChannelConverter") as mock_converter, \
-         patch("api.routers.tags.get_entity_or_404", new_callable=AsyncMock) as mock_get_entity, \
-         patch("api.routers.tags.discord", _mock_discord):
+    with (
+        patch("api.routers.tags.resolve_bot", new_callable=AsyncMock) as mock_resolve,
+        patch("api.routers.tags.handle_discord_exception", new_callable=AsyncMock) as mock_handle,
+        patch("api.routers.tags.ChannelConverter") as mock_converter,
+        patch("api.routers.tags.get_entity_or_404", new_callable=AsyncMock) as mock_get_entity,
+        patch("api.routers.tags.discord", _mock_discord),
+    ):
 
         async def mock_resolve_bot(request):
             return mock_bot
@@ -168,6 +173,7 @@ def tags_test_app(mock_bot):
 
         # forum_tag_to_payload returns a ForumTag-like dict
         from api.schemas.channel_schemas import ForumTag
+
         _mock_tag_payload = ForumTag(
             id=1234567890,
             channel_id=555555555,
@@ -181,13 +187,14 @@ def tags_test_app(mock_bot):
             if entity_id == 555555555:
                 return mock_bot.get_channel(entity_id)
             from fastapi import HTTPException
+
             raise HTTPException(status_code=404, detail=f"{entity_type} not found")
 
         mock_get_entity.side_effect = _get_entity
 
         # Set up discord.utils.get to find tag within available_tags
         def _utils_get(iterable, **kwargs):
-            for item in (iterable or []):
+            for item in iterable or []:
                 match = True
                 for k, v in kwargs.items():
                     if getattr(item, k, None) != v:
@@ -200,6 +207,7 @@ def tags_test_app(mock_bot):
         _mock_discord.utils.get = _utils_get
 
         from api.routers.tags import router
+
         app.include_router(router, prefix="/api/v1")
 
         yield app
@@ -316,9 +324,14 @@ class TestErrorHandling:
     def test_handle_discord_exception(self, tags_client):
         """Tags endpoints should handle Discord exceptions gracefully."""
         from fastapi import HTTPException as FastAPIHTTPException
-        with patch("api.routers.tags.resolve_bot", side_effect=Exception("Test Discord error")), \
-             patch("api.routers.tags.handle_discord_exception",
-                   side_effect=FastAPIHTTPException(status_code=500, detail="Internal server error")):
+
+        with (
+            patch("api.routers.tags.resolve_bot", side_effect=Exception("Test Discord error")),
+            patch(
+                "api.routers.tags.handle_discord_exception",
+                side_effect=FastAPIHTTPException(status_code=500, detail="Internal server error"),
+            ),
+        ):
             response = tags_client.get("/api/v1/tags/1234567890")
             assert response.status_code == 500
             assert "internal server error" in response.json()["detail"].lower()

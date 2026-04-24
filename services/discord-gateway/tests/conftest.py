@@ -1,4 +1,5 @@
 """Service-specific fixtures for discord-gateway tests with comprehensive test isolation."""
+
 import os
 import sys
 import types

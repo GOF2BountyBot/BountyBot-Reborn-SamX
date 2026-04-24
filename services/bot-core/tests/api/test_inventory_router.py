@@ -36,9 +36,10 @@ def mock_inventory_service():
             "player_tier": "Bronze",
             "guild_id": 67890,
             "ship": 1,
-            "weapon": 2,
+            "primary_weapon": 2,
+            "secondary_weapon": 0,
+            "turret_weapon": 0,
             "module": 1,
-            "turret": 0,
             "total_items": 4,
         }
     )
@@ -112,8 +113,22 @@ def client(test_app):
 
 
 def _configure_db_mock(mock_get_db):
-    """Configure mock_get_db to act as an async context manager."""
+    """Configure mock_get_db to act as an async context manager.
+
+    Also configures mock_session.begin() to return an async context manager so
+    that routers using ``async with get_db_session() as db, db.begin():`` work
+    correctly after the A.44 transaction-ownership fix.
+    """
+    from contextlib import asynccontextmanager
+    from unittest.mock import MagicMock
+
     mock_session = AsyncMock()
+
+    @asynccontextmanager
+    async def _mock_begin():
+        yield
+
+    mock_session.begin = MagicMock(side_effect=lambda: _mock_begin())
     mock_get_db.return_value.__aenter__ = AsyncMock(return_value=mock_session)
     mock_get_db.return_value.__aexit__ = AsyncMock(return_value=False)
     return mock_session
@@ -176,6 +191,7 @@ class TestGetPlayerInventory:
     def test_get_player_inventory_invalid_item_type_returns_422(self, mock_get_db, client, mock_inventory_service):
         """Returns 422 when service raises InvalidItemTypeError (A.33 fix)."""
         from services.exceptions import InvalidItemTypeError
+
         _configure_db_mock(mock_get_db)
         mock_inventory_service.get_player_inventory.side_effect = InvalidItemTypeError("Unknown type 'foo'")
 
@@ -217,9 +233,10 @@ class TestGetInventorySummary:
         assert data["player_tier"] == "Bronze"
         assert data["guild_id"] == 67890
         assert data["ship"] == 1
-        assert data["weapon"] == 2
+        assert data["primary_weapon"] == 2
+        assert data["secondary_weapon"] == 0
+        assert data["turret_weapon"] == 0
         assert data["module"] == 1
-        assert data["turret"] == 0
         assert data["total_items"] == 4
 
     @patch("api.routers.inventory.get_db_session")
@@ -260,13 +277,13 @@ class TestAddItemToInventory:
 
         response = client.post(
             "/api/v1/inventory/add",
-            json={"player_id": 1, "item_type": "weapon", "item_name": "Pulse Laser", "quantity": 1},
+            # A.45: use concrete type (not alias "weapon")
+            json={"player_id": 1, "item_type": "primary_weapon", "item_name": "Pulse Laser", "quantity": 1},
         )
 
         assert response.status_code == 200
         data = response.json()
         assert data["player_id"] == 1
-        assert data["item_type"] == "weapon"
         assert data["item_name"] == "Pulse Laser"
         assert data["quantity_changed"] == 1
         assert data["new_total_quantity"] == 3
@@ -280,7 +297,8 @@ class TestAddItemToInventory:
 
         response = client.post(
             "/api/v1/inventory/add",
-            json={"player_id": 1, "item_type": "weapon", "item_name": "Nonexistent", "quantity": 1},
+            # A.45: use concrete type to get past schema validation before testing service error
+            json={"player_id": 1, "item_type": "primary_weapon", "item_name": "Nonexistent", "quantity": 1},
         )
 
         assert response.status_code == 400
@@ -294,7 +312,8 @@ class TestAddItemToInventory:
 
         response = client.post(
             "/api/v1/inventory/add",
-            json={"player_id": 1, "item_type": "weapon", "item_name": "Pulse Laser", "quantity": 1},
+            # A.45: use concrete type to reach the service (which raises RuntimeError)
+            json={"player_id": 1, "item_type": "primary_weapon", "item_name": "Pulse Laser", "quantity": 1},
         )
 
         assert response.status_code == 500
@@ -304,9 +323,8 @@ class TestAddItemToInventory:
     def test_add_item_invalid_item_type_service_error_returns_422(self, mock_get_db, client, mock_inventory_service):
         """Returns 422 (not 400) when service raises InvalidItemTypeError on write (DEF-IVF-001 fix).
 
-        This covers the case where a generic alias (e.g. 'weapon') is passed to a write
-        endpoint — the service rejects it with InvalidItemTypeError, and the router must
-        map it to 422 (Unprocessable Entity), not 400 (Bad Request).
+        A.45: uses a concrete type in the request body so the schema passes and the
+        service's InvalidItemTypeError is what triggers the 422 (defense-in-depth path).
         """
         from services.exceptions import InvalidItemTypeError
 
@@ -317,7 +335,8 @@ class TestAddItemToInventory:
 
         response = client.post(
             "/api/v1/inventory/add",
-            json={"player_id": 1, "item_type": "weapon", "item_name": "Pulse Laser", "quantity": 1},
+            # A.45: use concrete type so schema validation passes; service raises InvalidItemTypeError
+            json={"player_id": 1, "item_type": "primary_weapon", "item_name": "Pulse Laser", "quantity": 1},
         )
 
         assert response.status_code == 422, (
@@ -344,7 +363,8 @@ class TestAddItemToInventory:
 
         response = client.post(
             "/api/v1/inventory/add",
-            json={"player_id": 1, "item_type": "weapon", "item_name": "Pulse Laser", "quantity": 0},
+            # A.45: use concrete type; the 422 is from quantity=0 validation
+            json={"player_id": 1, "item_type": "primary_weapon", "item_name": "Pulse Laser", "quantity": 0},
         )
 
         assert response.status_code == 422
@@ -382,13 +402,13 @@ class TestRemoveItemFromInventory:
 
         response = client.post(
             "/api/v1/inventory/remove",
-            json={"player_id": 1, "item_type": "weapon", "item_name": "Pulse Laser", "quantity": 1},
+            # A.45: use concrete type (not alias "weapon")
+            json={"player_id": 1, "item_type": "primary_weapon", "item_name": "Pulse Laser", "quantity": 1},
         )
 
         assert response.status_code == 200
         data = response.json()
         assert data["player_id"] == 1
-        assert data["item_type"] == "weapon"
         assert data["item_name"] == "Pulse Laser"
         # quantity_changed is negative because it's a removal
         assert data["quantity_changed"] == -1
@@ -404,7 +424,8 @@ class TestRemoveItemFromInventory:
 
         response = client.post(
             "/api/v1/inventory/remove",
-            json={"player_id": 1, "item_type": "weapon", "item_name": "Pulse Laser", "quantity": 100},
+            # A.45: use concrete type
+            json={"player_id": 1, "item_type": "primary_weapon", "item_name": "Pulse Laser", "quantity": 100},
         )
 
         assert response.status_code == 400
@@ -418,7 +439,8 @@ class TestRemoveItemFromInventory:
 
         response = client.post(
             "/api/v1/inventory/remove",
-            json={"player_id": 1, "item_type": "weapon", "item_name": "Pulse Laser", "quantity": 1},
+            # A.45: use concrete type
+            json={"player_id": 1, "item_type": "primary_weapon", "item_name": "Pulse Laser", "quantity": 1},
         )
 
         assert response.status_code == 500
@@ -436,7 +458,8 @@ class TestRemoveItemFromInventory:
 
         response = client.post(
             "/api/v1/inventory/remove",
-            json={"player_id": 1, "item_type": "weapon", "item_name": "Pulse Laser", "quantity": 1},
+            # A.45: use concrete type so schema passes; service raises InvalidItemTypeError
+            json={"player_id": 1, "item_type": "primary_weapon", "item_name": "Pulse Laser", "quantity": 1},
         )
 
         assert response.status_code == 422, (
@@ -477,10 +500,11 @@ class TestTransferItemBetweenPlayers:
 
         response = client.post(
             "/api/v1/inventory/transfer",
+            # A.45: use concrete type (not alias "weapon")
             json={
                 "from_player_id": 1,
                 "to_player_id": 2,
-                "item_type": "weapon",
+                "item_type": "primary_weapon",
                 "item_name": "Pulse Laser",
                 "quantity": 1,
             },
@@ -490,7 +514,6 @@ class TestTransferItemBetweenPlayers:
         data = response.json()
         assert data["from_player_id"] == 1
         assert data["to_player_id"] == 2
-        assert data["item_type"] == "weapon"
         assert data["item_name"] == "Pulse Laser"
         assert data["quantity"] == 1
         assert data["status"] == "success"
@@ -503,10 +526,11 @@ class TestTransferItemBetweenPlayers:
 
         response = client.post(
             "/api/v1/inventory/transfer",
+            # A.45: use concrete type
             json={
                 "from_player_id": 1,
                 "to_player_id": 999,
-                "item_type": "weapon",
+                "item_type": "primary_weapon",
                 "item_name": "Pulse Laser",
                 "quantity": 1,
             },
@@ -523,10 +547,11 @@ class TestTransferItemBetweenPlayers:
 
         response = client.post(
             "/api/v1/inventory/transfer",
+            # A.45: use concrete type
             json={
                 "from_player_id": 1,
                 "to_player_id": 2,
-                "item_type": "weapon",
+                "item_type": "primary_weapon",
                 "item_name": "Pulse Laser",
                 "quantity": 1,
             },
@@ -549,10 +574,11 @@ class TestTransferItemBetweenPlayers:
 
         response = client.post(
             "/api/v1/inventory/transfer",
+            # A.45: use concrete type so schema passes; service raises InvalidItemTypeError
             json={
                 "from_player_id": 1,
                 "to_player_id": 2,
-                "item_type": "weapon",
+                "item_type": "primary_weapon",
                 "item_name": "Pulse Laser",
                 "quantity": 1,
             },
@@ -570,10 +596,11 @@ class TestTransferItemBetweenPlayers:
 
         client.post(
             "/api/v1/inventory/transfer",
+            # A.45: use concrete type (turret_weapon not alias "turret")
             json={
                 "from_player_id": 10,
                 "to_player_id": 20,
-                "item_type": "turret",
+                "item_type": "turret_weapon",
                 "item_name": "Heavy Cannon",
                 "quantity": 2,
             },
@@ -583,7 +610,7 @@ class TestTransferItemBetweenPlayers:
         call_args = mock_inventory_service.transfer_item_between_players.call_args
         assert call_args.args[1] == 10
         assert call_args.args[2] == 20
-        assert call_args.args[3] == "turret"
+        assert call_args.args[3] == "turret_weapon"
         assert call_args.args[4] == "Heavy Cannon"
         assert call_args.args[5] == 2
 
@@ -604,6 +631,67 @@ class TestTransferItemBetweenPlayers:
         )
 
         assert response.status_code == 422
+
+    def test_transfer_item_rejects_alias_with_422(self, client, mock_inventory_service):
+        """A.45: posting item_type='weapon' (generic alias) is rejected at schema with HTTP 422.
+
+        The Literal schema validation rejects 'weapon' before the service is called.
+        Mock budget: 0 (schema rejects before service is called).
+        """
+        response = client.post(
+            "/api/v1/inventory/transfer",
+            json={
+                "from_player_id": 1,
+                "to_player_id": 2,
+                "item_type": "weapon",
+                "item_name": "Pulse Laser",
+                "quantity": 1,
+            },
+        )
+
+        assert response.status_code == 422, (
+            f"Expected 422 for alias 'weapon' in TransferItemRequest, got {response.status_code}"
+        )
+        # Service should NOT have been called
+        mock_inventory_service.transfer_item_between_players.assert_not_awaited()
+
+
+class TestAddItemA45Rejection:
+    """A.45 alias rejection tests for POST /api/v1/inventory/add."""
+
+    def test_add_item_rejects_alias_with_422(self, client, mock_inventory_service):
+        """A.45: posting item_type='weapon' (generic alias) is rejected at schema with HTTP 422.
+
+        Mock budget: 0 (schema rejects before service is called).
+        """
+        response = client.post(
+            "/api/v1/inventory/add",
+            json={"player_id": 1, "item_type": "weapon", "item_name": "Pulse Laser", "quantity": 1},
+        )
+
+        assert response.status_code == 422, (
+            f"Expected 422 for alias 'weapon' in AddItemRequest, got {response.status_code}"
+        )
+        mock_inventory_service.add_item_to_inventory.assert_not_awaited()
+
+
+class TestRemoveItemA45Rejection:
+    """A.45 alias rejection tests for POST /api/v1/inventory/remove."""
+
+    def test_remove_item_rejects_alias_with_422(self, client, mock_inventory_service):
+        """A.45: posting item_type='weapon' (generic alias) is rejected at schema with HTTP 422.
+
+        Mock budget: 0 (schema rejects before service is called).
+        """
+        response = client.post(
+            "/api/v1/inventory/remove",
+            json={"player_id": 1, "item_type": "weapon", "item_name": "Pulse Laser", "quantity": 1},
+        )
+
+        assert response.status_code == 422, (
+            f"Expected 422 for alias 'weapon' in RemoveItemRequest, got {response.status_code}"
+        )
+        mock_inventory_service.remove_item_from_inventory.assert_not_awaited()
 
 
 # ===========================================================================

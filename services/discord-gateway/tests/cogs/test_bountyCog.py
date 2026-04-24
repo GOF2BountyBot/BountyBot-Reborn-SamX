@@ -818,9 +818,7 @@ class TestCriminalLoadoutCommand:
         embed = interaction.followup.send.call_args[1]["embed"]
         assert embed.thumbnail.url == "https://cdn/criminal.png"
 
-    def test_criminal_loadout_missing_criminal_ship_sends_ephemeral_error(
-        self, mock_bounty_cog, make_mock_response
-    ):
+    def test_criminal_loadout_missing_criminal_ship_sends_ephemeral_error(self, mock_bounty_cog, make_mock_response):
         """message='Criminal ship data unavailable' → red error embed, ephemeral."""
         interaction = _create_mock_interaction()
         data = _make_loadout_response(message="Criminal ship data unavailable")

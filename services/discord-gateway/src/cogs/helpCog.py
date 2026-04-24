@@ -414,11 +414,7 @@ async def _user_category_autocomplete(
 ) -> list[app_commands.Choice[str]]:
     """Return matching user-facing category names for autocomplete."""
     norm = current.lower()
-    return [
-        app_commands.Choice(name=cat, value=cat)
-        for cat in _USER_CATEGORY_ORDER
-        if norm in cat.lower()
-    ][:25]
+    return [app_commands.Choice(name=cat, value=cat) for cat in _USER_CATEGORY_ORDER if norm in cat.lower()][:25]
 
 
 async def _admin_category_autocomplete(
@@ -427,11 +423,7 @@ async def _admin_category_autocomplete(
 ) -> list[app_commands.Choice[str]]:
     """Return matching admin category names for autocomplete."""
     norm = current.lower()
-    return [
-        app_commands.Choice(name=cat, value=cat)
-        for cat in _ADMIN_CATEGORY_ORDER
-        if norm in cat.lower()
-    ][:25]
+    return [app_commands.Choice(name=cat, value=cat) for cat in _ADMIN_CATEGORY_ORDER if norm in cat.lower()][:25]
 
 
 # ---------------------------------------------------------------------------
@@ -490,9 +482,7 @@ class HelpCog(commands.Cog):
                 color=discord.Color.blurple(),
             )
             await interaction.response.send_message(embed=embed, ephemeral=True)
-            flogger.info(
-                f"/help overview success: guild={interaction.guild_id} user={interaction.user.id}"
-            )
+            flogger.info(f"/help overview success: guild={interaction.guild_id} user={interaction.user.id}")
 
         else:
             # Detail mode: find the matching category (case-insensitive)
@@ -506,8 +496,7 @@ class HelpCog(commands.Cog):
             if matched_cat is None:
                 available = ", ".join(_USER_CATEGORY_ORDER)
                 await interaction.response.send_message(
-                    f"❌ Category **'{category}'** not found.\n"
-                    f"Available categories: {available}",
+                    f"❌ Category **'{category}'** not found.\nAvailable categories: {available}",
                     ephemeral=True,
                 )
                 return
@@ -583,9 +572,7 @@ class HelpCog(commands.Cog):
                 color=discord.Color.red(),
             )
             await interaction.response.send_message(embed=embed, ephemeral=True)
-            flogger.info(
-                f"/admin_help overview success: guild={interaction.guild_id} user={interaction.user.id}"
-            )
+            flogger.info(f"/admin_help overview success: guild={interaction.guild_id} user={interaction.user.id}")
 
         else:
             # Detail mode: find the matching admin category (case-insensitive)
@@ -599,8 +586,7 @@ class HelpCog(commands.Cog):
             if matched_cat is None:
                 available = ", ".join(_ADMIN_CATEGORY_ORDER)
                 await interaction.response.send_message(
-                    f"❌ Admin category **'{category}'** not found.\n"
-                    f"Available categories: {available}",
+                    f"❌ Admin category **'{category}'** not found.\nAvailable categories: {available}",
                     ephemeral=True,
                 )
                 return

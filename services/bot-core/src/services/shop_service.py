@@ -79,6 +79,8 @@ class ShopService:
         combination.  At 1000 guilds x 3 tiers this reduces ~420K
         DB queries to 4 (one per item type).
         """
+        # Internal cache keys (not user-facing item_type values).
+        # See A.45 spec §2 for the wire-boundary vocab rule.
         self._static_cache = {
             "ship": await self.ship_repo.list_all(db),
             "weapon": await self.primary_weapon_repo.list_all(db),
@@ -269,131 +271,133 @@ class ShopService:
                 if old_ship_static:
                     old_ship_value = old_ship_static.value
 
-            # Perform transaction atomically (credit check is done under lock below)
-            async with db.begin():
-                # Lock the player row to prevent concurrent credit modifications
-                player = await self.player_repo.get_by_id_for_update(db, player_id)
-                if not player:
-                    raise ValueError(f"Player {player_id} not found")
+            # Transaction is owned by the caller (router).
+            # Lock the player row to prevent concurrent credit modifications.
+            player = await self.player_repo.get_by_id_for_update(db, player_id)
+            if not player:
+                raise ValueError(f"Player {player_id} not found")
 
-                # Re-check credits under lock (prevents TOCTOU race)
-                if sell_old_ship and old_player_ship:
-                    effective_cost = new_ship_price - old_ship_value
-                    if player.credits < effective_cost:
-                        raise ValueError(
-                            f"Insufficient credits. Cost: {new_ship_price}, "
-                            f"Trade-in value: {old_ship_value}, "
-                            f"Net cost: {effective_cost}, "
-                            f"Available: {player.credits}"
-                        )
-                else:
-                    if player.credits < new_ship_price:
-                        raise ValueError(f"Insufficient credits. Cost: {new_ship_price}, Available: {player.credits}")
-
-                # a. Create new PlayerShip record for the player (inactive for now)
-                new_player_ship = PlayerShip(
-                    player_id=player_id,
-                    ship_name=shop_item.item_name,
-                    is_active=False,
-                    weapons=[],
-                    modules=[],
-                    turrets=[],
-                    secondary_weapons=[],
-                )
-                db.add(new_player_ship)
-                await db.flush()  # Get the new ship's ID
-
-                # b. Transfer equipped items from old ship to new ship.
-                # Overflow items are returned to inventory using concrete item types
-                # (resolved via ItemRepository STI discriminator).
-                items_transferred: dict[str, list[str]] = {
-                    "weapons": [],
-                    "modules": [],
-                    "turrets": [],
-                    "secondary_weapons": [],
-                }
-                items_unequipped: dict[str, list[str]] = {
-                    "weapons": [],
-                    "modules": [],
-                    "turrets": [],
-                    "secondary_weapons": [],
-                }
-
-                if old_player_ship:
-                    # Determine slot limits on new ship
-                    slot_limits = {
-                        "weapons": new_ship_static.max_primaries,
-                        "modules": new_ship_static.max_modules,
-                        "turrets": new_ship_static.max_turrets,
-                        "secondary_weapons": getattr(new_ship_static, "max_secondaries", 0),
-                    }
-
-                    for equip_type in ("weapons", "modules", "turrets", "secondary_weapons"):
-                        old_items: list[str] = list(getattr(old_player_ship, equip_type) or [])
-                        max_slots = slot_limits[equip_type]
-
-                        # Items that fit on new ship
-                        fitting = old_items[:max_slots]
-                        overflow = old_items[max_slots:]
-
-                        items_transferred[equip_type] = fitting
-                        items_unequipped[equip_type] = overflow
-
-                        # Unequip overflow items to inventory using concrete type via STI discriminator
-                        for item_name in overflow:
-                            base = await self.item_repo.get_by_name_any_type(db, item_name)
-                            if base:
-                                from services.equipment_service import item_discriminator_to_concrete_type
-                                concrete = item_discriminator_to_concrete_type(base.type)
-                                if concrete:
-                                    await self.inventory_repo.add_item(db, player_id, concrete, item_name, 1)
-                                    continue
-                            # Fallback: use the equipment-type's natural inventory type
-                            from services.equipment_service import _INVENTORY_TYPE_MAP as _EQUIP_INV_MAP
-                            fallback_type = _EQUIP_INV_MAP.get(equip_type, "module")
-                            await self.inventory_repo.add_item(db, player_id, fallback_type, item_name, 1)
-
-                    # Apply transferred loadout to new ship
-                    new_player_ship.weapons = items_transferred["weapons"]
-                    new_player_ship.modules = items_transferred["modules"]
-                    new_player_ship.turrets = items_transferred["turrets"]
-                    new_player_ship.secondary_weapons = items_transferred["secondary_weapons"]
-
-                # c. Handle old ship trade-in
-                if sell_old_ship and old_player_ship:
-                    # Add old ship to shop stock
-                    await self._add_item_to_shop(
-                        db,
-                        player.guild_id,
-                        shop_item.tier,
-                        "ship",
-                        old_player_ship.ship_name,
-                        1,
-                        old_ship_value,
+            # Re-check credits under lock (prevents TOCTOU race)
+            if sell_old_ship and old_player_ship:
+                effective_cost = new_ship_price - old_ship_value
+                if player.credits < effective_cost:
+                    raise ValueError(
+                        f"Insufficient credits. Cost: {new_ship_price}, "
+                        f"Trade-in value: {old_ship_value}, "
+                        f"Net cost: {effective_cost}, "
+                        f"Available: {player.credits}"
                     )
-                    # Delete old PlayerShip record
-                    await db.delete(old_player_ship)
-                    await db.flush()
+            else:
+                if player.credits < new_ship_price:
+                    raise ValueError(f"Insufficient credits. Cost: {new_ship_price}, Available: {player.credits}")
 
-                # d. Set new ship as active (deactivate all others first)
-                from sqlalchemy import update as sa_update
+            # a. Create new PlayerShip record for the player (inactive for now)
+            new_player_ship = PlayerShip(
+                player_id=player_id,
+                ship_name=shop_item.item_name,
+                is_active=False,
+                weapons=[],
+                modules=[],
+                turrets=[],
+                secondary_weapons=[],
+            )
+            db.add(new_player_ship)
+            await db.flush()  # Get the new ship's ID
 
-                await db.execute(sa_update(PlayerShip).where(PlayerShip.player_id == player_id).values(is_active=False))
-                new_player_ship.is_active = True
+            # b. Transfer equipped items from old ship to new ship.
+            # Overflow items are returned to inventory using concrete item types
+            # (resolved via ItemRepository STI discriminator).
+            items_transferred: dict[str, list[str]] = {
+                "weapons": [],
+                "modules": [],
+                "turrets": [],
+                "secondary_weapons": [],
+            }
+            items_unequipped: dict[str, list[str]] = {
+                "weapons": [],
+                "modules": [],
+                "turrets": [],
+                "secondary_weapons": [],
+            }
 
-                # e. Calculate and set final credit balance in a single update
-                if sell_old_ship and old_player_ship:
-                    updated_credits = player.credits + old_ship_value - new_ship_price
-                else:
-                    updated_credits = player.credits - new_ship_price
-                await self.player_repo.update_credits(db, player_id, updated_credits, commit=False)
+            if old_player_ship:
+                # Determine slot limits on new ship
+                slot_limits = {
+                    "weapons": new_ship_static.max_primaries,
+                    "modules": new_ship_static.max_modules,
+                    "turrets": new_ship_static.max_turrets,
+                    "secondary_weapons": getattr(new_ship_static, "max_secondaries", 0),
+                }
 
-                # f. Remove new ship from shop stock
-                new_shop_quantity = shop_item.quantity - 1
-                if new_shop_quantity <= 0:
-                    await self.shop_repo.remove(db, shop_item)
-                else:
-                    await self.shop_repo.update_quantity(db, shop_item_id, new_shop_quantity)
+                for equip_type in ("weapons", "modules", "turrets", "secondary_weapons"):
+                    old_items: list[str] = list(getattr(old_player_ship, equip_type) or [])
+                    max_slots = slot_limits[equip_type]
+
+                    # Items that fit on new ship
+                    fitting = old_items[:max_slots]
+                    overflow = old_items[max_slots:]
+
+                    items_transferred[equip_type] = fitting
+                    items_unequipped[equip_type] = overflow
+
+                    # Unequip overflow items to inventory using concrete type via STI discriminator
+                    for item_name in overflow:
+                        base = await self.item_repo.get_by_name_any_type(db, item_name)
+                        if base:
+                            from services.equipment_service import item_discriminator_to_concrete_type
+
+                            concrete = item_discriminator_to_concrete_type(base.type)
+                            if concrete:
+                                await self.inventory_repo.add_item(db, player_id, concrete, item_name, 1, commit=False)
+                                continue
+                        # Fallback: use the equipment-type's natural inventory type
+                        from services.equipment_service import _INVENTORY_TYPE_MAP as _EQUIP_INV_MAP
+
+                        fallback_type = _EQUIP_INV_MAP.get(equip_type, "module")
+                        await self.inventory_repo.add_item(db, player_id, fallback_type, item_name, 1, commit=False)
+
+                # Apply transferred loadout to new ship
+                new_player_ship.weapons = items_transferred["weapons"]
+                new_player_ship.modules = items_transferred["modules"]
+                new_player_ship.turrets = items_transferred["turrets"]
+                new_player_ship.secondary_weapons = items_transferred["secondary_weapons"]
+
+            # c. Handle old ship trade-in
+            if sell_old_ship and old_player_ship:
+                # Add old ship to shop stock (commit=False — caller's transaction controls commit)
+                await self._add_item_to_shop(
+                    db,
+                    player.guild_id,
+                    shop_item.tier,
+                    "ship",
+                    old_player_ship.ship_name,
+                    1,
+                    old_ship_value,
+                    commit=False,
+                )
+                # Delete old PlayerShip record
+                await db.delete(old_player_ship)
+                await db.flush()
+
+            # d. Set new ship as active (deactivate all others first)
+            from sqlalchemy import update as sa_update
+
+            await db.execute(sa_update(PlayerShip).where(PlayerShip.player_id == player_id).values(is_active=False))
+            new_player_ship.is_active = True
+
+            # e. Calculate and set final credit balance in a single update
+            if sell_old_ship and old_player_ship:
+                updated_credits = player.credits + old_ship_value - new_ship_price
+            else:
+                updated_credits = player.credits - new_ship_price
+            await self.player_repo.update_credits(db, player_id, updated_credits, commit=False)
+
+            # f. Remove new ship from shop stock (commit=False — caller's transaction controls commit)
+            new_shop_quantity = shop_item.quantity - 1
+            if new_shop_quantity <= 0:
+                await self.shop_repo.remove(db, shop_item, commit=False)
+            else:
+                await self.shop_repo.update_quantity(db, shop_item_id, new_shop_quantity, commit=False)
 
             total_overflow = sum(len(v) for v in items_unequipped.values()) if old_player_ship else 0
             total_transferred = sum(len(v) for v in items_transferred.values()) if old_player_ship else 0
@@ -483,23 +487,22 @@ class ShopService:
             unit_sell_price = base_price
             total_sell_value = unit_sell_price * quantity
 
-            # Perform transaction atomically
-            async with db.begin():
-                # Lock player row to prevent concurrent credit modifications
-                player = await self.player_repo.get_by_id_for_update(db, player_id)
-                if not player:
-                    raise ValueError(f"Player {player_id} not found")
+            # Transaction is owned by the caller (router).
+            # Lock player row to prevent concurrent credit modifications.
+            player = await self.player_repo.get_by_id_for_update(db, player_id)
+            if not player:
+                raise ValueError(f"Player {player_id} not found")
 
-                # Remove item from player inventory (using concrete type)
-                await self.inventory_repo.remove_item(db, player_id, concrete_type, item_name, quantity)
+            # Remove item from player inventory (commit=False — caller's transaction controls commit)
+            await self.inventory_repo.remove_item(db, player_id, concrete_type, item_name, quantity, commit=False)
 
-                # Add credits to player
-                await self.player_repo.update_credits(db, player_id, player.credits + total_sell_value, commit=False)
+            # Add credits to player
+            await self.player_repo.update_credits(db, player_id, player.credits + total_sell_value, commit=False)
 
-                # Add item to target shop (using concrete type)
-                await self._add_item_to_shop(
-                    db, player.guild_id, target_tier, concrete_type, item_name, quantity, base_price
-                )
+            # Add item to target shop (using concrete type)
+            await self._add_item_to_shop(
+                db, player.guild_id, target_tier, concrete_type, item_name, quantity, base_price, commit=False
+            )
 
             transaction_details = {
                 "player_id": player_id,
@@ -513,8 +516,7 @@ class ShopService:
             }
 
             flogger.info(
-                f"Player {player_id} sold {quantity}x {item_name} ({concrete_type}) "
-                f"for {total_sell_value} credits"
+                f"Player {player_id} sold {quantity}x {item_name} ({concrete_type}) for {total_sell_value} credits"
             )
             return transaction_details
 
@@ -577,49 +579,51 @@ class ShopService:
                 "secondary_weapons": [],
             }
 
-            async with db.begin():
-                # Lock the player row to prevent concurrent credit modifications
-                player = await self.player_repo.get_by_id_for_update(db, player_id)
-                if not player:
-                    raise ValueError(f"Player {player_id} not found")
+            # Transaction is owned by the caller (router).
+            # Lock the player row to prevent concurrent credit modifications.
+            player = await self.player_repo.get_by_id_for_update(db, player_id)
+            if not player:
+                raise ValueError(f"Player {player_id} not found")
 
-                if clear_equipment:
-                    # Unequip all items to player inventory before selling ship.
-                    # Resolve concrete types via STI discriminator to avoid generic aliases.
-                    from services.equipment_service import _INVENTORY_TYPE_MAP as _EQUIP_INV_MAP
-                    from services.equipment_service import item_discriminator_to_concrete_type
-                    for equip_type in ("weapons", "modules", "turrets", "secondary_weapons"):
-                        equipped: list[str] = list(getattr(player_ship, equip_type) or [])
-                        for item_name in equipped:
-                            base = await self.item_repo.get_by_name_any_type(db, item_name)
-                            if base:
-                                concrete = item_discriminator_to_concrete_type(base.type)
-                                if concrete:
-                                    await self.inventory_repo.add_item(db, player_id, concrete, item_name, 1)
-                                    items_unequipped[equip_type].append(item_name)
-                                    continue
-                            # Fallback to equipment_service's natural concrete type map
-                            fallback = _EQUIP_INV_MAP.get(equip_type, "module")
-                            await self.inventory_repo.add_item(db, player_id, fallback, item_name, 1)
-                            items_unequipped[equip_type].append(item_name)
+            if clear_equipment:
+                # Unequip all items to player inventory before selling ship.
+                # Resolve concrete types via STI discriminator to avoid generic aliases.
+                from services.equipment_service import _INVENTORY_TYPE_MAP as _EQUIP_INV_MAP
+                from services.equipment_service import item_discriminator_to_concrete_type
 
-                # Credit player with ship's full value (no tax)
-                await self.player_repo.update_credits(db, player_id, player.credits + ship_value, commit=False)
+                for equip_type in ("weapons", "modules", "turrets", "secondary_weapons"):
+                    equipped: list[str] = list(getattr(player_ship, equip_type) or [])
+                    for item_name in equipped:
+                        base = await self.item_repo.get_by_name_any_type(db, item_name)
+                        if base:
+                            concrete = item_discriminator_to_concrete_type(base.type)
+                            if concrete:
+                                await self.inventory_repo.add_item(db, player_id, concrete, item_name, 1, commit=False)
+                                items_unequipped[equip_type].append(item_name)
+                                continue
+                        # Fallback to equipment_service's natural concrete type map
+                        fallback = _EQUIP_INV_MAP.get(equip_type, "module")
+                        await self.inventory_repo.add_item(db, player_id, fallback, item_name, 1, commit=False)
+                        items_unequipped[equip_type].append(item_name)
 
-                # Remove the PlayerShip from database
-                await db.delete(player_ship)
-                await db.flush()
+            # Credit player with ship's full value (no tax; commit=False — caller's transaction)
+            await self.player_repo.update_credits(db, player_id, player.credits + ship_value, commit=False)
 
-                # Add the ship to shop stock
-                await self._add_item_to_shop(
-                    db,
-                    player.guild_id,
-                    target_tier,
-                    "ship",
-                    player_ship.ship_name,
-                    1,
-                    ship_value,
-                )
+            # Remove the PlayerShip from database
+            await db.delete(player_ship)
+            await db.flush()
+
+            # Add the ship to shop stock (commit=False — caller's transaction controls commit)
+            await self._add_item_to_shop(
+                db,
+                player.guild_id,
+                target_tier,
+                "ship",
+                player_ship.ship_name,
+                1,
+                ship_value,
+                commit=False,
+            )
 
             total_unequipped = sum(len(v) for v in items_unequipped.values())
             transaction_details = {
@@ -678,9 +682,7 @@ class ShopService:
             # writing generic aliases to guild_shops.item_type.
             # Only types that have a GuildConfig count_range key are generated;
             # secondary_weapon is excluded until mechanics ship (no config key yet).
-            _generation_types = tuple(
-                t for t in GameConstants.CURRENTLY_ENABLED_TYPES if t in _CONCRETE_TO_CONFIG_KEY
-            )
+            _generation_types = tuple(t for t in GameConstants.CURRENTLY_ENABLED_TYPES if t in _CONCRETE_TO_CONFIG_KEY)
             generated_items = []
 
             for concrete_type in _generation_types:
@@ -849,9 +851,22 @@ class ShopService:
         return 0
 
     async def _add_item_to_shop(
-        self, db: AsyncSession, guild_id: int, tier: str, item_type: str, item_name: str, quantity: int, base_price: int
+        self,
+        db: AsyncSession,
+        guild_id: int,
+        tier: str,
+        item_type: str,
+        item_name: str,
+        quantity: int,
+        base_price: int,
+        commit: bool = True,
     ) -> None:
-        """Add an item to a shop (used when players sell items)."""
+        """Add an item to a shop (used when players sell items).
+
+        Args:
+            commit: When False, flush without committing (use when the caller owns
+                the transaction, e.g. inside a router-level db.begin() context).
+        """
         try:
             # Check if item already exists in shop
             existing_item = await self.shop_repo.get_shop_item_by_name(db, guild_id, tier, item_name)
@@ -859,7 +874,7 @@ class ShopService:
             if existing_item:
                 # Update quantity
                 new_quantity = existing_item.quantity + quantity
-                await self.shop_repo.update_quantity(db, existing_item.id, new_quantity)
+                await self.shop_repo.update_quantity(db, existing_item.id, new_quantity, commit=commit)
             else:
                 # Create new shop item
                 shop_item_data = {
@@ -872,7 +887,7 @@ class ShopService:
                     "price": base_price,
                     "last_restocked": datetime.now(UTC),
                 }
-                await self.shop_repo.create_or_update(db, shop_item_data)
+                await self.shop_repo.create_or_update(db, shop_item_data, commit=commit)
 
         except Exception as e:
             flogger.error(f"Error adding item to shop: {e}")

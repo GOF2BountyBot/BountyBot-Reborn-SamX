@@ -76,6 +76,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 # Per-test isolation fixture
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture(autouse=True)
 def _restore_real_discord():
     """
@@ -88,9 +89,11 @@ def _restore_real_discord():
     sys.modules["discord.ext.commands"] = _cm._REAL_DISCORD_EXT_COMMANDS
     # Reload discord_mock_utils so create_discord_not_found() uses real discord
     import tests.mocks.discord_mock_utils as _dmu_mod
+
     importlib.reload(_dmu_mod)
     # Force the threads router to re-bind its 'discord' global to real discord
     from api.routers import threads as _threads_mod
+
     importlib.reload(_threads_mod)
     yield
 
@@ -144,6 +147,7 @@ def threads_test_app(mock_bot):
     mock_thread.fetch_message = AsyncMock(return_value=mock_message)
     # make thread.send return a mock message
     mock_thread.send = AsyncMock(return_value=mock_message)
+
     # make thread.history an async generator returning empty list
     async def _empty_history(limit=100):
         return
@@ -151,12 +155,14 @@ def threads_test_app(mock_bot):
 
     mock_thread.history = MagicMock(return_value=_empty_history())
 
-    with patch("api.routers.threads.resolve_bot", new_callable=AsyncMock) as mock_resolve, \
-         patch("api.routers.threads.handle_discord_exception", new_callable=AsyncMock) as mock_handle, \
-         patch("api.routers.threads.find_thread_by_id") as mock_find, \
-         patch("api.routers.threads.ChannelConverter") as mock_channel_converter, \
-         patch("api.routers.threads.MessageConverter") as mock_message_converter, \
-         patch("api.routers.threads.EmbedConverter") as mock_embed_converter:
+    with (
+        patch("api.routers.threads.resolve_bot", new_callable=AsyncMock) as mock_resolve,
+        patch("api.routers.threads.handle_discord_exception", new_callable=AsyncMock) as mock_handle,
+        patch("api.routers.threads.find_thread_by_id") as mock_find,
+        patch("api.routers.threads.ChannelConverter") as mock_channel_converter,
+        patch("api.routers.threads.MessageConverter") as mock_message_converter,
+        patch("api.routers.threads.EmbedConverter") as mock_embed_converter,
+    ):
 
         async def mock_resolve_bot(request):
             return mock_bot
@@ -173,6 +179,7 @@ def threads_test_app(mock_bot):
 
         # ChannelConverter.thread_to_detail returns a Thread schema object
         from api.schemas.channel_schemas import Thread as ThreadSchema
+
         _mock_thread_data = ThreadSchema(
             id=1234567890,
             name="Test Thread",
@@ -189,6 +196,7 @@ def threads_test_app(mock_bot):
 
         # MessageConverter.message_to_payload returns a Message schema object
         from api.schemas.message_schemas import Message as MessageSchema
+
         _mock_message_data = MessageSchema(
             id=999999999,
             channel_id=1234567890,
@@ -203,6 +211,7 @@ def threads_test_app(mock_bot):
         mock_embed_converter.payload_to_embed.return_value = MagicMock()
 
         from api.routers.threads import router
+
         app.include_router(router, prefix="/api/v1")
 
         yield app
@@ -365,9 +374,14 @@ class TestErrorHandling:
     def test_handle_discord_exception(self, threads_client):
         """Threads endpoints should handle Discord exceptions gracefully."""
         from fastapi import HTTPException as FastAPIHTTPException
-        with patch("api.routers.threads.resolve_bot", side_effect=Exception("Test Discord error")), \
-             patch("api.routers.threads.handle_discord_exception",
-                   side_effect=FastAPIHTTPException(status_code=500, detail="Internal server error")):
+
+        with (
+            patch("api.routers.threads.resolve_bot", side_effect=Exception("Test Discord error")),
+            patch(
+                "api.routers.threads.handle_discord_exception",
+                side_effect=FastAPIHTTPException(status_code=500, detail="Internal server error"),
+            ),
+        ):
             response = threads_client.get("/api/v1/threads/1234567890")
             assert response.status_code == 500
             assert "internal server error" in response.json()["detail"].lower()

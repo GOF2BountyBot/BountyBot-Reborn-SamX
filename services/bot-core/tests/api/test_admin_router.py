@@ -853,11 +853,14 @@ class TestAddInventoryItem:
         """Returns 200 with item details when player exists."""
         _configure_db_mock(mock_get_db)
         mock_inventory_service.add_item_to_inventory = AsyncMock(
-            return_value=_make_transaction_details(player_id=1, item_type="weapon", item_name="Pulse Laser", quantity=2)
+            return_value=_make_transaction_details(
+                player_id=1, item_type="primary_weapon", item_name="Pulse Laser", quantity=2
+            )
         )
+        # A.45: use concrete type (primary_weapon not alias "weapon")
         payload = {
             "player_id": 1,
-            "item_type": "weapon",
+            "item_type": "primary_weapon",
             "item_name": "Pulse Laser",
             "quantity": 2,
         }
@@ -867,7 +870,6 @@ class TestAddInventoryItem:
         assert response.status_code == 200
         data = response.json()
         assert data["player_id"] == 1
-        assert data["item_type"] == "weapon"
         assert data["item_name"] == "Pulse Laser"
         assert data["quantity_added"] == 2
         assert "message" in data
@@ -889,9 +891,10 @@ class TestAddInventoryItem:
 
     @patch("api.routers.admin.get_db_session")
     def test_add_inventory_item_all_valid_item_types(self, mock_get_db, client, mock_inventory_service):
-        """Accepts all valid item types: ship, weapon, module, turret."""
+        """Accepts all valid concrete item types (A.45: 5-value Literal)."""
         _configure_db_mock(mock_get_db)
-        valid_types = ["ship", "weapon", "module", "turret"]
+        # A.45: concrete vocabulary; aliases ("weapon", "turret") are now rejected at 422
+        valid_types = ["ship", "primary_weapon", "secondary_weapon", "turret_weapon", "module"]
 
         for item_type in valid_types:
             mock_inventory_service.add_item_to_inventory = AsyncMock(
@@ -906,7 +909,8 @@ class TestAddInventoryItem:
         """Returns 404 when player does not exist (service raises ValueError)."""
         _configure_db_mock(mock_get_db)
         mock_inventory_service.add_item_to_inventory = AsyncMock(side_effect=ValueError("Player 9999 not found"))
-        payload = {"player_id": 9999, "item_type": "weapon", "item_name": "Pulse Laser"}
+        # A.45: use concrete type so schema passes; service raises ValueError
+        payload = {"player_id": 9999, "item_type": "primary_weapon", "item_name": "Pulse Laser"}
 
         response = client.post("/api/v1/admin/players/inventory/add?user_id=67890&guild_id=67890", json=payload)
 
@@ -918,7 +922,8 @@ class TestAddInventoryItem:
         """Returns 500 when an unexpected exception is raised."""
         _configure_db_mock(mock_get_db)
         mock_inventory_service.add_item_to_inventory = AsyncMock(side_effect=RuntimeError("DB connection lost"))
-        payload = {"player_id": 1, "item_type": "weapon", "item_name": "Pulse Laser"}
+        # A.45: use concrete type so schema passes; service raises RuntimeError
+        payload = {"player_id": 1, "item_type": "primary_weapon", "item_name": "Pulse Laser"}
 
         response = client.post("/api/v1/admin/players/inventory/add?user_id=67890&guild_id=67890", json=payload)
 
@@ -939,7 +944,8 @@ class TestAddInventoryItem:
 
     def test_add_inventory_item_quantity_zero_returns_422(self, client):
         """Returns 422 when quantity is 0 (gt=0)."""
-        payload = {"player_id": 1, "item_type": "weapon", "item_name": "Laser", "quantity": 0}
+        # A.45: use concrete type; the 422 is from quantity=0 validation
+        payload = {"player_id": 1, "item_type": "primary_weapon", "item_name": "Laser", "quantity": 0}
 
         response = client.post("/api/v1/admin/players/inventory/add?user_id=67890&guild_id=67890", json=payload)
 
@@ -947,7 +953,8 @@ class TestAddInventoryItem:
 
     def test_add_inventory_item_negative_quantity_returns_422(self, client):
         """Returns 422 when quantity is negative (gt=0)."""
-        payload = {"player_id": 1, "item_type": "weapon", "item_name": "Laser", "quantity": -1}
+        # A.45: use concrete type; the 422 is from negative quantity validation
+        payload = {"player_id": 1, "item_type": "primary_weapon", "item_name": "Laser", "quantity": -1}
 
         response = client.post("/api/v1/admin/players/inventory/add?user_id=67890&guild_id=67890", json=payload)
 
@@ -1002,7 +1009,8 @@ class TestAddInventoryItem:
         )
         mock_inventory_service.add_item_to_inventory = AsyncMock(return_value=expected_details)
 
-        payload = {"player_id": 7, "item_type": "weapon", "item_name": real_item_name, "quantity": 1}
+        # A.45: use concrete type (primary_weapon)
+        payload = {"player_id": 7, "item_type": "primary_weapon", "item_name": real_item_name, "quantity": 1}
         response = client.post("/api/v1/admin/players/inventory/add?user_id=67890&guild_id=67890", json=payload)
 
         assert response.status_code == 200

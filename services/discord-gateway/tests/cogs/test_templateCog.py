@@ -1,4 +1,5 @@
 """Tests for templateCog cog."""
+
 import os
 import sys
 import types
@@ -12,6 +13,7 @@ _mock_shared.__path__ = []
 
 _mock_bblogger = types.ModuleType("shared.bblogger")
 
+
 def _make_mock_logger(*_args, **_kwargs):
     """Return a MagicMock with common log-level methods."""
     logger = MagicMock()
@@ -23,6 +25,7 @@ def _make_mock_logger(*_args, **_kwargs):
     logger.critical = MagicMock()
     logger.exception = MagicMock()
     return logger
+
 
 _mock_bblogger.get_logger = MagicMock(side_effect=_make_mock_logger)
 
@@ -52,9 +55,16 @@ def mock_bot():
 
 def _evict_discord_modules():
     """Remove cached discord/source modules."""
-    to_evict = [k for k in sys.modules if k == "discord" or k.startswith("discord.")
-                or k in ("api", "bot", "utils") or k.startswith("api.") or k.startswith("utils.")
-                or k.startswith("cogs.")]
+    to_evict = [
+        k
+        for k in sys.modules
+        if k == "discord"
+        or k.startswith("discord.")
+        or k in ("api", "bot", "utils")
+        or k.startswith("api.")
+        or k.startswith("utils.")
+        or k.startswith("cogs.")
+    ]
     for k in to_evict:
         sys.modules.pop(k, None)
 
@@ -66,6 +76,7 @@ def mock_template_cog(mock_bot):
     sys.modules["shared.bblogger"] = _mock_bblogger
     _evict_discord_modules()
     from cogs.templateCog import TemplateCog
+
     cog = TemplateCog(mock_bot)
     return cog
 
@@ -76,13 +87,13 @@ class TestTemplateCogInitialization:
     def test_initialization(self, mock_template_cog):
         """TemplateCog should initialize properly with bot reference."""
         assert mock_template_cog.bot is not None
-        assert hasattr(mock_template_cog, 'bot')
-        assert mock_template_cog.__class__.__name__ == 'TemplateCog'
+        assert hasattr(mock_template_cog, "bot")
+        assert mock_template_cog.__class__.__name__ == "TemplateCog"
 
     def test_cog_has_commands(self, mock_template_cog):
         """TemplateCog should have at least one command."""
         # Check that the cog has the example command
-        assert hasattr(mock_template_cog, 'example')
+        assert hasattr(mock_template_cog, "example")
 
 
 class TestTemplateCogCommands:
@@ -91,14 +102,14 @@ class TestTemplateCogCommands:
     def test_example_command_exists(self, mock_template_cog):
         """example command should exist in cog."""
         # Check that example command exists
-        assert hasattr(mock_template_cog, 'example')
+        assert hasattr(mock_template_cog, "example")
         # Should be an app_commands.Command
         assert mock_template_cog.example is not None
 
     def test_example_error_handler_exists(self, mock_template_cog):
         """example_error handler should exist in cog."""
         # Check that example_error exists
-        assert hasattr(mock_template_cog, 'example_error')
+        assert hasattr(mock_template_cog, "example_error")
         # Should be callable
         assert callable(mock_template_cog.example_error)
 
@@ -112,6 +123,7 @@ class TestTemplateCogCommands:
 
         # Create MissingRole error
         from discord import app_commands
+
         error = app_commands.MissingRole("developer")
 
         # Call error handler directly (it's a coroutine function)
@@ -120,7 +132,7 @@ class TestTemplateCogCommands:
         # Verify error message was sent
         interaction.response.send_message.assert_called_once()
         call_kwargs = interaction.response.send_message.call_args.kwargs
-        assert call_kwargs.get('ephemeral') is True
+        assert call_kwargs.get("ephemeral") is True
 
     @pytest.mark.asyncio
     async def test_example_error_handler_generic_error(self, mock_template_cog):
@@ -132,6 +144,7 @@ class TestTemplateCogCommands:
 
         # Create generic error
         from discord import app_commands
+
         error = app_commands.AppCommandError("Some other error")
 
         # Call error handler
@@ -152,6 +165,7 @@ class TestTemplateCogSetup:
         _evict_discord_modules()
 
         from cogs.templateCog import setup
+
         await setup(mock_bot)
 
         # Verify add_cog was called
@@ -171,6 +185,7 @@ class TestTemplateCogConfiguration:
         _evict_discord_modules()
 
         from cogs.templateCog import is_developer
+
         result = is_developer()
         assert isinstance(result, bool)
 
@@ -183,4 +198,5 @@ class TestTemplateCogConfiguration:
         with patch.dict(os.environ, {"BOT_API_BASE_URL": "http://custom:8000"}):
             # Module re-import should use env var
             from cogs import templateCog
-            assert hasattr(templateCog, 'api_base')
+
+            assert hasattr(templateCog, "api_base")

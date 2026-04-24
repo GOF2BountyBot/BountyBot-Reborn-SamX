@@ -186,7 +186,7 @@ async def player_inventory_autocomplete(
                 continue
 
             qty_suffix = f" x{quantity}" if quantity and quantity > 1 else ""
-            label = f"{item_name} ({item_type.title() or 'Item'}){qty_suffix}"
+            label = f"{item_name} ({item_type.replace('_', ' ').title() or 'Item'}){qty_suffix}"
 
             if norm_current in normalize_for_search(label):
                 seen.add(item_name)
@@ -264,7 +264,7 @@ async def player_equippable_autocomplete(
             if item_name in equipped_names:
                 continue
             qty_suffix = f" x{quantity}" if quantity and quantity > 1 else ""
-            label = f"{item_name} ({item_type.title()}){qty_suffix}"
+            label = f"{item_name} ({item_type.replace('_', ' ').title()}){qty_suffix}"
             if norm_current in normalize_for_search(label):
                 seen.add(item_name)
                 choices.append(app_commands.Choice(name=label[:100], value=item_name))

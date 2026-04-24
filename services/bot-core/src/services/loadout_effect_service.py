@@ -130,10 +130,7 @@ class LoadoutEffectService:
         if spec is None:
             # Unknown type — log for ops visibility, return empty
             keys = list(extra_atts.keys()) if isinstance(extra_atts, dict) else None
-            flogger.warning(
-                f"Unknown module_type for effects formatting: {module_type!r} "
-                f"(extra_atts keys={keys})"
-            )
+            flogger.warning(f"Unknown module_type for effects formatting: {module_type!r} (extra_atts keys={keys})")
             return []
 
         if not spec:

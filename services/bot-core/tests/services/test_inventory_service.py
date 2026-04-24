@@ -275,7 +275,9 @@ class TestAddItemToInventory:
         mock_player_repo.get_by_id.return_value = _make_player()
 
         with pytest.raises(ValueError, match="Quantity must be positive"):
-            await service.add_item_to_inventory(mock_db, player_id=1, item_type="primary_weapon", item_name="Laser", quantity=0)
+            await service.add_item_to_inventory(
+                mock_db, player_id=1, item_type="primary_weapon", item_name="Laser", quantity=0
+            )
 
     @pytest.mark.asyncio
     async def test_raises_for_negative_quantity(self, service, mock_db, mock_player_repo):
@@ -305,7 +307,7 @@ class TestAddItemToInventory:
 
         await service.add_item_to_inventory(mock_db, player_id=1, item_type="module", item_name="Shield", quantity=2)
 
-        mock_inventory_repo.add_item.assert_awaited_once_with(mock_db, 1, "module", "Shield", 2)
+        mock_inventory_repo.add_item.assert_awaited_once_with(mock_db, 1, "module", "Shield", 2, commit=True)
 
     @pytest.mark.asyncio
     async def test_raises_when_item_does_not_exist(self, service, mock_db, mock_player_repo):
@@ -424,9 +426,11 @@ class TestRemoveItemFromInventory:
         updated = _make_inventory_item(item_type="primary_weapon", quantity=1)
         mock_inventory_repo.get_player_item.side_effect = [existing, updated]
 
-        await service.remove_item_from_inventory(mock_db, player_id=1, item_type="primary_weapon", item_name="Gun", quantity=2)
+        await service.remove_item_from_inventory(
+            mock_db, player_id=1, item_type="primary_weapon", item_name="Gun", quantity=2
+        )
 
-        mock_inventory_repo.remove_item.assert_awaited_once_with(mock_db, 1, "primary_weapon", "Gun", 2)
+        mock_inventory_repo.remove_item.assert_awaited_once_with(mock_db, 1, "primary_weapon", "Gun", 2, commit=True)
 
 
 # ===========================================================================
@@ -1066,3 +1070,59 @@ class TestConsolidateInventoryMerge:
 
         assert result["player_id"] == 42
         assert result["items_consolidated"] == 0
+
+
+# ===========================================================================
+# Tests: Service-layer alias guard (GAP-A-001)
+# ===========================================================================
+
+
+class TestServiceLayerAliasGuard:
+    """GAP-A-001: Defense-in-depth — service layer rejects multi-expansion generic aliases
+    even if the router schema Literal were bypassed.
+
+    These tests call the service methods directly (bypassing the router's Literal schema)
+    with the generic alias "weapon" and assert that InvalidItemTypeError is raised.
+    This proves the guard remains effective if a future refactor removes the schema Literal.
+
+    Guard mechanics (see inventory_service.py):
+      expand_item_type_to_concrete(item_type, context="playable") is called; if the result
+      has len != 1 (i.e. the alias expands to multiple concrete types), InvalidItemTypeError
+      is raised immediately — before any player lookup.
+
+    Scope note: the alias "turret" expands to exactly one concrete type ("turret_weapon")
+    and is therefore normalised silently to "turret_weapon" rather than rejected. The guard
+    targets multi-expansion ambiguity ("weapon" -> primary/secondary/turret). Single-expansion
+    aliases like "turret" pass the guard because they resolve unambiguously.
+
+    Mock budget: 0 — InvalidItemTypeError is raised before any repo call.
+    """
+
+    @pytest.mark.asyncio
+    async def test_add_item_rejects_alias_at_service_layer(self, service, mock_db):
+        """Calling add_item_to_inventory with the alias 'weapon' raises InvalidItemTypeError
+        directly at the service layer, without going through the router schema guard.
+        The guard fires before any player-lookup or repo call.
+        """
+        with pytest.raises(InvalidItemTypeError):
+            await service.add_item_to_inventory(mock_db, player_id=1, item_type="weapon", item_name="Pulse Laser")
+
+    @pytest.mark.asyncio
+    async def test_add_item_rejects_unknown_alias_at_service_layer(self, service, mock_db):
+        """Calling add_item_to_inventory with a completely unknown alias raises InvalidItemTypeError."""
+        with pytest.raises(InvalidItemTypeError):
+            await service.add_item_to_inventory(mock_db, player_id=1, item_type="unknown_type", item_name="Foo")
+
+    @pytest.mark.asyncio
+    async def test_remove_item_rejects_alias_at_service_layer(self, service, mock_db):
+        """Calling remove_item_from_inventory with the alias 'weapon' raises InvalidItemTypeError
+        directly at the service layer.
+        """
+        with pytest.raises(InvalidItemTypeError):
+            await service.remove_item_from_inventory(mock_db, player_id=1, item_type="weapon", item_name="Pulse Laser")
+
+    @pytest.mark.asyncio
+    async def test_remove_item_rejects_unknown_alias_at_service_layer(self, service, mock_db):
+        """Calling remove_item_from_inventory with an unknown alias raises InvalidItemTypeError."""
+        with pytest.raises(InvalidItemTypeError):
+            await service.remove_item_from_inventory(mock_db, player_id=1, item_type="bad_alias", item_name="Foo")

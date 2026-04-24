@@ -1,4 +1,5 @@
 """Tests for command utility functions and classes."""
+
 import importlib
 import os
 import sys
@@ -53,10 +54,7 @@ class TestCommandValidator:
 
     def test_register_command_with_permissions(self):
         """Test registering a command with specific permissions."""
-        permissions = {
-            "admin_only": True,
-            "required_roles": ["Moderator"]
-        }
+        permissions = {"admin_only": True, "required_roles": ["Moderator"]}
         self.validator.register_command("admin_cmd", "Admin command", permissions)
 
         assert self.validator.command_registry["admin_cmd"]["permissions"] == permissions
@@ -286,6 +284,7 @@ class TestCommandHandler:
         # uses the current discord.ext.commands reference, not a stale one from
         # when the module was first imported during test collection.
         import utils.command_utils as _cu
+
         self.mock_bot = MagicMock()
         self.handler = _cu.CommandHandler(self.mock_bot)
 
@@ -299,11 +298,7 @@ class TestCommandHandler:
 
         mock_handler = AsyncMock()
 
-        result = await self.handler.execute_command(
-            mock_ctx,
-            "test_cmd",
-            mock_handler
-        )
+        result = await self.handler.execute_command(mock_ctx, "test_cmd", mock_handler)
 
         assert result is True
         mock_handler.assert_called_once()
@@ -319,12 +314,7 @@ class TestCommandHandler:
         permissions = {"admin_only": True}
         mock_handler = AsyncMock()
 
-        result = await self.handler.execute_command(
-            mock_ctx,
-            "admin_cmd",
-            mock_handler,
-            permissions=permissions
-        )
+        result = await self.handler.execute_command(mock_ctx, "admin_cmd", mock_handler, permissions=permissions)
 
         assert result is False
         mock_handler.assert_not_called()
@@ -341,23 +331,13 @@ class TestCommandHandler:
         mock_handler = AsyncMock()
 
         # First execution
-        await self.handler.execute_command(
-            mock_ctx,
-            "cooldown_cmd",
-            mock_handler,
-            cooldown_seconds=10
-        )
+        await self.handler.execute_command(mock_ctx, "cooldown_cmd", mock_handler, cooldown_seconds=10)
 
         # Reset mock to track second call
         mock_ctx.reset_mock()
 
         # Second execution (should be on cooldown)
-        result = await self.handler.execute_command(
-            mock_ctx,
-            "cooldown_cmd",
-            mock_handler,
-            cooldown_seconds=10
-        )
+        result = await self.handler.execute_command(mock_ctx, "cooldown_cmd", mock_handler, cooldown_seconds=10)
 
         assert result is False
         mock_ctx.respond.assert_called_once()
@@ -372,13 +352,10 @@ class TestCommandHandler:
 
         # Handler that raises CommandError
         from discord.ext import commands
+
         mock_handler = AsyncMock(side_effect=commands.CommandError("Test error"))
 
-        result = await self.handler.execute_command(
-            mock_ctx,
-            "error_cmd",
-            mock_handler
-        )
+        result = await self.handler.execute_command(mock_ctx, "error_cmd", mock_handler)
 
         assert result is False
 
@@ -393,11 +370,7 @@ class TestCommandHandler:
         # Handler that raises generic error
         mock_handler = AsyncMock(side_effect=ValueError("Unexpected error"))
 
-        result = await self.handler.execute_command(
-            mock_ctx,
-            "error_cmd",
-            mock_handler
-        )
+        result = await self.handler.execute_command(mock_ctx, "error_cmd", mock_handler)
 
         assert result is False
 
@@ -407,6 +380,7 @@ class TestCommandHandler:
 
         # Call private method directly for testing
         import asyncio
+
         asyncio.run(self.handler._send_permission_error(mock_ctx))
 
         assert mock_ctx.respond.called
@@ -417,6 +391,7 @@ class TestCommandHandler:
 
         # Call private method directly for testing
         import asyncio
+
         asyncio.run(self.handler._send_cooldown_error(mock_ctx, 5))
 
         assert mock_ctx.respond.called
@@ -427,6 +402,7 @@ class TestCommandHandler:
 
         # Call private method directly for testing
         import asyncio
+
         asyncio.run(self.handler._send_command_error(mock_ctx, "Test error"))
 
         assert mock_ctx.respond.called
@@ -437,6 +413,7 @@ class TestCommandHandler:
 
         # Call private method directly for testing
         import asyncio
+
         asyncio.run(self.handler._send_generic_error(mock_ctx))
 
         assert mock_ctx.respond.called
@@ -449,6 +426,7 @@ class TestGetCommandHandler:
         """Test that get_command_handler creates an instance on first call."""
         # Reset global state and use the reloaded module to avoid stale class references.
         import utils.command_utils
+
         utils.command_utils._command_handler = None
 
         mock_bot = MagicMock()
@@ -460,6 +438,7 @@ class TestGetCommandHandler:
     def test_get_command_handler_returns_same_instance(self):
         """Test that get_command_handler returns the same instance on subsequent calls."""
         import utils.command_utils
+
         utils.command_utils._command_handler = None
 
         mock_bot1 = MagicMock()

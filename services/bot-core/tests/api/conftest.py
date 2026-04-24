@@ -60,8 +60,21 @@ def mock_db_session():
 
     Replaces per-test @patch("...get_db_session") decorators.
     Returns (mock_session, mock_cm) tuple so tests can unpack as needed.
+
+    Also configures mock_session.begin() to behave as an async context manager
+    so that routers using ``async with get_db_session() as db, db.begin():``
+    work correctly after the A.44 transaction-ownership fix.
     """
+    from contextlib import asynccontextmanager
+
     mock_session = AsyncMock()
+
+    @asynccontextmanager
+    async def _mock_begin():
+        yield
+
+    mock_session.begin = MagicMock(side_effect=lambda: _mock_begin())
+
     mock_cm = MagicMock()
     mock_cm.__aenter__ = AsyncMock(return_value=mock_session)
     mock_cm.__aexit__ = AsyncMock(return_value=False)

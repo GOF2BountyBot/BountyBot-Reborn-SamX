@@ -50,14 +50,13 @@ for _mod in ["discord", "discord.ext", "discord.ext.commands", "discord.app_comm
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 
-
 def create_mock_message(
     message_id=1234567890,
     channel_id=1234567890,
     guild_id=987654321,
     author_id=111111111,
     content="Test message",
-    timestamp=None
+    timestamp=None,
 ):
     """Create a mock Discord message using DiscordMockUtils."""
     return DiscordMockUtils.create_mock_message(
@@ -105,9 +104,16 @@ def mock_bot():
 
 def _evict_discord_modules():
     """Remove any cached discord or source modules so they re-import with real discord."""
-    to_evict = [k for k in sys.modules if k == "discord" or k.startswith("discord.")
-                or k in ("api", "bot", "utils") or k.startswith("api.") or k.startswith("utils.")
-                or k.startswith("cogs.")]
+    to_evict = [
+        k
+        for k in sys.modules
+        if k == "discord"
+        or k.startswith("discord.")
+        or k in ("api", "bot", "utils")
+        or k.startswith("api.")
+        or k.startswith("utils.")
+        or k.startswith("cogs.")
+    ]
     for k in to_evict:
         sys.modules.pop(k, None)
 
@@ -121,18 +127,16 @@ def messages_test_app(mock_bot):
 
     app.state.bot = mock_bot
 
-    with patch("api.routers.messages._find_message", new_callable=AsyncMock) as mock_find_message, \
-         patch("api.routers.messages.resolve_bot", new_callable=AsyncMock) as mock_resolve, \
-         patch("api.routers.messages.handle_discord_exception", new_callable=AsyncMock) as mock_handle, \
-         patch("api.routers.messages.MessageConverter") as mock_converter:
-
+    with (
+        patch("api.routers.messages._find_message", new_callable=AsyncMock) as mock_find_message,
+        patch("api.routers.messages.resolve_bot", new_callable=AsyncMock) as mock_resolve,
+        patch("api.routers.messages.handle_discord_exception", new_callable=AsyncMock) as mock_handle,
+        patch("api.routers.messages.MessageConverter") as mock_converter,
+    ):
         from api.schemas.message_schemas import MessageSummary
 
         _mock_message_payload = MessageSummary(
-            id=1234567890,
-            author_id=123456789,
-            content=None,
-            timestamp="2024-01-01T00:00:00"
+            id=1234567890, author_id=123456789, content=None, timestamp="2024-01-01T00:00:00"
         )
 
         async def mock_find_message_impl(bot, message_id, logger):
@@ -144,9 +148,7 @@ def messages_test_app(mock_bot):
                 mock_msg.channel = MagicMock()
                 mock_msg.channel.guild = MagicMock()
                 mock_msg.channel.guild.get_member = MagicMock(return_value=MagicMock())
-                mock_msg.channel.permissions_for = MagicMock(
-                    return_value=MagicMock(manage_messages=True)
-                )
+                mock_msg.channel.permissions_for = MagicMock(return_value=MagicMock(manage_messages=True))
                 mock_msg.edit = AsyncMock()
                 mock_msg.delete = AsyncMock()
                 return mock_msg
@@ -198,18 +200,14 @@ class TestUpdateMessage:
 
     def test_update_message_success(self, messages_client, mock_bot):
         """PUT /messages/{message_id} should update message successfully."""
-        update_data = {
-            "content": {"title": "Updated title", "description": "Updated content"}
-        }
+        update_data = {"content": {"title": "Updated title", "description": "Updated content"}}
 
         response = messages_client.put("/api/v1/messages/1234567890", json=update_data)
         assert response.status_code in (200, 403)  # 403 if not bot's own message
 
     def test_update_message_not_found(self, messages_client):
         """PUT /messages/{message_id} should return 404 for non-existent message."""
-        update_data = {
-            "content": {"title": "Updated title"}
-        }
+        update_data = {"content": {"title": "Updated title"}}
 
         response = messages_client.put("/api/v1/messages/9999999999", json=update_data)
         assert response.status_code == 404

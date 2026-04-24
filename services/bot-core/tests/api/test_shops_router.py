@@ -114,8 +114,21 @@ def client(test_app):
 
 
 def _configure_db_mock(mock_get_db):
-    """Configure mock_get_db to act as an async context manager."""
+    """Configure mock_get_db to act as an async context manager.
+
+    Also configures mock_session.begin() to return an async context manager so
+    that routers using ``async with get_db_session() as db, db.begin():`` work
+    correctly after the A.44 transaction-ownership fix.
+    """
+    from contextlib import asynccontextmanager
+
     mock_session = AsyncMock()
+
+    @asynccontextmanager
+    async def _mock_begin():
+        yield
+
+    mock_session.begin = MagicMock(side_effect=lambda: _mock_begin())
     mock_get_db.return_value.__aenter__ = AsyncMock(return_value=mock_session)
     mock_get_db.return_value.__aexit__ = AsyncMock(return_value=False)
     return mock_session
@@ -378,8 +391,8 @@ class TestSellItem:
             "player_id": 1,
             "item_name": "Pulse Laser",
             "quantity": 1,
-            "item_type": "weapon",       # stale field — silently ignored
-            "target_tier": "Bronze",     # stale field — silently ignored
+            "item_type": "weapon",  # stale field — silently ignored
+            "target_tier": "Bronze",  # stale field — silently ignored
         }
 
         with patch("api.routers.shops.get_db_session") as mock_get_db:

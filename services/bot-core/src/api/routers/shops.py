@@ -149,7 +149,7 @@ async def purchase_ship(request: ShipPurchaseRequest, shop_service: ShopService 
     )
 
     try:
-        async with get_db_session() as db:
+        async with get_db_session() as db, db.begin():
             transaction = await shop_service.purchase_ship(
                 db, request.player_id, request.shop_item_id, request.sell_old_ship
             )
@@ -180,15 +180,11 @@ async def sell_item(request: SellRequest, shop_service: ShopService = Depends(ge
     item_type is resolved from the player's inventory by item_name (A.42b).
     target_tier always matches the player's current tier (A.42c).
     """
-    flogger.info(
-        f"Player {request.player_id} selling {request.quantity}x {request.item_name}"
-    )
+    flogger.info(f"Player {request.player_id} selling {request.quantity}x {request.item_name}")
 
     try:
-        async with get_db_session() as db:
-            transaction = await shop_service.sell_item(
-                db, request.player_id, request.item_name, request.quantity
-            )
+        async with get_db_session() as db, db.begin():
+            transaction = await shop_service.sell_item(db, request.player_id, request.item_name, request.quantity)
 
             return TransactionResponse(
                 player_id=transaction["player_id"],
@@ -218,7 +214,7 @@ async def sell_ship(request: ShipSellRequest, shop_service: ShopService = Depend
     )
 
     try:
-        async with get_db_session() as db:
+        async with get_db_session() as db, db.begin():
             transaction = await shop_service.sell_ship(
                 db,
                 request.player_id,

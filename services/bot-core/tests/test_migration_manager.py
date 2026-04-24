@@ -216,7 +216,8 @@ class TestEnsureCurrent:
         with (
             patch("src.persist.database.migration_manager.command"),
             patch.object(mgr, "get_current_revision", side_effect=op_error) as mock_gcr,
-            patch("src.persist.database.migration_manager.time.sleep"),pytest.raises(OperationalError)
+            patch("src.persist.database.migration_manager.time.sleep"),
+            pytest.raises(OperationalError),
         ):
             mgr.ensure_current()
 
@@ -231,7 +232,8 @@ class TestEnsureCurrent:
         with (
             patch("src.persist.database.migration_manager.command"),
             patch.object(mgr, "get_current_revision", side_effect=prog_error) as mock_gcr,
-            patch("src.persist.database.migration_manager.time.sleep") as mock_sleep,pytest.raises(ProgrammingError)
+            patch("src.persist.database.migration_manager.time.sleep") as mock_sleep,
+            pytest.raises(ProgrammingError),
         ):
             mgr.ensure_current()
 

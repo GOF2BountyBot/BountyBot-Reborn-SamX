@@ -35,10 +35,10 @@ _SLOT_MAP: dict[str, str] = {
 
 # Map equipment_type → concrete inventory item_type (A.36 fix: concrete, not generic)
 _INVENTORY_TYPE_MAP: dict[str, str] = {
-    "weapons": "primary_weapon",       # was "weapon" — now concrete
+    "weapons": "primary_weapon",  # was "weapon" — now concrete
     "secondary_weapons": "secondary_weapon",
     "modules": "module",
-    "turrets": "turret_weapon",        # was "turret" — now concrete
+    "turrets": "turret_weapon",  # was "turret" — now concrete
 }
 
 # Map Item.type STI discriminator → equipment_category

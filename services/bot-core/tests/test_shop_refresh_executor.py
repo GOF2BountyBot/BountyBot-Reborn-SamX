@@ -699,8 +699,7 @@ async def test_embed_description_is_exact_refresh_message_no_role_prefix():
 
         # Description must be EXACTLY the refresh message — no role prefix
         assert description == expected_description, (
-            f"Expected exact description:\n  {expected_description!r}\n"
-            f"Got:\n  {description!r}"
+            f"Expected exact description:\n  {expected_description!r}\nGot:\n  {description!r}"
         )
 
 

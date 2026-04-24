@@ -1,3 +1,5 @@
+from typing import Literal
+
 from pydantic import BaseModel, Field
 
 
@@ -49,14 +51,16 @@ class UpdatePlayerXPRequest(BaseModel):
 
 class AddInventoryItemRequest(BaseModel):
     player_id: int = Field(ge=1)
-    item_type: str = Field(pattern="^(ship|weapon|module|turret)$")
+    # A.45: concrete vocabulary only (includes ship for admin add/remove inventory paths).
+    item_type: Literal["ship", "primary_weapon", "secondary_weapon", "turret_weapon", "module"]
     item_name: str = Field(max_length=256)
     quantity: int = Field(gt=0, default=1)
 
 
 class RemoveInventoryItemRequest(BaseModel):
     player_id: int = Field(ge=1)
-    item_type: str = Field(pattern="^(ship|weapon|module|turret)$")
+    # A.45: concrete vocabulary only (includes ship for admin add/remove inventory paths).
+    item_type: Literal["ship", "primary_weapon", "secondary_weapon", "turret_weapon", "module"]
     item_name: str = Field(max_length=256)
     quantity: int = Field(gt=0, default=1)
 
@@ -91,7 +95,8 @@ class AdminGiveItemRequest(BaseModel):
     guild_id: int = Field(ge=1)
     user_id: int = Field(ge=1)
     item_name: str = Field(max_length=256)
-    item_type: str = Field(pattern="^(weapon|module|turret)$")
+    # A.45: 4-value concrete set — ship is intentionally excluded; ships use AdminGiveShipRequest.
+    item_type: Literal["primary_weapon", "secondary_weapon", "turret_weapon", "module"]
     quantity: int = Field(gt=0, default=1)
 
 
@@ -99,7 +104,8 @@ class AdminRemoveItemRequest(BaseModel):
     guild_id: int = Field(ge=1)
     user_id: int = Field(ge=1)
     item_name: str = Field(max_length=256)
-    item_type: str = Field(pattern="^(weapon|module|turret)$")
+    # A.45: 4-value concrete set — ship is intentionally excluded; ships use AdminRemoveShipRequest.
+    item_type: Literal["primary_weapon", "secondary_weapon", "turret_weapon", "module"]
     quantity: int = Field(gt=0, default=1)
 
 

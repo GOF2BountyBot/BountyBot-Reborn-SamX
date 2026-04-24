@@ -49,7 +49,8 @@ class CargoItem(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     item_name: str
-    item_type: str  # "weapon", "module", "turret", "misc"
+    # Concrete item_type from PlayerInventory (ship|primary_weapon|secondary_weapon|turret_weapon|module).
+    item_type: str
     quantity: int
     emoji: str | None = None
 

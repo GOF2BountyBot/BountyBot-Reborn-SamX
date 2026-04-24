@@ -368,8 +368,7 @@ async def get_player_loadout(
     # See LOADOUT_EMBED_DESIGN_SPEC.md §10 item 5 (accepted internal-network trust boundary).
     """
     flogger.debug(
-        f"Getting loadout for player {player_id}, include_cargo={include_cargo}, "
-        f"viewer_discord_id={viewer_discord_id}"
+        f"Getting loadout for player {player_id}, include_cargo={include_cargo}, viewer_discord_id={viewer_discord_id}"
     )
 
     try:
@@ -449,7 +448,7 @@ async def transfer_credits(
     )
 
     try:
-        async with get_db_session() as db:
+        async with get_db_session() as db, db.begin():
             result = await player_service.transfer_credits(
                 db,
                 request.source_player_id,

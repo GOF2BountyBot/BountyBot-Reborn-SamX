@@ -51,6 +51,7 @@ class TestFutureEnablementFlip:
         monkeypatch.setattr(GameConstants, "CURRENTLY_ENABLED_TYPES", _ENABLED_WITH_SECONDARY)
 
         from services.equipment_service import GameConstants as EquipGC
+
         monkeypatch.setattr(EquipGC, "CURRENTLY_ENABLED_TYPES", _ENABLED_WITH_SECONDARY)
 
         # The gate check: equipment_type == "secondary_weapons" and not in CURRENTLY_ENABLED_TYPES
@@ -64,9 +65,7 @@ class TestFutureEnablementFlip:
 
         # Today secondary_weapon is not in _CONCRETE_TO_CONFIG_KEY (no GuildConfig support yet)
         # This test documents the state — when GuildConfig supports it, add to _CONCRETE_TO_CONFIG_KEY
-        enabled_with_config_key = {
-            t for t in GameConstants.CURRENTLY_ENABLED_TYPES if t in _CONCRETE_TO_CONFIG_KEY
-        }
+        enabled_with_config_key = {t for t in GameConstants.CURRENTLY_ENABLED_TYPES if t in _CONCRETE_TO_CONFIG_KEY}
         # secondary_weapon is NOT in _CONCRETE_TO_CONFIG_KEY yet — that's expected
         # This test ensures the generation loop is aware of CURRENTLY_ENABLED_TYPES
         assert "ship" in enabled_with_config_key

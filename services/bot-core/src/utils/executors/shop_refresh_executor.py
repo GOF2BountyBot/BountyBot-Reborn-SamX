@@ -171,8 +171,7 @@ async def _announce_shop_refresh(
     """
     if channel_id is None:
         flogger.warning(
-            f"ShopRefreshJob[{parent_job_id}] guild={guild_id}: "
-            "shop_channel_id not configured, skipping announcement"
+            f"ShopRefreshJob[{parent_job_id}] guild={guild_id}: shop_channel_id not configured, skipping announcement"
         )
         return
 

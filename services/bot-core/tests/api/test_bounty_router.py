@@ -503,9 +503,7 @@ class TestGetBountyLoadout:
         assert data["subject_kind"] == "criminal"
 
     @patch("api.routers.bounties.get_db_session")
-    def test_get_loadout_server_error_returns_500(
-        self, mock_get_db, client, mock_loadout_response_service
-    ):
+    def test_get_loadout_server_error_returns_500(self, mock_get_db, client, mock_loadout_response_service):
         _configure_db_mock(mock_get_db)
         mock_loadout_response_service.build_bounty_loadout.side_effect = Exception("boom")
 
@@ -609,8 +607,15 @@ class TestLoadoutResponseServiceBountyPath:
         )
         criminal = SimpleNamespace(icon="https://cdn/darkmage.png")
         ship = SimpleNamespace(
-            name="Betty", armour=95, cargo=30, handling=60, icon="https://cdn/betty.png",
-            max_primaries=1, max_secondaries=0, max_turrets=0, max_modules=2,
+            name="Betty",
+            armour=95,
+            cargo=30,
+            handling=60,
+            icon="https://cdn/betty.png",
+            max_primaries=1,
+            max_secondaries=0,
+            max_turrets=0,
+            max_modules=2,
         )
 
         svc, db = self._make_svc(bounty=bounty, criminal=criminal, ship=ship)
@@ -662,8 +667,11 @@ class TestLoadoutResponseServiceBountyPath:
             "modules": [],
         }
         bounty = SimpleNamespace(
-            id=7, criminal_name="Ghost", criminal_faction=None,
-            tech_level=2, criminal_ship=criminal_ship,
+            id=7,
+            criminal_name="Ghost",
+            criminal_faction=None,
+            tech_level=2,
+            criminal_ship=criminal_ship,
         )
         svc, db = self._make_svc(bounty=bounty, criminal=None, ship=None)
         result = await svc.build_bounty_loadout(db, 7)
@@ -681,12 +689,22 @@ class TestLoadoutResponseServiceBountyPath:
 
         criminal_ship = {"ship_name": "X", "weapons": [], "turrets": [], "modules": []}
         bounty = SimpleNamespace(
-            id=7, criminal_name="Ghost", criminal_faction=None,
-            tech_level=2, criminal_ship=criminal_ship,
+            id=7,
+            criminal_name="Ghost",
+            criminal_faction=None,
+            tech_level=2,
+            criminal_ship=criminal_ship,
         )
         ship = SimpleNamespace(
-            name="X", armour=50, cargo=10, handling=40, icon="https://cdn/x.png",
-            max_primaries=0, max_secondaries=0, max_turrets=0, max_modules=0,
+            name="X",
+            armour=50,
+            cargo=10,
+            handling=40,
+            icon="https://cdn/x.png",
+            max_primaries=0,
+            max_secondaries=0,
+            max_turrets=0,
+            max_modules=0,
         )
         svc, db = self._make_svc(bounty=bounty, criminal=None, ship=ship)
         result = await svc.build_bounty_loadout(db, 7)

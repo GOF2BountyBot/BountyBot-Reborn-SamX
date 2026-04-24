@@ -1480,9 +1480,10 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
     )
     @app_commands.choices(
         item_type=[
-            app_commands.Choice(name="Weapon", value="weapon"),
+            app_commands.Choice(name="Primary Weapon", value="primary_weapon"),
+            app_commands.Choice(name="Secondary Weapon", value="secondary_weapon"),
+            app_commands.Choice(name="Turret", value="turret_weapon"),
             app_commands.Choice(name="Module", value="module"),
-            app_commands.Choice(name="Turret", value="turret"),
         ]
     )
     @app_commands.autocomplete(item_name=item_name_autocomplete)
@@ -1528,7 +1529,7 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
                 color=discord.Color.green(),
             )
             embed.add_field(name="Item", value=item_name, inline=True)
-            embed.add_field(name="Type", value=item_type.title(), inline=True)
+            embed.add_field(name="Type", value=item_type.replace("_", " ").title(), inline=True)
             embed.add_field(name="Quantity", value=str(quantity), inline=True)
             embed.add_field(name="Player", value=user.mention, inline=True)
             embed.add_field(name="New Total", value=str(result.get("new_total_quantity", "?")), inline=True)
@@ -1559,9 +1560,10 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
     )
     @app_commands.choices(
         item_type=[
-            app_commands.Choice(name="Weapon", value="weapon"),
+            app_commands.Choice(name="Primary Weapon", value="primary_weapon"),
+            app_commands.Choice(name="Secondary Weapon", value="secondary_weapon"),
+            app_commands.Choice(name="Turret", value="turret_weapon"),
             app_commands.Choice(name="Module", value="module"),
-            app_commands.Choice(name="Turret", value="turret"),
         ]
     )
     @app_commands.autocomplete(item_name=item_name_autocomplete)
@@ -1607,7 +1609,7 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
                 color=discord.Color.orange(),
             )
             embed.add_field(name="Item", value=item_name, inline=True)
-            embed.add_field(name="Type", value=item_type.title(), inline=True)
+            embed.add_field(name="Type", value=item_type.replace("_", " ").title(), inline=True)
             embed.add_field(name="Quantity Removed", value=str(quantity), inline=True)
             embed.add_field(name="Player", value=user.mention, inline=True)
             embed.add_field(name="Remaining", value=str(result.get("new_quantity", 0)), inline=True)

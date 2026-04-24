@@ -567,7 +567,7 @@ async def transfer_ship(
     )
 
     try:
-        async with get_db_session() as db:
+        async with get_db_session() as db, db.begin():
             # Validate both players exist
             from_player = await player_repo.get_by_id(db, request.from_player_id)
             if not from_player:
@@ -621,18 +621,15 @@ async def transfer_ship(
                 for item_name in slot_items:
                     base = await item_repo_local.get_by_name_any_type(db, item_name)
                     if not base:
-                        flogger.warning(
-                            f"transfer_ship: item '{item_name}' not found in item table; skipping"
-                        )
+                        flogger.warning(f"transfer_ship: item '{item_name}' not found in item table; skipping")
                         continue
                     concrete = item_discriminator_to_concrete_type(base.type)
                     if not concrete:
                         flogger.warning(
-                            f"transfer_ship: cannot map discriminator '{base.type}' "
-                            f"for item '{item_name}'; skipping"
+                            f"transfer_ship: cannot map discriminator '{base.type}' for item '{item_name}'; skipping"
                         )
                         continue
-                    await inventory_repo.add_item(db, request.from_player_id, concrete, item_name, 1)
+                    await inventory_repo.add_item(db, request.from_player_id, concrete, item_name, 1, commit=False)
                     items_returned.append(item_name)
 
             # Clear the loadout on the ship
@@ -645,7 +642,6 @@ async def transfer_ship(
             ship.player_id = request.to_player_id
             ship.is_active = False
 
-            await db.commit()
             await db.refresh(ship)
 
             flogger.info(

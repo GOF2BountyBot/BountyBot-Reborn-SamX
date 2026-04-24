@@ -97,10 +97,12 @@ def create_mock_channel(channel_type="text", channel_id=1234567890):
     channel.overwrites = {}
     channel.threads = []
     channel.available_tags = []
+
     # async history as an async generator
     async def _history(limit=50):
         return
         yield  # make it an async generator
+
     channel.history = _history
     return channel
 
@@ -160,15 +162,18 @@ def channels_test_app(mock_bot):
 
     app.state.bot = mock_bot
 
-    with patch("api.routers.channels.get_entity_or_404", new_callable=AsyncMock) as mock_get_entity, \
-         patch("api.routers.channels.handle_discord_exception", new_callable=AsyncMock) as mock_handle, \
-         patch("api.routers.channels.resolve_bot", new_callable=AsyncMock) as mock_resolve, \
-         patch("api.routers.channels.ChannelConverter") as mock_converter:
+    with (
+        patch("api.routers.channels.get_entity_or_404", new_callable=AsyncMock) as mock_get_entity,
+        patch("api.routers.channels.handle_discord_exception", new_callable=AsyncMock) as mock_handle,
+        patch("api.routers.channels.resolve_bot", new_callable=AsyncMock) as mock_resolve,
+        patch("api.routers.channels.ChannelConverter") as mock_converter,
+    ):
 
         async def mock_get_entity_or_404(get_fn, fetch_fn, entity_id, entity_type):
             channel = mock_bot.get_channel(entity_id)
             if channel is None:
                 from fastapi import HTTPException
+
                 raise HTTPException(status_code=404, detail=f"{entity_type} {entity_id} not found")
             return channel
 
@@ -189,7 +194,7 @@ def channels_test_app(mock_bot):
             "created_at": "2024-01-01T00:00:00",
             "topic": "Test topic",
             "nsfw": False,
-            "slowmode_delay": 0
+            "slowmode_delay": 0,
         }
         mock_converter.overwrite_to_payload = MagicMock(return_value={})
 

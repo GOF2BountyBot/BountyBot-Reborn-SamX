@@ -67,6 +67,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 # Per-test isolation fixture
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture(autouse=True)
 def _restore_real_discord():
     """
@@ -79,9 +80,11 @@ def _restore_real_discord():
     sys.modules["discord.ext.commands"] = _cm._REAL_DISCORD_EXT_COMMANDS
     # Reload discord_mock_utils so create_discord_not_found() uses real discord
     import tests.mocks.discord_mock_utils as _dmu_mod
+
     importlib.reload(_dmu_mod)
     # Force the permissions router to re-bind its 'discord' global to real discord
     from api.routers import permissions as _permissions_mod
+
     importlib.reload(_permissions_mod)
     yield
 
@@ -181,9 +184,11 @@ def permissions_test_app(mock_bot):
 
     app.state.bot = mock_bot
 
-    with patch("api.routers.permissions.resolve_bot", new_callable=AsyncMock) as mock_resolve, \
-         patch("api.routers.permissions.handle_discord_exception", new_callable=AsyncMock) as mock_handle, \
-         patch("api.routers.permissions.PermissionConverter") as mock_converter:
+    with (
+        patch("api.routers.permissions.resolve_bot", new_callable=AsyncMock) as mock_resolve,
+        patch("api.routers.permissions.handle_discord_exception", new_callable=AsyncMock) as mock_handle,
+        patch("api.routers.permissions.PermissionConverter") as mock_converter,
+    ):
 
         async def mock_resolve_bot(request):
             return mock_bot
@@ -193,6 +198,7 @@ def permissions_test_app(mock_bot):
 
         # Set up mock PermissionConverter with a proper PermissionOverwrite Pydantic object
         from api.schemas.permission_schemas import PermissionOverwrite as PermOverwrite
+
         _mock_overwrite_payload = PermOverwrite(
             id="1234567890:111111111",
             channel_id=1234567890,
@@ -322,10 +328,7 @@ class TestUpdatePermissionOverwrite:
 
     def test_update_permission_overwrite_returns_200(self, permissions_client):
         """PUT /permissions/{permission_id} should return 200 with updated overwrite."""
-        overwrite_data = {
-            "allow": 8,
-            "deny": 4
-        }
+        overwrite_data = {"allow": 8, "deny": 4}
         response = permissions_client.put("/api/v1/permissions/1234567890:111111111", json=overwrite_data)
         assert response.status_code == 200
 
@@ -336,20 +339,14 @@ class TestUpdatePermissionOverwrite:
 
     def test_update_permission_overwrite_invalid_id_returns_400(self, permissions_client):
         """PUT /permissions/{permission_id} should return 400 for invalid ID format."""
-        overwrite_data = {
-            "allow": 8,
-            "deny": 4
-        }
+        overwrite_data = {"allow": 8, "deny": 4}
         response = permissions_client.put("/api/v1/permissions/invalid", json=overwrite_data)
         assert response.status_code == 400
         assert "permission_id must be in format" in response.json()["detail"].lower()
 
     def test_update_permission_overwrite_not_found_returns_404(self, permissions_client):
         """PUT /permissions/{permission_id} should return 404 for non-existent channel or target."""
-        overwrite_data = {
-            "allow": 8,
-            "deny": 4
-        }
+        overwrite_data = {"allow": 8, "deny": 4}
         response = permissions_client.put("/api/v1/permissions/9999999999:111111111", json=overwrite_data)
         assert response.status_code == 404
         assert "not found" in response.json()["detail"].lower()
@@ -386,9 +383,7 @@ class TestConvertNamesToValue:
 
     def test_convert_names_to_value_returns_200(self, permissions_client):
         """POST /permissions/convert/names-to-value should return 200 with bitfield value."""
-        body = {
-            "names": ["MANAGE_GUILD", "KICK_MEMBERS"]
-        }
+        body = {"names": ["MANAGE_GUILD", "KICK_MEMBERS"]}
         response = permissions_client.post("/api/v1/permissions/convert/names-to-value", json=body)
         assert response.status_code == 200
 
@@ -400,18 +395,14 @@ class TestConvertNamesToValue:
 
     def test_convert_names_to_value_empty_list_returns_422(self, permissions_client):
         """POST /permissions/convert/names-to-value should return 422 for empty list."""
-        body = {
-            "names": []
-        }
+        body = {"names": []}
         response = permissions_client.post("/api/v1/permissions/convert/names-to-value", json=body)
         assert response.status_code == 422
         assert "names list must contain at least one permission" in response.json()["detail"].lower()
 
     def test_convert_names_to_value_invalid_permission_returns_400(self, permissions_client):
         """POST /permissions/convert/names-to-value should return 400 for invalid permission."""
-        body = {
-            "names": ["INVALID_PERMISSION"]
-        }
+        body = {"names": ["INVALID_PERMISSION"]}
         response = permissions_client.post("/api/v1/permissions/convert/names-to-value", json=body)
         assert response.status_code == 400
         assert "unknown permission" in response.json()["detail"].lower()
@@ -422,9 +413,7 @@ class TestConvertValueToNames:
 
     def test_convert_value_to_names_returns_200(self, permissions_client):
         """POST /permissions/convert/value-to-names should return 200 with permission names."""
-        body = {
-            "value": 8
-        }
+        body = {"value": 8}
         response = permissions_client.post("/api/v1/permissions/convert/value-to-names", json=body)
         assert response.status_code == 200
 
@@ -440,11 +429,7 @@ class TestCalculatePermissions:
 
     def test_calculate_permissions_returns_200(self, permissions_client):
         """POST /permissions/calculate should return 200 with effective permissions."""
-        body = {
-            "base": 8,
-            "allow": 4,
-            "deny": 2
-        }
+        body = {"base": 8, "allow": 4, "deny": 2}
         response = permissions_client.post("/api/v1/permissions/calculate", json=body)
         assert response.status_code == 200
 
@@ -461,15 +446,9 @@ class TestCheckComprehensivePermissions:
     def test_check_comprehensive_permissions_returns_200(self, permissions_client):
         """POST /permissions/check should return 200 with permission check results."""
         body = {
-            "subject": {
-                "type": "user",
-                "id": 111111111
-            },
-            "target": {
-                "type": "guild",
-                "id": 987654321
-            },
-            "permissions": ["MANAGE_GUILD", "KICK_MEMBERS"]
+            "subject": {"type": "user", "id": 111111111},
+            "target": {"type": "guild", "id": 987654321},
+            "permissions": ["MANAGE_GUILD", "KICK_MEMBERS"],
         }
         response = permissions_client.post("/api/v1/permissions/check", json=body)
         assert response.status_code == 200
@@ -484,15 +463,9 @@ class TestCheckComprehensivePermissions:
     def test_check_comprehensive_permissions_empty_permissions_returns_200(self, permissions_client):
         """POST /permissions/check with empty permissions should return evaluate-style summary."""
         body = {
-            "subject": {
-                "type": "user",
-                "id": 111111111
-            },
-            "target": {
-                "type": "guild",
-                "id": 987654321
-            },
-            "permissions": []
+            "subject": {"type": "user", "id": 111111111},
+            "target": {"type": "guild", "id": 987654321},
+            "permissions": [],
         }
         response = permissions_client.post("/api/v1/permissions/check", json=body)
         assert response.status_code == 200
@@ -507,15 +480,9 @@ class TestCheckComprehensivePermissions:
     def test_check_comprehensive_permissions_invalid_permission_returns_422(self, permissions_client):
         """POST /permissions/check should return 422 for invalid permission."""
         body = {
-            "subject": {
-                "type": "user",
-                "id": 111111111
-            },
-            "target": {
-                "type": "guild",
-                "id": 987654321
-            },
-            "permissions": ["INVALID_PERMISSION"]
+            "subject": {"type": "user", "id": 111111111},
+            "target": {"type": "guild", "id": 987654321},
+            "permissions": ["INVALID_PERMISSION"],
         }
         response = permissions_client.post("/api/v1/permissions/check", json=body)
         assert response.status_code == 422
@@ -524,15 +491,9 @@ class TestCheckComprehensivePermissions:
     def test_check_comprehensive_permissions_invalid_subject_type_returns_400(self, permissions_client):
         """POST /permissions/check should return 400 for invalid subject type."""
         body = {
-            "subject": {
-                "type": "invalid",
-                "id": 111111111
-            },
-            "target": {
-                "type": "guild",
-                "id": 987654321
-            },
-            "permissions": ["MANAGE_GUILD"]
+            "subject": {"type": "invalid", "id": 111111111},
+            "target": {"type": "guild", "id": 987654321},
+            "permissions": ["MANAGE_GUILD"],
         }
         response = permissions_client.post("/api/v1/permissions/check", json=body)
         assert response.status_code == 400
@@ -545,9 +506,14 @@ class TestErrorHandling:
     def test_handle_discord_exception(self, permissions_client):
         """Permissions endpoints should handle Discord exceptions gracefully."""
         from fastapi import HTTPException as FastAPIHTTPException
-        with patch("api.routers.permissions.resolve_bot", side_effect=Exception("Test Discord error")), \
-             patch("api.routers.permissions.handle_discord_exception",
-                   side_effect=FastAPIHTTPException(status_code=500, detail="internal server error")):
+
+        with (
+            patch("api.routers.permissions.resolve_bot", side_effect=Exception("Test Discord error")),
+            patch(
+                "api.routers.permissions.handle_discord_exception",
+                side_effect=FastAPIHTTPException(status_code=500, detail="internal server error"),
+            ),
+        ):
             response = permissions_client.get("/api/v1/permissions/1234567890:111111111")
             assert response.status_code == 500
             assert "internal server error" in response.json()["detail"].lower()

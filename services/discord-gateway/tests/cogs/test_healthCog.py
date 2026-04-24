@@ -48,7 +48,6 @@ for _mod in ["discord", "discord.ext", "discord.ext.commands", "discord.app_comm
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "src"))
 
 
-
 @pytest.fixture
 def mock_bot():
     """Create a mock Discord bot for healthCog testing."""
@@ -62,9 +61,16 @@ def mock_bot():
 
 def _evict_discord_modules():
     """Remove cached discord/source modules so they re-import with real discord."""
-    to_evict = [k for k in sys.modules if k == "discord" or k.startswith("discord.")
-                or k in ("api", "bot", "utils") or k.startswith("api.") or k.startswith("utils.")
-                or k.startswith("cogs.")]
+    to_evict = [
+        k
+        for k in sys.modules
+        if k == "discord"
+        or k.startswith("discord.")
+        or k in ("api", "bot", "utils")
+        or k.startswith("api.")
+        or k.startswith("utils.")
+        or k.startswith("cogs.")
+    ]
     for k in to_evict:
         sys.modules.pop(k, None)
 
@@ -81,6 +87,7 @@ def mock_health_cog(mock_bot):
     sys.modules["shared.bblogger"] = _mock_bblogger
     _evict_discord_modules()
     from cogs.healthCog import HealthCog
+
     cog = HealthCog(mock_bot)
     return cog
 
@@ -121,7 +128,7 @@ class TestHealthCommands:
                 "status": "healthy",
                 "connectivity": True,
                 "error": None,
-                "connection_pool": {"size": 10, "checked_in": 5, "checked_out": 5, "overflow": 0}
+                "connection_pool": {"size": 10, "checked_in": 5, "checked_out": 5, "overflow": 0},
             },
             "schema_check": {
                 "status": "healthy",
@@ -129,8 +136,8 @@ class TestHealthCommands:
                 "expected_version": "1.0",
                 "schema_table_exists": True,
                 "version_match": True,
-                "error": None
-            }
+                "error": None,
+            },
         }
         mock_health_cog.http_client.get = AsyncMock(return_value=mock_response)
 
@@ -150,6 +157,7 @@ class TestHealthCommands:
 
         # Mock HTTP client with error
         import httpx
+
         mock_health_cog.http_client.get = AsyncMock(side_effect=httpx.HTTPError("API error"))
 
         # Call command using .callback()
@@ -194,6 +202,7 @@ class TestErrorHandling:
 
         # Mock HTTP client with connection error
         import httpx
+
         mock_health_cog.http_client.get = AsyncMock(side_effect=httpx.HTTPError("Connection failed"))
 
         # Call command using .callback()
@@ -308,7 +317,7 @@ class TestHealthCommandUnhealthyStatus:
                 "status": "unhealthy",
                 "connectivity": False,
                 "error": "Connection timeout",
-                "connection_pool": {"size": 10, "checked_in": 10, "checked_out": 0, "overflow": 0}
+                "connection_pool": {"size": 10, "checked_in": 10, "checked_out": 0, "overflow": 0},
             },
             "schema_check": {
                 "status": "unknown",
@@ -316,8 +325,8 @@ class TestHealthCommandUnhealthyStatus:
                 "expected_version": "2.0",
                 "schema_table_exists": True,
                 "version_match": False,
-                "error": "Version mismatch"
-            }
+                "error": "Version mismatch",
+            },
         }
         mock_health_cog.http_client.get = AsyncMock(return_value=mock_response)
 
@@ -351,9 +360,9 @@ class TestHealthCommandEmptyFields:
             "version": "1.0.0",
             "service": "BountyBot",
             "environment": {},  # Empty
-            "checks": {},       # Empty
+            "checks": {},  # Empty
             "database_check": {},  # Empty
-            "schema_check": {}  # Empty
+            "schema_check": {},  # Empty
         }
         mock_health_cog.http_client.get = AsyncMock(return_value=mock_response)
 
@@ -377,6 +386,7 @@ class TestHealthCommandFollowupError:
 
         # Mock HTTP client with error to trigger error path
         import httpx
+
         mock_health_cog.http_client.get = AsyncMock(side_effect=httpx.HTTPError("API error"))
 
         # Call command using .callback() - should not raise because error path has exception handling
@@ -384,8 +394,6 @@ class TestHealthCommandFollowupError:
 
         # Verify response was attempted
         interaction.response.defer.assert_called_once()
-
-
 
 
 class TestCogSetup:
@@ -400,5 +408,5 @@ class TestCogSetup:
         mock_bot.add_cog.assert_called_once()
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     pytest.main([__file__])

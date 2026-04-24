@@ -274,9 +274,10 @@ class InventoryCog(commands.Cog):
     @app_commands.choices(
         item_type=[
             app_commands.Choice(name="Ship", value="ship"),
-            app_commands.Choice(name="Weapon", value="weapon"),
+            app_commands.Choice(name="Primary Weapon", value="primary_weapon"),
+            app_commands.Choice(name="Secondary Weapon", value="secondary_weapon"),
+            app_commands.Choice(name="Turret", value="turret_weapon"),
             app_commands.Choice(name="Module", value="module"),
-            app_commands.Choice(name="Turret", value="turret"),
         ]
     )
     async def inventory(
@@ -329,7 +330,7 @@ class InventoryCog(commands.Cog):
             # Create inventory embed
             title = f"🎒 {target_user.display_name}'s Inventory"
             if item_type:
-                title += f" - {item_type.title()}s"
+                title += f" - {item_type.replace('_', ' ').title()}s"
 
             embed = discord.Embed(title=title, color=discord.Color.blue())
 
@@ -434,7 +435,7 @@ class InventoryCog(commands.Cog):
                 if len(type_items) > 10:
                     items_text += f"... and {len(type_items) - 10} more"
 
-                embed.add_field(name=f"{item_type.title()}s", value=items_text, inline=True)
+                embed.add_field(name=f"{item_type.replace('_', ' ').title()}s", value=items_text, inline=True)
 
             await interaction.followup.send(embed=embed)
             flogger.debug(f"/search '{query}' by {interaction.user} in guild {interaction.guild_id}")
@@ -481,9 +482,10 @@ class InventoryCog(commands.Cog):
     @app_commands.choices(
         item_type=[
             app_commands.Choice(name="Ship", value="ship"),
-            app_commands.Choice(name="Weapon", value="weapon"),
+            app_commands.Choice(name="Primary Weapon", value="primary_weapon"),
+            app_commands.Choice(name="Secondary Weapon", value="secondary_weapon"),
+            app_commands.Choice(name="Turret", value="turret_weapon"),
             app_commands.Choice(name="Module", value="module"),
-            app_commands.Choice(name="Turret", value="turret"),
         ]
     )
     async def item(self, interaction: discord.Interaction, item_name: str, item_type: str):
@@ -510,7 +512,7 @@ class InventoryCog(commands.Cog):
             # Create item info embed
             embed = discord.Embed(title=f"📦 {item_name}", color=self._get_item_type_color(item_type))
 
-            embed.add_field(name="Type", value=item_type.title(), inline=True)
+            embed.add_field(name="Type", value=item_type.replace("_", " ").title(), inline=True)
             embed.add_field(name="Quantity Owned", value=str(count_data["quantity"]), inline=True)
 
             if count_data["quantity"] == 0:
@@ -599,7 +601,7 @@ class InventoryCog(commands.Cog):
                     seen.add(item_name)
                     qty = item.get("quantity") or 0
                     qty_suffix = f" x{qty}" if qty and qty > 1 else ""
-                    label = f"{item_name} ({item_type.title()}){qty_suffix}"
+                    label = f"{item_name} ({item_type.replace('_', ' ').title()}){qty_suffix}"
                     choices.append(app_commands.Choice(name=label[:100], value=item_name))
             return choices[:25]
         except Exception:  # pylint: disable=broad-exception-caught
@@ -874,12 +876,13 @@ class InventoryCog(commands.Cog):
             await interaction.followup.send("⚠️ An error occurred while unequipping the item.", ephemeral=True)
 
     def _get_item_type_color(self, item_type: str) -> discord.Color:
-        """Get Discord color based on item type."""
+        """Get Discord color based on item type (concrete vocab, A.46)."""
         type_colors = {
             "ship": discord.Color.green(),
-            "weapon": discord.Color.red(),
+            "primary_weapon": discord.Color.red(),
+            "secondary_weapon": discord.Color.orange(),
+            "turret_weapon": discord.Color.purple(),
             "module": discord.Color.blue(),
-            "turret": discord.Color.purple(),
         }
         return type_colors.get(item_type, discord.Color.default())
 
@@ -1051,12 +1054,16 @@ class InventoryCog(commands.Cog):
                     await interaction.followup.send("❌ Please select an item to give.", ephemeral=True)
                     return
 
-                # Parse item name and type from autocomplete value ("name::type")
+                # Parse item name and type from autocomplete value ("name::type").
+                # If "::" is absent the user typed freehand instead of picking from autocomplete;
+                # reject with a friendly message — A.46 spec §4.2 "reject freehand" path.
                 if "::" in item:
                     item_name, item_type = item.split("::", 1)
                 else:
-                    item_name = item
-                    item_type = "weapon"  # fallback
+                    await interaction.followup.send(
+                        "❌ Please pick the item from the autocomplete list.", ephemeral=True
+                    )
+                    return
 
                 transfer_resp = await self.http_client.post(
                     f"{api_base}/inventory/transfer",
@@ -1073,6 +1080,21 @@ class InventoryCog(commands.Cog):
                     detail = transfer_resp.json().get("detail", "Transfer failed.")
                     await interaction.followup.send(f"❌ {detail}", ephemeral=True)
                     return
+                if transfer_resp.status_code == 422:
+                    # Translate 422 validation errors into user-friendly messages.
+                    # A.46: secondary_weapon is present in the choice list but may be
+                    # surface-gated on the server (InvalidItemTypeError → 422).
+                    try:
+                        raw_detail = transfer_resp.json().get("detail", "")
+                        detail_str = str(raw_detail).lower()
+                    except Exception:  # pylint: disable=broad-exception-caught
+                        detail_str = ""
+                    if "secondary_weapon" in detail_str or "not currently available" in detail_str:
+                        msg = "❌ Secondary weapons are not currently available."
+                    else:
+                        msg = "❌ That item type is not valid. Please pick a valid item from the autocomplete list."
+                    await interaction.followup.send(msg, ephemeral=True)
+                    return
                 transfer_resp.raise_for_status()
 
                 embed = discord.Embed(
@@ -1080,7 +1102,7 @@ class InventoryCog(commands.Cog):
                     description=f"You gave **{item_name}** to {target.mention}.",
                     color=discord.Color.green(),
                 )
-                embed.add_field(name="Item Type", value=item_type.title(), inline=True)
+                embed.add_field(name="Item Type", value=item_type.replace("_", " ").title(), inline=True)
                 await interaction.followup.send(embed=embed, ephemeral=True)
 
             elif give_type == "ship":

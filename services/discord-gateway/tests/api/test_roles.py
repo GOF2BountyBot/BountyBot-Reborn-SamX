@@ -68,6 +68,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 # Per-test isolation fixture
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture(autouse=True)
 def _restore_real_discord():
     """
@@ -80,9 +81,11 @@ def _restore_real_discord():
     sys.modules["discord.ext.commands"] = _cm._REAL_DISCORD_EXT_COMMANDS
     # Reload discord_mock_utils so create_discord_not_found() uses real discord
     import tests.mocks.discord_mock_utils as _dmu_mod
+
     importlib.reload(_dmu_mod)
     # Force the roles router to re-bind its 'discord' global to real discord
     from api.routers import roles as _roles_mod
+
     importlib.reload(_roles_mod)
     yield
 
@@ -158,9 +161,11 @@ def roles_test_app(mock_bot):
 
     app.state.bot = mock_bot
 
-    with patch("api.routers.roles.resolve_bot", new_callable=AsyncMock) as mock_resolve, \
-         patch("api.routers.roles.handle_discord_exception", new_callable=AsyncMock) as mock_handle, \
-         patch("api.routers.roles.RoleConverter") as mock_role_converter:
+    with (
+        patch("api.routers.roles.resolve_bot", new_callable=AsyncMock) as mock_resolve,
+        patch("api.routers.roles.handle_discord_exception", new_callable=AsyncMock) as mock_handle,
+        patch("api.routers.roles.RoleConverter") as mock_role_converter,
+    ):
 
         async def mock_resolve_bot(request):
             return mock_bot
@@ -169,6 +174,7 @@ def roles_test_app(mock_bot):
         mock_handle.return_value = None
 
         from api.schemas.role_schemas import Role as RoleSchema
+
         _mock_role_payload = RoleSchema(
             id=123456789,
             guild_id=987654321,
@@ -234,7 +240,7 @@ class TestUpdateRole:
             "permissions": 8,
             "hoist": True,
             "position": 2,
-            "mentionable": True
+            "mentionable": True,
         }
         response = roles_client.put("/api/v1/roles/123456789", json=update_data)
         assert response.status_code == 200
@@ -246,27 +252,21 @@ class TestUpdateRole:
 
     def test_update_role_partial_returns_200(self, roles_client):
         """PUT /roles/{role_id} should return 200 with partial updates."""
-        update_data = {
-            "name": "partial-role"
-        }
+        update_data = {"name": "partial-role"}
         response = roles_client.put("/api/v1/roles/123456789", json=update_data)
         assert response.status_code == 200
         assert response.json()["status"] == "updated"
 
     def test_update_role_invalid_permissions_returns_422(self, roles_client):
         """PUT /roles/{role_id} should return 422 for invalid permissions."""
-        update_data = {
-            "permissions": -1
-        }
+        update_data = {"permissions": -1}
         response = roles_client.put("/api/v1/roles/123456789", json=update_data)
         assert response.status_code == 422
         assert "invalid permissions" in response.json()["detail"].lower()
 
     def test_update_role_not_found_returns_404(self, roles_client):
         """PUT /roles/{role_id} should return 404 for non-existent role."""
-        update_data = {
-            "name": "new-role"
-        }
+        update_data = {"name": "new-role"}
         response = roles_client.put("/api/v1/roles/999999999", json=update_data)
         assert response.status_code == 404
         assert "not found" in response.json()["detail"].lower()
@@ -405,9 +405,14 @@ class TestErrorHandling:
         """Roles endpoints should handle Discord exceptions gracefully."""
         # Mock a Discord exception scenario — make handle_discord_exception raise an HTTP 500
         from fastapi import HTTPException as FastAPIHTTPException
-        with patch("api.routers.roles.resolve_bot", side_effect=Exception("Test Discord error")), \
-             patch("api.routers.roles.handle_discord_exception",
-                   side_effect=FastAPIHTTPException(status_code=500, detail="Internal server error")):
+
+        with (
+            patch("api.routers.roles.resolve_bot", side_effect=Exception("Test Discord error")),
+            patch(
+                "api.routers.roles.handle_discord_exception",
+                side_effect=FastAPIHTTPException(status_code=500, detail="Internal server error"),
+            ),
+        ):
             response = roles_client.get("/api/v1/roles/123456789")
             assert response.status_code == 500
             assert "internal server error" in response.json()["detail"].lower()

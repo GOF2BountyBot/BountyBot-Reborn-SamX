@@ -50,12 +50,16 @@ class UpdateNicknameRequest(BaseModel):
 
 class EquipItemRequest(BaseModel):
     player_id: int
+    # Equipment slot category (NOT item_type). Permitted: weapons | modules | turrets.
+    # This is orthogonal to item_type vocabulary — e.g. slot "weapons" holds "primary_weapon" items.
     equipment_type: str | None = Field(default=None, pattern="^(weapons|modules|turrets)$")
     item_name: str
 
 
 class UnequipItemRequest(BaseModel):
     player_id: int
+    # Equipment slot category (NOT item_type). Permitted: weapons | modules | turrets.
+    # This is orthogonal to item_type vocabulary — e.g. slot "weapons" holds "primary_weapon" items.
     equipment_type: str | None = Field(default=None, pattern="^(weapons|modules|turrets)$")
     item_name: str
 

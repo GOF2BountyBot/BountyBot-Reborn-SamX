@@ -68,6 +68,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 # Per-test isolation fixture
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture(autouse=True)
 def _restore_real_discord():
     """
@@ -80,20 +81,17 @@ def _restore_real_discord():
     sys.modules["discord.ext.commands"] = _cm._REAL_DISCORD_EXT_COMMANDS
     # Reload discord_mock_utils so create_discord_not_found() uses real discord
     import tests.mocks.discord_mock_utils as _dmu_mod
+
     importlib.reload(_dmu_mod)
     # Force the categories router to re-bind its 'discord' global to real discord
     from api.routers import categories as _categories_mod
+
     importlib.reload(_categories_mod)
     yield
 
 
 def create_mock_category(
-    category_id=1111111111,
-    guild_id=987654321,
-    name="Test Category",
-    position=1,
-    nsfw=False,
-    created_at=None
+    category_id=1111111111, guild_id=987654321, name="Test Category", position=1, nsfw=False, created_at=None
 ):
     """Create a mock Discord category using DiscordMockUtils."""
     category = DiscordMockUtils.create_mock_category_channel(
@@ -136,16 +134,19 @@ def categories_test_app(mock_bot):
 
     app.state.bot = mock_bot
 
-    with patch("api.routers.categories.get_entity_or_404", new_callable=AsyncMock) as mock_get_entity, \
-         patch("api.routers.categories.handle_discord_exception", new_callable=AsyncMock) as mock_handle, \
-         patch("api.routers.categories.validate_channel_type") as mock_validate, \
-         patch("api.routers.categories.resolve_bot", new_callable=AsyncMock) as mock_resolve, \
-         patch("api.routers.categories.ChannelConverter") as mock_converter:
+    with (
+        patch("api.routers.categories.get_entity_or_404", new_callable=AsyncMock) as mock_get_entity,
+        patch("api.routers.categories.handle_discord_exception", new_callable=AsyncMock) as mock_handle,
+        patch("api.routers.categories.validate_channel_type") as mock_validate,
+        patch("api.routers.categories.resolve_bot", new_callable=AsyncMock) as mock_resolve,
+        patch("api.routers.categories.ChannelConverter") as mock_converter,
+    ):
 
         async def mock_get_entity_or_404(get_fn, fetch_fn, entity_id, entity_type):
             category = mock_bot.get_channel(entity_id)
             if category is None:
                 from fastapi import HTTPException
+
                 raise HTTPException(status_code=404, detail=f"Channel {entity_id} not found")
             return category
 
@@ -154,12 +155,13 @@ def categories_test_app(mock_bot):
 
         mock_get_entity.side_effect = mock_get_entity_or_404
         mock_resolve.side_effect = mock_resolve_bot
+
         # handle_discord_exception raises HTTPException, never returns a value
         async def mock_handle_discord_exception(operation, exc):
             raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=f"Failed to {operation}: {exc}"
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to {operation}: {exc}"
             )
+
         mock_handle.side_effect = mock_handle_discord_exception
         mock_validate.return_value = None  # don't raise, pass validation
 
@@ -169,7 +171,7 @@ def categories_test_app(mock_bot):
             "name": "Test Category",
             "position": 1,
             "nsfw": False,
-            "created_at": "2024-01-01T00:00:00"
+            "created_at": "2024-01-01T00:00:00",
         }
         mock_converter.channel_to_summary.return_value = {
             "id": 1111111111,
@@ -214,10 +216,7 @@ class TestUpdateCategory:
 
     def test_update_category_success(self, categories_client):
         """PUT /categories/{category_id} should update category successfully."""
-        update_data = {
-            "name": "Updated Category Name",
-            "position": 2
-        }
+        update_data = {"name": "Updated Category Name", "position": 2}
 
         response = categories_client.put("/api/v1/categories/1111111111", json=update_data)
         assert response.status_code == 200
@@ -228,9 +227,7 @@ class TestUpdateCategory:
 
     def test_update_category_not_found(self, categories_client):
         """PUT /categories/{category_id} should return 404 for non-existent category."""
-        update_data = {
-            "name": "Updated Category Name"
-        }
+        update_data = {"name": "Updated Category Name"}
 
         response = categories_client.put("/api/v1/categories/9999999999", json=update_data)
         assert response.status_code == 404

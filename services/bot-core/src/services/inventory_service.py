@@ -93,7 +93,13 @@ class InventoryService:
             raise
 
     async def add_item_to_inventory(
-        self, db: AsyncSession, player_id: int, item_type: str, item_name: str, quantity: int = 1
+        self,
+        db: AsyncSession,
+        player_id: int,
+        item_type: str,
+        item_name: str,
+        quantity: int = 1,
+        commit: bool = True,
     ) -> dict[str, Any]:
         """
         Add items to a player's inventory.
@@ -101,6 +107,10 @@ class InventoryService:
         *item_type* MUST be a concrete type.  Generic aliases are rejected with
         ``InvalidItemTypeError`` — callers must resolve the concrete type before
         calling this method.
+
+        Args:
+            commit: When False, flush changes without committing (use when the caller
+                owns the transaction, e.g. inside a router-level db.begin() context).
 
         Returns transaction details.
         """
@@ -128,7 +138,9 @@ class InventoryService:
                 raise ValueError(f"Item {item_name} does not exist or is not of type {concrete_type}")
 
             # Add item to inventory using the concrete type
-            inventory_item = await self.inventory_repo.add_item(db, player_id, concrete_type, item_name, quantity)
+            inventory_item = await self.inventory_repo.add_item(
+                db, player_id, concrete_type, item_name, quantity, commit=commit
+            )
 
             transaction_details = {
                 "player_id": player_id,
@@ -149,13 +161,23 @@ class InventoryService:
             raise
 
     async def remove_item_from_inventory(
-        self, db: AsyncSession, player_id: int, item_type: str, item_name: str, quantity: int = 1
+        self,
+        db: AsyncSession,
+        player_id: int,
+        item_type: str,
+        item_name: str,
+        quantity: int = 1,
+        commit: bool = True,
     ) -> dict[str, Any]:
         """
         Remove items from a player's inventory.
 
         *item_type* MUST be a concrete type on write paths.  Generic aliases are
         rejected with ``InvalidItemTypeError``.
+
+        Args:
+            commit: When False, flush changes without committing (use when the caller
+                owns the transaction, e.g. inside a router-level db.begin() context).
 
         Returns transaction details.
         """
@@ -190,7 +212,7 @@ class InventoryService:
             old_quantity = existing_item.quantity
 
             # Remove item from inventory
-            await self.inventory_repo.remove_item(db, player_id, concrete_type, item_name, quantity)
+            await self.inventory_repo.remove_item(db, player_id, concrete_type, item_name, quantity, commit=commit)
 
             # Get updated item (or None if completely removed)
             updated_item = await self.inventory_repo.get_player_item(db, player_id, concrete_type, item_name)
@@ -238,15 +260,16 @@ class InventoryService:
             if from_player.guild_id != to_player.guild_id:
                 raise ValueError("Players must be in the same guild to trade")
 
-            # Perform atomic transfer
-            async with db.begin():
-                # Remove from source player
-                remove_result = await self.remove_item_from_inventory(
-                    db, from_player_id, item_type, item_name, quantity
-                )
+            # Transaction is owned by the caller (router).
+            # Remove from source player (commit=False — caller's transaction controls commit).
+            remove_result = await self.remove_item_from_inventory(
+                db, from_player_id, item_type, item_name, quantity, commit=False
+            )
 
-                # Add to target player
-                add_result = await self.add_item_to_inventory(db, to_player_id, item_type, item_name, quantity)
+            # Add to target player (commit=False — caller's transaction controls commit).
+            add_result = await self.add_item_to_inventory(
+                db, to_player_id, item_type, item_name, quantity, commit=False
+            )
 
             transfer_details = {
                 "from_player_id": from_player_id,

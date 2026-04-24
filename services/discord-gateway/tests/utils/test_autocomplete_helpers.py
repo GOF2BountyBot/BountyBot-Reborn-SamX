@@ -200,22 +200,26 @@ class TestPlayerEquippableAutocomplete:
         interaction = _make_interaction()
         client = AsyncMock()
 
-        inv_resp = _make_response([
-            {"item_name": "Pulse Laser", "item_type": "primary_weapon", "quantity": 1},
-            {"item_name": "Shield Gen", "item_type": "module", "quantity": 1},
-            {"item_name": "Big Cannon", "item_type": "primary_weapon", "quantity": 1},
-        ])
-        ships_resp = _make_response([
-            {
-                "id": 1,
-                "ship_name": "Betty",
-                "is_active": True,
-                "weapons": ["Pulse Laser"],  # already equipped
-                "modules": [],
-                "turrets": [],
-                "secondary_weapons": [],
-            }
-        ])
+        inv_resp = _make_response(
+            [
+                {"item_name": "Pulse Laser", "item_type": "primary_weapon", "quantity": 1},
+                {"item_name": "Shield Gen", "item_type": "module", "quantity": 1},
+                {"item_name": "Big Cannon", "item_type": "primary_weapon", "quantity": 1},
+            ]
+        )
+        ships_resp = _make_response(
+            [
+                {
+                    "id": 1,
+                    "ship_name": "Betty",
+                    "is_active": True,
+                    "weapons": ["Pulse Laser"],  # already equipped
+                    "modules": [],
+                    "turrets": [],
+                    "secondary_weapons": [],
+                }
+            ]
+        )
         player_resp = _make_response({"id": 1})
 
         client.post = AsyncMock(return_value=player_resp)
@@ -233,16 +237,25 @@ class TestPlayerEquippableAutocomplete:
         interaction = _make_interaction()
         client = AsyncMock()
 
-        inv_resp = _make_response([
-            {"item_name": "Primary Gun", "item_type": "primary_weapon", "quantity": 1},
-            {"item_name": "Seeker Missile", "item_type": "secondary_weapon", "quantity": 1},
-        ])
-        ships_resp = _make_response([
-            {
-                "id": 1, "ship_name": "Betty", "is_active": True,
-                "weapons": [], "modules": [], "turrets": [], "secondary_weapons": [],
-            }
-        ])
+        inv_resp = _make_response(
+            [
+                {"item_name": "Primary Gun", "item_type": "primary_weapon", "quantity": 1},
+                {"item_name": "Seeker Missile", "item_type": "secondary_weapon", "quantity": 1},
+            ]
+        )
+        ships_resp = _make_response(
+            [
+                {
+                    "id": 1,
+                    "ship_name": "Betty",
+                    "is_active": True,
+                    "weapons": [],
+                    "modules": [],
+                    "turrets": [],
+                    "secondary_weapons": [],
+                }
+            ]
+        )
         player_resp = _make_response({"id": 1})
         client.post = AsyncMock(return_value=player_resp)
         client.get = AsyncMock(side_effect=[inv_resp, ships_resp])
@@ -282,17 +295,19 @@ class TestPlayerEquippedAutocomplete:
         client = AsyncMock()
 
         player_resp = _make_response({"id": 1})
-        ships_resp = _make_response([
-            {
-                "id": 1,
-                "ship_name": "Betty",
-                "is_active": True,
-                "weapons": ["Pulse Laser"],
-                "modules": ["Shield Gen"],
-                "turrets": ["Beam Turret"],
-                "secondary_weapons": [],
-            }
-        ])
+        ships_resp = _make_response(
+            [
+                {
+                    "id": 1,
+                    "ship_name": "Betty",
+                    "is_active": True,
+                    "weapons": ["Pulse Laser"],
+                    "modules": ["Shield Gen"],
+                    "turrets": ["Beam Turret"],
+                    "secondary_weapons": [],
+                }
+            ]
+        )
         client.post = AsyncMock(return_value=player_resp)
         client.get = AsyncMock(return_value=ships_resp)
 
@@ -309,12 +324,19 @@ class TestPlayerEquippedAutocomplete:
         client = AsyncMock()
 
         player_resp = _make_response({"id": 1})
-        ships_resp = _make_response([
-            {
-                "id": 1, "ship_name": "Betty", "is_active": False,
-                "weapons": [], "modules": [], "turrets": [], "secondary_weapons": [],
-            }
-        ])
+        ships_resp = _make_response(
+            [
+                {
+                    "id": 1,
+                    "ship_name": "Betty",
+                    "is_active": False,
+                    "weapons": [],
+                    "modules": [],
+                    "turrets": [],
+                    "secondary_weapons": [],
+                }
+            ]
+        )
         client.post = AsyncMock(return_value=player_resp)
         client.get = AsyncMock(return_value=ships_resp)
 
@@ -336,17 +358,19 @@ class TestPlayerEquippedAutocomplete:
         client = AsyncMock()
 
         player_resp = _make_response({"id": 1})
-        ships_resp = _make_response([
-            {
-                "id": 1,
-                "ship_name": "Betty",
-                "is_active": True,
-                "weapons": ["Pulse Laser", "Micro Gun"],
-                "modules": ["Shield Gen"],
-                "turrets": [],
-                "secondary_weapons": [],
-            }
-        ])
+        ships_resp = _make_response(
+            [
+                {
+                    "id": 1,
+                    "ship_name": "Betty",
+                    "is_active": True,
+                    "weapons": ["Pulse Laser", "Micro Gun"],
+                    "modules": ["Shield Gen"],
+                    "turrets": [],
+                    "secondary_weapons": [],
+                }
+            ]
+        )
         client.post = AsyncMock(return_value=player_resp)
         client.get = AsyncMock(return_value=ships_resp)
 

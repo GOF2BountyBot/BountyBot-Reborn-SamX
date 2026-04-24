@@ -80,16 +80,7 @@ async def get_inventory_summary(player_id: int, inventory_service: InventoryServ
         async with get_db_session() as db:
             summary = await inventory_service.get_inventory_summary(db, player_id)
 
-            return InventorySummaryResponse(
-                player_id=summary["player_id"],
-                player_tier=summary["player_tier"],
-                guild_id=summary["guild_id"],
-                ship=summary["ship"],
-                weapon=summary["weapon"],
-                module=summary["module"],
-                turret=summary["turret"],
-                total_items=summary["total_items"],
-            )
+            return InventorySummaryResponse(**summary)
 
     except InvalidItemTypeError as e:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(e)) from e
@@ -179,7 +170,7 @@ async def transfer_item_between_players(
     )
 
     try:
-        async with get_db_session() as db:
+        async with get_db_session() as db, db.begin():
             result = await inventory_service.transfer_item_between_players(
                 db, request.from_player_id, request.to_player_id, request.item_type, request.item_name, request.quantity
             )

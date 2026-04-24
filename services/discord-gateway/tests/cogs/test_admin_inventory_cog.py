@@ -592,3 +592,62 @@ class TestAdminAutocomplete:
 
         result = asyncio.run(mock_admin_cog.player_ship_autocomplete(interaction, ""))
         assert result == []
+
+
+class TestAdminCogA46Choices:
+    """A.46: validates that /admin_give_item and /admin_remove_item use 4-value concrete choices."""
+
+    def test_admin_give_item_choices_are_concrete_vocab(self, mock_admin_cog):
+        """A.46: /admin_give_item item_type choices must be the 4-value concrete set (no ship).
+
+        Introspects the 'admin_give_item' command's app_commands.Choice list and asserts
+        the values match exactly: primary_weapon, secondary_weapon, turret_weapon, module.
+        Mock budget: 0.
+        """
+        give_item_cmd = None
+        for cmd in mock_admin_cog.__cog_app_commands__:
+            if cmd.name == "admin_give_item":
+                give_item_cmd = cmd
+                break
+        assert give_item_cmd is not None, "Could not find 'admin_give_item' command on AdminCog"
+
+        item_type_param = None
+        for param in give_item_cmd.parameters:
+            if param.name == "item_type":
+                item_type_param = param
+                break
+        assert item_type_param is not None, "Could not find 'item_type' parameter on /admin_give_item"
+
+        choice_values = {c.value for c in (item_type_param.choices or [])}
+        expected = {"primary_weapon", "secondary_weapon", "turret_weapon", "module"}
+        assert choice_values == expected, (
+            f"/admin_give_item item_type choices mismatch. Expected {expected}, got {choice_values}"
+        )
+        # Ship must NOT be in the choices (handled by /admin_give_ship instead)
+        assert "ship" not in choice_values, "/admin_give_item must not have 'ship' — use /admin_give_ship"
+
+    def test_admin_remove_item_choices_are_concrete_vocab(self, mock_admin_cog):
+        """A.46: /admin_remove_item item_type choices must be the 4-value concrete set (no ship).
+
+        Mock budget: 0.
+        """
+        remove_item_cmd = None
+        for cmd in mock_admin_cog.__cog_app_commands__:
+            if cmd.name == "admin_remove_item":
+                remove_item_cmd = cmd
+                break
+        assert remove_item_cmd is not None, "Could not find 'admin_remove_item' command on AdminCog"
+
+        item_type_param = None
+        for param in remove_item_cmd.parameters:
+            if param.name == "item_type":
+                item_type_param = param
+                break
+        assert item_type_param is not None, "Could not find 'item_type' parameter on /admin_remove_item"
+
+        choice_values = {c.value for c in (item_type_param.choices or [])}
+        expected = {"primary_weapon", "secondary_weapon", "turret_weapon", "module"}
+        assert choice_values == expected, (
+            f"/admin_remove_item item_type choices mismatch. Expected {expected}, got {choice_values}"
+        )
+        assert "ship" not in choice_values, "/admin_remove_item must not have 'ship' — use /admin_remove_ship"

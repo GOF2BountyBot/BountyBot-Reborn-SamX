@@ -60,10 +60,14 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "src"))
 def _evict_discord_modules():
     """Remove cached discord/source modules so they re-import with real discord."""
     to_evict = [
-        k for k in sys.modules
-        if k == "discord" or k.startswith("discord.")
-        or k in ("api", "bot", "utils") or k.startswith("api.")
-        or k.startswith("utils.") or k.startswith("cogs.")
+        k
+        for k in sys.modules
+        if k == "discord"
+        or k.startswith("discord.")
+        or k in ("api", "bot", "utils")
+        or k.startswith("api.")
+        or k.startswith("utils.")
+        or k.startswith("cogs.")
     ]
     for k in to_evict:
         sys.modules.pop(k, None)
@@ -195,9 +199,7 @@ class TestDuelChallengeCommand:
         resp = make_mock_response(_make_mock_duel(duel_id=1, challenger_id=100, target_id=200))
         mock_duel_cog.http_client.post = AsyncMock(return_value=resp)
 
-        asyncio.run(
-            mock_duel_cog.duel_challenge.callback(mock_duel_cog, interaction, target, 500)
-        )
+        asyncio.run(mock_duel_cog.duel_challenge.callback(mock_duel_cog, interaction, target, 500))
 
         interaction.response.defer.assert_awaited_once_with(thinking=True)
         interaction.followup.send.assert_awaited_once()
@@ -209,20 +211,17 @@ class TestDuelChallengeCommand:
     def test_challenge_self_duel_rejected(self, mock_duel_cog):
         """/duel-challenge with self as target should show error on 400."""
         import httpx
+
         interaction = _create_mock_interaction(user_id=100)
         target = DiscordMockUtils.create_mock_user(user_id=100, username="SameUser")
 
         error_response = MagicMock()
         error_response.status_code = 400
         error_response.json.return_value = {"detail": "A player cannot challenge themselves to a duel."}
-        http_error = httpx.HTTPStatusError(
-            "400 Bad Request", request=MagicMock(), response=error_response
-        )
+        http_error = httpx.HTTPStatusError("400 Bad Request", request=MagicMock(), response=error_response)
         mock_duel_cog.http_client.post = AsyncMock(side_effect=http_error)
 
-        asyncio.run(
-            mock_duel_cog.duel_challenge.callback(mock_duel_cog, interaction, target, 0)
-        )
+        asyncio.run(mock_duel_cog.duel_challenge.callback(mock_duel_cog, interaction, target, 0))
 
         interaction.followup.send.assert_awaited_once()
         call_kwargs = interaction.followup.send.call_args
@@ -231,22 +230,17 @@ class TestDuelChallengeCommand:
     def test_challenge_insufficient_credits(self, mock_duel_cog):
         """/duel-challenge with insufficient credits should show error on 400."""
         import httpx
+
         interaction = _create_mock_interaction(user_id=100)
         target = DiscordMockUtils.create_mock_user(user_id=200, username="TargetUser")
 
         error_response = MagicMock()
         error_response.status_code = 400
-        error_response.json.return_value = {
-            "detail": "Challenger has insufficient credits: has 100, needs 500."
-        }
-        http_error = httpx.HTTPStatusError(
-            "400 Bad Request", request=MagicMock(), response=error_response
-        )
+        error_response.json.return_value = {"detail": "Challenger has insufficient credits: has 100, needs 500."}
+        http_error = httpx.HTTPStatusError("400 Bad Request", request=MagicMock(), response=error_response)
         mock_duel_cog.http_client.post = AsyncMock(side_effect=http_error)
 
-        asyncio.run(
-            mock_duel_cog.duel_challenge.callback(mock_duel_cog, interaction, target, 500)
-        )
+        asyncio.run(mock_duel_cog.duel_challenge.callback(mock_duel_cog, interaction, target, 500))
 
         interaction.followup.send.assert_awaited_once()
         call_kwargs = interaction.followup.send.call_args
@@ -258,9 +252,7 @@ class TestDuelChallengeCommand:
         target = DiscordMockUtils.create_mock_user(user_id=200, username="TargetUser")
         mock_duel_cog.http_client.post = AsyncMock(side_effect=RuntimeError("connection refused"))
 
-        asyncio.run(
-            mock_duel_cog.duel_challenge.callback(mock_duel_cog, interaction, target, 0)
-        )
+        asyncio.run(mock_duel_cog.duel_challenge.callback(mock_duel_cog, interaction, target, 0))
 
         interaction.followup.send.assert_awaited_once()
         call_kwargs = interaction.followup.send.call_args
@@ -299,6 +291,7 @@ class TestDuelAcceptCommand:
         embed = call_kwargs["embed"]
         assert "Victory" in embed.title or "⚔️" in embed.title
         import discord
+
         assert embed.color == discord.Color.green()
 
     def test_accept_stalemate_result_shows_embed(self, mock_duel_cog, make_mock_response):
@@ -323,17 +316,17 @@ class TestDuelAcceptCommand:
         embed = call_kwargs["embed"]
         assert "Stalemate" in embed.title
         import discord
+
         assert embed.color == discord.Color.yellow()
 
     def test_accept_duel_not_found(self, mock_duel_cog):
         """/duel-accept with non-existent duel should show not found error."""
         import httpx
+
         interaction = _create_mock_interaction(user_id=200)
         error_response = MagicMock()
         error_response.status_code = 404
-        http_error = httpx.HTTPStatusError(
-            "404 Not Found", request=MagicMock(), response=error_response
-        )
+        http_error = httpx.HTTPStatusError("404 Not Found", request=MagicMock(), response=error_response)
         mock_duel_cog.http_client.post = AsyncMock(side_effect=http_error)
 
         asyncio.run(mock_duel_cog.duel_accept.callback(mock_duel_cog, interaction, "999"))
@@ -366,9 +359,7 @@ class TestDuelRejectCommand:
     def test_reject_success_shows_confirmation(self, mock_duel_cog, make_mock_response):
         """/duel-reject success should show rejection confirmation embed."""
         interaction = _create_mock_interaction(user_id=200)
-        resp = make_mock_response(
-            _make_mock_duel(duel_id=1, challenger_id=100, target_id=200, status="rejected")
-        )
+        resp = make_mock_response(_make_mock_duel(duel_id=1, challenger_id=100, target_id=200, status="rejected"))
         mock_duel_cog.http_client.post = AsyncMock(return_value=resp)
 
         asyncio.run(mock_duel_cog.duel_reject.callback(mock_duel_cog, interaction, "1"))
@@ -383,12 +374,11 @@ class TestDuelRejectCommand:
     def test_reject_duel_not_found(self, mock_duel_cog):
         """/duel-reject with non-existent duel should show not found error."""
         import httpx
+
         interaction = _create_mock_interaction(user_id=200)
         error_response = MagicMock()
         error_response.status_code = 404
-        http_error = httpx.HTTPStatusError(
-            "404 Not Found", request=MagicMock(), response=error_response
-        )
+        http_error = httpx.HTTPStatusError("404 Not Found", request=MagicMock(), response=error_response)
         mock_duel_cog.http_client.post = AsyncMock(side_effect=http_error)
 
         asyncio.run(mock_duel_cog.duel_reject.callback(mock_duel_cog, interaction, "999"))
@@ -441,9 +431,7 @@ class TestPendingDuelAutocomplete:
 
     def test_autocomplete_api_failure_returns_empty_list(self, mock_duel_cog):
         """pending_duel_autocomplete should return empty list on API failure."""
-        mock_duel_cog.http_client.get = AsyncMock(
-            side_effect=RuntimeError("connection refused")
-        )
+        mock_duel_cog.http_client.get = AsyncMock(side_effect=RuntimeError("connection refused"))
         interaction = _create_mock_interaction(user_id=200)
 
         result = asyncio.run(mock_duel_cog.pending_duel_autocomplete(interaction, ""))

@@ -1,6 +1,6 @@
-from typing import Any
+from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 # Response Models
@@ -14,26 +14,31 @@ class InventoryItemResponse(BaseModel):
 
 
 class InventorySummaryResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     player_id: int
     player_tier: str
     guild_id: int
     ship: int
-    weapon: int
+    primary_weapon: int
+    secondary_weapon: int
+    turret_weapon: int
     module: int
-    turret: int
     total_items: int
 
 
+# A.45: item_type fields now use Literal instead of Field(pattern=...).
+# Concrete vocabulary only — aliases ("weapon", "turret") are rejected at 422.
 class AddItemRequest(BaseModel):
     player_id: int
-    item_type: str = Field(pattern="^(ship|weapon|module|turret)$")
+    item_type: Literal["ship", "primary_weapon", "secondary_weapon", "turret_weapon", "module"]
     item_name: str
     quantity: int = Field(gt=0, default=1)
 
 
 class RemoveItemRequest(BaseModel):
     player_id: int
-    item_type: str = Field(pattern="^(ship|weapon|module|turret)$")
+    item_type: Literal["ship", "primary_weapon", "secondary_weapon", "turret_weapon", "module"]
     item_name: str
     quantity: int = Field(gt=0, default=1)
 
@@ -41,7 +46,7 @@ class RemoveItemRequest(BaseModel):
 class TransferItemRequest(BaseModel):
     from_player_id: int
     to_player_id: int
-    item_type: str = Field(pattern="^(ship|weapon|module|turret)$")
+    item_type: Literal["ship", "primary_weapon", "secondary_weapon", "turret_weapon", "module"]
     item_name: str
     quantity: int = Field(gt=0, default=1)
 

@@ -492,9 +492,7 @@ class TestSellItem:
         # Mock _get_item_base_price to return a deterministic value
         service._get_item_base_price = AsyncMock(return_value=500)
 
-        result = await service.sell_item(
-            mock_db, player_id=1, item_name="Micro Gun MK I", quantity=1
-        )
+        result = await service.sell_item(mock_db, player_id=1, item_name="Micro Gun MK I", quantity=1)
 
         assert result["player_id"] == 1
         assert result["item_type"] == "primary_weapon"  # concrete type, NOT the generic 'weapon' (A.42 fix)
@@ -538,9 +536,7 @@ class TestSellItem:
             await service.sell_item(mock_db, player_id=1, item_name="Gun", quantity=5)
 
     @pytest.mark.asyncio
-    async def test_raises_for_cross_type_name_collision(
-        self, service, mock_db, mock_player_repo, mock_inventory_repo
-    ):
+    async def test_raises_for_cross_type_name_collision(self, service, mock_db, mock_player_repo, mock_inventory_repo):
         """InvalidItemTypeError raised when item_name appears under multiple concrete types.
 
         This is an impossible scenario with the current item catalog (verified: 146 items,
@@ -732,9 +728,7 @@ class TestRefreshShop:
         # be a concrete type — never a generic alias ('weapon', 'turret').
         _VALID_CONCRETE_TYPES = {"ship", "primary_weapon", "secondary_weapon", "turret_weapon", "module"}
         for t in item_types_written:
-            assert t in _VALID_CONCRETE_TYPES, (
-                f"generic alias '{t}' written to guild_shops.item_type — A.36 regression"
-            )
+            assert t in _VALID_CONCRETE_TYPES, f"generic alias '{t}' written to guild_shops.item_type — A.36 regression"
         assert "weapon" not in item_types_written, "generic alias 'weapon' must NOT be written to guild_shops"
         assert "turret" not in item_types_written, "generic alias 'turret' must NOT be written to guild_shops"
 
@@ -1016,7 +1010,7 @@ class TestAddItemToShop:
             mock_db, guild_id=999, tier="Bronze", item_type="weapon", item_name="Gun", quantity=2, base_price=300
         )
 
-        mock_shop_repo.update_quantity.assert_awaited_once_with(mock_db, 20, 5)  # 3 + 2
+        mock_shop_repo.update_quantity.assert_awaited_once_with(mock_db, 20, 5, commit=True)  # 3 + 2
         mock_shop_repo.create_or_update.assert_not_awaited()
 
     @pytest.mark.asyncio
@@ -1309,7 +1303,7 @@ class TestPurchaseShip:
         await service.purchase_ship(mock_db, player_id=1, shop_item_id=10)
 
         # quantity was 3, should be 2 after purchase
-        mock_shop_repo.update_quantity.assert_awaited_once_with(mock_db, 10, 2)
+        mock_shop_repo.update_quantity.assert_awaited_once_with(mock_db, 10, 2, commit=False)
 
     @pytest.mark.asyncio
     async def test_ship_buy_shop_item_removed_when_last_stock(
@@ -1328,7 +1322,7 @@ class TestPurchaseShip:
 
         await service.purchase_ship(mock_db, player_id=1, shop_item_id=10)
 
-        mock_shop_repo.remove.assert_awaited_once_with(mock_db, shop_item)
+        mock_shop_repo.remove.assert_awaited_once_with(mock_db, shop_item, commit=False)
 
 
 # ===========================================================================

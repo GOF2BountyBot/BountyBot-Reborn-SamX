@@ -56,9 +56,7 @@ class PlayerService:
             # New player path — guild must have a config row first.
             config = await self.config_repo.get_by_guild_id(db, guild_id)
             if not config:
-                flogger.warning(
-                    f"Cannot create player for user {discord_id} in guild {guild_id}: guild not configured"
-                )
+                flogger.warning(f"Cannot create player for user {discord_id} in guild {guild_id}: guild not configured")
                 raise GuildNotConfiguredError(guild_id)
 
             # Ensure user exists
@@ -432,29 +430,28 @@ class PlayerService:
         if source_player_id == target_player_id:
             raise ValueError("Cannot transfer credits to yourself")
 
-        # Atomic transfer with row-level locking
-        async with db.begin():
-            # Lock both rows to prevent concurrent modifications.
-            # Always lock in consistent ID order to prevent deadlocks.
-            ids_ordered = sorted([source_player_id, target_player_id])
-            locked = {}
-            for pid in ids_ordered:
-                player = await self.player_repo.get_by_id_for_update(db, pid)
-                if not player:
-                    raise ValueError(f"Player {pid} not found")
-                locked[pid] = player
+        # Transaction is owned by the caller (router).
+        # Lock both rows to prevent concurrent modifications.
+        # Always lock in consistent ID order to prevent deadlocks.
+        ids_ordered = sorted([source_player_id, target_player_id])
+        locked = {}
+        for pid in ids_ordered:
+            player = await self.player_repo.get_by_id_for_update(db, pid)
+            if not player:
+                raise ValueError(f"Player {pid} not found")
+            locked[pid] = player
 
-            source = locked[source_player_id]
-            target = locked[target_player_id]
+        source = locked[source_player_id]
+        target = locked[target_player_id]
 
-            # Check source has enough credits (under lock — no TOCTOU)
-            if source.credits < amount:
-                raise ValueError(f"Insufficient credits: have {source.credits}, need {amount}")
+        # Check source has enough credits (under lock — no TOCTOU)
+        if source.credits < amount:
+            raise ValueError(f"Insufficient credits: have {source.credits}, need {amount}")
 
-            source_new = source.credits - amount
-            target_new = target.credits + amount
-            await self.player_repo.update_credits(db, source_player_id, source_new, commit=False)
-            await self.player_repo.update_credits(db, target_player_id, target_new, commit=False)
+        source_new = source.credits - amount
+        target_new = target.credits + amount
+        await self.player_repo.update_credits(db, source_player_id, source_new, commit=False)
+        await self.player_repo.update_credits(db, target_player_id, target_new, commit=False)
 
         flogger.info(f"Transferred {amount} credits from player {source_player_id} to player {target_player_id}")
 

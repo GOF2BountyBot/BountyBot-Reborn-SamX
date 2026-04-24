@@ -37,7 +37,7 @@ class ShopCog(commands.Cog):
         self.bot = bot
         self.http_client = httpx.AsyncClient(timeout=httpx.Timeout(10.0))
         self._valid_tiers = ["Bronze", "Silver", "Gold", "Platinum"]
-        self._valid_item_types = ["ship", "weapon", "module", "turret"]
+        self._valid_item_types = ["ship", "primary_weapon", "secondary_weapon", "turret_weapon", "module"]
         flogger.debug("ShopCog initialized")
 
     async def cog_unload(self):
@@ -79,7 +79,7 @@ class ShopCog(commands.Cog):
         """Autocomplete for item type selection."""
         norm_current = normalize_for_search(current)
         return [
-            app_commands.Choice(name=item_type.title(), value=item_type)
+            app_commands.Choice(name=item_type.replace("_", " ").title(), value=item_type)
             for item_type in self._valid_item_types
             if norm_current in normalize_for_search(item_type)
         ]
@@ -87,7 +87,7 @@ class ShopCog(commands.Cog):
     @app_commands.command(name="shop", description="Browse the guild shop")
     @app_commands.describe(
         tier="Shop tier to browse (Bronze, Silver, Gold, Platinum)",
-        item_type="Filter by item type (ship, weapon, module, turret)",
+        item_type="Filter by item type (ship, primary_weapon, secondary_weapon, turret_weapon, module)",
     )
     @app_commands.autocomplete(tier=tier_autocomplete, item_type=item_type_autocomplete)
     async def shop(self, interaction: discord.Interaction, tier: str, item_type: str | None = None):
@@ -131,14 +131,14 @@ class ShopCog(commands.Cog):
             items = resp.json()
 
             if not items:
-                type_filter = f" ({item_type}s)" if item_type else ""
+                type_filter = f" ({item_type.replace('_', ' ').title()}s)" if item_type else ""
                 await interaction.followup.send(f"🏪 The {tier} shop{type_filter} is currently empty.", ephemeral=True)
                 return
 
             # Create shop embed
             title = f"🏪 {tier} Shop"
             if item_type:
-                title += f" - {item_type.title()}s"
+                title += f" - {item_type.replace('_', ' ').title()}s"
 
             embed = discord.Embed(
                 title=title,

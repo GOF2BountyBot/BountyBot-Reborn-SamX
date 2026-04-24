@@ -1401,9 +1401,7 @@ class TestLoadoutResponseServicePlayerPath:
         svc.user_repo = MagicMock()
         svc.user_repo.get_by_id = AsyncMock(return_value=None)
 
-        result = await svc.build_player_loadout(
-            MagicMock(), 1, include_cargo=False, viewer_discord_id=999
-        )
+        result = await svc.build_player_loadout(MagicMock(), 1, include_cargo=False, viewer_discord_id=999)
         assert result.subject_mention == "<@999>"
 
     async def test_full_loadout_with_modules_populates_effects(self):
@@ -1415,35 +1413,56 @@ class TestLoadoutResponseServicePlayerPath:
         user = SimpleNamespace(discord_username="Alice")
 
         player_ship = SimpleNamespace(
-            id=10, ship_name="Wraith", nickname="Betty",
-            weapons=["Pulse Laser"], modules=["D'iol", "AutoPacker 2"], turrets=[],
+            id=10,
+            ship_name="Wraith",
+            nickname="Betty",
+            weapons=["Pulse Laser"],
+            modules=["D'iol", "AutoPacker 2"],
+            turrets=[],
         )
         ship = SimpleNamespace(
-            name="Wraith", armour=95, cargo=20, emoji="<:wraith:1>", icon="https://cdn/wraith.png",
-            handling=60, max_primaries=2, max_secondaries=0, max_turrets=0, max_modules=4,
+            name="Wraith",
+            armour=95,
+            cargo=20,
+            emoji="<:wraith:1>",
+            icon="https://cdn/wraith.png",
+            handling=60,
+            max_primaries=2,
+            max_secondaries=0,
+            max_turrets=0,
+            max_modules=4,
         )
 
         def module_factory(name):
             if name == "D'iol":
                 return SimpleNamespace(
-                    name="D'iol", emoji="<:diol:1>", type="ArmourModule",
-                    value=500, tech_level=1, extra_atts={"armour": 40},
+                    name="D'iol",
+                    emoji="<:diol:1>",
+                    type="ArmourModule",
+                    value=500,
+                    tech_level=1,
+                    extra_atts={"armour": 40},
                 )
             if name == "AutoPacker 2":
                 return SimpleNamespace(
-                    name="AutoPacker 2", emoji="<:pack:1>", type="CompressorModule",
-                    value=300, tech_level=2, extra_atts={"cargoMultiplier": 1.25},
+                    name="AutoPacker 2",
+                    emoji="<:pack:1>",
+                    type="CompressorModule",
+                    value=300,
+                    tech_level=2,
+                    extra_atts={"cargoMultiplier": 1.25},
                 )
             return None
 
         svc, db = self._make_service_with_repos(
-            player=player, player_ship=player_ship, ship=ship,
-            module_factory=module_factory, user=user,
+            player=player,
+            player_ship=player_ship,
+            ship=ship,
+            module_factory=module_factory,
+            user=user,
         )
         # Pulse Laser needs to resolve via ItemRepository
-        svc.item_repo.get_by_name = AsyncMock(
-            return_value=SimpleNamespace(emoji="<:pulse:1>", dps=12.0, value=1000)
-        )
+        svc.item_repo.get_by_name = AsyncMock(return_value=SimpleNamespace(emoji="<:pulse:1>", dps=12.0, value=1000))
 
         result = await svc.build_player_loadout(db, 1, include_cargo=False)
 
@@ -1486,9 +1505,15 @@ class TestLoadoutResponseServicePlayerPath:
         svc = self._make_service_with_repos(
             player=player, player_ship=None, ship=None, module_factory=lambda _: None, user=None
         )[0]
-        svc.inventory_repo.get_player_items = AsyncMock(return_value=[SimpleNamespace(
-            item_name="X", item_type="weapon", quantity=1,
-        )])
+        svc.inventory_repo.get_player_items = AsyncMock(
+            return_value=[
+                SimpleNamespace(
+                    item_name="X",
+                    item_type="weapon",
+                    quantity=1,
+                )
+            ]
+        )
 
         result = await svc.build_player_loadout(MagicMock(), 1, include_cargo=False)
         assert result.cargo == []
@@ -1504,24 +1529,44 @@ class TestLoadoutResponseServicePlayerPath:
         player = SimpleNamespace(id=1, user_id=42, active_ship_id=10)
         user = SimpleNamespace(discord_username="Alice")
         player_ship = SimpleNamespace(
-            id=10, ship_name="Wraith", nickname=None, weapons=[], modules=["FutureMod"], turrets=[],
+            id=10,
+            ship_name="Wraith",
+            nickname=None,
+            weapons=[],
+            modules=["FutureMod"],
+            turrets=[],
         )
         ship = SimpleNamespace(
-            name="Wraith", armour=100, cargo=10, emoji=None, icon=None,
-            handling=50, max_primaries=1, max_secondaries=0, max_turrets=0, max_modules=1,
+            name="Wraith",
+            armour=100,
+            cargo=10,
+            emoji=None,
+            icon=None,
+            handling=50,
+            max_primaries=1,
+            max_secondaries=0,
+            max_turrets=0,
+            max_modules=1,
         )
 
         def module_factory(name):
             if name == "FutureMod":
                 return SimpleNamespace(
-                    name="FutureMod", emoji="<:fm:1>", type="SomeFutureModule",
-                    value=100, tech_level=1, extra_atts={"unknown_key": 42},
+                    name="FutureMod",
+                    emoji="<:fm:1>",
+                    type="SomeFutureModule",
+                    value=100,
+                    tech_level=1,
+                    extra_atts={"unknown_key": 42},
                 )
             return None
 
         svc, db = self._make_service_with_repos(
-            player=player, player_ship=player_ship, ship=ship,
-            module_factory=module_factory, user=user,
+            player=player,
+            player_ship=player_ship,
+            ship=ship,
+            module_factory=module_factory,
+            user=user,
         )
         svc.item_repo.get_by_name = AsyncMock(return_value=None)
 
@@ -1536,7 +1581,6 @@ class TestLoadoutResponseServicePlayerPath:
 # ---------------------------------------------------------------------------
 # End of loadout test section
 # ---------------------------------------------------------------------------
-
 
 
 # ---------------------------------------------------------------------------

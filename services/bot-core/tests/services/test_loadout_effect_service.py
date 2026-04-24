@@ -31,9 +31,7 @@ class TestDocumentedModuleEffects:
         assert result == [EffectItem(label="Plasma Cost", value="30")]
 
     def test_booster_module_both_fields(self):
-        result = LoadoutEffectService.format_module_effects(
-            "BoosterModule", {"duration": 10, "effect": 0.8}
-        )
+        result = LoadoutEffectService.format_module_effects("BoosterModule", {"duration": 10, "effect": 0.8})
         assert result == [
             EffectItem(label="Duration", value="10s"),
             EffectItem(label="Speed", value="80%"),
@@ -123,9 +121,7 @@ class TestEdgeCases:
 
     def test_bad_seed_data_skipped_silently(self):
         # Non-numeric value for 'int' formatter — should be skipped, not raise.
-        result = LoadoutEffectService.format_module_effects(
-            "ArmourModule", {"armour": "not-a-number"}
-        )
+        result = LoadoutEffectService.format_module_effects("ArmourModule", {"armour": "not-a-number"})
         assert result == []
 
     def test_seconds_formatter_rounds_down(self):

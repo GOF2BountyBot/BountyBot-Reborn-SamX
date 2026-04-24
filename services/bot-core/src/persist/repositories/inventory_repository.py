@@ -39,21 +39,35 @@ class InventoryRepository(IRepository[PlayerInventory]):
             flogger.error(f"Error listing all inventory items: {e}")
             raise
 
-    async def add(self, db: AsyncSession, obj: PlayerInventory) -> PlayerInventory:
-        """Add new inventory item to database."""
+    async def add(self, db: AsyncSession, obj: PlayerInventory, commit: bool = True) -> PlayerInventory:
+        """Add new inventory item to database.
+
+        Args:
+            commit: When False, flush changes without committing (use when the caller
+                owns the transaction, e.g. inside a router-level db.begin() context).
+        """
         try:
             db.add(obj)
-            await db.commit()
+            if commit:
+                await db.commit()
+            else:
+                await db.flush()
             await db.refresh(obj)
             flogger.info(f"Added inventory item: {obj.item_name} for player {obj.player_id}")
             return obj
         except Exception as e:
             flogger.error(f"Error adding inventory item: {e}")
-            await db.rollback()
+            if commit:
+                await db.rollback()
             raise
 
-    async def create_or_update(self, db: AsyncSession, raw: dict) -> PlayerInventory:
-        """Create or update inventory item from raw data."""
+    async def create_or_update(self, db: AsyncSession, raw: dict, commit: bool = True) -> PlayerInventory:
+        """Create or update inventory item from raw data.
+
+        Args:
+            commit: When False, flush changes without committing (use when the caller
+                owns the transaction, e.g. inside a router-level db.begin() context).
+        """
         try:
             player_id = raw.get("player_id")
             item_type = raw.get("item_type")
@@ -69,32 +83,45 @@ class InventoryRepository(IRepository[PlayerInventory]):
             if existing_item:
                 # Update existing item quantity
                 existing_item.quantity += quantity
-                try:
-                    await db.commit()
+                if commit:
+                    try:
+                        await db.commit()
+                        await db.refresh(existing_item)
+                    except Exception:
+                        await db.rollback()
+                        raise
+                else:
+                    await db.flush()
                     await db.refresh(existing_item)
-                except Exception:
-                    await db.rollback()
-                    raise
                 flogger.debug(f"Updated inventory item quantity: {item_name} for player {player_id}")
                 return existing_item
 
             # Create new inventory item
             inventory_item = PlayerInventory(**raw)
-            return await self.add(db, inventory_item)
+            return await self.add(db, inventory_item, commit=commit)
 
         except Exception as e:
             flogger.error(f"Error creating/updating inventory item: {e}")
             raise
 
-    async def remove(self, db: AsyncSession, obj: PlayerInventory) -> None:
-        """Remove inventory item from database."""
+    async def remove(self, db: AsyncSession, obj: PlayerInventory, commit: bool = True) -> None:
+        """Remove inventory item from database.
+
+        Args:
+            commit: When False, flush changes without committing (use when the caller
+                owns the transaction, e.g. inside a router-level db.begin() context).
+        """
         try:
             await db.delete(obj)
-            await db.commit()
+            if commit:
+                await db.commit()
+            else:
+                await db.flush()
             flogger.info(f"Removed inventory item: {obj.item_name}")
         except Exception as e:
             flogger.error(f"Error removing inventory item: {e}")
-            await db.rollback()
+            if commit:
+                await db.rollback()
             raise
 
     async def get_player_items(
@@ -164,9 +191,7 @@ class InventoryRepository(IRepository[PlayerInventory]):
             flogger.error(f"Error getting item '{item_name}' by types {item_types} for player {player_id}: {e}")
             raise
 
-    async def get_player_items_by_name(
-        self, db: AsyncSession, player_id: int, item_name: str
-    ) -> list[PlayerInventory]:
+    async def get_player_items_by_name(self, db: AsyncSession, player_id: int, item_name: str) -> list[PlayerInventory]:
         """Get all inventory rows for a player matching a given item_name across all concrete types.
 
         Used by ``ShopService.sell_item`` (A.42b) to resolve the concrete item_type
@@ -208,9 +233,20 @@ class InventoryRepository(IRepository[PlayerInventory]):
             raise
 
     async def add_item(
-        self, db: AsyncSession, player_id: int, item_type: str, item_name: str, quantity: int
+        self,
+        db: AsyncSession,
+        player_id: int,
+        item_type: str,
+        item_name: str,
+        quantity: int,
+        commit: bool = True,
     ) -> PlayerInventory:
-        """Add items to player's inventory (or increase existing quantity)."""
+        """Add items to player's inventory (or increase existing quantity).
+
+        Args:
+            commit: When False, flush changes without committing (use when the caller
+                owns the transaction, e.g. inside a router-level db.begin() context).
+        """
         try:
             if quantity <= 0:
                 raise ValueError("Quantity must be positive")
@@ -220,22 +256,33 @@ class InventoryRepository(IRepository[PlayerInventory]):
             if existing_item:
                 # Update existing item
                 new_quantity = existing_item.quantity + quantity
-                await self.update_quantity(db, existing_item.id, new_quantity)
+                await self.update_quantity(db, existing_item.id, new_quantity, commit=commit)
                 await db.refresh(existing_item)
                 return existing_item
 
             # Create new item
             item_data = {"player_id": player_id, "item_type": item_type, "item_name": item_name, "quantity": quantity}
-            return await self.create_or_update(db, item_data)
+            return await self.create_or_update(db, item_data, commit=commit)
 
         except Exception as e:
             flogger.error(f"Error adding item {item_name} to player {player_id}: {e}")
             raise
 
     async def remove_item(
-        self, db: AsyncSession, player_id: int, item_type: str, item_name: str, quantity: int
+        self,
+        db: AsyncSession,
+        player_id: int,
+        item_type: str,
+        item_name: str,
+        quantity: int,
+        commit: bool = True,
     ) -> None:
-        """Remove items from player's inventory."""
+        """Remove items from player's inventory.
+
+        Args:
+            commit: When False, flush changes without committing (use when the caller
+                owns the transaction, e.g. inside a router-level db.begin() context).
+        """
         try:
             if quantity <= 0:
                 raise ValueError("Quantity must be positive")
@@ -251,10 +298,10 @@ class InventoryRepository(IRepository[PlayerInventory]):
 
             if new_quantity <= 0:
                 # Remove item entirely
-                await self.remove(db, item)
+                await self.remove(db, item, commit=commit)
             else:
                 # Update quantity
-                await self.update_quantity(db, item.id, new_quantity)
+                await self.update_quantity(db, item.id, new_quantity, commit=commit)
 
             flogger.debug(f"Removed {quantity}x {item_name} from player {player_id}")
 
@@ -262,8 +309,15 @@ class InventoryRepository(IRepository[PlayerInventory]):
             flogger.error(f"Error removing item {item_name} from player {player_id}: {e}")
             raise
 
-    async def update_quantity(self, db: AsyncSession, inventory_id: int, new_quantity: int) -> PlayerInventory:
-        """Update the quantity of an inventory item."""
+    async def update_quantity(
+        self, db: AsyncSession, inventory_id: int, new_quantity: int, commit: bool = True
+    ) -> PlayerInventory:
+        """Update the quantity of an inventory item.
+
+        Args:
+            commit: When False, flush changes without committing (use when the caller
+                owns the transaction, e.g. inside a router-level db.begin() context).
+        """
         try:
             if new_quantity < 0:
                 raise ValueError("Quantity cannot be negative")
@@ -271,11 +325,14 @@ class InventoryRepository(IRepository[PlayerInventory]):
             await db.execute(
                 update(PlayerInventory).where(PlayerInventory.id == inventory_id).values(quantity=new_quantity)
             )
-            try:
-                await db.commit()
-            except Exception:
-                await db.rollback()
-                raise
+            if commit:
+                try:
+                    await db.commit()
+                except Exception:
+                    await db.rollback()
+                    raise
+            else:
+                await db.flush()
 
             item = await self.get_by_id(db, inventory_id)
             flogger.debug(f"Updated inventory item {inventory_id} quantity: {new_quantity}")

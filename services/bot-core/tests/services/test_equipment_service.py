@@ -254,7 +254,9 @@ class TestEquipItemSuccess:
 
         assert result["success"] is True
         # A.36 fix: remove_item now called with concrete type "turret_weapon", not generic "turret"
-        svc.inventory_repo.remove_item.assert_called_once_with(mock_db, 42, "turret_weapon", "Turreted Beam Laser", quantity=1)
+        svc.inventory_repo.remove_item.assert_called_once_with(
+            mock_db, 42, "turret_weapon", "Turreted Beam Laser", quantity=1
+        )
 
 
 class TestEquipItemValidationErrors:
@@ -444,7 +446,9 @@ class TestUnequipItemSuccess:
 
         assert result["success"] is True
         # A.36 fix: add_item now called with concrete "turret_weapon", not generic "turret"
-        svc.inventory_repo.add_item.assert_called_once_with(mock_db, 42, "turret_weapon", "Turreted Beam Laser", quantity=1)
+        svc.inventory_repo.add_item.assert_called_once_with(
+            mock_db, 42, "turret_weapon", "Turreted Beam Laser", quantity=1
+        )
 
 
 class TestUnequipItemValidationErrors:
@@ -1054,9 +1058,7 @@ class TestSecondaryWeaponSlotRouting:
         )
 
         base_item = _make_base_item("Seeker Missile", "SecondaryWeapon")
-        player_ship = _make_player_ship(
-            player_id=42, ship_name="Betty", weapons=[], modules=[], turrets=[]
-        )
+        player_ship = _make_player_ship(player_id=42, ship_name="Betty", weapons=[], modules=[], turrets=[])
         player_ship.secondary_weapons = []
         static_ship = _make_static_ship(name="Betty", max_primaries=2, max_modules=4, max_turrets=1)
         static_ship.max_secondaries = 2
@@ -1086,25 +1088,31 @@ class TestItemDiscriminatorToConcrete:
 
     def test_primary_weapon(self):
         from services.equipment_service import item_discriminator_to_concrete_type
+
         assert item_discriminator_to_concrete_type("PrimaryWeapon") == "primary_weapon"
 
     def test_secondary_weapon(self):
         from services.equipment_service import item_discriminator_to_concrete_type
+
         assert item_discriminator_to_concrete_type("SecondaryWeapon") == "secondary_weapon"
 
     def test_turret_weapon(self):
         from services.equipment_service import item_discriminator_to_concrete_type
+
         assert item_discriminator_to_concrete_type("TurretWeapon") == "turret_weapon"
 
     def test_module_subclasses(self):
         from services.equipment_service import item_discriminator_to_concrete_type
+
         for module_type in ("ArmourModule", "ShieldModule", "CabinModule", "BoosterModule"):
             assert item_discriminator_to_concrete_type(module_type) == "module", f"Failed for {module_type}"
 
     def test_ship(self):
         from services.equipment_service import item_discriminator_to_concrete_type
+
         assert item_discriminator_to_concrete_type("Ship") == "ship"
 
     def test_unknown_returns_none(self):
         from services.equipment_service import item_discriminator_to_concrete_type
+
         assert item_discriminator_to_concrete_type("SomethingUnknown") is None

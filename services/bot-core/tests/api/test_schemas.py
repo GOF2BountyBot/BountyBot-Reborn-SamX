@@ -483,16 +483,18 @@ class TestAddInventoryItemRequestSchema:
         assert req.quantity == 1
 
     def test_valid_weapon_type(self):
-        req = AddInventoryItemRequest(player_id=1, item_type="weapon", item_name="Laser")
-        assert req.item_type == "weapon"
+        # A.45: concrete type (primary_weapon), not alias "weapon"
+        req = AddInventoryItemRequest(player_id=1, item_type="primary_weapon", item_name="Laser")
+        assert req.item_type == "primary_weapon"
 
     def test_valid_module_type(self):
         req = AddInventoryItemRequest(player_id=1, item_type="module", item_name="Shield")
         assert req.item_type == "module"
 
     def test_valid_turret_type(self):
-        req = AddInventoryItemRequest(player_id=1, item_type="turret", item_name="AutoGun")
-        assert req.item_type == "turret"
+        # A.45: concrete type (turret_weapon), not alias "turret"
+        req = AddInventoryItemRequest(player_id=1, item_type="turret_weapon", item_name="AutoGun")
+        assert req.item_type == "turret_weapon"
 
     def test_invalid_item_type_raises(self):
         with pytest.raises(ValidationError):
@@ -507,7 +509,8 @@ class TestAddInventoryItemRequestSchema:
             AddInventoryItemRequest(player_id=1, item_type="ship", item_name="Falcon", quantity=-5)
 
     def test_quantity_default_one(self):
-        req = AddInventoryItemRequest(player_id=1, item_type="weapon", item_name="Laser")
+        # A.45: concrete type
+        req = AddInventoryItemRequest(player_id=1, item_type="primary_weapon", item_name="Laser")
         assert req.quantity == 1
 
 
@@ -523,8 +526,9 @@ class TestRemoveInventoryItemRequestSchema:
             RemoveInventoryItemRequest(player_id=1, item_type="misc", item_name="X")
 
     def test_quantity_zero_raises(self):
+        # A.45: use concrete type; the 422 is from quantity=0 validation
         with pytest.raises(ValidationError):
-            RemoveInventoryItemRequest(player_id=1, item_type="turret", item_name="Gun", quantity=0)
+            RemoveInventoryItemRequest(player_id=1, item_type="turret_weapon", item_name="Gun", quantity=0)
 
 
 class TestAdminRefreshShopRequestSchema:
@@ -689,7 +693,8 @@ class TestAdminSchemaInputValidation:
     def test_add_inventory_item_name_at_max_length_valid(self):
         """item_name of exactly 256 chars is accepted on AddInventoryItemRequest."""
         max_name = "A" * 256
-        req = AddInventoryItemRequest(player_id=1, item_type="weapon", item_name=max_name)
+        # A.45: concrete type
+        req = AddInventoryItemRequest(player_id=1, item_type="primary_weapon", item_name=max_name)
         assert len(req.item_name) == 256
 
     def test_remove_inventory_item_name_too_long_raises(self):
@@ -701,7 +706,8 @@ class TestAdminSchemaInputValidation:
     def test_remove_inventory_item_name_at_max_length_valid(self):
         """item_name of exactly 256 chars is accepted on RemoveInventoryItemRequest."""
         max_name = "B" * 256
-        req = RemoveInventoryItemRequest(player_id=1, item_type="turret", item_name=max_name)
+        # A.45: concrete type
+        req = RemoveInventoryItemRequest(player_id=1, item_type="turret_weapon", item_name=max_name)
         assert len(req.item_name) == 256
 
     # ------------------------------------------------------------------
@@ -1015,13 +1021,14 @@ class TestInventorySummaryResponseSchema:
             player_tier="Bronze",
             guild_id=10,
             ship=2,
-            weapon=5,
+            primary_weapon=3,
+            secondary_weapon=1,
+            turret_weapon=1,
             module=3,
-            turret=1,
-            total_items=11,
+            total_items=10,
         )
         assert resp.player_id == 1
-        assert resp.total_items == 11
+        assert resp.total_items == 10
 
     def test_missing_required_raises(self):
         with pytest.raises(ValidationError):
@@ -1036,8 +1043,9 @@ class TestInventoryAddItemRequestSchema:
         assert req.quantity == 1
 
     def test_valid_weapon(self):
-        req = AddItemRequest(player_id=1, item_type="weapon", item_name="Laser")
-        assert req.item_type == "weapon"
+        # A.45: concrete type (primary_weapon), not alias "weapon"
+        req = AddItemRequest(player_id=1, item_type="primary_weapon", item_name="Laser")
+        assert req.item_type == "primary_weapon"
 
     def test_invalid_type_raises(self):
         with pytest.raises(ValidationError):
@@ -1052,7 +1060,8 @@ class TestInventoryRemoveItemRequestSchema:
     """Tests for inventory_schema.RemoveItemRequest."""
 
     def test_valid_construction(self):
-        req = RemoveItemRequest(player_id=1, item_type="turret", item_name="AutoGun", quantity=2)
+        # A.45: concrete type (turret_weapon), not alias "turret"
+        req = RemoveItemRequest(player_id=1, item_type="turret_weapon", item_name="AutoGun", quantity=2)
         assert req.quantity == 2
 
     def test_invalid_type_raises(self):
@@ -1068,10 +1077,11 @@ class TestTransferItemRequestSchema:
     """Tests for TransferItemRequest."""
 
     def test_valid_construction(self):
+        # A.45: concrete type (primary_weapon), not alias "weapon"
         req = TransferItemRequest(
             from_player_id=1,
             to_player_id=2,
-            item_type="weapon",
+            item_type="primary_weapon",
             item_name="Laser",
             quantity=1,
         )
@@ -1087,7 +1097,8 @@ class TestTransferItemRequestSchema:
             TransferItemRequest(from_player_id=1, to_player_id=2, item_type="module", item_name="Shield", quantity=0)
 
     def test_default_quantity_one(self):
-        req = TransferItemRequest(from_player_id=1, to_player_id=2, item_type="turret", item_name="Gun")
+        # A.45: concrete type
+        req = TransferItemRequest(from_player_id=1, to_player_id=2, item_type="turret_weapon", item_name="Gun")
         assert req.quantity == 1
 
 

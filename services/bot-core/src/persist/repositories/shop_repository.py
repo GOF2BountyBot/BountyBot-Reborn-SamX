@@ -48,21 +48,35 @@ class ShopRepository(IRepository[GuildShop]):
             flogger.error(f"Error listing all shop items: {e}")
             raise
 
-    async def add(self, db: AsyncSession, obj: GuildShop) -> GuildShop:
-        """Add new shop item to database."""
+    async def add(self, db: AsyncSession, obj: GuildShop, commit: bool = True) -> GuildShop:
+        """Add new shop item to database.
+
+        Args:
+            commit: When False, flush without committing (use when the caller owns
+                the transaction, e.g. inside a router-level db.begin() context).
+        """
         try:
             db.add(obj)
-            await db.commit()
+            if commit:
+                await db.commit()
+            else:
+                await db.flush()
             await db.refresh(obj)
             flogger.info(f"Added shop item: {obj.item_name} to {obj.tier} shop in guild {obj.guild_id}")
             return obj
         except Exception as e:
             flogger.error(f"Error adding shop item: {e}")
-            await db.rollback()
+            if commit:
+                await db.rollback()
             raise
 
-    async def create_or_update(self, db: AsyncSession, raw: dict) -> GuildShop:
-        """Create or update shop item from raw data."""
+    async def create_or_update(self, db: AsyncSession, raw: dict, commit: bool = True) -> GuildShop:
+        """Create or update shop item from raw data.
+
+        Args:
+            commit: When False, flush without committing (use when the caller owns
+                the transaction, e.g. inside a router-level db.begin() context).
+        """
         try:
             guild_id = raw.get("guild_id")
             tier = raw.get("tier")
@@ -79,28 +93,40 @@ class ShopRepository(IRepository[GuildShop]):
                 for key, value in raw.items():
                     if hasattr(existing_item, key) and key not in ["id", "guild_id", "tier", "item_name"]:
                         setattr(existing_item, key, value)
-                await db.commit()
+                if commit:
+                    await db.commit()
+                else:
+                    await db.flush()
                 await db.refresh(existing_item)
                 flogger.debug(f"Updated shop item: {item_name} in {tier} shop")
                 return existing_item
 
             # Create new shop item
             shop_item = GuildShop(**raw)
-            return await self.add(db, shop_item)
+            return await self.add(db, shop_item, commit=commit)
 
         except Exception as e:
             flogger.error(f"Error creating/updating shop item: {e}")
             raise
 
-    async def remove(self, db: AsyncSession, obj: GuildShop) -> None:
-        """Remove shop item from database."""
+    async def remove(self, db: AsyncSession, obj: GuildShop, commit: bool = True) -> None:
+        """Remove shop item from database.
+
+        Args:
+            commit: When False, flush without committing (use when the caller owns
+                the transaction, e.g. inside a router-level db.begin() context).
+        """
         try:
             await db.delete(obj)
-            await db.commit()
+            if commit:
+                await db.commit()
+            else:
+                await db.flush()
             flogger.info(f"Removed shop item: {obj.item_name} from {obj.tier} shop")
         except Exception as e:
             flogger.error(f"Error removing shop item: {e}")
-            await db.rollback()
+            if commit:
+                await db.rollback()
             raise
 
     async def get_shop_items(
@@ -161,21 +187,32 @@ class ShopRepository(IRepository[GuildShop]):
             flogger.error(f"Error getting shop item {item_name} from {tier} shop in guild {guild_id}: {e}")
             raise
 
-    async def update_quantity(self, db: AsyncSession, shop_item_id: int, new_quantity: int) -> GuildShop:
-        """Update the quantity of a shop item."""
+    async def update_quantity(
+        self, db: AsyncSession, shop_item_id: int, new_quantity: int, commit: bool = True
+    ) -> GuildShop:
+        """Update the quantity of a shop item.
+
+        Args:
+            commit: When False, flush without committing (use when the caller owns
+                the transaction, e.g. inside a router-level db.begin() context).
+        """
         try:
             if new_quantity < 0:
                 raise ValueError("Quantity cannot be negative")
 
             await db.execute(update(GuildShop).where(GuildShop.id == shop_item_id).values(quantity=new_quantity))
-            await db.commit()
+            if commit:
+                await db.commit()
+            else:
+                await db.flush()
 
             item = await self.get_by_id(db, shop_item_id)
             flogger.debug(f"Updated shop item {shop_item_id} quantity: {new_quantity}")
             return item
         except Exception as e:
             flogger.error(f"Error updating quantity for shop item {shop_item_id}: {e}")
-            await db.rollback()
+            if commit:
+                await db.rollback()
             raise
 
     async def clear_shop_tier(self, db: AsyncSession, guild_id: int, tier: str) -> None:

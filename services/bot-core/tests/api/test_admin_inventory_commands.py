@@ -156,11 +156,12 @@ class TestAdminGiveItem:
         mock_player_repo.get_by_user_and_guild = AsyncMock(return_value=make_mock_player())
         mock_player_repo_cls.return_value = mock_player_repo
 
+        # A.45: use concrete type (primary_weapon, not alias "weapon")
         payload = {
             "guild_id": 67890,
             "user_id": 111222333,
             "item_name": "Pulse Laser",
-            "item_type": "weapon",
+            "item_type": "primary_weapon",
             "quantity": 1,
         }
         with patch("persist.repositories.user_repository.UserRepository", mock_user_repo_cls):
@@ -181,11 +182,12 @@ class TestAdminGiveItem:
         mock_user_repo.get_by_discord_id = AsyncMock(return_value=None)
         mock_player_repo_cls.return_value = AsyncMock()
 
+        # A.45: use concrete type
         payload = {
             "guild_id": 67890,
             "user_id": 999999,
             "item_name": "Pulse Laser",
-            "item_type": "weapon",
+            "item_type": "primary_weapon",
             "quantity": 1,
         }
         with patch("persist.repositories.user_repository.UserRepository") as mock_ur:
@@ -206,11 +208,12 @@ class TestAdminGiveItem:
         mock_player_repo.get_by_user_and_guild = AsyncMock(return_value=None)
         mock_player_repo_cls.return_value = mock_player_repo
 
+        # A.45: use concrete type
         payload = {
             "guild_id": 67890,
             "user_id": 111222333,
             "item_name": "Pulse Laser",
-            "item_type": "weapon",
+            "item_type": "primary_weapon",
             "quantity": 1,
         }
         with patch("persist.repositories.user_repository.UserRepository") as mock_ur:
@@ -252,11 +255,12 @@ class TestAdminRemoveItem:
         mock_player_repo.get_by_user_and_guild = AsyncMock(return_value=make_mock_player())
         mock_player_repo_cls.return_value = mock_player_repo
 
+        # A.45: use concrete type (primary_weapon, not alias "weapon")
         payload = {
             "guild_id": 67890,
             "user_id": 111222333,
             "item_name": "Pulse Laser",
-            "item_type": "weapon",
+            "item_type": "primary_weapon",
             "quantity": 1,
         }
         with patch("persist.repositories.user_repository.UserRepository") as mock_ur:
@@ -278,11 +282,12 @@ class TestAdminRemoveItem:
         mock_user_repo.get_by_discord_id = AsyncMock(return_value=None)
         mock_player_repo_cls.return_value = AsyncMock()
 
+        # A.45: use concrete type
         payload = {
             "guild_id": 67890,
             "user_id": 999999,
             "item_name": "Pulse Laser",
-            "item_type": "weapon",
+            "item_type": "primary_weapon",
             "quantity": 1,
         }
         with patch("persist.repositories.user_repository.UserRepository") as mock_ur:
@@ -305,11 +310,12 @@ class TestAdminRemoveItem:
 
         mock_inventory_service.remove_item_from_inventory = AsyncMock(side_effect=ValueError("Insufficient quantity"))
 
+        # A.45: use concrete type
         payload = {
             "guild_id": 67890,
             "user_id": 111222333,
             "item_name": "Pulse Laser",
-            "item_type": "weapon",
+            "item_type": "primary_weapon",
             "quantity": 999,
         }
         with patch("persist.repositories.user_repository.UserRepository") as mock_ur:
@@ -330,17 +336,77 @@ class TestAdminRemoveItem:
         mock_player_repo.get_by_user_and_guild = AsyncMock(return_value=None)
         mock_player_repo_cls.return_value = mock_player_repo
 
+        # A.45: use concrete type
         payload = {
             "guild_id": 67890,
             "user_id": 111222333,
             "item_name": "Pulse Laser",
-            "item_type": "weapon",
+            "item_type": "primary_weapon",
             "quantity": 1,
         }
         with patch("persist.repositories.user_repository.UserRepository") as mock_ur:
             mock_ur.return_value = mock_user_repo
             resp = client.post("/api/v1/admin/remove-item?admin_user_id=999", json=payload)
         assert resp.status_code == 404
+
+
+class TestAdminGiveItemA45Rejection:
+    """A.45 alias rejection tests for POST /api/v1/admin/give-item."""
+
+    def test_admin_give_item_rejects_alias_with_422(self, client):
+        """A.45: posting item_type='weapon' (generic alias) is rejected at schema with HTTP 422.
+
+        AdminGiveItemRequest now uses Literal[4 concrete values] — 'weapon' is not in the set.
+        Mock budget: 0 (schema rejects before any handler is called).
+        """
+        payload = {
+            "guild_id": 67890,
+            "user_id": 111222333,
+            "item_name": "Pulse Laser",
+            "item_type": "weapon",  # alias — should be rejected
+            "quantity": 1,
+        }
+        resp = client.post("/api/v1/admin/give-item?admin_user_id=999", json=payload)
+        assert resp.status_code == 422, (
+            f"Expected 422 for alias 'weapon' in AdminGiveItemRequest, got {resp.status_code}"
+        )
+
+    def test_admin_give_item_rejects_ship_with_422(self, client):
+        """A.45: 'ship' is excluded from AdminGiveItemRequest (use AdminGiveShipRequest instead).
+
+        Mock budget: 0.
+        """
+        payload = {
+            "guild_id": 67890,
+            "user_id": 111222333,
+            "item_name": "Hammerhead",
+            "item_type": "ship",  # excluded from give-item; use give-ship instead
+            "quantity": 1,
+        }
+        resp = client.post("/api/v1/admin/give-item?admin_user_id=999", json=payload)
+        assert resp.status_code == 422
+
+
+class TestAdminRemoveItemA45Rejection:
+    """A.45 alias rejection tests for POST /api/v1/admin/remove-item."""
+
+    def test_admin_remove_item_rejects_alias_with_422(self, client):
+        """A.45: posting item_type='weapon' (generic alias) is rejected at schema with HTTP 422.
+
+        AdminRemoveItemRequest now uses Literal[4 concrete values] — 'weapon' is not in the set.
+        Mock budget: 0 (schema rejects before any handler is called).
+        """
+        payload = {
+            "guild_id": 67890,
+            "user_id": 111222333,
+            "item_name": "Pulse Laser",
+            "item_type": "weapon",  # alias — should be rejected
+            "quantity": 1,
+        }
+        resp = client.post("/api/v1/admin/remove-item?admin_user_id=999", json=payload)
+        assert resp.status_code == 422, (
+            f"Expected 422 for alias 'weapon' in AdminRemoveItemRequest, got {resp.status_code}"
+        )
 
 
 # ===========================================================================

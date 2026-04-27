@@ -8,7 +8,7 @@ item management, quantity tracking, and inventory queries.
 from collections.abc import Sequence
 
 from shared import bblogger
-from sqlalchemy import and_, delete, select, update
+from sqlalchemy import and_, delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from persist.interfaces.repository_interface import IRepository
@@ -314,31 +314,37 @@ class InventoryRepository(IRepository[PlayerInventory]):
     ) -> PlayerInventory:
         """Update the quantity of an inventory item.
 
+        Mutates the ORM-tracked PlayerInventory instance via ``setattr`` (NOT a Core UPDATE).
+        See ``persist/repositories/AGENTS.md`` for the rationale.
+
         Args:
             commit: When False, flush changes without committing (use when the caller
                 owns the transaction, e.g. inside a router-level db.begin() context).
+
+        Raises:
+            ValueError: If quantity is negative or no inventory item exists with the given ID.
         """
         try:
             if new_quantity < 0:
                 raise ValueError("Quantity cannot be negative")
 
-            await db.execute(
-                update(PlayerInventory).where(PlayerInventory.id == inventory_id).values(quantity=new_quantity)
-            )
+            item = await self.get_by_id(db, inventory_id)
+            if item is None:
+                raise ValueError(f"Inventory item {inventory_id} not found")
+            item.quantity = new_quantity
             if commit:
-                try:
-                    await db.commit()
-                except Exception:
-                    await db.rollback()
-                    raise
+                await db.commit()
             else:
                 await db.flush()
 
-            item = await self.get_by_id(db, inventory_id)
             flogger.debug(f"Updated inventory item {inventory_id} quantity: {new_quantity}")
             return item
+        except ValueError:
+            raise
         except Exception as e:
             flogger.error(f"Error updating quantity for inventory item {inventory_id}: {e}")
+            if commit:
+                await db.rollback()
             raise
 
     async def get_item_count_by_type(self, db: AsyncSession, player_id: int, item_type: str) -> int:

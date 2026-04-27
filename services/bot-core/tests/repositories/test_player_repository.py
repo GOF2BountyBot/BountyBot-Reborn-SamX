@@ -220,17 +220,24 @@ class TestGetPlayersByUser:
 class TestUpdateCredits:
     @pytest.mark.asyncio
     async def test_update_credits_commit_true_exception(self, repo, mock_db):
-        mock_db.execute = AsyncMock(side_effect=Exception("credit fail"))
+        # Post Option-B refactor: failure surface is db.commit (the ORM-tracked
+        # mutation flushes on commit). db.execute is no longer used by this method.
+        player = _make_player(id=1)
+        mock_db.get = AsyncMock(return_value=player)
+        mock_db.commit = AsyncMock(side_effect=Exception("credit fail"))
         with pytest.raises(Exception, match="credit fail"):
             await repo.update_credits(mock_db, player_id=1, new_credits=500)
         mock_db.rollback.assert_awaited()
 
     @pytest.mark.asyncio
     async def test_update_credits_commit_false_exception(self, repo, mock_db):
-        mock_db.execute = AsyncMock(side_effect=Exception("credit fail"))
+        # In commit=False mode, the failure surface is db.flush.
+        player = _make_player(id=1)
+        mock_db.get = AsyncMock(return_value=player)
+        mock_db.flush = AsyncMock(side_effect=Exception("credit fail"))
         with pytest.raises(Exception, match="credit fail"):
             await repo.update_credits(mock_db, player_id=1, new_credits=500, commit=False)
-        # When commit=False, rollback should NOT be called
+        # When commit=False, rollback should NOT be called (caller owns transaction)
         mock_db.rollback.assert_not_awaited()
 
     @pytest.mark.asyncio
@@ -241,6 +248,14 @@ class TestUpdateCredits:
         mock_db.flush.assert_awaited_once()
         mock_db.commit.assert_not_awaited()
 
+    @pytest.mark.asyncio
+    async def test_update_credits_player_not_found_raises_value_error(self, repo, mock_db):
+        # Post Option-B: explicit ValueError when the player ID doesn't exist
+        # (was previously a silent no-op via Core UPDATE matching zero rows).
+        mock_db.get = AsyncMock(return_value=None)
+        with pytest.raises(ValueError, match="Player 999 not found"):
+            await repo.update_credits(mock_db, player_id=999, new_credits=500)
+
 
 # ===================================================================
 # update_xp – exception path (lines 178, 183-187)
@@ -250,10 +265,20 @@ class TestUpdateCredits:
 class TestUpdateXp:
     @pytest.mark.asyncio
     async def test_update_xp_exception(self, repo, mock_db):
-        mock_db.execute = AsyncMock(side_effect=Exception("xp fail"))
+        # Post Option-B refactor: failure surface is db.commit, not db.execute.
+        player = _make_player(id=1)
+        mock_db.get = AsyncMock(return_value=player)
+        mock_db.commit = AsyncMock(side_effect=Exception("xp fail"))
         with pytest.raises(Exception, match="xp fail"):
             await repo.update_xp(mock_db, player_id=1, xp=1000)
         mock_db.rollback.assert_awaited()
+
+    @pytest.mark.asyncio
+    async def test_update_xp_player_not_found_raises_value_error(self, repo, mock_db):
+        # Post Option-B: explicit ValueError when the player ID doesn't exist.
+        mock_db.get = AsyncMock(return_value=None)
+        with pytest.raises(ValueError, match="Player 999 not found"):
+            await repo.update_xp(mock_db, player_id=999, xp=1000)
 
 
 # ===================================================================
@@ -264,16 +289,29 @@ class TestUpdateXp:
 class TestUpdateTier:
     @pytest.mark.asyncio
     async def test_update_tier_invalid_tier(self, repo, mock_db):
+        # Post Option-B: ValueError raised before any DB I/O, so no rollback.
         with pytest.raises(ValueError, match="Invalid tier"):
             await repo.update_tier(mock_db, player_id=1, tier="Diamond")
-        mock_db.rollback.assert_awaited()
+        mock_db.rollback.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_update_tier_exception(self, repo, mock_db):
-        mock_db.execute = AsyncMock(side_effect=Exception("tier fail"))
+        # Post Option-B refactor: failure surface is db.commit.
+        player = _make_player(id=1)
+        mock_db.get = AsyncMock(return_value=player)
+        mock_db.commit = AsyncMock(side_effect=Exception("tier fail"))
         with pytest.raises(Exception, match="tier fail"):
             await repo.update_tier(mock_db, player_id=1, tier="Gold")
         mock_db.rollback.assert_awaited()
+
+    @pytest.mark.asyncio
+    async def test_update_tier_player_not_found_raises_value_error(self, repo, mock_db):
+        # Post Option-B: explicit ValueError when the player ID doesn't exist.
+        # Use a valid tier ("Silver") so the invalid-tier branch is NOT triggered —
+        # this exercises the player-not-found branch.
+        mock_db.get = AsyncMock(return_value=None)
+        with pytest.raises(ValueError, match="Player 999 not found"):
+            await repo.update_tier(mock_db, player_id=999, tier="Silver")
 
 
 # ===================================================================
@@ -284,7 +322,10 @@ class TestUpdateTier:
 class TestUpdateActiveShip:
     @pytest.mark.asyncio
     async def test_update_active_ship_exception(self, repo, mock_db):
-        mock_db.execute = AsyncMock(side_effect=Exception("ship fail"))
+        # Post Option-B refactor: failure surface is db.commit.
+        player = _make_player(id=1)
+        mock_db.get = AsyncMock(return_value=player)
+        mock_db.commit = AsyncMock(side_effect=Exception("ship fail"))
         with pytest.raises(Exception, match="ship fail"):
             await repo.update_active_ship(mock_db, player_id=1, ship_id=5)
         mock_db.rollback.assert_awaited()
@@ -296,3 +337,10 @@ class TestUpdateActiveShip:
         result = await repo.update_active_ship(mock_db, player_id=1, ship_id=None)
         mock_db.commit.assert_awaited()
         assert result is player
+
+    @pytest.mark.asyncio
+    async def test_update_active_ship_player_not_found_raises_value_error(self, repo, mock_db):
+        # Post Option-B: explicit ValueError when the player ID doesn't exist.
+        mock_db.get = AsyncMock(return_value=None)
+        with pytest.raises(ValueError, match="Player 999 not found"):
+            await repo.update_active_ship(mock_db, player_id=999, ship_id=5)

@@ -496,8 +496,12 @@ class ShopService:
             # Remove item from player inventory (commit=False — caller's transaction controls commit)
             await self.inventory_repo.remove_item(db, player_id, concrete_type, item_name, quantity, commit=False)
 
-            # Add credits to player
-            await self.player_repo.update_credits(db, player_id, player.credits + total_sell_value, commit=False)
+            # Compute the new credit balance ONCE, locally, BEFORE the update.
+            # Reading player.credits AFTER update_credits() would yield the post-update value
+            # (the ORM-mutation refactor preserves this contract, and the locally-captured-value
+            # pattern matches buy_ship / transfer_credits / consolidate_inventory).
+            new_credits = player.credits + total_sell_value
+            await self.player_repo.update_credits(db, player_id, new_credits, commit=False)
 
             # Add item to target shop (using concrete type)
             await self._add_item_to_shop(
@@ -511,7 +515,7 @@ class ShopService:
                 "quantity": quantity,
                 "unit_sell_price": unit_sell_price,
                 "total_sell_value": total_sell_value,
-                "new_credits": player.credits + total_sell_value,
+                "new_credits": new_credits,
                 "target_shop_tier": target_tier,
             }
 
@@ -606,8 +610,10 @@ class ShopService:
                         await self.inventory_repo.add_item(db, player_id, fallback, item_name, 1, commit=False)
                         items_unequipped[equip_type].append(item_name)
 
-            # Credit player with ship's full value (no tax; commit=False — caller's transaction)
-            await self.player_repo.update_credits(db, player_id, player.credits + ship_value, commit=False)
+            # Credit player with ship's full value (no tax; commit=False — caller's transaction).
+            # Compute new_credits ONCE, locally, BEFORE the update. See sell_item for rationale.
+            new_credits = player.credits + ship_value
+            await self.player_repo.update_credits(db, player_id, new_credits, commit=False)
 
             # Remove the PlayerShip from database
             await db.delete(player_ship)
@@ -633,7 +639,7 @@ class ShopService:
                 "ship_id": ship_id,
                 "quantity": 1,
                 "sell_value": ship_value,
-                "new_credits": player.credits + ship_value,
+                "new_credits": new_credits,
                 "target_shop_tier": target_tier,
                 "items_unequipped_to_inventory": total_unequipped,
                 "items_unequipped_detail": items_unequipped,

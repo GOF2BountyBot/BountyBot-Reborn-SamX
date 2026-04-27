@@ -138,6 +138,13 @@ class BountyRepository(IRepository[Bounty]):
     async def clear_active_by_guild(self, db: AsyncSession, guild_id: int, tier: str | None = None) -> list[int]:
         """Set all matching active bounties to status='cleared'.
 
+        DOCUMENTED EXCEPTION to the ORM-mutation rule (see
+        ``persist/repositories/AGENTS.md``): this is a legitimate bulk operation
+        that updates N rows in one statement and returns only IDs (never returns
+        Bounty model objects). To remain identity-map safe, the Core UPDATE uses
+        ``synchronize_session="fetch"`` so any identity-mapped Bounty rows in the
+        session are correctly expired/refreshed.
+
         Args:
             db: Async database session.
             guild_id: Discord guild ID.
@@ -162,8 +169,16 @@ class BountyRepository(IRepository[Bounty]):
             if not bounty_ids:
                 return []
 
-            # Bulk update to 'cleared'
-            await db.execute(update(Bounty).where(Bounty.id.in_(bounty_ids)).values(status="cleared"))
+            # Bulk update to 'cleared'.
+            # synchronize_session="fetch" is required: it forces SQLAlchemy to
+            # re-fetch matching rows so any identity-mapped Bounty instances in
+            # this session are correctly expired/refreshed.
+            await db.execute(
+                update(Bounty)
+                .where(Bounty.id.in_(bounty_ids))
+                .values(status="cleared")
+                .execution_options(synchronize_session="fetch")
+            )
             await db.commit()
             flogger.info(f"Cleared {len(bounty_ids)} bounties for guild {guild_id} tier={tier}")
             return bounty_ids

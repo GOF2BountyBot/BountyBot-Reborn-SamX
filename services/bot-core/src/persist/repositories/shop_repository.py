@@ -192,23 +192,33 @@ class ShopRepository(IRepository[GuildShop]):
     ) -> GuildShop:
         """Update the quantity of a shop item.
 
+        Mutates the ORM-tracked GuildShop instance via ``setattr`` (NOT a Core UPDATE).
+        See ``persist/repositories/AGENTS.md`` for the rationale.
+
         Args:
             commit: When False, flush without committing (use when the caller owns
                 the transaction, e.g. inside a router-level db.begin() context).
+
+        Raises:
+            ValueError: If quantity is negative or no shop item exists with the given ID.
         """
         try:
             if new_quantity < 0:
                 raise ValueError("Quantity cannot be negative")
 
-            await db.execute(update(GuildShop).where(GuildShop.id == shop_item_id).values(quantity=new_quantity))
+            item = await self.get_by_id(db, shop_item_id)
+            if item is None:
+                raise ValueError(f"Shop item {shop_item_id} not found")
+            item.quantity = new_quantity
             if commit:
                 await db.commit()
             else:
                 await db.flush()
 
-            item = await self.get_by_id(db, shop_item_id)
             flogger.debug(f"Updated shop item {shop_item_id} quantity: {new_quantity}")
             return item
+        except ValueError:
+            raise
         except Exception as e:
             flogger.error(f"Error updating quantity for shop item {shop_item_id}: {e}")
             if commit:

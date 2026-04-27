@@ -38,6 +38,39 @@ Use `equipment_service.item_discriminator_to_concrete_type(item.type)` to resolv
 
 ---
 
+## Locally-Captured-Value Pattern for Repo Update Helpers
+
+When updating an entity via a repo helper (`update_credits`, `update_xp`,
+`update_quantity`, etc.), use the **locally-captured-value pattern**:
+
+1. Compute the new value into a local variable BEFORE the update call.
+2. Pass that local variable to the repo helper.
+3. Use the local variable (NOT a re-read of `entity.col`) when assembling the
+   response dict.
+
+```python
+# CORRECT — locally-captured-value pattern
+new_credits = player.credits + total_sell_value
+await self.player_repo.update_credits(db, player_id, new_credits, commit=False)
+return {"new_credits": new_credits, ...}
+```
+
+```python
+# WRONG — reads entity.col after the update; produced doubled-credit bug pre-2026-04-27
+await self.player_repo.update_credits(db, player_id, player.credits + total_sell_value, commit=False)
+return {"new_credits": player.credits + total_sell_value, ...}  # BUG: player.credits is now post-update
+```
+
+Why: even after the Option B refactor (ORM `setattr` instead of Core UPDATE),
+the in-place-mutated instance reflects the NEW value immediately. Reading
+`entity.col` after the update gives the post-update value, so any
+`entity.col + delta` re-computation will double-apply the delta.
+
+The locally-captured-value pattern is also used by `shop_service.buy_ship`,
+`player_service.transfer_credits`, and `inventory_service.consolidate_inventory`.
+
+---
+
 ## Service Layer Purpose
 
 Services contain **all business logic**. Routers handle HTTP concerns only (parsing requests, returning responses). Repositories handle data access only (SQL queries). Logic that coordinates multiple repositories or enforces game rules lives in services.

@@ -126,18 +126,32 @@ class PlayerShipRepository(IRepository[PlayerShip]):
             raise
 
     async def set_active_ship(self, db: AsyncSession, player_id: int, ship_id: int) -> PlayerShip:
-        """Set a ship as the active ship for a player."""
+        """Set a ship as the active ship for a player.
+
+        Hybrid pattern (see ``persist/repositories/AGENTS.md``):
+        - Deactivate-all step uses Core UPDATE with ``synchronize_session="fetch"``
+          to safely expire any identity-mapped PlayerShip rows for this player.
+        - Activate step is an ORM ``setattr`` on the already-loaded target ``ship``
+          instance, so the returned object reflects the in-memory state correctly.
+        """
         try:
             # Verify ship belongs to player
             ship = await self.get_by_id(db, ship_id)
             if not ship or ship.player_id != player_id:
                 raise ValueError(f"Ship {ship_id} not found or doesn't belong to player {player_id}")
 
-            # Deactivate all other ships for this player
-            await db.execute(update(PlayerShip).where(PlayerShip.player_id == player_id).values(is_active=False))
+            # Deactivate all other ships for this player.
+            # Bulk Core UPDATE is acceptable here ONLY because synchronize_session="fetch"
+            # forces SQLAlchemy to expire any identity-mapped rows in this session.
+            await db.execute(
+                update(PlayerShip)
+                .where(PlayerShip.player_id == player_id)
+                .values(is_active=False)
+                .execution_options(synchronize_session="fetch")
+            )
 
-            # Activate the target ship
-            await db.execute(update(PlayerShip).where(PlayerShip.id == ship_id).values(is_active=True))
+            # Activate the target ship via ORM mutation (in-place, identity-map safe)
+            ship.is_active = True
 
             await db.commit()
 

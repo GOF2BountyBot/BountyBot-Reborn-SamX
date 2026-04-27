@@ -6,7 +6,7 @@ player management, progression tracking, and statistics.
 """
 
 from shared import bblogger
-from sqlalchemy import and_, func, select, update
+from sqlalchemy import and_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from persist.interfaces.repository_interface import IRepository
@@ -149,6 +149,11 @@ class PlayerRepository(IRepository[Player]):
     ) -> Player:
         """Update player credits.
 
+        Mutates the ORM-tracked Player instance via ``setattr`` (NOT a Core UPDATE).
+        See ``persist/repositories/AGENTS.md`` for the rationale: Core UPDATE +
+        identity map causes silent attribute expiration that previously produced
+        the doubled-credit bug in shop_service.sell_item / sell_ship.
+
         Args:
             db: Database session.
             player_id: Player whose credits to update.
@@ -156,17 +161,24 @@ class PlayerRepository(IRepository[Player]):
             commit: If True (default), commit immediately.  Pass ``False``
                 when this call is part of a larger transaction managed by the
                 caller (e.g. inside ``async with db.begin()``).
+
+        Raises:
+            ValueError: If no player exists with the given ID.
         """
         try:
-            await db.execute(update(Player).where(Player.id == player_id).values(credits=new_credits))
+            player = await self.get_by_id(db, player_id)
+            if player is None:
+                raise ValueError(f"Player {player_id} not found")
+            player.credits = new_credits
             if commit:
                 await db.commit()
             else:
                 await db.flush()
 
-            player = await self.get_by_id(db, player_id)
             flogger.debug(f"Updated credits for player {player_id}: {new_credits}")
             return player
+        except ValueError:
+            raise
         except Exception as e:
             flogger.error(f"Error updating credits for player {player_id}: {e}")
             if commit:
@@ -174,46 +186,79 @@ class PlayerRepository(IRepository[Player]):
             raise
 
     async def update_xp(self, db: AsyncSession, player_id: int, xp: int) -> Player:
-        """Update player XP."""
+        """Update player XP.
+
+        Mutates the ORM-tracked Player instance via ``setattr`` (NOT a Core UPDATE).
+        See ``persist/repositories/AGENTS.md``.
+
+        Raises:
+            ValueError: If no player exists with the given ID.
+        """
         try:
-            await db.execute(update(Player).where(Player.id == player_id).values(xp=xp))
+            player = await self.get_by_id(db, player_id)
+            if player is None:
+                raise ValueError(f"Player {player_id} not found")
+            player.xp = xp
             await db.commit()
 
-            player = await self.get_by_id(db, player_id)
             flogger.debug(f"Updated XP for player {player_id}: {xp}")
             return player
+        except ValueError:
+            raise
         except Exception as e:
             flogger.error(f"Error updating XP for player {player_id}: {e}")
             await db.rollback()
             raise
 
     async def update_tier(self, db: AsyncSession, player_id: int, tier: str) -> Player:
-        """Update player tier."""
+        """Update player tier.
+
+        Mutates the ORM-tracked Player instance via ``setattr`` (NOT a Core UPDATE).
+        See ``persist/repositories/AGENTS.md``.
+
+        Raises:
+            ValueError: If tier is invalid or no player exists with the given ID.
+        """
         try:
             valid_tiers = ["Bronze", "Silver", "Gold", "Platinum"]
             if tier not in valid_tiers:
                 raise ValueError(f"Invalid tier: {tier}. Must be one of {valid_tiers}")
 
-            await db.execute(update(Player).where(Player.id == player_id).values(tier=tier))
+            player = await self.get_by_id(db, player_id)
+            if player is None:
+                raise ValueError(f"Player {player_id} not found")
+            player.tier = tier
             await db.commit()
 
-            player = await self.get_by_id(db, player_id)
             flogger.info(f"Updated tier for player {player_id}: {tier}")
             return player
+        except ValueError:
+            raise
         except Exception as e:
             flogger.error(f"Error updating tier for player {player_id}: {e}")
             await db.rollback()
             raise
 
     async def update_active_ship(self, db: AsyncSession, player_id: int, ship_id: int | None) -> Player:
-        """Update player's active ship."""
+        """Update player's active ship.
+
+        Mutates the ORM-tracked Player instance via ``setattr`` (NOT a Core UPDATE).
+        See ``persist/repositories/AGENTS.md``.
+
+        Raises:
+            ValueError: If no player exists with the given ID.
+        """
         try:
-            await db.execute(update(Player).where(Player.id == player_id).values(active_ship_id=ship_id))
+            player = await self.get_by_id(db, player_id)
+            if player is None:
+                raise ValueError(f"Player {player_id} not found")
+            player.active_ship_id = ship_id
             await db.commit()
 
-            player = await self.get_by_id(db, player_id)
             flogger.debug(f"Updated active ship for player {player_id}: {ship_id}")
             return player
+        except ValueError:
+            raise
         except Exception as e:
             flogger.error(f"Error updating active ship for player {player_id}: {e}")
             await db.rollback()

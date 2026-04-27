@@ -199,7 +199,16 @@ class TestGetShopItemByName:
 class TestUpdateQuantity:
     @pytest.mark.asyncio
     async def test_update_quantity_exception(self, repo, mock_db):
-        mock_db.execute = AsyncMock(side_effect=Exception("update fail"))
+        # Post Option-B refactor (2026-04-27): repo no longer issues a Core UPDATE.
+        # Failure surface is db.commit (the ORM-tracked attribute mutation flushes
+        # on commit). db.execute is no longer used by this method.
+        from unittest.mock import MagicMock
+
+        item = MagicMock()
+        item.id = 1
+        item.quantity = 0
+        mock_db.get = AsyncMock(return_value=item)
+        mock_db.commit = AsyncMock(side_effect=Exception("update fail"))
         with pytest.raises(Exception, match="update fail"):
             await repo.update_quantity(mock_db, shop_item_id=1, new_quantity=5)
         mock_db.rollback.assert_awaited()

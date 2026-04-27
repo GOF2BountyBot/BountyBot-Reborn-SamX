@@ -51,6 +51,75 @@ class IRepository(ABC, Generic[T]):
 
 ---
 
+## Mutation Pattern: ORM-Tracked Setattr (NOT Core UPDATE)
+
+**Rule**: Single-row column updates in repository methods MUST use ORM-tracked
+attribute assignment (`setattr` / direct attribute write) followed by
+`flush()` / `commit()`. Do **not** use `db.execute(update(Model).where(...).values(...))`
+followed by `get_by_id()` for single-row updates.
+
+### Why
+
+`db.execute(update(...))` is a Core-level statement that bypasses SQLAlchemy's
+unit-of-work / identity-map tracking. After such a statement, any ORM instances
+already loaded for the affected row are silently expired. A subsequent attribute
+read on the caller's reference triggers a re-fetch from the DB — returning the
+POST-update value, NOT the pre-update value the caller may have been holding.
+
+This produced the **doubled-credit bug** in `shop_service.sell_item` /
+`sell_ship` (April 2026): after `update_credits()` re-fetched the player, the
+service re-read `player.credits + total_sell_value` and applied the addition twice.
+
+### Correct pattern (single-row update)
+
+```python
+async def update_credits(self, db: AsyncSession, player_id: int, new_credits: int,
+                        *, commit: bool = True) -> Player:
+    try:
+        player = await self.get_by_id(db, player_id)
+        if player is None:
+            raise ValueError(f"Player {player_id} not found")
+        player.credits = new_credits           # ORM-tracked mutation
+        if commit:
+            await db.commit()
+        else:
+            await db.flush()
+        return player
+    except ValueError:
+        raise
+    except Exception as e:
+        flogger.error(f"Error updating credits for player {player_id}: {e}")
+        if commit:
+            await db.rollback()
+        raise
+```
+
+The inherited FOR UPDATE row lock (when the caller pre-loaded with
+`get_by_id_for_update`) carries through automatically — the internal
+`get_by_id` is an identity-map hit that returns the SAME instance.
+
+### Documented exceptions (bulk operations)
+
+Bulk multi-row updates may use Core UPDATE **only** with
+`execution_options(synchronize_session="fetch")` so SQLAlchemy correctly expires
+any identity-mapped rows. `synchronize_session="evaluate"` is BANNED (compatibility
+issues with complex WHERE clauses).
+
+Current documented exceptions:
+
+- **`bounty_repository.clear_active_by_guild`** — bulk-clears N active bounties
+  to status='cleared'. Uses Core UPDATE + `synchronize_session="fetch"`. Returns
+  IDs only, never returns model objects.
+- **`player_ship_repository.set_active_ship`** (deactivate-all step) — bulk-deactivates
+  N PlayerShip rows for a player. Uses Core UPDATE + `synchronize_session="fetch"`.
+  The activate-target step is a single-row ORM mutation on the already-loaded
+  ship instance.
+
+When adding a new bulk-update exception, document it in the method docstring
+AND in this AGENTS.md.
+
+---
+
 ## Error Handling Pattern
 
 Every write operation (add, update, remove, create_or_update) must follow this pattern:

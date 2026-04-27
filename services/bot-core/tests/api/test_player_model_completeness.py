@@ -244,41 +244,34 @@ class TestUpdateCreditsBugFix:
     """
 
     @pytest.mark.asyncio
-    async def test_update_credits_uses_credits_column_name(self):
-        """update_credits calls .values(credits=...) not .values(new_credits=...)."""
+    async def test_update_credits_sets_credits_attribute(self):
+        """update_credits assigns the new value to the ORM-tracked `credits` attribute.
+
+        Post-Option-B refactor (2026-04-27): repo no longer issues a Core UPDATE.
+        It loads the Player via get_by_id and assigns ``player.credits = new_credits``
+        so SQLAlchemy's unit-of-work emits a normal ORM UPDATE on flush/commit.
+        Identity-map confusion is eliminated.
+        """
         from persist.repositories.player_repository import PlayerRepository
 
         repo = PlayerRepository()
 
         mock_db = AsyncMock()
-        mock_execute_result = AsyncMock()
-        mock_db.execute = AsyncMock(return_value=mock_execute_result)
         mock_db.commit = AsyncMock()
 
-        # Mock get_by_id to return a player after update
         mock_player = MagicMock()
         mock_player.id = 1
         mock_player.credits = 500
-
-        captured_stmt = []
-
-        async def capture_execute(stmt):
-            captured_stmt.append(stmt)
-            return mock_execute_result
-
-        mock_db.execute = capture_execute
         repo.get_by_id = AsyncMock(return_value=mock_player)
 
         await repo.update_credits(mock_db, player_id=1, new_credits=800)
 
-        # Verify the SQL statement used 'credits' column, not 'new_credits'
-        assert len(captured_stmt) == 1
-        stmt = captured_stmt[0]
-        # Compile the statement to check column names
-        compiled = stmt.compile()
-        sql_str = str(compiled)
-        assert "credits" in sql_str, f"Expected 'credits' in SQL, got: {sql_str}"
-        assert "new_credits" not in sql_str, f"Should not have 'new_credits' in SQL: {sql_str}"
+        # The ORM-tracked attribute now holds the new value (the unit-of-work
+        # will emit an UPDATE on the next flush/commit).
+        assert mock_player.credits == 800
+        # No Core UPDATE statement was constructed.
+        mock_db.execute.assert_not_called()
+        mock_db.commit.assert_awaited()
 
     @pytest.mark.asyncio
     async def test_update_credits_returns_updated_player(self):

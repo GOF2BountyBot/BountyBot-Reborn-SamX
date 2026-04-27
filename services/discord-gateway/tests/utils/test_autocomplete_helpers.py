@@ -7,10 +7,11 @@ Choice objects are real (not mocked); the only mocked surface is
 """
 
 import asyncio
+import logging
 import os
 import sys
 import types
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -27,6 +28,7 @@ sys.modules["shared.bblogger"] = _mock_bblogger
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "src"))
 
+import utils.autocomplete_helpers as _autocomplete_helpers_mod
 from utils.autocomplete_helpers import (
     _CURRENTLY_EQUIPPABLE_INVENTORY_TYPES,
     player_equippable_autocomplete,
@@ -380,6 +382,113 @@ class TestPlayerEquippedAutocomplete:
         assert "Pulse Laser" in names
         assert "Micro Gun" not in names
         assert "Shield Gen" not in names
+
+
+# ---------------------------------------------------------------------------
+# Diagnostic logging tests (O.1 fix)
+#
+# The module-level `logger` is a MagicMock (because bblogger is mocked at
+# import time).  To make pytest's caplog fixture capture real log records,
+# each test below replaces `utils.autocomplete_helpers.logger` with a real
+# logging.Logger for the duration of the test, then restores it.
+# ---------------------------------------------------------------------------
+
+
+class TestAutocompleteExceptionLogging:
+    """Verify that each helper emits a WARNING log when an exception occurs."""
+
+    def test_resolve_player_id_logs_warning_on_exception(self, caplog):
+        """resolve_player_id logs WARNING with exc_info when an exception is swallowed."""
+        real_logger = logging.getLogger("discord-gateway-autocomplete-helpers")
+        with (
+            patch.object(_autocomplete_helpers_mod, "logger", real_logger),
+            caplog.at_level(logging.WARNING, logger=real_logger.name),
+        ):
+            client = MagicMock()
+            client.post = AsyncMock(side_effect=RuntimeError("network down"))
+            result = asyncio.run(resolve_player_id(client, API_BASE, 111, 222))
+
+        assert result is None
+        assert any("resolve_player_id" in rec.message and rec.levelno == logging.WARNING for rec in caplog.records), (
+            f"Expected WARNING log from resolve_player_id; got: {[r.message for r in caplog.records]}"
+        )
+
+    def test_player_ships_autocomplete_logs_warning_on_exception(self, caplog):
+        """player_ships_autocomplete logs WARNING with exc_info when an exception is swallowed."""
+        real_logger = logging.getLogger("discord-gateway-autocomplete-helpers")
+        with (
+            patch.object(_autocomplete_helpers_mod, "logger", real_logger),
+            caplog.at_level(logging.WARNING, logger=real_logger.name),
+        ):
+            client = MagicMock()
+            # Player resolves OK, but ship fetch raises
+            client.post = AsyncMock(return_value=_make_response({"id": 7}))
+            client.get = AsyncMock(side_effect=RuntimeError("ships API down"))
+            choices = asyncio.run(
+                player_ships_autocomplete(client, API_BASE, _make_interaction(user_id=111, guild_id=222), "")
+            )
+
+        assert choices == []
+        assert any(
+            "player_ships_autocomplete" in rec.message and rec.levelno == logging.WARNING for rec in caplog.records
+        ), f"Expected WARNING log from player_ships_autocomplete; got: {[r.message for r in caplog.records]}"
+
+    def test_player_inventory_autocomplete_logs_warning_on_exception(self, caplog):
+        """player_inventory_autocomplete logs WARNING with exc_info when an exception is swallowed."""
+        real_logger = logging.getLogger("discord-gateway-autocomplete-helpers")
+        with (
+            patch.object(_autocomplete_helpers_mod, "logger", real_logger),
+            caplog.at_level(logging.WARNING, logger=real_logger.name),
+        ):
+            client = MagicMock()
+            client.post = AsyncMock(return_value=_make_response({"id": 7}))
+            client.get = AsyncMock(side_effect=RuntimeError("inventory API down"))
+            choices = asyncio.run(
+                player_inventory_autocomplete(client, API_BASE, _make_interaction(user_id=111, guild_id=222), "")
+            )
+
+        assert choices == []
+        assert any(
+            "player_inventory_autocomplete" in rec.message and rec.levelno == logging.WARNING for rec in caplog.records
+        ), f"Expected WARNING log from player_inventory_autocomplete; got: {[r.message for r in caplog.records]}"
+
+    def test_player_equippable_autocomplete_logs_warning_on_exception(self, caplog):
+        """player_equippable_autocomplete logs WARNING with exc_info when an exception is swallowed."""
+        real_logger = logging.getLogger("discord-gateway-autocomplete-helpers")
+        with (
+            patch.object(_autocomplete_helpers_mod, "logger", real_logger),
+            caplog.at_level(logging.WARNING, logger=real_logger.name),
+        ):
+            client = AsyncMock()
+            client.post = AsyncMock(return_value=_make_response({"id": 7}))
+            client.get = AsyncMock(side_effect=RuntimeError("equippable API down"))
+            choices = asyncio.run(
+                player_equippable_autocomplete(client, API_BASE, _make_interaction(user_id=111, guild_id=222), "")
+            )
+
+        assert choices == []
+        assert any(
+            "player_equippable_autocomplete" in rec.message and rec.levelno == logging.WARNING for rec in caplog.records
+        ), f"Expected WARNING log from player_equippable_autocomplete; got: {[r.message for r in caplog.records]}"
+
+    def test_player_equipped_autocomplete_logs_warning_on_exception(self, caplog):
+        """player_equipped_autocomplete logs WARNING with exc_info when an exception is swallowed."""
+        real_logger = logging.getLogger("discord-gateway-autocomplete-helpers")
+        with (
+            patch.object(_autocomplete_helpers_mod, "logger", real_logger),
+            caplog.at_level(logging.WARNING, logger=real_logger.name),
+        ):
+            client = AsyncMock()
+            client.post = AsyncMock(return_value=_make_response({"id": 7}))
+            client.get = AsyncMock(side_effect=RuntimeError("equipped API down"))
+            choices = asyncio.run(
+                player_equipped_autocomplete(client, API_BASE, _make_interaction(user_id=111, guild_id=222), "")
+            )
+
+        assert choices == []
+        assert any(
+            "player_equipped_autocomplete" in rec.message and rec.levelno == logging.WARNING for rec in caplog.records
+        ), f"Expected WARNING log from player_equipped_autocomplete; got: {[r.message for r in caplog.records]}"
 
 
 if __name__ == "__main__":

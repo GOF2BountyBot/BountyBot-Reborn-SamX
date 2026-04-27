@@ -516,12 +516,18 @@ class TestSellItem:
 
     @pytest.mark.asyncio
     async def test_raises_when_item_not_in_inventory(self, service, mock_db, mock_player_repo, mock_inventory_repo):
-        """ValueError raised when player does not own the item (empty inventory lookup)."""
+        """ValueError raised when player does not own the item (empty inventory lookup).
+
+        B.7: Error message must NOT contain numeric player_id; must use 'your inventory'.
+        """
         mock_player_repo.get_by_id.return_value = _make_player()
         mock_inventory_repo.get_player_items_by_name.return_value = []  # not found
 
-        with pytest.raises(ValueError, match="not found in player"):
+        with pytest.raises(ValueError, match="not found in your inventory") as exc_info:
             await service.sell_item(mock_db, player_id=1, item_name="Missing Gun")
+
+        # B.7: numeric player_id must NOT appear in user-facing error text
+        assert "1" not in str(exc_info.value), "player_id must not appear in error message"
 
     @pytest.mark.asyncio
     async def test_raises_when_insufficient_inventory_quantity(

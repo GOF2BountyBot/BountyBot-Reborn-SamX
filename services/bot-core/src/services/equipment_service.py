@@ -178,9 +178,7 @@ class EquipmentService:
                     f"Item not found in player inventory: player_id={player_id}, "
                     f"item_name={item_name}, inventory_type={inventory_type}"
                 )
-                raise ValueError(
-                    f"Item '{item_name}' (type={inventory_type}) not found in player {player_id} inventory"
-                )
+                raise ValueError(f"Item '{item_name}' (type={inventory_type}) not found in your inventory")
 
             # 5. Check slot availability
             await self._validate_slot_available(db, ship, equipment_type)
@@ -333,7 +331,7 @@ class EquipmentService:
         inventory_type = _INVENTORY_TYPE_MAP[equipment_category]
         inv_item = await self.inventory_repo.get_player_item(db, player_id, inventory_type, item_name)
         if not inv_item:
-            raise ValueError(f"Item '{item_name}' (type={inventory_type}) not found in player {player_id} inventory")
+            raise ValueError(f"Item '{item_name}' (type={inventory_type}) not found in your inventory")
 
         # 4. Check slot availability
         slot_field = _SLOT_MAP[equipment_category]

@@ -31,8 +31,11 @@ from __future__ import annotations
 import discord
 import httpx
 from discord import app_commands
+from shared import bblogger
 
 from utils.autocomplete_utils import normalize_for_search
+
+logger = bblogger.get_logger("discord-gateway-autocomplete-helpers")
 
 # Discord hard limit on autocomplete choice count.
 _MAX_CHOICES = 25
@@ -68,6 +71,11 @@ async def resolve_player_id(
         resp.raise_for_status()
         return resp.json().get("id")
     except Exception:  # pylint: disable=broad-exception-caught
+        logger.warning(
+            "resolve_player_id: exception resolving player; helper=resolve_player_id "
+            f"user_id={user_id} guild_id={guild_id}",
+            exc_info=True,
+        )
         return None
 
 
@@ -130,6 +138,12 @@ async def player_ships_autocomplete(
                 choices.append(app_commands.Choice(name=label[:100], value=str(ship_id_val)))
         return choices[:_MAX_CHOICES]
     except Exception:  # pylint: disable=broad-exception-caught
+        logger.warning(
+            "player_ships_autocomplete: exception building ship choices; helper=player_ships_autocomplete "
+            f"user_id={getattr(getattr(interaction, 'user', None), 'id', None)} "
+            f"guild_id={getattr(interaction, 'guild_id', None)}",
+            exc_info=True,
+        )
         return []
 
 
@@ -193,6 +207,13 @@ async def player_inventory_autocomplete(
                 choices.append(app_commands.Choice(name=label[:100], value=item_name))
         return choices[:_MAX_CHOICES]
     except Exception:  # pylint: disable=broad-exception-caught
+        logger.warning(
+            "player_inventory_autocomplete: exception building inventory choices; "
+            "helper=player_inventory_autocomplete "
+            f"user_id={getattr(getattr(interaction, 'user', None), 'id', None)} "
+            f"guild_id={getattr(interaction, 'guild_id', None)}",
+            exc_info=True,
+        )
         return []
 
 
@@ -270,6 +291,13 @@ async def player_equippable_autocomplete(
                 choices.append(app_commands.Choice(name=label[:100], value=item_name))
         return choices[:_MAX_CHOICES]
     except Exception:  # pylint: disable=broad-exception-caught
+        logger.warning(
+            "player_equippable_autocomplete: exception building equippable choices; "
+            "helper=player_equippable_autocomplete "
+            f"user_id={getattr(getattr(interaction, 'user', None), 'id', None)} "
+            f"guild_id={getattr(interaction, 'guild_id', None)}",
+            exc_info=True,
+        )
         return []
 
 
@@ -332,4 +360,11 @@ async def player_equipped_autocomplete(
                 choices.append(app_commands.Choice(name=item_name, value=item_name))
         return choices[:_MAX_CHOICES]
     except Exception:  # pylint: disable=broad-exception-caught
+        logger.warning(
+            "player_equipped_autocomplete: exception building equipped choices; "
+            "helper=player_equipped_autocomplete "
+            f"user_id={getattr(getattr(interaction, 'user', None), 'id', None)} "
+            f"guild_id={getattr(interaction, 'guild_id', None)}",
+            exc_info=True,
+        )
         return []

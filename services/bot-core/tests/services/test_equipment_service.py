@@ -297,7 +297,10 @@ class TestEquipItemValidationErrors:
 
     @pytest.mark.asyncio
     async def test_equip_item_player_does_not_own_item_raises(self, mock_db, svc):
-        """ValueError is raised when the item is not in player's inventory."""
+        """ValueError is raised when the item is not in player's inventory.
+
+        B.7: Error message must NOT contain numeric player_id; must use 'your inventory'.
+        """
         player_ship = _make_player_ship(player_id=42, ship_name="Sidewinder", weapons=[])
         static_ship = _make_static_ship(name="Sidewinder", max_primaries=2)
         game_item = _make_game_item("Pulse Laser")
@@ -307,7 +310,7 @@ class TestEquipItemValidationErrors:
         svc.item_repo.get_by_name.return_value = game_item
         svc.inventory_repo.get_player_item.return_value = None  # not owned
 
-        with pytest.raises(ValueError, match="not found in player"):
+        with pytest.raises(ValueError, match="not found in your inventory") as exc_info:
             await svc.equip_item(
                 mock_db,
                 player_id=42,
@@ -316,6 +319,8 @@ class TestEquipItemValidationErrors:
                 item_name="Pulse Laser",
             )
 
+        # B.7: numeric player_id must NOT appear in user-facing error text
+        assert "42" not in str(exc_info.value), "player_id must not appear in error message"
         svc.ship_repo.add_equipment.assert_not_called()
 
     @pytest.mark.asyncio
@@ -926,7 +931,10 @@ class TestEquipCheck:
 
     @pytest.mark.asyncio
     async def test_equip_check_player_does_not_own_item_raises(self, mock_db, svc):
-        """Raises ValueError when player does not own the item."""
+        """Raises ValueError when player does not own the item.
+
+        B.7: Error message must NOT contain numeric player_id; must use 'your inventory'.
+        """
         player_ship = _make_player_ship(player_id=42, ship_name="Sidewinder", weapons=[])
         static_ship = _make_static_ship(name="Sidewinder", max_primaries=2)
         base_item = _make_base_item("Pulse Laser", "PrimaryWeapon")
@@ -936,8 +944,11 @@ class TestEquipCheck:
         svc.item_repo.get_by_name_any_type.return_value = base_item
         svc.inventory_repo.get_player_item.return_value = None
 
-        with pytest.raises(ValueError, match="not found in player"):
+        with pytest.raises(ValueError, match="not found in your inventory") as exc_info:
             await svc.equip_check(mock_db, player_id=42, ship_id=1, item_name="Pulse Laser")
+
+        # B.7: numeric player_id must NOT appear in user-facing error text
+        assert "42" not in str(exc_info.value), "player_id must not appear in error message"
 
     @pytest.mark.asyncio
     async def test_equip_check_unlimited_module_ok(self, mock_db, svc):

@@ -461,7 +461,7 @@ class ShopService:
             # Writes must use a single concrete type (never a generic alias).
             all_matching = await self.inventory_repo.get_player_items_by_name(db, player_id, item_name)
             if not all_matching:
-                raise ValueError(f"Item '{item_name}' not found in player {player_id}'s inventory")
+                raise ValueError(f"Item '{item_name}' not found in your inventory")
 
             # Guard: cross-type name collision is impossible in the current catalog (verified:
             # 146 items, 146 distinct names, zero cross-type name collisions), but defensively

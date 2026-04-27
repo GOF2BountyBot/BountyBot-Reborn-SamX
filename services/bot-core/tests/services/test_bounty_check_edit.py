@@ -41,6 +41,35 @@ from services.bounty_service import BountyService, CheckResult, RewardInfo
 # ---------------------------------------------------------------------------
 
 
+# ---------------------------------------------------------------------------
+# Minimal BountyAnnouncementRequest-shaped dict returned by the real helper.
+# Used when a test only needs the call to complete without asserting on the
+# return value (e.g. tests verifying HTTP PUT behaviour or non-fatal paths).
+# ---------------------------------------------------------------------------
+
+
+def _make_request_payload(bounty=None, *, captured=False, route_map_url=None, bounty_hunter_role_id=None):
+    """Return a minimal BountyAnnouncementRequest-shaped dict (wire shape from A.48)."""
+    name = getattr(bounty, "criminal_name", None) or "Unknown"
+    faction = getattr(bounty, "criminal_faction", None)
+    title = f"✅ {name} — CAPTURED" if captured else name
+    return {
+        "text_content": (f"<@&{bounty_hunter_role_id}>" if bounty_hunter_role_id else None),
+        "loadout_response": {
+            "subject_kind": "criminal",
+            "subject_name": name,
+        },
+        "metadata": {
+            "title": title,
+            "color": 0,
+            "footer_text": faction,
+            "image_url": route_map_url,
+            "prefix_fields": [],
+            "suffix_fields": [],
+        },
+    }
+
+
 @pytest.fixture(autouse=True)
 def _mock_loadout_builder_from_player():
     """Auto-mock LoadoutBuilder.from_player so check_bounty tests don't need real DB calls."""
@@ -359,17 +388,14 @@ async def test_edit_announcement_looks_up_discord_message(service, mock_db):
     mock_msg_repo = AsyncMock()
     mock_msg_repo.get_by_guild_type_and_reference = AsyncMock(return_value=discord_msg)
 
-    mock_builder = MagicMock()
-    mock_builder.build_payload = MagicMock(return_value={"embed": {"title": "Zara"}})
-
     with (
         patch(
             "persist.repositories.discord_message_repository.DiscordMessageRepository",
             return_value=mock_msg_repo,
         ),
         patch(
-            "message_builders.builders.bounty_announcement.BountyAnnouncementBuilder",
-            return_value=mock_builder,
+            "utils.bounty_announcement_payload.build_bounty_announcement_request",
+            new=AsyncMock(return_value=_make_request_payload(bounty)),
         ),
         patch("httpx.AsyncClient") as mock_client_cls,
     ):
@@ -430,14 +456,7 @@ async def test_edit_announcement_rebuilds_embed_with_checked_systems(service, mo
     mock_msg_repo = AsyncMock()
     mock_msg_repo.get_by_guild_type_and_reference = AsyncMock(return_value=discord_msg)
 
-    captured_payload_args = {}
-
-    def capture_build(payload_data):
-        captured_payload_args.update(payload_data)
-        return {"embed": {"title": "Zara"}}
-
-    mock_builder = MagicMock()
-    mock_builder.build_payload = MagicMock(side_effect=capture_build)
+    mock_helper = AsyncMock(return_value=_make_request_payload(bounty))
 
     with (
         patch(
@@ -445,8 +464,8 @@ async def test_edit_announcement_rebuilds_embed_with_checked_systems(service, mo
             return_value=mock_msg_repo,
         ),
         patch(
-            "message_builders.builders.bounty_announcement.BountyAnnouncementBuilder",
-            return_value=mock_builder,
+            "utils.bounty_announcement_payload.build_bounty_announcement_request",
+            new=mock_helper,
         ),
         patch("httpx.AsyncClient") as mock_client_cls,
     ):
@@ -460,24 +479,19 @@ async def test_edit_announcement_rebuilds_embed_with_checked_systems(service, mo
 
         await service._edit_bounty_announcement(mock_db, bounty)
 
-    # Verify the builder was called
-    mock_builder.build_payload.assert_called_once()
-
-    # Alpha is checked 3+ stops before the answer → "checked" (not recently_spotted)
-    # Sol is the answer and was checked → "found"
-    # Beta/Gamma/Delta are unchecked (checker_id == -1) → not in checked_for_builder
-    checked_for_builder = captured_payload_args.get("checked")
-    assert checked_for_builder is not None
-    assert checked_for_builder.get("Alpha") == "checked"
-    assert checked_for_builder.get("Sol") == "found"
-    assert "Beta" not in checked_for_builder
-    assert "Gamma" not in checked_for_builder
-    assert "Delta" not in checked_for_builder
+    # A.48: the helper is invoked with the bounty object (which carries the raw checked
+    # dict).  Translation (player IDs → status strings) is the helper's responsibility,
+    # exercised by tests/test_bounty_announcement_payload.py.
+    # Here we assert that build_bounty_announcement_request was called and received the
+    # bounty whose .checked dict matches what the test set up.
+    mock_helper.assert_awaited_once()
+    called_bounty = mock_helper.call_args.args[1]
+    assert called_bounty.checked == bounty.checked
 
 
 @pytest.mark.asyncio
 async def test_edit_announcement_rebuilds_embed_with_recently_spotted(service, mock_db):
-    """Systems 1-2 stops before the answer are marked as recently_spotted in the builder."""
+    """A.48: the helper receives the bounty (raw checked dict); translation is downstream."""
     # Gamma is 1 stop before Sol → recently_spotted
     # Delta is 2 stops before Sol → recently_spotted
     # Alpha is 4 stops before Sol → checked (not recently_spotted)
@@ -500,14 +514,7 @@ async def test_edit_announcement_rebuilds_embed_with_recently_spotted(service, m
     mock_msg_repo = AsyncMock()
     mock_msg_repo.get_by_guild_type_and_reference = AsyncMock(return_value=discord_msg)
 
-    captured_payload_args = {}
-
-    def capture_build(payload_data):
-        captured_payload_args.update(payload_data)
-        return {"embed": {"title": "Zara"}}
-
-    mock_builder = MagicMock()
-    mock_builder.build_payload = MagicMock(side_effect=capture_build)
+    mock_helper = AsyncMock(return_value=_make_request_payload(bounty))
 
     with (
         patch(
@@ -515,8 +522,8 @@ async def test_edit_announcement_rebuilds_embed_with_recently_spotted(service, m
             return_value=mock_msg_repo,
         ),
         patch(
-            "message_builders.builders.bounty_announcement.BountyAnnouncementBuilder",
-            return_value=mock_builder,
+            "utils.bounty_announcement_payload.build_bounty_announcement_request",
+            new=mock_helper,
         ),
         patch("httpx.AsyncClient") as mock_client_cls,
     ):
@@ -530,18 +537,12 @@ async def test_edit_announcement_rebuilds_embed_with_recently_spotted(service, m
 
         await service._edit_bounty_announcement(mock_db, bounty)
 
-    checked_for_builder = captured_payload_args.get("checked")
-    assert checked_for_builder is not None
-    # Alpha is 4 stops before Sol → plain "checked"
-    assert checked_for_builder.get("Alpha") == "checked"
-    # Gamma is 2 stops before Sol → "recently_spotted"
-    assert checked_for_builder.get("Gamma") == "recently_spotted"
-    # Delta is 1 stop before Sol → "recently_spotted"
-    assert checked_for_builder.get("Delta") == "recently_spotted"
-    # Sol is the answer → "found"
-    assert checked_for_builder.get("Sol") == "found"
-    # Beta is unchecked → not in dict
-    assert "Beta" not in checked_for_builder
+    # A.48: translation now lives in `utils.bounty_announcement_payload._project_checked`
+    # and is tested in `tests/test_bounty_announcement_payload.py`. Here we verify
+    # the helper was invoked with the bounty carrying the raw checked dict.
+    mock_helper.assert_awaited_once()
+    called_bounty = mock_helper.call_args.args[1]
+    assert called_bounty.checked == bounty.checked
 
 
 @pytest.mark.asyncio
@@ -553,17 +554,14 @@ async def test_edit_announcement_non_fatal(service, mock_db):
     mock_msg_repo = AsyncMock()
     mock_msg_repo.get_by_guild_type_and_reference = AsyncMock(return_value=discord_msg)
 
-    mock_builder = MagicMock()
-    mock_builder.build_payload = MagicMock(return_value={"embed": {"title": "Zara"}})
-
     with (
         patch(
             "persist.repositories.discord_message_repository.DiscordMessageRepository",
             return_value=mock_msg_repo,
         ),
         patch(
-            "message_builders.builders.bounty_announcement.BountyAnnouncementBuilder",
-            return_value=mock_builder,
+            "utils.bounty_announcement_payload.build_bounty_announcement_request",
+            new=AsyncMock(return_value=_make_request_payload(bounty)),
         ),
         patch("httpx.AsyncClient") as mock_client_cls,
     ):
@@ -580,7 +578,7 @@ async def test_edit_announcement_non_fatal(service, mock_db):
 
 @pytest.mark.asyncio
 async def test_edit_announcement_sends_put_to_gateway(service, mock_db):
-    """Verifies the PUT request is sent to the correct gateway URL with the right payload."""
+    """A.48: Verifies PUT goes to the unified bounty-announcement endpoint with structured payload."""
     import os
 
     bounty = _make_active_bounty(bounty_id=77, guild_id=5)
@@ -588,10 +586,6 @@ async def test_edit_announcement_sends_put_to_gateway(service, mock_db):
 
     mock_msg_repo = AsyncMock()
     mock_msg_repo.get_by_guild_type_and_reference = AsyncMock(return_value=discord_msg)
-
-    embed_content = {"title": "Zara", "fields": []}
-    mock_builder = MagicMock()
-    mock_builder.build_payload = MagicMock(return_value={"embed": embed_content})
 
     captured_calls = {}
 
@@ -601,8 +595,8 @@ async def test_edit_announcement_sends_put_to_gateway(service, mock_db):
             return_value=mock_msg_repo,
         ),
         patch(
-            "message_builders.builders.bounty_announcement.BountyAnnouncementBuilder",
-            return_value=mock_builder,
+            "utils.bounty_announcement_payload.build_bounty_announcement_request",
+            new=AsyncMock(return_value=_make_request_payload(bounty)),
         ),
         patch("httpx.AsyncClient") as mock_client_cls,
         patch.dict(os.environ, {"DISCORD_GATEWAY_HOST": "test-gateway", "GATEWAY_PORT": "8888"}),
@@ -623,13 +617,14 @@ async def test_edit_announcement_sends_put_to_gateway(service, mock_db):
 
         await service._edit_bounty_announcement(mock_db, bounty)
 
-    # Verify URL format: http://{host}:{port}/api/v1/channels/{channel_id}/messages/{message_id}
-    assert captured_calls["url"] == "http://test-gateway:8888/api/v1/channels/7777/messages/12345"
+    # A.48 unified endpoint: http://{host}:{port}/api/v1/announcements/bounty/channel/{channel_id}/message/{message_id}
+    assert captured_calls["url"] == "http://test-gateway:8888/api/v1/announcements/bounty/channel/7777/message/12345"
 
-    # Verify payload structure
+    # Structured payload: text_content + loadout_response + metadata.
     payload = captured_calls["json"]
-    assert payload["content"] == embed_content
-    assert payload["message_type"] == "bounty_announcement"
+    assert "loadout_response" in payload
+    assert "metadata" in payload
+    assert "text_content" in payload
 
 
 # ---------------------------------------------------------------------------
@@ -697,14 +692,7 @@ async def test_edit_announcement_passes_captured_true_to_builder(service, mock_d
     mock_msg_repo = AsyncMock()
     mock_msg_repo.get_by_guild_type_and_reference = AsyncMock(return_value=discord_msg)
 
-    captured_payload_args = {}
-
-    def capture_build(payload_data):
-        captured_payload_args.update(payload_data)
-        return {"embed": {"title": "✅ Zara — CAPTURED"}}
-
-    mock_builder = MagicMock()
-    mock_builder.build_payload = MagicMock(side_effect=capture_build)
+    mock_helper = AsyncMock(return_value=_make_request_payload(bounty, captured=True))
 
     with (
         patch(
@@ -712,8 +700,8 @@ async def test_edit_announcement_passes_captured_true_to_builder(service, mock_d
             return_value=mock_msg_repo,
         ),
         patch(
-            "message_builders.builders.bounty_announcement.BountyAnnouncementBuilder",
-            return_value=mock_builder,
+            "utils.bounty_announcement_payload.build_bounty_announcement_request",
+            new=mock_helper,
         ),
         patch("httpx.AsyncClient") as mock_client_cls,
     ):
@@ -727,8 +715,9 @@ async def test_edit_announcement_passes_captured_true_to_builder(service, mock_d
 
         await service._edit_bounty_announcement(mock_db, bounty, captured=True)
 
-    # captured=True must be passed to the builder
-    assert captured_payload_args.get("captured") is True
+    # A.48 wire shape: build_bounty_announcement_request must be called with captured=True kwarg.
+    mock_helper.assert_awaited_once()
+    assert mock_helper.call_args.kwargs.get("captured") is True
 
 
 @pytest.mark.asyncio
@@ -740,14 +729,7 @@ async def test_edit_announcement_passes_captured_false_by_default(service, mock_
     mock_msg_repo = AsyncMock()
     mock_msg_repo.get_by_guild_type_and_reference = AsyncMock(return_value=discord_msg)
 
-    captured_payload_args = {}
-
-    def capture_build(payload_data):
-        captured_payload_args.update(payload_data)
-        return {"embed": {"title": "Zara"}}
-
-    mock_builder = MagicMock()
-    mock_builder.build_payload = MagicMock(side_effect=capture_build)
+    mock_helper = AsyncMock(return_value=_make_request_payload(bounty))
 
     with (
         patch(
@@ -755,8 +737,8 @@ async def test_edit_announcement_passes_captured_false_by_default(service, mock_
             return_value=mock_msg_repo,
         ),
         patch(
-            "message_builders.builders.bounty_announcement.BountyAnnouncementBuilder",
-            return_value=mock_builder,
+            "utils.bounty_announcement_payload.build_bounty_announcement_request",
+            new=mock_helper,
         ),
         patch("httpx.AsyncClient") as mock_client_cls,
     ):
@@ -770,5 +752,6 @@ async def test_edit_announcement_passes_captured_false_by_default(service, mock_
 
         await service._edit_bounty_announcement(mock_db, bounty)
 
-    # captured should be False when not specified
-    assert captured_payload_args.get("captured") is False
+    # A.48 wire shape: captured kwarg should default to False when not passed.
+    mock_helper.assert_awaited_once()
+    assert mock_helper.call_args.kwargs.get("captured") is False

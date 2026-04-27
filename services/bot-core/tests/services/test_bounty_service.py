@@ -3764,13 +3764,11 @@ class TestEditBountyAnnouncementCriminalIcon:
 
     @pytest.mark.asyncio
     async def test_criminal_icon_included_in_embed_payload(self, svc, mock_db):
-        """_edit_bounty_announcement passes criminal_icon from Criminal to builder."""
+        """_edit_bounty_announcement passes criminal_icon kwarg to build_bounty_announcement_request."""
         import os
 
-        # Build a mock bounty
         bounty = _make_edit_bounty()
 
-        # Discord message repo returns a message record
         mock_msg = MagicMock()
         mock_msg.channel_id = 1234
         mock_msg.message_id = 9999
@@ -3783,12 +3781,21 @@ class TestEditBountyAnnouncementCriminalIcon:
         mock_criminal_repo = AsyncMock()
         mock_criminal_repo.get_by_name = AsyncMock(return_value=mock_criminal)
 
-        captured_payloads: list[dict] = []
-
-        class FakeBuilder:
-            def build_payload(self, data: dict) -> dict:
-                captured_payloads.append(data.copy())
-                return {"content": None, "embed": {"title": "Test"}}
+        # A.48 wire shape: build_bounty_announcement_request receives criminal_icon as kwarg.
+        mock_helper = AsyncMock(
+            return_value={
+                "text_content": None,
+                "loadout_response": {"subject_kind": "criminal", "subject_name": "BlackViper"},
+                "metadata": {
+                    "title": "BlackViper",
+                    "color": 0,
+                    "footer_text": None,
+                    "image_url": None,
+                    "prefix_fields": [],
+                    "suffix_fields": [],
+                },
+            }
+        )
 
         class FakeHttpxResponse:
             def raise_for_status(self):
@@ -3814,20 +3821,21 @@ class TestEditBountyAnnouncementCriminalIcon:
                 return_value=mock_criminal_repo,
             ),
             patch(
-                "message_builders.builders.bounty_announcement.BountyAnnouncementBuilder",
-                return_value=FakeBuilder(),
+                "utils.bounty_announcement_payload.build_bounty_announcement_request",
+                new=mock_helper,
             ),
             patch("httpx.AsyncClient", FakeAsyncClient),
             patch.dict(os.environ, {"DISCORD_GATEWAY_HOST": "gateway", "GATEWAY_PORT": "7999"}),
         ):
             await svc._edit_bounty_announcement(mock_db, bounty)
 
-        assert len(captured_payloads) == 1
-        assert captured_payloads[0]["criminal_icon"] == "https://example.com/blackviper.png"
+        # A.48: criminal_icon is passed as a kwarg to build_bounty_announcement_request.
+        mock_helper.assert_awaited_once()
+        assert mock_helper.call_args.kwargs.get("criminal_icon") == "https://example.com/blackviper.png"
 
     @pytest.mark.asyncio
     async def test_criminal_icon_none_when_criminal_not_found(self, svc, mock_db):
-        """_edit_bounty_announcement sets criminal_icon=None when criminal lookup returns None."""
+        """_edit_bounty_announcement passes criminal_icon=None when criminal lookup returns None."""
         import os
 
         bounty = _make_edit_bounty()
@@ -3842,12 +3850,20 @@ class TestEditBountyAnnouncementCriminalIcon:
         mock_criminal_repo = AsyncMock()
         mock_criminal_repo.get_by_name = AsyncMock(return_value=None)
 
-        captured_payloads: list[dict] = []
-
-        class FakeBuilder:
-            def build_payload(self, data: dict) -> dict:
-                captured_payloads.append(data.copy())
-                return {"content": None, "embed": {"title": "Test"}}
+        mock_helper = AsyncMock(
+            return_value={
+                "text_content": None,
+                "loadout_response": {"subject_kind": "criminal", "subject_name": "BlackViper"},
+                "metadata": {
+                    "title": "BlackViper",
+                    "color": 0,
+                    "footer_text": None,
+                    "image_url": None,
+                    "prefix_fields": [],
+                    "suffix_fields": [],
+                },
+            }
+        )
 
         class FakeHttpxResponse:
             def raise_for_status(self):
@@ -3873,20 +3889,20 @@ class TestEditBountyAnnouncementCriminalIcon:
                 return_value=mock_criminal_repo,
             ),
             patch(
-                "message_builders.builders.bounty_announcement.BountyAnnouncementBuilder",
-                return_value=FakeBuilder(),
+                "utils.bounty_announcement_payload.build_bounty_announcement_request",
+                new=mock_helper,
             ),
             patch("httpx.AsyncClient", FakeAsyncClient),
             patch.dict(os.environ, {"DISCORD_GATEWAY_HOST": "gateway", "GATEWAY_PORT": "7999"}),
         ):
             await svc._edit_bounty_announcement(mock_db, bounty)
 
-        assert len(captured_payloads) == 1
-        assert captured_payloads[0]["criminal_icon"] is None
+        mock_helper.assert_awaited_once()
+        assert mock_helper.call_args.kwargs.get("criminal_icon") is None
 
     @pytest.mark.asyncio
     async def test_criminal_icon_lookup_failure_is_non_fatal(self, svc, mock_db):
-        """_edit_bounty_announcement continues when criminal icon lookup raises an exception."""
+        """_edit_bounty_announcement continues with criminal_icon=None when lookup raises."""
         import os
 
         bounty = _make_edit_bounty()
@@ -3901,12 +3917,20 @@ class TestEditBountyAnnouncementCriminalIcon:
         mock_criminal_repo = AsyncMock()
         mock_criminal_repo.get_by_name = AsyncMock(side_effect=Exception("DB failure"))
 
-        captured_payloads: list[dict] = []
-
-        class FakeBuilder:
-            def build_payload(self, data: dict) -> dict:
-                captured_payloads.append(data.copy())
-                return {"content": None, "embed": {"title": "Test"}}
+        mock_helper = AsyncMock(
+            return_value={
+                "text_content": None,
+                "loadout_response": {"subject_kind": "criminal", "subject_name": "BlackViper"},
+                "metadata": {
+                    "title": "BlackViper",
+                    "color": 0,
+                    "footer_text": None,
+                    "image_url": None,
+                    "prefix_fields": [],
+                    "suffix_fields": [],
+                },
+            }
+        )
 
         class FakeHttpxResponse:
             def raise_for_status(self):
@@ -3932,8 +3956,8 @@ class TestEditBountyAnnouncementCriminalIcon:
                 return_value=mock_criminal_repo,
             ),
             patch(
-                "message_builders.builders.bounty_announcement.BountyAnnouncementBuilder",
-                return_value=FakeBuilder(),
+                "utils.bounty_announcement_payload.build_bounty_announcement_request",
+                new=mock_helper,
             ),
             patch("httpx.AsyncClient", FakeAsyncClient),
             patch.dict(os.environ, {"DISCORD_GATEWAY_HOST": "gateway", "GATEWAY_PORT": "7999"}),
@@ -3941,9 +3965,9 @@ class TestEditBountyAnnouncementCriminalIcon:
             # Should not raise even when criminal lookup fails
             await svc._edit_bounty_announcement(mock_db, bounty)
 
-        # Builder was still called (icon defaults to None)
-        assert len(captured_payloads) == 1
-        assert captured_payloads[0]["criminal_icon"] is None
+        # A.48: build_bounty_announcement_request still called; criminal_icon defaults to None.
+        mock_helper.assert_awaited_once()
+        assert mock_helper.call_args.kwargs.get("criminal_icon") is None
 
     @pytest.mark.asyncio
     async def test_no_discord_message_skips_build(self, svc, mock_db):

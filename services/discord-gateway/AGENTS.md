@@ -310,7 +310,6 @@ Discord user → discord.py → Cog command handler
 | Scope | Count |
 |-------|-------|
 | Test files | 63 |
-| Total tests | 1,374 |
 
 ### Test Structure
 

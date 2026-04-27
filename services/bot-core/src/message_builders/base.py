@@ -21,10 +21,16 @@ class MessagePayloadBuilder(ABC):
         """Build the embed payload from input data."""
         flogger.log(level=5, message="build_payload called by subclass")
 
-    @abstractmethod
     def extract_data(self, payload: str) -> dict[str, Any] | None:
-        """Extract structured data from stored payload."""
-        flogger.log(level=5, message="extract_data called by subclass")
+        """Extract structured data from stored payload.
+
+        Concrete subclasses may override this when they need to parse back a
+        previously-serialised embed payload.  The default returns None so that
+        future builder subclasses are not forced to implement this method if
+        they have no parsing-back-from-string need.
+        """
+        flogger.log(level=5, message="extract_data called on base; returning None")
+        return None
 
     @abstractmethod
     def get_message_type(self) -> str:

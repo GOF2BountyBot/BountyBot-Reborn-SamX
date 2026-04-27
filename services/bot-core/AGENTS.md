@@ -484,7 +484,7 @@ JSON files in `import_data/` are the source of truth for game assets. They are l
 
 ## Testing
 
-- **85 test files**, **2,239 tests + 1 skip**
+- **85 test files**
 - Runner: `pytest` with `asyncio_mode = auto` (root `pyproject.toml`)
 - Coverage target: ≥ 80%
 

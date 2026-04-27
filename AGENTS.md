@@ -6,7 +6,7 @@ This file provides guidance for AI agents working on this codebase. Each service
 
 ## Project Overview
 
-**BountyBot-Reborn-SamX** is a containerized, GPU-ready micro-service stack powering a game-related Discord bot. The project uses FastAPI, PostgreSQL, Discord.py, CUDA, Blender, Alembic, PIL, and Docker-Compose. The stack has 185 source files, 162 test files, and 3,717+ tests across all services.
+**BountyBot-Reborn-SamX** is a containerized, GPU-ready micro-service stack powering a game-related Discord bot. The project uses FastAPI, PostgreSQL, Discord.py, CUDA, Blender, Alembic, PIL, and Docker-Compose. The stack has 185 source files and 162 test files across all services.
 
 ---
 
@@ -29,12 +29,12 @@ discord-gateway → blender-service → bot-core → db
 
 ### Codebase Statistics
 
-| Service | Source files | Test files | Tests | Routers | Models | Repos | Services | Cogs | Schemas |
-|---------|-------------|------------|-------|---------|--------|-------|----------|------|---------|
-| bot-core | 125 | 85 | 2,239+1skip | 15 | 21 | 19 | 17 | — | 13 |
-| discord-gateway | 43 | 63 | 1,374 | 10 | — | — | — | 14 | 7 |
-| blender-service | 17 | 14 | 104 | 6 | — | — | 6 | — | — |
-| **TOTAL** | **185** | **162** | **3,717+** | **31** | **21** | **19** | **23** | **14** | **20** |
+| Service | Source files | Test files | Routers | Models | Repos | Services | Cogs | Schemas |
+|---------|-------------|------------|---------|--------|-------|----------|------|---------|
+| bot-core | 125 | 85 | 15 | 21 | 19 | 17 | — | 13 |
+| discord-gateway | 43 | 63 | 10 | — | — | — | 14 | 7 |
+| blender-service | 17 | 14 | 6 | — | — | 6 | — | — |
+| **TOTAL** | **185** | **162** | **31** | **21** | **19** | **23** | **14** | **20** |
 
 ---
 

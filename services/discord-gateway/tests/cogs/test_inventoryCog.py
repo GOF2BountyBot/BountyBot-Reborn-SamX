@@ -378,6 +378,135 @@ class TestInventoryCommand:
 
 
 # ---------------------------------------------------------------------------
+# /inventory unfiltered aggregate field names (DEF-CLEANUP-001 regression tests)
+# ---------------------------------------------------------------------------
+
+
+class TestInventoryAggregateFieldRendering:
+    """Regression tests for DEF-CLEANUP-001 site 3: /inventory unfiltered aggregate
+    field names must render without underscores.
+
+    Site 3 fix: item_type_key.replace('_', ' ').title()
+    """
+
+    def test_inventory_primary_weapon_field_name_no_underscore(self, mock_inventory_cog, make_mock_response):
+        """DEF-CLEANUP-001 site 3: primary_weapon items → field named 'Primary Weapons (N)' no underscore."""
+        interaction = _create_mock_interaction()
+
+        player_resp = make_mock_response({"id": 1})
+        items_resp = make_mock_response(
+            [
+                _make_inventory_item("Nirai Impulse EX 1", "primary_weapon", 1),
+                _make_inventory_item("Nirai Impulse EX 2", "primary_weapon", 2),
+            ]
+        )
+        summary_resp = make_mock_response(_make_summary(total_items=2, weapon=2))
+
+        mock_inventory_cog.http_client.post = AsyncMock(return_value=player_resp)
+        mock_inventory_cog.http_client.get = AsyncMock(side_effect=[items_resp, summary_resp])
+
+        asyncio.run(mock_inventory_cog.inventory.callback(mock_inventory_cog, interaction))
+
+        interaction.followup.send.assert_awaited_once()
+        send_kwargs = interaction.followup.send.call_args[1]
+        assert "embed" in send_kwargs
+        embed = send_kwargs["embed"]
+
+        field_names = [f.name for f in embed.fields]
+        pw_field = next((n for n in field_names if "primary" in n.lower()), None)
+        assert pw_field is not None, f"Expected a Primary Weapon field, got: {field_names}"
+        assert "_" not in pw_field, f"Field name must not contain underscores (DEF-CLEANUP-001), got: {pw_field!r}"
+        assert pw_field == "Primary Weapons (2)", f"Expected 'Primary Weapons (2)', got: {pw_field!r}"
+
+    def test_inventory_secondary_weapon_field_name_no_underscore(self, mock_inventory_cog, make_mock_response):
+        """DEF-CLEANUP-001 site 3: secondary_weapon items → field named 'Secondary Weapons (N)' no underscore."""
+        interaction = _create_mock_interaction()
+
+        player_resp = make_mock_response({"id": 1})
+        items_resp = make_mock_response(
+            [
+                _make_inventory_item("Rail Blaster", "secondary_weapon", 1),
+            ]
+        )
+        summary_resp = make_mock_response(_make_summary(total_items=1))
+
+        mock_inventory_cog.http_client.post = AsyncMock(return_value=player_resp)
+        mock_inventory_cog.http_client.get = AsyncMock(side_effect=[items_resp, summary_resp])
+
+        asyncio.run(mock_inventory_cog.inventory.callback(mock_inventory_cog, interaction))
+
+        interaction.followup.send.assert_awaited_once()
+        send_kwargs = interaction.followup.send.call_args[1]
+        assert "embed" in send_kwargs
+        embed = send_kwargs["embed"]
+
+        field_names = [f.name for f in embed.fields]
+        sw_field = next((n for n in field_names if "secondary" in n.lower()), None)
+        assert sw_field is not None, f"Expected a Secondary Weapon field, got: {field_names}"
+        assert "_" not in sw_field, f"Field name must not contain underscores (DEF-CLEANUP-001), got: {sw_field!r}"
+        assert sw_field == "Secondary Weapons (1)", f"Expected 'Secondary Weapons (1)', got: {sw_field!r}"
+
+    def test_inventory_turret_weapon_field_name_no_underscore(self, mock_inventory_cog, make_mock_response):
+        """DEF-CLEANUP-001 site 3: turret_weapon items → field named 'Turret Weapons (N)' no underscore."""
+        interaction = _create_mock_interaction()
+
+        player_resp = make_mock_response({"id": 1})
+        items_resp = make_mock_response(
+            [
+                _make_inventory_item("Raptor Turret", "turret_weapon", 1),
+                _make_inventory_item("Siege Cannon", "turret_weapon", 3),
+            ]
+        )
+        summary_resp = make_mock_response(_make_summary(total_items=2, turret=2))
+
+        mock_inventory_cog.http_client.post = AsyncMock(return_value=player_resp)
+        mock_inventory_cog.http_client.get = AsyncMock(side_effect=[items_resp, summary_resp])
+
+        asyncio.run(mock_inventory_cog.inventory.callback(mock_inventory_cog, interaction))
+
+        interaction.followup.send.assert_awaited_once()
+        send_kwargs = interaction.followup.send.call_args[1]
+        assert "embed" in send_kwargs
+        embed = send_kwargs["embed"]
+
+        field_names = [f.name for f in embed.fields]
+        tw_field = next((n for n in field_names if "turret" in n.lower()), None)
+        assert tw_field is not None, f"Expected a Turret Weapon field, got: {field_names}"
+        assert "_" not in tw_field, f"Field name must not contain underscores (DEF-CLEANUP-001), got: {tw_field!r}"
+        assert tw_field == "Turret Weapons (2)", f"Expected 'Turret Weapons (2)', got: {tw_field!r}"
+
+    def test_inventory_mixed_types_all_fields_underscore_free(self, mock_inventory_cog, make_mock_response):
+        """DEF-CLEANUP-001 site 3: when multiple weapon types exist, all field names are underscore-free."""
+        interaction = _create_mock_interaction()
+
+        player_resp = make_mock_response({"id": 1})
+        items_resp = make_mock_response(
+            [
+                _make_inventory_item("Nirai EX 1", "primary_weapon", 1),
+                _make_inventory_item("Raptor Turret", "turret_weapon", 1),
+                _make_inventory_item("Shield Gen", "module", 1),
+                _make_inventory_item("Eagle", "ship", 1),
+            ]
+        )
+        summary_resp = make_mock_response(_make_summary(total_items=4, weapon=1, turret=1, module=1, ship=1))
+
+        mock_inventory_cog.http_client.post = AsyncMock(return_value=player_resp)
+        mock_inventory_cog.http_client.get = AsyncMock(side_effect=[items_resp, summary_resp])
+
+        asyncio.run(mock_inventory_cog.inventory.callback(mock_inventory_cog, interaction))
+
+        interaction.followup.send.assert_awaited_once()
+        send_kwargs = interaction.followup.send.call_args[1]
+        assert "embed" in send_kwargs
+        embed = send_kwargs["embed"]
+
+        for field in embed.fields:
+            assert "_" not in field.name, (
+                f"Embed field name '{field.name}' contains underscore — DEF-CLEANUP-001 regression"
+            )
+
+
+# ---------------------------------------------------------------------------
 # _get_item_type_color helper
 # ---------------------------------------------------------------------------
 

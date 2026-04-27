@@ -989,6 +989,154 @@ class TestBuyCommandBranches:
 
 
 # ---------------------------------------------------------------------------
+# /buy embed — Item Type field rendering (DEF-CLEANUP-001 regression tests)
+# ---------------------------------------------------------------------------
+
+
+class TestBuyItemTypeFieldRendering:
+    """Regression tests for DEF-CLEANUP-001: /buy post-purchase embed must render
+    weapon type names without underscores.
+
+    Site 1 fix: transaction["item_type"].replace("_", " ").title()
+    """
+
+    def _run_buy_with_item_type(self, mock_shop_cog, make_mock_response, item_type):
+        """Helper: run /buy for a given item_type and return the success embed."""
+        interaction = _create_mock_interaction()
+
+        player_resp = make_mock_response(_make_player_data(tier="Bronze", credits=5000))
+        item_resp = make_mock_response(_make_shop_item(1, "TestItem", item_type, "Bronze", 500, 10))
+        purchase_resp = make_mock_response(_make_transaction("TestItem", item_type, 500, 4500))
+
+        mock_shop_cog.http_client.post = AsyncMock(side_effect=[player_resp, purchase_resp])
+        mock_shop_cog.http_client.get = AsyncMock(return_value=item_resp)
+
+        asyncio.run(mock_shop_cog.buy.callback(mock_shop_cog, interaction, 1, 1))
+
+        interaction.followup.send.assert_awaited_once()
+        send_kwargs = interaction.followup.send.call_args[1]
+        assert "embed" in send_kwargs
+        return send_kwargs["embed"]
+
+    def _get_item_type_field(self, embed):
+        """Extract the 'Item Type' field value from the embed."""
+        field = next((f for f in embed.fields if f.name == "Item Type"), None)
+        assert field is not None, "Success embed must contain an 'Item Type' field"
+        return field.value
+
+    def test_buy_primary_weapon_item_type_renders_without_underscore(self, mock_shop_cog, make_mock_response):
+        """DEF-CLEANUP-001 site 1: /buy primary_weapon → 'Primary Weapon' (no underscore)."""
+        embed = self._run_buy_with_item_type(mock_shop_cog, make_mock_response, "primary_weapon")
+        value = self._get_item_type_field(embed)
+        assert "_" not in value, f"Item Type field must not contain underscores, got: {value!r}"
+        assert value == "Primary Weapon", f"Expected 'Primary Weapon', got: {value!r}"
+
+    def test_buy_secondary_weapon_item_type_renders_without_underscore(self, mock_shop_cog, make_mock_response):
+        """DEF-CLEANUP-001 site 1: /buy secondary_weapon → 'Secondary Weapon' (no underscore)."""
+        embed = self._run_buy_with_item_type(mock_shop_cog, make_mock_response, "secondary_weapon")
+        value = self._get_item_type_field(embed)
+        assert "_" not in value, f"Item Type field must not contain underscores, got: {value!r}"
+        assert value == "Secondary Weapon", f"Expected 'Secondary Weapon', got: {value!r}"
+
+    def test_buy_turret_weapon_item_type_renders_without_underscore(self, mock_shop_cog, make_mock_response):
+        """DEF-CLEANUP-001 site 1: /buy turret_weapon → 'Turret Weapon' (no underscore)."""
+        embed = self._run_buy_with_item_type(mock_shop_cog, make_mock_response, "turret_weapon")
+        value = self._get_item_type_field(embed)
+        assert "_" not in value, f"Item Type field must not contain underscores, got: {value!r}"
+        assert value == "Turret Weapon", f"Expected 'Turret Weapon', got: {value!r}"
+
+    def test_buy_ship_item_type_unchanged(self, mock_shop_cog, make_mock_response):
+        """Ship type has no underscore so title() is sufficient; verify still renders 'Ship'."""
+        embed = self._run_buy_with_item_type(mock_shop_cog, make_mock_response, "ship")
+        value = self._get_item_type_field(embed)
+        assert value == "Ship", f"Expected 'Ship', got: {value!r}"
+
+    def test_buy_module_item_type_unchanged(self, mock_shop_cog, make_mock_response):
+        """Module type has no underscore; verify still renders 'Module'."""
+        embed = self._run_buy_with_item_type(mock_shop_cog, make_mock_response, "module")
+        value = self._get_item_type_field(embed)
+        assert value == "Module", f"Expected 'Module', got: {value!r}"
+
+
+# ---------------------------------------------------------------------------
+# /shop listing — unknown item_type fallback label (DEF-CLEANUP-001 site 2)
+# ---------------------------------------------------------------------------
+
+
+class TestShopFallbackLabel:
+    """Regression tests for DEF-CLEANUP-001 site 2: /shop listing fallback label for
+    unknown item types must use replace('_', ' ').title() instead of bare .title().
+
+    The fix: type_labels.get(item_type_key, f"{item_type_key.replace('_', ' ').title()}s")
+    """
+
+    def test_shop_unknown_item_type_primary_weapon_fallback_no_underscore(self, mock_shop_cog, make_mock_response):
+        """DEF-CLEANUP-001 site 2: Unknown type 'primary_weapon' falls back to label without underscore.
+
+        Since 'primary_weapon' IS in type_labels, it returns the proper label. This verifies the
+        known-type path still works after the fix.
+        """
+        interaction = _create_mock_interaction()
+
+        player_resp = make_mock_response(_make_player_data(tier="Bronze", credits=5000))
+        items_resp = make_mock_response(
+            [
+                _make_shop_item(1, "Nirai EX 1", "primary_weapon", "Bronze", 500, 5, 1),
+            ]
+        )
+
+        mock_shop_cog.http_client.post = AsyncMock(return_value=player_resp)
+        mock_shop_cog.http_client.get = AsyncMock(return_value=items_resp)
+
+        asyncio.run(mock_shop_cog.shop.callback(mock_shop_cog, interaction, "Bronze"))
+
+        interaction.followup.send.assert_awaited_once()
+        send_kwargs = interaction.followup.send.call_args[1]
+        assert "embed" in send_kwargs
+        embed = send_kwargs["embed"]
+
+        # The field name should be "Primary Weapons (1)" — no underscores
+        field_names = [f.name for f in embed.fields]
+        assert any("_" not in name for name in field_names), "All embed field names should be underscore-free"
+        # Specifically verify the primary_weapon field renders correctly
+        pw_field = next((n for n in field_names if "primary" in n.lower()), None)
+        assert pw_field is not None, f"Expected a Primary Weapons field, got: {field_names}"
+        assert "_" not in pw_field, f"Primary Weapons field name contains underscore: {pw_field!r}"
+        assert pw_field == "Primary Weapons (1)", f"Expected 'Primary Weapons (1)', got: {pw_field!r}"
+
+    def test_shop_exotic_unknown_item_type_fallback_no_underscore(self, mock_shop_cog, make_mock_response):
+        """DEF-CLEANUP-001 site 2: A fictional 'exotic_weapon' type not in type_labels falls back
+        to 'Exotic Weapons' (no underscore). This exercises the fallback branch directly.
+        """
+        interaction = _create_mock_interaction()
+
+        player_resp = make_mock_response(_make_player_data(tier="Bronze", credits=5000))
+        # Inject an unknown type 'exotic_weapon' that is NOT in type_labels
+        items_resp = make_mock_response(
+            [
+                _make_shop_item(99, "Exotic Blaster", "exotic_weapon", "Bronze", 999, 1, 1),
+            ]
+        )
+
+        mock_shop_cog.http_client.post = AsyncMock(return_value=player_resp)
+        mock_shop_cog.http_client.get = AsyncMock(return_value=items_resp)
+
+        asyncio.run(mock_shop_cog.shop.callback(mock_shop_cog, interaction, "Bronze"))
+
+        interaction.followup.send.assert_awaited_once()
+        send_kwargs = interaction.followup.send.call_args[1]
+        assert "embed" in send_kwargs
+        embed = send_kwargs["embed"]
+
+        # The fallback label for 'exotic_weapon' must be 'Exotic Weapons (1)' — no underscores
+        field_names = [f.name for f in embed.fields]
+        exotic_field = next((n for n in field_names if "exotic" in n.lower()), None)
+        assert exotic_field is not None, f"Expected an Exotic field in embed, got: {field_names}"
+        assert "_" not in exotic_field, f"Fallback field name contains underscore: {exotic_field!r}"
+        assert exotic_field == "Exotic Weapons (1)", f"Expected 'Exotic Weapons (1)', got: {exotic_field!r}"
+
+
+# ---------------------------------------------------------------------------
 # sell command
 # ---------------------------------------------------------------------------
 

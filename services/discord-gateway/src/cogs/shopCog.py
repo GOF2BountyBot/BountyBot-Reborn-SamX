@@ -193,7 +193,7 @@ class ShopCog(commands.Cog):
                 if len(type_items) > 10:
                     items_text += f"... and {len(type_items) - 10} more items\n"
 
-                label = type_labels.get(item_type_key, f"{item_type_key.title()}s")
+                label = type_labels.get(item_type_key, f"{item_type_key.replace('_', ' ').title()}s")
                 embed.add_field(
                     name=f"{label} ({len(type_items)})",
                     value=items_text or "None available",
@@ -311,7 +311,7 @@ class ShopCog(commands.Cog):
                 color=discord.Color.green(),
             )
 
-            embed.add_field(name="Item Type", value=transaction["item_type"].title(), inline=True)
+            embed.add_field(name="Item Type", value=transaction["item_type"].replace("_", " ").title(), inline=True)
             embed.add_field(name="Quantity", value=str(quantity), inline=True)
             embed.add_field(name="Total Cost", value=f"{transaction['total_cost']:,} credits", inline=True)
             embed.add_field(name="Remaining Credits", value=f"{transaction['remaining_credits']:,}", inline=True)

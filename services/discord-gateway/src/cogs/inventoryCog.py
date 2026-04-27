@@ -368,7 +368,9 @@ class InventoryCog(commands.Cog):
                     items_text += f"... and {len(type_items) - 20} more"
 
                 embed.add_field(
-                    name=f"{item_type_key.title()}s ({len(type_items)})", value=items_text or "None", inline=True
+                    name=f"{item_type_key.replace('_', ' ').title()}s ({len(type_items)})",
+                    value=items_text or "None",
+                    inline=True,
                 )
 
             embed.set_thumbnail(url=target_user.display_avatar.url)

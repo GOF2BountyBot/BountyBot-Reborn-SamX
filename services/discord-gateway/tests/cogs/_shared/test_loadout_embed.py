@@ -491,6 +491,44 @@ class TestContinuationField:
         for f in embed.fields:
             assert len(f.value) <= MAX_FIELD_VALUE, f"Field '{f.name}' exceeded 1024"
 
+    def test_section_with_exactly_1024_char_line_fits_in_single_field(self):
+        """A.48 GAP-001: _render_section uses `>` (not `>=`) at boundary, so a single
+        line of exactly 1024 chars must produce exactly one module field (no split).
+
+        The boundary condition: `current_len + added > MAX_FIELD_VALUE` → 1024 > 1024
+        is False, so the line stays in the first field without continuation.
+        """
+        # Build a line that is exactly 1024 chars after formatting.
+        # _format_module_line with emoji=None produces: "• {name}" (prefix = "• ", 2 chars).
+        # So name must be 1022 chars to reach exactly 1024.
+        name = "X" * 1022
+        resp = _make_player_response(
+            modules=[
+                {
+                    "name": name,
+                    "emoji": None,
+                    "type": "ArmourModule",
+                    "effects": [],
+                    "combat_tier": "combat",
+                }
+            ]
+        )
+        resp["ship_stats"]["max_modules"] = 1
+        embed = build_loadout_embed(resp, viewer_is_owner_or_admin=False)
+
+        # All fields that belong to the Modules section (header or SPACER_NAME continuations
+        # whose value contains our 'X' payload).
+        mod_fields = [
+            f for f in embed.fields if f.name.startswith("Modules") or (f.name == SPACER_NAME and "X" in f.value)
+        ]
+        assert len(mod_fields) == 1, (
+            f"Expected exactly 1 module field (boundary at 1024 should not split), "
+            f"got {len(mod_fields)}: {[(f.name, len(f.value)) for f in mod_fields]}"
+        )
+        assert len(mod_fields[0].value) == MAX_FIELD_VALUE, (
+            f"Field value length should be exactly {MAX_FIELD_VALUE}, got {len(mod_fields[0].value)}"
+        )
+
 
 # ---------------------------------------------------------------------------
 # Truncation strategy (spec §7.2)
@@ -1119,3 +1157,332 @@ class TestCargoQuantityEdgeCases:
         line = _format_cargo_line({"item_name": "Credits", "item_type": "misc", "quantity": 5, "emoji": None})
         assert "Credits" in line
         assert "(x5)" in line
+
+
+# ===========================================================================
+# A.48 — bounty-announcement extension kwargs
+# ===========================================================================
+
+
+def _make_a48_criminal_response(**overrides):
+    """Minimal valid criminal-path LoadoutResponse dict."""
+    defaults = {
+        "subject_kind": "criminal",
+        "subject_name": "Pal Tyyrt",
+        "subject_description": "Terran",
+        "tech_level": 10,
+        "ship_name": "Darkzov",
+        "thumbnail_url": "https://cdn/pal.png",
+        "ship_stats": {
+            "armour": 200,
+            "cargo": 40,
+            "handling": 50,
+            "hp": 740,
+            "dps": 75.0,
+            "total_value": 60000,
+            "max_primaries": 4,
+            "max_modules": 14,
+        },
+        "weapons": [
+            {"name": "Mimung Blaster", "emoji": "<:m:1>", "dps": 30.0, "value": 1000},
+        ],
+        "turrets": [],
+        "modules": [
+            {
+                "name": "Targe Shield",
+                "emoji": "<:s:1>",
+                "type": "ShieldModule",
+                "value": 500,
+                "effects": [],
+                "combat_tier": "combat",
+            },
+        ],
+        "cargo": [],
+        "cargo_total_count": 0,
+    }
+    defaults.update(overrides)
+    return defaults
+
+
+class TestBountyExtensionKwargs:
+    """build_loadout_embed accepts new kwargs for bounty announcements (A.48)."""
+
+    def test_title_override_replaces_default_title(self):
+        response = _make_a48_criminal_response()
+        embed = build_loadout_embed(response, viewer_is_owner_or_admin=True, title_override="Pal Tyyrt")
+        assert embed.title == "Pal Tyyrt"
+
+    def test_title_override_captured_string(self):
+        response = _make_a48_criminal_response()
+        embed = build_loadout_embed(response, viewer_is_owner_or_admin=True, title_override="✅ Pal Tyyrt — CAPTURED")
+        assert embed.title == "✅ Pal Tyyrt — CAPTURED"
+
+    def test_color_override_applied(self):
+        response = _make_a48_criminal_response()
+        embed = build_loadout_embed(response, viewer_is_owner_or_admin=True, color_override=15844367)
+        assert embed.color.value == 15844367
+
+    def test_footer_text_set(self):
+        response = _make_a48_criminal_response()
+        embed = build_loadout_embed(response, viewer_is_owner_or_admin=True, footer_text="Terran")
+        assert embed.footer.text == "Terran"
+
+    def test_image_url_set_for_route_map(self):
+        response = _make_a48_criminal_response()
+        embed = build_loadout_embed(response, viewer_is_owner_or_admin=True, image_url="https://cdn/route_map.png")
+        assert embed.image.url == "https://cdn/route_map.png"
+
+    def test_prefix_fields_added_before_active_ship(self):
+        response = _make_a48_criminal_response()
+        prefix = [
+            {"name": "Difficulty", "value": "T10", "inline": True},
+            {"name": "Reward Pool", "value": "50,000 credits", "inline": True},
+            {"name": "Bounty Ends", "value": "<t:1700000000:R>", "inline": True},
+        ]
+        embed = build_loadout_embed(response, viewer_is_owner_or_admin=True, prefix_fields=prefix)
+        names = [f.name for f in embed.fields]
+        # First three fields are the prefix; "Active Ship" must appear after them
+        assert names[0] == "Difficulty"
+        assert names[1] == "Reward Pool"
+        assert names[2] == "Bounty Ends"
+        assert "Active Ship" in names
+        assert names.index("Active Ship") > names.index("Bounty Ends")
+
+    def test_suffix_fields_added_after_loadout_sections(self):
+        response = _make_a48_criminal_response()
+        suffix = [
+            {"name": "Route", "value": "Pan, Mido, Pescal Ansen", "inline": False},
+            {"name": "Checked Systems", "value": "> *No systems checked yet*", "inline": False},
+        ]
+        embed = build_loadout_embed(response, viewer_is_owner_or_admin=True, suffix_fields=suffix)
+        names = [f.name for f in embed.fields]
+        # Route and Checked Systems are last (in that order)
+        assert names[-2] == "Route"
+        assert names[-1] == "Checked Systems"
+
+    def test_default_kwargs_preserve_baseline_behaviour(self):
+        """When no kwargs are supplied, the embed matches the existing /criminal-loadout output."""
+        response = _make_a48_criminal_response()
+        embed = build_loadout_embed(response, viewer_is_owner_or_admin=True)
+        assert embed.title == "Loadout — Pal Tyyrt"  # default title prefix preserved
+        # No image, no footer (footer_text default None)
+        assert (embed.footer.text or "") == ""
+
+    def test_prefix_field_continuation_split_when_over_1024(self):
+        response = _make_a48_criminal_response()
+        long_value = "A" * (MAX_FIELD_VALUE + 200)  # 1224 chars
+        prefix = [{"name": "Big Field", "value": long_value, "inline": False}]
+        embed = build_loadout_embed(response, viewer_is_owner_or_admin=True, prefix_fields=prefix)
+
+        # Find consecutive Big Field + continuation entries
+        big_field_chunks = []
+        seen_named = False
+        for f in embed.fields:
+            if f.name == "Big Field":
+                seen_named = True
+                big_field_chunks.append(f.value)
+            elif seen_named and f.name == SPACER_NAME:
+                # First spacer after Big Field is its continuation
+                big_field_chunks.append(f.value)
+                break
+        assert len(big_field_chunks) >= 2  # split into at least two parts
+        # Each chunk respects the 1024 cap
+        for chunk in big_field_chunks:
+            assert len(chunk) <= MAX_FIELD_VALUE
+
+    def test_suffix_field_continuation_split_when_over_1024(self):
+        response = _make_a48_criminal_response()
+        # Multi-line value > 1024
+        big_route = ", ".join([f"System{i}" for i in range(150)])
+        assert len(big_route) > MAX_FIELD_VALUE
+        suffix = [{"name": "Route", "value": big_route, "inline": False}]
+        embed = build_loadout_embed(response, viewer_is_owner_or_admin=True, suffix_fields=suffix)
+        # Find Route field and its continuation
+        route_idx = next(i for i, f in enumerate(embed.fields) if f.name == "Route")
+        # First chunk
+        assert len(embed.fields[route_idx].value) <= MAX_FIELD_VALUE
+        # If a continuation field follows, it should also respect the cap
+        if route_idx + 1 < len(embed.fields):
+            assert len(embed.fields[route_idx + 1].value) <= MAX_FIELD_VALUE
+
+    def test_field_split_kicks_in_for_synthetic_overlong_loadout(self):
+        """A.48 regression: 30 ShieldModule entries (no dedup applies) → loadout still rendered, no field >1024."""
+        # ShieldModule is NOT eligible for criminal dedup; we synthetically push the section over 1024.
+        modules = [
+            {
+                "name": f"Targe Shield {i}",
+                "emoji": "<:s:1>",
+                "type": "ShieldModule",
+                "value": 500,
+                "effects": [{"label": "Shield", "value": str(100 + i)}],
+                "combat_tier": "combat",
+            }
+            for i in range(30)
+        ]
+        response = _make_a48_criminal_response(modules=modules)
+        embed = build_loadout_embed(
+            response,
+            viewer_is_owner_or_admin=True,
+            title_override="Pal Tyyrt",
+            color_override=15844367,
+            footer_text="Terran",
+        )
+        # Every field value must be <= 1024 chars (Discord's hard limit)
+        for f in embed.fields:
+            assert len(f.value) <= MAX_FIELD_VALUE, f"field {f.name!r} value len = {len(f.value)}"
+
+    def test_max_field_count_respected_with_extras(self):
+        """Even with prefix + suffix + many sections, total field count never exceeds 25."""
+        response = _make_a48_criminal_response()
+        # 12 prefix fields + 12 suffix fields would be way over 25 with internal sections.
+        prefix = [{"name": f"P{i}", "value": "x", "inline": False} for i in range(12)]
+        suffix = [{"name": f"S{i}", "value": "y", "inline": False} for i in range(12)]
+        embed = build_loadout_embed(
+            response,
+            viewer_is_owner_or_admin=True,
+            prefix_fields=prefix,
+            suffix_fields=suffix,
+        )
+        assert len(embed.fields) <= MAX_FIELDS
+
+    def test_message_response_path_uses_title_override(self):
+        """When response carries a 'message' (e.g. unavailable), title_override still applies."""
+        response = {
+            "subject_kind": "criminal",
+            "subject_name": "Pal Tyyrt",
+            "message": "Criminal ship data unavailable",
+        }
+        embed = build_loadout_embed(response, viewer_is_owner_or_admin=True, title_override="Pal Tyyrt")
+        assert embed.title == "Pal Tyyrt"
+        assert embed.color.value == discord.Color.red().value
+
+
+# ===========================================================================
+# A.48 — End-to-end regression: realistic Pal Tyyrt criminal payload
+# ===========================================================================
+
+
+class TestPalTyyrtA48Regression:
+    """Real-shape A.48 regression: the exact Pal Tyyrt loadout that triggered the live bug.
+
+    The bug: 9× Rhoda Blackhole (CompressorModule) rendered as 9 separate lines,
+    pushing the Loadout field to 1043 chars and triggering Discord HTTP 400 50035.
+
+    After A.48:
+      1. bot-core's LoadoutResponseService dedups CompressorModule → 1 entry "Rhoda Blackhole x9"
+      2. The gateway's continuation-split protects against any residual overflow.
+
+    This test simulates the post-dedup LoadoutResponse and asserts every field
+    value is <= 1024 chars when rendered through `build_loadout_embed` with the
+    A.48 bounty-announcement kwargs.
+    """
+
+    def test_pal_tyyrt_post_dedup_under_1024(self):
+        # Post-dedup criminal LoadoutResponse — 14 modules collapse to 5 visible entries.
+        response = {
+            "subject_kind": "criminal",
+            "subject_name": "Pal Tyyrt",
+            "subject_description": "Terran",
+            "tech_level": 10,
+            "ship_name": "Darkzov",
+            "ship_emoji": "<:darkzov:1>",
+            "thumbnail_url": "https://cdn/paltyyrt.png",
+            "ship_stats": {
+                "armour": 200,
+                "cargo": 80,
+                "handling": 50,
+                "hp": 740,
+                "dps": 110.5,
+                "total_value": 80000,
+                "max_primaries": 4,
+                "max_modules": 14,
+            },
+            "weapons": [
+                {"name": "Mimung Blaster", "emoji": "<:m:1>", "dps": 30.0, "value": 1500},
+                {"name": "MaxHeat o20", "emoji": "<:mh:2>", "dps": 25.5, "value": 1200},
+                {"name": "MaxHeat o20", "emoji": "<:mh:2>", "dps": 25.5, "value": 1200},
+                {"name": "Mass Driver MD 12", "emoji": "<:md:3>", "dps": 29.5, "value": 1800},
+            ],
+            "turrets": [
+                {"name": "PE Ambipolar-5", "emoji": "<:t:1>", "dps": 18.0, "value": 1100},
+            ],
+            "modules": [
+                {
+                    "name": "Targe Shield",
+                    "emoji": "<:ts:1>",
+                    "type": "ShieldModule",
+                    "value": 500,
+                    "effects": [{"label": "Shield", "value": "150"}],
+                    "combat_tier": "combat",
+                },
+                {
+                    "name": "Phoenix SIS",
+                    "emoji": "<:psis:2>",
+                    "type": "ShieldInjectorModule",
+                    "value": 700,
+                    "effects": [{"label": "Heal", "value": "50"}],
+                    "combat_tier": "combat",
+                },
+                {
+                    "name": "Spectral Filter Omega",
+                    "emoji": "<:sfo:3>",
+                    "type": "SpectralFilterModule",
+                    "value": 600,
+                    "effects": [],
+                    "combat_tier": "utility",
+                },
+                {
+                    "name": "Rhoda Vortex",
+                    "emoji": "<:rv:4>",
+                    "type": "TimeExtenderModule",
+                    "value": 800,
+                    "effects": [{"label": "Duration", "value": "10s"}],
+                    "combat_tier": "utility",
+                },
+                # POST-DEDUP: 9 separate CompressorModule entries collapse to 1 with "x9" suffix
+                {
+                    "name": "Rhoda Blackhole x9",
+                    "emoji": "<:rbh:5>",
+                    "type": "CompressorModule",
+                    "value": 300,
+                    "effects": [{"label": "Cargo Bonus", "value": "+25%"}],
+                    "combat_tier": "utility",
+                },
+            ],
+            "cargo": [],
+            "cargo_total_count": 0,
+        }
+
+        prefix = [
+            {"name": "Difficulty", "value": "T10", "inline": True},
+            {"name": "Reward Pool", "value": "85,000 credits", "inline": True},
+            {"name": "Bounty Ends", "value": "<t:1700000000:R>", "inline": True},
+        ]
+        suffix = [
+            {"name": "Route", "value": "Pan, Mido, Pescal Ansen, Vossk Prime", "inline": False},
+            {"name": "Checked Systems", "value": "> *No systems checked yet*", "inline": False},
+        ]
+
+        embed = build_loadout_embed(
+            response,
+            viewer_is_owner_or_admin=True,
+            title_override="Pal Tyyrt",
+            color_override=15844367,
+            footer_text="Terran",
+            image_url="https://cdn/route_map.png",
+            prefix_fields=prefix,
+            suffix_fields=suffix,
+        )
+
+        # HARD INVARIANT: every single rendered field value MUST fit Discord's 1024-char cap.
+        for f in embed.fields:
+            assert len(f.value) <= MAX_FIELD_VALUE, (
+                f"field {f.name!r} value len = {len(f.value)} (max {MAX_FIELD_VALUE})"
+            )
+        # And total embed size stays under Discord's 6000-char cap.
+        total = (
+            len(embed.title or "")
+            + len(embed.description or "")
+            + sum(len(f.name) + len(f.value) for f in embed.fields)
+        )
+        assert total <= MAX_EMBED_TOTAL

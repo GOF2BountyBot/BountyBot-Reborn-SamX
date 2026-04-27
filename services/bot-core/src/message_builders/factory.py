@@ -8,18 +8,22 @@ of message-specific payload builders.
 from shared import bblogger
 
 from message_builders.base import MessagePayloadBuilder
-from message_builders.builders.bounty_announcement import BountyAnnouncementBuilder
 from message_builders.builders.time_announcement import TimeAnnouncementBuilder
 
 logger = bblogger.get_logger("message-builder-factory")
 
 
 class MessageBuilderFactory:
-    """Factory for creating message payload builders."""
+    """Factory for creating message payload builders.
+
+    Note: bounty announcements no longer use this factory after the A.48
+    unified-loadout-render refactor. The gateway now renders bounty
+    announcements via `build_loadout_embed`. See
+    `utils/bounty_announcement_payload.build_bounty_announcement_request`.
+    """
 
     _builders: dict[str, type[MessagePayloadBuilder]] = {
         "time_announcement": TimeAnnouncementBuilder,
-        "bounty_announcement": BountyAnnouncementBuilder,
     }
 
     @classmethod

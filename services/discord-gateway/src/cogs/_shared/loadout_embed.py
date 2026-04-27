@@ -44,7 +44,17 @@ SHIP_STATS_TOTAL_VALUE_THRESHOLD = 120
 # ---------------------------------------------------------------------------
 
 
-def build_loadout_embed(response: dict, viewer_is_owner_or_admin: bool) -> discord.Embed:
+def build_loadout_embed(
+    response: dict,
+    viewer_is_owner_or_admin: bool,
+    *,
+    title_override: str | None = None,
+    color_override: int | None = None,
+    footer_text: str | None = None,
+    image_url: str | None = None,
+    prefix_fields: list[dict] | None = None,
+    suffix_fields: list[dict] | None = None,
+) -> discord.Embed:
     """Build the unified loadout embed for either player or criminal.
 
     Args:
@@ -52,6 +62,19 @@ def build_loadout_embed(response: dict, viewer_is_owner_or_admin: bool) -> disco
         viewer_is_owner_or_admin: True if the Cargo Hold section should be visible.
             - Player path: True when interaction.user.id == target.id OR admin.
             - Criminal path: pass True always (cargo header always shown per spec).
+        title_override: When provided, replaces the default "Loadout — {name}" title.
+            Used by bounty announcements (A.48 unified rendering) — title is the
+            criminal name (or "✅ {name} — CAPTURED").
+        color_override: Integer color for the embed border. When provided, overrides
+            the default blurple. Bounty announcements pass faction color or green-on-capture.
+        footer_text: When provided, sets the embed footer. Bounty announcements pass
+            criminal_faction here.
+        image_url: When provided, sets the large image (bottom of the embed). Bounty
+            announcements pass the route map URL here.
+        prefix_fields: Optional list of `{name, value, inline}` field dicts inserted
+            BEFORE Active Ship. Continuation-split applies if any value > 1024 chars.
+        suffix_fields: Optional list of `{name, value, inline}` field dicts appended
+            AFTER all loadout sections. Continuation-split applies likewise.
 
     Returns:
         A fully-populated discord.Embed, or a short red error embed if
@@ -61,15 +84,16 @@ def build_loadout_embed(response: dict, viewer_is_owner_or_admin: bool) -> disco
     if response.get("message"):
         subject = response.get("subject_name") or "Unknown"
         return build_loadout_error_embed(
-            title=f"Loadout — {subject}",
+            title=title_override or f"Loadout — {subject}",
             description=response["message"],
         )
 
     subject = response.get("subject_name") or "Unknown"
-    title = f"Loadout — {subject}"
+    title = title_override if title_override is not None else f"Loadout — {subject}"
     description = _format_description(response)
 
-    embed = discord.Embed(title=title, color=discord.Color.blurple())
+    color = discord.Color(color_override) if color_override is not None else discord.Color.blurple()
+    embed = discord.Embed(title=title, color=color)
     if description:
         embed.description = description
 
@@ -77,9 +101,19 @@ def build_loadout_embed(response: dict, viewer_is_owner_or_admin: bool) -> disco
     if thumbnail_url:
         embed.set_thumbnail(url=thumbnail_url)
 
+    if image_url:
+        embed.set_image(url=image_url)
+
+    if footer_text:
+        embed.set_footer(text=footer_text)
+
     # Budget tracking: sum of title + description + field name/value lengths.
     budget = MAX_EMBED_TOTAL - SAFETY_RESERVE
     used = len(title) + len(description or "")
+
+    # 0. Prefix fields (e.g. Difficulty / Reward Pool / Bounty Ends).
+    if prefix_fields:
+        used = _render_extra_fields(embed, prefix_fields, budget, used)
 
     # 1. Active Ship (never truncated)
     name, value = _format_active_ship_field(response)
@@ -100,6 +134,10 @@ def build_loadout_embed(response: dict, viewer_is_owner_or_admin: bool) -> disco
 
     for section_header, lines in sections:
         used = _render_section(embed, section_header, lines, budget, used)
+
+    # Trailing suffix fields (e.g. Route, Checked Systems for bounty announcements).
+    if suffix_fields:
+        used = _render_extra_fields(embed, suffix_fields, budget, used)
 
     return embed
 
@@ -495,3 +533,81 @@ def _add_field_safe(embed: discord.Embed, name: str, value: str) -> None:
     if len(value) > MAX_FIELD_VALUE:
         value = value[: MAX_FIELD_VALUE - 1] + "…"
     embed.add_field(name=name, value=value, inline=False)
+
+
+def _render_extra_fields(
+    embed: discord.Embed,
+    fields: list[dict],
+    budget: int,
+    used: int,
+) -> int:
+    """Render a flat list of `{name, value, inline}` fields with 1024-char continuation.
+
+    Each field's value is split across multiple fields if it exceeds the per-field cap,
+    using the same SPACER_NAME convention as section continuations to indicate the
+    visual continuation. The first chunk keeps the original `name` and `inline`; later
+    chunks use SPACER_NAME and are forced to `inline=False` to preserve readability.
+
+    Returns the new running `used` byte count (best-effort approximation).
+    """
+    for spec in fields:
+        if len(embed.fields) >= MAX_FIELDS:
+            break
+        name = str(spec.get("name") or SPACER_NAME)
+        value = str(spec.get("value") or "")
+        inline = bool(spec.get("inline", False))
+
+        if len(value) <= MAX_FIELD_VALUE:
+            embed.add_field(name=name, value=value, inline=inline)
+            used += len(name) + len(value)
+            continue
+
+        # Split across multiple fields at line boundaries, with a fallback
+        # hard-cut for pathological single-line values > 1024 chars.
+        first = True
+        chunks = _split_value_at_boundaries(value, MAX_FIELD_VALUE)
+        for chunk in chunks:
+            if len(embed.fields) >= MAX_FIELDS:
+                break
+            field_name = name if first else SPACER_NAME
+            field_inline = inline if first else False
+            embed.add_field(name=field_name, value=chunk, inline=field_inline)
+            used += len(field_name) + len(chunk)
+            first = False
+    return used
+
+
+def _split_value_at_boundaries(value: str, cap: int) -> list[str]:
+    """Split a long string into <=cap chunks at newline boundaries when possible.
+
+    Falls back to a hard-cut split if any single line exceeds the cap.
+    """
+    chunks: list[str] = []
+    current: list[str] = []
+    current_len = 0
+    for line in value.split("\n"):
+        # If a single line is itself bigger than cap, hard-cut it.
+        if len(line) > cap:
+            # Flush any pending buffer first.
+            if current:
+                chunks.append("\n".join(current))
+                current = []
+                current_len = 0
+            # Hard-cut the oversized line.
+            i = 0
+            while i < len(line):
+                chunks.append(line[i : i + cap])
+                i += cap
+            continue
+
+        added = len(line) + (1 if current else 0)  # +newline when joining
+        if current_len + added > cap:
+            chunks.append("\n".join(current))
+            current = [line]
+            current_len = len(line)
+        else:
+            current.append(line)
+            current_len += added
+    if current:
+        chunks.append("\n".join(current))
+    return chunks

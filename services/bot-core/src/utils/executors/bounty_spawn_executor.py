@@ -761,12 +761,14 @@ async def _schedule_expiry_job(parent_job_id: str, bounty) -> None:
 async def _announce_bounty(parent_job_id: str, bounty, config, db) -> None:
     """POST a bounty announcement to the discord-gateway per-division channel.
 
-    Flow:
+    Flow (post-A.48 unified-loadout-render):
     1. Determine the target channel from config based on bounty.division.
     2. Optionally upload a route map PNG to config.image_channel_id.
     3. Look up the criminal's icon URL from the Criminal model (non-fatal).
-    4. Build the rich embed payload via BountyAnnouncementBuilder (with criminal_icon).
-    5. POST the embed to the division bounty board channel.
+    4. Build the structured announcement payload via
+       `build_bounty_announcement_request` (LoadoutResponse + metadata).
+    5. POST to gateway `/announcements/bounty/channel/{id}` so the gateway
+       renders the unified embed via the shared loadout builder.
     6. Persist the Discord message ID in the DiscordMessage table.
 
     All HTTP failures are non-fatal — errors are logged and the function
@@ -781,9 +783,10 @@ async def _announce_bounty(parent_job_id: str, bounty, config, db) -> None:
         db: AsyncSession for persisting the DiscordMessage record.
     """
     # Deferred imports to match the executor's deferred-import pattern.
-    from message_builders.builders.bounty_announcement import BountyAnnouncementBuilder
     from persist.repositories.criminal_repository import CriminalRepository
     from persist.repositories.discord_message_repository import DiscordMessageRepository
+
+    from utils.bounty_announcement_payload import build_bounty_announcement_request
 
     target_channel_id = _get_division_channel_id(config, bounty.division)
 
@@ -850,46 +853,26 @@ async def _announce_bounty(parent_job_id: str, bounty, config, db) -> None:
         )
 
     # ------------------------------------------------------------------
-    # Step 3: Build rich embed via BountyAnnouncementBuilder
+    # Step 3: Build the unified announcement request body (A.48).
     # ------------------------------------------------------------------
-    end_time_unix = int(bounty.end_time.timestamp()) if bounty.end_time else 0
-
-    builder = BountyAnnouncementBuilder()
-    embed_data = builder.build_payload(
-        {
-            "criminal_name": bounty.criminal_name,
-            "criminal_faction": bounty.criminal_faction or "Unknown",
-            "division": bounty.division,
-            "tech_level": bounty.tech_level,
-            "reward": bounty.reward,
-            "route": bounty.route or [],
-            "end_time_unix": end_time_unix,
-            "criminal_icon": criminal_icon,
-            "criminal_ship": getattr(bounty, "criminal_ship", None),
-            "checked": getattr(bounty, "checked", None),
-            "bounty_hunter_role_id": bounty_hunter_role_id,
-            "route_map_url": route_map_url,
-        }
+    announcement = await build_bounty_announcement_request(
+        db,
+        bounty,
+        criminal_icon=criminal_icon,
+        route_map_url=route_map_url,
+        bounty_hunter_role_id=bounty_hunter_role_id,
+        captured=False,
     )
 
-    # Map builder output → MessageCreateRequest body.
-    # embed_data = {"content": str|None, "embed": dict}
-    # The channel messages endpoint expects {"content": EmbedPayload, "text_content": str, "message_type": "default"}.
-    announcement = {
-        "content": embed_data["embed"],
-        "text_content": embed_data.get("content"),  # Role mention (e.g. "<@&123>")
-        "message_type": "default",
-    }
-
     # ------------------------------------------------------------------
-    # Step 4: POST announcement to the division bounty board channel
+    # Step 4: POST announcement to the gateway's bounty-announcement endpoint
     # ------------------------------------------------------------------
     discord_message_id: int | None = None
 
     try:
         async with httpx.AsyncClient() as client:
             resp = await client.post(
-                f"{_GATEWAY_BASE_URL}/channels/{target_channel_id}/messages",
+                f"{_GATEWAY_BASE_URL}/announcements/bounty/channel/{target_channel_id}",
                 json=announcement,
                 timeout=10,
             )
@@ -924,7 +907,10 @@ async def _announce_bounty(parent_job_id: str, bounty, config, db) -> None:
                     "message_id": discord_message_id,
                     "message_type": "bounty_announcement",
                     "reference_id": bounty.id,
-                    "embed_payload": json.dumps(embed_data["embed"]),
+                    # Persist the structured request body (loadout_response + metadata)
+                    # rather than a rendered embed dict; the gateway is now the
+                    # rendering authority.
+                    "embed_payload": json.dumps(announcement),
                 },
             )
             flogger.debug(

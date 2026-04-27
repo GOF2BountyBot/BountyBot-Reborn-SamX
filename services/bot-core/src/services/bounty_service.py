@@ -1154,23 +1154,27 @@ class BountyService:
     async def _edit_bounty_announcement(self, db: AsyncSession, bounty: Bounty, captured: bool = False) -> None:
         """Edit the bounty's Discord announcement to reflect updated checked systems.
 
+        Post-A.48 unified rendering: the gateway is the rendering authority. We
+        post the structured payload (LoadoutResponse + metadata) and let the
+        gateway re-render with the shared `build_loadout_embed`.
+
         Non-fatal — if the message lookup or edit fails, logs a warning and continues.
 
         Args:
             db:       Async database session.
             bounty:   The bounty whose announcement should be updated.
-            captured: When True, passes ``captured=True`` to the builder so the embed
-                      shows the "CAPTURED" state (green color, updated title, etc.).
+            captured: When True, the embed shows the "CAPTURED" state (green
+                      color, updated title, "**Captured**" Bounty Ends value).
         """
         try:
             import os
 
             import httpx
-            from message_builders.builders.bounty_announcement import BountyAnnouncementBuilder
             from persist.repositories.criminal_repository import (
                 CriminalRepository,
             )
             from persist.repositories.discord_message_repository import DiscordMessageRepository
+            from utils.bounty_announcement_payload import build_bounty_announcement_request
 
             msg_repo = DiscordMessageRepository()
             discord_msg = await msg_repo.get_by_guild_type_and_reference(
@@ -1197,70 +1201,28 @@ class BountyService:
                     f"{bounty.criminal_name!r}: {_icon_exc}"
                 )
 
-            # Rebuild the embed with updated checked systems
-            builder = BountyAnnouncementBuilder()
-
-            # Translate bounty.checked (player IDs / -1) → builder format
-            # Status values: "found", "recently_spotted", or "checked"
-            # "recently_spotted": criminal was at this system 1-2 stops before the answer
-            checked_for_builder: dict[str, str] = {}
-            answer_idx: int | None = None
-            if bounty.checked and bounty.route and bounty.answer:
-                try:
-                    answer_idx = bounty.route.index(bounty.answer)
-                except (ValueError, IndexError):
-                    answer_idx = None
-
-            if bounty.checked:
-                for system_name, checker_id in bounty.checked.items():
-                    if checker_id != -1:  # -1 means unchecked
-                        if system_name == bounty.answer:
-                            checked_for_builder[system_name] = "found"
-                        else:
-                            # Check if this system is 1-2 stops before the answer
-                            is_recently_spotted = False
-                            if answer_idx is not None and bounty.route:
-                                try:
-                                    sys_idx = bounty.route.index(system_name)
-                                    distance = answer_idx - sys_idx
-                                    if 1 <= distance <= 2:
-                                        is_recently_spotted = True
-                                except (ValueError, IndexError):
-                                    pass
-                            checked_for_builder[system_name] = "recently_spotted" if is_recently_spotted else "checked"
-
-            embed_data = builder.build_payload(
-                {
-                    "criminal_name": bounty.criminal_name,
-                    "criminal_faction": bounty.criminal_faction or "Unknown",
-                    "division": bounty.division,
-                    "tech_level": bounty.tech_level,
-                    "reward": bounty.reward,
-                    "route": bounty.route or [],
-                    "end_time_unix": int(bounty.end_time.timestamp()) if bounty.end_time else 0,
-                    "criminal_icon": criminal_icon,
-                    "criminal_ship": bounty.criminal_ship,
-                    "checked": checked_for_builder if checked_for_builder else None,
-                    "bounty_hunter_role_id": None,  # Don't re-mention on edits
-                    "route_map_url": None,  # Image URL already set in the original message
-                    "captured": captured,
-                }
+            # Build the structured edit payload (LoadoutResponse + metadata).
+            # role mention suppressed on edits; route_map_url=None preserves the
+            # image URL that was set on the original send (the gateway's edit
+            # path doesn't unset the image when image_url=None unless we pass
+            # set_image; in practice the original embed retains the route map).
+            edit_payload = await build_bounty_announcement_request(
+                db,
+                bounty,
+                criminal_icon=criminal_icon,
+                route_map_url=None,
+                bounty_hunter_role_id=None,
+                captured=captured,
             )
 
             gateway_host = os.getenv("DISCORD_GATEWAY_HOST", "discord-gateway")
             gateway_port = os.getenv("GATEWAY_PORT", "7999")
             gateway_url = f"http://{gateway_host}:{gateway_port}/api/v1"
 
-            edit_payload = {
-                "content": embed_data["embed"],
-                "message_type": "bounty_announcement",
-            }
-
-            # Prefer the channel-specific edit endpoint for faster message lookup
             channel_id = discord_msg.channel_id
             async with httpx.AsyncClient() as client:
                 resp = await client.put(
-                    f"{gateway_url}/channels/{channel_id}/messages/{discord_msg.message_id}",
+                    f"{gateway_url}/announcements/bounty/channel/{channel_id}/message/{discord_msg.message_id}",
                     json=edit_payload,
                     timeout=10,
                 )

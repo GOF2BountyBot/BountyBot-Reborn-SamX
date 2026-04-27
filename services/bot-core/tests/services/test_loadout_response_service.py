@@ -484,3 +484,235 @@ class TestBuildBountyLoadout:
 
         # 20 × 1.5 = 30
         assert result.ship_stats.cargo == 30
+
+
+# ---------------------------------------------------------------------------
+# A.48 — criminal-only module dedup tests
+# ---------------------------------------------------------------------------
+
+
+class TestCriminalModuleDedup:
+    """A.48: dedup CabinModule + CompressorModule (criminal only).
+
+    The dedup is a pure presentation transform applied inside
+    `build_bounty_loadout`. It MUST NOT touch `build_player_loadout` (HARD
+    invariant per A.48). All other module subtypes pass through unchanged.
+    """
+
+    def _make_bounty(self, criminal_ship):
+        return SimpleNamespace(
+            id=99,
+            criminal_name="Pal Tyyrt",
+            criminal_faction="Terran",
+            tech_level=10,
+            criminal_ship=criminal_ship,
+        )
+
+    def _criminal_ship_with_modules(self, modules):
+        return {
+            "ship_name": "Darkzov",
+            "ship_armour": 200,
+            "total_hp": 500,
+            "weapons": [],
+            "turrets": [],
+            "modules": modules,
+        }
+
+    def _module_dict(self, name, mtype):
+        return {"name": name, "type": mtype, "value": 100}
+
+    async def test_compressor_module_x9_collapses_to_xN_marker(self):
+        """9× Rhoda Blackhole CompressorModule → single 'Rhoda Blackhole x9' entry (A.48 root cause)."""
+        modules = [self._module_dict("Rhoda Blackhole", "CompressorModule") for _ in range(9)]
+        bounty = self._make_bounty(self._criminal_ship_with_modules(modules))
+        ship = _interceptor_ship()
+
+        svc = _make_svc(bounty=bounty, criminal=None)
+        db = _make_db_session(ship=ship)
+
+        result = await svc.build_bounty_loadout(db, bounty_id=99)
+
+        assert len(result.modules) == 1
+        assert result.modules[0].name == "Rhoda Blackhole x9"
+        assert result.modules[0].type == "CompressorModule"
+
+    async def test_cabin_module_x3_collapses_to_xN_marker(self):
+        """3× CabinModule of the same name → 'Name x3'."""
+        modules = [self._module_dict("Comfy Cabin", "CabinModule") for _ in range(3)]
+        bounty = self._make_bounty(self._criminal_ship_with_modules(modules))
+        svc = _make_svc(bounty=bounty, criminal=None)
+        db = _make_db_session(ship=_interceptor_ship())
+
+        result = await svc.build_bounty_loadout(db, bounty_id=99)
+
+        assert len(result.modules) == 1
+        assert result.modules[0].name == "Comfy Cabin x3"
+        assert result.modules[0].type == "CabinModule"
+
+    async def test_compressor_x1_left_alone(self):
+        """A single CompressorModule (N=1) is rendered with its bare name (no x1 suffix)."""
+        modules = [self._module_dict("Rhoda Blackhole", "CompressorModule")]
+        bounty = self._make_bounty(self._criminal_ship_with_modules(modules))
+        svc = _make_svc(bounty=bounty, criminal=None)
+        db = _make_db_session(ship=_interceptor_ship())
+
+        result = await svc.build_bounty_loadout(db, bounty_id=99)
+
+        assert len(result.modules) == 1
+        assert result.modules[0].name == "Rhoda Blackhole"
+
+    async def test_shield_module_not_deduped(self):
+        """Three different ShieldModule rows render individually (no dedup)."""
+        modules = [
+            self._module_dict("Targe Shield", "ShieldModule"),
+            self._module_dict("Targe Shield", "ShieldModule"),
+            self._module_dict("Targe Shield", "ShieldModule"),
+        ]
+        bounty = self._make_bounty(self._criminal_ship_with_modules(modules))
+        svc = _make_svc(bounty=bounty, criminal=None)
+        db = _make_db_session(ship=_interceptor_ship())
+
+        result = await svc.build_bounty_loadout(db, bounty_id=99)
+
+        assert len(result.modules) == 3
+        # All three retain bare name
+        assert all(m.name == "Targe Shield" for m in result.modules)
+
+    async def test_armour_module_not_deduped(self):
+        """ArmourModule is gameplay-meaningful and not deduped, even when stacked."""
+        modules = [self._module_dict("D'iol", "ArmourModule") for _ in range(4)]
+        bounty = self._make_bounty(self._criminal_ship_with_modules(modules))
+        svc = _make_svc(bounty=bounty, criminal=None)
+        db = _make_db_session(ship=_interceptor_ship())
+
+        result = await svc.build_bounty_loadout(db, bounty_id=99)
+
+        assert len(result.modules) == 4
+
+    async def test_mixed_dedup_and_passthrough_preserves_order(self):
+        """Mixed loadout: dedup the eligible runs, passthrough the rest, preserve original order."""
+        modules = [
+            self._module_dict("Targe Shield", "ShieldModule"),
+            self._module_dict("Rhoda Blackhole", "CompressorModule"),
+            self._module_dict("Rhoda Blackhole", "CompressorModule"),
+            self._module_dict("D'iol", "ArmourModule"),
+            self._module_dict("Rhoda Blackhole", "CompressorModule"),  # still dedups even if non-adjacent
+            self._module_dict("Comfy Cabin", "CabinModule"),
+            self._module_dict("Comfy Cabin", "CabinModule"),
+        ]
+        bounty = self._make_bounty(self._criminal_ship_with_modules(modules))
+        svc = _make_svc(bounty=bounty, criminal=None)
+        db = _make_db_session(ship=_interceptor_ship())
+
+        result = await svc.build_bounty_loadout(db, bounty_id=99)
+
+        names = [m.name for m in result.modules]
+        # ShieldModule + first CompressorModule run (3 total) + ArmourModule + first CabinModule run (2 total)
+        assert names == [
+            "Targe Shield",
+            "Rhoda Blackhole x3",
+            "D'iol",
+            "Comfy Cabin x2",
+        ]
+
+    async def test_pal_tyyrt_loadout_module_count_after_dedup(self):
+        """A.48 GAP-002 (spec §6): Pal Tyyrt's exact criminal loadout deduplicates the
+        9× Rhoda Blackhole CompressorModule entries into a single 'Rhoda Blackhole x9'
+        entry.  The remaining 5 distinct module types pass through unchanged.
+
+        Input: 14 modules (Targe Shield, Phoenix SIS, Spectral Filter Omega, Rhoda Vortex,
+        Rhoda Blackhole × 9).
+        Expected: 5 visible module entries after dedup (4 distinct + 1 grouped).
+        """
+        pal_tyyrt_ship = {
+            "ship_name": "Darkzov",
+            "ship_armour": 200,
+            "total_hp": 740,
+            "weapons": [
+                {"name": "Mimung Blaster", "dps": 30.0, "value": 1500},
+                {"name": "MaxHeat o20", "dps": 25.5, "value": 1200},
+                {"name": "MaxHeat o20", "dps": 25.5, "value": 1200},
+                {"name": "Mass Driver MD 12", "dps": 29.5, "value": 1800},
+            ],
+            "turrets": [
+                {"name": "PE Ambipolar-5", "dps": 18.0, "value": 1100},
+            ],
+            "modules": [
+                {"name": "Targe Shield", "type": "ShieldModule", "value": 500},
+                {"name": "Phoenix SIS", "type": "ShieldInjectorModule", "value": 700},
+                {"name": "Spectral Filter Omega", "type": "SpectralFilterModule", "value": 600},
+                {"name": "Rhoda Vortex", "type": "TimeExtenderModule", "value": 800},
+                # 9× Rhoda Blackhole (CompressorModule) — the A.48 root cause
+                {"name": "Rhoda Blackhole", "type": "CompressorModule", "value": 300},
+                {"name": "Rhoda Blackhole", "type": "CompressorModule", "value": 300},
+                {"name": "Rhoda Blackhole", "type": "CompressorModule", "value": 300},
+                {"name": "Rhoda Blackhole", "type": "CompressorModule", "value": 300},
+                {"name": "Rhoda Blackhole", "type": "CompressorModule", "value": 300},
+                {"name": "Rhoda Blackhole", "type": "CompressorModule", "value": 300},
+                {"name": "Rhoda Blackhole", "type": "CompressorModule", "value": 300},
+                {"name": "Rhoda Blackhole", "type": "CompressorModule", "value": 300},
+                {"name": "Rhoda Blackhole", "type": "CompressorModule", "value": 300},
+            ],
+        }
+        bounty = self._make_bounty(pal_tyyrt_ship)
+        ship = _interceptor_ship(name="Darkzov", cargo=80, handling=50, armour=200)
+
+        svc = _make_svc(bounty=bounty, criminal=None)
+        db = _make_db_session(ship=ship)
+
+        result = await svc.build_bounty_loadout(db, bounty_id=99)
+
+        assert result is not None
+        # After dedup: 4 non-deduped modules + 1 collapsed Rhoda Blackhole x9 = 5 total.
+        assert len(result.modules) == 5, (
+            f"Expected 5 modules after dedup (4 distinct + 1 Rhoda Blackhole x9), "
+            f"got {len(result.modules)}: {[m.name for m in result.modules]}"
+        )
+        # The deduped entry must carry the x9 suffix.
+        rhoda_entry = next((m for m in result.modules if "Rhoda Blackhole" in m.name), None)
+        assert rhoda_entry is not None, "Rhoda Blackhole entry missing from deduped modules"
+        assert rhoda_entry.name == "Rhoda Blackhole x9", f"Expected 'Rhoda Blackhole x9', got {rhoda_entry.name!r}"
+        # No individual Rhoda Blackhole entries should remain (sanity: no 'x10' or bare name).
+        for m in result.modules:
+            assert "x10" not in m.name, f"Unexpected xN suffix ≥ 10: {m.name!r}"
+
+    async def test_player_loadout_never_deduped(self):
+        """HARD INVARIANT (A.48): build_player_loadout MUST NOT dedup any modules."""
+        # Player path: 9 identical CompressorModule entries via player_ship.modules
+        player = _player()
+        user = _user()
+
+        ps = SimpleNamespace(
+            id=10,
+            ship_name="Darkzov",
+            nickname=None,
+            weapons=[],
+            modules=["Rhoda Blackhole"] * 9,
+            turrets=[],
+        )
+        ship = _ship()
+
+        # ItemRepository / Module lookup return the same compressor record each time.
+        compressor_module = SimpleNamespace(
+            name="Rhoda Blackhole",
+            emoji=None,
+            type="CompressorModule",
+            value=100,
+            tech_level=8,
+            extra_atts={"cargoMultiplier": 1.1},
+        )
+
+        svc = _make_svc(player=player, user=user)
+        svc.item_repo = MagicMock()
+        svc.item_repo.get_by_name = AsyncMock(return_value=None)
+        db = _make_db_session(
+            player_ship=ps,
+            ship=ship,
+            module_factory=lambda n: compressor_module if n == "Rhoda Blackhole" else None,
+        )
+
+        result = await svc.build_player_loadout(db, player_id=1, include_cargo=False)
+
+        # All 9 entries returned as separate items — INVARIANT verified.
+        assert len(result.modules) == 9
+        assert all(m.name == "Rhoda Blackhole" for m in result.modules)

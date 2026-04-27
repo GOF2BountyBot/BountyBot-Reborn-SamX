@@ -110,9 +110,11 @@ resp.raise_for_status()
 4. Count active bounties via `BountyRepository.get_active_by_guild_and_division()`
 5. If slot available: call `BountyService.spawn_bounty(db, guild_id, division)`
 6. Schedule expiry job via `POST /api/v1/jobs` (one-time at `bounty.end_time`)
-7. Announce via `POST {GATEWAY_BASE_URL}/messages` (non-fatal if fails)
+7. Announce via `POST {GATEWAY_BASE_URL}/announcements/bounty/channel/{cid}` (non-fatal if fails)
 
 **Returns**: `{"status": "success", "guilds_processed": N, "total_spawned": M, "results": {...}}`
+
+**A.48 announcement payload (post-2026-04-27)**: `_announce_bounty()` builds the request via `utils.bounty_announcement_payload.build_bounty_announcement_request(db, bounty, criminal_icon=..., route_map_url=..., bounty_hunter_role_id=..., captured=False)`. The body is a structured dict (`text_content` + `loadout_response` + `metadata`); the gateway renders the final embed using `cogs/_shared/loadout_embed.build_loadout_embed`. The old per-channel `/channels/{cid}/messages` POST and the pre-rendered `BountyAnnouncementBuilder` were removed. Edit-on-capture still flows through `BountyService._edit_bounty_announcement` and posts to the gateway's PUT counterpart at `/announcements/bounty/channel/{cid}/message/{mid}`.
 
 ---
 

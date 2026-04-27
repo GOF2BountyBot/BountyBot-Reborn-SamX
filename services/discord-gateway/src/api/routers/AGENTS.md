@@ -47,6 +47,17 @@ for _, modname, ispkg in pkgutil.iter_modules(routers_pkg.__path__):
 | `permissions.py` | `/permissions` | Permission overwrite get/set/delete | Channel permission management |
 | `tags.py` | `/tags` | Forum tag CRUD | Forum channel tag management |
 | `threads.py` | `/threads` | Thread create/archive/list | Thread management |
+| `announcements.py` | `/announcements` | `POST /announcements/bounty/channel/{cid}`, `PUT /announcements/bounty/channel/{cid}/message/{mid}` | A.48 unified bounty-announcement endpoint: receives `LoadoutResponse + metadata` from bot-core, renders a single embed via the shared `cogs/_shared/loadout_embed.build_loadout_embed`. Field values > 1024 chars are continuation-split automatically (regression protection for A.48). |
+
+### A.48: Unified bounty-announcement rendering
+
+The `announcements.py` router exists because bot-core can no longer build a Discord-ready embed dict for bounty announcements: a 9× CompressorModule loadout exceeded Discord's 1024-char field limit (HTTP 400 code 50035). The architectural fix moves rendering authority to the gateway:
+
+1. bot-core POSTs `BountyAnnouncementRequest` (LoadoutResponse + metadata) to `/announcements/bounty/channel/{cid}`.
+2. The router invokes `build_loadout_embed(loadout_response, viewer_is_owner_or_admin=True, title_override=..., color_override=..., footer_text=..., image_url=..., prefix_fields=..., suffix_fields=...)`.
+3. The shared builder applies the same continuation-split it already uses for `/profile` and `/criminal-loadout`, so any field that would exceed 1024 chars is split across multiple fields with a zero-width-space continuation header.
+
+Bot-core's `/criminal-loadout` flow continues to fetch a `LoadoutResponse` directly from `/api/v1/bounties/{bid}/loadout` and render it locally with `build_loadout_embed` — the same renderer, the same 1024-char protection. **Player loadouts are NEVER deduped**; only criminal loadouts have the CabinModule/CompressorModule dedup applied (in `bot-core/services/loadout_response_service.py::_apply_criminal_module_dedup`).
 
 ---
 

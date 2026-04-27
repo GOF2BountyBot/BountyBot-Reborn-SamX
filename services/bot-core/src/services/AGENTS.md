@@ -4,6 +4,30 @@ Business logic layer for bot-core. All 17 service modules live here + 1 normaliz
 
 ---
 
+## Criminal-Only Module Dedup Invariant (A.48 fix, 2026-04-27)
+
+`LoadoutResponseService.build_bounty_loadout()` runs the criminal modules through
+`_apply_criminal_module_dedup()` before returning. This collapses runs of identical
+`CabinModule` or `CompressorModule` entries into a single `Name xN` representative.
+**Only those two subtypes are deduped**; all other module types (Shield, Armour,
+GammaShield, weapons, turrets) render individually as before.
+
+**HARD INVARIANT — DO NOT VIOLATE**: `build_player_loadout()` MUST NEVER call the
+dedup helper. Player loadouts are always shown verbatim. The dedup is purely a
+presentation transform for criminals (the underlying `bounty.criminal_ship` JSON
+is unchanged; combat resolution uses the raw, non-deduped loadout).
+
+The dedup keeps both `/criminal-loadout` AND bounty-spawn announcements visually
+clean, since both render through the same `LoadoutResponse` path. This was the
+architectural unification that fixed A.48 (Discord HTTP 400 code 50035 from a
+9× Rhoda Blackhole CompressorModule loadout exceeding the 1024-char field cap).
+
+A second-line continuation-field split lives in the gateway's
+`cogs/_shared/loadout_embed.build_loadout_embed`, providing a regression-proof
+safety net for any future edge case the dedup doesn't cover.
+
+---
+
 ## Item-Type Vocabulary & Normalizer Contract (A.36 fix, 2026-04-22)
 
 **Storage invariant**: `player_inventories.item_type` and `guild_shops.item_type` always store

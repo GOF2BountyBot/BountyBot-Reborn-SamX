@@ -27,6 +27,70 @@ from services.loadout_effect_service import LoadoutEffectService
 flogger = bblogger.get_logger("loadout-response-service")
 
 
+# ---------------------------------------------------------------------------
+# A.48 — criminal-only module dedup configuration
+# ---------------------------------------------------------------------------
+# Module subtypes that may be repeat-fill at bounty spawn time and whose
+# duplicates produce purely visual noise (no gameplay-meaningful information
+# loss). Per A.48, only these are deduped — and ONLY for criminals. Player
+# loadouts are NEVER deduped.
+_DEDUP_CRIMINAL_MODULE_TYPES = frozenset({"CabinModule", "CompressorModule"})
+
+
+def _apply_criminal_module_dedup(items: list) -> list:
+    """Collapse runs of identical CabinModule/CompressorModule entries.
+
+    Group `LoadoutModuleItem` entries by `(name, type)` pair. For groups whose
+    `type ∈ _DEDUP_CRIMINAL_MODULE_TYPES` and N>1, replace the group with a
+    SINGLE representative item whose `name` becomes ``"{original_name} x{N}"``.
+    All other items pass through unchanged, preserving original ordering.
+
+    This is a pure presentation-layer transformation: the underlying
+    `bounty.criminal_ship` JSON is not modified, and combat resolution still
+    uses the raw, non-deduped loadout. Player loadouts MUST NEVER be passed
+    through this function.
+
+    Args:
+        items: Original list of LoadoutModuleItem instances.
+
+    Returns:
+        New list with eligible duplicates collapsed.
+    """
+    # Count occurrences per (name, type) for eligible types.
+    counts: dict[tuple[str, str], int] = {}
+    for it in items:
+        if it.type in _DEDUP_CRIMINAL_MODULE_TYPES:
+            key = (it.name, it.type)
+            counts[key] = counts.get(key, 0) + 1
+
+    if not counts or all(n <= 1 for n in counts.values()):
+        # Nothing to dedup — return original list as-is.
+        return list(items)
+
+    # Walk the list once; emit eligible items only on first occurrence,
+    # rewriting `.name` to `"<original> x<N>"` when N > 1. Drop subsequent
+    # eligible duplicates. Non-eligible items pass through unchanged.
+    seen_eligible: set[tuple[str, str]] = set()
+    out: list = []
+    for it in items:
+        if it.type in _DEDUP_CRIMINAL_MODULE_TYPES:
+            key = (it.name, it.type)
+            if key in seen_eligible:
+                continue
+            seen_eligible.add(key)
+            n = counts[key]
+            if n > 1:
+                # Build a fresh model_copy with the rewritten name.
+                # model_copy preserves emoji/effects/combat_tier/value/etc.
+                new_item = it.model_copy(update={"name": f"{it.name} x{n}"})
+                out.append(new_item)
+            else:
+                out.append(it)
+        else:
+            out.append(it)
+    return out
+
+
 class LoadoutResponseService:
     """Builds a LoadoutResponse for either a player's active ship or a bounty's criminal ship."""
 
@@ -362,6 +426,12 @@ class LoadoutResponseService:
                     combat_tier=combat_tier,
                 )
             )
+
+        # A.48 — criminal-only presentation dedup. Applied here so it covers
+        # both /criminal-loadout AND bounty announcements (both are criminal
+        # rendering surfaces). Player loadouts go through build_player_loadout
+        # which never invokes this helper.
+        module_items = _apply_criminal_module_dedup(module_items)
 
         # DPS
         weapon_dps = sum((w.dps or 0.0) for w in weapon_items)

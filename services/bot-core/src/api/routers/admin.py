@@ -389,6 +389,14 @@ async def update_player_credits(
 
     try:
         async with get_db_session() as db:
+            # Pre-capture old_credits BEFORE the service mutates the player in-place
+            # (identity-map sequencing: after update_player_credits(), player.credits
+            # already holds the new value — reading it post-call yields 0 for old_credits)
+            old_player = await player_service.player_repo.get_by_id(db, request.player_id)
+            if not old_player:
+                raise ValueError(f"Player {request.player_id} not found")
+            old_credits = old_player.credits
+
             player = await player_service.update_player_credits(
                 db, request.player_id, request.credits, request.update_lifetime
             )
@@ -405,7 +413,7 @@ async def update_player_credits(
 
             return {
                 "player_id": request.player_id,
-                "old_credits": player.credits - request.credits,
+                "old_credits": old_credits,
                 "new_credits": request.credits,
                 "lifetime_credits": player.lifetime_credits,
                 "message": f"Credits updated for player {request.player_id}",
@@ -586,17 +594,46 @@ async def add_inventory_item(
 async def refresh_shop(
     request: RefreshShopRequest, user_id: int, shop_service: ShopService = Depends(get_shop_service)
 ):
-    """Force refresh a shop's inventory. Requires admin permissions."""
+    """Force refresh a shop's inventory and announce the restock. Requires admin permissions.
+
+    After a successful DB refresh the endpoint posts a shop-refresh announcement
+    to the guild's ``#shop`` channel (looked up from ``GuildConfig.shop_channel_id``).
+    The announcement mirrors the one posted by the scheduled ``shop_refresh_executor``.
+
+    Announcement failures are **non-fatal** — the refresh succeeds even when the
+    discord-gateway call fails, and the response includes an ``announcement_warning``
+    field in that case.
+    """
     if not await verify_admin_permissions(request.guild_id, user_id):
         raise HTTPException(status_code=403, detail="Admin permissions required")
 
-    flogger.info(f"Admin refreshing {request.tier} shop for guild {request.guild_id}")
+    flogger.info(f"Admin refreshing {request.tier} shop for guild={request.guild_id} user={user_id}")
 
     try:
+        shop_channel_id: int | None = None
+        bounty_hunter_role_id: int | None = None
+
         async with get_db_session() as db:
             refresh_details = await shop_service.refresh_shop(
                 db, request.guild_id, request.tier, request.force_tech_level
             )
+
+            # Look up the guild config so we can announce to the right channel.
+            # The lookup is best-effort: if it fails (e.g. in tests with simple
+            # AsyncMock sessions) we proceed without a channel ID and skip the
+            # announcement rather than failing the refresh.
+            try:
+                from persist.repositories.config_repository import ConfigRepository
+
+                config_repo = ConfigRepository()
+                config = await config_repo.get_by_guild_id(db, request.guild_id)
+                shop_channel_id = getattr(config, "shop_channel_id", None) if config else None
+                bounty_hunter_role_id = getattr(config, "bounty_hunter_role_id", None) if config else None
+            except Exception as cfg_exc:  # pylint: disable=broad-exception-caught
+                flogger.warning(
+                    f"Admin shop refresh: could not look up guild config for guild={request.guild_id}, "
+                    f"announcement will be skipped: {cfg_exc}"
+                )
 
             await AuditService.log_action(
                 db,
@@ -608,15 +645,36 @@ async def refresh_shop(
                 details={"tier": request.tier},
             )
 
-            return {
-                **refresh_details,
-                "message": f"Successfully refreshed {request.tier} shop for guild {request.guild_id}",
-            }
+        # Announce AFTER the DB session is closed so the commit is visible to readers.
+        # This call is non-fatal — errors are logged inside announce_shop_refresh.
+        from utils.shop_announcement import announce_shop_refresh
+
+        announcement_warning: str | None = None
+        try:
+            await announce_shop_refresh(
+                caller_label=f"AdminRefresh[guild={request.guild_id}]",
+                guild_id=request.guild_id,
+                channel_id=shop_channel_id,
+                bounty_hunter_role_id=bounty_hunter_role_id,
+            )
+        except Exception as ann_exc:  # pylint: disable=broad-exception-caught
+            # Should not reach here (announce_shop_refresh swallows its own errors),
+            # but guard defensively so the admin response is always returned.
+            flogger.error(f"Admin shop refresh announcement failed for guild={request.guild_id}: {ann_exc}")
+            announcement_warning = "Announcement to #shop failed — shop was still refreshed successfully."
+
+        response: dict = {
+            **refresh_details,
+            "message": f"Successfully refreshed {request.tier} shop for guild {request.guild_id}",
+        }
+        if announcement_warning:
+            response["announcement_warning"] = announcement_warning
+        return response
 
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
     except Exception as e:
-        flogger.error(f"Error refreshing shop: {e}")
+        flogger.error(f"Error refreshing shop for guild={request.guild_id}: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to refresh shop") from e
 
 

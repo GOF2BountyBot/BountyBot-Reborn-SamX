@@ -990,6 +990,13 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
     # Bounty admin commands
     # ------------------------------------------------------------------
 
+    # TODO(B.8 sibling — P1 announcement gap): /admin_clear_bounties does NOT post a
+    # user-facing announcement when bounties are cleared. The scheduled bounty_expire
+    # path correctly announces; this manual admin path silently mutates DB state.
+    # Researcher findings: /proj/old-refs/session-research-2026-04-20/B8_admin_refresh_shop_announcement_findings.md
+    # Fix: extract the cleared-bounty announcement into a shared helper (analogous to
+    # B.8's shop_announcement.py extraction) and invoke it from both the manual admin
+    # path and the scheduled executor.
     @app_commands.command(name="admin_clear_bounties", description="[ADMIN] Clear active bounties for this guild")
     @app_commands.default_permissions(administrator=True)
     @is_admin()
@@ -1283,6 +1290,13 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
             flogger.error(f"Error in /admin_config_xp: {e}")
             await interaction.followup.send("⚠️ An error occurred while managing XP thresholds.", ephemeral=True)
 
+    # TODO(B.8 sibling — P1 announcement gap): /admin_spawn_bounty does NOT post the
+    # spawn announcement to the bounty board channel. The scheduled bounty_spawn_executor
+    # correctly announces via the new POST /api/v1/announcements/bounty/channel/{cid}
+    # endpoint (per A.48 architectural fix); this manual admin path bypasses it.
+    # Researcher findings: /proj/old-refs/session-research-2026-04-20/B8_admin_refresh_shop_announcement_findings.md
+    # Fix: have the manual spawn path call the same announcement helper used by the
+    # executor (or extract a shared spawn-announcement helper if not already shared).
     @app_commands.command(name="admin_spawn_bounty", description="[ADMIN] Manually trigger a bounty spawn")
     @app_commands.default_permissions(administrator=True)
     @is_admin()
@@ -1696,11 +1710,51 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
     async def player_ship_autocomplete(
         self, interaction: discord.Interaction, current: str
     ) -> list[app_commands.Choice[str]]:
-        """Autocomplete for remove-ship — shows ships owned by the target player."""
+        """Autocomplete for remove-ship — filters to the target player's ships when possible.
+
+        If ``interaction.namespace.user`` is already populated (the user param was filled
+        in before the ship_name field), resolves that user to a bot-core player and fetches
+        only that player's owned ships via ``GET /api/v1/ships/player/{player_id}``.
+
+        Falls back to showing all ships from game data when:
+        - The user param has not been selected yet (namespace.user is None/absent)
+        - Player resolution fails (e.g. guild not configured)
+        - The player-ships API call fails
+
+        Degrades silently on any error (returns []) — autocomplete must never raise.
+        """
         try:
-            # We can only show ships for a generic autocomplete since we don't know the target user
-            # until the command is submitted. Show all ships from game data as fallback.
             norm_current = normalize_for_search(current)
+
+            # Attempt to resolve the target user from the partially-filled command
+            target_user = getattr(interaction.namespace, "user", None)
+            if target_user is not None:
+                from utils.autocomplete_helpers import resolve_player_id
+
+                player_id = await resolve_player_id(
+                    self.http_client, api_base, target_user.id, interaction.guild_id, timeout=3.0
+                )
+                if player_id is not None:
+                    resp = await self.http_client.get(f"{api_base}/ships/player/{player_id}", timeout=5)
+                    if resp.status_code == 200:
+                        ships = resp.json()
+                        choices = [
+                            app_commands.Choice(
+                                name=s.get("ship_name", s.get("name", "")),
+                                value=s.get("ship_name", s.get("name", "")),
+                            )
+                            for s in ships
+                            if norm_current in normalize_for_search(s.get("ship_name", s.get("name", "")))
+                        ]
+                        return choices[:25]
+                # Player resolution failed or API error — fall through to game-data fallback
+                flogger.warning(
+                    f"player_ship_autocomplete: could not resolve player ships for "
+                    f"user={getattr(target_user, 'id', None)} guild={interaction.guild_id}; "
+                    "falling back to all ships"
+                )
+
+            # Fallback: show all ships from game data (user param not yet selected, or resolution failed)
             resp = await self.http_client.get(f"{api_base}/about/ships", timeout=5)
             if resp.status_code != 200:
                 return []

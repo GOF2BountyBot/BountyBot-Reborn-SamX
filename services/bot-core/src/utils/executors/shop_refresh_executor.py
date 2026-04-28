@@ -8,29 +8,27 @@ After a successful refresh, an announcement is posted to the discord-gateway
 ``POST /api/v1/channels/{shop_channel_id}/messages`` endpoint so players are
 notified that new stock is available.
 
+Announcement logic is implemented in ``utils.shop_announcement.announce_shop_refresh``
+(the shared module) and forwarded here via the private ``_announce_shop_refresh``
+wrapper to preserve the existing test surface.
+
 Imports of service/repository classes are deferred to function scope so that
 the executor module can be imported in test environments without requiring a
 live database or all ORM dependencies to be present.
 """
 
-import os
-import traceback
 from datetime import UTC, datetime
 
-import httpx
 from shared.bblogger import get_logger
+
+from utils.shop_announcement import (
+    announce_shop_refresh as _shared_announce,
+)
 
 flogger = get_logger("shop-refresh-executor")
 
 # Tiers supported by the shop system.
 _SHOP_TIERS = ["Bronze", "Silver", "Gold", "Platinum"]
-
-# ---------------------------------------------------------------------------
-# Service endpoints (configurable via environment variables)
-# ---------------------------------------------------------------------------
-_GATEWAY_HOST = os.getenv("DISCORD_GATEWAY_HOST", "discord-gateway")
-_GATEWAY_PORT = os.getenv("GATEWAY_PORT", "7999")
-_GATEWAY_BASE_URL = f"http://{_GATEWAY_HOST}:{_GATEWAY_PORT}/api/v1"
 
 
 async def execute_shop_refresh_job(job_id: str, payload: dict) -> dict:
@@ -135,7 +133,6 @@ async def execute_shop_refresh_job(job_id: str, payload: dict) -> dict:
 
     except Exception as e:  # pylint: disable=broad-exception-caught
         flogger.error(f"ShopRefreshJob[{job_id}] failed: {e}")
-        flogger.trace(traceback.format_exc())
         raise
 
 
@@ -150,64 +147,17 @@ async def _announce_shop_refresh(
     channel_id: int | None,
     bounty_hunter_role_id: int | None = None,
 ) -> None:
-    """POST a shop-refresh announcement to the discord-gateway channel messages endpoint.
+    """Thin wrapper around the shared ``announce_shop_refresh`` helper.
 
-    POSTs to ``POST /api/v1/channels/{channel_id}/messages`` with an
-    EmbedPayload as the request body (matching ``MessageCreateRequest`` schema).
+    Delegates to ``utils.shop_announcement.announce_shop_refresh`` so that
+    the same announcement logic is available to the admin router without
+    duplicating the HTTP call or embed-payload construction.
 
-    The announcement is posted to the shop channel (``shop_channel_id``)
-    so all players are notified of the shop restock.
-
-    If ``channel_id`` is None, a warning is logged and the announcement
-    is skipped — no shop channel has been configured for this guild yet.
-
-    If ``bounty_hunter_role_id`` is set, a ``<@&{role_id}>`` mention is
-    placed in ``text_content`` (plain text alongside the embed) so that
-    Discord recognises it as an actual role mention and notifies members.
-    Role mentions inside embed descriptions are NOT parsed by Discord.
-
-    Failures are logged but do NOT propagate — a failed announcement is
-    non-fatal for the refresh operation.
+    See ``utils.shop_announcement`` for full parameter documentation.
     """
-    if channel_id is None:
-        flogger.warning(
-            f"ShopRefreshJob[{parent_job_id}] guild={guild_id}: shop_channel_id not configured, skipping announcement"
-        )
-        return
-
-    base_description = (
-        "The guild shop has been restocked with new items across all tiers. "
-        "Check out the latest offerings and upgrade your loadout!"
+    await _shared_announce(
+        caller_label=f"ShopRefreshJob[{parent_job_id}]",
+        guild_id=guild_id,
+        channel_id=channel_id,
+        bounty_hunter_role_id=bounty_hunter_role_id,
     )
-
-    announcement = {
-        "content": {  # embed payload
-            "title": "🛒 Shop Refreshed!",
-            "description": base_description,
-            "color": 3447003,  # Blue (#3498DB)
-            "fields": [
-                {"name": "Tiers Available", "value": "Bronze · Silver · Gold · Platinum", "inline": False},
-            ],
-            "footer_text": "Use /shop to browse!",
-        },
-        "text_content": f"<@&{bounty_hunter_role_id}>" if bounty_hunter_role_id else None,
-        "message_type": "default",
-    }
-
-    try:
-        async with httpx.AsyncClient() as client:
-            resp = await client.post(
-                f"{_GATEWAY_BASE_URL}/channels/{channel_id}/messages",
-                json=announcement,
-                timeout=10,
-            )
-        resp.raise_for_status()
-        flogger.info(
-            f"ShopRefreshJob[{parent_job_id}] announced shop refresh for guild={guild_id} to channel {channel_id}"
-        )
-    except Exception as e:  # pylint: disable=broad-exception-caught
-        flogger.error(
-            f"ShopRefreshJob[{parent_job_id}] failed to announce shop refresh for guild={guild_id} "
-            f"to channel {channel_id}: {e}"
-        )
-        flogger.trace(traceback.format_exc())

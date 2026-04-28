@@ -89,7 +89,26 @@ async def edit_bounty_announcement(
     message_id: int,
     payload: BountyAnnouncementRequest,
 ) -> MessageResponse:
-    """Edit an existing bounty announcement."""
+    """Edit an existing bounty announcement.
+
+    Image-URL preservation semantics
+    ---------------------------------
+    ``discord.Message.edit(embed=new_embed)`` **replaces the entire embed**,
+    including the image.  If the new embed has no image set, Discord clears
+    the previous image — it does NOT preserve it automatically.
+
+    To keep the route-map visible across state-transition edits (e.g.
+    "recently visited", "system checked"), this handler applies the following
+    rule:
+
+    * If ``payload.metadata.image_url`` is **non-None** → use that URL
+      (explicit caller-supplied value, may add or replace the image).
+    * If ``payload.metadata.image_url`` is **None** → inspect the *existing*
+      message's first embed for its ``image.url`` and carry it forward.
+      This preserves the route map that was set when the announcement was
+      first posted.  If the existing message has no image, the new embed
+      also renders without one (no error, no image).
+    """
     flogger.info(f"edit_bounty_announcement called for channel_id={channel_id} message_id={message_id}")
     try:
         bot = await resolve_bot(request)
@@ -115,7 +134,26 @@ async def edit_bounty_announcement(
                 detail="Can only edit messages sent by the bot",
             )
 
-        embed = _build_bounty_embed(payload)
+        # Resolve the effective image URL before building the embed.
+        # When the caller passes image_url=None (state-transition edits in
+        # bounty_service._edit_bounty_announcement), we carry forward the
+        # URL that was embedded in the original announcement so the route
+        # map is not silently erased by Discord's full-embed-replace semantics.
+        effective_image_url = payload.metadata.image_url
+        if effective_image_url is None:
+            existing_embeds = getattr(message, "embeds", []) or []
+            if existing_embeds:
+                existing_image = getattr(existing_embeds[0], "image", None)
+                if existing_image is not None:
+                    existing_url = getattr(existing_image, "url", None)
+                    if existing_url:
+                        effective_image_url = existing_url
+                        flogger.debug(
+                            f"edit_bounty_announcement: preserving existing image_url={existing_url!r} "
+                            f"for message_id={message_id}"
+                        )
+
+        embed = _build_bounty_embed(payload, image_url_override=effective_image_url)
         await message.edit(embed=embed)
 
         updated_data = MessageConverter.message_to_payload(message)
@@ -133,20 +171,31 @@ async def edit_bounty_announcement(
 # ---------------------------------------------------------------------------
 
 
-def _build_bounty_embed(payload: BountyAnnouncementRequest) -> discord.Embed:
+def _build_bounty_embed(
+    payload: BountyAnnouncementRequest,
+    image_url_override: str | None = None,
+) -> discord.Embed:
     """Render a `discord.Embed` from a BountyAnnouncementRequest using build_loadout_embed.
 
     Bounty announcements always treat the cargo section as visible (matches the
     `/criminal-loadout` callsite which passes viewer_is_owner_or_admin=True).
+
+    Args:
+        payload: The structured announcement request from bot-core.
+        image_url_override: When provided, this value is used as the embed image URL
+            instead of ``payload.metadata.image_url``.  The edit handler uses this
+            to forward the URL recovered from the existing message so that the route
+            map image is preserved across state-transition edits.
     """
     meta = payload.metadata
+    resolved_image_url = image_url_override if image_url_override is not None else meta.image_url
     return build_loadout_embed(
         payload.loadout_response,
         viewer_is_owner_or_admin=True,
         title_override=meta.title,
         color_override=meta.color,
         footer_text=meta.footer_text,
-        image_url=meta.image_url,
+        image_url=resolved_image_url,
         prefix_fields=list(meta.prefix_fields),
         suffix_fields=list(meta.suffix_fields),
     )

@@ -303,3 +303,122 @@ class TestEditBountyAnnouncement:
             json=payload,
         )
         assert response.status_code == 404
+
+    # B.13 — image_url preservation on PUT edits
+
+    def test_put_image_url_none_preserves_existing_embed_image(self, announcements_client, mock_bot):
+        """B.13: PUT with image_url=None and an existing message embed image preserves the image.
+
+        discord.Message.edit(embed=new_embed) replaces the entire embed. If the
+        new embed has no image, Discord clears the previous one.  The router must
+        carry forward the existing image URL when the caller passes image_url=None.
+        """
+        existing_image_url = "https://cdn.example.com/route_map_original.png"
+
+        # Build a fetched message whose embed has an image.
+        mock_image = MagicMock()
+        mock_image.url = existing_image_url
+
+        mock_embed = MagicMock()
+        mock_embed.image = mock_image
+
+        fetched_message = MagicMock()
+        fetched_message.id = 5555555555
+        fetched_message.author = MagicMock()
+        fetched_message.author.id = 123456789
+        fetched_message.embeds = [mock_embed]
+        fetched_message.edit = AsyncMock()
+
+        mock_bot.get_channel(1234567890).fetch_message = AsyncMock(return_value=fetched_message)
+
+        # Payload with image_url=None (state-transition edit)
+        payload = _make_request_payload()
+        payload["metadata"]["image_url"] = None
+
+        with patch("api.routers.announcements.build_loadout_embed") as mock_build:
+            import discord
+
+            mock_build.return_value = discord.Embed(title="test")
+            response = announcements_client.put(
+                "/api/v1/announcements/bounty/channel/1234567890/message/5555555555",
+                json=payload,
+            )
+
+        assert response.status_code == 200
+        # The embed builder must have received the existing image URL (not None)
+        assert mock_build.call_count == 1
+        actual_image_url = mock_build.call_args.kwargs.get("image_url")
+        assert actual_image_url == existing_image_url, (
+            f"Expected image_url={existing_image_url!r} to be preserved, got {actual_image_url!r}"
+        )
+
+    def test_put_explicit_image_url_overrides_existing(self, announcements_client, mock_bot):
+        """B.13: PUT with an explicit image_url replaces the existing image (not preserved).
+
+        When the caller provides a non-None image_url, it should be used as-is
+        even if the existing message has a different image.
+        """
+        existing_image_url = "https://cdn.example.com/old_route_map.png"
+        new_image_url = "https://cdn.example.com/new_route_map.png"
+
+        mock_image = MagicMock()
+        mock_image.url = existing_image_url
+
+        mock_embed = MagicMock()
+        mock_embed.image = mock_image
+
+        fetched_message = MagicMock()
+        fetched_message.id = 5555555555
+        fetched_message.author = MagicMock()
+        fetched_message.author.id = 123456789
+        fetched_message.embeds = [mock_embed]
+        fetched_message.edit = AsyncMock()
+
+        mock_bot.get_channel(1234567890).fetch_message = AsyncMock(return_value=fetched_message)
+
+        payload = _make_request_payload()
+        payload["metadata"]["image_url"] = new_image_url
+
+        with patch("api.routers.announcements.build_loadout_embed") as mock_build:
+            import discord
+
+            mock_build.return_value = discord.Embed(title="test")
+            response = announcements_client.put(
+                "/api/v1/announcements/bounty/channel/1234567890/message/5555555555",
+                json=payload,
+            )
+
+        assert response.status_code == 200
+        actual_image_url = mock_build.call_args.kwargs.get("image_url")
+        assert actual_image_url == new_image_url, (
+            f"Expected new image_url={new_image_url!r} to be used, got {actual_image_url!r}"
+        )
+
+    def test_put_image_url_none_no_existing_image_renders_without_image(self, announcements_client, mock_bot):
+        """B.13: PUT with image_url=None and no existing image renders embed without image (no error)."""
+        # Message with no embeds at all
+        fetched_message = MagicMock()
+        fetched_message.id = 5555555555
+        fetched_message.author = MagicMock()
+        fetched_message.author.id = 123456789
+        fetched_message.embeds = []
+        fetched_message.edit = AsyncMock()
+
+        mock_bot.get_channel(1234567890).fetch_message = AsyncMock(return_value=fetched_message)
+
+        payload = _make_request_payload()
+        payload["metadata"]["image_url"] = None
+
+        with patch("api.routers.announcements.build_loadout_embed") as mock_build:
+            import discord
+
+            mock_build.return_value = discord.Embed(title="test")
+            response = announcements_client.put(
+                "/api/v1/announcements/bounty/channel/1234567890/message/5555555555",
+                json=payload,
+            )
+
+        assert response.status_code == 200
+        # image_url should remain None — no existing image to preserve
+        actual_image_url = mock_build.call_args.kwargs.get("image_url")
+        assert actual_image_url is None, f"Expected image_url=None (no existing image), got {actual_image_url!r}"

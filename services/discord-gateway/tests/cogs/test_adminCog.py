@@ -2020,5 +2020,150 @@ class TestAdminCooldownReset:
         assert "⚠️" in sent_msg
 
 
+class TestPlayerShipAutocomplete:
+    """Tests for player_ship_autocomplete — /admin_remove_ship ship_name autocomplete.
+
+    This autocomplete was updated (B.11) to filter by the target player's owned ships
+    when interaction.namespace.user is available.  It falls back to all ships from game
+    data when the user param has not yet been filled or when player resolution fails.
+    """
+
+    def _make_interaction(self, target_user=None, guild_id=12345):
+        """Return a mock interaction with optional namespace.user pre-set."""
+        interaction = _create_mock_interaction()
+        interaction.guild_id = guild_id
+        # interaction.namespace holds partially-filled command params during autocomplete
+        interaction.namespace = MagicMock()
+        interaction.namespace.user = target_user
+        return interaction
+
+    def _make_user(self, user_id=111111):
+        user = MagicMock()
+        user.id = user_id
+        return user
+
+    def test_filters_to_player_ships_when_user_param_available(self, mock_admin_cog):
+        """When namespace.user is set and player resolves, only that player's ships are shown."""
+        target_user = self._make_user(user_id=42)
+        interaction = self._make_interaction(target_user=target_user, guild_id=99)
+
+        # resolve_player_id → POST /players/ returns player_id=7
+        player_resp = MagicMock()
+        player_resp.status_code = 200
+        player_resp.raise_for_status = MagicMock()
+        player_resp.json = MagicMock(return_value={"id": 7})
+
+        # GET /ships/player/7 returns two ships owned by the player
+        ships_resp = MagicMock()
+        ships_resp.status_code = 200
+        ships_resp.json = MagicMock(
+            return_value=[
+                {"ship_name": "Niode", "ship_id": 1},
+                {"ship_name": "Groza", "ship_id": 2},
+            ]
+        )
+
+        mock_admin_cog.http_client.post = AsyncMock(return_value=player_resp)
+        mock_admin_cog.http_client.get = AsyncMock(return_value=ships_resp)
+
+        result = asyncio.run(mock_admin_cog.player_ship_autocomplete(interaction, ""))
+
+        names = [c.name for c in result]
+        assert "Niode" in names
+        assert "Groza" in names
+        # Should NOT have fetched all-ships fallback (only called player ships endpoint)
+        get_calls = [call[0][0] for call in mock_admin_cog.http_client.get.call_args_list]
+        assert any("ships/player/7" in url for url in get_calls)
+        assert not any("about/ships" in url for url in get_calls)
+
+    def test_falls_back_to_all_ships_when_user_param_is_none(self, mock_admin_cog):
+        """When namespace.user is None (not yet selected), all ships are shown."""
+        interaction = self._make_interaction(target_user=None, guild_id=99)
+
+        all_ships_resp = MagicMock()
+        all_ships_resp.status_code = 200
+        all_ships_resp.json = MagicMock(
+            return_value=[
+                {"name": "Niode"},
+                {"name": "Groza"},
+                {"name": "Bloodstar"},
+            ]
+        )
+        mock_admin_cog.http_client.get = AsyncMock(return_value=all_ships_resp)
+
+        result = asyncio.run(mock_admin_cog.player_ship_autocomplete(interaction, ""))
+
+        names = [c.name for c in result]
+        assert "Niode" in names
+        assert "Groza" in names
+        assert "Bloodstar" in names
+        # Only the all-ships fallback endpoint should have been called
+        get_calls = [call[0][0] for call in mock_admin_cog.http_client.get.call_args_list]
+        assert any("about/ships" in url for url in get_calls)
+
+    def test_falls_back_when_player_resolution_fails(self, mock_admin_cog):
+        """When player resolution returns None, falls back to all ships (no error raised)."""
+        target_user = self._make_user(user_id=42)
+        interaction = self._make_interaction(target_user=target_user, guild_id=99)
+
+        # POST /players/ returns non-200 → resolve_player_id returns None
+        player_resp = MagicMock()
+        player_resp.status_code = 400
+        player_resp.raise_for_status = MagicMock(side_effect=Exception("guild not configured"))
+
+        all_ships_resp = MagicMock()
+        all_ships_resp.status_code = 200
+        all_ships_resp.json = MagicMock(return_value=[{"name": "Niode"}, {"name": "Groza"}])
+
+        # First call (POST) fails resolution; second call (GET about/ships) returns all ships
+        mock_admin_cog.http_client.post = AsyncMock(return_value=player_resp)
+        mock_admin_cog.http_client.get = AsyncMock(return_value=all_ships_resp)
+
+        result = asyncio.run(mock_admin_cog.player_ship_autocomplete(interaction, ""))
+
+        # Must not raise — must return the fallback all-ships list
+        assert isinstance(result, list)
+        names = [c.name for c in result]
+        assert "Niode" in names
+
+    def test_filters_ships_by_current_input(self, mock_admin_cog):
+        """Autocomplete filters results by the current typed prefix (case/accent-insensitive)."""
+        target_user = self._make_user(user_id=42)
+        interaction = self._make_interaction(target_user=target_user, guild_id=99)
+
+        player_resp = MagicMock()
+        player_resp.status_code = 200
+        player_resp.raise_for_status = MagicMock()
+        player_resp.json = MagicMock(return_value={"id": 7})
+
+        ships_resp = MagicMock()
+        ships_resp.status_code = 200
+        ships_resp.json = MagicMock(
+            return_value=[
+                {"ship_name": "Niode", "ship_id": 1},
+                {"ship_name": "Groza", "ship_id": 2},
+                {"ship_name": "Bloodstar", "ship_id": 3},
+            ]
+        )
+        mock_admin_cog.http_client.post = AsyncMock(return_value=player_resp)
+        mock_admin_cog.http_client.get = AsyncMock(return_value=ships_resp)
+
+        result = asyncio.run(mock_admin_cog.player_ship_autocomplete(interaction, "Ni"))
+
+        names = [c.name for c in result]
+        assert "Niode" in names
+        assert "Groza" not in names
+        assert "Bloodstar" not in names
+
+    def test_returns_empty_on_unexpected_exception(self, mock_admin_cog):
+        """Any unexpected exception returns [] without raising (silent degradation)."""
+        interaction = self._make_interaction(target_user=None, guild_id=99)
+        mock_admin_cog.http_client.get = AsyncMock(side_effect=Exception("network failure"))
+
+        result = asyncio.run(mock_admin_cog.player_ship_autocomplete(interaction, ""))
+
+        assert result == []
+
+
 if __name__ == "__main__":
     pytest.main([__file__])

@@ -727,6 +727,47 @@ class TestUpdatePlayerCredits:
         # update_lifetime=True should be passed
         assert True in call_args.args or call_args.kwargs.get("update_lifetime") is True
 
+    @patch("api.routers.admin.get_db_session")
+    def test_update_player_credits_old_credits_reflects_premutation_value(
+        self, mock_get_db, client, mock_player_service
+    ):
+        """old_credits in response must equal the player's credits BEFORE the update.
+
+        Regression guard for B.10 (identity-map sequencing bug): the router used to
+        compute old_credits = player.credits - request.credits AFTER the service had
+        already mutated player.credits in-place, always yielding 0 when new==old.
+        The fix pre-captures old_credits via player_repo.get_by_id BEFORE calling
+        update_player_credits.
+        """
+        _configure_db_mock(mock_get_db)
+        # Pre-mutation player has 750 credits
+        mock_player_service.player_repo.get_by_id = AsyncMock(return_value=make_mock_player(credits=750))
+        # Post-mutation player (returned by the service) has the new amount
+        mock_player_service.update_player_credits = AsyncMock(
+            return_value=make_mock_player(credits=200, lifetime_credits=750)
+        )
+        payload = {"player_id": 1, "credits": 200, "update_lifetime": False}
+
+        response = client.put("/api/v1/admin/players/credits?user_id=67890&guild_id=67890", json=payload)
+
+        assert response.status_code == 200
+        data = response.json()
+        # old_credits must match the PRE-mutation value (750), NOT 0 or 200
+        assert data["old_credits"] == 750
+        assert data["new_credits"] == 200
+
+    @patch("api.routers.admin.get_db_session")
+    def test_update_player_credits_player_not_found_returns_404(self, mock_get_db, client, mock_player_service):
+        """Returns 404 when the player does not exist (get_by_id returns None)."""
+        _configure_db_mock(mock_get_db)
+        mock_player_service.player_repo.get_by_id = AsyncMock(return_value=None)
+        payload = {"player_id": 9999, "credits": 100}
+
+        response = client.put("/api/v1/admin/players/credits?user_id=67890&guild_id=67890", json=payload)
+
+        assert response.status_code == 404
+        assert "not found" in response.json()["detail"].lower()
+
 
 # ===========================================================================
 # 5. PUT /admin/players/xp
@@ -757,20 +798,35 @@ class TestUpdatePlayerXP:
         assert "message" in data
 
     @patch("api.routers.admin.get_db_session")
-    def test_update_player_xp_tier_change(self, mock_get_db, client, mock_player_service):
-        """Returns tier_changed=True when tier advances."""
+    def test_set_xp_above_threshold_does_not_auto_promote_tier(self, mock_get_db, client, mock_player_service):
+        """Set XP does NOT auto-advance tier, even when new XP qualifies for a higher tier.
+
+        Design intent (per player_service.update_player_xp docstring):
+        "Tier is NOT auto-advanced; use promote_player() to advance tier."
+
+        The old test `test_update_player_xp_tier_change` MOCKED the service to return
+        tier="Silver" — contradicting the real implementation which never changes tier.
+        This replacement test asserts the BY-DESIGN behaviour: tier remains "Bronze"
+        after setting XP to a value that would qualify for Platinum, and tier_changed
+        is False because the stored tier column was not mutated.
+        """
         _configure_db_mock(mock_get_db)
+        # Pre-update: player is Bronze with 100 XP
         mock_player_service.player_repo.get_by_id = AsyncMock(return_value=make_mock_player(xp=100, tier="Bronze"))
-        mock_player_service.update_player_xp = AsyncMock(return_value=make_mock_player(xp=5000, tier="Silver"))
-        payload = {"player_id": 1, "xp": 5000}
+        # Post-update: service only changes XP — tier column is unchanged (still Bronze)
+        mock_player_service.update_player_xp = AsyncMock(return_value=make_mock_player(xp=50000, tier="Bronze"))
+        payload = {"player_id": 1, "xp": 50000}
 
         response = client.put("/api/v1/admin/players/xp?user_id=67890&guild_id=67890", json=payload)
 
         assert response.status_code == 200
         data = response.json()
+        assert data["old_xp"] == 100
+        assert data["new_xp"] == 50000
+        # Tier must remain Bronze — Set XP does NOT auto-promote
         assert data["old_tier"] == "Bronze"
-        assert data["new_tier"] == "Silver"
-        assert data["tier_changed"] is True
+        assert data["new_tier"] == "Bronze"
+        assert data["tier_changed"] is False
 
     @patch("api.routers.admin.get_db_session")
     def test_update_player_xp_player_not_found_returns_500(self, mock_get_db, client, mock_player_service):
@@ -1120,6 +1176,80 @@ class TestRefreshShop:
         response = client.post("/api/v1/admin/shops/refresh?user_id=67890", json=payload)
 
         assert response.status_code == 422
+
+    # B.8 — Admin refresh shop must call announce_shop_refresh after a successful DB refresh
+
+    @patch("api.routers.admin.get_db_session")
+    @patch("utils.shop_announcement.announce_shop_refresh", new_callable=AsyncMock)
+    def test_refresh_shop_calls_announcement_after_success(self, mock_announce, mock_get_db, client, mock_shop_service):
+        """B.8: After a successful shop refresh the endpoint calls announce_shop_refresh.
+
+        Acceptance criterion: the shared announcement helper is invoked once,
+        with the guild_id from the request.
+        """
+        mock_session = _configure_db_mock(mock_get_db)
+
+        # Config repo lookup — return a config with shop channel set.
+        mock_config = MagicMock()
+        mock_config.shop_channel_id = 111222
+        mock_config.bounty_hunter_role_id = 555666
+        mock_config_repo_instance = AsyncMock()
+        mock_config_repo_instance.get_by_guild_id = AsyncMock(return_value=mock_config)
+
+        with patch("persist.repositories.config_repository.ConfigRepository", return_value=mock_config_repo_instance):
+            payload = {"guild_id": 67890, "tier": "Bronze"}
+            response = client.post("/api/v1/admin/shops/refresh?user_id=67890", json=payload)
+
+        assert response.status_code == 200
+        mock_announce.assert_awaited_once()
+        call_kwargs = mock_announce.call_args.kwargs
+        assert call_kwargs["guild_id"] == 67890
+
+    @patch("api.routers.admin.get_db_session")
+    @patch("utils.shop_announcement.announce_shop_refresh", new_callable=AsyncMock)
+    def test_refresh_shop_passes_shop_channel_and_role_to_announcement(
+        self, mock_announce, mock_get_db, client, mock_shop_service
+    ):
+        """B.8: announce_shop_refresh receives shop_channel_id and bounty_hunter_role_id from config."""
+        _configure_db_mock(mock_get_db)
+
+        mock_config = MagicMock()
+        mock_config.shop_channel_id = 777888
+        mock_config.bounty_hunter_role_id = 999000
+        mock_config_repo_instance = AsyncMock()
+        mock_config_repo_instance.get_by_guild_id = AsyncMock(return_value=mock_config)
+
+        with patch("persist.repositories.config_repository.ConfigRepository", return_value=mock_config_repo_instance):
+            payload = {"guild_id": 67890, "tier": "Silver"}
+            client.post("/api/v1/admin/shops/refresh?user_id=67890", json=payload)
+
+        mock_announce.assert_awaited_once()
+        call_kwargs = mock_announce.call_args.kwargs
+        assert call_kwargs["channel_id"] == 777888
+        assert call_kwargs["bounty_hunter_role_id"] == 999000
+
+    @patch("api.routers.admin.get_db_session")
+    @patch("utils.shop_announcement.announce_shop_refresh", new_callable=AsyncMock)
+    def test_refresh_shop_announcement_failure_does_not_prevent_200(
+        self, mock_announce, mock_get_db, client, mock_shop_service
+    ):
+        """B.8: Announcement failure is non-fatal — shop refresh still returns 200."""
+        _configure_db_mock(mock_get_db)
+
+        mock_config_repo_instance = AsyncMock()
+        mock_config_repo_instance.get_by_guild_id = AsyncMock(return_value=None)
+
+        # Simulate announcement raising despite the inner guard (belt-and-suspenders)
+        mock_announce.side_effect = RuntimeError("gateway down")
+
+        with patch("persist.repositories.config_repository.ConfigRepository", return_value=mock_config_repo_instance):
+            payload = {"guild_id": 67890, "tier": "Gold"}
+            response = client.post("/api/v1/admin/shops/refresh?user_id=67890", json=payload)
+
+        assert response.status_code == 200
+        # The warning surfaces in the response body
+        data = response.json()
+        assert "announcement_warning" in data
 
 
 # ===========================================================================

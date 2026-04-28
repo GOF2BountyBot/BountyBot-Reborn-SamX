@@ -1,5 +1,6 @@
 """
-Unit tests for utils.executors.shop_refresh_executor.
+Unit tests for utils.executors.shop_refresh_executor and the shared
+utils.shop_announcement helper.
 
 Tests verify:
  - single guild + single tier dispatch
@@ -12,6 +13,8 @@ Tests verify:
  - shop_channel_id=None skips announcement with warning
  - shop_channel_id set causes POST to /channels/{id}/messages
  - _announce_shop_refresh is called once per guild in bulk mode
+ - utils.shop_announcement.announce_shop_refresh (shared helper) is exercised
+   directly by the announcement-specific tests (B.8 refactor)
 
 IMPORTANT: shared.bblogger is mocked BEFORE any source imports (via
 conftest.py, with a belt-and-suspenders guard below).
@@ -23,6 +26,11 @@ at the source module level:
   - "persist.repositories.config_repository.ConfigRepository"
 We pre-register stub modules in sys.modules so that the deferred imports
 inside execute_shop_refresh_job resolve without pulling in real ORM code.
+
+Announcement-specific tests now import and exercise
+``utils.shop_announcement.announce_shop_refresh`` directly, patching
+``utils.shop_announcement.httpx.AsyncClient`` (the actual httpx usage site
+after the B.8 extraction into the shared module).
 """
 
 import os as _os
@@ -364,40 +372,45 @@ async def test_shop_service_error_is_re_raised():
 
 
 # ===========================================================================
-# Tests: _announce_shop_refresh
+# Tests: announce_shop_refresh (shared helper) — exercised directly (B.8)
+# ===========================================================================
+# These tests import utils.shop_announcement.announce_shop_refresh directly
+# (the shared module extracted in B.8).  The executor's _announce_shop_refresh
+# is now a thin delegate; behaviour tests target the shared implementation.
+# Patch target: "utils.shop_announcement.httpx.AsyncClient"
 # ===========================================================================
 
 
 @pytest.mark.asyncio
 async def test_announce_shop_refresh_skipped_when_no_channel_id():
-    """_announce_shop_refresh skips HTTP when shop_channel_id is None."""
-    from utils.executors.shop_refresh_executor import _announce_shop_refresh
+    """announce_shop_refresh skips HTTP when shop_channel_id is None."""
+    from utils.shop_announcement import announce_shop_refresh
 
-    with patch("utils.executors.shop_refresh_executor.httpx.AsyncClient") as mock_cls:
-        await _announce_shop_refresh("parent-job", 100, None)
+    with patch("utils.shop_announcement.httpx.AsyncClient") as mock_cls:
+        await announce_shop_refresh("parent-job", 100, None)
         mock_cls.assert_not_called()
 
 
 @pytest.mark.asyncio
 async def test_announce_shop_refresh_http_error_is_non_fatal():
-    """An HTTP error in _announce_shop_refresh does not propagate."""
+    """An HTTP error in announce_shop_refresh does not propagate."""
     import httpx
-    from utils.executors.shop_refresh_executor import _announce_shop_refresh
+    from utils.shop_announcement import announce_shop_refresh
 
-    with patch("utils.executors.shop_refresh_executor.httpx.AsyncClient") as mock_cls:
+    with patch("utils.shop_announcement.httpx.AsyncClient") as mock_cls:
         mock_client = AsyncMock()
         mock_client.post = AsyncMock(side_effect=httpx.ConnectError("refused"))
         mock_cls.return_value.__aenter__ = AsyncMock(return_value=mock_client)
         mock_cls.return_value.__aexit__ = AsyncMock(return_value=False)
 
         # Must NOT raise.
-        await _announce_shop_refresh("parent-job", 100, 12345)
+        await announce_shop_refresh("parent-job", 100, 12345)
 
 
 @pytest.mark.asyncio
 async def test_announce_shop_refresh_posts_to_correct_endpoint():
-    """_announce_shop_refresh POSTs to /channels/{channel_id}/messages with embed payload."""
-    from utils.executors.shop_refresh_executor import _announce_shop_refresh
+    """announce_shop_refresh POSTs to /channels/{channel_id}/messages with embed payload."""
+    from utils.shop_announcement import announce_shop_refresh
 
     channel_id = 555666
     guild_id = 101
@@ -405,13 +418,13 @@ async def test_announce_shop_refresh_posts_to_correct_endpoint():
     mock_response = MagicMock()
     mock_response.raise_for_status = MagicMock()
 
-    with patch("utils.executors.shop_refresh_executor.httpx.AsyncClient") as mock_cls:
+    with patch("utils.shop_announcement.httpx.AsyncClient") as mock_cls:
         mock_client = AsyncMock()
         mock_client.post = AsyncMock(return_value=mock_response)
         mock_cls.return_value.__aenter__ = AsyncMock(return_value=mock_client)
         mock_cls.return_value.__aexit__ = AsyncMock(return_value=False)
 
-        await _announce_shop_refresh("parent-job", guild_id, channel_id)
+        await announce_shop_refresh("parent-job", guild_id, channel_id)
 
         call_args = mock_client.post.call_args
         posted_url = call_args.args[0] if call_args.args else call_args.kwargs.get("url")
@@ -537,7 +550,7 @@ async def test_shop_announcement_role_mention_in_text_content_not_description():
     Bug 2 fix: role mention must NOT be inside embed description.
     It must be in text_content so Discord recognises it as an actual mention.
     """
-    from utils.executors.shop_refresh_executor import _announce_shop_refresh
+    from utils.shop_announcement import announce_shop_refresh
 
     role_id = 987654321
     channel_id = 555777
@@ -546,13 +559,13 @@ async def test_shop_announcement_role_mention_in_text_content_not_description():
     mock_response = MagicMock()
     mock_response.raise_for_status = MagicMock()
 
-    with patch("utils.executors.shop_refresh_executor.httpx.AsyncClient") as mock_cls:
+    with patch("utils.shop_announcement.httpx.AsyncClient") as mock_cls:
         mock_client = AsyncMock()
         mock_client.post = AsyncMock(return_value=mock_response)
         mock_cls.return_value.__aenter__ = AsyncMock(return_value=mock_client)
         mock_cls.return_value.__aexit__ = AsyncMock(return_value=False)
 
-        await _announce_shop_refresh("parent-job", guild_id, channel_id, role_id)
+        await announce_shop_refresh("parent-job", guild_id, channel_id, role_id)
 
         call_args = mock_client.post.call_args
         posted_body = call_args.kwargs.get("json") or (call_args.args[1] if len(call_args.args) > 1 else {})
@@ -572,7 +585,7 @@ async def test_shop_announcement_role_mention_in_text_content_not_description():
 @pytest.mark.asyncio
 async def test_shop_announcement_no_role_mention_when_none():
     """Test 29: When bounty_hunter_role_id is None, text_content is None (no mention)."""
-    from utils.executors.shop_refresh_executor import _announce_shop_refresh
+    from utils.shop_announcement import announce_shop_refresh
 
     channel_id = 555888
     guild_id = 303
@@ -580,13 +593,13 @@ async def test_shop_announcement_no_role_mention_when_none():
     mock_response = MagicMock()
     mock_response.raise_for_status = MagicMock()
 
-    with patch("utils.executors.shop_refresh_executor.httpx.AsyncClient") as mock_cls:
+    with patch("utils.shop_announcement.httpx.AsyncClient") as mock_cls:
         mock_client = AsyncMock()
         mock_client.post = AsyncMock(return_value=mock_response)
         mock_cls.return_value.__aenter__ = AsyncMock(return_value=mock_client)
         mock_cls.return_value.__aexit__ = AsyncMock(return_value=False)
 
-        await _announce_shop_refresh("parent-job", guild_id, channel_id, None)
+        await announce_shop_refresh("parent-job", guild_id, channel_id, None)
 
         call_args = mock_client.post.call_args
         posted_body = call_args.kwargs.get("json") or (call_args.args[1] if len(call_args.args) > 1 else {})
@@ -604,7 +617,7 @@ async def test_shop_announcement_no_role_mention_when_none():
 @pytest.mark.asyncio
 async def test_shop_announcement_still_works_without_role():
     """Backward compatibility: announcement posts successfully when no bounty_hunter_role_id."""
-    from utils.executors.shop_refresh_executor import _announce_shop_refresh
+    from utils.shop_announcement import announce_shop_refresh
 
     channel_id = 555999
     guild_id = 404
@@ -612,14 +625,14 @@ async def test_shop_announcement_still_works_without_role():
     mock_response = MagicMock()
     mock_response.raise_for_status = MagicMock()
 
-    with patch("utils.executors.shop_refresh_executor.httpx.AsyncClient") as mock_cls:
+    with patch("utils.shop_announcement.httpx.AsyncClient") as mock_cls:
         mock_client = AsyncMock()
         mock_client.post = AsyncMock(return_value=mock_response)
         mock_cls.return_value.__aenter__ = AsyncMock(return_value=mock_client)
         mock_cls.return_value.__aexit__ = AsyncMock(return_value=False)
 
         # Call with no bounty_hunter_role_id argument (tests default/omitted behavior)
-        await _announce_shop_refresh("parent-job", guild_id, channel_id)
+        await announce_shop_refresh("parent-job", guild_id, channel_id)
 
         # Should have posted successfully
         mock_client.post.assert_awaited_once()
@@ -672,7 +685,7 @@ async def test_executor_reads_shop_channel_id_not_hunting_channel_id():
 @pytest.mark.asyncio
 async def test_embed_description_is_exact_refresh_message_no_role_prefix():
     """Test 30: Embed description is exactly the refresh message text, no role prefix."""
-    from utils.executors.shop_refresh_executor import _announce_shop_refresh
+    from utils.shop_announcement import announce_shop_refresh
 
     expected_description = (
         "The guild shop has been restocked with new items across all tiers. "
@@ -685,13 +698,13 @@ async def test_embed_description_is_exact_refresh_message_no_role_prefix():
     mock_response = MagicMock()
     mock_response.raise_for_status = MagicMock()
 
-    with patch("utils.executors.shop_refresh_executor.httpx.AsyncClient") as mock_cls:
+    with patch("utils.shop_announcement.httpx.AsyncClient") as mock_cls:
         mock_client = AsyncMock()
         mock_client.post = AsyncMock(return_value=mock_response)
         mock_cls.return_value.__aenter__ = AsyncMock(return_value=mock_client)
         mock_cls.return_value.__aexit__ = AsyncMock(return_value=False)
 
-        await _announce_shop_refresh("parent-job", guild_id, channel_id, role_id)
+        await announce_shop_refresh("parent-job", guild_id, channel_id, role_id)
 
         call_args = mock_client.post.call_args
         posted_body = call_args.kwargs.get("json") or (call_args.args[1] if len(call_args.args) > 1 else {})
@@ -706,7 +719,7 @@ async def test_embed_description_is_exact_refresh_message_no_role_prefix():
 @pytest.mark.asyncio
 async def test_message_posted_to_shop_channel_url():
     """Test 31: Message is posted to correct URL /channels/{shop_channel_id}/messages."""
-    from utils.executors.shop_refresh_executor import _announce_shop_refresh
+    from utils.shop_announcement import announce_shop_refresh
 
     shop_channel_id = 777888999
     guild_id = 606
@@ -714,13 +727,13 @@ async def test_message_posted_to_shop_channel_url():
     mock_response = MagicMock()
     mock_response.raise_for_status = MagicMock()
 
-    with patch("utils.executors.shop_refresh_executor.httpx.AsyncClient") as mock_cls:
+    with patch("utils.shop_announcement.httpx.AsyncClient") as mock_cls:
         mock_client = AsyncMock()
         mock_client.post = AsyncMock(return_value=mock_response)
         mock_cls.return_value.__aenter__ = AsyncMock(return_value=mock_client)
         mock_cls.return_value.__aexit__ = AsyncMock(return_value=False)
 
-        await _announce_shop_refresh("parent-job", guild_id, shop_channel_id)
+        await announce_shop_refresh("parent-job", guild_id, shop_channel_id)
 
         call_args = mock_client.post.call_args
         posted_url = call_args.args[0] if call_args.args else call_args.kwargs.get("url")

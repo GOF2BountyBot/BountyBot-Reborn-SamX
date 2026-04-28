@@ -46,8 +46,13 @@ def make_mock_bounty(**overrides):
 
 
 def make_check_response(result_value="correct", bounty_id=1, message=""):
-    """Build a mock CheckResponse-like object."""
-    from services.bounty_service import CheckResponse, CheckResult
+    """Build a mock MultiCheckResponse with a single per-bounty outcome.
+
+    B.12: bot-core's ``check_bounty`` now returns a multi-bounty
+    :class:`MultiCheckResponse`. For single-outcome tests we wrap one
+    :class:`CheckResponse` inside the list.
+    """
+    from services.bounty_service import CheckResponse, CheckResult, MultiCheckResponse
 
     result_map = {
         "correct": CheckResult.CORRECT,
@@ -56,11 +61,12 @@ def make_check_response(result_value="correct", bounty_id=1, message=""):
         "on_cooldown": CheckResult.ON_COOLDOWN,
         "already_checked": CheckResult.ALREADY_CHECKED,
     }
-    return CheckResponse(
+    outcome = CheckResponse(
         result=result_map[result_value],
         bounty_id=bounty_id,
         message=message,
     )
+    return MultiCheckResponse(outcomes=[outcome])
 
 
 # ---------------------------------------------------------------------------
@@ -1099,19 +1105,24 @@ class TestCheckBountyNewFields:
     def test_check_bounty_correct_includes_division(self, mock_get_db, client, mock_bounty_service):
         """The check response includes division when result is correct."""
         _configure_db_mock(mock_get_db)
-        from services.bounty_service import CheckResponse, CheckResult
+        from services.bounty_service import CheckResponse, CheckResult, MultiCheckResponse
 
         mock_bounty_service.check_bounty = AsyncMock(
-            return_value=CheckResponse(
-                result=CheckResult.CORRECT,
-                bounty_id=1,
-                message="Bounty captured! +500cr",
+            return_value=MultiCheckResponse(
+                outcomes=[
+                    CheckResponse(
+                        result=CheckResult.CORRECT,
+                        bounty_id=1,
+                        message="Bounty captured! +500cr",
+                        division="bronze",
+                        criminal_name="Viper",
+                        reward=500,
+                        total_reward=1000,
+                        bonus_won=True,
+                        criminal_ship={"ship_name": "Bandit", "ship_armour": 80},
+                    )
+                ],
                 division="bronze",
-                criminal_name="Viper",
-                reward=500,
-                total_reward=1000,
-                bonus_won=True,
-                criminal_ship={"ship_name": "Bandit", "ship_armour": 80},
             )
         )
 
@@ -1134,25 +1145,30 @@ class TestCheckBountyNewFields:
     def test_check_bounty_includes_combat_result(self, mock_get_db, client, mock_bounty_service):
         """The check response includes combat_result dict when combat occurred."""
         _configure_db_mock(mock_get_db)
-        from services.bounty_service import CheckResponse, CheckResult
+        from services.bounty_service import CheckResponse, CheckResult, MultiCheckResponse
 
         mock_bounty_service.check_bounty = AsyncMock(
-            return_value=CheckResponse(
-                result=CheckResult.CORRECT,
-                bounty_id=2,
-                message="Combat victory! +800cr",
+            return_value=MultiCheckResponse(
+                outcomes=[
+                    CheckResponse(
+                        result=CheckResult.CORRECT,
+                        bounty_id=2,
+                        message="Combat victory! +800cr",
+                        division="silver",
+                        criminal_name="Crusher",
+                        reward=800,
+                        combat_won=True,
+                        combat_result={
+                            "winner_name": "Betty",
+                            "loser_name": "Crusher",
+                            "is_stalemate": False,
+                            "ship1_stats": {"ship_name": "Betty"},
+                            "ship2_stats": {"ship_name": "Crusher"},
+                            "variance_percent": 0.05,
+                        },
+                    )
+                ],
                 division="silver",
-                criminal_name="Crusher",
-                reward=800,
-                combat_won=True,
-                combat_result={
-                    "winner_name": "Betty",
-                    "loser_name": "Crusher",
-                    "is_stalemate": False,
-                    "ship1_stats": {"ship_name": "Betty"},
-                    "ship2_stats": {"ship_name": "Crusher"},
-                    "variance_percent": 0.05,
-                },
             )
         )
 
@@ -1168,29 +1184,133 @@ class TestCheckBountyNewFields:
         assert data["division"] == "silver"
         assert data["combat_won"] is True
 
+    # ------------------------------------------------------------------
+    # B.12 — Multi-bounty list-shaped response tests
+    # ------------------------------------------------------------------
+
+    @patch("api.routers.bounties.get_db_session")
+    def test_check_bounty_response_includes_outcomes_list(self, mock_get_db, client, mock_bounty_service):
+        """B.12: /check response always includes ``outcomes[]`` and ``result_count``.
+
+        Even for single-bounty results, the new wire shape exposes a list
+        of per-bounty outcomes.
+        """
+        _configure_db_mock(mock_get_db)
+        from services.bounty_service import CheckResponse, CheckResult, MultiCheckResponse
+
+        mock_bounty_service.check_bounty = AsyncMock(
+            return_value=MultiCheckResponse(
+                outcomes=[
+                    CheckResponse(
+                        result=CheckResult.INCORRECT,
+                        bounty_id=42,
+                        message="No sign of Crusher at Sol",
+                        criminal_name="Crusher",
+                        division="silver",
+                    )
+                ],
+                division="silver",
+            )
+        )
+
+        response = client.post(
+            "/api/v1/bounties/check?guild_id=67890",
+            json={"player_id": 1, "system_name": "Sol"},
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert "outcomes" in data
+        assert isinstance(data["outcomes"], list)
+        assert data["result_count"] == 1
+        assert data["outcomes"][0]["bounty_id"] == 42
+        assert data["outcomes"][0]["result"] == "incorrect"
+        # Legacy top-level fields still mirror outcomes[0]
+        assert data["result"] == "incorrect"
+        assert data["bounty_id"] == 42
+
+    @patch("api.routers.bounties.get_db_session")
+    def test_check_bounty_response_multi_bounty_outcomes(self, mock_get_db, client, mock_bounty_service):
+        """B.12: When multiple bounties share a system, response.outcomes contains all of them.
+
+        Verifies the new list-shaped contract end-to-end through the router.
+        """
+        _configure_db_mock(mock_get_db)
+        from services.bounty_service import CheckResponse, CheckResult, MultiCheckResponse
+
+        mock_bounty_service.check_bounty = AsyncMock(
+            return_value=MultiCheckResponse(
+                outcomes=[
+                    CheckResponse(
+                        result=CheckResult.CORRECT,
+                        bounty_id=10,
+                        criminal_name="Alice",
+                        division="silver",
+                        reward=500,
+                        combat_won=True,
+                        message="Combat victory! Defeated Alice! +500cr",
+                    ),
+                    CheckResponse(
+                        result=CheckResult.INCORRECT,
+                        bounty_id=11,
+                        criminal_name="Bob",
+                        division="silver",
+                        message="No sign of Bob at Sol",
+                    ),
+                    CheckResponse(
+                        result=CheckResult.ALREADY_CHECKED,
+                        bounty_id=12,
+                        message="System Sol already checked",
+                    ),
+                ],
+                division="silver",
+            )
+        )
+
+        response = client.post(
+            "/api/v1/bounties/check?guild_id=67890",
+            json={"player_id": 1, "system_name": "Sol"},
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["result_count"] == 3
+        assert len(data["outcomes"]) == 3
+        bounty_ids = sorted(o["bounty_id"] for o in data["outcomes"])
+        assert bounty_ids == [10, 11, 12]
+        results = [o["result"] for o in data["outcomes"]]
+        assert "correct" in results
+        assert "incorrect" in results
+        assert "already_checked" in results
+
     @patch("api.routers.bounties.get_db_session")
     def test_check_bounty_silver_loss_no_reward(self, mock_get_db, client, mock_bounty_service):
         """Silver loss has no reward and combat_won=False."""
         _configure_db_mock(mock_get_db)
-        from services.bounty_service import CheckResponse, CheckResult
+        from services.bounty_service import CheckResponse, CheckResult, MultiCheckResponse
 
         mock_bounty_service.check_bounty = AsyncMock(
-            return_value=CheckResponse(
-                result=CheckResult.CORRECT,
-                bounty_id=3,
-                message="Crusher defeated you in combat and escaped!",
+            return_value=MultiCheckResponse(
+                outcomes=[
+                    CheckResponse(
+                        result=CheckResult.CORRECT,
+                        bounty_id=3,
+                        message="Crusher defeated you in combat and escaped!",
+                        division="silver",
+                        criminal_name="Crusher",
+                        combat_won=False,
+                        reward=None,
+                        combat_result={
+                            "winner_name": "Crusher",
+                            "loser_name": "Betty",
+                            "is_stalemate": False,
+                            "ship1_stats": {},
+                            "ship2_stats": {},
+                            "variance_percent": 0.05,
+                        },
+                    )
+                ],
                 division="silver",
-                criminal_name="Crusher",
-                combat_won=False,
-                reward=None,
-                combat_result={
-                    "winner_name": "Crusher",
-                    "loser_name": "Betty",
-                    "is_stalemate": False,
-                    "ship1_stats": {},
-                    "ship2_stats": {},
-                    "variance_percent": 0.05,
-                },
             )
         )
 

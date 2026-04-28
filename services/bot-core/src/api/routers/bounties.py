@@ -23,6 +23,7 @@ from shared import bblogger
 
 from api.schemas.bounty_schema import (
     AdminSpawnResponse,
+    BountyCheckOutcome,
     BountyCheckRequest,
     BountyCheckResponse,
     BountyCreateRequest,
@@ -67,42 +68,84 @@ router = APIRouter(
 # ---------------------------------------------------------------------------
 
 
+def _outcome_to_schema(outcome) -> BountyCheckOutcome:
+    """Convert a service-layer :class:`CheckResponse` to its API schema."""
+    return BountyCheckOutcome(
+        result=outcome.result.value,
+        bounty_id=outcome.bounty_id,
+        message=outcome.message,
+        new_tier=outcome.new_tier,
+        division=outcome.division,
+        criminal_name=outcome.criminal_name,
+        reward=outcome.reward,
+        combat_result=outcome.combat_result,
+        combat_won=outcome.combat_won,
+        bonus_won=outcome.bonus_won,
+        total_reward=outcome.total_reward,
+        criminal_ship=outcome.criminal_ship,
+        recently_spotted=outcome.recently_spotted,
+        proximity_hint=outcome.proximity_hint,
+        distance_to_answer=outcome.distance_to_answer,
+    )
+
+
+def _build_check_response(multi) -> BountyCheckResponse:
+    """Build the wire-level :class:`BountyCheckResponse` from a service
+    :class:`MultiCheckResponse`.
+
+    Top-level fields mirror ``outcomes[0]`` so single-bounty clients keep
+    working unchanged. ``outcomes`` and ``result_count`` are always
+    populated for new multi-bounty-aware clients.
+    """
+    outcome_schemas = [_outcome_to_schema(o) for o in multi.outcomes]
+    first = outcome_schemas[0] if outcome_schemas else None
+    return BountyCheckResponse(
+        outcomes=outcome_schemas,
+        result_count=len(outcome_schemas),
+        result=first.result if first else "not_found",
+        bounty_id=first.bounty_id if first else None,
+        message=first.message if first else "",
+        new_tier=first.new_tier if first else None,
+        division=multi.division if multi.division is not None else (first.division if first else None),
+        criminal_name=first.criminal_name if first else None,
+        reward=first.reward if first else None,
+        combat_result=first.combat_result if first else None,
+        combat_won=first.combat_won if first else None,
+        bonus_won=first.bonus_won if first else False,
+        total_reward=first.total_reward if first else None,
+        criminal_ship=first.criminal_ship if first else None,
+        recently_spotted=first.recently_spotted if first else False,
+        # cooldown_until is only populated on the ON_COOLDOWN outcome.
+        cooldown_until=(multi.outcomes[0].cooldown_until if multi.outcomes else None),
+    )
+
+
 @router.post("/check", response_model=BountyCheckResponse)
 async def check_bounty(
     request: BountyCheckRequest,
     guild_id: int = Query(..., description="Discord guild ID"),
     service: BountyService = Depends(get_bounty_service),
 ):
-    """Check a system against active bounties for a given guild."""
-    from services.bounty_service import CheckResult
+    """Check a system against active bounties for a given guild.
 
+    A single ``/check`` request may produce multiple outcomes — one per
+    bounty in the player's division whose route contains the system
+    (B.12 multi-bounty fix). The response returns ``outcomes[]`` plus
+    backwards-compat top-level fields mirroring ``outcomes[0]``.
+    """
     flogger.info(
         f"Bounty check request: player_id={request.player_id} system={request.system_name!r} guild_id={guild_id}"
     )
     try:
         async with get_db_session() as db:
-            result = await service.check_bounty(db, request.player_id, request.system_name, guild_id)
+            multi = await service.check_bounty(db, request.player_id, request.system_name, guild_id)
         flogger.info(
             f"Bounty check result: player_id={request.player_id}"
-            f" system={request.system_name!r} result={result.result.value}"
-            f" bounty_id={result.bounty_id}"
+            f" system={request.system_name!r} result_count={len(multi.outcomes)}"
+            f" results={[o.result.value for o in multi.outcomes]}"
+            f" bounty_ids={[o.bounty_id for o in multi.outcomes]}"
         )
-        return BountyCheckResponse(
-            result=result.result.value,
-            bounty_id=result.bounty_id,
-            message=result.message,
-            new_tier=result.new_tier,
-            division=result.division,
-            criminal_name=result.criminal_name,
-            reward=result.reward,
-            combat_result=result.combat_result,
-            combat_won=result.combat_won,
-            bonus_won=result.bonus_won,
-            total_reward=result.total_reward,
-            criminal_ship=result.criminal_ship,
-            recently_spotted=result.recently_spotted,
-            cooldown_until=result.cooldown_until,
-        )
+        return _build_check_response(multi)
     except HTTPException:
         raise
     except Exception as e:
@@ -111,10 +154,17 @@ async def check_bounty(
             f" system={request.system_name!r} guild_id={guild_id}: {e}"
         )
         # Return a graceful not-found response rather than propagating as a 500
-        return BountyCheckResponse(
-            result=CheckResult.NOT_FOUND.value,
+        fallback = BountyCheckOutcome(
+            result="not_found",
             bounty_id=None,
             message="No active bounties found or an error occurred processing the check.",
+        )
+        return BountyCheckResponse(
+            outcomes=[fallback],
+            result_count=1,
+            result="not_found",
+            bounty_id=None,
+            message=fallback.message,
         )
 
 

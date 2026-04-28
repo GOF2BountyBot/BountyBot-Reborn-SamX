@@ -3996,3 +3996,332 @@ class TestEditBountyAnnouncementCriminalIcon:
 
         # Criminal lookup should NOT have happened (returned early)
         assert len(captured_icons) == 0
+
+
+# ===========================================================================
+# B.12 — Multi-bounty shared-system /check tests
+# ===========================================================================
+#
+# These tests exercise the case where a player checks a system that appears
+# in the routes of multiple active bounties for the player's division. Prior
+# to B.12 the service exited the iteration loop after the first matching
+# bounty (3 separate `return` statements at lines 1040, 1096, 1135 of the
+# pre-fix bounty_service.py). The fix processes ALL matching bounties and
+# returns a `MultiCheckResponse` with one outcome per matched bounty.
+
+
+@pytest.mark.asyncio
+async def test_b12_two_bounties_share_intermediate_system_both_marked_incorrect(check_bounty_setup):
+    """B.12: Two bounties share an intermediate system → both get systems_checked updated.
+
+    Neither system is the answer for either bounty, so both outcomes are
+    INCORRECT and both bounties' ``checked`` dicts are mutated.
+    """
+    from services.bounty_service import CheckResult, MultiCheckResponse
+
+    service, mock_db = check_bounty_setup
+    player = _make_player(player_id=7)
+    # Both bounties have "Beta" in their route but NEITHER answer is "Beta".
+    bounty_a = _make_active_bounty(
+        bounty_id=10,
+        route=["Alpha", "Beta", "Gamma"],
+        answer="Alpha",
+        criminal_name="Alice",
+    )
+    bounty_b = _make_active_bounty(
+        bounty_id=11,
+        route=["Beta", "Delta", "Epsilon"],
+        answer="Epsilon",
+        criminal_name="Bob",
+    )
+    service.player_repo.get_by_id.return_value = player
+    service.bounty_repo.get_active_by_guild_and_division.return_value = [bounty_a, bounty_b]
+    service.bounty_repo.update.return_value = None
+
+    result = await service.check_bounty(mock_db, player_id=7, system_name="Beta", guild_id=1)
+
+    assert isinstance(result, MultiCheckResponse)
+    assert len(result.outcomes) == 2
+    # Both outcomes must be INCORRECT (Beta is in route but not the answer for either)
+    bounty_ids_seen = sorted(o.bounty_id for o in result.outcomes)
+    assert bounty_ids_seen == [10, 11]
+    for outcome in result.outcomes:
+        assert outcome.result == CheckResult.INCORRECT
+    # Both bounties must have their checked dict updated with this player
+    assert bounty_a.checked["Beta"] == 7
+    assert bounty_b.checked["Beta"] == 7
+
+
+@pytest.mark.asyncio
+async def test_b12_three_bounties_share_intermediate_system_all_updated(check_bounty_setup):
+    """B.12: Three bounties share an intermediate system → all 3 get systems_checked updated."""
+    from services.bounty_service import CheckResult
+
+    service, mock_db = check_bounty_setup
+    player = _make_player(player_id=42)
+    # All three contain "Hub" but none is "Hub" the answer.
+    bounty_a = _make_active_bounty(
+        bounty_id=21,
+        route=["Hub", "X", "Y"],
+        answer="Y",
+        criminal_name="A",
+    )
+    bounty_b = _make_active_bounty(
+        bounty_id=22,
+        route=["Z", "Hub", "W"],
+        answer="W",
+        criminal_name="B",
+    )
+    bounty_c = _make_active_bounty(
+        bounty_id=23,
+        route=["Hub", "Q", "R"],
+        answer="R",
+        criminal_name="C",
+    )
+    service.player_repo.get_by_id.return_value = player
+    service.bounty_repo.get_active_by_guild_and_division.return_value = [bounty_a, bounty_b, bounty_c]
+    service.bounty_repo.update.return_value = None
+
+    result = await service.check_bounty(mock_db, player_id=42, system_name="Hub", guild_id=1)
+
+    assert len(result.outcomes) == 3
+    # Every outcome should be INCORRECT and reference one of the three bounties.
+    assert {o.bounty_id for o in result.outcomes} == {21, 22, 23}
+    for outcome in result.outcomes:
+        assert outcome.result == CheckResult.INCORRECT
+    # All three bounties had their checked dict updated.
+    assert bounty_a.checked["Hub"] == 42
+    assert bounty_b.checked["Hub"] == 42
+    assert bounty_c.checked["Hub"] == 42
+
+
+@pytest.mark.asyncio
+async def test_b12_two_bounties_share_terminal_system_both_terminate_and_pay_out(check_bounty_setup):
+    """B.12: Two bounties share their terminal (answer) system → BOTH terminate and pay out.
+
+    This is the smoking-gun gameplay scenario: a player solves two bounties at
+    once. The reward / XP must be granted PER bounty (independently).
+    """
+    from services.bounty_service import CheckResult, RewardInfo
+
+    service, mock_db = check_bounty_setup
+    player = _make_player(player_id=99, classic_mode=True)  # bronze auto-capture path
+    bounty_a = _make_active_bounty(
+        bounty_id=30,
+        route=["A1", "A2", "Sol"],
+        answer="Sol",
+        criminal_name="AlphaCrim",
+    )
+    bounty_a.criminal_ship = {}
+    bounty_b = _make_active_bounty(
+        bounty_id=31,
+        route=["B1", "B2", "Sol"],
+        answer="Sol",
+        criminal_name="BetaCrim",
+    )
+    bounty_b.criminal_ship = {}
+    service.player_repo.get_by_id.return_value = player
+    service.bounty_repo.get_active_by_guild_and_division.return_value = [bounty_a, bounty_b]
+    service.bounty_repo.update.return_value = None
+    service.calc_rewards = AsyncMock(
+        return_value=[RewardInfo(player_id=99, credits_earned=1000, xp_earned=50, is_winner=True)]
+    )
+    service.distribute_rewards = AsyncMock(return_value=[])
+
+    result = await service.check_bounty(mock_db, player_id=99, system_name="Sol", guild_id=1)
+
+    assert len(result.outcomes) == 2
+    # Both outcomes are CORRECT and combat_won=True (bronze auto-capture)
+    for outcome in result.outcomes:
+        assert outcome.result == CheckResult.CORRECT
+        assert outcome.combat_won is True
+        assert outcome.reward == 1000
+    # Reward distribution must be called twice — ONCE per terminating bounty.
+    assert service.calc_rewards.call_count == 2
+    assert service.distribute_rewards.call_count == 2
+
+
+@pytest.mark.asyncio
+async def test_b12_mixed_one_terminates_two_intermediate_in_same_call(check_bounty_setup):
+    """B.12: Mixed scenario — one bounty terminates, two get intermediate-check, all in one call."""
+    from services.bounty_service import CheckResult, RewardInfo
+
+    service, mock_db = check_bounty_setup
+    player = _make_player(player_id=5, classic_mode=True)
+    bounty_terminal = _make_active_bounty(
+        bounty_id=40,
+        route=["X", "Hub", "Y"],
+        answer="Hub",
+        criminal_name="Boss",
+    )
+    bounty_terminal.criminal_ship = {}
+    bounty_intermediate_a = _make_active_bounty(
+        bounty_id=41,
+        route=["Hub", "X", "Y"],
+        answer="Y",
+        criminal_name="Minion1",
+    )
+    bounty_intermediate_b = _make_active_bounty(
+        bounty_id=42,
+        route=["Z", "Hub", "Q"],
+        answer="Q",
+        criminal_name="Minion2",
+    )
+    service.player_repo.get_by_id.return_value = player
+    service.bounty_repo.get_active_by_guild_and_division.return_value = [
+        bounty_terminal,
+        bounty_intermediate_a,
+        bounty_intermediate_b,
+    ]
+    service.bounty_repo.update.return_value = None
+    service.calc_rewards = AsyncMock(
+        return_value=[RewardInfo(player_id=5, credits_earned=2000, xp_earned=100, is_winner=True)]
+    )
+    service.distribute_rewards = AsyncMock(return_value=[])
+
+    result = await service.check_bounty(mock_db, player_id=5, system_name="Hub", guild_id=1)
+
+    assert len(result.outcomes) == 3
+    by_id = {o.bounty_id: o for o in result.outcomes}
+    assert by_id[40].result == CheckResult.CORRECT
+    assert by_id[40].combat_won is True
+    assert by_id[41].result == CheckResult.INCORRECT
+    assert by_id[42].result == CheckResult.INCORRECT
+    # Reward distribution should run exactly once (only the terminal bounty)
+    assert service.calc_rewards.call_count == 1
+    assert service.distribute_rewards.call_count == 1
+
+
+@pytest.mark.asyncio
+async def test_b12_same_division_overlap_bronze_division(check_bounty_setup):
+    """B.12: Two bronze bounties sharing a system both update on /check.
+
+    Mirrors the live DB state described in the findings doc — same-division
+    overlap is the most common B.12 trigger.
+    """
+    from services.bounty_service import CheckResult
+
+    service, mock_db = check_bounty_setup
+    player = _make_player(player_id=1, tier="Bronze")  # bronze division
+    bounty_a = _make_active_bounty(
+        bounty_id=51,
+        route=["Eanya", "Ginoya", "Nesla", "Weymire"],
+        answer="Weymire",
+        criminal_name="Mashon Redal",
+    )
+    bounty_b = _make_active_bounty(
+        bounty_id=52,
+        route=["Nesla", "Eanya", "Ginoya"],
+        answer="Ginoya",
+        criminal_name="Heinrich Wickel",
+    )
+    service.player_repo.get_by_id.return_value = player
+    service.bounty_repo.get_active_by_guild_and_division.return_value = [bounty_a, bounty_b]
+    service.bounty_repo.update.return_value = None
+
+    # Player checks Nesla — shared system that is NOT the answer for either bounty
+    result = await service.check_bounty(mock_db, player_id=1, system_name="Nesla", guild_id=1)
+
+    # Verify the bronze division was queried (regression guard for division derivation)
+    service.bounty_repo.get_active_by_guild_and_division.assert_called_once_with(mock_db, 1, "bronze")
+    assert len(result.outcomes) == 2
+    for outcome in result.outcomes:
+        assert outcome.result == CheckResult.INCORRECT
+    assert bounty_a.checked["Nesla"] == 1
+    assert bounty_b.checked["Nesla"] == 1
+
+
+@pytest.mark.asyncio
+async def test_b12_no_overlap_single_bounty_still_works(check_bounty_setup):
+    """B.12 regression guard: the no-overlap (single-bounty) case must still produce one outcome."""
+    from services.bounty_service import CheckResult
+
+    service, mock_db = check_bounty_setup
+    player = _make_player(player_id=3)
+    bounty_only = _make_active_bounty(
+        bounty_id=60,
+        route=["A", "B", "C"],
+        answer="C",
+        criminal_name="Solo",
+    )
+    # Other bounty exists but does NOT contain the checked system
+    bounty_other = _make_active_bounty(
+        bounty_id=61,
+        route=["X", "Y", "Z"],
+        answer="Z",
+        criminal_name="Unrelated",
+    )
+    service.player_repo.get_by_id.return_value = player
+    service.bounty_repo.get_active_by_guild_and_division.return_value = [bounty_only, bounty_other]
+    service.bounty_repo.update.return_value = None
+
+    result = await service.check_bounty(mock_db, player_id=3, system_name="A", guild_id=1)
+
+    assert len(result.outcomes) == 1
+    assert result.outcomes[0].bounty_id == 60
+    assert result.outcomes[0].result == CheckResult.INCORRECT
+    # Backwards-compat proxy: top-level access still works for single-outcome case.
+    assert result.result == CheckResult.INCORRECT
+    assert result.bounty_id == 60
+
+
+@pytest.mark.asyncio
+async def test_b12_cooldown_applied_once_per_check_invocation(check_bounty_setup):
+    """B.12: Even when /check touches multiple bounties, cooldown is set ONCE on the player."""
+    from datetime import UTC, datetime
+
+    service, mock_db = check_bounty_setup
+    player = _make_player(player_id=8, bounty_cooldown_end=None)
+    bounty_a = _make_active_bounty(bounty_id=70, route=["Alpha", "Shared"], answer="Alpha", criminal_name="A")
+    bounty_b = _make_active_bounty(bounty_id=71, route=["Shared", "Beta"], answer="Beta", criminal_name="B")
+    service.player_repo.get_by_id.return_value = player
+    service.bounty_repo.get_active_by_guild_and_division.return_value = [bounty_a, bounty_b]
+    service.bounty_repo.update.return_value = None
+
+    before = datetime.now(UTC)
+    await service.check_bounty(mock_db, player_id=8, system_name="Shared", guild_id=1)
+
+    # Cooldown applied exactly once — but the bounty_cooldown_end attribute
+    # should still reflect a future timestamp.
+    assert player.bounty_cooldown_end is not None
+    assert player.bounty_cooldown_end > before
+
+
+@pytest.mark.asyncio
+async def test_b12_idempotency_already_checked_for_overlapping_bounties(check_bounty_setup):
+    """B.12: Re-running /check on a system already-checked for some bounties.
+
+    Verifies the per-bounty ALREADY_CHECKED guard survives the multi-bounty refactor.
+    """
+    from services.bounty_service import CheckResult
+
+    service, mock_db = check_bounty_setup
+    player = _make_player(player_id=4)
+    # Both bounties contain "Shared" but Bounty A already has it marked
+    bounty_a = _make_active_bounty(
+        bounty_id=80,
+        route=["Shared", "X"],
+        answer="X",
+        criminal_name="A",
+        checked={"Shared": 99, "X": -1},  # already checked by another player
+    )
+    bounty_b = _make_active_bounty(
+        bounty_id=81,
+        route=["Shared", "Y"],
+        answer="Y",
+        criminal_name="B",
+        checked={"Shared": -1, "Y": -1},
+    )
+    service.player_repo.get_by_id.return_value = player
+    service.bounty_repo.get_active_by_guild_and_division.return_value = [bounty_a, bounty_b]
+    service.bounty_repo.update.return_value = None
+
+    result = await service.check_bounty(mock_db, player_id=4, system_name="Shared", guild_id=1)
+
+    by_id = {o.bounty_id: o for o in result.outcomes}
+    assert by_id[80].result == CheckResult.ALREADY_CHECKED
+    assert by_id[81].result == CheckResult.INCORRECT
+    # The already-checked bounty's marker must be untouched (regression guard)
+    assert bounty_a.checked["Shared"] == 99
+    # The new bounty got its marker
+    assert bounty_b.checked["Shared"] == 4

@@ -1867,3 +1867,178 @@ class TestCheckCommandCooldownAndRecentlySpotted:
         interaction.followup.send.assert_awaited_once()
         embed = interaction.followup.send.call_args[1]["embed"]
         assert embed.color == discord.Color.red()
+
+
+# ===========================================================================
+# B.12 — Multi-bounty consolidated /check reply tests
+# ===========================================================================
+#
+# Verifies the cog handles the new list-shaped response from bot-core (B.12)
+# by emitting a single consolidated embed listing each bounty's outcome.
+
+
+def _make_multi_check_response(outcomes: list[dict], cooldown_until: int | None = None) -> dict:
+    """Build a multi-bounty BountyCheckResponse-like dict (B.12 wire shape)."""
+    first = outcomes[0] if outcomes else {}
+    return {
+        "outcomes": outcomes,
+        "result_count": len(outcomes),
+        # Legacy top-level fields mirror outcomes[0] (for back-compat)
+        "result": first.get("result", "not_found"),
+        "bounty_id": first.get("bounty_id"),
+        "message": first.get("message", ""),
+        "new_tier": first.get("new_tier"),
+        "division": first.get("division"),
+        "criminal_name": first.get("criminal_name"),
+        "reward": first.get("reward"),
+        "combat_result": first.get("combat_result"),
+        "combat_won": first.get("combat_won"),
+        "bonus_won": first.get("bonus_won", False),
+        "total_reward": first.get("total_reward"),
+        "criminal_ship": first.get("criminal_ship"),
+        "recently_spotted": first.get("recently_spotted", False),
+        "cooldown_until": cooldown_until,
+    }
+
+
+class TestCheckMultiBountyResponse:
+    """B.12: /check handles multi-bounty list-shaped responses with a consolidated embed."""
+
+    @pytest.fixture(autouse=True)
+    def _patch_player_id(self, mock_bounty_cog):
+        mock_bounty_cog._get_player_id = AsyncMock(return_value=42)
+
+    def test_check_multi_outcomes_renders_consolidated_embed(self, mock_bounty_cog, make_mock_response):
+        """When response has >1 outcome, exactly one embed is sent with N fields."""
+        interaction = _create_mock_interaction()
+        outcomes = [
+            {
+                "result": "correct",
+                "bounty_id": 10,
+                "criminal_name": "Alice",
+                "combat_won": True,
+                "reward": 1000,
+                "total_reward": 1000,
+                "bonus_won": False,
+            },
+            {
+                "result": "incorrect",
+                "bounty_id": 11,
+                "criminal_name": "Bob",
+                "recently_spotted": False,
+                "message": "No sign of Bob at Sol",
+            },
+            {
+                "result": "already_checked",
+                "bounty_id": 12,
+                "criminal_name": "Carol",
+                "message": "System Sol already checked",
+            },
+        ]
+        resp = make_mock_response(_make_multi_check_response(outcomes))
+        mock_bounty_cog.http_client.post = AsyncMock(return_value=resp)
+
+        asyncio.run(mock_bounty_cog.check.callback(mock_bounty_cog, interaction, "Sol"))
+
+        interaction.followup.send.assert_awaited_once()
+        call_kwargs = interaction.followup.send.call_args[1]
+        assert "embed" in call_kwargs
+        embed = call_kwargs["embed"]
+        # One field per bounty outcome (combat_result was absent so no extra fields)
+        names = [f.name for f in embed.fields]
+        assert any("Alice" in n for n in names)
+        assert any("Bob" in n for n in names)
+        assert any("Carol" in n for n in names)
+        # Exactly 3 outcome fields
+        assert len(embed.fields) == 3
+
+    def test_check_multi_outcomes_capture_uses_green_color(self, mock_bounty_cog, make_mock_response):
+        """Multi-outcome embed with at least one capture is green."""
+        import discord
+
+        interaction = _create_mock_interaction()
+        outcomes = [
+            {
+                "result": "correct",
+                "bounty_id": 20,
+                "criminal_name": "Boss",
+                "combat_won": True,
+                "reward": 5000,
+                "total_reward": 5000,
+            },
+            {
+                "result": "incorrect",
+                "bounty_id": 21,
+                "criminal_name": "Lackey",
+                "recently_spotted": False,
+            },
+        ]
+        resp = make_mock_response(_make_multi_check_response(outcomes))
+        mock_bounty_cog.http_client.post = AsyncMock(return_value=resp)
+
+        asyncio.run(mock_bounty_cog.check.callback(mock_bounty_cog, interaction, "Sol"))
+
+        embed = interaction.followup.send.call_args[1]["embed"]
+        assert embed.color == discord.Color.green()
+        # Description mentions the system and outcome count
+        assert "Sol" in (embed.description or "")
+        assert "2" in (embed.description or "")
+
+    def test_check_multi_outcomes_lists_each_bounty_credit_amount(self, mock_bounty_cog, make_mock_response):
+        """Multi-bounty capture embed surfaces each bounty's credit reward independently."""
+        interaction = _create_mock_interaction()
+        outcomes = [
+            {
+                "result": "correct",
+                "bounty_id": 30,
+                "criminal_name": "AlphaCrim",
+                "combat_won": True,
+                "reward": 1234,
+                "total_reward": 1234,
+            },
+            {
+                "result": "correct",
+                "bounty_id": 31,
+                "criminal_name": "BetaCrim",
+                "combat_won": True,
+                "reward": 5678,
+                "total_reward": 5678,
+            },
+        ]
+        resp = make_mock_response(_make_multi_check_response(outcomes))
+        mock_bounty_cog.http_client.post = AsyncMock(return_value=resp)
+
+        asyncio.run(mock_bounty_cog.check.callback(mock_bounty_cog, interaction, "Sol"))
+
+        embed = interaction.followup.send.call_args[1]["embed"]
+        # Both reward amounts must appear in the embed (formatted with thousands sep)
+        all_text = " ".join(f.value for f in embed.fields if f.value)
+        assert "1,234" in all_text
+        assert "5,678" in all_text
+
+    def test_check_single_outcome_uses_legacy_single_embed(self, mock_bounty_cog, make_mock_response):
+        """Single-outcome responses keep the legacy single-bounty embed (no consolidation)."""
+        import discord
+
+        interaction = _create_mock_interaction()
+        outcomes = [
+            {
+                "result": "correct",
+                "bounty_id": 40,
+                "criminal_name": "Solo",
+                "combat_won": True,
+                "reward": 500,
+                "total_reward": 500,
+            },
+        ]
+        resp = make_mock_response(_make_multi_check_response(outcomes))
+        mock_bounty_cog.http_client.post = AsyncMock(return_value=resp)
+
+        asyncio.run(mock_bounty_cog.check.callback(mock_bounty_cog, interaction, "Sol"))
+
+        embed = interaction.followup.send.call_args[1]["embed"]
+        # Legacy single-capture embed colour = green
+        assert embed.color == discord.Color.green()
+        # Title is the legacy "Bounty Captured!" not the multi-bounty title
+        assert "Captured" in (embed.title or "")
+        assert "Multiple" not in (embed.title or "")

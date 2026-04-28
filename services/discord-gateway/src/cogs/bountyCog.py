@@ -180,8 +180,10 @@ class BountyCog(commands.Cog):
             data = resp.json()
             result = data.get("result", "")
             message = data.get("message", "")
+            outcomes = data.get("outcomes") or []
 
             # Handle on_cooldown as ephemeral message (not an embed)
+            # On_cooldown is always a single-outcome top-level result.
             if result == "on_cooldown":
                 cooldown_until = data.get("cooldown_until")
                 if cooldown_until:
@@ -193,17 +195,33 @@ class BountyCog(commands.Cog):
                     await interaction.followup.send(f"⏱️ {message}", ephemeral=True)
                 return
 
-            # Inject system_name so _build_check_embed can reference it
-            data["system_name"] = system
-            embed = self._build_check_embed(data)
+            # Build the user-facing reply.
+            #   0 outcomes (defensive — bot-core always emits at least one) → fall
+            #     back to top-level fields for the embed.
+            #   1 outcome  → single-bounty embed (legacy behaviour).
+            #   2+ outcomes → consolidated multi-bounty embed listing each
+            #     bounty's per-bounty result (B.12 multi-bounty fix).
+            if len(outcomes) > 1:
+                embed = self._build_multi_check_embed(system, outcomes)
+            else:
+                # Single-outcome path: prefer outcomes[0] (new shape) but fall
+                # back to top-level fields for legacy bot-core responses.
+                outcome_data = outcomes[0] if outcomes else data
+                outcome_data = dict(outcome_data)
+                outcome_data["system_name"] = system
+                embed = self._build_check_embed(outcome_data)
+
             await interaction.followup.send(embed=embed)
             flogger.info(
                 f"/check success: guild={interaction.guild_id} user={interaction.user.id}"
-                f" system={system} result={result}"
+                f" system={system} result={result} result_count={len(outcomes)}"
             )
 
-            # If the player's tier changed, update their Discord role (non-fatal)
-            new_tier = data.get("new_tier")
+            # If the player's tier changed on ANY outcome, update their Discord role.
+            new_tier = data.get("new_tier") or next(
+                (o.get("new_tier") for o in outcomes if o.get("new_tier")),
+                None,
+            )
             if new_tier:
                 try:
                     config_resp = await self.http_client.get(
@@ -251,6 +269,108 @@ class BountyCog(commands.Cog):
         except Exception as e:  # pylint: disable=broad-exception-caught
             flogger.error(f"/check error: guild={interaction.guild_id} user={interaction.user.id} error={e}")
             await interaction.followup.send("⚠️ An error occurred while checking the system.", ephemeral=True)
+
+    def _summarize_outcome_line(self, outcome: dict) -> tuple[str, str]:
+        """Build (title, value) for one bounty's row inside a multi-bounty embed.
+
+        Used by :meth:`_build_multi_check_embed` to render N independent
+        per-bounty results in a single consolidated reply.
+        """
+        result = outcome.get("result", "")
+        criminal_name = outcome.get("criminal_name") or f"Bounty #{outcome.get('bounty_id')}"
+        bounty_id = outcome.get("bounty_id")
+        title_prefix = f"🎯 {criminal_name}"
+        if bounty_id is not None:
+            title_prefix += f" (#{bounty_id})"
+
+        if result == "correct":
+            combat_won = outcome.get("combat_won")
+            reward = outcome.get("reward", 0) or 0
+            total_reward = outcome.get("total_reward", reward) or reward
+            bonus_won = outcome.get("bonus_won", False)
+
+            if combat_won is False:
+                # Silver+ combat loss — checks reset for this bounty
+                return (
+                    f"💀 {criminal_name}",
+                    "Combat loss — system checks reset for this bounty.",
+                )
+            if bonus_won:
+                return (
+                    f"{title_prefix} — Captured!",
+                    f"💰 **{total_reward:,}** credits (2× combat bonus!)",
+                )
+            return (
+                f"{title_prefix} — Captured!",
+                f"💰 **{reward:,}** credits",
+            )
+        if result == "incorrect":
+            recently_spotted = outcome.get("recently_spotted", False)
+            if recently_spotted:
+                return (
+                    f"👀 {criminal_name}",
+                    "Recently spotted here — they're close!",
+                )
+            return (
+                f"❌ {criminal_name}",
+                "System checked — bounty not here.",
+            )
+        if result == "already_checked":
+            return (
+                f"🔁 {criminal_name}",
+                "System was already checked.",
+            )
+        # not_found / unknown — should not normally appear inside outcomes when len > 1
+        return (
+            title_prefix,
+            outcome.get("message") or "No bounty here.",
+        )
+
+    def _build_multi_check_embed(self, system: str, outcomes: list[dict]) -> discord.Embed:
+        """Build a consolidated multi-bounty embed for /check (B.12 fix).
+
+        Picks an aggregate color reflecting the most "newsworthy" outcome —
+        green if any capture, red if any combat loss, otherwise default.
+        Each outcome contributes one field to the embed.
+        """
+        any_capture = any(o.get("result") == "correct" and o.get("combat_won") is not False for o in outcomes)
+        any_loss = any(o.get("result") == "correct" and o.get("combat_won") is False for o in outcomes)
+
+        if any_capture:
+            color = discord.Color.green()
+            title = "🎯 Multiple Bounties Updated — Capture!"
+        elif any_loss:
+            color = discord.Color.dark_red()
+            title = "💥 Multiple Bounties Updated"
+        else:
+            color = discord.Color.blue()
+            title = "🗺️ Multiple Bounties Updated"
+
+        description = f"**{system}** affected **{len(outcomes)}** active bounty(s) in your division."
+        embed = discord.Embed(title=title, description=description, color=color)
+
+        for outcome in outcomes:
+            field_name, field_value = self._summarize_outcome_line(outcome)
+            # Discord embed field limits: name ≤256, value ≤1024.
+            embed.add_field(
+                name=field_name[:256],
+                value=field_value[:1024] if field_value else "—",
+                inline=False,
+            )
+
+        # Combat summaries: append once per outcome that had combat.
+        for outcome in outcomes:
+            combat = outcome.get("combat_result")
+            if combat:
+                criminal_name = outcome.get("criminal_name") or f"Bounty #{outcome.get('bounty_id')}"
+                summary = self._format_combat_summary(combat)
+                embed.add_field(
+                    name=f"⚔️ Combat — {criminal_name}",
+                    value=summary[:1024],
+                    inline=False,
+                )
+
+        return embed
 
     @staticmethod
     def _format_combat_summary(combat: dict) -> str:

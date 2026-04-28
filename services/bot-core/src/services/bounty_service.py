@@ -84,7 +84,12 @@ class CheckResult(enum.Enum):
 
 @dataclass
 class CheckResponse:  # pylint: disable=too-many-instance-attributes
-    """Response object returned by :meth:`BountyService.check_bounty`."""
+    """Per-bounty outcome of a single :meth:`BountyService.check_bounty` invocation.
+
+    A single ``/check`` call may produce one or more :class:`CheckResponse`
+    objects (one per bounty in the player's division whose route contains the
+    checked system). They are aggregated inside a :class:`MultiCheckResponse`.
+    """
 
     result: CheckResult
     bounty_id: int | None = None
@@ -107,6 +112,36 @@ class CheckResponse:  # pylint: disable=too-many-instance-attributes
     recently_spotted: bool = False
     # Cooldown timestamp (Unix): when the cooldown expires (populated on ON_COOLDOWN results)
     cooldown_until: int | None = None
+
+
+@dataclass
+class MultiCheckResponse:
+    """Aggregate response for a single ``/check`` invocation.
+
+    ``/check`` on a system may affect multiple bounties simultaneously when
+    several active bounties in the player's division share that system.
+    :class:`MultiCheckResponse` collects one :class:`CheckResponse` per
+    affected bounty in :attr:`outcomes`.
+
+    For pre-multi-bounty callers (single-outcome cases) attribute access
+    transparently delegates to ``outcomes[0]`` so old code that did
+    ``result.result``, ``result.bounty_id`` etc. keeps working.
+    """
+
+    outcomes: list[CheckResponse]
+    # Aggregated/top-level fields useful to the gateway:
+    cooldown_until: int | None = None
+    division: str | None = None
+
+    def __getattr__(self, name: str):
+        # Only invoked for attributes NOT defined on the dataclass itself.
+        # Delegates to the first outcome when present; raises otherwise.
+        outcomes = self.__dict__.get("outcomes")
+        if outcomes:
+            first = outcomes[0]
+            if hasattr(first, name):
+                return getattr(first, name)
+        raise AttributeError(f"{type(self).__name__!r} object has no attribute {name!r}")
 
 
 @dataclass
@@ -907,12 +942,35 @@ class BountyService:
         player_id: int,
         system_name: str,
         guild_id: int,
-    ) -> CheckResponse:
-        """Check a star system against active bounty routes.
+    ) -> MultiCheckResponse:
+        """Check a star system against ALL active bounties for the player's division.
 
-        Validates the player's cooldown, identifies which (if any) active
-        bounty for the player's division contains *system_name*, records the
-        check, and returns a :class:`CheckResponse` indicating the outcome.
+        Identifies every active bounty in the player's division whose route
+        contains *system_name* and records the check on each. A single
+        ``/check`` invocation may therefore terminate, mark "already checked",
+        or "incorrect" for multiple bounties simultaneously when their routes
+        overlap (B.12 fix).
+
+        Behaviour summary:
+        - Player not found → single :class:`CheckResponse` with NOT_FOUND.
+        - Cooldown active  → single :class:`CheckResponse` with ON_COOLDOWN.
+        - System not in any active route → single CheckResponse with NOT_FOUND.
+        - Otherwise → one CheckResponse per matched bounty.
+
+        Atomicity: all per-bounty mutations are committed in a single
+        transaction. Announcement edits run AFTER the commit and are
+        non-fatal — a failure to update one bounty's announcement does not
+        roll back the credit / state changes for the others.
+
+        Idempotency: the per-bounty "already checked" guard (``checked[system]
+        != -1``) is unchanged. A second invocation of ``/check`` for the same
+        ``(player, system)`` pair will see the system already marked and emit
+        ALREADY_CHECKED for those bounties — the second call is safe and
+        will not double-credit.
+
+        Cooldown: applied ONCE per ``/check`` invocation regardless of how
+        many bounties were touched (B.12 design decision — players are not
+        penalised for hunting overlapping bounties).
 
         Args:
             db:          Async database session.
@@ -921,21 +979,30 @@ class BountyService:
             guild_id:    Discord guild ID.
 
         Returns:
-            A :class:`CheckResponse` with the appropriate :class:`CheckResult`.
+            A :class:`MultiCheckResponse` whose ``outcomes`` list contains
+            one :class:`CheckResponse` per bounty processed (or a single
+            top-level outcome for cooldown / no-match cases).
         """
         # Step 1: Get player
         player = await self.player_repo.get_by_id(db, player_id)
         if player is None:
-            return CheckResponse(result=CheckResult.NOT_FOUND, message="Player not found")
+            return MultiCheckResponse(
+                outcomes=[CheckResponse(result=CheckResult.NOT_FOUND, message="Player not found")],
+            )
 
         # Step 2: Check cooldown
         now = datetime.now(UTC)
         if player.bounty_cooldown_end and player.bounty_cooldown_end > now:
             remaining = (player.bounty_cooldown_end - now).total_seconds()
             cooldown_until = int(player.bounty_cooldown_end.timestamp())
-            return CheckResponse(
-                result=CheckResult.ON_COOLDOWN,
-                message=f"On cooldown for {int(remaining)} more seconds",
+            return MultiCheckResponse(
+                outcomes=[
+                    CheckResponse(
+                        result=CheckResult.ON_COOLDOWN,
+                        message=f"On cooldown for {int(remaining)} more seconds",
+                        cooldown_until=cooldown_until,
+                    )
+                ],
                 cooldown_until=cooldown_until,
             )
 
@@ -945,104 +1012,187 @@ class BountyService:
         # Step 4: Get active bounties for this division
         active_bounties = await self.bounty_repo.get_active_by_guild_and_division(db, guild_id, division)
 
-        # Step 5: Check system against all active bounties
-        for bounty in active_bounties:
-            if system_name not in bounty.route:
-                continue
+        # Step 5: Filter to bounties whose route contains the system
+        matching_bounties = [b for b in active_bounties if system_name in b.route]
 
-            # System is in this bounty's route
-            checked = dict(bounty.checked)  # Copy to modify
+        if not matching_bounties:
+            # System not in any active bounty route
+            return MultiCheckResponse(
+                outcomes=[
+                    CheckResponse(
+                        result=CheckResult.NOT_FOUND,
+                        message=f"System {system_name} not in any active bounty route",
+                    )
+                ],
+                division=division,
+            )
 
-            if checked.get(system_name, -1) != -1:
-                # Already checked by someone
-                return CheckResponse(
+        # Step 6: Process each matching bounty.
+        # We process all bounties in-memory first (mutating state), commit ONCE
+        # at the end, and then run announcement edits per outcome.
+        outcomes: list[CheckResponse] = []
+        bounties_to_announce: list[tuple[Bounty, bool]] = []  # (bounty, captured)
+        cooldown_applied = False
+        cooldown_seconds = getattr(GameConstants, "CHECK_COOLDOWN", 180)
+        tier_before = player.tier
+
+        for bounty in matching_bounties:
+            outcome, announce_info = await self._process_single_bounty_check(
+                db,
+                player=player,
+                player_id=player_id,
+                bounty=bounty,
+                system_name=system_name,
+                division=division,
+                now=now,
+            )
+            outcomes.append(outcome)
+            if announce_info is not None:
+                bounties_to_announce.append(announce_info)
+
+            # Apply cooldown ONCE per /check call, only after a real (non-already-checked) state change.
+            if not cooldown_applied and outcome.result in (CheckResult.CORRECT, CheckResult.INCORRECT):
+                player.bounty_cooldown_end = now + timedelta(seconds=cooldown_seconds)
+                cooldown_applied = True
+
+        # Single transactional commit covering all per-bounty mutations.
+        await db.commit()
+        await db.refresh(player)
+
+        # Refresh tier-change tracking ONCE for the whole invocation
+        # (any tier promotion was caused by reward distribution above).
+        tier_after = player.tier
+        new_tier = tier_after if tier_after != tier_before else None
+        if new_tier is not None:
+            for outcome in outcomes:
+                if outcome.result == CheckResult.CORRECT and outcome.combat_won:
+                    outcome.new_tier = new_tier
+                    break  # Tier-change applies once; surface on the first capture outcome.
+
+        # Per-bounty announcement edits. Each is best-effort & non-fatal —
+        # _edit_bounty_announcement already swallows its own exceptions.
+        for bounty, captured in bounties_to_announce:
+            try:
+                await self._edit_bounty_announcement(db, bounty, captured=captured)
+            except Exception as e:  # pylint: disable=broad-exception-caught
+                flogger.warning(
+                    f"Per-bounty announcement edit failed (bounty {bounty.id}, "
+                    f"player {player_id}, system {system_name!r}): {e}"
+                )
+
+        # Per-bounty structured logging for observability (B.12)
+        for outcome in outcomes:
+            flogger.info(
+                f"check_bounty outcome: bounty_id={outcome.bounty_id} player_id={player_id}"
+                f" system={system_name!r} result={outcome.result.value}"
+            )
+
+        # cooldown_until on MultiCheckResponse is reserved for the ON_COOLDOWN
+        # case (clients show the user when they can retry). It is NOT populated
+        # when a new cooldown is just applied — that information lives in the
+        # player's state on the next call.
+        return MultiCheckResponse(
+            outcomes=outcomes,
+            cooldown_until=None,
+            division=division,
+        )
+
+    async def _process_single_bounty_check(
+        self,
+        db: AsyncSession,
+        *,
+        player,
+        player_id: int,
+        bounty: Bounty,
+        system_name: str,
+        division: str,
+        now: datetime,
+    ) -> tuple[CheckResponse, tuple[Bounty, bool] | None]:
+        """Process a single bounty for a /check invocation.
+
+        Mutates ``bounty`` and ``player`` state in-memory but does NOT
+        commit — the caller commits once for all bounties (atomicity).
+        Returns the per-bounty :class:`CheckResponse` and an optional
+        ``(bounty, captured)`` tuple identifying which announcement to
+        re-render after the commit.
+
+        Note: combat (silver+) is run independently per bounty, mirroring
+        the original single-bounty contract. Multi-bounty terminal hits
+        therefore distribute rewards independently per matching bounty.
+        """
+        # System is in this bounty's route
+        checked = dict(bounty.checked)  # Copy to modify
+
+        if checked.get(system_name, -1) != -1:
+            # Already checked by someone — no state change, no announce.
+            return (
+                CheckResponse(
                     result=CheckResult.ALREADY_CHECKED,
                     bounty_id=bounty.id,
                     message=f"System {system_name} already checked",
-                )
+                ),
+                None,
+            )
 
-            # Mark system as checked by this player
-            checked[system_name] = player_id
-            bounty.checked = checked
+        # Mark system as checked by this player
+        checked[system_name] = player_id
+        bounty.checked = checked
 
-            # Apply cooldown
-            cooldown_seconds = getattr(GameConstants, "CHECK_COOLDOWN", 180)
-            player.bounty_cooldown_end = now + timedelta(seconds=cooldown_seconds)
+        # Check if this is the answer
+        if bounty.answer == system_name:
+            # CORRECT — found the criminal!
+            await self.bounty_repo.update(db, bounty)
 
-            # Check if this is the answer
-            if bounty.answer == system_name:
-                # CORRECT — found the criminal!
-                await self.bounty_repo.update(db, bounty)
+            flogger.info(f"Player {player_id} found {bounty.criminal_name} at {system_name} (bounty {bounty.id})")
 
-                flogger.info(f"Player {player_id} found {bounty.criminal_name} at {system_name} (bounty {bounty.id})")
+            # Division-based combat gating
+            is_bronze = division == "bronze" or player.classic_mode
 
-                # ------------------------------------------------------------------
-                # Division-based combat gating
-                # ------------------------------------------------------------------
-                # Bronze (and classic mode): auto-capture + optional bonus combat
-                # Silver / Gold / Platinum: mandatory combat gate
-                # ------------------------------------------------------------------
-                is_bronze = division == "bronze" or player.classic_mode
+            # Load player ship (used for all non-classic-mode cases)
+            player_ship = None
+            if hasattr(player, "active_ship_id") and player.active_ship_id is not None:
+                from persist.models.player_ship import PlayerShip
 
-                # Load player ship (used for all non-classic-mode cases)
-                player_ship = None
-                if hasattr(player, "active_ship_id") and player.active_ship_id is not None:
-                    from persist.models.player_ship import PlayerShip
+                player_ship = await db.get(PlayerShip, player.active_ship_id)
+            else:
+                # Fallback for SimpleNamespace test objects that expose active_ship directly
+                player_ship = getattr(player, "active_ship", None)
 
-                    player_ship = await db.get(PlayerShip, player.active_ship_id)
-                else:
-                    # Fallback for SimpleNamespace test objects that expose active_ship directly
-                    player_ship = getattr(player, "active_ship", None)
+            _no_ship = player_ship is None
 
-                _no_ship = player_ship is None
+            # Build loadouts for combat (always — used for both bronze bonus and silver+ gate)
+            from services.loadout_builder import LoadoutBuilder
 
-                # Build loadouts for combat (always — used for both bronze bonus and silver+ gate)
-                from services.loadout_builder import LoadoutBuilder
+            fight_results = None
+            player_loadout = await LoadoutBuilder.from_player(db, player_id)
+            criminal_loadout = LoadoutBuilder.from_criminal_ship(bounty.criminal_ship or {})
 
-                fight_results = None
-                player_loadout = await LoadoutBuilder.from_player(db, player_id)
-                criminal_loadout = LoadoutBuilder.from_criminal_ship(bounty.criminal_ship or {})
+            if is_bronze:
+                # BRONZE: Auto-capture always succeeds. Optional combat bonus.
+                rewards = await self.calc_rewards(db, bounty)
+                await self.distribute_rewards(db, bounty, rewards)
 
-                if is_bronze:
-                    # -----------------------------------------------------------
-                    # BRONZE: Auto-capture always succeeds.
-                    # Also run combat simulation to determine optional bonus.
-                    # -----------------------------------------------------------
-                    tier_before = player.tier
-                    rewards = await self.calc_rewards(db, bounty)
-                    await self.distribute_rewards(db, bounty, rewards)
+                winner_reward = next((r.credits_earned for r in rewards if r.is_winner), 0)
 
-                    # Base reward for the winner
-                    winner_reward = next((r.credits_earned for r in rewards if r.is_winner), 0)
+                bonus_won = False
+                total_reward = winner_reward
+                if not _no_ship:
+                    fight_results = self.combat_service.fight_ships(player_loadout, criminal_loadout)
+                    combat_player_won = (
+                        fight_results.winner_name == player_loadout.ship_name
+                    ) or fight_results.is_stalemate
+                    if combat_player_won:
+                        bonus_won = True
+                        total_reward = winner_reward * 2
+                        await self._award_combat_bonus(db, player_id, winner_reward)
 
-                    # Run optional combat bonus (skip if no ship — still auto-win)
-                    bonus_won = False
-                    total_reward = winner_reward
-                    if not _no_ship:
-                        fight_results = self.combat_service.fight_ships(player_loadout, criminal_loadout)
-                        combat_player_won = (
-                            fight_results.winner_name == player_loadout.ship_name
-                        ) or fight_results.is_stalemate
-                        if combat_player_won:
-                            bonus_won = True
-                            total_reward = winner_reward * 2
-                            await self._award_combat_bonus(db, player_id, winner_reward)
-                    else:
-                        # No ship → no combat bonus possible
-                        fight_results = None
-
-                    await db.commit()
-                    await db.refresh(player)
-                    tier_after = player.tier
-                    await self._edit_bounty_announcement(db, bounty, captured=True)
-
-                    bonus_msg = " (2x combat bonus!)" if bonus_won else ""
-                    return CheckResponse(
+                bonus_msg = " (2x combat bonus!)" if bonus_won else ""
+                return (
+                    CheckResponse(
                         result=CheckResult.CORRECT,
                         bounty_id=bounty.id,
                         message=f"Bounty captured! +{total_reward:,}cr{bonus_msg}",
                         combat_won=True,
-                        new_tier=tier_after if tier_after != tier_before else None,
                         division=division,
                         criminal_name=bounty.criminal_name,
                         reward=winner_reward,
@@ -1050,101 +1200,86 @@ class BountyService:
                         bonus_won=bonus_won,
                         total_reward=total_reward,
                         criminal_ship=bounty.criminal_ship,
-                    )
+                    ),
+                    (bounty, True),
+                )
 
-                else:
-                    # -----------------------------------------------------------
-                    # SILVER / GOLD / PLATINUM: Mandatory combat gate.
-                    # Win (or stalemate) → capture + distribute rewards.
-                    # Lose → reset checks (clear all checked, pick new answer).
-                    # -----------------------------------------------------------
-                    if _no_ship:
-                        # No ship → treat same as auto-win (player can't fight)
-                        duel_won = True
-                        fight_results = None
-                    else:
-                        fight_results = self.combat_service.fight_ships(player_loadout, criminal_loadout)
-                        # Stalemate counts as player win for bounties
-                        duel_won = (fight_results.winner_name == player_loadout.ship_name) or fight_results.is_stalemate
-
-                    if duel_won:
-                        tier_before = player.tier
-                        rewards = await self.calc_rewards(db, bounty)
-                        await self.distribute_rewards(db, bounty, rewards)
-                        winner_reward = next((r.credits_earned for r in rewards if r.is_winner), 0)
-                        await db.commit()
-                        await db.refresh(player)
-                        tier_after = player.tier
-                        await self._edit_bounty_announcement(db, bounty, captured=True)
-                        return CheckResponse(
-                            result=CheckResult.CORRECT,
-                            bounty_id=bounty.id,
-                            message=f"Combat victory! Defeated {bounty.criminal_name}! +{winner_reward:,}cr",
-                            combat_won=True,
-                            new_tier=tier_after if tier_after != tier_before else None,
-                            division=division,
-                            criminal_name=bounty.criminal_name,
-                            reward=winner_reward,
-                            combat_result=_serialize_fight_results(fight_results) if fight_results else None,
-                        )
-                    else:
-                        # LOSS: Criminal escapes checks — reset bounty location
-                        await self._reset_bounty_checks(db, bounty)
-                        await db.commit()
-                        await db.refresh(player)
-                        await self._edit_bounty_announcement(db, bounty)
-                        return CheckResponse(
-                            result=CheckResult.CORRECT,
-                            bounty_id=bounty.id,
-                            message=f"{bounty.criminal_name} defeated you in combat and escaped!",
-                            combat_won=False,
-                            division=division,
-                            criminal_name=bounty.criminal_name,
-                            combat_result=_serialize_fight_results(fight_results) if fight_results else None,
-                        )
-
-            # INCORRECT — system was in the route but not the answer
-            # Check for proximity hint and recently_spotted
-            proximity_hint = False
-            recently_spotted = False
-            distance = None
-            try:
-                answer_idx = bounty.route.index(bounty.answer)
-                system_idx = bounty.route.index(system_name)
-                distance = answer_idx - system_idx
-                close_threshold = getattr(GameConstants, "CLOSE_BOUNTY_THRESHOLD", 4)
-                if 0 < distance < close_threshold:
-                    proximity_hint = True
-                # recently_spotted: criminal was here 1-2 stops ago (answer is 1-2 stops ahead)
-                if 1 <= distance <= 2:
-                    recently_spotted = True
-            except (ValueError, IndexError):
-                pass
-
-            await self.bounty_repo.update(db, bounty)
-            await db.commit()
-            await db.refresh(player)
-            await self._edit_bounty_announcement(db, bounty)
-            flogger.debug(f"Player {player_id} checked {system_name} on bounty {bounty.id}: incorrect")
-
-            if recently_spotted:
-                inc_message = f"{bounty.criminal_name} was recently spotted here! They're close..."
+            # SILVER / GOLD / PLATINUM: Mandatory combat gate.
+            if _no_ship:
+                duel_won = True
+                fight_results = None
             else:
-                inc_message = f"No sign of {bounty.criminal_name} at {system_name}"
+                fight_results = self.combat_service.fight_ships(player_loadout, criminal_loadout)
+                duel_won = (fight_results.winner_name == player_loadout.ship_name) or fight_results.is_stalemate
 
-            return CheckResponse(
+            if duel_won:
+                rewards = await self.calc_rewards(db, bounty)
+                await self.distribute_rewards(db, bounty, rewards)
+                winner_reward = next((r.credits_earned for r in rewards if r.is_winner), 0)
+                return (
+                    CheckResponse(
+                        result=CheckResult.CORRECT,
+                        bounty_id=bounty.id,
+                        message=f"Combat victory! Defeated {bounty.criminal_name}! +{winner_reward:,}cr",
+                        combat_won=True,
+                        division=division,
+                        criminal_name=bounty.criminal_name,
+                        reward=winner_reward,
+                        combat_result=_serialize_fight_results(fight_results) if fight_results else None,
+                    ),
+                    (bounty, True),
+                )
+
+            # LOSS: Criminal escapes checks — reset bounty location
+            await self._reset_bounty_checks(db, bounty)
+            return (
+                CheckResponse(
+                    result=CheckResult.CORRECT,
+                    bounty_id=bounty.id,
+                    message=f"{bounty.criminal_name} defeated you in combat and escaped!",
+                    combat_won=False,
+                    division=division,
+                    criminal_name=bounty.criminal_name,
+                    combat_result=_serialize_fight_results(fight_results) if fight_results else None,
+                ),
+                (bounty, False),
+            )
+
+        # INCORRECT — system was in the route but not the answer
+        proximity_hint = False
+        recently_spotted = False
+        distance = None
+        try:
+            answer_idx = bounty.route.index(bounty.answer)
+            system_idx = bounty.route.index(system_name)
+            distance = answer_idx - system_idx
+            close_threshold = getattr(GameConstants, "CLOSE_BOUNTY_THRESHOLD", 4)
+            if 0 < distance < close_threshold:
+                proximity_hint = True
+            # recently_spotted: criminal was here 1-2 stops ago (answer is 1-2 stops ahead)
+            if 1 <= distance <= 2:
+                recently_spotted = True
+        except (ValueError, IndexError):
+            pass
+
+        await self.bounty_repo.update(db, bounty)
+        flogger.debug(f"Player {player_id} checked {system_name} on bounty {bounty.id}: incorrect")
+
+        if recently_spotted:
+            inc_message = f"{bounty.criminal_name} was recently spotted here! They're close..."
+        else:
+            inc_message = f"No sign of {bounty.criminal_name} at {system_name}"
+
+        return (
+            CheckResponse(
                 result=CheckResult.INCORRECT,
                 bounty_id=bounty.id,
                 message=inc_message,
                 proximity_hint=proximity_hint,
                 distance_to_answer=distance,
                 recently_spotted=recently_spotted,
-            )
-
-        # System not found in any active bounty
-        return CheckResponse(
-            result=CheckResult.NOT_FOUND,
-            message=f"System {system_name} not in any active bounty route",
+            ),
+            (bounty, False),
         )
 
     # ------------------------------------------------------------------

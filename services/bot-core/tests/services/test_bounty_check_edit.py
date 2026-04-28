@@ -197,7 +197,8 @@ async def test_check_incorrect_triggers_announcement_edit(service, mock_db):
     result = await service.check_bounty(mock_db, player_id=1, system_name="Alpha", guild_id=1)
 
     assert result.result == CheckResult.INCORRECT
-    service._edit_bounty_announcement.assert_called_once_with(mock_db, bounty)
+    # B.12: incorrect outcomes pass captured=False explicitly (was positional-only).
+    service._edit_bounty_announcement.assert_called_once_with(mock_db, bounty, captured=False)
 
 
 @pytest.mark.asyncio
@@ -261,7 +262,8 @@ async def test_check_correct_triggers_announcement_edit_loss(service, mock_db):
 
     assert result.result == CheckResult.CORRECT
     assert result.combat_won is False
-    service._edit_bounty_announcement.assert_called_once_with(mock_db, bounty)
+    # B.12: combat-loss outcomes pass captured=False explicitly (was positional-only).
+    service._edit_bounty_announcement.assert_called_once_with(mock_db, bounty, captured=False)
 
 
 # ---------------------------------------------------------------------------
@@ -673,8 +675,9 @@ async def test_check_correct_loss_edits_announcement_no_captured_flag(service, m
 
     assert result.result == CheckResult.CORRECT
     assert result.combat_won is False
-    # On Silver+ loss: bounty stays active, edit called WITHOUT captured flag
-    service._edit_bounty_announcement.assert_called_once_with(mock_db, bounty)
+    # B.12: On Silver+ loss the announcement is still edited (bounty stays active).
+    # The "no captured flag" semantics now means captured=False is passed explicitly.
+    service._edit_bounty_announcement.assert_called_once_with(mock_db, bounty, captured=False)
     service._delete_bounty_announcement.assert_not_called()
 
 

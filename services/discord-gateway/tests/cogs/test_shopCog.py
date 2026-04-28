@@ -424,6 +424,99 @@ class TestShopCommand:
         call_kwargs = interaction.followup.send.call_args
         assert call_kwargs[1].get("ephemeral", False)
 
+    # R.1 — optional tier parameter defaulting to player's current tier
+
+    def test_shop_omit_tier_uses_player_tier_bronze(self, mock_shop_cog, make_mock_response):
+        """R.1: /shop with no tier defaults to the invoker's current tier (Bronze)."""
+        interaction = _create_mock_interaction()
+
+        player_resp = make_mock_response(_make_player_data(tier="Bronze", credits=1000))
+        items_resp = make_mock_response([_make_shop_item(1, "LaserCannon", "weapon", "Bronze", 500)])
+
+        mock_shop_cog.http_client.post = AsyncMock(return_value=player_resp)
+        mock_shop_cog.http_client.get = AsyncMock(return_value=items_resp)
+
+        # Call with tier=None (omitted)
+        asyncio.run(mock_shop_cog.shop.callback(mock_shop_cog, interaction, None))
+
+        # Verify an embed was sent (not an error)
+        interaction.followup.send.assert_awaited_once()
+        call_kwargs = interaction.followup.send.call_args[1]
+        assert "embed" in call_kwargs
+
+        # Verify the API was called with the Bronze tier URL
+        get_call = mock_shop_cog.http_client.get.call_args
+        assert "Bronze" in get_call[0][0]
+
+    def test_shop_omit_tier_uses_player_tier_gold(self, mock_shop_cog, make_mock_response):
+        """R.1: /shop with no tier defaults to the invoker's current tier (Gold)."""
+        interaction = _create_mock_interaction()
+
+        player_resp = make_mock_response(_make_player_data(tier="Gold", credits=5000))
+        items_resp = make_mock_response([_make_shop_item(1, "LaserCannon", "weapon", "Gold", 2000)])
+
+        mock_shop_cog.http_client.post = AsyncMock(return_value=player_resp)
+        mock_shop_cog.http_client.get = AsyncMock(return_value=items_resp)
+
+        asyncio.run(mock_shop_cog.shop.callback(mock_shop_cog, interaction, None))
+
+        interaction.followup.send.assert_awaited_once()
+        call_kwargs = interaction.followup.send.call_args[1]
+        assert "embed" in call_kwargs
+
+        get_call = mock_shop_cog.http_client.get.call_args
+        assert "Gold" in get_call[0][0]
+
+    def test_shop_explicit_tier_still_works(self, mock_shop_cog, make_mock_response):
+        """R.1: explicitly passing a tier still works as before."""
+        interaction = _create_mock_interaction()
+
+        player_resp = make_mock_response(_make_player_data(tier="Silver", credits=2000))
+        items_resp = make_mock_response([_make_shop_item(1, "ShieldModule", "module", "Silver", 800)])
+
+        mock_shop_cog.http_client.post = AsyncMock(return_value=player_resp)
+        mock_shop_cog.http_client.get = AsyncMock(return_value=items_resp)
+
+        asyncio.run(mock_shop_cog.shop.callback(mock_shop_cog, interaction, "Silver"))
+
+        interaction.followup.send.assert_awaited_once()
+        call_kwargs = interaction.followup.send.call_args[1]
+        assert "embed" in call_kwargs
+
+    def test_shop_omit_tier_player_tier_missing_falls_back_to_bronze(self, mock_shop_cog, make_mock_response):
+        """R.1: if player.tier is missing/None, falls back to Bronze with a warning log."""
+        interaction = _create_mock_interaction()
+
+        # Player data with no tier field
+        player_data = _make_player_data(tier="Bronze", credits=500)
+        del player_data["tier"]  # simulate missing field
+        player_resp = make_mock_response(player_data)
+        items_resp = make_mock_response([_make_shop_item(1, "LaserCannon", "weapon", "Bronze", 300)])
+
+        mock_shop_cog.http_client.post = AsyncMock(return_value=player_resp)
+        mock_shop_cog.http_client.get = AsyncMock(return_value=items_resp)
+
+        asyncio.run(mock_shop_cog.shop.callback(mock_shop_cog, interaction, None))
+
+        # Should not error — fallback to Bronze
+        interaction.followup.send.assert_awaited_once()
+        call_kwargs = interaction.followup.send.call_args[1]
+        # Should get an embed, not an error
+        assert "embed" in call_kwargs
+
+    def test_shop_omit_tier_player_not_found_shows_error(self, mock_shop_cog):
+        """R.1: omitting tier but having no player data shows error message."""
+        interaction = _create_mock_interaction()
+
+        # _get_player_data returns None on non-configured-guild
+        mock_shop_cog.http_client.post = AsyncMock(side_effect=RuntimeError("player error"))
+
+        asyncio.run(mock_shop_cog.shop.callback(mock_shop_cog, interaction, None))
+
+        interaction.followup.send.assert_awaited_once()
+        call_kwargs = interaction.followup.send.call_args[1]
+        assert call_kwargs.get("ephemeral", False)
+
 
 # ---------------------------------------------------------------------------
 # buy command

@@ -990,13 +990,6 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
     # Bounty admin commands
     # ------------------------------------------------------------------
 
-    # TODO(B.8 sibling — P1 announcement gap): /admin_clear_bounties does NOT post a
-    # user-facing announcement when bounties are cleared. The scheduled bounty_expire
-    # path correctly announces; this manual admin path silently mutates DB state.
-    # Researcher findings: /proj/old-refs/session-research-2026-04-20/B8_admin_refresh_shop_announcement_findings.md
-    # Fix: extract the cleared-bounty announcement into a shared helper (analogous to
-    # B.8's shop_announcement.py extraction) and invoke it from both the manual admin
-    # path and the scheduled executor.
     @app_commands.command(name="admin_clear_bounties", description="[ADMIN] Clear active bounties for this guild")
     @app_commands.default_permissions(administrator=True)
     @is_admin()
@@ -1290,13 +1283,6 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
             flogger.error(f"Error in /admin_config_xp: {e}")
             await interaction.followup.send("⚠️ An error occurred while managing XP thresholds.", ephemeral=True)
 
-    # TODO(B.8 sibling — P1 announcement gap): /admin_spawn_bounty does NOT post the
-    # spawn announcement to the bounty board channel. The scheduled bounty_spawn_executor
-    # correctly announces via the new POST /api/v1/announcements/bounty/channel/{cid}
-    # endpoint (per A.48 architectural fix); this manual admin path bypasses it.
-    # Researcher findings: /proj/old-refs/session-research-2026-04-20/B8_admin_refresh_shop_announcement_findings.md
-    # Fix: have the manual spawn path call the same announcement helper used by the
-    # executor (or extract a shared spawn-announcement helper if not already shared).
     @app_commands.command(name="admin_spawn_bounty", description="[ADMIN] Manually trigger a bounty spawn")
     @app_commands.default_permissions(administrator=True)
     @is_admin()

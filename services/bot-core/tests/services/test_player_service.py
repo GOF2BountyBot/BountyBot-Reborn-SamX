@@ -1437,3 +1437,36 @@ class TestPromotePlayer:
         result = await service.promote_player(mock_db, player_id=1)
 
         assert result["new_tier"] == "Silver"
+
+
+# ===========================================================================
+# B.15 sibling — DB/ORM exception → ValueError in PlayerService.transfer_credits
+# ===========================================================================
+
+
+class TestTransferCreditsDbExceptionHandling:
+    """B.15 sibling fix: non-ValueError DB exceptions in transfer_credits must be
+    wrapped as ValueError so the router returns HTTP 400 instead of leaking a 500.
+    """
+
+    @pytest.mark.asyncio
+    async def test_db_error_on_first_player_lock_raises_value_error(self, service, mock_db):
+        """B.15: RuntimeError from get_by_id_for_update (first locked player) → ValueError."""
+        # IDs [1, 2] sorted → 1 locked first; make that throw.
+        service.player_repo.get_by_id_for_update = AsyncMock(side_effect=RuntimeError("DB connection lost"))
+        with pytest.raises(ValueError, match="could not be retrieved"):
+            await service.transfer_credits(mock_db, 1, 2, 100)
+
+    @pytest.mark.asyncio
+    async def test_db_error_on_second_player_lock_raises_value_error(self, service, mock_db):
+        """B.15: RuntimeError from get_by_id_for_update (second locked player) → ValueError."""
+        source = _make_player(player_id=1, credits=500)
+
+        async def _side_effect(db, pid):
+            if pid == 1:
+                return source
+            raise RuntimeError("DB timeout")
+
+        service.player_repo.get_by_id_for_update = AsyncMock(side_effect=_side_effect)
+        with pytest.raises(ValueError, match="could not be retrieved"):
+            await service.transfer_credits(mock_db, 1, 2, 100)

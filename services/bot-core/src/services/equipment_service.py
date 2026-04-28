@@ -438,10 +438,15 @@ class EquipmentService:
         """Retrieve a ship and verify ownership.
 
         Raises:
-            ValueError: if ship not found or does not belong to player.
+            ValueError: if ship not found or does not belong to player, or if a
+                DB/ORM error occurs (converted to ValueError to surface as HTTP 400).
         """
         flogger.trace(f"Retrieving ship: ship_id={ship_id}")
-        ship = await self.ship_repo.get_by_id(db, ship_id)
+        try:
+            ship = await self.ship_repo.get_by_id(db, ship_id)
+        except Exception as exc:
+            flogger.error(f"DB error fetching ship_id={ship_id}: {exc}", exc_info=True)
+            raise ValueError(f"Ship with ID {ship_id} could not be retrieved.") from exc
         if not ship:
             flogger.warning(f"Ship not found: ship_id={ship_id}")
             raise ValueError(f"Ship {ship_id} not found")

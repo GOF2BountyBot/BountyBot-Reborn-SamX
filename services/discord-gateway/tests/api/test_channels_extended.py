@@ -2019,5 +2019,94 @@ class TestDeleteChannelMessage:
         assert resp.status_code == 404
 
 
+# ===========================================================================
+# B.13 — image-URL preservation on PUT /channels/{channel_id}/messages/{message_id}
+# ===========================================================================
+
+
+class TestEditChannelMessageImagePreservation:
+    """B.13: PUT /channels/{channel_id}/messages/{message_id} must preserve the
+    existing embed image when the new embed payload omits an image_url.
+
+    These tests exercise preserve_embed_image() via direct unit tests (the
+    helper is shared by both the messages and channels routes).
+    """
+
+    def _evict_modules(self):
+        to_evict = [
+            k
+            for k in sys.modules
+            if k == "discord"
+            or k.startswith("discord.")
+            or k in ("api", "bot", "utils")
+            or k.startswith("api.")
+            or k.startswith("utils.")
+            or k.startswith("cogs.")
+        ]
+        for k in to_evict:
+            sys.modules.pop(k, None)
+
+    def test_preserve_embed_image_when_payload_omits_image(self):
+        """B.13: preserve_embed_image carries forward existing image URL when new embed has none."""
+        self._evict_modules()
+        import discord
+        from utils.discord_helpers import preserve_embed_image
+
+        existing_url = "https://cdn.example.com/bounty_map.png"
+
+        new_embed = discord.Embed(title="Channel edit test")
+
+        mock_image = MagicMock()
+        mock_image.url = existing_url
+
+        mock_existing_embed = MagicMock()
+        mock_existing_embed.image = mock_image
+
+        existing_message = MagicMock()
+        existing_message.embeds = [mock_existing_embed]
+
+        result = preserve_embed_image(new_embed, existing_message)
+        assert result.image.url == existing_url
+
+    def test_preserve_embed_image_does_not_overwrite_new_image(self):
+        """B.13: preserve_embed_image leaves the new embed's image in place when already set."""
+        self._evict_modules()
+        import discord
+        from utils.discord_helpers import preserve_embed_image
+
+        new_url = "https://cdn.example.com/new_map.png"
+        old_url = "https://cdn.example.com/old_map.png"
+
+        new_embed = discord.Embed(title="Channel edit test")
+        new_embed.set_image(url=new_url)
+
+        mock_image = MagicMock()
+        mock_image.url = old_url
+
+        mock_existing_embed = MagicMock()
+        mock_existing_embed.image = mock_image
+
+        existing_message = MagicMock()
+        existing_message.embeds = [mock_existing_embed]
+
+        result = preserve_embed_image(new_embed, existing_message)
+        assert result.image.url == new_url
+
+    def test_preserve_embed_image_no_existing_embeds_no_error(self):
+        """B.13: preserve_embed_image is a no-op when existing message has no embeds."""
+        self._evict_modules()
+        import discord
+        from utils.discord_helpers import preserve_embed_image
+
+        new_embed = discord.Embed(title="Channel edit test")
+
+        existing_message = MagicMock()
+        existing_message.embeds = []
+
+        result = preserve_embed_image(new_embed, existing_message)
+        # No image set — url should be falsy
+        assert not getattr(getattr(result, "image", None), "url", None)
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

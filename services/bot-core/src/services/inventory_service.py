@@ -128,8 +128,13 @@ class InventoryService:
             if quantity <= 0:
                 raise ValueError("Quantity must be positive")
 
-            # Verify player exists
-            player = await self.player_repo.get_by_id(db, player_id)
+            # Verify player exists — wrap repo call so DB/ORM exceptions surface as
+            # friendly ValueError (maps to HTTP 400) rather than leaking as raw 500s.
+            try:
+                player = await self.player_repo.get_by_id(db, player_id)
+            except Exception as exc:
+                flogger.error(f"DB error fetching player_id={player_id}: {exc}", exc_info=True)
+                raise ValueError(f"Player with ID {player_id} could not be retrieved.") from exc
             if not player:
                 raise ValueError(f"Player {player_id} not found")
 
@@ -195,8 +200,13 @@ class InventoryService:
             if quantity <= 0:
                 raise ValueError("Quantity must be positive")
 
-            # Verify player exists
-            player = await self.player_repo.get_by_id(db, player_id)
+            # Verify player exists — wrap repo call so DB/ORM exceptions surface as
+            # friendly ValueError (maps to HTTP 400) rather than leaking as raw 500s.
+            try:
+                player = await self.player_repo.get_by_id(db, player_id)
+            except Exception as exc:
+                flogger.error(f"DB error fetching player_id={player_id}: {exc}", exc_info=True)
+                raise ValueError(f"Player with ID {player_id} could not be retrieved.") from exc
             if not player:
                 raise ValueError(f"Player {player_id} not found")
 

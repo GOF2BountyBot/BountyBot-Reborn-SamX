@@ -546,3 +546,45 @@ def tags_to_edit_payload(tags_iterable, *, updates: dict | None = None) -> list:
                 out.append(entry)
     flogger.debug(f"tags_to_edit_payload returning {len(out)} tag entries")
     return out
+
+
+def preserve_embed_image(new_embed: discord.Embed, existing_message: discord.Message) -> discord.Embed:
+    """Preserve the existing embed image on *new_embed* when no image is set.
+
+    Discord's ``message.edit(embed=...)`` replaces the entire embed, including
+    any image.  If the new embed has no image set and the existing message has
+    an embed image, this helper copies the existing image URL into *new_embed*
+    so it is not silently erased.
+
+    Contract
+    --------
+    * If ``new_embed.image.url`` is already set → return *new_embed* unchanged.
+    * If the existing message has no embeds, or its first embed has no image →
+      return *new_embed* unchanged.
+    * Otherwise → set ``new_embed.set_image(url=existing_image_url)`` and return.
+
+    This implements the universal gateway image-preservation contract (B.13).
+
+    Args:
+        new_embed: The ``discord.Embed`` about to be posted in the edit call.
+        existing_message: The existing Discord message whose first embed's image
+            URL should be carried forward when the new embed omits one.
+
+    Returns:
+        The (possibly mutated) *new_embed*.
+    """
+    # If the new embed already has an image, respect the caller's intent.
+    if getattr(getattr(new_embed, "image", None), "url", None):
+        return new_embed
+
+    existing_embeds = getattr(existing_message, "embeds", None) or []
+    if not existing_embeds:
+        return new_embed
+
+    existing_image = getattr(existing_embeds[0], "image", None)
+    existing_url = getattr(existing_image, "url", None) if existing_image is not None else None
+    if existing_url:
+        flogger.debug(f"preserve_embed_image: carrying forward image_url={existing_url!r}")
+        new_embed.set_image(url=existing_url)
+
+    return new_embed

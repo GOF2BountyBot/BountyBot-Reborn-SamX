@@ -86,35 +86,57 @@ class ShopCog(commands.Cog):
 
     @app_commands.command(name="shop", description="Browse the guild shop")
     @app_commands.describe(
-        tier="Shop tier to browse (Bronze, Silver, Gold, Platinum)",
+        tier="Shop tier to browse (defaults to your current tier)",
         item_type="Filter by item type (ship, primary_weapon, secondary_weapon, turret_weapon, module)",
     )
     @app_commands.autocomplete(tier=tier_autocomplete, item_type=item_type_autocomplete)
-    async def shop(self, interaction: discord.Interaction, tier: str, item_type: str | None = None):
-        """Browse guild shop by tier."""
+    async def shop(self, interaction: discord.Interaction, tier: str | None = None, item_type: str | None = None):
+        """Browse guild shop by tier. Defaults to your current tier when omitted."""
         await interaction.response.defer(thinking=True)
 
         try:
-            # Validate tier
-            if tier not in self._valid_tiers:
+            # Validate explicit tier before hitting the API so we fail-fast on a
+            # known-bad value without incurring a network round-trip.
+            if tier is not None and tier not in self._valid_tiers:
                 await interaction.followup.send(
                     f"❌ Invalid tier. Valid tiers: {', '.join(self._valid_tiers)}", ephemeral=True
                 )
                 return
 
-            # Get player data to check tier access
+            # Get player data — needed for tier resolution (when tier is None) and
+            # for tier-access gating (always).
             player = await self._get_player_data(interaction.user.id, interaction.guild_id)
             if not player:
                 await interaction.followup.send("❌ Player not found.", ephemeral=True)
                 return
 
-            # Check tier access (players can only access their tier and below)
-            player_tier_level = self._valid_tiers.index(player["tier"])
+            # Resolve effective tier: use invoker's current tier when not explicitly provided.
+            if tier is None:
+                player_tier: str | None = player.get("tier")
+                if not player_tier or player_tier not in self._valid_tiers:
+                    flogger.warning(
+                        f"/shop: player tier missing or unrecognised for "
+                        f"guild={interaction.guild_id} user={interaction.user.id}; "
+                        "falling back to Bronze"
+                    )
+                    player_tier = "Bronze"
+                tier = player_tier
+
+            # Check tier access (players can only access their tier and below).
+            # Use .get() to guard against the edge case where "tier" is absent.
+            raw_player_tier: str = player.get("tier") or "Bronze"
+            if raw_player_tier not in self._valid_tiers:
+                flogger.warning(
+                    f"/shop: player tier {raw_player_tier!r} not in valid tiers for "
+                    f"guild={interaction.guild_id} user={interaction.user.id}; treating as Bronze"
+                )
+                raw_player_tier = "Bronze"
+            player_tier_level = self._valid_tiers.index(raw_player_tier)
             requested_tier_level = self._valid_tiers.index(tier)
 
             if requested_tier_level > player_tier_level:
                 await interaction.followup.send(
-                    f"🔒 You need to be **{tier}** tier to access this shop. Your current tier: **{player['tier']}**",
+                    f"🔒 You need to be **{tier}** tier to access this shop. Your current tier: **{raw_player_tier}**",
                     ephemeral=True,
                 )
                 return
@@ -200,7 +222,7 @@ class ShopCog(commands.Cog):
                     inline=False,
                 )
 
-            embed.set_footer(text=f"Use /buy <item_id> [quantity] to purchase items | Your tier: {player['tier']}")
+            embed.set_footer(text=f"Use /buy <item_id> [quantity] to purchase items | Your tier: {raw_player_tier}")
 
             await interaction.followup.send(embed=embed)
             flogger.debug(f"/shop {tier} by {interaction.user} in guild {interaction.guild_id}")

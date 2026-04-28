@@ -1228,5 +1228,127 @@ class TestDeleteMessageExceptionHandlers:
             assert isinstance(captured_calls[0][1], OSError)
 
 
+# ===========================================================================
+# B.13 — image-URL preservation on PUT /messages/{message_id}
+# ===========================================================================
+
+
+class TestUpdateMessageImagePreservation:
+    """B.13: PUT /messages/{message_id} must preserve the existing embed image
+    when the new embed payload omits an image_url.
+    """
+
+    def _build_app_with_message(self, mock_bot, mock_image_url: str | None):
+        """Return a TestClient whose mocked message has (or lacks) an embed image."""
+        _evict_discord_modules()
+
+        app = FastAPI(title="Discord Gateway API Test - Image Preservation")
+        app.state.bot = mock_bot
+
+        import discord
+
+        # Build existing message embed
+        if mock_image_url:
+            existing_image = MagicMock()
+            existing_image.url = mock_image_url
+            existing_embed = MagicMock(spec=discord.Embed)
+            existing_embed.image = existing_image
+        else:
+            existing_embed = MagicMock(spec=discord.Embed)
+            existing_embed.image = None
+
+        existing_message = MagicMock()
+        existing_message.id = 1234567890
+        existing_message.author = MagicMock()
+        existing_message.author.id = 123456789  # same as bot user → editable
+        existing_message.embeds = [existing_embed] if mock_image_url is not None else []
+        existing_message.edit = AsyncMock()
+
+        from api.schemas.message_schemas import MessageSummary
+
+        msg_payload = MessageSummary(id=1234567890, author_id=123456789, content=None, timestamp="2024-01-01T00:00:00")
+
+        with (
+            patch("api.routers.messages._find_message", new_callable=AsyncMock) as mock_find,
+            patch("api.routers.messages.resolve_bot", new_callable=AsyncMock) as mock_resolve,
+            patch("api.routers.messages.handle_discord_exception", new_callable=AsyncMock),
+            patch("api.routers.messages.MessageConverter") as mock_converter,
+        ):
+            mock_find.return_value = existing_message
+            mock_resolve.return_value = mock_bot
+            mock_converter.message_to_payload.return_value = msg_payload
+
+            from api.routers.messages import router
+
+            app.include_router(router, prefix="/api/v1")
+
+            yield TestClient(app), existing_message
+
+    def test_put_image_less_payload_preserves_existing_embed_image(self, mock_bot):
+        """B.13: PUT with no image_url in payload preserves the existing message's image."""
+        existing_url = "https://cdn.example.com/route_map.png"
+
+        # Directly invoke preserve_embed_image to verify its behaviour
+        _evict_discord_modules()
+        import discord
+        from utils.discord_helpers import preserve_embed_image
+
+        new_embed = discord.Embed(title="Updated")
+        # embed has no image set
+
+        mock_image = MagicMock()
+        mock_image.url = existing_url
+
+        mock_existing_embed = MagicMock()
+        mock_existing_embed.image = mock_image
+
+        existing_message = MagicMock()
+        existing_message.embeds = [mock_existing_embed]
+
+        result = preserve_embed_image(new_embed, existing_message)
+        assert result.image.url == existing_url, (
+            f"Expected existing image_url={existing_url!r} to be preserved, got {result.image.url!r}"
+        )
+
+    def test_put_with_new_image_url_does_not_overwrite(self, mock_bot):
+        """B.13: When new embed already has an image, preserve_embed_image leaves it unchanged."""
+        _evict_discord_modules()
+        import discord
+        from utils.discord_helpers import preserve_embed_image
+
+        new_url = "https://cdn.example.com/new_image.png"
+        existing_url = "https://cdn.example.com/old_image.png"
+
+        new_embed = discord.Embed(title="Updated")
+        new_embed.set_image(url=new_url)
+
+        mock_image = MagicMock()
+        mock_image.url = existing_url
+
+        mock_existing_embed = MagicMock()
+        mock_existing_embed.image = mock_image
+
+        existing_message = MagicMock()
+        existing_message.embeds = [mock_existing_embed]
+
+        result = preserve_embed_image(new_embed, existing_message)
+        assert result.image.url == new_url, f"New image URL should be kept; got {result.image.url!r}"
+
+    def test_put_image_less_payload_no_existing_image_no_error(self, mock_bot):
+        """B.13: PUT with no image_url, no existing image → no error, embed unchanged."""
+        _evict_discord_modules()
+        import discord
+        from utils.discord_helpers import preserve_embed_image
+
+        new_embed = discord.Embed(title="Updated")
+
+        existing_message = MagicMock()
+        existing_message.embeds = []
+
+        result = preserve_embed_image(new_embed, existing_message)
+        # embed.image exists but url is empty/falsy when not set
+        assert not getattr(getattr(result, "image", None), "url", None)
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

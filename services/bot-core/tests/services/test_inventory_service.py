@@ -1126,3 +1126,31 @@ class TestServiceLayerAliasGuard:
         """Calling remove_item_from_inventory with an unknown alias raises InvalidItemTypeError."""
         with pytest.raises(InvalidItemTypeError):
             await service.remove_item_from_inventory(mock_db, player_id=1, item_type="bad_alias", item_name="Foo")
+
+
+# ===========================================================================
+# B.15 sibling — DB/ORM exception → ValueError conversion in InventoryService
+# ===========================================================================
+
+
+class TestInventoryServiceDbExceptionHandling:
+    """B.15 sibling fix: non-ValueError DB exceptions during repo lookups in
+    add_item_to_inventory and remove_item_from_inventory must be wrapped as
+    ValueError so the router returns HTTP 400 instead of leaking a raw 500.
+    """
+
+    @pytest.mark.asyncio
+    async def test_add_item_db_error_on_player_lookup_raises_value_error(self, service, mock_db, mock_player_repo):
+        """B.15: RuntimeError from player_repo.get_by_id during add_item → ValueError."""
+        mock_player_repo.get_by_id.side_effect = RuntimeError("DB connection lost")
+        with pytest.raises(ValueError, match="could not be retrieved"):
+            await service.add_item_to_inventory(mock_db, player_id=1, item_type="primary_weapon", item_name="Laser")
+
+    @pytest.mark.asyncio
+    async def test_remove_item_db_error_on_player_lookup_raises_value_error(self, service, mock_db, mock_player_repo):
+        """B.15: RuntimeError from player_repo.get_by_id during remove_item → ValueError."""
+        mock_player_repo.get_by_id.side_effect = RuntimeError("DB connection lost")
+        with pytest.raises(ValueError, match="could not be retrieved"):
+            await service.remove_item_from_inventory(
+                mock_db, player_id=1, item_type="primary_weapon", item_name="Laser"
+            )

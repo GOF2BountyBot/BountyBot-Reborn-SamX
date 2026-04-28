@@ -11,7 +11,7 @@ import discord
 from fastapi import APIRouter, HTTPException, Request, status
 from shared import bblogger
 from utils.discord_converters import MessageConverter
-from utils.discord_helpers import handle_discord_exception, resolve_bot
+from utils.discord_helpers import handle_discord_exception, preserve_embed_image, resolve_bot
 from utils.embed_converter import EmbedConverter
 
 from api.schemas.base_schemas import DeleteResponse
@@ -155,6 +155,9 @@ async def update_message(request: Request, message_id: int, payload: MessageUpda
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Can only edit messages sent by the bot")
 
         embed = EmbedConverter.payload_to_embed(payload.content)
+        # Preserve the existing embed image when the new payload omits one (B.13).
+        # Discord's full-embed-replace semantics would silently erase the image otherwise.
+        embed = preserve_embed_image(embed, message)
         await message.edit(embed=embed)
 
         # After edit, message object may be updated in-place by discord.py — re-read for payload conversion

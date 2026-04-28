@@ -1127,3 +1127,38 @@ class TestItemDiscriminatorToConcrete:
         from services.equipment_service import item_discriminator_to_concrete_type
 
         assert item_discriminator_to_concrete_type("SomethingUnknown") is None
+
+
+# ===========================================================================
+# B.15 sibling — DB/ORM exception → ValueError in EquipmentService._get_owned_ship
+# ===========================================================================
+
+
+class TestEquipmentServiceDbExceptionHandling:
+    """B.15 sibling fix: non-ValueError DB exceptions in _get_owned_ship must be
+    wrapped as ValueError so the caller (router) returns HTTP 400 instead of 500.
+    """
+
+    @pytest.mark.asyncio
+    async def test_db_error_on_ship_lookup_raises_value_error(self, svc, mock_db):
+        """B.15: RuntimeError from ship_repo.get_by_id in _get_owned_ship → ValueError."""
+        svc.ship_repo.get_by_id.side_effect = RuntimeError("DB connection lost")
+        with pytest.raises(ValueError, match="could not be retrieved"):
+            await svc._get_owned_ship(mock_db, player_id=42, ship_id=1)
+
+    @pytest.mark.asyncio
+    async def test_db_error_on_equip_surfaces_as_value_error(self, svc, mock_db):
+        """B.15: equip_item propagates ValueError when ship lookup throws a DB error."""
+        svc.ship_repo.get_by_id.side_effect = RuntimeError("DB connection lost")
+        # item_repo is called before ship fetch — give it a plausible item to get past
+        # the _resolve_equipment_type step
+        svc.item_repo.get_by_name_any_type.return_value = _make_base_item("Pulse Laser", "PrimaryWeapon")
+        with pytest.raises(ValueError, match="could not be retrieved"):
+            await svc.equip_item(mock_db, player_id=42, ship_id=1, item_name="Pulse Laser")
+
+    @pytest.mark.asyncio
+    async def test_db_error_on_unequip_surfaces_as_value_error(self, svc, mock_db):
+        """B.15: unequip_item propagates ValueError when ship lookup throws a DB error."""
+        svc.ship_repo.get_by_id.side_effect = RuntimeError("DB connection lost")
+        with pytest.raises(ValueError, match="could not be retrieved"):
+            await svc.unequip_item(mock_db, player_id=42, ship_id=1, item_name="Pulse Laser")

@@ -433,10 +433,16 @@ class PlayerService:
         # Transaction is owned by the caller (router).
         # Lock both rows to prevent concurrent modifications.
         # Always lock in consistent ID order to prevent deadlocks.
+        # Wrap repo calls so DB/ORM exceptions surface as friendly ValueError
+        # (maps to HTTP 400) rather than leaking as raw 500s.
         ids_ordered = sorted([source_player_id, target_player_id])
         locked = {}
         for pid in ids_ordered:
-            player = await self.player_repo.get_by_id_for_update(db, pid)
+            try:
+                player = await self.player_repo.get_by_id_for_update(db, pid)
+            except Exception as exc:
+                flogger.error(f"DB error fetching player_id={pid} for transfer: {exc}", exc_info=True)
+                raise ValueError(f"Player with ID {pid} could not be retrieved.") from exc
             if not player:
                 raise ValueError(f"Player {pid} not found")
             locked[pid] = player

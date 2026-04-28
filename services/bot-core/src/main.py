@@ -159,6 +159,81 @@ async def run_stale_state_recovery_sweep() -> None:
             await db.rollback()
 
 
+async def run_stale_respawn_recovery() -> None:
+    """Recovery sweep: re-fire missed bounty respawns on startup.
+
+    Sibling to ``run_stale_state_recovery_sweep`` that addresses the
+    ``bounty_respawn_executor`` reliability gap.
+
+    Scenario this fixes:
+        ``BountyService.escape_bounty()`` sets ``status='escaped'`` and stamps
+        ``respawn_time = now + (1 min × route length)``.  A one-shot
+        APScheduler job is then scheduled to fire ``execute_bounty_respawn_job``
+        at that ``respawn_time``.  If the bot is offline at that moment, the
+        job is silently dropped (past-scheduled jobs do not back-fire by
+        default), leaving the bounty stuck in ``status='escaped'`` forever.
+
+    Recovery strategy:
+        1. Select bounties with ``status='escaped'`` where ``respawn_time``
+           has passed (or is NULL — defensive guard against an aborted
+           ``escape_bounty`` call).
+        2. For each, directly invoke ``execute_bounty_respawn_job`` which
+           regenerates the route, flips status back to ``active``, and
+           announces the respawn through the gateway.
+        3. Failures are logged but never propagate — startup must not fail.
+
+    Runs AFTER the scheduler has started so the executor's HTTP announcement
+    path is consistent with the live runtime path.
+    """
+    from persist.models.bounty import Bounty
+    from sqlalchemy import func, or_, select
+    from utils.executors.bounty_respawn_executor import execute_bounty_respawn_job
+
+    flogger.info("🔄 Running stale-respawn recovery sweep...")
+
+    stale_ids: list[int] = []
+    async with db_manager.get_session() as db:
+        try:
+            result = await db.execute(
+                select(Bounty.id).where(
+                    Bounty.status == "escaped",
+                    or_(
+                        Bounty.respawn_time.is_(None),
+                        Bounty.respawn_time < func.now(),
+                    ),
+                )
+            )
+            stale_ids = [row[0] for row in result.all()]
+        except Exception as e:  # pylint: disable=broad-exception-caught
+            flogger.error(f"⚠️ Stale-respawn query failed (non-fatal, continuing): {e}")
+            return
+
+    if not stale_ids:
+        flogger.info("✅ Stale-respawn sweep complete: no escaped bounties needing respawn")
+        return
+
+    flogger.info(f"🔁 Stale-respawn sweep found {len(stale_ids)} escaped bounty(ies); re-firing respawn")
+
+    succeeded = 0
+    failed = 0
+    for bounty_id in stale_ids:
+        try:
+            outcome = await execute_bounty_respawn_job(
+                job_id=f"recovery-respawn-{bounty_id}",
+                payload={"job_type": "bounty_respawn", "bounty_id": bounty_id},
+            )
+            if outcome.get("status") == "success":
+                succeeded += 1
+            else:
+                failed += 1
+                flogger.warning(f"Stale-respawn for bounty_id={bounty_id} returned {outcome}")
+        except Exception as e:  # pylint: disable=broad-exception-caught
+            failed += 1
+            flogger.error(f"Stale-respawn for bounty_id={bounty_id} raised: {e}")
+
+    flogger.info(f"✅ Stale-respawn sweep complete: {succeeded} respawned, {failed} failed")
+
+
 @asynccontextmanager
 async def lifespan(fastapi_app: FastAPI):
     """
@@ -230,6 +305,11 @@ async def lifespan(fastapi_app: FastAPI):
 
         # Register default recurring jobs (idempotent — skip if already present)
         register_default_jobs(scheduler)
+
+        # Recovery: re-fire bounty respawns missed while the bot was offline.
+        # Runs after the scheduler is up so the executor's behavior (DB +
+        # gateway announcement) matches the live runtime path.
+        await run_stale_respawn_recovery()
 
     except Exception as e:
         flogger.error(f"❌ Scheduler initialization failed: {e}")

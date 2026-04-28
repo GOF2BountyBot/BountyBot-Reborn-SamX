@@ -304,3 +304,121 @@ class TestRecoverySweepErrorHandling:
 
         mock_db.rollback.assert_awaited_once()
         mock_db.commit.assert_not_awaited()
+
+
+class TestStaleRespawnRecovery:
+    """run_stale_respawn_recovery() re-fires bounty respawns missed during downtime."""
+
+    @pytest.mark.asyncio
+    async def test_no_stale_escaped_bounties_no_op(self):
+        """Empty result set → executor never invoked."""
+        mock_db = AsyncMock()
+        result = MagicMock()
+        result.all = MagicMock(return_value=[])
+        mock_db.execute = AsyncMock(return_value=result)
+
+        mock_db_manager = MagicMock()
+        mock_db_manager.get_session = MagicMock(return_value=_make_session_ctx(mock_db))
+
+        executor = AsyncMock()
+        with (
+            patch("main.db_manager", mock_db_manager),
+            patch("utils.executors.bounty_respawn_executor.execute_bounty_respawn_job", executor),
+        ):
+            from main import run_stale_respawn_recovery
+
+            await run_stale_respawn_recovery()
+
+        executor.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_stale_escaped_bounties_invoke_executor(self):
+        """Each stale escaped bounty triggers an execute_bounty_respawn_job call."""
+        mock_db = AsyncMock()
+        result = MagicMock()
+        result.all = MagicMock(return_value=[(101,), (202,), (303,)])
+        mock_db.execute = AsyncMock(return_value=result)
+
+        mock_db_manager = MagicMock()
+        mock_db_manager.get_session = MagicMock(return_value=_make_session_ctx(mock_db))
+
+        executor = AsyncMock(return_value={"status": "success", "bounty_id": 0})
+        with (
+            patch("main.db_manager", mock_db_manager),
+            patch("utils.executors.bounty_respawn_executor.execute_bounty_respawn_job", executor),
+        ):
+            from main import run_stale_respawn_recovery
+
+            await run_stale_respawn_recovery()
+
+        assert executor.await_count == 3
+        # Verify payload shape on the first call
+        first_kwargs = executor.await_args_list[0].kwargs
+        assert first_kwargs["payload"]["job_type"] == "bounty_respawn"
+        assert first_kwargs["payload"]["bounty_id"] in (101, 202, 303)
+
+    @pytest.mark.asyncio
+    async def test_executor_failure_is_swallowed(self):
+        """Exception from executor → other bounties still processed; sweep does not raise."""
+        mock_db = AsyncMock()
+        result = MagicMock()
+        result.all = MagicMock(return_value=[(1,), (2,)])
+        mock_db.execute = AsyncMock(return_value=result)
+
+        mock_db_manager = MagicMock()
+        mock_db_manager.get_session = MagicMock(return_value=_make_session_ctx(mock_db))
+
+        executor = AsyncMock(side_effect=[RuntimeError("boom"), {"status": "success"}])
+        with (
+            patch("main.db_manager", mock_db_manager),
+            patch("utils.executors.bounty_respawn_executor.execute_bounty_respawn_job", executor),
+        ):
+            from main import run_stale_respawn_recovery
+
+            # Must not raise
+            await run_stale_respawn_recovery()
+
+        assert executor.await_count == 2
+
+    @pytest.mark.asyncio
+    async def test_db_error_during_query_is_swallowed(self):
+        """DB error during the SELECT → sweep returns without invoking executor."""
+        mock_db = AsyncMock()
+        mock_db.execute = AsyncMock(side_effect=Exception("Connection lost"))
+
+        mock_db_manager = MagicMock()
+        mock_db_manager.get_session = MagicMock(return_value=_make_session_ctx(mock_db))
+
+        executor = AsyncMock()
+        with (
+            patch("main.db_manager", mock_db_manager),
+            patch("utils.executors.bounty_respawn_executor.execute_bounty_respawn_job", executor),
+        ):
+            from main import run_stale_respawn_recovery
+
+            await run_stale_respawn_recovery()
+
+        executor.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_query_filters_status_escaped_with_time_guard(self):
+        """SELECT statement filters status='escaped' AND respawn_time guard."""
+        mock_db = AsyncMock()
+        result = MagicMock()
+        result.all = MagicMock(return_value=[])
+        mock_db.execute = AsyncMock(return_value=result)
+
+        mock_db_manager = MagicMock()
+        mock_db_manager.get_session = MagicMock(return_value=_make_session_ctx(mock_db))
+
+        with patch("main.db_manager", mock_db_manager):
+            from main import run_stale_respawn_recovery
+
+            await run_stale_respawn_recovery()
+
+        stmt = mock_db.execute.call_args_list[0][0][0]
+        stmt_str = str(stmt.compile(compile_kwargs={"literal_binds": True}))
+        assert "bounty" in stmt_str.lower()
+        assert "escaped" in stmt_str.lower()
+        assert "now" in stmt_str.lower()
+        assert "respawn_time" in stmt_str.lower()

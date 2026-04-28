@@ -241,6 +241,79 @@ class TestGetActiveByGuild:
 
         assert result == []
 
+    @pytest.mark.asyncio
+    async def test_get_active_by_guild_excludes_past_expiry_duels(self, repo, mock_db):
+        """B.14 sibling: get_active_by_guild() must exclude pending duels past their expires_at.
+
+        Verifies the emitted SQL contains a func.now() time guard so stale duels do not
+        appear as pending when the expire executor was missed (e.g. on app restart).
+        """
+        mock_db.execute = AsyncMock(return_value=_make_scalars_result([]))
+
+        result = await repo.get_active_by_guild(mock_db, guild_id=111)
+
+        assert result == []
+        call_args = mock_db.execute.call_args
+        stmt = call_args[0][0]
+        stmt_str = str(stmt.compile(compile_kwargs={"literal_binds": False}))
+        assert "now" in stmt_str.lower(), (
+            f"B.14 sibling: get_active_by_guild() (DuelRepository) WHERE clause must include "
+            f"func.now() time filter. Got SQL: {stmt_str}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_get_active_by_guild_includes_pending_duel_with_future_expiry(self, repo, mock_db):
+        """B.14 sibling: pending duels with expires_at in the future must be included."""
+        future_duel = _make_duel(
+            status="pending",
+            guild_id=444,
+            expires_at=datetime.now(UTC) + timedelta(hours=1),
+        )
+        mock_db.execute = AsyncMock(return_value=_make_scalars_result([future_duel]))
+
+        result = await repo.get_active_by_guild(mock_db, guild_id=444)
+
+        assert len(result) == 1
+        assert result[0].status == "pending"
+
+
+class TestGetPendingByTarget:
+    @pytest.mark.asyncio
+    async def test_get_pending_by_target_excludes_past_expiry_duels(self, repo, mock_db):
+        """B.14 sibling: get_pending_by_target() must exclude pending duels past their expires_at.
+
+        Verifies the emitted SQL contains a func.now() time guard so stale duels do not
+        appear in autocomplete when the expire executor was missed (e.g. on app restart).
+        """
+        mock_db.execute = AsyncMock(return_value=_make_scalars_result([]))
+
+        result = await repo.get_pending_by_target(mock_db, target_id=100, guild_id=111)
+
+        assert result == []
+        call_args = mock_db.execute.call_args
+        stmt = call_args[0][0]
+        stmt_str = str(stmt.compile(compile_kwargs={"literal_binds": False}))
+        assert "now" in stmt_str.lower(), (
+            f"B.14 sibling: get_pending_by_target() (DuelRepository) WHERE clause must include "
+            f"func.now() time filter. Got SQL: {stmt_str}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_get_pending_by_target_returns_non_expired_pending_duels(self, repo, mock_db):
+        """B.14 sibling: get_pending_by_target() includes pending duels with future expiry."""
+        future_duel = _make_duel(
+            status="pending",
+            target_id=555,
+            guild_id=111,
+            expires_at=datetime.now(UTC) + timedelta(minutes=30),
+        )
+        mock_db.execute = AsyncMock(return_value=_make_scalars_result([future_duel]))
+
+        result = await repo.get_pending_by_target(mock_db, target_id=555, guild_id=111)
+
+        assert len(result) == 1
+        assert result[0].target_id == 555
+
 
 class TestErrorHandling:
     @pytest.mark.asyncio

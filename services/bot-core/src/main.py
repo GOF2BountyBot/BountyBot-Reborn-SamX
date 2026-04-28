@@ -92,6 +92,73 @@ def register_default_jobs(scheduler) -> None:
         flogger.info(f"📅 Registered default job '{jid}' with cron '{job_def['cron']}'{jitter_info}")
 
 
+async def run_stale_state_recovery_sweep() -> None:
+    """Recovery sweep: mark stale active bounties/duels as expired on startup.
+
+    Runs once after migrations complete and BEFORE the scheduler starts.
+
+    Scenario this fixes (B.14):  When the bot is offline at a bounty/duel
+    expiry time, APScheduler's one-time job is skipped (past-scheduled jobs
+    are not back-fired by default).  On the next startup the rows remain
+    status='active'/'pending' even though end_time/expires_at is in the past.
+
+    This sweep performs a single bulk UPDATE per entity type so the DB is in
+    a consistent state before any live traffic is served.
+    """
+    from persist.models.bounty import Bounty
+    from persist.models.duel_request import DuelRequest
+    from sqlalchemy import and_, func, update
+
+    flogger.info("🔄 Running stale-state recovery sweep (B.14)...")
+
+    async with db_manager.get_session() as db:
+        try:
+            # ------------------------------------------------------------------ #
+            # Bounties: status='active' AND end_time < NOW()                     #
+            # ------------------------------------------------------------------ #
+            bounty_result = await db.execute(
+                update(Bounty)
+                .where(
+                    and_(
+                        Bounty.status == "active",
+                        Bounty.end_time < func.now(),
+                    )
+                )
+                .values(status="expired")
+                .execution_options(synchronize_session="fetch")
+            )
+            stale_bounty_count = bounty_result.rowcount
+
+            # ------------------------------------------------------------------ #
+            # Duels: status='pending' AND expires_at IS NOT NULL AND             #
+            #        expires_at < NOW()                                           #
+            # ------------------------------------------------------------------ #
+            duel_result = await db.execute(
+                update(DuelRequest)
+                .where(
+                    and_(
+                        DuelRequest.status == "pending",
+                        DuelRequest.expires_at.isnot(None),
+                        DuelRequest.expires_at < func.now(),
+                    )
+                )
+                .values(status="expired")
+                .execution_options(synchronize_session="fetch")
+            )
+            stale_duel_count = duel_result.rowcount
+
+            await db.commit()
+
+            flogger.info(
+                f"✅ Recovery sweep complete: marked {stale_bounty_count} stale bounties "
+                f"and {stale_duel_count} stale duels as expired"
+            )
+
+        except Exception as e:  # pylint: disable=broad-exception-caught
+            flogger.error(f"⚠️ Recovery sweep failed (non-fatal, continuing): {e}")
+            await db.rollback()
+
+
 @asynccontextmanager
 async def lifespan(fastapi_app: FastAPI):
     """
@@ -124,6 +191,11 @@ async def lifespan(fastapi_app: FastAPI):
         flogger.error(f"❌ Database initialization failed: {e}")
         flogger.error("🛑 Application startup aborted due to database issues")
         raise
+
+    # Recovery sweep: mark stale active bounties/duels as expired (B.14 — Layer 2).
+    # Runs AFTER migrations and BEFORE the scheduler, so the DB is clean before
+    # any jobs or live requests are processed.
+    await run_stale_state_recovery_sweep()
 
     # Auto-seed game data tables if they are empty
     try:

@@ -8,7 +8,7 @@ queries, CRUD operations, and status management.
 from datetime import datetime
 
 from shared import bblogger
-from sqlalchemy import and_, delete, select
+from sqlalchemy import and_, delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from persist.interfaces.repository_interface import IRepository
@@ -146,13 +146,24 @@ class DuelRepository(IRepository[DuelRequest]):
             raise
 
     async def get_active_by_guild(self, db: AsyncSession, guild_id: int) -> list[DuelRequest]:
-        """Get all pending duel requests for a given guild."""
+        """Get all currently-pending duel requests for a given guild.
+
+        Filters on BOTH status='pending' AND (expires_at IS NULL OR expires_at > NOW())
+        (B.14 sibling fix — same defensive dual-layer pattern as BountyRepository).
+        Duels without an expires_at are treated as non-expiring and always included.
+
+        Methods intentionally left without the time filter:
+          - delete_expired()  — explicitly operates on expired rows; time filter is its purpose
+          - get_pending_by_players() — point-lookup before accepting; include even at-expiry-edge
+        """
         try:
             result = await db.execute(
                 select(DuelRequest).where(
                     and_(
                         DuelRequest.guild_id == guild_id,
                         DuelRequest.status == "pending",
+                        # B.14 sibling: exclude duels that have passed their expiry
+                        (DuelRequest.expires_at.is_(None) | (DuelRequest.expires_at > func.now())),
                     )
                 )
             )
@@ -162,9 +173,11 @@ class DuelRepository(IRepository[DuelRequest]):
             raise
 
     async def get_pending_by_target(self, db: AsyncSession, target_id: int, guild_id: int) -> list[DuelRequest]:
-        """Get all pending duel requests where the given player is the target in a guild.
+        """Get all currently-pending duel requests where the given player is the target.
 
         Used for autocomplete: shows challenges the user needs to accept/reject.
+        Applies the same expires_at > NOW() guard (B.14 sibling fix) so that
+        stale un-expired duels do not pollute autocomplete results.
         """
         try:
             result = await db.execute(
@@ -173,6 +186,8 @@ class DuelRepository(IRepository[DuelRequest]):
                         DuelRequest.target_id == target_id,
                         DuelRequest.guild_id == guild_id,
                         DuelRequest.status == "pending",
+                        # B.14 sibling: exclude duels that have passed their expiry
+                        (DuelRequest.expires_at.is_(None) | (DuelRequest.expires_at > func.now())),
                     )
                 )
             )

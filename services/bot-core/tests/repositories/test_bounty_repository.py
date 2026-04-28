@@ -181,6 +181,43 @@ class TestGetActiveByGuild:
 
         assert result == []
 
+    @pytest.mark.asyncio
+    async def test_get_active_by_guild_excludes_stale_active_bounties(self, repo, mock_db):
+        """B.14: get_active_by_guild() must exclude bounties with status='active' AND end_time < NOW().
+
+        The mock simulates the DB returning no rows (i.e. the time filter excluded stale rows).
+        We also verify the SQL statement emitted includes a func.now() call so regressions
+        would be caught at the statement level.
+        """
+        # Mock returns empty — simulating that DB filtered out the stale bounty
+        mock_db.execute = AsyncMock(return_value=_make_scalars_result([]))
+
+        result = await repo.get_active_by_guild(mock_db, guild_id=111)
+
+        assert result == []
+        # Inspect the compiled SQL statement — it must reference 'now' (func.now() → NOW())
+        call_args = mock_db.execute.call_args
+        stmt = call_args[0][0]  # positional arg 0: the SQLAlchemy select statement
+        stmt_str = str(stmt.compile(compile_kwargs={"literal_binds": False}))
+        assert "now" in stmt_str.lower(), (
+            f"B.14: get_active_by_guild() WHERE clause must include func.now() time filter. Got SQL: {stmt_str}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_get_active_by_guild_includes_bounty_with_future_end_time(self, repo, mock_db):
+        """B.14: get_active_by_guild() must include bounties with status='active' AND end_time > NOW()."""
+        future_bounty = _make_bounty(
+            status="active",
+            guild_id=222,
+            end_time=datetime(2099, 1, 1, tzinfo=UTC),
+        )
+        mock_db.execute = AsyncMock(return_value=_make_scalars_result([future_bounty]))
+
+        result = await repo.get_active_by_guild(mock_db, guild_id=222)
+
+        assert len(result) == 1
+        assert result[0].status == "active"
+
 
 class TestGetActiveByGuildAndDivision:
     @pytest.mark.asyncio
@@ -203,6 +240,41 @@ class TestGetActiveByGuildAndDivision:
         result = await repo.get_active_by_guild_and_division(mock_db, guild_id=111, division="gold")
 
         assert result == []
+
+    @pytest.mark.asyncio
+    async def test_get_active_by_guild_and_division_excludes_stale_active_bounties(self, repo, mock_db):
+        """B.14: get_active_by_guild_and_division() must exclude status='active' bounties past end_time.
+
+        Verifies the emitted SQL contains a func.now() time filter clause.
+        """
+        mock_db.execute = AsyncMock(return_value=_make_scalars_result([]))
+
+        result = await repo.get_active_by_guild_and_division(mock_db, guild_id=111, division="silver")
+
+        assert result == []
+        call_args = mock_db.execute.call_args
+        stmt = call_args[0][0]
+        stmt_str = str(stmt.compile(compile_kwargs={"literal_binds": False}))
+        assert "now" in stmt_str.lower(), (
+            f"B.14: get_active_by_guild_and_division() WHERE clause must include func.now() time filter. "
+            f"Got SQL: {stmt_str}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_get_active_by_guild_and_division_includes_future_end_time(self, repo, mock_db):
+        """B.14: bounties with status='active' and end_time in the future are included."""
+        future_bounty = _make_bounty(
+            status="active",
+            guild_id=333,
+            division="gold",
+            end_time=datetime(2099, 6, 1, tzinfo=UTC),
+        )
+        mock_db.execute = AsyncMock(return_value=_make_scalars_result([future_bounty]))
+
+        result = await repo.get_active_by_guild_and_division(mock_db, guild_id=333, division="gold")
+
+        assert len(result) == 1
+        assert result[0].division == "gold"
 
 
 class TestUpdateBounty:
@@ -283,6 +355,25 @@ class TestCountActiveByGuildAndDivision:
         result = await repo.count_active_by_guild_and_division(mock_db, guild_id=111, division="platinum")
 
         assert result == 0
+
+    @pytest.mark.asyncio
+    async def test_count_active_by_guild_and_division_uses_time_filter(self, repo, mock_db):
+        """B.14: count_active_by_guild_and_division() must include func.now() time filter.
+
+        This ensures stale expired bounties don't count against the spawn slot limit,
+        preventing the spawn executor from being permanently blocked.
+        """
+        mock_db.execute = AsyncMock(return_value=_make_scalar_one_result(0))
+
+        await repo.count_active_by_guild_and_division(mock_db, guild_id=111, division="bronze")
+
+        call_args = mock_db.execute.call_args
+        stmt = call_args[0][0]
+        stmt_str = str(stmt.compile(compile_kwargs={"literal_binds": False}))
+        assert "now" in stmt_str.lower(), (
+            f"B.14: count_active_by_guild_and_division() WHERE clause must include func.now() time filter. "
+            f"Got SQL: {stmt_str}"
+        )
 
 
 class TestErrorHandling:

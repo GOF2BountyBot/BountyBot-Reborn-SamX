@@ -74,13 +74,25 @@ class BountyRepository(IRepository[Bounty]):
     # ------------------------------------------------------------------ #
 
     async def get_active_by_guild(self, db: AsyncSession, guild_id: int) -> list[Bounty]:
-        """Get all active bounties for a given guild."""
+        """Get all currently-active bounties for a given guild.
+
+        Filters on BOTH status='active' AND end_time > NOW() (defensive dual-layer
+        guard — B.14 fix).  The end_time filter ensures that bounties whose
+        expire-job was lost (e.g. on app restart) are never surfaced as active,
+        even if their status was not flipped to 'expired' by the executor.
+
+        Methods that intentionally omit the time filter:
+          - list_all()         — admin/history read; returns every bounty regardless of status
+          - clear_active_by_guild() — bulk admin clear; acts on status only, time irrelevant
+          - count_active_by_guild_and_division() — slot-counting for spawn logic; also time-filtered (see below)
+        """
         try:
             result = await db.execute(
                 select(Bounty).where(
                     and_(
                         Bounty.guild_id == guild_id,
                         Bounty.status == "active",
+                        Bounty.end_time > func.now(),  # B.14: exclude stale bounties past end_time
                     )
                 )
             )
@@ -90,7 +102,12 @@ class BountyRepository(IRepository[Bounty]):
             raise
 
     async def get_active_by_guild_and_division(self, db: AsyncSession, guild_id: int, division: str) -> list[Bounty]:
-        """Get all active bounties for a given guild and division."""
+        """Get all currently-active bounties for a given guild and division.
+
+        Filters on BOTH status='active' AND end_time > NOW() (defensive dual-layer
+        guard — B.14 fix).  Mirrors get_active_by_guild(); see its docstring for
+        rationale and the list of intentionally un-filtered methods.
+        """
         try:
             result = await db.execute(
                 select(Bounty).where(
@@ -98,6 +115,7 @@ class BountyRepository(IRepository[Bounty]):
                         Bounty.guild_id == guild_id,
                         Bounty.division == division,
                         Bounty.status == "active",
+                        Bounty.end_time > func.now(),  # B.14: exclude stale bounties past end_time
                     )
                 )
             )
@@ -189,7 +207,12 @@ class BountyRepository(IRepository[Bounty]):
             raise
 
     async def count_active_by_guild_and_division(self, db: AsyncSession, guild_id: int, division: str) -> int:
-        """Return count of active bounties for a guild and division."""
+        """Return count of currently-active bounties for a guild and division.
+
+        Also filters on end_time > NOW() (B.14 fix) so that stale bounties whose
+        expire-job was lost do not count against the spawn slot limit, preventing
+        the spawn executor from being permanently blocked by un-expired rows.
+        """
         try:
             result = await db.execute(
                 select(func.count())  # pylint: disable=not-callable
@@ -199,6 +222,7 @@ class BountyRepository(IRepository[Bounty]):
                         Bounty.guild_id == guild_id,
                         Bounty.division == division,
                         Bounty.status == "active",
+                        Bounty.end_time > func.now(),  # B.14: exclude stale bounties past end_time
                     )
                 )
             )

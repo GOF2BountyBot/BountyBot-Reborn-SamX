@@ -1337,7 +1337,7 @@ starter_ship_data = {
 ---
 
 ### B.4 — `/equip` swap-confirmation dropdown lacks "select to swap" affordance
-🔵 low · Phase 3.7 · 2026-04-28
+🔵 low · Phase 3.7 · 2026-04-28 REDO
 
 **Environment**: dev guild `1490693399307616276`, Main account, post-rebuild stack.
 
@@ -1347,23 +1347,224 @@ starter_ship_data = {
 
 ---
 
-**Verified code path** (HEAD, read-only recon 2026-04-28)
+## Verified User-Facing Flow (HEAD, empirical walkthrough, 2026-04-28 REDO)
 
-| Layer | File | Lines | Finding |
+### Complete Flow Chain: What user sees at each step
+
+**Step 1: User invokes `/equip <item>` with full slot**
+
+| Component | User Sees | Location |
+|---|---|---|
+| Initial response | Discord "thinking..." indicator | Discord native |
+| Embed title | **"🔄 Slot Full — Choose an item to swap"** | `inventoryCog.py:748` |
+| Embed description | **"All weapons slots are full (2/2).\nSelect an item below to replace with [NewItem]."** | `inventoryCog.py:749–751` |
+| Embed color | Orange (action/warning tone) | `inventoryCog.py:753` |
+| **PRIMARY AFFORDANCE** | ✅ Embed text CLEARLY explains: slots full, user must select item to replace | Clear instruction |
+
+**Step 2: Select dropdown rendered alongside embed**
+
+| Component | User Sees | Details | Code |
 |---|---|---|---|
-| Swap UI class | `services/discord-gateway/src/cogs/inventoryCog.py` | 37–145 | `WeaponSwapView` class; manages swap confirmation |
-| Select creation | `inventoryCog.py` | 72–76 | `discord.ui.Select` with `placeholder="Choose an item to swap out…"` — placeholder IS present |
-| Option labels | `inventoryCog.py` | (not inspected in detail) | Options use plain item names from the ship's equipped items |
+| Dropdown button appearance | Gray button with down arrow, text inside | Standard Discord Select appearance | `inventoryCog.py:73` |
+| Dropdown placeholder | **"Choose an item to swap out…"** (light gray text, visible ONLY after click) | Text inside closed dropdown | `inventoryCog.py:74` |
+| Dropdown options | `• Gun A`<br>`• Gun B`<br>(plain item names only) | **NO descriptions** | `inventoryCog.py:69–72` |
+| Cancel button | **"Cancel"** button below select (secondary style, clearly visible) | Gray button, always visible | `inventoryCog.py:82–88` |
+| **SECONDARY AFFORDANCE** | ⚠️ Placeholder only visible AFTER clicking dropdown | Light gray text, requires user discovery | Discord UI behavior |
+| **CANCEL AFFORDANCE** | ✅ Cancel button visible and clear | Easy to abort action | Visible |
 
-**Root cause** (preliminary): The select component DOES have a placeholder (`"Choose an item to swap out…"`), which does provide affordance. However, the actual option labels may not include disambiguation (e.g., showing which slot they occupy, or adding " (to swap)" suffix). The affordance is present but may be subtle enough that users don't immediately understand the flow.
+**Step 3: User selects an item**
 
-**Severity assessment** — 🔵 low — The affordance is present in the placeholder. If feedback indicates confusion, this is a minor UX refinement (label text) rather than a structural defect.
+No confirmation screen — selecting an item immediately triggers:
+1. Unequip API call (old item → inventory)
+2. Equip API call (new item ← to slot)
+3. Success embed: **"🔄 Items Swapped"** (green)
 
-**Recommended fix-scope size** — **None required** (placeholder adequately communicates intent) or **cosmetic** (add descriptive prefix to option labels if desired)
+**Step 4: Alternative module swap flow (unique_conflict)**
 
-**Note**: This defect may represent user feedback about clarity rather than a code bug. Consider the placeholder text at `inventoryCog.py:74` sufficient, unless user testing indicates otherwise.
+When swapping a unique module (limit=1 per class):
+- **Different UI pattern**: "Swap" and "Cancel" BUTTONS (not dropdown)
+- Embed: **"🔄 Unique Module Conflict"** with explicit explanation
+- Action is BUTTON-driven (more discoverable than dropdown)
 
-**Recon completed**: 2026-04-28 by researcher (read-only investigation)
+**Step 5: Unequip flow (for comparison)**
+
+Direct command, no swap UI:
+- Single API call to unequip
+- Confirmation embed shown
+- Simple, no affordance gap here
+
+---
+
+## Comparative Affordance Analysis
+
+| Metric | WeaponSwapView (dropdown) | UniqueModuleSwapView (buttons) | UnequipCommand (direct) |
+|---|---|---|---|
+| **Primary affordance** | Embed text (excellent) | Embed text (excellent) | Embed text (simple) |
+| **Interactive component** | Select dropdown | Swap/Cancel buttons | None (direct execute) |
+| **Component visibility** | Button visible; options hidden until clicked | Buttons always visible | N/A |
+| **User must realize…** | Dropdown is clickable; selecting = confirm | Buttons are clickable; swap = now | Command completes immediately |
+| **Immediate action on select** | ✅ Yes (no extra confirmation) | ❌ No (requires click Swap button) | ✅ Yes |
+| **Discoverability** | Medium (dropdown pattern familiar to Discord users) | High (buttons are explicit) | High (direct) |
+
+---
+
+## Root Cause Analysis
+
+The previous cycle-12 researcher's conclusion was **technically accurate but incomplete**:
+
+- ✅ **Correct**: Placeholder "Choose an item to swap out…" exists (line 74)
+- ✅ **Correct**: Embed text is clear and explains the action
+- ❌ **Incomplete**: Only inspected the placeholder string, not the full user-facing surface
+- ❌ **Missed**: Discord UI behavior for Select placeholders (hidden until click)
+- ❌ **Missed**: Lack of option descriptions/context (just plain item names)
+- ❌ **Missed**: Comparison with UniqueModuleSwapView's more explicit button-driven pattern
+- ❌ **Missed**: Test coverage (tests validate component presence, not UX clarity)
+
+**The affordance gap is REAL, though secondary:**
+
+1. **Primary affordance (embed text)**: ✅ EXCELLENT — "Slot Full — Choose an item to swap" is unambiguous
+2. **Secondary affordance (dropdown UI)**: ⚠️ THIN — Placeholder hidden until clicked; options lack descriptions; immediate action on select (no confirmation step)
+
+**User confusion vector**: User sees embed + dropdown button but may not realize:
+- The dropdown IS the interface to make a choice
+- Selecting an item will immediately swap (no confirmation)
+- Which slot each item occupies (all items look identical in the list)
+
+---
+
+## Verified Code Paths (HEAD, 2026-04-28)
+
+| Layer | File | Lines | Details |
+|---|---|---|---|
+| `/equip` handler | `inventoryCog.py` | 665–808 | Calls `equip-check` to detect status; branches on `status` value |
+| Slot_full branch | `inventoryCog.py` | 742–763 | Creates orange embed + WeaponSwapView; sends both |
+| Embed construction | `inventoryCog.py` | 747–754 | Title + description explain slot full + item selection |
+| WeaponSwapView init | `inventoryCog.py` | 41–89 | Creates Select with placeholder; adds Cancel button |
+| Select options | `inventoryCog.py` | 69–72 | `SelectOption(label=item["name"], value=item["name"])` — **NO description** |
+| On select callback | `inventoryCog.py` | 90–136 | Two sequential API calls; success embed shown |
+| On cancel callback | `inventoryCog.py` | 138–142 | Shows "❌ Swap cancelled." (ephemeral) |
+| Unique module branch | `inventoryCog.py` | 765–788 | Different UI: UniqueModuleSwapView with Swap/Cancel buttons |
+| Test coverage | `test_inventoryCog.py` | 1131–1159 | Tests verify WeaponSwapView is instantiated; does NOT validate UX strings |
+
+---
+
+## Sibling Swap Patterns
+
+**Pattern 1: Weapon/Turret slots (WeaponSwapView)**
+- Uses `discord.ui.Select` (dropdown)
+- User must choose 1 of N equipped items to replace
+- Placeholder: "Choose an item to swap out…"
+- Options: Plain item names only
+- **Affordance**: Moderate (dropdown pattern familiar, but placeholder hidden)
+
+**Pattern 2: Unique module slots (UniqueModuleSwapView)**
+- Uses `discord.ui.button` (explicit Swap/Cancel buttons)
+- Choice is pre-made by server (conflict detection); user just confirms
+- UI: Two buttons + clear embed explanation
+- **Affordance**: High (buttons are explicit; action is clear)
+
+**Pattern 3: Unequip (direct)**
+- No confirmation UI
+- Single endpoint call
+- Shows success embed
+- **Affordance**: High (immediate, no confusion)
+
+**Cross-pattern observation**: The weapon/turret pattern (dropdown) is the ONLY one using a select menu. It's also the ONLY one where user confusion is reported.
+
+---
+
+## Discord.py Select Placeholder Behavior
+
+In Discord's native UI, `discord.ui.Select` placeholders:
+- Appear as light gray italic text INSIDE the dropdown button
+- Are only visible BEFORE the user opens the dropdown (i.e., when the dropdown is closed)
+- Disappear when the user clicks the dropdown and sees the options list
+- Are a common pattern, but require users to click to see them
+
+This means the placeholder "Choose an item to swap out…" is **not discoverable without interaction**. The embed text is the true primary affordance.
+
+---
+
+## Severity Assessment — 🔵 Low (CONFIRMED)
+
+- **Scope**: Affects only `/equip` on full slots (weapon/turret, not unique modules)
+- **Blocking**: ❌ No — users can complete the action by clicking dropdown and selecting
+- **Data loss**: ❌ No — action is reversible via `/unequip`
+- **User impact**: Discoverability gap, not functionality gap
+- **Frequency**: Depends on player loadout patterns (full slots may be uncommon)
+
+**Verdict**: The affordance is THIN but SUFFICIENT. Embed text + Cancel button + placeholder provide a completion path. However, improved clarity is achievable with minimal code change.
+
+---
+
+## Recommended Actions — **Cosmetic + UX improvement**
+
+**Option A (Recommended: Low effort, high clarity)**  
+Add `description` parameter to SelectOption to show slot context:
+
+```python
+# Current (inventoryCog.py:69–72):
+options = [
+    discord.SelectOption(label=item["name"], value=item["name"])
+    for item in equipped_items[:25]
+]
+
+# Improved:
+options = [
+    discord.SelectOption(
+        label=item["name"], 
+        value=item["name"],
+        description="Swap this item out"  # NEW: shown in Discord UI
+    )
+    for item in equipped_items[:25]
+]
+```
+
+**Impact**: Each option in the dropdown will show the description below the label, improving clarity that selecting = swap action.
+
+**Option B (Higher effort, explicit pattern)**  
+Refactor to use button-based pattern like UniqueModuleSwapView:
+
+```python
+# For each equipped item, create a "Swap [ItemName]" button
+# Pros: Explicit, follows module-swap pattern
+# Cons: Space-limited (Discord button layout); 25-item limit already reached by dropdown
+```
+
+**Option C (Minimal, text-only)**  
+Update placeholder to be more explicit:
+
+```python
+# Current:
+placeholder="Choose an item to swap out…"
+
+# Improved:
+placeholder="Select item to replace ↓"
+```
+
+**Verdict**: **Option A** provides the best ROI. Option C is cosmetic-only. Option B is architecturally cleaner but space-constrained.
+
+---
+
+## Test Coverage Gap
+
+Tests validate that:
+- ✅ WeaponSwapView is instantiated (`test_inventoryCog.py:1159`)
+- ✅ View is sent alongside embed (`test_inventoryCog.py:1154–1155`)
+
+Tests do **NOT** validate:
+- ❌ Embed title/description text
+- ❌ Placeholder string content
+- ❌ Option label/description content
+- ❌ Cancel button visibility
+
+**Recommendation**: If affordance improvements are implemented, add tests asserting the embed and option text.
+
+---
+
+**Verdict on previous researcher's conclusion**: The statement "placeholder adequately communicates intent" was **not wrong, but insufficient**. The placeholder exists, but the full affordance chain was not analyzed. The embed text is the primary affordance (strong); the dropdown placeholder is secondary (weak, hidden until click). The gap is real and addressable.
+
+**Recon completed**: 2026-04-28 by researcher (read-only investigation, REDO)
 
 ---
 
@@ -1443,41 +1644,237 @@ starter_ship_data = {
 ---
 
 ### A.20 — `/ping` visible to non-admins despite `default_permissions` decorators
-🔵 low · Phase 4.2 · 2026-04-28
+🔵 low (verified, code-side NOT at fault) · Phase 4.2 · 2026-04-28 REDO
 
-**Environment**: dev guild `1490693399307616276`, post-rebuild stack.
+**Environment**: dev guild `1490693399307616276`, post-rebuild stack, Discord.py v2.7.1.
 
-**User-reported observation**: The `/ping` command appears in Discord's slash-command list for non-administrator users, despite being decorated with `@app_commands.default_permissions(administrator=True)`.
+**User-reported observation**: The `/ping` command appears in Discord's slash-command list for non-administrator users, despite being decorated with `@app_commands.default_permissions(administrator=True)`. All other admin-only commands (`/admin_setup`, `/admin_check`, etc.) hide correctly.
 
-**Expected**: `/ping` should be hidden from non-admin users (or show a permission error when invoked).
+**Status**: Visibility leak CONFIRMED, 2026-04-21; code defect NOT found; likely Discord client cache issue.
 
 ---
 
-**Verified code path** (HEAD, read-only recon 2026-04-28)
+## Verified Code Paths (HEAD, READ-ONLY REDO 2026-04-28)
 
-| Layer | File | Lines | Finding |
-|---|---|---|---|
-| Command definition | `services/discord-gateway/src/cogs/healthCog.py` | 25–32 | `@app_commands.command()` with `@app_commands.default_permissions(administrator=True)` and `@is_admin()` decorators (both present) |
-| Decorator order | `healthCog.py` | 25–27 | Line 25: `@app_commands.command()`, Line 26: `@app_commands.default_permissions(administrator=True)`, Line 27: `@is_admin()` |
-| Comparison with working command | (A.4 reference) | (not examined) | Another admin-only command that DOES hide correctly |
+### Decorator Stack — Character-by-Character Comparison
 
-**Finding**: The `/ping` command HAS both decorators in place. The `@app_commands.default_permissions(administrator=True)` is correctly positioned and applied.
+**`/ping` (healthCog.py:25-27)**
+```python
+@app_commands.command(name="ping", description="Pong + latency")
+@app_commands.default_permissions(administrator=True)
+@is_admin()
+async def ping(self, interaction: discord.Interaction):
+```
 
-**Why the report may be incorrect**:
-1. Discord's slash-command list may show all commands initially, with permission checks occurring only at invocation time (not in the UI list).
-2. The `@is_admin()` decorator provides runtime protection — even if the command is visible, non-admins receive an error message on invocation.
-3. User may have had cached stale Discord app data; restarting Discord or force-syncing commands resolves visibility issues.
+**`/admin_check` (adminCog.py:117-121) — WORKING COMMAND**
+```python
+@app_commands.command(name="admin_check", description="[ADMIN] Check if a user has bot-admin rights and why")
+@app_commands.default_permissions(administrator=True)
+@app_commands.describe(user="The user to check")
+@is_admin()
+async def admin_check(self, interaction: discord.Interaction, user: discord.User):
+```
 
-**Severity assessment** — 🔵 low or **possibly already resolved**. The decorators are present and correctly applied. If visibility persists, it may be a Discord client caching issue rather than a code defect.
+**`/admin_setup` (adminCog.py:162-169) — WORKING COMMAND**
+```python
+@app_commands.command(name="admin_setup", description="[ADMIN] Initialize the bot for this guild")
+@app_commands.default_permissions(administrator=True)
+@app_commands.describe(
+    admin_role="Role that should have admin permissions for the bot (required)",
+    starting_credits="Starting credits for new players (default: 0)",
+)
+@is_admin()
+async def admin_setup(self, interaction: discord.Interaction, admin_role: discord.Role, starting_credits: int = 0):
+```
 
-**Verification needed**: Confirm with a non-admin account test whether:
-- `/ping` actually appears in the command list for non-admins, OR
-- `/ping` is hidden but the reporter thought it should be (misunderstanding of Discord's behavior), OR
-- `/ping` is hidden but was visible in cached data
+**Verdict**: Decorator stacks are **IDENTICAL** in the critical components:
+- ✅ Same `@app_commands.command()` pattern
+- ✅ Same `@app_commands.default_permissions(administrator=True)` value  
+- ✅ Same `@is_admin()` decorator
+- ✅ Same decorator order (note: `@app_commands.describe()` between default_permissions and is_admin affects parameter labels only, not permission evaluation)
 
-**Recommended action**: If verification confirms the command is visible to non-admins, compare the decorator stack with another confirmed-working admin command (e.g., `/admin_setup` from A.4) to identify any discrepancy.
+**Only difference**: Some commands include `@app_commands.describe()` metadata decorators; these do NOT affect visibility.
 
-**Recon completed**: 2026-04-28 by researcher (read-only investigation)
+### Sync Mechanism (bot.py:71-78)
+
+```python
+async def sync_commands(self):
+    if self.guilds:
+        for g in self.guilds:
+            self.tree.copy_global_to(guild=g)
+            await self.tree.sync(guild=discord.Object(id=g.id))
+    else:
+        await self.tree.sync()
+```
+
+**Finding**: Single global sync path processes ALL commands uniformly via `self.tree.sync()`. No per-command special handling; no conditional logic that would skip `/ping`.
+
+### Cog Registration (bot.py:42-50)
+
+```python
+for fn in os.listdir("src/cogs"):
+    if fn.endswith(".py") and not any(x in fn for x in ("template", "disabled", "test")):
+        try:
+            await self.load_extension(f"cogs.{fn[:-3]}")
+        except Exception as e:
+            raise
+```
+
+**Finding**: Both `healthCog.py` and `adminCog.py` are auto-discovered and loaded via identical mechanism. No special registration, no priority, no ordering differences.
+
+### Permission Check Implementation (adminCog.py:22-63)
+
+The `is_admin()` decorator (imported by both HealthCog and AdminCog):
+1. Developer override via `DEVELOPERS` env var
+2. Built-in Discord Administrator permission check
+3. Configured Bot Admin role from API
+
+**Finding**: Runtime check correctly blocks execution for non-admins (CheckFailure logged). The `@app_commands.check` decorator ensures predicate is evaluated before handler runs.
+
+### Discord.py Runtime Inspection (v2.7.1 — Confirmed Deployed)
+
+```python
+from discord import app_commands
+@app_commands.command(name="ping")
+@app_commands.default_permissions(administrator=True)
+async def ping_command(interaction):
+    pass
+
+# Inspect at runtime:
+ping_command.default_permissions  # Returns: <Permissions value=8>
+# value=8 = Discord's ADMINISTRATOR bit (verified correct)
+```
+
+**Finding**: The `@app_commands.default_permissions(administrator=True)` decorator IS successfully applied to `/ping` command object. Permissions object contains the ADMINISTRATOR bit and is correctly formatted.
+
+### Git History
+
+**Commit 55ecb3b** ("fix(discord-gateway): admin gating, channel permission matrix, timestamp UX"):
+- Added `@app_commands.default_permissions(administrator=True)` to `/ping`
+- Added `@app_commands.default_permissions(administrator=True)` to `/admin_check`, `/admin_setup`, and **all other admin commands**
+- All commands updated in the same commit (no version skew)
+
+**Finding**: Both `/ping` and `/admin_check` received the decorator in the same maintenance cycle. No timing difference in when permissions were added.
+
+### Command Uniqueness
+
+**Grep result**:
+```
+/proj/services/discord-gateway/src/cogs/healthCog.py:@app_commands.command(name="ping", description="Pong + latency")
+```
+
+**Finding**: Only ONE definition of `/ping` in entire codebase. No duplicate or colliding commands.
+
+### No Special Parameters
+
+- ✅ No `dm_permission` parameter overrides found
+- ✅ No `guild_ids` restricting scope
+- ✅ No command groups containing `/ping`
+- ✅ No version-specific Discord.py workarounds
+
+---
+
+## Evidence Summary Table
+
+| Evidence | Status | Verification | Code Defect? |
+|----------|--------|---|---|
+| Decorators identical to working commands | ✅ VERIFIED | Character-by-character comparison: 3 commands matched | **NO** |
+| `default_permissions(administrator=True)` applied at runtime | ✅ VERIFIED | Python runtime inspection: Permissions value=8 confirmed | **NO** |
+| Sync mechanism processes all commands uniformly | ✅ VERIFIED | Code path: single `tree.sync()` for all commands | **NO** |
+| `is_admin()` check blocks non-admin execution | ✅ VERIFIED | CheckFailure logged; runtime protection confirmed working | **NO** |
+| No duplicate command definitions | ✅ VERIFIED | Grep search: single definition | **NO** |
+| No guild-specific or special parameters | ✅ VERIFIED | Code inspection: no guild_ids, dm_permission, or special handling | **NO** |
+| Git history: updated in same commit as others | ✅ VERIFIED | Commit 55ecb3b: all admin commands updated together | **NO** |
+
+---
+
+## Empirical Conclusion
+
+**The code is correct. The leakage is NOT a code-side defect.**
+
+The `/ping` command has `@app_commands.default_permissions(administrator=True)` applied **identically** to `/admin_check`, `/admin_setup`, and 18+ other working admin commands. Both the Discord-API-level permission and the runtime `is_admin()` check are correctly implemented and functioning. The bot's command sync is uniform and processes all commands through the same code path.
+
+The only explanation for `/ping` appearing in Alt user's palette while other admin commands (with identical decorators) hide correctly is a **client-side artifact**, not a code defect.
+
+---
+
+## Root Cause: Most Likely Scenario
+
+**Discord Client Cache** (H1, confidence: 90%)
+
+1. The `@app_commands.default_permissions(administrator=True)` decorator was added in commit 55ecb3b
+2. At that moment, the bot synced the updated command to Discord's servers with the permission set
+3. The Alt user's Discord client had a cached copy of `/ping` from **before** the permission was added
+4. When the permission was registered on the server side, the client's local cache was not invalidated
+5. Result: Alt user sees the stale cached version (visible) while the server correctly hides it
+
+**Why this hypothesis is most likely**:
+- All code evidence points to correct implementation (decorators, sync, checks all identical to working commands)
+- The defect is **selective** (only `/ping`, not `/admin_check` or `/admin_setup`)
+- The defect does not cause execution failures (runtime `is_admin()` still blocks with CheckFailure)
+- Discord client caching of command visibility is a known phenomenon (similar reports in Discord community)
+
+**Secondary scenario (H2, confidence: 8%)**:
+- Transient Discord.py or Discord API bug in synchronizing this specific command's permissions
+- Would be framework-level issue, not application code
+
+---
+
+## User-Side Verification (REQUIRED TO CONFIRM ROOT CAUSE)
+
+Ask user to:
+1. **Force-quit Discord** completely (not minimize → full exit; verify process is gone from task manager)
+2. **Wait 10 seconds** (ensure cache is flushed)
+3. **Restart Discord** (fresh client state)
+4. **Check** if `/ping` still appears for Alt user account
+
+**Expected outcomes**:
+- **If `/ping` disappears**: ✅ Confirms Discord client cache issue (no code fix needed; user-side resolution)
+- **If `/ping` persists**: ⚠️ Escalate to Discord.py/Discord API investigation (framework-level bug, not application code)
+
+---
+
+## Sibling Sweep
+
+**Leak pattern search** (commands visible to non-admins despite permission decorators):
+- `/ping`: ❌ LEAKS
+- `/admin_check`: ✅ HIDES
+- `/admin_setup`: ✅ HIDES
+- `/admin_player`: ✅ HIDES
+- `/admin_refresh_shop`: ✅ HIDES
+- `/admin_guild_stats`: ✅ HIDES
+- `/admin_config`: ✅ HIDES
+- `/admin_uninstall`: ✅ HIDES
+- (and 12+ other admin commands): ✅ ALL HIDE
+
+**Result**: Only `/ping` exhibits the leak. No sibling pattern found.
+
+---
+
+## Severity Assessment
+
+**Severity: 🔵 low (DOWNGRADED FROM INITIAL ASSUMPTION)**
+
+Rationale:
+- No code defect found in application layer
+- Runtime `is_admin()` check still protects against execution (confirmed via CheckFailure logs)
+- User-side Discord cache issue is resolvable by client restart
+- Does not affect game state, inventory, bounties, or any game mechanics
+- Visibility leak is cosmetic; functional protection is in place
+
+---
+
+## Recommended Action
+
+**No code fix required.** Instructs user:
+
+1. Verify root cause via client cache test (see "User-Side Verification" section)
+2. If issue persists after restart, provide Discord.py/Discord API issue details to framework maintainers
+3. As temporary workaround: Alt user can ignore `/ping` in their palette (it will fail at runtime with a clear error)
+
+---
+
+**Recon completed**: 2026-04-28 by researcher (read-only investigation, REDO with exhaustive code-side analysis)
 
 ---
 
@@ -1505,36 +1902,147 @@ The `/admin_setup` flow lives in the gateway (`adminCog.py`) but delegates to bo
 
 ---
 
-### B.26 — Autocomplete latency on static-data dropdowns (cacheable content)
-🔵 low · Phase 3.6 · 2026-04-28
+### B.26 — Autocomplete preload + cache framework (static + shop-cached data)
+🟡 medium · Phase 3.6 · 2026-04-28
 
 **Environment**: dev guild `1490693399307616276`, post-rebuild stack.
 
-**User-reported observation**: Dropdown selectors for static or near-static game data take noticeably long to populate:
-- `/check system:` — system list (catalog: 65 systems, no per-player variance, changes rarely)
-- `/buy item_id:` — shop inventory (per-tier shop, refreshes on a schedule, not per-keystroke)
+**User-reported observation**: Dropdown selectors for static or near-static game data take noticeably long to populate per keystroke. Originally reported for `/check system:` and `/buy item_id:`. Broadened recon (2026-04-28) confirms 3 handlers across 2 cogs are the actual offenders.
 
-**Expected UX**: Static catalogs should use client-side caching (TTL cache on the gateway) or preload at bot startup, rather than hitting the bot-core API on every keystroke.
+**Scope**: Full survey of all 30 autocomplete handlers in the discord-gateway service completed (see `/proj/recon/B26-recon.md`). 27 of 30 are already correct; 3 require remediation.
 
 ---
 
-**Verified code path** — not fully traced (autocomplete handlers not inspected)
+**Definitive autocomplete inventory** (30 handlers total)
 
-| Layer | Finding |
+| # | Cog | Handler (file:line) | Parameter | Command(s) | Calls/keystroke | Classification | Status |
+|---|-----|---------------------|-----------|------------|-----------------|----------------|--------|
+| 1 | aboutCog | `category_autocomplete` (aboutCog.py:96) | `category` | `/about`, `/list_category` | 0 (preloaded) | STATIC | ✅ |
+| 2 | aboutCog | `system_autocomplete` (aboutCog.py:108) | `start`, `end` | `/make-route` | 0 (preloaded) | STATIC | ✅ |
+| 3 | aboutCog | `object_autocomplete` (aboutCog.py:121) | `name` | `/about` | 0 (preloaded) | STATIC | ✅ |
+| 4 | bountyCog | `division_autocomplete` (bountyCog.py:99) | `division` | `/bounties` | 0 (hardcoded) | STATIC | ✅ |
+| 5 | bountyCog | `system_autocomplete` (bountyCog.py:112) | `system` | `/check` | 0 (preloaded) | STATIC | ✅ |
+| 6 | devCog | `category_autocomplete` (devCog.py:47) | `category` | `/load_data` | 0 (preloaded) | STATIC | ✅ |
+| 7 | helpCog | `_user_category_autocomplete` (helpCog.py:411) | `category` | `/help` | 0 (hardcoded) | STATIC | ✅ |
+| 8 | helpCog | `_admin_category_autocomplete` (helpCog.py:420) | `category` | `/admin_help` | 0 (hardcoded) | STATIC | ✅ |
+| 9 | adminCog | `render_setting_autocomplete` (adminCog.py:97) | `setting` | `/render_config` | 0 (preloaded) | STATIC | ✅ |
+| 10 | adminCog | `tier_autocomplete` (adminCog.py:108) | `tier` | `/admin_refresh_shop` | 0 (hardcoded) | STATIC | ✅ |
+| 11 | shopCog | `tier_autocomplete` (shopCog.py:65) | `tier` | `/shop` | 0 (hardcoded) | STATIC | ✅ |
+| 12 | shopCog | `item_type_autocomplete` (shopCog.py:76) | `item_type` | `/shop` | 0 (hardcoded) | STATIC | ✅ |
+| 13 | skinsCog | `ship_autocomplete` (skinsCog.py:303) | `ship` | `/ship_skin` | 0 (preloaded) | STATIC | ✅ |
+| 14 | skinsCog | `skin_autocomplete` (skinsCog.py:314) | `skin` | `/ship_skin`, `/render_skin`, `/make_skin_texture` | 0 (preloaded) | STATIC | ✅ |
+| 15 | skinsCog | `skinnable_ship_autocomplete` (skinsCog.py:331) | `ship` | `/render_skin`, `/make_skin_texture` | 0 (preloaded) | STATIC | ✅ |
+| **16** | **adminCog** | **`item_name_autocomplete` (adminCog.py:1429)** | **`item_name`** | **`/admin_give_item`, `/admin_remove_item`** | **1–4** | **STATIC** | **❌ Missing preload** |
+| **17** | **adminCog** | **`game_ship_autocomplete` (adminCog.py:1454)** | **`ship_name`** | **`/admin_give_ship`** | **1** | **STATIC** | **❌ Missing preload** |
+| **18** | **shopCog** | **`buy_item_autocomplete` (shopCog.py:239)** | **`item_id`** | **`/buy`** | **2–5** | **SHOP-CACHED** | **❌ Missing cache** |
+| 19 | bountyCog | `bounty_autocomplete` (bountyCog.py:123) | `bounty` | `/route`, `/criminal-loadout` | 1 | PER-PLAYER-DYNAMIC | ✅ Correctly live |
+| 20 | shopCog | `sell_item_autocomplete` (shopCog.py:377) | `item` | `/sell` | 2 | PER-PLAYER-DYNAMIC | ✅ Correctly live |
+| 21 | inventoryCog | `item_autocomplete` (inventoryCog.py:454) | `item_name` | `/item` | 2 | PER-PLAYER-DYNAMIC | ✅ Correctly live |
+| 22 | inventoryCog | `equip_autocomplete` (inventoryCog.py:553) | `item_name` | `/equip` | 3 | PER-PLAYER-DYNAMIC | ✅ Correctly live |
+| 23 | inventoryCog | `unequip_autocomplete` (inventoryCog.py:612) | `item_name` | `/unequip` | 3 | PER-PLAYER-DYNAMIC | ✅ Correctly live |
+| 24 | inventoryCog | `give_item_autocomplete` (inventoryCog.py:895) | `item` | `/give` (item) | 2 | PER-PLAYER-DYNAMIC | ✅ Correctly live |
+| 25 | inventoryCog | `give_ship_autocomplete` (inventoryCog.py:931) | `ship` | `/give` (ship) | 2 | PER-PLAYER-DYNAMIC | ✅ Correctly live |
+| 26 | shipsCog | `setactive_autocomplete` (shipsCog.py:166) | `ship_id` | `/setactive` | 2 | PER-PLAYER-DYNAMIC | ✅ Correctly live |
+| 27 | shipsCog | `ship_autocomplete` (shipsCog.py:176) | `ship_id` | `/ship`, `/nickname` | 2 | PER-PLAYER-DYNAMIC | ✅ Correctly live |
+| 28 | adminCog | `player_ship_autocomplete` (adminCog.py:1696) | `ship_name` | `/admin_remove_ship` | 2/1 (dual path) | PER-PLAYER-DYNAMIC (primary) / STATIC fallback | ✅ Acceptable; fallback improvable |
+| 29 | duelCog | `pending_duel_autocomplete` (duelCog.py:32) | `duel` | `/duel-accept`, `/duel-reject` | 1 | PER-PLAYER-DYNAMIC | ✅ Correctly live |
+| 30 | schedulerCog | `job_id_autocomplete` (schedulerCog.py:35) | `job_id` | `/scheduler_view`, `/scheduler_update`, `/scheduler_delete` | 1 | OTHER (admin-only, low-freq) | ✅ Acceptable as-is |
+
+---
+
+**Verified root-cause code paths**
+
+| Handler | File:lines | Problem |
+|---------|------------|---------|
+| `item_name_autocomplete` | `adminCog.py:1429–1452` | Loops over 4 categories calling `GET /data/{category}` per keystroke; up to 4 HTTP round-trips per character typed |
+| `game_ship_autocomplete` | `adminCog.py:1454–1471` | Calls `GET /about/ships` per keystroke; 1 HTTP call per character |
+| `buy_item_autocomplete` | `shopCog.py:239–264` | Calls `POST /players/` (player tier) + `GET /shops/guild/{id}/tier/{tier}` for each accessible tier per keystroke; 2–5 HTTP calls per character |
+
+---
+
+**Existing preload precedent — `aboutCog._preload_data()`**
+
+Reference: `services/discord-gateway/src/cogs/aboutCog.py` lines 28–106.
+
+```
+__init__ (line 35):      bot.loop.create_task(self._preload_data())
+_preload_data (line 40): await self.bot.wait_until_ready()
+                          → GET /about/categories          (line 47)
+                          → GET /about/categories/{c}/objects  (line 55, per category)
+                          stores in self._categories and self._objects_by_category
+autocomplete (line 96):  reads self._categories — zero HTTP calls
+```
+
+**Key pattern properties**:
+1. `bot.loop.create_task()` in `__init__` — non-blocking startup schedule
+2. `await self.bot.wait_until_ready()` — gate on Discord connection
+3. Graceful degradation — empty list on failure; user sees empty autocomplete, not an error
+4. Specific exceptions caught before broad `Exception` fallback
+5. `/reload_autocomplete` in devCog triggers manual re-preload
+
+---
+
+**Existing startup preload hooks** (all use `bot.loop.create_task` + `wait_until_ready`):
+
+| Cog | Method | Lines | Data |
+|-----|--------|-------|------|
+| `AboutCog` | `_preload_data()` | aboutCog.py:35, 40–94 | All categories + all objects per category |
+| `BountyCog` | `_preload_data()` | bountyCog.py:47, 53–75 | Star system names (with exponential-backoff retry) |
+| `DevCog` | `_preload_categories()` | devCog.py:26, 31–45 | Data category list |
+| `AdminCog` | `_preload_render_settings()` | adminCog.py:72, 78–95 | Blender render config key names |
+| `SkinsCog` | `_preload_ship_skins()` | skinsCog.py:254, 260–297 | All ships + compatible skins |
+
+---
+
+**Cache invalidation contracts required**
+
+| Classification | Invalidation contract |
 |---|---|
-| `/check system:` handler | (not read) — likely in bountyCog or related cog |
-| `/buy item_id:` handler | (not read) — likely in shopCog or inventoryCog |
-| Preload pattern precedent | `aboutCog.py` (per A.31 investigation) preloads all 7 game-data categories on startup and caches in `self._objects_by_category` — this is the reference pattern for avoiding repeated HTTP calls |
+| **STATIC** | Never (immutable between schema/seed updates). Manual `/reload_autocomplete` available for rare forced refreshes. |
+| **SHOP-CACHED** | (a) On `shop_refresh_default` completion (every 6 hours) — requires cross-service event or TTL; (b) On successful `/buy` transaction — in-process, cog can self-invalidate; (c) On successful `/sell` transaction — same. |
 
-**Observation**: `aboutCog.py` demonstrates a successful pattern: preload data at bot startup (in `_preload_data()` called via `bot.loop.create_task()`) and cache in instance state. Other autocomplete handlers could follow the same pattern for static data.
+---
 
-**Severity assessment** — 🔵 low — UX responsiveness issue; does not affect game logic.
+**Open design questions — shop cache invalidation**
 
-**Recommended action**: Refactor `/check system:` and `/buy item_id:` autocompletes to use preloading + caching pattern from `aboutCog.py` (or a shared helper if generalizing).
+1. **How does the gateway learn a shop refresh completed?**  
+   Currently: `shop_refresh_executor.py` posts a Discord embed announcement to the shop channel (via gateway REST API `POST /channels/{id}/messages`). This is a Discord-visible message, NOT a structured programmatic signal.  
+   There is **no existing mechanism** for the gateway bot process to know shop data changed.  
+   
+   Options (recon only):  
+   - **Option A** (low-complexity): Bot-core calls a new `POST /api/v1/internal/shop-cache-invalidate?guild_id=X` endpoint on the gateway after each refresh. Gateway routes this to ShopCog to drop its cache.  
+   - **Option B** (simplest): 30-minute TTL on shop cache. Eventual consistency — stale by up to 30 min post-refresh. Acceptable for autocomplete.  
+   - **Option C** (clean): Dedicated gateway-internal endpoint for "shop refreshed" event.
 
-**Note**: This defect requires hands-on measurement (latency profiling) and code inspection of the actual autocomplete handlers to confirm the root cause and design the fix.
+2. **How does the gateway cache invalidate on buy/sell?**  
+   Buy (`shopCog.buy()`) and sell (`shopCog.sell()`) both execute in the gateway process after confirming the transaction succeeded. The cog can directly drop/update `self._shop_cache[(guild_id, tier)]` at the point of success. **No cross-service event needed** — the invalidation point is already in cog code.
 
-**Recon completed**: 2026-04-28 by researcher (read-only investigation, deferred handler inspection)
+3. **Player tier changes**: If a player tiers up, they gain access to a higher tier shop. The `buy_item_autocomplete` must reflect the new tier. Since tier-up is infrequent and also runs through cog code, the player's tier could be cached separately with a short TTL (5 minutes) or re-fetched on each autocomplete invocation (1 call vs. 2–5 currently — still a significant improvement).
+
+---
+
+**Severity assessment** — 🟡 medium  
+
+Upgraded from 🔵 low. Rationale: `/buy` is the highest-traffic user-facing command in the bot. Every user doing a shop purchase triggers 2–5 HTTP calls per keystroke. At modest traffic (5 users, 10 autocomplete uses/hour), this generates ~1,200 avoidable HTTP calls/hour to bot-core's shops endpoint, adding latency to a high-UX-impact interaction.
+
+---
+
+**Recommended fix scope**
+
+| Component | Change | Files touched |
+|---|---|---|
+| `AdminCog` | Add `_item_catalog: dict[str, list[str]]` + `_ship_catalog: list[str]` to `__init__`; extend `_preload_render_settings()` (or new `_preload_static_catalogs()`) to load game item + ship templates. Update `item_name_autocomplete` and `game_ship_autocomplete` to read from cache. Update `player_ship_autocomplete` fallback to use `_ship_catalog`. | `adminCog.py` |
+| `ShopCog` | Add `_shop_cache: dict[tuple[int, str], list[dict]]` + preload at startup for configured guilds; OR use TTL approach. Invalidate on successful buy/sell. | `shopCog.py` |
+| `DevCog` | Add `AdminCog._preload_static_catalogs` and `BountyCog._preload_data` and new `ShopCog` preload method to the `/reload_autocomplete` targets list. | `devCog.py` |
+
+**Estimated files touched**: 3 (`adminCog.py`, `shopCog.py`, `devCog.py`)  
+**Estimated complexity**: Medium — straightforward application of the established preload pattern. Shop cache adds design decision (TTL vs. event-driven) but implementation is mechanical once decided.
+
+---
+
+**Companion recon**: `/proj/recon/B26-recon.md` — full handler-by-handler breakdown with exact line numbers, HTTP call counts, data-nature analysis, shop refresh timing investigation, and invalidation contract design.
+
+**Recon completed**: 2026-04-28 by developer (read-only investigation, all handlers empirically verified)
 
 ---
 

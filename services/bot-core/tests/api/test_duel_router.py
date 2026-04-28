@@ -237,6 +237,36 @@ class TestCreateChallenge:
         assert response.status_code == 400
         assert "pending duel already exists" in response.json()["detail"].lower()
 
+    @patch("api.routers.duels.get_db_session")
+    def test_create_challenge_unexpected_exception_returns_safe_500(self, mock_get_db, client, mock_duel_service):
+        """B.15 fix: unhandled service exception returns 500 with safe message, not raw exception text.
+
+        Previously any non-ValueError from the service would surface as a raw
+        FastAPI 500 potentially leaking internal details.  After the fix the
+        router catches it and returns a generic safe message.
+        """
+        _configure_db_mock(mock_get_db)
+        mock_duel_service.create_challenge = AsyncMock(
+            side_effect=RuntimeError("sqlalchemy internal: connection pool exhausted")
+        )
+
+        response = client.post(
+            "/api/v1/duels/challenge",
+            json={
+                "challenger_id": 100,
+                "target_id": 200,
+                "stakes": 0,
+                "guild_id": 67890,
+            },
+        )
+
+        assert response.status_code == 500
+        detail = response.json()["detail"]
+        # Safe generic message — no raw exception text leaked
+        assert "internal error" in detail.lower()
+        assert "sqlalchemy" not in detail.lower()
+        assert "pool exhausted" not in detail.lower()
+
 
 # ===========================================================================
 # 2. POST /duels/{duel_id}/accept
@@ -339,6 +369,20 @@ class TestAcceptDuel:
         assert response.status_code == 403
         assert "only the challenged player" in response.json()["detail"].lower()
 
+    @patch("api.routers.duels.get_db_session")
+    def test_accept_duel_unexpected_exception_returns_safe_500(self, mock_get_db, client, mock_duel_service):
+        """B.15 sibling fix: unhandled accept exception returns safe 500, not raw exception text."""
+        _configure_db_mock(mock_get_db)
+        mock_duel_service.get_duel = AsyncMock(return_value=make_mock_duel(id=1, target_id=200))
+        mock_duel_service.accept_duel = AsyncMock(side_effect=RuntimeError("sqlalchemy internal: deadlock detected"))
+
+        response = client.post("/api/v1/duels/1/accept?user_id=200")
+
+        assert response.status_code == 500
+        detail = response.json()["detail"]
+        assert "internal error" in detail.lower()
+        assert "deadlock" not in detail.lower()
+
 
 # ===========================================================================
 # 3. POST /duels/{duel_id}/reject
@@ -403,6 +447,20 @@ class TestRejectDuel:
 
         assert response.status_code == 403
         assert "only the challenged player" in response.json()["detail"].lower()
+
+    @patch("api.routers.duels.get_db_session")
+    def test_reject_duel_unexpected_exception_returns_safe_500(self, mock_get_db, client, mock_duel_service):
+        """B.15 sibling fix: unhandled reject exception returns safe 500, not raw exception text."""
+        _configure_db_mock(mock_get_db)
+        mock_duel_service.get_duel = AsyncMock(return_value=make_mock_duel(id=1, target_id=200))
+        mock_duel_service.reject_duel = AsyncMock(side_effect=RuntimeError("sqlalchemy internal: session closed"))
+
+        response = client.post("/api/v1/duels/1/reject?user_id=200")
+
+        assert response.status_code == 500
+        detail = response.json()["detail"]
+        assert "internal error" in detail.lower()
+        assert "session closed" not in detail.lower()
 
 
 # ===========================================================================

@@ -270,6 +270,60 @@ class TestCreateChallenge:
             await svc.create_challenge(db=None, challenger_id=5, target_id=5, stakes=0, guild_id=1)
 
     @pytest.mark.asyncio
+    async def test_self_challenge_raises_before_player_lookup(self):
+        """B.15 fix: self-target check fires BEFORE any player lookup.
+
+        If a non-existent challenger ID were looked up first, the repo would
+        return None and raise a 'Challenger not found' error.  This test
+        confirms the self-target ValueError is raised instead, proving the
+        check runs before I/O.
+        """
+        player_repo = AsyncMock()
+        # Repo would return None for any ID (player doesn't exist)
+        player_repo.get_by_id.return_value = None
+
+        svc = make_service(player_repo=player_repo)
+        with pytest.raises(ValueError, match="cannot challenge themselves"):
+            # Same ID on both sides; player doesn't exist in DB
+            await svc.create_challenge(db=None, challenger_id=999999, target_id=999999, stakes=0, guild_id=1)
+
+        # Confirm no DB lookups were performed
+        player_repo.get_by_id.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_repo_exception_on_challenger_lookup_raises_value_error(self):
+        """B.15 fix: repo DB exception during challenger lookup is wrapped as ValueError (→ 400).
+
+        Previously any non-ValueError exception from the repo would bubble as a
+        raw 500.  After the fix it is caught and re-raised as ValueError so the
+        router returns 400 with a safe message.
+        """
+        player_repo = AsyncMock()
+        player_repo.get_by_id.side_effect = RuntimeError("DB connection lost")
+
+        svc = make_service(player_repo=player_repo)
+        with pytest.raises(ValueError, match="could not be retrieved"):
+            await svc.create_challenge(db=None, challenger_id=1, target_id=2, stakes=0, guild_id=1)
+
+    @pytest.mark.asyncio
+    async def test_repo_exception_on_target_lookup_raises_value_error(self):
+        """B.15 fix: repo DB exception during target lookup is wrapped as ValueError (→ 400)."""
+        challenger = make_player(1, credits=500)
+
+        player_repo = AsyncMock()
+
+        async def _side_effect(db, pid):
+            if pid == 1:
+                return challenger
+            raise RuntimeError("DB connection lost")
+
+        player_repo.get_by_id.side_effect = _side_effect
+
+        svc = make_service(player_repo=player_repo)
+        with pytest.raises(ValueError, match="could not be retrieved"):
+            await svc.create_challenge(db=None, challenger_id=1, target_id=2, stakes=0, guild_id=1)
+
+    @pytest.mark.asyncio
     async def test_negative_stakes_raises(self):
         """Negative stakes raises ValueError."""
         svc = make_service()

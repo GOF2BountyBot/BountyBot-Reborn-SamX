@@ -97,6 +97,16 @@ async def create_challenge(
                 f"Duel challenge failed: challenger={request.challenger_id} target={request.target_id}: {exc}"
             )
             raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except Exception as exc:
+            flogger.error(
+                f"Unexpected error during duel challenge: challenger={request.challenger_id}"
+                f" target={request.target_id}: {exc}",
+                exc_info=True,
+            )
+            raise HTTPException(
+                status_code=500,
+                detail="An internal error occurred while processing the duel challenge.",
+            ) from exc
 
 
 # ---------------------------------------------------------------------------
@@ -136,6 +146,15 @@ async def accept_duel(
             flogger.error(f"Duel accept failed: duel_id={duel_id} user_id={user_id}: {msg}")
             status_code = 404 if "not found" in msg.lower() else 400
             raise HTTPException(status_code=status_code, detail=msg) from exc
+        except Exception as exc:
+            flogger.error(
+                f"Unexpected error during duel accept: duel_id={duel_id} user_id={user_id}: {exc}",
+                exc_info=True,
+            )
+            raise HTTPException(
+                status_code=500,
+                detail="An internal error occurred while processing the duel acceptance.",
+            ) from exc
 
         fight = result["fight_results"]
         challenger = result["challenger"]
@@ -210,3 +229,12 @@ async def reject_duel(
             flogger.error(f"Duel reject failed: duel_id={duel_id} user_id={user_id}: {msg}")
             status_code = 404 if "not found" in msg.lower() else 400
             raise HTTPException(status_code=status_code, detail=msg) from exc
+        except Exception as exc:
+            flogger.error(
+                f"Unexpected error during duel reject: duel_id={duel_id} user_id={user_id}: {exc}",
+                exc_info=True,
+            )
+            raise HTTPException(
+                status_code=500,
+                detail="An internal error occurred while processing the duel rejection.",
+            ) from exc

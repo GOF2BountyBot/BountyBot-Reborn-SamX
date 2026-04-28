@@ -65,6 +65,7 @@ class DuelService:
             f"stakes={stakes} guild_id={guild_id}"
         )
 
+        # --- Cheap validation FIRST, before any I/O ---
         if challenger_id == target_id:
             flogger.warning(f"Self-duel attempt: player {challenger_id} tried to challenge themselves")
             raise ValueError("A player cannot challenge themselves to a duel.")
@@ -73,13 +74,22 @@ class DuelService:
             flogger.warning(f"Invalid stakes attempted: {stakes} (must be non-negative)")
             raise ValueError(f"Stakes must be non-negative, got {stakes}.")
 
-        # Fetch players
-        challenger = await self.player_repo.get_by_id(db, challenger_id)
+        # Fetch players — wrap repository calls so DB/ORM exceptions surface as
+        # friendly 400 errors rather than leaking as raw 500s.
+        try:
+            challenger = await self.player_repo.get_by_id(db, challenger_id)
+        except Exception as exc:
+            flogger.error(f"DB error fetching challenger player_id={challenger_id}: {exc}", exc_info=True)
+            raise ValueError(f"Challenger player with ID {challenger_id} could not be retrieved.") from exc
         if challenger is None:
             flogger.error(f"Challenger not found: player_id={challenger_id}")
             raise ValueError(f"Challenger player with ID {challenger_id} not found.")
 
-        target = await self.player_repo.get_by_id(db, target_id)
+        try:
+            target = await self.player_repo.get_by_id(db, target_id)
+        except Exception as exc:
+            flogger.error(f"DB error fetching target player_id={target_id}: {exc}", exc_info=True)
+            raise ValueError(f"Target player with ID {target_id} could not be retrieved.") from exc
         if target is None:
             flogger.error(f"Target not found: player_id={target_id}")
             raise ValueError(f"Target player with ID {target_id} not found.")

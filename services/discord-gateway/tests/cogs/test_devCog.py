@@ -109,34 +109,69 @@ class TestDevCogInitialization:
 
 
 class TestCategoryPreload:
-    """Tests for category preloading."""
+    """Tests for category preloading.
 
-    @patch("cogs.devCog.httpx")
-    def test_preload_categories_success(self, mock_httpx, mock_dev_cog):
-        """_preload_categories should load categories successfully."""
-        # Mock API response
-        mock_response = MagicMock()
-        mock_response.status_code = 200
-        mock_response.json.return_value = ["ships", "modules", "weapons"]
-        mock_dev_cog.http_client.get = AsyncMock(return_value=mock_response)
+    B.33 followup (Finding 2): tests use respx to assert exact URL + HTTP method,
+    confirming devCog calls GET /api/v1/data/categories on bot-core
+    (route registered in bot-core/src/api/routers/data.py:43).
+    """
 
-        # Call method
-        asyncio.run(mock_dev_cog._preload_categories())
+    _CATEGORIES_URL = "http://bot-core:8000/api/v1/data/categories"
 
-        # Verify behavior
-        mock_dev_cog.http_client.get.assert_called_once_with("http://bot-core:8000/api/v1/data/categories", timeout=5)
+    def _with_real_client(self, cog):
+        """Replace cog.http_client with a real httpx.AsyncClient for respx interception."""
+        import httpx
+
+        cog.http_client = httpx.AsyncClient(timeout=httpx.Timeout(10.0))
+        return cog
+
+    def test_preload_categories_success(self, mock_dev_cog):
+        """_preload_categories calls GET /api/v1/data/categories and populates _categories."""
+        import httpx
+        import respx
+
+        self._with_real_client(mock_dev_cog)
+        mock_dev_cog.bot.wait_until_ready = AsyncMock()
+
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.get(self._CATEGORIES_URL).mock(
+                return_value=httpx.Response(200, json=["ships", "modules", "weapons"])
+            )
+            asyncio.run(mock_dev_cog._preload_categories())
+
         assert mock_dev_cog._categories == ["ships", "modules", "weapons"]
 
-    @patch("cogs.devCog.httpx")
-    def test_preload_categories_failure(self, mock_httpx, mock_dev_cog):
-        """_preload_categories should handle failures gracefully."""
-        # Mock HTTP client with error
-        mock_dev_cog.http_client.get = AsyncMock(side_effect=Exception("API error"))
+    def test_preload_categories_http_error_leaves_empty(self, mock_dev_cog):
+        """_preload_categories leaves _categories empty on HTTP error response."""
+        import httpx
+        import respx
 
-        # Call method
-        asyncio.run(mock_dev_cog._preload_categories())
+        self._with_real_client(mock_dev_cog)
+        mock_dev_cog.bot.wait_until_ready = AsyncMock()
 
-        # Verify behavior - categories should remain empty on error
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.get(self._CATEGORIES_URL).mock(
+                return_value=httpx.Response(503, json={"detail": "Service Unavailable"})
+            )
+            asyncio.run(mock_dev_cog._preload_categories())
+
+        # On HTTP error, _categories remains empty (no retry in this preload)
+        assert mock_dev_cog._categories == []
+
+    def test_preload_categories_network_error_leaves_empty(self, mock_dev_cog):
+        """_preload_categories leaves _categories empty on network-level error."""
+        import httpx
+        import respx
+
+        self._with_real_client(mock_dev_cog)
+        mock_dev_cog.bot.wait_until_ready = AsyncMock()
+
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.get(self._CATEGORIES_URL).mock(
+                side_effect=httpx.ConnectError("connection refused")
+            )
+            asyncio.run(mock_dev_cog._preload_categories())
+
         assert mock_dev_cog._categories == []
 
 

@@ -656,12 +656,12 @@ See companion file `/proj/recon/B27-B28-recon.md` §9 for full fix detail.
 
 ---
 
-### O.2 — `/scheduler_view`, `/scheduler_update`, `/scheduler_delete` `job_id` lack autocomplete
-🔵 low · Phase 9.2–9.6 · 2026-04-28
+### O.2 — RETROACTIVELY CLOSED — already fixed in HEAD
+🔵 low · Phase 9.2–9.6 · 2026-04-28 · **CLOSED 2026-04-28**
 
-**User-reported observation**: typing job IDs by hand (especially the UUID-style one-time job IDs like `b19ec5fd-35d2-488c-8921-3d5b4a8782f0`) is impractical. The job list returned by `/scheduler_list` is the natural candidate for an autocomplete dropdown on these three commands.
+Originally logged as missing autocomplete on `/scheduler_view`, `/scheduler_update`, `/scheduler_delete`. Cycle-8 recon (B.27/B.28) verified empirically that `job_id_autocomplete` is implemented at `schedulerCog.py:35-54` and applied to all three commands (`/scheduler_view` line 140, `/scheduler_update` line 221, `/scheduler_delete` line 300).
 
-**Comparison**: bountyCog autocompletes `bounty_id` against the active-bounty list. Same pattern would apply for scheduler jobs.
+Status: moved to FIXED table for tracking. No further action.
 
 ---
 
@@ -1643,14 +1643,28 @@ Tests do **NOT** validate:
 
 ---
 
-### A.20 — `/ping` visible to non-admins despite `default_permissions` decorators
-🔵 low (verified, code-side NOT at fault) · Phase 4.2 · 2026-04-28 REDO
+### A.20 — RETROACTIVELY CLOSED — code-side identical to working commands
+🔵 low · Phase 4.2 · 2026-04-28 REDO · **CLOSED 2026-04-28 (won't-fix from code side)**
+
+**Closure justification**: Empirical redo investigation 2026-04-28 confirmed:
+- Decorator stacks IDENTICAL character-for-character to 3 working admin commands (`/admin_check`, `/admin_setup`, etc.)
+- Sync mechanism uniform (`bot.py:71-78` — single `tree.sync()` for all commands)
+- Runtime inspection confirms `default_permissions(administrator=True)` (Permissions value=8) applied correctly to `/ping` command object
+- Cog registration mechanism identical (`bot.py:42-50` auto-discovery)
+- Same git commit (`55ecb3b`) added decorator to `/ping` AND working commands together — no version skew
+- Single command definition in codebase; no collision
+
+Conclusion: code-side is correct. Visibility leak is Discord client cache or Discord-API quirk. Not fixable from code without changing Discord's behavior. Runtime `is_admin()` check still blocks execution (CheckFailure logged). The leak is cosmetic-only; functionally protected.
+
+Status: moved to CLOSED / WITHDRAWN. Full evidence retained below for archival.
+
+---
 
 **Environment**: dev guild `1490693399307616276`, post-rebuild stack, Discord.py v2.7.1.
 
 **User-reported observation**: The `/ping` command appears in Discord's slash-command list for non-administrator users, despite being decorated with `@app_commands.default_permissions(administrator=True)`. All other admin-only commands (`/admin_setup`, `/admin_check`, etc.) hide correctly.
 
-**Status**: Visibility leak CONFIRMED, 2026-04-21; code defect NOT found; likely Discord client cache issue.
+**Original status**: Visibility leak CONFIRMED, 2026-04-21; code defect NOT found; likely Discord client cache issue.
 
 ---
 
@@ -2564,6 +2578,7 @@ Many tests exceed project's "max 2 mocks per test" standard (`AGENTS.md`). Sever
 
 | ID | Summary | Commit | Verified |
 |---|---|---|---|
+| **O.2** | `/scheduler_view`/`/scheduler_update`/`/scheduler_delete` `job_id` autocomplete (verified retroactively present in HEAD per cycle-8 recon: `schedulerCog.py:35-54` + line 140/221/300) | (already in HEAD) | live (verified read-only) |
 | **B.14-sibling** | Stale-respawn recovery sweep for `status='escaped'` past `respawn_time` | `815cd59` | ✅ live 2026-04-28 |
 | **B.14** | Bounty/duel listing time filter + startup recovery sweep (12 stale bounties expired on first boot) | `db79c60` | ✅ live 2026-04-28 |
 | **B.12** | `/check` processes ALL matching bounties on shared system (was: first-match-only via early returns at `bounty_service.py:1040,1096,1135`) | `ee81738` | pending |
@@ -2614,6 +2629,7 @@ Many tests exceed project's "max 2 mocks per test" standard (`AGENTS.md`). Sever
 | **A.2** | Secondary weapons not yet implemented (planned: rockets/missiles/bombs, single-use). Their absence from starter loadout is correct. Stale `IMT Extract 1.3` reference in older checklist drafts. |
 | **A.17** | "4 shops" wording in `/admin_setup` correctly refers to 4 tier-shop containers. Label is accurate. |
 | **A.40** | "0 turrets across tiers" was RNG variance (5 forced refreshes showed normal distribution), not a systemic defect. Enhancement opportunity logged as A.41. |
+| **A.20** | `/ping` visible to non-admins. Empirical redo (2026-04-28) verified decorator stack identical character-for-character to working admin commands; sync mechanism uniform; runtime inspection confirms `default_permissions(administrator=True)` applied. Code-side correct. Visibility leak is Discord client cache or Discord-API quirk; runtime `is_admin()` check still blocks execution. Cosmetic-only; not fixable from code side. Full evidence retained in OPEN section above. |
 
 ---
 

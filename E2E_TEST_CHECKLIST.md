@@ -1,5 +1,9 @@
 # BountyBot E2E Test Checklist (Discord)
 
+> **🔁 RESET 2026-04-28** — All test items reset to pending after defect-remediation cycle. Full DB nuke + re-test from Phase 0 required. Reason: ~25 fixes across nearly every cog/service plus B.19 architectural overhaul of player/ship state mechanics. Prior pass-state cannot be trusted under the new code paths.
+>
+> **DB nuke procedure**: stop stack → remove `mappings/postgres-data/` → restart stack → migrations auto-apply on first boot.
+
 Run these tests against a live stack (`docker compose up`).
 Work through each phase in order — later phases depend on earlier ones.
 
@@ -95,10 +99,10 @@ sudo docker exec bountybot-db psql -U bounty -d bountydb -c \
 
 Verify all four services are running and connected.
 
-- [x] **0.1** `[ADMIN]` `/ping` — Returns ephemeral "Pong! Latency is N ms" ✅ 80 ms
-- [x] **0.2** `[ADMIN]` `/health` — Top-level healthy ✅; Schema subsection has field-mapping bug (A.24, not a blocker)
-- [x] **0.3** Confirm no error messages in `docker compose logs` on fresh boot ✅ all 3 services clean
-- [x] **0.4** Confirm health check endpoints respond directly: ✅ bot-core, gateway, blender all return `status: healthy`
+- [ ] **0.1** `[ADMIN]` `/ping` — Returns ephemeral "Pong! Latency is N ms" ✅ 80 ms
+- [ ] **0.2** `[ADMIN]` `/health` — Top-level healthy ✅; Schema subsection has field-mapping bug (A.24, not a blocker)
+- [ ] **0.3** Confirm no error messages in `docker compose logs` on fresh boot ✅ all 3 services clean
+- [ ] **0.4** Confirm health check endpoints respond directly: ✅ bot-core, gateway, blender all return `status: healthy`
    - `curl http://localhost:8000/api/v1/health` (bot-core)
    - `curl http://localhost:7999/api/v1/health` (discord-gateway)
    - `curl http://localhost:8001/api/v1/health/` (blender-service)
@@ -109,17 +113,17 @@ Verify all four services are running and connected.
 
 > ⚠️ **Run BEFORE Phase 1** — these tests require the alt account to NOT yet be registered (no `/profile` run yet by alt user). If the alt account is already registered, skip this phase.
 
-- [x] **0.5.1** (Alt account, unregistered) `/bounties` — ✅ "No active bounties at this time." clean response
-- [x] **0.5.2** (Alt account, unregistered) `/shop tier:Bronze` — ✅ Correct "server hasn't been set up" ephemeral (validates A.3 no-auto-create)
-- [~] **0.5.3** (Alt account, unregistered) `/unregister` — ⚠️ Shows generic "An error occurred while removing the role" instead of graceful message (A.25, low-priority fix deferred)
+- [ ] **0.5.1** (Alt account, unregistered) `/bounties` — ✅ "No active bounties at this time." clean response
+- [ ] **0.5.2** (Alt account, unregistered) `/shop tier:Bronze` — ✅ Correct "server hasn't been set up" ephemeral (validates A.3 no-auto-create)
+- [ ] **0.5.3** (Alt account, unregistered) `/unregister` — ⚠️ Shows generic "An error occurred while removing the role" instead of graceful message (A.25, low-priority fix deferred)
 
 ### Help discoverability (A.5, unconfigured guild)
 
-- [x] **0.5.4** (Alt account, unregistered) `/help` (no args) — ✅ 8 user categories, DB still 0/0/0 after (no auto-create). **Note**: admin-hint line ("Admins: use /admin_help…") visible to non-admin Alt — verify on Main comparison in Phase 2.5 whether intentional
-- [x] **0.5.5** (Alt account, unregistered) `/help category:Bounty Hunting` — ✅ `/bounties`, `/check`, `/criminal-loadout`, `/route` with correct params
-- [x] **0.5.6** (Alt account, unregistered) `/help category:bounty hunting` (lowercase) — ✅ Case-insensitive confirmed, identical response
-- [x] **0.5.7** (Alt account, unregistered) `/help category:nonsense` — ✅ Lists all 8 valid categories, no DB writes
-- [x] **0.5.8** (Alt account, unregistered) `/help ` autocomplete — ✅ 8 user categories, no admin ones
+- [ ] **0.5.4** (Alt account, unregistered) `/help` (no args) — ✅ 8 user categories, DB still 0/0/0 after (no auto-create). **Note**: admin-hint line ("Admins: use /admin_help…") visible to non-admin Alt — verify on Main comparison in Phase 2.5 whether intentional
+- [ ] **0.5.5** (Alt account, unregistered) `/help category:Bounty Hunting` — ✅ `/bounties`, `/check`, `/criminal-loadout`, `/route` with correct params
+- [ ] **0.5.6** (Alt account, unregistered) `/help category:bounty hunting` (lowercase) — ✅ Case-insensitive confirmed, identical response
+- [ ] **0.5.7** (Alt account, unregistered) `/help category:nonsense` — ✅ Lists all 8 valid categories, no DB writes
+- [ ] **0.5.8** (Alt account, unregistered) `/help ` autocomplete — ✅ 8 user categories, no admin ones
 
 ---
 
@@ -127,7 +131,7 @@ Verify all four services are running and connected.
 
 ### First-time guild initialisation
 
-- [x] **1.1** `[ADMIN]` `/admin_setup` — "Guild initialized" response; creates: *(Re-verified 2026-04-22 PM post-wipe/rebuild: all 8 channels + 6 roles + category + GuildConfig + 4 tier shops (12/11/10/10 = 43 items) created correctly. A.30 still observed — gateway channel list returns `category_id: null` despite DB category_id populated. A.10 doc-drift still unaddressed.)*
+- [ ] **1.1** `[ADMIN]` `/admin_setup` — "Guild initialized" response; creates: *(Re-verified 2026-04-22 PM post-wipe/rebuild: all 8 channels + 6 roles + category + GuildConfig + 4 tier shops (12/11/10/10 = 43 items) created correctly. A.30 still observed — gateway channel list returns `category_id: null` despite DB category_id populated. A.10 doc-drift still unaddressed.)*
    - "BountyBot" category with @everyone view denied
    - `#bronze-bounty-board` channel (read-only for players)
    - `#silver-bounty-board` channel (read-only for players)
@@ -151,9 +155,9 @@ Verify all four services are running and connected.
 
 ### Verify channel infrastructure
 
-- [x] **1.2** Confirm all 7 text channels exist under the "BountyBot" category in Discord ✅ Re-verified 2026-04-22 PM (visual confirm; gateway API still reports `category_id: null` per A.30 but DB category_id is populated)
-- [x] **1.3** Confirm `@Bounty Hunter` role exists in the guild role list and is mentionable ✅ Re-verified 2026-04-22 PM (plus 4 tier roles — Bronze/Silver/Gold/Platinum — all mentionable per roles API)
-- [~] **1.4** Verify channel permissions: *(Partially verified 2026-04-22 PM via Alt unregister/re-register cycle)*
+- [ ] **1.2** Confirm all 7 text channels exist under the "BountyBot" category in Discord ✅ Re-verified 2026-04-22 PM (visual confirm; gateway API still reports `category_id: null` per A.30 but DB category_id is populated)
+- [ ] **1.3** Confirm `@Bounty Hunter` role exists in the guild role list and is mentionable ✅ Re-verified 2026-04-22 PM (plus 4 tier roles — Bronze/Silver/Gold/Platinum — all mentionable per roles API)
+- [ ] **1.4** Verify channel permissions: *(Partially verified 2026-04-22 PM via Alt unregister/re-register cycle)*
    - Users WITHOUT `@Bounty Hunter` role CANNOT see any BountyBot channels ✅ Alt's unregister showed channel visibility loss; re-register restored
    - `#bronze-bounty-board`, `#silver-bounty-board`, `#gold-bounty-board`, `#shop` are read-only for `@Bounty Hunter` (cannot type in them) — NOT YET VERIFIED (visual check deferred)
    - `#bounty-hunting` allows `@Bounty Hunter` to use slash commands — ✅ implicitly verified (Alt ran multiple slash commands without being blocked)
@@ -162,35 +166,35 @@ Verify all four services are running and connected.
 
 ### Verify config
 
-- [x] **1.5** `[ADMIN]` `/admin_config action:View Config` — ✅ Re-verified 2026-04-22 PM: shows credits=999,999,999, sale_factor=80%, XP thresholds=Silver:10/Gold:20/Platinum:30, admin role ✅, configured ✅. Matches Session Setup exactly. (Note: does NOT include channel IDs in the embed — only role + numeric config. Documentation drift.)
-- [x] **1.6** `[ADMIN]` `/admin_config_validate` — ✅ Re-verified 2026-04-22 PM: 0 errors, 0 warnings. (Earlier observation about `guild bb-temp` withdrawn 2026-04-25 — that IS the actual guild name.)
+- [ ] **1.5** `[ADMIN]` `/admin_config action:View Config` — ✅ Re-verified 2026-04-22 PM: shows credits=999,999,999, sale_factor=80%, XP thresholds=Silver:10/Gold:20/Platinum:30, admin role ✅, configured ✅. Matches Session Setup exactly. (Note: does NOT include channel IDs in the embed — only role + numeric config. Documentation drift.)
+- [ ] **1.6** `[ADMIN]` `/admin_config_validate` — ✅ Re-verified 2026-04-22 PM: 0 errors, 0 warnings. (Earlier observation about `guild bb-temp` withdrawn 2026-04-25 — that IS the actual guild name.)
 
 ### Player registration (your account)
 
-- [x] **1.7** `/profile` — ✅ Re-verified 2026-04-22 PM: Main (discord_id=402296276617527306, username=samx.ai) created as PID 1. Betty active ship with weapons=["Nirai Impulse EX 1"], modules=["E2 Exoclad","Telta Quickscan"], turrets=[], secondary_weapons=NULL. Inventory: Micro Gun MK I qty=1. Bronze/0 XP/999,999,999 credits. **Observation**: `secondary_weapons` field is NULL not [] — may matter for Phase 5 equip logic; monitor.
-- [x] **1.8** Verify BountyBot channels are now visible to you (you have `@Bounty Hunter` role) ✅ Re-verified 2026-04-22 PM (Main + Alt both see all 7 player-visible channels; #bot-images Admin-only via Main client)
-- [x] **1.9** `/profile` — Second use: identical response, no duplicate player created (idempotent) ✅ Re-verified 2026-04-22 PM: same PID 1, row counts stable at 1/1/1/1
+- [ ] **1.7** `/profile` — ✅ Re-verified 2026-04-22 PM: Main (discord_id=402296276617527306, username=samx.ai) created as PID 1. Betty active ship with weapons=["Nirai Impulse EX 1"], modules=["E2 Exoclad","Telta Quickscan"], turrets=[], secondary_weapons=NULL. Inventory: Micro Gun MK I qty=1. Bronze/0 XP/999,999,999 credits. **Observation**: `secondary_weapons` field is NULL not [] — may matter for Phase 5 equip logic; monitor.
+- [ ] **1.8** Verify BountyBot channels are now visible to you (you have `@Bounty Hunter` role) ✅ Re-verified 2026-04-22 PM (Main + Alt both see all 7 player-visible channels; #bot-images Admin-only via Main client)
+- [ ] **1.9** `/profile` — Second use: identical response, no duplicate player created (idempotent) ✅ Re-verified 2026-04-22 PM: same PID 1, row counts stable at 1/1/1/1
 
 ### Unregister / re-register cycle
 
-- [x] **1.10** `/unregister` — ✅ Re-verified 2026-04-22 PM: "Bounty Hunter role(s) removed: @Bounty Hunter, @Bounty Hunter Bronze. Your player data is preserved." Both roles stripped; DB counts preserved at 1/1/1/1; Main had only @everyone after.
-- [x] **1.11** `/profile` — ✅ Re-verified 2026-04-22 PM: re-register restores same PID 1, both tier+hunter roles restored; no new DB rows.
+- [ ] **1.10** `/unregister` — ✅ Re-verified 2026-04-22 PM: "Bounty Hunter role(s) removed: @Bounty Hunter, @Bounty Hunter Bronze. Your player data is preserved." Both roles stripped; DB counts preserved at 1/1/1/1; Main had only @everyone after.
+- [ ] **1.11** `/profile` — ✅ Re-verified 2026-04-22 PM: re-register restores same PID 1, both tier+hunter roles restored; no new DB rows.
 
 ### Unregister edge cases
 
-- [x] **1.12** `/unregister` when you don't have the role — ✅ Re-verified 2026-04-22 PM: "ℹ️ You don't have the Bounty Hunter role." — graceful, informational tone. **Important clarification**: registered-then-unregistered user takes this no-role path cleanly, whereas **never-registered** user still hits generic error (A.25). A.25 scope narrower than originally thought.
+- [ ] **1.12** `/unregister` when you don't have the role — ✅ Re-verified 2026-04-22 PM: "ℹ️ You don't have the Bounty Hunter role." — graceful, informational tone. **Important clarification**: registered-then-unregistered user takes this no-role path cleanly, whereas **never-registered** user still hits generic error (A.25). A.25 scope narrower than originally thought.
 
 ### `[2P]` Second player registration
 
-- [x] **1.13** `[2P]` Player 2 runs `/profile` — ✅ Re-verified 2026-04-22 PM: Alt (discord_id=970691862035841048, username=general_failure.) created as PID 2 with own Betty (PID2 ship row), own Micro Gun MK I in inventory, own credits/XP; both tier+hunter roles assigned to Alt. Counts stable at 2/2/2/2.
+- [ ] **1.13** `[2P]` Player 2 runs `/profile` — ✅ Re-verified 2026-04-22 PM: Alt (discord_id=970691862035841048, username=general_failure.) created as PID 2 with own Betty (PID2 ship row), own Micro Gun MK I in inventory, own credits/XP; both tier+hunter roles assigned to Alt. Counts stable at 2/2/2/2.
 
 ### `/register` alias (A.19 closure verification — NEW 2026-04-22)
 
-- [x] **1.14** `/register` — ✅ Re-verified 2026-04-22 PM: Alt ran `/register` immediately after `/profile`; returned identical embed (PID 2, Bronze, 0 XP, 999,999,999 credits); zero DB mutations (counts stable at 2/2/2/2); no role change. **A.19 closed.**
+- [ ] **1.14** `/register` — ✅ Re-verified 2026-04-22 PM: Alt ran `/register` immediately after `/profile`; returned identical embed (PID 2, Bronze, 0 XP, 999,999,999 credits); zero DB mutations (counts stable at 2/2/2/2); no role change. **A.19 closed.**
 
 ### A.9 platinum validator closure verification (NEW 2026-04-22)
 
-- [x] **1.15** Session Setup platinum payload — AFTER `/admin_setup` completes, orchestrator runs: `PUT /api/v1/config/guild/{gid}/bounty` with `max_bounties_per_tier={"bronze":20,"silver":20,"gold":20,"platinum":20}`. Expected: HTTP 200 + response includes all 4 tier entries (previously returned 400 with "Must be bronze, silver, or gold" — see A.9). ✅ Re-verified 2026-04-22 PM post-wipe: all 3 Session Setup endpoints returned 200 with platinum included. **A.9 closed.**
+- [ ] **1.15** Session Setup platinum payload — AFTER `/admin_setup` completes, orchestrator runs: `PUT /api/v1/config/guild/{gid}/bounty` with `max_bounties_per_tier={"bronze":20,"silver":20,"gold":20,"platinum":20}`. Expected: HTTP 200 + response includes all 4 tier entries (previously returned 400 with "Must be bronze, silver, or gold" — see A.9). ✅ Re-verified 2026-04-22 PM post-wipe: all 3 Session Setup endpoints returned 200 with platinum included. **A.9 closed.**
 
 > Note: `/profile` takes no parameters — it always shows the invoking user's profile. `/register` is a full alias of `/profile` — identical behavior, interchangeable. There is no way to view another player's profile via either. Use `/admin_player user:@player action:View Stats` (admin) to inspect other players.
 
@@ -205,7 +209,7 @@ Verify all four services are running and connected.
 - [ ] **1.5.3** (Non-admin) `/admin_config action:View Config` — Invisible *(Reset 2026-04-22 post-wipe)*
 - [ ] **1.5.4** (Non-admin) `/scheduler_list` — Invisible *(Reset 2026-04-22 post-wipe)*
 - [ ] **1.5.5** (Non-admin) `/health` — Invisible *(Reset 2026-04-22 post-wipe)*
-- [~] **1.5.6** (Non-admin) `/ping` — Invisible (note: A.20 — was previously visible; verify fix still working) *(Reset 2026-04-22 post-wipe; A.20 still open — /ping visible to non-admins; runtime guard rejects but visibility leak remains)*
+- [ ] **1.5.6** (Non-admin) `/ping` — Invisible (note: A.20 — was previously visible; verify fix still working) *(Reset 2026-04-22 post-wipe; A.20 still open — /ping visible to non-admins; runtime guard rejects but visibility leak remains)*
 - [ ] **1.5.7** (Non-admin) `/load_data category:ship` — Invisible *(Reset 2026-04-22 post-wipe)*
 - [ ] **1.5.8** (Non-admin) `/admin_help` — Invisible (validates A.4 decorator on `/admin_help`) *(Reset 2026-04-22 post-wipe)*
 - [ ] **1.5.9** (Non-admin) Open the slash-command menu and start typing `/admin` — autocomplete does NOT surface any `admin_*`, `scheduler_*`, `ping`, `health`, `load_data`, `reload_autocomplete`, `render_config`, or `render_cache_clear` entries. `/admin_help` itself must also be absent. *(Reset 2026-04-22 post-wipe)*
@@ -219,26 +223,26 @@ Verify seeded data is accessible via the aboutCog. All of this is read-only.
 
 ### Object lookup
 
-- [x] **2.1** `/about category:ship name:Betty` — Returns detailed ship embed (armour, cargo, compatible skins, manufacturer, tech level) ✅ PASS 2026-04-21 (ran on Alt)
-- [x] **2.2** `/about category:primary_weapon name:Micro Gun MK I` — Returns weapon stats ✅ PASS 2026-04-21
-- [x] **2.3** `/about category:module name:Telta Quickscan` — Returns module stats ✅ PASS 2026-04-21
-- [x] **2.4** `/about category:ship name:nonexistent_ship` — Error: not found ✅ PASS 2026-04-21 (ephemeral error returned — non-public; no INFO success logged)
+- [ ] **2.1** `/about category:ship name:Betty` — Returns detailed ship embed (armour, cargo, compatible skins, manufacturer, tech level) ✅ PASS 2026-04-21 (ran on Alt)
+- [ ] **2.2** `/about category:primary_weapon name:Micro Gun MK I` — Returns weapon stats ✅ PASS 2026-04-21
+- [ ] **2.3** `/about category:module name:Telta Quickscan` — Returns module stats ✅ PASS 2026-04-21
+- [ ] **2.4** `/about category:ship name:nonexistent_ship` — Error: not found ✅ PASS 2026-04-21 (ephemeral error returned — non-public; no INFO success logged)
 
 ### Category listing
 
-- [x] **2.5** `/list_category category:ship` — Paginated list of all seeded ships (capped at 100) ✅ PASS 2026-04-22 (A.26/A.27 closure: 65 ships, two continuation-field spacers, single clean list — surfaced A.32 `mpzzzm` emoji alias gap on one module, tracked separately)
-- [x] **2.6** `/list_category category:primary_weapon` — Lists primary weapons (40 items) ✅ PASS 2026-04-22 (40 items, one continuation-field spacer)
-- [x] **2.7** `/list_category category:secondary_weapon` — Lists secondary weapons (30 items; feature not usable per A.2 but data browsing works) ✅ PASS 2026-04-22 (30 items, one continuation-field spacer)
-- [x] **2.8** `/list_category category:turret_weapon` — Lists turret weapons (10 items, single field) ✅ PASS 2026-04-22 (10 items, single field — no spacer needed)
-- [x] **2.9** `/list_category category:module` — Lists all 66 modules ✅ PASS 2026-04-22 (66 items, three continuation-field spacers — A.32 `mpzzzm` emoji gap noted)
-- [x] **2.10** `/list_category category:criminal` — Lists 25 NPC criminals ✅ PASS 2026-04-22 (25 items; no emoji prefix — criminals don't carry emoji metadata, which is expected)
-- [x] **2.11** `/list_category category:system` — Lists all 34 star systems ✅ PASS 2026-04-22 (34 items; no emoji prefix — systems don't carry emoji metadata, expected)
-- [~] **2.12** `/list_category category:module tech_level:2` — Filtered by tech level ❌ FAIL 2026-04-22 → **A.31 logged** (preload endpoint omits `tech_level` field, client-side filter always empty; affects all 5 categories that support tech_level filtering). Test coverage hid the bug (mocks included `tech_level`; real API doesn't).
+- [ ] **2.5** `/list_category category:ship` — Paginated list of all seeded ships (capped at 100) ✅ PASS 2026-04-22 (A.26/A.27 closure: 65 ships, two continuation-field spacers, single clean list — surfaced A.32 `mpzzzm` emoji alias gap on one module, tracked separately)
+- [ ] **2.6** `/list_category category:primary_weapon` — Lists primary weapons (40 items) ✅ PASS 2026-04-22 (40 items, one continuation-field spacer)
+- [ ] **2.7** `/list_category category:secondary_weapon` — Lists secondary weapons (30 items; feature not usable per A.2 but data browsing works) ✅ PASS 2026-04-22 (30 items, one continuation-field spacer)
+- [ ] **2.8** `/list_category category:turret_weapon` — Lists turret weapons (10 items, single field) ✅ PASS 2026-04-22 (10 items, single field — no spacer needed)
+- [ ] **2.9** `/list_category category:module` — Lists all 66 modules ✅ PASS 2026-04-22 (66 items, three continuation-field spacers — A.32 `mpzzzm` emoji gap noted)
+- [ ] **2.10** `/list_category category:criminal` — Lists 25 NPC criminals ✅ PASS 2026-04-22 (25 items; no emoji prefix — criminals don't carry emoji metadata, which is expected)
+- [ ] **2.11** `/list_category category:system` — Lists all 34 star systems ✅ PASS 2026-04-22 (34 items; no emoji prefix — systems don't carry emoji metadata, expected)
+- [ ] **2.12** `/list_category category:module tech_level:2` — Filtered by tech level ❌ FAIL 2026-04-22 → **A.31 logged** (preload endpoint omits `tech_level` field, client-side filter always empty; affects all 5 categories that support tech_level filtering). Test coverage hid the bug (mocks included `tech_level`; real API doesn't).
 
 ### Route planning
 
-- [x] **2.13** `/make-route start:Wolf-Reiser end:Pan` — Returns numbered route with hop count and route map image attachment ✅ PASS 2026-04-21 (6 hops, map rendered)
-- [x] **2.14** `/make-route start:Pan end:Pan` — Edge case: same start/end system ✅ PASS 2026-04-21 (0 hops; description "1. Pan"; footer "Shortest path via A* (1 system(s))"; map with single node rendered — not an error, but consider early-return for same-system case as future UX polish)
+- [ ] **2.13** `/make-route start:Wolf-Reiser end:Pan` — Returns numbered route with hop count and route map image attachment ✅ PASS 2026-04-21 (6 hops, map rendered)
+- [ ] **2.14** `/make-route start:Pan end:Pan` — Edge case: same start/end system ✅ PASS 2026-04-21 (0 hops; description "1. Pan"; footer "Shortest path via A* (1 system(s))"; map with single node rendered — not an error, but consider early-return for same-system case as future UX polish)
 
 ---
 
@@ -248,19 +252,19 @@ Validates the `/help` and `/admin_help` commands end-to-end as a discoverability
 
 ### `/help` (user-facing, admin account)
 
-- [x] **2.5.1** `/help` (no args) — Same 8-category overview embed as 0.5.4. Confirm no admin categories appear even when invoked by an admin. ✅ PASS 2026-04-21 (exact match; admin hint footer present but not a leak per earlier decision)
-- [x] **2.5.2** `/help category:Player Profile` — Detail embed lists `/profile`, `/leaderboard`, `/prestige` with their parameter names + descriptions. ✅ PASS 2026-04-21
-- [x] **2.5.3** `/help category:Shop & Economy` — Lists `/shop`, `/buy`, `/sell`, `/shops`. ✅ PASS 2026-04-21
-- [x] **2.5.4** `/help category:Inventory & Equipment` — Lists `/inventory`, `/search`, `/item`, `/equip`, `/unequip`, `/give`. ✅ PASS 2026-04-21
-- [x] **2.5.5** `/help category:Ships` — Lists `/ships`, `/ship`, `/setactive`, `/nickname`. ✅ PASS 2026-04-21
-- [x] **2.5.6** `/help category:Dueling` — Lists `/duel-challenge`, `/duel-accept`, `/duel-reject`. ✅ PASS 2026-04-21
-- [x] **2.5.7** `/help category:Game Data` — Lists `/about`, `/list_category`, `/make-route`. ✅ PASS 2026-04-21
-- [x] **2.5.8** `/help category:Skins & Rendering` — Lists `/ship_skin`, `/render_skin`, `/make_skin_texture`. ✅ PASS 2026-04-21
-- [x] **2.5.9** `/help category:SHIPS` (uppercase) — Case-insensitive match, same as 2.5.5. ✅ PASS 2026-04-21 (when invoked with exactly "SHIPS", resolves correctly; first attempt submitted literal "SHIPS (uppercase)" from Discord autocomplete label — not a bug, just a UI artifact)
+- [ ] **2.5.1** `/help` (no args) — Same 8-category overview embed as 0.5.4. Confirm no admin categories appear even when invoked by an admin. ✅ PASS 2026-04-21 (exact match; admin hint footer present but not a leak per earlier decision)
+- [ ] **2.5.2** `/help category:Player Profile` — Detail embed lists `/profile`, `/leaderboard`, `/prestige` with their parameter names + descriptions. ✅ PASS 2026-04-21
+- [ ] **2.5.3** `/help category:Shop & Economy` — Lists `/shop`, `/buy`, `/sell`, `/shops`. ✅ PASS 2026-04-21
+- [ ] **2.5.4** `/help category:Inventory & Equipment` — Lists `/inventory`, `/search`, `/item`, `/equip`, `/unequip`, `/give`. ✅ PASS 2026-04-21
+- [ ] **2.5.5** `/help category:Ships` — Lists `/ships`, `/ship`, `/setactive`, `/nickname`. ✅ PASS 2026-04-21
+- [ ] **2.5.6** `/help category:Dueling` — Lists `/duel-challenge`, `/duel-accept`, `/duel-reject`. ✅ PASS 2026-04-21
+- [ ] **2.5.7** `/help category:Game Data` — Lists `/about`, `/list_category`, `/make-route`. ✅ PASS 2026-04-21
+- [ ] **2.5.8** `/help category:Skins & Rendering` — Lists `/ship_skin`, `/render_skin`, `/make_skin_texture`. ✅ PASS 2026-04-21
+- [ ] **2.5.9** `/help category:SHIPS` (uppercase) — Case-insensitive match, same as 2.5.5. ✅ PASS 2026-04-21 (when invoked with exactly "SHIPS", resolves correctly; first attempt submitted literal "SHIPS (uppercase)" from Discord autocomplete label — not a bug, just a UI artifact)
 
 ### `/admin_help` (admin-only, admin account)
 
-- [x] **2.5.10** `/admin_help` (no args) — Admin-only ephemeral embed. Lists all 9 admin categories with descriptions and command counts: ✅ PASS 2026-04-21 (9 categories present; 2 command-count deltas vs checklist — Config shows 4 not 3, Bounties shows 5 not 4; checklist doc gap — recommend reconciliation during post-E2E cleanup alongside A.10)
+- [ ] **2.5.10** `/admin_help` (no args) — Admin-only ephemeral embed. Lists all 9 admin categories with descriptions and command counts: ✅ PASS 2026-04-21 (9 categories present; 2 command-count deltas vs checklist — Config shows 4 not 3, Bounties shows 5 not 4; checklist doc gap — recommend reconciliation during post-E2E cleanup alongside A.10)
    - **Admin — Setup** (3): `/admin_setup`, `/admin_uninstall`, `/admin_check` ✓ matches
    - **Admin — Players** (5): `/admin_player`, `/admin_give_item`, `/admin_give_ship`, `/admin_remove_item`, `/admin_remove_ship` ✓ matches
    - **Admin — Config** (3 predicted → actual **4**): `/admin_config`, `/admin_config_shop`, `/admin_config_validate` + 1 more (needs verification via `/admin_help category:Admin — Config`)
@@ -270,16 +274,16 @@ Validates the `/help` and `/admin_help` commands end-to-end as a discoverability
    - **Admin — Health** (2): `/ping`, `/health` ✓ matches
    - **Admin — Dev Tools** (2): `/load_data`, `/reload_autocomplete` ✓ matches
    - **Admin — Scheduler** (6): `/scheduler_list`, `/scheduler_view`, `/scheduler_update`, `/scheduler_delete`, `/admin_reset_scheduler`, `/admin_clear_scheduler` ✓ matches
-- [x] **2.5.11** `/admin_help category:Admin — Setup` — Detail embed lists the 3 setup commands with their parameters + descriptions. ✅ PASS 2026-04-21 (3 commands: `/admin_check`, `/admin_setup`, `/admin_uninstall`)
-- [x] **2.5.12** `/admin_help category:Admin — Scheduler` — Detail embed lists all 6 scheduler commands. **This is the key regression test** — earlier polish pass added the Scheduler mapping. ✅ PASS 2026-04-21 (all 6 commands: `/admin_clear_scheduler`, `/admin_reset_scheduler`, `/scheduler_delete`, `/scheduler_list`, `/scheduler_update`, `/scheduler_view`)
-- [x] **2.5.13** `/admin_help category:admin — scheduler` (lowercase) — Case-insensitive match, same as 2.5.12. ✅ PASS 2026-04-21 (identical to 2.5.12)
-- [x] **2.5.14** `/admin_help category:Scheduler` (short form, no "Admin — " prefix) — Behaviour: either resolves (if substring match is supported) OR returns the "Unknown category" error listing the 9 valid names. **Record which** — it documents the autocomplete/resolution contract. ✅ PASS 2026-04-21. **Contract: short form does NOT resolve; error message lists all 9 valid "Admin — *" full-form names.** This is a clean exact-match contract — no fuzzy/substring ambiguity.
-- [x] **2.5.15** `/admin_help category:nonsense` — Ephemeral "Unknown category…" error listing all 9 admin categories. ✅ PASS 2026-04-21
-- [x] **2.5.16** Open slash-menu autocomplete while typing `/admin_help ` — dropdown surfaces all 9 admin categories (not user categories). ✅ PASS 2026-04-21
+- [ ] **2.5.11** `/admin_help category:Admin — Setup` — Detail embed lists the 3 setup commands with their parameters + descriptions. ✅ PASS 2026-04-21 (3 commands: `/admin_check`, `/admin_setup`, `/admin_uninstall`)
+- [ ] **2.5.12** `/admin_help category:Admin — Scheduler` — Detail embed lists all 6 scheduler commands. **This is the key regression test** — earlier polish pass added the Scheduler mapping. ✅ PASS 2026-04-21 (all 6 commands: `/admin_clear_scheduler`, `/admin_reset_scheduler`, `/scheduler_delete`, `/scheduler_list`, `/scheduler_update`, `/scheduler_view`)
+- [ ] **2.5.13** `/admin_help category:admin — scheduler` (lowercase) — Case-insensitive match, same as 2.5.12. ✅ PASS 2026-04-21 (identical to 2.5.12)
+- [ ] **2.5.14** `/admin_help category:Scheduler` (short form, no "Admin — " prefix) — Behaviour: either resolves (if substring match is supported) OR returns the "Unknown category" error listing the 9 valid names. **Record which** — it documents the autocomplete/resolution contract. ✅ PASS 2026-04-21. **Contract: short form does NOT resolve; error message lists all 9 valid "Admin — *" full-form names.** This is a clean exact-match contract — no fuzzy/substring ambiguity.
+- [ ] **2.5.15** `/admin_help category:nonsense` — Ephemeral "Unknown category…" error listing all 9 admin categories. ✅ PASS 2026-04-21
+- [ ] **2.5.16** Open slash-menu autocomplete while typing `/admin_help ` — dropdown surfaces all 9 admin categories (not user categories). ✅ PASS 2026-04-21
 
 ### Cross-cutting
 
-- [x] **2.5.17** Confirm `/help` + `/admin_help` produce zero DB mutations during this phase:
+- [ ] **2.5.17** Confirm `/help` + `/admin_help` produce zero DB mutations during this phase:
    ```bash
    sudo docker exec bountybot-db psql -U bounty -d bountydb -c \
      "SELECT COUNT(*) AS audit_rows FROM admin_audit_logs WHERE action LIKE '%help%';"
@@ -292,9 +296,9 @@ Validates the `/help` and `/admin_help` commands end-to-end as a discoverability
 
 ### View your ships
 
-- [x] **3.1** `/ships` — ✅ Re-verified 2026-04-22 PM on Alt: Betty shown with 🟢 ACTIVE indicator, Ship ID 2, W:1/M:2/T:0 loadout summary. **A.28 re-verified closed.**
-- [~] **3.2** `/ship ship_id:<your_betty_id>` — ✅ Re-verified 2026-04-22 PM on Alt (ship_id:2): shows Nirai Impulse EX 1 in Weapons, E2 Exoclad + Telta Quickscan in Modules. **A.28 closed.** **A.34a/b/c remain OPEN** — plus new **B.3** observation: embed shows `Type: Betty` (should be `Class:` or omitted since title already shows ship name).
-- [~] **3.3** `/nickname ship_id:<your_ship_id> nickname:MyBetty` — Sets custom nickname; visible in `/ships` *(Reset 2026-04-22 post-wipe; A.34c remains OPEN — same helper as A.34a)*
+- [ ] **3.1** `/ships` — ✅ Re-verified 2026-04-22 PM on Alt: Betty shown with 🟢 ACTIVE indicator, Ship ID 2, W:1/M:2/T:0 loadout summary. **A.28 re-verified closed.**
+- [ ] **3.2** `/ship ship_id:<your_betty_id>` — ✅ Re-verified 2026-04-22 PM on Alt (ship_id:2): shows Nirai Impulse EX 1 in Weapons, E2 Exoclad + Telta Quickscan in Modules. **A.28 closed.** **A.34a/b/c remain OPEN** — plus new **B.3** observation: embed shows `Type: Betty` (should be `Class:` or omitted since title already shows ship name).
+- [ ] **3.3** `/nickname ship_id:<your_ship_id> nickname:MyBetty` — Sets custom nickname; visible in `/ships` *(Reset 2026-04-22 post-wipe; A.34c remains OPEN — same helper as A.34a)*
 - [ ] **3.4** `/nickname ship_id:<your_ship_id> nickname:<51+ char string>` — Error: nickname too long *(Reset 2026-04-22 post-wipe)*
 
 ### Set active ship (tested after buying a second ship in Phase 4)
@@ -308,30 +312,30 @@ Validates the `/help` and `/admin_help` commands end-to-end as a discoverability
 
 ### Browse all shops
 
-- [x] **4.1** `/shops` — *(2026-04-27 verified on Alt: Total 51 items, Bronze 12/32 🔓, Silver 11/28 🔒, Gold 16/42 🔒, Platinum 12/30 🔒. All counts match DB GROUP BY tier. Lock/unlock indicators correct for Alt's Bronze tier.)*
-- [x] **4.2** `/shop tier:Bronze` — *(2026-04-27: B.6 fully closed. All sections render with proper spacing: "Primary Weapons", "Turret Weapons", "Modules". 12-item Bronze shop displayed correctly post-`823c13d` discord-gateway latent .title() fixes.)*
-- [x] **4.3** `/shop tier:Silver` — ✅ Re-verified 2026-04-22 PM: "🔒 You need to be Silver tier to access this shop. Your current tier: Bronze" — tier gate works correctly.
-- [x] **4.4** `/shop tier:Gold` (and Platinum) — ✅ Re-verified 2026-04-22 PM: both higher-tier shops correctly return tier-gate errors for Bronze player. 4-tier gating (including new Platinum) fully working.
+- [ ] **4.1** `/shops` — *(2026-04-27 verified on Alt: Total 51 items, Bronze 12/32 🔓, Silver 11/28 🔒, Gold 16/42 🔒, Platinum 12/30 🔒. All counts match DB GROUP BY tier. Lock/unlock indicators correct for Alt's Bronze tier.)*
+- [ ] **4.2** `/shop tier:Bronze` — *(2026-04-27: B.6 fully closed. All sections render with proper spacing: "Primary Weapons", "Turret Weapons", "Modules". 12-item Bronze shop displayed correctly post-`823c13d` discord-gateway latent .title() fixes.)*
+- [ ] **4.3** `/shop tier:Silver` — ✅ Re-verified 2026-04-22 PM: "🔒 You need to be Silver tier to access this shop. Your current tier: Bronze" — tier gate works correctly.
+- [ ] **4.4** `/shop tier:Gold` (and Platinum) — ✅ Re-verified 2026-04-22 PM: both higher-tier shops correctly return tier-gate errors for Bronze player. 4-tier gating (including new Platinum) fully working.
 
 ### Purchase items
 
-- [x] **4.5** `/buy item_id:<affordable_item_id> quantity:1` — *(2026-04-27: Three buys verified on Alt — Linear Boost 5,704 (Module), Luna EMP Mk I 5,942 (Primary Weapon), 2x M6 A4 "Raccoon" 1,105,494 (Primary Weapon). All embeds render Item Type with proper spacing post-`823c13d`. Buy embed credits MATCH DB (buy path uses local var — no doubling bug, unlike /sell).)*
-- [x] **4.6** `/profile` — *(2026-04-27 verified twice on Alt: credits 993,837,989 post-/sell then 992,732,495 post-/buy 1,105,494. Both match DB exactly. Tier displays "Bronze" cleanly. Note: profile credits show DB truth, NOT the inflated value the buggy `/sell` embed displayed — confirms response-body bug isolated to /sell embed only.)*
-- [x] **4.7** `/inventory` — *(2026-04-27 verified on Alt: shows "Modules (1) Linear Boost", "Primary Weapons (1) Luna EMP Mk I" with correct field name spacing post-`823c13d`. Total Items: 2, summary line "Ships: 0 | Weapons: 1 | Modules: 1 | Turrets: 0" correct.)*
+- [ ] **4.5** `/buy item_id:<affordable_item_id> quantity:1` — *(2026-04-27: Three buys verified on Alt — Linear Boost 5,704 (Module), Luna EMP Mk I 5,942 (Primary Weapon), 2x M6 A4 "Raccoon" 1,105,494 (Primary Weapon). All embeds render Item Type with proper spacing post-`823c13d`. Buy embed credits MATCH DB (buy path uses local var — no doubling bug, unlike /sell).)*
+- [ ] **4.6** `/profile` — *(2026-04-27 verified twice on Alt: credits 993,837,989 post-/sell then 992,732,495 post-/buy 1,105,494. Both match DB exactly. Tier displays "Bronze" cleanly. Note: profile credits show DB truth, NOT the inflated value the buggy `/sell` embed displayed — confirms response-body bug isolated to /sell embed only.)*
+- [ ] **4.7** `/inventory` — *(2026-04-27 verified on Alt: shows "Modules (1) Linear Boost", "Primary Weapons (1) Luna EMP Mk I" with correct field name spacing post-`823c13d`. Total Items: 2, summary line "Ships: 0 | Weapons: 1 | Modules: 1 | Turrets: 0" correct.)*
 
 ### Purchase error cases
 
-- [~] **4.8** `/buy item_id:<expensive_item_id>` — *(2026-04-27 partially verified on Alt: requested qty 5 of M6 A4 "Raccoon" with stock=2 → "❌ Insufficient stock! Available: 2 | Requested: 5". Stock validation works. Insufficient-credits path NOT YET exercised — Alt has 992M credits and no Bronze shop item costs > 992M. Defer to a phase where Alt has reduced credits, or via admin credit reduction.)*
-- [x] **4.9** `/buy item_id:999999` — *(2026-04-27 verified on Alt: "❌ Item not found in shop.")*
+- [ ] **4.8** `/buy item_id:<expensive_item_id>` — *(2026-04-27 partially verified on Alt: requested qty 5 of M6 A4 "Raccoon" with stock=2 → "❌ Insufficient stock! Available: 2 | Requested: 5". Stock validation works. Insufficient-credits path NOT YET exercised — Alt has 992M credits and no Bronze shop item costs > 992M. Defer to a phase where Alt has reduced credits, or via admin credit reduction.)*
+- [ ] **4.9** `/buy item_id:999999` — *(2026-04-27 verified on Alt: "❌ Item not found in shop.")*
 
 ### Sell items
 
-- [~] **4.10** `/sell item:<owned_item> quantity:1` — *(2026-04-27 verified on Alt: 64MJ Railgun sold for 15,343 — A.42 + A.44 closed end-to-end in Discord. Item Type renders "Primary Weapon" with space (B.6 closed). HOWEVER: response embed showed New Credits = 993,853,332 but DB showed 993,837,989 (off by exactly +15,343 = one extra sale price). DOUBLED-CREDITS BUG: shop_service.sell_item:514 read player.credits + total_sell_value AFTER update_credits() refreshed the identity-mapped instance. Refactored in commit `c8b5fef` (Option B — Core UPDATE → ORM setattr). **Stack rebuilt 2026-04-28 — fix now live; awaiting Discord re-test to confirm embed credits match DB exactly.**)*
-- [x] **4.11** `/sell item_name:<item_you_dont_own>` — *(2026-04-27 verified on Alt: "❌ Item '<not-owned>' not found in player 2's inventory". Functional. Cosmetic observation: error leaks numeric player_id (2) — could read "in your inventory" instead. Logged as B.7.)*
+- [ ] **4.10** `/sell item:<owned_item> quantity:1` — *(2026-04-27 verified on Alt: 64MJ Railgun sold for 15,343 — A.42 + A.44 closed end-to-end in Discord. Item Type renders "Primary Weapon" with space (B.6 closed). HOWEVER: response embed showed New Credits = 993,853,332 but DB showed 993,837,989 (off by exactly +15,343 = one extra sale price). DOUBLED-CREDITS BUG: shop_service.sell_item:514 read player.credits + total_sell_value AFTER update_credits() refreshed the identity-mapped instance. Refactored in commit `c8b5fef` (Option B — Core UPDATE → ORM setattr). **Stack rebuilt 2026-04-28 — fix now live; awaiting Discord re-test to confirm embed credits match DB exactly.**)*
+- [ ] **4.11** `/sell item_name:<item_you_dont_own>` — *(2026-04-27 verified on Alt: "❌ Item '<not-owned>' not found in player 2's inventory". Functional. Cosmetic observation: error leaks numeric player_id (2) — could read "in your inventory" instead. Logged as B.7.)*
 
 ### Now complete Phase 3 ship management
 
-- [~] **4.12** *(If a second ship was purchased)* Return to **3.5** and **3.6** to test `/setactive` — *(2026-04-27 partially verified on Alt: `/setactive ship_id:3` set Cormorant active. DB confirms ship_id=3 is_active=true, ship_id=4 (Ghost) is_active=false, players.active_ship_id=3. Embed shows "🟢 Active" status. **Observation O.1**: autocomplete dropdown did not populate when invoking — user manually typed "3". Bot-core API responded correctly in ~6ms with both ships; cause likely Discord client-side caching or silent exception in cog autocomplete helper. Logged O.1 for investigation.)*
+- [ ] **4.12** *(If a second ship was purchased)* Return to **3.5** and **3.6** to test `/setactive` — *(2026-04-27 partially verified on Alt: `/setactive ship_id:3` set Cormorant active. DB confirms ship_id=3 is_active=true, ship_id=4 (Ghost) is_active=false, players.active_ship_id=3. Embed shows "🟢 Active" status. **Observation O.1**: autocomplete dropdown did not populate when invoking — user manually typed "3". Bot-core API responded correctly in ~6ms with both ships; cause likely Discord client-side caching or silent exception in cog autocomplete helper. Logged O.1 for investigation.)*
 
 ---
 
@@ -339,11 +343,11 @@ Validates the `/help` and `/admin_help` commands end-to-end as a discoverability
 
 ### View inventory
 
-- [x] **5.1** `/inventory` — *(2026-04-27 verified on Alt during Phase 4.7: shows Modules (1) and Primary Weapons (1) with proper field-name spacing. Summary "Ships: 0 | Weapons: 1 | Modules: 1 | Turrets: 0" aggregates correctly. D1 + A.43 + A.46 all closed end-to-end. See test 4.7 for full embed text.)*
-- [x] **5.2** `/inventory item_type:<concrete>` — *(2026-04-27 verified on Alt with `item_type:Primary Weapon`: shows filtered "Primary Weapons (2)" section with Luna EMP Mk I + M6 A4 "Raccoon" x2; summary line "Total Items: 4" (full inventory) and bucket counts "Ships: 0 | Weapons: 3 | Modules: 1 | Turrets: 0" still aggregate over full inventory. A.46 cog choice migration verified live.)*
-- [x] **5.3** `/search query:Micro` — *(2026-04-27 verified on Alt: "🔍 No items found matching 'Micro'" — correct. Per-player scope works (Main has Micro Gun MK I, Alt does not). Empty-results path verified. Note: A.46 .title() fix on field name not actually exercised because search returned zero results — per-bucket field rendering will be exercised when search has hits.)*
+- [ ] **5.1** `/inventory` — *(2026-04-27 verified on Alt during Phase 4.7: shows Modules (1) and Primary Weapons (1) with proper field-name spacing. Summary "Ships: 0 | Weapons: 1 | Modules: 1 | Turrets: 0" aggregates correctly. D1 + A.43 + A.46 all closed end-to-end. See test 4.7 for full embed text.)*
+- [ ] **5.2** `/inventory item_type:<concrete>` — *(2026-04-27 verified on Alt with `item_type:Primary Weapon`: shows filtered "Primary Weapons (2)" section with Luna EMP Mk I + M6 A4 "Raccoon" x2; summary line "Total Items: 4" (full inventory) and bucket counts "Ships: 0 | Weapons: 3 | Modules: 1 | Turrets: 0" still aggregate over full inventory. A.46 cog choice migration verified live.)*
+- [ ] **5.3** `/search query:Micro` — *(2026-04-27 verified on Alt: "🔍 No items found matching 'Micro'" — correct. Per-player scope works (Main has Micro Gun MK I, Alt does not). Empty-results path verified. Note: A.46 .title() fix on field name not actually exercised because search returned zero results — per-bucket field rendering will be exercised when search has hits.)*
 - [ ] **5.4** `/search query:nonexistent` — No results message
-- [~] **5.5** `/item item_name:Micro Gun MK I item_type:Weapon` — ✅ Re-verified 2026-04-22 PM on Alt: "📦 Micro Gun MK I / Type: Weapon / Quantity Owned: 1 / Status: ✅ Owned". **A.36 closed.** **But A.39 surfaced**: mismatched `item_type` (e.g. specifying Ship for a weapon) returns "Not Owned" rather than helpful cross-type error. User deferred A.39 to post-release (remove `item_type` param + use item emoji in title).
+- [ ] **5.5** `/item item_name:Micro Gun MK I item_type:Weapon` — ✅ Re-verified 2026-04-22 PM on Alt: "📦 Micro Gun MK I / Type: Weapon / Quantity Owned: 1 / Status: ✅ Owned". **A.36 closed.** **But A.39 surfaced**: mismatched `item_type` (e.g. specifying Ship for a weapon) returns "Not Owned" rather than helpful cross-type error. User deferred A.39 to post-release (remove `item_type` param + use item emoji in title).
 
 ### Equip weapons/modules
 
@@ -659,27 +663,29 @@ These can be tested at any point after Phase 1.
 
 ## Test Results Summary
 
+**RESET 2026-04-28** — Full re-test required from Phase 0. Reason: defect-remediation cycle landing ~25 fixes across nearly every cog and service, including B.19 architectural overhaul of player_service starter loadout, shop_service.purchase_ship, prestige flow, ships.py equip/unequip transactional boundaries, and set_active_ship reconciliation. Full DB nuke + re-test from square 1 is the proper validation strategy. All previously-passed test items reset to pending.
+
 | Phase | Total | Passed | Partial | Pending | Notes |
 |-------|-------|--------|---------|---------|-------|
-| 0 — Stack Health | 4 | 4 | 0 | 0 | All passed |
-| 0.5 — Pre-Registration Edge Cases | 8 | 7 | 1 | 0 | A.25 partial (deferred low-priority error-text fix) |
-| 1 — Setup, Channels & Registration | 15 | 14 | 1 | 0 | 1 partial item; 1 needs `[2P]` |
-| 1.5 — Non-Admin Permission Denials | 10 | 0 | 1 | 9 | A.20 (/ping) partial; rest pending Alt re-walk |
-| 2 — Game Data | 14 | 13 | 1 | 0 | A.31/A.32 sub-items partial |
-| 2.5 — Help Discoverability | 17 | 17 | 0 | 0 | All passed |
-| 3 — Ship Management | 6 | 1 | 2 | 3 | 2 deferred to after Phase 4 |
-| 4 — Shop | 12 | 9 | 3 | 0 | 4.10 (c8b5fef deployed, awaiting re-verify), 4.8 + 4.12 partial |
-| 5 — Inventory & Equipment | 15 | 3 | 1 | 11 | 5.6 + 5.10 deployed (3e73940), awaiting Discord re-verify; 5.7–5.15 untested |
-| 6 — Progression & Tiers | 17 | 0 | 0 | 17 | ALL need `[ADMIN]` — untested |
-| 7 — Bounty Hunting | 17 | 0 | 0 | 17 | 2 need `[2P]`, 1 needs `[WAIT]` |
-| 8 — Dueling | 11 | 0 | 0 | 11 | ALL need `[2P]` |
-| 9 — Scheduler Administration | 6 | 0 | 0 | 6 | ALL need `[ADMIN]` |
-| 10 — Dev Tools | 3 | 0 | 0 | 3 | ALL need `[ADMIN]` |
-| 11 — Scheduled Jobs | 6 | 0 | 0 | 6 | 1 needs `[2P]`; some shortcuts available |
-| 11.5 — Invalid Input Edge Cases | 5 | 0 | 0 | 5 | |
-| 12 — Admin Ops & Audit | 26 | 0 | 0 | 26 | ALL need `[ADMIN]` |
+| 0 — Stack Health | 4 | 0 | 0 | 4 | RESET — full re-test required |
+| 0.5 — Pre-Registration Edge Cases | 8 | 0 | 0 | 8 | RESET |
+| 1 — Setup, Channels & Registration | 15 | 0 | 0 | 15 | RESET; 1 needs `[2P]` |
+| 1.5 — Non-Admin Permission Denials | 10 | 0 | 0 | 10 | RESET; A.20 closed (Discord-side, not code) |
+| 2 — Game Data | 14 | 0 | 0 | 14 | RESET |
+| 2.5 — Help Discoverability | 17 | 0 | 0 | 17 | RESET |
+| 3 — Ship Management | 6 | 0 | 0 | 6 | RESET — covers B.19 fixes |
+| 4 — Shop | 12 | 0 | 0 | 12 | RESET — covers B.19 + B.31a fixes |
+| 5 — Inventory & Equipment | 15 | 0 | 0 | 15 | RESET — covers B.19 + B.2 fixes |
+| 6 — Progression & Tiers | 17 | 0 | 0 | 17 | RESET — covers B.17 fix |
+| 7 — Bounty Hunting | 17 | 0 | 0 | 17 | RESET — covers B.23 + B.24 + B.25 fixes |
+| 8 — Dueling | 11 | 0 | 0 | 11 | RESET; ALL `[2P]` |
+| 9 — Scheduler Administration | 6 | 0 | 0 | 6 | RESET — covers B.27/B.28/B.29/B.30 fixes |
+| 10 — Dev Tools | 3 | 0 | 0 | 3 | RESET |
+| 11 — Scheduled Jobs | 6 | 0 | 0 | 6 | RESET — covers B.23 reliability fixes |
+| 11.5 — Invalid Input Edge Cases | 5 | 0 | 0 | 5 | RESET |
+| 12 — Admin Ops & Audit | 26 | 0 | 0 | 26 | RESET — covers B.31a + B.32 + B.31b fixes |
 | DEFERRED — Skins & Rendering | (15) | — | — | — | Requires blender-service + GPU; excluded from active count |
-| **TOTAL (active)** | **192** | **68** | **10** | **114** | ~35% complete; remaining concentrated in Phases 5.7+, 6, 8–12 |
+| **TOTAL (active)** | **192** | **0** | **0** | **192** | 0% — full re-test pending fix-cycle completion |
 
 ### Tests requiring a second Discord user: ~15
 `1.13, 7.16, 7.17, 8.1–8.11, 11.4, 11.6`

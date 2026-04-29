@@ -11,6 +11,13 @@ Cross-ref: `E2E_TEST_CHECKLIST.md` (test-item references). All commit SHAs are l
 
 ## OPEN
 
+> **Status snapshot (2026-04-29 post-Patch I + lint cleanup)**: All Package A–G + Patch H + Patch I fixes have landed and unit tests pass. Every entry in the OPEN section below carries one of:
+> - `> **FIXED** in commit ...` annotation → fix committed, awaits live re-verification under DB-nuke E2E pass
+> - `RETROACTIVELY CLOSED` header → already correct in HEAD or won't-fix-from-code (A.20, O.2)
+> - No FIXED banner → genuinely unresolved (currently only **O.1**, intermittent `/setactive` autocomplete awaiting diagnostic reproduction)
+>
+> Items marked FIXED here are also summarized in the **FIXED** table at the bottom with their `Verified` column. `Verified: pending` will flip to `✅ live <date>` as the live re-verification pass walks each affected E2E phase.
+
 ### B.32 — `/render_config action:set setting:samples` silently accepts unrecognized field name
 🟡 medium · Phase 12.16 · 2026-04-28
 > **FIXED** in commit `8860c5a` (Package C, 2026-04-29). Fix A: cog validates `setting` against `self._render_settings` before API call (adminCog.py); returns ephemeral error listing valid settings. Fix B: blender-service router raises 422 when no valid `RenderConfig` fields appear in the update payload (config.py defense-in-depth).
@@ -1106,6 +1113,7 @@ Not surgical (3+ independent code sites); not full architectural overhaul (the d
 
 ### B.18 — `/leaderboard tier:X` empty-result message omits tier filter context
 🔵 low · Phase 6.17 · 2026-04-28
+> **FIXED** in commit `1f3561d` (Package D, 2026-04-29). Conditional empty-state message now reads `f"📭 No {tier}-tier players found in this guild."` when `tier` parameter is set.
 
 **Environment**: dev guild `1490693399307616276`, Main account, post-rebuild stack.
 
@@ -1301,6 +1309,7 @@ See companion detail: `/proj/recon/B17-recon.md`
 
 ### B.2 — `player_ships.secondary_weapons` is `NULL` not `[]` on starter Betty
 🔵 low · Phase 3.11 · 2026-04-28
+> **FIXED** in commit `1f3561d` (Package D, 2026-04-29). Added `"secondary_weapons": []` to `starter_ship_data` dict in `_create_starter_loadout()` (`player_service.py:124`); regression test asserts `secondary_weapons == []` (not None/missing).
 
 **Environment**: dev guild `1490693399307616276`, Main account, post-rebuild stack. Any new player at account creation.
 
@@ -1355,6 +1364,7 @@ starter_ship_data = {
 
 ### B.4 — `/equip` swap-confirmation dropdown lacks "select to swap" affordance
 🔵 low · Phase 3.7 · 2026-04-28 REDO
+> **FIXED** in commit `1f3561d` (Package D, 2026-04-29). Added `description="Swap this item out"` to each `discord.SelectOption` in `WeaponSwapView` (`inventoryCog.py:69-72`).
 
 **Environment**: dev guild `1490693399307616276`, Main account, post-rebuild stack.
 
@@ -1587,6 +1597,7 @@ Tests do **NOT** validate:
 
 ### B.3 — `/ship` embed redundant `Type: Betty` field
 🔵 low · Phase 3.3 · 2026-04-28
+> **FIXED** in commit `1f3561d` (Package D, 2026-04-29). Subsumed by A.34b — same `embed.add_field(name="Type", ...)` line removed in the A.34 fix.
 
 **Environment**: dev guild `1490693399307616276`, Main account, post-rebuild stack.
 
@@ -1911,6 +1922,7 @@ Rationale:
 
 ### A.10 — Checklist 1.1 undercounts roles + channels (doc-only)
 ℹ️ info · Phase 1.1 · 2026-04-28
+> **FIXED** in commit `1f3561d` (Package D, 2026-04-29). E2E_TEST_CHECKLIST.md Appendix B updated with all 8 channels (incl. `#platinum-bounties`) and all 6 roles (5 player-facing + 1 admin); item 1.2 corrected from "all 7 text channels" to "8 channels"; "BountyBot Admins" → "BountyBot Admin" naming corrected.
 
 **Context**: This is a **documentation issue**, not a code bug. The E2E_TEST_CHECKLIST.md item 1.1 specifies expected artifact counts from `/admin_setup`, but the actual count may differ.
 
@@ -2192,6 +2204,7 @@ Alternative: Use a factory/fixture that builds realistic preload objects includi
 
 ### A.30 — Gateway list endpoints return `category_id: null` on child channels
 🔵 low · Phase 1.1 · 2026-04-22
+> **FIXED** in commit `1f3561d` (Package D, 2026-04-29). Added `category_id=getattr(channel, "category_id", None)` to `channel_to_summary()` return; 2 regression tests assert child channels populate `category_id`.
 
 `GET /guilds/{gid}/channels` and `GET /categories/{cat_id}/channels` return `category_id: null` for every BountyBot child channel. Single-fetch `GET /channels/{id}` returns the correct value. No runtime impact (internal callers use `guild_configs.*_channel_id`).
 
@@ -2277,6 +2290,7 @@ This mirrors the detail method's line 125 exactly.
 
 ### A.34 — `/ship` and `/nickname` styling/UX gaps
 🔵 low · Phase 3.2/3.3 · 2026-04-22
+> **FIXED** in commit `1f3561d` (Package D, 2026-04-29). Added `show_active_indicator: bool = True` parameter to `player_ships_autocomplete()`; `/ship` and `/nickname` callers pass `False` (suppresses 🟢 prefix). Removed redundant `embed.add_field(name="Type", ...)` from inline `/ship` embed builder (subsumes B.3). Full delegation to `build_loadout_embed()` deferred (response-shape mismatch between `/ships/{id}/loadout` and `/players/{id}/loadout`).
 
 Three sub-issues, same surface area:
 - **a** — `/ship` autocomplete dropdown shows literal `🟢` prefix from `player_ships_autocomplete` (active-ship marker leaks into selection list)
@@ -2400,6 +2414,7 @@ Defer to developer — requires understanding the exact signature and behavior o
 
 ### A.32 — `Mp'zzzm Thrust` module renders custom emoji `:mpzzzm:` without guild emoji upload
 🔵 low · Phase 2.9 · 2026-04-22
+> **FIXED** in commit `1f3561d` (Package D, 2026-04-29). Replaced `<:mpzzzm:723707097778225214>` with unicode `⚡` in `import_data/module/thrusters/mpzzzm_thrust.json`.
 
 Single-row data gap: 1 of 66 modules. The `Mp'zzzm Thrust` module seed data specifies a custom Discord emoji reference `<:mpzzzm:723707097778225214>`, but the custom emoji is not uploaded to the guild.
 
@@ -2462,6 +2477,7 @@ Seed data emoji inventory:
 
 ### A.25 — `/unregister` on unconfigured guild shows generic error
 🔵 low · Phase 0.5.3 · 2026-04-20
+> **FIXED** in commit `1f3561d` (Package D, 2026-04-29). Added explicit `except httpx.HTTPStatusError` branch before broad `except Exception`; calls existing `_is_guild_not_configured()` helper and emits `_GUILD_NOT_CONFIGURED_MSG` when applicable.
 
 Alt account in unconfigured guild gets `⚠️ An error occurred while removing the role.` because `playerCog./unregister` does `GET /api/v1/config/guild/{id}` which returns 400 (not configured) → broad `except` swallows.
 
@@ -2675,4 +2691,4 @@ Many tests exceed project's "max 2 mocks per test" standard (`AGENTS.md`). Sever
 
 ---
 
-*Last updated: 2026-04-29 — Patch I QA hardening: C.1 (B.32 guard fail-closed), Cross-1 (B.25 @is_admin() scope), E.1 (autocomplete cache TOCTOU comment + test), E.2 (B.26 tier-resolution WARNING), F.1 (B.31b sanitizer extended to bare hostnames + IPv4)*
+*Last updated: 2026-04-29 — added inline FIXED annotations to 9 OPEN entries that were already in the FIXED table (B.18, B.2, B.4, B.3, A.10, A.30, A.34, A.32, A.25); added top-of-OPEN status snapshot. Patch I QA hardening (earlier today): C.1 (B.32 guard fail-closed), Cross-1 (B.25 @is_admin() scope), E.1 (autocomplete cache TOCTOU comment + test), E.2 (B.26 tier-resolution WARNING), F.1 (B.31b sanitizer extended to bare hostnames + IPv4).*

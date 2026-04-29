@@ -2723,7 +2723,7 @@ Effort estimate: 20–60 agent-hours, deferred until after Tier 1–2.
 4. Defer Tier 3 until Tier 1–2 complete.
 
 **Status**
-- Tier 1 critical 4 files: **in-flight** as B.33 fix (separate developer dispatch, 2026-04-29).
+- Tier 1 critical 4 files: **preload tests fixed under B.33** (commits `9a19909`, `645c474`, `51c0bb5`, `169b0e4`); command-path tests (~24K LOC across 22 files) still pending.
 - Tier 2 + 3: still deferred, no agent dispatched.
 
 **Cross-references**: B.33 (proven consequence), NC-002 / NC-003 (prior-session non-compliance findings).

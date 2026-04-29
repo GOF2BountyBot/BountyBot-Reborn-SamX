@@ -314,6 +314,28 @@ class TestPreloadData:
         # Module objects should be empty list (fallback on HTTP error)
         assert mock_about_cog._objects_by_category["module"] == []
 
+    def test_preload_data_network_error(self, mock_about_cog, request):
+        """_preload_data handles network-level ConnectError gracefully
+        (resets to empty without raising) — restores coverage lost when old
+        ConnectError test was replaced in the B.33 respx conversion."""
+        import httpx
+        import respx
+
+        self._with_real_client(mock_about_cog, request)
+        mock_about_cog.bot.wait_until_ready = AsyncMock()
+
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.get(f"{self._API_BASE}/about/categories").mock(
+                side_effect=httpx.ConnectError("connection refused")
+            )
+
+            # Should not raise — failure is caught internally
+            asyncio.run(mock_about_cog._preload_data())
+
+        # On network error, categories should be reset to empty
+        assert mock_about_cog._categories == []
+        assert mock_about_cog._objects_by_category == {}
+
 
 # ---------------------------------------------------------------------------
 # category_autocomplete

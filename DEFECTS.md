@@ -156,7 +156,7 @@ if str(response_config.get(setting)) != str(value):
 ### B.31 — `/admin_config action:Reset to Defaults` returns 500; user sees raw bot-core URL
 🟠 high · Phase 12.5 · 2026-04-28
 > **B.31a FIXED** in commit `360287b` (Package A, 2026-04-29). `cascade="all, delete-orphan"` added to `GuildConfig.shops` relationship. No migration needed.
-> **B.31b** (URL leak across 53 cog error handlers) — DEFERRED to Package F.
+> **B.31b FIXED** in commit `a35aa7c` (Package F, 2026-04-29). Centralized `report_api_error(interaction, exc, *, action_label=None, detail_override=None)` helper added at `services/discord-gateway/src/cogs/_shared/http_error_handler.py` and applied to all 53 sites across 9 cogs. Helper sanitizes (strips internal URLs and httpx MDN-link lines, collapses whitespace, truncates at 1000 chars), maps status codes to friendly canned messages with severity-based emoji/color, surfaces FastAPI `{"detail": ...}` bodies (string + Pydantic-list shapes), and is race-safe via `contextlib.suppress(discord.HTTPException)`. Pre-existing specialized branches (404 specials in `schedulerCog`, `_is_guild_not_configured` checks, B.28 validation-failure sends, duelCog 400 detail extraction) preserved verbatim — only the bare "everything-else" `f"❌ API Error: {e}"` line was replaced. 15 helper unit tests + 9 cog integration tests assert the embed-based output is free of `bot-core` / `http://` leaks.
 
 **Environment**: dev guild `1490693399307616276`, Main account, post-rebuild stack.
 
@@ -2614,6 +2614,7 @@ Many tests exceed project's "max 2 mocks per test" standard (`AGENTS.md`). Sever
 | **B.23b** | `run_stale_state_recovery_sweep()` marked stale bounties expired in DB but never deleted Discord announcements (zombie messages). Fixed: collect stale bounty refs before bulk UPDATE, call `_delete_bounty_announcement` for each after commit. | `360287b` | pending |
 | **B.30** | `PUT /api/v1/jobs/{job_id}` silently wiped job payload when request body used wrong field name. Fixed: `ConfigDict(extra="forbid")` on `UpdateJob` schema; wrong-field body → 422 before APScheduler. | `360287b` | pending |
 | **B.31a** | `POST /config/guild/{id}/reset` returned 500 NOT NULL violation when `guild_shops` had rows. Fixed: `cascade="all, delete-orphan"` on `GuildConfig.shops` relationship (ORM-side only, no migration). | `360287b` | pending |
+| **B.31b** | `f"❌ API Error: {e}"` pattern across 53 sites in 9 cogs leaked internal `http://bot-core:8000/...` URL + httpx MDN link to end users. Fixed: new `report_api_error()` helper at `cogs/_shared/http_error_handler.py` produces sanitized status-aware embeds; 53 sites migrated; pre-existing specialized branches (404 specials, guild-not-configured, B.28 validation, duelCog 400-detail) preserved verbatim. 15 unit + 9 integration tests added. | `a35aa7c` | pending |
 | **O.2** | `/scheduler_view`/`/scheduler_update`/`/scheduler_delete` `job_id` autocomplete (verified retroactively present in HEAD per cycle-8 recon: `schedulerCog.py:35-54` + line 140/221/300) | (already in HEAD) | live (verified read-only) |
 | **B.14-sibling** | Stale-respawn recovery sweep for `status='escaped'` past `respawn_time` | `815cd59` | ✅ live 2026-04-28 |
 | **B.14** | Bounty/duel listing time filter + startup recovery sweep (12 stale bounties expired on first boot) | `db79c60` | ✅ live 2026-04-28 |

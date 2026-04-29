@@ -13,6 +13,7 @@ Cross-ref: `E2E_TEST_CHECKLIST.md` (test-item references). All commit SHAs are l
 
 ### B.32 — `/render_config action:set setting:samples` silently accepts unrecognized field name
 🟡 medium · Phase 12.16 · 2026-04-28
+> **FIXED** in commit `8860c5a` (Package C, 2026-04-29). Fix A: cog validates `setting` against `self._render_settings` before API call (adminCog.py); returns ephemeral error listing valid settings. Fix B: blender-service router raises 422 when no valid `RenderConfig` fields appear in the update payload (config.py defense-in-depth).
 
 **Environment**: dev guild `1490693399307616276`, post-rebuild stack, blender-service `/api/v1/config/render`.
 
@@ -783,6 +784,7 @@ The predicate function creates a **fresh `httpx.AsyncClient`** on every invocati
 
 ### B.24 — `/route` output does not visually highlight "Recently Spotted" system
 🔵 low · Phase 7.6 · 2026-04-28
+> **FIXED** in commit `8860c5a` (Package C, 2026-04-29). API: added `system_statuses` field to `GET /bounties/{id}/route` response (computed server-side via `_project_checked()` with `"found"` masked to `"checked"` to prevent answer leakage). Cog: updated `/route` embed builder to render 3-state markdown — `recently_spotted` → `**~~system~~** 🔍`, `checked` → `~~system~~ ✅`, unchecked → plain.
 
 **Environment**: dev guild `1490693399307616276`, Main account, post-rebuild stack.
 
@@ -2073,6 +2075,7 @@ Upgraded from 🔵 low. Rationale: `/buy` is the highest-traffic user-facing com
 
 ### A.31 — `/list_category ... tech_level:N` and `manufacturer:` filters always return empty
 🟡 medium · Phase 2.12 · 2026-04-22
+> **FIXED** in commit `8860c5a` (Package C, 2026-04-29). Added `tech_level` and `manufacturer` fields to `list_objects_for_category()` preload response in `about.py:102-109` using `getattr(obj, field, None)`. Both cog filters (`aboutCog.py:369-373`) already used correct `.get()` logic — they only needed the data to be present.
 
 **Root cause**: `/list_category` filters are applied client-side in the cog, but the preloaded object data is missing the required filter fields.
 
@@ -2589,6 +2592,9 @@ Many tests exceed project's "max 2 mocks per test" standard (`AGENTS.md`). Sever
 
 | ID | Summary | Commit | Verified |
 |---|---|---|---|
+| **B.32** | `/render_config action:set` silently accepted unrecognized field (cog reported ✅ on HTTP 200 without verifying mutation). Fixed: (A) cog validates `setting` against `self._render_settings` before API call; (B) blender-service router raises 422 when update payload contains no valid `RenderConfig` fields. | `8860c5a` | pending |
+| **B.24** | `/route` embed rendered "recently spotted" systems identically to plain-checked (binary ~~strikethrough~~). Fixed: API adds `system_statuses` field computed server-side (`_project_checked()`, `"found"` masked); cog uses 3-state rendering (`**~~spotted~~** 🔍`, `~~checked~~ ✅`, plain). | `8860c5a` | pending |
+| **A.31** | `/list_category tech_level:N` and `manufacturer:` filters always returned empty. Fixed: add `tech_level` + `manufacturer` to preload response shape in `about.py:102-109`; cog filters already correct, only needed data present. | `8860c5a` | pending |
 | **B.29** | `/scheduler_*` cron trigger display stripped asterisks (Discord markdown consumed `*` as italic delimiters). Fixed: wrap trigger strings in backticks in `scheduler_list` and `scheduler_view` embed fields (`schedulerCog.py`). | `ec42c4d` | pending |
 | **B.28** | `/scheduler_update` with invalid JSON showed doubled response ("This interaction failed" + actual error). Fixed: move `json.loads` validation before `defer()`; use `response.send_message()` for sync error path (`schedulerCog.py`). | `ec42c4d` | pending |
 | **B.27** | `/scheduler_view` with nonexistent `job_id` showed raw "This interaction failed" (no user-visible error). Fixed: add `else: with suppress(Exception): followup.send(...)` branch to all 6 scheduler error handlers (`schedulerCog.py`). | `ec42c4d` | pending |

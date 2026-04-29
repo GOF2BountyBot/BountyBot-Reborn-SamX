@@ -215,3 +215,7 @@ old-refs
 scripts/
 benchmarking/
 kv-quant-benchmarks.zip
+node_modules/
+package.json
+package-lock.json
+activity.md

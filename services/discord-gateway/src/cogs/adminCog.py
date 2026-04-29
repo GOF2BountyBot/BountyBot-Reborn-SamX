@@ -117,10 +117,12 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
     @app_commands.command(name="admin_check", description="[ADMIN] Check if a user has bot-admin rights and why")
     @app_commands.default_permissions(administrator=True)
     @app_commands.describe(user="The user to check")
-    @is_admin()
     async def admin_check(self, interaction: discord.Interaction, user: discord.User):
         """Report whether the given user has admin rights—and by which rule."""
         await interaction.response.defer(thinking=True, ephemeral=True)
+        if not await _check_is_admin(interaction):
+            await interaction.followup.send("❌ This command requires admin privileges.", ephemeral=True)
+            return
 
         reason = None
         has_admin = False
@@ -166,10 +168,12 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
         admin_role="Role that should have admin permissions for the bot (required)",
         starting_credits="Starting credits for new players (default: 0)",
     )
-    @is_admin()
     async def admin_setup(self, interaction: discord.Interaction, admin_role: discord.Role, starting_credits: int = 0):
         """Initialize guild for bot usage."""
         await interaction.response.defer(thinking=True, ephemeral=True)
+        if not await _check_is_admin(interaction):
+            await interaction.followup.send("❌ This command requires admin privileges.", ephemeral=True)
+            return
         guild = self.bot.get_guild(interaction.guild_id)
 
         try:
@@ -278,7 +282,6 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
             app_commands.Choice(name="Reset Player", value="reset"),
         ]
     )
-    @is_admin()
     async def admin_player(
         self,
         interaction: discord.Interaction,
@@ -289,6 +292,9 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
     ):
         """Manage player data."""
         await interaction.response.defer(thinking=True, ephemeral=True)
+        if not await _check_is_admin(interaction):
+            await interaction.followup.send("❌ This command requires admin privileges.", ephemeral=True)
+            return
         try:
             # Ensure player exists or create
             user_data = {"discord_id": user.id, "guild_id": interaction.guild_id, "discord_username": str(user)}
@@ -430,12 +436,14 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
     @app_commands.default_permissions(administrator=True)
     @app_commands.describe(tier="Shop tier to refresh", force_tech_level="Force all items to specific tech level (1-9)")
     @app_commands.autocomplete(tier=tier_autocomplete)
-    @is_admin()
     async def admin_refresh_shop(
         self, interaction: discord.Interaction, tier: str, force_tech_level: int | None = None
     ):
         """Force refresh a guild shop."""
         await interaction.response.defer(thinking=True, ephemeral=True)
+        if not await _check_is_admin(interaction):
+            await interaction.followup.send("❌ This command requires admin privileges.", ephemeral=True)
+            return
         try:
             if tier not in self._valid_tiers:
                 await interaction.followup.send(
@@ -475,10 +483,12 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
 
     @app_commands.command(name="admin_guild_stats", description="[ADMIN] View guild statistics")
     @app_commands.default_permissions(administrator=True)
-    @is_admin()
     async def admin_guild_stats(self, interaction: discord.Interaction):
         """View comprehensive guild statistics."""
         await interaction.response.defer(thinking=True, ephemeral=True)
+        if not await _check_is_admin(interaction):
+            await interaction.followup.send("❌ This command requires admin privileges.", ephemeral=True)
+            return
         try:
             resp = await self.http_client.get(
                 f"{api_base}/admin/guilds/{interaction.guild_id}/stats",
@@ -524,7 +534,6 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
             app_commands.Choice(name="Reset to Defaults", value="reset"),
         ]
     )
-    @is_admin()
     async def admin_config(
         self,
         interaction: discord.Interaction,
@@ -534,6 +543,9 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
     ):
         """Manage guild configuration."""
         await interaction.response.defer(thinking=True, ephemeral=True)
+        if not await _check_is_admin(interaction):
+            await interaction.followup.send("❌ This command requires admin privileges.", ephemeral=True)
+            return
         try:
             if action == "view":
                 resp = await self.http_client.get(f"{api_base}/config/guild/{interaction.guild_id}", timeout=10)
@@ -607,7 +619,6 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
     @app_commands.command(name="admin_uninstall", description="[ADMIN] Completely remove all bot data from this guild")
     @app_commands.default_permissions(administrator=True)
     @app_commands.describe(confirm="Type CONFIRM-DELETE to confirm (this is IRREVERSIBLE)")
-    @is_admin()
     async def admin_uninstall(
         self,
         interaction: discord.Interaction,
@@ -615,6 +626,9 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
     ):
         """Destructively remove all bot data for this guild."""
         await interaction.response.defer(thinking=True, ephemeral=True)
+        if not await _check_is_admin(interaction):
+            await interaction.followup.send("❌ This command requires admin privileges.", ephemeral=True)
+            return
 
         # 2-step confirmation: show warning if no/wrong confirmation string
         if confirm != "CONFIRM-DELETE":
@@ -750,7 +764,6 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
         turret_count_max="Maximum number of turret types in shop",
         sale_factor="Sale price factor (0.0 - 1.0, e.g. 0.8 = 80% of base price)",
     )
-    @is_admin()
     async def admin_config_shop(
         self,
         interaction: discord.Interaction,
@@ -766,6 +779,9 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
     ):
         """Update shop-specific configuration for this guild."""
         await interaction.response.defer(thinking=True, ephemeral=True)
+        if not await _check_is_admin(interaction):
+            await interaction.followup.send("❌ This command requires admin privileges.", ephemeral=True)
+            return
 
         # Build item_count_ranges — only include a type's range when BOTH min and max
         # are provided so that bot-core never receives a partial {"min": N} dict that
@@ -846,10 +862,12 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
 
     @app_commands.command(name="admin_config_validate", description="[ADMIN] Validate guild configuration")
     @app_commands.default_permissions(administrator=True)
-    @is_admin()
     async def admin_config_validate(self, interaction: discord.Interaction):
         """Validate the current guild configuration."""
         await interaction.response.defer(thinking=True, ephemeral=True)
+        if not await _check_is_admin(interaction):
+            await interaction.followup.send("❌ This command requires admin privileges.", ephemeral=True)
+            return
 
         try:
             resp = await self.http_client.get(
@@ -909,7 +927,6 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
         setting="Setting name to update (required for 'set' action)",
         value="New integer value (required for 'set' action)",
     )
-    @is_admin()
     @app_commands.autocomplete(setting=render_setting_autocomplete)
     async def render_config(
         self,
@@ -919,6 +936,10 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
         value: int | None = None,
     ) -> None:
         """Admin command to view/update blender-service render configuration."""
+        await interaction.response.defer(thinking=True, ephemeral=True)
+        if not await _check_is_admin(interaction):
+            await interaction.followup.send("❌ This command requires admin privileges.", ephemeral=True)
+            return
         blender_base = os.getenv("BLENDER_API_BASE_URL", "http://blender-service:8001/api/v1")
 
         try:
@@ -929,40 +950,40 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
                 embed = discord.Embed(title="🎨 Render Configuration", color=discord.Color.blue())
                 for key, val in config.items():
                     embed.add_field(name=key, value=str(val), inline=True)
-                await interaction.response.send_message(embed=embed, ephemeral=True)
+                await interaction.followup.send(embed=embed, ephemeral=True)
 
             elif action == "set":
                 if not setting or value is None:
-                    await interaction.response.send_message(
-                        "⚠️ Usage: `/render_config set <setting> <value>`", ephemeral=True
-                    )
+                    await interaction.followup.send("⚠️ Usage: `/render_config set <setting> <value>`", ephemeral=True)
                     return
                 resp = await self.http_client.put(
                     f"{blender_base}/config/render",
                     json={setting: value},
                 )
                 resp.raise_for_status()
-                await interaction.response.send_message(f"✅ Updated `{setting}` = `{value}`", ephemeral=True)
+                await interaction.followup.send(f"✅ Updated `{setting}` = `{value}`", ephemeral=True)
                 flogger.info(f"Admin {interaction.user} updated render config: {setting}={value}")
 
             elif action == "reset":
                 resp = await self.http_client.post(f"{blender_base}/config/render/reset")
                 resp.raise_for_status()
-                await interaction.response.send_message("✅ Render config reset to defaults.", ephemeral=True)
+                await interaction.followup.send("✅ Render config reset to defaults.", ephemeral=True)
                 flogger.info(f"Admin {interaction.user} reset render config")
 
         except httpx.HTTPStatusError as e:
-            await interaction.response.send_message(f"❌ API Error: {e}", ephemeral=True)
+            await interaction.followup.send(f"❌ API Error: {e}", ephemeral=True)
         except Exception as e:  # pylint: disable=broad-exception-caught
             flogger.error(f"Error in /render_config: {e}")
-            if not interaction.response.is_done():
-                await interaction.response.send_message("⚠️ An error occurred.", ephemeral=True)
+            await interaction.followup.send("⚠️ An error occurred.", ephemeral=True)
 
     @app_commands.command(name="render_cache_clear", description="[ADMIN] Clear blender render cache (/tmp)")
     @app_commands.default_permissions(administrator=True)
-    @is_admin()
     async def render_cache_clear(self, interaction: discord.Interaction) -> None:
         """Admin command to clear blender-service temp render files."""
+        await interaction.response.defer(thinking=True, ephemeral=True)
+        if not await _check_is_admin(interaction):
+            await interaction.followup.send("❌ This command requires admin privileges.", ephemeral=True)
+            return
         blender_base = os.getenv("BLENDER_API_BASE_URL", "http://blender-service:8001/api/v1")
 
         try:
@@ -973,18 +994,17 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
             embed = discord.Embed(title="🗑️ Render Cache Cleared", color=discord.Color.green())
             embed.add_field(name="Directories Cleared", value=str(result["cleared_directories"]), inline=True)
             embed.add_field(name="Space Freed", value=f"{result['freed_mb']} MB", inline=True)
-            await interaction.response.send_message(embed=embed, ephemeral=True)
+            await interaction.followup.send(embed=embed, ephemeral=True)
             flogger.info(
                 f"Admin {interaction.user} cleared render cache: "
                 f"{result['cleared_directories']} dirs, {result['freed_mb']} MB"
             )
 
         except httpx.HTTPStatusError as e:
-            await interaction.response.send_message(f"❌ API Error: {e}", ephemeral=True)
+            await interaction.followup.send(f"❌ API Error: {e}", ephemeral=True)
         except Exception as e:  # pylint: disable=broad-exception-caught
             flogger.error(f"Error in /render_cache_clear: {e}")
-            if not interaction.response.is_done():
-                await interaction.response.send_message("⚠️ An error occurred.", ephemeral=True)
+            await interaction.followup.send("⚠️ An error occurred.", ephemeral=True)
 
     # ------------------------------------------------------------------
     # Bounty admin commands
@@ -992,7 +1012,6 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
 
     @app_commands.command(name="admin_clear_bounties", description="[ADMIN] Clear active bounties for this guild")
     @app_commands.default_permissions(administrator=True)
-    @is_admin()
     @app_commands.describe(
         tier="Tier to clear (omit for all tiers)",
         confirm="Type CONFIRM to execute this destructive action",
@@ -1008,6 +1027,9 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
     async def admin_clear_bounties(self, interaction: discord.Interaction, confirm: str, tier: str | None = None):
         """Clear active bounties for this guild."""
         await interaction.response.defer(thinking=True, ephemeral=True)
+        if not await _check_is_admin(interaction):
+            await interaction.followup.send("❌ This command requires admin privileges.", ephemeral=True)
+            return
 
         if confirm != "CONFIRM":
             await interaction.followup.send(
@@ -1047,7 +1069,6 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
 
     @app_commands.command(name="admin_config_bounty", description="[ADMIN] View or update bounty configuration")
     @app_commands.default_permissions(administrator=True)
-    @is_admin()
     @app_commands.describe(
         action="View current config or update settings",
         max_bronze="Max active bounties for Bronze tier (0-20)",
@@ -1076,6 +1097,9 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
     ):
         """View or update bounty configuration for this guild."""
         await interaction.response.defer(thinking=True, ephemeral=True)
+        if not await _check_is_admin(interaction):
+            await interaction.followup.send("❌ This command requires admin privileges.", ephemeral=True)
+            return
 
         try:
             if action == "view":
@@ -1178,7 +1202,6 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
 
     @app_commands.command(name="admin_config_xp", description="[ADMIN] View or update XP tier thresholds")
     @app_commands.default_permissions(administrator=True)
-    @is_admin()
     @app_commands.describe(
         action="View current thresholds or update them",
         silver="XP threshold for Silver tier",
@@ -1201,6 +1224,9 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
     ):
         """View or update XP tier thresholds for this guild."""
         await interaction.response.defer(thinking=True, ephemeral=True)
+        if not await _check_is_admin(interaction):
+            await interaction.followup.send("❌ This command requires admin privileges.", ephemeral=True)
+            return
 
         try:
             if action == "view":
@@ -1285,7 +1311,6 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
 
     @app_commands.command(name="admin_spawn_bounty", description="[ADMIN] Manually trigger a bounty spawn")
     @app_commands.default_permissions(administrator=True)
-    @is_admin()
     @app_commands.describe(tier="Tier to spawn for (omit for all tiers)")
     @app_commands.choices(
         tier=[
@@ -1298,6 +1323,9 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
     async def admin_spawn_bounty(self, interaction: discord.Interaction, tier: str | None = None):
         """Manually trigger a bounty spawn for this guild."""
         await interaction.response.defer(thinking=True, ephemeral=True)
+        if not await _check_is_admin(interaction):
+            await interaction.followup.send("❌ This command requires admin privileges.", ephemeral=True)
+            return
 
         try:
             params: dict = {"user_id": interaction.user.id}
@@ -1356,10 +1384,12 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
     )
     @app_commands.default_permissions(administrator=True)
     @app_commands.describe(user="The Discord member whose cooldown should be reset")
-    @is_admin()
     async def admin_cooldown_reset(self, interaction: discord.Interaction, user: discord.Member):
         """Reset a player's bounty cooldown."""
         await interaction.response.defer(thinking=True, ephemeral=True)
+        if not await _check_is_admin(interaction):
+            await interaction.followup.send("❌ This command requires admin privileges.", ephemeral=True)
+            return
         flogger.info(
             f"/admin_cooldown_reset invoked: guild={interaction.guild_id} admin={interaction.user.id} target={user.id}"
         )
@@ -1487,7 +1517,6 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
         ]
     )
     @app_commands.autocomplete(item_name=item_name_autocomplete)
-    @is_admin()
     async def admin_give_item(
         self,
         interaction: discord.Interaction,
@@ -1498,6 +1527,9 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
     ):
         """Give an item directly to a player's inventory (no credit cost)."""
         await interaction.response.defer(thinking=True, ephemeral=True)
+        if not await _check_is_admin(interaction):
+            await interaction.followup.send("❌ This command requires admin privileges.", ephemeral=True)
+            return
         try:
             payload = {
                 "guild_id": interaction.guild_id,
@@ -1567,7 +1599,6 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
         ]
     )
     @app_commands.autocomplete(item_name=item_name_autocomplete)
-    @is_admin()
     async def admin_remove_item(
         self,
         interaction: discord.Interaction,
@@ -1578,6 +1609,9 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
     ):
         """Remove an item from a player's inventory."""
         await interaction.response.defer(thinking=True, ephemeral=True)
+        if not await _check_is_admin(interaction):
+            await interaction.followup.send("❌ This command requires admin privileges.", ephemeral=True)
+            return
         try:
             payload = {
                 "guild_id": interaction.guild_id,
@@ -1637,7 +1671,6 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
         ship_name="Name of the ship to give (autocomplete from game data)",
     )
     @app_commands.autocomplete(ship_name=game_ship_autocomplete)
-    @is_admin()
     async def admin_give_ship(
         self,
         interaction: discord.Interaction,
@@ -1646,6 +1679,9 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
     ):
         """Give a ship to a player. Ship starts inactive with empty loadout."""
         await interaction.response.defer(thinking=True, ephemeral=True)
+        if not await _check_is_admin(interaction):
+            await interaction.followup.send("❌ This command requires admin privileges.", ephemeral=True)
+            return
         try:
             payload = {
                 "guild_id": interaction.guild_id,
@@ -1761,7 +1797,6 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
         ship_name="Name of the ship to remove",
     )
     @app_commands.autocomplete(ship_name=player_ship_autocomplete)
-    @is_admin()
     async def admin_remove_ship(
         self,
         interaction: discord.Interaction,
@@ -1770,6 +1805,9 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
     ):
         """Remove a ship from a player. Unequips all items first. Cannot remove only active ship."""
         await interaction.response.defer(thinking=True, ephemeral=True)
+        if not await _check_is_admin(interaction):
+            await interaction.followup.send("❌ This command requires admin privileges.", ephemeral=True)
+            return
         try:
             payload = {
                 "guild_id": interaction.guild_id,

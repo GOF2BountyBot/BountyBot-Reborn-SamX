@@ -179,12 +179,17 @@ class TestAdminCheckCommand:
         assert "Discord Administrator permission" in call_args
 
     def test_admin_check_bot_admin_role(self, mock_admin_cog):
-        """admin_check should detect Bot Admin role."""
-        # Mock interaction
+        """admin_check should detect Bot Admin role for the TARGET user.
+
+        B.25 Fix A: The INVOKER uses the default admin interaction (Discord admin),
+        while the TARGET user has a Bot Admin role but not Discord admin.
+        """
+        # Mock interaction — invoker is admin (default MagicMock truthy administrator)
         interaction = _create_mock_interaction()
-        user = _create_mock_user(is_admin=False)
-        interaction.user = user
         interaction.guild_id = 987654321
+
+        # TARGET user has a Bot Admin role but not Discord administrator
+        user = _create_mock_user(is_admin=False)
 
         # Mock guild and member with role
         guild = MagicMock()
@@ -215,12 +220,17 @@ class TestAdminCheckCommand:
         assert "Assigned Bot Admin role" in call_args
 
     def test_admin_check_no_admin_rights(self, mock_admin_cog):
-        """admin_check should correctly identify users without admin rights."""
-        # Mock interaction
+        """admin_check should correctly identify users without admin rights.
+
+        B.25 Fix A: The INVOKER uses the default admin interaction (Discord admin),
+        while the TARGET user has neither Discord admin nor Bot Admin role.
+        """
+        # Mock interaction — invoker is admin (default MagicMock truthy administrator)
         interaction = _create_mock_interaction()
-        user = _create_mock_user(is_admin=False)
-        interaction.user = user
         interaction.guild_id = 987654321
+
+        # TARGET user has no admin permissions at all
+        user = _create_mock_user(is_admin=False)
 
         # Mock guild without admin role
         guild = MagicMock()
@@ -326,13 +336,15 @@ class TestAdminSetupCommand:
         interaction.followup.send.assert_called_once()
 
     def test_admin_setup_payload_contains_all_9_new_keys(self, mock_admin_cog):
-        """admin_setup should build init_payload with all channel/role keys (including platinum)."""
+        """admin_setup should build init_payload with all channel/role keys (including platinum).
+
+        B.25 Fix A: Invoker uses default admin interaction (truthy administrator).
+        """
         interaction = _create_mock_interaction()
         interaction.guild = MagicMock()
         interaction.guild.id = 987654321
         interaction.guild.name = "Test Guild"
-        user = _create_mock_user()
-        interaction.user = user
+        # Do NOT override interaction.user — keep the default admin mock (truthy guild_permissions.administrator)
 
         role = MagicMock()
         role.id = 333333333
@@ -406,8 +418,7 @@ class TestAdminSetupCommand:
         interaction.guild = MagicMock()
         interaction.guild.id = 987654321
         interaction.guild.name = "Test Guild"
-        user = _create_mock_user()
-        interaction.user = user
+        # B.25 Fix A: Use default interaction (truthy administrator), no user override needed
 
         role = MagicMock()
         role.id = 444444444
@@ -456,8 +467,7 @@ class TestAdminSetupCommand:
         interaction.guild = MagicMock()
         interaction.guild.id = 987654321
         interaction.guild.name = "Test Guild"
-        user = _create_mock_user()
-        interaction.user = user
+        # B.25 Fix A: Use default interaction (truthy administrator), no user override needed
 
         role = MagicMock()
         role.id = 555555555
@@ -494,8 +504,7 @@ class TestAdminSetupCommand:
         interaction.guild = MagicMock()
         interaction.guild.id = 987654321
         interaction.guild.name = "Test Guild"
-        user = _create_mock_user()
-        interaction.user = user
+        # B.25 Fix A: Use default interaction (truthy administrator), no user override needed
 
         role = MagicMock()
         role.id = 555555555
@@ -535,8 +544,7 @@ class TestAdminSetupCommand:
         interaction.guild = MagicMock()
         interaction.guild.id = 987654321
         interaction.guild.name = "Test Guild"
-        user = _create_mock_user()
-        interaction.user = user
+        # B.25 Fix A: Use default interaction (truthy administrator), no user override needed
 
         role = MagicMock()
         role.id = 666666666
@@ -583,8 +591,7 @@ class TestAdminSetupCommand:
         interaction.guild = MagicMock()
         interaction.guild.id = 987654321
         interaction.guild.name = "Test Guild"
-        user = _create_mock_user()
-        interaction.user = user
+        # B.25 Fix A: Use default interaction (truthy administrator), no user override needed
 
         role = MagicMock()
         role.id = 777777777

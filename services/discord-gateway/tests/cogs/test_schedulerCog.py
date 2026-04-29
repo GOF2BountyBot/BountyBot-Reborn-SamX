@@ -530,7 +530,7 @@ class TestSchedulerUpdate:
         interaction.followup.send.assert_awaited_once()
 
     def test_scheduler_update_invalid_json_sends_error(self, cog):
-        """Invalid JSON payload sends error message without calling API."""
+        """B.28 fix: Invalid JSON is validated BEFORE defer — uses send_message not followup.send."""
         interaction = _make_interaction()
         cog.http_client.put = AsyncMock()
 
@@ -538,9 +538,37 @@ class TestSchedulerUpdate:
 
         # API should not have been called
         cog.http_client.put.assert_not_awaited()
-        interaction.followup.send.assert_awaited_once()
-        msg = str(interaction.followup.send.call_args)
+        # B.28: since validation happens before defer, error uses response.send_message (not followup)
+        interaction.response.send_message.assert_awaited_once()
+        interaction.response.defer.assert_not_awaited()
+        msg = str(interaction.response.send_message.call_args)
         assert "❌" in msg or "invalid" in msg.lower()
+
+    def test_scheduler_update_valid_json_defers_before_api_call(self, cog):
+        """B.28 fix: When JSON is valid, defer is called before the PUT request."""
+        interaction = _make_interaction()
+        cog.http_client.put = AsyncMock(return_value=_make_mock_response({"status": "updated", "job_id": "job-1"}))
+
+        call_order = []
+        original_defer = interaction.response.defer
+        original_put = cog.http_client.put
+
+        async def track_defer(*args, **kwargs):
+            call_order.append("defer")
+            return await original_defer(*args, **kwargs)
+
+        async def track_put(*args, **kwargs):
+            call_order.append("put")
+            return await original_put(*args, **kwargs)
+
+        interaction.response.defer = track_defer
+        cog.http_client.put = track_put
+
+        asyncio.run(
+            cog.scheduler_update.callback(cog, interaction, job_id="job-1", payload_json='{"job_type": "bounty_spawn"}')
+        )
+
+        assert call_order.index("defer") < call_order.index("put"), "defer must happen before API PUT"
 
 
 # ===========================================================================
@@ -591,3 +619,185 @@ class TestJobIdAutocomplete:
         choices = asyncio.run(cog.job_id_autocomplete(interaction, current=""))
 
         assert choices == []
+
+
+# ===========================================================================
+# TestB27ErrorHandlerFallback — B.27: error handlers fallback after defer
+# ===========================================================================
+
+
+class TestB27ErrorHandlerFallback:
+    """B.27 fix: All 6 scheduler error handlers must send a followup when is_done() is True."""
+
+    def _make_deferred_interaction(self) -> MagicMock:
+        """Interaction where defer has already been called (is_done() returns True)."""
+        interaction = MagicMock()
+        interaction.guild_id = 123456789
+        interaction.user = MagicMock()
+        interaction.user.id = 987654321
+        interaction.response = MagicMock()
+        interaction.response.is_done = MagicMock(return_value=True)
+        interaction.response.send_message = AsyncMock()
+        interaction.followup = AsyncMock()
+        return interaction
+
+    def _make_undeferred_interaction(self) -> MagicMock:
+        """Interaction where defer has NOT been called (is_done() returns False)."""
+        interaction = MagicMock()
+        interaction.guild_id = 123456789
+        interaction.user = MagicMock()
+        interaction.user.id = 987654321
+        interaction.response = MagicMock()
+        interaction.response.is_done = MagicMock(return_value=False)
+        interaction.response.send_message = AsyncMock()
+        interaction.followup = AsyncMock()
+        return interaction
+
+    def test_scheduler_list_error_handler_sends_followup_when_deferred(self, cog):
+        """scheduler_list error handler sends followup.send when is_done() is True."""
+        from discord import app_commands
+
+        interaction = self._make_deferred_interaction()
+        error = app_commands.CheckFailure("Not admin")
+
+        asyncio.run(cog.scheduler_list_error(interaction, error))
+
+        interaction.followup.send.assert_awaited_once()
+        interaction.response.send_message.assert_not_awaited()
+
+    def test_scheduler_list_error_handler_sends_response_when_not_deferred(self, cog):
+        """scheduler_list error handler sends response.send_message when is_done() is False."""
+        from discord import app_commands
+
+        interaction = self._make_undeferred_interaction()
+        error = app_commands.CheckFailure("Not admin")
+
+        asyncio.run(cog.scheduler_list_error(interaction, error))
+
+        interaction.response.send_message.assert_awaited_once()
+        interaction.followup.send.assert_not_awaited()
+
+    def test_scheduler_view_error_handler_sends_followup_when_deferred(self, cog):
+        """scheduler_view error handler sends followup.send when is_done() is True."""
+        from discord import app_commands
+
+        interaction = self._make_deferred_interaction()
+        error = app_commands.CheckFailure("Not admin")
+
+        asyncio.run(cog.scheduler_view_error(interaction, error))
+
+        interaction.followup.send.assert_awaited_once()
+
+    def test_scheduler_update_error_handler_sends_followup_when_deferred(self, cog):
+        """scheduler_update error handler sends followup.send when is_done() is True."""
+        from discord import app_commands
+
+        interaction = self._make_deferred_interaction()
+        error = app_commands.CheckFailure("Not admin")
+
+        asyncio.run(cog.scheduler_update_error(interaction, error))
+
+        interaction.followup.send.assert_awaited_once()
+
+    def test_scheduler_delete_error_handler_sends_followup_when_deferred(self, cog):
+        """scheduler_delete error handler sends followup.send when is_done() is True."""
+        from discord import app_commands
+
+        interaction = self._make_deferred_interaction()
+        error = app_commands.CheckFailure("Not admin")
+
+        asyncio.run(cog.scheduler_delete_error(interaction, error))
+
+        interaction.followup.send.assert_awaited_once()
+
+    def test_admin_reset_scheduler_error_handler_sends_followup_when_deferred(self, cog):
+        """admin_reset_scheduler error handler sends followup.send when is_done() is True."""
+        from discord import app_commands
+
+        interaction = self._make_deferred_interaction()
+        error = app_commands.CheckFailure("Not admin")
+
+        asyncio.run(cog.admin_reset_scheduler_error(interaction, error))
+
+        interaction.followup.send.assert_awaited_once()
+
+    def test_admin_clear_scheduler_error_handler_sends_followup_when_deferred(self, cog):
+        """admin_clear_scheduler error handler sends followup.send when is_done() is True."""
+        from discord import app_commands
+
+        interaction = self._make_deferred_interaction()
+        error = app_commands.CheckFailure("Not admin")
+
+        asyncio.run(cog.admin_clear_scheduler_error(interaction, error))
+
+        interaction.followup.send.assert_awaited_once()
+
+    def test_error_handler_suppresses_followup_exception(self, cog):
+        """B.27: followup.send failure in error handler must be silently suppressed."""
+        from discord import app_commands
+
+        interaction = self._make_deferred_interaction()
+        interaction.followup.send.side_effect = Exception("Discord API error")
+        error = app_commands.CheckFailure("Not admin")
+
+        # Should not raise despite followup.send throwing
+        asyncio.run(cog.scheduler_view_error(interaction, error))
+
+        interaction.followup.send.assert_awaited_once()
+
+
+# ===========================================================================
+# TestB29CronTriggerDisplay — B.29: cron trigger wrapped in backticks
+# ===========================================================================
+
+
+class TestB29CronTriggerDisplay:
+    """B.29 fix: cron trigger strings must be wrapped in backticks to prevent Discord markdown."""
+
+    def test_scheduler_list_wraps_trigger_in_backticks(self, cog):
+        """scheduler_list embed field values must wrap trigger in backticks."""
+        cron_trigger = "cron[month='*', day='*', day_of_week='*', hour='*', minute='*/5']"
+        jobs = [
+            {
+                "id": "bounty_spawn_default",
+                "next_run_time": "2026-06-01T12:00:00+00:00",
+                "trigger": cron_trigger,
+                "args": ["bounty_spawn_default", {"job_type": "bounty_spawn"}],
+            }
+        ]
+        interaction = _make_interaction()
+        cog.http_client.get = AsyncMock(return_value=_make_mock_response(jobs))
+
+        asyncio.run(cog.scheduler_list.callback(cog, interaction))
+
+        send_call = interaction.followup.send.call_args
+        embed = send_call.kwargs.get("embed") or (send_call.args[0] if send_call.args else None)
+        assert embed is not None
+        # The trigger value in the embed field must be wrapped in backticks
+        field_values = [f.value for f in embed.fields]
+        assert any(f"`{cron_trigger}`" in v for v in field_values), (
+            f"Expected trigger wrapped in backticks in embed fields, got: {field_values}"
+        )
+
+    def test_scheduler_view_wraps_trigger_in_backticks(self, cog):
+        """scheduler_view Trigger embed field must wrap the trigger in backticks."""
+        cron_trigger = "cron[month='*', day='*', day_of_week='*', hour='*', minute='*/5']"
+        job_data = {
+            "id": "bounty_spawn_default",
+            "next_run_time": "2026-06-01T12:00:00+00:00",
+            "trigger": cron_trigger,
+            "args": ["bounty_spawn_default", {"job_type": "bounty_spawn"}],
+        }
+        interaction = _make_interaction()
+        cog.http_client.get = AsyncMock(return_value=_make_mock_response(job_data))
+
+        asyncio.run(cog.scheduler_view.callback(cog, interaction, job_id="bounty_spawn_default"))
+
+        send_call = interaction.followup.send.call_args
+        embed = send_call.kwargs.get("embed") or (send_call.args[0] if send_call.args else None)
+        assert embed is not None
+        # Find the "Trigger" field and verify backtick wrapping
+        trigger_fields = [f for f in embed.fields if f.name == "Trigger"]
+        assert trigger_fields, "Expected a 'Trigger' field in the embed"
+        trigger_value = trigger_fields[0].value
+        assert trigger_value == f"`{cron_trigger}`", f"Expected trigger wrapped in backticks, got: {trigger_value!r}"

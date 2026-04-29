@@ -99,7 +99,7 @@ class SchedulerCog(commands.Cog):
 
                 embed.add_field(
                     name=f"📌 {job_id[:50]}",
-                    value=(f"**Type:** {job_type}\n**Trigger:** {trigger}\n**Next Run:** {next_run_str}"),
+                    value=(f"**Type:** {job_type}\n**Trigger:** `{trigger}`\n**Next Run:** {next_run_str}"),
                     inline=False,
                 )
 
@@ -129,6 +129,9 @@ class SchedulerCog(commands.Cog):
         flogger.exception("Error in /scheduler_list", exc_info=error)
         if not interaction.response.is_done():
             await interaction.response.send_message("⚠️ An error occurred.", ephemeral=True)
+        else:
+            with suppress(Exception):
+                await interaction.followup.send("⚠️ An error occurred.", ephemeral=True)
 
     # ------------------------------------------------------------------
     # /scheduler_view — View details of a specific job
@@ -173,7 +176,7 @@ class SchedulerCog(commands.Cog):
             )
             embed.add_field(name="Job Type", value=job_type, inline=True)
             embed.add_field(name="Next Run", value=next_run_str, inline=True)
-            embed.add_field(name="Trigger", value=trigger, inline=False)
+            embed.add_field(name="Trigger", value=f"`{trigger}`", inline=False)
             if payload_str and payload_str != "N/A":
                 embed.add_field(name="Payload", value=payload_str[:1024], inline=False)
 
@@ -207,6 +210,9 @@ class SchedulerCog(commands.Cog):
         flogger.exception("Error in /scheduler_view", exc_info=error)
         if not interaction.response.is_done():
             await interaction.response.send_message("⚠️ An error occurred.", ephemeral=True)
+        else:
+            with suppress(Exception):
+                await interaction.followup.send("⚠️ An error occurred.", ephemeral=True)
 
     # ------------------------------------------------------------------
     # /scheduler_update — Update a job's payload
@@ -222,20 +228,21 @@ class SchedulerCog(commands.Cog):
     @is_admin()
     async def scheduler_update(self, interaction: discord.Interaction, job_id: str, payload_json: str):
         """Update the payload/args of an existing scheduled job."""
-        await interaction.response.defer(thinking=True, ephemeral=True)
-        flogger.debug(
-            f"/scheduler_update invoked: guild={interaction.guild_id} user={interaction.user.id} job_id={job_id}"
-        )
-
-        # Parse the JSON payload supplied by the user
+        # B.28 fix: validate JSON synchronously BEFORE defer — no async work needed for validation
         try:
             payload = json.loads(payload_json)
         except json.JSONDecodeError as e:
-            await interaction.followup.send(
+            await interaction.response.send_message(
                 f'❌ Invalid JSON payload: `{e}`\n\nExample: `{{"job_type": "bounty_spawn"}}`',
                 ephemeral=True,
             )
             return
+
+        # Only defer after validation passes — async I/O follows
+        await interaction.response.defer(thinking=True, ephemeral=True)
+        flogger.debug(
+            f"/scheduler_update invoked: guild={interaction.guild_id} user={interaction.user.id} job_id={job_id}"
+        )
 
         try:
             resp = await self.http_client.put(
@@ -289,6 +296,9 @@ class SchedulerCog(commands.Cog):
         flogger.exception("Error in /scheduler_update", exc_info=error)
         if not interaction.response.is_done():
             await interaction.response.send_message("⚠️ An error occurred.", ephemeral=True)
+        else:
+            with suppress(Exception):
+                await interaction.followup.send("⚠️ An error occurred.", ephemeral=True)
 
     # ------------------------------------------------------------------
     # /scheduler_delete — Delete a specific job
@@ -349,6 +359,9 @@ class SchedulerCog(commands.Cog):
         flogger.exception("Error in /scheduler_delete", exc_info=error)
         if not interaction.response.is_done():
             await interaction.response.send_message("⚠️ An error occurred.", ephemeral=True)
+        else:
+            with suppress(Exception):
+                await interaction.followup.send("⚠️ An error occurred.", ephemeral=True)
 
     # ------------------------------------------------------------------
     # /admin_reset_scheduler — Wipe all jobs and re-register defaults
@@ -408,6 +421,9 @@ class SchedulerCog(commands.Cog):
         flogger.exception("Error in /admin_reset_scheduler", exc_info=error)
         if not interaction.response.is_done():
             await interaction.response.send_message("⚠️ An error occurred.", ephemeral=True)
+        else:
+            with suppress(Exception):
+                await interaction.followup.send("⚠️ An error occurred.", ephemeral=True)
 
     # ------------------------------------------------------------------
     # /admin_clear_scheduler — Delete all one-time jobs for this guild
@@ -467,6 +483,9 @@ class SchedulerCog(commands.Cog):
         flogger.exception("Error in /admin_clear_scheduler", exc_info=error)
         if not interaction.response.is_done():
             await interaction.response.send_message("⚠️ An error occurred.", ephemeral=True)
+        else:
+            with suppress(Exception):
+                await interaction.followup.send("⚠️ An error occurred.", ephemeral=True)
 
 
 async def setup(bot: commands.Bot):

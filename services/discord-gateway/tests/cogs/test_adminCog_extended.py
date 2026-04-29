@@ -720,10 +720,16 @@ class TestAdminCheckExtended:
     """Extended tests for admin_check command."""
 
     def test_admin_check_no_admin_api_error(self, mock_admin_cog):
-        """admin_check should silently pass when API call fails (not admin)."""
+        """admin_check should silently pass when API call fails for TARGET (not admin).
+
+        B.25 Fix A: The INVOKER uses the default admin interaction (Discord admin truthy),
+        while the TARGET user lookup fails — still reports 'does not have admin rights'.
+        """
+        # Invoker interaction uses default MagicMock (truthy administrator)
         interaction = _create_mock_interaction()
+
+        # TARGET user to check
         user = _create_mock_user(is_admin=False)
-        interaction.user = user
 
         guild = MagicMock()
         member = MagicMock()
@@ -734,7 +740,7 @@ class TestAdminCheckExtended:
         guild.fetch_member = AsyncMock(return_value=member)
         mock_admin_cog.bot.get_guild = MagicMock(return_value=guild)
 
-        # API call raises an exception
+        # API call raises an exception (for target's role lookup)
         mock_admin_cog.http_client.get = AsyncMock(side_effect=Exception("API unavailable"))
 
         asyncio.run(mock_admin_cog.admin_check.callback(mock_admin_cog, interaction, user))
@@ -745,10 +751,16 @@ class TestAdminCheckExtended:
         assert "**does not have** bot-admin rights" in call_args
 
     def test_admin_check_member_fetch_fallback(self, mock_admin_cog):
-        """admin_check should fetch member when get_member returns None."""
+        """admin_check should fetch member when get_member returns None.
+
+        B.25 Fix A: The INVOKER uses the default admin interaction,
+        while the TARGET user (fetched via get_guild) has Discord admin perm.
+        """
+        # Invoker interaction uses default MagicMock (truthy administrator)
         interaction = _create_mock_interaction()
+
+        # TARGET user to check
         user = _create_mock_user(is_admin=False)
-        interaction.user = user
 
         guild = MagicMock()
         member = MagicMock()

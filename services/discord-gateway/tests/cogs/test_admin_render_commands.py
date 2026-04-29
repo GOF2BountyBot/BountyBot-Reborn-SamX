@@ -3,6 +3,9 @@ Tests for AdminCog render configuration commands:
   /render_config  (view / set / reset)
   /render_cache_clear
 
+B.25 Fix B: These commands now use defer() + followup.send() instead of
+response.send_message() directly.
+
 Bootstrap pattern mirrors test_setupCog.py:
   - mock shared.bblogger before any cog imports
   - use real discord library
@@ -56,7 +59,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "src"))
 
 
 def _make_mock_interaction(is_admin_user: bool = True) -> MagicMock:
-    """Return a minimal mock discord.Interaction."""
+    """Return a minimal mock discord.Interaction with defer+followup support."""
     import discord
 
     interaction = MagicMock(spec=discord.Interaction)
@@ -68,10 +71,15 @@ def _make_mock_interaction(is_admin_user: bool = True) -> MagicMock:
     interaction.user.guild_permissions = MagicMock()
     interaction.user.guild_permissions.administrator = is_admin_user
 
-    # Response helpers
+    # Response helpers — B.25 Fix B: commands now use defer + followup
     interaction.response = MagicMock()
+    interaction.response.defer = AsyncMock()
     interaction.response.send_message = AsyncMock()
     interaction.response.is_done = MagicMock(return_value=False)
+
+    # Followup — used after defer
+    interaction.followup = AsyncMock()
+    interaction.followup.send = AsyncMock()
 
     return interaction
 
@@ -112,13 +120,13 @@ def admin_cog():
 
 
 # -------------------------------------------------------------------------
-# /render_config view
+# /render_config view — B.25 Fix B: now uses defer + followup.send
 # -------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
 async def test_render_config_view(admin_cog) -> None:
-    """render_config view should GET /config/render and send an embed."""
+    """B.25 Fix B: render_config view defers first, then GETs /config/render and sends embed."""
     config_data = {
         "max_res_x": 3840,
         "max_res_y": 2160,
@@ -139,12 +147,17 @@ async def test_render_config_view(admin_cog) -> None:
 
     await admin_cog.render_config.callback(admin_cog, interaction, action="view")
 
+    # B.25 Fix B: defer must be called first
+    interaction.response.defer.assert_awaited_once()
+
     admin_cog.http_client.get.assert_called_once()
     call_url = admin_cog.http_client.get.call_args[0][0]
     assert "/config/render" in call_url
 
-    interaction.response.send_message.assert_called_once()
-    _, kwargs = interaction.response.send_message.call_args
+    # B.25 Fix B: response is sent via followup.send, not response.send_message
+    interaction.followup.send.assert_awaited_once()
+    interaction.response.send_message.assert_not_awaited()
+    _, kwargs = interaction.followup.send.call_args
     assert kwargs.get("ephemeral") is True
     # Verify an embed was sent.
     import discord
@@ -153,13 +166,13 @@ async def test_render_config_view(admin_cog) -> None:
 
 
 # -------------------------------------------------------------------------
-# /render_config set
+# /render_config set — B.25 Fix B
 # -------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
 async def test_render_config_set(admin_cog) -> None:
-    """render_config set should PUT /config/render with the given key/value."""
+    """B.25 Fix B: render_config set defers, then PUTs /config/render, responds via followup."""
     mock_resp = _make_mock_http_response({"max_res_x": 1920})
     admin_cog.http_client.put = AsyncMock(return_value=mock_resp)
 
@@ -167,6 +180,7 @@ async def test_render_config_set(admin_cog) -> None:
 
     await admin_cog.render_config.callback(admin_cog, interaction, action="set", setting="max_res_x", value=1920)
 
+    interaction.response.defer.assert_awaited_once()
     admin_cog.http_client.put.assert_called_once()
     call_url = admin_cog.http_client.put.call_args[0][0]
     assert "/config/render" in call_url
@@ -174,33 +188,36 @@ async def test_render_config_set(admin_cog) -> None:
     json_payload = call.kwargs.get("json") or call[1].get("json")
     assert json_payload == {"max_res_x": 1920}
 
-    interaction.response.send_message.assert_called_once()
-    msg_text = interaction.response.send_message.call_args[0][0]
+    # B.25 Fix B: response via followup
+    interaction.followup.send.assert_awaited_once()
+    msg_text = str(interaction.followup.send.call_args)
     assert "max_res_x" in msg_text
     assert "1920" in msg_text
 
 
 @pytest.mark.asyncio
 async def test_render_config_set_missing_args(admin_cog) -> None:
-    """render_config set with missing setting/value should warn the user."""
+    """B.25 Fix B: render_config set with missing args warns via followup.send."""
     interaction = _make_mock_interaction(is_admin_user=True)
 
     # Call with setting=None, value=None  (user forgot args)
     await admin_cog.render_config.callback(admin_cog, interaction, action="set", setting=None, value=None)
 
-    interaction.response.send_message.assert_called_once()
+    interaction.response.defer.assert_awaited_once()
+    # B.25 Fix B: warning sent via followup
+    interaction.followup.send.assert_awaited_once()
     # http_client.put should NOT have been called
     assert not hasattr(admin_cog.http_client, "put") or not admin_cog.http_client.put.called
 
 
 # -------------------------------------------------------------------------
-# /render_config reset
+# /render_config reset — B.25 Fix B
 # -------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
 async def test_render_config_reset(admin_cog) -> None:
-    """render_config reset should POST /config/render/reset."""
+    """B.25 Fix B: render_config reset defers, then POSTs /config/render/reset via followup."""
     mock_resp = _make_mock_http_response({})
     admin_cog.http_client.post = AsyncMock(return_value=mock_resp)
 
@@ -208,21 +225,24 @@ async def test_render_config_reset(admin_cog) -> None:
 
     await admin_cog.render_config.callback(admin_cog, interaction, action="reset")
 
+    interaction.response.defer.assert_awaited_once()
     admin_cog.http_client.post.assert_called_once()
     call_url = admin_cog.http_client.post.call_args[0][0]
     assert "/config/render/reset" in call_url
 
-    interaction.response.send_message.assert_called_once()
+    # B.25 Fix B: response via followup
+    interaction.followup.send.assert_awaited_once()
+    interaction.response.send_message.assert_not_awaited()
 
 
 # -------------------------------------------------------------------------
-# /render_cache_clear
+# /render_cache_clear — B.25 Fix B
 # -------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
 async def test_render_cache_clear(admin_cog) -> None:
-    """render_cache_clear should POST /cache/clear and return an embed with stats."""
+    """B.25 Fix B: render_cache_clear defers, POSTs /cache/clear, sends embed via followup."""
     cache_result = {"cleared_directories": 3, "freed_bytes": 1048576, "freed_mb": 1.0}
     mock_resp = _make_mock_http_response(cache_result)
     admin_cog.http_client.post = AsyncMock(return_value=mock_resp)
@@ -231,12 +251,16 @@ async def test_render_cache_clear(admin_cog) -> None:
 
     await admin_cog.render_cache_clear.callback(admin_cog, interaction)
 
+    # B.25 Fix B: defer called first
+    interaction.response.defer.assert_awaited_once()
     admin_cog.http_client.post.assert_called_once()
     call_url = admin_cog.http_client.post.call_args[0][0]
     assert "/cache/clear" in call_url
 
-    interaction.response.send_message.assert_called_once()
-    _, kwargs = interaction.response.send_message.call_args
+    # B.25 Fix B: response via followup
+    interaction.followup.send.assert_awaited_once()
+    interaction.response.send_message.assert_not_awaited()
+    _, kwargs = interaction.followup.send.call_args
     assert kwargs.get("ephemeral") is True
     import discord
 
@@ -249,13 +273,131 @@ async def test_render_cache_clear(admin_cog) -> None:
 
 
 # -------------------------------------------------------------------------
-# Admin permission check
+# B.25 Fix A: Post-defer admin permission check
+# -------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_render_config_blocks_non_admin(admin_cog) -> None:
+    """B.25 Fix A: render_config must defer first, then reject non-admin via followup."""
+    interaction = _make_mock_interaction(is_admin_user=False)
+    # Ensure no Bot Admin role
+    interaction.user.roles = []
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setenv("DEVELOPERS", "")
+        mock_http_resp = _make_mock_http_response({"admin_role_id": None})
+        with __import__("unittest.mock", fromlist=["patch"]).patch(
+            "httpx.AsyncClient.__aenter__",
+            return_value=MagicMock(get=AsyncMock(return_value=mock_http_resp)),
+        ):
+            await admin_cog.render_config.callback(admin_cog, interaction, action="view")
+
+    # Defer must have been called before the admin check
+    interaction.response.defer.assert_awaited_once()
+    # Non-admin gets permission-denied via followup
+    interaction.followup.send.assert_awaited_once()
+    msg = str(interaction.followup.send.call_args)
+    assert "admin" in msg.lower() or "privilege" in msg.lower()
+
+
+@pytest.mark.asyncio
+async def test_render_cache_clear_blocks_non_admin(admin_cog) -> None:
+    """B.25 Fix A: render_cache_clear must defer first, then reject non-admin via followup."""
+    interaction = _make_mock_interaction(is_admin_user=False)
+    interaction.user.roles = []
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setenv("DEVELOPERS", "")
+        mock_http_resp = _make_mock_http_response({"admin_role_id": None})
+        with __import__("unittest.mock", fromlist=["patch"]).patch(
+            "httpx.AsyncClient.__aenter__",
+            return_value=MagicMock(get=AsyncMock(return_value=mock_http_resp)),
+        ):
+            await admin_cog.render_cache_clear.callback(admin_cog, interaction)
+
+    # Defer must have been called before the admin check
+    interaction.response.defer.assert_awaited_once()
+    # Non-admin gets permission-denied via followup
+    interaction.followup.send.assert_awaited_once()
+    msg = str(interaction.followup.send.call_args)
+    assert "admin" in msg.lower() or "privilege" in msg.lower()
+
+
+# -------------------------------------------------------------------------
+# B.25 Fix A: Admin commands defer before any HTTP call
+# -------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_render_config_defer_before_http(admin_cog) -> None:
+    """B.25 Fix A+B: defer must be called BEFORE any HTTP call in render_config."""
+    call_order = []
+    interaction = _make_mock_interaction(is_admin_user=True)
+
+    original_defer = interaction.response.defer
+
+    async def track_defer(*args, **kwargs):
+        call_order.append("defer")
+        return await original_defer(*args, **kwargs)
+
+    interaction.response.defer = track_defer
+
+    mock_resp = _make_mock_http_response({"max_res_x": 3840})
+    call_count = [0]
+
+    async def track_get(*args, **kwargs):
+        call_order.append("get")
+        call_count[0] += 1
+        return mock_resp
+
+    admin_cog.http_client.get = track_get
+
+    await admin_cog.render_config.callback(admin_cog, interaction, action="view")
+
+    assert "defer" in call_order
+    assert "get" in call_order
+    assert call_order.index("defer") < call_order.index("get"), "defer must happen before HTTP GET"
+
+
+@pytest.mark.asyncio
+async def test_render_cache_clear_defer_before_http(admin_cog) -> None:
+    """B.25 Fix A+B: defer must be called BEFORE any HTTP call in render_cache_clear."""
+    call_order = []
+    interaction = _make_mock_interaction(is_admin_user=True)
+
+    original_defer = interaction.response.defer
+
+    async def track_defer(*args, **kwargs):
+        call_order.append("defer")
+        return await original_defer(*args, **kwargs)
+
+    interaction.response.defer = track_defer
+
+    mock_resp = _make_mock_http_response({"cleared_directories": 0, "freed_mb": 0.0})
+    mock_resp.raise_for_status = MagicMock()
+
+    async def track_post(*args, **kwargs):
+        call_order.append("post")
+        return mock_resp
+
+    admin_cog.http_client.post = track_post
+
+    await admin_cog.render_cache_clear.callback(admin_cog, interaction)
+
+    assert "defer" in call_order
+    assert "post" in call_order
+    assert call_order.index("defer") < call_order.index("post"), "defer must happen before HTTP POST"
+
+
+# -------------------------------------------------------------------------
+# Admin permission check — original test preserved (checks _check_is_admin directly)
 # -------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
 async def test_render_config_requires_admin(admin_cog) -> None:
-    """render_config predicate should return False for non-admin users."""
+    """render_config predicate (_check_is_admin) should return False for non-admin users."""
     from cogs.adminCog import _check_is_admin
 
     # Non-admin user: not in DEVELOPERS, no Administrator permission.

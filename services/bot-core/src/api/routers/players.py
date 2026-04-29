@@ -277,7 +277,9 @@ async def prestige_player(player_id: int, player_service: PlayerService = Depend
     flogger.info(f"Prestiging player {player_id}")
 
     try:
-        async with get_db_session() as db:
+        # Package G (B.19): wrap in db.begin() so inventory clear and ship
+        # loadout clear are atomic (invariant I3).
+        async with get_db_session() as db, db.begin():
             result = await player_service.prestige_player(db, player_id)
             return PrestigeResponse(**result)
 

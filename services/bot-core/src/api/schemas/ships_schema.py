@@ -14,6 +14,11 @@ class ShipResponse(BaseModel):
     modules: list[str] | None
     turrets: list[str] | None
     created_at: str
+    # Package G B.19: optional structured report from set_active_ship when
+    # switching to a ship whose loadout exceeds its slot caps.  Pydantic
+    # ignores unknown fields by default, so legacy consumers are unaffected.
+    evacuated_items: dict[str, list[str]] | None = None
+    any_evacuated: bool | None = None
 
 
 class ShipLoadoutSummaryResponse(BaseModel):

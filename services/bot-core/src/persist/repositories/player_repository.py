@@ -239,11 +239,17 @@ class PlayerRepository(IRepository[Player]):
             await db.rollback()
             raise
 
-    async def update_active_ship(self, db: AsyncSession, player_id: int, ship_id: int | None) -> Player:
+    async def update_active_ship(
+        self, db: AsyncSession, player_id: int, ship_id: int | None, *, commit: bool = True
+    ) -> Player:
         """Update player's active ship.
 
         Mutates the ORM-tracked Player instance via ``setattr`` (NOT a Core UPDATE).
         See ``persist/repositories/AGENTS.md``.
+
+        Args:
+            commit: When False, flush changes without committing (use when the caller
+                owns the transaction, e.g. inside a router-level db.begin() context).
 
         Raises:
             ValueError: If no player exists with the given ID.
@@ -253,7 +259,10 @@ class PlayerRepository(IRepository[Player]):
             if player is None:
                 raise ValueError(f"Player {player_id} not found")
             player.active_ship_id = ship_id
-            await db.commit()
+            if commit:
+                await db.commit()
+            else:
+                await db.flush()
 
             flogger.debug(f"Updated active ship for player {player_id}: {ship_id}")
             return player
@@ -261,5 +270,6 @@ class PlayerRepository(IRepository[Player]):
             raise
         except Exception as e:
             flogger.error(f"Error updating active ship for player {player_id}: {e}")
-            await db.rollback()
+            if commit:
+                await db.rollback()
             raise

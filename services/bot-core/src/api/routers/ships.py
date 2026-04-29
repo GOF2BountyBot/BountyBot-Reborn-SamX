@@ -7,12 +7,11 @@ loadout management, and active ship selection.
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from persist.database.manager import get_db_session
-from persist.repositories.inventory_repository import InventoryRepository
 from persist.repositories.item_repository import ItemRepository
 from persist.repositories.player_repository import PlayerRepository
 from persist.repositories.player_ship_repository import PlayerShipRepository
 from persist.repositories.ship_repository import ShipRepository
-from services.equipment_service import EquipmentService, item_discriminator_to_concrete_type
+from services.equipment_service import EquipmentService
 from shared import bblogger
 
 from api.schemas.ships_schema import (
@@ -82,6 +81,18 @@ async def get_equipment_service():
 
 async def get_item_repository():
     return ItemRepository()
+
+
+async def get_loadout_consistency_service():
+    """Dependency factory for LoadoutConsistencyService.
+
+    Lives at module scope so router tests can override it via
+    ``app.dependency_overrides`` in the same way they override the repo and
+    equipment-service factories (Package G B.19).
+    """
+    from services.loadout_consistency_service import LoadoutConsistencyService
+
+    return LoadoutConsistencyService()
 
 
 @router.get("/player/{player_id}", response_model=list[ShipResponse])
@@ -232,16 +243,26 @@ async def set_active_ship(
     player_id: int,
     player_ship_repo: PlayerShipRepository = Depends(get_player_ship_repository),
     player_repo: PlayerRepository = Depends(get_player_repository),
+    consistency=Depends(get_loadout_consistency_service),
 ):
-    """Set a ship as the active ship for a player."""
+    """Set a ship as the active ship for a player.
+
+    Package G (B.19): the target ship's loadout is reconciled against its
+    static slot caps (invariant I4).  Overflow items are evacuated to
+    inventory atomically with the active-flag flip.  The response includes
+    ``evacuated_items`` for cogs that wish to render a "X items moved to
+    cargo" notice.
+    """
     flogger.info(f"Setting ship {ship_id} as active for player {player_id}")
 
     try:
-        async with get_db_session() as db:
-            ship = await player_ship_repo.set_active_ship(db, player_id, ship_id)
+        async with get_db_session() as db, db.begin():
+            # 1. Reconcile target ship's slots against static max_* caps.
+            reconcile = await consistency.reconcile_active_ship_slots(db, player_id=player_id, target_ship_id=ship_id)
 
-            # Update player's active ship reference
-            await player_repo.update_active_ship(db, player_id, ship_id)
+            # 2. Flip active flag; update player.active_ship_id (single transaction).
+            ship = await player_ship_repo.set_active_ship(db, player_id, ship_id, commit=False)
+            await player_repo.update_active_ship(db, player_id, ship_id, commit=False)
 
             return ShipResponse(
                 id=ship.id,
@@ -253,6 +274,8 @@ async def set_active_ship(
                 modules=ship.modules,
                 turrets=ship.turrets,
                 created_at=ship.created_at.isoformat(),
+                evacuated_items=reconcile["evacuated_items"],
+                any_evacuated=reconcile["any_evacuated"],
             )
 
     except ValueError as e:
@@ -395,7 +418,9 @@ async def equip_item(
     )
 
     try:
-        async with get_db_session() as db:
+        # Package G (B.19): wrap in db.begin() so that ship-slot append and
+        # inventory decrement are atomic (invariant I3).
+        async with get_db_session() as db, db.begin():
             result = await equipment_service.equip_item(
                 db,
                 player_id=request.player_id,
@@ -446,7 +471,9 @@ async def unequip_item(
     )
 
     try:
-        async with get_db_session() as db:
+        # Package G (B.19): wrap in db.begin() so that ship-slot remove and
+        # inventory increment are atomic (invariant I3).
+        async with get_db_session() as db, db.begin():
             result = await equipment_service.unequip_item(
                 db,
                 player_id=request.player_id,
@@ -604,44 +631,20 @@ async def transfer_ship(
                     detail="Cannot transfer the active ship. Set another ship as active first.",
                 )
 
-            # Unequip all items back to from_player's inventory using concrete item types.
-            # Resolve each item's concrete type via the ItemRepository STI discriminator
-            # to avoid writing generic aliases (weapon, turret) to the DB.
-            inventory_repo = InventoryRepository()
-            item_repo_local = ItemRepository()
-            items_returned: list[str] = []
+            # Package G (B.19): evacuate items via the LoadoutConsistencyService
+            # choke-point (anti-duplication guard prevents legacy phantom-item
+            # exploit on transfer).  The service clears the ship's slot lists
+            # in the same transaction and returns the items moved to inventory.
+            from services.loadout_consistency_service import LoadoutConsistencyService
 
-            all_slots = [
-                list(ship.weapons or []),
-                list(ship.modules or []),
-                list(ship.turrets or []),
-                list(ship.secondary_weapons or []),
-            ]
-            for slot_items in all_slots:
-                for item_name in slot_items:
-                    base = await item_repo_local.get_by_name_any_type(db, item_name)
-                    if not base:
-                        flogger.warning(f"transfer_ship: item '{item_name}' not found in item table; skipping")
-                        continue
-                    concrete = item_discriminator_to_concrete_type(base.type)
-                    if not concrete:
-                        flogger.warning(
-                            f"transfer_ship: cannot map discriminator '{base.type}' for item '{item_name}'; skipping"
-                        )
-                        continue
-                    await inventory_repo.add_item(db, request.from_player_id, concrete, item_name, 1, commit=False)
-                    items_returned.append(item_name)
-
-            # Clear the loadout on the ship
-            ship.weapons = []
-            ship.modules = []
-            ship.turrets = []
-            ship.secondary_weapons = []
+            consistency = LoadoutConsistencyService()
+            evac = await consistency.evacuate_ship_loadout_to_inventory(db, ship=ship)
+            items_returned: list[str] = list(evac["items_returned"])
 
             # Transfer ship ownership to to_player (inactive)
             ship.player_id = request.to_player_id
             ship.is_active = False
-
+            await db.flush()
             await db.refresh(ship)
 
             flogger.info(

@@ -106,32 +106,60 @@ class PlayerService:
             raise
 
     async def _create_starter_loadout(self, db: AsyncSession, player: Player) -> None:
-        """Create the starter ship and equipment for a new player."""
+        """Create the starter ship and equipment for a new player.
+
+        Package G (B.19) refactor: starter items now flow through the
+        :class:`~services.loadout_consistency_service.LoadoutConsistencyService`
+        choke-point so that every JSON slot reference is backed by an
+        inventory-row decrement (invariant I2 — no materialisation from
+        nothing).
+
+        Net DB state — identical to the pre-fix intended state: Betty has
+        ``weapons=["Nirai Impulse EX 1"]``, ``modules=["E2 Exoclad", "Telta
+        Quickscan"]``; inventory has 1 row for ``Micro Gun MK I``.  The
+        difference is provenance: every JSON entry was placed by
+        ``equip_one`` after a corresponding inventory decrement.
+        """
         try:
             from persist.repositories.inventory_repository import InventoryRepository
             from persist.repositories.player_ship_repository import PlayerShipRepository
 
-            player_ship_repo = PlayerShipRepository()
+            from services.loadout_consistency_service import LoadoutConsistencyService
 
-            # Create starter PlayerShip record linking the player to the "Betty" ship
+            player_ship_repo = PlayerShipRepository()
+            inv_repo = InventoryRepository()
+            consistency = LoadoutConsistencyService()
+
+            # 1. Create the PlayerShip row for Betty with EMPTY slot lists.
             starter_ship_data = {
                 "player_id": player.id,
                 "ship_name": "Betty",
                 "is_active": True,
-                "weapons": ["Nirai Impulse EX 1"],
-                "modules": ["E2 Exoclad", "Telta Quickscan"],
+                "weapons": [],
+                "modules": [],
                 "turrets": [],
                 "secondary_weapons": [],
             }
+            starter_ship = await player_ship_repo.create_or_update(db, starter_ship_data, commit=False)
 
-            starter_ship = await player_ship_repo.create_or_update(db, starter_ship_data)
+            # 2. Update player's active ship reference (PlayerShip.id, not Ship.id)
+            await self.player_repo.update_active_ship(db, player.id, starter_ship.id, commit=False)
 
-            # Update player's active ship reference (PlayerShip.id, not Ship.id)
-            await self.player_repo.update_active_ship(db, player.id, starter_ship.id)
+            # 3. Add all four starter items to inventory (concrete types).
+            await inv_repo.add_item(db, player.id, "primary_weapon", "Nirai Impulse EX 1", quantity=1, commit=False)
+            await inv_repo.add_item(db, player.id, "module", "E2 Exoclad", quantity=1, commit=False)
+            await inv_repo.add_item(db, player.id, "module", "Telta Quickscan", quantity=1, commit=False)
+            await inv_repo.add_item(db, player.id, "primary_weapon", "Micro Gun MK I", quantity=1, commit=False)
 
-            # Add Micro Gun MK I to player's cargo inventory
-            inv_repo = InventoryRepository()
-            await inv_repo.add_item(db, player.id, "primary_weapon", "Micro Gun MK I", quantity=1)
+            # 4. Equip the three items that should start fitted on Betty.
+            #    Each call decrements its inventory row and appends to the ship's
+            #    slot list — preserving I2 by construction.
+            await consistency.equip_one(
+                db, player_id=player.id, ship_id=starter_ship.id, item_name="Nirai Impulse EX 1"
+            )
+            await consistency.equip_one(db, player_id=player.id, ship_id=starter_ship.id, item_name="E2 Exoclad")
+            await consistency.equip_one(db, player_id=player.id, ship_id=starter_ship.id, item_name="Telta Quickscan")
+            # Micro Gun MK I stays in cargo — Betty has only 1 primary slot.
 
             flogger.info("Created starter loadout for player %s", player.id)
 
@@ -296,9 +324,18 @@ class PlayerService:
 
         Requirements:
         - Player must be level 10 (max level) to prestige
-        - Resets: xp, xp_surplus, credits, tier, inventory
-        - Preserves: lifetime_credits, ships, prestige_count, duel stats, bounty stats
+        - Resets: xp, xp_surplus, credits, tier, inventory, AND ship loadouts
+        - Preserves: lifetime_credits, ship hulls, prestige_count, duel stats, bounty stats
         - Kaamo storage preservation: not yet implemented (future feature)
+
+        Package G (B.19) Option P1: ship loadouts are cleared alongside
+        inventory.  This aligns prestige's "reset progress" intent with the
+        consistency contract (no orphan slot references — invariants I1, I2).
+        Pre-fix behaviour preserved JSON loadouts while wiping inventory,
+        which created post-prestige phantom items.
+
+        The caller (router) should wrap this in ``async with db.begin()`` for
+        atomicity; the service uses no internal commit anymore.
 
         Returns dict with:
         - player_id: int
@@ -326,18 +363,25 @@ class PlayerService:
             player.credits = 0  # Reset credits (legacy gives 0 starting credits on prestige)
             player.tier = "Bronze"
             player.prestige_count += 1
-            # Note: lifetime_credits, ships, duel stats, bounty stats are preserved
+            # Note: lifetime_credits, ship hulls, duel stats, bounty stats are preserved
 
-            # Clear inventory (preserving Kaamo storage in future)
-            # For now: clear all non-ship inventory items
-            # TODO: When Kaamo storage is implemented, preserve those items
+            # Clear all ship loadouts alongside inventory (Package G B.19, Option P1).
             from persist.repositories.inventory_repository import InventoryRepository
+            from persist.repositories.player_ship_repository import PlayerShipRepository
 
             inventory_repo = InventoryRepository()
+            player_ship_repo = PlayerShipRepository()
+
+            ships = await player_ship_repo.get_player_ships(db, player_id)
+            for ship in ships:
+                ship.weapons = []
+                ship.modules = []
+                ship.turrets = []
+                ship.secondary_weapons = []
+
             await inventory_repo.clear_player_inventory(db, player_id)
 
-            await db.commit()
-            await db.refresh(player)
+            await db.flush()
 
             flogger.info(f"Player {player_id} prestiged (count: {player.prestige_count})")
 

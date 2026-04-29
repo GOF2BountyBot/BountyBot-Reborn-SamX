@@ -388,4 +388,46 @@ ShopService ──── PlayerService
 
 ---
 
-*Last updated: 2026-03-16*
+## Loadout↔Inventory Consistency Choke-Point (Package G B.19, 2026-04-29)
+
+`LoadoutConsistencyService` is the **single canonical mutation point** for any
+operation that touches both `player_ships.{weapons,modules,turrets,secondary_weapons}`
+JSON and `player_inventories` rows.  It enforces four hard invariants:
+
+- **I1** — No item duplication across a single player's ships.
+- **I2** — No materialisation from nothing (every JSON entry has an inventory provenance).
+- **I3** — Atomicity (caller owns the transaction; the service uses `commit=False`).
+- **I4** — Active ship within static slot caps.
+
+### Public API (always `commit=False`)
+
+| Method | Used by |
+|---|---|
+| `equip_one(db, player_id, ship_id, item_name, equipment_type=None)` | `EquipmentService.equip_item` |
+| `unequip_one(db, player_id, ship_id, item_name, equipment_type=None)` | `EquipmentService.unequip_item` |
+| `transfer_loadout_to_new_ship(db, player_id, src_ship, dst_ship, slot_limits)` | `ShopService.purchase_ship` |
+| `evacuate_ship_loadout_to_inventory(db, ship)` | `ShopService.sell_ship`, `transfer_ship` router, `admin_remove_ship` |
+| `reconcile_active_ship_slots(db, player_id, target_ship_id)` | `set_active_ship` router |
+| `repair_player(db, player_id, *, dry_run=False)` | `0002_b19_repair_loadout_consistency` migration; admin tool |
+
+### HARD RULE — DO NOT VIOLATE
+
+Direct calls to `inventory_repo.add_item` / `inventory_repo.remove_item`
+**paired** with `player_ship_repo.add_equipment` / `remove_equipment` outside
+`LoadoutConsistencyService` are forbidden.  Future PRs that introduce such
+pairings should be rejected at review.
+
+The choke-point is what guarantees I1 and I2 by construction; bypassing it
+re-introduces the B.19 phantom-item / cross-ship duplication bug class.
+
+### Constructor injection for tests
+
+`LoadoutConsistencyService(*, player_ship_repo=None, inventory_repo=None,
+item_repo=None, ship_repo=None)` accepts optional repo overrides so callers
+(e.g. `EquipmentService.equip_item`, `ShopService.purchase_ship`) can share
+their already-mocked repositories with the consistency service in unit
+tests.
+
+---
+
+*Last updated: 2026-04-29*

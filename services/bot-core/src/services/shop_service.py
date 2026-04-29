@@ -304,63 +304,42 @@ class ShopService:
             db.add(new_player_ship)
             await db.flush()  # Get the new ship's ID
 
-            # b. Transfer equipped items from old ship to new ship.
-            # Overflow items are returned to inventory using concrete item types
-            # (resolved via ItemRepository STI discriminator).
+            # b. Transfer equipped items from old ship to new ship via the
+            # LoadoutConsistencyService choke-point (B.19 fix).
+            # The service clears the old ship's slot lists as part of the
+            # transfer — fixes the cross-ship duplication bug observed in
+            # B.19 (recon root cause #2).  Overflow items go to inventory
+            # using concrete item types resolved via STI discriminator.
+            from services.loadout_consistency_service import LoadoutConsistencyService
+
+            # Share repo handles so service-level test mocks propagate.
+            consistency = LoadoutConsistencyService(
+                player_ship_repo=self.player_ship_repo,
+                inventory_repo=self.inventory_repo,
+                item_repo=self.item_repo,
+                ship_repo=self.ship_repo,
+            )
+
+            slot_limits = {
+                "weapons": new_ship_static.max_primaries,
+                "modules": new_ship_static.max_modules,
+                "turrets": new_ship_static.max_turrets,
+                "secondary_weapons": getattr(new_ship_static, "max_secondaries", 0) or 0,
+            }
+            transfer_result = await consistency.transfer_loadout_to_new_ship(
+                db,
+                player_id=player_id,
+                src_ship=old_player_ship,
+                dst_ship=new_player_ship,
+                slot_limits=slot_limits,
+            )
+            # Translate breakdown to legacy shape used by transaction_details below.
             items_transferred: dict[str, list[str]] = {
-                "weapons": [],
-                "modules": [],
-                "turrets": [],
-                "secondary_weapons": [],
+                kind: list(transfer_result["breakdown"][kind]["transferred"]) for kind in slot_limits
             }
             items_unequipped: dict[str, list[str]] = {
-                "weapons": [],
-                "modules": [],
-                "turrets": [],
-                "secondary_weapons": [],
+                kind: list(transfer_result["breakdown"][kind]["overflowed"]) for kind in slot_limits
             }
-
-            if old_player_ship:
-                # Determine slot limits on new ship
-                slot_limits = {
-                    "weapons": new_ship_static.max_primaries,
-                    "modules": new_ship_static.max_modules,
-                    "turrets": new_ship_static.max_turrets,
-                    "secondary_weapons": getattr(new_ship_static, "max_secondaries", 0),
-                }
-
-                for equip_type in ("weapons", "modules", "turrets", "secondary_weapons"):
-                    old_items: list[str] = list(getattr(old_player_ship, equip_type) or [])
-                    max_slots = slot_limits[equip_type]
-
-                    # Items that fit on new ship
-                    fitting = old_items[:max_slots]
-                    overflow = old_items[max_slots:]
-
-                    items_transferred[equip_type] = fitting
-                    items_unequipped[equip_type] = overflow
-
-                    # Unequip overflow items to inventory using concrete type via STI discriminator
-                    for item_name in overflow:
-                        base = await self.item_repo.get_by_name_any_type(db, item_name)
-                        if base:
-                            from services.equipment_service import item_discriminator_to_concrete_type
-
-                            concrete = item_discriminator_to_concrete_type(base.type)
-                            if concrete:
-                                await self.inventory_repo.add_item(db, player_id, concrete, item_name, 1, commit=False)
-                                continue
-                        # Fallback: use the equipment-type's natural inventory type
-                        from services.equipment_service import _INVENTORY_TYPE_MAP as _EQUIP_INV_MAP
-
-                        fallback_type = _EQUIP_INV_MAP.get(equip_type, "module")
-                        await self.inventory_repo.add_item(db, player_id, fallback_type, item_name, 1, commit=False)
-
-                # Apply transferred loadout to new ship
-                new_player_ship.weapons = items_transferred["weapons"]
-                new_player_ship.modules = items_transferred["modules"]
-                new_player_ship.turrets = items_transferred["turrets"]
-                new_player_ship.secondary_weapons = items_transferred["secondary_weapons"]
 
             # c. Handle old ship trade-in
             if sell_old_ship and old_player_ship:
@@ -590,25 +569,18 @@ class ShopService:
                 raise ValueError(f"Player {player_id} not found")
 
             if clear_equipment:
-                # Unequip all items to player inventory before selling ship.
-                # Resolve concrete types via STI discriminator to avoid generic aliases.
-                from services.equipment_service import _INVENTORY_TYPE_MAP as _EQUIP_INV_MAP
-                from services.equipment_service import item_discriminator_to_concrete_type
+                # Package G (B.19): use the LoadoutConsistencyService choke-point
+                # (anti-duplication guard prevents legacy phantom-item exploit).
+                from services.loadout_consistency_service import LoadoutConsistencyService
 
-                for equip_type in ("weapons", "modules", "turrets", "secondary_weapons"):
-                    equipped: list[str] = list(getattr(player_ship, equip_type) or [])
-                    for item_name in equipped:
-                        base = await self.item_repo.get_by_name_any_type(db, item_name)
-                        if base:
-                            concrete = item_discriminator_to_concrete_type(base.type)
-                            if concrete:
-                                await self.inventory_repo.add_item(db, player_id, concrete, item_name, 1, commit=False)
-                                items_unequipped[equip_type].append(item_name)
-                                continue
-                        # Fallback to equipment_service's natural concrete type map
-                        fallback = _EQUIP_INV_MAP.get(equip_type, "module")
-                        await self.inventory_repo.add_item(db, player_id, fallback, item_name, 1, commit=False)
-                        items_unequipped[equip_type].append(item_name)
+                consistency = LoadoutConsistencyService(
+                    player_ship_repo=self.player_ship_repo,
+                    inventory_repo=self.inventory_repo,
+                    item_repo=self.item_repo,
+                    ship_repo=self.ship_repo,
+                )
+                evac = await consistency.evacuate_ship_loadout_to_inventory(db, ship=player_ship)
+                items_unequipped = {kind: list(v) for kind, v in evac["items_returned_detail"].items()}
 
             # Credit player with ship's full value (no tax; commit=False — caller's transaction).
             # Compute new_credits ONCE, locally, BEFORE the update. See sell_item for rationale.

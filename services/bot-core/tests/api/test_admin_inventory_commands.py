@@ -84,6 +84,13 @@ def _configure_db_mock(mock_get_db):
     mock_session = AsyncMock()
     mock_get_db.return_value.__aenter__ = AsyncMock(return_value=mock_session)
     mock_get_db.return_value.__aexit__ = AsyncMock(return_value=False)
+    # Package G B.19: routers now wrap mutating calls in `db.begin()`.
+    # Make `db.begin()` return an async context manager so the patched
+    # session works with `async with db.begin():`.
+    _begin_ctx = AsyncMock()
+    _begin_ctx.__aenter__ = AsyncMock(return_value=mock_session)
+    _begin_ctx.__aexit__ = AsyncMock(return_value=False)
+    mock_session.begin = MagicMock(return_value=_begin_ctx)
     return mock_session
 
 
@@ -539,12 +546,8 @@ class TestAdminRemoveShip:
     @patch("api.routers.admin.get_db_session")
     @patch("api.routers.admin.PlayerRepository")
     @patch("api.routers.admin.PlayerShipRepository")
-    @patch("api.routers.admin.InventoryRepository")
-    @patch("api.routers.admin.ItemRepository")
     def test_remove_ship_success(
         self,
-        mock_item_repo_cls,
-        mock_inv_repo_cls,
         mock_player_ship_repo_cls,
         mock_player_repo_cls,
         mock_get_db,
@@ -552,8 +555,12 @@ class TestAdminRemoveShip:
     ):
         """Returns 200 and returns items to inventory on successful removal.
 
-        A.36 regression guard: verifies that items are returned to inventory
-        with CONCRETE item types (primary_weapon, module) not generic aliases.
+        Package G (B.19): the inline evacuation loop has been replaced with a
+        call to ``LoadoutConsistencyService.evacuate_ship_loadout_to_inventory``.
+        We patch that service directly to control its return shape.
+
+        A.36 regression guard: verifies the response surfaces the items moved
+        to inventory.
         """
         _configure_db_mock(mock_get_db)
 
@@ -571,35 +578,33 @@ class TestAdminRemoveShip:
         mock_ps_repo.remove = AsyncMock()
         mock_player_ship_repo_cls.return_value = mock_ps_repo
 
-        mock_inv_repo = AsyncMock()
-        mock_inv_repo.add_item = AsyncMock()
-        mock_inv_repo_cls.return_value = mock_inv_repo
-
-        # Mock ItemRepository to return items with concrete STI discriminators
-        mock_item_repo = AsyncMock()
-
-        def _make_item_mock(type_str: str):
-            m = MagicMock()
-            m.type = type_str
-            return m
-
-        async def _get_by_name_any_type(db, name):
-            if name == "Pulse Laser":
-                return _make_item_mock("PrimaryWeapon")
-            if name == "Shield Gen":
-                return _make_item_mock("ShieldModule")
-            return None
-
-        mock_item_repo.get_by_name_any_type = _get_by_name_any_type
-        mock_item_repo_cls.return_value = mock_item_repo
+        # Patch the LoadoutConsistencyService used by the router; return a
+        # canonical evacuation report so the response is deterministic.
+        mock_consistency = AsyncMock()
+        mock_consistency.evacuate_ship_loadout_to_inventory = AsyncMock(
+            return_value={
+                "items_returned": ["Pulse Laser", "Shield Gen"],
+                "items_returned_detail": {
+                    "weapons": ["Pulse Laser"],
+                    "modules": ["Shield Gen"],
+                    "turrets": [],
+                    "secondary_weapons": [],
+                },
+                "duplicates_dropped": 0,
+            }
+        )
 
         payload = {
             "guild_id": 67890,
             "user_id": 111222333,
             "ship_name": "Sidewinder",
         }
-        with patch("persist.repositories.user_repository.UserRepository") as mock_ur:
+        with (
+            patch("persist.repositories.user_repository.UserRepository") as mock_ur,
+            patch("services.loadout_consistency_service.LoadoutConsistencyService") as mock_lcs_cls,
+        ):
             mock_ur.return_value = mock_user_repo
+            mock_lcs_cls.return_value = mock_consistency
             resp = client.post("/api/v1/admin/remove-ship?admin_user_id=999", json=payload)
         assert resp.status_code == 200
         data = resp.json()
@@ -609,21 +614,14 @@ class TestAdminRemoveShip:
         # Should have returned weapons + modules
         assert "Pulse Laser" in data["items_returned_to_inventory"]
         assert "Shield Gen" in data["items_returned_to_inventory"]
-        # A.36 regression guard: verify CONCRETE types used in add_item calls
-        add_item_calls = mock_inv_repo.add_item.call_args_list
-        item_types_used = {call.args[2] for call in add_item_calls if len(call.args) >= 3}
-        assert "weapon" not in item_types_used, "generic alias 'weapon' must not be written"
-        assert "turret" not in item_types_used, "generic alias 'turret' must not be written"
-        assert "primary_weapon" in item_types_used, "PrimaryWeapon must map to concrete 'primary_weapon'"
-        assert "module" in item_types_used, "ShieldModule must map to concrete 'module'"
+        # The router now delegates to the consistency service exactly once.
+        assert mock_consistency.evacuate_ship_loadout_to_inventory.call_count == 1
 
     @patch("api.routers.admin.get_db_session")
     @patch("api.routers.admin.PlayerRepository")
     @patch("api.routers.admin.PlayerShipRepository")
-    @patch("api.routers.admin.InventoryRepository")
     def test_remove_ship_only_active_ship_blocked(
         self,
-        mock_inv_repo_cls,
         mock_player_ship_repo_cls,
         mock_player_repo_cls,
         mock_get_db,
@@ -645,8 +643,6 @@ class TestAdminRemoveShip:
         mock_ps_repo.get_player_ships = AsyncMock(return_value=[active_ship])  # only one ship
         mock_player_ship_repo_cls.return_value = mock_ps_repo
 
-        mock_inv_repo_cls.return_value = AsyncMock()
-
         payload = {
             "guild_id": 67890,
             "user_id": 111222333,
@@ -661,10 +657,8 @@ class TestAdminRemoveShip:
     @patch("api.routers.admin.get_db_session")
     @patch("api.routers.admin.PlayerRepository")
     @patch("api.routers.admin.PlayerShipRepository")
-    @patch("api.routers.admin.InventoryRepository")
     def test_remove_ship_ship_not_found(
         self,
-        mock_inv_repo_cls,
         mock_player_ship_repo_cls,
         mock_player_repo_cls,
         mock_get_db,
@@ -684,8 +678,6 @@ class TestAdminRemoveShip:
         mock_ps_repo.get_ships_by_name = AsyncMock(return_value=[])  # player doesn't own this ship
         mock_player_ship_repo_cls.return_value = mock_ps_repo
 
-        mock_inv_repo_cls.return_value = AsyncMock()
-
         payload = {
             "guild_id": 67890,
             "user_id": 111222333,
@@ -699,10 +691,8 @@ class TestAdminRemoveShip:
     @patch("api.routers.admin.get_db_session")
     @patch("api.routers.admin.PlayerRepository")
     @patch("api.routers.admin.PlayerShipRepository")
-    @patch("api.routers.admin.InventoryRepository")
     def test_remove_ship_active_ship_allowed_when_multiple_ships(
         self,
-        mock_inv_repo_cls,
         mock_player_ship_repo_cls,
         mock_player_repo_cls,
         mock_get_db,
@@ -726,16 +716,31 @@ class TestAdminRemoveShip:
         mock_ps_repo.remove = AsyncMock()
         mock_player_ship_repo_cls.return_value = mock_ps_repo
 
-        mock_inv_repo = AsyncMock()
-        mock_inv_repo.add_item = AsyncMock()
-        mock_inv_repo_cls.return_value = mock_inv_repo
+        # Patch the consistency service so evacuation is deterministic.
+        mock_consistency = AsyncMock()
+        mock_consistency.evacuate_ship_loadout_to_inventory = AsyncMock(
+            return_value={
+                "items_returned": [],
+                "items_returned_detail": {
+                    "weapons": [],
+                    "modules": [],
+                    "turrets": [],
+                    "secondary_weapons": [],
+                },
+                "duplicates_dropped": 0,
+            }
+        )
 
         payload = {
             "guild_id": 67890,
             "user_id": 111222333,
             "ship_name": "Sidewinder",
         }
-        with patch("persist.repositories.user_repository.UserRepository") as mock_ur:
+        with (
+            patch("persist.repositories.user_repository.UserRepository") as mock_ur,
+            patch("services.loadout_consistency_service.LoadoutConsistencyService") as mock_lcs_cls,
+        ):
             mock_ur.return_value = mock_user_repo
+            mock_lcs_cls.return_value = mock_consistency
             resp = client.post("/api/v1/admin/remove-ship?admin_user_id=999", json=payload)
         assert resp.status_code == 200

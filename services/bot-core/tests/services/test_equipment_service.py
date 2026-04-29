@@ -197,9 +197,11 @@ class TestEquipItemSuccess:
         )
 
         assert result["success"] is True
-        svc.ship_repo.add_equipment.assert_called_once_with(mock_db, 1, "weapons", "Pulse Laser")
+        svc.ship_repo.add_equipment.assert_called_once_with(mock_db, 1, "weapons", "Pulse Laser", commit=False)
         # A.36 fix: remove_item now called with concrete type "primary_weapon", not generic "weapon"
-        svc.inventory_repo.remove_item.assert_called_once_with(mock_db, 42, "primary_weapon", "Pulse Laser", quantity=1)
+        svc.inventory_repo.remove_item.assert_called_once_with(
+            mock_db, 42, "primary_weapon", "Pulse Laser", quantity=1, commit=False
+        )
 
     @pytest.mark.asyncio
     async def test_equip_module_to_ship_with_available_module_slot(self, mock_db, svc):
@@ -227,8 +229,10 @@ class TestEquipItemSuccess:
         )
 
         assert result["success"] is True
-        svc.ship_repo.add_equipment.assert_called_once_with(mock_db, 1, "modules", "Shield Generator")
-        svc.inventory_repo.remove_item.assert_called_once_with(mock_db, 42, "module", "Shield Generator", quantity=1)
+        svc.ship_repo.add_equipment.assert_called_once_with(mock_db, 1, "modules", "Shield Generator", commit=False)
+        svc.inventory_repo.remove_item.assert_called_once_with(
+            mock_db, 42, "module", "Shield Generator", quantity=1, commit=False
+        )
 
     @pytest.mark.asyncio
     async def test_equip_turret_to_ship_with_available_turret_slot(self, mock_db, svc):
@@ -255,7 +259,7 @@ class TestEquipItemSuccess:
         assert result["success"] is True
         # A.36 fix: remove_item now called with concrete type "turret_weapon", not generic "turret"
         svc.inventory_repo.remove_item.assert_called_once_with(
-            mock_db, 42, "turret_weapon", "Turreted Beam Laser", quantity=1
+            mock_db, 42, "turret_weapon", "Turreted Beam Laser", quantity=1, commit=False
         )
 
 
@@ -412,9 +416,11 @@ class TestUnequipItemSuccess:
         )
 
         assert result["success"] is True
-        svc.ship_repo.remove_equipment.assert_called_once_with(mock_db, 1, "weapons", "Pulse Laser")
+        svc.ship_repo.remove_equipment.assert_called_once_with(mock_db, 1, "weapons", "Pulse Laser", commit=False)
         # A.36 fix: add_item now called with concrete type "primary_weapon", not generic "weapon"
-        svc.inventory_repo.add_item.assert_called_once_with(mock_db, 42, "primary_weapon", "Pulse Laser", quantity=1)
+        svc.inventory_repo.add_item.assert_called_once_with(
+            mock_db, 42, "primary_weapon", "Pulse Laser", quantity=1, commit=False
+        )
 
     @pytest.mark.asyncio
     async def test_unequip_module_from_ship_success(self, mock_db, svc):
@@ -432,7 +438,9 @@ class TestUnequipItemSuccess:
         )
 
         assert result["success"] is True
-        svc.inventory_repo.add_item.assert_called_once_with(mock_db, 42, "module", "Shield Generator", quantity=1)
+        svc.inventory_repo.add_item.assert_called_once_with(
+            mock_db, 42, "module", "Shield Generator", quantity=1, commit=False
+        )
 
     @pytest.mark.asyncio
     async def test_unequip_turret_from_ship_success(self, mock_db, svc):
@@ -452,7 +460,7 @@ class TestUnequipItemSuccess:
         assert result["success"] is True
         # A.36 fix: add_item now called with concrete "turret_weapon", not generic "turret"
         svc.inventory_repo.add_item.assert_called_once_with(
-            mock_db, 42, "turret_weapon", "Turreted Beam Laser", quantity=1
+            mock_db, 42, "turret_weapon", "Turreted Beam Laser", quantity=1, commit=False
         )
 
 
@@ -587,7 +595,7 @@ class TestEquipItemAutoDetect:
         )
 
         assert result["success"] is True
-        svc.ship_repo.add_equipment.assert_called_once_with(mock_db, 1, "weapons", "Pulse Laser")
+        svc.ship_repo.add_equipment.assert_called_once_with(mock_db, 1, "weapons", "Pulse Laser", commit=False)
 
     @pytest.mark.asyncio
     async def test_equip_turret_auto_detected_from_turret_weapon_type(self, mock_db, svc):
@@ -613,7 +621,7 @@ class TestEquipItemAutoDetect:
         )
 
         assert result["success"] is True
-        svc.ship_repo.add_equipment.assert_called_once_with(mock_db, 1, "turrets", "Berger AGT 20mm")
+        svc.ship_repo.add_equipment.assert_called_once_with(mock_db, 1, "turrets", "Berger AGT 20mm", commit=False)
 
     @pytest.mark.asyncio
     async def test_equip_module_auto_detected_from_module_suffix(self, mock_db, svc):
@@ -639,7 +647,7 @@ class TestEquipItemAutoDetect:
         )
 
         assert result["success"] is True
-        svc.ship_repo.add_equipment.assert_called_once_with(mock_db, 1, "modules", "D'iol")
+        svc.ship_repo.add_equipment.assert_called_once_with(mock_db, 1, "modules", "D'iol", commit=False)
 
     @pytest.mark.asyncio
     async def test_equip_auto_detect_item_not_found_raises(self, mock_db, svc):
@@ -678,7 +686,7 @@ class TestUnequipItemAutoDetect:
         )
 
         assert result["success"] is True
-        svc.ship_repo.remove_equipment.assert_called_once_with(mock_db, 1, "weapons", "Pulse Laser")
+        svc.ship_repo.remove_equipment.assert_called_once_with(mock_db, 1, "weapons", "Pulse Laser", commit=False)
 
     @pytest.mark.asyncio
     async def test_unequip_auto_detect_fallback_to_slot_scan(self, mock_db, svc):
@@ -698,7 +706,7 @@ class TestUnequipItemAutoDetect:
         )
 
         assert result["success"] is True
-        svc.ship_repo.remove_equipment.assert_called_once_with(mock_db, 1, "modules", "Mystery Module")
+        svc.ship_repo.remove_equipment.assert_called_once_with(mock_db, 1, "modules", "Mystery Module", commit=False)
 
     @pytest.mark.asyncio
     async def test_unequip_auto_detect_item_not_in_any_slot_raises(self, mock_db, svc):

@@ -530,10 +530,19 @@ class TestPrestigePlayer:
         player.prestige_count = 0
         mock_player_repo.get_by_id.return_value = player
 
-        with patch(
-            "persist.repositories.inventory_repository.InventoryRepository.clear_player_inventory",
-            new_callable=AsyncMock,
-            return_value=0,
+        # Package G (B.19) Option P1: prestige now also clears ship loadouts.
+        # Patch the player_ship_repository so the per-ship clear loop is a no-op.
+        with (
+            patch(
+                "persist.repositories.inventory_repository.InventoryRepository.clear_player_inventory",
+                new_callable=AsyncMock,
+                return_value=0,
+            ),
+            patch(
+                "persist.repositories.player_ship_repository.PlayerShipRepository.get_player_ships",
+                new_callable=AsyncMock,
+                return_value=[],
+            ),
         ):
             result = await service.prestige_player(mock_db, player_id=1)
 
@@ -542,13 +551,61 @@ class TestPrestigePlayer:
         assert player.xp_surplus == 0
         assert player.credits == 0
         assert player.prestige_count == 1
-        mock_db.commit.assert_awaited_once()
-        mock_db.refresh.assert_awaited_once_with(player)
+        # Caller (router) owns the transaction now — service flushes, never commits.
         # Verify return dict structure
         assert result["player_id"] == 1
         assert result["prestige_count"] == 1
         assert result["level_before"] == 10
         assert isinstance(result["division_before"], str)
+
+    @pytest.mark.asyncio
+    async def test_prestige_clears_ship_loadouts(self, service, mock_db, mock_player_repo):
+        """Package G (B.19) Option P1: prestige clears every ship's slot lists.
+
+        This is the regression guard for the post-prestige phantom-item bug
+        (B.19 root cause #3) — pre-fix, inventory was wiped while ship JSON
+        loadouts were preserved, leaving every equipped item without an
+        inventory provenance.
+        """
+        player = _make_player(xp=1_000_000, credits=5000, prestige_count=0)
+        player.xp = 1_000_000
+        player.xp_surplus = 0
+        player.credits = 0
+        player.prestige_count = 0
+        mock_player_repo.get_by_id.return_value = player
+
+        ship_a = MagicMock()
+        ship_a.weapons = ["Pulse Laser"]
+        ship_a.modules = ["E2 Exoclad"]
+        ship_a.turrets = []
+        ship_a.secondary_weapons = []
+
+        ship_b = MagicMock()
+        ship_b.weapons = ["Rail Gun"]
+        ship_b.modules = ["Telta Quickscan"]
+        ship_b.turrets = ["Turret A"]
+        ship_b.secondary_weapons = ["Mine"]
+
+        with (
+            patch(
+                "persist.repositories.inventory_repository.InventoryRepository.clear_player_inventory",
+                new_callable=AsyncMock,
+                return_value=0,
+            ),
+            patch(
+                "persist.repositories.player_ship_repository.PlayerShipRepository.get_player_ships",
+                new_callable=AsyncMock,
+                return_value=[ship_a, ship_b],
+            ),
+        ):
+            await service.prestige_player(mock_db, player_id=1)
+
+        assert ship_a.weapons == []
+        assert ship_a.modules == []
+        assert ship_b.weapons == []
+        assert ship_b.modules == []
+        assert ship_b.turrets == []
+        assert ship_b.secondary_weapons == []
 
     @pytest.mark.asyncio
     async def test_raises_when_player_not_found(self, service, mock_db, mock_player_repo):
@@ -588,10 +645,17 @@ class TestPrestigePlayer:
         player.prestige_count = 3
         mock_player_repo.get_by_id.return_value = player
 
-        with patch(
-            "persist.repositories.inventory_repository.InventoryRepository.clear_player_inventory",
-            new_callable=AsyncMock,
-            return_value=0,
+        with (
+            patch(
+                "persist.repositories.inventory_repository.InventoryRepository.clear_player_inventory",
+                new_callable=AsyncMock,
+                return_value=0,
+            ),
+            patch(
+                "persist.repositories.player_ship_repository.PlayerShipRepository.get_player_ships",
+                new_callable=AsyncMock,
+                return_value=[],
+            ),
         ):
             result = await service.prestige_player(mock_db, player_id=1)
 
@@ -609,10 +673,17 @@ class TestPrestigePlayer:
         player.prestige_count = 0
         mock_player_repo.get_by_id.return_value = player
 
-        with patch(
-            "persist.repositories.inventory_repository.InventoryRepository.clear_player_inventory",
-            new_callable=AsyncMock,
-            return_value=0,
+        with (
+            patch(
+                "persist.repositories.inventory_repository.InventoryRepository.clear_player_inventory",
+                new_callable=AsyncMock,
+                return_value=0,
+            ),
+            patch(
+                "persist.repositories.player_ship_repository.PlayerShipRepository.get_player_ships",
+                new_callable=AsyncMock,
+                return_value=[],
+            ),
         ):
             await service.prestige_player(mock_db, player_id=1)
 
@@ -629,10 +700,17 @@ class TestPrestigePlayer:
         player.prestige_count = 0
         mock_player_repo.get_by_id.return_value = player
 
-        with patch(
-            "persist.repositories.inventory_repository.InventoryRepository.clear_player_inventory",
-            new_callable=AsyncMock,
-            return_value=0,
+        with (
+            patch(
+                "persist.repositories.inventory_repository.InventoryRepository.clear_player_inventory",
+                new_callable=AsyncMock,
+                return_value=0,
+            ),
+            patch(
+                "persist.repositories.player_ship_repository.PlayerShipRepository.get_player_ships",
+                new_callable=AsyncMock,
+                return_value=[],
+            ),
         ):
             result = await service.prestige_player(mock_db, player_id=1)
 
@@ -767,10 +845,14 @@ class TestGetPlayersByTier:
 class TestCreateStarterLoadout:
     """Tests for PlayerService._create_starter_loadout.
 
-    _create_starter_loadout uses local imports:
-        from persist.repositories.player_ship_repository import PlayerShipRepository
-        from persist.repositories.inventory_repository import InventoryRepository
-    We intercept them by pre-populating sys.modules with mock modules.
+    Package G (B.19) refactor: the starter ship is now created with EMPTY
+    JSON slot lists, items are added to inventory, and ``equip_one`` is
+    called three times to fit the items onto Betty (1 primary + 2 modules).
+    The 4th item (Micro Gun MK I) stays in cargo because Betty has only
+    1 primary slot.
+
+    Tests patch the ``LoadoutConsistencyService.equip_one`` choke-point so
+    the per-equip path is deterministic without touching repos directly.
     """
 
     def _make_player_ship_repo_mock(self, player_ship_repo_mock):
@@ -789,8 +871,17 @@ class TestCreateStarterLoadout:
         inv_mod.InventoryRepository = MagicMock(return_value=inv_repo_mock)
         return inv_mod
 
+    def _make_consistency_mod(self, consistency_mock):
+        """Return a mock module that exposes the LoadoutConsistencyService class."""
+        import types as _types
+
+        lcs_mod = _types.ModuleType("services.loadout_consistency_service")
+        lcs_mod.LoadoutConsistencyService = MagicMock(return_value=consistency_mock)
+        return lcs_mod
+
     def _make_repo_mocks(self):
-        """Create and return (mock_ps_repo, mock_inv_repo, starter_ship, ps_mod, inv_mod)."""
+        """Create and return (mock_ps_repo, mock_inv_repo, mock_consistency,
+        starter_ship, ps_mod, inv_mod, lcs_mod)."""
         mock_ps_repo = AsyncMock()
         starter_ship = MagicMock()
         starter_ship.id = 42
@@ -799,16 +890,24 @@ class TestCreateStarterLoadout:
         mock_inv_repo = AsyncMock()
         mock_inv_repo.add_item.return_value = MagicMock()
 
+        mock_consistency = AsyncMock()
+        mock_consistency.equip_one = AsyncMock(return_value={"success": True})
+
         ps_mod = self._make_player_ship_repo_mock(mock_ps_repo)
         inv_mod = self._make_inventory_repo_mock(mock_inv_repo)
-        return mock_ps_repo, mock_inv_repo, starter_ship, ps_mod, inv_mod
+        lcs_mod = self._make_consistency_mod(mock_consistency)
+        return mock_ps_repo, mock_inv_repo, mock_consistency, starter_ship, ps_mod, inv_mod, lcs_mod
 
     @pytest.mark.asyncio
-    async def test_creates_betty_with_default_loadout(self, service, mock_db, mock_player_repo):
-        """PlayerShipRepository.create_or_update is called with Betty ship data."""
+    async def test_creates_betty_with_empty_slot_lists(self, service, mock_db, mock_player_repo):
+        """Package G (B.19): the starter PlayerShip is created with EMPTY slot lists.
+
+        Items are subsequently equipped via the consistency service so each
+        slot reference has an inventory provenance (invariant I2).
+        """
         player = _make_player(player_id=7)
 
-        mock_ps_repo, _inv_repo, starter_ship, ps_mod, inv_mod = self._make_repo_mocks()
+        mock_ps_repo, _inv_repo, _lcs, starter_ship, ps_mod, inv_mod, lcs_mod = self._make_repo_mocks()
         starter_ship.id = 42
 
         with patch.dict(
@@ -816,6 +915,7 @@ class TestCreateStarterLoadout:
             {
                 "persist.repositories.player_ship_repository": ps_mod,
                 "persist.repositories.inventory_repository": inv_mod,
+                "services.loadout_consistency_service": lcs_mod,
             },
         ):
             await service._create_starter_loadout(mock_db, player)
@@ -826,13 +926,18 @@ class TestCreateStarterLoadout:
         assert ship_data["ship_name"] == "Betty"
         assert ship_data["player_id"] == 7
         assert ship_data["is_active"] is True
+        # Package G B.19: starter slots are now empty; equip_one fills them.
+        assert ship_data["weapons"] == []
+        assert ship_data["modules"] == []
+        assert ship_data["turrets"] == []
+        assert ship_data["secondary_weapons"] == []
 
     @pytest.mark.asyncio
     async def test_updates_active_ship_after_creation(self, service, mock_db, mock_player_repo):
         """player_repo.update_active_ship is called with the new PlayerShip id."""
         player = _make_player(player_id=7)
 
-        _ps_repo, _inv_repo, starter_ship, ps_mod, inv_mod = self._make_repo_mocks()
+        _ps_repo, _inv_repo, _lcs, starter_ship, ps_mod, inv_mod, lcs_mod = self._make_repo_mocks()
         starter_ship.id = 99
 
         with patch.dict(
@@ -840,79 +945,77 @@ class TestCreateStarterLoadout:
             {
                 "persist.repositories.player_ship_repository": ps_mod,
                 "persist.repositories.inventory_repository": inv_mod,
+                "services.loadout_consistency_service": lcs_mod,
             },
         ):
             await service._create_starter_loadout(mock_db, player)
 
-        mock_player_repo.update_active_ship.assert_awaited_once_with(mock_db, 7, 99)
+        mock_player_repo.update_active_ship.assert_awaited_once_with(mock_db, 7, 99, commit=False)
 
     @pytest.mark.asyncio
-    async def test_starter_loadout_includes_weapons_and_modules(self, service, mock_db, mock_player_repo):
-        """Starter ship data includes the correct default weapons and modules."""
-        player = _make_player(player_id=7)
+    async def test_starter_loadout_equips_three_items_via_consistency_service(self, service, mock_db, mock_player_repo):
+        """Package G (B.19): equip_one is called 3 times — Nirai, E2, Telta.
 
-        mock_ps_repo, _inv_repo, _starter_ship, ps_mod, inv_mod = self._make_repo_mocks()
-
-        with patch.dict(
-            sys.modules,
-            {
-                "persist.repositories.player_ship_repository": ps_mod,
-                "persist.repositories.inventory_repository": inv_mod,
-            },
-        ):
-            await service._create_starter_loadout(mock_db, player)
-
-        ship_data = mock_ps_repo.create_or_update.call_args[0][1]
-        assert "Nirai Impulse EX 1" in ship_data["weapons"]
-        assert "E2 Exoclad" in ship_data["modules"]
-        assert "Telta Quickscan" in ship_data["modules"]
-        assert ship_data["turrets"] == []
-
-    @pytest.mark.asyncio
-    async def test_starter_loadout_secondary_weapons_is_empty_list_not_null(self, service, mock_db, mock_player_repo):
-        """B.2: Starter ship data must include secondary_weapons=[] (not NULL/missing).
-
-        Without this key, PlayerShipRepository.create_or_update() leaves the column
-        NULL in PostgreSQL, causing secondary_weapons to be None instead of [] for
-        new players. This causes inconsistency with weapons/modules/turrets which
-        are all explicit empty lists.
+        Micro Gun MK I stays in cargo because Betty has only 1 primary slot.
         """
         player = _make_player(player_id=7)
 
-        mock_ps_repo, _inv_repo, _starter_ship, ps_mod, inv_mod = self._make_repo_mocks()
+        _ps, _inv, mock_consistency, _ship, ps_mod, inv_mod, lcs_mod = self._make_repo_mocks()
 
         with patch.dict(
             sys.modules,
             {
                 "persist.repositories.player_ship_repository": ps_mod,
                 "persist.repositories.inventory_repository": inv_mod,
+                "services.loadout_consistency_service": lcs_mod,
             },
         ):
             await service._create_starter_loadout(mock_db, player)
 
-        ship_data = mock_ps_repo.create_or_update.call_args[0][1]
-        assert "secondary_weapons" in ship_data, "starter_ship_data must include 'secondary_weapons' key (B.2)"
-        assert ship_data["secondary_weapons"] == [], (
-            "secondary_weapons must be [] not None/missing on starter loadout (B.2)"
-        )
+        equipped_names = [
+            call.kwargs.get("item_name", call.args[3] if len(call.args) > 3 else None)
+            for call in mock_consistency.equip_one.call_args_list
+        ]
+        assert "Nirai Impulse EX 1" in equipped_names
+        assert "E2 Exoclad" in equipped_names
+        assert "Telta Quickscan" in equipped_names
+        # Micro Gun MK I should NOT be equipped on Betty (cargo only).
+        assert "Micro Gun MK I" not in equipped_names
+        assert mock_consistency.equip_one.await_count == 3
 
     @pytest.mark.asyncio
-    async def test_starter_loadout_adds_micro_gun_to_cargo(self, service, mock_db, mock_player_repo):
-        """Micro Gun MK I is added to player cargo inventory after ship creation."""
+    async def test_starter_loadout_adds_all_four_starter_items_to_inventory(self, service, mock_db, mock_player_repo):
+        """Package G (B.19): all 4 starter items are added to inventory first.
+
+        Three are then equipped onto Betty via the consistency service, which
+        decrements the inventory rows.  Micro Gun MK I remains in cargo.
+        """
         player = _make_player(player_id=7)
 
-        _ps_repo, mock_inv_repo, _starter_ship, ps_mod, inv_mod = self._make_repo_mocks()
+        _ps, mock_inv_repo, _lcs, _ship, ps_mod, inv_mod, lcs_mod = self._make_repo_mocks()
 
         with patch.dict(
             sys.modules,
             {
                 "persist.repositories.player_ship_repository": ps_mod,
                 "persist.repositories.inventory_repository": inv_mod,
+                "services.loadout_consistency_service": lcs_mod,
             },
         ):
             await service._create_starter_loadout(mock_db, player)
 
-        mock_inv_repo.add_item.assert_awaited_once_with(mock_db, 7, "primary_weapon", "Micro Gun MK I", quantity=1)
+        item_names_added = [
+            c.args[3] if len(c.args) > 3 else c.kwargs["item_name"] for c in mock_inv_repo.add_item.call_args_list
+        ]
+        assert "Nirai Impulse EX 1" in item_names_added
+        assert "E2 Exoclad" in item_names_added
+        assert "Telta Quickscan" in item_names_added
+        assert "Micro Gun MK I" in item_names_added
+        # All four added with concrete types.
+        item_types = [
+            c.args[2] if len(c.args) > 2 else c.kwargs["item_type"] for c in mock_inv_repo.add_item.call_args_list
+        ]
+        assert all(t in {"primary_weapon", "module"} for t in item_types)
 
     @pytest.mark.asyncio
     async def test_reraises_exception_on_error(self, service, mock_db):
@@ -927,12 +1030,16 @@ class TestCreateStarterLoadout:
         mock_inv_repo = AsyncMock()
         inv_mod = self._make_inventory_repo_mock(mock_inv_repo)
 
+        mock_consistency = AsyncMock()
+        lcs_mod = self._make_consistency_mod(mock_consistency)
+
         with (
             patch.dict(
                 sys.modules,
                 {
                     "persist.repositories.player_ship_repository": ps_mod,
                     "persist.repositories.inventory_repository": inv_mod,
+                    "services.loadout_consistency_service": lcs_mod,
                 },
             ),
             pytest.raises(RuntimeError, match="ship create failed"),

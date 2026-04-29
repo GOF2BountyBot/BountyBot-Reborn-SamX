@@ -39,21 +39,35 @@ class PlayerShipRepository(IRepository[PlayerShip]):
             flogger.error(f"Error listing all ships: {e}")
             raise
 
-    async def add(self, db: AsyncSession, obj: PlayerShip) -> PlayerShip:
-        """Add new ship to database."""
+    async def add(self, db: AsyncSession, obj: PlayerShip, commit: bool = True) -> PlayerShip:
+        """Add new ship to database.
+
+        Args:
+            commit: When False, flush changes without committing (use when the caller
+                owns the transaction, e.g. inside a router-level db.begin() context).
+        """
         try:
             db.add(obj)
-            await db.commit()
+            if commit:
+                await db.commit()
+            else:
+                await db.flush()
             await db.refresh(obj)
             flogger.info(f"Added ship: {obj.ship_name} for player {obj.player_id}")
             return obj
         except Exception as e:
             flogger.error(f"Error adding ship: {e}")
-            await db.rollback()
+            if commit:
+                await db.rollback()
             raise
 
-    async def create_or_update(self, db: AsyncSession, raw: dict) -> PlayerShip:
-        """Create or update ship from raw data."""
+    async def create_or_update(self, db: AsyncSession, raw: dict, commit: bool = True) -> PlayerShip:
+        """Create or update ship from raw data.
+
+        Args:
+            commit: When False, flush changes without committing (use when the caller
+                owns the transaction, e.g. inside a router-level db.begin() context).
+        """
         try:
             player_id = raw.get("player_id")
             ship_name = raw.get("ship_name")
@@ -72,28 +86,40 @@ class PlayerShipRepository(IRepository[PlayerShip]):
                     for key, value in raw.items():
                         if hasattr(ship, key) and key not in ["id", "player_id", "created_at"]:
                             setattr(ship, key, value)
-                    await db.commit()
+                    if commit:
+                        await db.commit()
+                    else:
+                        await db.flush()
                     await db.refresh(ship)
                     flogger.debug(f"Updated ship: {ship_id}")
                     return ship
 
             # Create new ship
             ship = PlayerShip(**raw)
-            return await self.add(db, ship)
+            return await self.add(db, ship, commit=commit)
 
         except Exception as e:
             flogger.error(f"Error creating/updating ship: {e}")
             raise
 
-    async def remove(self, db: AsyncSession, obj: PlayerShip) -> None:
-        """Remove ship from database."""
+    async def remove(self, db: AsyncSession, obj: PlayerShip, commit: bool = True) -> None:
+        """Remove ship from database.
+
+        Args:
+            commit: When False, flush changes without committing (use when the caller
+                owns the transaction, e.g. inside a router-level db.begin() context).
+        """
         try:
             await db.delete(obj)
-            await db.commit()
+            if commit:
+                await db.commit()
+            else:
+                await db.flush()
             flogger.info(f"Removed ship: {obj.id}")
         except Exception as e:
             flogger.error(f"Error removing ship {obj.id}: {e}")
-            await db.rollback()
+            if commit:
+                await db.rollback()
             raise
 
     async def get_player_ships(self, db: AsyncSession, player_id: int) -> list[PlayerShip]:
@@ -125,7 +151,7 @@ class PlayerShipRepository(IRepository[PlayerShip]):
             flogger.error(f"Error getting active ship for player {player_id}: {e}")
             raise
 
-    async def set_active_ship(self, db: AsyncSession, player_id: int, ship_id: int) -> PlayerShip:
+    async def set_active_ship(self, db: AsyncSession, player_id: int, ship_id: int, commit: bool = True) -> PlayerShip:
         """Set a ship as the active ship for a player.
 
         Hybrid pattern (see ``persist/repositories/AGENTS.md``):
@@ -133,6 +159,10 @@ class PlayerShipRepository(IRepository[PlayerShip]):
           to safely expire any identity-mapped PlayerShip rows for this player.
         - Activate step is an ORM ``setattr`` on the already-loaded target ``ship``
           instance, so the returned object reflects the in-memory state correctly.
+
+        Args:
+            commit: When False, flush changes without committing (use when the caller
+                owns the transaction, e.g. inside a router-level db.begin() context).
         """
         try:
             # Verify ship belongs to player
@@ -153,20 +183,33 @@ class PlayerShipRepository(IRepository[PlayerShip]):
             # Activate the target ship via ORM mutation (in-place, identity-map safe)
             ship.is_active = True
 
-            await db.commit()
+            if commit:
+                await db.commit()
+            else:
+                await db.flush()
 
             # Refresh and return the ship
             await db.refresh(ship)
             flogger.info(f"Set ship {ship_id} as active for player {player_id}")
             return ship
 
+        except ValueError:
+            raise
         except Exception as e:
             flogger.error(f"Error setting active ship {ship_id} for player {player_id}: {e}")
-            await db.rollback()
+            if commit:
+                await db.rollback()
             raise
 
-    async def update_loadout(self, db: AsyncSession, ship_id: int, loadout: dict[str, list[str]]) -> PlayerShip:
-        """Update a ship's equipment loadout."""
+    async def update_loadout(
+        self, db: AsyncSession, ship_id: int, loadout: dict[str, list[str]], commit: bool = True
+    ) -> PlayerShip:
+        """Update a ship's equipment loadout.
+
+        Args:
+            commit: When False, flush changes without committing (use when the caller
+                owns the transaction, e.g. inside a router-level db.begin() context).
+        """
         try:
             ship = await self.get_by_id(db, ship_id)
             if not ship:
@@ -179,33 +222,50 @@ class PlayerShipRepository(IRepository[PlayerShip]):
                 ship.modules = loadout["modules"]
             if "turrets" in loadout:
                 ship.turrets = loadout["turrets"]
+            if "secondary_weapons" in loadout:
+                ship.secondary_weapons = loadout["secondary_weapons"]
 
-            await db.commit()
+            if commit:
+                await db.commit()
+            else:
+                await db.flush()
             await db.refresh(ship)
 
             flogger.debug(f"Updated loadout for ship {ship_id}")
             return ship
 
+        except ValueError:
+            raise
         except Exception as e:
             flogger.error(f"Error updating loadout for ship {ship_id}: {e}")
-            await db.rollback()
+            if commit:
+                await db.rollback()
             raise
 
-    async def add_equipment(self, db: AsyncSession, ship_id: int, equipment_type: str, item_name: str) -> PlayerShip:
-        """Add a piece of equipment to a ship's loadout."""
+    async def add_equipment(
+        self, db: AsyncSession, ship_id: int, equipment_type: str, item_name: str, commit: bool = True
+    ) -> PlayerShip:
+        """Add a piece of equipment to a ship's loadout.
+
+        Args:
+            commit: When False, flush changes without committing (use when the caller
+                owns the transaction, e.g. inside a router-level db.begin() context).
+        """
         try:
             ship = await self.get_by_id(db, ship_id)
             if not ship:
                 raise ValueError(f"Ship {ship_id} not found")
 
             # Get current loadout
-            current_loadout = {}
+            current_loadout: list[str] = []
             if equipment_type == "weapons":
-                current_loadout = ship.weapons or []
+                current_loadout = list(ship.weapons or [])
             elif equipment_type == "modules":
-                current_loadout = ship.modules or []
+                current_loadout = list(ship.modules or [])
             elif equipment_type == "turrets":
-                current_loadout = ship.turrets or []
+                current_loadout = list(ship.turrets or [])
+            elif equipment_type == "secondary_weapons":
+                current_loadout = list(ship.secondary_weapons or [])
             else:
                 raise ValueError(f"Invalid equipment type: {equipment_type}")
 
@@ -214,7 +274,7 @@ class PlayerShipRepository(IRepository[PlayerShip]):
             updated_loadout.append(item_name)
 
             # Update ship
-            await self.update_loadout(db, ship_id, {equipment_type: updated_loadout})
+            await self.update_loadout(db, ship_id, {equipment_type: updated_loadout}, commit=commit)
 
             flogger.debug(f"Added {item_name} to {equipment_type} on ship {ship_id}")
             return ship
@@ -223,21 +283,30 @@ class PlayerShipRepository(IRepository[PlayerShip]):
             flogger.error(f"Error adding equipment to ship {ship_id}: {e}")
             raise
 
-    async def remove_equipment(self, db: AsyncSession, ship_id: int, equipment_type: str, item_name: str) -> PlayerShip:
-        """Remove a piece of equipment from a ship's loadout."""
+    async def remove_equipment(
+        self, db: AsyncSession, ship_id: int, equipment_type: str, item_name: str, commit: bool = True
+    ) -> PlayerShip:
+        """Remove a piece of equipment from a ship's loadout.
+
+        Args:
+            commit: When False, flush changes without committing (use when the caller
+                owns the transaction, e.g. inside a router-level db.begin() context).
+        """
         try:
             ship = await self.get_by_id(db, ship_id)
             if not ship:
                 raise ValueError(f"Ship {ship_id} not found")
 
             # Get current loadout
-            current_loadout = []
+            current_loadout: list[str] = []
             if equipment_type == "weapons":
-                current_loadout = ship.weapons or []
+                current_loadout = list(ship.weapons or [])
             elif equipment_type == "modules":
-                current_loadout = ship.modules or []
+                current_loadout = list(ship.modules or [])
             elif equipment_type == "turrets":
-                current_loadout = ship.turrets or []
+                current_loadout = list(ship.turrets or [])
+            elif equipment_type == "secondary_weapons":
+                current_loadout = list(ship.secondary_weapons or [])
             else:
                 raise ValueError(f"Invalid equipment type: {equipment_type}")
 
@@ -249,7 +318,7 @@ class PlayerShipRepository(IRepository[PlayerShip]):
             updated_loadout.remove(item_name)
 
             # Update ship
-            await self.update_loadout(db, ship_id, {equipment_type: updated_loadout})
+            await self.update_loadout(db, ship_id, {equipment_type: updated_loadout}, commit=commit)
 
             flogger.debug(f"Removed {item_name} from {equipment_type} on ship {ship_id}")
             return ship
@@ -258,23 +327,34 @@ class PlayerShipRepository(IRepository[PlayerShip]):
             flogger.error(f"Error removing equipment from ship {ship_id}: {e}")
             raise
 
-    async def update_nickname(self, db: AsyncSession, ship_id: int, nickname: str) -> PlayerShip:
-        """Update a ship's nickname."""
+    async def update_nickname(self, db: AsyncSession, ship_id: int, nickname: str, commit: bool = True) -> PlayerShip:
+        """Update a ship's nickname.
+
+        Args:
+            commit: When False, flush changes without committing (use when the caller
+                owns the transaction, e.g. inside a router-level db.begin() context).
+        """
         try:
             ship = await self.get_by_id(db, ship_id)
             if not ship:
                 raise ValueError(f"Ship {ship_id} not found")
 
             ship.nickname = nickname
-            await db.commit()
+            if commit:
+                await db.commit()
+            else:
+                await db.flush()
             await db.refresh(ship)
 
             flogger.debug(f"Updated nickname for ship {ship_id}: {nickname}")
             return ship
 
+        except ValueError:
+            raise
         except Exception as e:
             flogger.error(f"Error updating nickname for ship {ship_id}: {e}")
-            await db.rollback()
+            if commit:
+                await db.rollback()
             raise
 
     async def get_ships_by_name(self, db: AsyncSession, player_id: int, ship_name: str) -> list[PlayerShip]:

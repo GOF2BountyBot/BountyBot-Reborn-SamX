@@ -974,8 +974,9 @@ class TestShipTransferRollback:
 
         call_count_add = {"n": 0}
 
-        # Mock 1: ItemRepository -- resolves every item name to a PrimaryWeapon discriminator
-        #         (the real Item/Weapon tables are not in the SQLite integration schema)
+        # Mock 1: ItemRepository (used by LoadoutConsistencyService internally) --
+        # resolves every item name to a PrimaryWeapon discriminator (the real
+        # Item/Weapon tables are not in the SQLite integration schema).
         class _FakeItemRepo:
             async def get_by_name_any_type(self, db, name):
                 m = MagicMock()
@@ -998,9 +999,34 @@ class TestShipTransferRollback:
                 db.add(inv_item)
                 await db.flush()
 
+        # Package G B.19: the router now calls
+        # LoadoutConsistencyService.evacuate_ship_loadout_to_inventory which
+        # uses its own InventoryRepository and ItemRepository instances.  We
+        # patch the constructors at their canonical import sites so the
+        # service picks up the fakes.
         with (
-            patch("api.routers.ships.InventoryRepository", return_value=_FakeInventoryRepo()),
-            patch("api.routers.ships.ItemRepository", return_value=_FakeItemRepo()),
+            patch(
+                "services.loadout_consistency_service.InventoryRepository",
+                return_value=_FakeInventoryRepo(),
+            ),
+            patch(
+                "services.loadout_consistency_service.ItemRepository",
+                return_value=_FakeItemRepo(),
+            ),
+            patch(
+                "services.loadout_consistency_service.PlayerShipRepository",
+                return_value=__import__(
+                    "persist.repositories.player_ship_repository",
+                    fromlist=["PlayerShipRepository"],
+                ).PlayerShipRepository(),
+            ),
+            patch(
+                "services.loadout_consistency_service.ShipRepository",
+                return_value=__import__(
+                    "persist.repositories.ship_repository",
+                    fromlist=["ShipRepository"],
+                ).ShipRepository(),
+            ),
         ):
             async with factory() as router_db:
                 with _make_cm_patcher("api.routers.ships.get_db_session", router_db):

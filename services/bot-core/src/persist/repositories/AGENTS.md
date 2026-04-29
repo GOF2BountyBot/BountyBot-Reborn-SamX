@@ -313,4 +313,37 @@ display buckets on their side. The Discord cog uses these 4 display buckets:
 
 ---
 
-*Last updated: 2026-03-16*
+## `commit: bool = True` Parameter (Package G B.19, 2026-04-29)
+
+The following `PlayerShipRepository` methods now accept a `commit: bool = True`
+keyword argument:
+
+- `set_active_ship(db, player_id, ship_id, commit=True)`
+- `add_equipment(db, ship_id, equipment_type, item_name, commit=True)`
+- `remove_equipment(db, ship_id, equipment_type, item_name, commit=True)`
+- `update_loadout(db, ship_id, loadout, commit=True)`
+- `update_nickname(db, ship_id, nickname, commit=True)`
+- `add(db, obj, commit=True)`
+- `create_or_update(db, raw, commit=True)`
+- `remove(db, obj, commit=True)`
+
+Plus `PlayerRepository.update_active_ship(db, player_id, ship_id, *, commit=True)`.
+
+When `commit=False`, the method calls `db.flush()` instead of `db.commit()`
+and does NOT roll back on exception — the caller (typically a router-level
+`async with db.begin()` block) owns the transaction.  This mirrors the
+pattern already used by `InventoryRepository.add_item` / `remove_item` /
+`update_quantity`.
+
+### When to use `commit=False`
+
+Whenever a router wraps multiple repository calls in `async with db.begin():`
+for atomicity (Package G's invariant I3 contract).  Pre-fix, several routers
+used `async with get_db_session() as db:` only and accepted that mid-flow
+crashes left the player in an inconsistent state across `player_ships` and
+`player_inventories`.  Post-fix, every cross-table flow is wrapped, and
+every repo call inside that wrapper passes `commit=False`.
+
+---
+
+*Last updated: 2026-04-29*

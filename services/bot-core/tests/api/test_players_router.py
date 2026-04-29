@@ -1611,7 +1611,7 @@ class TestCooldownReset:
         """Happy path: user and player found → cooldown reset → 200."""
         from unittest.mock import AsyncMock, MagicMock, patch
 
-        mock_session, _ = mock_db_session
+        _, _ = mock_db_session
 
         user = self._make_user()
         player = self._make_player_obj()
@@ -1637,7 +1637,7 @@ class TestCooldownReset:
         from datetime import UTC, datetime, timedelta
         from unittest.mock import AsyncMock, MagicMock, patch
 
-        mock_session, _ = mock_db_session
+        _, _ = mock_db_session
 
         future = datetime.now(UTC) + timedelta(seconds=120)
         user = self._make_user()
@@ -1660,7 +1660,7 @@ class TestCooldownReset:
         """Returns 404 when Discord user is not found."""
         from unittest.mock import AsyncMock, MagicMock, patch
 
-        mock_session, _ = mock_db_session
+        _, _ = mock_db_session
 
         mock_user_repo = MagicMock()
         mock_user_repo.get_by_id = AsyncMock(return_value=None)
@@ -1678,7 +1678,7 @@ class TestCooldownReset:
         """Returns 404 when player is not found for the given user+guild."""
         from unittest.mock import AsyncMock, MagicMock, patch
 
-        mock_session, _ = mock_db_session
+        _, _ = mock_db_session
 
         user = self._make_user()
         mock_user_repo = MagicMock()

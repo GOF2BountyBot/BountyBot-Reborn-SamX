@@ -98,16 +98,14 @@ def client(test_app):
 class TestShipTransfer:
     """Tests for POST /api/v1/ships/transfer."""
 
-    @patch("api.routers.ships.ItemRepository")
-    @patch("api.routers.ships.InventoryRepository")
+    @patch("services.loadout_consistency_service.LoadoutConsistencyService")
     @patch("api.routers.ships.get_db_session")
-    def test_transfer_ship_success(
-        self, mock_get_db, mock_inv_repo_cls, mock_item_repo_cls, client, mock_player_ship_repo, mock_player_repo
-    ):
+    def test_transfer_ship_success(self, mock_get_db, mock_lcs_cls, client, mock_player_ship_repo, mock_player_repo):
         """Returns 200 with transfer details on success.
 
-        Verifies: ship exists, belongs to from_player, is not active, items returned.
-        A.36 regression guard: verifies concrete types used in add_item calls.
+        Package G (B.19): the inline evacuation loop has been replaced with a
+        call to ``LoadoutConsistencyService.evacuate_ship_loadout_to_inventory``.
+        We patch that service and assert the response shape.
         """
         mock_session = _configure_db_mock(mock_get_db)
         # from_player is player 10, to_player is player 20
@@ -119,27 +117,20 @@ class TestShipTransfer:
         ship = make_mock_player_ship(player_id=10, is_active=False)
         mock_player_ship_repo.get_by_id = AsyncMock(return_value=ship)
 
-        mock_inv_repo = AsyncMock()
-        mock_inv_repo.add_item = AsyncMock()
-        mock_inv_repo_cls.return_value = mock_inv_repo
-
-        # Mock ItemRepository to resolve concrete types
-        mock_item_repo = AsyncMock()
-
-        def _make_item_mock(type_str: str):
-            m = MagicMock()
-            m.type = type_str
-            return m
-
-        async def _get_by_name_any_type(db, name):
-            if name == "Pulse Laser":
-                return _make_item_mock("PrimaryWeapon")
-            if name == "Shield Gen":
-                return _make_item_mock("ShieldModule")
-            return None
-
-        mock_item_repo.get_by_name_any_type = _get_by_name_any_type
-        mock_item_repo_cls.return_value = mock_item_repo
+        mock_consistency = AsyncMock()
+        mock_consistency.evacuate_ship_loadout_to_inventory = AsyncMock(
+            return_value={
+                "items_returned": ["Pulse Laser", "Shield Gen"],
+                "items_returned_detail": {
+                    "weapons": ["Pulse Laser"],
+                    "modules": ["Shield Gen"],
+                    "turrets": [],
+                    "secondary_weapons": [],
+                },
+                "duplicates_dropped": 0,
+            }
+        )
+        mock_lcs_cls.return_value = mock_consistency
 
         mock_session.commit = AsyncMock()
         mock_session.refresh = AsyncMock()
@@ -155,44 +146,34 @@ class TestShipTransfer:
         assert "items_returned_to_source" in data
         assert "Pulse Laser" in data["items_returned_to_source"]
         assert "Shield Gen" in data["items_returned_to_source"]
-        # A.36 regression guard: verify CONCRETE types used in add_item calls
-        add_calls = mock_inv_repo.add_item.call_args_list
-        item_types_used = {call.args[2] for call in add_calls if len(call.args) >= 3}
-        assert "weapon" not in item_types_used, "generic alias 'weapon' must not be written"
-        assert "turret" not in item_types_used, "generic alias 'turret' must not be written"
+        # The router delegates evacuation to the consistency service exactly once.
+        assert mock_consistency.evacuate_ship_loadout_to_inventory.call_count == 1
 
-    @patch("api.routers.ships.InventoryRepository")
     @patch("api.routers.ships.get_db_session")
-    def test_transfer_ship_from_player_not_found(self, mock_get_db, mock_inv_repo_cls, client, mock_player_repo):
+    def test_transfer_ship_from_player_not_found(self, mock_get_db, client, mock_player_repo):
         """Returns 404 when from_player does not exist."""
         _configure_db_mock(mock_get_db)
         mock_player_repo.get_by_id = AsyncMock(return_value=None)
-        mock_inv_repo_cls.return_value = AsyncMock()
 
         payload = {"from_player_id": 999, "to_player_id": 20, "ship_id": 42}
         resp = client.post("/api/v1/ships/transfer", json=payload)
         assert resp.status_code == 404
 
-    @patch("api.routers.ships.InventoryRepository")
     @patch("api.routers.ships.get_db_session")
-    def test_transfer_ship_to_player_not_found(self, mock_get_db, mock_inv_repo_cls, client, mock_player_repo):
+    def test_transfer_ship_to_player_not_found(self, mock_get_db, client, mock_player_repo):
         """Returns 404 when to_player does not exist."""
         _configure_db_mock(mock_get_db)
         mock_player_repo.get_by_id.side_effect = [
             make_mock_player(id=10),
             None,  # to_player not found
         ]
-        mock_inv_repo_cls.return_value = AsyncMock()
 
         payload = {"from_player_id": 10, "to_player_id": 999, "ship_id": 42}
         resp = client.post("/api/v1/ships/transfer", json=payload)
         assert resp.status_code == 404
 
-    @patch("api.routers.ships.InventoryRepository")
     @patch("api.routers.ships.get_db_session")
-    def test_transfer_ship_not_found(
-        self, mock_get_db, mock_inv_repo_cls, client, mock_player_ship_repo, mock_player_repo
-    ):
+    def test_transfer_ship_not_found(self, mock_get_db, client, mock_player_ship_repo, mock_player_repo):
         """Returns 404 when the ship does not exist."""
         _configure_db_mock(mock_get_db)
         mock_player_repo.get_by_id.side_effect = [
@@ -200,17 +181,13 @@ class TestShipTransfer:
             make_mock_player(id=20),
         ]
         mock_player_ship_repo.get_by_id = AsyncMock(return_value=None)
-        mock_inv_repo_cls.return_value = AsyncMock()
 
         payload = {"from_player_id": 10, "to_player_id": 20, "ship_id": 9999}
         resp = client.post("/api/v1/ships/transfer", json=payload)
         assert resp.status_code == 404
 
-    @patch("api.routers.ships.InventoryRepository")
     @patch("api.routers.ships.get_db_session")
-    def test_transfer_ship_not_owned_by_from_player(
-        self, mock_get_db, mock_inv_repo_cls, client, mock_player_ship_repo, mock_player_repo
-    ):
+    def test_transfer_ship_not_owned_by_from_player(self, mock_get_db, client, mock_player_ship_repo, mock_player_repo):
         """Returns 400 when the ship belongs to a different player."""
         _configure_db_mock(mock_get_db)
         mock_player_repo.get_by_id.side_effect = [
@@ -220,18 +197,14 @@ class TestShipTransfer:
         # Ship belongs to player 99, not player 10
         ship = make_mock_player_ship(player_id=99, is_active=False)
         mock_player_ship_repo.get_by_id = AsyncMock(return_value=ship)
-        mock_inv_repo_cls.return_value = AsyncMock()
 
         payload = {"from_player_id": 10, "to_player_id": 20, "ship_id": 42}
         resp = client.post("/api/v1/ships/transfer", json=payload)
         assert resp.status_code == 400
         assert "does not belong" in resp.json()["detail"]
 
-    @patch("api.routers.ships.InventoryRepository")
     @patch("api.routers.ships.get_db_session")
-    def test_transfer_ship_active_ship_blocked(
-        self, mock_get_db, mock_inv_repo_cls, client, mock_player_ship_repo, mock_player_repo
-    ):
+    def test_transfer_ship_active_ship_blocked(self, mock_get_db, client, mock_player_ship_repo, mock_player_repo):
         """Returns 400 when trying to transfer the active ship."""
         _configure_db_mock(mock_get_db)
         mock_player_repo.get_by_id.side_effect = [
@@ -241,18 +214,14 @@ class TestShipTransfer:
         # Ship IS active
         ship = make_mock_player_ship(player_id=10, is_active=True)
         mock_player_ship_repo.get_by_id = AsyncMock(return_value=ship)
-        mock_inv_repo_cls.return_value = AsyncMock()
 
         payload = {"from_player_id": 10, "to_player_id": 20, "ship_id": 42}
         resp = client.post("/api/v1/ships/transfer", json=payload)
         assert resp.status_code == 400
         assert "active" in resp.json()["detail"].lower()
 
-    @patch("api.routers.ships.InventoryRepository")
     @patch("api.routers.ships.get_db_session")
-    def test_transfer_ship_empty_loadout(
-        self, mock_get_db, mock_inv_repo_cls, client, mock_player_ship_repo, mock_player_repo
-    ):
+    def test_transfer_ship_empty_loadout(self, mock_get_db, client, mock_player_ship_repo, mock_player_repo):
         """Returns 200 with empty items_returned_to_source when ship has no loadout."""
         mock_session = _configure_db_mock(mock_get_db)
         mock_player_repo.get_by_id.side_effect = [
@@ -264,7 +233,6 @@ class TestShipTransfer:
 
         mock_inv_repo = AsyncMock()
         mock_inv_repo.add_item = AsyncMock()
-        mock_inv_repo_cls.return_value = mock_inv_repo
 
         mock_session.commit = AsyncMock()
         mock_session.refresh = AsyncMock()
@@ -280,25 +248,23 @@ class TestShipTransfer:
         resp = client.post("/api/v1/ships/transfer", json={"from_player_id": 10})
         assert resp.status_code == 422
 
-    @patch("api.routers.ships.ItemRepository")
-    @patch("api.routers.ships.InventoryRepository")
+    @patch("services.loadout_consistency_service.LoadoutConsistencyService")
     @patch("api.routers.ships.get_db_session")
     def test_ship_transfer_rolls_back_on_partial_failure(
-        self, mock_get_db, mock_inv_repo_cls, mock_item_repo_cls, client, mock_player_ship_repo, mock_player_repo
+        self, mock_get_db, mock_lcs_cls, client, mock_player_ship_repo, mock_player_repo
     ):
-        """A.47: verifies that ship ownership does NOT change when inventory_repo.add_item
-        raises on the second call (simulating a partial failure mid-loop).
+        """A.47 + Package G B.19: verifies the transaction rolls back when the
+        consistency service raises mid-evacuation.
 
-        After A.47, all operations are inside a single db.begin() block. A failure in any
-        repo call aborts the entire transaction. We assert that:
-        1. The endpoint returns non-200 (error)
-        2. Ship ownership was not updated on the mock (player_id still belongs to from_player)
+        The router wraps the entire transfer in ``async with db.begin()``; a
+        failure in the evacuation aborts the transaction.  We assert:
+        1. The endpoint returns non-200 (error).
+        2. Ship ownership was not updated on the mock (from_player still owns).
 
-        Mock budget: 2 (InventoryRepository + ItemRepository).
+        Mock budget: 2 (db_session + LoadoutConsistencyService).
         """
-        mock_session = _configure_db_mock(mock_get_db)
+        _configure_db_mock(mock_get_db)
 
-        # Ship has two weapons; add_item succeeds on first call, fails on second
         ship = make_mock_player_ship(player_id=10, is_active=False, weapons=["Pulse Laser", "Burst Laser"])
         mock_player_ship_repo.get_by_id = AsyncMock(return_value=ship)
 
@@ -307,30 +273,12 @@ class TestShipTransfer:
             make_mock_player(id=20),
         ]
 
-        # Mock ItemRepository: always resolves to PrimaryWeapon
-        mock_item_repo = AsyncMock()
-
-        async def _get_by_name_any_type(db, name):
-            m = MagicMock()
-            m.type = "PrimaryWeapon"
-            return m
-
-        mock_item_repo.get_by_name_any_type = _get_by_name_any_type
-        mock_item_repo_cls.return_value = mock_item_repo
-
-        # Mock InventoryRepository: raises on second add_item call
-        call_count = {"n": 0}
-
-        async def _add_item_fail_on_second(*args, **kwargs):
-            call_count["n"] += 1
-            if call_count["n"] >= 2:
-                raise RuntimeError("Simulated DB write failure mid-loop")
-
-        mock_inv_repo = AsyncMock()
-        mock_inv_repo.add_item = _add_item_fail_on_second
-        mock_inv_repo_cls.return_value = mock_inv_repo
-
-        mock_session.refresh = AsyncMock()
+        # Make the consistency service raise to simulate a mid-evacuation failure.
+        mock_consistency = AsyncMock()
+        mock_consistency.evacuate_ship_loadout_to_inventory = AsyncMock(
+            side_effect=RuntimeError("Simulated DB write failure mid-evacuation")
+        )
+        mock_lcs_cls.return_value = mock_consistency
 
         payload = {"from_player_id": 10, "to_player_id": 20, "ship_id": 42}
         resp = client.post("/api/v1/ships/transfer", json=payload)

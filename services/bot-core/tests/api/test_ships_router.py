@@ -114,6 +114,30 @@ def mock_equipment_service():
 
 
 @pytest.fixture
+def mock_loadout_consistency_service():
+    """Mock LoadoutConsistencyService for router-level tests (Package G B.19).
+
+    Default behaviour: reconcile_active_ship_slots returns no evacuated items
+    and any_evacuated=False (the common path).  Tests can override.
+    """
+    svc = AsyncMock()
+    svc.reconcile_active_ship_slots = AsyncMock(
+        return_value={
+            "evacuated_items": {"weapons": [], "modules": [], "turrets": [], "secondary_weapons": []},
+            "any_evacuated": False,
+        }
+    )
+    svc.evacuate_ship_loadout_to_inventory = AsyncMock(
+        return_value={
+            "items_returned": [],
+            "items_returned_detail": {"weapons": [], "modules": [], "turrets": [], "secondary_weapons": []},
+            "duplicates_dropped": 0,
+        }
+    )
+    return svc
+
+
+@pytest.fixture
 def mock_ship_definition_repo():
     """Mock ShipRepository (ship definitions / seed data).
 
@@ -131,10 +155,17 @@ def mock_ship_definition_repo():
 
 
 @pytest.fixture
-def test_app(mock_ship_repo, mock_ship_definition_repo, mock_player_repo, mock_equipment_service):
+def test_app(
+    mock_ship_repo,
+    mock_ship_definition_repo,
+    mock_player_repo,
+    mock_equipment_service,
+    mock_loadout_consistency_service,
+):
     app = FastAPI()
     from api.routers.ships import (
         get_equipment_service,
+        get_loadout_consistency_service,
         get_player_repository,
         get_player_ship_repository,
         get_ship_repository,
@@ -150,6 +181,7 @@ def test_app(mock_ship_repo, mock_ship_definition_repo, mock_player_repo, mock_e
     app.dependency_overrides[get_player_repository] = lambda: mock_player_repo
     app.dependency_overrides[get_player_ship_repository] = lambda: mock_ship_repo
     app.dependency_overrides[get_equipment_service] = lambda: mock_equipment_service
+    app.dependency_overrides[get_loadout_consistency_service] = lambda: mock_loadout_consistency_service
     yield app
     app.dependency_overrides.clear()
 

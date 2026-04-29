@@ -126,79 +126,42 @@ class EquipmentService:
     ) -> dict[str, Any]:
         """Equip an item from the player's inventory onto a ship.
 
-        If *equipment_type* is ``None`` the type is auto-detected from the item
-        name via :meth:`_resolve_equipment_type`.
+        Thin wrapper that delegates to ``LoadoutConsistencyService.equip_one``
+        — the choke-point introduced in Package G (B.19) for cross-table
+        invariant enforcement.  Public signature preserved for backward
+        compatibility with router and direct callers.
 
-        Validation chain:
-        1. Resolve / validate equipment_type
-        2. Ship exists and belongs to player
-        3. Item exists in game data
-        4. Player owns item in inventory
-        5. Ship has an available slot for this equipment type
-        6. MODULE_EQUIP_LIMITS enforcement (modules only)
-        7. Add item to ship loadout
-        8. Remove item from inventory
+        The wrapped service uses ``commit=False``; the caller (router) is
+        expected to wrap this call in ``async with db.begin()`` for atomicity.
 
         Returns a result dict with ``success``, ``ship``, and ``message`` keys.
 
         Raises:
             ValueError: for any validation failure (caller maps to HTTP 400/404).
+            InvalidItemTypeError: secondary_weapons gated off.
         """
         try:
             flogger.debug(
                 f"equip_item: player_id={player_id}, ship_id={ship_id}, "
                 f"equipment_type={equipment_type!r}, item_name={item_name}"
             )
-            # 1. Resolve equipment_type (auto-detect if not provided)
-            if equipment_type is None:
-                equipment_type = await self._resolve_equipment_type(db, item_name)
-            else:
-                self._validate_equipment_type(equipment_type)
-            flogger.trace(f"Resolved equipment_type: {equipment_type}")
+            # Local import to avoid circular dependency at module load time.
+            from services.loadout_consistency_service import LoadoutConsistencyService
 
-            # Defense-in-depth: reject secondary_weapon equip when gated off.
-            # The cog-side filter also prevents this, but we enforce it here too.
-            _sec_gated = equipment_type == "secondary_weapons" and (
-                "secondary_weapon" not in GameConstants.CURRENTLY_ENABLED_TYPES
+            service = LoadoutConsistencyService(
+                player_ship_repo=self.ship_repo,
+                inventory_repo=self.inventory_repo,
+                item_repo=self.item_repo,
+                ship_repo=self.ship_data_repo,
             )
-            if _sec_gated:
-                raise InvalidItemTypeError("Secondary weapons are not currently enabled")
-
-            # 2. Ship exists and belongs to player
-            ship = await self._get_owned_ship(db, player_id, ship_id)
-
-            # 3. Item exists in game data
-            inventory_type = self._map_equipment_type_to_inventory_type(equipment_type)
-            await self._validate_item_exists(db, item_name, inventory_type)
-
-            # 4. Player owns item in inventory
-            inv_item = await self.inventory_repo.get_player_item(db, player_id, inventory_type, item_name)
-            if not inv_item:
-                flogger.warning(
-                    f"Item not found in player inventory: player_id={player_id}, "
-                    f"item_name={item_name}, inventory_type={inventory_type}"
-                )
-                raise ValueError(f"Item '{item_name}' (type={inventory_type}) not found in your inventory")
-
-            # 5. Check slot availability
-            await self._validate_slot_available(db, ship, equipment_type)
-
-            # 6. MODULE_EQUIP_LIMITS enforcement
-            if equipment_type == "modules":
-                await self._validate_module_equip_limit(db, ship, item_name)
-
-            # 7. Add item to ship loadout
-            updated_ship = await self.ship_repo.add_equipment(db, ship_id, equipment_type, item_name)
-
-            # 8. Remove item from inventory
-            await self.inventory_repo.remove_item(db, player_id, inventory_type, item_name, quantity=1)
-
-            flogger.info(f"Player {player_id} equipped '{item_name}' ({equipment_type}) on ship {ship_id}")
-            return {
-                "success": True,
-                "ship": updated_ship,
-                "message": f"Successfully equipped '{item_name}' on ship {ship_id}",
-            }
+            result = await service.equip_one(
+                db,
+                player_id=player_id,
+                ship_id=ship_id,
+                item_name=item_name,
+                equipment_type=equipment_type,
+            )
+            return result
 
         except (ValueError, InvalidItemTypeError):
             raise
@@ -216,16 +179,13 @@ class EquipmentService:
     ) -> dict[str, Any]:
         """Unequip an item from a ship back to the player's inventory.
 
-        If *equipment_type* is ``None`` it is auto-detected from the item name.
-        If auto-detection fails, the item is searched for across all equipped
-        slots on the ship.
+        Thin wrapper that delegates to ``LoadoutConsistencyService.unequip_one``
+        — the choke-point introduced in Package G (B.19) for cross-table
+        invariant enforcement.  Public signature preserved for backward
+        compatibility.
 
-        Validation chain:
-        1. Resolve / validate equipment_type
-        2. Ship exists and belongs to player
-        3. Item is currently equipped on ship
-        4. Remove item from ship loadout
-        5. Add item to inventory
+        The wrapped service uses ``commit=False``; the caller (router) is
+        expected to wrap this call in ``async with db.begin()`` for atomicity.
 
         Returns a result dict with ``success``, ``ship``, and ``message`` keys.
 
@@ -237,47 +197,22 @@ class EquipmentService:
                 f"unequip_item: player_id={player_id}, ship_id={ship_id}, "
                 f"equipment_type={equipment_type!r}, item_name={item_name}"
             )
-            # 2. Ship exists and belongs to player (do this first so we have ship for fallback)
-            ship = await self._get_owned_ship(db, player_id, ship_id)
+            from services.loadout_consistency_service import LoadoutConsistencyService
 
-            # 1. Resolve equipment_type (auto-detect if not provided)
-            if equipment_type is None:
-                # Try item lookup first
-                try:
-                    equipment_type = await self._resolve_equipment_type(db, item_name)
-                except ValueError:
-                    # Fallback: scan all equipped slots for the item
-                    equipment_type = self._find_item_in_equipped_slots(ship, item_name)
-                    if equipment_type is None:
-                        raise ValueError(
-                            f"Item '{item_name}' not found in any equipped slot on ship {ship_id}"
-                        ) from None
-            else:
-                self._validate_equipment_type(equipment_type)
-            flogger.trace(f"Resolved equipment_type: {equipment_type}")
-
-            # 3. Item is currently equipped on ship
-            equipped_items: list[str] = self._get_equipment_list(ship, equipment_type)
-            if item_name not in equipped_items:
-                flogger.warning(
-                    f"Item not equipped on ship: player_id={player_id}, ship_id={ship_id}, "
-                    f"item_name={item_name}, equipment_type={equipment_type}"
-                )
-                raise ValueError(f"Item '{item_name}' is not equipped in {equipment_type} on ship {ship_id}")
-
-            # 4. Remove item from ship loadout
-            updated_ship = await self.ship_repo.remove_equipment(db, ship_id, equipment_type, item_name)
-
-            # 5. Add item back to inventory
-            inventory_type = self._map_equipment_type_to_inventory_type(equipment_type)
-            await self.inventory_repo.add_item(db, player_id, inventory_type, item_name, quantity=1)
-
-            flogger.info(f"Player {player_id} unequipped '{item_name}' ({equipment_type}) from ship {ship_id}")
-            return {
-                "success": True,
-                "ship": updated_ship,
-                "message": f"Successfully unequipped '{item_name}' from ship {ship_id}",
-            }
+            service = LoadoutConsistencyService(
+                player_ship_repo=self.ship_repo,
+                inventory_repo=self.inventory_repo,
+                item_repo=self.item_repo,
+                ship_repo=self.ship_data_repo,
+            )
+            result = await service.unequip_one(
+                db,
+                player_id=player_id,
+                ship_id=ship_id,
+                item_name=item_name,
+                equipment_type=equipment_type,
+            )
+            return result
 
         except (ValueError, InvalidItemTypeError):
             raise

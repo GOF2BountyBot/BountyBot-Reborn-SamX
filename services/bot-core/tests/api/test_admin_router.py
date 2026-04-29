@@ -1203,7 +1203,7 @@ class TestRefreshShop:
         Acceptance criterion: the shared announcement helper is invoked once,
         with the guild_id from the request.
         """
-        mock_session = _configure_db_mock(mock_get_db)
+        _configure_db_mock(mock_get_db)
 
         # Config repo lookup — return a config with shop channel set.
         mock_config = MagicMock()

@@ -12,3 +12,4 @@ pytest-cov>=4.0.0
 pytest-mock>=3.10.0
 faker>=18.0.0
 coverage>=7.0.0
+respx>=0.21.0

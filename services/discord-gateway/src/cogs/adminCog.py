@@ -116,7 +116,7 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
         for category in ("primary_weapon", "secondary_weapon", "turret_weapon", "module"):
             for attempt in range(5):
                 try:
-                    resp = await self.http_client.get(f"{api_base}/data/{category}", timeout=10)
+                    resp = await self.http_client.get(f"{api_base}/about/categories/{category}/objects", timeout=10)
                     resp.raise_for_status()
                     names = [obj["name"] for obj in resp.json() if obj.get("name")]
                     self._item_catalog.set(category, names)
@@ -139,7 +139,7 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
         # Preload ship catalog.
         for attempt in range(5):
             try:
-                resp = await self.http_client.get(f"{api_base}/about/ships", timeout=10)
+                resp = await self.http_client.get(f"{api_base}/about/categories/ship/objects", timeout=10)
                 resp.raise_for_status()
                 names = [s["name"] for s in resp.json() if s.get("name")]
                 self._ship_catalog.set("all", names)

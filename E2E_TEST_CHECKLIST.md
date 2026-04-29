@@ -1,8 +1,15 @@
 # BountyBot E2E Test Checklist (Discord)
 
-> **🔁 RESET 2026-04-28** — All test items reset to pending after defect-remediation cycle. Full DB nuke + re-test from Phase 0 required. Reason: ~25 fixes across nearly every cog/service plus B.19 architectural overhaul of player/ship state mechanics. Prior pass-state cannot be trusted under the new code paths.
+> **🔁 RESET 2026-04-29** — All 201 test items reset to pending after defect-remediation cycle. Full DB nuke + re-test from Phase 0 required. Reason: ~25 fixes across nearly every cog/service plus B.19 architectural overhaul of player/ship state mechanics, Patches H+I QA hardening (13 findings), and pylint cleanup. Prior pass-state cannot be trusted under the new code paths.
 >
 > **DB nuke procedure**: stop stack → remove `mappings/postgres-data/` → restart stack → migrations auto-apply on first boot.
+>
+> **Clean-slate verified 2026-04-29 14:50 UTC**:
+> - Containers: `bountybot-db`, `bountybot-bot-core`, `bountybot-discord-gateway`, `bountybot-blender-service` — all healthy
+> - Mutable tables empty: `players=0`, `users=0`, `guild_configs=0`, `bounty=0`, `guild_shops=0`, `player_ships=0`, `player_inventories=0`, `admin_audit_logs=0`
+> - Seed data present: `ship=65`, `criminal=25`, `system=34`, `item=146`
+> - Schema migrations applied (`schema_version_current: true`)
+> - Default scheduler jobs registered: `bounty_spawn_default`, `shop_refresh_default`, `temperature_decay_default`
 
 Run these tests against a live stack (`docker compose up`).
 Work through each phase in order — later phases depend on earlier ones.

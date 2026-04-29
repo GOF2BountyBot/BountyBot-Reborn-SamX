@@ -337,6 +337,7 @@ See companion detail: `/proj/recon/B31-recon.md`
 ### B.30 — `PUT /api/v1/jobs/{job_id}` silently wipes payload when request body lacks expected fields
 🟠 high · 2026-04-28 · surfaced during Phase 9 cleanup
 > **FIXED** in commit `360287b` (Package A, 2026-04-29). `ConfigDict(extra="forbid")` added to `UpdateJob` schema.
+> **Patch H hardening** (2026-04-29): `payload: dict | None = {}` changed to `payload: dict = Field(default_factory=dict)` — closes null-injection vector where `{"payload": null}` passed schema validation and corrupted job args (A.1). Test `test_update_job_rejects_null_payload` added.
 
 **Environment**: dev guild `1490693399307616276`, post-rebuild stack, direct bot-core API call (no gateway/cog involved).
 
@@ -867,6 +868,7 @@ New tests: 1 API endpoint test (`system_statuses` field) + 1 cog test (recently_
 > **B.23a + B.23b FIXED** in commit `360287b` (Package A, 2026-04-29).
 > B.23a: `_schedule_expiry_job()` now uses direct APScheduler Python API via `scheduler_holder.py`; HTTP POST fallback retained.
 > B.23b: `run_stale_state_recovery_sweep()` now deletes Discord announcements for stale bounties after marking them expired.
+> **Patch H hardening** (2026-04-29): lifespan test mock corrected so `.all()` returns a sync list (not AsyncMock coroutine), ensuring the B.23b cleanup branch is actually exercised in tests (A.2). Dedicated test `test_lifespan_b23b_announcement_cleanup_called_for_stale_bounties` added.
 
 **Environment**: dev guild `1490693399307616276`, Main account, post-rebuild stack (commit `815cd59` — includes B.14 listing-filter fix `db79c60` and recovery sweeps).
 
@@ -954,6 +956,7 @@ See companion detail: `/proj/recon/B23-recon.md`
 ### B.19 — Ship loadout ↔ inventory data anomalies after equip / buy-ship / setactive sequence
 🔴 high · 2026-04-28 · surfaced after Phase 6 Reset (no specific test item) on Main account in dev guild `1490693399307616276`
 > **FIXED** in commit `63864ed` (Package G, 2026-04-29). Verification: pending. Establishes the four loadout↔inventory hard invariants (I1: no cross-ship duplication; I2: no materialisation from nothing; I3: atomicity across both tables; I4: active ship within slot caps) via a new `LoadoutConsistencyService` choke-point.  Six affected flows (`_create_starter_loadout`, `purchase_ship`, `set_active_ship`, `equip`/`unequip`, `sell_ship`/`transfer_ship`/`admin_remove_ship`, `prestige_player`) all route through the service with `commit=False`; routers own the transaction via `async with db.begin()`.  One-shot Alembic data-fixup migration (`0002_b19_repair_loadout_consistency`) deduplicates legacy slot references on first deployment.  Test coverage: ~180 new tests including 25 unit, 152 property cases, 3 migration, and adversarial exploit-closure tests.
+> **Patch H hardening** (2026-04-29): (G.1) `duplicates_dropped` counter fixed — `pass` → `duplicates_dropped += removed_other`; (G.2) 3 real-service property tests added to verify service against real SQLite session; (G.3) debug post-condition assertion added to `repair_player`; (G.4) None entries filtered from `_get_slot` with WARNING log; (G.5) downgrade no-op safety test added; (G.6) router integration test for `transfer_ship` using real service verifies single-mint invariant.
 
 Multiple user-visible anomalies across one continuous action sequence. Recon (2026-04-28) has traced all 6 behaviors to verified code paths. Behaviors share two independent root causes (starter-loadout phantom items; purchase_ship not clearing old loadout); not a single root cause. See companion detail: `/proj/recon/B19-recon.md`.  See architect design: `/proj/recon/B19-design.md`.
 

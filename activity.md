@@ -355,3 +355,48 @@ Status: completed
 - discord-gateway: 2165 passed, 0 failed — GREEN
 - Ruff src check: All checks passed
 - Ruff tests check: All checks passed
+
+---
+
+# Patch H — bot-core QA Hardening Activity Log
+
+## Attempt 1 [2026-04-29 UTC]
+
+**Task**: Implement Patch H — address 8 QA findings from `/proj/recon/QA-review-A-through-G.md`
+**Iteration**: 1
+**Status**: completed
+
+### Work Completed
+
+- **G.1**: Fixed `duplicates_dropped` counter in `evacuate_ship_loadout_to_inventory` — replaced bare `pass` with `duplicates_dropped += removed_other`. Added `assert result["duplicates_dropped"] == 1` to `test_admin_remove_ship_does_not_mint_phantom_duplicate_twice`.
+- **A.1**: Changed `payload: dict | None = {}` to `payload: dict = Field(default_factory=dict)` in `UpdateJob` schema — makes null payload reject with HTTP 422. Updated `test_payload_none` → `test_payload_none_raises_validation_error`. Added `test_update_job_rejects_null_payload` to scheduler router tests.
+- **G.4**: Added None-filtering in `_get_slot` — `return [x for x in raw if x is not None]` with WARNING log on corrupt entries. Added `test_none_entries_filtered_from_slot_lists` to loadout consistency service tests.
+- **G.3**: Added `if __debug__:` post-condition check in `repair_player` after `flush()` — re-scans player's ships and logs WARNING if residual duplicates remain. Added `test_post_condition_check_is_clean_after_successful_repair`.
+- **A.2**: Fixed lifespan test mock setup — patched `run_stale_state_recovery_sweep` and `run_stale_respawn_recovery` directly. Added `test_lifespan_b23b_announcement_cleanup_called_for_stale_bounties` with synchronous `.all()` return value `[(1, 67890)]`.
+- **G.5**: Added `test_downgrade_after_upgrade_is_safe_noop` to migration tests — uses `importlib.util.spec_from_file_location` to load the migration module and call `downgrade()` directly.
+- **G.6**: Added `test_transfer_ship_real_service_phantom_duplicate_state_yields_single_inventory_entry` — uses real `LoadoutConsistencyService` with injected mock repos in a pre-seeded duplicate state. Asserts `add_item.await_count == 1` (not 2).
+- **G.2**: Added comment section clarifying simulator vs. real-service test distinction. Added 3 real-service property tests (`test_real_service_*`) using the integration conftest `db_session` fixture against a real SQLite-in-memory session.
+- Also updated `test_schemas.py::TestUpdateJobSchema::test_payload_none` to `test_payload_none_raises_validation_error` (the test was testing the now-fixed bug).
+
+### Spec-to-Test Traceability
+
+| Acceptance Criterion | Test File(s) | Status |
+|---|---|---|
+| G.1: duplicates_dropped counter increments | `test_loadout_consistency_service.py::TestAntiDuplicationExploitClosure::test_admin_remove_ship_does_not_mint_phantom_duplicate_twice` | COVERED |
+| A.1: null payload returns 422 | `test_scheduler_router.py::TestUpdateJob::test_update_job_rejects_null_payload` | COVERED |
+| A.1: null payload ValidationError | `test_schemas.py::TestUpdateJobSchema::test_payload_none_raises_validation_error` | COVERED |
+| G.4: None in slot list filtered | `test_loadout_consistency_service.py::TestEvacuateShipLoadoutToInventory::test_none_entries_filtered_from_slot_lists` | COVERED |
+| G.3: post-condition check OK after repair | `test_loadout_consistency_service.py::TestRepairPlayer::test_post_condition_check_is_clean_after_successful_repair` | COVERED |
+| A.2: B.23b cleanup branch exercised | `test_main_coverage.py::TestLifespan::test_lifespan_b23b_announcement_cleanup_called_for_stale_bounties` | COVERED |
+| G.5: downgrade is safe no-op | `test_migration_b19_repair.py::test_downgrade_after_upgrade_is_safe_noop` | COVERED |
+| G.6: transfer_ship real service phantom-dup closure | `test_ship_transfer.py::TestShipTransfer::test_transfer_ship_real_service_phantom_duplicate_state_yields_single_inventory_entry` | COVERED |
+| G.2: real-service property tests (evacuate) | `test_loadout_consistency_property.py::test_real_service_evacuate_clears_slots_and_mints_inventory` | COVERED |
+| G.2: real-service property tests (repair) | `test_loadout_consistency_property.py::test_real_service_repair_player_deduplicates_across_ships` | COVERED |
+| G.2: real-service property tests (anti-dup) | `test_loadout_consistency_property.py::test_real_service_evacuate_anti_duplication_guard_single_mint` | COVERED |
+
+### Coverage Summary
+
+- Line coverage: bot-core full suite — 3146 passed, 1 skipped, 84 warnings — GREEN
+- Ruff check: All checks passed
+- Ruff format: 239 files formatted — clean
+- No files outside `services/bot-core/` modified

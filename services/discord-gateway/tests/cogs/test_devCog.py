@@ -650,5 +650,77 @@ class TestReloadAutocompletePackageE:
         admin_cog._preload_render_settings.assert_awaited_once()
 
 
+# ===========================================================================
+# Cross-1: Defer fires BEFORE admin check in devCog commands
+# ===========================================================================
+
+
+class TestCrossOneDevCogDeferBeforeAdminCheck:
+    """Cross-1: Verify that defer() fires before _check_is_admin() in devCog commands."""
+
+    async def _run_with_admin_blocked(self, cog, coro_fn):
+        """Run a command callback tracking defer vs admin_check order.
+
+        Patches cogs.devCog._check_is_admin (the local name bound by the import)
+        rather than cogs.adminCog._check_is_admin.
+        """
+        import cogs.devCog as dev_module
+
+        original = dev_module._check_is_admin
+        call_order = []
+
+        async def track_defer(*a, **kw):
+            call_order.append("defer")
+
+        async def fake_check_is_admin(interaction):
+            call_order.append("admin_check")
+            return False  # non-admin
+
+        interaction = MagicMock()
+        interaction.guild_id = 123456789
+        interaction.user = MagicMock()
+        interaction.user.id = 987654321
+        interaction.user.guild_permissions = MagicMock()
+        interaction.user.guild_permissions.administrator = False
+        interaction.user.roles = []
+        interaction.response = AsyncMock()
+        interaction.response.defer = track_defer
+        interaction.followup = AsyncMock()
+
+        dev_module._check_is_admin = fake_check_is_admin
+        try:
+            await coro_fn(interaction)
+        finally:
+            dev_module._check_is_admin = original
+
+        return call_order
+
+    def test_load_data_defer_before_admin_check(self, mock_dev_cog):
+        """Cross-1: /load_data defers before checking admin status."""
+
+        async def run():
+            return await self._run_with_admin_blocked(
+                mock_dev_cog,
+                lambda i: mock_dev_cog.load_data.callback(mock_dev_cog, i, "ships"),
+            )
+
+        call_order = asyncio.run(run())
+        assert "defer" in call_order
+        assert "admin_check" in call_order
+        assert call_order.index("defer") < call_order.index("admin_check"), "defer must fire before admin check"
+
+    def test_reload_autocomplete_defer_before_admin_check(self, mock_dev_cog):
+        """Cross-1: /reload_autocomplete defers before checking admin status."""
+
+        async def run():
+            return await self._run_with_admin_blocked(
+                mock_dev_cog,
+                lambda i: mock_dev_cog.reload_autocomplete.callback(mock_dev_cog, i),
+            )
+
+        call_order = asyncio.run(run())
+        assert call_order.index("defer") < call_order.index("admin_check")
+
+
 if __name__ == "__main__":
     pytest.main([__file__])

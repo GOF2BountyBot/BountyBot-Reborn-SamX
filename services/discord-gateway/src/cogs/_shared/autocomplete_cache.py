@@ -73,6 +73,21 @@ class AutocompleteCache[K, V]:
         Returns None if:
         - No value is cached for ``key`` and no refresh_fn is configured.
         - refresh_fn raises and no prior value was cached.
+
+        Concurrency / TOCTOU note (E.1):
+        The initial TTL-expiry check (fast-path) runs outside the lock to avoid
+        lock contention on every hot-path cache hit.  Because asyncio uses
+        cooperative multitasking (a single event loop; no coroutine is interrupted
+        between two non-await statements), there is no OS-thread race between the
+        fast-path check and the lock acquisition below.  The double-check inside
+        the lock handles the case where two concurrent coroutines both see an
+        expired entry on the fast-path: the first one acquires the lock and
+        refreshes; the second acquires the lock afterward, re-checks, finds the
+        entry fresh, and returns the cached value without issuing a second
+        refresh_fn call.  Only one refresh fires — guaranteed by the double-check.
+        Thread-safety assumption: single asyncio event loop, no thread-pool
+        executor mixing with set().  If that assumption ever changes, move the
+        fast-path check inside the lock.
         """
         entry = self._store.get(key)
         expired = entry is not None and self._ttl is not None and (self._monotonic() - entry.stored_at) > self._ttl

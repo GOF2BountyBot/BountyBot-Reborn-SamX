@@ -45,6 +45,18 @@ _URL_PATTERN = re.compile(r"https?://[^\s'\"]+")
 # by httpx for non-2xx responses, case-insensitive, line-granular.
 _MDN_LINE_PATTERN = re.compile(r"(?im)^.*for more information check:.*$")
 
+# F.1: Strip bare internal service hostnames that could leak topology info.
+# Catches patterns like "bot-core:8000 timed out" or "blender-service refused".
+# The optional ":\d+" suffix strips the port number when present (e.g. bot-core:8000).
+_BARE_HOSTNAME_PATTERN = re.compile(
+    r"\b(bot-core|discord-gateway|blender-service|db)(:\d{1,5})?\b",
+    re.IGNORECASE,
+)
+
+# F.1: Strip IPv4 addresses (e.g. "192.168.1.5" or "10.0.0.1:8000").
+# Replaces any dotted-quad followed by an optional ":port" suffix.
+_IPV4_PATTERN = re.compile(r"\b(?:\d{1,3}\.){3}\d{1,3}(?::\d{1,5})?\b")
+
 # Collapse runs of any whitespace to a single space.
 _WS_PATTERN = re.compile(r"\s+")
 
@@ -54,11 +66,21 @@ _MAX_DESCRIPTION = 1000
 
 
 def _sanitize(text: str) -> str:
-    """Strip URLs / MDN hints, collapse whitespace, and truncate."""
+    """Strip URLs / MDN hints / internal hostnames / IPs, collapse whitespace, and truncate.
+
+    Defense-in-depth layers applied in order:
+    1. MDN documentation hint lines (httpx appends these for non-2xx responses).
+    2. http/https URLs (primary vector for leaking bot-core paths).
+    3. Bare internal service hostnames (bot-core, discord-gateway, blender-service, db).
+    4. IPv4 addresses (may appear in connection-refused or timeout messages).
+    5. Whitespace collapse + length truncation.
+    """
     if not text:
         return ""
     text = _MDN_LINE_PATTERN.sub("", text)
     text = _URL_PATTERN.sub("", text)
+    text = _BARE_HOSTNAME_PATTERN.sub("<service>", text)
+    text = _IPV4_PATTERN.sub("<address>", text)
     text = _WS_PATTERN.sub(" ", text).strip()
     if len(text) > _MAX_DESCRIPTION:
         text = text[: _MAX_DESCRIPTION - 1].rstrip() + "…"

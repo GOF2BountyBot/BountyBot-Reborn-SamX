@@ -408,5 +408,86 @@ class TestCogSetup:
         mock_bot.add_cog.assert_called_once()
 
 
+# ===========================================================================
+# Cross-1: Defer fires BEFORE admin check in /health command
+# ===========================================================================
+
+
+class TestCrossOneHealthDeferBeforeAdminCheck:
+    """Cross-1: /health defers before _check_is_admin() to avoid consuming the 3-second
+    Discord budget before the interaction is acknowledged.
+    """
+
+    def test_health_defer_before_admin_check(self, mock_health_cog):
+        """Cross-1: /health must defer before the inline admin check fires.
+
+        Patches cogs.healthCog._check_is_admin (the local name bound by the import)
+        rather than cogs.adminCog._check_is_admin.
+        """
+        import cogs.healthCog as health_module
+
+        original = health_module._check_is_admin
+        call_order = []
+
+        async def track_defer(*a, **kw):
+            call_order.append("defer")
+
+        async def fake_not_admin(interaction):
+            call_order.append("admin_check")
+            return False
+
+        interaction = MagicMock()
+        interaction.guild_id = 123456789
+        interaction.user = MagicMock()
+        interaction.user.id = 987654321
+        interaction.user.guild_permissions = MagicMock()
+        interaction.user.guild_permissions.administrator = False
+        interaction.user.roles = []
+        interaction.response = AsyncMock()
+        interaction.response.defer = track_defer
+        interaction.followup = AsyncMock()
+
+        health_module._check_is_admin = fake_not_admin
+        try:
+            asyncio.run(mock_health_cog.health.callback(mock_health_cog, interaction))
+        finally:
+            health_module._check_is_admin = original
+
+        assert "defer" in call_order
+        assert "admin_check" in call_order
+        assert call_order.index("defer") < call_order.index("admin_check"), (
+            "defer must fire before admin check in /health"
+        )
+
+    def test_health_non_admin_rejected_via_followup(self, mock_health_cog):
+        """Cross-1: Non-admin user rejected via followup.send (post-defer) in /health."""
+        import cogs.healthCog as health_module
+
+        original = health_module._check_is_admin
+
+        async def fake_not_admin(interaction):
+            return False
+
+        interaction = MagicMock()
+        interaction.guild_id = 123456789
+        interaction.user = MagicMock()
+        interaction.user.id = 987654321
+        interaction.response = AsyncMock()
+        interaction.followup = AsyncMock()
+
+        health_module._check_is_admin = fake_not_admin
+        try:
+            asyncio.run(mock_health_cog.health.callback(mock_health_cog, interaction))
+        finally:
+            health_module._check_is_admin = original
+
+        # defer must have been called first
+        interaction.response.defer.assert_awaited_once()
+        # rejection via followup (not send_message)
+        interaction.followup.send.assert_awaited_once()
+        msg = str(interaction.followup.send.call_args)
+        assert "admin" in msg.lower() or "privilege" in msg.lower()
+
+
 if __name__ == "__main__":
     pytest.main([__file__])

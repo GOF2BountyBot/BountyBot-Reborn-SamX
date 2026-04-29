@@ -224,3 +224,65 @@ def test_sanitizer_defense_in_depth():
     assert "8000" not in cleaned
     assert "developer.mozilla.org" not in cleaned
     assert "for more information check" not in cleaned.lower()
+
+
+# --------------------------------------------------------------------------- #
+# F.1 — Bare hostname and IPv4 sanitization
+# --------------------------------------------------------------------------- #
+
+
+def test_sanitizer_strips_bare_service_hostnames():
+    """F.1: Bare internal service hostnames in detail text are replaced with <service>."""
+    cases = [
+        ("Connection to bot-core timed out", "bot-core"),
+        ("discord-gateway refused connection", "discord-gateway"),
+        ("blender-service is unreachable", "blender-service"),
+        ("db connection failed", "db"),
+    ]
+    for raw, hostname in cases:
+        cleaned = _sanitize(raw)
+        assert hostname not in cleaned, f"Hostname {hostname!r} should be stripped from: {raw!r}"
+        assert "<service>" in cleaned, f"Expected <service> placeholder in: {cleaned!r}"
+
+
+def test_sanitizer_strips_bare_hostname_with_port():
+    """F.1: Bare hostname:port patterns (e.g. bot-core:8000) are stripped."""
+    raw = "Connection to bot-core:8000 refused"
+    cleaned = _sanitize(raw)
+    assert "bot-core" not in cleaned
+    # The :8000 port is part of the hostname pattern and stripped with the URL/hostname
+    assert "8000" not in cleaned
+
+
+def test_sanitizer_strips_ipv4_addresses():
+    """F.1: IPv4 addresses in detail text are replaced with <address>."""
+    cases = [
+        "Connection refused: 192.168.1.5",
+        "10.0.0.1:8000 timed out",
+        "Service at 172.16.254.1 is down",
+    ]
+    for raw in cases:
+        cleaned = _sanitize(raw)
+        import re
+
+        assert not re.search(r"\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b", cleaned), (
+            f"IPv4 address should be stripped from: {raw!r}"
+        )
+        assert "<address>" in cleaned, f"Expected <address> placeholder in: {cleaned!r}"
+
+
+def test_sanitizer_strips_bare_hostname_in_detail_field():
+    """F.1: Bare hostname in FastAPI detail body is stripped by _build_embed sanitization."""
+    exc = _http_error(500, body={"detail": "bot-core:8000 connection refused"})
+    embed = _build_embed(exc)
+    assert "bot-core" not in embed.description
+    assert "8000" not in embed.description
+
+
+def test_sanitizer_strips_ip_in_detail_field():
+    """F.1: IPv4 address in FastAPI detail body is stripped by _build_embed sanitization."""
+    exc = _http_error(503, body={"detail": "Upstream 192.168.10.5 unreachable"})
+    embed = _build_embed(exc)
+    import re
+
+    assert not re.search(r"\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b", embed.description)

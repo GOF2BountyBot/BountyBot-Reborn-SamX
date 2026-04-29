@@ -173,6 +173,8 @@ async def test_render_config_view(admin_cog) -> None:
 @pytest.mark.asyncio
 async def test_render_config_set(admin_cog) -> None:
     """B.25 Fix B: render_config set defers, then PUTs /config/render, responds via followup."""
+    # C.1: preload must be set for the guard to allow through; empty preload now blocks.
+    admin_cog._render_settings = ["max_res_x", "max_res_y", "default_samples"]
     mock_resp = _make_mock_http_response({"max_res_x": 1920})
     admin_cog.http_client.put = AsyncMock(return_value=mock_resp)
 
@@ -486,18 +488,27 @@ async def test_render_config_set_valid_setting_calls_api(admin_cog) -> None:
 
 
 @pytest.mark.asyncio
-async def test_render_config_set_empty_preload_skips_guard(admin_cog) -> None:
-    """B.32: If _render_settings is empty (preload failed), skip guard and call API.
+async def test_render_config_set_empty_preload_blocks_call(admin_cog) -> None:
+    """C.1: If _render_settings is empty (preload failed), block the set action.
 
-    This is a safe-failure mode: if the preload fails, we don't block all set ops.
+    Empty _render_settings means the preload didn't complete (blender-service
+    was unavailable at startup).  The C.1 fix changes this from fail-OPEN
+    (bypass guard, let blender's 422 handle it) to fail-CLOSED (user sees a
+    friendly 'preload not ready' message; API is never called).
     """
     admin_cog._render_settings = []  # preload failed
-    mock_resp = _make_mock_http_response({"max_res_x": 1920})
-    admin_cog.http_client.put = AsyncMock(return_value=mock_resp)
+    admin_cog.http_client.put = AsyncMock()
 
     interaction = _make_mock_interaction(is_admin_user=True)
 
     await admin_cog.render_config.callback(admin_cog, interaction, action="set", setting="max_res_x", value=1920)
 
-    # With empty preload, the guard is bypassed and API is called
-    admin_cog.http_client.put.assert_called_once()
+    # C.1: API must NOT be called when preload is empty
+    admin_cog.http_client.put.assert_not_called()
+    # User sees a friendly error message
+    interaction.followup.send.assert_awaited_once()
+    msg = str(interaction.followup.send.call_args)
+    assert "preload" in msg.lower() or "retry" in msg.lower() or "not yet ready" in msg.lower()
+    # Must be ephemeral
+    kwargs = interaction.followup.send.call_args[1]
+    assert kwargs.get("ephemeral") is True

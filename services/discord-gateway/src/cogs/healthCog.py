@@ -3,7 +3,7 @@ from contextlib import suppress
 
 import discord
 import httpx
-from cogs.adminCog import is_admin
+from cogs.adminCog import _check_is_admin, is_admin
 from discord import app_commands
 from discord.ext import commands
 from shared import bblogger
@@ -25,6 +25,14 @@ class HealthCog(commands.Cog):
     @app_commands.command(name="ping", description="Pong + latency")
     @app_commands.default_permissions(administrator=True)
     @is_admin()
+    # Cross-1 audit: /ping uses send_message (no defer) and has zero HTTP calls in the
+    # command body beyond the is_admin check itself.  The 3-second Discord budget risk
+    # is theoretically present for Bot-Admin users (is_admin makes one HTTP call), but
+    # practically negligible because: (a) the is_admin check is the only async call,
+    # (b) bot-core is a local service with <10 ms latency under normal conditions, and
+    # (c) the command response is immediate send_message, not a long-running flow.
+    # Converting to post-defer would change the UX (ephemeral thinking... → plain pong)
+    # and is not worth the disruption.  Safe as-is.
     async def ping(self, interaction: discord.Interaction):
         latency_ms = round(self.bot.latency * 1000)
         # ephemeral: visible only to the user who invoked the command
@@ -50,12 +58,18 @@ class HealthCog(commands.Cog):
 
     @app_commands.command(name="health", description="Check the health of the BountyBot API service.")
     @app_commands.default_permissions(administrator=True)
-    @is_admin()
+    # Cross-1: defer fires BEFORE the admin check so the 3-second Discord budget
+    # is not consumed by the Bot-Admin HTTP call.  /health makes an additional HTTP
+    # call to bot-core after the admin check, making this a non-trivial flow that
+    # requires the post-defer pattern.
     async def health(self, interaction: discord.Interaction):
         """Calls the /health endpoint and reports status."""
         flogger.trace("/health command invoked by user...")
         # defer so we can do processing; we'll send an ephemeral followup
         await interaction.response.defer(thinking=True, ephemeral=True)
+        if not await _check_is_admin(interaction):
+            await interaction.followup.send("❌ This command requires admin privileges.", ephemeral=True)
+            return
         try:
             flogger.trace("Executing API request to bot service...")
             resp = await self.http_client.get(f"{api_base}/health", timeout=2.0)

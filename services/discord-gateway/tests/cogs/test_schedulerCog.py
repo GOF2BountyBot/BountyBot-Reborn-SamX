@@ -810,3 +810,138 @@ class TestB29CronTriggerDisplay:
         assert trigger_fields, "Expected a 'Trigger' field in the embed"
         trigger_value = trigger_fields[0].value
         assert trigger_value == f"`{cron_trigger}`", f"Expected trigger wrapped in backticks, got: {trigger_value!r}"
+
+
+# ===========================================================================
+# Cross-1: Defer fires BEFORE admin check in all scheduler commands
+# ===========================================================================
+
+
+class TestCrossOneSchedulerDeferBeforeAdminCheck:
+    """Cross-1: Verify that defer() fires before _check_is_admin() in all scheduler commands.
+
+    Non-admin users (Bot-Admin role only) trigger an HTTP call from _check_is_admin.
+    If the decorator fired before defer(), the 3-second Discord budget could be
+    consumed before the user sees a response.  The fix: all commands now defer first,
+    then call _check_is_admin inline.
+    """
+
+    def _make_non_admin_interaction(self):
+        """Interaction where the user is NOT a guild administrator."""
+        interaction = _make_interaction()
+        interaction.user.guild_permissions = MagicMock()
+        interaction.user.guild_permissions.administrator = False
+        interaction.user.roles = []
+        return interaction
+
+    async def _run_with_admin_blocked(self, coro_fn, *args):
+        """Run a command callback with admin check returning False; track defer order.
+
+        Patches cogs.schedulerCog._check_is_admin (the local name bound by
+        ``from cogs.adminCog import _check_is_admin``) rather than the attribute
+        on the adminCog module, because the import already bound a local reference.
+        """
+        import cogs.schedulerCog as sched_module
+
+        original = sched_module._check_is_admin
+        call_order = []
+
+        async def track_defer(*a, **kw):
+            call_order.append("defer")
+
+        async def fake_check_is_admin(interaction):
+            call_order.append("admin_check")
+            return False  # non-admin
+
+        interaction = self._make_non_admin_interaction()
+        interaction.response.defer = track_defer
+        interaction.followup.send = AsyncMock()
+
+        sched_module._check_is_admin = fake_check_is_admin
+        try:
+            await coro_fn(interaction, *args)
+        finally:
+            sched_module._check_is_admin = original
+
+        return call_order
+
+    def test_scheduler_list_defer_before_admin_check(self, cog):
+        """Cross-1: /scheduler_list defers before checking admin status."""
+
+        async def run():
+            return await self._run_with_admin_blocked(lambda i: cog.scheduler_list.callback(cog, i))
+
+        call_order = asyncio.run(run())
+        assert "defer" in call_order
+        assert "admin_check" in call_order
+        assert call_order.index("defer") < call_order.index("admin_check"), "defer must fire before admin check"
+
+    def test_scheduler_view_defer_before_admin_check(self, cog):
+        """Cross-1: /scheduler_view defers before checking admin status."""
+
+        async def run():
+            return await self._run_with_admin_blocked(lambda i: cog.scheduler_view.callback(cog, i, "some-job-id"))
+
+        call_order = asyncio.run(run())
+        assert call_order.index("defer") < call_order.index("admin_check")
+
+    def test_scheduler_update_defer_before_admin_check(self, cog):
+        """Cross-1: /scheduler_update defers before checking admin status (after JSON parse)."""
+
+        async def run():
+            return await self._run_with_admin_blocked(
+                lambda i: cog.scheduler_update.callback(cog, i, "some-job", '{"job_type": "test"}')
+            )
+
+        call_order = asyncio.run(run())
+        assert call_order.index("defer") < call_order.index("admin_check")
+
+    def test_scheduler_delete_defer_before_admin_check(self, cog):
+        """Cross-1: /scheduler_delete defers before checking admin status."""
+
+        async def run():
+            return await self._run_with_admin_blocked(lambda i: cog.scheduler_delete.callback(cog, i, "some-job-id"))
+
+        call_order = asyncio.run(run())
+        assert call_order.index("defer") < call_order.index("admin_check")
+
+    def test_admin_reset_scheduler_defer_before_admin_check(self, cog):
+        """Cross-1: /admin_reset_scheduler defers before checking admin status."""
+
+        async def run():
+            return await self._run_with_admin_blocked(lambda i: cog.admin_reset_scheduler.callback(cog, i))
+
+        call_order = asyncio.run(run())
+        assert call_order.index("defer") < call_order.index("admin_check")
+
+    def test_admin_clear_scheduler_defer_before_admin_check(self, cog):
+        """Cross-1: /admin_clear_scheduler defers before checking admin status."""
+
+        async def run():
+            return await self._run_with_admin_blocked(lambda i: cog.admin_clear_scheduler.callback(cog, i))
+
+        call_order = asyncio.run(run())
+        assert call_order.index("defer") < call_order.index("admin_check")
+
+    def test_non_admin_is_rejected_after_defer(self, cog):
+        """Cross-1: Non-admin user gets rejection message via followup (post-defer)."""
+        import cogs.schedulerCog as sched_module
+
+        interaction = self._make_non_admin_interaction()
+        original = sched_module._check_is_admin
+
+        async def fake_not_admin(inter):
+            return False
+
+        sched_module._check_is_admin = fake_not_admin
+        try:
+            asyncio.run(cog.scheduler_list.callback(cog, interaction))
+        finally:
+            sched_module._check_is_admin = original
+
+        # defer must have been called
+        interaction.response.defer.assert_awaited_once()
+        # rejection must come via followup (not send_message), confirming post-defer
+        interaction.followup.send.assert_awaited_once()
+        msg = str(interaction.followup.send.call_args)
+        assert "admin" in msg.lower() or "privilege" in msg.lower()

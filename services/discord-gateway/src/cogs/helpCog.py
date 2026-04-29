@@ -527,6 +527,12 @@ class HelpCog(commands.Cog):
     @app_commands.describe(category="Admin category to drill into (leave blank for overview)")
     @app_commands.autocomplete(category=_admin_category_autocomplete)
     @is_admin()
+    # Cross-1 audit: /admin_help has ZERO HTTP calls in its command body — it only
+    # introspects the bot's command tree synchronously and calls send_message (no defer).
+    # The @is_admin() decorator makes one HTTP call for Bot-Admin users, but since
+    # there is no subsequent async I/O in the handler, the total async budget used is
+    # just the is_admin check itself.  Post-defer refactor is not warranted; keeping
+    # the existing pattern with this documented rationale.
     async def admin_help_cmd(self, interaction: discord.Interaction, category: str | None = None):
         """List admin slash commands. Without category shows overview; with category shows details."""
         flogger.info(

@@ -2,7 +2,7 @@ import os
 
 import discord
 import httpx
-from cogs.adminCog import is_admin
+from cogs.adminCog import _check_is_admin
 from discord import app_commands
 from discord.ext import commands
 from httpx import HTTPStatusError as HttpxHTTPStatusError
@@ -56,11 +56,16 @@ class DevCog(commands.Cog):
 
     @app_commands.command(name="load_data", description="Trigger a JSON → DB load for a given category")
     @app_commands.default_permissions(administrator=True)
-    @is_admin()
     @app_commands.describe(category="Choose a data category")
     @app_commands.autocomplete(category=category_autocomplete)
+    # Cross-1: defer fires BEFORE the admin check so the 3-second Discord budget
+    # is not consumed by the Bot-Admin HTTP call.  Inline post-defer pattern matches
+    # AdminCog's B.25 fix.
     async def load_data(self, interaction: discord.Interaction, category: str):
         await interaction.response.defer(thinking=True)
+        if not await _check_is_admin(interaction):
+            await interaction.followup.send("❌ This command requires admin privileges.", ephemeral=True)
+            return
         # virtual "All" path: iterate every category
         if category == "All":
             total_count = 0
@@ -109,10 +114,13 @@ class DevCog(commands.Cog):
 
     @app_commands.command(name="reload_autocomplete", description="Force-reload all autocomplete data in other cogs")
     @app_commands.default_permissions(administrator=True)
-    @is_admin()
+    # Cross-1: post-defer inline admin check (see load_data for rationale)
     async def reload_autocomplete(self, interaction: discord.Interaction):
         """Call each cog's preload method so you don't have to restart."""
         await interaction.response.defer(thinking=True)
+        if not await _check_is_admin(interaction):
+            await interaction.followup.send("❌ This command requires admin privileges.", ephemeral=True)
+            return
         reloaded = []
         failed = []
 

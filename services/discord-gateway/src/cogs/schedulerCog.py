@@ -5,7 +5,7 @@ from contextlib import suppress
 import discord
 import httpx
 from cogs._shared.http_error_handler import report_api_error
-from cogs.adminCog import is_admin
+from cogs.adminCog import _check_is_admin
 from discord import app_commands
 from discord.ext import commands
 from shared import bblogger
@@ -60,10 +60,15 @@ class SchedulerCog(commands.Cog):
 
     @app_commands.command(name="scheduler_list", description="[ADMIN] List all scheduled jobs")
     @app_commands.default_permissions(administrator=True)
-    @is_admin()
+    # Cross-1: defer fires BEFORE the admin check so the 3-second Discord budget
+    # is not consumed by the Bot-Admin HTTP call.  Inline post-defer pattern matches
+    # AdminCog's B.25 fix.
     async def scheduler_list(self, interaction: discord.Interaction):
         """List all currently scheduled APScheduler jobs relevant to this guild."""
         await interaction.response.defer(thinking=True, ephemeral=True)
+        if not await _check_is_admin(interaction):
+            await interaction.followup.send("❌ This command requires admin privileges.", ephemeral=True)
+            return
         flogger.debug(f"/scheduler_list invoked: guild={interaction.guild_id} user={interaction.user.id}")
 
         try:
@@ -142,10 +147,13 @@ class SchedulerCog(commands.Cog):
     @app_commands.default_permissions(administrator=True)
     @app_commands.describe(job_id="The ID of the job to view")
     @app_commands.autocomplete(job_id=job_id_autocomplete)
-    @is_admin()
+    # Cross-1: post-defer inline admin check (see scheduler_list for rationale)
     async def scheduler_view(self, interaction: discord.Interaction, job_id: str):
         """View full details of a single scheduled job by its ID."""
         await interaction.response.defer(thinking=True, ephemeral=True)
+        if not await _check_is_admin(interaction):
+            await interaction.followup.send("❌ This command requires admin privileges.", ephemeral=True)
+            return
         flogger.debug(
             f"/scheduler_view invoked: guild={interaction.guild_id} user={interaction.user.id} job_id={job_id}"
         )
@@ -226,7 +234,9 @@ class SchedulerCog(commands.Cog):
         payload_json='New payload as a JSON string (e.g. {"job_type": "bounty_spawn"})',
     )
     @app_commands.autocomplete(job_id=job_id_autocomplete)
-    @is_admin()
+    # Cross-1: post-defer inline admin check.  JSON validation still runs before
+    # defer (B.28 fix) because it is synchronous and avoids wasting the interaction
+    # token on a validation error.  The Bot-Admin HTTP check is deferred.
     async def scheduler_update(self, interaction: discord.Interaction, job_id: str, payload_json: str):
         """Update the payload/args of an existing scheduled job."""
         # B.28 fix: validate JSON synchronously BEFORE defer — no async work needed for validation
@@ -239,8 +249,11 @@ class SchedulerCog(commands.Cog):
             )
             return
 
-        # Only defer after validation passes — async I/O follows
+        # Only defer after validation passes — async I/O (including admin check) follows
         await interaction.response.defer(thinking=True, ephemeral=True)
+        if not await _check_is_admin(interaction):
+            await interaction.followup.send("❌ This command requires admin privileges.", ephemeral=True)
+            return
         flogger.debug(
             f"/scheduler_update invoked: guild={interaction.guild_id} user={interaction.user.id} job_id={job_id}"
         )
@@ -309,10 +322,13 @@ class SchedulerCog(commands.Cog):
     @app_commands.default_permissions(administrator=True)
     @app_commands.describe(job_id="The ID of the job to delete")
     @app_commands.autocomplete(job_id=job_id_autocomplete)
-    @is_admin()
+    # Cross-1: post-defer inline admin check (see scheduler_list for rationale)
     async def scheduler_delete(self, interaction: discord.Interaction, job_id: str):
         """Delete a single scheduled job by its ID."""
         await interaction.response.defer(thinking=True, ephemeral=True)
+        if not await _check_is_admin(interaction):
+            await interaction.followup.send("❌ This command requires admin privileges.", ephemeral=True)
+            return
         flogger.debug(
             f"/scheduler_delete invoked: guild={interaction.guild_id} user={interaction.user.id} job_id={job_id}"
         )
@@ -373,10 +389,13 @@ class SchedulerCog(commands.Cog):
         description="[ADMIN] Wipe all scheduled jobs and re-register the 3 default recurring jobs",
     )
     @app_commands.default_permissions(administrator=True)
-    @is_admin()
+    # Cross-1: post-defer inline admin check (see scheduler_list for rationale)
     async def admin_reset_scheduler(self, interaction: discord.Interaction):
         """Remove all scheduled jobs and re-register the default recurring jobs."""
         await interaction.response.defer(thinking=True, ephemeral=True)
+        if not await _check_is_admin(interaction):
+            await interaction.followup.send("❌ This command requires admin privileges.", ephemeral=True)
+            return
         flogger.debug(f"/admin_reset_scheduler invoked: guild={interaction.guild_id} user={interaction.user.id}")
 
         try:
@@ -435,10 +454,13 @@ class SchedulerCog(commands.Cog):
         description="[ADMIN] Delete all one-time scheduled jobs scoped to this guild",
     )
     @app_commands.default_permissions(administrator=True)
-    @is_admin()
+    # Cross-1: post-defer inline admin check (see scheduler_list for rationale)
     async def admin_clear_scheduler(self, interaction: discord.Interaction):
         """Delete all one-time jobs associated with the invoking guild."""
         await interaction.response.defer(thinking=True, ephemeral=True)
+        if not await _check_is_admin(interaction):
+            await interaction.followup.send("❌ This command requires admin privileges.", ephemeral=True)
+            return
         flogger.debug(f"/admin_clear_scheduler invoked: guild={interaction.guild_id} user={interaction.user.id}")
 
         try:

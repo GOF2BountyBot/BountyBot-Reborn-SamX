@@ -310,6 +310,60 @@ class TestConcurrentGetLock:
 # ---------------------------------------------------------------------------
 
 
+# ---------------------------------------------------------------------------
+# Test 13: Concurrent gets at the moment of TTL expiry — only one refresh fires
+# (E.1 — TOCTOU double-check correctness)
+# ---------------------------------------------------------------------------
+
+
+class TestConcurrentExpiryLock:
+    def test_only_one_refresh_fires_when_multiple_gets_hit_expiry(self):
+        """E.1: Two concurrent gets on an expired entry call refresh_fn exactly once.
+
+        This validates the double-check locking pattern inside get(): both
+        coroutines see the entry as expired on the fast-path, both queue up for
+        the lock, but only the first acquires it and refreshes; the second
+        re-checks inside the lock and sees the fresh entry.
+        """
+        call_count = 0
+
+        clock = [0.0]
+
+        async def expiry_refresh(key):
+            nonlocal call_count
+            call_count += 1
+            await asyncio.sleep(0)  # yield so the second coroutine can reach the lock
+            return [f"refreshed-{call_count}"]
+
+        cache = AutocompleteCache(
+            ttl_seconds=300.0,
+            refresh_fn=expiry_refresh,
+            _monotonic=lambda: clock[0],
+            name="expiry-lock-test",
+        )
+
+        # Prime the cache at t=0
+        asyncio.run(cache.get("key"))
+        assert call_count == 1
+
+        # Advance time past TTL — both concurrent gets will see the entry as expired
+        clock[0] = 301.0
+
+        async def run_concurrent():
+            results = await asyncio.gather(
+                cache.get("key"),
+                cache.get("key"),
+            )
+            return results
+
+        results = asyncio.run(run_concurrent())
+
+        # Only one refresh should have fired despite two concurrent gets at expiry
+        assert call_count == 2, f"Expected exactly 2 total calls (1 prime + 1 refresh), got {call_count}"
+        # Both gets return the same (new) value
+        assert all(r == ["refreshed-2"] for r in results)
+
+
 class TestObservability:
     def test_keys_and_size_reflect_state(self):
         """keys() and size accurately reflect current cache contents."""

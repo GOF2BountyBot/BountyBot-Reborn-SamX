@@ -1021,8 +1021,24 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
                 if not setting or value is None:
                     await interaction.followup.send("⚠️ Usage: `/render_config set <setting> <value>`", ephemeral=True)
                     return
-                # B.32: validate setting against preloaded allowlist before API call
-                if self._render_settings and setting not in self._render_settings:
+                # C.1 / B.32: validate setting against preloaded allowlist before API call.
+                # Fail CLOSED when preload failed (empty list): do not silently pass the
+                # call through to blender-service, which would re-introduce the B.32
+                # silent-no-op behavior.  Fail OPEN would only be correct if blender-service
+                # guaranteed a friendly 422; we cannot rely on that for UX clarity.
+                if not self._render_settings:
+                    flogger.warning(
+                        f"render_config set: _render_settings preload not ready "
+                        f"(empty); blocking call for setting={setting!r} "
+                        f"user={interaction.user} guild={interaction.guild_id}"
+                    )
+                    await interaction.followup.send(
+                        "⚠️ Render config preload is not yet ready. "
+                        "Please retry in a moment or contact an admin if this persists.",
+                        ephemeral=True,
+                    )
+                    return
+                if setting not in self._render_settings:
                     valid = ", ".join(f"`{s}`" for s in sorted(self._render_settings))
                     await interaction.followup.send(
                         f"⚠️ Unknown setting `{setting}`. Valid settings: {valid}",

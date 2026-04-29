@@ -268,6 +268,17 @@ class ShopCog(commands.Cog):
             player = await self._get_player_data(interaction.user.id, interaction.guild_id)
             if not player:
                 return []
+            # E.2: Guard against unrecognized tier values before indexing the list.
+            # If tier resolution returns an unexpected value (e.g. a new tier added to the
+            # API not yet reflected in _valid_tiers), log a warning so operators can
+            # diagnose the issue rather than silently returning an empty dropdown.
+            if player.get("tier") not in self._valid_tiers:
+                flogger.warning(
+                    f"buy_item_autocomplete: unrecognized player tier={player.get('tier')!r} "
+                    f"guild={interaction.guild_id} user={interaction.user.id}; "
+                    "returning empty autocomplete"
+                )
+                return []
             player_tier_idx = self._valid_tiers.index(player["tier"])
             norm_current = normalize_for_search(current)
             choices: list[app_commands.Choice[int]] = []

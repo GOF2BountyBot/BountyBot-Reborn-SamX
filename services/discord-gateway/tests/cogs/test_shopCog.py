@@ -2038,6 +2038,49 @@ class TestBuyItemAutocompleteEdgeCases:
         # Gold tier items should NOT appear
         assert not any("[Gold]" in n for n in names)
 
+    # ------------------------------------------------------------------
+    # Test E.2 — WARNING logged when player_tier is not in _valid_tiers
+    # ------------------------------------------------------------------
+
+    def test_unknown_player_tier_returns_empty_and_logs_warning(self, mock_shop_cog):
+        """E.2: buy_item_autocomplete returns [] and logs WARNING when player tier is unrecognized.
+
+        If the API returns a tier value not present in _valid_tiers (e.g. a new
+        prestige state or a new tier added server-side before the cog is updated),
+        the autocomplete must not silently fail — it must log a WARNING so operators
+        can investigate.
+        """
+        # Return a player with an unrecognized tier
+        player = _make_player_data(tier="Legendary")  # not in ["Bronze","Silver","Gold","Platinum"]
+        player_resp = MagicMock()
+        player_resp.status_code = 200
+        player_resp.raise_for_status = MagicMock()
+        player_resp.json = MagicMock(return_value=player)
+        mock_shop_cog.http_client.post = AsyncMock(return_value=player_resp)
+
+        # Inject a trackable logger into the cog
+        mock_logger = MagicMock()
+        mock_logger.warning = MagicMock()
+        import cogs.shopCog as shop_module
+
+        original_flogger = shop_module.flogger
+        shop_module.flogger = mock_logger
+
+        try:
+            interaction = self._make_interaction()
+            result = asyncio.run(mock_shop_cog.buy_item_autocomplete(interaction, ""))
+        finally:
+            shop_module.flogger = original_flogger
+
+        # Must return empty list
+        assert result == []
+        # Must have logged a WARNING mentioning the tier, guild, and user
+        mock_logger.warning.assert_called_once()
+        warning_msg = mock_logger.warning.call_args[0][0]
+        assert "Legendary" in warning_msg
+        assert str(interaction.guild_id) in warning_msg
+        assert str(interaction.user.id) in warning_msg
+
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

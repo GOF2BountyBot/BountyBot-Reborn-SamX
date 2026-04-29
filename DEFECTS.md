@@ -953,8 +953,9 @@ See companion detail: `/proj/recon/B23-recon.md`
 
 ### B.19 — Ship loadout ↔ inventory data anomalies after equip / buy-ship / setactive sequence
 🔴 high · 2026-04-28 · surfaced after Phase 6 Reset (no specific test item) on Main account in dev guild `1490693399307616276`
+> **FIXED** in commit `63864ed` (Package G, 2026-04-29). Verification: pending. Establishes the four loadout↔inventory hard invariants (I1: no cross-ship duplication; I2: no materialisation from nothing; I3: atomicity across both tables; I4: active ship within slot caps) via a new `LoadoutConsistencyService` choke-point.  Six affected flows (`_create_starter_loadout`, `purchase_ship`, `set_active_ship`, `equip`/`unequip`, `sell_ship`/`transfer_ship`/`admin_remove_ship`, `prestige_player`) all route through the service with `commit=False`; routers own the transaction via `async with db.begin()`.  One-shot Alembic data-fixup migration (`0002_b19_repair_loadout_consistency`) deduplicates legacy slot references on first deployment.  Test coverage: ~180 new tests including 25 unit, 152 property cases, 3 migration, and adversarial exploit-closure tests.
 
-Multiple user-visible anomalies across one continuous action sequence. Recon (2026-04-28) has traced all 6 behaviors to verified code paths. Behaviors share two independent root causes (starter-loadout phantom items; purchase_ship not clearing old loadout); not a single root cause. See companion detail: `/proj/recon/B19-recon.md`.
+Multiple user-visible anomalies across one continuous action sequence. Recon (2026-04-28) has traced all 6 behaviors to verified code paths. Behaviors share two independent root causes (starter-loadout phantom items; purchase_ship not clearing old loadout); not a single root cause. See companion detail: `/proj/recon/B19-recon.md`.  See architect design: `/proj/recon/B19-design.md`.
 
 **Environment**
 - Guild: `1490693399307616276` (dev `bb-temp`)

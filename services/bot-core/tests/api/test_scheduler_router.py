@@ -519,6 +519,26 @@ class TestUpdateJob:
         # modify_job must NOT have been called — the payload must never reach the scheduler
         mock_scheduler.modify_job.assert_not_called()
 
+    def test_update_job_rejects_null_payload(self, client, mock_scheduler):
+        """A.1: Returns 422 when payload is explicitly null.
+
+        Before this fix, ``{"payload": null}`` passed Pydantic validation because
+        ``payload: dict | None = {}`` accepted None.  The router then called
+        ``scheduler.modify_job(job_id, args=[job_id, None])``, corrupting the job's
+        args so that ``job_executor.py`` would raise AttributeError on the next
+        execution (``None.get("job_type")``).
+
+        With ``payload: dict = Field(default_factory=dict)`` (non-nullable), Pydantic
+        rejects null immediately with HTTP 422 before APScheduler is ever called.
+        """
+        null_payload_body = {"payload": None}
+
+        response = client.put("/api/v1/jobs/test-job-id-1234", json=null_payload_body)
+
+        assert response.status_code == 422
+        # modify_job must NOT have been called — null payload must be rejected at schema level
+        mock_scheduler.modify_job.assert_not_called()
+
 
 # ===========================================================================
 # 6. DELETE /jobs/all

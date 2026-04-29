@@ -1382,9 +1382,19 @@ class TestUpdateJobSchema:
         job = UpdateJob(payload={"tier": "Gold"})
         assert job.payload == {"tier": "Gold"}
 
-    def test_payload_none(self):
-        job = UpdateJob(payload=None)
-        assert job.payload is None
+    def test_payload_none_raises_validation_error(self):
+        """A.1: payload is non-nullable; None must raise ValidationError.
+
+        The original schema had ``payload: dict | None = {}`` which allowed
+        ``{"payload": null}`` through Pydantic validation and could corrupt
+        live job args (job_executor.py does ``payload.get("job_type")`` on None,
+        raising AttributeError on every subsequent execution).
+
+        With ``payload: dict = Field(default_factory=dict)``, passing None
+        must raise ValidationError instead of silently corrupting the job.
+        """
+        with pytest.raises(ValidationError):
+            UpdateJob(payload=None)
 
     def test_wrong_type_for_payload_raises(self):
         with pytest.raises(ValidationError):

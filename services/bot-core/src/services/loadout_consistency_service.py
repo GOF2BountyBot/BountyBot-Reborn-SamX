@@ -100,7 +100,13 @@ class LoadoutConsistencyService:
 
     @staticmethod
     def _get_slot(ship: PlayerShip, kind: str) -> list[str]:
-        """Return a copy of the ship's slot list for the given kind."""
+        """Return a copy of the ship's slot list for the given kind.
+
+        G.4: None entries in the JSON list (from corrupt legacy data) are silently
+        filtered out with a WARNING so downstream callers never encounter None where
+        a string item name is expected (prevents ``_resolve_concrete_type(db, None)``
+        from triggering an unexpected DB lookup or error).
+        """
         attr_map = {
             "weapons": ship.weapons,
             "modules": ship.modules,
@@ -108,7 +114,17 @@ class LoadoutConsistencyService:
             "secondary_weapons": getattr(ship, "secondary_weapons", None),
         }
         raw = attr_map.get(kind)
-        return list(raw) if raw else []
+        if not raw:
+            return []
+        filtered = [x for x in raw if x is not None]
+        if len(filtered) < len(raw):
+            flogger.warning(
+                "G.4: filtered %d None entry(ies) from player_ship %s '%s' slot list — corrupt legacy data",
+                len(raw) - len(filtered),
+                getattr(ship, "id", "?"),
+                kind,
+            )
+        return filtered
 
     @staticmethod
     def _set_slot(ship: PlayerShip, kind: str, items: list[str]) -> None:
@@ -459,7 +475,7 @@ class LoadoutConsistencyService:
                 if removed_other:
                     # The duplicate copy on the other ship was deleted; this side
                     # remains as the "winning" copy and proceeds to inventory.
-                    pass
+                    duplicates_dropped += removed_other
                 # Add the legitimate copy to inventory
                 concrete = await self._resolve_concrete_type(db, name, fallback_kind=kind)
                 await self.inventory_repo.add_item(db, ship.player_id, concrete, name, 1, commit=False)
@@ -587,6 +603,36 @@ class LoadoutConsistencyService:
 
         if not dry_run and ships_modified:
             await db.flush()
+
+        # G.3: Post-condition check — after a live repair, re-scan to assert that
+        # zero duplicates remain.  Wrapped in ``if __debug__:`` so it only runs in
+        # normal Python mode (not -O/PYTHONOPTIMIZE).  If a bug in ``_set_slot``
+        # prevented the ORM mutation from being flushed, this will surface it as a
+        # WARNING rather than silently completing a corrupt migration.
+        if __debug__ and not dry_run and ships_modified:
+            post_seen: dict[tuple[str, str], int] = {}
+            residual_duplicates = 0
+            for ship in ships:
+                for kind in _SLOT_KINDS:
+                    for name in self._get_slot(ship, kind):
+                        key = (name, kind)
+                        if key in post_seen:
+                            residual_duplicates += 1
+                        else:
+                            post_seen[key] = ship.id
+            if residual_duplicates > 0:
+                flogger.warning(
+                    "G.3 repair_player post-condition FAILED for player %d: "
+                    "%d duplicate slot reference(s) remain after flush — "
+                    "_set_slot mutation may not have been applied correctly.",
+                    player_id,
+                    residual_duplicates,
+                )
+            else:
+                flogger.debug(
+                    "G.3 repair_player post-condition OK for player %d: zero duplicate slot references after flush.",
+                    player_id,
+                )
 
         return {
             "player_id": player_id,

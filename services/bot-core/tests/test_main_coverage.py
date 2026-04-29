@@ -247,10 +247,46 @@ class TestIncludeRouters:
 # ===================================================================
 
 
+def _make_db_session_mock_with_empty_sweep():
+    """Build a db_manager mock whose get_session() context manager returns a DB
+    session where execute().all() returns an empty list (no stale bounties/ids).
+
+    A.2: The fix ensures .all() is a synchronous list (not an AsyncMock coroutine),
+    matching SQLAlchemy's real CursorResult.all() which is synchronous.
+    """
+    from contextlib import asynccontextmanager
+
+    mock_execute_result = MagicMock()
+    mock_execute_result.all.return_value = []  # synchronous empty list — no stale bounties
+
+    mock_db_session = AsyncMock()
+    mock_db_session.execute = AsyncMock(return_value=mock_execute_result)
+    mock_db_session.commit = AsyncMock()
+    mock_db_session.rollback = AsyncMock()
+
+    mock_db_mgr = MagicMock()
+    mock_db_mgr.initialize = AsyncMock()
+    mock_db_mgr._connection_string = "postgresql+asyncpg://user:pass@host/db"
+    mock_db_mgr.shutdown = MagicMock()
+
+    @asynccontextmanager
+    async def _mock_get_session():
+        yield mock_db_session
+
+    mock_db_mgr.get_session = _mock_get_session
+    return mock_db_mgr, mock_db_session, mock_execute_result
+
+
 class TestLifespan:
     @pytest.mark.asyncio
     async def test_lifespan_startup_and_shutdown_success(self):
-        """Full startup → yield → shutdown cycle with all deps mocked."""
+        """Full startup → yield → shutdown cycle with all deps mocked.
+
+        A.2: The db_manager.get_session() mock is configured so that
+        execute().all() returns a synchronous empty list (matching SQLAlchemy's
+        real CursorResult.all() contract) — preventing the RuntimeWarning
+        'coroutine was never awaited' that indicated the B.23b sweep was broken.
+        """
         from main import lifespan
 
         test_app = FastAPI()
@@ -270,8 +306,12 @@ class TestLifespan:
         mock_mm_class = MagicMock()
         mock_mm_class.from_async_url.return_value = mock_mm_instance
 
+        mock_db_mgr, _db_session, _execute_result = _make_db_session_mock_with_empty_sweep()
+
         with (
-            patch("main.db_manager") as mock_db_mgr,
+            patch("main.db_manager", mock_db_mgr),
+            patch("main.run_stale_state_recovery_sweep", new_callable=AsyncMock),
+            patch("main.run_stale_respawn_recovery", new_callable=AsyncMock),
             patch("persist.database.migration_manager.MigrationManager", mock_mm_class),
             patch("main.initialize_schema", new_callable=AsyncMock, return_value=mock_schema_mgr),
             patch("main.auto_seed_data", new_callable=AsyncMock),
@@ -281,10 +321,6 @@ class TestLifespan:
             patch("main.AsyncIOScheduler", return_value=mock_scheduler),
             patch("main.register_default_jobs"),
         ):
-            mock_db_mgr.initialize = AsyncMock()
-            mock_db_mgr._connection_string = "postgresql+asyncpg://user:pass@host/db"
-            mock_db_mgr.shutdown = MagicMock()
-
             async with lifespan(test_app):
                 # App is "running" — verify startup happened
                 mock_db_mgr.initialize.assert_awaited_once()
@@ -292,6 +328,55 @@ class TestLifespan:
 
             # Verify shutdown
             mock_db_mgr.shutdown.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_lifespan_b23b_announcement_cleanup_called_for_stale_bounties(self):
+        """A.2: Dedicated test asserting the B.23b announcement-cleanup branch is exercised.
+
+        When the stale-state recovery sweep finds stale bounties, it calls
+        ``_delete_bounty_announcement`` once per bounty.  Previously the mock
+        returned an AsyncMock coroutine from ``.all()``, so the loop iterated over
+        an empty list (the async mock object is falsy only if the coroutine was
+        awaited — it is not).  With the corrected synchronous list mock,
+        the branch at main.py:190 is actually entered.
+        """
+        from contextlib import asynccontextmanager
+
+        from main import run_stale_state_recovery_sweep
+
+        # Set up DB session: returns one stale bounty (id=1, guild_id=67890)
+        mock_execute_result = MagicMock()
+        mock_execute_result.all.return_value = [(1, 67890)]  # sync list — one stale bounty
+
+        mock_db_session = AsyncMock()
+        mock_db_session.execute = AsyncMock(return_value=mock_execute_result)
+        mock_db_session.commit = AsyncMock()
+        mock_db_session.rollback = AsyncMock()
+
+        mock_db_mgr_inner = MagicMock()
+
+        @asynccontextmanager
+        async def _mock_get_session():
+            yield mock_db_session
+
+        mock_db_mgr_inner.get_session = _mock_get_session
+
+        mock_delete_announcement = AsyncMock()
+
+        with (
+            patch("main.db_manager", mock_db_mgr_inner),
+            # The function does a lazy import inside itself; patch the source module.
+            patch(
+                "utils.executors.bounty_expire_executor._delete_bounty_announcement",
+                mock_delete_announcement,
+            ),
+        ):
+            await run_stale_state_recovery_sweep()
+
+        # The cleanup branch (main.py:190) must have been entered.
+        # _delete_bounty_announcement is called inside the loop at main.py:198,
+        # once per stale bounty.
+        mock_delete_announcement.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_lifespan_db_init_failure_raises(self):
@@ -318,8 +403,12 @@ class TestLifespan:
         mock_scheduler.start = MagicMock()
         mock_scheduler.shutdown = MagicMock()
 
+        mock_db_mgr, _db_session, _execute_result = _make_db_session_mock_with_empty_sweep()
+
         with (
-            patch("main.db_manager") as mock_db_mgr,
+            patch("main.db_manager", mock_db_mgr),
+            patch("main.run_stale_state_recovery_sweep", new_callable=AsyncMock),
+            patch("main.run_stale_respawn_recovery", new_callable=AsyncMock),
             patch("main.initialize_schema", new_callable=AsyncMock),
             patch("main.auto_seed_data", new_callable=AsyncMock, side_effect=Exception("seed fail")),
             patch("main.create_async_engine"),
@@ -327,19 +416,15 @@ class TestLifespan:
             patch("main.SQLAlchemyJobStore"),
             patch("main.AsyncIOScheduler", return_value=mock_scheduler),
             patch("main.register_default_jobs"),
+            patch("persist.database.migration_manager.MigrationManager") as MockMM,
         ):
-            mock_db_mgr.initialize = AsyncMock()
-            mock_db_mgr._connection_string = "postgresql+asyncpg://user:pass@host/db"
-            mock_db_mgr.shutdown = MagicMock()
+            mock_mm_instance = MagicMock()
+            mock_mm_instance.ensure_current = MagicMock()
+            MockMM.from_async_url.return_value = mock_mm_instance
 
-            with patch("persist.database.migration_manager.MigrationManager") as MockMM:
-                mock_mm_instance = MagicMock()
-                mock_mm_instance.ensure_current = MagicMock()
-                MockMM.from_async_url.return_value = mock_mm_instance
-
-                async with lifespan(test_app):
-                    # Should reach here despite seed failure
-                    pass
+            async with lifespan(test_app):
+                # Should reach here despite seed failure
+                pass
 
     @pytest.mark.asyncio
     async def test_lifespan_scheduler_failure_raises(self):
@@ -348,24 +433,23 @@ class TestLifespan:
 
         test_app = FastAPI()
 
+        mock_db_mgr, _db_session, _execute_result = _make_db_session_mock_with_empty_sweep()
+
         with (
-            patch("main.db_manager") as mock_db_mgr,
+            patch("main.db_manager", mock_db_mgr),
+            patch("main.run_stale_state_recovery_sweep", new_callable=AsyncMock),
             patch("main.initialize_schema", new_callable=AsyncMock),
             patch("main.auto_seed_data", new_callable=AsyncMock),
             patch("main.create_async_engine", side_effect=Exception("scheduler fail")),
+            patch("persist.database.migration_manager.MigrationManager") as MockMM,
         ):
-            mock_db_mgr.initialize = AsyncMock()
-            mock_db_mgr._connection_string = "postgresql+asyncpg://user:pass@host/db"
-            mock_db_mgr.shutdown = MagicMock()
+            mock_mm_instance = MagicMock()
+            mock_mm_instance.ensure_current = MagicMock()
+            MockMM.from_async_url.return_value = mock_mm_instance
 
-            with patch("persist.database.migration_manager.MigrationManager") as MockMM:
-                mock_mm_instance = MagicMock()
-                mock_mm_instance.ensure_current = MagicMock()
-                MockMM.from_async_url.return_value = mock_mm_instance
-
-                with pytest.raises(Exception, match="scheduler fail"):
-                    async with lifespan(test_app):
-                        pass
+            with pytest.raises(Exception, match="scheduler fail"):
+                async with lifespan(test_app):
+                    pass
 
     @pytest.mark.asyncio
     async def test_lifespan_shutdown_scheduler_error_handled(self):
@@ -378,8 +462,12 @@ class TestLifespan:
         mock_scheduler.start = MagicMock()
         mock_scheduler.shutdown = MagicMock(side_effect=Exception("shutdown fail"))
 
+        mock_db_mgr, _db_session, _execute_result = _make_db_session_mock_with_empty_sweep()
+
         with (
-            patch("main.db_manager") as mock_db_mgr,
+            patch("main.db_manager", mock_db_mgr),
+            patch("main.run_stale_state_recovery_sweep", new_callable=AsyncMock),
+            patch("main.run_stale_respawn_recovery", new_callable=AsyncMock),
             patch("main.initialize_schema", new_callable=AsyncMock),
             patch("main.auto_seed_data", new_callable=AsyncMock),
             patch("main.create_async_engine"),
@@ -387,19 +475,15 @@ class TestLifespan:
             patch("main.SQLAlchemyJobStore"),
             patch("main.AsyncIOScheduler", return_value=mock_scheduler),
             patch("main.register_default_jobs"),
+            patch("persist.database.migration_manager.MigrationManager") as MockMM,
         ):
-            mock_db_mgr.initialize = AsyncMock()
-            mock_db_mgr._connection_string = "postgresql+asyncpg://user:pass@host/db"
-            mock_db_mgr.shutdown = MagicMock()
+            mock_mm_instance = MagicMock()
+            mock_mm_instance.ensure_current = MagicMock()
+            MockMM.from_async_url.return_value = mock_mm_instance
 
-            with patch("persist.database.migration_manager.MigrationManager") as MockMM:
-                mock_mm_instance = MagicMock()
-                mock_mm_instance.ensure_current = MagicMock()
-                MockMM.from_async_url.return_value = mock_mm_instance
-
-                # Should NOT raise — scheduler shutdown error is caught
-                async with lifespan(test_app):
-                    pass
+            # Should NOT raise — scheduler shutdown error is caught
+            async with lifespan(test_app):
+                pass
 
     @pytest.mark.asyncio
     async def test_lifespan_shutdown_db_error_handled(self):
@@ -412,8 +496,13 @@ class TestLifespan:
         mock_scheduler.start = MagicMock()
         mock_scheduler.shutdown = MagicMock()
 
+        mock_db_mgr, _db_session, _execute_result = _make_db_session_mock_with_empty_sweep()
+        mock_db_mgr.shutdown = MagicMock(side_effect=Exception("db shutdown fail"))
+
         with (
-            patch("main.db_manager") as mock_db_mgr,
+            patch("main.db_manager", mock_db_mgr),
+            patch("main.run_stale_state_recovery_sweep", new_callable=AsyncMock),
+            patch("main.run_stale_respawn_recovery", new_callable=AsyncMock),
             patch("main.initialize_schema", new_callable=AsyncMock),
             patch("main.auto_seed_data", new_callable=AsyncMock),
             patch("main.create_async_engine"),
@@ -421,19 +510,15 @@ class TestLifespan:
             patch("main.SQLAlchemyJobStore"),
             patch("main.AsyncIOScheduler", return_value=mock_scheduler),
             patch("main.register_default_jobs"),
+            patch("persist.database.migration_manager.MigrationManager") as MockMM,
         ):
-            mock_db_mgr.initialize = AsyncMock()
-            mock_db_mgr._connection_string = "postgresql+asyncpg://user:pass@host/db"
-            mock_db_mgr.shutdown = MagicMock(side_effect=Exception("db shutdown fail"))
+            mock_mm_instance = MagicMock()
+            mock_mm_instance.ensure_current = MagicMock()
+            MockMM.from_async_url.return_value = mock_mm_instance
 
-            with patch("persist.database.migration_manager.MigrationManager") as MockMM:
-                mock_mm_instance = MagicMock()
-                mock_mm_instance.ensure_current = MagicMock()
-                MockMM.from_async_url.return_value = mock_mm_instance
-
-                # Should NOT raise — db shutdown error is caught
-                async with lifespan(test_app):
-                    pass
+            # Should NOT raise — db shutdown error is caught
+            async with lifespan(test_app):
+                pass
 
 
 # ===================================================================

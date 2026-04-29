@@ -248,6 +248,90 @@ class TestShipTransfer:
         resp = client.post("/api/v1/ships/transfer", json={"from_player_id": 10})
         assert resp.status_code == 422
 
+    @patch("api.routers.ships.get_db_session")
+    def test_transfer_ship_real_service_phantom_duplicate_state_yields_single_inventory_entry(
+        self,
+        mock_get_db,
+        client,
+        mock_player_ship_repo,
+        mock_player_repo,
+    ):
+        """G.6: Real LoadoutConsistencyService — phantom-dup exploit closure.
+
+        Verifies that the router integration path calls the real
+        ``evacuate_ship_loadout_to_inventory`` with a pre-seeded phantom-duplicate
+        state (two ships both referencing "M6 A4") and produces exactly ONE
+        inventory add_item call (not two).
+
+        This test does NOT mock LoadoutConsistencyService.  Instead it injects
+        mocked repos into a real service instance, so the anti-duplication guard
+        code itself is exercised.  If the router mistakenly bypassed the service,
+        the anti-duplication guard would never fire and inventory_repo.add_item
+        would be called twice (two phantom mints).
+
+        Mock budget: 1 (db_session only).  The real LoadoutConsistencyService is
+        constructed inside the router and receives injected repos via constructor
+        injection (achieved by patching the class to capture the call).
+        """
+        from services.loadout_consistency_service import LoadoutConsistencyService
+
+        mock_session = _configure_db_mock(mock_get_db)
+        mock_session.commit = AsyncMock()
+        mock_session.refresh = AsyncMock()
+
+        # Pre-state: ship_a has phantom duplicate weapon "M6 A4" (no other items).
+        # ship_b also references the same "M6 A4" (legacy corrupt state, no other items).
+        ship_a = make_mock_player_ship(
+            id=1, player_id=10, is_active=False, weapons=["M6 A4"], modules=[], turrets=[], secondary_weapons=[]
+        )
+        ship_b = make_mock_player_ship(
+            id=2, player_id=10, is_active=True, weapons=["M6 A4"], modules=[], turrets=[], secondary_weapons=[]
+        )
+
+        mock_player_repo.get_by_id.side_effect = [
+            make_mock_player(id=10),
+            make_mock_player(id=20),
+        ]
+        mock_player_ship_repo.get_by_id = AsyncMock(return_value=ship_a)
+
+        # Set up mock repos for the real LoadoutConsistencyService instance.
+        # The service will use these when it scans all player ships.
+        mock_inv_repo = AsyncMock()
+        mock_inv_repo.add_item = AsyncMock()
+        mock_item_repo = AsyncMock()
+        mock_item_repo.get_by_name_any_type = AsyncMock(
+            return_value=type("Item", (), {"name": "M6 A4", "type": "PrimaryWeapon"})()
+        )
+        mock_ps_repo_for_svc = AsyncMock()
+        mock_ps_repo_for_svc.get_player_ships = AsyncMock(return_value=[ship_a, ship_b])
+        mock_ps_repo_for_svc.get_by_id = AsyncMock(return_value=ship_a)
+
+        # Create the REAL LoadoutConsistencyService with injected mock repos.
+        real_svc = LoadoutConsistencyService(
+            player_ship_repo=mock_ps_repo_for_svc,
+            inventory_repo=mock_inv_repo,
+            item_repo=mock_item_repo,
+        )
+
+        # Patch the router's import of LoadoutConsistencyService to return our real instance.
+        with patch("services.loadout_consistency_service.LoadoutConsistencyService", return_value=real_svc):
+            payload = {"from_player_id": 10, "to_player_id": 20, "ship_id": 1}
+            resp = client.post("/api/v1/ships/transfer", json=payload)
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["ship_id"] == 1
+        assert data["from_player_id"] == 10
+        assert data["to_player_id"] == 20
+
+        # Anti-duplication guard must have fired: only 1 inventory entry minted
+        # (not 2 — that would be the phantom-dup exploit).
+        assert mock_inv_repo.add_item.await_count == 1, (
+            f"Expected exactly 1 inventory add_item call (anti-dup guard), got {mock_inv_repo.add_item.await_count}"
+        )
+        # The phantom duplicate on ship_b must have been cleared.
+        assert ship_b.weapons == [], "Anti-duplication guard must clear the duplicate from ship_b"
+
     @patch("services.loadout_consistency_service.LoadoutConsistencyService")
     @patch("api.routers.ships.get_db_session")
     def test_ship_transfer_rolls_back_on_partial_failure(

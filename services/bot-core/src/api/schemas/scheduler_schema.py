@@ -43,6 +43,8 @@ class UpdateJob(BaseModel):
 
     # B.30: forbid extra fields so that a wrong-field body (e.g. {"args": [...]})
     # returns HTTP 422 instead of silently wiping the existing payload to {}.
+    # A.1: payload is non-nullable; {"payload": null} returns 422 instead of
+    # corrupting the live job args with None (which would break job_executor.py).
     model_config = ConfigDict(extra="forbid")
 
-    payload: dict | None = {}
+    payload: dict = Field(default_factory=dict)

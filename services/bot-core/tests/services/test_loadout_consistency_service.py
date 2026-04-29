@@ -378,6 +378,33 @@ class TestEvacuateShipLoadoutToInventory:
         # The duplicate reference on the OTHER ship was removed
         assert other.weapons == []
 
+    @pytest.mark.asyncio
+    async def test_none_entries_filtered_from_slot_lists(self, svc, mock_db):
+        """G.4: None entries in ship JSON slot lists are silently filtered before processing.
+
+        A legacy corrupt row with weapons=["A", None, "B"] must behave as if
+        it only contained ["A", "B"] — None is never passed to _resolve_concrete_type
+        (which would call item_repo.get_by_name_any_type(db, None)).
+        """
+        # Build a ship with a corrupt weapons list containing None.
+        ship = _make_player_ship(ship_id=1, player_id=42)
+        ship.weapons = ["Pulse Laser", None, "Rail Gun"]
+        svc.item_repo.get_by_name_any_type = AsyncMock(
+            side_effect=lambda _db, name: _make_base_item(name, "PrimaryWeapon") if name is not None else None
+        )
+        svc.player_ship_repo.get_player_ships = AsyncMock(return_value=[ship])
+
+        result = await svc.evacuate_ship_loadout_to_inventory(mock_db, ship=ship)
+
+        # Only the two real items should be returned (None is skipped).
+        assert "Pulse Laser" in result["items_returned"]
+        assert "Rail Gun" in result["items_returned"]
+        assert None not in result["items_returned"]
+        # Exactly 2 add_item calls — one for each non-None entry.
+        assert svc.inventory_repo.add_item.await_count == 2
+        # Ship's weapons slot is now empty.
+        assert ship.weapons == []
+
 
 # ---------------------------------------------------------------------------
 # reconcile_active_ship_slots
@@ -492,6 +519,31 @@ class TestRepairPlayer:
         assert s2.modules == []
         assert s2.turrets == ["T"]
 
+    @pytest.mark.asyncio
+    async def test_post_condition_check_is_clean_after_successful_repair(self, svc, mock_db):
+        """G.3: The debug-mode post-condition check logs 'OK' (no residual duplicates)
+        after a successful live repair.  This test verifies that repair_player correctly
+        modifies the in-memory ship objects so the post-scan finds zero duplicates.
+
+        If the post-condition check fires a WARNING (i.e. residual_duplicates > 0), the
+        ORM mutation (_set_slot) didn't take effect — which would also break the main
+        assertions below.
+        """
+        active = _make_player_ship(ship_id=1, player_id=42, weapons=["Dup"], is_active=True)
+        loser = _make_player_ship(ship_id=2, player_id=42, weapons=["Dup"], is_active=False)
+        svc.player_ship_repo.get_player_ships = AsyncMock(return_value=[active, loser])
+
+        result = await svc.repair_player(mock_db, player_id=42)
+
+        # Primary repair outcome
+        assert result["duplicates_removed"] == 1
+        assert active.weapons == ["Dup"]
+        assert loser.weapons == []  # G.3: if _set_slot failed, this would still be ["Dup"]
+        # Post-condition: the loser's slot is cleared so a re-scan finds no residual duplicates.
+        # (The post-condition check inside repair_player already ran; if it had found duplicates
+        #  it would have logged a WARNING, which we can't assert on directly here, but the
+        #  mutation assertions above prove the in-memory state is correct.)
+
 
 # ---------------------------------------------------------------------------
 # Adversarial / exploit closure: legacy phantom-item state
@@ -531,6 +583,8 @@ class TestAntiDuplicationExploitClosure:
         assert svc.inventory_repo.add_item.await_count == 1
         # Anti-duplication guard removed the duplicate from ship_b
         assert ship_b.weapons == []
+        # G.1: counter must reflect the removal (was always 0 before fix)
+        assert result_a["duplicates_dropped"] == 1
 
         # Second evacuation (admin_remove_ship targeting ship_b) — slots are
         # already empty; no further inventory rows are minted.

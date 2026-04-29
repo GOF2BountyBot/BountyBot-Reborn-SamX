@@ -276,3 +276,71 @@ def test_repair_preserves_unique_items(engine):
     slots = _read_ship_slots(engine)
     assert slots[1]["weapons"] == ["Pulse Laser"]
     assert slots[2]["weapons"] == ["Rail Gun"]
+
+
+def test_downgrade_after_upgrade_is_safe_noop(engine):
+    """G.5: The down-migration (downgrade()) is a no-op and does not raise.
+
+    The design spec says: 'Restoring [duplicate slot references] would re-introduce
+    the bug, so the down-migration is intentionally empty.'
+
+    This test verifies that:
+    1. ``upgrade()`` (simulated via _run_repair_logic) deduplicates correctly.
+    2. Calling ``downgrade()`` (the real migration module's function, which just
+       returns None) does NOT raise and does NOT re-introduce duplicates.
+
+    We import the downgrade function directly from the migration module. Unlike
+    upgrade(), downgrade() uses no Alembic op context, so it is safe to call
+    without an Alembic environment.
+    """
+    import importlib.util
+    import os
+
+    # Load the migration module directly (it imports alembic.op at module level,
+    # but only upgrade() calls op functions; downgrade() just does `return None`).
+    migration_path = os.path.join(
+        os.path.dirname(__file__),
+        "..",
+        "src",
+        "persist",
+        "database",
+        "revisions",
+        "versions",
+        "0002_b19_repair_loadout_consistency.py",
+    )
+    spec = importlib.util.spec_from_file_location("migration_0002", migration_path)
+    assert spec is not None, "Could not load migration module spec"
+    migration_mod = importlib.util.module_from_spec(spec)
+
+    # The migration imports 'alembic.op' at module level; mock it to avoid
+    # needing a real Alembic context for just the downgrade() call.
+    import sys
+    import types
+
+    if "alembic" not in sys.modules:
+        _alembic_mod = types.ModuleType("alembic")
+        sys.modules["alembic"] = _alembic_mod
+    if "alembic.op" not in sys.modules:
+        _op_mod = types.ModuleType("alembic.op")
+        sys.modules["alembic.op"] = _op_mod
+        sys.modules["alembic"].op = _op_mod  # type: ignore[attr-defined]
+
+    spec.loader.exec_module(migration_mod)  # type: ignore[union-attr]
+
+    # Seed and run the upgrade.
+    table = _create_player_ships_table(engine)
+    _seed_corrupt_state(engine, table)
+    _run_repair_logic(engine)
+    snapshot_after_upgrade = _read_ship_slots(engine)
+
+    # Verify the active ship kept its modules (upgrade worked).
+    assert snapshot_after_upgrade[1]["modules"] == ["E2 Exoclad", "Telta Quickscan"]
+    assert snapshot_after_upgrade[5]["modules"] == []
+
+    # Call downgrade() — must not raise and must not alter data.
+    result = migration_mod.downgrade()  # type: ignore[attr-defined]
+    assert result is None
+
+    snapshot_after_downgrade = _read_ship_slots(engine)
+    # Data is UNCHANGED (downgrade is a pure no-op — no duplicates re-introduced).
+    assert snapshot_after_downgrade == snapshot_after_upgrade

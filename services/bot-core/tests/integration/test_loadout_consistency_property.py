@@ -24,16 +24,95 @@ Each test runs 50 random seeds × 20 sequence lengths.  Failures produce the
 action sequence that broke consistency, which itself becomes a regression
 seed.
 
-The property tests use a deterministic in-memory simulator that mirrors the
-LoadoutConsistencyService's contract.  Production code is exercised
-indirectly: the simulator implements the same contract that the service
-enforces, and any divergence from total-ownership conservation is a property
-violation.
+===========================================================================
+TWO LEVELS OF COVERAGE IN THIS FILE
+===========================================================================
+
+LEVEL 1 — Simulator-based property tests (``test_invariants_hold_*`` etc.)
+    Use the deterministic ``PlayerWorld`` in-memory simulator which mirrors
+    the ``LoadoutConsistencyService`` contract.  These tests verify the
+    CONTRACT (the state-machine semantics) under many action sequences.
+    They do NOT exercise the production service code — if the real service
+    drifts from the contract, the simulator tests still pass.  The existing
+    25 service-level unit tests and router integration tests serve as the
+    regression net for the production code.
+
+LEVEL 2 — Real-service property tests (``test_real_service_*``)  [G.2]
+    These tests invoke the actual ``LoadoutConsistencyService`` against a
+    real SQLite-in-memory session (using the ``db_session`` / ``async_engine``
+    fixtures from ``tests/integration/conftest.py``).  They use real ORM
+    mutation paths so that a divergence between the simulator and the
+    production service would surface as a test failure.
+
+    Because SQLite does not support PostgreSQL ARRAY columns (used by
+    ``Ship``, ``Item``, and module/weapon STI tables), these tests mock
+    ``item_repo`` and ``ship_repo`` at the repo boundary.  Only
+    ``player_ships`` and ``player_inventories`` rows are persisted to the
+    real in-memory DB.
 """
 
 import random
+import sys
+import types
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+
+# ---------------------------------------------------------------------------
+# Module-level mocks for the real-service tests (Level 2 tests below).
+# The bblogger and sqlalchemy_utils mocks are installed by
+# tests/integration/conftest.py, but we also need them here for
+# LoadoutConsistencyService's module-level logger call.
+# ---------------------------------------------------------------------------
+if "shared" not in sys.modules:
+    _mock_shared = types.ModuleType("shared")
+    _mock_bblogger = types.ModuleType("shared.bblogger")
+    _mock_bblogger.get_logger = MagicMock(return_value=MagicMock())
+    _mock_shared.bblogger = _mock_bblogger
+    sys.modules["shared"] = _mock_shared
+    sys.modules["shared.bblogger"] = _mock_bblogger
+
+if "sqlalchemy_utils" not in sys.modules:
+    _mock_sqla_utils = types.ModuleType("sqlalchemy_utils")
+    _mock_sqla_utils.UUIDType = MagicMock()
+    sys.modules["sqlalchemy_utils"] = _mock_sqla_utils
+
+# ---------------------------------------------------------------------------
+# Import LoadoutConsistencyService for Level 2 real-service tests.
+#
+# When pytest runs from /proj, Python finds /proj/services/ as a namespace
+# package (no __init__.py) before services/bot-core/src/services/ (which has
+# a proper __init__.py).  This causes ModuleNotFoundError for sub-modules.
+#
+# Fix: temporarily ensure src/ is at the front of sys.path and clear any
+# cached ``services`` namespace package before importing, then restore.
+# ---------------------------------------------------------------------------
+import os as _os
+
+_src_dir = _os.path.normpath(_os.path.join(_os.path.dirname(__file__), "..", "..", "src"))
+
+# If the cached 'services' is a namespace (no __file__), remove it so the
+# next import finds src/services/ instead.
+if "services" in sys.modules:
+    _svc_init = getattr(sys.modules["services"], "__file__", None) or ""
+    if "bot-core/src" not in _svc_init:
+        # Cached as namespace package — clear it and all sub-modules.
+        for _k in list(sys.modules):
+            if _k == "services" or _k.startswith("services."):
+                del sys.modules[_k]
+
+# Ensure src/ is at position 0.
+if _src_dir not in sys.path:
+    sys.path.insert(0, _src_dir)
+elif sys.path[0] != _src_dir:
+    sys.path.remove(_src_dir)
+    sys.path.insert(0, _src_dir)
+
+# Now the import will find src/services/ correctly.
+from services.loadout_consistency_service import (
+    LoadoutConsistencyService as _LoadoutConsistencyService,
+)
 
 # ---------------------------------------------------------------------------
 # Deterministic simulator that mirrors the LoadoutConsistencyService contract.
@@ -415,3 +494,204 @@ def test_phantom_dup_is_repaired_by_repair_player_logic() -> None:
     # Post-repair: only one ship has Phantom; total slot references count is 1.
     slot_count = sum(s["modules"].count("Phantom") for s in world.ships)
     assert slot_count == 1
+
+
+# ---------------------------------------------------------------------------
+# Level 2: Real-service property tests [G.2]
+#
+# These tests invoke the actual LoadoutConsistencyService against a real
+# SQLite-in-memory session (from the ``db_session`` fixture in conftest.py).
+# They use real ORM mutations on ``player_ships`` and ``player_inventories``
+# rows.  item_repo and ship_repo are mocked at the repo boundary (ARRAY
+# columns not supported by SQLite).
+# ---------------------------------------------------------------------------
+
+
+def _make_mock_item(name: str, sti_type: str = "PrimaryWeapon") -> SimpleNamespace:
+    return SimpleNamespace(name=name, type=sti_type)
+
+
+@pytest.fixture
+def real_svc():
+    """Real LoadoutConsistencyService with item_repo and ship_repo mocked.
+
+    player_ship_repo and inventory_repo are NOT mocked — they use real
+    repository instances that delegate to the SQLite-in-memory session.
+    """
+    from persist.repositories.inventory_repository import InventoryRepository
+    from persist.repositories.player_ship_repository import PlayerShipRepository
+
+    # Use the already-imported class from module level (avoids namespace clash).
+    LoadoutConsistencyService = _LoadoutConsistencyService
+
+    mock_item_repo = AsyncMock()
+    mock_item_repo.get_by_name_any_type = AsyncMock(return_value=_make_mock_item("Pulse Laser", "PrimaryWeapon"))
+    mock_item_repo.get_by_name = AsyncMock(return_value=_make_mock_item("Pulse Laser", "PrimaryWeapon"))
+
+    mock_ship_repo = AsyncMock()
+    mock_ship_repo.get_by_name = AsyncMock(
+        return_value=SimpleNamespace(
+            name="Betty",
+            max_primaries=2,
+            max_modules=3,
+            max_turrets=1,
+            max_secondaries=0,
+        )
+    )
+
+    return LoadoutConsistencyService(
+        player_ship_repo=PlayerShipRepository(),
+        inventory_repo=InventoryRepository(),
+        item_repo=mock_item_repo,
+        ship_repo=mock_ship_repo,
+    )
+
+
+@pytest.mark.asyncio
+async def test_real_service_evacuate_clears_slots_and_mints_inventory(db_session, real_svc):
+    """G.2 Level 2: Real service evacuates ship and mints inventory rows.
+
+    Inserts a real PlayerShip row with a weapon equipped, then calls
+    evacuate_ship_loadout_to_inventory.  Asserts that:
+    - The ship's weapons slot is empty in the DB.
+    - An inventory row was created for the evacuated weapon.
+    """
+    from persist.models.player_ship import PlayerShip
+
+    # Insert a real ship row via ORM.
+    ship = PlayerShip()
+    ship.player_id = 42
+    ship.ship_name = "Betty"
+    ship.is_active = True
+    ship.weapons = ["Pulse Laser"]
+    ship.modules = []
+    ship.turrets = []
+    ship.secondary_weapons = []
+    db_session.add(ship)
+    await db_session.flush()
+
+    # Real service call — no mocks on the repo layer.
+    result = await real_svc.evacuate_ship_loadout_to_inventory(db_session, ship=ship)
+
+    # Contract: items_returned contains the evacuated weapon.
+    assert "Pulse Laser" in result["items_returned"]
+    # Contract: ship's slot is cleared.
+    assert ship.weapons == []
+
+    # Contract: an inventory row was inserted (check via the inventory repo).
+    from persist.repositories.inventory_repository import InventoryRepository
+
+    inv_repo = InventoryRepository()
+    inv_item = await inv_repo.get_player_item(db_session, 42, "primary_weapon", "Pulse Laser")
+    assert inv_item is not None, "Inventory row must be created for evacuated weapon"
+    assert inv_item.quantity == 1
+
+
+@pytest.mark.asyncio
+async def test_real_service_repair_player_deduplicates_across_ships(db_session, real_svc):
+    """G.2 Level 2: Real service repair_player deduplicates corrupt slot state.
+
+    Inserts two real PlayerShip rows both referencing "Pulse Laser" in their
+    weapons slot (the empirical B.19 duplicate state).  Calls repair_player
+    and asserts:
+    - Only one ship retains the reference.
+    - The other ship's weapons slot is cleared.
+    - No inventory rows are minted (repair must not materialise from nothing).
+    """
+    from persist.models.player_ship import PlayerShip
+    from persist.repositories.inventory_repository import InventoryRepository
+
+    player_id = 101
+
+    active = PlayerShip()
+    active.player_id = player_id
+    active.ship_name = "Betty"
+    active.is_active = True
+    active.weapons = ["Pulse Laser"]
+    active.modules = []
+    active.turrets = []
+    active.secondary_weapons = []
+    db_session.add(active)
+
+    loser = PlayerShip()
+    loser.player_id = player_id
+    loser.ship_name = "Hera"
+    loser.is_active = False
+    loser.weapons = ["Pulse Laser"]
+    loser.modules = []
+    loser.turrets = []
+    loser.secondary_weapons = []
+    db_session.add(loser)
+    await db_session.flush()
+
+    result = await real_svc.repair_player(db_session, player_id)
+
+    assert result["duplicates_removed"] == 1
+    assert result["ships_modified"] == 1
+    # Active ship wins.
+    assert active.weapons == ["Pulse Laser"]
+    # Loser's slot is cleared.
+    assert loser.weapons == []
+
+    # No inventory rows must have been minted by repair_player.
+    inv_repo = InventoryRepository()
+    all_inv = await inv_repo.get_player_items(db_session, player_id)
+    assert len(all_inv) == 0, "repair_player must NOT materialise inventory rows (I2 invariant)"
+
+
+@pytest.mark.asyncio
+async def test_real_service_evacuate_anti_duplication_guard_single_mint(db_session, real_svc):
+    """G.2 Level 2: Real service anti-duplication guard mints exactly once.
+
+    Pre-seeds two ships with the same phantom weapon.  Calls evacuate on
+    ship_a.  Asserts exactly one inventory row (quantity=1) is created — the
+    guard removes the duplicate from ship_b before minting, so the total
+    inventory count stays at 1 (not 2).
+
+    This is the G.1 exploit closure verified against a real DB session.
+    """
+    from persist.models.player_ship import PlayerShip
+    from persist.repositories.inventory_repository import InventoryRepository
+
+    player_id = 202
+    phantom = "M6 A4"
+
+    real_svc.item_repo.get_by_name_any_type = AsyncMock(return_value=_make_mock_item(phantom, "PrimaryWeapon"))
+
+    ship_a = PlayerShip()
+    ship_a.player_id = player_id
+    ship_a.ship_name = "Betty"
+    ship_a.is_active = False
+    ship_a.weapons = [phantom]
+    ship_a.modules = []
+    ship_a.turrets = []
+    ship_a.secondary_weapons = []
+    db_session.add(ship_a)
+
+    ship_b = PlayerShip()
+    ship_b.player_id = player_id
+    ship_b.ship_name = "Hera"
+    ship_b.is_active = True
+    ship_b.weapons = [phantom]
+    ship_b.modules = []
+    ship_b.turrets = []
+    ship_b.secondary_weapons = []
+    db_session.add(ship_b)
+    await db_session.flush()
+
+    result = await real_svc.evacuate_ship_loadout_to_inventory(db_session, ship=ship_a)
+
+    # The evacuated item is listed in items_returned.
+    assert phantom in result["items_returned"]
+    # Counter reflects the duplicate removal.
+    assert result["duplicates_dropped"] == 1
+    # ship_b's weapons slot is cleared by the anti-duplication guard.
+    assert ship_b.weapons == []
+    # ship_a's weapons slot is cleared after evacuation.
+    assert ship_a.weapons == []
+
+    # Exactly one inventory row — quantity 1 (not 2).
+    inv_repo = InventoryRepository()
+    inv_item = await inv_repo.get_player_item(db_session, player_id, "primary_weapon", phantom)
+    assert inv_item is not None, "Inventory row must be created for the evacuated phantom item"
+    assert inv_item.quantity == 1, f"Expected quantity=1, got {inv_item.quantity} (phantom-dup exploit if 2)"

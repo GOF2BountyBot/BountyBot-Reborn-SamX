@@ -2,6 +2,7 @@ import os
 
 import discord
 import httpx
+from cogs._shared.http_error_handler import report_api_error
 from discord import app_commands
 from discord.ext import commands
 from shared import bblogger
@@ -109,7 +110,7 @@ class DuelCog(commands.Cog):
                     f"/duel-challenge API error: guild={interaction.guild_id} user={interaction.user.id}"
                     f" target={target.id} status={e.response.status_code}"
                 )
-                await interaction.followup.send(f"❌ API Error: {e}", ephemeral=True)
+                await report_api_error(interaction, e)
         except Exception as e:  # pylint: disable=broad-exception-caught
             flogger.error(
                 f"/duel-challenge error: guild={interaction.guild_id} user={interaction.user.id}"
@@ -209,7 +210,7 @@ class DuelCog(commands.Cog):
                     f"/duel-accept API error: guild={interaction.guild_id} user={interaction.user.id}"
                     f" duel_id={duel_id} status={e.response.status_code}"
                 )
-                await interaction.followup.send(f"❌ API Error: {e}", ephemeral=True)
+                await report_api_error(interaction, e)
         except Exception as e:  # pylint: disable=broad-exception-caught
             flogger.error(
                 f"/duel-accept error: guild={interaction.guild_id} user={interaction.user.id}"
@@ -331,7 +332,7 @@ class DuelCog(commands.Cog):
                     f"/duel-reject API error: guild={interaction.guild_id} user={interaction.user.id}"
                     f" duel_id={duel_id} status={e.response.status_code}"
                 )
-                await interaction.followup.send(f"❌ API Error: {e}", ephemeral=True)
+                await report_api_error(interaction, e)
         except Exception as e:  # pylint: disable=broad-exception-caught
             flogger.error(
                 f"/duel-reject error: guild={interaction.guild_id} user={interaction.user.id}"

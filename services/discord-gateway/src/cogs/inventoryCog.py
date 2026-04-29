@@ -2,6 +2,7 @@ import os
 
 import discord
 import httpx
+from cogs._shared.http_error_handler import report_api_error
 from discord import app_commands
 from discord.ext import commands
 from shared import bblogger
@@ -383,7 +384,7 @@ class InventoryCog(commands.Cog):
             if _is_guild_not_configured(e):
                 await interaction.followup.send(_GUILD_NOT_CONFIGURED_MSG, ephemeral=True)
             else:
-                await interaction.followup.send(f"❌ API Error: {e}", ephemeral=True)
+                await report_api_error(interaction, e)
         except Exception as e:  # pylint: disable=broad-exception-caught
             flogger.error(f"Error in /inventory: {e}")
             await interaction.followup.send("⚠️ An error occurred while fetching inventory.", ephemeral=True)
@@ -446,7 +447,7 @@ class InventoryCog(commands.Cog):
             if _is_guild_not_configured(e):
                 await interaction.followup.send(_GUILD_NOT_CONFIGURED_MSG, ephemeral=True)
             else:
-                await interaction.followup.send(f"❌ API Error: {e}", ephemeral=True)
+                await report_api_error(interaction, e)
         except Exception as e:  # pylint: disable=broad-exception-caught
             flogger.error(f"Error in /search: {e}")
             await interaction.followup.send("⚠️ An error occurred while searching inventory.", ephemeral=True)
@@ -532,7 +533,7 @@ class InventoryCog(commands.Cog):
             if e.response.status_code == 404:
                 await interaction.followup.send(f"❌ Item '{item_name}' not found.", ephemeral=True)
             else:
-                await interaction.followup.send(f"❌ API Error: {e}", ephemeral=True)
+                await report_api_error(interaction, e)
         except Exception as e:  # pylint: disable=broad-exception-caught
             flogger.error(f"Error in /item: {e}")
             await interaction.followup.send("⚠️ An error occurred while fetching item information.", ephemeral=True)
@@ -802,7 +803,7 @@ class InventoryCog(commands.Cog):
             elif e.response.status_code == 404:
                 await interaction.followup.send(f"❌ Ship or item '{item_name}' not found.", ephemeral=True)
             else:
-                await interaction.followup.send(f"❌ API Error: {e}", ephemeral=True)
+                await report_api_error(interaction, e)
         except Exception as e:  # pylint: disable=broad-exception-caught
             flogger.error(f"Error in /equip: {e}")
             await interaction.followup.send("⚠️ An error occurred while equipping the item.", ephemeral=True)
@@ -872,7 +873,7 @@ class InventoryCog(commands.Cog):
             elif e.response.status_code == 404:
                 await interaction.followup.send(f"❌ Ship or item '{item_name}' not found.", ephemeral=True)
             else:
-                await interaction.followup.send(f"❌ API Error: {e}", ephemeral=True)
+                await report_api_error(interaction, e)
         except Exception as e:  # pylint: disable=broad-exception-caught
             flogger.error(f"Error in /unequip: {e}")
             await interaction.followup.send("⚠️ An error occurred while unequipping the item.", ephemeral=True)
@@ -1161,7 +1162,7 @@ class InventoryCog(commands.Cog):
             )
 
         except httpx.HTTPStatusError as e:
-            await interaction.followup.send(f"❌ API Error: {e}", ephemeral=True)
+            await report_api_error(interaction, e)
         except Exception as e:  # pylint: disable=broad-exception-caught
             flogger.error(f"Error in /give: {e}")
             await interaction.followup.send("⚠️ An error occurred.", ephemeral=True)

@@ -3,6 +3,7 @@ import os
 
 import discord
 import httpx
+from cogs._shared.http_error_handler import report_api_error
 from cogs._shared.loadout_embed import build_loadout_embed, build_loadout_error_embed
 from discord import app_commands
 from discord.ext import commands
@@ -265,7 +266,7 @@ class BountyCog(commands.Cog):
                     f"/check API error: guild={interaction.guild_id} user={interaction.user.id}"
                     f" status={e.response.status_code}"
                 )
-                await interaction.followup.send(f"❌ API Error: {e}", ephemeral=True)
+                await report_api_error(interaction, e)
         except Exception as e:  # pylint: disable=broad-exception-caught
             flogger.error(f"/check error: guild={interaction.guild_id} user={interaction.user.id} error={e}")
             await interaction.followup.send("⚠️ An error occurred while checking the system.", ephemeral=True)
@@ -649,7 +650,7 @@ class BountyCog(commands.Cog):
                     f"/bounties API error: guild={interaction.guild_id} user={interaction.user.id}"
                     f" status={e.response.status_code}"
                 )
-                await interaction.followup.send(f"❌ API Error: {e}", ephemeral=True)
+                await report_api_error(interaction, e)
         except Exception as e:  # pylint: disable=broad-exception-caught
             flogger.error(f"/bounties error: guild={interaction.guild_id} user={interaction.user.id} error={e}")
             await interaction.followup.send("⚠️ An error occurred while fetching bounties.", ephemeral=True)
@@ -740,7 +741,7 @@ class BountyCog(commands.Cog):
                     f"/route API error: guild={interaction.guild_id} user={interaction.user.id}"
                     f" bounty_id={bounty_id} status={e.response.status_code}"
                 )
-                await interaction.followup.send(f"❌ API Error: {e}", ephemeral=True)
+                await report_api_error(interaction, e)
         except Exception as e:  # pylint: disable=broad-exception-caught
             flogger.error(
                 f"/route error: guild={interaction.guild_id} user={interaction.user.id} bounty_id={bounty_id} error={e}"
@@ -809,7 +810,7 @@ class BountyCog(commands.Cog):
                     f"/criminal-loadout API error: guild={interaction.guild_id} user={interaction.user.id}"
                     f" bounty_id={bounty_id} status={e.response.status_code}"
                 )
-                await interaction.followup.send(f"❌ API Error: {e}", ephemeral=True)
+                await report_api_error(interaction, e)
         except Exception as e:  # pylint: disable=broad-exception-caught
             flogger.error(
                 f"/criminal-loadout error: guild={interaction.guild_id} user={interaction.user.id}"

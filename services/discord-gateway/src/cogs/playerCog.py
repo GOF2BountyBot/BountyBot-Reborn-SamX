@@ -2,6 +2,7 @@ import os
 
 import discord
 import httpx
+from cogs._shared.http_error_handler import report_api_error
 from cogs._shared.loadout_embed import build_loadout_embed, build_loadout_error_embed
 from cogs.adminCog import _check_is_admin
 from discord import app_commands
@@ -190,7 +191,7 @@ class PlayerCog(commands.Cog):
             elif e.response.status_code == 404:
                 await interaction.followup.send("❌ Player profile not found.", ephemeral=True)
             else:
-                await interaction.followup.send(f"❌ API Error: {e}", ephemeral=True)
+                await report_api_error(interaction, e)
         except Exception as e:  # pylint: disable=broad-exception-caught
             flogger.error(f"/profile error: guild={interaction.guild_id}, user={interaction.user.id}, error={e}")
             await interaction.followup.send("⚠️ An error occurred while fetching your profile.", ephemeral=True)
@@ -263,7 +264,7 @@ class PlayerCog(commands.Cog):
                 f"/leaderboard HTTP error: guild={interaction.guild_id}, user={interaction.user.id}, "
                 f"status={e.response.status_code}"
             )
-            await interaction.followup.send(f"❌ API Error: {e}", ephemeral=True)
+            await report_api_error(interaction, e)
         except Exception as e:  # pylint: disable=broad-exception-caught
             flogger.error(f"/leaderboard error: guild={interaction.guild_id}, user={interaction.user.id}, error={e}")
             await interaction.followup.send("⚠️ An error occurred while fetching the leaderboard.", ephemeral=True)
@@ -350,7 +351,7 @@ class PlayerCog(commands.Cog):
                     detail = "Level too low to prestige."
                 await interaction.followup.send(f"❌ {detail}", ephemeral=True)
             else:
-                await interaction.followup.send(f"❌ API Error: {e}", ephemeral=True)
+                await report_api_error(interaction, e)
         except Exception as e:  # pylint: disable=broad-exception-caught
             flogger.error(f"/prestige error: guild={interaction.guild_id}, user={interaction.user.id}, error={e}")
             await interaction.followup.send("⚠️ An error occurred.", ephemeral=True)
@@ -429,7 +430,7 @@ class PlayerCog(commands.Cog):
                 )
                 await interaction.followup.send(embed=embed, ephemeral=True)
             else:
-                await interaction.followup.send(f"❌ API Error: {e}", ephemeral=True)
+                await report_api_error(interaction, e)
         except Exception as e:  # pylint: disable=broad-exception-caught
             flogger.error(f"/promote error: guild={interaction.guild_id}, user={interaction.user.id}, error={e}")
             await interaction.followup.send("⚠️ An error occurred.", ephemeral=True)
@@ -514,7 +515,7 @@ class PlayerCog(commands.Cog):
                     ephemeral=True,
                 )
             else:
-                await interaction.followup.send(f"❌ API Error: {e}", ephemeral=True)
+                await report_api_error(interaction, e)
         except Exception as e:  # pylint: disable=broad-exception-caught
             flogger.error(f"/loadout error: guild={interaction.guild_id}, user={interaction.user.id}, error={e}")
             await interaction.followup.send("⚠️ An error occurred while fetching the loadout.", ephemeral=True)

@@ -192,8 +192,11 @@ class TestSchedulerList:
         asyncio.run(cog.scheduler_list.callback(cog, interaction))
 
         interaction.followup.send.assert_awaited_once()
-        msg = str(interaction.followup.send.call_args)
-        assert "❌" in msg or "error" in msg.lower()
+        # B.31b: helper sends a sanitized embed for non-503 API errors.
+        call_kwargs = interaction.followup.send.call_args.kwargs
+        embed = call_kwargs.get("embed")
+        assert embed is not None, "Expected embed-based error reply from report_api_error"
+        assert "bot-core" not in (embed.description or "")
 
     def test_scheduler_list_generic_exception_sends_warning(self, cog):
         """Generic exceptions send a warning message."""
@@ -266,8 +269,11 @@ class TestAdminResetScheduler:
         asyncio.run(cog.admin_reset_scheduler.callback(cog, interaction))
 
         interaction.followup.send.assert_awaited_once()
-        msg = str(interaction.followup.send.call_args)
-        assert "❌" in msg or "error" in msg.lower()
+        # B.31b: helper sends a sanitized embed for non-503 API errors.
+        call_kwargs = interaction.followup.send.call_args.kwargs
+        embed = call_kwargs.get("embed")
+        assert embed is not None, "Expected embed-based error reply from report_api_error"
+        assert "bot-core" not in (embed.description or "")
 
     def test_reset_scheduler_generic_exception_sends_warning(self, cog):
         """Generic exceptions send a warning message."""
@@ -378,8 +384,11 @@ class TestAdminClearScheduler:
         asyncio.run(cog.admin_clear_scheduler.callback(cog, interaction))
 
         interaction.followup.send.assert_awaited_once()
-        msg = str(interaction.followup.send.call_args)
-        assert "❌" in msg or "error" in msg.lower()
+        # B.31b: helper sends a sanitized embed for non-503 API errors.
+        call_kwargs = interaction.followup.send.call_args.kwargs
+        embed = call_kwargs.get("embed")
+        assert embed is not None, "Expected embed-based error reply from report_api_error"
+        assert "bot-core" not in (embed.description or "")
 
     def test_clear_scheduler_generic_exception_sends_warning(self, cog):
         """Generic exceptions send a warning message."""

@@ -777,9 +777,13 @@ class TestSearchCommand:
         asyncio.run(mock_inventory_cog.search.callback(mock_inventory_cog, interaction, query="Laser"))
 
         interaction.followup.send.assert_awaited_once()
-        call_args = interaction.followup.send.call_args
-        assert call_args[1].get("ephemeral", False)
-        assert "API Error" in call_args[0][0]
+        call_kwargs = interaction.followup.send.call_args.kwargs
+        assert call_kwargs.get("ephemeral", False)
+        # B.31b: helper now sends a sanitized embed instead of a raw URL string.
+        embed = call_kwargs.get("embed")
+        assert embed is not None, "Expected embed-based error reply from report_api_error"
+        assert "bot-core" not in (embed.description or "")
+        assert "http://" not in (embed.description or "")
 
     def test_search_generic_exception(self, mock_inventory_cog, make_mock_response):
         """search should handle generic exception gracefully."""
@@ -918,9 +922,13 @@ class TestItemCommand:
         )
 
         interaction.followup.send.assert_awaited_once()
-        call_args = interaction.followup.send.call_args
-        assert call_args[1].get("ephemeral", False)
-        assert "API Error" in call_args[0][0]
+        call_kwargs = interaction.followup.send.call_args.kwargs
+        assert call_kwargs.get("ephemeral", False)
+        # B.31b: helper now sends a sanitized embed instead of a raw URL string.
+        embed = call_kwargs.get("embed")
+        assert embed is not None, "Expected embed-based error reply from report_api_error"
+        assert "bot-core" not in (embed.description or "")
+        assert "http://" not in (embed.description or "")
 
     def test_item_generic_exception(self, mock_inventory_cog, make_mock_response):
         """item should handle generic exception gracefully."""

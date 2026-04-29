@@ -259,6 +259,29 @@ class TestDuelChallengeCommand:
         assert call_kwargs[1].get("ephemeral", False)
         assert "error occurred" in call_kwargs[0][0].lower()
 
+    def test_challenge_500_uses_sanitized_embed(self, mock_duel_cog):
+        """B.31b: non-400 HTTPStatusError flows through the helper and produces an embed
+        whose description does NOT contain the raw bot-core URL."""
+        import httpx
+
+        interaction = _create_mock_interaction(user_id=100)
+        target = DiscordMockUtils.create_mock_user(user_id=200, username="TargetUser")
+
+        error_response = MagicMock()
+        error_response.status_code = 500
+        http_error = httpx.HTTPStatusError("500 Server Error", request=MagicMock(), response=error_response)
+        mock_duel_cog.http_client.post = AsyncMock(side_effect=http_error)
+
+        asyncio.run(mock_duel_cog.duel_challenge.callback(mock_duel_cog, interaction, target, 0))
+
+        interaction.followup.send.assert_awaited_once()
+        call_kwargs = interaction.followup.send.call_args.kwargs
+        assert call_kwargs.get("ephemeral", False)
+        embed = call_kwargs.get("embed")
+        assert embed is not None, "Expected embed-based error reply from report_api_error"
+        assert "bot-core" not in (embed.description or "")
+        assert "http://" not in (embed.description or "")
+
 
 # ---------------------------------------------------------------------------
 # /duel-accept command

@@ -4,6 +4,7 @@ from contextlib import suppress
 
 import discord
 import httpx
+from cogs._shared.http_error_handler import report_api_error
 from cogs.adminCog import is_admin
 from discord import app_commands
 from discord.ext import commands
@@ -119,7 +120,7 @@ class SchedulerCog(commands.Cog):
                     f"/scheduler_list API error: guild={interaction.guild_id} user={interaction.user.id}"
                     f" status={e.response.status_code}"
                 )
-                await interaction.followup.send(f"❌ API Error: {e}", ephemeral=True)
+                await report_api_error(interaction, e)
         except Exception as e:  # pylint: disable=broad-exception-caught
             flogger.error(f"/scheduler_list error: guild={interaction.guild_id} user={interaction.user.id} error={e}")
             await interaction.followup.send("⚠️ An error occurred while listing jobs.", ephemeral=True)
@@ -197,7 +198,7 @@ class SchedulerCog(commands.Cog):
                     f"/scheduler_view API error: guild={interaction.guild_id} user={interaction.user.id}"
                     f" job_id={job_id} status={e.response.status_code}"
                 )
-                await interaction.followup.send(f"❌ API Error: {e}", ephemeral=True)
+                await report_api_error(interaction, e)
         except Exception as e:  # pylint: disable=broad-exception-caught
             flogger.error(
                 f"/scheduler_view error: guild={interaction.guild_id} user={interaction.user.id}"
@@ -283,7 +284,7 @@ class SchedulerCog(commands.Cog):
                     f"/scheduler_update API error: guild={interaction.guild_id} user={interaction.user.id}"
                     f" job_id={job_id} status={e.response.status_code}"
                 )
-                await interaction.followup.send(f"❌ API Error: {e}", ephemeral=True)
+                await report_api_error(interaction, e)
         except Exception as e:  # pylint: disable=broad-exception-caught
             flogger.error(
                 f"/scheduler_update error: guild={interaction.guild_id} user={interaction.user.id}"
@@ -346,7 +347,7 @@ class SchedulerCog(commands.Cog):
                     f"/scheduler_delete API error: guild={interaction.guild_id} user={interaction.user.id}"
                     f" job_id={job_id} status={e.response.status_code}"
                 )
-                await interaction.followup.send(f"❌ API Error: {e}", ephemeral=True)
+                await report_api_error(interaction, e)
         except Exception as e:  # pylint: disable=broad-exception-caught
             flogger.error(
                 f"/scheduler_delete error: guild={interaction.guild_id} user={interaction.user.id}"
@@ -409,7 +410,7 @@ class SchedulerCog(commands.Cog):
                     f"/admin_reset_scheduler API error: guild={interaction.guild_id} user={interaction.user.id}"
                     f" status={e.response.status_code}"
                 )
-                await interaction.followup.send(f"❌ API Error: {e}", ephemeral=True)
+                await report_api_error(interaction, e)
         except Exception as e:  # pylint: disable=broad-exception-caught
             flogger.error(
                 f"/admin_reset_scheduler error: guild={interaction.guild_id} user={interaction.user.id} error={e}"
@@ -471,7 +472,7 @@ class SchedulerCog(commands.Cog):
                     f"/admin_clear_scheduler API error: guild={interaction.guild_id} user={interaction.user.id}"
                     f" status={e.response.status_code}"
                 )
-                await interaction.followup.send(f"❌ API Error: {e}", ephemeral=True)
+                await report_api_error(interaction, e)
         except Exception as e:  # pylint: disable=broad-exception-caught
             flogger.error(
                 f"/admin_clear_scheduler error: guild={interaction.guild_id} user={interaction.user.id} error={e}"

@@ -2,6 +2,7 @@ import os
 
 import discord
 import httpx
+from cogs._shared.http_error_handler import report_api_error
 from discord import app_commands
 from discord.ext import commands
 from shared import bblogger
@@ -151,7 +152,7 @@ class ShipsCog(commands.Cog):
                     f"/ships API error: status={e.response.status_code}, guild={interaction.guild_id}, "
                     f"user={interaction.user.id}, error={e}"
                 )
-                await interaction.followup.send(f"❌ API Error: {e}", ephemeral=True)
+                await report_api_error(interaction, e)
         except Exception as e:  # pylint: disable=broad-exception-caught
             flogger.error(f"/ships failed: guild={interaction.guild_id}, user={interaction.user.id}, error={e}")
             await interaction.followup.send("⚠️ An error occurred while fetching ships.", ephemeral=True)
@@ -282,7 +283,7 @@ class ShipsCog(commands.Cog):
                     f"/ship API error: status={e.response.status_code}, ship_id={ship_id_int}, "
                     f"guild={interaction.guild_id}, user={interaction.user.id}, error={e}"
                 )
-                await interaction.followup.send(f"❌ API Error: {e}", ephemeral=True)
+                await report_api_error(interaction, e)
         except Exception as e:  # pylint: disable=broad-exception-caught
             flogger.error(
                 f"/ship failed: ship_id={ship_id_int}, guild={interaction.guild_id}, "
@@ -356,7 +357,7 @@ class ShipsCog(commands.Cog):
                     f"/setactive API error: status={e.response.status_code}, ship_id={ship_id_int}, "
                     f"guild={interaction.guild_id}, user={interaction.user.id}, error={e}"
                 )
-                await interaction.followup.send(f"❌ API Error: {e}", ephemeral=True)
+                await report_api_error(interaction, e)
         except Exception as e:  # pylint: disable=broad-exception-caught
             flogger.error(
                 f"/setactive failed: ship_id={ship_id_int}, guild={interaction.guild_id}, "
@@ -443,7 +444,7 @@ class ShipsCog(commands.Cog):
                     f"/nickname API error: status={e.response.status_code}, ship_id={ship_id_int}, "
                     f"guild={interaction.guild_id}, user={interaction.user.id}, error={e}"
                 )
-                await interaction.followup.send(f"❌ API Error: {e}", ephemeral=True)
+                await report_api_error(interaction, e)
         except Exception as e:  # pylint: disable=broad-exception-caught
             flogger.error(
                 f"/nickname failed: ship_id={ship_id_int}, guild={interaction.guild_id}, "

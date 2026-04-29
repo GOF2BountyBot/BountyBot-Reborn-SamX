@@ -4,6 +4,7 @@ import os
 import discord
 import httpx
 from cogs._shared.embed_pagination import DEFAULT_LIST_CAP, add_continuation_fields
+from cogs._shared.http_error_handler import report_api_error
 from discord import app_commands
 from discord.ext import commands
 from shared import bblogger
@@ -179,7 +180,7 @@ class AboutCog(commands.Cog):
                     f"/about API error: guild={interaction.guild_id} user={interaction.user.id}"
                     f" category={category} status={e.response.status_code}"
                 )
-                await interaction.followup.send(f"❌ API Error: {e}", ephemeral=True)
+                await report_api_error(interaction, e)
         except Exception as e:  # pylint: disable=broad-exception-caught
             flogger.error(
                 f"/about error: guild={interaction.guild_id} user={interaction.user.id}"
@@ -521,7 +522,7 @@ class AboutCog(commands.Cog):
                     f"/make-route API error: guild={interaction.guild_id} user={interaction.user.id}"
                     f" start={start} end={end} status={e.response.status_code}"
                 )
-                await interaction.followup.send(f"❌ API Error: {e}", ephemeral=True)
+                await report_api_error(interaction, e)
         except Exception as e:  # pylint: disable=broad-exception-caught
             flogger.error(
                 f"/make-route error: guild={interaction.guild_id} user={interaction.user.id}"

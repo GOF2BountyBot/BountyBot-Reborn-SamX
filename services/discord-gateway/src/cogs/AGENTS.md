@@ -118,6 +118,7 @@ import os
 
 import discord
 import httpx
+from cogs._shared.http_error_handler import report_api_error
 from cogs.adminCog import is_admin      # import if you need admin protection
 from discord import app_commands
 from discord.ext import commands
@@ -157,7 +158,7 @@ class MyCog(commands.Cog):
                 await interaction.followup.send("❌ Not found.", ephemeral=True)
             else:
                 flogger.error(f"/my_command API error: status={e.response.status_code}")
-                await interaction.followup.send(f"❌ API Error: {e}", ephemeral=True)
+                await report_api_error(interaction, e)
         except Exception as e:  # pylint: disable=broad-exception-caught
             flogger.error(f"/my_command error: {e}")
             await interaction.followup.send("⚠️ An error occurred.", ephemeral=True)
@@ -207,10 +208,20 @@ BLENDER_API_BASE_URL = os.getenv("BLENDER_API_BASE_URL", "http://blender-service
 ### Standard Error Handling
 
 Always handle these cases explicitly:
-- `httpx.HTTPStatusError` with `status_code == 404` → "not found" message
+- `httpx.HTTPStatusError` with `status_code == 404` → command-specific "not found" message
+  (e.g. `"❌ Job \`{job_id}\` not found."`)
 - `httpx.HTTPStatusError` with `status_code == 400` → extract `detail` from JSON body
-- `httpx.HTTPStatusError` other → generic API error
-- Generic `Exception` → generic warning, log full error
+  if the command has domain-specific 400 semantics; otherwise let the helper handle it
+- `httpx.HTTPStatusError` "everything-else" branch → call `report_api_error(interaction, e)`
+  (B.31b, Package F). The helper produces a sanitized status-aware embed: it strips
+  internal URLs / MDN links, picks a friendly canned message keyed by status code,
+  appends FastAPI `detail` when present, and is race-safe via
+  `contextlib.suppress(discord.HTTPException)`. Optional kwargs: `action_label="..."`
+  (short verb-phrase shown in the embed title) and `detail_override={status: msg}`
+  to specialize the canned message for a specific status code.
+- Generic `Exception` → generic warning, log full error. Do **not** route the bare
+  `except Exception` block through `report_api_error` — those branches typically
+  already have command-specific phrasing.
 
 ---
 

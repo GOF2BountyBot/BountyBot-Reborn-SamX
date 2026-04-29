@@ -595,9 +595,13 @@ class TestShipCommand:
         asyncio.run(mock_ships_cog.ship.callback(mock_ships_cog, interaction, ship_id="1"))
 
         interaction.followup.send.assert_awaited_once()
-        call_args = interaction.followup.send.call_args
-        assert "API Error" in call_args[0][0]
-        assert call_args[1].get("ephemeral", False)
+        call_kwargs = interaction.followup.send.call_args.kwargs
+        assert call_kwargs.get("ephemeral", False)
+        # B.31b: helper now sends a sanitized embed instead of a raw URL string.
+        embed = call_kwargs.get("embed")
+        assert embed is not None, "Expected embed-based error reply from report_api_error"
+        assert "bot-core" not in (embed.description or "")
+        assert "http://" not in (embed.description or "")
 
     def test_ship_generic_exception(self, mock_ships_cog):
         """ship should handle generic exceptions gracefully."""
@@ -826,9 +830,13 @@ class TestSetActiveCommand:
         asyncio.run(mock_ships_cog.setactive.callback(mock_ships_cog, interaction, ship_id=5))
 
         interaction.followup.send.assert_awaited_once()
-        call_args = interaction.followup.send.call_args
-        assert "API Error" in call_args[0][0]
-        assert call_args[1].get("ephemeral", False)
+        call_kwargs = interaction.followup.send.call_args.kwargs
+        assert call_kwargs.get("ephemeral", False)
+        # B.31b: helper now sends a sanitized embed instead of a raw URL string.
+        embed = call_kwargs.get("embed")
+        assert embed is not None, "Expected embed-based error reply from report_api_error"
+        assert "bot-core" not in (embed.description or "")
+        assert "http://" not in (embed.description or "")
 
     def test_setactive_generic_exception(self, mock_ships_cog, make_mock_response):
         """setactive should handle generic exceptions gracefully."""
@@ -986,9 +994,13 @@ class TestNicknameCommand:
         asyncio.run(mock_ships_cog.nickname.callback(mock_ships_cog, interaction, ship_id="1", nickname="Test"))
 
         interaction.followup.send.assert_awaited_once()
-        call_args = interaction.followup.send.call_args
-        assert "API Error" in call_args[0][0]
-        assert call_args[1].get("ephemeral", False)
+        call_kwargs = interaction.followup.send.call_args.kwargs
+        assert call_kwargs.get("ephemeral", False)
+        # B.31b: helper now sends a sanitized embed instead of a raw URL string.
+        embed = call_kwargs.get("embed")
+        assert embed is not None, "Expected embed-based error reply from report_api_error"
+        assert "bot-core" not in (embed.description or "")
+        assert "http://" not in (embed.description or "")
 
     def test_nickname_generic_exception(self, mock_ships_cog):
         """nickname should handle generic exceptions gracefully."""

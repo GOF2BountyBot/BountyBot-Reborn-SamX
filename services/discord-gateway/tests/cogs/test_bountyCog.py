@@ -588,9 +588,13 @@ class TestCheckCommand:
         asyncio.run(mock_bounty_cog.check.callback(mock_bounty_cog, interaction, "Alpha"))
 
         interaction.followup.send.assert_awaited_once()
-        call_kwargs = interaction.followup.send.call_args
-        assert call_kwargs[1].get("ephemeral", False)
-        assert "API Error" in call_kwargs[0][0]
+        call_kwargs = interaction.followup.send.call_args.kwargs
+        assert call_kwargs.get("ephemeral", False)
+        # B.31b: helper now sends a sanitized embed instead of a raw URL string.
+        embed = call_kwargs.get("embed")
+        assert embed is not None, "Expected embed-based error reply from report_api_error"
+        assert "bot-core" not in (embed.description or "")
+        assert "http://" not in (embed.description or "")
 
 
 # ---------------------------------------------------------------------------

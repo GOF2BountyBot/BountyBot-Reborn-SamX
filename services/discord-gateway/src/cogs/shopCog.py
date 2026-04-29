@@ -3,6 +3,7 @@ import os
 import discord
 import httpx
 from cogs._shared.autocomplete_cache import AutocompleteCache
+from cogs._shared.http_error_handler import report_api_error
 from discord import app_commands
 from discord.ext import commands
 from shared import bblogger
@@ -248,7 +249,7 @@ class ShopCog(commands.Cog):
             if _is_guild_not_configured(e):
                 await interaction.followup.send(_GUILD_NOT_CONFIGURED_MSG, ephemeral=True)
             else:
-                await interaction.followup.send(f"❌ API Error: {e}", ephemeral=True)
+                await report_api_error(interaction, e)
         except Exception as e:  # pylint: disable=broad-exception-caught
             flogger.error(f"Error in /shop: {e}")
             await interaction.followup.send("⚠️ An error occurred while fetching shop items.", ephemeral=True)
@@ -388,7 +389,7 @@ class ShopCog(commands.Cog):
             elif e.response.status_code == 404:
                 await interaction.followup.send("❌ Item not found in shop.", ephemeral=True)
             else:
-                await interaction.followup.send(f"❌ API Error: {e}", ephemeral=True)
+                await report_api_error(interaction, e)
         except Exception as e:  # pylint: disable=broad-exception-caught
             flogger.error(f"Error in /buy: {e}")
             await interaction.followup.send("⚠️ An error occurred while processing purchase.", ephemeral=True)
@@ -513,7 +514,7 @@ class ShopCog(commands.Cog):
                 except Exception:  # pylint: disable=broad-exception-caught
                     await interaction.followup.send("❌ Invalid sell request.", ephemeral=True)
             else:
-                await interaction.followup.send(f"❌ API Error: {e}", ephemeral=True)
+                await report_api_error(interaction, e)
         except Exception as e:  # pylint: disable=broad-exception-caught
             flogger.error(f"Error in /sell: {e}")
             await interaction.followup.send("⚠️ An error occurred while processing sale.", ephemeral=True)
@@ -569,7 +570,7 @@ class ShopCog(commands.Cog):
             flogger.debug(f"/shops by {interaction.user} in guild {interaction.guild_id}")
 
         except httpx.HTTPStatusError as e:
-            await interaction.followup.send(f"❌ API Error: {e}", ephemeral=True)
+            await report_api_error(interaction, e)
         except Exception as e:  # pylint: disable=broad-exception-caught
             flogger.error(f"Error in /shops: {e}")
             await interaction.followup.send("⚠️ An error occurred while fetching shops summary.", ephemeral=True)

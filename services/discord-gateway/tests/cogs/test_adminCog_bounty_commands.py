@@ -282,8 +282,11 @@ class TestAdminClearBounties:
         )
 
         interaction.followup.send.assert_called_once()
-        call_args = interaction.followup.send.call_args[0][0]
-        assert "❌" in call_args
+        # B.31b: helper now sends a sanitized embed instead of a raw URL string.
+        embed = interaction.followup.send.call_args.kwargs.get("embed")
+        assert embed is not None, "Expected embed-based error reply from report_api_error"
+        assert "bot-core" not in (embed.description or "")
+        assert "http://" not in (embed.description or "")
 
     def test_clear_bounties_generic_error(self, mock_admin_cog):
         """Generic exception → sends ephemeral warning."""
@@ -575,9 +578,10 @@ class TestAdminConfigBounty:
         )
 
         interaction.followup.send.assert_called_once()
-        args = interaction.followup.send.call_args[0]
-        # Error message contains ❌
-        assert "❌" in args[0]
+        # B.31b: helper now sends a sanitized embed instead of a raw URL string.
+        embed = interaction.followup.send.call_args.kwargs.get("embed")
+        assert embed is not None, "Expected embed-based error reply from report_api_error"
+        assert "bot-core" not in (embed.description or "")
 
     def test_config_bounty_update_api_error(self, mock_admin_cog):
         """API error in update → ephemeral error message."""
@@ -604,8 +608,10 @@ class TestAdminConfigBounty:
         )
 
         interaction.followup.send.assert_called_once()
-        args = interaction.followup.send.call_args[0]
-        assert "❌" in args[0]
+        # B.31b: helper now sends a sanitized embed instead of a raw URL string.
+        embed = interaction.followup.send.call_args.kwargs.get("embed")
+        assert embed is not None, "Expected embed-based error reply from report_api_error"
+        assert "bot-core" not in (embed.description or "")
 
     def test_config_bounty_generic_error(self, mock_admin_cog):
         """Generic exception → sends ephemeral warning."""
@@ -731,8 +737,10 @@ class TestAdminSpawnBounty:
         asyncio.run(mock_admin_cog.admin_spawn_bounty.callback(mock_admin_cog, interaction, tier=None))
 
         interaction.followup.send.assert_called_once()
-        args = interaction.followup.send.call_args[0]
-        assert "❌" in args[0]
+        # B.31b: helper now sends a sanitized embed instead of a raw URL string.
+        embed = interaction.followup.send.call_args.kwargs.get("embed")
+        assert embed is not None, "Expected embed-based error reply from report_api_error"
+        assert "bot-core" not in (embed.description or "")
 
     def test_spawn_bounty_generic_error(self, mock_admin_cog):
         """Generic exception → sends ephemeral warning."""

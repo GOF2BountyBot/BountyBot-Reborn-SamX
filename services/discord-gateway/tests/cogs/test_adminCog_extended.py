@@ -314,8 +314,10 @@ class TestAdminPlayerAddCredits:
         asyncio.run(mock_admin_cog.admin_player.callback(mock_admin_cog, interaction, user, "view_stats", None, None))
 
         interaction.followup.send.assert_called_once()
-        call_args = interaction.followup.send.call_args[0][0]
-        assert "❌" in call_args
+        # B.31b: helper now sends a sanitized embed instead of a raw URL string.
+        embed = interaction.followup.send.call_args.kwargs.get("embed")
+        assert embed is not None, "Expected embed-based error reply from report_api_error"
+        assert "bot-core" not in (embed.description or "")
 
     def test_admin_player_generic_error(self, mock_admin_cog):
         """admin_player should handle generic errors gracefully."""
@@ -498,8 +500,10 @@ class TestAdminGuildStats:
         asyncio.run(mock_admin_cog.admin_guild_stats.callback(mock_admin_cog, interaction))
 
         interaction.followup.send.assert_called_once()
-        call_args = interaction.followup.send.call_args[0][0]
-        assert "❌" in call_args
+        # B.31b: helper now sends a sanitized embed instead of a raw URL string.
+        embed = interaction.followup.send.call_args.kwargs.get("embed")
+        assert embed is not None, "Expected embed-based error reply from report_api_error"
+        assert "bot-core" not in (embed.description or "")
 
     def test_admin_guild_stats_generic_error(self, mock_admin_cog):
         """admin_guild_stats should handle generic errors."""
@@ -624,8 +628,10 @@ class TestAdminConfig:
         asyncio.run(mock_admin_cog.admin_config.callback(mock_admin_cog, interaction, "view", None, None))
 
         interaction.followup.send.assert_called_once()
-        call_args = interaction.followup.send.call_args[0][0]
-        assert "❌" in call_args
+        # B.31b: helper now sends a sanitized embed instead of a raw URL string.
+        embed = interaction.followup.send.call_args.kwargs.get("embed")
+        assert embed is not None, "Expected embed-based error reply from report_api_error"
+        assert "bot-core" not in (embed.description or "")
 
     def test_admin_config_generic_error(self, mock_admin_cog):
         """admin_config should handle generic errors gracefully."""
@@ -707,8 +713,10 @@ class TestAdminSetupExtended:
             asyncio.run(mock_admin_cog.admin_setup.callback(mock_admin_cog, interaction, role, 0))
 
         interaction.followup.send.assert_called_once()
-        call_args = interaction.followup.send.call_args[0][0]
-        assert "❌" in call_args
+        # B.31b: helper now sends a sanitized embed instead of a raw URL string.
+        embed = interaction.followup.send.call_args.kwargs.get("embed")
+        assert embed is not None, "Expected embed-based error reply from report_api_error"
+        assert "bot-core" not in (embed.description or "")
 
 
 # ---------------------------------------------------------------------------

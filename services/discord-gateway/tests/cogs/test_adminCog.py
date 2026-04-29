@@ -2018,8 +2018,13 @@ class TestAdminCooldownReset:
         asyncio.run(mock_admin_cog.admin_cooldown_reset.callback(mock_admin_cog, interaction, user))
 
         interaction.followup.send.assert_awaited_once()
-        sent_msg = interaction.followup.send.call_args[0][0]
-        assert "❌" in sent_msg
+        # B.31b: helper now sends a sanitized embed instead of a raw URL string.
+        call_kwargs = interaction.followup.send.call_args.kwargs
+        assert call_kwargs.get("ephemeral", False)
+        embed = call_kwargs.get("embed")
+        assert embed is not None, "Expected embed-based error reply from report_api_error"
+        assert "bot-core" not in (embed.description or "")
+        assert "http://" not in (embed.description or "")
 
     def test_cooldown_reset_generic_exception_shows_warning(self, mock_admin_cog):
         """admin_cooldown_reset shows warning message on unexpected exception."""

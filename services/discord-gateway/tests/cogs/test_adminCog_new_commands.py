@@ -197,8 +197,10 @@ class TestAdminUninstall:
         asyncio.run(mock_admin_cog.admin_uninstall.callback(mock_admin_cog, interaction, "CONFIRM-DELETE"))
 
         interaction.followup.send.assert_called_once()
-        call_args = interaction.followup.send.call_args[0][0]
-        assert "❌" in call_args
+        # B.31b: helper now sends a sanitized embed instead of a raw URL string.
+        embed = interaction.followup.send.call_args.kwargs.get("embed")
+        assert embed is not None, "Expected embed-based error reply from report_api_error"
+        assert "bot-core" not in (embed.description or "")
 
     def test_admin_uninstall_generic_error(self, mock_admin_cog):
         """/admin_uninstall should handle unexpected errors gracefully."""
@@ -430,8 +432,10 @@ class TestAdminConfigShop:
         )
 
         interaction.followup.send.assert_called_once()
-        call_args = interaction.followup.send.call_args[0][0]
-        assert "❌" in call_args
+        # B.31b: helper now sends a sanitized embed instead of a raw URL string.
+        embed = interaction.followup.send.call_args.kwargs.get("embed")
+        assert embed is not None, "Expected embed-based error reply from report_api_error"
+        assert "bot-core" not in (embed.description or "")
 
     def test_admin_config_shop_generic_error(self, mock_admin_cog):
         """/admin_config_shop should handle unexpected errors gracefully."""
@@ -533,8 +537,10 @@ class TestAdminConfigValidate:
         asyncio.run(mock_admin_cog.admin_config_validate.callback(mock_admin_cog, interaction))
 
         interaction.followup.send.assert_called_once()
-        call_args = interaction.followup.send.call_args[0][0]
-        assert "❌" in call_args
+        # B.31b: helper now sends a sanitized embed instead of a raw URL string.
+        embed = interaction.followup.send.call_args.kwargs.get("embed")
+        assert embed is not None, "Expected embed-based error reply from report_api_error"
+        assert "bot-core" not in (embed.description or "")
 
     def test_admin_config_validate_generic_error(self, mock_admin_cog):
         """/admin_config_validate should handle unexpected errors gracefully."""

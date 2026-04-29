@@ -307,8 +307,13 @@ class TestProfileCommand:
         asyncio.run(mock_player_cog.profile.callback(mock_player_cog, interaction))
 
         interaction.followup.send.assert_awaited_once()
-        call_kwargs = interaction.followup.send.call_args
-        assert call_kwargs[1].get("ephemeral", False)
+        call_kwargs = interaction.followup.send.call_args.kwargs
+        assert call_kwargs.get("ephemeral", False)
+        # B.31b: helper sends a sanitized embed instead of a raw URL string.
+        embed = call_kwargs.get("embed")
+        assert embed is not None, "Expected embed-based error reply from report_api_error"
+        assert "bot-core" not in (embed.description or "")
+        assert "http://" not in (embed.description or "")
 
     def test_profile_generic_exception(self, mock_player_cog):
         """profile should handle generic exceptions with warning message."""

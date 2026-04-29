@@ -5,6 +5,7 @@ from typing import Literal
 import discord
 import httpx
 from cogs._shared.autocomplete_cache import AutocompleteCache
+from cogs._shared.http_error_handler import report_api_error
 from discord import app_commands
 from discord.ext import commands
 from shared import bblogger
@@ -323,7 +324,7 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
             flogger.info(f"Guild {interaction.guild_id} initialized by {interaction.user}")
 
         except httpx.HTTPStatusError as e:
-            await interaction.followup.send(f"❌ API Error: {e}", ephemeral=True)
+            await report_api_error(interaction, e)
         except Exception as e:  # pylint: disable=broad-exception-caught
             flogger.error(f"Error in /admin_setup: {e}")
             await interaction.followup.send("⚠️ An error occurred during guild initialization.", ephemeral=True)
@@ -491,7 +492,7 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
             )
 
         except httpx.HTTPStatusError as e:
-            await interaction.followup.send(f"❌ API Error: {e}", ephemeral=True)
+            await report_api_error(interaction, e)
         except Exception as e:  # pylint: disable=broad-exception-caught
             flogger.error(f"Error in /admin_player: {e}")
             await interaction.followup.send("⚠️ An error occurred while managing player.", ephemeral=True)
@@ -540,7 +541,7 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
             flogger.info(f"Admin {interaction.user} refreshed {tier} shop in guild {interaction.guild_id}")
 
         except httpx.HTTPStatusError as e:
-            await interaction.followup.send(f"❌ API Error: {e}", ephemeral=True)
+            await report_api_error(interaction, e)
         except Exception as e:  # pylint: disable=broad-exception-caught
             flogger.error(f"Error in /admin_refresh_shop: {e}")
             await interaction.followup.send("⚠️ An error occurred while refreshing shop.", ephemeral=True)
@@ -578,7 +579,7 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
             flogger.debug(f"Admin {interaction.user} viewed guild stats for {interaction.guild_id}")
 
         except httpx.HTTPStatusError as e:
-            await interaction.followup.send(f"❌ API Error: {e}", ephemeral=True)
+            await report_api_error(interaction, e)
         except Exception as e:  # pylint: disable=broad-exception-caught
             flogger.error(f"Error in /admin_guild_stats: {e}")
             await interaction.followup.send("⚠️ An error occurred while fetching guild statistics.", ephemeral=True)
@@ -675,7 +676,7 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
             flogger.info(f"Admin {interaction.user} performed config {action} in guild {interaction.guild_id}")
 
         except httpx.HTTPStatusError as e:
-            await interaction.followup.send(f"❌ API Error: {e}", ephemeral=True)
+            await report_api_error(interaction, e)
         except Exception as e:  # pylint: disable=broad-exception-caught
             flogger.error(f"Error in /admin_config: {e}")
             await interaction.followup.send("⚠️ An error occurred while managing configuration.", ephemeral=True)
@@ -810,7 +811,7 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
             flogger.warning(f"Guild {interaction.guild_id} uninstalled by {interaction.user}")
 
         except httpx.HTTPStatusError as e:
-            await interaction.followup.send(f"❌ API Error: {e}", ephemeral=True)
+            await report_api_error(interaction, e)
         except Exception as e:  # pylint: disable=broad-exception-caught
             flogger.error(f"Error in /admin_uninstall: {e}")
             await interaction.followup.send("⚠️ An error occurred during uninstall.", ephemeral=True)
@@ -919,7 +920,7 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
             flogger.info(f"Admin {interaction.user} updated shop config for guild {interaction.guild_id}")
 
         except httpx.HTTPStatusError as e:
-            await interaction.followup.send(f"❌ API Error: {e}", ephemeral=True)
+            await report_api_error(interaction, e)
         except Exception as e:  # pylint: disable=broad-exception-caught
             flogger.error(f"Error in /admin_config_shop: {e}")
             await interaction.followup.send("⚠️ An error occurred while updating shop configuration.", ephemeral=True)
@@ -975,7 +976,7 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
             flogger.debug(f"Admin {interaction.user} validated config for guild {interaction.guild_id}")
 
         except httpx.HTTPStatusError as e:
-            await interaction.followup.send(f"❌ API Error: {e}", ephemeral=True)
+            await report_api_error(interaction, e)
         except Exception as e:  # pylint: disable=broad-exception-caught
             flogger.error(f"Error in /admin_config_validate: {e}")
             await interaction.followup.send("⚠️ An error occurred while validating configuration.", ephemeral=True)
@@ -1043,7 +1044,7 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
                 flogger.info(f"Admin {interaction.user} reset render config")
 
         except httpx.HTTPStatusError as e:
-            await interaction.followup.send(f"❌ API Error: {e}", ephemeral=True)
+            await report_api_error(interaction, e)
         except Exception as e:  # pylint: disable=broad-exception-caught
             flogger.error(f"Error in /render_config: {e}")
             await interaction.followup.send("⚠️ An error occurred.", ephemeral=True)
@@ -1073,7 +1074,7 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
             )
 
         except httpx.HTTPStatusError as e:
-            await interaction.followup.send(f"❌ API Error: {e}", ephemeral=True)
+            await report_api_error(interaction, e)
         except Exception as e:  # pylint: disable=broad-exception-caught
             flogger.error(f"Error in /render_cache_clear: {e}")
             await interaction.followup.send("⚠️ An error occurred.", ephemeral=True)
@@ -1134,7 +1135,7 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
             flogger.info(f"Admin {interaction.user} cleared {tier_display} bounties in guild {interaction.guild_id}")
 
         except httpx.HTTPStatusError as e:
-            await interaction.followup.send(f"❌ API Error: {e}", ephemeral=True)
+            await report_api_error(interaction, e)
         except Exception as e:  # pylint: disable=broad-exception-caught
             flogger.error(f"Error in /admin_clear_bounties: {e}")
             await interaction.followup.send("⚠️ An error occurred while clearing bounties.", ephemeral=True)
@@ -1267,7 +1268,7 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
             flogger.info(f"Admin {interaction.user} performed bounty config {action} in guild {interaction.guild_id}")
 
         except httpx.HTTPStatusError as e:
-            await interaction.followup.send(f"❌ API Error: {e}", ephemeral=True)
+            await report_api_error(interaction, e)
         except Exception as e:  # pylint: disable=broad-exception-caught
             flogger.error(f"Error in /admin_config_bounty: {e}")
             await interaction.followup.send("⚠️ An error occurred while managing bounty configuration.", ephemeral=True)
@@ -1376,7 +1377,7 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
                     detail = "Validation error."
                 await interaction.followup.send(f"❌ {detail}", ephemeral=True)
             else:
-                await interaction.followup.send(f"❌ API Error: {e}", ephemeral=True)
+                await report_api_error(interaction, e)
         except Exception as e:  # pylint: disable=broad-exception-caught
             flogger.error(f"Error in /admin_config_xp: {e}")
             await interaction.followup.send("⚠️ An error occurred while managing XP thresholds.", ephemeral=True)
@@ -1441,7 +1442,7 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
             )
 
         except httpx.HTTPStatusError as e:
-            await interaction.followup.send(f"❌ API Error: {e}", ephemeral=True)
+            await report_api_error(interaction, e)
         except Exception as e:  # pylint: disable=broad-exception-caught
             flogger.error(f"Error in /admin_spawn_bounty: {e}")
             await interaction.followup.send("⚠️ An error occurred while spawning bounties.", ephemeral=True)
@@ -1490,7 +1491,7 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
                 f"/admin_cooldown_reset API error: guild={interaction.guild_id} "
                 f"target={user.id} status={e.response.status_code}"
             )
-            await interaction.followup.send(f"❌ API Error: {e}", ephemeral=True)
+            await report_api_error(interaction, e)
         except Exception as e:  # pylint: disable=broad-exception-caught
             flogger.error(f"/admin_cooldown_reset error: {e}")
             await interaction.followup.send("⚠️ An error occurred while resetting the cooldown.", ephemeral=True)
@@ -1642,7 +1643,7 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
             )
 
         except httpx.HTTPStatusError as e:
-            await interaction.followup.send(f"❌ API Error: {e}", ephemeral=True)
+            await report_api_error(interaction, e)
         except Exception as e:  # pylint: disable=broad-exception-caught
             flogger.error(f"Error in /admin_give_item: {e}")
             await interaction.followup.send("⚠️ An error occurred while giving item.", ephemeral=True)
@@ -1724,7 +1725,7 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
             )
 
         except httpx.HTTPStatusError as e:
-            await interaction.followup.send(f"❌ API Error: {e}", ephemeral=True)
+            await report_api_error(interaction, e)
         except Exception as e:  # pylint: disable=broad-exception-caught
             flogger.error(f"Error in /admin_remove_item: {e}")
             await interaction.followup.send("⚠️ An error occurred while removing item.", ephemeral=True)
@@ -1789,7 +1790,7 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
             flogger.info(f"Admin {interaction.user} gave ship {ship_name} to {user} in guild {interaction.guild_id}")
 
         except httpx.HTTPStatusError as e:
-            await interaction.followup.send(f"❌ API Error: {e}", ephemeral=True)
+            await report_api_error(interaction, e)
         except Exception as e:  # pylint: disable=broad-exception-caught
             flogger.error(f"Error in /admin_give_ship: {e}")
             await interaction.followup.send("⚠️ An error occurred while giving ship.", ephemeral=True)
@@ -1918,7 +1919,7 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
             )
 
         except httpx.HTTPStatusError as e:
-            await interaction.followup.send(f"❌ API Error: {e}", ephemeral=True)
+            await report_api_error(interaction, e)
         except Exception as e:  # pylint: disable=broad-exception-caught
             flogger.error(f"Error in /admin_remove_ship: {e}")
             await interaction.followup.send("⚠️ An error occurred while removing ship.", ephemeral=True)

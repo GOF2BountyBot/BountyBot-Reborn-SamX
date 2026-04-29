@@ -1930,6 +1930,7 @@ The `/admin_setup` flow lives in the gateway (`adminCog.py`) but delegates to bo
 ---
 
 ### B.26 — Autocomplete preload + cache framework (static + shop-cached data)
+🟢 FIXED in commit `1a07cb4` (Package E, 2026-04-29) · pending verified
 🟡 medium · Phase 3.6 · 2026-04-28
 
 **Environment**: dev guild `1490693399307616276`, post-rebuild stack.

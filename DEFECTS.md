@@ -75,19 +75,16 @@ A single integration test booting a real bot-core and exercising `_preload_stati
 
 A secondary masking factor: AboutCog's separate, *correct* preload (`/about/categories` + `/about/categories/{cat}/objects`) populates `_object_dict` for `/about` and `/list_category` autocomplete, hiding the breakage from any spot-check that exercised those commands. The new `_item_catalog` / `_ship_catalog` caches feed *different* commands (`/equip`, `/buy`, `/sell`, ship-skin) which were not exercised live before this re-verification pass.
 
-**Proposed fix** (sketch, awaits user approval before implementation)
+**Implemented fix**
 
-Option 1 — minimal change, reuse existing AboutCog endpoint contract:
+Option 1 (taken) — minimal change, reuse existing AboutCog endpoint contract:
 - L119: `self.http_client.get(f"{api_base}/about/categories/{category}/objects", timeout=10)` (already returns `list[dict]` with `name` field — adminCog's existing parsing at L121 works unchanged)
 - L142: `self.http_client.get(f"{api_base}/about/categories/ship/objects", timeout=10)` (same endpoint, ship category — adminCog's existing parsing at L144 works unchanged)
-- Eliminates entire dependency on `/data/{category}` POST contract; aligns with AboutCog's known-working pattern.
+- Eliminated entire dependency on `/data/{category}` POST contract; aligned with AboutCog's known-working pattern. 2-line URL change with no shape-handling changes.
 
-Option 2 — keep `/data/{category}` but fix method + shape:
-- Change `.get` → `.post` (with empty body) and parse `resp.json()` as `list[str]` directly. More invasive (changes both URL semantics and parse logic) and `/data/{category}` was designed as an admin import endpoint, not a query.
+Rejected alternative (not taken): keep `/data/{category}` but fix method + shape — more invasive (changes both URL semantics and parse logic) and `/data/{category}` was designed as an admin import endpoint, not a query.
 
-**Option 1 strongly preferred** — it's a 2-line URL change with no shape-handling changes.
-
-**Test-debt remediation** required alongside the code fix:
+**Test-debt remediation** applied alongside the code fix:
 1. Replace the `http_client.get` mock pattern in `test_adminCog.py::test_preload_static_catalogs_*` with either (a) a `respx`-backed mock that asserts URL+method, or (b) a real bot-core TestClient fixture.
 2. Add similar URL+method assertions to all other gateway preload tests (devCog, shopCog, bountyCog) to prevent recurrence.
 3. Audit `services/discord-gateway/tests/AGENTS.md` (if exists) or add a new section codifying: "preload tests must assert URL and HTTP method, not just response handling."

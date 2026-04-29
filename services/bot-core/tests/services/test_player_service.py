@@ -869,6 +869,34 @@ class TestCreateStarterLoadout:
         assert ship_data["turrets"] == []
 
     @pytest.mark.asyncio
+    async def test_starter_loadout_secondary_weapons_is_empty_list_not_null(self, service, mock_db, mock_player_repo):
+        """B.2: Starter ship data must include secondary_weapons=[] (not NULL/missing).
+
+        Without this key, PlayerShipRepository.create_or_update() leaves the column
+        NULL in PostgreSQL, causing secondary_weapons to be None instead of [] for
+        new players. This causes inconsistency with weapons/modules/turrets which
+        are all explicit empty lists.
+        """
+        player = _make_player(player_id=7)
+
+        mock_ps_repo, _inv_repo, _starter_ship, ps_mod, inv_mod = self._make_repo_mocks()
+
+        with patch.dict(
+            sys.modules,
+            {
+                "persist.repositories.player_ship_repository": ps_mod,
+                "persist.repositories.inventory_repository": inv_mod,
+            },
+        ):
+            await service._create_starter_loadout(mock_db, player)
+
+        ship_data = mock_ps_repo.create_or_update.call_args[0][1]
+        assert "secondary_weapons" in ship_data, "starter_ship_data must include 'secondary_weapons' key (B.2)"
+        assert ship_data["secondary_weapons"] == [], (
+            "secondary_weapons must be [] not None/missing on starter loadout (B.2)"
+        )
+
+    @pytest.mark.asyncio
     async def test_starter_loadout_adds_micro_gun_to_cargo(self, service, mock_db, mock_player_repo):
         """Micro Gun MK I is added to player cargo inventory after ship creation."""
         player = _make_player(player_id=7)

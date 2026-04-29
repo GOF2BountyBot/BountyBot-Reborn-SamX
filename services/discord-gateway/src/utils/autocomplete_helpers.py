@@ -86,13 +86,15 @@ async def player_ships_autocomplete(
     current: str,
     *,
     exclude_active: bool = False,
+    show_active_indicator: bool = True,
     timeout: float = 3.0,
 ) -> list[app_commands.Choice[str]]:
     """Return Discord autocomplete choices of the invoking player's ships.
 
     Value format : ``str(ship_id)`` — callers should ``int()`` when needed.
     Label format : ``"ShipName (Nickname)"`` prefixed with ``"🟢 "`` when
-                   the ship is the player's active ship.
+                   the ship is the player's active ship and ``show_active_indicator``
+                   is True.
     Filter       : accent/apostrophe-insensitive substring match on the label.
 
     Args:
@@ -103,6 +105,10 @@ async def player_ships_autocomplete(
             parameter; empty string matches everything.
         exclude_active: When True, the active ship is omitted from the choices
             (used by flows that forbid operating on the active ship, e.g. ``/give``).
+        show_active_indicator: When True (default), prefixes the active ship's label
+            with ``"🟢 "`` to indicate it is the active ship. Set to False for
+            selection-only contexts (e.g. ``/ship``, ``/nickname``) where the
+            indicator clutters the dropdown without adding actionable information.
         timeout: Per-request timeout in seconds.
 
     Returns:
@@ -131,7 +137,7 @@ async def player_ships_autocomplete(
 
             nickname = ship.get("nickname") or ""
             label = f"{ship_name} ({nickname})" if nickname else ship_name
-            if ship.get("is_active"):
+            if ship.get("is_active") and show_active_indicator:
                 label = f"🟢 {label}"
 
             if norm_current in normalize_for_search(label):

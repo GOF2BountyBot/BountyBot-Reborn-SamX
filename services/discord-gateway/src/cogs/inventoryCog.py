@@ -65,9 +65,9 @@ class WeaponSwapView(discord.ui.View):
         self.equipped_items = equipped_items
         self.result: str | None = None  # "swapped" | "cancelled" | None (timeout)
 
-        # Build the select menu options from equipped items
+        # Build the select menu options from equipped items; description clarifies the swap action
         options = [
-            discord.SelectOption(label=item["name"], value=item["name"])
+            discord.SelectOption(label=item["name"], value=item["name"], description="Swap this item out")
             for item in equipped_items[:25]  # Discord limit: 25 options
         ]
         select = discord.ui.Select(

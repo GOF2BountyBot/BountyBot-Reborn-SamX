@@ -88,6 +88,7 @@ class ChannelConverter:
                 position=position,
                 guild_id=getattr(getattr(channel, "guild", None), "id", None),
                 created_at=getattr(getattr(channel, "created_at", None), "isoformat", lambda: "")(),
+                category_id=getattr(channel, "category_id", None),
             )
         except Exception:  # pylint: disable=broad-exception-caught
             flogger.exception("Error converting channel to summary")

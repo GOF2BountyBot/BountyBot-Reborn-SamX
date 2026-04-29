@@ -155,7 +155,7 @@ Verify all four services are running and connected.
 
 ### Verify channel infrastructure
 
-- [ ] **1.2** Confirm all 7 text channels exist under the "BountyBot" category in Discord ✅ Re-verified 2026-04-22 PM (visual confirm; gateway API still reports `category_id: null` per A.30 but DB category_id is populated)
+- [ ] **1.2** Confirm all 8 channels (7 player-visible + 1 hidden `#bot-images`) exist under the "BountyBot" category in Discord ✅ Re-verified 2026-04-22 PM (visual confirm; gateway API still reported `category_id: null` per A.30 — fixed in Package D)
 - [ ] **1.3** Confirm `@Bounty Hunter` role exists in the guild role list and is mentionable ✅ Re-verified 2026-04-22 PM (plus 4 tier roles — Bronze/Silver/Gold/Platinum — all mentionable per roles API)
 - [ ] **1.4** Verify channel permissions: *(Partially verified 2026-04-22 PM via Alt unregister/re-register cycle)*
    - Users WITHOUT `@Bounty Hunter` role CANNOT see any BountyBot channels ✅ Alt's unregister showed channel visibility loss; re-register restored
@@ -723,19 +723,32 @@ These can be tested at any point after Phase 1.
 
 Created by `/admin_setup` via `ensure_bountybot_infrastructure()`:
 
+**8 channels total** (7 player-visible + 1 hidden):
+
 | Channel | Permission | Purpose |
 |---------|-----------|---------|
 | `#bronze-bounty-board` | Read-only (players can view, not type) | Bronze division bounty announcements |
 | `#silver-bounty-board` | Read-only | Silver division bounty announcements |
 | `#gold-bounty-board` | Read-only | Gold division bounty announcements |
+| `#platinum-bounties` | Read-only (players can view, not type) | Platinum division bounty announcements |
 | `#shop` | Read-only | Shop refresh announcements |
 | `#bounty-hunting` | Interactive (slash commands + chat) | Gameplay commands |
 | `#bounty-discussions` | Chat-only (NO slash commands) | Player discussion |
 | `#bot-images` | Hidden (bot-only) | Route map image hosting |
 
-**Roles:**
+> **⚠️ Naming asymmetry (A.10)**: The three lower-tier channels follow the pattern `#<tier>-bounty-board`,
+> but the platinum channel is named `#platinum-bounties` (not `#platinum-bounty-board`). This is a known
+> cosmetic inconsistency in the seed infrastructure; changing it would require a migration or guild
+> re-setup so it is documented here rather than fixed.
+
+**6 roles total** (5 player-facing + 1 admin):
+
 - `@Bounty Hunter` — Assigned by `/profile`, removed by `/unregister`. Controls visibility of all BountyBot channels.
-- `BountyBot Admins` — Created if no admin role specified. Grants admin command access.
+- `@Bounty Hunter Bronze` — Assigned on Bronze tier. Controls visibility of `#bronze-bounty-board`.
+- `@Bounty Hunter Silver` — Assigned on Silver tier. Controls visibility of `#silver-bounty-board`.
+- `@Bounty Hunter Gold` — Assigned on Gold tier. Controls visibility of `#gold-bounty-board`.
+- `@Bounty Hunter Platinum` — Assigned on Platinum tier. Controls visibility of `#platinum-bounties`.
+- `BountyBot Admin` — Created if no admin role specified. Grants admin command access. (Note: role name is "BountyBot Admin", not "BountyBot Admins".)
 
 ## Appendix C — Bounty Announcement Lifecycle
 

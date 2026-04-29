@@ -174,8 +174,10 @@ class ShipsCog(commands.Cog):
         return await player_ships_autocomplete(self.http_client, api_base, interaction, current)
 
     async def ship_autocomplete(self, interaction: discord.Interaction, current: str) -> list[app_commands.Choice[str]]:
-        """Autocomplete for /ship and /nickname — shows the player's owned ships."""
-        return await player_ships_autocomplete(self.http_client, api_base, interaction, current)
+        """Autocomplete for /ship and /nickname — shows the player's owned ships (no active indicator)."""
+        return await player_ships_autocomplete(
+            self.http_client, api_base, interaction, current, show_active_indicator=False
+        )
 
     @app_commands.command(name="ship", description="View detailed information about a specific ship")
     @app_commands.describe(ship_id="ID of the ship to view (pick from list or enter numeric ID)")
@@ -232,8 +234,7 @@ class ShipsCog(commands.Cog):
                 color=discord.Color.green() if ship["is_active"] else discord.Color.greyple(),
             )
 
-            # Basic info
-            embed.add_field(name="Type", value=ship["ship_name"], inline=True)
+            # Basic info (ship_name already shown in embed title; skip redundant Type field)
             embed.add_field(name="Status", value="Active" if ship["is_active"] else "Inactive", inline=True)
             embed.add_field(name="Created", value=iso_to_discord_ts(ship["created_at"], "D"), inline=True)
 

@@ -121,6 +121,7 @@ class PlayerService:
                 "weapons": ["Nirai Impulse EX 1"],
                 "modules": ["E2 Exoclad", "Telta Quickscan"],
                 "turrets": [],
+                "secondary_weapons": [],
             }
 
             starter_ship = await player_ship_repo.create_or_update(db, starter_ship_data)

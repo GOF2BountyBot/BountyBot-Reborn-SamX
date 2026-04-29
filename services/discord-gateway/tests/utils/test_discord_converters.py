@@ -327,6 +327,48 @@ class TestChannelConverter:
 
         assert result.position == 5
 
+    def test_channel_to_summary_includes_category_id_for_child_channel(self):
+        """A.30: channel_to_summary must return category_id for child channels.
+
+        Previously category_id was missing from the summary response, causing
+        GET /guilds/{id}/channels to always return category_id: null.
+        """
+        parent_category_id = 555444333
+
+        mock_channel = DiscordMockUtils.create_mock_text_channel(
+            channel_id=1234567890,
+            name="bronze-bounty-board",
+            position=0,
+            guild_id=987654321,
+            created_at=datetime(2024, 1, 1),
+        )
+        mock_channel.category_id = parent_category_id
+
+        from utils.discord_converters import ChannelConverter
+
+        result = ChannelConverter.channel_to_summary(mock_channel)
+
+        assert result.category_id == parent_category_id, (
+            "channel_to_summary must include category_id for child channels (A.30)"
+        )
+
+    def test_channel_to_summary_category_id_none_for_top_level_channel(self):
+        """A.30: channel_to_summary returns category_id=None for top-level channels."""
+        mock_channel = DiscordMockUtils.create_mock_text_channel(
+            channel_id=1234567890,
+            name="general",
+            position=0,
+            guild_id=987654321,
+            created_at=datetime(2024, 1, 1),
+        )
+        # category_id defaults to None in the mock (top-level channel)
+
+        from utils.discord_converters import ChannelConverter
+
+        result = ChannelConverter.channel_to_summary(mock_channel)
+
+        assert result.category_id is None
+
     def test_channel_to_detail_handles_text_channel(self):
         """channel_to_detail should convert text channel with extended fields."""
         mock_channel = DiscordMockUtils.create_mock_text_channel(

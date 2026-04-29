@@ -215,7 +215,10 @@ class PlayerCog(commands.Cog):
             players = resp.json()
 
             if not players:
-                await interaction.followup.send("📭 No players found in this guild.", ephemeral=True)
+                msg = (
+                    f"📭 No {tier}-tier players found in this guild." if tier else "📭 No players found in this guild."
+                )
+                await interaction.followup.send(msg, ephemeral=True)
                 return
 
             # Sort by XP descending
@@ -585,6 +588,15 @@ class PlayerCog(commands.Cog):
                 f"in guild {interaction.guild_id}"
             )
 
+        except httpx.HTTPStatusError as e:
+            if _is_guild_not_configured(e):
+                await interaction.followup.send(_GUILD_NOT_CONFIGURED_MSG, ephemeral=True)
+                return
+            flogger.error(
+                f"/unregister HTTP error: guild={interaction.guild_id}, "
+                f"user={interaction.user.id}, status={e.response.status_code}"
+            )
+            await interaction.followup.send("⚠️ An error occurred while removing the role.", ephemeral=True)
         except Exception as e:  # pylint: disable=broad-exception-caught
             flogger.error(f"/unregister error: guild={interaction.guild_id}, user={interaction.user.id}, error={e}")
             await interaction.followup.send("⚠️ An error occurred while removing the role.", ephemeral=True)

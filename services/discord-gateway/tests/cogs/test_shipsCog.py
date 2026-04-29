@@ -1296,8 +1296,12 @@ class TestSetactiveInvalidShipId:
 class TestShipAutocomplete:
     """Tests for the new ship_autocomplete method (used by /ship and /nickname)."""
 
-    def test_ship_autocomplete_returns_player_ships_with_active_prefix(self, mock_ships_cog, make_mock_response):
-        """ship_autocomplete should list ships with 🟢 prefix on active + str value."""
+    def test_ship_autocomplete_returns_player_ships_without_active_prefix(self, mock_ships_cog, make_mock_response):
+        """A.34a: ship_autocomplete should NOT show 🟢 prefix (used by /ship, /nickname).
+
+        The active-ship indicator is suppressed for selection-only dropdowns to avoid
+        cluttering the autocomplete list. /setactive still shows the indicator.
+        """
         interaction = _create_mock_interaction()
 
         player_resp = make_mock_response({"id": 1})
@@ -1316,11 +1320,13 @@ class TestShipAutocomplete:
         active_choice = next((c for c in choices if c.value == "7"), None)
         assert active_choice is not None
         assert active_choice.value == "7"  # values are strings per the design
-        assert "🟢" in active_choice.name
+        # A.34a: active ship must NOT show 🟢 in /ship and /nickname autocomplete
+        assert "🟢" not in active_choice.name, "ship_autocomplete must not show active indicator (A.34a)"
+        assert active_choice.name == "Eagle"
 
         inactive_choice = next((c for c in choices if c.value == "8"), None)
         assert inactive_choice is not None
-        assert not inactive_choice.name.startswith("🟢")
+        assert inactive_choice.name == "Mako"
 
     def test_ship_autocomplete_returns_empty_on_failure(self, mock_ships_cog):
         """ship_autocomplete should return [] on API failure (no error surface)."""

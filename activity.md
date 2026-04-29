@@ -358,6 +358,55 @@ Status: completed
 
 ---
 
+# Patch I — discord-gateway QA Hardening Activity Log
+
+## Attempt 1 [2026-04-29 UTC]
+
+**Task**: Implement Patch I — 5 QA findings from `/proj/recon/QA-review-A-through-G.md` (discord-gateway only)
+**Iteration**: 1
+**Status**: completed
+
+### Work Completed
+
+- **F.1**: Extended `_sanitize()` in `http_error_handler.py` with two new regex patterns: `_BARE_HOSTNAME_PATTERN` strips bare service hostnames (`bot-core`, `discord-gateway`, `blender-service`, `db`, with optional `:port` suffix) replacing with `<service>`; `_IPV4_PATTERN` strips IPv4 addresses (with optional `:port`) replacing with `<address>`. 7 new tests added.
+- **E.1**: Added detailed TOCTOU/concurrency comment in `autocomplete_cache.py::get()` explaining the double-check locking guarantee (fast-path outside lock + re-check inside lock). Added `TestConcurrentExpiryLock::test_only_one_refresh_fires_when_multiple_gets_hit_expiry` test asserting only one refresh fires when two concurrent gets see an expired entry simultaneously.
+- **E.2**: Added explicit guard in `shopCog.py::buy_item_autocomplete` — when `player.get("tier") not in self._valid_tiers`, log `flogger.warning(...)` with guild_id, user_id, and returned tier before returning `[]`. Previously a `ValueError` from `list.index()` was silently swallowed by the outer `except Exception`. Added `TestBuyItemAutocompleteEdgeCases::test_unknown_player_tier_returns_empty_and_logs_warning` test.
+- **C.1**: Changed `adminCog.py::render_config` guard from fail-open (`if self._render_settings and ...`) to fail-closed (`if not self._render_settings: return error; if setting not in ...: return error`). Updated `test_render_config_set_empty_preload_skips_guard` → `test_render_config_set_empty_preload_blocks_call` asserting API is NOT called when preload empty. Added logging of WARNING when guard blocks due to empty preload. Also set `_render_settings` in `test_render_config_set` (previously inadvertently relying on fail-open behavior).
+- **Cross-1**: Audited all 11 `@is_admin()` sites outside AdminCog. Refactored 9 commands to post-defer inline pattern (matching B.25 fix): `schedulerCog` (6: scheduler_list/view/update/delete/reset/clear) + `devCog` (2: load_data/reload_autocomplete) + `healthCog` `/health`. Documented `healthCog` `/ping` and `helpCog` `/admin_help` as safe (no post-check HTTP calls; immediate `send_message` responses). Import changed from `is_admin` to `_check_is_admin` in schedulerCog/devCog; `is_admin` removed from those imports (still used in healthCog/helpCog for `/ping`/`/admin_help`). Added 13 tests total across 3 test files verifying defer-before-admin-check order.
+
+### Spec-to-Test Traceability
+
+| Acceptance Criterion | Test File(s) | Status |
+|---|---|---|
+| F.1: bare hostname stripped | `test_http_error_handler.py::test_sanitizer_strips_bare_service_hostnames` | COVERED |
+| F.1: hostname:port stripped | `test_http_error_handler.py::test_sanitizer_strips_bare_hostname_with_port` | COVERED |
+| F.1: IPv4 stripped | `test_http_error_handler.py::test_sanitizer_strips_ipv4_addresses` | COVERED |
+| F.1: hostname in detail field stripped | `test_http_error_handler.py::test_sanitizer_strips_bare_hostname_in_detail_field` | COVERED |
+| F.1: IP in detail field stripped | `test_http_error_handler.py::test_sanitizer_strips_ip_in_detail_field` | COVERED |
+| E.1: only one refresh fires on concurrent expiry | `test_autocomplete_cache.py::TestConcurrentExpiryLock::test_only_one_refresh_fires_when_multiple_gets_hit_expiry` | COVERED |
+| E.2: WARNING logged on unknown tier | `test_shopCog.py::TestBuyItemAutocompleteEdgeCases::test_unknown_player_tier_returns_empty_and_logs_warning` | COVERED |
+| C.1: API NOT called when preload empty | `test_admin_render_commands.py::test_render_config_set_empty_preload_blocks_call` | COVERED |
+| Cross-1: scheduler_list defer before admin check | `test_schedulerCog.py::TestCrossOneSchedulerDeferBeforeAdminCheck::test_scheduler_list_defer_before_admin_check` | COVERED |
+| Cross-1: scheduler_view defer before admin check | `test_schedulerCog.py::TestCrossOneSchedulerDeferBeforeAdminCheck::test_scheduler_view_defer_before_admin_check` | COVERED |
+| Cross-1: scheduler_update defer before admin check | `test_schedulerCog.py::TestCrossOneSchedulerDeferBeforeAdminCheck::test_scheduler_update_defer_before_admin_check` | COVERED |
+| Cross-1: scheduler_delete defer before admin check | `test_schedulerCog.py::TestCrossOneSchedulerDeferBeforeAdminCheck::test_scheduler_delete_defer_before_admin_check` | COVERED |
+| Cross-1: admin_reset_scheduler defer before admin check | `test_schedulerCog.py::TestCrossOneSchedulerDeferBeforeAdminCheck::test_admin_reset_scheduler_defer_before_admin_check` | COVERED |
+| Cross-1: admin_clear_scheduler defer before admin check | `test_schedulerCog.py::TestCrossOneSchedulerDeferBeforeAdminCheck::test_admin_clear_scheduler_defer_before_admin_check` | COVERED |
+| Cross-1: non-admin rejected via followup | `test_schedulerCog.py::TestCrossOneSchedulerDeferBeforeAdminCheck::test_non_admin_is_rejected_after_defer` | COVERED |
+| Cross-1: load_data defer before admin check | `test_devCog.py::TestCrossOneDevCogDeferBeforeAdminCheck::test_load_data_defer_before_admin_check` | COVERED |
+| Cross-1: reload_autocomplete defer before admin check | `test_devCog.py::TestCrossOneDevCogDeferBeforeAdminCheck::test_reload_autocomplete_defer_before_admin_check` | COVERED |
+| Cross-1: /health defer before admin check | `test_healthCog.py::TestCrossOneHealthDeferBeforeAdminCheck::test_health_defer_before_admin_check` | COVERED |
+| Cross-1: /health non-admin via followup | `test_healthCog.py::TestCrossOneHealthDeferBeforeAdminCheck::test_health_non_admin_rejected_via_followup` | COVERED |
+
+### Coverage Summary
+
+- discord-gateway full suite: 2199 passed, 0 failed, 11 warnings — GREEN (18 new tests added over baseline of 2181)
+- Ruff check: All checks passed
+- Ruff format: 3 test files reformatted; 133 unchanged — clean
+- Files outside `services/discord-gateway/` modified: `/proj/DEFECTS.md` (docs update), `/proj/activity.md` (this log)
+
+---
+
 # Patch H — bot-core QA Hardening Activity Log
 
 ## Attempt 1 [2026-04-29 UTC]

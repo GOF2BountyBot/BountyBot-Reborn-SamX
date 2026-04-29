@@ -428,6 +428,7 @@ See companion detail: `/proj/recon/B30-recon.md`
 
 ### B.29 — `/scheduler_*` cron trigger display strips asterisks (Discord markdown)
 🔵 low · Phase 9.1 / 9.2 · 2026-04-28
+> **FIXED** in commit `ec42c4d` (Package B, 2026-04-29). Cron trigger strings wrapped in backticks in `scheduler_list` and `scheduler_view` embed fields.
 
 **Environment**: dev guild `1490693399307616276`, post-rebuild stack.
 
@@ -451,6 +452,7 @@ See companion detail: `/proj/recon/B30-recon.md`
 
 ### B.28 — `/scheduler_update` intermittently shows "This interaction failed" before the actual error embed
 🔵 low · Phase 9.4 · 2026-04-28
+> **FIXED** in commit `ec42c4d` (Package B, 2026-04-29). JSON validation moved before `defer()`; sync error path uses `response.send_message()` directly.
 
 **Environment**: dev guild `1490693399307616276`, Main account, post-rebuild stack.
 
@@ -556,6 +558,7 @@ described in B.27. See companion file `/proj/recon/B27-B28-recon.md` §9 for ful
 
 ### B.27 — `/scheduler_view` with nonexistent job_id shows raw Discord "This interaction failed"
 🟡 medium · Phase 9.5 · 2026-04-28
+> **FIXED** in commit `ec42c4d` (Package B, 2026-04-29). Added `else: with suppress(Exception): followup.send(...)` fallback to all 6 scheduler error handlers.
 
 **Environment**: dev guild `1490693399307616276`, Main account, post-rebuild stack.
 
@@ -670,6 +673,7 @@ Status: moved to FIXED table for tracking. No further action.
 
 ### B.25 — `/admin_spawn_bounty` triggers Discord 3-second interaction timeout despite successful spawn
 🟡 medium · Phase 7.15 prep · 2026-04-28
+> **FIXED** in commit `ec42c4d` (Package B, 2026-04-29). Fix A: removed `@is_admin()` decorator from all 20 admin commands; replaced with inline post-defer `_check_is_admin()` call. Fix B: converted `render_config` and `render_cache_clear` to `defer()` + `followup.send()` pattern.
 
 **Environment**: dev guild `1490693399307616276`, Main account, post-rebuild stack.
 
@@ -2585,6 +2589,10 @@ Many tests exceed project's "max 2 mocks per test" standard (`AGENTS.md`). Sever
 
 | ID | Summary | Commit | Verified |
 |---|---|---|---|
+| **B.29** | `/scheduler_*` cron trigger display stripped asterisks (Discord markdown consumed `*` as italic delimiters). Fixed: wrap trigger strings in backticks in `scheduler_list` and `scheduler_view` embed fields (`schedulerCog.py`). | `ec42c4d` | pending |
+| **B.28** | `/scheduler_update` with invalid JSON showed doubled response ("This interaction failed" + actual error). Fixed: move `json.loads` validation before `defer()`; use `response.send_message()` for sync error path (`schedulerCog.py`). | `ec42c4d` | pending |
+| **B.27** | `/scheduler_view` with nonexistent `job_id` showed raw "This interaction failed" (no user-visible error). Fixed: add `else: with suppress(Exception): followup.send(...)` branch to all 6 scheduler error handlers (`schedulerCog.py`). | `ec42c4d` | pending |
+| **B.25** | `/admin_spawn_bounty` (and all 20 admin commands) could hit Discord 3s timeout when Bot-Admin-role HTTP check ran before `defer()` (Mode B). Fixed: (A) remove `@is_admin()` decorator from all 20 admin commands, add inline post-defer `_check_is_admin()` call; (B) convert `render_config` and `render_cache_clear` to `defer()` + `followup.send()` pattern (`adminCog.py`). | `ec42c4d` | pending |
 | **B.17** | `/admin_player action:Set XP` returned `old_xp` equal to new value (identity-map read after mutation). Fixed: capture `old_xp = old_player.xp` before `update_player_xp()` call; test refactored to shared-mock pattern. | `360287b` | pending |
 | **B.23a** | Bounty expire job silently not scheduled: `_schedule_expiry_job()` used HTTP POST to scheduler; failures were non-fatal non-retried. Fixed: direct APScheduler Python API via `scheduler_holder.py` singleton; HTTP retained as fallback. | `360287b` | pending |
 | **B.23b** | `run_stale_state_recovery_sweep()` marked stale bounties expired in DB but never deleted Discord announcements (zombie messages). Fixed: collect stale bounty refs before bulk UPDATE, call `_delete_bounty_announcement` for each after commit. | `360287b` | pending |

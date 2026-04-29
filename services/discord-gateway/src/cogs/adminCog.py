@@ -4,6 +4,7 @@ from typing import Literal
 
 import discord
 import httpx
+from cogs._shared.autocomplete_cache import AutocompleteCache
 from discord import app_commands
 from discord.ext import commands
 from shared import bblogger
@@ -68,8 +69,15 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
         self.bot = bot
         self._valid_tiers = ["Bronze", "Silver", "Gold", "Platinum"]
         self._render_settings: list[str] = []
+        self._item_catalog: AutocompleteCache[str, list[str]] = AutocompleteCache(
+            ttl_seconds=None, name="adminCog-item-catalog"
+        )
+        self._ship_catalog: AutocompleteCache[str, list[str]] = AutocompleteCache(
+            ttl_seconds=None, name="adminCog-ship-catalog"
+        )
         self.http_client = httpx.AsyncClient(timeout=httpx.Timeout(10.0))
         bot.loop.create_task(self._preload_render_settings())
+        bot.loop.create_task(self._preload_static_catalogs())
         flogger.debug("AdminCog initialized")
 
     async def cog_unload(self):
@@ -93,6 +101,62 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
                 )
                 await asyncio.sleep(wait)
         flogger.error("Failed to preload render settings after 3 attempts")
+
+    async def _preload_static_catalogs(self) -> None:
+        """Preload item catalogs (4 categories) and ship catalog from bot-core.
+
+        Uses 5-attempt exponential-backoff retry (5s, 10s, 20s, 40s, 60s) mirroring
+        the pattern in bountyCog._preload_data.  On terminal failure leaves the cache
+        empty for that category so autocomplete degrades gracefully to an empty list.
+        """
+        await self.bot.wait_until_ready()
+
+        # Preload each item category independently so one failure doesn't block others.
+        for category in ("primary_weapon", "secondary_weapon", "turret_weapon", "module"):
+            for attempt in range(5):
+                try:
+                    resp = await self.http_client.get(f"{api_base}/data/{category}", timeout=10)
+                    resp.raise_for_status()
+                    names = [obj["name"] for obj in resp.json() if obj.get("name")]
+                    self._item_catalog.set(category, names)
+                    flogger.info(f"_preload_static_catalogs: loaded {len(names)} items for category={category}")
+                    break
+                except Exception as exc:  # pylint: disable=broad-exception-caught
+                    wait = min(5 * (2**attempt), 60)
+                    flogger.warning(
+                        f"_preload_static_catalogs: failed for category={category} "
+                        f"(attempt {attempt + 1}/5): {type(exc).__name__}: {exc}, retrying in {wait}s"
+                    )
+                    await asyncio.sleep(wait)
+            else:
+                flogger.error(
+                    f"_preload_static_catalogs: terminal failure for category={category} "
+                    "after 5 attempts; autocomplete will be empty"
+                )
+                self._item_catalog.set(category, [])
+
+        # Preload ship catalog.
+        for attempt in range(5):
+            try:
+                resp = await self.http_client.get(f"{api_base}/about/ships", timeout=10)
+                resp.raise_for_status()
+                names = [s["name"] for s in resp.json() if s.get("name")]
+                self._ship_catalog.set("all", names)
+                flogger.info(f"_preload_static_catalogs: loaded {len(names)} ships")
+                break
+            except Exception as exc:  # pylint: disable=broad-exception-caught
+                wait = min(5 * (2**attempt), 60)
+                flogger.warning(
+                    f"_preload_static_catalogs: failed for ship catalog "
+                    f"(attempt {attempt + 1}/5): {type(exc).__name__}: {exc}, retrying in {wait}s"
+                )
+                await asyncio.sleep(wait)
+        else:
+            flogger.error(
+                "_preload_static_catalogs: terminal failure for ship catalog after 5 attempts; "
+                "autocomplete will be empty"
+            )
+            self._ship_catalog.set("all", [])
 
     async def render_setting_autocomplete(
         self, _interaction: discord.Interaction, current: str
@@ -1465,21 +1529,24 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
     # ------------------------------------------------------------------
 
     async def item_name_autocomplete(
-        self, _interaction: discord.Interaction, current: str
+        self, interaction: discord.Interaction, current: str
     ) -> list[app_commands.Choice[str]]:
-        """Autocomplete for item names from game data (weapons, modules, turrets)."""
+        """Autocomplete for item names — served from preloaded in-memory cache (zero HTTP per keystroke)."""
         try:
+            # Determine the item type category from the already-filled item_type parameter.
+            item_type = getattr(interaction.namespace, "item_type", None)
             norm_current = normalize_for_search(current)
             choices: list[app_commands.Choice[str]] = []
             seen: set[str] = set()
 
-            # Query game data for weapons, modules, turrets
-            for category in ("primary_weapon", "secondary_weapon", "turret_weapon", "module"):
-                resp = await self.http_client.get(f"{api_base}/data/{category}", timeout=5)
-                if resp.status_code != 200:
-                    continue
-                for item in resp.json():
-                    name = item.get("name", "")
+            categories = (
+                (item_type,)
+                if item_type in ("primary_weapon", "secondary_weapon", "turret_weapon", "module")
+                else ("primary_weapon", "secondary_weapon", "turret_weapon", "module")
+            )
+            for category in categories:
+                names = await self._item_catalog.get(category) or []
+                for name in names:
                     if name and name not in seen and norm_current in normalize_for_search(name):
                         seen.add(name)
                         choices.append(app_commands.Choice(name=name, value=name))
@@ -1492,19 +1559,15 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
     async def game_ship_autocomplete(
         self, _interaction: discord.Interaction, current: str
     ) -> list[app_commands.Choice[str]]:
-        """Autocomplete for ship names from game data (for give-ship)."""
+        """Autocomplete for ship names — served from preloaded in-memory cache (zero HTTP per keystroke)."""
         try:
             norm_current = normalize_for_search(current)
-            resp = await self.http_client.get(f"{api_base}/about/ships", timeout=5)
-            if resp.status_code != 200:
-                return []
-            ships = resp.json()
-            choices = [
-                app_commands.Choice(name=s["name"], value=s["name"])
-                for s in ships
-                if norm_current in normalize_for_search(s.get("name", ""))
-            ]
-            return choices[:25]
+            names = await self._ship_catalog.get("all") or []
+            return [
+                app_commands.Choice(name=name, value=name)
+                for name in names
+                if norm_current in normalize_for_search(name)
+            ][:25]
         except Exception:  # pylint: disable=broad-exception-caught
             return []
 
@@ -1784,17 +1847,13 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
                     "falling back to all ships"
                 )
 
-            # Fallback: show all ships from game data (user param not yet selected, or resolution failed)
-            resp = await self.http_client.get(f"{api_base}/about/ships", timeout=5)
-            if resp.status_code != 200:
-                return []
-            ships = resp.json()
-            choices = [
-                app_commands.Choice(name=s["name"], value=s["name"])
-                for s in ships
-                if norm_current in normalize_for_search(s.get("name", ""))
-            ]
-            return choices[:25]
+            # Fallback: show all ships from preloaded catalog (user param not yet selected, or resolution failed)
+            names = await self._ship_catalog.get("all") or []
+            return [
+                app_commands.Choice(name=name, value=name)
+                for name in names
+                if norm_current in normalize_for_search(name)
+            ][:25]
         except Exception:  # pylint: disable=broad-exception-caught
             return []
 

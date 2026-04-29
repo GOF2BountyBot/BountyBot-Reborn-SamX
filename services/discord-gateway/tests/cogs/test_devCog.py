@@ -256,18 +256,25 @@ class TestReloadAutocompleteCommand:
         interaction.response.defer = AsyncMock()
         interaction.followup.send = AsyncMock()
 
-        # Mock other cogs
+        # Mock a cog that responds to all method requests (AboutCog, BountyCog, etc.)
         about_cog = MagicMock()
         about_cog._preload_data = AsyncMock()
+        about_cog._preload_categories = AsyncMock()
+        about_cog._preload_ship_skins = AsyncMock()
+        about_cog._preload_render_settings = AsyncMock()
+        about_cog._preload_static_catalogs = AsyncMock()
+        about_cog._shop_cache = MagicMock()
+        about_cog._shop_cache.clear = MagicMock()
         mock_dev_cog.bot.get_cog.return_value = about_cog
 
         # Call command via callback
         asyncio.run(mock_dev_cog.reload_autocomplete.callback(mock_dev_cog, interaction))
 
-        # Verify behavior
+        # Verify behavior — at least the preload methods were called
         interaction.response.defer.assert_called_once_with(thinking=True)
         interaction.followup.send.assert_called_once()
-        about_cog._preload_data.assert_called_once()
+        # _preload_data is called for AboutCog and BountyCog (2 times total)
+        assert about_cog._preload_data.await_count >= 1
 
     @patch("cogs.devCog.httpx")
     def test_reload_autocomplete_with_errors(self, mock_httpx, mock_dev_cog):
@@ -484,6 +491,163 @@ class TestCogSetup:
         asyncio.run(setup(mock_bot))
 
         mock_bot.add_cog.assert_called_once()
+
+
+# ===========================================================================
+# Package E — Tests #27–29: /reload_autocomplete extended coverage
+# ===========================================================================
+
+
+class TestReloadAutocompletePackageE:
+    """Tests for reload_autocomplete covering new Package E targets (spec tests #27–29)."""
+
+    def _make_interaction(self):
+        interaction = MagicMock()
+        interaction.response = MagicMock()
+        interaction.response.defer = AsyncMock()
+        interaction.followup = MagicMock()
+        interaction.followup.send = AsyncMock()
+        return interaction
+
+    # ------------------------------------------------------------------
+    # Test #27 — invokes AdminCog._preload_static_catalogs
+    # ------------------------------------------------------------------
+
+    @patch("cogs.devCog.httpx")
+    def test_reload_invokes_admin_preload_static_catalogs(self, mock_httpx, mock_dev_cog):
+        """reload_autocomplete invokes AdminCog._preload_static_catalogs."""
+        interaction = self._make_interaction()
+
+        admin_cog = MagicMock()
+        admin_cog._preload_data = AsyncMock()
+        admin_cog._preload_render_settings = AsyncMock()
+        admin_cog._preload_static_catalogs = AsyncMock()
+
+        bounty_cog = MagicMock()
+        bounty_cog._preload_data = AsyncMock()
+
+        about_cog = MagicMock()
+        about_cog._preload_data = AsyncMock()
+
+        dev_cog_inner = MagicMock()
+        dev_cog_inner._preload_categories = AsyncMock()
+
+        skins_cog = MagicMock()
+        skins_cog._preload_ship_skins = AsyncMock()
+
+        shop_cog = MagicMock()
+        shop_cache = MagicMock()
+        shop_cache.clear = MagicMock()
+        shop_cog._shop_cache = shop_cache
+
+        def get_cog_side_effect(name):
+            return {
+                "AboutCog": about_cog,
+                "DevCog": dev_cog_inner,
+                "SkinsCog": skins_cog,
+                "BountyCog": bounty_cog,
+                "AdminCog": admin_cog,
+                "ShopCog": shop_cog,
+            }.get(name)
+
+        mock_dev_cog.bot.get_cog = MagicMock(side_effect=get_cog_side_effect)
+
+        asyncio.run(mock_dev_cog.reload_autocomplete.callback(mock_dev_cog, interaction))
+
+        admin_cog._preload_static_catalogs.assert_awaited_once()
+
+    # ------------------------------------------------------------------
+    # Test #28 — clears ShopCog._shop_cache
+    # ------------------------------------------------------------------
+
+    @patch("cogs.devCog.httpx")
+    def test_reload_clears_shop_cache(self, mock_httpx, mock_dev_cog):
+        """reload_autocomplete calls clear() on ShopCog._shop_cache."""
+        interaction = self._make_interaction()
+
+        about_cog = MagicMock()
+        about_cog._preload_data = AsyncMock()
+
+        dev_cog_inner = MagicMock()
+        dev_cog_inner._preload_categories = AsyncMock()
+
+        skins_cog = MagicMock()
+        skins_cog._preload_ship_skins = AsyncMock()
+
+        bounty_cog = MagicMock()
+        bounty_cog._preload_data = AsyncMock()
+
+        admin_cog = MagicMock()
+        admin_cog._preload_render_settings = AsyncMock()
+        admin_cog._preload_static_catalogs = AsyncMock()
+
+        shop_cog = MagicMock()
+        shop_cache = MagicMock()
+        shop_cache.clear = MagicMock()
+        shop_cog._shop_cache = shop_cache
+
+        def get_cog_side_effect(name):
+            return {
+                "AboutCog": about_cog,
+                "DevCog": dev_cog_inner,
+                "SkinsCog": skins_cog,
+                "BountyCog": bounty_cog,
+                "AdminCog": admin_cog,
+                "ShopCog": shop_cog,
+            }.get(name)
+
+        mock_dev_cog.bot.get_cog = MagicMock(side_effect=get_cog_side_effect)
+
+        asyncio.run(mock_dev_cog.reload_autocomplete.callback(mock_dev_cog, interaction))
+
+        shop_cache.clear.assert_called_once()
+
+    # ------------------------------------------------------------------
+    # Test #29 — invokes BountyCog._preload_data and AdminCog._preload_render_settings
+    # ------------------------------------------------------------------
+
+    @patch("cogs.devCog.httpx")
+    def test_reload_invokes_bounty_preload_and_render_settings(self, mock_httpx, mock_dev_cog):
+        """reload_autocomplete invokes BountyCog._preload_data and AdminCog._preload_render_settings."""
+        interaction = self._make_interaction()
+
+        about_cog = MagicMock()
+        about_cog._preload_data = AsyncMock()
+
+        dev_cog_inner = MagicMock()
+        dev_cog_inner._preload_categories = AsyncMock()
+
+        skins_cog = MagicMock()
+        skins_cog._preload_ship_skins = AsyncMock()
+
+        bounty_cog = MagicMock()
+        bounty_cog._preload_data = AsyncMock()
+
+        admin_cog = MagicMock()
+        admin_cog._preload_render_settings = AsyncMock()
+        admin_cog._preload_static_catalogs = AsyncMock()
+
+        shop_cog = MagicMock()
+        shop_cache = MagicMock()
+        shop_cache.clear = MagicMock()
+        shop_cog._shop_cache = shop_cache
+
+        def get_cog_side_effect(name):
+            return {
+                "AboutCog": about_cog,
+                "DevCog": dev_cog_inner,
+                "SkinsCog": skins_cog,
+                "BountyCog": bounty_cog,
+                "AdminCog": admin_cog,
+                "ShopCog": shop_cog,
+            }.get(name)
+
+        mock_dev_cog.bot.get_cog = MagicMock(side_effect=get_cog_side_effect)
+
+        asyncio.run(mock_dev_cog.reload_autocomplete.callback(mock_dev_cog, interaction))
+
+        bounty_cog._preload_data.assert_awaited_once()
+        admin_cog._preload_render_settings.assert_awaited_once()
 
 
 if __name__ == "__main__":

@@ -20,11 +20,15 @@ _mock_bblogger = types.ModuleType("shared.bblogger")
 
 # Track the module-level logger
 _module_logger = None
+# Track all loggers created (keyed by name) to support lookup after multi-logger inits.
+_all_loggers: dict[str, MagicMock] = {}
 
 
 def _make_mock_logger(*_args, **_kwargs):
     """Return a MagicMock that already has common log-level methods."""
     global _module_logger
+    # Use the logger name if provided to allow targeted lookup.
+    name = _args[0] if _args else None
     logger = MagicMock()
     logger.info = MagicMock()
     logger.debug = MagicMock()
@@ -33,6 +37,8 @@ def _make_mock_logger(*_args, **_kwargs):
     logger.trace = MagicMock()
     logger.critical = MagicMock()
     _module_logger = logger
+    if name:
+        _all_loggers[name] = logger
     return logger
 
 
@@ -120,11 +126,13 @@ class TestAdminCogInitialization:
 
     def test_initialization(self, mock_admin_cog):
         """adminCog should initialize properly with bot reference."""
-        global _module_logger
         assert mock_admin_cog.bot is not None
-        # The cog uses the module-level flogger
-        assert _module_logger is not None
-        _module_logger.debug.assert_called_with("AdminCog initialized")
+        # AdminCog uses module-level flogger named "discord-gateway-AdminCog".
+        # After __init__ multiple AutocompleteCache loggers are also created,
+        # so we look up the AdminCog logger specifically.
+        admin_logger = _all_loggers.get("discord-gateway-AdminCog")
+        assert admin_logger is not None, "AdminCog logger not found in _all_loggers"
+        admin_logger.debug.assert_called_with("AdminCog initialized")
         assert mock_admin_cog._valid_tiers == ["Bronze", "Silver", "Gold", "Platinum"]
 
 
@@ -1667,7 +1675,7 @@ class TestPreloadRenderSettings:
         assert mock_admin_cog._render_settings == []
 
     def test_preload_creates_task_on_init(self, mock_bot):
-        """__init__ should schedule _preload_render_settings as a task."""
+        """__init__ should schedule both _preload_render_settings and _preload_static_catalogs as tasks."""
         sys.modules["shared"] = _mock_shared
         sys.modules["shared.bblogger"] = _mock_bblogger
         _evict_discord_modules()
@@ -1675,7 +1683,8 @@ class TestPreloadRenderSettings:
 
         cog = AdminCog(mock_bot)
         _ = cog  # use the cog
-        mock_bot.loop.create_task.assert_called_once()
+        # Two create_task calls: one for _preload_render_settings, one for _preload_static_catalogs
+        assert mock_bot.loop.create_task.call_count == 2
 
     def test_preload_success_populates_settings(self, mock_admin_cog):
         """_preload_render_settings should populate _render_settings on success."""
@@ -2084,19 +2093,15 @@ class TestPlayerShipAutocomplete:
         assert not any("about/ships" in url for url in get_calls)
 
     def test_falls_back_to_all_ships_when_user_param_is_none(self, mock_admin_cog):
-        """When namespace.user is None (not yet selected), all ships are shown."""
+        """When namespace.user is None (not yet selected), all ships from _ship_catalog are shown.
+
+        Package E: fallback now reads from preloaded _ship_catalog (zero HTTP calls).
+        """
         interaction = self._make_interaction(target_user=None, guild_id=99)
 
-        all_ships_resp = MagicMock()
-        all_ships_resp.status_code = 200
-        all_ships_resp.json = MagicMock(
-            return_value=[
-                {"name": "Niode"},
-                {"name": "Groza"},
-                {"name": "Bloodstar"},
-            ]
-        )
-        mock_admin_cog.http_client.get = AsyncMock(return_value=all_ships_resp)
+        # Populate the ship catalog (simulating what _preload_static_catalogs would do)
+        mock_admin_cog._ship_catalog.set("all", ["Niode", "Groza", "Bloodstar"])
+        mock_admin_cog.http_client.get = AsyncMock()
 
         result = asyncio.run(mock_admin_cog.player_ship_autocomplete(interaction, ""))
 
@@ -2104,12 +2109,14 @@ class TestPlayerShipAutocomplete:
         assert "Niode" in names
         assert "Groza" in names
         assert "Bloodstar" in names
-        # Only the all-ships fallback endpoint should have been called
-        get_calls = [call[0][0] for call in mock_admin_cog.http_client.get.call_args_list]
-        assert any("about/ships" in url for url in get_calls)
+        # No HTTP calls — served from in-memory catalog
+        mock_admin_cog.http_client.get.assert_not_called()
 
     def test_falls_back_when_player_resolution_fails(self, mock_admin_cog):
-        """When player resolution returns None, falls back to all ships (no error raised)."""
+        """When player resolution returns None, falls back to _ship_catalog (no HTTP, no error raised).
+
+        Package E: fallback now reads from preloaded _ship_catalog.
+        """
         target_user = self._make_user(user_id=42)
         interaction = self._make_interaction(target_user=target_user, guild_id=99)
 
@@ -2118,20 +2125,19 @@ class TestPlayerShipAutocomplete:
         player_resp.status_code = 400
         player_resp.raise_for_status = MagicMock(side_effect=Exception("guild not configured"))
 
-        all_ships_resp = MagicMock()
-        all_ships_resp.status_code = 200
-        all_ships_resp.json = MagicMock(return_value=[{"name": "Niode"}, {"name": "Groza"}])
-
-        # First call (POST) fails resolution; second call (GET about/ships) returns all ships
         mock_admin_cog.http_client.post = AsyncMock(return_value=player_resp)
-        mock_admin_cog.http_client.get = AsyncMock(return_value=all_ships_resp)
+        mock_admin_cog.http_client.get = AsyncMock()
+        # Populate ship catalog
+        mock_admin_cog._ship_catalog.set("all", ["Niode", "Groza"])
 
         result = asyncio.run(mock_admin_cog.player_ship_autocomplete(interaction, ""))
 
-        # Must not raise — must return the fallback all-ships list
+        # Must not raise — must return the fallback all-ships list from cache
         assert isinstance(result, list)
         names = [c.name for c in result]
         assert "Niode" in names
+        # No about/ships HTTP call made
+        mock_admin_cog.http_client.get.assert_not_called()
 
     def test_filters_ships_by_current_input(self, mock_admin_cog):
         """Autocomplete filters results by the current typed prefix (case/accent-insensitive)."""
@@ -2163,13 +2169,224 @@ class TestPlayerShipAutocomplete:
         assert "Bloodstar" not in names
 
     def test_returns_empty_on_unexpected_exception(self, mock_admin_cog):
-        """Any unexpected exception returns [] without raising (silent degradation)."""
+        """Empty catalog (cold cache) returns [] without raising (silent degradation)."""
         interaction = self._make_interaction(target_user=None, guild_id=99)
-        mock_admin_cog.http_client.get = AsyncMock(side_effect=Exception("network failure"))
+        # _ship_catalog is empty (no preload run) → fallback returns []
+        mock_admin_cog.http_client.get = AsyncMock()
 
         result = asyncio.run(mock_admin_cog.player_ship_autocomplete(interaction, ""))
 
         assert result == []
+
+
+# ===========================================================================
+# Package E — Tests #13–20: _preload_static_catalogs + cache-backed autocomplete
+# ===========================================================================
+
+
+class TestPreloadStaticCatalogs:
+    """Tests for AdminCog._preload_static_catalogs (spec tests #13–16)."""
+
+    def _make_success_resp(self, data):
+        resp = MagicMock()
+        resp.raise_for_status = MagicMock()
+        resp.json = MagicMock(return_value=data)
+        return resp
+
+    # ------------------------------------------------------------------
+    # Test #13 — populates _item_catalog for all 4 categories on success
+    # ------------------------------------------------------------------
+
+    def test_preload_populates_item_catalog_all_categories(self, mock_admin_cog):
+        """_preload_static_catalogs populates _item_catalog for all 4 categories."""
+        primary = [{"name": "Laser"}, {"name": "Plasma"}]
+        secondary = [{"name": "Shield"}]
+        turret = [{"name": "Gatling"}]
+        module = [{"name": "Engine"}]
+        ships_data = [{"name": "Niode"}]
+
+        responses = [
+            self._make_success_resp(primary),
+            self._make_success_resp(secondary),
+            self._make_success_resp(turret),
+            self._make_success_resp(module),
+            self._make_success_resp(ships_data),
+        ]
+        mock_admin_cog.http_client.get = AsyncMock(side_effect=responses)
+        mock_admin_cog.bot.wait_until_ready = AsyncMock()
+
+        asyncio.run(mock_admin_cog._preload_static_catalogs())
+
+        assert asyncio.run(mock_admin_cog._item_catalog.get("primary_weapon")) == ["Laser", "Plasma"]
+        assert asyncio.run(mock_admin_cog._item_catalog.get("secondary_weapon")) == ["Shield"]
+        assert asyncio.run(mock_admin_cog._item_catalog.get("turret_weapon")) == ["Gatling"]
+        assert asyncio.run(mock_admin_cog._item_catalog.get("module")) == ["Engine"]
+
+    # ------------------------------------------------------------------
+    # Test #14 — populates _ship_catalog["all"] on success
+    # ------------------------------------------------------------------
+
+    def test_preload_populates_ship_catalog(self, mock_admin_cog):
+        """_preload_static_catalogs populates _ship_catalog['all'] on success."""
+        ships_data = [{"name": "Niode"}, {"name": "Groza"}, {"name": "Bloodstar"}]
+        item_resp = self._make_success_resp([{"name": "Laser"}])
+        ship_resp = self._make_success_resp(ships_data)
+
+        # 4 item category calls + 1 ship call
+        responses = [item_resp] * 4 + [ship_resp]
+        mock_admin_cog.http_client.get = AsyncMock(side_effect=responses)
+        mock_admin_cog.bot.wait_until_ready = AsyncMock()
+
+        asyncio.run(mock_admin_cog._preload_static_catalogs())
+
+        ship_names = asyncio.run(mock_admin_cog._ship_catalog.get("all"))
+        assert ship_names == ["Niode", "Groza", "Bloodstar"]
+
+    # ------------------------------------------------------------------
+    # Test #15 — retries on transient HTTPStatusError and eventually succeeds
+    # ------------------------------------------------------------------
+
+    def test_preload_retries_on_transient_error_and_succeeds(self, mock_admin_cog):
+        """_preload_static_catalogs retries on 503 and succeeds on the second attempt."""
+        import httpx
+
+        error_resp = MagicMock()
+        error_resp.status_code = 503
+        error = httpx.HTTPStatusError("503", request=MagicMock(), response=error_resp)
+        success_resp = self._make_success_resp([{"name": "Laser"}])
+
+        # First attempt for primary_weapon fails; second succeeds. Rest succeed directly.
+        mock_admin_cog.http_client.get = AsyncMock(side_effect=[error, success_resp] + [success_resp] * 4)
+        mock_admin_cog.bot.wait_until_ready = AsyncMock()
+
+        with patch("cogs.adminCog.asyncio.sleep", new=AsyncMock()):
+            asyncio.run(mock_admin_cog._preload_static_catalogs())
+
+        # primary_weapon should be populated after successful retry
+        result = asyncio.run(mock_admin_cog._item_catalog.get("primary_weapon"))
+        assert result == ["Laser"]
+
+    # ------------------------------------------------------------------
+    # Test #16 — terminal failure leaves caches empty, no exception bubbles
+    # ------------------------------------------------------------------
+
+    def test_preload_terminal_failure_leaves_caches_empty(self, mock_admin_cog):
+        """_preload_static_catalogs leaves caches empty on terminal failure; no exception raised."""
+        mock_admin_cog.http_client.get = AsyncMock(side_effect=Exception("all down"))
+        mock_admin_cog.bot.wait_until_ready = AsyncMock()
+
+        with patch("cogs.adminCog.asyncio.sleep", new=AsyncMock()):
+            # Must not raise
+            asyncio.run(mock_admin_cog._preload_static_catalogs())
+
+        # All caches should be empty lists (set explicitly on terminal failure)
+        assert asyncio.run(mock_admin_cog._item_catalog.get("primary_weapon")) == []
+        assert asyncio.run(mock_admin_cog._item_catalog.get("module")) == []
+        assert asyncio.run(mock_admin_cog._ship_catalog.get("all")) == []
+
+
+class TestItemNameAutocompleteFromCache:
+    """Tests for item_name_autocomplete reading from preloaded cache (spec tests #17, #19)."""
+
+    def _make_interaction(self, item_type=None):
+        interaction = _create_mock_interaction()
+        interaction.namespace = MagicMock()
+        interaction.namespace.item_type = item_type
+        return interaction
+
+    # ------------------------------------------------------------------
+    # Test #17 — after preload, autocomplete returns choices without HTTP calls
+    # ------------------------------------------------------------------
+
+    def test_autocomplete_after_preload_no_http_calls(self, mock_admin_cog):
+        """item_name_autocomplete after preload returns choices without HTTP calls."""
+        mock_admin_cog._item_catalog.set("primary_weapon", ["Laser Cannon", "Plasma Gun"])
+        mock_admin_cog._item_catalog.set("secondary_weapon", ["Shield Array"])
+        mock_admin_cog._item_catalog.set("turret_weapon", ["Gatling Turret"])
+        mock_admin_cog._item_catalog.set("module", ["Engine Core"])
+        mock_admin_cog.http_client.get = AsyncMock()
+
+        interaction = self._make_interaction(item_type=None)
+        result = asyncio.run(mock_admin_cog.item_name_autocomplete(interaction, ""))
+
+        # No HTTP calls should have been made
+        mock_admin_cog.http_client.get.assert_not_called()
+        names = [c.name for c in result]
+        assert "Laser Cannon" in names
+        assert "Plasma Gun" in names
+        assert "Shield Array" in names
+
+    # ------------------------------------------------------------------
+    # Test #19 — filtering by current substring works
+    # ------------------------------------------------------------------
+
+    def test_autocomplete_filters_by_current_substring(self, mock_admin_cog):
+        """item_name_autocomplete filters names by the current input substring."""
+        mock_admin_cog._item_catalog.set("primary_weapon", ["Laser Cannon", "Plasma Rifle", "Laser Pistol"])
+        mock_admin_cog._item_catalog.set("secondary_weapon", [])
+        mock_admin_cog._item_catalog.set("turret_weapon", [])
+        mock_admin_cog._item_catalog.set("module", [])
+
+        interaction = self._make_interaction(item_type=None)
+        result = asyncio.run(mock_admin_cog.item_name_autocomplete(interaction, "Laser"))
+
+        names = [c.name for c in result]
+        assert "Laser Cannon" in names
+        assert "Laser Pistol" in names
+        assert "Plasma Rifle" not in names
+
+
+class TestGameShipAutocompleteFromCache:
+    """Tests for game_ship_autocomplete reading from preloaded cache (spec test #18)."""
+
+    # ------------------------------------------------------------------
+    # Test #18 — after preload, returns choices without HTTP calls
+    # ------------------------------------------------------------------
+
+    def test_autocomplete_after_preload_no_http_calls(self, mock_admin_cog):
+        """game_ship_autocomplete after preload returns choices without HTTP calls."""
+        mock_admin_cog._ship_catalog.set("all", ["Niode", "Groza", "Bloodstar"])
+        mock_admin_cog.http_client.get = AsyncMock()
+
+        interaction = _create_mock_interaction()
+        result = asyncio.run(mock_admin_cog.game_ship_autocomplete(interaction, ""))
+
+        mock_admin_cog.http_client.get.assert_not_called()
+        names = [c.name for c in result]
+        assert "Niode" in names
+        assert "Groza" in names
+        assert "Bloodstar" in names
+
+
+class TestPlayerShipAutocompleteFallbackFromCache:
+    """Tests for player_ship_autocomplete fallback branch reading from _ship_catalog (spec test #20)."""
+
+    def _make_interaction(self, target_user, guild_id=9876):
+        interaction = _create_mock_interaction()
+        interaction.guild_id = guild_id
+        interaction.namespace = MagicMock()
+        interaction.namespace.user = target_user
+        return interaction
+
+    # ------------------------------------------------------------------
+    # Test #20 — fallback reads from _ship_catalog, no HTTP
+    # ------------------------------------------------------------------
+
+    def test_fallback_reads_from_ship_catalog_no_http(self, mock_admin_cog):
+        """player_ship_autocomplete fallback reads from _ship_catalog without HTTP."""
+        mock_admin_cog._ship_catalog.set("all", ["Niode", "Groza", "Bloodstar"])
+        mock_admin_cog.http_client.get = AsyncMock()
+        mock_admin_cog.http_client.post = AsyncMock()
+
+        # No target_user selected → forces fallback path
+        interaction = self._make_interaction(target_user=None)
+        result = asyncio.run(mock_admin_cog.player_ship_autocomplete(interaction, ""))
+
+        mock_admin_cog.http_client.get.assert_not_called()
+        names = [c.name for c in result]
+        assert "Niode" in names
+        assert "Groza" in names
+        assert "Bloodstar" in names
 
 
 if __name__ == "__main__":

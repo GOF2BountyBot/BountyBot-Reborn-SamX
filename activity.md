@@ -284,3 +284,74 @@ This is a **read-only investigation** with no code changes. B.4 entry in `/proj/
 - blender-service: 127 passed — GREEN
 - discord-gateway: 2132 passed — GREEN
 - Ruff source check: All checks passed
+
+---
+
+## Attempt 5 [2026-04-29 UTC]
+Iteration: 5
+Status: completed
+
+### Work Completed (Package E — B.26 Autocomplete Preload + Cache Framework)
+
+- **AutocompleteCache helper** (`cogs/_shared/autocomplete_cache.py`, ~120 LOC):
+  - Generic `AutocompleteCache[K, V]` with optional TTL, async refresh callable, asyncio.Lock concurrency
+  - Stale-on-error fallback for lazy refresh path
+  - Monotonic injection for deterministic TTL testing
+  - Logger: `discord-gateway-AutocompleteCache.<name>`
+- **AdminCog static catalogs** (`adminCog.py`, +70/-20 LOC):
+  - `_item_catalog` and `_ship_catalog` AutocompleteCache instances (TTL=None)
+  - `_preload_static_catalogs()`: 5-attempt exponential-backoff (5s→10s→20s→40s→60s), independent per category
+  - `item_name_autocomplete`: reads from `_item_catalog` (zero HTTP per keystroke, was 1–4)
+  - `game_ship_autocomplete`: reads from `_ship_catalog` (zero HTTP, was 1)
+  - `player_ship_autocomplete` fallback branch: reads from `_ship_catalog` (zero HTTP, was 1)
+- **ShopCog shop cache** (`shopCog.py`, +40/-15 LOC):
+  - `_shop_cache` AutocompleteCache (TTL=300s, refresh_fn=`_fetch_tier_shop`)
+  - `_fetch_tier_shop(guild_id, tier)` private helper
+  - `buy_item_autocomplete`: reads tiers from `_shop_cache` (1 HTTP/tier/5min, was 2–5 per keystroke)
+  - `buy` post-success: invalidates `(guild_id, tier)` cache entry
+  - `sell` post-success: invalidates `(guild_id, player.tier)` cache entry
+- **DevCog /reload_autocomplete** (`devCog.py`, +20 LOC):
+  - Added `BountyCog._preload_data`, `AdminCog._preload_render_settings` (recon §7.3 gaps)
+  - Added `AdminCog._preload_static_catalogs`
+  - Added `ShopCog._shop_cache.clear()` as a cache-clear target (separate logic path)
+- **Tests**: 29 new tests (14 unit + 15 integration) covering spec tests #1–29
+
+### Spec-to-Test Traceability
+
+| Acceptance Criterion | Test File(s) | Status |
+|---|---|---|
+| #1 set then get returns value | `test_autocomplete_cache.py::TestSetAndGet` | COVERED |
+| #2 cold miss no refresh_fn returns None | `test_autocomplete_cache.py::TestColdMissNoRefreshFn` | COVERED |
+| #3 cold miss with refresh_fn invokes and stores | `test_autocomplete_cache.py::TestColdMissWithRefreshFn` | COVERED |
+| #4 second get within TTL does not refresh | `test_autocomplete_cache.py::TestHitWithinTTL` | COVERED |
+| #5 get after TTL expiry re-fetches | `test_autocomplete_cache.py::TestTTLExpiry` | COVERED |
+| #6 invalidate drops only that key | `test_autocomplete_cache.py::TestInvalidate` | COVERED |
+| #7 clear drops all keys | `test_autocomplete_cache.py::TestClear` | COVERED |
+| #8 stale-on-error with prior value | `test_autocomplete_cache.py::TestStaleOnError` | COVERED |
+| #9 hard miss on error | `test_autocomplete_cache.py::TestHardMissOnError` | COVERED |
+| #10 TTL=None never expires | `test_autocomplete_cache.py::TestNoTTLNeverExpires` | COVERED |
+| #11 concurrent get invokes refresh_fn once | `test_autocomplete_cache.py::TestConcurrentGetLock` | COVERED |
+| #12 keys() and size observability | `test_autocomplete_cache.py::TestObservability` | COVERED |
+| #13 preload item catalog all 4 categories | `test_adminCog.py::TestPreloadStaticCatalogs::test_preload_populates_item_catalog_all_categories` | COVERED |
+| #14 preload ship catalog | `test_adminCog.py::TestPreloadStaticCatalogs::test_preload_populates_ship_catalog` | COVERED |
+| #15 retry on transient error succeeds | `test_adminCog.py::TestPreloadStaticCatalogs::test_preload_retries_on_transient_error_and_succeeds` | COVERED |
+| #16 terminal failure leaves caches empty | `test_adminCog.py::TestPreloadStaticCatalogs::test_preload_terminal_failure_leaves_caches_empty` | COVERED |
+| #17 item_name_autocomplete after preload no HTTP | `test_adminCog.py::TestItemNameAutocompleteFromCache::test_autocomplete_after_preload_no_http_calls` | COVERED |
+| #18 game_ship_autocomplete after preload no HTTP | `test_adminCog.py::TestGameShipAutocompleteFromCache::test_autocomplete_after_preload_no_http_calls` | COVERED |
+| #19 item_name_autocomplete filtering by current | `test_adminCog.py::TestItemNameAutocompleteFromCache::test_autocomplete_filters_by_current_substring` | COVERED |
+| #20 player_ship_autocomplete fallback from cache | `test_adminCog.py::TestPlayerShipAutocompleteFallbackFromCache::test_fallback_reads_from_ship_catalog_no_http` | COVERED |
+| #21 cold cache fetches once, second uses cache | `test_shopCog.py::TestBuyItemAutocompleteWithCache::test_cold_cache_fetches_once_second_hit_uses_cache` | COVERED |
+| #22 TTL expiry refetches | `test_shopCog.py::TestBuyItemAutocompleteWithCache::test_after_ttl_expiry_refetches` | COVERED |
+| #23 buy success invalidates tier cache | `test_shopCog.py::TestBuyInvalidatesCache::test_buy_success_invalidates_purchased_tier_cache` | COVERED |
+| #24 sell success invalidates tier cache | `test_shopCog.py::TestSellInvalidatesCache::test_sell_success_invalidates_seller_tier_cache` | COVERED |
+| #25 empty when player resolution fails | `test_shopCog.py::TestBuyItemAutocompleteEdgeCases::test_returns_empty_when_player_resolution_fails` | COVERED |
+| #26 Silver player sees Bronze+Silver | `test_shopCog.py::TestBuyItemAutocompleteEdgeCases::test_silver_player_sees_bronze_and_silver_items` | COVERED |
+| #27 reload invokes admin static catalogs | `test_devCog.py::TestReloadAutocompletePackageE::test_reload_invokes_admin_preload_static_catalogs` | COVERED |
+| #28 reload clears shop cache | `test_devCog.py::TestReloadAutocompletePackageE::test_reload_clears_shop_cache` | COVERED |
+| #29 reload invokes bounty/render settings | `test_devCog.py::TestReloadAutocompletePackageE::test_reload_invokes_bounty_preload_and_render_settings` | COVERED |
+
+### Coverage Summary
+
+- discord-gateway: 2165 passed, 0 failed — GREEN
+- Ruff src check: All checks passed
+- Ruff tests check: All checks passed

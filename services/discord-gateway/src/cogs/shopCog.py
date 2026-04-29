@@ -2,6 +2,7 @@ import os
 
 import discord
 import httpx
+from cogs._shared.autocomplete_cache import AutocompleteCache
 from discord import app_commands
 from discord.ext import commands
 from shared import bblogger
@@ -38,6 +39,11 @@ class ShopCog(commands.Cog):
         self.http_client = httpx.AsyncClient(timeout=httpx.Timeout(10.0))
         self._valid_tiers = ["Bronze", "Silver", "Gold", "Platinum"]
         self._valid_item_types = ["ship", "primary_weapon", "secondary_weapon", "turret_weapon", "module"]
+        self._shop_cache: AutocompleteCache[tuple, list] = AutocompleteCache(
+            ttl_seconds=300.0,
+            refresh_fn=self._fetch_tier_shop,
+            name="shopCog-shop-cache",
+        )
         flogger.debug("ShopCog initialized")
 
     async def cog_unload(self):
@@ -61,6 +67,17 @@ class ShopCog(commands.Cog):
             return None
         except Exception:  # pylint: disable=broad-exception-caught
             return None
+
+    async def _fetch_tier_shop(self, key: tuple) -> list:
+        """Fetch shop items for a (guild_id, tier) key.  Called by _shop_cache on miss/expiry."""
+        guild_id, tier = key
+        try:
+            resp = await self.http_client.get(f"{api_base}/shops/guild/{guild_id}/tier/{tier}", timeout=5)
+            if resp.status_code != 200:
+                return []
+            return resp.json()
+        except Exception:  # pylint: disable=broad-exception-caught
+            return []
 
     async def tier_autocomplete(
         self, _interaction: discord.Interaction, current: str
@@ -239,9 +256,14 @@ class ShopCog(commands.Cog):
     async def buy_item_autocomplete(
         self, interaction: discord.Interaction, current: str
     ) -> list[app_commands.Choice[int]]:
-        """Live autocomplete for shop items the player can buy."""
+        """Cached autocomplete for shop items the player can buy.
+
+        Still makes one live call to resolve player tier (per-user state).
+        Shop inventory per (guild_id, tier) is served from _shop_cache with a
+        5-minute TTL — zero shop-API calls per keystroke under steady state.
+        """
         try:
-            # Get player data to determine accessible tier
+            # Player tier must always be resolved live (per-user, can change on prestige/tier-up).
             player = await self._get_player_data(interaction.user.id, interaction.guild_id)
             if not player:
                 return []
@@ -250,12 +272,8 @@ class ShopCog(commands.Cog):
             choices: list[app_commands.Choice[int]] = []
             for tier_idx in range(player_tier_idx + 1):
                 tier = self._valid_tiers[tier_idx]
-                resp = await self.http_client.get(
-                    f"{api_base}/shops/guild/{interaction.guild_id}/tier/{tier}", timeout=5
-                )
-                if resp.status_code != 200:
-                    continue
-                for item in resp.json():
+                items = await self._shop_cache.get((interaction.guild_id, tier)) or []
+                for item in items:
                     label = f"{item['item_name']} ({item['price']:,}cr) [{tier}]"
                     if norm_current in normalize_for_search(label):
                         choices.append(app_commands.Choice(name=label[:100], value=item["id"]))
@@ -325,6 +343,16 @@ class ShopCog(commands.Cog):
 
             resp.raise_for_status()
             transaction = resp.json()
+
+            # Invalidate the shop cache for the purchased item's tier so the next
+            # autocomplete reflects the updated stock count.
+            try:
+                self._shop_cache.invalidate((interaction.guild_id, shop_item["tier"]))
+            except Exception:  # pylint: disable=broad-exception-caught
+                flogger.warning(
+                    f"/buy: cache invalidation failed for guild={interaction.guild_id} "
+                    f"tier={shop_item.get('tier')}; transaction still succeeded"
+                )
 
             # Success message
             embed = discord.Embed(
@@ -447,6 +475,15 @@ class ShopCog(commands.Cog):
             resp = await self.http_client.post(f"{api_base}/shops/sell", json=sell_data, timeout=10)
             resp.raise_for_status()
             transaction = resp.json()
+
+            # Invalidate the shop cache for the player's tier — sold items land there.
+            try:
+                self._shop_cache.invalidate((interaction.guild_id, player["tier"]))
+            except Exception:  # pylint: disable=broad-exception-caught
+                flogger.warning(
+                    f"/sell: cache invalidation failed for guild={interaction.guild_id} "
+                    f"tier={player.get('tier')}; transaction still succeeded"
+                )
 
             # Success message
             embed = discord.Embed(

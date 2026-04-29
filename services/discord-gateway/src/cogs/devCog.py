@@ -116,15 +116,18 @@ class DevCog(commands.Cog):
         reloaded = []
         failed = []
 
-        # list of (cog_name, method_name, friendly_name)
-        targets = [
+        # Preload-method targets: (cog_name, method_name, friendly_name).
+        # Includes previously-missing entries (recon §7.3): BountyCog, AdminCog render settings.
+        method_targets = [
             ("AboutCog", "_preload_data", "about data"),
             ("DevCog", "_preload_categories", "dev categories"),
             ("SkinsCog", "_preload_ship_skins", "ship skins"),
-            # add more cogs here if needed
+            ("BountyCog", "_preload_data", "bounty data"),
+            ("AdminCog", "_preload_render_settings", "render settings"),
+            ("AdminCog", "_preload_static_catalogs", "admin static catalogs"),
         ]
 
-        for cog_name, method_name, label in targets:
+        for cog_name, method_name, label in method_targets:
             cog = self.bot.get_cog(cog_name)
             if not cog:
                 failed.append(f"{label}: cog not found")
@@ -138,6 +141,29 @@ class DevCog(commands.Cog):
             try:
                 # call the preload method; most are async
                 await method()
+                reloaded.append(label)
+            except Exception as e:  # pylint: disable=broad-exception-caught
+                failed.append(f"{label}: {e}")
+
+        # Cache-clear targets: (cog_name, cache_attr_name, friendly_name).
+        # clear() is synchronous; no await needed.
+        cache_targets = [
+            ("ShopCog", "_shop_cache", "shop cache"),
+        ]
+
+        for cog_name, attr_name, label in cache_targets:
+            cog = self.bot.get_cog(cog_name)
+            if not cog:
+                failed.append(f"{label}: cog not found")
+                continue
+
+            cache = getattr(cog, attr_name, None)
+            if cache is None:
+                failed.append(f"{label}: no attribute {attr_name}")
+                continue
+
+            try:
+                cache.clear()
                 reloaded.append(label)
             except Exception as e:  # pylint: disable=broad-exception-caught
                 failed.append(f"{label}: {e}")

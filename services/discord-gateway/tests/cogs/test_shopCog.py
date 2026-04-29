@@ -23,11 +23,14 @@ _mock_shared.__path__ = []
 _mock_bblogger = types.ModuleType("shared.bblogger")
 
 _module_logger = None
+# Track all loggers created (keyed by name) to support lookup after multi-logger inits.
+_all_loggers: dict[str, MagicMock] = {}
 
 
 def _make_mock_logger(*_args, **_kwargs):
     """Return a MagicMock with common log-level methods."""
     global _module_logger
+    name = _args[0] if _args else None
     logger = MagicMock()
     logger.info = MagicMock()
     logger.debug = MagicMock()
@@ -37,6 +40,8 @@ def _make_mock_logger(*_args, **_kwargs):
     logger.critical = MagicMock()
     logger.exception = MagicMock()
     _module_logger = logger
+    if name:
+        _all_loggers[name] = logger
     return logger
 
 
@@ -170,9 +175,12 @@ class TestShopCogInitialization:
 
     def test_initialization_logs_debug(self, mock_shop_cog):
         """ShopCog __init__ should log a debug message."""
-        global _module_logger
-        assert _module_logger is not None
-        _module_logger.debug.assert_called_with("ShopCog initialized")
+        # ShopCog uses module-level flogger "discord-gateway-ShopCog".
+        # After __init__ an AutocompleteCache logger is also created, so look up
+        # the ShopCog logger specifically.
+        shop_logger = _all_loggers.get("discord-gateway-ShopCog")
+        assert shop_logger is not None, "ShopCog logger not found in _all_loggers"
+        shop_logger.debug.assert_called_with("ShopCog initialized")
 
     def test_valid_tiers_initialized(self, mock_shop_cog):
         """ShopCog should have valid tiers list."""
@@ -1772,6 +1780,251 @@ class TestCogSetup:
         from cogs.shopCog import ShopCog
 
         assert isinstance(added_arg, ShopCog)
+
+
+# ===========================================================================
+# Package E — Tests #21–26: shop cache + buy_item_autocomplete + invalidation
+# ===========================================================================
+
+
+def _make_shop_items_for_tier(tier: str, count: int = 3) -> list[dict]:
+    """Generate minimal shop item dicts for a given tier."""
+    return [
+        {
+            "id": i + 1,
+            "item_name": f"Item{i + 1}",
+            "item_type": "primary_weapon",
+            "tier": tier,
+            "price": (i + 1) * 100,
+            "quantity": 10,
+        }
+        for i in range(count)
+    ]
+
+
+class TestBuyItemAutocompleteWithCache:
+    """Tests for buy_item_autocomplete serving from _shop_cache (spec tests #21–22)."""
+
+    def _make_interaction(self, user_id=111111, guild_id=987654321):
+        interaction = _create_mock_interaction(user_id=user_id, guild_id=guild_id)
+        return interaction
+
+    # ------------------------------------------------------------------
+    # Test #21 — cold cache fetches once; second invocation uses cache (zero new HTTP)
+    # ------------------------------------------------------------------
+
+    def test_cold_cache_fetches_once_second_hit_uses_cache(self, mock_shop_cog):
+        """Cold cache fetches tier shop once; second autocomplete uses cached data (no new HTTP)."""
+        player = _make_player_data(tier="Bronze")
+        bronze_items = _make_shop_items_for_tier("Bronze", 3)
+
+        # Player resolution response
+        player_resp = MagicMock()
+        player_resp.status_code = 200
+        player_resp.raise_for_status = MagicMock()
+        player_resp.json = MagicMock(return_value=player)
+
+        # Shop items response
+        shop_resp = MagicMock()
+        shop_resp.status_code = 200
+        shop_resp.json = MagicMock(return_value=bronze_items)
+
+        mock_shop_cog.http_client.post = AsyncMock(return_value=player_resp)
+        mock_shop_cog.http_client.get = AsyncMock(return_value=shop_resp)
+
+        interaction = self._make_interaction()
+
+        # First autocomplete — should call GET /shops/... once (cold cache)
+        result1 = asyncio.run(mock_shop_cog.buy_item_autocomplete(interaction, ""))
+        assert len(result1) == 3
+        get_call_count_after_first = mock_shop_cog.http_client.get.call_count
+
+        # Second autocomplete — should NOT call GET /shops/... again (cache hit)
+        result2 = asyncio.run(mock_shop_cog.buy_item_autocomplete(interaction, ""))
+        assert len(result2) == 3
+        assert mock_shop_cog.http_client.get.call_count == get_call_count_after_first
+
+    # ------------------------------------------------------------------
+    # Test #22 — after TTL expiry, refetches
+    # ------------------------------------------------------------------
+
+    def test_after_ttl_expiry_refetches(self, mock_shop_cog):
+        """After TTL expiry, buy_item_autocomplete triggers a new shop fetch."""
+        player = _make_player_data(tier="Bronze")
+        bronze_items = _make_shop_items_for_tier("Bronze", 2)
+
+        player_resp = MagicMock()
+        player_resp.status_code = 200
+        player_resp.raise_for_status = MagicMock()
+        player_resp.json = MagicMock(return_value=player)
+
+        shop_resp = MagicMock()
+        shop_resp.status_code = 200
+        shop_resp.json = MagicMock(return_value=bronze_items)
+
+        mock_shop_cog.http_client.post = AsyncMock(return_value=player_resp)
+        mock_shop_cog.http_client.get = AsyncMock(return_value=shop_resp)
+
+        interaction = self._make_interaction()
+
+        # First call — primes cache
+        asyncio.run(mock_shop_cog.buy_item_autocomplete(interaction, ""))
+        get_calls_after_prime = mock_shop_cog.http_client.get.call_count
+
+        # Manually expire the cache entry by replacing it with an expired one
+        guild_id = interaction.guild_id
+        clock = [0.0]
+        mock_shop_cog._shop_cache._monotonic = lambda: clock[0]
+        # Re-set with t=0 then advance past TTL
+        mock_shop_cog._shop_cache.set((guild_id, "Bronze"), bronze_items)
+        clock[0] = 400.0  # past 300s TTL
+
+        # Second call — cache expired, should fetch again
+        asyncio.run(mock_shop_cog.buy_item_autocomplete(interaction, ""))
+        assert mock_shop_cog.http_client.get.call_count > get_calls_after_prime
+
+
+class TestBuyInvalidatesCache:
+    """Tests for /buy success invalidating shop cache (spec test #23)."""
+
+    def _make_interaction(self, user_id=111111, guild_id=987654321):
+        return _create_mock_interaction(user_id=user_id, guild_id=guild_id)
+
+    def test_buy_success_invalidates_purchased_tier_cache(self, mock_shop_cog):
+        """Successful /buy invalidates only the purchased item's tier cache."""
+        # Pre-populate the cache for Bronze and Silver
+        mock_shop_cog._shop_cache.set((987654321, "Bronze"), _make_shop_items_for_tier("Bronze"))
+        mock_shop_cog._shop_cache.set((987654321, "Silver"), _make_shop_items_for_tier("Silver"))
+        assert mock_shop_cog._shop_cache.size == 2
+
+        player = _make_player_data(tier="Bronze", credits=5000)
+        shop_item = _make_shop_item(item_id=1, item_name="Laser", tier="Bronze", price=100)
+        transaction = {
+            "item_name": "Laser",
+            "item_type": "primary_weapon",
+            "total_cost": 100,
+            "remaining_credits": 4900,
+        }
+
+        item_resp = MagicMock()
+        item_resp.raise_for_status = MagicMock()
+        item_resp.json = MagicMock(return_value=shop_item)
+
+        purchase_resp = MagicMock()
+        purchase_resp.raise_for_status = MagicMock()
+        purchase_resp.json = MagicMock(return_value=transaction)
+
+        player_resp = MagicMock()
+        player_resp.status_code = 200
+        player_resp.raise_for_status = MagicMock()
+        player_resp.json = MagicMock(return_value=player)
+
+        # Sequence: POST /players/ → item GET → purchase POST
+        mock_shop_cog.http_client.post = AsyncMock(side_effect=[player_resp, purchase_resp])
+        mock_shop_cog.http_client.get = AsyncMock(return_value=item_resp)
+
+        interaction = self._make_interaction()
+        asyncio.run(mock_shop_cog.buy.callback(mock_shop_cog, interaction, item_id=1, quantity=1))
+
+        # Bronze tier should be invalidated; Silver should remain
+        assert mock_shop_cog._shop_cache.size == 1
+        remaining = mock_shop_cog._shop_cache.keys()
+        assert (987654321, "Silver") in remaining
+        assert (987654321, "Bronze") not in remaining
+
+
+class TestSellInvalidatesCache:
+    """Tests for /sell success invalidating shop cache (spec test #24)."""
+
+    def _make_interaction(self, user_id=111111, guild_id=987654321):
+        return _create_mock_interaction(user_id=user_id, guild_id=guild_id)
+
+    def test_sell_success_invalidates_seller_tier_cache(self, mock_shop_cog):
+        """Successful /sell invalidates only the seller's current tier cache."""
+        # Pre-populate caches
+        mock_shop_cog._shop_cache.set((987654321, "Bronze"), _make_shop_items_for_tier("Bronze"))
+        mock_shop_cog._shop_cache.set((987654321, "Silver"), _make_shop_items_for_tier("Silver"))
+        assert mock_shop_cog._shop_cache.size == 2
+
+        player = _make_player_data(tier="Bronze", credits=1000)
+        transaction = {
+            "item_name": "Laser",
+            "item_type": "primary_weapon",
+            "total_value": 50,
+            "remaining_credits": 1050,
+        }
+
+        player_resp = MagicMock()
+        player_resp.status_code = 200
+        player_resp.raise_for_status = MagicMock()
+        player_resp.json = MagicMock(return_value=player)
+
+        sell_resp = MagicMock()
+        sell_resp.raise_for_status = MagicMock()
+        sell_resp.json = MagicMock(return_value=transaction)
+
+        mock_shop_cog.http_client.post = AsyncMock(side_effect=[player_resp, sell_resp])
+
+        interaction = self._make_interaction()
+        asyncio.run(mock_shop_cog.sell.callback(mock_shop_cog, interaction, item="Laser", quantity=1))
+
+        # Bronze tier (player's tier) should be invalidated; Silver should remain
+        assert mock_shop_cog._shop_cache.size == 1
+        remaining = mock_shop_cog._shop_cache.keys()
+        assert (987654321, "Silver") in remaining
+        assert (987654321, "Bronze") not in remaining
+
+
+class TestBuyItemAutocompleteEdgeCases:
+    """Tests for buy_item_autocomplete edge cases (spec tests #25, #26)."""
+
+    def _make_interaction(self, user_id=111111, guild_id=987654321):
+        return _create_mock_interaction(user_id=user_id, guild_id=guild_id)
+
+    # ------------------------------------------------------------------
+    # Test #25 — returns empty list when player resolution fails
+    # ------------------------------------------------------------------
+
+    def test_returns_empty_when_player_resolution_fails(self, mock_shop_cog):
+        """buy_item_autocomplete returns empty list when player resolution fails."""
+        mock_shop_cog.http_client.post = AsyncMock(side_effect=Exception("connection error"))
+
+        interaction = self._make_interaction()
+        result = asyncio.run(mock_shop_cog.buy_item_autocomplete(interaction, ""))
+
+        assert result == []
+
+    # ------------------------------------------------------------------
+    # Test #26 — Silver player sees Bronze + Silver items
+    # ------------------------------------------------------------------
+
+    def test_silver_player_sees_bronze_and_silver_items(self, mock_shop_cog):
+        """Silver player's autocomplete includes items from Bronze and Silver tiers."""
+        player = _make_player_data(tier="Silver")
+        bronze_items = _make_shop_items_for_tier("Bronze", 2)
+        silver_items = _make_shop_items_for_tier("Silver", 2)
+
+        player_resp = MagicMock()
+        player_resp.status_code = 200
+        player_resp.raise_for_status = MagicMock()
+        player_resp.json = MagicMock(return_value=player)
+
+        mock_shop_cog.http_client.post = AsyncMock(return_value=player_resp)
+
+        # Pre-populate cache for both tiers
+        mock_shop_cog._shop_cache.set((987654321, "Bronze"), bronze_items)
+        mock_shop_cog._shop_cache.set((987654321, "Silver"), silver_items)
+
+        interaction = self._make_interaction()
+        result = asyncio.run(mock_shop_cog.buy_item_autocomplete(interaction, ""))
+
+        # Should show all 4 items (2 Bronze + 2 Silver)
+        assert len(result) == 4
+        names = [c.name for c in result]
+        assert any("[Bronze]" in n for n in names)
+        assert any("[Silver]" in n for n in names)
+        # Gold tier items should NOT appear
+        assert not any("[Gold]" in n for n in names)
 
 
 if __name__ == "__main__":

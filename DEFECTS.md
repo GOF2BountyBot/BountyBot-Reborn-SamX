@@ -18,6 +18,86 @@ Cross-ref: `E2E_TEST_CHECKLIST.md` (test-item references). All commit SHAs are l
 >
 > Items marked FIXED here are also summarized in the **FIXED** table at the bottom with their `Verified` column. `Verified: pending` will flip to `✅ live <date>` as the live re-verification pass walks each affected E2E phase.
 
+### B.33 — Package E `_preload_static_catalogs` regression: GET vs POST + nonexistent ship URL leaves item & ship autocomplete caches empty on every boot
+> **FIXED** in commits `452ac28` (production fix), `9a19909` (adminCog respx tests), `645c474` (project-wide preload test audit), `51c0bb5` (testing policy docs). Fix: L119 `GET /data/{category}` → `GET /about/categories/{category}/objects`; L142 `GET /about/ships` → `GET /about/categories/ship/objects`. Test debt: 4 old tautological mock tests replaced with 5 respx tests asserting URL+method. Audit: aboutCog, bountyCog, skinsCog preload tests converted; no new defects found. See `services/discord-gateway/tests/AGENTS.md` for policy.
+
+🔴 high · Phase 0.3 · 2026-04-29
+
+**Environment**: HEAD (commit `3ac67a4` tip of `samx-wip`), fresh stack rebuild, dev guild `1490693399307616276`. Detected during E2E Phase 0.3 docker-log scan immediately after clean-slate verification.
+
+**Symptom**
+- On every cold boot, `discord-gateway-AdminCog._preload_static_catalogs` retries 5 times each (5s/10s/20s/40s/60s back-off) for **all 4 item categories + ship catalog**, totalling ~8 minutes of warning/error log noise.
+- Terminal failures land on `_item_catalog` and `_ship_catalog`, leaving both caches empty.
+- `/reload_autocomplete` (devCog) re-runs the same broken `_preload_static_catalogs` and fails identically — confirmed by user reproduction in dev guild 2026-04-29 ~15:08 UTC.
+- Downstream: every cog autocomplete that reads from `_item_catalog` (`/equip`, `/unequip`, `/buy`, `/sell`, `/admin_give_item`, `/admin_remove_item`) or `_ship_catalog` (skin commands, ship-name slots in admin commands) returns an empty dropdown after fresh boot until/unless an alternative cache feeds it.
+
+**Empirical citations (HEAD)**
+
+`services/discord-gateway/src/cogs/adminCog.py:116-160`:
+- L116 iterates `("primary_weapon", "secondary_weapon", "turret_weapon", "module")`
+- L119 issues `await self.http_client.get(f"{api_base}/data/{category}", timeout=10)` — **WRONG METHOD**
+- L121 expects `[obj["name"] for obj in resp.json() if obj.get("name")]` — **WRONG SHAPE** (server returns `list[str]`)
+- L142 issues `await self.http_client.get(f"{api_base}/about/ships", timeout=10)` — **NONEXISTENT URL**
+- L144 expects `[s["name"] for s in resp.json() if s.get("name")]` — would also fail on shape
+
+`services/bot-core/src/api/routers/data.py:23` registers `@router.post("/{category}", response_model=list[str])` — POST-only, returns plain string list.
+
+`services/bot-core/src/api/routers/about.py` registered routes (verified via grep): only `/about/categories`, `/about/categories/{category}/objects`, `/about/object/...`, `/about/ships/{ship_name}/render-info` exist. **No `/about/ships` plural endpoint.** `aboutCog._preload_data` correctly uses `/about/categories/{cat}/objects` (verified working in same boot — log shows "Preloaded 65 objects for category ship").
+
+**Direct curl probe from inside bot-core container, 2026-04-29 15:03 UTC:**
+```
+GET /api/v1/data/primary_weapon    → 405
+GET /api/v1/data/secondary_weapon  → 405
+GET /api/v1/data/turret_weapon     → 405
+GET /api/v1/data/module            → 405
+GET /api/v1/about/ships            → 404
+```
+
+**Live boot log evidence** (gateway, fresh container started 14:54 UTC):
+```
+14:54:01 ERROR _preload_static_catalogs: terminal failure for category=secondary_weapon after 5 attempts
+14:56:16 ERROR _preload_static_catalogs: terminal failure for category=turret_weapon after 5 attempts
+14:58:31 ERROR _preload_static_catalogs: terminal failure for category=module after 5 attempts
+15:00:46 ERROR _preload_static_catalogs: terminal failure for ship catalog after 5 attempts
+```
+(Primary_weapon failed earlier, before tail window; user-triggered `/reload_autocomplete` at 15:03:59 reproduced the same failures starting again — pattern continues at 15:03:59-15:05:14+.)
+
+**Provenance** — git blame: introduced in commit `1a07cb4` ("feat(discord-gateway): Package E autocomplete preload + cache framework (B.26)", 2026-04-29 06:44 UTC). Diff added 121 lines to adminCog.py with `_preload_static_catalogs` and 277 lines of test coverage to `test_adminCog.py`.
+
+**Root cause of the test miss** (per user observation 2026-04-29 ~15:10 UTC)
+
+This is a textbook violation of `services/bot-core/tests/AGENTS.md`'s "max 2 mocks / prefer real objects" rule, applied to the gateway test suite. The 277 new test lines mock `cog.http_client.get` with canned success payloads, never asserting:
+1. The HTTP **method** used matches the server's actual route (server is `@router.post`, cog uses `.get`)
+2. The **URL** maps to a route registered on bot-core (server has no `/about/ships`)
+3. The **response shape** matches the server contract (`list[str]` from server vs cog's `obj["name"]` access — would `KeyError` even if URL/method were right)
+
+A single integration test booting a real bot-core and exercising `_preload_static_catalogs` end-to-end would have caught all three bugs simultaneously. Mocking the HTTP client is tautological: it tests "the code calls the mock the way the mock expects", not "the code makes a request the server can serve".
+
+A secondary masking factor: AboutCog's separate, *correct* preload (`/about/categories` + `/about/categories/{cat}/objects`) populates `_object_dict` for `/about` and `/list_category` autocomplete, hiding the breakage from any spot-check that exercised those commands. The new `_item_catalog` / `_ship_catalog` caches feed *different* commands (`/equip`, `/buy`, `/sell`, ship-skin) which were not exercised live before this re-verification pass.
+
+**Proposed fix** (sketch, awaits user approval before implementation)
+
+Option 1 — minimal change, reuse existing AboutCog endpoint contract:
+- L119: `self.http_client.get(f"{api_base}/about/categories/{category}/objects", timeout=10)` (already returns `list[dict]` with `name` field — adminCog's existing parsing at L121 works unchanged)
+- L142: `self.http_client.get(f"{api_base}/about/categories/ship/objects", timeout=10)` (same endpoint, ship category — adminCog's existing parsing at L144 works unchanged)
+- Eliminates entire dependency on `/data/{category}` POST contract; aligns with AboutCog's known-working pattern.
+
+Option 2 — keep `/data/{category}` but fix method + shape:
+- Change `.get` → `.post` (with empty body) and parse `resp.json()` as `list[str]` directly. More invasive (changes both URL semantics and parse logic) and `/data/{category}` was designed as an admin import endpoint, not a query.
+
+**Option 1 strongly preferred** — it's a 2-line URL change with no shape-handling changes.
+
+**Test-debt remediation** required alongside the code fix:
+1. Replace the `http_client.get` mock pattern in `test_adminCog.py::test_preload_static_catalogs_*` with either (a) a `respx`-backed mock that asserts URL+method, or (b) a real bot-core TestClient fixture.
+2. Add similar URL+method assertions to all other gateway preload tests (devCog, shopCog, bountyCog) to prevent recurrence.
+3. Audit `services/discord-gateway/tests/AGENTS.md` (if exists) or add a new section codifying: "preload tests must assert URL and HTTP method, not just response handling."
+
+**Workaround**: none in-band. `/reload_autocomplete` reproduces the same bug. AboutCog cache covers `/about` + `/list_category`. Other commands relying on the empty caches will show empty dropdowns until fix ships.
+
+**Severity rationale (🔴 high)**: Blocks live verification of Phase 5 (equip/unequip), Phase 6 (shop buy/sell), Phase 11 (skin selection), and degrades autocomplete UX silently in production with no user-visible error — only an empty dropdown. Fix is trivial (2-line URL change); cost of leaving open dwarfs cost of fixing.
+
+---
+
 ### B.32 — `/render_config action:set setting:samples` silently accepts unrecognized field name
 🟡 medium · Phase 12.16 · 2026-04-28
 > **FIXED** in commit `8860c5a` (Package C, 2026-04-29). Fix A: cog validates `setting` against `self._render_settings` before API call (adminCog.py); returns ephemeral error listing valid settings. Fix B: blender-service router raises 422 when no valid `RenderConfig` fields appear in the update payload (config.py defense-in-depth).
@@ -2597,13 +2677,59 @@ Initial shop generation can legitimately produce 0 turret_weapon rows (RNG varia
 ---
 
 ### A.23 — Test suite over-mocking + sub-threshold coverage audit
-🟡 medium · cross-cutting · post-E2E
+🟠 high (upgraded from 🟡 2026-04-29) · cross-cutting · partial fix in flight
 
-Many tests exceed project's "max 2 mocks per test" standard (`AGENTS.md`). Several files below coverage threshold. Cross-references NC-002 / NC-003 from prior sessions.
+Many tests exceed project's "max 2 mocks per test" standard (`AGENTS.md`). The B.33 incident (Package E preload regression, 3 bugs co-shipped with 277 lines of passing-but-tautological test coverage) confirmed the empirical impact: contract drift between cogs and bot-core/blender-service is invisible to the existing test suite.
 
-**Scope**: enumerate violators; refactor to real objects (reference: `test_combat_service.py`); decide per low-coverage file (add tests / document exemption / remove dead code).
+**Empirical inventory (2026-04-29 skim-pass by @developer)**
 
-**Prereq**: complete E2E manual pass first.
+Total corpus: 200 test files / 5,473 tests across 3 services.
+
+**Tier 1 — Critical (B.33 family, blocking E2E re-verify)**
+22 gateway cog test files (~24,065 LOC) all use `cog.http_client.method = AsyncMock(return_value=canned_payload)` without asserting URL or HTTP method matches a real server route.
+Highest-volume offenders:
+
+| File | LOC | `http_client.*` hits |
+|---|---|---|
+| `cogs/test_inventoryCog.py` | 2,242 | 123 |
+| `cogs/test_shopCog.py` | 2,086 | 119 |
+| `cogs/test_shipsCog.py` | — | 88 |
+| `cogs/test_adminCog.py` | 2,398 | 84 |
+| `cogs/test_playerCog.py` | 2,306 | 78 |
+| `cogs/test_bountyCog.py` | 2,145 | 49 |
+
+Effort estimate: 8–16 agent-hours for the 4 critical B.33-adjacent files; 60–120h for full Tier-2 conversion.
+
+**Tier 2 — High value (catches future contract drift)**: all 22 cog HTTP test files (full list in @developer report archived in conversation log).
+
+**Tier 3 — Hygiene (bot-core repo/session over-mocking, ORM identity-map risk class)**
+8 high-priority bot-core API/service files (~10,000+ LOC of test code) patch entire repository classes at the constructor level, masking the doubled-credit bug class documented in `bot-core/tests/AGENTS.md`. Worst single offender: `api/test_admin_router.py` (1,746 LOC, 86 `@patch` decorators, 104 mock instantiations).
+
+| File | LOC | `@patch` count |
+|---|---|---|
+| `api/test_admin_router.py` | 1,746 | 86 |
+| `api/test_bounty_router.py` | 1,594 | 66 |
+| `api/test_shops_router.py` | 1,053 | 46 |
+| `api/test_config_router.py` | 862 | 44 |
+| `api/test_inventory_router.py` | 942 | 43 |
+| `api/test_admin_inventory_commands.py` | 746 | 39 |
+| `services/test_bounty_service.py` | 4,327 | 422 mock-line hits |
+
+Effort estimate: 20–60 agent-hours, deferred until after Tier 1–2.
+
+**Blender-service**: clean (low mock usage, uses TestClient + DI). Not a remediation target.
+
+**Recommended approach**
+1. Fix `TestPreloadStaticCatalogs` in `test_adminCog.py` first (~130 LOC, ~2h) — closes B.33 directly + establishes canonical `respx` pattern.
+2. Create `tests/cogs/fixtures/bot_core_contract.py` — single source of truth for real route URL + method + response shape. All `respx` mocks reference it. Done once (~4h), pays dividends across all Tier 2 conversions.
+3. Stage Tier 2 by cog file (one PR per cog, ~4–8h each).
+4. Defer Tier 3 until Tier 1–2 complete.
+
+**Status**
+- Tier 1 critical 4 files: **in-flight** as B.33 fix (separate developer dispatch, 2026-04-29).
+- Tier 2 + 3: still deferred, no agent dispatched.
+
+**Cross-references**: B.33 (proven consequence), NC-002 / NC-003 (prior-session non-compliance findings).
 
 ---
 
@@ -2613,6 +2739,7 @@ Many tests exceed project's "max 2 mocks per test" standard (`AGENTS.md`). Sever
 
 | ID | Summary | Commit | Verified |
 |---|---|---|---|
+| **B.33** | `adminCog._preload_static_catalogs` used wrong URLs: `GET /data/{cat}` (405 POST-only) for 4 item categories and `GET /about/ships` (404 nonexistent) for ships. Fixed: both changed to `GET /about/categories/{cat}/objects` — matching AboutCog's known-working pattern. Test debt: 4 tautological mock tests replaced with 5 respx tests asserting URL+method; aboutCog, bountyCog, skinsCog preload tests also converted; `tests/AGENTS.md` policy added. | `452ac28`, `9a19909`, `645c474`, `51c0bb5` | Verified: pending |
 | **A.34** | `/ship` autocomplete showed `🟢` prefix in dropdown (a/c); `/ship` embed had redundant `Type: Betty` field (b/B.3). Fixed: added `show_active_indicator: bool = True` param to `player_ships_autocomplete()`; `/ship` and `/nickname` callers pass `False`; removed `embed.add_field(name="Type", ...)` from inline `/ship` builder. B.3 subsumed — `Type:` field is the same redundancy, removed by same change. Full delegation to `build_loadout_embed()` deferred (format mismatch between `/ships/{id}/loadout` and `/players/{id}/loadout` responses). | `1f3561d` | pending |
 | **A.32** | `Mp'zzzm Thrust` module rendered custom emoji `:mpzzzm:` (guild emoji not uploaded). Fixed: replaced `<:mpzzzm:723707097778225214>` with unicode `⚡` in `thrusters.mpzzzm_thrust.json`. | `1f3561d` | pending |
 | **A.30** | `GET /guilds/{id}/channels` returned `category_id: null` for all child channels. Fixed: added `category_id=getattr(channel, "category_id", None)` to `channel_to_summary()` return. Added 2 tests asserting category_id is populated for child channels. | `1f3561d` | pending |
@@ -2691,4 +2818,4 @@ Many tests exceed project's "max 2 mocks per test" standard (`AGENTS.md`). Sever
 
 ---
 
-*Last updated: 2026-04-29 — added inline FIXED annotations to 9 OPEN entries that were already in the FIXED table (B.18, B.2, B.4, B.3, A.10, A.30, A.34, A.32, A.25); added top-of-OPEN status snapshot. Patch I QA hardening (earlier today): C.1 (B.32 guard fail-closed), Cross-1 (B.25 @is_admin() scope), E.1 (autocomplete cache TOCTOU comment + test), E.2 (B.26 tier-resolution WARNING), F.1 (B.31b sanitizer extended to bare hostnames + IPv4).*
+*Last updated: 2026-04-29 — B.33 fixed (adminCog _preload_static_catalogs wrong URLs + test debt remediation; commits 452ac28/9a19909/645c474/51c0bb5); B.33 added to FIXED table with Verified:pending. Earlier today: added inline FIXED annotations to 9 OPEN entries that were already in the FIXED table (B.18, B.2, B.4, B.3, A.10, A.30, A.34, A.32, A.25); added top-of-OPEN status snapshot. Patch I QA hardening: C.1 (B.32 guard fail-closed), Cross-1 (B.25 @is_admin() scope), E.1 (autocomplete cache TOCTOU comment + test), E.2 (B.26 tier-resolution WARNING), F.1 (B.31b sanitizer extended to bare hostnames + IPv4).*

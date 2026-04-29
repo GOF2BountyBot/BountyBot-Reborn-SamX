@@ -295,81 +295,139 @@ class TestBountyCogInitialization:
 
 
 class TestPreloadData:
-    """Tests for _preload_data method."""
+    """Tests for _preload_data method.
 
-    def test_preload_data_populates_systems(self, mock_bounty_cog, make_mock_response):
-        """_preload_data should populate _systems list from API response."""
+    B.33 remediation: tests use respx to assert exact URL + HTTP method,
+    confirming bountyCog calls GET /about/categories/system/objects (correct
+    bot-core route per about.py:85) rather than any wrong URL/method.
+    """
+
+    _SYSTEMS_URL = "http://bot-core:8000/api/v1/about/categories/system/objects"
+
+    def _with_real_client(self, cog):
+        """Replace cog.http_client with a real httpx.AsyncClient for respx interception."""
+        import httpx
+
+        cog.http_client = httpx.AsyncClient(timeout=httpx.Timeout(10.0))
+        return cog
+
+    def test_preload_data_populates_systems(self, mock_bounty_cog):
+        """_preload_data calls GET /about/categories/system/objects and populates _systems."""
+        import httpx
+        import respx
+
+        self._with_real_client(mock_bounty_cog)
+        mock_bounty_cog.bot.wait_until_ready = AsyncMock()
+
         systems_data = [
             {"name": "Sol", "id": 1},
             {"name": "Alpha Centauri", "id": 2},
             {"name": "Proxima", "id": 3},
         ]
-        resp = make_mock_response(systems_data)
-        mock_bounty_cog.http_client.get = AsyncMock(return_value=resp)
 
-        asyncio.run(mock_bounty_cog._preload_data())
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.get(self._SYSTEMS_URL).mock(
+                return_value=httpx.Response(200, json=systems_data)
+            )
+            asyncio.run(mock_bounty_cog._preload_data())
 
         assert mock_bounty_cog._systems == ["Sol", "Alpha Centauri", "Proxima"]
 
     def test_preload_data_handles_api_failure_gracefully(self, mock_bounty_cog):
-        """_preload_data should set _systems to [] after all retries exhausted."""
-        mock_bounty_cog.http_client.get = AsyncMock(side_effect=RuntimeError("connection refused"))
+        """_preload_data sets _systems to [] after all retries exhausted on 500 errors."""
+        import httpx
+        import respx
 
-        # Patch asyncio.sleep so retries don't actually wait
-        with patch("cogs.bountyCog.asyncio.sleep", new=AsyncMock()) as mock_sleep:
-            asyncio.run(mock_bounty_cog._preload_data())
+        self._with_real_client(mock_bounty_cog)
+        mock_bounty_cog.bot.wait_until_ready = AsyncMock()
+
+        with respx.mock(assert_all_called=False) as mock_router:
+            mock_router.get(self._SYSTEMS_URL).mock(
+                return_value=httpx.Response(503, json={"detail": "Service Unavailable"})
+            )
+            with patch("cogs.bountyCog.asyncio.sleep", new=AsyncMock()) as mock_sleep:
+                asyncio.run(mock_bounty_cog._preload_data())
 
         assert mock_bounty_cog._systems == []
         # Should have slept 5 times (once per retry attempt)
         assert mock_sleep.call_count == 5
 
-    def test_preload_data_retries_on_timeout(self, mock_bounty_cog, make_mock_response):
-        """_preload_data should retry on TimeoutException and succeed on 2nd attempt."""
+    def test_preload_data_retries_on_timeout(self, mock_bounty_cog):
+        """_preload_data retries on TimeoutException and succeeds on 2nd attempt."""
         import httpx
+        import respx
 
-        systems_data = [{"name": "Sol", "id": 1}]
-        success_resp = make_mock_response(systems_data)
+        self._with_real_client(mock_bounty_cog)
+        mock_bounty_cog.bot.wait_until_ready = AsyncMock()
+        attempt_count = {"n": 0}
 
-        timeout_exc = httpx.TimeoutException("timeout")
-        mock_bounty_cog.http_client.get = AsyncMock(side_effect=[timeout_exc, success_resp])
+        async def flaky_handler(request):
+            attempt_count["n"] += 1
+            if attempt_count["n"] == 1:
+                raise httpx.TimeoutException("timeout", request=request)
+            return httpx.Response(200, json=[{"name": "Sol", "id": 1}])
 
-        with patch("cogs.bountyCog.asyncio.sleep", new=AsyncMock()) as mock_sleep:
-            asyncio.run(mock_bounty_cog._preload_data())
+        with respx.mock(assert_all_called=False) as mock_router:
+            mock_router.get(self._SYSTEMS_URL).mock(side_effect=flaky_handler)
+            with patch("cogs.bountyCog.asyncio.sleep", new=AsyncMock()) as mock_sleep:
+                asyncio.run(mock_bounty_cog._preload_data())
 
         assert mock_bounty_cog._systems == ["Sol"]
         # Should have slept once after the first failure
         assert mock_sleep.call_count == 1
 
     def test_preload_data_retries_correct_delays(self, mock_bounty_cog):
-        """_preload_data should use exponential backoff delays [5, 10, 20, 40, 60]."""
-        mock_bounty_cog.http_client.get = AsyncMock(side_effect=RuntimeError("error"))
+        """_preload_data uses exponential backoff delays [5, 10, 20, 40, 60]."""
+        import httpx
+        import respx
 
-        with patch("cogs.bountyCog.asyncio.sleep", new=AsyncMock()) as mock_sleep:
-            asyncio.run(mock_bounty_cog._preload_data())
+        self._with_real_client(mock_bounty_cog)
+        mock_bounty_cog.bot.wait_until_ready = AsyncMock()
+
+        with respx.mock(assert_all_called=False) as mock_router:
+            mock_router.get(self._SYSTEMS_URL).mock(
+                return_value=httpx.Response(500, json={"detail": "error"})
+            )
+            with patch("cogs.bountyCog.asyncio.sleep", new=AsyncMock()) as mock_sleep:
+                asyncio.run(mock_bounty_cog._preload_data())
 
         expected_delays = [5, 10, 20, 40, 60]
         actual_delays = [call.args[0] for call in mock_sleep.call_args_list]
         assert actual_delays == expected_delays
 
     def test_preload_data_logs_warning_on_retry(self, mock_bounty_cog):
-        """_preload_data should log a warning on each failed attempt."""
-        mock_bounty_cog.http_client.get = AsyncMock(side_effect=RuntimeError("boom"))
+        """_preload_data logs a warning on each failed attempt and error at terminal failure."""
+        import httpx
+        import respx
 
-        with patch("cogs.bountyCog.asyncio.sleep", new=AsyncMock()):
-            asyncio.run(mock_bounty_cog._preload_data())
+        self._with_real_client(mock_bounty_cog)
+        mock_bounty_cog.bot.wait_until_ready = AsyncMock()
+
+        with respx.mock(assert_all_called=False) as mock_router:
+            mock_router.get(self._SYSTEMS_URL).mock(
+                return_value=httpx.Response(500, json={"detail": "boom"})
+            )
+            with patch("cogs.bountyCog.asyncio.sleep", new=AsyncMock()):
+                asyncio.run(mock_bounty_cog._preload_data())
 
         # Should have logged a warning for each attempt and an error at the end
         assert _module_logger.warning.call_count == 5
         assert _module_logger.error.call_count >= 1
 
-    def test_preload_data_returns_immediately_on_success(self, mock_bounty_cog, make_mock_response):
-        """_preload_data should return after first successful attempt, not retry."""
-        systems_data = [{"name": "Sol", "id": 1}]
-        resp = make_mock_response(systems_data)
-        mock_bounty_cog.http_client.get = AsyncMock(return_value=resp)
+    def test_preload_data_returns_immediately_on_success(self, mock_bounty_cog):
+        """_preload_data returns after first successful attempt, no retry sleep."""
+        import httpx
+        import respx
 
-        with patch("cogs.bountyCog.asyncio.sleep", new=AsyncMock()) as mock_sleep:
-            asyncio.run(mock_bounty_cog._preload_data())
+        self._with_real_client(mock_bounty_cog)
+        mock_bounty_cog.bot.wait_until_ready = AsyncMock()
+
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.get(self._SYSTEMS_URL).mock(
+                return_value=httpx.Response(200, json=[{"name": "Sol", "id": 1}])
+            )
+            with patch("cogs.bountyCog.asyncio.sleep", new=AsyncMock()) as mock_sleep:
+                asyncio.run(mock_bounty_cog._preload_data())
 
         assert mock_bounty_cog._systems == ["Sol"]
         # No sleep should occur on first-attempt success

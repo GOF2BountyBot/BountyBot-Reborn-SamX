@@ -106,50 +106,55 @@ class TestSkinsCogInitialization:
 
 
 class TestShipSkinPreload:
-    """Tests for ship skin preloading."""
+    """Tests for ship skin preloading.
 
-    @patch("cogs.skinsCog.httpx")
-    def test_preload_ship_skins_success(self, mock_httpx, mock_skins_cog):
-        """_preload_ship_skins should load ship skins successfully."""
-        # Mock HTTP client
-        mock_httpx.AsyncClient = MagicMock()
-        mock_client = MagicMock()
-        mock_httpx.AsyncClient.return_value = mock_client
+    B.33 remediation: tests use respx to assert exact URL + HTTP method.
+    skinsCog._preload_ship_skins calls:
+    - GET /about/categories/ship/objects  (ship list)
+    - GET /about/object/name/{name}       (per-ship detail with skins)
+    Both routes are confirmed correct in about.py.
+    """
 
-        # Mock API responses - ships list
-        ships_resp = MagicMock()
-        ships_resp.status_code = 200
-        ships_resp.json.return_value = [{"name": "Test Ship 1"}, {"name": "Test Ship 2"}]
-        ships_resp.raise_for_status = MagicMock()
+    _API_BASE = "http://bot-core:8000/api/v1"
 
-        # Mock ship detail responses
-        ship1_resp = MagicMock()
-        ship1_resp.status_code = 200
-        ship1_resp.json.return_value = {
-            "name": "Test Ship 1",
-            "compatible_skins": {"Red Skin": "http://example.com/red.png", "Blue Skin": "http://example.com/blue.png"},
-        }
-        ship1_resp.raise_for_status = MagicMock()
+    def test_preload_ship_skins_success(self, mock_skins_cog):
+        """_preload_ship_skins calls GET /about/categories/ship/objects and
+        GET /about/object/name/{name} for each ship, populating _ship_skins."""
+        import httpx
+        import respx
 
-        ship2_resp = MagicMock()
-        ship2_resp.status_code = 200
-        ship2_resp.json.return_value = {
-            "name": "Test Ship 2",
-            "compatible_skins": {"Green Skin": "http://example.com/green.png"},
-        }
-        ship2_resp.raise_for_status = MagicMock()
+        mock_skins_cog.bot.wait_until_ready = AsyncMock()
 
-        mock_client.get = AsyncMock(side_effect=[ships_resp, ship1_resp, ship2_resp])
-        mock_client.aclose = AsyncMock()
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.get(f"{self._API_BASE}/about/categories/ship/objects").mock(
+                return_value=httpx.Response(
+                    200, json=[{"name": "Test Ship 1", "id": 1}, {"name": "Test Ship 2", "id": 2}]
+                )
+            )
+            mock_router.get(f"{self._API_BASE}/about/object/name/Test Ship 1").mock(
+                return_value=httpx.Response(
+                    200,
+                    json={
+                        "name": "Test Ship 1",
+                        "compatible_skins": {
+                            "Red Skin": "http://example.com/red.png",
+                            "Blue Skin": "http://example.com/blue.png",
+                        },
+                    },
+                )
+            )
+            mock_router.get(f"{self._API_BASE}/about/object/name/Test Ship 2").mock(
+                return_value=httpx.Response(
+                    200,
+                    json={
+                        "name": "Test Ship 2",
+                        "compatible_skins": {"Green Skin": "http://example.com/green.png"},
+                    },
+                )
+            )
 
-        # Replace the cog's http_client with our mock
-        mock_skins_cog.http_client = mock_client
+            asyncio.run(mock_skins_cog._preload_ship_skins())
 
-        # Call method
-        asyncio.run(mock_skins_cog._preload_ship_skins())
-
-        # Verify behavior
-        mock_client.get.assert_any_call("http://bot-core:8000/api/v1/about/categories/ship/objects", timeout=10)
         assert len(mock_skins_cog._ship_skins) == 2
         assert "Test Ship 1" in mock_skins_cog._ship_skins
         assert "Test Ship 2" in mock_skins_cog._ship_skins
@@ -157,23 +162,21 @@ class TestShipSkinPreload:
         assert "Blue Skin" in mock_skins_cog._ship_skins["Test Ship 1"]
         assert "Green Skin" in mock_skins_cog._ship_skins["Test Ship 2"]
 
-    @patch("cogs.skinsCog.httpx")
-    def test_preload_ship_skins_failure(self, mock_httpx, mock_skins_cog):
-        """_preload_ship_skins should handle failures gracefully."""
-        # Mock HTTP client with error
-        mock_httpx.AsyncClient = MagicMock()
-        mock_client = MagicMock()
-        mock_httpx.AsyncClient.return_value = mock_client
-        mock_client.get = AsyncMock(side_effect=Exception("API error"))
-        mock_client.aclose = AsyncMock()
+    def test_preload_ship_skins_failure(self, mock_skins_cog):
+        """_preload_ship_skins handles GET /about/categories/ship/objects failure gracefully."""
+        import httpx
+        import respx
 
-        # Replace the cog's http_client with our mock
-        mock_skins_cog.http_client = mock_client
+        mock_skins_cog.bot.wait_until_ready = AsyncMock()
 
-        # Call method
-        asyncio.run(mock_skins_cog._preload_ship_skins())
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.get(f"{self._API_BASE}/about/categories/ship/objects").mock(
+                return_value=httpx.Response(500, json={"detail": "Internal Server Error"})
+            )
 
-        # Verify behavior - error should be logged but not crash
+            asyncio.run(mock_skins_cog._preload_ship_skins())
+
+        # Error should be caught and _ship_skins stays empty
         assert mock_skins_cog._ship_skins == {}
 
 
@@ -364,74 +367,70 @@ class TestCogUnload:
 
 
 class TestShipSkinPreloadEdgeCases:
-    """Tests for ship skin preloading edge cases."""
+    """Tests for ship skin preloading edge cases.
 
-    @patch("cogs.skinsCog.httpx")
-    def test_preload_ship_skins_missing_name(self, mock_httpx, mock_skins_cog):
-        """_preload_ship_skins should skip ships without names."""
-        # Mock HTTP client
-        mock_httpx.AsyncClient = MagicMock()
-        mock_client = MagicMock()
-        mock_httpx.AsyncClient.return_value = mock_client
+    B.33 remediation: uses respx to assert URL + HTTP method correctness.
+    """
 
-        # Mock API responses - ship without name and ship with name
-        ships_resp = MagicMock()
-        ships_resp.status_code = 200
-        ships_resp.json.return_value = [
-            {"name": None},  # No name - should skip
-            {"name": ""},  # Empty name - should skip
-            {"name": "Valid Ship"},
-        ]
-        ships_resp.raise_for_status = MagicMock()
+    _API_BASE = "http://bot-core:8000/api/v1"
 
-        # Valid ship response
-        valid_resp = MagicMock()
-        valid_resp.status_code = 200
-        valid_resp.json.return_value = {"name": "Valid Ship", "compatible_skins": {"Skin1": "url1"}}
-        valid_resp.raise_for_status = MagicMock()
+    def test_preload_ship_skins_missing_name(self, mock_skins_cog):
+        """_preload_ship_skins skips ships without names from the ship list."""
+        import httpx
+        import respx
 
-        mock_client.get = AsyncMock(side_effect=[ships_resp, valid_resp])
-        mock_client.aclose = AsyncMock()
-        mock_skins_cog.http_client = mock_client
+        mock_skins_cog.bot.wait_until_ready = AsyncMock()
 
-        # Call method
-        asyncio.run(mock_skins_cog._preload_ship_skins())
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.get(f"{self._API_BASE}/about/categories/ship/objects").mock(
+                return_value=httpx.Response(
+                    200,
+                    json=[
+                        {"name": None},   # No name — should skip
+                        {"name": ""},     # Empty name — should skip
+                        {"name": "Valid Ship", "id": 3},
+                    ],
+                )
+            )
+            mock_router.get(f"{self._API_BASE}/about/object/name/Valid Ship").mock(
+                return_value=httpx.Response(
+                    200, json={"name": "Valid Ship", "compatible_skins": {"Skin1": "url1"}}
+                )
+            )
 
-        # Verify only valid ship was loaded
+            asyncio.run(mock_skins_cog._preload_ship_skins())
+
         assert "Valid Ship" in mock_skins_cog._ship_skins
         assert len(mock_skins_cog._ship_skins) == 1
 
-    @patch("cogs.skinsCog.httpx")
-    def test_preload_ship_skins_individual_ship_error(self, mock_httpx, mock_skins_cog):
-        """_preload_ship_skins should handle errors loading individual ship details."""
-        # Mock HTTP client
-        mock_httpx.AsyncClient = MagicMock()
-        mock_client = MagicMock()
-        mock_httpx.AsyncClient.return_value = mock_client
+    def test_preload_ship_skins_individual_ship_error(self, mock_skins_cog):
+        """_preload_ship_skins handles errors loading individual ship details:
+        failed ship gets empty skins list, others continue loading."""
+        import httpx
+        import respx
 
-        # Mock API responses
-        ships_resp = MagicMock()
-        ships_resp.status_code = 200
-        ships_resp.json.return_value = [{"name": "Ship 1"}, {"name": "Ship 2"}]
-        ships_resp.raise_for_status = MagicMock()
+        mock_skins_cog.bot.wait_until_ready = AsyncMock()
 
-        # First ship fails, second succeeds
-        error_resp = MagicMock()
-        error_resp.raise_for_status = MagicMock(side_effect=Exception("Failed to load ship"))
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.get(f"{self._API_BASE}/about/categories/ship/objects").mock(
+                return_value=httpx.Response(
+                    200, json=[{"name": "Ship 1", "id": 1}, {"name": "Ship 2", "id": 2}]
+                )
+            )
+            # First ship fails with 500
+            mock_router.get(f"{self._API_BASE}/about/object/name/Ship 1").mock(
+                return_value=httpx.Response(500, json={"detail": "Internal Server Error"})
+            )
+            # Second ship succeeds
+            mock_router.get(f"{self._API_BASE}/about/object/name/Ship 2").mock(
+                return_value=httpx.Response(
+                    200, json={"name": "Ship 2", "compatible_skins": {"Skin2": "url2"}}
+                )
+            )
 
-        success_resp = MagicMock()
-        success_resp.status_code = 200
-        success_resp.json.return_value = {"name": "Ship 2", "compatible_skins": {"Skin2": "url2"}}
-        success_resp.raise_for_status = MagicMock()
+            asyncio.run(mock_skins_cog._preload_ship_skins())
 
-        mock_client.get = AsyncMock(side_effect=[ships_resp, error_resp, success_resp])
-        mock_client.aclose = AsyncMock()
-        mock_skins_cog.http_client = mock_client
-
-        # Call method
-        asyncio.run(mock_skins_cog._preload_ship_skins())
-
-        # Verify behavior - failed ship should have empty list, successful ship should have skins
+        # Failed ship should have empty skins list; successful ship should have skins
         assert "Ship 1" in mock_skins_cog._ship_skins
         assert mock_skins_cog._ship_skins["Ship 1"] == []
         assert "Ship 2" in mock_skins_cog._ship_skins

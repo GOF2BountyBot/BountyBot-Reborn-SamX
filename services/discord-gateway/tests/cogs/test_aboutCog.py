@@ -205,83 +205,108 @@ class TestCogUnload:
 
 
 class TestPreloadData:
-    """Tests for _preload_data method."""
+    """Tests for _preload_data method.
+
+    B.33 remediation: tests use respx to assert exact URL + HTTP method,
+    confirming aboutCog calls the correct bot-core routes:
+    - GET /about/categories  (list categories)
+    - GET /about/categories/{cat}/objects  (objects per category)
+    Both routes are confirmed correct in about.py:69 and about.py:85.
+
+    Note: the mock_about_cog fixture replaces http_client with a MagicMock for
+    most tests. The preload tests reinstall a real httpx.AsyncClient so that
+    respx can intercept network calls and assert URL+method correctness.
+    """
+
+    _API_BASE = "http://bot-core:8000/api/v1"
+
+    def _with_real_client(self, cog):
+        """Replace cog.http_client with a real httpx.AsyncClient for respx interception."""
+        import httpx
+
+        cog.http_client = httpx.AsyncClient(timeout=httpx.Timeout(10.0))
+        return cog
 
     def test_preload_data_success(self, mock_about_cog):
-        """_preload_data should load categories and objects successfully."""
-        categories = ["ship", "module", "primary_weapon"]
+        """_preload_data calls GET /about/categories then GET /about/categories/{cat}/objects
+        for each category and populates _categories and _objects_by_category."""
+        import httpx
+        import respx
 
-        categories_resp = MagicMock()
-        categories_resp.raise_for_status = MagicMock()
-        categories_resp.json.return_value = categories
-
-        ship_objects = [{"name": "Eagle", "aliases": []}, {"name": "Hawk", "aliases": []}]
-        module_objects = [{"name": "Shield", "aliases": []}]
-        weapon_objects = [{"name": "Laser", "aliases": []}]
-
-        ship_resp = MagicMock()
-        ship_resp.raise_for_status = MagicMock()
-        ship_resp.json.return_value = ship_objects
-
-        module_resp = MagicMock()
-        module_resp.raise_for_status = MagicMock()
-        module_resp.json.return_value = module_objects
-
-        weapon_resp = MagicMock()
-        weapon_resp.raise_for_status = MagicMock()
-        weapon_resp.json.return_value = weapon_objects
-
-        mock_about_cog.http_client.get = AsyncMock(side_effect=[categories_resp, ship_resp, module_resp, weapon_resp])
-        # wait_until_ready returns immediately
+        self._with_real_client(mock_about_cog)
         mock_about_cog.bot.wait_until_ready = AsyncMock()
 
-        asyncio.run(mock_about_cog._preload_data())
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.get(f"{self._API_BASE}/about/categories").mock(
+                return_value=httpx.Response(200, json=["ship", "module", "primary_weapon"])
+            )
+            mock_router.get(f"{self._API_BASE}/about/categories/ship/objects").mock(
+                return_value=httpx.Response(
+                    200, json=[{"name": "Eagle", "aliases": []}, {"name": "Hawk", "aliases": []}]
+                )
+            )
+            mock_router.get(f"{self._API_BASE}/about/categories/module/objects").mock(
+                return_value=httpx.Response(200, json=[{"name": "Shield", "aliases": []}])
+            )
+            mock_router.get(f"{self._API_BASE}/about/categories/primary_weapon/objects").mock(
+                return_value=httpx.Response(200, json=[{"name": "Laser", "aliases": []}])
+            )
 
-        assert mock_about_cog._categories == categories
+            asyncio.run(mock_about_cog._preload_data())
+
+        assert mock_about_cog._categories == ["ship", "module", "primary_weapon"]
         assert "ship" in mock_about_cog._objects_by_category
         assert len(mock_about_cog._objects_by_category["ship"]) == 2
 
     def test_preload_data_api_failure(self, mock_about_cog):
-        """_preload_data should handle API failure gracefully."""
+        """_preload_data handles GET /about/categories failure gracefully
+        (resets to empty without raising)."""
         import httpx
+        import respx
 
-        mock_about_cog.http_client.get = AsyncMock(side_effect=httpx.HTTPError("connection refused"))
+        self._with_real_client(mock_about_cog)
         mock_about_cog.bot.wait_until_ready = AsyncMock()
 
-        # Should not raise — failure is caught internally
-        asyncio.run(mock_about_cog._preload_data())
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.get(f"{self._API_BASE}/about/categories").mock(
+                return_value=httpx.Response(503, json={"detail": "Service Unavailable"})
+            )
+
+            # Should not raise — failure is caught internally
+            asyncio.run(mock_about_cog._preload_data())
 
         # On failure, categories should be reset to empty
         assert mock_about_cog._categories == []
         assert mock_about_cog._objects_by_category == {}
 
     def test_preload_data_category_object_failure(self, mock_about_cog):
-        """_preload_data should handle per-category failure gracefully."""
-        categories = ["ship", "module"]
-
-        categories_resp = MagicMock()
-        categories_resp.raise_for_status = MagicMock()
-        categories_resp.json.return_value = categories
-
-        ship_resp = MagicMock()
-        ship_resp.raise_for_status = MagicMock()
-        ship_resp.json.return_value = [{"name": "Eagle", "aliases": []}]
-
-        # Module category fails
+        """_preload_data handles per-category failure gracefully:
+        successful categories are populated; failed category gets empty list."""
         import httpx
+        import respx
 
-        module_error = httpx.HTTPError("timeout")
-
-        mock_about_cog.http_client.get = AsyncMock(side_effect=[categories_resp, ship_resp, module_error])
+        self._with_real_client(mock_about_cog)
         mock_about_cog.bot.wait_until_ready = AsyncMock()
 
-        asyncio.run(mock_about_cog._preload_data())
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.get(f"{self._API_BASE}/about/categories").mock(
+                return_value=httpx.Response(200, json=["ship", "module"])
+            )
+            mock_router.get(f"{self._API_BASE}/about/categories/ship/objects").mock(
+                return_value=httpx.Response(200, json=[{"name": "Eagle", "aliases": []}])
+            )
+            # Module category fails with 500
+            mock_router.get(f"{self._API_BASE}/about/categories/module/objects").mock(
+                return_value=httpx.Response(500, json={"detail": "Internal Server Error"})
+            )
+
+            asyncio.run(mock_about_cog._preload_data())
 
         # Categories should be loaded
-        assert mock_about_cog._categories == categories
+        assert mock_about_cog._categories == ["ship", "module"]
         # Ship objects should be loaded
         assert len(mock_about_cog._objects_by_category["ship"]) == 1
-        # Module objects should be empty list (fallback)
+        # Module objects should be empty list (fallback on HTTP error)
         assert mock_about_cog._objects_by_category["module"] == []
 
 

@@ -90,13 +90,29 @@ def test_update_config(client: TestClient) -> None:
     assert body["default_samples"] == 16
 
 
-def test_update_config_unknown_key_ignored(client: TestClient) -> None:
-    """PUT /config/render with an unknown key should succeed and ignore the key."""
+def test_update_config_unknown_key_returns_422(client: TestClient) -> None:
+    """B.32: PUT /config/render with only unknown keys returns 422 (no valid fields applied)."""
     response = client.put("/api/v1/config/render", json={"totally_fake_setting": 42})
+    assert response.status_code == 422
+    body = response.json()
+    assert "detail" in body
+
+
+def test_update_config_unknown_key_samples_returns_422(client: TestClient) -> None:
+    """B.32: PUT /config/render with 'samples' (non-existent field) returns 422.
+
+    'samples' is a plausible near-miss for 'default_samples' — exact scenario from B.32.
+    """
+    response = client.put("/api/v1/config/render", json={"samples": 64})
+    assert response.status_code == 422
+
+
+def test_update_config_mixed_valid_unknown_succeeds(client: TestClient) -> None:
+    """B.32: PUT /config/render with at least one valid field plus unknowns succeeds."""
+    response = client.put("/api/v1/config/render", json={"max_res_x": 1920, "unknown_field": 99})
     assert response.status_code == 200
     body = response.json()
-    # The response should still have the standard keys.
-    assert "max_res_x" in body
+    assert body["max_res_x"] == 1920
 
 
 # ---------------------------------------------------------------------------

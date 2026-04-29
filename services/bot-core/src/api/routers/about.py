@@ -105,6 +105,8 @@ async def list_objects_for_category(category: DataCategory, db: AsyncSession = D
                     "name": obj.name,
                     "aliases": obj.aliases if hasattr(obj, "aliases") else [],
                     "emoji": obj.emoji if hasattr(obj, "emoji") else None,
+                    "tech_level": getattr(obj, "tech_level", None),
+                    "manufacturer": getattr(obj, "manufacturer", None),
                 }
             )
 

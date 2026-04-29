@@ -20,6 +20,7 @@ from services.loadout_response_service import LoadoutResponseService
 from services.map_renderer import MapRenderer
 from services.system_graph_service import SystemGraphService
 from shared import bblogger
+from utils.bounty_announcement_payload import _project_checked
 
 from api.schemas.bounty_schema import (
     AdminSpawnResponse,
@@ -268,6 +269,10 @@ async def get_bounty_route(
         bounty = await service.bounty_repo.get_by_id(db, bounty_id)
         if bounty is None:
             raise HTTPException(status_code=404, detail="Bounty not found")
+        # B.24: compute 3-state system statuses server-side; mask "found" to prevent
+        # answer leakage (client must not know which system the criminal is in)
+        raw_statuses = _project_checked(bounty) or {}
+        system_statuses = {k: ("checked" if v == "found" else v) for k, v in raw_statuses.items()}
         return {
             "bounty_id": bounty.id,
             "criminal_name": bounty.criminal_name,
@@ -275,6 +280,7 @@ async def get_bounty_route(
             "route": bounty.route,
             "checked": bounty.checked,
             "status": bounty.status,
+            "system_statuses": system_statuses,
         }
 
 

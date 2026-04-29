@@ -956,6 +956,14 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
                 if not setting or value is None:
                     await interaction.followup.send("⚠️ Usage: `/render_config set <setting> <value>`", ephemeral=True)
                     return
+                # B.32: validate setting against preloaded allowlist before API call
+                if self._render_settings and setting not in self._render_settings:
+                    valid = ", ".join(f"`{s}`" for s in sorted(self._render_settings))
+                    await interaction.followup.send(
+                        f"⚠️ Unknown setting `{setting}`. Valid settings: {valid}",
+                        ephemeral=True,
+                    )
+                    return
                 resp = await self.http_client.put(
                     f"{blender_base}/config/render",
                     json={setting: value},

@@ -420,3 +420,84 @@ async def test_render_config_requires_admin(admin_cog) -> None:
             result = await _check_is_admin(interaction)
 
     assert result is False
+
+
+# -------------------------------------------------------------------------
+# B.32: Unknown setting guard — cog-side validation
+# -------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_render_config_set_unknown_setting_blocked(admin_cog) -> None:
+    """B.32: render_config set with unknown setting is rejected before API call.
+
+    When setting is not in _render_settings, an error embed must be sent
+    and http_client.put must NOT be called.
+    """
+    admin_cog._render_settings = [
+        "max_res_x",
+        "max_res_y",
+        "min_res_x",
+        "min_res_y",
+        "max_samples",
+        "min_samples",
+        "default_res_x",
+        "default_res_y",
+        "default_samples",
+        "max_concurrent_renders",
+        "job_ttl_hours",
+    ]
+    admin_cog.http_client.put = AsyncMock()
+
+    interaction = _make_mock_interaction(is_admin_user=True)
+
+    # "samples" is the exact scenario from B.32 — not a valid field
+    await admin_cog.render_config.callback(admin_cog, interaction, action="set", setting="samples", value=64)
+
+    # Must NOT have called the API
+    admin_cog.http_client.put.assert_not_called()
+    # Must have sent an error message via followup
+    interaction.followup.send.assert_awaited_once()
+    msg = str(interaction.followup.send.call_args)
+    assert "samples" in msg
+    assert "unknown" in msg.lower() or "valid" in msg.lower()
+    # Must be ephemeral
+    kwargs = interaction.followup.send.call_args[1]
+    assert kwargs.get("ephemeral") is True
+
+
+@pytest.mark.asyncio
+async def test_render_config_set_valid_setting_calls_api(admin_cog) -> None:
+    """B.32: render_config set with valid setting still calls the PUT API."""
+    admin_cog._render_settings = ["max_res_x", "default_samples"]
+    mock_resp = _make_mock_http_response({"max_res_x": 1920})
+    admin_cog.http_client.put = AsyncMock(return_value=mock_resp)
+
+    interaction = _make_mock_interaction(is_admin_user=True)
+
+    await admin_cog.render_config.callback(admin_cog, interaction, action="set", setting="max_res_x", value=1920)
+
+    # API must have been called with the correct payload
+    admin_cog.http_client.put.assert_called_once()
+    interaction.followup.send.assert_awaited_once()
+    msg = str(interaction.followup.send.call_args)
+    assert "max_res_x" in msg
+    assert "1920" in msg
+
+
+@pytest.mark.asyncio
+async def test_render_config_set_empty_preload_skips_guard(admin_cog) -> None:
+    """B.32: If _render_settings is empty (preload failed), skip guard and call API.
+
+    This is a safe-failure mode: if the preload fails, we don't block all set ops.
+    """
+    admin_cog._render_settings = []  # preload failed
+    mock_resp = _make_mock_http_response({"max_res_x": 1920})
+    admin_cog.http_client.put = AsyncMock(return_value=mock_resp)
+
+    interaction = _make_mock_interaction(is_admin_user=True)
+
+    await admin_cog.render_config.callback(admin_cog, interaction, action="set", setting="max_res_x", value=1920)
+
+    # With empty preload, the guard is bypassed and API is called
+    admin_cog.http_client.put.assert_called_once()

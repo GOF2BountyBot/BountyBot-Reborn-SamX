@@ -4,7 +4,8 @@ Router for render configuration management.
 Provides GET/PUT/POST endpoints to inspect and update render settings at runtime.
 """
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, HTTPException, Request
+from services.render_config_service import RenderConfig
 from shared import bblogger
 
 flogger = bblogger.get_logger("blender-config-api-router")
@@ -27,10 +28,17 @@ async def get_render_config(request: Request) -> dict:
 async def update_render_config(request: Request, updates: dict) -> dict:
     """Update one or more render settings.
 
-    Only valid field names are accepted; unknown keys are silently ignored.
+    Only valid field names are accepted; unknown keys raise HTTP 422.
     """
     config_service = request.app.state.render_config
     flogger.info(f"PUT /config/render called with updates: {updates}")
+    # B.32 defense-in-depth: reject requests where no recognized field is provided
+    valid_fields = set(RenderConfig.__dataclass_fields__)
+    if not any(k in valid_fields for k in updates):
+        raise HTTPException(
+            status_code=422,
+            detail=f"No valid fields in update. Valid fields: {sorted(valid_fields)}",
+        )
     updated = config_service.update(updates)
     return updated.to_dict()
 

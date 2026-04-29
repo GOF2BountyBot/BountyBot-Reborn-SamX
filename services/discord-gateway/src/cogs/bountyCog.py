@@ -705,10 +705,14 @@ class BountyCog(commands.Cog):
             if not route_systems:
                 embed.add_field(name="Route", value="No systems in route.", inline=False)
             else:
+                # B.24: use server-computed 3-state system_statuses for visual distinction
+                system_statuses = data.get("system_statuses") or {}
                 route_lines = []
                 for i, system_name in enumerate(route_systems, start=1):
-                    # A system is truly checked when its value != -1 (player_id assigned)
-                    if checked.get(system_name, -1) != -1:
+                    status = system_statuses.get(system_name)
+                    if status == "recently_spotted":
+                        route_lines.append(f"{i}. **~~{system_name}~~** 🔍")
+                    elif status in ("checked", "found"):
                         route_lines.append(f"{i}. ~~{system_name}~~ ✅")
                     else:
                         route_lines.append(f"{i}. {system_name}")

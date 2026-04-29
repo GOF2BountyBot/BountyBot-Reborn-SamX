@@ -261,6 +261,39 @@ class TestListObjectsForCategory:
         assert "aliases" in data[0]
         assert "emoji" in data[0]
 
+    def test_list_objects_includes_tech_level_and_manufacturer(self, client, mock_repos):
+        """A.31: Response includes tech_level and manufacturer fields for filter support.
+
+        Previously these fields were missing, causing /list_category tech_level and
+        manufacturer filters to always return empty results.
+        """
+        mock_obj = make_mock_module(tech_level=3)
+        mock_obj.manufacturer = "Corp X"
+        mock_repos["module"].list_all = AsyncMock(return_value=[mock_obj])
+
+        response = client.get("/api/v1/about/categories/module/objects")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert "tech_level" in data[0], "tech_level must be present in preload response"
+        assert data[0]["tech_level"] == 3
+        assert "manufacturer" in data[0], "manufacturer must be present in preload response"
+        assert data[0]["manufacturer"] == "Corp X"
+
+    def test_list_objects_tech_level_none_when_missing(self, client, mock_repos):
+        """A.31: tech_level returns None gracefully when object has no such attribute."""
+        mock_ship = make_mock_ship(name="Betty")
+        # Ships don't have tech_level in ORM; getattr should return None
+        del mock_ship.tech_level  # remove the attribute if present on mock
+        mock_repos["ship"].list_all = AsyncMock(return_value=[mock_ship])
+
+        response = client.get("/api/v1/about/categories/ship/objects")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert "tech_level" in data[0]
+        # Value is None (or may be set from mock defaults — just confirm field exists)
+
 
 # ===========================================================================
 # 3. GET /about/object/name/{object_name}

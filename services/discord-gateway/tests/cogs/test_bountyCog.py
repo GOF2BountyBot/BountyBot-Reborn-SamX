@@ -133,18 +133,22 @@ def _make_route_response(
     route=None,
     checked=None,
     status="active",
+    system_statuses=None,
 ):
     """Return a minimal route response dict."""
     if route is None:
         route = ["Alpha", "Beta", "Gamma"]
     if checked is None:
         checked = {}
+    if system_statuses is None:
+        system_statuses = {}
     return {
         "bounty_id": bounty_id,
         "criminal_name": criminal_name,
         "route": route,
         "checked": checked,
         "status": status,
+        "system_statuses": system_statuses,
     }
 
 
@@ -669,6 +673,8 @@ class TestRouteCommand:
             _make_route_response(
                 route=["Alpha", "Beta", "Gamma"],
                 checked={"Alpha": 1},
+                # B.24: system_statuses is the new rendering source; provide it
+                system_statuses={"Alpha": "checked"},
             )
         )
         mock_bounty_cog.http_client.get = AsyncMock(return_value=resp)
@@ -753,6 +759,97 @@ class TestRouteCommand:
         interaction.followup.send.assert_awaited_once()
         embed = interaction.followup.send.call_args[1]["embed"]
         assert "Tier:" not in embed.description
+
+    def test_route_recently_spotted_uses_bold_strikethrough(self, mock_bounty_cog, make_mock_response):
+        """B.24: /route renders recently_spotted systems with **~~bold strikethrough~~** + 🔍."""
+        interaction = _create_mock_interaction()
+        resp = make_mock_response(
+            _make_route_response(
+                route=["Alpha", "Beta", "Gamma"],
+                checked={"Alpha": 1, "Beta": 2},
+                system_statuses={"Alpha": "checked", "Beta": "recently_spotted"},
+            )
+        )
+        mock_bounty_cog.http_client.get = AsyncMock(return_value=resp)
+
+        asyncio.run(mock_bounty_cog.route.callback(mock_bounty_cog, interaction, "1"))
+
+        interaction.followup.send.assert_awaited_once()
+        embed = interaction.followup.send.call_args[1]["embed"]
+        field_value = embed.fields[0].value
+        # Alpha is checked — plain strikethrough
+        assert "~~Alpha~~" in field_value
+        # Alpha should NOT have bold
+        assert "**~~Alpha~~**" not in field_value
+        # Beta is recently spotted — bold + strikethrough + 🔍
+        assert "**~~Beta~~**" in field_value
+        assert "🔍" in field_value
+        # Gamma is unchecked — plain
+        assert "~~Gamma~~" not in field_value
+        assert "Gamma" in field_value
+
+    def test_route_checked_system_uses_strikethrough_checkmark(self, mock_bounty_cog, make_mock_response):
+        """B.24: /route renders checked (not recently spotted) systems with ~~strikethrough~~ ✅."""
+        interaction = _create_mock_interaction()
+        resp = make_mock_response(
+            _make_route_response(
+                route=["Proxima", "Tau"],
+                checked={"Proxima": 1},
+                system_statuses={"Proxima": "checked"},
+            )
+        )
+        mock_bounty_cog.http_client.get = AsyncMock(return_value=resp)
+
+        asyncio.run(mock_bounty_cog.route.callback(mock_bounty_cog, interaction, "1"))
+
+        interaction.followup.send.assert_awaited_once()
+        field_value = interaction.followup.send.call_args[1]["embed"].fields[0].value
+        assert "~~Proxima~~" in field_value
+        assert "✅" in field_value
+        assert "**~~Proxima~~**" not in field_value  # not recently spotted
+
+    def test_route_unchecked_system_is_plain(self, mock_bounty_cog, make_mock_response):
+        """B.24: /route renders unchecked systems as plain text (no markdown)."""
+        interaction = _create_mock_interaction()
+        resp = make_mock_response(
+            _make_route_response(
+                route=["Sol", "Proxima"],
+                checked={},
+                system_statuses={},
+            )
+        )
+        mock_bounty_cog.http_client.get = AsyncMock(return_value=resp)
+
+        asyncio.run(mock_bounty_cog.route.callback(mock_bounty_cog, interaction, "1"))
+
+        interaction.followup.send.assert_awaited_once()
+        field_value = interaction.followup.send.call_args[1]["embed"].fields[0].value
+        # Both systems unchecked — plain text, no strikethrough
+        assert "~~Sol~~" not in field_value
+        assert "Sol" in field_value
+        assert "~~Proxima~~" not in field_value
+        assert "Proxima" in field_value
+
+    def test_route_backward_compat_no_system_statuses_field(self, mock_bounty_cog, make_mock_response):
+        """B.24: /route falls back gracefully when system_statuses field is missing (API backward compat)."""
+        interaction = _create_mock_interaction()
+        # API response WITHOUT system_statuses (older API version simulation)
+        route_data = {
+            "bounty_id": 1,
+            "criminal_name": "OldBounty",
+            "route": ["Alpha", "Beta"],
+            "checked": {"Alpha": 1},
+            "status": "active",
+        }
+        resp = make_mock_response(route_data)
+        mock_bounty_cog.http_client.get = AsyncMock(return_value=resp)
+
+        asyncio.run(mock_bounty_cog.route.callback(mock_bounty_cog, interaction, "1"))
+
+        # Should not crash — should still send an embed
+        interaction.followup.send.assert_awaited_once()
+        call_kwargs = interaction.followup.send.call_args[1]
+        assert "embed" in call_kwargs
 
 
 # ---------------------------------------------------------------------------

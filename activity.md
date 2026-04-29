@@ -226,3 +226,61 @@ This is a **read-only investigation** with no code changes. B.4 entry in `/proj/
 **Investigator**: Researcher (read-only mode)
 **Evidence collected**: 7 empirical data points, 3 code comparisons, 1 test coverage analysis
 **Deliverable**: Updated B.4 entry in DEFECTS.md with comprehensive root cause analysis and concrete recommendations
+
+---
+
+## Attempt N [2026-04-29 UTC] — Package C Cross-Service Surgical Bundle (B.32/B.24/A.31)
+
+**Task**: Implement Package C — 3 cross-service defects (A.31, B.32, B.24)
+**Iteration**: 1
+**Status**: in_progress
+
+### Work Completed
+
+- **A.31** (`about.py:102-109`): Added `tech_level` and `manufacturer` fields to `list_objects_for_category()` preload response using `getattr(obj, field, None)`. Fixes `/list_category tech_level:N` and `manufacturer:` filters which received `None` for every object due to missing fields.
+- **B.32 cog** (`adminCog.py:955-977`): Added guard in `render_config` `action == "set"` branch: if `self._render_settings` is non-empty and `setting not in self._render_settings`, sends ephemeral error embed with list of valid settings and returns WITHOUT calling the API.
+- **B.32 service** (`blender-service/routers/config.py:26-43`): Added import of `HTTPException` and `RenderConfig`; added pre-call check in `update_render_config` — raises HTTP 422 when `updates` dict contains no recognized `RenderConfig` fields.
+- **B.24 API** (`bounties.py:261-280`): Added import of `_project_checked` from `utils/bounty_announcement_payload`; computed `system_statuses` server-side with `"found"` masked to `"checked"` to prevent answer leakage; added `system_statuses` field to route response.
+- **B.24 cog** (`bountyCog.py:705-725`): Updated `/route` embed builder to use `data.get("system_statuses")` for 3-state rendering: `recently_spotted` → `**~~system~~** 🔍`, `checked/found` → `~~system~~ ✅`, unchecked → plain.
+
+### Tests Written
+
+- `test_about_router.py::TestListObjectsForCategory::test_list_objects_includes_tech_level_and_manufacturer` — asserts both fields present in preload response
+- `test_about_router.py::TestListObjectsForCategory::test_list_objects_tech_level_none_when_missing` — field present even for object types without tech_level
+- `test_bounty_router.py::TestGetBountyRoute::test_get_route_includes_system_statuses` — A=3 stops(checked), B/C=1-2 stops(recently_spotted)
+- `test_bounty_router.py::TestGetBountyRoute::test_get_route_system_statuses_masks_found` — "found" never in response values
+- `test_bounty_router.py::TestGetBountyRoute::test_get_route_system_statuses_empty_for_unchecked_bounty` — empty dict when nothing checked
+- `test_config_router.py::test_update_config_unknown_key_returns_422` — renamed from test_update_config_unknown_key_ignored; asserts 422
+- `test_config_router.py::test_update_config_unknown_key_samples_returns_422` — exact B.32 scenario
+- `test_config_router.py::test_update_config_mixed_valid_unknown_succeeds` — valid+unknown still succeeds
+- `test_admin_render_commands.py::test_render_config_set_unknown_setting_blocked` — cog returns error, API not called
+- `test_admin_render_commands.py::test_render_config_set_valid_setting_calls_api` — valid setting still goes through
+- `test_admin_render_commands.py::test_render_config_set_empty_preload_skips_guard` — empty preload = bypass guard
+- `test_bountyCog.py::TestRouteCommand::test_route_recently_spotted_uses_bold_strikethrough` — bold+strikethrough+🔍
+- `test_bountyCog.py::TestRouteCommand::test_route_checked_system_uses_strikethrough_checkmark` — plain strikethrough+✅
+- `test_bountyCog.py::TestRouteCommand::test_route_unchecked_system_is_plain` — no markdown for unchecked
+- `test_bountyCog.py::TestRouteCommand::test_route_backward_compat_no_system_statuses_field` — no crash on old API
+
+### Spec-to-Test Traceability
+
+| Acceptance Criterion | Test File(s) | Status |
+|---|---|---|
+| A.31: tech_level + manufacturer in preload response | `test_about_router.py::test_list_objects_includes_tech_level_and_manufacturer` | COVERED |
+| A.31: field present even without attribute | `test_about_router.py::test_list_objects_tech_level_none_when_missing` | COVERED |
+| B.32 cog: unknown setting blocked client-side | `test_admin_render_commands.py::test_render_config_set_unknown_setting_blocked` | COVERED |
+| B.32 cog: valid setting calls API | `test_admin_render_commands.py::test_render_config_set_valid_setting_calls_api` | COVERED |
+| B.32 service: 422 on all-unknown payload | `test_config_router.py::test_update_config_unknown_key_returns_422` | COVERED |
+| B.32 service: 422 for 'samples' scenario | `test_config_router.py::test_update_config_unknown_key_samples_returns_422` | COVERED |
+| B.32 service: mixed valid+unknown succeeds | `test_config_router.py::test_update_config_mixed_valid_unknown_succeeds` | COVERED |
+| B.24 API: system_statuses field present | `test_bounty_router.py::test_get_route_includes_system_statuses` | COVERED |
+| B.24 API: "found" never leaked | `test_bounty_router.py::test_get_route_system_statuses_masks_found` | COVERED |
+| B.24 cog: recently_spotted → bold+strikethrough+🔍 | `test_bountyCog.py::test_route_recently_spotted_uses_bold_strikethrough` | COVERED |
+| B.24 cog: checked → strikethrough+✅ | `test_bountyCog.py::test_route_checked_system_uses_strikethrough_checkmark` | COVERED |
+| B.24 cog: unchecked → plain | `test_bountyCog.py::test_route_unchecked_system_is_plain` | COVERED |
+
+### Coverage Summary (all gates passed)
+
+- bot-core: 2956 passed, 1 skipped — GREEN
+- blender-service: 127 passed — GREEN
+- discord-gateway: 2132 passed — GREEN
+- Ruff source check: All checks passed

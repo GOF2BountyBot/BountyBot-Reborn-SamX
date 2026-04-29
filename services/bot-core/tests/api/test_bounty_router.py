@@ -358,6 +358,88 @@ class TestGetBountyRoute:
         assert response.status_code == 404
         assert "not found" in response.json()["detail"].lower()
 
+    @patch("api.routers.bounties.get_db_session")
+    def test_get_route_includes_system_statuses(self, mock_get_db, client, mock_bounty_service):
+        """B.24: Route response includes system_statuses with 3-state projection.
+
+        Route: A -> B -> C -> D -> answer:D
+        B is 2 stops before D (recently_spotted)
+        C is 1 stop before D (recently_spotted)
+        A is 3 stops before D (plain checked)
+
+        recently_spotted = 1 or 2 stops before answer
+        """
+        _configure_db_mock(mock_get_db)
+        mock_bounty = make_mock_bounty(
+            id=10,
+            route=["A", "B", "C", "D"],
+            answer="D",
+            checked={"A": 1, "B": 2, "C": 3},  # all three checked by players
+            status="active",
+            division="bronze",
+        )
+        mock_bounty_service.bounty_repo.get_by_id = AsyncMock(return_value=mock_bounty)
+
+        response = client.get("/api/v1/bounties/10/route")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert "system_statuses" in data, "system_statuses field must be present in route response"
+        statuses = data["system_statuses"]
+        # A is 3 stops before answer D — ordinary checked
+        assert statuses.get("A") == "checked"
+        # B is 2 stops before answer D — recently spotted
+        assert statuses.get("B") == "recently_spotted"
+        # C is 1 stop before answer D — recently spotted
+        assert statuses.get("C") == "recently_spotted"
+
+    @patch("api.routers.bounties.get_db_session")
+    def test_get_route_system_statuses_masks_found(self, mock_get_db, client, mock_bounty_service):
+        """B.24: system_statuses never exposes 'found' — answer leakage prevention.
+
+        When the answer system has been checked, it must appear as 'checked' in
+        system_statuses, never as 'found'.
+        """
+        _configure_db_mock(mock_get_db)
+        mock_bounty = make_mock_bounty(
+            id=11,
+            route=["Sol", "Proxima", "Tau Ceti"],
+            answer="Tau Ceti",
+            checked={"Sol": 1, "Proxima": 2, "Tau Ceti": 3},  # answer checked
+            status="captured",
+            division="bronze",
+        )
+        mock_bounty_service.bounty_repo.get_by_id = AsyncMock(return_value=mock_bounty)
+
+        response = client.get("/api/v1/bounties/11/route")
+
+        assert response.status_code == 200
+        data = response.json()
+        statuses = data["system_statuses"]
+        # "found" must never appear — it would reveal the answer
+        assert "found" not in statuses.values(), "system_statuses must not expose 'found' status"
+        # Answer system should appear as 'checked' (masked from 'found')
+        assert statuses.get("Tau Ceti") == "checked"
+
+    @patch("api.routers.bounties.get_db_session")
+    def test_get_route_system_statuses_empty_for_unchecked_bounty(self, mock_get_db, client, mock_bounty_service):
+        """B.24: system_statuses is empty dict when no systems have been checked."""
+        _configure_db_mock(mock_get_db)
+        mock_bounty = make_mock_bounty(
+            id=12,
+            route=["Sol", "Proxima"],
+            checked={},  # no systems checked
+            status="active",
+        )
+        mock_bounty_service.bounty_repo.get_by_id = AsyncMock(return_value=mock_bounty)
+
+        response = client.get("/api/v1/bounties/12/route")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert "system_statuses" in data
+        assert data["system_statuses"] == {}
+
 
 # ===========================================================================
 # 4. POST /bounties/spawn

@@ -46,7 +46,7 @@ _CONCRETE_TO_CONFIG_KEY: dict[str, str] = {
 }
 
 
-class ShopService:
+class ShopService:  # pylint: disable=too-many-instance-attributes
     def __init__(self):
         self.shop_repo = ShopRepository()
         self.config_repo = ConfigRepository()

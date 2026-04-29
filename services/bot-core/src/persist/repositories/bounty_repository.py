@@ -92,7 +92,7 @@ class BountyRepository(IRepository[Bounty]):
                     and_(
                         Bounty.guild_id == guild_id,
                         Bounty.status == "active",
-                        Bounty.end_time > func.now(),  # B.14: exclude stale bounties past end_time
+                        Bounty.end_time > func.now(),  # B.14: exclude stale bounties past end_time  # pylint: disable=not-callable
                     )
                 )
             )
@@ -115,7 +115,7 @@ class BountyRepository(IRepository[Bounty]):
                         Bounty.guild_id == guild_id,
                         Bounty.division == division,
                         Bounty.status == "active",
-                        Bounty.end_time > func.now(),  # B.14: exclude stale bounties past end_time
+                        Bounty.end_time > func.now(),  # B.14: exclude stale bounties past end_time  # pylint: disable=not-callable
                     )
                 )
             )
@@ -222,7 +222,7 @@ class BountyRepository(IRepository[Bounty]):
                         Bounty.guild_id == guild_id,
                         Bounty.division == division,
                         Bounty.status == "active",
-                        Bounty.end_time > func.now(),  # B.14: exclude stale bounties past end_time
+                        Bounty.end_time > func.now(),  # B.14: exclude stale bounties past end_time  # pylint: disable=not-callable
                     )
                 )
             )

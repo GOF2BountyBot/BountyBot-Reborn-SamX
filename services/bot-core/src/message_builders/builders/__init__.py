@@ -1,3 +1,4 @@
+# pylint: disable=cyclic-import
 """
 Message builder implementations.
 

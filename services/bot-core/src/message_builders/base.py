@@ -30,7 +30,6 @@ class MessagePayloadBuilder(ABC):
         they have no parsing-back-from-string need.
         """
         flogger.log(level=5, message="extract_data called on base; returning None")
-        return None
 
     @abstractmethod
     def get_message_type(self) -> str:

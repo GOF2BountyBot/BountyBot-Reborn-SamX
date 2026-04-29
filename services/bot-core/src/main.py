@@ -131,7 +131,7 @@ async def run_stale_state_recovery_sweep() -> None:
                 select(Bounty.id, Bounty.guild_id).where(
                     and_(
                         Bounty.status == "active",
-                        Bounty.end_time < func.now(),
+                        Bounty.end_time < func.now(),  # pylint: disable=not-callable
                     )
                 )
             )
@@ -145,7 +145,7 @@ async def run_stale_state_recovery_sweep() -> None:
                 .where(
                     and_(
                         Bounty.status == "active",
-                        Bounty.end_time < func.now(),
+                        Bounty.end_time < func.now(),  # pylint: disable=not-callable
                     )
                 )
                 .values(status="expired")
@@ -163,7 +163,7 @@ async def run_stale_state_recovery_sweep() -> None:
                     and_(
                         DuelRequest.status == "pending",
                         DuelRequest.expires_at.isnot(None),
-                        DuelRequest.expires_at < func.now(),
+                        DuelRequest.expires_at < func.now(),  # pylint: disable=not-callable
                     )
                 )
                 .values(status="expired")
@@ -243,7 +243,7 @@ async def run_stale_respawn_recovery() -> None:
                     Bounty.status == "escaped",
                     or_(
                         Bounty.respawn_time.is_(None),
-                        Bounty.respawn_time < func.now(),
+                        Bounty.respawn_time < func.now(),  # pylint: disable=not-callable
                     ),
                 )
             )

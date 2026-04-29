@@ -163,7 +163,7 @@ class DuelRepository(IRepository[DuelRequest]):
                         DuelRequest.guild_id == guild_id,
                         DuelRequest.status == "pending",
                         # B.14 sibling: exclude duels that have passed their expiry
-                        (DuelRequest.expires_at.is_(None) | (DuelRequest.expires_at > func.now())),
+                        (DuelRequest.expires_at.is_(None) | (DuelRequest.expires_at > func.now())),  # pylint: disable=not-callable
                     )
                 )
             )
@@ -187,7 +187,7 @@ class DuelRepository(IRepository[DuelRequest]):
                         DuelRequest.guild_id == guild_id,
                         DuelRequest.status == "pending",
                         # B.14 sibling: exclude duels that have passed their expiry
-                        (DuelRequest.expires_at.is_(None) | (DuelRequest.expires_at > func.now())),
+                        (DuelRequest.expires_at.is_(None) | (DuelRequest.expires_at > func.now())),  # pylint: disable=not-callable
                     )
                 )
             )

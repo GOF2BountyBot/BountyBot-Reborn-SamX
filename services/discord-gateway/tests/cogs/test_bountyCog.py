@@ -304,19 +304,24 @@ class TestPreloadData:
 
     _SYSTEMS_URL = "http://bot-core:8000/api/v1/about/categories/system/objects"
 
-    def _with_real_client(self, cog):
-        """Replace cog.http_client with a real httpx.AsyncClient for respx interception."""
+    def _with_real_client(self, cog, request):
+        """Replace cog.http_client with a real httpx.AsyncClient for respx interception.
+
+        Registers a pytest finalizer to close the client after the test so no
+        httpx.AsyncClient instances are leaked between tests.
+        """
         import httpx
 
         cog.http_client = httpx.AsyncClient(timeout=httpx.Timeout(10.0))
+        request.addfinalizer(lambda: asyncio.run(cog.http_client.aclose()))
         return cog
 
-    def test_preload_data_populates_systems(self, mock_bounty_cog):
+    def test_preload_data_populates_systems(self, mock_bounty_cog, request):
         """_preload_data calls GET /about/categories/system/objects and populates _systems."""
         import httpx
         import respx
 
-        self._with_real_client(mock_bounty_cog)
+        self._with_real_client(mock_bounty_cog, request)
         mock_bounty_cog.bot.wait_until_ready = AsyncMock()
 
         systems_data = [
@@ -333,12 +338,12 @@ class TestPreloadData:
 
         assert mock_bounty_cog._systems == ["Sol", "Alpha Centauri", "Proxima"]
 
-    def test_preload_data_handles_api_failure_gracefully(self, mock_bounty_cog):
+    def test_preload_data_handles_api_failure_gracefully(self, mock_bounty_cog, request):
         """_preload_data sets _systems to [] after all retries exhausted on 500 errors."""
         import httpx
         import respx
 
-        self._with_real_client(mock_bounty_cog)
+        self._with_real_client(mock_bounty_cog, request)
         mock_bounty_cog.bot.wait_until_ready = AsyncMock()
 
         with respx.mock(assert_all_called=False) as mock_router:
@@ -352,12 +357,12 @@ class TestPreloadData:
         # Should have slept 5 times (once per retry attempt)
         assert mock_sleep.call_count == 5
 
-    def test_preload_data_retries_on_timeout(self, mock_bounty_cog):
+    def test_preload_data_retries_on_timeout(self, mock_bounty_cog, request):
         """_preload_data retries on TimeoutException and succeeds on 2nd attempt."""
         import httpx
         import respx
 
-        self._with_real_client(mock_bounty_cog)
+        self._with_real_client(mock_bounty_cog, request)
         mock_bounty_cog.bot.wait_until_ready = AsyncMock()
         attempt_count = {"n": 0}
 
@@ -376,12 +381,12 @@ class TestPreloadData:
         # Should have slept once after the first failure
         assert mock_sleep.call_count == 1
 
-    def test_preload_data_retries_correct_delays(self, mock_bounty_cog):
+    def test_preload_data_retries_correct_delays(self, mock_bounty_cog, request):
         """_preload_data uses exponential backoff delays [5, 10, 20, 40, 60]."""
         import httpx
         import respx
 
-        self._with_real_client(mock_bounty_cog)
+        self._with_real_client(mock_bounty_cog, request)
         mock_bounty_cog.bot.wait_until_ready = AsyncMock()
 
         with respx.mock(assert_all_called=False) as mock_router:
@@ -395,12 +400,12 @@ class TestPreloadData:
         actual_delays = [call.args[0] for call in mock_sleep.call_args_list]
         assert actual_delays == expected_delays
 
-    def test_preload_data_logs_warning_on_retry(self, mock_bounty_cog):
+    def test_preload_data_logs_warning_on_retry(self, mock_bounty_cog, request):
         """_preload_data logs a warning on each failed attempt and error at terminal failure."""
         import httpx
         import respx
 
-        self._with_real_client(mock_bounty_cog)
+        self._with_real_client(mock_bounty_cog, request)
         mock_bounty_cog.bot.wait_until_ready = AsyncMock()
 
         with respx.mock(assert_all_called=False) as mock_router:
@@ -414,12 +419,12 @@ class TestPreloadData:
         assert _module_logger.warning.call_count == 5
         assert _module_logger.error.call_count >= 1
 
-    def test_preload_data_returns_immediately_on_success(self, mock_bounty_cog):
+    def test_preload_data_returns_immediately_on_success(self, mock_bounty_cog, request):
         """_preload_data returns after first successful attempt, no retry sleep."""
         import httpx
         import respx
 
-        self._with_real_client(mock_bounty_cog)
+        self._with_real_client(mock_bounty_cog, request)
         mock_bounty_cog.bot.wait_until_ready = AsyncMock()
 
         with respx.mock(assert_all_called=True) as mock_router:

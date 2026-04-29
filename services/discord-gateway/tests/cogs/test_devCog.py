@@ -118,19 +118,24 @@ class TestCategoryPreload:
 
     _CATEGORIES_URL = "http://bot-core:8000/api/v1/data/categories"
 
-    def _with_real_client(self, cog):
-        """Replace cog.http_client with a real httpx.AsyncClient for respx interception."""
+    def _with_real_client(self, cog, request):
+        """Replace cog.http_client with a real httpx.AsyncClient for respx interception.
+
+        Registers a pytest finalizer to close the client after the test so no
+        httpx.AsyncClient instances are leaked between tests.
+        """
         import httpx
 
         cog.http_client = httpx.AsyncClient(timeout=httpx.Timeout(10.0))
+        request.addfinalizer(lambda: asyncio.run(cog.http_client.aclose()))
         return cog
 
-    def test_preload_categories_success(self, mock_dev_cog):
+    def test_preload_categories_success(self, mock_dev_cog, request):
         """_preload_categories calls GET /api/v1/data/categories and populates _categories."""
         import httpx
         import respx
 
-        self._with_real_client(mock_dev_cog)
+        self._with_real_client(mock_dev_cog, request)
         mock_dev_cog.bot.wait_until_ready = AsyncMock()
 
         with respx.mock(assert_all_called=True) as mock_router:
@@ -141,12 +146,12 @@ class TestCategoryPreload:
 
         assert mock_dev_cog._categories == ["ships", "modules", "weapons"]
 
-    def test_preload_categories_http_error_leaves_empty(self, mock_dev_cog):
+    def test_preload_categories_http_error_leaves_empty(self, mock_dev_cog, request):
         """_preload_categories leaves _categories empty on HTTP error response."""
         import httpx
         import respx
 
-        self._with_real_client(mock_dev_cog)
+        self._with_real_client(mock_dev_cog, request)
         mock_dev_cog.bot.wait_until_ready = AsyncMock()
 
         with respx.mock(assert_all_called=True) as mock_router:
@@ -158,12 +163,12 @@ class TestCategoryPreload:
         # On HTTP error, _categories remains empty (no retry in this preload)
         assert mock_dev_cog._categories == []
 
-    def test_preload_categories_network_error_leaves_empty(self, mock_dev_cog):
+    def test_preload_categories_network_error_leaves_empty(self, mock_dev_cog, request):
         """_preload_categories leaves _categories empty on network-level error."""
         import httpx
         import respx
 
-        self._with_real_client(mock_dev_cog)
+        self._with_real_client(mock_dev_cog, request)
         mock_dev_cog.bot.wait_until_ready = AsyncMock()
 
         with respx.mock(assert_all_called=True) as mock_router:

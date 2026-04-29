@@ -53,16 +53,25 @@ merge.
 
 Some test fixtures replace `cog.http_client` with a `MagicMock` for general
 command tests. Preload tests must reinstall a real `httpx.AsyncClient` so respx
-can intercept it:
+can intercept it. **Always register a finalizer to close the client** — leaking
+live `httpx.AsyncClient` instances causes resource warnings across test runs:
 
 ```python
-def _with_real_client(cog):
+def _with_real_client(self, cog, request):
+    """Replace cog.http_client with a real httpx.AsyncClient for respx interception.
+
+    Registers a pytest finalizer to close the client after the test so no
+    httpx.AsyncClient instances are leaked between tests.
+    """
     import httpx
     cog.http_client = httpx.AsyncClient(timeout=httpx.Timeout(10.0))
+    request.addfinalizer(lambda: asyncio.run(cog.http_client.aclose()))
     return cog
 ```
 
-Call this helper at the start of any preload test that needs respx.
+Call this helper (passing the pytest `request` fixture) at the start of any
+preload test that needs respx. The finalizer runs automatically after the test
+completes, regardless of pass or fail.
 
 ### Parent Principle
 

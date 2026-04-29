@@ -220,20 +220,25 @@ class TestPreloadData:
 
     _API_BASE = "http://bot-core:8000/api/v1"
 
-    def _with_real_client(self, cog):
-        """Replace cog.http_client with a real httpx.AsyncClient for respx interception."""
+    def _with_real_client(self, cog, request):
+        """Replace cog.http_client with a real httpx.AsyncClient for respx interception.
+
+        Registers a pytest finalizer to close the client after the test so no
+        httpx.AsyncClient instances are leaked between tests.
+        """
         import httpx
 
         cog.http_client = httpx.AsyncClient(timeout=httpx.Timeout(10.0))
+        request.addfinalizer(lambda: asyncio.run(cog.http_client.aclose()))
         return cog
 
-    def test_preload_data_success(self, mock_about_cog):
+    def test_preload_data_success(self, mock_about_cog, request):
         """_preload_data calls GET /about/categories then GET /about/categories/{cat}/objects
         for each category and populates _categories and _objects_by_category."""
         import httpx
         import respx
 
-        self._with_real_client(mock_about_cog)
+        self._with_real_client(mock_about_cog, request)
         mock_about_cog.bot.wait_until_ready = AsyncMock()
 
         with respx.mock(assert_all_called=True) as mock_router:
@@ -258,13 +263,13 @@ class TestPreloadData:
         assert "ship" in mock_about_cog._objects_by_category
         assert len(mock_about_cog._objects_by_category["ship"]) == 2
 
-    def test_preload_data_api_failure(self, mock_about_cog):
+    def test_preload_data_api_failure(self, mock_about_cog, request):
         """_preload_data handles GET /about/categories failure gracefully
         (resets to empty without raising)."""
         import httpx
         import respx
 
-        self._with_real_client(mock_about_cog)
+        self._with_real_client(mock_about_cog, request)
         mock_about_cog.bot.wait_until_ready = AsyncMock()
 
         with respx.mock(assert_all_called=True) as mock_router:
@@ -279,13 +284,13 @@ class TestPreloadData:
         assert mock_about_cog._categories == []
         assert mock_about_cog._objects_by_category == {}
 
-    def test_preload_data_category_object_failure(self, mock_about_cog):
+    def test_preload_data_category_object_failure(self, mock_about_cog, request):
         """_preload_data handles per-category failure gracefully:
         successful categories are populated; failed category gets empty list."""
         import httpx
         import respx
 
-        self._with_real_client(mock_about_cog)
+        self._with_real_client(mock_about_cog, request)
         mock_about_cog.bot.wait_until_ready = AsyncMock()
 
         with respx.mock(assert_all_called=True) as mock_router:

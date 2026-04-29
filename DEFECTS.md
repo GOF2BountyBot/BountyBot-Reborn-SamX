@@ -154,6 +154,8 @@ if str(response_config.get(setting)) != str(value):
 
 ### B.31 — `/admin_config action:Reset to Defaults` returns 500; user sees raw bot-core URL
 🟠 high · Phase 12.5 · 2026-04-28
+> **B.31a FIXED** in commit `360287b` (Package A, 2026-04-29). `cascade="all, delete-orphan"` added to `GuildConfig.shops` relationship. No migration needed.
+> **B.31b** (URL leak across 53 cog error handlers) — DEFERRED to Package F.
 
 **Environment**: dev guild `1490693399307616276`, Main account, post-rebuild stack.
 
@@ -333,6 +335,7 @@ See companion detail: `/proj/recon/B31-recon.md`
 
 ### B.30 — `PUT /api/v1/jobs/{job_id}` silently wipes payload when request body lacks expected fields
 🟠 high · 2026-04-28 · surfaced during Phase 9 cleanup
+> **FIXED** in commit `360287b` (Package A, 2026-04-29). `ConfigDict(extra="forbid")` added to `UpdateJob` schema.
 
 **Environment**: dev guild `1490693399307616276`, post-rebuild stack, direct bot-core API call (no gateway/cog involved).
 
@@ -855,6 +858,9 @@ New tests: 1 API endpoint test (`system_statuses` field) + 1 cog test (recently_
 
 ### B.23 — `/bounties` listing returns bounties whose displayed expiry text shows past `end_time`
 🟡 medium · Phase 7.1 · 2026-04-28
+> **B.23a + B.23b FIXED** in commit `360287b` (Package A, 2026-04-29).
+> B.23a: `_schedule_expiry_job()` now uses direct APScheduler Python API via `scheduler_holder.py`; HTTP POST fallback retained.
+> B.23b: `run_stale_state_recovery_sweep()` now deletes Discord announcements for stale bounties after marking them expired.
 
 **Environment**: dev guild `1490693399307616276`, Main account, post-rebuild stack (commit `815cd59` — includes B.14 listing-filter fix `db79c60` and recovery sweeps).
 
@@ -1131,6 +1137,7 @@ await interaction.followup.send(msg, ephemeral=True)
 
 ### B.17 — `/admin_player action:Set XP` returns `old_xp` equal to new XP value
 🟡 medium · Phase 6.1 / 6.12 · 2026-04-28
+> **FIXED** in commit `360287b` (Package A, 2026-04-29). Captured `old_xp = old_player.xp` before mutation. Test refactored to shared-mock pattern.
 
 **Environment**: dev guild `1490693399307616276`, Main account `SamAccountX` (player_id=1, Discord user_id=402296276617527306), post-rebuild stack.
 
@@ -2578,6 +2585,11 @@ Many tests exceed project's "max 2 mocks per test" standard (`AGENTS.md`). Sever
 
 | ID | Summary | Commit | Verified |
 |---|---|---|---|
+| **B.17** | `/admin_player action:Set XP` returned `old_xp` equal to new value (identity-map read after mutation). Fixed: capture `old_xp = old_player.xp` before `update_player_xp()` call; test refactored to shared-mock pattern. | `360287b` | pending |
+| **B.23a** | Bounty expire job silently not scheduled: `_schedule_expiry_job()` used HTTP POST to scheduler; failures were non-fatal non-retried. Fixed: direct APScheduler Python API via `scheduler_holder.py` singleton; HTTP retained as fallback. | `360287b` | pending |
+| **B.23b** | `run_stale_state_recovery_sweep()` marked stale bounties expired in DB but never deleted Discord announcements (zombie messages). Fixed: collect stale bounty refs before bulk UPDATE, call `_delete_bounty_announcement` for each after commit. | `360287b` | pending |
+| **B.30** | `PUT /api/v1/jobs/{job_id}` silently wiped job payload when request body used wrong field name. Fixed: `ConfigDict(extra="forbid")` on `UpdateJob` schema; wrong-field body → 422 before APScheduler. | `360287b` | pending |
+| **B.31a** | `POST /config/guild/{id}/reset` returned 500 NOT NULL violation when `guild_shops` had rows. Fixed: `cascade="all, delete-orphan"` on `GuildConfig.shops` relationship (ORM-side only, no migration). | `360287b` | pending |
 | **O.2** | `/scheduler_view`/`/scheduler_update`/`/scheduler_delete` `job_id` autocomplete (verified retroactively present in HEAD per cycle-8 recon: `schedulerCog.py:35-54` + line 140/221/300) | (already in HEAD) | live (verified read-only) |
 | **B.14-sibling** | Stale-respawn recovery sweep for `status='escaped'` past `respawn_time` | `815cd59` | ✅ live 2026-04-28 |
 | **B.14** | Bounty/duel listing time filter + startup recovery sweep (12 stale bounties expired on first boot) | `db79c60` | ✅ live 2026-04-28 |
@@ -2633,4 +2645,4 @@ Many tests exceed project's "max 2 mocks per test" standard (`AGENTS.md`). Sever
 
 ---
 
-*Last updated: 2026-04-28*
+*Last updated: 2026-04-29 — Package A (B.17/B.23/B.30/B.31a) fixed in commit `360287b`*

@@ -779,10 +779,24 @@ class TestUpdatePlayerXP:
 
     @patch("api.routers.admin.get_db_session")
     def test_update_player_xp_happy_path(self, mock_get_db, client, mock_player_service):
-        """Returns 200 with updated XP and tier information."""
+        """Returns 200 with updated XP and tier information.
+
+        Uses a SINGLE shared player object (simulating SQLAlchemy identity-map) where
+        update_player_xp() mutates shared_player.xp in-place.  Without the B.17 fix
+        (old_xp captured before mutation), the test would see old_xp == 100 (the new
+        value) instead of 50 (the pre-mutation value).
+        """
         _configure_db_mock(mock_get_db)
-        mock_player_service.player_repo.get_by_id = AsyncMock(return_value=make_mock_player(xp=50, tier="Bronze"))
-        mock_player_service.update_player_xp = AsyncMock(return_value=make_mock_player(xp=100, tier="Bronze"))
+        # Single shared object — both get_by_id and update_player_xp return the same instance.
+        shared_player = make_mock_player(xp=50, tier="Bronze")
+        mock_player_service.player_repo.get_by_id = AsyncMock(return_value=shared_player)
+
+        # Simulate SQLAlchemy identity-map mutation: service sets shared_player.xp in-place.
+        async def _mutate_and_return(db, player_id, new_xp):
+            shared_player.xp = new_xp
+            return shared_player
+
+        mock_player_service.update_player_xp = AsyncMock(side_effect=_mutate_and_return)
         payload = {"player_id": 1, "xp": 100}
 
         response = client.put("/api/v1/admin/players/xp?user_id=67890&guild_id=67890", json=payload)
@@ -790,7 +804,7 @@ class TestUpdatePlayerXP:
         assert response.status_code == 200
         data = response.json()
         assert data["player_id"] == 1
-        assert data["old_xp"] == 50
+        assert data["old_xp"] == 50  # B.17: must be pre-mutation value, NOT 100
         assert data["new_xp"] == 100
         assert data["old_tier"] == "Bronze"
         assert data["new_tier"] == "Bronze"
@@ -804,24 +818,26 @@ class TestUpdatePlayerXP:
         Design intent (per player_service.update_player_xp docstring):
         "Tier is NOT auto-advanced; use promote_player() to advance tier."
 
-        The old test `test_update_player_xp_tier_change` MOCKED the service to return
-        tier="Silver" — contradicting the real implementation which never changes tier.
-        This replacement test asserts the BY-DESIGN behaviour: tier remains "Bronze"
-        after setting XP to a value that would qualify for Platinum, and tier_changed
-        is False because the stored tier column was not mutated.
+        Uses shared-mock pattern to simulate identity-map mutation (B.17 regression guard).
         """
         _configure_db_mock(mock_get_db)
-        # Pre-update: player is Bronze with 100 XP
-        mock_player_service.player_repo.get_by_id = AsyncMock(return_value=make_mock_player(xp=100, tier="Bronze"))
-        # Post-update: service only changes XP — tier column is unchanged (still Bronze)
-        mock_player_service.update_player_xp = AsyncMock(return_value=make_mock_player(xp=50000, tier="Bronze"))
+        # Pre-update: player is Bronze with 100 XP — single shared object.
+        shared_player = make_mock_player(xp=100, tier="Bronze")
+        mock_player_service.player_repo.get_by_id = AsyncMock(return_value=shared_player)
+
+        # Simulate identity-map: service sets shared_player.xp in-place.
+        async def _mutate_and_return(db, player_id, new_xp):
+            shared_player.xp = new_xp
+            return shared_player
+
+        mock_player_service.update_player_xp = AsyncMock(side_effect=_mutate_and_return)
         payload = {"player_id": 1, "xp": 50000}
 
         response = client.put("/api/v1/admin/players/xp?user_id=67890&guild_id=67890", json=payload)
 
         assert response.status_code == 200
         data = response.json()
-        assert data["old_xp"] == 100
+        assert data["old_xp"] == 100  # B.17: must be pre-mutation value
         assert data["new_xp"] == 50000
         # Tier must remain Bronze — Set XP does NOT auto-promote
         assert data["old_tier"] == "Bronze"

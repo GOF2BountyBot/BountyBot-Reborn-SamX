@@ -625,6 +625,58 @@ async def test_expiry_skipped_when_no_end_time():
         mock_cls.assert_not_called()
 
 
+@pytest.mark.asyncio
+async def test_expiry_uses_direct_scheduler_when_holder_has_scheduler():
+    """B.23a: _schedule_expiry_job uses the direct APScheduler API when scheduler_holder
+    has a scheduler instance, bypassing the HTTP POST entirely."""
+    from utils.executors.bounty_spawn_executor import _schedule_expiry_job
+
+    bounty = _make_bounty(bounty_id=42)
+    mock_scheduler = MagicMock()
+    mock_scheduler.add_job = MagicMock()
+
+    with (
+        patch("utils.scheduler_holder.get_scheduler", return_value=mock_scheduler),
+        patch("utils.executors.bounty_spawn_executor.httpx.AsyncClient") as mock_http_cls,
+    ):
+        await _schedule_expiry_job("parent-job-direct", bounty)
+
+    # Direct API must have been called; HTTP must NOT have been used
+    mock_scheduler.add_job.assert_called_once()
+    add_job_kwargs = mock_scheduler.add_job.call_args
+    # Verify the job is a date-trigger one-time job with the correct payload
+    assert add_job_kwargs.kwargs.get("trigger") == "date" or (
+        len(add_job_kwargs.args) > 1 and add_job_kwargs.args[1] == "date"
+    )
+    mock_http_cls.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_expiry_falls_back_to_http_when_holder_returns_none():
+    """B.23a: _schedule_expiry_job falls back to HTTP POST when scheduler_holder has no
+    scheduler (e.g. test environments or early startup before set_scheduler is called)."""
+    from utils.executors.bounty_spawn_executor import _schedule_expiry_job
+
+    bounty = _make_bounty(bounty_id=43)
+
+    with (
+        patch("utils.scheduler_holder.get_scheduler", return_value=None),
+        patch("utils.executors.bounty_spawn_executor.httpx.AsyncClient") as mock_http_cls,
+    ):
+        mock_client = AsyncMock()
+        mock_response = MagicMock()
+        mock_response.raise_for_status = MagicMock()
+        mock_client.post = AsyncMock(return_value=mock_response)
+        mock_http_cls.return_value.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_http_cls.return_value.__aexit__ = AsyncMock(return_value=False)
+
+        await _schedule_expiry_job("parent-job-fallback", bounty)
+
+    # HTTP fallback must have been used
+    mock_http_cls.assert_called_once()
+    mock_client.post.assert_awaited_once()
+
+
 # ===========================================================================
 # Tests: discord-gateway announcement — new per-division routing (SEG-07)
 # ===========================================================================

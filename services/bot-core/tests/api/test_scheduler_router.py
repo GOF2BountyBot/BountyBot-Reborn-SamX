@@ -503,6 +503,22 @@ class TestUpdateJob:
         assert response.status_code == 400
         assert "Could not update job" in response.json()["detail"]
 
+    def test_update_job_rejects_unknown_fields(self, client, mock_scheduler):
+        """B.30: Returns 422 when request body uses wrong field name (e.g. 'args' instead of 'payload').
+
+        Without ConfigDict(extra='forbid') on UpdateJob, Pydantic silently drops the unknown
+        'args' field, uses the default payload={}, and the scheduler wipes the existing job
+        payload to {}.  With the fix, a wrong-field body must return HTTP 422 immediately
+        before APScheduler is ever called.
+        """
+        wrong_body = {"args": ["bounty_spawn_default", {"job_type": "bounty_spawn_orchestrate"}]}
+
+        response = client.put("/api/v1/jobs/test-job-id-1234", json=wrong_body)
+
+        assert response.status_code == 422
+        # modify_job must NOT have been called — the payload must never reach the scheduler
+        mock_scheduler.modify_job.assert_not_called()
+
 
 # ===========================================================================
 # 6. DELETE /jobs/all

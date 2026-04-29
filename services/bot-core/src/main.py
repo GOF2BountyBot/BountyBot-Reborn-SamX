@@ -104,15 +104,39 @@ async def run_stale_state_recovery_sweep() -> None:
 
     This sweep performs a single bulk UPDATE per entity type so the DB is in
     a consistent state before any live traffic is served.
+
+    B.23b: After marking bounties expired, the sweep also deletes their Discord
+    announcement messages so stale bounties don't leave zombie announcements in
+    Discord channels indefinitely.  Announcement deletion is best-effort and
+    non-fatal — gateway may not be ready at startup time.
     """
+    from types import SimpleNamespace
+
     from persist.models.bounty import Bounty
     from persist.models.duel_request import DuelRequest
-    from sqlalchemy import and_, func, update
+    from sqlalchemy import and_, func, select, update
 
     flogger.info("🔄 Running stale-state recovery sweep (B.14)...")
 
+    # B.23b: collect stale bounty identifiers BEFORE the bulk UPDATE so we can
+    # clean up their Discord announcements after marking them expired.
+    stale_bounty_refs: list = []
+
     async with db_manager.get_session() as db:
         try:
+            # ------------------------------------------------------------------ #
+            # B.23b: select stale bounty (id, guild_id) pairs before UPDATE      #
+            # ------------------------------------------------------------------ #
+            stale_select_result = await db.execute(
+                select(Bounty.id, Bounty.guild_id).where(
+                    and_(
+                        Bounty.status == "active",
+                        Bounty.end_time < func.now(),
+                    )
+                )
+            )
+            stale_bounty_refs = [SimpleNamespace(id=row[0], guild_id=row[1]) for row in stale_select_result.all()]
+
             # ------------------------------------------------------------------ #
             # Bounties: status='active' AND end_time < NOW()                     #
             # ------------------------------------------------------------------ #
@@ -157,6 +181,26 @@ async def run_stale_state_recovery_sweep() -> None:
         except Exception as e:  # pylint: disable=broad-exception-caught
             flogger.error(f"⚠️ Recovery sweep failed (non-fatal, continuing): {e}")
             await db.rollback()
+            return  # skip announcement cleanup if the sweep itself failed
+
+    # ------------------------------------------------------------------ #
+    # B.23b: delete Discord announcement messages for stale bounties      #
+    # (best-effort, non-fatal — gateway may not be reachable at startup)  #
+    # ------------------------------------------------------------------ #
+    if stale_bounty_refs:
+        flogger.info(f"🧹 Cleaning up announcements for {len(stale_bounty_refs)} stale bounty(ies)...")
+        from utils.executors.bounty_expire_executor import _delete_bounty_announcement
+
+        announcement_cleaned = 0
+        for bounty_ref in stale_bounty_refs:
+            try:
+                async with db_manager.get_session() as db:
+                    await _delete_bounty_announcement("recovery-sweep", bounty_ref, db)
+                announcement_cleaned += 1
+            except Exception as e:  # pylint: disable=broad-exception-caught
+                flogger.warning(f"⚠️ Recovery sweep: failed to clean announcement for bounty id={bounty_ref.id}: {e}")
+
+        flogger.info(f"✅ Announcement cleanup complete: {announcement_cleaned}/{len(stale_bounty_refs)} cleaned")
 
 
 async def run_stale_respawn_recovery() -> None:
@@ -302,6 +346,13 @@ async def lifespan(fastapi_app: FastAPI):
         fastapi_app.state.scheduler = scheduler
         scheduler.start()
         flogger.info("✅ Scheduler started")
+
+        # B.23a: expose the scheduler instance via the module-level holder so that
+        # executor modules can schedule jobs directly (no HTTP round-trip needed).
+        from utils.scheduler_holder import set_scheduler
+
+        set_scheduler(scheduler)
+        flogger.info("📌 Scheduler registered in scheduler_holder")
 
         # Register default recurring jobs (idempotent — skip if already present)
         register_default_jobs(scheduler)

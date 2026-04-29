@@ -88,7 +88,13 @@ class GuildConfig(Base):
     )
 
     # Relationships
-    shops: Mapped[list["GuildShop"]] = relationship("GuildShop", back_populates="guild_config")
+    # B.31a: cascade="all, delete-orphan" ensures SQLAlchemy issues DELETE (not SET NULL)
+    # for related GuildShop rows when the parent GuildConfig is deleted.  Without this,
+    # SQLAlchemy emits UPDATE guild_shops SET guild_id=NULL which PostgreSQL rejects
+    # (guild_id is NOT NULL) — causing a 500 on POST /config/guild/{id}/reset.
+    shops: Mapped[list["GuildShop"]] = relationship(
+        "GuildShop", back_populates="guild_config", cascade="all, delete-orphan"
+    )
 
     def __repr__(self) -> str:
         return f"<GuildConfig(guild_id={self.guild_id}, starting_credits={self.starting_credits})>"

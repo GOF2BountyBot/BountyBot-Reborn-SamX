@@ -2,8 +2,10 @@
 
 import pytest
 from persist.models.guild_config import GuildConfig
+from persist.models.guild_shop import GuildShop
 from persist.repositories.config_repository import ConfigRepository
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.future import select
 
 
 @pytest.fixture
@@ -199,6 +201,43 @@ async def test_reset_to_defaults_creates_if_missing(db_session: AsyncSession, re
     config = await repo.reset_to_defaults(db_session, guild_id=1200)
     assert config.guild_id == 1200
     assert config.starting_credits == 0
+
+
+async def test_reset_to_defaults_with_shops_does_not_raise(db_session: AsyncSession, repo: ConfigRepository):
+    """B.31a: reset_to_defaults must succeed even when guild_shops has rows for the guild.
+
+    Root cause (B.31a): without cascade="all, delete-orphan" on GuildConfig.shops,
+    SQLAlchemy issues UPDATE guild_shops SET guild_id=NULL before deleting the parent row.
+    PostgreSQL rejects this (guild_id is NOT NULL), raising an IntegrityError and causing
+    POST /config/guild/{id}/reset to return 500 on every invocation for a configured guild.
+
+    Fix verification: reset succeeds when shops exist, and those shops are removed.
+    """
+    # Create a config and add two shop rows for the same guild.
+    await repo.create_default_config(db_session, guild_id=1150)
+    guild_id = 1150
+
+    shop1 = GuildShop(
+        guild_id=guild_id, item_name="Laser", item_type="primary_weapon", tier="Bronze", tech_level=3, price=500
+    )
+    shop2 = GuildShop(guild_id=guild_id, item_name="Shield", item_type="module", tier="Silver", tech_level=5, price=750)
+    db_session.add_all([shop1, shop2])
+    await db_session.commit()
+
+    # Verify shops exist before reset.
+    before_shops = (await db_session.execute(select(GuildShop).where(GuildShop.guild_id == guild_id))).scalars().all()
+    assert len(before_shops) == 2
+
+    # Reset should NOT raise — this was the B.31a failure point.
+    config = await repo.reset_to_defaults(db_session, guild_id=guild_id)
+
+    # Config reset to defaults.
+    assert config.guild_id == guild_id
+    assert config.starting_credits == 0
+
+    # Shops must be gone after reset (cascade delete).
+    after_shops = (await db_session.execute(select(GuildShop).where(GuildShop.guild_id == guild_id))).scalars().all()
+    assert after_shops == []
 
 
 # -- update_admin_role ---------------------------------------------------------

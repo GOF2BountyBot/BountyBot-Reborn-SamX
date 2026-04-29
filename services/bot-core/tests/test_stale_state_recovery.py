@@ -138,6 +138,14 @@ def _make_execute_result(rowcount: int) -> MagicMock:
     return result
 
 
+def _make_select_result(rows: list) -> MagicMock:
+    """Return a mock execute result for SELECT queries (returns rows via .all())."""
+    result = MagicMock()
+    result.all = MagicMock(return_value=rows)
+    result.rowcount = len(rows)
+    return result
+
+
 def _make_session_ctx(session: AsyncMock) -> MagicMock:
     """Return an async context manager that yields *session*."""
     ctx = MagicMock()
@@ -156,12 +164,19 @@ class TestStaleBountyRecovery:
 
     @pytest.mark.asyncio
     async def test_stale_bounties_are_marked_expired(self):
-        """3 stale active bounties → both UPDATEs executed, single commit."""
+        """3 stale active bounties → SELECT + both UPDATEs executed, single commit.
+
+        B.23b: execute calls are now SELECT(stale ids) + UPDATE(bounties) + UPDATE(duels).
+        """
         mock_db = AsyncMock()
         mock_db.commit = AsyncMock()
         mock_db.rollback = AsyncMock()
-        # First execute = bounty UPDATE (3 rows), second = duel UPDATE (0 rows)
-        mock_db.execute = AsyncMock(side_effect=[_make_execute_result(3), _make_execute_result(0)])
+        # execute call 1: SELECT stale bounty ids (0 rows = no announcement cleanup needed)
+        # execute call 2: bounty UPDATE (3 rows)
+        # execute call 3: duel UPDATE (0 rows)
+        mock_db.execute = AsyncMock(
+            side_effect=[_make_select_result([]), _make_execute_result(3), _make_execute_result(0)]
+        )
 
         mock_db_manager = MagicMock()
         mock_db_manager.get_session = MagicMock(return_value=_make_session_ctx(mock_db))
@@ -171,17 +186,20 @@ class TestStaleBountyRecovery:
 
             await run_stale_state_recovery_sweep()
 
-        # Two UPDATEs executed (bounties + duels)
-        assert mock_db.execute.await_count == 2
+        # Three execute calls: SELECT(ids) + UPDATE(bounties) + UPDATE(duels)
+        assert mock_db.execute.await_count == 3
         mock_db.commit.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_no_stale_bounties_no_op(self):
-        """0 stale bounties → commit still called once, no error."""
+        """0 stale bounties → commit still called once, no error, no announcement cleanup."""
         mock_db = AsyncMock()
         mock_db.commit = AsyncMock()
         mock_db.rollback = AsyncMock()
-        mock_db.execute = AsyncMock(side_effect=[_make_execute_result(0), _make_execute_result(0)])
+        # SELECT returns 0 rows; both UPDATEs affect 0 rows
+        mock_db.execute = AsyncMock(
+            side_effect=[_make_select_result([]), _make_execute_result(0), _make_execute_result(0)]
+        )
 
         mock_db_manager = MagicMock()
         mock_db_manager.get_session = MagicMock(return_value=_make_session_ctx(mock_db))
@@ -196,11 +214,16 @@ class TestStaleBountyRecovery:
 
     @pytest.mark.asyncio
     async def test_sweep_bounty_statement_targets_bounty_table_with_time_filter(self):
-        """The first UPDATE statement targets the bounty table and includes a now() time filter."""
+        """The second execute statement (UPDATE) targets the bounty table with a now() time filter.
+
+        B.23b: execute index shifted by 1 due to the new leading SELECT statement.
+        """
         mock_db = AsyncMock()
         mock_db.commit = AsyncMock()
         mock_db.rollback = AsyncMock()
-        mock_db.execute = AsyncMock(side_effect=[_make_execute_result(3), _make_execute_result(0)])
+        mock_db.execute = AsyncMock(
+            side_effect=[_make_select_result([]), _make_execute_result(3), _make_execute_result(0)]
+        )
 
         mock_db_manager = MagicMock()
         mock_db_manager.get_session = MagicMock(return_value=_make_session_ctx(mock_db))
@@ -210,9 +233,9 @@ class TestStaleBountyRecovery:
 
             await run_stale_state_recovery_sweep()
 
-        # Inspect the first UPDATE statement (bounty)
-        first_stmt = mock_db.execute.call_args_list[0][0][0]
-        stmt_str = str(first_stmt.compile(compile_kwargs={"literal_binds": False}))
+        # Inspect the second execute statement (bounty UPDATE, index=1 because SELECT is index=0)
+        update_stmt = mock_db.execute.call_args_list[1][0][0]
+        stmt_str = str(update_stmt.compile(compile_kwargs={"literal_binds": False}))
         # Must target the bounty table and include a now() time guard
         assert "bounty" in stmt_str.lower(), f"Expected 'bounty' table in SQL, got: {stmt_str}"
         assert "now" in stmt_str.lower(), f"Expected now() time filter in SQL, got: {stmt_str}"
@@ -223,12 +246,14 @@ class TestStaleDuelRecovery:
 
     @pytest.mark.asyncio
     async def test_stale_duels_are_marked_expired(self):
-        """2 stale pending duels → both UPDATEs executed, single commit."""
+        """2 stale pending duels → SELECT + both UPDATEs executed, single commit."""
         mock_db = AsyncMock()
         mock_db.commit = AsyncMock()
         mock_db.rollback = AsyncMock()
-        # First execute = bounty UPDATE (0), second = duel UPDATE (2)
-        mock_db.execute = AsyncMock(side_effect=[_make_execute_result(0), _make_execute_result(2)])
+        # execute 1: SELECT stale ids (0 rows), execute 2: bounty UPDATE (0), execute 3: duel UPDATE (2)
+        mock_db.execute = AsyncMock(
+            side_effect=[_make_select_result([]), _make_execute_result(0), _make_execute_result(2)]
+        )
 
         mock_db_manager = MagicMock()
         mock_db_manager.get_session = MagicMock(return_value=_make_session_ctx(mock_db))
@@ -238,16 +263,22 @@ class TestStaleDuelRecovery:
 
             await run_stale_state_recovery_sweep()
 
-        assert mock_db.execute.await_count == 2
+        assert mock_db.execute.await_count == 3
         mock_db.commit.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_duel_update_statement_uses_time_filter(self):
-        """The second UPDATE statement targets duel_requests with a now() time filter."""
+        """The third execute statement (duel UPDATE) targets duel_requests with a now() time filter.
+
+        B.23b: index shifted by 1 due to new leading SELECT statement.
+        """
         mock_db = AsyncMock()
         mock_db.commit = AsyncMock()
         mock_db.rollback = AsyncMock()
-        mock_db.execute = AsyncMock(side_effect=[_make_execute_result(0), _make_execute_result(1)])
+        # execute 1: SELECT(0 rows), execute 2: bounty UPDATE(0), execute 3: duel UPDATE(1)
+        mock_db.execute = AsyncMock(
+            side_effect=[_make_select_result([]), _make_execute_result(0), _make_execute_result(1)]
+        )
 
         mock_db_manager = MagicMock()
         mock_db_manager.get_session = MagicMock(return_value=_make_session_ctx(mock_db))
@@ -257,9 +288,9 @@ class TestStaleDuelRecovery:
 
             await run_stale_state_recovery_sweep()
 
-        # Second statement = duel UPDATE
-        second_stmt = mock_db.execute.call_args_list[1][0][0]
-        stmt_str = str(second_stmt.compile(compile_kwargs={"literal_binds": False}))
+        # Third statement = duel UPDATE (index=2)
+        duel_stmt = mock_db.execute.call_args_list[2][0][0]
+        stmt_str = str(duel_stmt.compile(compile_kwargs={"literal_binds": False}))
         assert "duel_requests" in stmt_str.lower(), f"Expected 'duel_requests' table in SQL, got: {stmt_str}"
         assert "now" in stmt_str.lower(), f"Expected now() time filter in duel UPDATE SQL, got: {stmt_str}"
 
@@ -273,6 +304,7 @@ class TestRecoverySweepErrorHandling:
         mock_db = AsyncMock()
         mock_db.commit = AsyncMock()
         mock_db.rollback = AsyncMock()
+        # First execute (SELECT) raises → triggers rollback
         mock_db.execute = AsyncMock(side_effect=Exception("Connection lost"))
 
         mock_db_manager = MagicMock()
@@ -292,6 +324,7 @@ class TestRecoverySweepErrorHandling:
         mock_db = AsyncMock()
         mock_db.commit = AsyncMock()
         mock_db.rollback = AsyncMock()
+        # First execute (SELECT) raises → rollback, no commit
         mock_db.execute = AsyncMock(side_effect=RuntimeError("Timeout"))
 
         mock_db_manager = MagicMock()
@@ -422,3 +455,152 @@ class TestStaleRespawnRecovery:
         assert "escaped" in stmt_str.lower()
         assert "now" in stmt_str.lower()
         assert "respawn_time" in stmt_str.lower()
+
+
+# ---------------------------------------------------------------------------
+# B.23b — Sweep deletes Discord announcements for stale bounties
+# ---------------------------------------------------------------------------
+
+
+class TestSweepAnnouncementCleanup:
+    """B.23b: run_stale_state_recovery_sweep deletes announcements for stale bounties."""
+
+    @pytest.mark.asyncio
+    async def test_sweep_calls_delete_announcement_for_each_stale_bounty(self):
+        """B.23b: When the SELECT returns stale bounty IDs, _delete_bounty_announcement is
+        called for each one via a new DB session after the bulk UPDATE commits.
+        """
+        mock_db = AsyncMock()
+        mock_db.commit = AsyncMock()
+        mock_db.rollback = AsyncMock()
+        # SELECT returns 2 stale bounty rows as (id, guild_id) tuples
+        stale_rows = [(101, 1001), (102, 1001)]
+        mock_db.execute = AsyncMock(
+            side_effect=[
+                _make_select_result(stale_rows),  # SELECT stale ids
+                _make_execute_result(2),  # UPDATE bounties
+                _make_execute_result(0),  # UPDATE duels
+            ]
+        )
+
+        mock_db_manager = MagicMock()
+        # First call to get_session is inside the sweep body (UPDATE session)
+        # Subsequent calls are per-bounty announcement cleanup sessions
+        mock_db_manager.get_session = MagicMock(return_value=_make_session_ctx(mock_db))
+
+        mock_delete_announcement = AsyncMock()
+
+        with (
+            patch("main.db_manager", mock_db_manager),
+            patch(
+                "utils.executors.bounty_expire_executor._delete_bounty_announcement",
+                mock_delete_announcement,
+            ),
+        ):
+            from main import run_stale_state_recovery_sweep
+
+            await run_stale_state_recovery_sweep()
+
+        # _delete_bounty_announcement must be called once per stale bounty
+        assert mock_delete_announcement.await_count == 2
+        # Verify the bounty ref objects passed have the correct IDs
+        call_ids = {call.args[1].id for call in mock_delete_announcement.await_args_list}
+        assert call_ids == {101, 102}
+
+    @pytest.mark.asyncio
+    async def test_sweep_no_announcements_when_no_stale_bounties(self):
+        """B.23b: When SELECT returns 0 rows, _delete_bounty_announcement is never called."""
+        mock_db = AsyncMock()
+        mock_db.commit = AsyncMock()
+        mock_db.rollback = AsyncMock()
+        mock_db.execute = AsyncMock(
+            side_effect=[
+                _make_select_result([]),  # SELECT returns 0 rows
+                _make_execute_result(0),  # UPDATE bounties
+                _make_execute_result(0),  # UPDATE duels
+            ]
+        )
+
+        mock_db_manager = MagicMock()
+        mock_db_manager.get_session = MagicMock(return_value=_make_session_ctx(mock_db))
+
+        mock_delete_announcement = AsyncMock()
+
+        with (
+            patch("main.db_manager", mock_db_manager),
+            patch(
+                "utils.executors.bounty_expire_executor._delete_bounty_announcement",
+                mock_delete_announcement,
+            ),
+        ):
+            from main import run_stale_state_recovery_sweep
+
+            await run_stale_state_recovery_sweep()
+
+        mock_delete_announcement.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_sweep_announcement_failure_is_non_fatal(self):
+        """B.23b: If _delete_bounty_announcement raises, the sweep continues and does not propagate."""
+        mock_db = AsyncMock()
+        mock_db.commit = AsyncMock()
+        mock_db.rollback = AsyncMock()
+        stale_rows = [(201, 2001), (202, 2001)]
+        mock_db.execute = AsyncMock(
+            side_effect=[
+                _make_select_result(stale_rows),
+                _make_execute_result(2),
+                _make_execute_result(0),
+            ]
+        )
+
+        mock_db_manager = MagicMock()
+        mock_db_manager.get_session = MagicMock(return_value=_make_session_ctx(mock_db))
+
+        # First announcement call raises; second should still be attempted
+        mock_delete_announcement = AsyncMock(side_effect=[RuntimeError("gateway timeout"), None])
+
+        with (
+            patch("main.db_manager", mock_db_manager),
+            patch(
+                "utils.executors.bounty_expire_executor._delete_bounty_announcement",
+                mock_delete_announcement,
+            ),
+        ):
+            from main import run_stale_state_recovery_sweep
+
+            # Must NOT raise
+            await run_stale_state_recovery_sweep()
+
+        # Both announcements were attempted despite first failure
+        assert mock_delete_announcement.await_count == 2
+
+
+# ---------------------------------------------------------------------------
+# B.23a — scheduler_holder singleton
+# ---------------------------------------------------------------------------
+
+
+class TestSchedulerHolder:
+    """B.23a: scheduler_holder provides a module-level scheduler reference."""
+
+    def test_get_scheduler_returns_none_before_set(self):
+        """Before set_scheduler is called, get_scheduler returns None."""
+        import utils.scheduler_holder as holder_mod
+
+        # Reset to None for isolation
+        holder_mod._scheduler = None
+
+        assert holder_mod.get_scheduler() is None
+
+    def test_set_and_get_scheduler(self):
+        """set_scheduler stores the instance; get_scheduler retrieves it."""
+        import utils.scheduler_holder as holder_mod
+
+        mock_sched = MagicMock()
+        holder_mod.set_scheduler(mock_sched)
+
+        try:
+            assert holder_mod.get_scheduler() is mock_sched
+        finally:
+            holder_mod._scheduler = None  # cleanup after test

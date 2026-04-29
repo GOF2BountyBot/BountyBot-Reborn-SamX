@@ -446,6 +446,10 @@ async def update_player_xp(
                 raise HTTPException(status_code=404, detail="Player not found")
 
             old_tier = old_player.tier
+            # Pre-capture old_xp BEFORE the service mutates the player in-place
+            # (identity-map sequencing: after update_player_xp(), old_player.xp
+            # already holds the new value — reading it post-call yields wrong old_xp)
+            old_xp = old_player.xp
             player = await player_service.update_player_xp(db, request.player_id, request.xp)
 
             await AuditService.log_action(
@@ -460,7 +464,7 @@ async def update_player_xp(
 
             return {
                 "player_id": request.player_id,
-                "old_xp": old_player.xp,
+                "old_xp": old_xp,
                 "new_xp": request.xp,
                 "old_tier": old_tier,
                 "new_tier": player.tier,

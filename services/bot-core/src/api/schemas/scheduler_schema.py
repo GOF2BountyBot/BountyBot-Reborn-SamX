@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 # —— Pydantic models ——
@@ -40,5 +40,9 @@ class UpdateJob(BaseModel):
     Model for updating the 'payload' of an existing job.
     Matches the shape of the original payload passed at scheduling time.
     """
+
+    # B.30: forbid extra fields so that a wrong-field body (e.g. {"args": [...]})
+    # returns HTTP 422 instead of silently wiping the existing payload to {}.
+    model_config = ConfigDict(extra="forbid")
 
     payload: dict | None = {}

@@ -713,9 +713,18 @@ async def execute_bounty_spawn_job(job_id: str, payload: dict) -> dict:
 
 
 async def _schedule_expiry_job(parent_job_id: str, bounty) -> None:
-    """POST a one-time job to the scheduler API to expire *bounty* at end_time.
+    """Schedule a one-time job to expire *bounty* at its end_time.
 
-    If end_time is not set or scheduling fails the error is logged but does NOT
+    B.23a fix: schedules via the direct APScheduler Python API (in-process) instead of
+    an HTTP POST to the scheduler router.  The HTTP approach was unreliable — failures
+    (timeouts, transient errors, startup races) were silently dropped, leaving bounties
+    without an expire job and their Discord announcements as permanent zombies.
+
+    The direct API call is synchronous and infallible within the same process.
+    If the scheduler instance is not yet available (e.g. test environments), falls back
+    to the original HTTP POST.
+
+    If end_time is not set or scheduling fails, the error is logged but does NOT
     propagate — a failed expiry schedule is non-fatal for the spawn operation.
     """
     if bounty.end_time is None:
@@ -731,6 +740,37 @@ async def _schedule_expiry_job(parent_job_id: str, bounty) -> None:
         "guild_id": bounty.guild_id,
         "division": bounty.division,
     }
+
+    # B.23a: try direct in-process scheduler first (no HTTP round-trip, no silent failure).
+    try:
+        from utils.job_executor import run_job
+        from utils.scheduler_holder import get_scheduler
+
+        scheduler = get_scheduler()
+        if scheduler is not None:
+            scheduler.add_job(
+                run_job,
+                trigger="date",
+                run_date=bounty.end_time,
+                args=[expiry_job_id, expiry_payload],
+                id=expiry_job_id,
+            )
+            flogger.info(
+                f"BountySpawnJob[{parent_job_id}] scheduled expiry job {expiry_job_id} "
+                f"(direct API) for bounty id={bounty.id} at {bounty.end_time.isoformat()}"
+            )
+            return
+        flogger.debug(
+            f"BountySpawnJob[{parent_job_id}] scheduler not available via holder; falling back to HTTP scheduling"
+        )
+    except Exception as e:  # pylint: disable=broad-exception-caught
+        flogger.warning(
+            f"BountySpawnJob[{parent_job_id}] direct scheduler call failed for bounty id={bounty.id}: {e}; "
+            "falling back to HTTP scheduling"
+        )
+        flogger.trace(traceback.format_exc())
+
+    # Fallback: original HTTP POST to the scheduler router.
     body = {
         "run_at": bounty.end_time.isoformat(),
         "payload": expiry_payload,
@@ -746,7 +786,7 @@ async def _schedule_expiry_job(parent_job_id: str, bounty) -> None:
         resp.raise_for_status()
         flogger.info(
             f"BountySpawnJob[{parent_job_id}] scheduled expiry job {expiry_job_id} "
-            f"for bounty id={bounty.id} at {bounty.end_time.isoformat()}"
+            f"(HTTP fallback) for bounty id={bounty.id} at {bounty.end_time.isoformat()}"
         )
     except Exception as e:  # pylint: disable=broad-exception-caught
         flogger.error(f"BountySpawnJob[{parent_job_id}] failed to schedule expiry for bounty id={bounty.id}: {e}")

@@ -2190,38 +2190,49 @@ class TestPlayerShipAutocomplete:
 
 
 class TestPreloadStaticCatalogs:
-    """Tests for AdminCog._preload_static_catalogs (spec tests #13–16)."""
+    """Tests for AdminCog._preload_static_catalogs (spec tests #13–16).
 
-    def _make_success_resp(self, data):
-        resp = MagicMock()
-        resp.raise_for_status = MagicMock()
-        resp.json = MagicMock(return_value=data)
-        return resp
+    B.33 remediation: all tests use respx to assert exact URL + HTTP method,
+    matching the real bot-core route: GET /about/categories/{cat}/objects.
+    The response shape is list[dict] with 'name' key — matching the actual
+    server contract from about.py:85.
+    """
+
+    _API_BASE = "http://bot-core:8000/api/v1"
 
     # ------------------------------------------------------------------
     # Test #13 — populates _item_catalog for all 4 categories on success
+    # Asserts: correct URL called, correct HTTP method (GET), correct cache state
     # ------------------------------------------------------------------
 
     def test_preload_populates_item_catalog_all_categories(self, mock_admin_cog):
-        """_preload_static_catalogs populates _item_catalog for all 4 categories."""
-        primary = [{"name": "Laser"}, {"name": "Plasma"}]
-        secondary = [{"name": "Shield"}]
-        turret = [{"name": "Gatling"}]
-        module = [{"name": "Engine"}]
-        ships_data = [{"name": "Niode"}]
+        """_preload_static_catalogs calls GET /about/categories/{cat}/objects and
+        populates _item_catalog for all 4 item categories on success."""
+        import httpx
+        import respx
 
-        responses = [
-            self._make_success_resp(primary),
-            self._make_success_resp(secondary),
-            self._make_success_resp(turret),
-            self._make_success_resp(module),
-            self._make_success_resp(ships_data),
-        ]
-        mock_admin_cog.http_client.get = AsyncMock(side_effect=responses)
         mock_admin_cog.bot.wait_until_ready = AsyncMock()
 
-        asyncio.run(mock_admin_cog._preload_static_catalogs())
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.get(f"{self._API_BASE}/about/categories/primary_weapon/objects").mock(
+                return_value=httpx.Response(200, json=[{"name": "Laser", "id": 1}, {"name": "Plasma", "id": 2}])
+            )
+            mock_router.get(f"{self._API_BASE}/about/categories/secondary_weapon/objects").mock(
+                return_value=httpx.Response(200, json=[{"name": "Shield", "id": 3}])
+            )
+            mock_router.get(f"{self._API_BASE}/about/categories/turret_weapon/objects").mock(
+                return_value=httpx.Response(200, json=[{"name": "Gatling", "id": 4}])
+            )
+            mock_router.get(f"{self._API_BASE}/about/categories/module/objects").mock(
+                return_value=httpx.Response(200, json=[{"name": "Engine", "id": 5}])
+            )
+            mock_router.get(f"{self._API_BASE}/about/categories/ship/objects").mock(
+                return_value=httpx.Response(200, json=[{"name": "Niode", "id": 6}])
+            )
 
+            asyncio.run(mock_admin_cog._preload_static_catalogs())
+
+        # Verify correct cache population from list[dict] with 'name' key
         assert asyncio.run(mock_admin_cog._item_catalog.get("primary_weapon")) == ["Laser", "Plasma"]
         assert asyncio.run(mock_admin_cog._item_catalog.get("secondary_weapon")) == ["Shield"]
         assert asyncio.run(mock_admin_cog._item_catalog.get("turret_weapon")) == ["Gatling"]
@@ -2229,63 +2240,149 @@ class TestPreloadStaticCatalogs:
 
     # ------------------------------------------------------------------
     # Test #14 — populates _ship_catalog["all"] on success
+    # Asserts: ship catalog URL is GET /about/categories/ship/objects (not /about/ships)
     # ------------------------------------------------------------------
 
     def test_preload_populates_ship_catalog(self, mock_admin_cog):
-        """_preload_static_catalogs populates _ship_catalog['all'] on success."""
-        ships_data = [{"name": "Niode"}, {"name": "Groza"}, {"name": "Bloodstar"}]
-        item_resp = self._make_success_resp([{"name": "Laser"}])
-        ship_resp = self._make_success_resp(ships_data)
+        """_preload_static_catalogs calls GET /about/categories/ship/objects and
+        populates _ship_catalog['all'] correctly."""
+        import httpx
+        import respx
 
-        # 4 item category calls + 1 ship call
-        responses = [item_resp] * 4 + [ship_resp]
-        mock_admin_cog.http_client.get = AsyncMock(side_effect=responses)
         mock_admin_cog.bot.wait_until_ready = AsyncMock()
 
-        asyncio.run(mock_admin_cog._preload_static_catalogs())
+        with respx.mock(assert_all_called=True) as mock_router:
+            # 4 item categories — any valid response
+            for cat in ("primary_weapon", "secondary_weapon", "turret_weapon", "module"):
+                mock_router.get(f"{self._API_BASE}/about/categories/{cat}/objects").mock(
+                    return_value=httpx.Response(200, json=[{"name": "Item", "id": 1}])
+                )
+            # Ship catalog — the correct endpoint (not the nonexistent /about/ships)
+            mock_router.get(f"{self._API_BASE}/about/categories/ship/objects").mock(
+                return_value=httpx.Response(
+                    200,
+                    json=[{"name": "Niode", "id": 10}, {"name": "Groza", "id": 11}, {"name": "Bloodstar", "id": 12}],
+                )
+            )
+
+            asyncio.run(mock_admin_cog._preload_static_catalogs())
 
         ship_names = asyncio.run(mock_admin_cog._ship_catalog.get("all"))
         assert ship_names == ["Niode", "Groza", "Bloodstar"]
 
     # ------------------------------------------------------------------
-    # Test #15 — retries on transient HTTPStatusError and eventually succeeds
+    # Test #15 — partial failure: one category 500s, others succeed
+    # Asserts: failed category cache is empty, successful categories are populated
+    # ------------------------------------------------------------------
+
+    def test_preload_partial_failure_one_category_fails(self, mock_admin_cog):
+        """_preload_static_catalogs leaves the failed category empty while
+        other categories are still populated on partial failure."""
+        import httpx
+        import respx
+
+        mock_admin_cog.bot.wait_until_ready = AsyncMock()
+        call_count = {"primary_weapon": 0}
+
+        async def primary_weapon_handler(request):
+            call_count["primary_weapon"] += 1
+            # Fail all 5 attempts for primary_weapon
+            return httpx.Response(500, json={"detail": "Internal Server Error"})
+
+        with respx.mock(assert_all_called=False) as mock_router:
+            mock_router.get(f"{self._API_BASE}/about/categories/primary_weapon/objects").mock(
+                side_effect=primary_weapon_handler
+            )
+            mock_router.get(f"{self._API_BASE}/about/categories/secondary_weapon/objects").mock(
+                return_value=httpx.Response(200, json=[{"name": "Shield", "id": 3}])
+            )
+            mock_router.get(f"{self._API_BASE}/about/categories/turret_weapon/objects").mock(
+                return_value=httpx.Response(200, json=[{"name": "Gatling", "id": 4}])
+            )
+            mock_router.get(f"{self._API_BASE}/about/categories/module/objects").mock(
+                return_value=httpx.Response(200, json=[{"name": "Engine", "id": 5}])
+            )
+            mock_router.get(f"{self._API_BASE}/about/categories/ship/objects").mock(
+                return_value=httpx.Response(200, json=[{"name": "Niode", "id": 6}])
+            )
+
+            with patch("cogs.adminCog.asyncio.sleep", new=AsyncMock()):
+                asyncio.run(mock_admin_cog._preload_static_catalogs())
+
+        # Failed category → empty cache
+        assert asyncio.run(mock_admin_cog._item_catalog.get("primary_weapon")) == []
+        # Successful categories → populated
+        assert asyncio.run(mock_admin_cog._item_catalog.get("secondary_weapon")) == ["Shield"]
+        assert asyncio.run(mock_admin_cog._item_catalog.get("turret_weapon")) == ["Gatling"]
+        assert asyncio.run(mock_admin_cog._item_catalog.get("module")) == ["Engine"]
+        assert asyncio.run(mock_admin_cog._ship_catalog.get("all")) == ["Niode"]
+
+    # ------------------------------------------------------------------
+    # Test #15b — retries on transient 503 and eventually succeeds
     # ------------------------------------------------------------------
 
     def test_preload_retries_on_transient_error_and_succeeds(self, mock_admin_cog):
         """_preload_static_catalogs retries on 503 and succeeds on the second attempt."""
         import httpx
+        import respx
 
-        error_resp = MagicMock()
-        error_resp.status_code = 503
-        error = httpx.HTTPStatusError("503", request=MagicMock(), response=error_resp)
-        success_resp = self._make_success_resp([{"name": "Laser"}])
-
-        # First attempt for primary_weapon fails; second succeeds. Rest succeed directly.
-        mock_admin_cog.http_client.get = AsyncMock(side_effect=[error, success_resp] + [success_resp] * 4)
         mock_admin_cog.bot.wait_until_ready = AsyncMock()
+        attempt_tracker = {"primary_weapon_calls": 0}
 
-        with patch("cogs.adminCog.asyncio.sleep", new=AsyncMock()):
-            asyncio.run(mock_admin_cog._preload_static_catalogs())
+        async def primary_weapon_flaky(request):
+            attempt_tracker["primary_weapon_calls"] += 1
+            if attempt_tracker["primary_weapon_calls"] == 1:
+                return httpx.Response(503, json={"detail": "Service Unavailable"})
+            return httpx.Response(200, json=[{"name": "Laser", "id": 1}])
+
+        with respx.mock(assert_all_called=False) as mock_router:
+            mock_router.get(f"{self._API_BASE}/about/categories/primary_weapon/objects").mock(
+                side_effect=primary_weapon_flaky
+            )
+            for cat in ("secondary_weapon", "turret_weapon", "module"):
+                mock_router.get(f"{self._API_BASE}/about/categories/{cat}/objects").mock(
+                    return_value=httpx.Response(200, json=[{"name": "Item", "id": 1}])
+                )
+            mock_router.get(f"{self._API_BASE}/about/categories/ship/objects").mock(
+                return_value=httpx.Response(200, json=[{"name": "Ship", "id": 10}])
+            )
+
+            with patch("cogs.adminCog.asyncio.sleep", new=AsyncMock()):
+                asyncio.run(mock_admin_cog._preload_static_catalogs())
 
         # primary_weapon should be populated after successful retry
         result = asyncio.run(mock_admin_cog._item_catalog.get("primary_weapon"))
         assert result == ["Laser"]
+        assert attempt_tracker["primary_weapon_calls"] == 2
 
     # ------------------------------------------------------------------
     # Test #16 — terminal failure leaves caches empty, no exception bubbles
+    # Asserts: 5 retries exhausted, cache set to [], no exception raised
     # ------------------------------------------------------------------
 
     def test_preload_terminal_failure_leaves_caches_empty(self, mock_admin_cog):
-        """_preload_static_catalogs leaves caches empty on terminal failure; no exception raised."""
-        mock_admin_cog.http_client.get = AsyncMock(side_effect=Exception("all down"))
+        """_preload_static_catalogs leaves all caches empty on terminal failure;
+        no exception raised to the caller."""
+        import httpx
+        import respx
+
         mock_admin_cog.bot.wait_until_ready = AsyncMock()
 
-        with patch("cogs.adminCog.asyncio.sleep", new=AsyncMock()):
-            # Must not raise
-            asyncio.run(mock_admin_cog._preload_static_catalogs())
+        with respx.mock(assert_all_called=False) as mock_router:
+            # All endpoints return 500 on every attempt
+            for cat in ("primary_weapon", "secondary_weapon", "turret_weapon", "module", "ship"):
+                mock_router.get(f"{self._API_BASE}/about/categories/{cat}/objects").mock(
+                    return_value=httpx.Response(500, json={"detail": "Internal Server Error"})
+                )
 
-        # All caches should be empty lists (set explicitly on terminal failure)
+            with patch("cogs.adminCog.asyncio.sleep", new=AsyncMock()):
+                # Must not raise even when all retries fail
+                asyncio.run(mock_admin_cog._preload_static_catalogs())
+
+        # All caches should be set to empty lists after terminal failure
         assert asyncio.run(mock_admin_cog._item_catalog.get("primary_weapon")) == []
+        assert asyncio.run(mock_admin_cog._item_catalog.get("secondary_weapon")) == []
+        assert asyncio.run(mock_admin_cog._item_catalog.get("turret_weapon")) == []
         assert asyncio.run(mock_admin_cog._item_catalog.get("module")) == []
         assert asyncio.run(mock_admin_cog._ship_catalog.get("all")) == []
 

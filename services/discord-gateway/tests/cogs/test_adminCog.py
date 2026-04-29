@@ -1668,7 +1668,22 @@ class TestAdminPlayerViewStatsTimestamps:
 
 
 class TestPreloadRenderSettings:
-    """Tests for _preload_render_settings method."""
+    """Tests for _preload_render_settings method.
+
+    B.33 followup (Finding 1): tests use respx to assert exact URL + HTTP method,
+    confirming adminCog calls GET /api/v1/config/render on blender-service
+    (route registered in blender-service/src/routers/config.py:19).
+    """
+
+    _DEFAULT_BLENDER_URL = "http://blender-service:8001/api/v1"
+    _RENDER_CONFIG_URL = "http://blender-service:8001/api/v1/config/render"
+
+    def _with_real_client(self, cog):
+        """Replace cog.http_client with a real httpx.AsyncClient for respx interception."""
+        import httpx
+
+        cog.http_client = httpx.AsyncClient(timeout=httpx.Timeout(10.0))
+        return cog
 
     def test_render_settings_initialized_empty(self, mock_admin_cog):
         """_render_settings should start empty on init."""
@@ -1687,7 +1702,10 @@ class TestPreloadRenderSettings:
         assert mock_bot.loop.create_task.call_count == 2
 
     def test_preload_success_populates_settings(self, mock_admin_cog):
-        """_preload_render_settings should populate _render_settings on success."""
+        """_preload_render_settings calls GET /api/v1/config/render and populates _render_settings."""
+        import httpx
+        import respx
+
         render_config_data = {
             "max_res_x": 3840,
             "max_res_y": 2160,
@@ -1701,79 +1719,110 @@ class TestPreloadRenderSettings:
             "max_concurrent_renders": 2,
             "job_ttl_hours": 1,
         }
-        mock_resp = MagicMock()
-        mock_resp.raise_for_status = MagicMock()
-        mock_resp.json.return_value = render_config_data
-        mock_admin_cog.http_client.get = AsyncMock(return_value=mock_resp)
+        self._with_real_client(mock_admin_cog)
         mock_admin_cog.bot.wait_until_ready = AsyncMock()
 
-        asyncio.run(mock_admin_cog._preload_render_settings())
+        env_without_blender = {k: v for k, v in os.environ.items() if k != "BLENDER_API_BASE_URL"}
+        with patch.dict(os.environ, env_without_blender, clear=True):
+            with respx.mock(assert_all_called=True) as mock_router:
+                mock_router.get(self._RENDER_CONFIG_URL).mock(
+                    return_value=httpx.Response(200, json=render_config_data)
+                )
+                asyncio.run(mock_admin_cog._preload_render_settings())
 
         assert mock_admin_cog._render_settings == list(render_config_data.keys())
         assert len(mock_admin_cog._render_settings) == 11
 
     def test_preload_retries_on_failure_then_succeeds(self, mock_admin_cog):
-        """_preload_render_settings should retry up to 3 times and succeed on 2nd attempt."""
-        render_config_data = {"max_res_x": 3840, "default_samples": 64}
-        success_resp = MagicMock()
-        success_resp.raise_for_status = MagicMock()
-        success_resp.json.return_value = render_config_data
+        """_preload_render_settings retries up to 3 times; succeeds on 2nd attempt."""
+        import httpx
+        import respx
 
-        # First call raises, second call succeeds
-        mock_admin_cog.http_client.get = AsyncMock(side_effect=[Exception("timeout"), success_resp])
+        render_config_data = {"max_res_x": 3840, "default_samples": 64}
+        attempt_count = {"n": 0}
+
+        async def flaky_handler(request):
+            attempt_count["n"] += 1
+            if attempt_count["n"] == 1:
+                raise httpx.ConnectError("connection refused", request=request)
+            return httpx.Response(200, json=render_config_data)
+
+        self._with_real_client(mock_admin_cog)
         mock_admin_cog.bot.wait_until_ready = AsyncMock()
 
-        with patch("cogs.adminCog.asyncio.sleep", new=AsyncMock()) as mock_sleep:
-            asyncio.run(mock_admin_cog._preload_render_settings())
+        env_without_blender = {k: v for k, v in os.environ.items() if k != "BLENDER_API_BASE_URL"}
+        with patch.dict(os.environ, env_without_blender, clear=True):
+            with respx.mock(assert_all_called=False) as mock_router:
+                mock_router.get(self._RENDER_CONFIG_URL).mock(side_effect=flaky_handler)
+                with patch("cogs.adminCog.asyncio.sleep", new=AsyncMock()) as mock_sleep:
+                    asyncio.run(mock_admin_cog._preload_render_settings())
 
-        # Should have slept once (after first failure)
+        # Should have slept once (after first failure) with 5s delay
         mock_sleep.assert_awaited_once_with(5)
         # Settings populated from successful 2nd attempt
         assert mock_admin_cog._render_settings == list(render_config_data.keys())
 
     def test_preload_all_3_attempts_fail_leaves_empty(self, mock_admin_cog):
-        """_preload_render_settings should leave _render_settings empty after all 3 failures."""
-        mock_admin_cog.http_client.get = AsyncMock(side_effect=Exception("connection refused"))
+        """_preload_render_settings leaves _render_settings empty after all 3 failures."""
+        import httpx
+        import respx
+
+        self._with_real_client(mock_admin_cog)
         mock_admin_cog.bot.wait_until_ready = AsyncMock()
 
-        with patch("cogs.adminCog.asyncio.sleep", new=AsyncMock()):
-            asyncio.run(mock_admin_cog._preload_render_settings())
+        env_without_blender = {k: v for k, v in os.environ.items() if k != "BLENDER_API_BASE_URL"}
+        with patch.dict(os.environ, env_without_blender, clear=True):
+            with respx.mock(assert_all_called=False) as mock_router:
+                mock_router.get(self._RENDER_CONFIG_URL).mock(
+                    return_value=httpx.Response(503, json={"detail": "Service Unavailable"})
+                )
+                with patch("cogs.adminCog.asyncio.sleep", new=AsyncMock()):
+                    asyncio.run(mock_admin_cog._preload_render_settings())
 
         # Settings should remain empty after all attempts fail
         assert mock_admin_cog._render_settings == []
 
     def test_preload_uses_blender_api_base_url_env(self, mock_admin_cog):
-        """_preload_render_settings should use BLENDER_API_BASE_URL env var."""
+        """_preload_render_settings uses BLENDER_API_BASE_URL env var for the request URL."""
+        import httpx
+        import respx
+
         render_config_data = {"max_res_x": 3840}
-        mock_resp = MagicMock()
-        mock_resp.raise_for_status = MagicMock()
-        mock_resp.json.return_value = render_config_data
-        mock_admin_cog.http_client.get = AsyncMock(return_value=mock_resp)
+        custom_url = "http://custom-blender:9001/api/v1"
+        custom_config_url = f"{custom_url}/config/render"
+
+        self._with_real_client(mock_admin_cog)
         mock_admin_cog.bot.wait_until_ready = AsyncMock()
 
-        custom_url = "http://custom-blender:9001/api/v1"
         with patch.dict(os.environ, {"BLENDER_API_BASE_URL": custom_url}):
-            asyncio.run(mock_admin_cog._preload_render_settings())
+            with respx.mock(assert_all_called=True) as mock_router:
+                # respx intercepts the custom URL — only matches if cog uses env var
+                mock_router.get(custom_config_url).mock(
+                    return_value=httpx.Response(200, json=render_config_data)
+                )
+                asyncio.run(mock_admin_cog._preload_render_settings())
 
-        call_url = mock_admin_cog.http_client.get.call_args[0][0]
-        assert call_url == f"{custom_url}/config/render"
+        assert mock_admin_cog._render_settings == list(render_config_data.keys())
 
     def test_preload_uses_default_blender_url_when_env_missing(self, mock_admin_cog):
-        """_preload_render_settings should fall back to default blender URL when env var absent."""
+        """_preload_render_settings falls back to default blender URL when env var absent."""
+        import httpx
+        import respx
+
         render_config_data = {"default_samples": 64}
-        mock_resp = MagicMock()
-        mock_resp.raise_for_status = MagicMock()
-        mock_resp.json.return_value = render_config_data
-        mock_admin_cog.http_client.get = AsyncMock(return_value=mock_resp)
+        self._with_real_client(mock_admin_cog)
         mock_admin_cog.bot.wait_until_ready = AsyncMock()
 
         env_without_blender = {k: v for k, v in os.environ.items() if k != "BLENDER_API_BASE_URL"}
         with patch.dict(os.environ, env_without_blender, clear=True):
-            asyncio.run(mock_admin_cog._preload_render_settings())
+            with respx.mock(assert_all_called=True) as mock_router:
+                # respx only matches if cog uses the default URL
+                mock_router.get(self._RENDER_CONFIG_URL).mock(
+                    return_value=httpx.Response(200, json=render_config_data)
+                )
+                asyncio.run(mock_admin_cog._preload_render_settings())
 
-        call_url = mock_admin_cog.http_client.get.call_args[0][0]
-        assert "blender-service:8001" in call_url
-        assert call_url.endswith("/config/render")
+        assert mock_admin_cog._render_settings == list(render_config_data.keys())
 
 
 class TestRenderSettingAutocomplete:

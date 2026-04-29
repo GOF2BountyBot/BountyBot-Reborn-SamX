@@ -2592,6 +2592,15 @@ Many tests exceed project's "max 2 mocks per test" standard (`AGENTS.md`). Sever
 
 | ID | Summary | Commit | Verified |
 |---|---|---|---|
+| **A.34** | `/ship` autocomplete showed `🟢` prefix in dropdown (a/c); `/ship` embed had redundant `Type: Betty` field (b/B.3). Fixed: added `show_active_indicator: bool = True` param to `player_ships_autocomplete()`; `/ship` and `/nickname` callers pass `False`; removed `embed.add_field(name="Type", ...)` from inline `/ship` builder. B.3 subsumed — `Type:` field is the same redundancy, removed by same change. Full delegation to `build_loadout_embed()` deferred (format mismatch between `/ships/{id}/loadout` and `/players/{id}/loadout` responses). | `1f3561d` | pending |
+| **A.32** | `Mp'zzzm Thrust` module rendered custom emoji `:mpzzzm:` (guild emoji not uploaded). Fixed: replaced `<:mpzzzm:723707097778225214>` with unicode `⚡` in `thrusters.mpzzzm_thrust.json`. | `1f3561d` | pending |
+| **A.30** | `GET /guilds/{id}/channels` returned `category_id: null` for all child channels. Fixed: added `category_id=getattr(channel, "category_id", None)` to `channel_to_summary()` return. Added 2 tests asserting category_id is populated for child channels. | `1f3561d` | pending |
+| **A.25** | `/unregister` on unconfigured guild showed generic `⚠️ An error occurred while removing the role.`. Fixed: added explicit `except httpx.HTTPStatusError` before broad `except Exception`; calls existing `_is_guild_not_configured()` helper and emits `_GUILD_NOT_CONFIGURED_MSG`. | `1f3561d` | pending |
+| **A.10** | E2E_TEST_CHECKLIST.md Appendix B undercounted channels (7→8) and roles (2→6). Fixed: Appendix B updated with all 8 channels (including `#platinum-bounties`), all 6 roles (5 player-facing + 1 admin), `#platinum-bounties` naming asymmetry documented; item 1.2 updated from "all 7 text channels" to "8 channels"; "BountyBot Admins" → "BountyBot Admin" naming corrected. | `1f3561d` | pending |
+| **B.3** | `/ship` embed showed redundant `Type: Betty` field (ship name duplicated from embed title). **Subsumed by A.34b** — same line removed in the A.34 fix. | `1f3561d` | pending |
+| **B.18** | `/leaderboard tier:X` empty-state message `"📭 No players found in this guild."` omitted tier filter context. Fixed: conditional `f"📭 No {tier}-tier players found in this guild."` when `tier` is set. | `1f3561d` | pending |
+| **B.4** | `/equip` swap-confirmation dropdown options showed plain item names with no UX hint that selecting = swap action. Fixed: added `description="Swap this item out"` to each `discord.SelectOption` in `WeaponSwapView` (`inventoryCog.py:69-72`). | `1f3561d` | pending |
+| **B.2** | `player_ships.secondary_weapons` was `NULL` not `[]` on starter Betty. Fixed: added `"secondary_weapons": []` key to `starter_ship_data` dict in `_create_starter_loadout()` (`player_service.py:124`). Added test asserting `secondary_weapons == []` (not None/missing) on starter creation. | `1f3561d` | pending |
 | **B.32** | `/render_config action:set` silently accepted unrecognized field (cog reported ✅ on HTTP 200 without verifying mutation). Fixed: (A) cog validates `setting` against `self._render_settings` before API call; (B) blender-service router raises 422 when update payload contains no valid `RenderConfig` fields. | `8860c5a` | pending |
 | **B.24** | `/route` embed rendered "recently spotted" systems identically to plain-checked (binary ~~strikethrough~~). Fixed: API adds `system_statuses` field computed server-side (`_project_checked()`, `"found"` masked); cog uses 3-state rendering (`**~~spotted~~** 🔍`, `~~checked~~ ✅`, plain). | `8860c5a` | pending |
 | **A.31** | `/list_category tech_level:N` and `manufacturer:` filters always returned empty. Fixed: add `tech_level` + `manufacturer` to preload response shape in `about.py:102-109`; cog filters already correct, only needed data present. | `8860c5a` | pending |
@@ -2659,4 +2668,4 @@ Many tests exceed project's "max 2 mocks per test" standard (`AGENTS.md`). Sever
 
 ---
 
-*Last updated: 2026-04-29 — Package A (B.17/B.23/B.30/B.31a) fixed in commit `360287b`*
+*Last updated: 2026-04-29 — Package D (A.25/A.30/A.32/A.34/B.18/B.2/B.3/B.4/A.10) fixed in commit `1f3561d`*

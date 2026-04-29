@@ -1305,6 +1305,9 @@ class BountyService:
             import os
 
             import httpx
+            from persist.repositories.criminal_repository import (  # pylint: disable=reimported,redefined-outer-name
+                CriminalRepository,
+            )
             from persist.repositories.discord_message_repository import DiscordMessageRepository
             from utils.bounty_announcement_payload import build_bounty_announcement_request
 

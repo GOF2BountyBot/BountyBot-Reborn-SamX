@@ -225,26 +225,42 @@ class ShopRepository(IRepository[GuildShop]):
                 await db.rollback()
             raise
 
-    async def clear_shop_tier(self, db: AsyncSession, guild_id: int, tier: str) -> None:
-        """Clear all items from a specific shop tier."""
+    async def clear_shop_tier(self, db: AsyncSession, guild_id: int, tier: str, *, commit: bool = True) -> None:
+        """Clear all items from a specific shop tier.
+
+        Args:
+            commit: When False, flush without committing (caller owns transaction).
+        """
         try:
             await db.execute(delete(GuildShop).where(and_(GuildShop.guild_id == guild_id, GuildShop.tier == tier)))
-            await db.commit()
+            if commit:
+                await db.commit()
+            else:
+                await db.flush()
             flogger.info(f"Cleared all items from {tier} shop in guild {guild_id}")
         except Exception as e:
             flogger.error(f"Error clearing {tier} shop in guild {guild_id}: {e}")
-            await db.rollback()
+            if commit:
+                await db.rollback()
             raise
 
-    async def clear_all_guild_shops(self, db: AsyncSession, guild_id: int) -> None:
-        """Clear all shop items for a guild."""
+    async def clear_all_guild_shops(self, db: AsyncSession, guild_id: int, *, commit: bool = True) -> None:
+        """Clear all shop items for a guild.
+
+        Args:
+            commit: When False, flush without committing (caller owns transaction).
+        """
         try:
             await db.execute(delete(GuildShop).where(GuildShop.guild_id == guild_id))
-            await db.commit()
+            if commit:
+                await db.commit()
+            else:
+                await db.flush()
             flogger.info(f"Cleared all shops for guild {guild_id}")
         except Exception as e:
             flogger.error(f"Error clearing all shops for guild {guild_id}: {e}")
-            await db.rollback()
+            if commit:
+                await db.rollback()
             raise
 
     async def get_guild_shops_summary(self, db: AsyncSession, guild_id: int) -> dict:
@@ -289,8 +305,19 @@ class ShopRepository(IRepository[GuildShop]):
             flogger.error(f"Error getting items by tech level {tech_level}: {e}")
             raise
 
-    async def update_prices(self, db: AsyncSession, guild_id: int, price_multiplier: float) -> int:
-        """Update all shop prices for a guild by a multiplier."""
+    async def update_prices(
+        self, db: AsyncSession, guild_id: int, price_multiplier: float, *, commit: bool = True
+    ) -> int:
+        """Update all shop prices for a guild by a multiplier.
+
+        Args:
+            commit: When False, flush without committing (caller owns transaction).
+
+        Note: This is a bulk Core UPDATE. Identity-mapped GuildShop rows in the
+        session will see stale price values until refresh; callers should treat
+        this as a "fire-and-forget" admin operation, not as a basis for re-reading
+        affected rows in the same transaction.
+        """
         try:
             if price_multiplier <= 0:
                 raise ValueError("Price multiplier must be positive")
@@ -298,14 +325,18 @@ class ShopRepository(IRepository[GuildShop]):
             result = await db.execute(
                 update(GuildShop).where(GuildShop.guild_id == guild_id).values(price=GuildShop.price * price_multiplier)
             )
-            await db.commit()
+            if commit:
+                await db.commit()
+            else:
+                await db.flush()
 
             updated_count = result.rowcount
             flogger.info(f"Updated {updated_count} shop item prices for guild {guild_id}")
             return updated_count
         except Exception as e:
             flogger.error(f"Error updating prices for guild {guild_id}: {e}")
-            await db.rollback()
+            if commit:
+                await db.rollback()
             raise
 
     async def get_items_due_for_refresh(self, db: AsyncSession, guild_id: int) -> list[GuildShop]:

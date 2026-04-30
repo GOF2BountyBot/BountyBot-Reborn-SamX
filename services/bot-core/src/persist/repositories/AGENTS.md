@@ -344,17 +344,24 @@ The full inventory after the B.34 remediation:
   `clear_player_inventory` (B.34 closeout, 2026-04-30)
 
 **`ShopRepository`** (Package G B.19 canonical pattern):
-- `add`, `create_or_update`, `remove`, `update_quantity`
+- `add`, `create_or_update`, `remove`, `update_quantity`,
+  `clear_shop_tier`, `clear_all_guild_shops`, `update_prices`
+  (B.34 closeout, 2026-04-30)
 
 **`BountyRepository`** (B.34 expansion):
-- `add`, `create_or_update`, `remove`, `create`, `update`, `delete`
+- `add`, `create_or_update`, `remove`, `create`, `update`, `delete`,
+  `clear_active_by_guild` (B.34 closeout, 2026-04-30)
 
 **`DuelRepository`** (B.34 expansion):
 - `add`, `create_or_update`, `remove`, `create`,
   `update_status`, `delete_expired`
 
 **`ConfigRepository`** (B.34 expansion):
-- `add`, `create_or_update`, `remove`
+- `add`, `create_or_update`, `remove`,
+  `create_default_config`, `reset_to_defaults`, `update_shop_config`,
+  `update_admin_role`, `update_starting_credits`, `update_xp_thresholds`,
+  `update_division_temperatures`, `delete_guild_config`
+  (B.34 closeout, 2026-04-30)
 
 **`DiscordMessageRepository`** (B.34 expansion):
 - `create_or_update`, `delete_by_composite_key`,

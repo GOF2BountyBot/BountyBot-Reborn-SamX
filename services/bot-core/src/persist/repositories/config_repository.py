@@ -136,8 +136,12 @@ class ConfigRepository(IRepository[GuildConfig]):
             flogger.error(f"Error getting config for guild {guild_id}: {e}")
             raise
 
-    async def create_default_config(self, db: AsyncSession, guild_id: int) -> GuildConfig:
-        """Create a default configuration for a guild."""
+    async def create_default_config(self, db: AsyncSession, guild_id: int, *, commit: bool = True) -> GuildConfig:
+        """Create a default configuration for a guild.
+
+        Args:
+            commit: When False, flush without committing (caller owns transaction).
+        """
         try:
             default_config = {
                 "guild_id": guild_id,
@@ -156,7 +160,7 @@ class ConfigRepository(IRepository[GuildConfig]):
                 "xp_thresholds": {"Silver": 1000, "Gold": 5000, "Platinum": 15000},
             }
 
-            config = await self.create_or_update(db, default_config)
+            config = await self.create_or_update(db, default_config, commit=commit)
             flogger.info(f"Created default config for guild {guild_id}")
             return config
 
@@ -164,8 +168,14 @@ class ConfigRepository(IRepository[GuildConfig]):
             flogger.error(f"Error creating default config for guild {guild_id}: {e}")
             raise
 
-    async def update_shop_config(self, db: AsyncSession, config_updates: dict[str, Any]) -> GuildConfig:
-        """Update shop-related configuration."""
+    async def update_shop_config(
+        self, db: AsyncSession, config_updates: dict[str, Any], *, commit: bool = True
+    ) -> GuildConfig:
+        """Update shop-related configuration.
+
+        Args:
+            commit: When False, flush without committing (caller owns transaction).
+        """
         try:
             guild_id = config_updates.get("guild_id")
             if not guild_id:
@@ -194,10 +204,14 @@ class ConfigRepository(IRepository[GuildConfig]):
                     setattr(config, field, config_updates[field])
 
             try:
-                await db.commit()
+                if commit:
+                    await db.commit()
+                else:
+                    await db.flush()
                 await db.refresh(config)
             except Exception:
-                await db.rollback()
+                if commit:
+                    await db.rollback()
                 raise
 
             flogger.info(f"Updated shop config for guild {guild_id}")
@@ -207,16 +221,20 @@ class ConfigRepository(IRepository[GuildConfig]):
             flogger.error(f"Error updating shop config: {e}")
             raise
 
-    async def reset_to_defaults(self, db: AsyncSession, guild_id: int) -> GuildConfig:
-        """Reset guild configuration to default values."""
+    async def reset_to_defaults(self, db: AsyncSession, guild_id: int, *, commit: bool = True) -> GuildConfig:
+        """Reset guild configuration to default values.
+
+        Args:
+            commit: When False, flush without committing (caller owns transaction).
+        """
         try:
             # Remove existing config
             existing_config = await self.get_by_guild_id(db, guild_id)
             if existing_config:
-                await self.remove(db, existing_config)
+                await self.remove(db, existing_config, commit=commit)
 
             # Create new default config
-            config = await self.create_default_config(db, guild_id)
+            config = await self.create_default_config(db, guild_id, commit=commit)
 
             flogger.info(f"Reset config to defaults for guild {guild_id}")
             return config
@@ -225,8 +243,14 @@ class ConfigRepository(IRepository[GuildConfig]):
             flogger.error(f"Error resetting config for guild {guild_id}: {e}")
             raise
 
-    async def update_admin_role(self, db: AsyncSession, guild_id: int, role_id: int) -> GuildConfig:
-        """Update the admin role for a guild."""
+    async def update_admin_role(
+        self, db: AsyncSession, guild_id: int, role_id: int, *, commit: bool = True
+    ) -> GuildConfig:
+        """Update the admin role for a guild.
+
+        Args:
+            commit: When False, flush without committing (caller owns transaction).
+        """
         try:
             config = await self.get_by_guild_id(db, guild_id)
             if not config:
@@ -234,10 +258,14 @@ class ConfigRepository(IRepository[GuildConfig]):
 
             config.admin_role_id = role_id
             try:
-                await db.commit()
+                if commit:
+                    await db.commit()
+                else:
+                    await db.flush()
                 await db.refresh(config)
             except Exception:
-                await db.rollback()
+                if commit:
+                    await db.rollback()
                 raise
 
             flogger.info(f"Updated admin role for guild {guild_id}: {role_id}")
@@ -247,8 +275,14 @@ class ConfigRepository(IRepository[GuildConfig]):
             flogger.error(f"Error updating admin role for guild {guild_id}: {e}")
             raise
 
-    async def update_starting_credits(self, db: AsyncSession, guild_id: int, new_credits: int) -> GuildConfig:
-        """Update the starting new_credits amount for a guild."""
+    async def update_starting_credits(
+        self, db: AsyncSession, guild_id: int, new_credits: int, *, commit: bool = True
+    ) -> GuildConfig:
+        """Update the starting new_credits amount for a guild.
+
+        Args:
+            commit: When False, flush without committing (caller owns transaction).
+        """
         try:
             if new_credits < 0:
                 raise ValueError("Starting new_credits cannot be negative")
@@ -259,10 +293,14 @@ class ConfigRepository(IRepository[GuildConfig]):
 
             config.starting_credits = new_credits
             try:
-                await db.commit()
+                if commit:
+                    await db.commit()
+                else:
+                    await db.flush()
                 await db.refresh(config)
             except Exception:
-                await db.rollback()
+                if commit:
+                    await db.rollback()
                 raise
 
             flogger.info(f"Updated starting new_credits for guild {guild_id}: {new_credits}")
@@ -272,8 +310,14 @@ class ConfigRepository(IRepository[GuildConfig]):
             flogger.error(f"Error updating starting new_credits for guild {guild_id}: {e}")
             raise
 
-    async def update_xp_thresholds(self, db: AsyncSession, guild_id: int, thresholds: dict[str, int]) -> GuildConfig:
-        """Update XP thresholds for tier advancement."""
+    async def update_xp_thresholds(
+        self, db: AsyncSession, guild_id: int, thresholds: dict[str, int], *, commit: bool = True
+    ) -> GuildConfig:
+        """Update XP thresholds for tier advancement.
+
+        Args:
+            commit: When False, flush without committing (caller owns transaction).
+        """
         try:
             config = await self.get_by_guild_id(db, guild_id)
             if not config:
@@ -291,10 +335,14 @@ class ConfigRepository(IRepository[GuildConfig]):
 
             config.xp_thresholds = thresholds
             try:
-                await db.commit()
+                if commit:
+                    await db.commit()
+                else:
+                    await db.flush()
                 await db.refresh(config)
             except Exception:
-                await db.rollback()
+                if commit:
+                    await db.rollback()
                 raise
 
             flogger.info(f"Updated XP thresholds for guild {guild_id}")
@@ -383,6 +431,8 @@ class ConfigRepository(IRepository[GuildConfig]):
         db: AsyncSession,
         guild_id: int,
         temperatures: dict[str, float],
+        *,
+        commit: bool = True,
     ) -> GuildConfig:
         """Persist *temperatures* for the given guild.
 
@@ -393,6 +443,7 @@ class ConfigRepository(IRepository[GuildConfig]):
             guild_id: Discord guild snowflake ID.
             temperatures: Mapping of division name (lowercase) → temperature float.
                 Example: ``{"bronze": 3.3, "silver": 1.0, "gold": 2.0}``
+            commit: When False, flush without committing (caller owns transaction).
 
         Returns:
             Updated :class:`GuildConfig` instance.
@@ -405,10 +456,14 @@ class ConfigRepository(IRepository[GuildConfig]):
 
             config.division_temperatures = temperatures
             try:
-                await db.commit()
+                if commit:
+                    await db.commit()
+                else:
+                    await db.flush()
                 await db.refresh(config)
             except Exception:
-                await db.rollback()
+                if commit:
+                    await db.rollback()
                 raise
 
             flogger.debug(f"Updated division_temperatures for guild {guild_id}: {temperatures}")
@@ -418,12 +473,16 @@ class ConfigRepository(IRepository[GuildConfig]):
             flogger.error(f"Error updating division_temperatures for guild {guild_id}: {e}")
             raise
 
-    async def delete_guild_config(self, db: AsyncSession, guild_id: int) -> bool:
-        """Delete all configuration for a guild."""
+    async def delete_guild_config(self, db: AsyncSession, guild_id: int, *, commit: bool = True) -> bool:
+        """Delete all configuration for a guild.
+
+        Args:
+            commit: When False, flush without committing (caller owns transaction).
+        """
         try:
             config = await self.get_by_guild_id(db, guild_id)
             if config:
-                await self.remove(db, config)
+                await self.remove(db, config, commit=commit)
                 flogger.info(f"Deleted config for guild {guild_id}")
                 return True
             return False

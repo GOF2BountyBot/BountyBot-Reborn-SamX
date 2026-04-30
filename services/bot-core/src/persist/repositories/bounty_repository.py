@@ -179,7 +179,9 @@ class BountyRepository(IRepository[Bounty]):
             flogger.error(f"Error counting bounties: {e}")
             raise
 
-    async def clear_active_by_guild(self, db: AsyncSession, guild_id: int, tier: str | None = None) -> list[int]:
+    async def clear_active_by_guild(
+        self, db: AsyncSession, guild_id: int, tier: str | None = None, *, commit: bool = True
+    ) -> list[int]:
         """Set all matching active bounties to status='cleared'.
 
         DOCUMENTED EXCEPTION to the ORM-mutation rule (see
@@ -194,6 +196,7 @@ class BountyRepository(IRepository[Bounty]):
             guild_id: Discord guild ID.
             tier: Optional division filter (e.g. 'bronze', 'silver', 'gold').
                   If None, clears all active bounties for the guild.
+            commit: When False, flush without committing (caller owns transaction).
 
         Returns:
             List of cleared bounty IDs.
@@ -223,13 +226,17 @@ class BountyRepository(IRepository[Bounty]):
                 .values(status="cleared")
                 .execution_options(synchronize_session="fetch")
             )
-            await db.commit()
+            if commit:
+                await db.commit()
+            else:
+                await db.flush()
             flogger.info(f"Cleared {len(bounty_ids)} bounties for guild {guild_id} tier={tier}")
             return bounty_ids
 
         except Exception as e:
             flogger.error(f"Error clearing active bounties for guild {guild_id} tier={tier}: {e}")
-            await db.rollback()
+            if commit:
+                await db.rollback()
             raise
 
     async def count_active_by_guild_and_division(self, db: AsyncSession, guild_id: int, division: str) -> int:

@@ -18,6 +18,108 @@ Cross-ref: `E2E_TEST_CHECKLIST.md` (test-item references). All commit SHAs are l
 >
 > Items marked FIXED here are also summarized in the **FIXED** table at the bottom with their `Verified` column. `Verified: pending` will flip to `✅ live <date>` as the live re-verification pass walks each affected E2E phase.
 
+### B.34 — `/profile` (player registration) silently drops starter ship + inventory on first registration
+> **FIXED** in commits `4e43b93` (Phase B repo API uniformity), `9ed326d` (Phase A.1+A.2 — static linter and B.34 atomic-create fix), `15294b5` (Phase A.4 — audit-service commit kwarg + linter refinement), `22a857c` (Phase D.1+D.3 — @requires_transaction decorator + consumer enumeration), `1a6d63e` (Phase D.2 — auto-commit on clean exit), `e0fc6db` (Phase C — 20 cross-session integration tests). Also addresses the broader systemic gap (the "every cross-table flow must be wrapped" contract was reviewer-only; now enforced by 4 layers: static linter, runtime decorator, session auto-commit, and integration tests). Spec at `/proj/recon/B34-remediation-spec.md`. Verified: pending live re-verification under DB-nuke E2E pass.
+
+🔴 high · Phase 1.7 · 2026-04-29
+
+**Environment**: HEAD (`samx-wip` post-B.33 fix), fresh stack rebuild post-DB-nuke, dev guild `1490693399307616276`. Detected during E2E Phase 1 live re-verification — Main and Alt both ran `/profile` for first registration and reported "all pass" based on Discord embed which displays only tier/XP/credits/stats and DOES NOT surface ship/inventory.
+
+**Symptom**
+- On `/profile` first registration, `players` row commits correctly with credits/tier/XP.
+- `player_ships` row, `player_inventories` rows, and `players.active_ship_id` update **all silently rolled back** — never persisted.
+- Logs DO emit "Added ship: Betty for player N", "Added inventory item: …", "Updated active ship for player N: N", and "Created starter loadout for player N" because they fire on `db.flush()`, before the missing commit.
+- Embed does not display loadout, so the silent failure is invisible to users until they try to `/equip`, fight a duel, hunt a bounty, or any other path that reads ship/inventory state.
+
+**Empirical citations (HEAD post-redeploy 2026-04-29 ~18:55 UTC)**
+
+`services/bot-core/src/services/player_service.py`:
+- L77-106 `_create_new_player(db, user, guild_id) -> Player`:
+  - L97: `player = await self.player_repo.add(db, player)` — `PlayerRepository.add` (player_repository.py:67) calls `await db.commit()` unconditionally. Player row commits at this point.
+  - L100: `await self._create_starter_loadout(db, player)` — all internal writes use `commit=False`.
+  - L102: `return player` — **no `await db.commit()`, no `async with db.begin()` wrapper.**
+- L108-168 `_create_starter_loadout(db, player) -> None`:
+  - L143: `player_ship_repo.create_or_update(..., commit=False)`
+  - L146: `self.player_repo.update_active_ship(..., commit=False)`
+  - L149-152: `inv_repo.add_item(..., commit=False)` × 4
+  - L157-161: `consistency.equip_one(...)` × 3 — per choke-point I3 contract these flush only.
+
+`services/bot-core/src/persist/repositories/AGENTS.md` (post-Package-G policy):
+> "every cross-table flow is wrapped [in `async with db.begin():`], and every repo call inside that wrapper passes `commit=False`."
+
+`_create_new_player` does not wrap, does not commit explicitly. After return, FastAPI dependency-managed session context exits and the flushed-only writes are discarded.
+
+**DB-side proof (2026-04-29 18:55 UTC, post-redeploy with both Main + Alt registered)**:
+- `players` count = 2 (PIDs 1 and 2 created)
+- `player_ships` count = **0**
+- `player_inventories` count = **0**
+- `players.active_ship_id` = **NULL** for both rows
+- `players.updated_at == created_at` (timestamps `2026-04-29 23:54:54.106+00` and `23:55:42.655+00`) — confirming no further commit ever touched these rows
+- bot-core logs at 23:54:54.140-.197 and 23:55:42.680-.742 show all "Added"/"Equipped"/"Created starter loadout" success entries — log-vs-DB divergence is the smoking gun
+
+**Root cause**
+- Package G / B.19 refactor (commits `3ac67a4` family, 2026-04-29) flipped all inventory/ship/loadout-consistency repository methods to `commit=False` per choke-point invariant I3 ("caller owns the transaction").
+- `_create_new_player` was the one cross-table flow not updated to actually own the transaction. Pre-refactor each repo call self-committed; post-refactor nothing commits.
+
+**Test gap**
+- Existing `tests/services/test_player_service.py` mocks the repositories so `commit=False` flag goes unobserved — the mock returns the persisted row regardless of whether commit was called.
+- No integration test covers "create new player, then re-fetch from DB to verify ship + inventory rows actually exist." This is exactly the class of bug a real-DB integration test would have caught.
+
+**Severity rationale**: 🔴 high. Every new-player registration produces a player with no ship and no inventory. Every downstream loadout/inventory/combat/duel/bounty path is broken for that player until manual repair. Phase 1 onward of the live re-verification cannot proceed meaningfully without this fixed.
+
+**Proposed fix (Option A — minimal, recommended)**
+Add `await db.commit()` at the end of `_create_new_player` after `_create_starter_loadout` returns. Match I3 contract (`_create_new_player` is the caller; it owns the transaction post-`player_repo.add`).
+
+```python
+# player_service.py:99-102
+# Create starter loadout
+await self._create_starter_loadout(db, player)
++await db.commit()
++await db.refresh(player)
+
+return player
+```
+
+**Alternative fix (Option B — atomic)**
+Wrap the entire body of `_create_new_player` in `async with db.begin():`, change `player_repo.add` call to `commit=False` (or use the FOR UPDATE / flush variant). Cleaner architecturally but touches `player_repo.add` signature.
+
+**Verification plan post-fix**
+1. Hot-reload picks up the change (bot-core has `reload=True`).
+2. Both users `/unregister` then `/profile` to re-trigger creation path.
+3. Self-verify: `player_ships=2`, `player_inventories=2` (Micro Gun MK I × 2), `players.active_ship_id` non-null on both, `weapons=["Nirai Impulse EX 1"]`, `modules=["E2 Exoclad","Telta Quickscan"]` on both ship rows.
+
+**Sibling sweep — other paths that should commit but might also rely on choke-point flushes without an outer commit**
+- `services/bot-core/src/services/shop_service.py` — `purchase_ship`, `sell_ship`, `transfer_ship` paths (TODO during fix).
+- `services/bot-core/src/services/equipment_service.py` — `equip_item`, `unequip_item` (these are router-driven; routers should wrap with `db.begin()` per AGENTS.md).
+- `services/bot-core/src/services/inventory_service.py` — buy/sell/transfer (router-driven).
+- Worth a focused grep audit during the developer fix package.
+
+**Remediation summary (2026-04-30)**
+
+The 2026-04-30 remediation expanded scope beyond `_create_new_player` to address the systemic gap that the audit at `/proj/activity.md` surfaced: the "every cross-table flow must be wrapped" contract was enforced only by reviewer discipline. Post-remediation it is enforced by **four defense-in-depth layers**:
+
+1. **Static linter** (test-time): `tests/test_transaction_discipline.py` walks the AST of every router file and fails CI when a route calls a flush-only service method without `async with db.begin():` or explicit `await db.commit()`. Pre-fix, the linter detected exactly one violation: `players.py:63 create_or_get_player → get_or_create_player` — the literal B.34. Zero unsuppressed violations remain post-fix.
+2. **Runtime decorator** (call-time): `@requires_transaction` from `services/_transaction_guards.py` raises `RuntimeError` if a `LoadoutConsistencyService` public method is invoked outside an active transaction. Catches dynamic-dispatch bypasses the static linter cannot reason about.
+3. **Session auto-commit** (exit-time): `db_manager.get_session()` now commits any pending transaction on clean exit. If a caller ever forgets to wrap or commit, work is preserved at the session boundary instead of silently rolled back. Audit at commit time confirmed all 102 read-only callsites are GET-style queries unaffected by the change.
+4. **Cross-session integration tests** (CI-time): 20 new tests in `tests/integration/test_cross_session_persistence.py` covering all 20 cross-table operations from spec §6.1. Each test opens session A, performs the op, closes A, opens FRESH session B, and asserts persistence. Includes a negative-path test (Op 20) that forces an exception mid-flow and asserts NOTHING persists.
+
+**Repository API uniformity (AC-3)**: every repository write method (INSERT/UPDATE/DELETE) now accepts `commit: bool = True` keyword. Default preserves backward compatibility. Inventory of methods updated:
+- `GenericRepository`: add, remove
+- `PlayerRepository`: add, create_or_update, remove, update_xp, update_tier (already had: update_credits, update_active_ship)
+- `UserRepository`: add, create_or_update, remove, get_or_create_user
+- `BountyRepository`: add, create_or_update, remove, create, update, delete
+- `DuelRepository`: add, create_or_update, remove, create, update_status, delete_expired
+- `ConfigRepository`: add, create_or_update, remove
+- `DiscordMessageRepository`: create_or_update, delete_by_composite_key, delete_by_guild_type_and_reference
+
+**Latent bug fixed in passing**: `BountyRepository.remove` and `DuelRepository.remove` were calling `db.delete(obj)` without `await`. SQLAlchemy AsyncSession.delete is async; the missing `await` would raise TypeError against a real database. Tests passed because they mocked `db.delete` as a sync MagicMock. Fixed in commit `4e43b93` along with the test files.
+
+**Service body purity (AC-4)**: `_create_new_player` was the canonical mixed-pattern violation (mixed self-committing `player_repo.add` with flush-only `_create_starter_loadout`). Fixed by passing `commit=False` to all repo calls and wrapping the route in `db.begin()`. `audit_service.log_action` was also identified as architecturally incompatible with atomicity inside wrapped transactions (it self-committed even when called from inside a `db.begin()` block). Fixed by adding `commit: bool = True` keyword; the one site inside a wrapped transaction (`admin_remove_ship`) now passes `commit=False`.
+
+**Test count delta**: bot-core 3146 → 3175 (+29 tests: 2 linter, 4 decorator, 3 AC-7, 20 integration).
+
+---
+
 ### B.33 — Package E `_preload_static_catalogs` regression: GET vs POST + nonexistent ship URL leaves item & ship autocomplete caches empty on every boot
 > **FIXED** in commits `452ac28` (production fix), `9a19909` (adminCog respx tests), `645c474` (project-wide preload test audit), `51c0bb5` (testing policy docs). Fix: L119 `GET /data/{category}` → `GET /about/categories/{category}/objects`; L142 `GET /about/ships` → `GET /about/categories/ship/objects`. Test debt: 4 old tautological mock tests replaced with 5 respx tests asserting URL+method. Audit: aboutCog, bountyCog, skinsCog preload tests converted; no new defects found. See `services/discord-gateway/tests/AGENTS.md` for policy.
 

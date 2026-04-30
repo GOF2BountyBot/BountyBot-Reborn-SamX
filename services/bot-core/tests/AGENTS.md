@@ -89,7 +89,52 @@ See:
   patching pattern
 - `tests/integration/test_response_body_consistency.py` — response-vs-DB consistency
   pattern (Option B defense)
+- `tests/integration/test_cross_session_persistence.py` — B.34 remediation
+  AC-8 cross-session-reload tests (20 cross-table operations)
 
 ---
 
-*Last updated: 2026-04-27*
+## Cross-Session Reload Rule (B.34, 2026-04-30)
+
+Every service method that performs cross-table writes MUST have at least
+one integration test in `tests/integration/` that:
+
+  1. Opens session A from a fresh per-test engine.
+  2. Performs the operation under test.
+  3. **Closes session A entirely.**
+  4. Opens a FRESH session B from the same engine.
+  5. Queries DB through B and asserts persistence (or non-persistence
+     for rollback paths).
+
+Mock-only tests in `tests/services/` are insufficient for methods in the
+flush-only set produced by `tests/test_transaction_discipline.py`'s
+WRITES_FLUSH_ONLY classifier. The mocks return success regardless of
+whether commit was actually called — this is the exact failure mode that
+let B.34 land in production. Mock-based service tests can add coverage
+but they do NOT substitute for the cross-session-reload integration
+assertion.
+
+The 20 cross-table operations covered by AC-8 are enumerated in
+`/proj/recon/B34-remediation-spec.md` §6.1 and implemented in
+`tests/integration/test_cross_session_persistence.py`. Future
+cross-table operations must extend that file (or a sibling) with a
+matching test.
+
+---
+
+## Transaction Discipline Linter (B.34, 2026-04-30)
+
+`tests/test_transaction_discipline.py` runs as part of the normal pytest
+suite. It fails CI when any router function calls a flush-only service
+method without wrapping in `async with db.begin():` or committing
+explicitly.
+
+If you encounter a false positive that legitimately should not be wrapped
+(e.g. dynamic dispatch the AST cannot reason about), add the suppression
+comment described in `services/bot-core/src/persist/repositories/AGENTS.md`
+under "Transaction Discipline Enforcement". Production-code suppressions
+require a documented justification in the same commit message.
+
+---
+
+*Last updated: 2026-04-30*

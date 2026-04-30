@@ -313,27 +313,56 @@ display buckets on their side. The Discord cog uses these 4 display buckets:
 
 ---
 
-## `commit: bool = True` Parameter (Package G B.19, 2026-04-29)
+## `commit: bool = True` Parameter (Package G B.19, B.34 expansion 2026-04-30)
 
-The following `PlayerShipRepository` methods now accept a `commit: bool = True`
-keyword argument:
+Every repository write method (INSERT/UPDATE/DELETE) accepts a
+`commit: bool = True` keyword argument. When `commit=False`, the method
+calls `db.flush()` instead of `db.commit()` and does NOT roll back on
+exception — the caller (typically a router-level `async with db.begin()`
+block) owns the transaction.
 
-- `set_active_ship(db, player_id, ship_id, commit=True)`
-- `add_equipment(db, ship_id, equipment_type, item_name, commit=True)`
-- `remove_equipment(db, ship_id, equipment_type, item_name, commit=True)`
-- `update_loadout(db, ship_id, loadout, commit=True)`
-- `update_nickname(db, ship_id, nickname, commit=True)`
-- `add(db, obj, commit=True)`
-- `create_or_update(db, raw, commit=True)`
-- `remove(db, obj, commit=True)`
+The full inventory after the B.34 remediation:
 
-Plus `PlayerRepository.update_active_ship(db, player_id, ship_id, *, commit=True)`.
+**`GenericRepository[T]`** (base class — all subclasses inherit):
+- `add(db, obj, *, commit=True)`
+- `remove(db, obj, *, commit=True)`
 
-When `commit=False`, the method calls `db.flush()` instead of `db.commit()`
-and does NOT roll back on exception — the caller (typically a router-level
-`async with db.begin()` block) owns the transaction.  This mirrors the
-pattern already used by `InventoryRepository.add_item` / `remove_item` /
-`update_quantity`.
+**`PlayerShipRepository`** (Package G B.19 canonical pattern):
+- `set_active_ship`, `add_equipment`, `remove_equipment`,
+  `update_loadout`, `update_nickname`, `add`, `create_or_update`, `remove`
+
+**`PlayerRepository`** (B.34 expansion):
+- `add`, `create_or_update`, `remove`,
+  `update_credits`, `update_xp`, `update_tier`, `update_active_ship`
+
+**`UserRepository`** (B.34 expansion):
+- `add`, `create_or_update`, `remove`, `get_or_create_user`
+
+**`InventoryRepository`** (Package G B.19 canonical pattern):
+- `add`, `create_or_update`, `remove`,
+  `add_item`, `remove_item`, `update_quantity`
+
+**`ShopRepository`** (Package G B.19 canonical pattern):
+- `add`, `create_or_update`, `remove`, `update_quantity`
+
+**`BountyRepository`** (B.34 expansion):
+- `add`, `create_or_update`, `remove`, `create`, `update`, `delete`
+
+**`DuelRepository`** (B.34 expansion):
+- `add`, `create_or_update`, `remove`, `create`,
+  `update_status`, `delete_expired`
+
+**`ConfigRepository`** (B.34 expansion):
+- `add`, `create_or_update`, `remove`
+
+**`DiscordMessageRepository`** (B.34 expansion):
+- `create_or_update`, `delete_by_composite_key`,
+  `delete_by_guild_type_and_reference`
+
+When NOT to use commit=False: methods that exist explicitly to be
+self-committing transaction-owners (e.g. legacy single-row updates that
+are called from bare-session routes). The default `commit=True` preserves
+backward compatibility — existing callers are unaffected.
 
 ### When to use `commit=False`
 
@@ -346,4 +375,85 @@ every repo call inside that wrapper passes `commit=False`.
 
 ---
 
-*Last updated: 2026-04-29*
+## Transaction Discipline Enforcement (B.34, 2026-04-30)
+
+The "every cross-table flow must be wrapped" contract documented above is
+enforced by **four defense-in-depth layers**, not by reviewer discipline alone.
+
+### Layer 1 — Static linter (test-time)
+
+`tests/test_transaction_discipline.py` is a pytest-collectable AST analyzer
+that fails CI when any router function calls a flush-only service method
+without wrapping in `async with db.begin():` or committing explicitly.
+
+How the linter classifies "flush-only":
+
+  Phase 1: walks every `services/*.py` file. A service method is flagged
+  flush-only if its body contains either:
+    - a Call with literal `commit=False` keyword argument, OR
+    - a direct `db.flush()` call AND no `db.commit()` call anywhere.
+  Then computes transitive closure: a method that calls (by name) a
+  method already in the set is itself in the set.
+
+  Phase 2: walks every router function. A route is in violation if it
+  calls a flush-only method without:
+    - `async with ... db.begin():` (any nesting), OR
+    - `await db.commit()` on the success path, OR
+    - a `# noqa: TRANSACTION_DISCIPLINE - <reason>` comment on the
+      offending line.
+
+To suppress a false positive (rare, but possible — e.g. dynamic dispatch
+the AST cannot reason about), add a comment to the offending line:
+
+```python
+await player_service.update_player_credits(...)  # noqa: TRANSACTION_DISCIPLINE - explanation
+```
+
+The marker must be exactly `noqa: TRANSACTION_DISCIPLINE`. The trailing
+`- explanation` is required documentation for human reviewers; the
+linter does not parse it. Production-code suppressions should cite a
+specific architectural reason in the same commit.
+
+### Layer 2 — Runtime decorator (call-time)
+
+`services/_transaction_guards.py` provides `@requires_transaction` which
+raises `RuntimeError` immediately if invoked outside an active transaction.
+Applied to all 6 public methods of `LoadoutConsistencyService` (the
+choke-point). This catches dynamic-dispatch bypasses that the static
+linter cannot reason about.
+
+### Layer 3 — Session manager auto-commit (exit-time)
+
+`db_manager.get_session()` commits any pending transaction on clean exit.
+If a caller forgets to wrap or commit, work is preserved at the session
+boundary instead of being silently rolled back. Read-only callers that
+mutated ORM instances and intentionally do not want them flushed must
+call `await session.rollback()` before exiting (no such callsites exist
+in bot-core as of the AC-7 callsite audit).
+
+### Layer 4 — Cross-session integration tests (CI-time)
+
+`tests/integration/test_cross_session_persistence.py` covers all 20
+cross-table operations enumerated in
+`/proj/recon/B34-remediation-spec.md` §6.1. Each test:
+
+  1. Opens session A, performs the operation.
+  2. Closes session A entirely.
+  3. Opens FRESH session B from the same engine.
+  4. Queries DB through B and asserts what should have persisted, did.
+
+This is the precise idiom that detects the B.34 silent-rollback class —
+mock-only tests cannot, because mocked repos return success regardless
+of whether commit was called.
+
+### Adding a new cross-table service method
+
+A service method that performs cross-table writes MUST have at least one
+integration test in `tests/integration/` following the cross-session-reload
+pattern. Mock-only tests (in `tests/services/`) are insufficient for
+methods in the WRITES_FLUSH_ONLY set produced by the linter — they can
+add coverage but do not substitute for the integration assertion.
+
+---
+
+*Last updated: 2026-04-30*

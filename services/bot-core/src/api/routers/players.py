@@ -59,7 +59,10 @@ async def create_or_get_player(
     flogger.info(f"Creating/getting player for Discord user {request.discord_id} in guild {request.guild_id}")
 
     try:
-        async with get_db_session() as db:
+        # B.34 fix: wrap creation in a single transaction so users + players +
+        # player_ships + player_inventories + active_ship_id are atomic.
+        # Pre-fix the starter ship + inventory were silently rolled back.
+        async with get_db_session() as db, db.begin():
             player = await player_service.get_or_create_player(
                 db, request.discord_id, request.guild_id, request.discord_username
             )

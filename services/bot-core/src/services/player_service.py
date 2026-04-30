@@ -42,6 +42,11 @@ class PlayerService:
         This is the main entry point for player management when a user
         first interacts with the bot in a guild.
 
+        Package G B.19 / B.34: this method is a transaction-PARTICIPANT — all
+        repo calls use ``commit=False``. The route caller MUST wrap in
+        ``async with db.begin():`` for atomic creation across the full
+        users/players/player_ships/player_inventories cluster.
+
         Raises GuildNotConfiguredError if no guild_configs row exists
         (i.e. /admin_setup has not been run for this guild).
         """
@@ -59,10 +64,10 @@ class PlayerService:
                 flogger.warning(f"Cannot create player for user {discord_id} in guild {guild_id}: guild not configured")
                 raise GuildNotConfiguredError(guild_id)
 
-            # Ensure user exists
-            user = await self.user_repo.get_or_create_user(db, discord_id, discord_username)
+            # Ensure user exists (commit=False — caller's transaction owns the commit).
+            user = await self.user_repo.get_or_create_user(db, discord_id, discord_username, commit=False)
 
-            # Create new player with starter configuration
+            # Create new player with default configuration
             player = await self._create_new_player(db, user, guild_id)
             flogger.info(f"Created new player {player.id} for user {discord_id} in guild {guild_id}")
 
@@ -73,9 +78,19 @@ class PlayerService:
         except Exception as e:
             flogger.error(f"Error getting/creating player for user {discord_id} in guild {guild_id}: {e}")
             raise
+        except Exception as e:
+            flogger.error(f"Error getting/creating player for user {discord_id} in guild {guild_id}: {e}")
+            raise
 
     async def _create_new_player(self, db: AsyncSession, user: User, guild_id: int) -> Player:
-        """Create a new player with default configuration and starter loadout."""
+        """Create a new player with default configuration and starter loadout.
+
+        Package G B.19 / B.34 fix: this method is a transaction-PARTICIPANT.
+        All repo calls use ``commit=False``. The caller (route) MUST wrap in
+        ``async with db.begin():`` to commit the unit of work atomically. The
+        I3 invariant guarantees players, player_ships, player_inventories, and
+        active_ship_id all persist together or roll back together.
+        """
         try:
             # Get guild configuration for starting credits
             config = await self.config_repo.get_by_guild_id(db, guild_id)
@@ -94,9 +109,9 @@ class PlayerService:
                 bounty_cooldown_end=None,
             )
 
-            player = await self.player_repo.add(db, player)
+            player = await self.player_repo.add(db, player, commit=False)
 
-            # Create starter loadout
+            # Create starter loadout (also commit=False end-to-end).
             await self._create_starter_loadout(db, player)
 
             return player

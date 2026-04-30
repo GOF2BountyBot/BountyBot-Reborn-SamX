@@ -217,7 +217,7 @@ class TestGetOrCreatePlayer:
 
         await service.get_or_create_player(mock_db, discord_id=111, guild_id=999, discord_username="Alice")
 
-        mock_user_repo.get_or_create_user.assert_awaited_once_with(mock_db, 111, "Alice")
+        mock_user_repo.get_or_create_user.assert_awaited_once_with(mock_db, 111, "Alice", commit=False)
 
     @pytest.mark.asyncio
     async def test_raises_guild_not_configured_when_no_config(

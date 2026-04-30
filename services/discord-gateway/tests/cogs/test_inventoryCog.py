@@ -4,7 +4,7 @@ import asyncio
 import os
 import sys
 import types
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -1287,6 +1287,61 @@ class TestEquipCommand:
         interaction.followup.send.assert_awaited_once()
         call_kwargs = interaction.followup.send.call_args
         assert call_kwargs[1].get("ephemeral", False)
+
+
+# ---------------------------------------------------------------------------
+# /equip URL+method contract (respx) — Tier 2 closeout 2026-04-30
+# ---------------------------------------------------------------------------
+
+
+class TestEquipCommandRespx:
+    """respx-backed URL+method contract test for /equip happy path.
+
+    Verifies that /equip touches all 4 required bot-core routes in the right
+    order: POST /players/, GET /ships/player/{id}, POST /ships/{ship_id}/equip-check,
+    POST /ships/{ship_id}/equip. All four URLs were verified against bot-core's
+    registered routes during the 2026-04-30 Tier 2 audit.
+
+    Follows the policy in services/discord-gateway/tests/AGENTS.md (B.33 followup).
+    """
+
+    _BOT_API = "http://bot-core:8000/api/v1"
+
+    def _with_real_client(self, cog, request):
+        import httpx
+
+        cog.http_client = httpx.AsyncClient(timeout=httpx.Timeout(10.0))
+        request.addfinalizer(lambda: asyncio.run(cog.http_client.aclose()))
+        return cog
+
+    def test_equip_happy_path_calls_correct_urls(self, mock_inventory_cog, request):
+        """/equip must POST/GET to the 4 expected URLs in order."""
+        import httpx
+        import respx
+
+        self._with_real_client(mock_inventory_cog, request)
+        interaction = _create_mock_interaction()
+
+        env_without_bot_api = {k: v for k, v in os.environ.items() if k != "BOT_API_BASE_URL"}
+        with (
+            patch.dict(os.environ, env_without_bot_api, clear=True),
+            respx.mock(assert_all_called=True) as mock_router,
+        ):
+            mock_router.post(f"{self._BOT_API}/players/").mock(return_value=httpx.Response(200, json={"id": 1}))
+            mock_router.get(f"{self._BOT_API}/ships/player/1").mock(
+                return_value=httpx.Response(200, json=[_make_ship_data(weapons=["OldLaser"])])
+            )
+            mock_router.post(f"{self._BOT_API}/ships/10/equip-check").mock(
+                return_value=httpx.Response(200, json=_make_check_response(status="ok", equipment_type="weapons"))
+            )
+            mock_router.post(f"{self._BOT_API}/ships/10/equip").mock(
+                return_value=httpx.Response(200, json=_make_ship_data(weapons=["OldLaser", "NewCannon"]))
+            )
+
+            asyncio.run(mock_inventory_cog.equip.callback(mock_inventory_cog, interaction, item_name="NewCannon"))
+
+        interaction.response.defer.assert_awaited_once_with(thinking=True)
+        interaction.followup.send.assert_awaited_once()
 
 
 # ---------------------------------------------------------------------------

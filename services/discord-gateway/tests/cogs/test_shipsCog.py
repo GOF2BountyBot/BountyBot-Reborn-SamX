@@ -4,7 +4,7 @@ import asyncio
 import os
 import sys
 import types
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -853,6 +853,66 @@ class TestSetActiveCommand:
         call_args = interaction.followup.send.call_args
         assert "error occurred" in call_args[0][0].lower()
         assert call_args[1].get("ephemeral", False)
+
+
+# ---------------------------------------------------------------------------
+# /setactive URL+method contract (respx) — Tier 2 closeout 2026-04-30
+# ---------------------------------------------------------------------------
+
+
+class TestSetActiveCommandRespx:
+    """respx-backed URL+method contract test for /setactive happy path.
+
+    Verifies that /setactive hits the 2 expected bot-core routes:
+      POST /api/v1/players/                       (player upsert)
+      PUT  /api/v1/ships/{ship_id}/set-active     (active-ship update)
+
+    Both URLs were verified against bot-core's registered routes during the
+    2026-04-30 Tier 2 audit. Follows the policy in
+    services/discord-gateway/tests/AGENTS.md (B.33 followup).
+    """
+
+    _BOT_API = "http://bot-core:8000/api/v1"
+
+    def _with_real_client(self, cog, request):
+        import httpx
+
+        cog.http_client = httpx.AsyncClient(timeout=httpx.Timeout(10.0))
+        request.addfinalizer(lambda: asyncio.run(cog.http_client.aclose()))
+        return cog
+
+    def test_setactive_calls_correct_urls(self, mock_ships_cog, request):
+        """/setactive must POST /players/ and PUT /ships/{ship_id}/set-active."""
+        import httpx
+        import respx
+
+        self._with_real_client(mock_ships_cog, request)
+        interaction = _create_mock_interaction()
+
+        ship_data = {
+            "id": 5,
+            "ship_name": "Eagle",
+            "nickname": "Speedy",
+            "is_active": True,
+            "weapons": [],
+            "modules": [],
+            "turrets": [],
+        }
+
+        env_without_bot_api = {k: v for k, v in os.environ.items() if k != "BOT_API_BASE_URL"}
+        with (
+            patch.dict(os.environ, env_without_bot_api, clear=True),
+            respx.mock(assert_all_called=True) as mock_router,
+        ):
+            mock_router.post(f"{self._BOT_API}/players/").mock(return_value=httpx.Response(200, json={"id": 1}))
+            mock_router.put(f"{self._BOT_API}/ships/5/set-active").mock(
+                return_value=httpx.Response(200, json=ship_data)
+            )
+
+            asyncio.run(mock_ships_cog.setactive.callback(mock_ships_cog, interaction, "5"))
+
+        interaction.response.defer.assert_awaited_once_with(thinking=True)
+        interaction.followup.send.assert_awaited_once()
 
 
 # ---------------------------------------------------------------------------

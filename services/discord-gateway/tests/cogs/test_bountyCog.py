@@ -653,6 +653,62 @@ class TestCheckCommand:
 
 
 # ---------------------------------------------------------------------------
+# /check URL+method contract (respx) — Tier 2 closeout 2026-04-30
+# ---------------------------------------------------------------------------
+
+
+class TestCheckCommandRespx:
+    """respx-backed URL+method contract test for /check happy path.
+
+    Verifies that /check hits the 2 expected bot-core routes:
+      POST /api/v1/players/         (player upsert)
+      POST /api/v1/bounties/check   (bounty system check)
+
+    Both URLs were verified against bot-core's registered routes during the
+    2026-04-30 Tier 2 audit. Follows the policy in
+    services/discord-gateway/tests/AGENTS.md (B.33 followup).
+    """
+
+    _BOT_API = "http://bot-core:8000/api/v1"
+
+    def _with_real_client(self, cog, request):
+        import httpx
+
+        cog.http_client = httpx.AsyncClient(timeout=httpx.Timeout(10.0))
+        request.addfinalizer(lambda: asyncio.run(cog.http_client.aclose()))
+        return cog
+
+    def test_check_calls_correct_urls(self, mock_bounty_cog, request):
+        """/check must POST /players/ and POST /bounties/check."""
+        import httpx
+        import respx
+
+        self._with_real_client(mock_bounty_cog, request)
+        interaction = _create_mock_interaction()
+
+        check_response = {
+            "result": "incorrect",
+            "message": "No bounty in this system.",
+            "outcomes": [{"result": "incorrect", "bounty_id": None}],
+        }
+
+        env_without_bot_api = {k: v for k, v in os.environ.items() if k != "BOT_API_BASE_URL"}
+        with (
+            patch.dict(os.environ, env_without_bot_api, clear=True),
+            respx.mock(assert_all_called=True) as mock_router,
+        ):
+            mock_router.post(f"{self._BOT_API}/players/").mock(return_value=httpx.Response(200, json={"id": 1}))
+            mock_router.post(f"{self._BOT_API}/bounties/check").mock(
+                return_value=httpx.Response(200, json=check_response)
+            )
+
+            asyncio.run(mock_bounty_cog.check.callback(mock_bounty_cog, interaction, system="Sol"))
+
+        interaction.response.defer.assert_awaited_once_with(thinking=True)
+        interaction.followup.send.assert_awaited_once()
+
+
+# ---------------------------------------------------------------------------
 # /bounties command
 # ---------------------------------------------------------------------------
 

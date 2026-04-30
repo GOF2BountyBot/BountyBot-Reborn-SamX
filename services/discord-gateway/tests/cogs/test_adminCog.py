@@ -642,6 +642,73 @@ class TestAdminSetupCommand:
         assert "Bounty Hunter Role" not in field_names, "BH role field should not appear when role_id is None"
 
 
+class TestAdminSetupCommandRespx:
+    """respx-backed URL+method contract test for /admin_setup.
+
+    Asserts that admin_setup POSTs to the EXACT URL /api/v1/admin/guilds/initialize
+    on bot-core. Verified against bot-core admin.py:97 during the 2026-04-30 Tier 2
+    audit. This class enforces the gateway test policy from
+    services/discord-gateway/tests/AGENTS.md (B.33 followup).
+    """
+
+    _BOT_API = "http://bot-core:8000/api/v1"
+
+    def _with_real_client(self, cog, request):
+        import httpx
+
+        cog.http_client = httpx.AsyncClient(timeout=httpx.Timeout(10.0))
+        request.addfinalizer(lambda: asyncio.run(cog.http_client.aclose()))
+        return cog
+
+    def test_admin_setup_posts_to_correct_url(self, mock_admin_cog, request):
+        """admin_setup must POST /api/v1/admin/guilds/initialize."""
+        import httpx
+        import respx
+
+        self._with_real_client(mock_admin_cog, request)
+
+        interaction = _create_mock_interaction()
+        interaction.guild_id = 987654321
+        interaction.guild = MagicMock()
+        interaction.guild.id = 987654321
+        interaction.guild.name = "Test Guild"
+        interaction.guild.icon = None
+        # Ensure _check_is_admin short-circuits on Discord administrator (L39 in adminCog.py)
+        # without falling through to the API call at L42-49 which would hit unhandled respx routes.
+        interaction.user.guild_permissions = MagicMock()
+        interaction.user.guild_permissions.administrator = True
+
+        role = MagicMock()
+        role.id = 222222222
+        type(role).mention = PropertyMock(return_value="<@&222222222>")
+
+        init_response = {
+            "guild_id": 987654321,
+            "shops_created": 4,
+            "message": "Guild initialized successfully",
+        }
+
+        env_without_bot_api = {k: v for k, v in os.environ.items() if k != "BOT_API_BASE_URL"}
+        infra_patch = patch(
+            "cogs.adminCog.ensure_bountybot_infrastructure",
+            new=AsyncMock(return_value=_make_full_channel_ids()),
+        )
+        with (
+            patch.dict(os.environ, env_without_bot_api, clear=True),
+            infra_patch,
+            patch("os.getenv", side_effect=lambda k, d="": "" if k == "DEVELOPERS" else os.environ.get(k, d)),
+            respx.mock(assert_all_called=True) as mock_router,
+        ):
+            mock_router.post(f"{self._BOT_API}/admin/guilds/initialize").mock(
+                return_value=httpx.Response(200, json=init_response)
+            )
+            asyncio.run(mock_admin_cog.admin_setup.callback(mock_admin_cog, interaction, role, 1000))
+
+        # respx.mock(assert_all_called=True) ensures the POST was made
+        interaction.response.defer.assert_called_once_with(thinking=True, ephemeral=True)
+        interaction.followup.send.assert_called_once()
+
+
 def _make_mock_role(role_id, name):
     """Create a minimal mock Discord role."""
     role = MagicMock()

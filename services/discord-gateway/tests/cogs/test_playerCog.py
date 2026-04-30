@@ -332,6 +332,68 @@ class TestProfileCommand:
 
 
 # ---------------------------------------------------------------------------
+# /profile URL+method contract (respx) — Tier 2 closeout 2026-04-30
+# ---------------------------------------------------------------------------
+
+
+class TestProfileCommandRespx:
+    """respx-backed tests asserting exact URL+method for /profile.
+
+    The existing TestProfileCommand tests use AsyncMock(http_client.get/post)
+    which is tautological — bugs in URL or HTTP method pass silently. This
+    class follows the policy in services/discord-gateway/tests/AGENTS.md
+    (B.33 remediation) and asserts the contract:
+
+      POST /api/v1/players/                    (player upsert)
+      GET  /api/v1/players/{id}/statistics     (stats fetch)
+      GET  /api/v1/players/{id}/promotion-status (best-effort enhancement)
+
+    All three URLs were empirically verified against bot-core's registered
+    routes during the 2026-04-30 Tier 2 closeout audit.
+    """
+
+    _BOT_API = "http://bot-core:8000/api/v1"
+
+    def _with_real_client(self, cog, request):
+        """Replace cog.http_client with a real httpx.AsyncClient for respx interception."""
+        import httpx
+
+        cog.http_client = httpx.AsyncClient(timeout=httpx.Timeout(10.0))
+        request.addfinalizer(lambda: asyncio.run(cog.http_client.aclose()))
+        return cog
+
+    def test_profile_calls_correct_urls_and_methods(self, mock_player_cog, request):
+        """/profile must POST /players/, GET /players/{id}/statistics, GET /players/{id}/promotion-status."""
+        import httpx
+        import respx
+
+        self._with_real_client(mock_player_cog, request)
+        interaction = _create_mock_interaction()
+
+        player_data = _make_player_data(tier="Bronze", prestige_count=0)
+        stats_data = _make_stats_data()
+        promo_data = {"can_promote": False, "next_tier": "Silver", "xp_threshold_for_next": 1000}
+
+        env_without_bot_api = {k: v for k, v in os.environ.items() if k != "BOT_API_BASE_URL"}
+        with (
+            patch.dict(os.environ, env_without_bot_api, clear=True),
+            respx.mock(assert_all_called=True) as mock_router,
+        ):
+            mock_router.post(f"{self._BOT_API}/players/").mock(return_value=httpx.Response(200, json=player_data))
+            mock_router.get(f"{self._BOT_API}/players/1/statistics").mock(
+                return_value=httpx.Response(200, json=stats_data)
+            )
+            mock_router.get(f"{self._BOT_API}/players/1/promotion-status").mock(
+                return_value=httpx.Response(200, json=promo_data)
+            )
+            asyncio.run(mock_player_cog.profile.callback(mock_player_cog, interaction))
+
+        interaction.response.defer.assert_awaited_once_with(thinking=True)
+        interaction.followup.send.assert_awaited_once()
+        # respx assert_all_called=True ensures ALL three endpoints were hit
+
+
+# ---------------------------------------------------------------------------
 # leaderboard command
 # ---------------------------------------------------------------------------
 

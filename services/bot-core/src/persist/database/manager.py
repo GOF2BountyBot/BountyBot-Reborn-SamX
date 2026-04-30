@@ -148,6 +148,30 @@ class DatabaseManager:
             async with db_manager.get_session() as session:
                 await session.execute(...)
                 await session.commit()
+
+        Defense-in-depth (AC-7, B.34 remediation): on clean exit, any
+        pending transaction is committed automatically. This is the third
+        layer of defense against the B.34 silent-rollback class:
+
+        - Layer 1 (static): tests/test_transaction_discipline.py — fails
+          CI when a route calls a flush-only service method without
+          wrapping or committing.
+        - Layer 2 (runtime): @requires_transaction on choke-point methods.
+        - Layer 3 (this method): even if a caller forgets to wrap or
+          commit, work is preserved at the session boundary instead of
+          being silently rolled back on clean exit.
+
+        Behaviour:
+          - On exception: rollback (existing behaviour, unchanged).
+          - On clean exit with active transaction: commit.
+          - On clean exit without active transaction (e.g. caller already
+            committed via db.commit() or via async with db.begin()): no-op.
+
+        Read-only callers that mutated ORM instances and intentionally do
+        not want them flushed must call ``await session.rollback()`` before
+        exiting. No such callsites exist in bot-core as of this commit
+        (callsite audit performed for the AC-7 commit; documented in
+        commit message).
         """
         if self._session_factory is None:
             raise RuntimeError("Database manager not initialized. Call initialize() first.")
@@ -160,6 +184,24 @@ class DatabaseManager:
                 flogger.error(f"Session error — rolling back transaction: {type(e).__name__}")
                 await session.rollback()
                 raise
+            else:
+                # AC-7: clean exit auto-commit. If the caller already
+                # committed (db.commit() or db.begin() block exit), the
+                # session is no longer in a transaction and this is a
+                # no-op. If the caller forgot, this preserves their work.
+                try:
+                    if session.in_transaction():
+                        await session.commit()
+                        flogger.debug("Session auto-committed pending transaction on clean exit")
+                except Exception as commit_exc:
+                    # If the auto-commit itself fails, ensure a clean
+                    # rollback so the session can be returned to the pool.
+                    flogger.error(f"Auto-commit on clean exit failed — rolling back: {type(commit_exc).__name__}")
+                    try:
+                        await session.rollback()
+                    except Exception:  # noqa: BLE001 — defensive: pool hygiene
+                        pass
+                    raise
             finally:
                 flogger.debug("Session released")
 

@@ -841,6 +841,79 @@ class TestDatabaseManagerSessionErrorHandling:
         mock_session.rollback.assert_awaited_once()
 
 
+class TestDatabaseManagerSessionAutoCommit:
+    """AC-7 tests: get_session() auto-commits on clean exit when a transaction is active."""
+
+    @pytest.mark.asyncio
+    async def test_get_session_auto_commits_on_clean_exit_when_in_transaction(self):
+        """If session.in_transaction() is True at clean exit, auto-commit fires."""
+        with patch("persist.database.manager.bblogger"):
+            mgr = DatabaseManager()
+
+        mock_session = AsyncMock()
+        mock_session.in_transaction = MagicMock(return_value=True)
+        mock_session.commit = AsyncMock()
+        mock_session.rollback = AsyncMock()
+        mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session.__aexit__ = AsyncMock(return_value=False)
+
+        mock_factory = MagicMock(return_value=mock_session)
+        mgr._session_factory = mock_factory
+
+        async with mgr.get_session() as db:
+            # Caller does not commit explicitly; AC-7 should auto-commit.
+            assert db is mock_session
+
+        mock_session.commit.assert_awaited_once()
+        mock_session.rollback.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_get_session_does_not_double_commit_when_not_in_transaction(self):
+        """If caller already committed (in_transaction()==False), AC-7 must not commit again."""
+        with patch("persist.database.manager.bblogger"):
+            mgr = DatabaseManager()
+
+        mock_session = AsyncMock()
+        mock_session.in_transaction = MagicMock(return_value=False)
+        mock_session.commit = AsyncMock()
+        mock_session.rollback = AsyncMock()
+        mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session.__aexit__ = AsyncMock(return_value=False)
+
+        mock_factory = MagicMock(return_value=mock_session)
+        mgr._session_factory = mock_factory
+
+        async with mgr.get_session() as db:
+            assert db is mock_session
+
+        # In-transaction is False (caller committed) → no auto-commit
+        mock_session.commit.assert_not_awaited()
+        mock_session.rollback.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_get_session_rolls_back_when_auto_commit_fails(self):
+        """If the auto-commit itself fails, rollback is attempted before re-raising."""
+        with patch("persist.database.manager.bblogger"):
+            mgr = DatabaseManager()
+
+        mock_session = AsyncMock()
+        mock_session.in_transaction = MagicMock(return_value=True)
+        mock_session.commit = AsyncMock(side_effect=RuntimeError("commit fail"))
+        mock_session.rollback = AsyncMock()
+        mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session.__aexit__ = AsyncMock(return_value=False)
+
+        mock_factory = MagicMock(return_value=mock_session)
+        mgr._session_factory = mock_factory
+
+        with pytest.raises(RuntimeError, match="commit fail"):
+            async with mgr.get_session():
+                pass
+
+        mock_session.commit.assert_awaited_once()
+        mock_session.rollback.assert_awaited_once()
+
+
 class TestDatabaseManagerExecuteSql:
     """Tests for execute_sql() error path – lines 171-178."""
 

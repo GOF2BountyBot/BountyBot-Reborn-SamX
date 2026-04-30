@@ -391,7 +391,7 @@ class PlayerService:
                 ship.turrets = []
                 ship.secondary_weapons = []
 
-            await inventory_repo.clear_player_inventory(db, player_id)
+            await inventory_repo.clear_player_inventory(db, player_id, commit=False)
 
             await db.flush()
 

@@ -259,6 +259,72 @@ class TestClearPlayerInventory:
         with pytest.raises(Exception, match="clear fail"):
             await repo.clear_player_inventory(mock_db, player_id=10)
 
+    @pytest.mark.asyncio
+    async def test_clear_player_inventory_default_commit_true(self, repo, mock_db):
+        """B.34 closeout: default commit=True calls db.commit() on success.
+
+        Contract uniformity with other write methods (add, remove, update_quantity).
+        """
+        result = MagicMock()
+        result.rowcount = 3
+        mock_db.execute = AsyncMock(return_value=result)
+        mock_db.commit = AsyncMock()
+        mock_db.flush = AsyncMock()
+        mock_db.rollback = AsyncMock()
+
+        deleted = await repo.clear_player_inventory(mock_db, player_id=10)
+
+        assert deleted == 3
+        mock_db.commit.assert_awaited_once()
+        mock_db.flush.assert_not_awaited()
+        mock_db.rollback.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_clear_player_inventory_commit_false_flushes_only(self, repo, mock_db):
+        """B.34 closeout: commit=False calls db.flush() (caller owns transaction)."""
+        result = MagicMock()
+        result.rowcount = 5
+        mock_db.execute = AsyncMock(return_value=result)
+        mock_db.commit = AsyncMock()
+        mock_db.flush = AsyncMock()
+        mock_db.rollback = AsyncMock()
+
+        deleted = await repo.clear_player_inventory(mock_db, player_id=10, commit=False)
+
+        assert deleted == 5
+        mock_db.flush.assert_awaited_once()
+        mock_db.commit.assert_not_awaited()
+        mock_db.rollback.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_clear_player_inventory_commit_true_rolls_back_on_exception(self, repo, mock_db):
+        """B.34 closeout: commit=True (default) rolls back on exception."""
+        mock_db.execute = AsyncMock(side_effect=Exception("DB error"))
+        mock_db.commit = AsyncMock()
+        mock_db.rollback = AsyncMock()
+
+        with pytest.raises(Exception, match="DB error"):
+            await repo.clear_player_inventory(mock_db, player_id=10)
+
+        mock_db.rollback.assert_awaited_once()
+        mock_db.commit.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_clear_player_inventory_commit_false_does_not_roll_back_on_exception(self, repo, mock_db):
+        """B.34 closeout: commit=False does NOT roll back on exception (caller owns transaction).
+
+        Matches the contract documented at services/bot-core/src/persist/repositories/AGENTS.md.
+        """
+        mock_db.execute = AsyncMock(side_effect=Exception("DB error"))
+        mock_db.commit = AsyncMock()
+        mock_db.rollback = AsyncMock()
+
+        with pytest.raises(Exception, match="DB error"):
+            await repo.clear_player_inventory(mock_db, player_id=10, commit=False)
+
+        mock_db.rollback.assert_not_awaited()
+        mock_db.commit.assert_not_awaited()
+
 
 # ===================================================================
 # get_inventory_summary – exception path (lines 288-290)

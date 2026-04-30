@@ -340,7 +340,8 @@ The full inventory after the B.34 remediation:
 
 **`InventoryRepository`** (Package G B.19 canonical pattern):
 - `add`, `create_or_update`, `remove`,
-  `add_item`, `remove_item`, `update_quantity`
+  `add_item`, `remove_item`, `update_quantity`,
+  `clear_player_inventory` (B.34 closeout, 2026-04-30)
 
 **`ShopRepository`** (Package G B.19 canonical pattern):
 - `add`, `create_or_update`, `remove`, `update_quantity`

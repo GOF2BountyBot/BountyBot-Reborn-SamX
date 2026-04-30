@@ -361,19 +361,29 @@ class InventoryRepository(IRepository[PlayerInventory]):
             flogger.error(f"Error getting item count for player {player_id}, type {item_type}: {e}")
             raise
 
-    async def clear_player_inventory(self, db: AsyncSession, player_id: int) -> int:
+    async def clear_player_inventory(self, db: AsyncSession, player_id: int, *, commit: bool = True) -> int:
         """Delete all inventory items for a player (used during prestige reset).
+
+        Args:
+            commit: When False, flush changes without committing (use when the caller
+                owns the transaction, e.g. inside a router-level db.begin() context).
+                When True (default), commit on success and rollback on exception.
 
         Returns the number of rows deleted.
         """
         try:
             result = await db.execute(delete(PlayerInventory).where(PlayerInventory.player_id == player_id))
-            await db.flush()
+            if commit:
+                await db.commit()
+            else:
+                await db.flush()
             deleted_count = result.rowcount
             flogger.info(f"Cleared {deleted_count} inventory items for player {player_id}")
             return deleted_count
         except Exception as e:
             flogger.error(f"Error clearing inventory for player {player_id}: {e}")
+            if commit:
+                await db.rollback()
             raise
 
     async def get_inventory_summary(self, db: AsyncSession, player_id: int) -> dict:

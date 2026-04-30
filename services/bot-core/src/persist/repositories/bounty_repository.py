@@ -103,12 +103,13 @@ class BountyRepository(IRepository[Bounty]):
           - count_active_by_guild_and_division() — slot-counting for spawn logic; also time-filtered (see below)
         """
         try:
+            # B.14: exclude stale bounties past end_time
             result = await db.execute(
                 select(Bounty).where(
                     and_(
                         Bounty.guild_id == guild_id,
                         Bounty.status == "active",
-                        Bounty.end_time > func.now(),  # B.14: exclude stale bounties past end_time  # pylint: disable=not-callable
+                        Bounty.end_time > func.now(),  # pylint: disable=not-callable
                     )
                 )
             )
@@ -125,13 +126,14 @@ class BountyRepository(IRepository[Bounty]):
         rationale and the list of intentionally un-filtered methods.
         """
         try:
+            # B.14: exclude stale bounties past end_time
             result = await db.execute(
                 select(Bounty).where(
                     and_(
                         Bounty.guild_id == guild_id,
                         Bounty.division == division,
                         Bounty.status == "active",
-                        Bounty.end_time > func.now(),  # B.14: exclude stale bounties past end_time  # pylint: disable=not-callable
+                        Bounty.end_time > func.now(),  # pylint: disable=not-callable
                     )
                 )
             )
@@ -238,6 +240,7 @@ class BountyRepository(IRepository[Bounty]):
         the spawn executor from being permanently blocked by un-expired rows.
         """
         try:
+            # B.14: exclude stale bounties past end_time
             result = await db.execute(
                 select(func.count())  # pylint: disable=not-callable
                 .select_from(Bounty)
@@ -246,7 +249,7 @@ class BountyRepository(IRepository[Bounty]):
                         Bounty.guild_id == guild_id,
                         Bounty.division == division,
                         Bounty.status == "active",
-                        Bounty.end_time > func.now(),  # B.14: exclude stale bounties past end_time  # pylint: disable=not-callable
+                        Bounty.end_time > func.now(),  # pylint: disable=not-callable
                     )
                 )
             )

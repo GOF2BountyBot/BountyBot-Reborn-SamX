@@ -632,6 +632,196 @@ class TestUninstallBot:
 
 
 # ===========================================================================
+# 3b. DELETE /admin/guilds/{guild_id}/cleanup  (B.37 — on_guild_remove cleanup)
+# ===========================================================================
+
+
+class TestCleanupGuildOnRemove:
+    """Tests for DELETE /api/v1/admin/guilds/{guild_id}/cleanup.
+
+    This endpoint is invoked by setupCog.on_guild_remove when the bot is removed
+    from a guild. It performs DB-only cleanup (does NOT touch Discord side, since
+    the bot is already gone). Unlike /uninstall, it has NO user_id requirement —
+    the actor is the Discord platform event itself.
+    """
+
+    @patch("api.routers.admin.get_db_session")
+    @patch("api.routers.admin.BountyService")
+    def test_cleanup_happy_path(self, mock_bounty_svc_cls, mock_get_db, client, mock_config_service):
+        """Returns 200 with removed counts on successful cleanup."""
+        _configure_db_mock(mock_get_db)
+        mock_bounty_instance = AsyncMock()
+        mock_bounty_instance.clear_bounties = AsyncMock(
+            return_value={"cleared_count": 2, "bounty_ids": [], "announcements_deleted": 0}
+        )
+        mock_bounty_svc_cls.return_value = mock_bounty_instance
+
+        # No user_id query parameter required — system-event endpoint.
+        response = client.delete("/api/v1/admin/guilds/67890/cleanup")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["guild_id"] == 67890
+        assert data["removed_counts"] == {"players": 5, "configs": 1, "shops": 40}
+        assert data["bounties_cleared"] == 2
+        assert "complete" in data["message"].lower()
+        mock_config_service.uninstall_guild.assert_awaited_once()
+
+    @patch("api.routers.admin.get_db_session")
+    @patch("api.routers.admin.BountyService")
+    def test_cleanup_no_user_id_required(self, mock_bounty_svc_cls, mock_get_db, client, mock_config_service):
+        """Cleanup must NOT require user_id (it's a system event, not user-initiated)."""
+        _configure_db_mock(mock_get_db)
+        mock_bounty_instance = AsyncMock()
+        mock_bounty_instance.clear_bounties = AsyncMock(
+            return_value={"cleared_count": 0, "bounty_ids": [], "announcements_deleted": 0}
+        )
+        mock_bounty_svc_cls.return_value = mock_bounty_instance
+
+        # Explicitly call without user_id and without ADMIN_USER_IDS set.
+        import os
+
+        env_backup = os.environ.pop("ADMIN_USER_IDS", None)
+        try:
+            response = client.delete("/api/v1/admin/guilds/67890/cleanup")
+            assert response.status_code == 200, (
+                f"Cleanup must succeed without user_id auth (system event); got {response.status_code}: "
+                f"{response.json()}"
+            )
+        finally:
+            if env_backup is not None:
+                os.environ["ADMIN_USER_IDS"] = env_backup
+
+    @patch("api.routers.admin.get_db_session")
+    @patch("api.routers.admin.BountyService")
+    def test_cleanup_idempotent_when_no_data_exists(
+        self, mock_bounty_svc_cls, mock_get_db, client, mock_config_service
+    ):
+        """Cleanup must succeed (200) even when guild has no DB data — idempotency
+        for Discord retrying guild-remove events."""
+        _configure_db_mock(mock_get_db)
+        mock_bounty_instance = AsyncMock()
+        mock_bounty_instance.clear_bounties = AsyncMock(
+            return_value={"cleared_count": 0, "bounty_ids": [], "announcements_deleted": 0}
+        )
+        mock_bounty_svc_cls.return_value = mock_bounty_instance
+
+        # Simulate "nothing to remove" state: uninstall_guild returns empty/zero counts
+        mock_config_service.uninstall_guild = AsyncMock(return_value={"players": 0, "shop_items": "all", "config": 0})
+
+        # Two consecutive calls — both must succeed.
+        r1 = client.delete("/api/v1/admin/guilds/77777/cleanup")
+        r2 = client.delete("/api/v1/admin/guilds/77777/cleanup")
+
+        assert r1.status_code == 200
+        assert r2.status_code == 200
+        # Both calls reached the service
+        assert mock_config_service.uninstall_guild.await_count == 2
+
+    @patch("api.routers.admin.get_db_session")
+    @patch("api.routers.admin.BountyService")
+    def test_cleanup_passes_correct_guild_id(self, mock_bounty_svc_cls, mock_get_db, client, mock_config_service):
+        """Cleanup invokes config_service.uninstall_guild with the URL-path guild_id."""
+        _configure_db_mock(mock_get_db)
+        mock_bounty_instance = AsyncMock()
+        mock_bounty_instance.clear_bounties = AsyncMock(
+            return_value={"cleared_count": 0, "bounty_ids": [], "announcements_deleted": 0}
+        )
+        mock_bounty_svc_cls.return_value = mock_bounty_instance
+
+        client.delete("/api/v1/admin/guilds/424242/cleanup")
+
+        call_args = mock_config_service.uninstall_guild.call_args
+        assert 424242 in call_args.args or call_args.kwargs.get("guild_id") == 424242
+
+    @patch("api.routers.admin.get_db_session")
+    @patch("api.routers.admin.BountyService")
+    def test_cleanup_server_error_returns_500(self, mock_bounty_svc_cls, mock_get_db, client, mock_config_service):
+        """Returns 500 when config_service.uninstall_guild raises an unexpected exception."""
+        _configure_db_mock(mock_get_db)
+        mock_bounty_instance = AsyncMock()
+        mock_bounty_instance.clear_bounties = AsyncMock(
+            return_value={"cleared_count": 0, "bounty_ids": [], "announcements_deleted": 0}
+        )
+        mock_bounty_svc_cls.return_value = mock_bounty_instance
+        mock_config_service.uninstall_guild.side_effect = RuntimeError("DB blew up")
+
+        response = client.delete("/api/v1/admin/guilds/67890/cleanup")
+
+        assert response.status_code == 500
+        assert "Failed to cleanup guild" in response.json()["detail"]
+
+    @patch("api.routers.admin.get_db_session")
+    @patch("api.routers.admin.BountyService")
+    def test_cleanup_cancels_scheduler_jobs_for_guild(self, mock_bounty_svc_cls, mock_get_db, mock_config_service):
+        """Cancels APScheduler jobs whose payload contains the guild_id (mirrors uninstall)."""
+        from api.routers.admin import get_config_service
+        from api.routers.admin import router as admin_router
+        from fastapi import FastAPI
+        from fastapi.testclient import TestClient
+
+        _configure_db_mock(mock_get_db)
+
+        mock_bounty_instance = AsyncMock()
+        mock_bounty_instance.clear_bounties = AsyncMock(
+            return_value={"cleared_count": 0, "bounty_ids": [], "announcements_deleted": 0}
+        )
+        mock_bounty_svc_cls.return_value = mock_bounty_instance
+
+        mock_scheduler = MagicMock()
+        matching_job = MagicMock()
+        matching_job.id = "spawn-67890"
+        matching_job.args = ["spawn-67890", {"job_type": "bounty_spawn", "guild_id": 67890}]
+        non_matching_job = MagicMock()
+        non_matching_job.id = "spawn-11111"
+        non_matching_job.args = ["spawn-11111", {"job_type": "bounty_spawn", "guild_id": 11111}]
+        mock_scheduler.get_jobs = MagicMock(return_value=[matching_job, non_matching_job])
+        mock_scheduler.remove_job = MagicMock()
+
+        app = FastAPI()
+        app.include_router(admin_router, prefix="/api/v1")
+        app.dependency_overrides[get_config_service] = lambda: mock_config_service
+        app.state.scheduler = mock_scheduler
+
+        local_client = TestClient(app)
+        response = local_client.delete("/api/v1/admin/guilds/67890/cleanup")
+
+        assert response.status_code == 200
+        data = response.json()
+        mock_scheduler.remove_job.assert_called_once_with("spawn-67890")
+        assert data["jobs_cancelled"] == 1
+        app.dependency_overrides.clear()
+
+    @patch("api.routers.admin.get_db_session")
+    @patch("api.routers.admin.BountyService")
+    def test_cleanup_audits_with_actor_id_zero(self, mock_bounty_svc_cls, mock_get_db, client, mock_config_service):
+        """Audit log must record actor_id=0 (system event, no user)."""
+        _configure_db_mock(mock_get_db)
+        mock_bounty_instance = AsyncMock()
+        mock_bounty_instance.clear_bounties = AsyncMock(
+            return_value={"cleared_count": 0, "bounty_ids": [], "announcements_deleted": 0}
+        )
+        mock_bounty_svc_cls.return_value = mock_bounty_instance
+
+        with patch("api.routers.admin.AuditService.log_action", new=AsyncMock()) as mock_audit:
+            response = client.delete("/api/v1/admin/guilds/67890/cleanup")
+
+            assert response.status_code == 200
+            mock_audit.assert_awaited_once()
+            call_kwargs = mock_audit.call_args.kwargs
+            # actor_id MUST be 0 — the convention for "no user — automated platform event"
+            assert call_kwargs.get("user_id") == 0, (
+                f"Cleanup audit must use user_id=0 for system events; got {call_kwargs.get('user_id')}"
+            )
+            assert call_kwargs.get("action") == "guild_cleanup_on_remove"
+            assert call_kwargs.get("guild_id") == 67890
+            details = call_kwargs.get("details") or {}
+            # Trigger field documents the platform event source
+            assert "trigger" in details
+            assert "on_guild_remove" in details["trigger"]
+
+
+# ===========================================================================
 # 4. PUT /admin/players/credits
 # ===========================================================================
 

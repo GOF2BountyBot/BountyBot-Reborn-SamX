@@ -371,6 +371,107 @@ async def uninstall_bot(
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to uninstall bot") from e
 
 
+@router.delete("/guilds/{guild_id}/cleanup")
+async def cleanup_guild_on_remove(
+    guild_id: int,
+    request: Request,
+    config_service: ConfigService = Depends(get_config_service),
+):
+    """
+    Soft cleanup invoked by the discord-gateway ``on_guild_remove`` event.
+
+    Removes guild-scoped DB state (``guild_configs``, ``guild_shops``, ``bounty``,
+    ``apscheduler_jobs``, players & cascaded ships/inventory) for a guild the bot
+    has just left. Does NOT touch Discord channels/roles — the bot is already
+    gone from the guild, so Discord side cannot be modified.
+
+    This endpoint is intentionally distinct from ``DELETE /uninstall``:
+
+    - ``/uninstall`` is a destructive admin command behind ADMIN_USER_IDS auth
+      and intends to delete Discord-side artifacts as well.
+    - ``/cleanup`` is a system-event endpoint with NO user_id parameter —
+      the actor is the Discord platform event itself (recorded as
+      ``actor_id=0`` in the audit log with explanatory ``details``).
+
+    **Idempotency**: the endpoint always returns 200 even when no guild data
+    exists to remove. Discord may retry guild-remove events, and a second
+    invocation must succeed silently rather than 404.
+    """
+    flogger.info(f"Cleanup invoked for guild {guild_id} (on_guild_remove event)")
+
+    # Best-effort: cancel scheduled jobs for this guild before removing DB data.
+    # Mirrors the uninstall pattern but without admin auth (system event).
+    jobs_cancelled = 0
+    try:
+        scheduler = getattr(request.app.state, "scheduler", None)
+        if scheduler is not None:
+            for job in scheduler.get_jobs():
+                try:
+                    job_args = list(job.args) if job.args else []
+                    payload = job_args[1] if len(job_args) > 1 else {}
+                    payload_str = json.dumps(payload, default=str)
+                    if str(guild_id) in payload_str:
+                        scheduler.remove_job(job.id)
+                        jobs_cancelled += 1
+                        flogger.info(f"Cancelled job {job.id} for guild {guild_id} during cleanup")
+                except Exception as _job_exc:
+                    flogger.warning(f"Non-fatal: failed to inspect/cancel job {getattr(job, 'id', '?')}: {_job_exc}")
+        else:
+            flogger.debug("Scheduler not available during cleanup; skipping job cancellation")
+    except Exception as sched_exc:
+        flogger.warning(f"Non-fatal: error during scheduler cleanup for guild {guild_id}: {sched_exc}")
+
+    # Best-effort: clear active bounties for the guild.
+    bounties_cleared = 0
+    try:
+        bounty_service = BountyService()
+        async with get_db_session() as db:
+            result = await bounty_service.clear_bounties(db, guild_id, tier=None)
+            bounties_cleared = result.get("cleared_count", 0)
+            flogger.info(f"Cleared {bounties_cleared} bounties for guild {guild_id} during cleanup")
+    except Exception as bounty_exc:
+        flogger.warning(f"Non-fatal: failed to clear bounties for guild {guild_id} during cleanup: {bounty_exc}")
+
+    try:
+        async with get_db_session() as db:
+            # Remove all guild DB data — same code path as /uninstall.
+            # Idempotency: clear_guild_players iterates a (possibly empty) list,
+            # clear_all_guild_shops issues a DELETE WHERE that's a no-op on empty,
+            # and delete_guild_config returns False if no row exists.
+            removed_counts = await config_service.uninstall_guild(db, guild_id)
+
+            flogger.info(f"Cleanup of guild {guild_id} complete: {removed_counts}")
+
+            # Audit-log the system event. actor_id=0 is the convention for
+            # "no user — automated platform event"; details documents the trigger.
+            await AuditService.log_action(
+                db,
+                user_id=0,
+                action="guild_cleanup_on_remove",
+                guild_id=guild_id,
+                resource_type="guild",
+                resource_id=str(guild_id),
+                details={
+                    "removed_counts": removed_counts,
+                    "jobs_cancelled": jobs_cancelled,
+                    "bounties_cleared": bounties_cleared,
+                    "trigger": "on_guild_remove event from discord-gateway",
+                },
+            )
+
+            return {
+                "guild_id": guild_id,
+                "removed_counts": removed_counts,
+                "jobs_cancelled": jobs_cancelled,
+                "bounties_cleared": bounties_cleared,
+                "message": f"Soft cleanup of guild {guild_id} complete (DB-only, Discord-side untouched)",
+            }
+
+    except Exception as e:
+        flogger.error(f"Error during cleanup of guild {guild_id}: {e}")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to cleanup guild") from e
+
+
 @router.put("/players/credits")
 async def update_player_credits(
     request: UpdatePlayerCreditsRequest,

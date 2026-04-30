@@ -2616,5 +2616,191 @@ class TestPlayerShipAutocompleteFallbackFromCache:
         assert "Bloodstar" in names
 
 
+# ---------------------------------------------------------------------------
+# Bug B.40: Admin commands must be visible to users with the configured admin role,
+# not only to Discord Administrators.
+#
+# Root cause: @app_commands.default_permissions(administrator=True) on every admin
+# command caused Discord to hide them from users who lack the built-in Discord
+# Administrator permission, regardless of the custom role check in _check_is_admin().
+# Fix: removed all @app_commands.default_permissions(administrator=True) decorators
+# from AdminCog commands. Access control is now enforced solely by the runtime
+# _check_is_admin() call inside each command handler.
+# ---------------------------------------------------------------------------
+
+
+class TestAdminRoleAccessGranted:
+    """B.40: A user with only the configured admin_role_id (no Discord Admin permission)
+    must be able to execute admin commands. The _check_is_admin() function must return
+    True for them, and no @app_commands.default_permissions decorator must be present
+    that would hide commands from them at the Discord level.
+    """
+
+    def test_check_is_admin_returns_true_for_admin_role_holder(self, mock_admin_cog):
+        """B.40: _check_is_admin returns True for a user who holds the configured admin role."""
+        from cogs.adminCog import _check_is_admin
+
+        admin_role_id = 555666777
+        admin_role = MagicMock()
+        admin_role.id = admin_role_id
+
+        interaction = _create_mock_interaction()
+        # User has the admin role but NOT Discord Administrator permission
+        interaction.user.roles = [admin_role]
+        interaction.user.guild_permissions = MagicMock()
+        interaction.user.guild_permissions.administrator = False
+        interaction.guild_id = 987654321
+
+        # Config API returns the matching admin_role_id
+        api_resp = MagicMock()
+        api_resp.raise_for_status = MagicMock()
+        api_resp.json.return_value = {"admin_role_id": admin_role_id}
+
+        with patch("cogs.adminCog.httpx.AsyncClient") as mock_client_cls:
+            mock_client = AsyncMock()
+            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client.__aexit__ = AsyncMock(return_value=None)
+            mock_client.get = AsyncMock(return_value=api_resp)
+            mock_client_cls.return_value = mock_client
+
+            result = asyncio.run(_check_is_admin(interaction))
+
+        assert result is True, (
+            "User holding the configured admin role must be granted admin access. "
+            "Bug B.40: @app_commands.default_permissions(administrator=True) was hiding commands "
+            "from admin-role holders who lack the built-in Discord Administrator permission."
+        )
+
+    def test_check_is_admin_returns_false_for_non_admin_role_holder(self, mock_admin_cog):
+        """B.40: _check_is_admin returns False for a user without admin role or Discord admin."""
+        from cogs.adminCog import _check_is_admin
+
+        other_role = MagicMock()
+        other_role.id = 111111111  # Some random non-admin role
+
+        interaction = _create_mock_interaction()
+        interaction.user.roles = [other_role]
+        interaction.user.guild_permissions = MagicMock()
+        interaction.user.guild_permissions.administrator = False
+        interaction.guild_id = 987654321
+
+        # Config API returns a different admin_role_id (user doesn't have it)
+        api_resp = MagicMock()
+        api_resp.raise_for_status = MagicMock()
+        api_resp.json.return_value = {"admin_role_id": 999888777}
+
+        with patch("cogs.adminCog.httpx.AsyncClient") as mock_client_cls:
+            mock_client = AsyncMock()
+            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client.__aexit__ = AsyncMock(return_value=None)
+            mock_client.get = AsyncMock(return_value=api_resp)
+            mock_client_cls.return_value = mock_client
+
+            result = asyncio.run(_check_is_admin(interaction))
+
+        assert result is False, (
+            "User without admin role or Discord Administrator should be denied access."
+        )
+
+    def test_admin_guild_stats_allows_admin_role_holder(self, mock_admin_cog):
+        """B.40: admin_guild_stats must be accessible to a user with the admin role (not Discord admin)."""
+        admin_role_id = 555666777
+        admin_role = MagicMock()
+        admin_role.id = admin_role_id
+
+        interaction = _create_mock_interaction()
+        interaction.user.roles = [admin_role]
+        interaction.user.guild_permissions = MagicMock()
+        interaction.user.guild_permissions.administrator = False
+        interaction.guild_id = 987654321
+        interaction.guild = MagicMock()
+        interaction.guild.name = "Test Guild"
+        interaction.guild.icon = None
+
+        # _check_is_admin is called inside the command — mock it to return True
+        # (separately tested above; here we verify the command does NOT short-circuit
+        # with a "requires admin privileges" rejection)
+        config_resp = MagicMock()
+        config_resp.raise_for_status = MagicMock()
+        config_resp.json.return_value = {"admin_role_id": admin_role_id}
+
+        stats_resp = MagicMock()
+        stats_resp.raise_for_status = MagicMock()
+        stats_resp.json.return_value = {
+            "guild_id": 987654321,
+            "total_players": 5,
+            "tier_distribution": {"Bronze": 3, "Silver": 2},
+            "total_credits": 1000,
+            "total_xp": 500,
+            "average_credits": 200.0,
+            "average_xp": 100.0,
+        }
+
+        # _check_is_admin first calls config (via httpx.AsyncClient context manager),
+        # then the command calls config again via http_client.get
+        with patch("cogs.adminCog._check_is_admin", AsyncMock(return_value=True)):
+            mock_admin_cog.http_client.get = AsyncMock(return_value=stats_resp)
+            asyncio.run(mock_admin_cog.admin_guild_stats.callback(mock_admin_cog, interaction))
+
+        interaction.response.defer.assert_awaited_once_with(thinking=True, ephemeral=True)
+        interaction.followup.send.assert_awaited_once()
+        call_kwargs = interaction.followup.send.call_args[1]
+        # Must NOT be the rejection message
+        assert "embed" in call_kwargs, "Admin-role holder must receive stats embed, not a rejection"
+        embed = call_kwargs["embed"]
+        assert "Guild Statistics" in (embed.title or ""), (
+            f"Expected guild stats embed, got title: {embed.title!r}"
+        )
+
+    def test_admin_commands_have_no_default_permissions_decorator(self, mock_admin_cog):
+        """B.40: No admin command should carry a default_permissions restriction.
+
+        discord.py's @app_commands.default_permissions(administrator=True) sets a
+        guild-level default that makes commands invisible to any user lacking the
+        specified permission — this includes users with the custom admin_role who
+        don't have the Discord 'Administrator' permission.
+
+        We verify that the commands no longer carry this restriction by inspecting
+        the 'default_member_permissions' attribute that discord.py exposes on the
+        AppCommand object.
+        """
+        # Commands that had @app_commands.default_permissions(administrator=True) before the fix:
+        admin_command_names = [
+            "admin_check",
+            "admin_setup",
+            "admin_player",
+            "admin_refresh_shop",
+            "admin_guild_stats",
+            "admin_config",
+            "admin_uninstall",
+            "admin_config_shop",
+            "admin_config_validate",
+            "render_config",
+            "render_cache_clear",
+            "admin_clear_bounties",
+            "admin_config_bounty",
+            "admin_config_xp",
+            "admin_spawn_bounty",
+            "admin_cooldown_reset",
+            "admin_give_item",
+            "admin_remove_item",
+            "admin_give_ship",
+            "admin_remove_ship",
+        ]
+        for cmd_name in admin_command_names:
+            cmd = getattr(mock_admin_cog, cmd_name, None)
+            assert cmd is not None, f"AdminCog must have a '{cmd_name}' command"
+            # discord.py stores the resolved permissions as cmd.default_permissions
+            # (a discord.Permissions object) or None when no default is set.
+            # After removing @app_commands.default_permissions(administrator=True),
+            # this attribute must be None (no restriction imposed at the Discord level).
+            default_perms = getattr(cmd, "default_permissions", "ATTRIBUTE_MISSING")
+            assert default_perms is None, (
+                f"Command '{cmd_name}' still has default_permissions={default_perms!r}. "
+                "Remove @app_commands.default_permissions(administrator=True) so users "
+                "with the configured admin role can see and use this command."
+            )
+
+
 if __name__ == "__main__":
     pytest.main([__file__])

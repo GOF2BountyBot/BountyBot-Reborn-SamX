@@ -180,7 +180,6 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
         ]
 
     @app_commands.command(name="admin_check", description="[ADMIN] Check if a user has bot-admin rights and why")
-    @app_commands.default_permissions(administrator=True)
     @app_commands.describe(user="The user to check")
     async def admin_check(self, interaction: discord.Interaction, user: discord.User):
         """Report whether the given user has admin rights—and by which rule."""
@@ -228,7 +227,6 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
         await interaction.followup.send(msg, ephemeral=True)
 
     @app_commands.command(name="admin_setup", description="[ADMIN] Initialize the bot for this guild")
-    @app_commands.default_permissions(administrator=True)
     @app_commands.describe(
         admin_role="Role that should have admin permissions for the bot (required)",
         starting_credits="Starting credits for new players (default: 0)",
@@ -330,7 +328,6 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
             await interaction.followup.send("⚠️ An error occurred during guild initialization.", ephemeral=True)
 
     @app_commands.command(name="admin_player", description="[ADMIN] Manage player data")
-    @app_commands.default_permissions(administrator=True)
     @app_commands.describe(
         user="Player to manage",
         action="Action to perform",
@@ -498,7 +495,6 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
             await interaction.followup.send("⚠️ An error occurred while managing player.", ephemeral=True)
 
     @app_commands.command(name="admin_refresh_shop", description="[ADMIN] Force refresh a shop")
-    @app_commands.default_permissions(administrator=True)
     @app_commands.describe(tier="Shop tier to refresh", force_tech_level="Force all items to specific tech level (1-9)")
     @app_commands.autocomplete(tier=tier_autocomplete)
     async def admin_refresh_shop(
@@ -547,7 +543,6 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
             await interaction.followup.send("⚠️ An error occurred while refreshing shop.", ephemeral=True)
 
     @app_commands.command(name="admin_guild_stats", description="[ADMIN] View guild statistics")
-    @app_commands.default_permissions(administrator=True)
     async def admin_guild_stats(self, interaction: discord.Interaction):
         """View comprehensive guild statistics."""
         await interaction.response.defer(thinking=True, ephemeral=True)
@@ -585,7 +580,6 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
             await interaction.followup.send("⚠️ An error occurred while fetching guild statistics.", ephemeral=True)
 
     @app_commands.command(name="admin_config", description="[ADMIN] View or update guild configuration")
-    @app_commands.default_permissions(administrator=True)
     @app_commands.describe(
         action="Configuration action to perform",
         starting_credits="Starting credits for new players",
@@ -682,7 +676,6 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
             await interaction.followup.send("⚠️ An error occurred while managing configuration.", ephemeral=True)
 
     @app_commands.command(name="admin_uninstall", description="[ADMIN] Completely remove all bot data from this guild")
-    @app_commands.default_permissions(administrator=True)
     @app_commands.describe(confirm="Type CONFIRM-DELETE to confirm (this is IRREVERSIBLE)")
     async def admin_uninstall(
         self,
@@ -817,7 +810,6 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
             await interaction.followup.send("⚠️ An error occurred during uninstall.", ephemeral=True)
 
     @app_commands.command(name="admin_config_shop", description="[ADMIN] Update shop configuration")
-    @app_commands.default_permissions(administrator=True)
     @app_commands.describe(
         ship_count_min="Minimum number of ship types in shop",
         ship_count_max="Maximum number of ship types in shop",
@@ -926,7 +918,6 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
             await interaction.followup.send("⚠️ An error occurred while updating shop configuration.", ephemeral=True)
 
     @app_commands.command(name="admin_config_validate", description="[ADMIN] Validate guild configuration")
-    @app_commands.default_permissions(administrator=True)
     async def admin_config_validate(self, interaction: discord.Interaction):
         """Validate the current guild configuration."""
         await interaction.response.defer(thinking=True, ephemeral=True)
@@ -986,7 +977,6 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
     # ------------------------------------------------------------------
 
     @app_commands.command(name="render_config", description="[ADMIN] View/update blender render settings")
-    @app_commands.default_permissions(administrator=True)
     @app_commands.describe(
         action="Action to perform: view current config, set a value, or reset to defaults",
         setting="Setting name to update (required for 'set' action)",
@@ -1066,7 +1056,6 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
             await interaction.followup.send("⚠️ An error occurred.", ephemeral=True)
 
     @app_commands.command(name="render_cache_clear", description="[ADMIN] Clear blender render cache (/tmp)")
-    @app_commands.default_permissions(administrator=True)
     async def render_cache_clear(self, interaction: discord.Interaction) -> None:
         """Admin command to clear blender-service temp render files."""
         await interaction.response.defer(thinking=True, ephemeral=True)
@@ -1100,7 +1089,6 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
     # ------------------------------------------------------------------
 
     @app_commands.command(name="admin_clear_bounties", description="[ADMIN] Clear active bounties for this guild")
-    @app_commands.default_permissions(administrator=True)
     @app_commands.describe(
         tier="Tier to clear (omit for all tiers)",
         confirm="Type CONFIRM to execute this destructive action",
@@ -1157,7 +1145,6 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
             await interaction.followup.send("⚠️ An error occurred while clearing bounties.", ephemeral=True)
 
     @app_commands.command(name="admin_config_bounty", description="[ADMIN] View or update bounty configuration")
-    @app_commands.default_permissions(administrator=True)
     @app_commands.describe(
         action="View current config or update settings",
         max_bronze="Max active bounties for Bronze tier (0-20)",
@@ -1290,7 +1277,6 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
             await interaction.followup.send("⚠️ An error occurred while managing bounty configuration.", ephemeral=True)
 
     @app_commands.command(name="admin_config_xp", description="[ADMIN] View or update XP tier thresholds")
-    @app_commands.default_permissions(administrator=True)
     @app_commands.describe(
         action="View current thresholds or update them",
         silver="XP threshold for Silver tier",
@@ -1399,7 +1385,6 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
             await interaction.followup.send("⚠️ An error occurred while managing XP thresholds.", ephemeral=True)
 
     @app_commands.command(name="admin_spawn_bounty", description="[ADMIN] Manually trigger a bounty spawn")
-    @app_commands.default_permissions(administrator=True)
     @app_commands.describe(tier="Tier to spawn for (omit for all tiers)")
     @app_commands.choices(
         tier=[
@@ -1471,7 +1456,6 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
         name="admin_cooldown_reset",
         description="Reset a player's bounty check cooldown immediately",
     )
-    @app_commands.default_permissions(administrator=True)
     @app_commands.describe(user="The Discord member whose cooldown should be reset")
     async def admin_cooldown_reset(self, interaction: discord.Interaction, user: discord.Member):
         """Reset a player's bounty cooldown."""
@@ -1589,7 +1573,6 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
             return []
 
     @app_commands.command(name="admin_give_item", description="[ADMIN] Give an item directly to a player's inventory")
-    @app_commands.default_permissions(administrator=True)
     @app_commands.describe(
         user="Target player",
         item_name="Item to give (autocomplete from game data)",
@@ -1671,7 +1654,6 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
             await interaction.response.send_message("⚠️ An error occurred.", ephemeral=True)
 
     @app_commands.command(name="admin_remove_item", description="[ADMIN] Remove an item from a player's inventory")
-    @app_commands.default_permissions(administrator=True)
     @app_commands.describe(
         user="Target player",
         item_name="Item to remove (autocomplete from game data)",
@@ -1753,7 +1735,6 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
             await interaction.response.send_message("⚠️ An error occurred.", ephemeral=True)
 
     @app_commands.command(name="admin_give_ship", description="[ADMIN] Give a ship to a player")
-    @app_commands.default_permissions(administrator=True)
     @app_commands.describe(
         user="Target player",
         ship_name="Name of the ship to give (autocomplete from game data)",
@@ -1875,7 +1856,6 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
             return []
 
     @app_commands.command(name="admin_remove_ship", description="[ADMIN] Remove a ship from a player")
-    @app_commands.default_permissions(administrator=True)
     @app_commands.describe(
         user="Target player",
         ship_name="Name of the ship to remove",

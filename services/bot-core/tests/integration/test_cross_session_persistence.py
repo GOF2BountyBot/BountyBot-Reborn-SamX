@@ -91,7 +91,7 @@ for _key in list(sys.modules):
 # ---------------------------------------------------------------------------
 
 from datetime import UTC, datetime
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import MagicMock
 
 import pytest
 from persist.models.base import Base
@@ -274,57 +274,56 @@ class TestOp01CreatePlayer:
         player_repo = PlayerRepository()
         user_repo = UserRepository()
 
-        async with factory() as db:
-            async with db.begin():  # The route-level wrapper added in B.34 fix.
-                # 1. Get-or-create user (idempotent on existing user) — commit=False participant
-                _ = await user_repo.get_or_create_user(db, user_id, "test", commit=False)
+        async with factory() as db, db.begin():  # The route-level wrapper added in B.34 fix.
+            # 1. Get-or-create user (idempotent on existing user) — commit=False participant
+            _ = await user_repo.get_or_create_user(db, user_id, "test", commit=False)
 
-                # 2. Add player — commit=False participant
-                new_player = Player(
-                    user_id=user_id,
-                    guild_id=10001,
-                    credits=5000,
-                    lifetime_credits=5000,
-                    tier="Bronze",
-                    xp=0,
-                    xp_surplus=0,
-                )
-                new_player = await player_repo.add(db, new_player, commit=False)
+            # 2. Add player — commit=False participant
+            new_player = Player(
+                user_id=user_id,
+                guild_id=10001,
+                credits=5000,
+                lifetime_credits=5000,
+                tier="Bronze",
+                xp=0,
+                xp_surplus=0,
+            )
+            new_player = await player_repo.add(db, new_player, commit=False)
 
-                # 3. Add a player_ship row (Betty starter) — flush-only via repo
-                from persist.repositories.player_ship_repository import PlayerShipRepository
+            # 3. Add a player_ship row (Betty starter) — flush-only via repo
+            from persist.repositories.player_ship_repository import PlayerShipRepository
 
-                ps_repo = PlayerShipRepository()
-                starter_ship = await ps_repo.create_or_update(
-                    db,
-                    {
-                        "player_id": new_player.id,
-                        "ship_name": "Betty",
-                        "is_active": True,
-                        "weapons": ["Nirai Impulse EX 1"],
-                        "modules": ["E2 Exoclad", "Telta Quickscan"],
-                        "turrets": [],
-                        "secondary_weapons": [],
-                    },
-                    commit=False,
-                )
+            ps_repo = PlayerShipRepository()
+            starter_ship = await ps_repo.create_or_update(
+                db,
+                {
+                    "player_id": new_player.id,
+                    "ship_name": "Betty",
+                    "is_active": True,
+                    "weapons": ["Nirai Impulse EX 1"],
+                    "modules": ["E2 Exoclad", "Telta Quickscan"],
+                    "turrets": [],
+                    "secondary_weapons": [],
+                },
+                commit=False,
+            )
 
-                # 4. Update active_ship_id — commit=False
-                await player_repo.update_active_ship(db, new_player.id, starter_ship.id, commit=False)
+            # 4. Update active_ship_id — commit=False
+            await player_repo.update_active_ship(db, new_player.id, starter_ship.id, commit=False)
 
-                # 5. Add 4 inventory rows — commit=False
-                from persist.repositories.inventory_repository import InventoryRepository
+            # 5. Add 4 inventory rows — commit=False
+            from persist.repositories.inventory_repository import InventoryRepository
 
-                inv_repo = InventoryRepository()
-                for itype, iname in [
-                    ("primary_weapon", "Nirai Impulse EX 1"),
-                    ("module", "E2 Exoclad"),
-                    ("module", "Telta Quickscan"),
-                    ("primary_weapon", "Micro Gun MK I"),
-                ]:
-                    await inv_repo.add_item(db, new_player.id, itype, iname, quantity=1, commit=False)
+            inv_repo = InventoryRepository()
+            for itype, iname in [
+                ("primary_weapon", "Nirai Impulse EX 1"),
+                ("module", "E2 Exoclad"),
+                ("module", "Telta Quickscan"),
+                ("primary_weapon", "Micro Gun MK I"),
+            ]:
+                await inv_repo.add_item(db, new_player.id, itype, iname, quantity=1, commit=False)
 
-                created_player_id = new_player.id
+            created_player_id = new_player.id
 
         # Cross-session reload — fresh session, query, assert
         async with factory() as fresh_db:
@@ -341,20 +340,14 @@ class TestOp01CreatePlayer:
             # Player_ship row?
             res = await fresh_db.execute(select(PlayerShip).where(PlayerShip.player_id == created_player_id))
             ships = list(res.scalars().all())
-            assert len(ships) == 1, (
-                f"B.34 regression — expected 1 player_ships row, got {len(ships)}: silent rollback?"
-            )
+            assert len(ships) == 1, f"B.34 regression — expected 1 player_ships row, got {len(ships)}: silent rollback?"
             assert ships[0].ship_name == "Betty"
             assert ships[0].is_active is True
 
             # Player_inventory rows?
-            res = await fresh_db.execute(
-                select(PlayerInventory).where(PlayerInventory.player_id == created_player_id)
-            )
+            res = await fresh_db.execute(select(PlayerInventory).where(PlayerInventory.player_id == created_player_id))
             inv = list(res.scalars().all())
-            assert len(inv) == 4, (
-                f"B.34 regression — expected 4 inventory rows, got {len(inv)}: silent rollback?"
-            )
+            assert len(inv) == 4, f"B.34 regression — expected 4 inventory rows, got {len(inv)}: silent rollback?"
             inv_names = sorted({i.item_name for i in inv})
             assert "Nirai Impulse EX 1" in inv_names
             assert "Micro Gun MK I" in inv_names
@@ -975,9 +968,7 @@ class TestOp03UnequipItem:
 
             consistency = LoadoutConsistencyService()
             async with factory() as db, db.begin():
-                await consistency.unequip_one(
-                    db, player_id=player_id, ship_id=ship_id, item_name="Pulse Laser"
-                )
+                await consistency.unequip_one(db, player_id=player_id, ship_id=ship_id, item_name="Pulse Laser")
         finally:
             ItemRepository.get_by_name_any_type = original_item_named
 
@@ -1328,7 +1319,7 @@ class TestOp05SellShipToShop:
 
             # Active ship preserved
             res = await fresh_db.execute(
-                select(PlayerShip).where((PlayerShip.player_id == player_id) & (PlayerShip.is_active == True))  # noqa: E712
+                select(PlayerShip).where((PlayerShip.player_id == player_id) & PlayerShip.is_active.is_(True))
             )
             assert res.scalars().first() is not None, "Active ship should be preserved"
 
@@ -1383,8 +1374,7 @@ class TestOp20RollbackNegativePath:
             # No inventory row was added
             res = await fresh_db.execute(
                 select(PlayerInventory).where(
-                    (PlayerInventory.player_id == player_id)
-                    & (PlayerInventory.item_name == "ShouldNotPersist")
+                    (PlayerInventory.player_id == player_id) & (PlayerInventory.item_name == "ShouldNotPersist")
                 )
             )
             assert res.scalars().first() is None, "Inventory row must NOT persist after rollback"

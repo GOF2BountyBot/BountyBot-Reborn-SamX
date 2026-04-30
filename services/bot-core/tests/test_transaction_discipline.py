@@ -193,9 +193,7 @@ def _has_commit_false_call(method_node: ast.AsyncFunctionDef) -> bool:
             has_db_commit = True
     if has_commit_false_kwarg:
         return True
-    if has_db_flush and not has_db_commit:
-        return True
-    return False
+    return bool(has_db_flush and not has_db_commit)
 
 
 def _build_writes_flush_only_set() -> set[tuple[str, str]]:
@@ -267,9 +265,13 @@ def _route_decorator_verb(deco: ast.expr) -> str | None:
     """
     if isinstance(deco, ast.Call):
         deco = deco.func
-    if isinstance(deco, ast.Attribute) and isinstance(deco.value, ast.Name) and deco.value.id == "router":
-        if deco.attr in {"get", "post", "put", "delete", "patch", "head", "options"}:
-            return deco.attr
+    if (
+        isinstance(deco, ast.Attribute)
+        and isinstance(deco.value, ast.Name)
+        and deco.value.id == "router"
+        and deco.attr in {"get", "post", "put", "delete", "patch", "head", "options"}
+    ):
+        return deco.attr
     return None
 
 
@@ -288,10 +290,14 @@ def _has_db_begin_in_body(fn: ast.AsyncFunctionDef) -> bool:
         if isinstance(node, ast.AsyncWith):
             for item in node.items:
                 expr = item.context_expr
-                if isinstance(expr, ast.Call) and isinstance(expr.func, ast.Attribute):
-                    if expr.func.attr == "begin" and isinstance(expr.func.value, ast.Name):
-                        if expr.func.value.id in ("db", "session"):
-                            return True
+                if (
+                    isinstance(expr, ast.Call)
+                    and isinstance(expr.func, ast.Attribute)
+                    and expr.func.attr == "begin"
+                    and isinstance(expr.func.value, ast.Name)
+                    and expr.func.value.id in ("db", "session")
+                ):
+                    return True
     return False
 
 
@@ -300,10 +306,14 @@ def _has_explicit_commit(fn: ast.AsyncFunctionDef) -> bool:
     for node in ast.walk(fn):
         if isinstance(node, ast.Await):
             inner = node.value
-            if isinstance(inner, ast.Call) and isinstance(inner.func, ast.Attribute):
-                if inner.func.attr == "commit" and isinstance(inner.func.value, ast.Name):
-                    if inner.func.value.id in ("db", "session"):
-                        return True
+            if (
+                isinstance(inner, ast.Call)
+                and isinstance(inner.func, ast.Attribute)
+                and inner.func.attr == "commit"
+                and isinstance(inner.func.value, ast.Name)
+                and inner.func.value.id in ("db", "session")
+            ):
+                return True
     return False
 
 
@@ -311,19 +321,13 @@ def _line_has_suppression(source_lines: list[str], lineno: int) -> bool:
     """Return True if the source line at lineno (1-indexed) or the line immediately
     preceding it contains the suppression marker.
     """
-    if 1 <= lineno <= len(source_lines):
-        if _SUPPRESSION_MARKER in source_lines[lineno - 1]:
-            return True
+    if 1 <= lineno <= len(source_lines) and _SUPPRESSION_MARKER in source_lines[lineno - 1]:
+        return True
     # Allow suppression on the line before too (multi-line call argument layout)
-    if 2 <= lineno <= len(source_lines) + 1:
-        if _SUPPRESSION_MARKER in source_lines[lineno - 2]:
-            return True
-    return False
+    return bool(2 <= lineno <= len(source_lines) + 1 and _SUPPRESSION_MARKER in source_lines[lineno - 2])
 
 
-def _find_consumer_calls(
-    fn: ast.AsyncFunctionDef, flush_only_method_names: set[str]
-) -> list[tuple[int, str]]:
+def _find_consumer_calls(fn: ast.AsyncFunctionDef, flush_only_method_names: set[str]) -> list[tuple[int, str]]:
     """Return [(lineno, method_name), ...] for every Call in fn that targets
     a flush-only method name (i.e. the .attr of an Attribute access).
     """
@@ -351,8 +355,7 @@ def test_writes_flush_only_set_is_non_empty():
     writes = _build_writes_flush_only_set()
     # _create_starter_loadout calls inv_repo.add_item(commit=False) etc.
     assert any(method == "_create_starter_loadout" for (_c, method) in writes), (
-        f"Expected _create_starter_loadout in WRITES_FLUSH_ONLY, got: "
-        f"{sorted(writes)}"
+        f"Expected _create_starter_loadout in WRITES_FLUSH_ONLY, got: {sorted(writes)}"
     )
     # LoadoutConsistencyService public methods are all flush-only by design.
     expected_choke_methods = {
@@ -403,10 +406,7 @@ def test_router_transaction_discipline():
                 continue
 
             # Filter out suppressed calls
-            unsuppressed = [
-                (ln, meth) for (ln, meth) in consumer_calls
-                if not _line_has_suppression(source_lines, ln)
-            ]
+            unsuppressed = [(ln, meth) for (ln, meth) in consumer_calls if not _line_has_suppression(source_lines, ln)]
             if not unsuppressed:
                 continue
 
@@ -426,9 +426,7 @@ def test_router_transaction_discipline():
                 )
 
     assert not violations, (
-        "Transaction-discipline invariant violated (B.34 class):\n"
-        + "\n".join(violations)
-        + "\n\nFix options:\n"
+        "Transaction-discipline invariant violated (B.34 class):\n" + "\n".join(violations) + "\n\nFix options:\n"
         "  1. Wrap the route body in `async with get_db_session() as db, db.begin():`\n"
         "  2. Add `await db.commit()` on the success path\n"
         "  3. Add `# noqa: TRANSACTION_DISCIPLINE - <reason>` to the offending line\n"

@@ -13,6 +13,7 @@ Key Features:
 - Future-ready for repository pattern integration
 """
 
+import contextlib
 import os
 import time
 from contextlib import asynccontextmanager
@@ -197,10 +198,8 @@ class DatabaseManager:
                     # If the auto-commit itself fails, ensure a clean
                     # rollback so the session can be returned to the pool.
                     flogger.error(f"Auto-commit on clean exit failed — rolling back: {type(commit_exc).__name__}")
-                    try:
+                    with contextlib.suppress(Exception):
                         await session.rollback()
-                    except Exception:  # noqa: BLE001 — defensive: pool hygiene
-                        pass
                     raise
             finally:
                 flogger.debug("Session released")

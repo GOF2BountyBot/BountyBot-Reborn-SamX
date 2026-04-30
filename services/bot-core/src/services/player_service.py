@@ -78,9 +78,6 @@ class PlayerService:
         except Exception as e:
             flogger.error(f"Error getting/creating player for user {discord_id} in guild {guild_id}: {e}")
             raise
-        except Exception as e:
-            flogger.error(f"Error getting/creating player for user {discord_id} in guild {guild_id}: {e}")
-            raise
 
     async def _create_new_player(self, db: AsyncSession, user: User, guild_id: int) -> Player:
         """Create a new player with default configuration and starter loadout.

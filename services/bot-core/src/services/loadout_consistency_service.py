@@ -30,18 +30,18 @@ which raises RuntimeError immediately if invoked outside a transaction.
 Consumer call-site map (verified at HEAD, 2026-04-30)
 -----------------------------------------------------
 
-| Method                              | Consumer                                 | Wrapping site                                       |
-|-------------------------------------|------------------------------------------|-----------------------------------------------------|
-| equip_one                           | EquipmentService.equip_item              | api/routers/ships.py:423 (db.begin())               |
-| equip_one (× 3, starter loadout)    | PlayerService._create_starter_loadout    | api/routers/players.py:65 (db.begin(), B.34 fix)    |
-| unequip_one                         | EquipmentService.unequip_item            | api/routers/ships.py:476 (db.begin())               |
-| transfer_loadout_to_new_ship        | ShopService.purchase_ship                | api/routers/shops.py:152 (db.begin())               |
-| evacuate_ship_loadout_to_inventory  | ShopService.sell_ship                    | api/routers/shops.py:217 (db.begin())               |
-| evacuate_ship_loadout_to_inventory  | admin remove_ship                        | api/routers/admin.py:1036 (db.begin())              |
-| evacuate_ship_loadout_to_inventory  | ships.transfer_ship                      | api/routers/ships.py:597 (db.begin())               |
-| reconcile_active_ship_slots         | ships.set_active_ship                    | api/routers/ships.py:259 (db.begin())               |
-| repair_player                       | 0002_b19_repair_loadout_consistency      | Alembic migration runner (transaction-managed)      |
-| repair_player                       | admin tooling (future)                   | (must be wrapped per I3)                            |
+| Method                             | Consumer                              | Wrapping site                           |
+|------------------------------------|---------------------------------------|-----------------------------------------|
+| equip_one                          | EquipmentService.equip_item           | api/routers/ships.py:423 (db.begin())   |
+| equip_one (×3, starter)            | PlayerService._create_starter_loadout | api/routers/players.py:65 (B.34 fix)    |
+| unequip_one                        | EquipmentService.unequip_item         | api/routers/ships.py:476 (db.begin())   |
+| transfer_loadout_to_new_ship       | ShopService.purchase_ship             | api/routers/shops.py:152 (db.begin())   |
+| evacuate_ship_loadout_to_inventory | ShopService.sell_ship                 | api/routers/shops.py:217 (db.begin())   |
+| evacuate_ship_loadout_to_inventory | admin remove_ship                     | api/routers/admin.py:1036 (db.begin())  |
+| evacuate_ship_loadout_to_inventory | ships.transfer_ship                   | api/routers/ships.py:597 (db.begin())   |
+| reconcile_active_ship_slots        | ships.set_active_ship                 | api/routers/ships.py:259 (db.begin())   |
+| repair_player                      | 0002_b19_repair_loadout_consistency   | Alembic migration runner                |
+| repair_player                      | admin tooling (future)                | (must be wrapped per I3)                |
 
 Each row above MUST be a wrapped consumer per I3. The runtime
 ``@requires_transaction`` guard catches any future regression that adds

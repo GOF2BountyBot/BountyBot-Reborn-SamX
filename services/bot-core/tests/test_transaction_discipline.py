@@ -139,12 +139,7 @@ def _get_method_calls_within(node: ast.AST) -> set[str]:
 
 
 def _is_db_flush_call(node: ast.AST) -> bool:
-    """Return True if node is ``db.flush()`` or ``session.flush()``.
-
-    Detects methods that flush directly without a commit=False repo call.
-    Per the I3 contract, calling ``db.flush()`` in a service method is an
-    explicit declaration that the caller owns the commit.
-    """
+    """Return True if node is ``db.flush()`` or ``session.flush()``."""
     if not isinstance(node, ast.Call):
         return False
     func = node.func
@@ -153,21 +148,53 @@ def _is_db_flush_call(node: ast.AST) -> bool:
     return isinstance(func.value, ast.Name) and func.value.id in ("db", "session")
 
 
-def _has_commit_false_call(method_node: ast.AsyncFunctionDef) -> bool:
-    """Return True if any Call in the method body either:
-    - has a commit=False kwarg, OR
-    - is a direct ``db.flush()`` / ``session.flush()`` call.
+def _is_db_commit_call(node: ast.AST) -> bool:
+    """Return True if node is ``db.commit()`` or ``session.commit()``."""
+    if not isinstance(node, ast.Call):
+        return False
+    func = node.func
+    if not isinstance(func, ast.Attribute) or func.attr != "commit":
+        return False
+    return isinstance(func.value, ast.Name) and func.value.id in ("db", "session")
 
-    Both patterns indicate "this method flushes without committing — caller
-    owns the transaction" per the I3 contract.
+
+def _has_commit_false_call(method_node: ast.AsyncFunctionDef) -> bool:
+    """Return True if the method is flush-only by construction.
+
+    Two signatures qualify:
+
+    1. The body contains a Call with literal commit=False kwarg — this
+       indicates an unconditional flush-only delegation to a repo method.
+
+    2. The body contains a direct ``db.flush()`` call AND does NOT contain
+       any unconditional ``db.commit()`` call. Methods that have BOTH
+       (e.g. ``if commit: db.commit() else: db.flush()``) are dual-mode
+       transaction-owner-or-participant — their semantics depend on the
+       caller's ``commit`` argument, so we exclude them from the
+       unconditional flush-only set. Their callers are unconstrained by
+       this linter.
+
+    Approximation: 'no unconditional commit' is checked as 'no commit call
+    anywhere in the body'. False positives are possible (a method with a
+    commit() inside an obscure conditional could escape) but won't matter
+    in practice — the method is still pure if it commits in its happy path.
     """
+    has_commit_false_kwarg = False
+    has_db_flush = False
+    has_db_commit = False
     for sub in ast.walk(method_node):
         if not isinstance(sub, ast.Call):
             continue
         if _has_commit_false_kwarg(sub):
-            return True
+            has_commit_false_kwarg = True
         if _is_db_flush_call(sub):
-            return True
+            has_db_flush = True
+        if _is_db_commit_call(sub):
+            has_db_commit = True
+    if has_commit_false_kwarg:
+        return True
+    if has_db_flush and not has_db_commit:
+        return True
     return False
 
 

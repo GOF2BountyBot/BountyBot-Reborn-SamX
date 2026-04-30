@@ -1078,6 +1078,9 @@ async def admin_remove_ship(
             # Delete the ship
             await player_ship_repo.remove(db, ship, commit=False)
 
+            # Inside the wrapping `async with db.begin():` block — the audit
+            # row joins the primary transaction so it persists atomically with
+            # the ship removal (or rolls back together if any step fails).
             await AuditService.log_action(
                 db,
                 user_id=admin_user_id,
@@ -1091,6 +1094,7 @@ async def admin_remove_ship(
                     "ship_id": ship.id,
                     "items_returned": items_returned,
                 },
+                commit=False,
             )
 
             return {

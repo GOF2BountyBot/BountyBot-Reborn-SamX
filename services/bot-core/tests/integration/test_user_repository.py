@@ -173,3 +173,42 @@ async def test_get_or_create_user_updates_username(db_session: AsyncSession, rep
 
     assert result.id == 900
     assert result.discord_username == "ivan_new"
+
+
+# -- get_by_discord_id ---------------------------------------------------------
+
+
+async def test_get_by_discord_id_returns_user(db_session: AsyncSession, repo: UserRepository):
+    """get_by_discord_id should return the user matching the Discord snowflake ID."""
+    user = User(id=1000, discord_username="judy")
+    db_session.add(user)
+    await db_session.commit()
+
+    result = await repo.get_by_discord_id(db_session, 1000)
+
+    assert result is not None
+    assert result.id == 1000
+    assert result.discord_username == "judy"
+
+
+async def test_get_by_discord_id_returns_none_for_missing(db_session: AsyncSession, repo: UserRepository):
+    """get_by_discord_id should return None when no user has the given Discord ID."""
+    result = await repo.get_by_discord_id(db_session, 9999999)
+    assert result is None
+
+
+async def test_get_by_discord_id_delegates_to_get_by_id(db_session: AsyncSession, repo: UserRepository):
+    """get_by_discord_id and get_by_id must return the same object for the same ID,
+    confirming the delegation contract (User.id IS the Discord snowflake PK)."""
+    user = User(id=1001, discord_username="karen")
+    db_session.add(user)
+    await db_session.commit()
+
+    result_by_discord = await repo.get_by_discord_id(db_session, 1001)
+    result_by_id = await repo.get_by_id(db_session, 1001)
+
+    # Both must find the same row
+    assert result_by_discord is not None
+    assert result_by_id is not None
+    assert result_by_discord.id == result_by_id.id
+    assert result_by_discord.discord_username == result_by_id.discord_username

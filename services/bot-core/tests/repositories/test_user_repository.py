@@ -113,6 +113,21 @@ class TestGetByName:
 
 
 # ===================================================================
+# get_by_discord_id – exception path (re-raises from get_by_id)
+# ===================================================================
+
+
+class TestGetByDiscordId:
+    @pytest.mark.asyncio
+    async def test_get_by_discord_id_exception(self, repo, mock_db):
+        """get_by_discord_id must propagate exceptions from the underlying get_by_id call."""
+        mock_db.get = AsyncMock(side_effect=Exception("snowflake lookup fail"))
+
+        with pytest.raises(Exception, match="snowflake lookup fail"):
+            await repo.get_by_discord_id(mock_db, 123456789)
+
+
+# ===================================================================
 # count – exception path (lines 44-46)
 # ===================================================================
 

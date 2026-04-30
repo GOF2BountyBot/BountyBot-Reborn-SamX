@@ -33,6 +33,25 @@ class UserRepository(IRepository[User]):
             flogger.error(f"Error getting user by name {name}: {e}")
             raise
 
+    async def get_by_discord_id(self, db: AsyncSession, discord_id: int) -> User | None:
+        """Get user by Discord ID (snowflake).
+
+        Args:
+            db: Async database session.
+            discord_id: Discord user ID (snowflake) to look up.
+
+        Returns:
+            User instance if found, None otherwise.
+
+        Raises:
+            Exception: Re-raised from underlying get_by_id on database errors.
+        """
+        try:
+            return await self.get_by_id(db, discord_id)
+        except Exception as e:
+            flogger.error(f"Error getting user by Discord ID {discord_id}: {e}")
+            raise
+
     async def count(self, db: AsyncSession) -> int:
         """Return total number of users."""
         try:

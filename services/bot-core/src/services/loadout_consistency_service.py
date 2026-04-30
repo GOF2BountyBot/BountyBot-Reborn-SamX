@@ -15,7 +15,43 @@ Repositories remain dumb data-access; routers own transactions; services use
 ``inventory_repo.remove_item`` paired with ``player_ship_repo.add_equipment`` /
 ``remove_equipment`` outside this service are forbidden.
 
-See ``/proj/recon/B19-design.md`` for the full architectural rationale.
+I3 enforcement (B.34 remediation, AC-5 + AC-6)
+==============================================
+
+Static enforcement: every router that calls into this service is checked
+by ``tests/test_transaction_discipline.py``. Any route that calls a
+flush-only method without wrapping in ``async with db.begin():`` (or
+explicit commit) fails the test suite.
+
+Runtime enforcement: every public method below carries the
+``@requires_transaction`` decorator (``services/_transaction_guards.py``)
+which raises RuntimeError immediately if invoked outside a transaction.
+
+Consumer call-site map (verified at HEAD, 2026-04-30)
+-----------------------------------------------------
+
+| Method                              | Consumer                                 | Wrapping site                                       |
+|-------------------------------------|------------------------------------------|-----------------------------------------------------|
+| equip_one                           | EquipmentService.equip_item              | api/routers/ships.py:423 (db.begin())               |
+| equip_one (× 3, starter loadout)    | PlayerService._create_starter_loadout    | api/routers/players.py:65 (db.begin(), B.34 fix)    |
+| unequip_one                         | EquipmentService.unequip_item            | api/routers/ships.py:476 (db.begin())               |
+| transfer_loadout_to_new_ship        | ShopService.purchase_ship                | api/routers/shops.py:152 (db.begin())               |
+| evacuate_ship_loadout_to_inventory  | ShopService.sell_ship                    | api/routers/shops.py:217 (db.begin())               |
+| evacuate_ship_loadout_to_inventory  | admin remove_ship                        | api/routers/admin.py:1036 (db.begin())              |
+| evacuate_ship_loadout_to_inventory  | ships.transfer_ship                      | api/routers/ships.py:597 (db.begin())               |
+| reconcile_active_ship_slots         | ships.set_active_ship                    | api/routers/ships.py:259 (db.begin())               |
+| repair_player                       | 0002_b19_repair_loadout_consistency      | Alembic migration runner (transaction-managed)      |
+| repair_player                       | admin tooling (future)                   | (must be wrapped per I3)                            |
+
+Each row above MUST be a wrapped consumer per I3. The runtime
+``@requires_transaction`` guard catches any future regression that adds
+a new consumer without wrapping; the static linter catches the most
+common pattern (route function calling the choke-point directly or
+transitively through equipment_service / shop_service / player_service).
+
+See ``/proj/recon/B19-design.md`` for the original architectural rationale
+and ``/proj/recon/B34-remediation-spec.md`` AC-5 / AC-6 for the
+enforcement layers added in the B.34 remediation.
 """
 
 from typing import Any
@@ -28,6 +64,7 @@ from persist.repositories.ship_repository import ShipRepository
 from shared import bblogger
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from services._transaction_guards import requires_transaction
 from services.equipment_service import (
     _INVENTORY_TYPE_MAP,
     _SLOT_MAP,
@@ -204,6 +241,7 @@ class LoadoutConsistencyService:
     # Public API
     # ------------------------------------------------------------------
 
+    @requires_transaction
     async def equip_one(
         self,
         db: AsyncSession,
@@ -222,6 +260,7 @@ class LoadoutConsistencyService:
         Raises:
             ValueError: validation failure (mapped to HTTP 400).
             InvalidItemTypeError: secondary_weapons gated off.
+            RuntimeError: invoked outside an active transaction (AC-6 guard).
         """
         # 1. Resolve / validate equipment_type
         if equipment_type is None:
@@ -299,6 +338,7 @@ class LoadoutConsistencyService:
             "equipment_type": equipment_type,
         }
 
+    @requires_transaction
     async def unequip_one(
         self,
         db: AsyncSession,
@@ -315,6 +355,7 @@ class LoadoutConsistencyService:
 
         Raises:
             ValueError: validation failure (mapped to HTTP 400).
+            RuntimeError: invoked outside an active transaction (AC-6 guard).
         """
         # Ship first so we can do fallback scan if equipment_type can't be auto-detected.
         # B.15: DB errors during ship lookup surface as friendly ValueError.
@@ -375,6 +416,7 @@ class LoadoutConsistencyService:
             "equipment_type": equipment_type,
         }
 
+    @requires_transaction
     async def transfer_loadout_to_new_ship(
         self,
         db: AsyncSession,
@@ -434,6 +476,7 @@ class LoadoutConsistencyService:
         )
         return {"transferred": transferred, "overflowed": overflowed, "breakdown": breakdown}
 
+    @requires_transaction
     async def evacuate_ship_loadout_to_inventory(
         self,
         db: AsyncSession,
@@ -499,6 +542,7 @@ class LoadoutConsistencyService:
             "duplicates_dropped": duplicates_dropped,
         }
 
+    @requires_transaction
     async def reconcile_active_ship_slots(
         self,
         db: AsyncSession,
@@ -548,6 +592,7 @@ class LoadoutConsistencyService:
 
         return {"evacuated_items": evacuated, "any_evacuated": any_evacuated}
 
+    @requires_transaction
     async def repair_player(
         self,
         db: AsyncSession,

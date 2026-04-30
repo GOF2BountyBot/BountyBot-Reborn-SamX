@@ -18,6 +18,89 @@ Cross-ref: `E2E_TEST_CHECKLIST.md` (test-item references). All commit SHAs are l
 >
 > Items marked FIXED here are also summarized in the **FIXED** table at the bottom with their `Verified` column. `Verified: pending` will flip to `✅ live <date>` as the live re-verification pass walks each affected E2E phase.
 
+### B.35 — B.34 closeout: 3 service-level split-brain transaction patterns + 11 missing repo commit kwargs (proactive sweep)
+> **FIXED** in commits `2231008` (F-1 ruff + F-2 InventoryRepository.clear_player_inventory), `1ec7c6b` (Sweep 1 — 11 repo write methods missing commit kwarg), `d83360a` (Sweep 2 — 3 service split-brain fixes + linter refinement), `1ecae1f` (Sweep 7 — ruff cleanup across all 3 services). All 10 sweeps documented in handoff. Verified: pending live re-verification.
+
+🟠 high · Phase pre-test hardening · 2026-04-30
+
+**Context**: After the B.34 remediation landed, a tester pass surfaced 2 narrow findings (F-1: 3 E501s + format diff in `bounty_repository.py`; F-2: `InventoryRepository.clear_player_inventory` missing `commit: bool = True`). The user authorized a proactive sweep for any **adjacent or similar pattern** before the next live testing round, citing the original B.19/B.34 root cause: prior fixes did not exhaustively enumerate all callers / similar cases.
+
+**Findings (post-sweep)**
+
+**F-1 — 3 E501 + format diff in `bounty_repository.py`** (commit `2231008`)
+- Lines 111, 134, 249 each had identical 131-char comment-suffixed expressions exceeding the 120-char limit.
+- Fixed by moving the explanatory `# B.14: exclude stale bounties past end_time` comment to a separate line above each filtered query block; expression line now fits in 120.
+
+**F-2 — `InventoryRepository.clear_player_inventory` missing `commit: bool = True`** (commit `2231008`)
+- Method violated AC-3 (every repository write method accepts `commit` kwarg).
+- Added `commit: bool = True` keyword-only parameter following the canonical pattern. Default preserves backward-compatible commit-on-success / rollback-on-exception. `commit=False` flushes only.
+- Updated sole caller (`PlayerService.prestige_player`) to pass `commit=False` since it is wrapped in `async with db.begin()` at the router level.
+- Added 4 unit tests covering commit=True/False × success/exception matrix.
+
+**Sweep 1 — 11 additional repository write methods missing `commit` kwarg** (commit `1ec7c6b`)
+Empirical AST sweep of all `services/bot-core/src/persist/repositories/*.py` for methods named `add`/`create`/`update`/`remove`/`delete`/`clear`/`set` that perform writes (db.add, db.delete, db.execute(update(...)), or attribute mutation followed by flush/commit). Found 11 methods with real writes but no `commit` kwarg:
+
+`ConfigRepository`:
+- `create_default_config`, `reset_to_defaults`, `update_shop_config`,
+  `update_admin_role`, `update_starting_credits`, `update_xp_thresholds`,
+  `update_division_temperatures`, `delete_guild_config`
+
+`ShopRepository`:
+- `clear_shop_tier`, `clear_all_guild_shops`, `update_prices`
+  (`update_prices` also doc-noted as bulk Core UPDATE — identity-mapped rows may see stale values until refresh; treated as fire-and-forget admin op)
+
+`BountyRepository`:
+- `clear_active_by_guild` (already a documented bulk-op exception; now accepts `commit` kwarg consistent with other bulk write methods)
+
+All defaulted to `commit=True` to preserve all existing call-site behavior. AGENTS.md inventory table updated.
+
+**Sweep 2 — 3 service-level split-brain (B.34-class) patterns** (commit `d83360a`) — **most important finding**
+
+The B.34 root cause was: a service method directly mutates one table's ORM instance THEN calls a self-committing repo method on a different table; the cross-table writes are persisted only because the repo's commit happens to flush them. If anyone changes the repo call to `commit=False`, the cross-table mutations silently rollback (exact B.34 mechanism).
+
+Three additional methods exhibited this pattern:
+
+1. **`duel_service.accept_duel`** — mutates `winner.credits/duel_wins/duel_credits_won` and `loser.credits/duel_losses/duel_credits_lost` (direct ORM attribute writes), then calls `duel_repo.update_status(duel_id, "completed")` with default `commit=True`. The Player ORM mutations are persisted only because update_status's commit propagates to all in-flight changes. Now: `update_status` uses `commit=False`; service explicitly commits at the end. Atomic.
+
+2. **`bounty_service.distribute_rewards`** — mutates `player.credits/lifetime_credits/xp/systems_checked/bounty_wins` for every reward recipient (direct ORM writes), then calls `bounty_repo.update(bounty)` with default `commit=True`. Same pattern. Now: `bounty_repo.update` uses `commit=False`; service explicitly commits.
+
+3. **`shop_service.purchase_item`** — deducted `player.credits` (ORM), called `inventory_repo.add_item` with default `commit=True` (mid-flow commit), then mutated `shop_item.quantity` (ORM), then called `db.commit()`. The mid-flow commit created a window where the shop-quantity update could fail and leave the player credit-deducted-with-item but shop unchanged. Now: a single atomic `db.commit()` covers all three writes (player + inventory + shop).
+
+**Linter refinement**: the static linter (`tests/test_transaction_discipline.py`) initially flagged the corrected services as flush-only because they pass `commit=False` to inner repo calls. This is a false positive: methods that have BOTH `commit=False` (inner) AND an unconditional `db.commit()` (own commit) are SELF-COMMITTING AGGREGATORS, not flush-only. They own their own transaction. Refined `_has_commit_false_call` to recognize this case: any method with an unconditional `db.commit()` is never flush-only regardless of inner commit=False delegations.
+
+**Sweep 3 — Routes calling 2+ mutating service methods**: 8 admin / config / shop / bounty routes call multiple mutating service methods. None create a B.34-class atomicity gap because each service method self-commits. They lack TRUE atomicity (partial-failure recoverable via re-run), but this is acceptable for admin-style idempotent operations. Listed for future hardening; not fixed in this pass.
+
+**Sweep 4 — Executors**: All executor service calls (`spawn_bounty`, `expire_bounty`, `respawn_bounty`, `expire_duel`, `refresh_shop`, `update_division_temperatures`) target self-committing service or repo methods. Static linter confirms zero executor calls land on flush-only methods. SAFE.
+
+**Sweep 5 — Dual-mode service methods**: 4 dual-mode methods (`audit_service.log_action`, `inventory_service.add_item_to_inventory`, `inventory_service.remove_item_from_inventory`, `shop_service._add_item_to_shop`) — all properly documented; linter handles them correctly. Zero new findings.
+
+**Sweep 6 — Migration scripts**: Both Alembic revision scripts use the standard `op.get_bind()` / `op.execute()` pattern. Zero findings.
+
+**Sweep 7 — Pre-existing ruff issues**: 5 SIM117 errors in `test_adminCog.py` (combined nested `with` statements) + 9 files with format diffs. All fixed.
+
+**Sweep 8 — AsyncMock overuse**: 1249 `AsyncMock(return_value=...)` instances in bot-core tests, mostly tautological for transaction-discipline assertions but correct for behavioral round-trip. The 20 cross-session integration tests in `test_cross_session_persistence.py` are the safety net for the transaction-discipline class. Migration to integration tests is huge scope, deferred.
+
+**Sweep 9 — cross-session test isolation**: All 20 tests in `test_cross_session_persistence.py` use ≥4 `factory()` calls (well above the required 2 — session A + session B). All 20 pass green. Confirmed clean.
+
+**Sweep 10 — Architectural smells noted**: see "Documented but not fixed" below.
+
+**Documented but not fixed (acceptable trade-offs)**:
+- `bounty_service._process_single_bounty_check` commits per-iteration in `check_bounty`'s loop (resilience trade-off — partial progress preserved on mid-loop failure rather than atomic-all-or-nothing).
+- `shop_service.refresh_shop` per-tier commits when called in admin `initialize_guild` loop — partial-failure recoverable.
+- `inventory_service.consolidate_inventory` per-duplicate commits — maintenance function, partial progress recoverable.
+- Admin multi-step routes (`initialize_guild`, `reset_guild`, `uninstall_bot`) lack `db.begin()` wrapping — non-atomic but idempotent admin operations.
+
+**Test counts after closeout**:
+- bot-core: 3179 passed, 1 skipped (was 3175 pre-closeout)
+- discord-gateway: 2202 passed
+- blender-service: 127 passed
+
+**Ruff state**: Clean across all 3 services (zero errors, zero format diffs). No `# noqa` introduced in production code beyond the 4 pre-existing documented suppressions.
+
+**Schema impact**: Zero. No model changes, no migration changes. The B.34 closeout is purely behavioral (transaction discipline) and stylistic (uniformity). Existing DB rows are unaffected.
+
+---
+
 ### B.34 — `/profile` (player registration) silently drops starter ship + inventory on first registration
 > **FIXED** in commits `4e43b93` (Phase B repo API uniformity), `9ed326d` (Phase A.1+A.2 — static linter and B.34 atomic-create fix), `15294b5` (Phase A.4 — audit-service commit kwarg + linter refinement), `22a857c` (Phase D.1+D.3 — @requires_transaction decorator + consumer enumeration), `1a6d63e` (Phase D.2 — auto-commit on clean exit), `e0fc6db` (Phase C — 20 cross-session integration tests). Also addresses the broader systemic gap (the "every cross-table flow must be wrapped" contract was reviewer-only; now enforced by 4 layers: static linter, runtime decorator, session auto-commit, and integration tests). Spec at `/proj/recon/B34-remediation-spec.md`. Verified: pending live re-verification under DB-nuke E2E pass.
 

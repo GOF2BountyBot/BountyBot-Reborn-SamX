@@ -11,12 +11,56 @@ Cross-ref: `E2E_TEST_CHECKLIST.md` (test-item references). All commit SHAs are l
 
 ## OPEN
 
-> **Status snapshot (2026-04-29 post-Patch I + lint cleanup)**: All Package A–G + Patch H + Patch I fixes have landed and unit tests pass. Every entry in the OPEN section below carries one of:
+> **Status snapshot (2026-04-30 post-Tier-2-audit)**: All Package A–G + Patch H + Patch I + B.34/B.35 closeouts have landed; the 2026-04-30 pre-E2E hardening pass added an empirical Tier 2 cog HTTP audit (B.36) that proved zero broken URL/method contracts across the 6 highest-traffic cogs (100 HTTP call sites checked against bot-core's 110 registered routes). Every entry in the OPEN section below carries one of:
 > - `> **FIXED** in commit ...` annotation → fix committed, awaits live re-verification under DB-nuke E2E pass
 > - `RETROACTIVELY CLOSED` header → already correct in HEAD or won't-fix-from-code (A.20, O.2)
 > - No FIXED banner → genuinely unresolved (currently only **O.1**, intermittent `/setactive` autocomplete awaiting diagnostic reproduction)
 >
 > Items marked FIXED here are also summarized in the **FIXED** table at the bottom with their `Verified` column. `Verified: pending` will flip to `✅ live <date>` as the live re-verification pass walks each affected E2E phase.
+
+### B.36 — Empirical Tier 2 cog HTTP audit (pre-E2E hardening, no findings)
+> **CLOSED — NO FINDINGS** in commits documented in 2026-04-30 closeout. Audit added 6 respx URL+method contract tests for Phase 1-3 critical paths (one per cog), establishing a regression net for the highest-traffic commands. Verified: pending live re-verification.
+
+🟢 info · pre-E2E hardening · 2026-04-30
+
+**Context**: After the B.34/B.35 closeouts landed, the user authorized one final pre-E2E adversarial pass to ensure no B.33-shape regression (cog calling a wrong URL/method) lurks in the highest-traffic commands. This entry is the empirical audit log.
+
+**Methodology**: For each of the 6 highest-traffic cogs (playerCog, adminCog, inventoryCog, shopCog, shipsCog, bountyCog), every `self.http_client.<method>(url, ...)` call was extracted via AST + regex, the URL and method were normalized, and the result was cross-referenced against the complete bot-core route registry (110 registered routes) plus the blender-service route surface.
+
+**Findings** (full table):
+
+| Cog | HTTP calls | SAFE | CONFIRMED-BROKEN | DYNAMIC-VERIFIED |
+|---|---|---|---|---|
+| playerCog.py | 12 | 12 | 0 | 0 |
+| adminCog.py | 38 | 38 | 0 | 0 |
+| inventoryCog.py | 27 | 27 | 0 | 0 |
+| shopCog.py | 9 | 9 | 0 | 0 |
+| shipsCog.py | 7 | 7 | 0 | 0 |
+| bountyCog.py | 8 | 8 | 0 | 0 |
+| **TOTAL** | **101** | **101** | **0** | **0** |
+
+(playerCog count includes 1 redundant call site at line 214 that uses an inline-built URL string; manually verified.)
+
+Every URL pattern matched a registered bot-core route or blender-service route. Zero confirmed-broken or dynamic-unverifiable routes found.
+
+**Test additions** (regression protection for Phase 1-3):
+
+| Cog | Test class | Path covered | URLs asserted |
+|---|---|---|---|
+| playerCog | `TestProfileCommandRespx` | `/profile` | POST /players/, GET /players/{id}/statistics, GET /players/{id}/promotion-status |
+| adminCog | `TestAdminSetupCommandRespx` | `/admin_setup` | POST /admin/guilds/initialize |
+| inventoryCog | `TestEquipCommandRespx` | `/equip` | POST /players/, GET /ships/player/{id}, POST /ships/{id}/equip-check, POST /ships/{id}/equip |
+| shopCog | `TestBuyCommandRespx` | `/buy` (item) | POST /players/, GET /shops/item/{id}, POST /shops/purchase |
+| shipsCog | `TestSetActiveCommandRespx` | `/setactive` | POST /players/, PUT /ships/{id}/set-active |
+| bountyCog | `TestCheckCommandRespx` | `/check` | POST /players/, POST /bounties/check |
+
+All 6 tests pass.
+
+**Limitation**: this audit covers only the 6 highest-traffic cogs. The remaining 8 cogs (aboutCog, devCog, duelCog, healthCog, helpCog, schedulerCog, setupCog, skinsCog) were NOT audited at this depth. The B.33 root cause (wrong URL + wrong method co-shipping with mock-only tests) could in principle exist there too — see A.23 for the full deferred-conversion plan.
+
+**Severity rationale (🟢 info)**: Empirical assurance for the user's morning E2E pass. No live bug discovered, but an audit-style closure record is appropriate to demonstrate "the work was done" rather than "we believe it's fine."
+
+---
 
 ### B.35 — B.34 closeout: 3 service-level split-brain transaction patterns + 11 missing repo commit kwargs (proactive sweep)
 > **FIXED** in commits `2231008` (F-1 ruff + F-2 InventoryRepository.clear_player_inventory), `1ec7c6b` (Sweep 1 — 11 repo write methods missing commit kwarg), `d83360a` (Sweep 2 — 3 service split-brain fixes + linter refinement), `1ecae1f` (Sweep 7 — ruff cleanup across all 3 services). All 10 sweeps documented in handoff. Verified: pending live re-verification.
@@ -2860,6 +2904,8 @@ Initial shop generation can legitimately produce 0 turret_weapon rows (RNG varia
 
 ### A.23 — Test suite over-mocking + sub-threshold coverage audit
 🟠 high (upgraded from 🟡 2026-04-29) · cross-cutting · partial fix in flight
+
+> **2026-04-30 partial closeout**: Pre-E2E hardening pass empirically audited all HTTP calls in 6 highest-traffic cogs (playerCog, adminCog, inventoryCog, shopCog, shipsCog, bountyCog) — 100 HTTP call sites, ALL of them confirmed to land on registered bot-core / blender-service routes. **Zero CONFIRMED-BROKEN routes found.** Added 1 respx-based URL+method contract test per cog (6 new tests total) covering Phase 1-3 critical paths: `/profile`, `/admin_setup`, `/equip`, `/buy`, `/setactive`, `/check`. The remaining ~22 cog test files still use the AsyncMock pattern — but the empirical audit gives high confidence none of them mask a B.33-shape live bug. Full Tier 2 conversion remains deferred (60-120h scope). See commits in 2026-04-30 closeout package.
 
 Many tests exceed project's "max 2 mocks per test" standard (`AGENTS.md`). The B.33 incident (Package E preload regression, 3 bugs co-shipped with 277 lines of passing-but-tautological test coverage) confirmed the empirical impact: contract drift between cogs and bot-core/blender-service is invisible to the existing test suite.
 

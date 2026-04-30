@@ -27,6 +27,8 @@ class DiscordMessageRepository(GenericRepository[DiscordMessage]):
         self,
         db: AsyncSession,
         raw: dict,
+        *,
+        commit: bool = True,
     ) -> DiscordMessage:
         """
         Create or update a Discord message record.
@@ -34,6 +36,7 @@ class DiscordMessageRepository(GenericRepository[DiscordMessage]):
         Args:
             db: Database session
             raw: Dictionary with message data including embed_payload
+            commit: When False, flush without committing (caller owns transaction).
 
         Returns:
             DiscordMessage object
@@ -55,7 +58,10 @@ class DiscordMessageRepository(GenericRepository[DiscordMessage]):
                 existing.message_type = raw.get("message_type", "general")
                 existing.reference_id = raw.get("reference_id", existing.reference_id)
                 existing.updated_at = datetime.now(UTC)
-                await db.commit()
+                if commit:
+                    await db.commit()
+                else:
+                    await db.flush()
                 await db.refresh(existing)
                 flogger.debug(
                     f"Updated Discord message {existing.id}: type='{existing.message_type}', "
@@ -72,7 +78,10 @@ class DiscordMessageRepository(GenericRepository[DiscordMessage]):
                 reference_id=raw.get("reference_id"),
             )
             db.add(message)
-            await db.commit()
+            if commit:
+                await db.commit()
+            else:
+                await db.flush()
             await db.refresh(message)
             flogger.debug(
                 f"Created Discord message {message.id}: type='{message.message_type}', "
@@ -81,7 +90,8 @@ class DiscordMessageRepository(GenericRepository[DiscordMessage]):
             return message
         except Exception as e:
             flogger.error(f"Error creating/updating Discord message: {e}")
-            await db.rollback()
+            if commit:
+                await db.rollback()
             raise
 
     async def get_by_composite_key(
@@ -175,9 +185,20 @@ class DiscordMessageRepository(GenericRepository[DiscordMessage]):
         flogger.trace(f"Found {len(messages)} message(s) of type '{message_type}' for guild_id={guild_id}")
         return messages
 
-    async def delete_by_composite_key(self, db: AsyncSession, guild_id: int, channel_id: int, message_id: int) -> bool:
+    async def delete_by_composite_key(
+        self,
+        db: AsyncSession,
+        guild_id: int,
+        channel_id: int,
+        message_id: int,
+        *,
+        commit: bool = True,
+    ) -> bool:
         """
         Delete message by composite key.
+
+        Args:
+            commit: When False, flush without committing (caller owns transaction).
         """
         flogger.trace(
             f"Attempting to delete message with guild_id={guild_id}, channel_id={channel_id}, message_id={message_id}"
@@ -186,7 +207,10 @@ class DiscordMessageRepository(GenericRepository[DiscordMessage]):
         if message:
             try:
                 await db.delete(message)
-                await db.commit()
+                if commit:
+                    await db.commit()
+                else:
+                    await db.flush()
                 flogger.debug(
                     f"Deleted Discord message: {message.id} (guild_id={guild_id}, "
                     f"channel_id={channel_id}, message_id={message_id})"
@@ -194,7 +218,8 @@ class DiscordMessageRepository(GenericRepository[DiscordMessage]):
                 return True
             except Exception as e:
                 flogger.error(f"Error deleting Discord message {message.id}: {e}")
-                await db.rollback()
+                if commit:
+                    await db.rollback()
                 raise
         flogger.trace(
             f"No message found to delete for guild_id={guild_id}, channel_id={channel_id}, message_id={message_id}"
@@ -233,7 +258,13 @@ class DiscordMessageRepository(GenericRepository[DiscordMessage]):
         return message
 
     async def delete_by_guild_type_and_reference(
-        self, db: AsyncSession, guild_id: int, message_type: str, reference_id: int
+        self,
+        db: AsyncSession,
+        guild_id: int,
+        message_type: str,
+        reference_id: int,
+        *,
+        commit: bool = True,
     ) -> bool:
         """
         Delete Discord message(s) by guild_id, message_type, and reference_id.
@@ -243,6 +274,7 @@ class DiscordMessageRepository(GenericRepository[DiscordMessage]):
             guild_id: Discord guild snowflake ID
             message_type: Type of message (e.g. 'bounty_announcement')
             reference_id: Linked entity ID (e.g. bounty ID)
+            commit: When False, flush without committing (caller owns transaction).
 
         Returns:
             True if at least one record was deleted, False otherwise.
@@ -264,7 +296,10 @@ class DiscordMessageRepository(GenericRepository[DiscordMessage]):
                 .returning(self._model.id)
             )
             result = await db.execute(stmt)
-            await db.commit()
+            if commit:
+                await db.commit()
+            else:
+                await db.flush()
             deleted_ids = result.fetchall()
             if deleted_ids:
                 flogger.debug(
@@ -282,5 +317,6 @@ class DiscordMessageRepository(GenericRepository[DiscordMessage]):
                 f"Error deleting Discord message(s) by reference "
                 f"(guild_id={guild_id}, message_type='{message_type}', reference_id={reference_id}): {e}"
             )
-            await db.rollback()
+            if commit:
+                await db.rollback()
             raise

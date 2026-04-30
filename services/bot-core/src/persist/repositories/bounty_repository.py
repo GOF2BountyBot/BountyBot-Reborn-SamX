@@ -41,32 +41,48 @@ class BountyRepository(IRepository[Bounty]):
             flogger.error(f"Error listing all bounties: {e}")
             raise
 
-    async def add(self, db: AsyncSession, obj: Bounty) -> Bounty:
-        """Add a new bounty to the database."""
+    async def add(self, db: AsyncSession, obj: Bounty, *, commit: bool = True) -> Bounty:
+        """Add a new bounty to the database.
+
+        Args:
+            commit: When False, flush without committing (caller owns transaction).
+        """
         try:
             db.add(obj)
-            await db.commit()
+            if commit:
+                await db.commit()
+            else:
+                await db.flush()
             await db.refresh(obj)
             flogger.info(f"Added new bounty: {obj.id} in guild {obj.guild_id}")
             return obj
         except Exception as e:
             flogger.error(f"Error adding bounty: {e}")
-            await db.rollback()
+            if commit:
+                await db.rollback()
             raise
 
-    async def create_or_update(self, db: AsyncSession, raw: dict) -> Bounty:
+    async def create_or_update(self, db: AsyncSession, raw: dict, *, commit: bool = True) -> Bounty:
         """Create or update a bounty from raw data."""
         raise NotImplementedError("Use create() and update() methods directly")
 
-    async def remove(self, db: AsyncSession, obj: Bounty) -> None:
-        """Remove a bounty from the database."""
+    async def remove(self, db: AsyncSession, obj: Bounty, *, commit: bool = True) -> None:
+        """Remove a bounty from the database.
+
+        Args:
+            commit: When False, flush without committing (caller owns transaction).
+        """
         try:
-            db.delete(obj)
-            await db.commit()
+            await db.delete(obj)
+            if commit:
+                await db.commit()
+            else:
+                await db.flush()
             flogger.info(f"Removed bounty: {obj.id}")
         except Exception as e:
             flogger.error(f"Error removing bounty {obj.id}: {e}")
-            await db.rollback()
+            if commit:
+                await db.rollback()
             raise
 
     # ------------------------------------------------------------------ #
@@ -124,25 +140,33 @@ class BountyRepository(IRepository[Bounty]):
             flogger.error(f"Error getting active bounties for guild {guild_id} division {division}: {e}")
             raise
 
-    async def create(self, db: AsyncSession, bounty: Bounty) -> Bounty:
+    async def create(self, db: AsyncSession, bounty: Bounty, *, commit: bool = True) -> Bounty:
         """Create a new bounty — alias for add()."""
-        return await self.add(db, bounty)
+        return await self.add(db, bounty, commit=commit)
 
-    async def update(self, db: AsyncSession, bounty: Bounty) -> Bounty:
-        """Persist changes to an existing bounty."""
+    async def update(self, db: AsyncSession, bounty: Bounty, *, commit: bool = True) -> Bounty:
+        """Persist changes to an existing bounty.
+
+        Args:
+            commit: When False, flush without committing (caller owns transaction).
+        """
         try:
-            await db.commit()
+            if commit:
+                await db.commit()
+            else:
+                await db.flush()
             await db.refresh(bounty)
             flogger.info(f"Updated bounty: {bounty.id}")
             return bounty
         except Exception as e:
             flogger.error(f"Error updating bounty {bounty.id}: {e}")
-            await db.rollback()
+            if commit:
+                await db.rollback()
             raise
 
-    async def delete(self, db: AsyncSession, bounty: Bounty) -> None:
+    async def delete(self, db: AsyncSession, bounty: Bounty, *, commit: bool = True) -> None:
         """Delete a bounty — alias for remove()."""
-        await self.remove(db, bounty)
+        await self.remove(db, bounty, commit=commit)
 
     async def count(self, db: AsyncSession) -> int:
         """Return total number of bounties."""

@@ -94,7 +94,7 @@ def mock_db() -> AsyncMock:
     db.commit = AsyncMock()
     db.refresh = AsyncMock()
     db.execute = AsyncMock()
-    db.delete = MagicMock()
+    db.delete = AsyncMock()
     db.rollback = AsyncMock()
     db.get = AsyncMock()
     return db

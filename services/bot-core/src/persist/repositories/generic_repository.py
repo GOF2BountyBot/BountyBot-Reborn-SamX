@@ -15,18 +15,28 @@ class GenericRepository(IRepository[T], Generic[T]):  # noqa: UP046
     def __init__(self, model: type[T]):
         self._model = model
 
-    async def add(self, db: AsyncSession, obj: T) -> T:
+    async def add(self, db: AsyncSession, obj: T, *, commit: bool = True) -> T:
+        """Add an entity to the database.
+
+        Args:
+            commit: When False, flush without committing (caller owns transaction);
+                rollback on exception is also the caller's responsibility.
+        """
         flogger.trace(f"add() called: model={self._model.__name__}, obj={obj}")
         try:
             db.add(obj)
-            await db.commit()
+            if commit:
+                await db.commit()
+            else:
+                await db.flush()
             await db.refresh(obj)
             obj_id = getattr(obj, "id", None)
             flogger.debug(f"Successfully added {self._model.__name__}: id={obj_id}")
             return obj
         except Exception as e:
             flogger.error(f"Error adding {self._model.__name__}: {e}")
-            await db.rollback()
+            if commit:
+                await db.rollback()
             raise
 
     async def create_or_update(self, db: AsyncSession, raw: dict) -> T:
@@ -87,14 +97,23 @@ class GenericRepository(IRepository[T], Generic[T]):  # noqa: UP046
             flogger.error(f"Error listing all {self._model.__name__}: {e}")
             raise
 
-    async def remove(self, db: AsyncSession, obj: T) -> None:
+    async def remove(self, db: AsyncSession, obj: T, *, commit: bool = True) -> None:
+        """Remove an entity from the database.
+
+        Args:
+            commit: When False, flush without committing (caller owns transaction).
+        """
         obj_id = getattr(obj, "id", None)
         flogger.trace(f"remove() called: model={self._model.__name__}, obj_id={obj_id}")
         try:
             await db.delete(obj)
-            await db.commit()
+            if commit:
+                await db.commit()
+            else:
+                await db.flush()
             flogger.debug(f"Successfully removed {self._model.__name__}: id={obj_id}")
         except Exception as e:
             flogger.error(f"Error removing {self._model.__name__} with id {obj_id}: {e}")
-            await db.rollback()
+            if commit:
+                await db.rollback()
             raise

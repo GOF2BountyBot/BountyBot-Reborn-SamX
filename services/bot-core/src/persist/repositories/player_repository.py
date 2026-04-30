@@ -60,21 +60,35 @@ class PlayerRepository(IRepository[Player]):
             flogger.error(f"Error listing all players: {e}")
             raise
 
-    async def add(self, db: AsyncSession, obj: Player) -> Player:
-        """Add new player to database."""
+    async def add(self, db: AsyncSession, obj: Player, *, commit: bool = True) -> Player:
+        """Add new player to database.
+
+        Args:
+            commit: When False, flush without committing (use when the caller
+                owns the transaction, e.g. inside a router-level db.begin() context).
+                In that mode rollback on exception is the caller's responsibility.
+        """
         try:
             db.add(obj)
-            await db.commit()
+            if commit:
+                await db.commit()
+            else:
+                await db.flush()
             await db.refresh(obj)
             flogger.info(f"Added new player: {obj.id} for user {obj.user_id} in guild {obj.guild_id}")
             return obj
         except Exception as e:
             flogger.error(f"Error adding player: {e}")
-            await db.rollback()
+            if commit:
+                await db.rollback()
             raise
 
-    async def create_or_update(self, db: AsyncSession, raw: dict) -> Player:
-        """Create or update player from raw data."""
+    async def create_or_update(self, db: AsyncSession, raw: dict, *, commit: bool = True) -> Player:
+        """Create or update player from raw data.
+
+        Args:
+            commit: When False, flush without committing (caller owns transaction).
+        """
         try:
             user_id = raw.get("user_id")
             guild_id = raw.get("guild_id")
@@ -90,13 +104,16 @@ class PlayerRepository(IRepository[Player]):
                 for key, value in raw.items():
                     if hasattr(player, key) and key not in ["id", "created_at"]:
                         setattr(player, key, value)
-                await db.commit()
+                if commit:
+                    await db.commit()
+                else:
+                    await db.flush()
                 await db.refresh(player)
                 flogger.debug(f"Updated player: {player.id}")
             else:
                 # Create new player
                 player = Player(**raw)
-                player = await self.add(db, player)
+                player = await self.add(db, player, commit=commit)
                 flogger.info(f"Created new player for user {user_id} in guild {guild_id}")
 
             return player
@@ -104,15 +121,23 @@ class PlayerRepository(IRepository[Player]):
             flogger.error(f"Error creating/updating player: {e}")
             raise
 
-    async def remove(self, db: AsyncSession, obj: Player) -> None:
-        """Remove player from database."""
+    async def remove(self, db: AsyncSession, obj: Player, *, commit: bool = True) -> None:
+        """Remove player from database.
+
+        Args:
+            commit: When False, flush without committing (caller owns transaction).
+        """
         try:
             await db.delete(obj)
-            await db.commit()
+            if commit:
+                await db.commit()
+            else:
+                await db.flush()
             flogger.info(f"Removed player: {obj.id}")
         except Exception as e:
             flogger.error(f"Error removing player {obj.id}: {e}")
-            await db.rollback()
+            if commit:
+                await db.rollback()
             raise
 
     async def get_by_user_and_guild(self, db: AsyncSession, user_id: int, guild_id: int) -> Player | None:
@@ -185,11 +210,14 @@ class PlayerRepository(IRepository[Player]):
                 await db.rollback()
             raise
 
-    async def update_xp(self, db: AsyncSession, player_id: int, xp: int) -> Player:
+    async def update_xp(self, db: AsyncSession, player_id: int, xp: int, *, commit: bool = True) -> Player:
         """Update player XP.
 
         Mutates the ORM-tracked Player instance via ``setattr`` (NOT a Core UPDATE).
         See ``persist/repositories/AGENTS.md``.
+
+        Args:
+            commit: When False, flush without committing (caller owns transaction).
 
         Raises:
             ValueError: If no player exists with the given ID.
@@ -199,7 +227,10 @@ class PlayerRepository(IRepository[Player]):
             if player is None:
                 raise ValueError(f"Player {player_id} not found")
             player.xp = xp
-            await db.commit()
+            if commit:
+                await db.commit()
+            else:
+                await db.flush()
 
             flogger.debug(f"Updated XP for player {player_id}: {xp}")
             return player
@@ -207,14 +238,18 @@ class PlayerRepository(IRepository[Player]):
             raise
         except Exception as e:
             flogger.error(f"Error updating XP for player {player_id}: {e}")
-            await db.rollback()
+            if commit:
+                await db.rollback()
             raise
 
-    async def update_tier(self, db: AsyncSession, player_id: int, tier: str) -> Player:
+    async def update_tier(self, db: AsyncSession, player_id: int, tier: str, *, commit: bool = True) -> Player:
         """Update player tier.
 
         Mutates the ORM-tracked Player instance via ``setattr`` (NOT a Core UPDATE).
         See ``persist/repositories/AGENTS.md``.
+
+        Args:
+            commit: When False, flush without committing (caller owns transaction).
 
         Raises:
             ValueError: If tier is invalid or no player exists with the given ID.
@@ -228,7 +263,10 @@ class PlayerRepository(IRepository[Player]):
             if player is None:
                 raise ValueError(f"Player {player_id} not found")
             player.tier = tier
-            await db.commit()
+            if commit:
+                await db.commit()
+            else:
+                await db.flush()
 
             flogger.info(f"Updated tier for player {player_id}: {tier}")
             return player
@@ -236,7 +274,8 @@ class PlayerRepository(IRepository[Player]):
             raise
         except Exception as e:
             flogger.error(f"Error updating tier for player {player_id}: {e}")
-            await db.rollback()
+            if commit:
+                await db.rollback()
             raise
 
     async def update_active_ship(

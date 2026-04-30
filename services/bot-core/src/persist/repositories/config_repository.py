@@ -48,21 +48,33 @@ class ConfigRepository(IRepository[GuildConfig]):
             flogger.error(f"Error listing all configs: {e}")
             raise
 
-    async def add(self, db: AsyncSession, obj: GuildConfig) -> GuildConfig:
-        """Add new config to database."""
+    async def add(self, db: AsyncSession, obj: GuildConfig, *, commit: bool = True) -> GuildConfig:
+        """Add new config to database.
+
+        Args:
+            commit: When False, flush without committing (caller owns transaction).
+        """
         try:
             db.add(obj)
-            await db.commit()
+            if commit:
+                await db.commit()
+            else:
+                await db.flush()
             await db.refresh(obj)
             flogger.info(f"Added config for guild {obj.guild_id}")
             return obj
         except Exception as e:
             flogger.error(f"Error adding config: {e}")
-            await db.rollback()
+            if commit:
+                await db.rollback()
             raise
 
-    async def create_or_update(self, db: AsyncSession, raw: dict) -> GuildConfig:
-        """Create or update config from raw data."""
+    async def create_or_update(self, db: AsyncSession, raw: dict, *, commit: bool = True) -> GuildConfig:
+        """Create or update config from raw data.
+
+        Args:
+            commit: When False, flush without committing (caller owns transaction).
+        """
         try:
             guild_id = raw.get("guild_id")
             if not guild_id:
@@ -77,30 +89,42 @@ class ConfigRepository(IRepository[GuildConfig]):
                     if hasattr(existing_config, key) and key not in ["id", "guild_id", "created_at"]:
                         setattr(existing_config, key, value)
                 try:
-                    await db.commit()
+                    if commit:
+                        await db.commit()
+                    else:
+                        await db.flush()
                     await db.refresh(existing_config)
                 except Exception:
-                    await db.rollback()
+                    if commit:
+                        await db.rollback()
                     raise
                 flogger.debug(f"Updated config for guild {guild_id}")
                 return existing_config
             # Create new config
             config = GuildConfig(**raw)
-            return await self.add(db, config)
+            return await self.add(db, config, commit=commit)
 
         except Exception as e:
             flogger.error(f"Error creating/updating config: {e}")
             raise
 
-    async def remove(self, db: AsyncSession, obj: GuildConfig) -> None:
-        """Remove config from database."""
+    async def remove(self, db: AsyncSession, obj: GuildConfig, *, commit: bool = True) -> None:
+        """Remove config from database.
+
+        Args:
+            commit: When False, flush without committing (caller owns transaction).
+        """
         try:
             await db.delete(obj)
-            await db.commit()
+            if commit:
+                await db.commit()
+            else:
+                await db.flush()
             flogger.info(f"Removed config for guild {obj.guild_id}")
         except Exception as e:
             flogger.error(f"Error removing config: {e}")
-            await db.rollback()
+            if commit:
+                await db.rollback()
             raise
 
     async def get_by_guild_id(self, db: AsyncSession, guild_id: int) -> GuildConfig | None:

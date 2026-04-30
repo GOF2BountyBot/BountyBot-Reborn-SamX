@@ -43,41 +43,57 @@ class DuelRepository(IRepository[DuelRequest]):
             flogger.error(f"Error listing all duel requests: {e}")
             raise
 
-    async def add(self, db: AsyncSession, obj: DuelRequest) -> DuelRequest:
-        """Add a new duel request to the database."""
+    async def add(self, db: AsyncSession, obj: DuelRequest, *, commit: bool = True) -> DuelRequest:
+        """Add a new duel request to the database.
+
+        Args:
+            commit: When False, flush without committing (caller owns transaction).
+        """
         try:
             db.add(obj)
-            await db.commit()
+            if commit:
+                await db.commit()
+            else:
+                await db.flush()
             await db.refresh(obj)
             flogger.info(f"Added new duel request: {obj.id} challenger={obj.challenger_id} target={obj.target_id}")
             return obj
         except Exception as e:
             flogger.error(f"Error adding duel request: {e}")
-            await db.rollback()
+            if commit:
+                await db.rollback()
             raise
 
-    async def create_or_update(self, db: AsyncSession, raw: dict) -> DuelRequest:
+    async def create_or_update(self, db: AsyncSession, raw: dict, *, commit: bool = True) -> DuelRequest:
         """Create or update a duel request from raw data."""
         raise NotImplementedError("Use create() and update_status() methods directly")
 
-    async def remove(self, db: AsyncSession, obj: DuelRequest) -> None:
-        """Remove a duel request from the database."""
+    async def remove(self, db: AsyncSession, obj: DuelRequest, *, commit: bool = True) -> None:
+        """Remove a duel request from the database.
+
+        Args:
+            commit: When False, flush without committing (caller owns transaction).
+        """
         try:
-            db.delete(obj)
-            await db.commit()
+            await db.delete(obj)
+            if commit:
+                await db.commit()
+            else:
+                await db.flush()
             flogger.info(f"Removed duel request: {obj.id}")
         except Exception as e:
             flogger.error(f"Error removing duel request {obj.id}: {e}")
-            await db.rollback()
+            if commit:
+                await db.rollback()
             raise
 
     # ------------------------------------------------------------------ #
     # Domain-specific methods                                              #
     # ------------------------------------------------------------------ #
 
-    async def create(self, db: AsyncSession, duel: DuelRequest) -> DuelRequest:
+    async def create(self, db: AsyncSession, duel: DuelRequest, *, commit: bool = True) -> DuelRequest:
         """Create a new duel request — alias for add()."""
-        return await self.add(db, duel)
+        return await self.add(db, duel, commit=commit)
 
     async def get_pending_by_players(
         self,
@@ -105,18 +121,28 @@ class DuelRepository(IRepository[DuelRequest]):
             )
             raise
 
-    async def update_status(self, db: AsyncSession, duel_id: int, new_status: str) -> DuelRequest | None:
-        """Update the status of a duel request."""
+    async def update_status(
+        self, db: AsyncSession, duel_id: int, new_status: str, *, commit: bool = True
+    ) -> DuelRequest | None:
+        """Update the status of a duel request.
+
+        Args:
+            commit: When False, flush without committing (caller owns transaction).
+        """
         try:
             duel = await db.get(DuelRequest, duel_id)
             if duel is None:
                 return None
             duel.status = new_status
             try:
-                await db.commit()
+                if commit:
+                    await db.commit()
+                else:
+                    await db.flush()
                 await db.refresh(duel)
             except Exception:
-                await db.rollback()
+                if commit:
+                    await db.rollback()
                 raise
             flogger.info(f"Updated duel request {duel_id} status to {new_status!r}")
             return duel
@@ -124,8 +150,12 @@ class DuelRepository(IRepository[DuelRequest]):
             flogger.error(f"Error updating duel request {duel_id} status: {e}")
             raise
 
-    async def delete_expired(self, db: AsyncSession, current_time: datetime) -> int:
-        """Delete all expired duel requests. Returns count of deleted rows."""
+    async def delete_expired(self, db: AsyncSession, current_time: datetime, *, commit: bool = True) -> int:
+        """Delete all expired duel requests. Returns count of deleted rows.
+
+        Args:
+            commit: When False, flush without committing (caller owns transaction).
+        """
         try:
             result = await db.execute(
                 delete(DuelRequest).where(
@@ -136,13 +166,17 @@ class DuelRepository(IRepository[DuelRequest]):
                     )
                 )
             )
-            await db.commit()
+            if commit:
+                await db.commit()
+            else:
+                await db.flush()
             count = result.rowcount
             flogger.info(f"Deleted {count} expired duel requests")
             return count
         except Exception as e:
             flogger.error(f"Error deleting expired duel requests: {e}")
-            await db.rollback()
+            if commit:
+                await db.rollback()
             raise
 
     async def get_active_by_guild(self, db: AsyncSession, guild_id: int) -> list[DuelRequest]:

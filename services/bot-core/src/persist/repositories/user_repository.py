@@ -51,21 +51,33 @@ class UserRepository(IRepository[User]):
             flogger.error(f"Error listing all users: {e}")
             raise
 
-    async def add(self, db: AsyncSession, obj: User) -> User:
-        """Add new user to database."""
+    async def add(self, db: AsyncSession, obj: User, *, commit: bool = True) -> User:
+        """Add new user to database.
+
+        Args:
+            commit: When False, flush without committing (caller owns transaction).
+        """
         try:
             db.add(obj)
-            await db.commit()
+            if commit:
+                await db.commit()
+            else:
+                await db.flush()
             await db.refresh(obj)
             flogger.info(f"Added new user: {obj.id}")
             return obj
         except Exception as e:
             flogger.error(f"Error adding user {obj.id}: {e}")
-            await db.rollback()
+            if commit:
+                await db.rollback()
             raise
 
-    async def create_or_update(self, db: AsyncSession, raw: dict) -> User:
-        """Create or update user from raw data."""
+    async def create_or_update(self, db: AsyncSession, raw: dict, *, commit: bool = True) -> User:
+        """Create or update user from raw data.
+
+        Args:
+            commit: When False, flush without committing (caller owns transaction).
+        """
         try:
             user_id = raw.get("id")
             if not user_id:
@@ -78,13 +90,16 @@ class UserRepository(IRepository[User]):
                 # Update existing user
                 if "discord_username" in raw:
                     user.discord_username = raw["discord_username"]
-                await db.commit()
+                if commit:
+                    await db.commit()
+                else:
+                    await db.flush()
                 await db.refresh(user)
                 flogger.debug(f"Updated user: {user_id}")
             else:
                 # Create new user
                 user = User(id=user_id, discord_username=raw.get("discord_username"))
-                user = await self.add(db, user)
+                user = await self.add(db, user, commit=commit)
                 flogger.info(f"Created new user: {user_id}")
 
             return user
@@ -92,29 +107,52 @@ class UserRepository(IRepository[User]):
             flogger.error(f"Error creating/updating user: {e}")
             raise
 
-    async def remove(self, db: AsyncSession, obj: User) -> None:
-        """Remove user from database."""
+    async def remove(self, db: AsyncSession, obj: User, *, commit: bool = True) -> None:
+        """Remove user from database.
+
+        Args:
+            commit: When False, flush without committing (caller owns transaction).
+        """
         try:
             await db.delete(obj)
-            await db.commit()
+            if commit:
+                await db.commit()
+            else:
+                await db.flush()
             flogger.info(f"Removed user: {obj.id}")
         except Exception as e:
             flogger.error(f"Error removing user {obj.id}: {e}")
-            await db.rollback()
+            if commit:
+                await db.rollback()
             raise
 
-    async def get_or_create_user(self, db: AsyncSession, discord_id: int, username: str | None = None) -> User:
-        """Get existing user or create new one."""
+    async def get_or_create_user(
+        self,
+        db: AsyncSession,
+        discord_id: int,
+        username: str | None = None,
+        *,
+        commit: bool = True,
+    ) -> User:
+        """Get existing user or create new one.
+
+        Args:
+            commit: When False, any new-user creation or username update flushes
+                without committing (caller owns transaction).
+        """
         try:
             user = await self.get_by_id(db, discord_id)
             if not user:
                 user = User(id=discord_id, discord_username=username)
-                user = await self.add(db, user)
+                user = await self.add(db, user, commit=commit)
                 flogger.info(f"Auto-created user for Discord ID: {discord_id}")
             elif username and user.discord_username != username:
                 # Update username if provided and different
                 user.discord_username = username
-                await db.commit()
+                if commit:
+                    await db.commit()
+                else:
+                    await db.flush()
                 await db.refresh(user)
                 flogger.debug(f"Updated username for user {discord_id}")
 

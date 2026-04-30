@@ -582,28 +582,32 @@ class InventoryCog(commands.Cog):
             choices = []
             seen: set[str] = set()
 
-            # Fetch active ship to exclude already-equipped items
+            # Fetch active ship to count already-equipped instances per item name.
+            # Use a Counter so duplicate equips of the same item are counted correctly.
+            # An item remains available in autocomplete as long as:
+            #   inventory_quantity > equipped_count_on_active_ship
             active_ship = await self._get_active_ship(player_id)
-            equipped_names: set[str] = set()
+            equipped_counts: dict[str, int] = {}
             if active_ship:
-                equipped_names.update(active_ship.get("weapons") or [])
-                equipped_names.update(active_ship.get("modules") or [])
-                equipped_names.update(active_ship.get("turrets") or [])
-                equipped_names.update(active_ship.get("secondary_weapons") or [])
+                for slot in ("weapons", "modules", "turrets", "secondary_weapons"):
+                    for name in active_ship.get(slot) or []:
+                        equipped_counts[name] = equipped_counts.get(name, 0) + 1
 
             for item in items:
                 item_type = item.get("item_type", "")
                 item_name = item.get("item_name", "")
+                qty = item.get("quantity") or 0
+                equipped_count = equipped_counts.get(item_name, 0)
                 if (
                     item_type in _CURRENTLY_EQUIPPABLE_INVENTORY_TYPES
                     and item_name
                     and item_name not in seen
-                    and item_name not in equipped_names
+                    and qty > equipped_count
                     and norm_current in normalize_for_search(item_name)
                 ):
                     seen.add(item_name)
-                    qty = item.get("quantity") or 0
-                    qty_suffix = f" x{qty}" if qty and qty > 1 else ""
+                    remaining = qty - equipped_count
+                    qty_suffix = f" x{remaining}" if remaining > 1 else ""
                     label = f"{item_name} ({item_type.replace('_', ' ').title()}){qty_suffix}"
                     choices.append(app_commands.Choice(name=label[:100], value=item_name))
             return choices[:25]

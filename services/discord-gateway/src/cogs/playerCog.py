@@ -410,6 +410,53 @@ class PlayerCog(commands.Cog):
                 f"/promote success: guild={interaction.guild_id}, user={interaction.user.id}, {old_tier} -> {new_tier}"
             )
 
+            # Swap tier roles: remove old tier role, add new tier role (non-fatal)
+            try:
+                config_resp = await self.http_client.get(f"{api_base}/config/guild/{interaction.guild_id}", timeout=5)
+                config_resp.raise_for_status()
+                config = config_resp.json()
+                guild = interaction.guild
+
+                old_tier_key = f"{old_tier.lower()}_role_id"
+                new_tier_key = f"{new_tier.lower()}_role_id"
+
+                roles_to_remove: list[discord.Role] = []
+                roles_to_add: list[discord.Role] = []
+
+                old_tier_role_id = config.get(old_tier_key)
+                if old_tier_role_id:
+                    old_role = guild.get_role(old_tier_role_id)
+                    if old_role and old_role in interaction.user.roles:
+                        roles_to_remove.append(old_role)
+
+                new_tier_role_id = config.get(new_tier_key)
+                if new_tier_role_id:
+                    new_role = guild.get_role(new_tier_role_id)
+                    if new_role and new_role not in interaction.user.roles:
+                        roles_to_add.append(new_role)
+
+                # Add new role first: if this fails, remove_roles never runs and the
+                # user keeps their existing tier role (no regression vs. pre-B.39 state).
+                if roles_to_add:
+                    await interaction.user.add_roles(*roles_to_add, reason="BountyBot tier promotion")
+                    added_names = ", ".join(r.name for r in roles_to_add)
+                    flogger.info(
+                        f"Assigned new tier roles [{added_names}] to user {interaction.user.id} "
+                        f"in guild {interaction.guild_id}"
+                    )
+                if roles_to_remove:
+                    await interaction.user.remove_roles(*roles_to_remove, reason="BountyBot tier promotion")
+                    removed_names = ", ".join(r.name for r in roles_to_remove)
+                    flogger.info(
+                        f"Removed old tier roles [{removed_names}] from user {interaction.user.id} "
+                        f"in guild {interaction.guild_id}"
+                    )
+            except Exception as e:  # pylint: disable=broad-exception-caught
+                flogger.warning(
+                    f"Failed to swap tier roles on promotion: guild={interaction.guild_id}, "
+                    f"user={interaction.user.id}, error={e}"
+                )
+
         except httpx.HTTPStatusError as e:
             flogger.error(
                 f"/promote HTTP error: guild={interaction.guild_id}, user={interaction.user.id}, "

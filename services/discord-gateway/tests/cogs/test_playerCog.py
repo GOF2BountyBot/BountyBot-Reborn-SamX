@@ -2364,5 +2364,284 @@ class TestRegisterAlias:
         assert body["discord_username"] == str(interaction.user)
 
 
+# ---------------------------------------------------------------------------
+# Bug B.39: /promote must remove old tier role and add new tier role
+# ---------------------------------------------------------------------------
+
+
+class TestPromoteTierRoleSwap:
+    """Tests for Bug B.39: /promote should remove old tier role and add new tier role.
+
+    Previously /promote only updated the tier in the DB but never mutated Discord
+    roles — the player ended up with Bronze AND Silver simultaneously after Bronze→Silver.
+    The fix: after a successful API promotion, fetch guild config, remove the old tier
+    role and add the new tier role (both non-fatal).
+    """
+
+    def _make_promote_setup(self, mock_player_cog, old_tier="Bronze", new_tier="Silver"):
+        """Wire the standard player-upsert + promote PUT mocks."""
+        player_data = _make_player_data(tier=old_tier)
+        player_resp = MagicMock()
+        player_resp.raise_for_status = MagicMock()
+        player_resp.json.return_value = player_data
+
+        promote_data = {
+            "player_id": 1,
+            "old_tier": old_tier,
+            "new_tier": new_tier,
+            "xp": 1500,
+            "eligible_for_next": False,
+            "next_tier": None,
+        }
+        promote_resp = MagicMock()
+        promote_resp.raise_for_status = MagicMock()
+        promote_resp.json.return_value = promote_data
+
+        mock_player_cog.http_client.post = AsyncMock(return_value=player_resp)
+        mock_player_cog.http_client.put = AsyncMock(return_value=promote_resp)
+        return promote_data
+
+    def test_promote_removes_old_tier_role_and_adds_new_tier_role(self, mock_player_cog):
+        """B.39: Bronze→Silver promotion must remove Bronze role and add Silver role."""
+        bronze_role_id = 111222001
+        silver_role_id = 111222002
+
+        mock_bronze_role = MagicMock()
+        mock_bronze_role.id = bronze_role_id
+        mock_bronze_role.name = "Bounty Hunter Bronze"
+
+        mock_silver_role = MagicMock()
+        mock_silver_role.id = silver_role_id
+        mock_silver_role.name = "Bounty Hunter Silver"
+
+        # User currently has Bronze role
+        interaction = _create_interaction_with_roles(existing_roles=[mock_bronze_role])
+
+        def _get_role(role_id):
+            return {bronze_role_id: mock_bronze_role, silver_role_id: mock_silver_role}.get(role_id)
+
+        interaction.guild.get_role = MagicMock(side_effect=_get_role)
+
+        self._make_promote_setup(mock_player_cog, old_tier="Bronze", new_tier="Silver")
+
+        # Config GET (called after the embed is sent)
+        config_resp = _make_config_resp(
+            bh_role_id=None,
+            bronze_role_id=bronze_role_id,
+            silver_role_id=silver_role_id,
+            gold_role_id=None,
+            platinum_role_id=None,
+        )
+        mock_player_cog.http_client.get = AsyncMock(return_value=config_resp)
+
+        asyncio.run(mock_player_cog.promote.callback(mock_player_cog, interaction))
+
+        # Success embed must be sent
+        interaction.followup.send.assert_awaited_once()
+
+        # Old Bronze role must be removed
+        interaction.user.remove_roles.assert_awaited_once()
+        removed_args = interaction.user.remove_roles.call_args[0]
+        removed_ids = {r.id for r in removed_args}
+        assert bronze_role_id in removed_ids, (
+            f"Bronze role must be removed on promotion; removed_ids={removed_ids}"
+        )
+        assert silver_role_id not in removed_ids, "New Silver role must NOT appear in remove list"
+
+        # New Silver role must be added
+        interaction.user.add_roles.assert_awaited_once()
+        added_args = interaction.user.add_roles.call_args[0]
+        added_ids = {r.id for r in added_args}
+        assert silver_role_id in added_ids, (
+            f"Silver role must be added on promotion; added_ids={added_ids}"
+        )
+        assert bronze_role_id not in added_ids, "Old Bronze role must NOT be added"
+
+    def test_promote_does_not_add_role_user_already_has(self, mock_player_cog):
+        """B.39: If user somehow already has the new tier role, add_roles is not called for it."""
+        silver_role_id = 111222002
+
+        mock_silver_role = MagicMock()
+        mock_silver_role.id = silver_role_id
+        mock_silver_role.name = "Bounty Hunter Silver"
+
+        # User already has Silver (edge case)
+        interaction = _create_interaction_with_roles(existing_roles=[mock_silver_role])
+        interaction.guild.get_role = MagicMock(return_value=mock_silver_role)
+
+        self._make_promote_setup(mock_player_cog, old_tier="Bronze", new_tier="Silver")
+
+        config_resp = _make_config_resp(
+            bh_role_id=None,
+            bronze_role_id=None,  # No Bronze role configured
+            silver_role_id=silver_role_id,
+            gold_role_id=None,
+            platinum_role_id=None,
+        )
+        mock_player_cog.http_client.get = AsyncMock(return_value=config_resp)
+
+        asyncio.run(mock_player_cog.promote.callback(mock_player_cog, interaction))
+
+        # Embed still sent
+        interaction.followup.send.assert_awaited_once()
+        # Nothing to remove (no old Bronze role configured)
+        interaction.user.remove_roles.assert_not_awaited()
+        # Nothing to add (Silver already held)
+        interaction.user.add_roles.assert_not_awaited()
+
+    def test_promote_role_swap_non_fatal_on_config_error(self, mock_player_cog):
+        """B.39: If the config API call fails, promote still succeeds (non-fatal)."""
+        interaction = _create_interaction_with_roles(existing_roles=[])
+
+        self._make_promote_setup(mock_player_cog, old_tier="Bronze", new_tier="Silver")
+
+        # Config fetch fails
+        mock_player_cog.http_client.get = AsyncMock(side_effect=RuntimeError("config unavailable"))
+
+        asyncio.run(mock_player_cog.promote.callback(mock_player_cog, interaction))
+
+        # Success embed is still sent
+        interaction.followup.send.assert_awaited_once()
+        call_kwargs = interaction.followup.send.call_args[1]
+        assert "embed" in call_kwargs
+        # Role methods not called because config was unavailable
+        interaction.user.remove_roles.assert_not_awaited()
+        interaction.user.add_roles.assert_not_awaited()
+
+    def test_promote_role_swap_non_fatal_on_remove_roles_error(self, mock_player_cog):
+        """B.39: If remove_roles fails, the promote embed was already sent (non-fatal)."""
+        bronze_role_id = 111222001
+        silver_role_id = 111222002
+
+        mock_bronze_role = MagicMock()
+        mock_bronze_role.id = bronze_role_id
+        mock_bronze_role.name = "Bounty Hunter Bronze"
+
+        mock_silver_role = MagicMock()
+        mock_silver_role.id = silver_role_id
+        mock_silver_role.name = "Bounty Hunter Silver"
+
+        interaction = _create_interaction_with_roles(existing_roles=[mock_bronze_role])
+        interaction.guild.get_role = MagicMock(
+            side_effect=lambda rid: {bronze_role_id: mock_bronze_role, silver_role_id: mock_silver_role}.get(rid)
+        )
+        interaction.user.remove_roles = AsyncMock(side_effect=RuntimeError("Missing Permissions"))
+
+        self._make_promote_setup(mock_player_cog, old_tier="Bronze", new_tier="Silver")
+
+        config_resp = _make_config_resp(
+            bh_role_id=None,
+            bronze_role_id=bronze_role_id,
+            silver_role_id=silver_role_id,
+            gold_role_id=None,
+            platinum_role_id=None,
+        )
+        mock_player_cog.http_client.get = AsyncMock(return_value=config_resp)
+
+        asyncio.run(mock_player_cog.promote.callback(mock_player_cog, interaction))
+
+        # The embed was sent BEFORE the role swap attempt — it must always succeed
+        interaction.followup.send.assert_awaited_once()
+        call_kwargs = interaction.followup.send.call_args[1]
+        assert "embed" in call_kwargs
+
+    def test_promote_skips_role_removal_if_old_role_not_in_config(self, mock_player_cog):
+        """B.39: If the old tier role isn't configured, remove_roles is not called."""
+        silver_role_id = 111222002
+        mock_silver_role = MagicMock()
+        mock_silver_role.id = silver_role_id
+
+        interaction = _create_interaction_with_roles(existing_roles=[])
+        interaction.guild.get_role = MagicMock(return_value=mock_silver_role)
+
+        self._make_promote_setup(mock_player_cog, old_tier="Bronze", new_tier="Silver")
+
+        # bronze_role_id absent from config
+        config_resp = _make_config_resp(
+            bh_role_id=None,
+            bronze_role_id=None,
+            silver_role_id=silver_role_id,
+            gold_role_id=None,
+            platinum_role_id=None,
+        )
+        mock_player_cog.http_client.get = AsyncMock(return_value=config_resp)
+
+        asyncio.run(mock_player_cog.promote.callback(mock_player_cog, interaction))
+
+        interaction.followup.send.assert_awaited_once()
+        # No old role to remove
+        interaction.user.remove_roles.assert_not_awaited()
+        # New Silver role added (user doesn't have it)
+        interaction.user.add_roles.assert_awaited_once()
+
+    def test_promote_add_roles_fails_after_remove_roles_succeeds_leaves_user_roleless(
+        self, mock_player_cog
+    ):
+        """DEF-B39-001 (adversarial): remove_roles succeeds but add_roles then fails.
+
+        EXPECTED (correct) behaviour: if the new role cannot be added, the old role
+        should be PRESERVED — the user keeps their pre-promotion tier role rather than
+        ending up with no tier role at all.
+
+        CURRENT (broken) behaviour: remove_roles fires first. If add_roles subsequently
+        raises, the outer except swallows the error, but the old role is already gone.
+        The user is left with NO tier role — a regression vs. the pre-fix state (where
+        at least they kept their Bronze role, even if that was wrong).
+
+        Fix required: swap the operation order — add new role FIRST, then remove old
+        role. That way any failure in the add step aborts before the remove, keeping
+        the old role intact.
+
+        This test DEMONSTRATES THE DEFECT by asserting the correct outcome. It will
+        FAIL against the current implementation (proving the defect is real), and
+        will PASS once the fix is applied.
+        """
+        bronze_role_id = 111222001
+        silver_role_id = 111222002
+
+        mock_bronze_role = MagicMock()
+        mock_bronze_role.id = bronze_role_id
+        mock_bronze_role.name = "Bounty Hunter Bronze"
+
+        mock_silver_role = MagicMock()
+        mock_silver_role.id = silver_role_id
+        mock_silver_role.name = "Bounty Hunter Silver"
+
+        # User currently has Bronze role
+        interaction = _create_interaction_with_roles(existing_roles=[mock_bronze_role])
+        interaction.guild.get_role = MagicMock(
+            side_effect=lambda rid: {bronze_role_id: mock_bronze_role, silver_role_id: mock_silver_role}.get(rid)
+        )
+
+        # remove_roles succeeds; add_roles fails (e.g. bot lacks Manage Roles for Silver)
+        interaction.user.remove_roles = AsyncMock()
+        interaction.user.add_roles = AsyncMock(side_effect=RuntimeError("Missing Permissions for Silver"))
+
+        self._make_promote_setup(mock_player_cog, old_tier="Bronze", new_tier="Silver")
+
+        config_resp = _make_config_resp(
+            bh_role_id=None,
+            bronze_role_id=bronze_role_id,
+            silver_role_id=silver_role_id,
+            gold_role_id=None,
+            platinum_role_id=None,
+        )
+        mock_player_cog.http_client.get = AsyncMock(return_value=config_resp)
+
+        asyncio.run(mock_player_cog.promote.callback(mock_player_cog, interaction))
+
+        # Success embed is always sent (non-fatal role swap) — not in dispute
+        interaction.followup.send.assert_awaited_once()
+
+        # CORRECT expected outcome: if add_roles fails, remove_roles must NOT have run.
+        # The user keeps their Bronze role rather than ending up with no role at all.
+        # This assertion FAILS on the current implementation (proving DEF-B39-001).
+        interaction.user.remove_roles.assert_not_awaited(), (
+            "DEF-B39-001: When add_roles fails, remove_roles must not have fired. "
+            "The implementation must add the new role BEFORE removing the old one so that "
+            "a failure in add_roles aborts without stripping the user's existing tier role."
+        )
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

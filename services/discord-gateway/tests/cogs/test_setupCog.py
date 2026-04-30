@@ -6,7 +6,7 @@ import asyncio
 import os
 import sys
 import types
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -289,6 +289,97 @@ class TestSetupCogInit:
         asyncio.run(mock_setup_cog.cog_unload())
 
         mock_setup_cog.http_client.aclose.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# on_guild_remove URL+method contract (respx) — B.37 regression net (2026-04-30)
+# ---------------------------------------------------------------------------
+
+
+class TestOnGuildRemoveRespx:
+    """respx-backed contract test for setupCog.on_guild_remove.
+
+    The existing TestOnGuildRemove tests above use AsyncMock(http_client.delete)
+    which is tautological — bugs in URL or HTTP method pass silently. This
+    class follows the policy in services/discord-gateway/tests/AGENTS.md
+    (B.33 remediation) and asserts the exact URL+method contract:
+
+      DELETE /api/v1/admin/guilds/{guild_id}/cleanup
+
+    History: this test was added as part of the B.37 remediation. Pre-fix,
+    setupCog called this URL but bot-core had no matching route — every
+    bot-removal returned 404 and lingering DB state was never cleaned. The
+    fix added the bot-core endpoint AND this test, locking the contract so a
+    future refactor (URL change, method swap) cannot silently re-introduce
+    the bug.
+    """
+
+    _BOT_API = "http://bot-core:8000/api/v1"
+
+    def _with_real_client(self, cog, request):
+        """Replace cog.http_client with a real httpx.AsyncClient for respx interception.
+
+        Registers a pytest finalizer to close the client after the test so no
+        httpx.AsyncClient instances are leaked between tests.
+        """
+        import httpx
+
+        cog.http_client = httpx.AsyncClient(timeout=httpx.Timeout(10.0))
+        request.addfinalizer(lambda: asyncio.run(cog.http_client.aclose()))
+        return cog
+
+    def test_on_guild_remove_calls_correct_url_and_method(self, mock_setup_cog, request):
+        """on_guild_remove must DELETE /api/v1/admin/guilds/{guild_id}/cleanup."""
+        import httpx
+        import respx
+
+        self._with_real_client(mock_setup_cog, request)
+        guild = _make_mock_guild(guild_id=987654321)
+
+        env_without_bot_api = {k: v for k, v in os.environ.items() if k != "BOT_API_BASE_URL"}
+        with (
+            patch.dict(os.environ, env_without_bot_api, clear=True),
+            respx.mock(assert_all_called=True) as mock_router,
+        ):
+            mock_router.delete(f"{self._BOT_API}/admin/guilds/987654321/cleanup").mock(
+                return_value=httpx.Response(
+                    200,
+                    json={
+                        "guild_id": 987654321,
+                        "removed_counts": {"players": 0, "shop_items": "all", "config": 0},
+                        "jobs_cancelled": 0,
+                        "bounties_cleared": 0,
+                        "message": "Soft cleanup of guild 987654321 complete (DB-only, Discord-side untouched)",
+                    },
+                )
+            )
+            asyncio.run(mock_setup_cog.on_guild_remove(guild))
+        # respx assert_all_called=True ensures the DELETE endpoint WAS hit at the
+        # exact URL — any drift in the URL or method causes the test to fail.
+
+    def test_on_guild_remove_handles_404_gracefully(self, mock_setup_cog, request):
+        """on_guild_remove must not raise if bot-core returns 404 (lingering bug regression net).
+
+        This guards the legacy behaviour: even if some future deployment serves
+        a bot-core that has not yet shipped the /cleanup endpoint, the cog must
+        not crash the bot's event loop. The 404 is logged at DEBUG and swallowed.
+        """
+        import httpx
+        import respx
+
+        self._with_real_client(mock_setup_cog, request)
+        guild = _make_mock_guild(guild_id=111222333)
+
+        env_without_bot_api = {k: v for k, v in os.environ.items() if k != "BOT_API_BASE_URL"}
+        with (
+            patch.dict(os.environ, env_without_bot_api, clear=True),
+            respx.mock(assert_all_called=True) as mock_router,
+        ):
+            mock_router.delete(f"{self._BOT_API}/admin/guilds/111222333/cleanup").mock(
+                return_value=httpx.Response(404, json={"detail": "Not Found"})
+            )
+            # Must NOT raise.
+            asyncio.run(mock_setup_cog.on_guild_remove(guild))
 
 
 if __name__ == "__main__":

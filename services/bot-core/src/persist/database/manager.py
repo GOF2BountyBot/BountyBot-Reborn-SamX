@@ -190,6 +190,38 @@ class DatabaseManager:
                 # committed (db.commit() or db.begin() block exit), the
                 # session is no longer in a transaction and this is a
                 # no-op. If the caller forgot, this preserves their work.
+                #
+                # ─── AC-7 CALLSITE AUDIT (recorded for re-verification) ───
+                # When AC-7 landed (commit 1a6d63e), an exhaustive grep was
+                # performed for every `async with get_db_session() as ...`
+                # and `async with db_manager.get_session() as ...` in
+                # services/bot-core/src/. Empirical finding: ZERO callers
+                # load mutable ORM instances and intentionally exit without
+                # committing. Every read-only path is GET-style (list_all,
+                # get_by_id, count_*, etc.) where the implicit no-commit
+                # close was incidental — auto-commit is a no-op for those
+                # paths because no DML was issued.
+                #
+                # Re-run criteria — the audit MUST be re-performed if ANY
+                # of the following becomes true:
+                #   (a) A new `async with get_db_session() as ...` block
+                #       is added that performs ORM attribute mutation
+                #       (e.g. `player.credits = ...`) but intentionally
+                #       relies on session-close-discards-changes semantics
+                #       to avoid persisting them.
+                #   (b) A new pattern is introduced that loads ORM
+                #       instances, mutates them for in-memory computation,
+                #       and expects the changes NOT to persist.
+                #   (c) `expire_on_commit` is changed from False (currently
+                #       False at line 92) — that would change the
+                #       attribute-refresh semantics of this commit.
+                #
+                # If any of (a)–(c) is true, re-run the audit and add an
+                # explicit `await session.rollback()` before context exit
+                # at the affected callsite. The contract is: this method
+                # commits pending work; callers that want discard-on-close
+                # MUST opt out explicitly.
+                # ──────────────────────────────────────────────────────────
                 try:
                     if session.in_transaction():
                         await session.commit()

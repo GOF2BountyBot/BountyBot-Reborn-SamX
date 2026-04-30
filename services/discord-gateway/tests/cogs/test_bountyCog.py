@@ -331,9 +331,7 @@ class TestPreloadData:
         ]
 
         with respx.mock(assert_all_called=True) as mock_router:
-            mock_router.get(self._SYSTEMS_URL).mock(
-                return_value=httpx.Response(200, json=systems_data)
-            )
+            mock_router.get(self._SYSTEMS_URL).mock(return_value=httpx.Response(200, json=systems_data))
             asyncio.run(mock_bounty_cog._preload_data())
 
         assert mock_bounty_cog._systems == ["Sol", "Alpha Centauri", "Proxima"]
@@ -390,9 +388,7 @@ class TestPreloadData:
         mock_bounty_cog.bot.wait_until_ready = AsyncMock()
 
         with respx.mock(assert_all_called=False) as mock_router:
-            mock_router.get(self._SYSTEMS_URL).mock(
-                return_value=httpx.Response(500, json={"detail": "error"})
-            )
+            mock_router.get(self._SYSTEMS_URL).mock(return_value=httpx.Response(500, json={"detail": "error"}))
             with patch("cogs.bountyCog.asyncio.sleep", new=AsyncMock()) as mock_sleep:
                 asyncio.run(mock_bounty_cog._preload_data())
 
@@ -409,9 +405,7 @@ class TestPreloadData:
         mock_bounty_cog.bot.wait_until_ready = AsyncMock()
 
         with respx.mock(assert_all_called=False) as mock_router:
-            mock_router.get(self._SYSTEMS_URL).mock(
-                return_value=httpx.Response(500, json={"detail": "boom"})
-            )
+            mock_router.get(self._SYSTEMS_URL).mock(return_value=httpx.Response(500, json={"detail": "boom"}))
             with patch("cogs.bountyCog.asyncio.sleep", new=AsyncMock()):
                 asyncio.run(mock_bounty_cog._preload_data())
 
@@ -428,9 +422,7 @@ class TestPreloadData:
         mock_bounty_cog.bot.wait_until_ready = AsyncMock()
 
         with respx.mock(assert_all_called=True) as mock_router:
-            mock_router.get(self._SYSTEMS_URL).mock(
-                return_value=httpx.Response(200, json=[{"name": "Sol", "id": 1}])
-            )
+            mock_router.get(self._SYSTEMS_URL).mock(return_value=httpx.Response(200, json=[{"name": "Sol", "id": 1}]))
             with patch("cogs.bountyCog.asyncio.sleep", new=AsyncMock()) as mock_sleep:
                 asyncio.run(mock_bounty_cog._preload_data())
 

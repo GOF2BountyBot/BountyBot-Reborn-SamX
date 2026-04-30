@@ -4,6 +4,7 @@ Integration tests for the /textures/convert endpoint.
 Uses FastAPI TestClient to exercise the POST /api/v1/textures/convert route.
 Each test uses at most 2 mocks.
 """
+
 from __future__ import annotations
 
 import sys
@@ -30,15 +31,11 @@ from main import app
 def _png_bytes(mode: str = "RGBA", size: tuple[int, int] = (4, 4)) -> bytes:
     """Return minimal valid PNG bytes."""
     buf = BytesIO()
-    Image.new(mode, size, (0, 0, 0, 255) if mode == "RGBA" else (0, 0, 0)).save(
-        buf, format="PNG"
-    )
+    Image.new(mode, size, (0, 0, 0, 255) if mode == "RGBA" else (0, 0, 0)).save(buf, format="PNG")
     return buf.getvalue()
 
 
-def _image_upload(
-    filename: str = "test.png", mode: str = "RGBA"
-) -> tuple[str, tuple]:
+def _image_upload(filename: str = "test.png", mode: str = "RGBA") -> tuple[str, tuple]:
     """Return a (field_name, (filename, data, content_type)) tuple."""
     return ("image", (filename, _png_bytes(mode), "image/png"))
 

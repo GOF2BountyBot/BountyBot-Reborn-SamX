@@ -149,12 +149,14 @@ def test_trim_full_content(svc: RenderService) -> None:
 # render_ship — subprocess-mocked tests
 # ---------------------------------------------------------------------------
 
+
 def _make_subprocess_mock(returncode: int, output_file: str | None = None):
     """Build a mock for asyncio.create_subprocess_exec.
 
     If *output_file* is provided the mock side-effect will create the file
     (simulating Blender writing its output).
     """
+
     async def _side_effect(*args, **kwargs):
         if output_file:
             Path(output_file).parent.mkdir(parents=True, exist_ok=True)
@@ -187,8 +189,10 @@ async def test_render_ship_creates_temp_dir(svc: RenderService, tmp_path: Path) 
         created_dirs.append(str(self))
         return original_mkdir(self, *args, **kwargs)
 
-    with patch("asyncio.create_subprocess_exec", side_effect=_make_subprocess_mock(0, out_file)), \
-         patch.object(Path, "mkdir", capturing_mkdir):
+    with (
+        patch("asyncio.create_subprocess_exec", side_effect=_make_subprocess_mock(0, out_file)),
+        patch.object(Path, "mkdir", capturing_mkdir),
+    ):
         await svc.render_ship(str(obj_file), str(tex_file), out_file)
 
     assert any("/tmp/blender_render_" in d for d in created_dirs)
@@ -311,10 +315,13 @@ async def test_render_ship_raises_on_failure(svc: RenderService, tmp_path: Path)
     tex_file.touch()
     out_file = str(tmp_path / "output.png")
 
-    with patch(
-        "asyncio.create_subprocess_exec",
-        side_effect=_make_subprocess_mock(returncode=1),
-    ), pytest.raises(RenderError, match="non-zero return code"):
+    with (
+        patch(
+            "asyncio.create_subprocess_exec",
+            side_effect=_make_subprocess_mock(returncode=1),
+        ),
+        pytest.raises(RenderError, match="non-zero return code"),
+    ):
         await svc.render_ship(str(obj_file), str(tex_file), out_file)
 
 

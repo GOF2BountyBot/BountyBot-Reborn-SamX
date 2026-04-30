@@ -386,16 +386,14 @@ class TestShipSkinPreloadEdgeCases:
                 return_value=httpx.Response(
                     200,
                     json=[
-                        {"name": None},   # No name — should skip
-                        {"name": ""},     # Empty name — should skip
+                        {"name": None},  # No name — should skip
+                        {"name": ""},  # Empty name — should skip
                         {"name": "Valid Ship", "id": 3},
                     ],
                 )
             )
             mock_router.get(f"{self._API_BASE}/about/object/name/Valid Ship").mock(
-                return_value=httpx.Response(
-                    200, json={"name": "Valid Ship", "compatible_skins": {"Skin1": "url1"}}
-                )
+                return_value=httpx.Response(200, json={"name": "Valid Ship", "compatible_skins": {"Skin1": "url1"}})
             )
 
             asyncio.run(mock_skins_cog._preload_ship_skins())
@@ -413,9 +411,7 @@ class TestShipSkinPreloadEdgeCases:
 
         with respx.mock(assert_all_called=True) as mock_router:
             mock_router.get(f"{self._API_BASE}/about/categories/ship/objects").mock(
-                return_value=httpx.Response(
-                    200, json=[{"name": "Ship 1", "id": 1}, {"name": "Ship 2", "id": 2}]
-                )
+                return_value=httpx.Response(200, json=[{"name": "Ship 1", "id": 1}, {"name": "Ship 2", "id": 2}])
             )
             # First ship fails with 500
             mock_router.get(f"{self._API_BASE}/about/object/name/Ship 1").mock(
@@ -423,9 +419,7 @@ class TestShipSkinPreloadEdgeCases:
             )
             # Second ship succeeds
             mock_router.get(f"{self._API_BASE}/about/object/name/Ship 2").mock(
-                return_value=httpx.Response(
-                    200, json={"name": "Ship 2", "compatible_skins": {"Skin2": "url2"}}
-                )
+                return_value=httpx.Response(200, json={"name": "Ship 2", "compatible_skins": {"Skin2": "url2"}})
             )
 
             asyncio.run(mock_skins_cog._preload_ship_skins())

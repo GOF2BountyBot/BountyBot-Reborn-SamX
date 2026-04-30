@@ -172,9 +172,7 @@ class TestCategoryPreload:
         mock_dev_cog.bot.wait_until_ready = AsyncMock()
 
         with respx.mock(assert_all_called=True) as mock_router:
-            mock_router.get(self._CATEGORIES_URL).mock(
-                side_effect=httpx.ConnectError("connection refused")
-            )
+            mock_router.get(self._CATEGORIES_URL).mock(side_effect=httpx.ConnectError("connection refused"))
             asyncio.run(mock_dev_cog._preload_categories())
 
         assert mock_dev_cog._categories == []

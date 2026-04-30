@@ -76,8 +76,17 @@ def test_job_to_dict_complete() -> None:
     d = job.to_dict()
 
     expected_keys = {
-        "job_id", "status", "created_at", "started_at", "completed_at",
-        "result_path", "error_message", "model_path", "res_x", "res_y", "num_samples",
+        "job_id",
+        "status",
+        "created_at",
+        "started_at",
+        "completed_at",
+        "result_path",
+        "error_message",
+        "model_path",
+        "res_x",
+        "res_y",
+        "num_samples",
     }
     assert expected_keys == set(d.keys())
     assert d["status"] == "queued"

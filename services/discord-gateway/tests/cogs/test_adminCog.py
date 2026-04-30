@@ -1728,12 +1728,12 @@ class TestPreloadRenderSettings:
         mock_admin_cog.bot.wait_until_ready = AsyncMock()
 
         env_without_blender = {k: v for k, v in os.environ.items() if k != "BLENDER_API_BASE_URL"}
-        with patch.dict(os.environ, env_without_blender, clear=True):
-            with respx.mock(assert_all_called=True) as mock_router:
-                mock_router.get(self._RENDER_CONFIG_URL).mock(
-                    return_value=httpx.Response(200, json=render_config_data)
-                )
-                asyncio.run(mock_admin_cog._preload_render_settings())
+        with (
+            patch.dict(os.environ, env_without_blender, clear=True),
+            respx.mock(assert_all_called=True) as mock_router,
+        ):
+            mock_router.get(self._RENDER_CONFIG_URL).mock(return_value=httpx.Response(200, json=render_config_data))
+            asyncio.run(mock_admin_cog._preload_render_settings())
 
         assert mock_admin_cog._render_settings == list(render_config_data.keys())
         assert len(mock_admin_cog._render_settings) == 11
@@ -1756,11 +1756,13 @@ class TestPreloadRenderSettings:
         mock_admin_cog.bot.wait_until_ready = AsyncMock()
 
         env_without_blender = {k: v for k, v in os.environ.items() if k != "BLENDER_API_BASE_URL"}
-        with patch.dict(os.environ, env_without_blender, clear=True):
-            with respx.mock(assert_all_called=False) as mock_router:
-                mock_router.get(self._RENDER_CONFIG_URL).mock(side_effect=flaky_handler)
-                with patch("cogs.adminCog.asyncio.sleep", new=AsyncMock()) as mock_sleep:
-                    asyncio.run(mock_admin_cog._preload_render_settings())
+        with (
+            patch.dict(os.environ, env_without_blender, clear=True),
+            respx.mock(assert_all_called=False) as mock_router,
+            patch("cogs.adminCog.asyncio.sleep", new=AsyncMock()) as mock_sleep,
+        ):
+            mock_router.get(self._RENDER_CONFIG_URL).mock(side_effect=flaky_handler)
+            asyncio.run(mock_admin_cog._preload_render_settings())
 
         # Should have slept once (after first failure) with 5s delay
         mock_sleep.assert_awaited_once_with(5)
@@ -1776,13 +1778,15 @@ class TestPreloadRenderSettings:
         mock_admin_cog.bot.wait_until_ready = AsyncMock()
 
         env_without_blender = {k: v for k, v in os.environ.items() if k != "BLENDER_API_BASE_URL"}
-        with patch.dict(os.environ, env_without_blender, clear=True):
-            with respx.mock(assert_all_called=False) as mock_router:
-                mock_router.get(self._RENDER_CONFIG_URL).mock(
-                    return_value=httpx.Response(503, json={"detail": "Service Unavailable"})
-                )
-                with patch("cogs.adminCog.asyncio.sleep", new=AsyncMock()):
-                    asyncio.run(mock_admin_cog._preload_render_settings())
+        with (
+            patch.dict(os.environ, env_without_blender, clear=True),
+            respx.mock(assert_all_called=False) as mock_router,
+            patch("cogs.adminCog.asyncio.sleep", new=AsyncMock()),
+        ):
+            mock_router.get(self._RENDER_CONFIG_URL).mock(
+                return_value=httpx.Response(503, json={"detail": "Service Unavailable"})
+            )
+            asyncio.run(mock_admin_cog._preload_render_settings())
 
         # Settings should remain empty after all attempts fail
         assert mock_admin_cog._render_settings == []
@@ -1799,13 +1803,13 @@ class TestPreloadRenderSettings:
         self._with_real_client(mock_admin_cog, request)
         mock_admin_cog.bot.wait_until_ready = AsyncMock()
 
-        with patch.dict(os.environ, {"BLENDER_API_BASE_URL": custom_url}):
-            with respx.mock(assert_all_called=True) as mock_router:
-                # respx intercepts the custom URL — only matches if cog uses env var
-                mock_router.get(custom_config_url).mock(
-                    return_value=httpx.Response(200, json=render_config_data)
-                )
-                asyncio.run(mock_admin_cog._preload_render_settings())
+        with (
+            patch.dict(os.environ, {"BLENDER_API_BASE_URL": custom_url}),
+            respx.mock(assert_all_called=True) as mock_router,
+        ):
+            # respx intercepts the custom URL — only matches if cog uses env var
+            mock_router.get(custom_config_url).mock(return_value=httpx.Response(200, json=render_config_data))
+            asyncio.run(mock_admin_cog._preload_render_settings())
 
         assert mock_admin_cog._render_settings == list(render_config_data.keys())
 
@@ -1819,13 +1823,13 @@ class TestPreloadRenderSettings:
         mock_admin_cog.bot.wait_until_ready = AsyncMock()
 
         env_without_blender = {k: v for k, v in os.environ.items() if k != "BLENDER_API_BASE_URL"}
-        with patch.dict(os.environ, env_without_blender, clear=True):
-            with respx.mock(assert_all_called=True) as mock_router:
-                # respx only matches if cog uses the default URL
-                mock_router.get(self._RENDER_CONFIG_URL).mock(
-                    return_value=httpx.Response(200, json=render_config_data)
-                )
-                asyncio.run(mock_admin_cog._preload_render_settings())
+        with (
+            patch.dict(os.environ, env_without_blender, clear=True),
+            respx.mock(assert_all_called=True) as mock_router,
+        ):
+            # respx only matches if cog uses the default URL
+            mock_router.get(self._RENDER_CONFIG_URL).mock(return_value=httpx.Response(200, json=render_config_data))
+            asyncio.run(mock_admin_cog._preload_render_settings())
 
         assert mock_admin_cog._render_settings == list(render_config_data.keys())
 

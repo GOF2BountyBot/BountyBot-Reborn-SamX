@@ -5,6 +5,7 @@ Uses ≤2 mocks per test. AEPi library calls are mocked at the module
 attribute level (services.aei_conversion_service.AEI / CompressionFormat)
 to avoid requiring the native codec libraries at test time.
 """
+
 from __future__ import annotations
 
 import io
@@ -104,8 +105,10 @@ def test_convert_valid_quality_accepted() -> None:
     mock_cf = MagicMock()
     mock_cf.DXT5 = object()
 
-    with patch("services.aei_conversion_service.AEI", mock_aei_cls), \
-         patch("services.aei_conversion_service.CompressionFormat", mock_cf):
+    with (
+        patch("services.aei_conversion_service.AEI", mock_aei_cls),
+        patch("services.aei_conversion_service.CompressionFormat", mock_cf),
+    ):
         service = AEIConversionService()
         img = _rgba_image()
         for q in (1, 2, 3):
@@ -126,8 +129,10 @@ def test_convert_rgb_to_rgba_conversion() -> None:
     mock_cf = MagicMock()
     mock_cf.DXT5 = object()
 
-    with patch("services.aei_conversion_service.AEI", side_effect=_capture_aei), \
-         patch("services.aei_conversion_service.CompressionFormat", mock_cf):
+    with (
+        patch("services.aei_conversion_service.AEI", side_effect=_capture_aei),
+        patch("services.aei_conversion_service.CompressionFormat", mock_cf),
+    ):
         service = AEIConversionService()
         rgb_img = _rgb_image()
         service.convert_to_aei(rgb_img, "dxt5")
@@ -149,8 +154,10 @@ def test_convert_calls_aepi_correctly() -> None:
     sentinel_fmt = object()
     mock_cf.DXT5 = sentinel_fmt
 
-    with patch("services.aei_conversion_service.AEI", mock_aei_cls), \
-         patch("services.aei_conversion_service.CompressionFormat", mock_cf):
+    with (
+        patch("services.aei_conversion_service.AEI", mock_aei_cls),
+        patch("services.aei_conversion_service.CompressionFormat", mock_cf),
+    ):
         service = AEIConversionService()
         img = _rgba_image()
         service.convert_to_aei(img, "dxt5", quality=2)
@@ -176,8 +183,10 @@ def test_convert_returns_bytesio_seeked_to_zero() -> None:
     mock_cf = MagicMock()
     mock_cf.DXT5 = object()
 
-    with patch("services.aei_conversion_service.AEI", mock_aei_cls), \
-         patch("services.aei_conversion_service.CompressionFormat", mock_cf):
+    with (
+        patch("services.aei_conversion_service.AEI", mock_aei_cls),
+        patch("services.aei_conversion_service.CompressionFormat", mock_cf),
+    ):
         service = AEIConversionService()
         result = service.convert_to_aei(_rgba_image(), "dxt5")
 
@@ -195,8 +204,10 @@ def test_convert_handles_aepi_error() -> None:
     mock_cf = MagicMock()
     mock_cf.DXT5 = object()
 
-    with patch("services.aei_conversion_service.AEI", mock_aei_cls), \
-         patch("services.aei_conversion_service.CompressionFormat", mock_cf):
+    with (
+        patch("services.aei_conversion_service.AEI", mock_aei_cls),
+        patch("services.aei_conversion_service.CompressionFormat", mock_cf),
+    ):
         service = AEIConversionService()
         with pytest.raises(AEIConversionError, match="AEI encoding failed"):
             service.convert_to_aei(_rgba_image(), "dxt5")

@@ -96,8 +96,8 @@ def test_crop_landscape_even_crop_bounds() -> None:
     """
     img = Image.new("RGB", (200, 100), (255, 255, 255))
     for y in range(100):
-        img.putpixel((0, y), (255, 0, 0))   # leftmost column → cropped (diff=100, remove 50 each side)
-        img.putpixel((50, y), (0, 0, 255))   # new left edge after 50-px crop
+        img.putpixel((0, y), (255, 0, 0))  # leftmost column → cropped (diff=100, remove 50 each side)
+        img.putpixel((50, y), (0, 0, 255))  # new left edge after 50-px crop
 
     result = crop_to_square(img)  # crop 50 from left, 50 from right → 100×100
     assert result.size == (100, 100)
@@ -211,7 +211,7 @@ def test_crop_preserves_center_content() -> None:
     Original pixel (100, 50) moves to (100-50, 50) = (50, 50) in result.
     """
     img = Image.new("RGB", (200, 100), (255, 0, 0))  # fill red
-    img.putpixel((100, 50), (0, 255, 0))              # center pixel green
+    img.putpixel((100, 50), (0, 255, 0))  # center pixel green
 
     result = crop_to_square(img)
     # 200×100 → remove 50 from left, 50 from right → 100×100

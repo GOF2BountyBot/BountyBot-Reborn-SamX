@@ -11,6 +11,82 @@ Cross-ref: `E2E_TEST_CHECKLIST.md` (test-item references). All commit SHAs are l
 
 ## OPEN
 
+### B.41 — `/equip` autocomplete filter blocks duplicate equips of same item type
+
+🟡 medium · E2E · 2026-04-30
+
+**Context**: Player has multiple instances of the same item (e.g. 3x M6 A4 "Raccoon" primary weapons) and a ship with multiple primary slots. After equipping the first instance, the autocomplete dropdown removes the item from suggestions, even though the player still owns 2 more in inventory and the game rules allow multiple equips of the same weapon (e.g. 4x M6 A4 "Raccoon" on a 4-primary-slot ship).
+
+**Root cause**: `services/discord-gateway/src/cogs/inventoryCog.py:600-601` autocomplete filter:
+```python
+and item_name not in equipped_names  # Blocks ALL duplicates
+```
+
+**Game rule**: Players are explicitly allowed to equip multiple instances of the same weapon. Backend correctly supports this (verified via researcher investigation: equip_one allows duplicate item names, ship loadout arrays support duplicates, inventory tracks via quantity column).
+
+**Workaround**: Player must type the full item name manually (with quotes for items containing them). Substring matching like "a4" fails because backend requires exact name.
+
+**Fix scope**: Discord-gateway only — change autocomplete filter logic to allow duplicates as long as `inventory_quantity > equipped_count_of_same_name`.
+
+**Severity**: 🟡 medium — workaround exists (full name manual entry), but UX is broken for the entire late-game loadout fitting flow.
+
+---
+
+### B.39 — `/promote` adds new tier role but fails to remove previous tier role
+
+🟡 medium · E2E · 2026-04-30
+
+**Context**: During E2E Phase 6, Main (SamAccountX) used `/promote` to advance from Bronze to Silver. The Silver tier role (@Bounty Hunter Silver) was correctly added, but the Bronze tier role (@Bounty Hunter Bronze) was NOT removed. Player ended up with both tier roles simultaneously.
+
+**Empirical evidence**:
+- After `/promote`: profile showed Tier=Silver, but both @Bounty Hunter Silver AND @Bounty Hunter Bronze roles were present on the Discord user
+- Expected: old tier role should be removed when new tier role is added
+- Affects: visual/role display; any future code that checks Discord role for tier determination
+
+**Fix location (tentative)**: `player_service.py` `update_tier` method or the cog handler — Discord role mutation logic needs to remove old tier role when adding new one.
+
+---
+
+### B.40 — Configured admin role not granting admin command access to Alt user
+> **Status**: OPEN, awaiting user investigation input.
+
+🟡 medium · E2E · 2026-04-30
+
+**Context**: During E2E, the configured admin role (@Bounty Bot Admin, added to guild config via `/admin_setup`) was assigned to the Alt account, but admin commands (e.g. `/admin_spawn_bounty`, `/admin_give_ship`, etc.) remained inaccessible. Alt could not see or use admin-only slash commands despite having the admin role.
+
+**Empirical evidence**:
+- Admin role exists in guild and was assigned to Alt
+- Admin commands remained invisible/inaccessible to Alt
+- Main (server owner) can access admin commands fine
+
+**Possible causes to investigate**:
+1. `ADMIN_USER_IDS` env var is empty — the auth check in `admin.py` router may be falling through to a guild-level permission check that doesn't match Discord role assignment
+2. The cog command's `admin_check` decorator may check `ctx.author.id` against a hardcoded list rather than checking for the admin role
+3. Discord role hierarchy issue — admin role may need to be higher in the role list
+4. Command registration timing — admin commands may need a gateway restart after role assignment
+
+**User directive**: Hold for user input before investigating further.
+
+---
+
+### B.38 — `UserRepository` missing `get_by_discord_id` method; all admin give/remove endpoints broken
+> **FIXED** in commit (pending). Developer added method + 4 tests. Tester PASS with remediated test coverage. **✅ Verified live 2026-04-30** — `/admin_give_ship` succeeded after rebuild.
+
+🟠 high · E2E · 2026-04-30
+
+**Context**: During E2E Phase 7, `/admin_give_ship user:@SamAccountX ship_name:Kinzer RS` raised `AttributeError: 'UserRepository' object has no attribute 'get_by_discord_id'`.
+
+**Empirical evidence**:
+- `services/bot-core/src/persist/repositories/user_repository.py` — method did not exist
+- `services/bot-core/src/api/routers/admin.py` — 4 call sites: `admin_give_item` (L924), `admin_remove_item` (L995), `admin_give_ship` (L1069), `admin_remove_ship` (L1144)
+
+**Fix**:
+- Added `get_by_discord_id(db, discord_id)` to `UserRepository` — delegates to `get_by_id` (User.id IS the Discord snowflake PK)
+- Added 1 unit test (`test_get_by_discord_id_exception`) and 3 integration tests (happy path found/not-found/contract)
+- All 26 user repository tests pass; ruff clean
+
+---
+
 > **Status snapshot (2026-04-30 post-Tier-2-audit)**: All Package A–G + Patch H + Patch I + B.34/B.35 closeouts have landed; the 2026-04-30 pre-E2E hardening pass added an empirical Tier 2 cog HTTP audit (B.36) that proved zero broken URL/method contracts across the 6 highest-traffic cogs (100 HTTP call sites checked against bot-core's 110 registered routes). Every entry in the OPEN section below carries one of:
 > - `> **FIXED** in commit ...` annotation → fix committed, awaits live re-verification under DB-nuke E2E pass
 > - `RETROACTIVELY CLOSED` header → already correct in HEAD or won't-fix-from-code (A.20, O.2)

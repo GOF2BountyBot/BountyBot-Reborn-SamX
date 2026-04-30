@@ -18,6 +18,87 @@ Cross-ref: `E2E_TEST_CHECKLIST.md` (test-item references). All commit SHAs are l
 >
 > Items marked FIXED here are also summarized in the **FIXED** table at the bottom with their `Verified` column. `Verified: pending` will flip to `✅ live <date>` as the live re-verification pass walks each affected E2E phase.
 
+### B.37 — `setupCog.on_guild_remove` called a nonexistent bot-core route; lingering DB state on bot removal
+> **FIXED** in commits `15dc544` (bot-core: add `DELETE /admin/guilds/{id}/cleanup` endpoint + 6 router tests), `3283009` (discord-gateway: respx URL+method contract test for `on_guild_remove`). Verified: pending live re-verification.
+
+🟡 low · pre-E2E hardening · 2026-04-30
+
+**Context**: Final adversarial QA pass on the B.34/B.35/B.36 cleanup package surfaced exactly one B.33-shape defect across all 14 discord-gateway cogs. The user authorized an immediate fix-then-handoff before the morning E2E run, with the explicit directive: "if ANY of these issues, OR ANY ADJACENT OR SIMILAR appear when I next test, there will be hell to pay."
+
+**Empirical evidence (pre-fix, code review at HEAD)**:
+
+`services/discord-gateway/src/cogs/setupCog.py:87` issued:
+
+```python
+resp = await self.http_client.delete(
+    f"{api_base}/admin/guilds/{guild.id}/cleanup",
+    timeout=10,
+)
+```
+
+Cross-referenced against the complete bot-core admin router (`services/bot-core/src/api/routers/admin.py`) at HEAD:
+
+| Route | Method | Auth | Discord-side effects? |
+|---|---|---|---|
+| `/admin/guilds/initialize` | POST | requires `user_id` ∈ ADMIN_USER_IDS | no |
+| `/admin/guilds/{id}/reset` | POST | requires `user_id` ∈ ADMIN_USER_IDS | no |
+| `/admin/guilds/{id}/uninstall` | DELETE | requires `user_id` ∈ ADMIN_USER_IDS | yes (channel/role deletion attempted) |
+| `/admin/guilds/{id}/cleanup` | — | **NO SUCH ROUTE** | — |
+
+Result: every `on_guild_remove` event produced a 404 response, which was caught by the broad `except Exception` block at `setupCog.py:95` and logged at DEBUG level. Zero user-facing impact, but the cog's clearly-intended DB-cleanup contract was unfulfilled — `guild_configs`, `guild_shops`, `bounty`, `apscheduler_jobs`, `players` and cascaded `player_ships` / `player_inventories` rows for the removed guild persisted indefinitely. If the bot was later re-added to the same guild, it inherited stale state.
+
+This is the textbook B.33-shape failure mode (cog calling a wrong/nonexistent URL co-shipping with mock-only tests that mask the bug). The pre-fix `tests/cogs/test_setupCog.py::TestOnGuildRemove` class used `cog.http_client.delete = AsyncMock(...)` — the mock returned a canned response regardless of URL, so the contract violation was invisible to the test layer.
+
+**Decision rationale (Option 1 chosen)**:
+
+Three reasonable fix shapes were on the table:
+
+| Option | Tradeoff |
+|---|---|
+| **1. Implement the new endpoint** | Matches the cog's clearly-intended contract; leverages existing `config_service.uninstall_guild()` (DB-only, naturally idempotent); requires audit-log convention for system-event actor. **Chosen.** |
+| 2. Repoint cog to `/uninstall` | Rejected: `/uninstall` requires `user_id` ∈ ADMIN_USER_IDS auth, which the bot's `on_guild_remove` cannot meaningfully supply (no user initiated the event). Would also attempt destructive Discord channel/role deletes that always fail (bot is already gone) — log noise pollution. |
+| 3. Delete the call | Rejected: leaves stale DB state on bot re-add — the exact failure mode the original cog code was trying to prevent. Violates the user's "fix what fucking needs to be fixed" directive. |
+
+**Fix shape**:
+
+1. **bot-core** (`services/bot-core/src/api/routers/admin.py`): added `DELETE /admin/guilds/{guild_id}/cleanup` (commit `15dc544`):
+   - Soft cleanup variant of `/uninstall`.
+   - DB-only: removes guild-scoped rows via existing `config_service.uninstall_guild()` — same code path as `/uninstall`.
+   - Does NOT touch Discord channels/roles (bot is already gone from the guild).
+   - **No `user_id` query parameter** — system-event endpoint, auth bypass is intentional and docstring-documented.
+   - **Audit-logged** with `actor_id=0` (convention for "no user — automated platform event") and `details.trigger="on_guild_remove event from discord-gateway"`.
+   - **Idempotent**: `clear_guild_players` iterates a possibly-empty list, `clear_all_guild_shops` issues `DELETE WHERE` (no-op on empty), `delete_guild_config` returns False if no row exists. Discord retries succeed silently.
+   - Mirrors `/uninstall` scheduler-job cancellation and bounty-clearing for parity.
+
+2. **discord-gateway** (`services/discord-gateway/tests/cogs/test_setupCog.py`): added `TestOnGuildRemoveRespx` class (commit `3283009`):
+   - `test_on_guild_remove_calls_correct_url_and_method` — respx `assert_all_called=True` against `DELETE /api/v1/admin/guilds/{guild_id}/cleanup`. Any drift (URL change, method swap) fails the test.
+   - `test_on_guild_remove_handles_404_gracefully` — defense-in-depth regression net: even if a future deployment serves bot-core without the endpoint, the broad-except path must not crash the bot's event loop.
+
+3. **bot-core router tests** (`services/bot-core/tests/api/test_admin_router.py`): 6 new tests in `TestCleanupGuildOnRemove` class (commit `15dc544`):
+   - happy path → 200 + correct removed_counts
+   - no `user_id` required (auth bypass for system events)
+   - idempotency on consecutive calls (Discord-retry resilience)
+   - guild_id from URL path is correctly threaded to `config_service.uninstall_guild`
+   - 500 on internal exception
+   - scheduler-job cancellation only matches the right guild (mirror of uninstall test)
+   - **audit-log contract**: asserts `actor_id=0`, `action="guild_cleanup_on_remove"`, `details.trigger` contains `"on_guild_remove"`
+
+**Test results**:
+
+| Service | Test scope | Pre-fix | Post-fix |
+|---|---|---|---|
+| bot-core | `tests/api/test_admin_router.py::TestCleanupGuildOnRemove` (6 new) | (did not exist) | 6 passed |
+| bot-core | full suite | 3180 passed | **3186 passed**, 1 skipped (47.63s) |
+| bot-core | `test_transaction_discipline.py` (linter, B.34 layer-1 defense) | 2 passed | 2 passed |
+| discord-gateway | `tests/cogs/test_setupCog.py` (11 pre-existing + 2 new respx) | 11 passed | **13 passed** (6.90s) |
+| discord-gateway | full suite | 2208 passed | **2210 passed** (15:23) |
+
+**Severity rationale (🟡 low)**: zero user-facing impact (404 was already swallowed); zero downtime risk (lingering data is bounded by the number of guilds the bot has ever been kicked from, currently 0–1 per dev cycle). The fix is preventive — it eliminates a B.33-shape latent risk that would have kept materializing on every guild-remove event in production. The respx contract test is the long-term insurance: the next time someone refactors `setupCog`, they cannot silently re-introduce the bug.
+
+**Limitation**: the new endpoint relies on `config_service.uninstall_guild()` being naturally idempotent. The B.34 transaction-discipline contract (every cross-table flow must be wrapped in `async with db.begin():`) is not strictly required here because the endpoint mirrors `/uninstall`'s existing per-step-commit pattern — both are existing self-committing service methods. A future refactor that converts `uninstall_guild` to flush-only must update both endpoints together.
+
+---
+
 ### B.36 — Empirical Tier 2 cog HTTP audit (pre-E2E hardening, no findings)
 > **CLOSED — NO FINDINGS** in commits documented in 2026-04-30 closeout. Audit added 6 respx URL+method contract tests for Phase 1-3 critical paths (one per cog), establishing a regression net for the highest-traffic commands. Verified: pending live re-verification.
 
@@ -2967,6 +3048,7 @@ Effort estimate: 20–60 agent-hours, deferred until after Tier 1–2.
 
 | ID | Summary | Commit | Verified |
 |---|---|---|---|
+| **B.37** | `setupCog.on_guild_remove` called nonexistent `DELETE /admin/guilds/{id}/cleanup`; 404 caught by broad except, lingering DB state never cleaned. Fixed: added the endpoint (DB-only soft cleanup, no user_id auth, audit-logged actor_id=0, idempotent) + 6 router tests + 2 respx URL+method contract tests for setupCog. Pure B.33-shape: cog HTTP call to nonexistent route co-shipping with mock-only tests. | `15dc544`, `3283009` | Verified: pending |
 | **B.33** | `adminCog._preload_static_catalogs` used wrong URLs: `GET /data/{cat}` (405 POST-only) for 4 item categories and `GET /about/ships` (404 nonexistent) for ships. Fixed: both changed to `GET /about/categories/{cat}/objects` — matching AboutCog's known-working pattern. Test debt: 4 tautological mock tests replaced with 5 respx tests asserting URL+method; aboutCog, bountyCog, skinsCog preload tests also converted; `tests/AGENTS.md` policy added. | `452ac28`, `9a19909`, `645c474`, `51c0bb5` | Verified: pending |
 | **A.34** | `/ship` autocomplete showed `🟢` prefix in dropdown (a/c); `/ship` embed had redundant `Type: Betty` field (b/B.3). Fixed: added `show_active_indicator: bool = True` param to `player_ships_autocomplete()`; `/ship` and `/nickname` callers pass `False`; removed `embed.add_field(name="Type", ...)` from inline `/ship` builder. B.3 subsumed — `Type:` field is the same redundancy, removed by same change. Full delegation to `build_loadout_embed()` deferred (format mismatch between `/ships/{id}/loadout` and `/players/{id}/loadout` responses). | `1f3561d` | pending |
 | **A.32** | `Mp'zzzm Thrust` module rendered custom emoji `:mpzzzm:` (guild emoji not uploaded). Fixed: replaced `<:mpzzzm:723707097778225214>` with unicode `⚡` in `thrusters.mpzzzm_thrust.json`. | `1f3561d` | pending |

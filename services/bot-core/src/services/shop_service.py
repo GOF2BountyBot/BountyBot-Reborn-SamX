@@ -190,8 +190,14 @@ class ShopService:  # pylint: disable=too-many-instance-attributes
             # Deduct credits from player
             player.credits -= total_cost
 
-            # Add item to player inventory
-            await self.inventory_repo.add_item(db, player_id, shop_item.item_type, shop_item.item_name, quantity)
+            # Add item to player inventory (commit=False — this service owns the
+            # explicit single commit below). B.34 closeout: previously this used
+            # the default commit=True, which committed the credit deduction
+            # mid-flow and left a window where the shop-quantity update could
+            # fail and leave player credit-deducted-with-item but shop unchanged.
+            await self.inventory_repo.add_item(
+                db, player_id, shop_item.item_type, shop_item.item_name, quantity, commit=False
+            )
 
             # Remove item from shop
             new_shop_quantity = shop_item.quantity - quantity
@@ -201,6 +207,7 @@ class ShopService:  # pylint: disable=too-many-instance-attributes
             else:
                 shop_item.quantity = new_shop_quantity
 
+            # Single atomic commit covering: player credits, inventory add, shop quantity update.
             await db.commit()
             await db.refresh(player)
 

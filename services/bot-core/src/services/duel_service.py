@@ -231,8 +231,17 @@ class DuelService:
         else:
             flogger.info(f"Duel {duel_id} ended in a stalemate — no credits transferred.")
 
-        # Mark duel as completed
-        await self.duel_repo.update_status(db, duel_id, "completed")
+        # Mark duel as completed (commit=False so we own the explicit commit below).
+        # B.34 closeout: previously this method relied on the duel_repo.update_status
+        # default commit=True to flush ALL pending changes (the direct ORM
+        # mutations on winner/loser players above). That works only by accident
+        # — if any future change set commit=False here, the cross-table writes
+        # would silently roll back. Now the service owns the transaction
+        # explicitly: all mutations + the status update commit together as one.
+        await self.duel_repo.update_status(db, duel_id, "completed", commit=False)
+        await db.commit()
+        await db.refresh(challenger)
+        await db.refresh(target)
 
         return {
             "fight_results": fight_results,

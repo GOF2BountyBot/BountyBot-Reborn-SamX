@@ -161,21 +161,32 @@ def _is_db_commit_call(node: ast.AST) -> bool:
 def _has_commit_false_call(method_node: ast.AsyncFunctionDef) -> bool:
     """Return True if the method is flush-only by construction.
 
-    Two signatures qualify:
+    A method is flush-only iff it propagates the no-commit contract to its
+    callers: it performs writes (or delegates writes) but never commits the
+    transaction itself. Two qualifying signatures:
 
-    1. The body contains a Call with literal commit=False kwarg — this
-       indicates an unconditional flush-only delegation to a repo method.
+    1. Body contains a Call with literal ``commit=False`` kwarg AND does NOT
+       contain any unconditional ``await db.commit()``.  The presence of an
+       explicit ``db.commit()`` indicates the method is a SELF-COMMITTING
+       AGGREGATOR — it uses ``commit=False`` on inner repo calls only to
+       defer the commit until all cross-table writes are flushed, then
+       commits atomically itself.  Such methods are SAFE to call from bare
+       routes; they are NOT in the flush-only set.
 
-    2. The body contains a direct ``db.flush()`` call AND does NOT contain
-       any unconditional ``db.commit()`` call. Methods that have BOTH
+    2. Body contains a direct ``db.flush()`` call AND does NOT contain any
+       unconditional ``db.commit()`` call.  Methods that have BOTH
        (e.g. ``if commit: db.commit() else: db.flush()``) are dual-mode
        transaction-owner-or-participant — their semantics depend on the
        caller's ``commit`` argument, so we exclude them from the
-       unconditional flush-only set. Their callers are unconstrained by
+       unconditional flush-only set.  Their callers are unconstrained by
        this linter.
 
+    The unifying rule: a method that has an unconditional ``db.commit()``
+    in its body is NEVER flush-only — it owns the transaction whenever it
+    is called, regardless of any inner ``commit=False`` delegations.
+
     Approximation: 'no unconditional commit' is checked as 'no commit call
-    anywhere in the body'. False positives are possible (a method with a
+    anywhere in the body'.  False positives are possible (a method with a
     commit() inside an obscure conditional could escape) but won't matter
     in practice — the method is still pure if it commits in its happy path.
     """
@@ -191,6 +202,10 @@ def _has_commit_false_call(method_node: ast.AsyncFunctionDef) -> bool:
             has_db_flush = True
         if _is_db_commit_call(sub):
             has_db_commit = True
+    # Self-committing aggregator: has commit=False internally BUT also has
+    # explicit db.commit() — owns its own transaction. Not flush-only.
+    if has_db_commit:
+        return False
     if has_commit_false_kwarg:
         return True
     return bool(has_db_flush and not has_db_commit)

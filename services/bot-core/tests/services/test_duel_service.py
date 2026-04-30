@@ -463,8 +463,10 @@ class TestAcceptDuel:
         async def mock_from_player(db, player_id):
             return make_ship_loadout("ChallengerShip" if player_id == 1 else "TargetShip")
 
+        # B.34 closeout: accept_duel now self-commits. Mock db.commit / db.refresh.
+        mock_db = AsyncMock()
         with patch.object(LoadoutBuilder, "from_player", side_effect=mock_from_player):
-            result = await svc.accept_duel(db=None, duel_id=1)
+            result = await svc.accept_duel(db=mock_db, duel_id=1)
 
         assert result["credits_transferred"] == 200
         assert challenger.credits == 1200
@@ -473,7 +475,8 @@ class TestAcceptDuel:
         assert target.credits == 800
         assert target.duel_losses == 1
         assert target.duel_credits_lost == 200
-        duel_repo.update_status.assert_awaited_once_with(None, 1, "completed")
+        duel_repo.update_status.assert_awaited_once_with(mock_db, 1, "completed", commit=False)
+        mock_db.commit.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_accept_target_wins(self):
@@ -505,8 +508,9 @@ class TestAcceptDuel:
         async def mock_from_player(db, player_id):
             return make_ship_loadout("ChallengerShip" if player_id == 1 else "TargetShip")
 
+        mock_db = AsyncMock()
         with patch.object(LoadoutBuilder, "from_player", side_effect=mock_from_player):
-            result = await svc.accept_duel(db=None, duel_id=2)
+            result = await svc.accept_duel(db=mock_db, duel_id=2)
 
         assert result["credits_transferred"] == 100
         assert target.credits == 600
@@ -515,6 +519,7 @@ class TestAcceptDuel:
         assert challenger.credits == 400
         assert challenger.duel_losses == 1
         assert challenger.duel_credits_lost == 100
+        mock_db.commit.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_accept_stalemate_no_credits_transferred(self):
@@ -546,8 +551,9 @@ class TestAcceptDuel:
         async def mock_from_player(db, player_id):
             return make_ship_loadout("ShipA" if player_id == 1 else "ShipB")
 
+        mock_db = AsyncMock()
         with patch.object(LoadoutBuilder, "from_player", side_effect=mock_from_player):
-            result = await svc.accept_duel(db=None, duel_id=3)
+            result = await svc.accept_duel(db=mock_db, duel_id=3)
 
         fight = result["fight_results"]
         assert fight.is_stalemate is True
@@ -560,8 +566,9 @@ class TestAcceptDuel:
         # Credits unchanged
         assert challenger.credits == 500
         assert target.credits == 500
-        # Status still updated
-        duel_repo.update_status.assert_awaited_once_with(None, 3, "completed")
+        # Status still updated; B.34 closeout: explicit commit owned by service
+        duel_repo.update_status.assert_awaited_once_with(mock_db, 3, "completed", commit=False)
+        mock_db.commit.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_accept_duel_not_found_raises(self):
@@ -659,13 +666,15 @@ class TestAcceptDuel:
         async def mock_from_player(db, player_id):
             return make_ship_loadout("Unarmed", base_armour=100)  # 0 weapons → 0 DPS
 
+        mock_db = AsyncMock()
         with patch.object(LoadoutBuilder, "from_player", side_effect=mock_from_player):
-            result = await svc.accept_duel(db=None, duel_id=4)
+            result = await svc.accept_duel(db=mock_db, duel_id=4)
 
         # Two ships with 0 DPS → stalemate
         fight = result["fight_results"]
         assert fight.is_stalemate is True
         assert result["credits_transferred"] == 0
+        mock_db.commit.assert_awaited_once()
 
 
 # ---------------------------------------------------------------------------

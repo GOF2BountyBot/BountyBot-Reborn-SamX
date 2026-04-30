@@ -1546,14 +1546,22 @@ class BountyService:
 
             modified_players.append(player)
 
-        # Update bounty status
+        # Update bounty status (commit=False; this service owns the explicit commit below).
+        # B.34 closeout: previously this method relied on bounty_repo.update()'s
+        # default commit=True to flush ALL pending changes (the direct ORM
+        # mutations on modified_players above). That works only by accident —
+        # if any future change set commit=False here, the cross-table player
+        # mutations would silently roll back. Now the service owns the
+        # transaction explicitly. (Note: distribute_rewards is called from
+        # check_bounty which already issues an explicit db.commit() at the end
+        # of its loop, so this commit is the inner cross-table flush; the outer
+        # check_bounty commit is a no-op when no further changes are pending.)
         bounty.status = "completed"
         bounty.win_user_id = next((r.player_id for r in rewards if r.is_winner), None)
-        await self.bounty_repo.update(db, bounty)
+        await self.bounty_repo.update(db, bounty, commit=False)
+        await db.commit()
 
         # Refresh all modified players for accurate state.
-        # Note: bounty_repo.update() already commits, so player changes
-        # are persisted. We just refresh to get the post-commit state.
         for player in modified_players:
             await db.refresh(player)
 

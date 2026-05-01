@@ -383,6 +383,7 @@ class ConfigRepository(IRepository[GuildConfig]):
                 },
                 "created_at": config.created_at.isoformat(),
                 "updated_at": config.updated_at.isoformat(),
+                "admin_role_id": config.admin_role_id,
                 "category_id": config.category_id,
                 "shop_channel_id": config.shop_channel_id,
                 "bronze_bounty_channel_id": config.bronze_bounty_channel_id,

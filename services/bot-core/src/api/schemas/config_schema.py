@@ -22,6 +22,7 @@ class GuildConfigResponse(BaseModel):
     hunting_channel_id: int | None = None
     discussion_channel_id: int | None = None
     image_channel_id: int | None = None
+    admin_role_id: int | None = None
     bounty_hunter_role_id: int | None = None
     bronze_role_id: int | None = None
     silver_role_id: int | None = None

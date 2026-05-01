@@ -11,6 +11,18 @@ Cross-ref: `E2E_TEST_CHECKLIST.md` (test-item references). All commit SHAs are l
 
 ## OPEN
 
+### B.44 — AboutCog preload has no retry logic, leaves category cache empty on startup
+
+🟡 medium · Runtime · 2026-05-01 · **FIXED** `f39e73a`
+
+**Context**: On stack startup, AboutCog's `_preload_about_data()` failed with "ConnectError: Name or service not known" because bot-core wasn't ready. Unlike AdminCog (which has 5 retries with backoff), AboutCog failed immediately and set `_objects_by_category = {}` — never retried.
+
+**Root cause**: `services/discord-gateway/src/cogs/aboutCog.py` preload method had no retry logic.
+
+**Fix**: Added 5-attempt exponential backoff loop (5s, 10s, 20s, 40s, 60s) matching AdminCog's pattern.
+
+---
+
 ### B.43 — Zero-slot turret equip gives generic Discord API error
 
 🟡 medium · E2E · 2026-05-01 · **FIXED** `d6c1e0b`

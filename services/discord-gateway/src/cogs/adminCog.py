@@ -46,7 +46,7 @@ async def _check_is_admin(interaction: discord.Interaction) -> bool:
         resp.raise_for_status()
         config_data = resp.json()
         admin_role_id = config_data.get("admin_role_id")
-        member = getattr(interaction, "member", None)
+        member = interaction.guild.get_member(interaction.user.id) if interaction.guild else None
         role_ids = [r.id for r in member.roles] if member and hasattr(member, "roles") else []
         flogger.debug(f"_check_is_admin: guild={interaction.guild_id}, user={interaction.user.id}, admin_role_id={admin_role_id}, member={member}, role_ids={role_ids}")
         if admin_role_id and member and admin_role_id in role_ids:

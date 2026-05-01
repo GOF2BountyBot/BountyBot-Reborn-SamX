@@ -1166,6 +1166,106 @@ class TestEquipCommand:
 
         assert isinstance(call_kwargs["view"], WeaponSwapView)
 
+    def test_equip_slot_full_zero_slots_returns_error(self, mock_inventory_cog, make_mock_response):
+        """/equip with slot_full and max_slots=0 returns ephemeral error instead of empty swap view."""
+        interaction = _create_mock_interaction()
+
+        player_resp = make_mock_response({"id": 1})
+        ships_resp = make_mock_response([_make_ship_data()])
+        check_resp = make_mock_response(
+            _make_check_response(
+                status="slot_full",
+                equipment_type="turret_weapon",
+                max_slots=0,
+                equipped_items=[],
+            )
+        )
+
+        mock_inventory_cog.http_client.post = AsyncMock(side_effect=[player_resp, check_resp])
+        mock_inventory_cog.http_client.get = AsyncMock(return_value=ships_resp)
+
+        asyncio.run(mock_inventory_cog.equip.callback(mock_inventory_cog, interaction, item_name="Matador TS"))
+
+        interaction.followup.send.assert_awaited_once()
+        call_args = interaction.followup.send.call_args
+        # Must be ephemeral
+        assert call_args[1].get("ephemeral", False)
+        # Must NOT have a view (no swap UI)
+        assert "view" not in call_args[1]
+        # Message must mention 0 slots
+        message = call_args[0][0]
+        assert "0" in message
+        assert "turret_weapon" in message
+
+    def test_equip_slot_full_zero_slots_weapons_returns_error(self, mock_inventory_cog, make_mock_response):
+        """B.43 adversarial: zero-slot guard works for equipment_type='weapons' (not just turrets).
+
+        Ensures the check is equipment_type-agnostic and not accidentally only
+        applied to a single type like turrets.
+        """
+        interaction = _create_mock_interaction()
+
+        player_resp = make_mock_response({"id": 1})
+        ships_resp = make_mock_response([_make_ship_data()])
+        check_resp = make_mock_response(
+            _make_check_response(
+                status="slot_full",
+                equipment_type="weapons",
+                max_slots=0,
+                equipped_items=[],
+            )
+        )
+
+        mock_inventory_cog.http_client.post = AsyncMock(side_effect=[player_resp, check_resp])
+        mock_inventory_cog.http_client.get = AsyncMock(return_value=ships_resp)
+
+        asyncio.run(mock_inventory_cog.equip.callback(mock_inventory_cog, interaction, item_name="Pulse Laser"))
+
+        interaction.followup.send.assert_awaited_once()
+        call_args = interaction.followup.send.call_args
+        assert call_args[1].get("ephemeral", False), "Zero-slot error must be ephemeral"
+        assert "view" not in call_args[1], "Must not show a swap UI for zero-slot ships"
+        message = call_args[0][0]
+        assert "0" in message
+        assert "weapons" in message
+
+    def test_equip_slot_full_nonzero_slots_shows_swap_view(self, mock_inventory_cog, make_mock_response):
+        """B.43 adversarial: zero-slot guard must NOT fire when max_slots > 0.
+
+        This is the boundary condition: max_slots=1 with 1 equipped item is a
+        legitimate slot_full condition that should show the swap view, not the
+        zero-slot error message.
+        """
+        from cogs.inventoryCog import WeaponSwapView
+
+        interaction = _create_mock_interaction()
+
+        player_resp = make_mock_response({"id": 1})
+        ships_resp = make_mock_response([_make_ship_data(weapons=["OldLaser"])])
+        check_resp = make_mock_response(
+            _make_check_response(
+                status="slot_full",
+                equipment_type="weapons",
+                max_slots=1,
+                equipped_items=[{"name": "OldLaser", "emoji": ""}],
+            )
+        )
+
+        mock_inventory_cog.http_client.post = AsyncMock(side_effect=[player_resp, check_resp])
+        mock_inventory_cog.http_client.get = AsyncMock(return_value=ships_resp)
+
+        asyncio.run(mock_inventory_cog.equip.callback(mock_inventory_cog, interaction, item_name="NewCannon"))
+
+        interaction.followup.send.assert_awaited_once()
+        call_kwargs = interaction.followup.send.call_args[1]
+        # Must NOT be the zero-slot error path
+        assert not call_kwargs.get("ephemeral", False), (
+            "A ship with max_slots=1 (not 0) must show the swap view, not an ephemeral error"
+        )
+        assert "embed" in call_kwargs, "Slot-full with > 0 slots must show the swap embed"
+        assert "view" in call_kwargs, "Slot-full with > 0 slots must show the swap view"
+        assert isinstance(call_kwargs["view"], WeaponSwapView)
+
     def test_equip_unique_conflict_shows_module_swap_view(self, mock_inventory_cog, make_mock_response):
         """/equip with unique_conflict status shows UniqueModuleSwapView."""
         interaction = _create_mock_interaction()

@@ -523,7 +523,6 @@ class HelpCog(commands.Cog):
     # ------------------------------------------------------------------
 
     @app_commands.command(name="admin_help", description="Show admin-only bot commands")
-    @app_commands.default_permissions(administrator=True)
     @app_commands.describe(category="Admin category to drill into (leave blank for overview)")
     @app_commands.autocomplete(category=_admin_category_autocomplete)
     @is_admin()

@@ -2645,8 +2645,12 @@ class TestAdminRoleAccessGranted:
         admin_role.id = admin_role_id
 
         interaction = _create_mock_interaction()
-        # User has the admin role but NOT Discord Administrator permission
-        interaction.user.roles = [admin_role]
+        # B.40 fix: production code reads interaction.member.roles (not user.roles).
+        # interaction.member is a discord.Member; interaction.user is a discord.User.
+        # In guild slash commands, interaction.member holds the guild-scoped object
+        # (with roles); interaction.user is the base User (no guild context).
+        interaction.member.roles = [admin_role]
+        interaction.member = interaction.member  # ensure member is set
         interaction.user.guild_permissions = MagicMock()
         interaction.user.guild_permissions.administrator = False
         interaction.guild_id = 987654321
@@ -2679,7 +2683,9 @@ class TestAdminRoleAccessGranted:
         other_role.id = 111111111  # Some random non-admin role
 
         interaction = _create_mock_interaction()
-        interaction.user.roles = [other_role]
+        # B.40 fix: set roles on member (not user) to match production code.
+        # The user does NOT have the admin role — member.roles has only a non-admin role.
+        interaction.member.roles = [other_role]
         interaction.user.guild_permissions = MagicMock()
         interaction.user.guild_permissions.administrator = False
         interaction.guild_id = 987654321
@@ -2800,6 +2806,120 @@ class TestAdminRoleAccessGranted:
                 "Remove @app_commands.default_permissions(administrator=True) so users "
                 "with the configured admin role can see and use this command."
             )
+
+
+class TestAdminRoleAccessAdversarial:
+    """B.40 adversarial edge cases for _check_is_admin.
+
+    Tests that the `interaction.member` None-guard works correctly, and that
+    setting roles only on interaction.user (the old bug) does NOT grant access
+    when interaction.member is used for the role check.
+    """
+
+    def test_check_is_admin_member_none_falls_back_to_false(self, mock_admin_cog):
+        """B.40 edge case: interaction.member is None → role check skipped → returns False.
+
+        In certain Discord contexts (DMs, uncached guilds) interaction.member may be
+        None.  The production code guards with `interaction.member and …`; this test
+        ensures that guard prevents an AttributeError and correctly returns False.
+        """
+        from cogs.adminCog import _check_is_admin
+
+        admin_role_id = 555666777
+        interaction = _create_mock_interaction()
+        interaction.member = None  # Simulate DM or uncached guild
+        interaction.user.guild_permissions = MagicMock()
+        interaction.user.guild_permissions.administrator = False
+        interaction.guild_id = 987654321
+
+        api_resp = MagicMock()
+        api_resp.raise_for_status = MagicMock()
+        api_resp.json.return_value = {"admin_role_id": admin_role_id}
+
+        with patch("cogs.adminCog.httpx.AsyncClient") as mock_client_cls:
+            mock_client = AsyncMock()
+            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client.__aexit__ = AsyncMock(return_value=None)
+            mock_client.get = AsyncMock(return_value=api_resp)
+            mock_client_cls.return_value = mock_client
+
+            result = asyncio.run(_check_is_admin(interaction))
+
+        assert result is False, (
+            "When interaction.member is None (DM context), the role check must be skipped "
+            "and _check_is_admin must return False rather than raising AttributeError."
+        )
+
+    def test_check_is_admin_user_roles_not_sufficient(self, mock_admin_cog):
+        """B.40 regression guard: setting roles on interaction.user (NOT member) does NOT grant access.
+
+        This is the root-cause scenario that was broken before the fix.
+        interaction.user.roles is a discord.User attribute that does NOT carry guild
+        role assignments in real discord.py.  Only interaction.member.roles is valid.
+        The fix ensures we check member.roles; this test asserts that user.roles
+        alone is NOT checked (i.e., leaving member.roles empty does NOT grant access
+        even when user.roles has the admin role).
+        """
+        from cogs.adminCog import _check_is_admin
+
+        admin_role_id = 555666777
+        admin_role = MagicMock()
+        admin_role.id = admin_role_id
+
+        interaction = _create_mock_interaction()
+        # Only set on user — NOT member (simulates the pre-fix state)
+        interaction.user.roles = [admin_role]
+        # member.roles must be empty (different from user)
+        interaction.member.roles = []
+        interaction.user.guild_permissions = MagicMock()
+        interaction.user.guild_permissions.administrator = False
+        interaction.guild_id = 987654321
+
+        api_resp = MagicMock()
+        api_resp.raise_for_status = MagicMock()
+        api_resp.json.return_value = {"admin_role_id": admin_role_id}
+
+        with patch("cogs.adminCog.httpx.AsyncClient") as mock_client_cls:
+            mock_client = AsyncMock()
+            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client.__aexit__ = AsyncMock(return_value=None)
+            mock_client.get = AsyncMock(return_value=api_resp)
+            mock_client_cls.return_value = mock_client
+
+            result = asyncio.run(_check_is_admin(interaction))
+
+        assert result is False, (
+            "interaction.user.roles must NOT be checked — only interaction.member.roles is authoritative. "
+            "Setting the admin role on user.roles with an empty member.roles must NOT grant access."
+        )
+
+    def test_check_is_admin_api_failure_returns_false(self, mock_admin_cog):
+        """B.40 edge case: if the config API call fails, _check_is_admin falls back to False.
+
+        The broad except block must swallow the error and deny access rather than
+        propagating a 500 to the user.
+        """
+        from cogs.adminCog import _check_is_admin
+
+        interaction = _create_mock_interaction()
+        interaction.member.roles = []
+        interaction.user.guild_permissions = MagicMock()
+        interaction.user.guild_permissions.administrator = False
+        interaction.guild_id = 987654321
+
+        with patch("cogs.adminCog.httpx.AsyncClient") as mock_client_cls:
+            mock_client = AsyncMock()
+            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client.__aexit__ = AsyncMock(return_value=None)
+            mock_client.get = AsyncMock(side_effect=Exception("Network timeout"))
+            mock_client_cls.return_value = mock_client
+
+            result = asyncio.run(_check_is_admin(interaction))
+
+        assert result is False, (
+            "An API failure during the role-ID lookup must not propagate; _check_is_admin "
+            "must return False (deny access) when the config API is unreachable."
+        )
 
 
 if __name__ == "__main__":

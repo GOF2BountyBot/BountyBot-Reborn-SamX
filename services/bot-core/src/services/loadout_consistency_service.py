@@ -303,6 +303,27 @@ class LoadoutConsistencyService:
         if inv_item is None:
             raise ValueError(f"Item '{item_name}' (type={inventory_type}) not found in your inventory")
 
+        # 4b. B.41 — Inventory quantity vs. equipped count validation.
+        #
+        # Count how many times this item is already equipped across ALL of the
+        # player's ships.  If that count is already >= the inventory quantity,
+        # the player has no remaining unequipped copies to use, so we must
+        # reject the request rather than allow the inventory to go negative.
+        #
+        # This prevents the class of bug where concurrent equip requests or a
+        # historical DB inconsistency allow more copies to be equipped than the
+        # player's inventory holds.
+        all_player_ships = await self.player_ship_repo.get_player_ships(db, player_id)
+        already_equipped_count = sum(
+            self._get_slot(s, equipment_type).count(item_name) for s in all_player_ships
+        )
+        if already_equipped_count >= inv_item.quantity:
+            raise ValueError(
+                f"Cannot equip '{item_name}': you have {inv_item.quantity} in inventory "
+                f"but {already_equipped_count} already equipped across your ships. "
+                f"No unequipped copies remain."
+            )
+
         # 5. Slot availability against static ship caps
         caps = await self._get_static_ship_caps(db, ship)
         current_slot = self._get_slot(ship, equipment_type)

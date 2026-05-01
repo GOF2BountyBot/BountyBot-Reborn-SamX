@@ -749,6 +749,14 @@ class InventoryCog(commands.Cog):
                 equipped_items = check_data.get("equipped_items", [])
                 max_slots = check_data.get("max_slots", len(equipped_items))
 
+                # Handle zero-slot case: ship cannot equip this equipment type at all
+                if max_slots == 0:
+                    await interaction.followup.send(
+                        f"❌ This ship has 0 {equipment_type} slots and cannot equip {equipment_type}.",
+                        ephemeral=True,
+                    )
+                    return
+
                 embed = discord.Embed(
                     title="🔄 Slot Full — Choose an item to swap",
                     description=(

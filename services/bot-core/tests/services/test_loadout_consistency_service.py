@@ -227,6 +227,125 @@ class TestEquipOne:
         with pytest.raises(ValueError, match="could not be retrieved"):
             await svc.equip_one(mock_db, player_id=42, ship_id=1, item_name="X", equipment_type="weapons")
 
+    @pytest.mark.asyncio
+    async def test_equip_one_all_copies_already_equipped_raises(self, svc, mock_db):
+        """B.41 — equip_one raises when inventory quantity <= already-equipped count.
+
+        Reproduces the exact scenario from B.41: player has 2x M6 A4 "Raccoon"
+        in inventory (or 0, legacy inconsistency) but 3 already equipped.
+        The service must reject further equips rather than allow the inventory
+        to go negative.
+        """
+        # Ship already has 2× "Raccoon" equipped; inventory shows quantity=2
+        ship = _make_player_ship(ship_id=6, player_id=1, weapons=["Raccoon", "Raccoon"])
+        static = _make_static_ship(max_primaries=4)
+        inv = _make_inv_item("Raccoon", "primary_weapon", quantity=2)
+
+        svc.player_ship_repo.get_by_id = AsyncMock(return_value=ship)
+        svc.ship_repo.get_by_name = AsyncMock(return_value=static)
+        svc.item_repo.get_by_name = AsyncMock(return_value=_make_base_item("Raccoon", "PrimaryWeapon"))
+        svc.inventory_repo.get_player_item = AsyncMock(return_value=inv)
+        # get_player_ships returns the ship with 2 already equipped
+        svc.player_ship_repo.get_player_ships = AsyncMock(return_value=[ship])
+
+        with pytest.raises(ValueError, match="No unequipped copies remain"):
+            await svc.equip_one(mock_db, player_id=1, ship_id=6, item_name="Raccoon", equipment_type="weapons")
+        svc.inventory_repo.remove_item.assert_not_called()
+        svc.player_ship_repo.add_equipment.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_equip_one_zero_inventory_with_any_equipped_raises(self, svc, mock_db):
+        """B.41 — zero-quantity inventory row blocks equip even with 1 equipped.
+
+        Legacy DB inconsistency: inventory row exists (not None) but quantity=0,
+        and the item is already equipped on at least one ship.  Must be rejected.
+        """
+        ship = _make_player_ship(ship_id=6, player_id=1, weapons=["Raccoon"])
+        static = _make_static_ship(max_primaries=4)
+        inv = _make_inv_item("Raccoon", "primary_weapon", quantity=0)
+
+        svc.player_ship_repo.get_by_id = AsyncMock(return_value=ship)
+        svc.ship_repo.get_by_name = AsyncMock(return_value=static)
+        svc.item_repo.get_by_name = AsyncMock(return_value=_make_base_item("Raccoon", "PrimaryWeapon"))
+        svc.inventory_repo.get_player_item = AsyncMock(return_value=inv)
+        svc.player_ship_repo.get_player_ships = AsyncMock(return_value=[ship])
+
+        with pytest.raises(ValueError, match="No unequipped copies remain"):
+            await svc.equip_one(mock_db, player_id=1, ship_id=6, item_name="Raccoon", equipment_type="weapons")
+
+    @pytest.mark.asyncio
+    async def test_equip_one_partial_equip_still_allowed(self, svc, mock_db):
+        """B.41 — equip is allowed when inventory_qty > already_equipped_count.
+
+        Player has 3× Raccoon in inventory and 2 equipped; a third equip is valid.
+        """
+        ship = _make_player_ship(ship_id=6, player_id=1, weapons=["Raccoon", "Raccoon"])
+        static = _make_static_ship(max_primaries=4)
+        inv = _make_inv_item("Raccoon", "primary_weapon", quantity=3)
+        # After the equip the repo returns the refreshed ship
+        updated_ship = _make_player_ship(ship_id=6, player_id=1, weapons=["Raccoon", "Raccoon", "Raccoon"])
+
+        svc.player_ship_repo.get_by_id = AsyncMock(side_effect=[ship, updated_ship])
+        svc.ship_repo.get_by_name = AsyncMock(return_value=static)
+        svc.item_repo.get_by_name = AsyncMock(return_value=_make_base_item("Raccoon", "PrimaryWeapon"))
+        svc.inventory_repo.get_player_item = AsyncMock(return_value=inv)
+        svc.player_ship_repo.get_player_ships = AsyncMock(return_value=[ship])
+
+        result = await svc.equip_one(mock_db, player_id=1, ship_id=6, item_name="Raccoon", equipment_type="weapons")
+        assert result["success"] is True
+        svc.inventory_repo.remove_item.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_equip_one_cross_ship_count_blocks_equip(self, svc, mock_db):
+        """B.41 adversarial: item equipped on MULTIPLE ships counts toward the total.
+
+        Player has 1 Raccoon in inventory but it is already equipped on two ships
+        (ship A and ship B via some legacy inconsistency).  already_equipped_count=2
+        >= inventory_quantity=1, so the equip on ship C must be rejected.
+        """
+        ship_a = _make_player_ship(ship_id=1, player_id=1, weapons=["Raccoon"])
+        ship_b = _make_player_ship(ship_id=2, player_id=1, weapons=["Raccoon"])
+        ship_c = _make_player_ship(ship_id=3, player_id=1, weapons=[])  # target ship
+        static = _make_static_ship(max_primaries=4)
+        inv = _make_inv_item("Raccoon", "primary_weapon", quantity=1)
+
+        # get_by_id returns ship_c (the target ship for this equip attempt)
+        svc.player_ship_repo.get_by_id = AsyncMock(return_value=ship_c)
+        svc.ship_repo.get_by_name = AsyncMock(return_value=static)
+        svc.item_repo.get_by_name = AsyncMock(return_value=_make_base_item("Raccoon", "PrimaryWeapon"))
+        svc.inventory_repo.get_player_item = AsyncMock(return_value=inv)
+        # get_player_ships returns all three ships (cross-ship sum = 2)
+        svc.player_ship_repo.get_player_ships = AsyncMock(return_value=[ship_a, ship_b, ship_c])
+
+        with pytest.raises(ValueError, match="No unequipped copies remain"):
+            await svc.equip_one(mock_db, player_id=1, ship_id=3, item_name="Raccoon", equipment_type="weapons")
+        svc.inventory_repo.remove_item.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_equip_one_boundary_exactly_one_unequipped_allowed(self, svc, mock_db):
+        """B.41 boundary: inventory_qty == already_equipped_count + 1 — exactly one free copy.
+
+        Player has 3 Raccoon in inventory and 2 already equipped (count=2 < qty=3).
+        This is the boundary condition where equip MUST succeed.  Regressing this
+        would block legitimate equip operations for stackable items.
+        """
+        ship_a = _make_player_ship(ship_id=1, player_id=1, weapons=["Raccoon"])
+        ship_b = _make_player_ship(ship_id=2, player_id=1, weapons=["Raccoon"])
+        ship_c = _make_player_ship(ship_id=3, player_id=1, weapons=[])
+        updated_ship_c = _make_player_ship(ship_id=3, player_id=1, weapons=["Raccoon"])
+        static = _make_static_ship(max_primaries=4)
+        inv = _make_inv_item("Raccoon", "primary_weapon", quantity=3)
+
+        svc.player_ship_repo.get_by_id = AsyncMock(side_effect=[ship_c, updated_ship_c])
+        svc.ship_repo.get_by_name = AsyncMock(return_value=static)
+        svc.item_repo.get_by_name = AsyncMock(return_value=_make_base_item("Raccoon", "PrimaryWeapon"))
+        svc.inventory_repo.get_player_item = AsyncMock(return_value=inv)
+        svc.player_ship_repo.get_player_ships = AsyncMock(return_value=[ship_a, ship_b, ship_c])
+
+        result = await svc.equip_one(mock_db, player_id=1, ship_id=3, item_name="Raccoon", equipment_type="weapons")
+        assert result["success"] is True
+        svc.inventory_repo.remove_item.assert_called_once()
+
 
 # ---------------------------------------------------------------------------
 # unequip_one

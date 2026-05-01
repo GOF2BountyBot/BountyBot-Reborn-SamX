@@ -45,7 +45,7 @@ async def _check_is_admin(interaction: discord.Interaction) -> bool:
             resp = await client.get(f"{api_base}/config/guild/{interaction.guild_id}", timeout=5)
         resp.raise_for_status()
         admin_role_id = resp.json().get("admin_role_id")
-        if admin_role_id and any(r.id == admin_role_id for r in interaction.user.roles):
+        if admin_role_id and interaction.member and any(r.id == admin_role_id for r in interaction.member.roles):
             return True
     except Exception:  # pylint: disable=broad-exception-caught
         pass

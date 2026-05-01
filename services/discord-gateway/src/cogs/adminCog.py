@@ -44,11 +44,18 @@ async def _check_is_admin(interaction: discord.Interaction) -> bool:
         async with httpx.AsyncClient(timeout=httpx.Timeout(10.0)) as client:
             resp = await client.get(f"{api_base}/config/guild/{interaction.guild_id}", timeout=5)
         resp.raise_for_status()
-        admin_role_id = resp.json().get("admin_role_id")
-        if admin_role_id and interaction.member and any(r.id == admin_role_id for r in interaction.member.roles):
-            return True
-    except Exception:  # pylint: disable=broad-exception-caught
-        pass
+        config_data = resp.json()
+        admin_role_id = config_data.get("admin_role_id")
+        flogger.debug(f"_check_is_admin: guild={interaction.guild_id}, user={interaction.user.id}, admin_role_id={admin_role_id}, member={interaction.member}, member_roles={[r.id for r in interaction.member.roles] if interaction.member else None}")
+        if admin_role_id and interaction.member:
+            role_ids = [r.id for r in interaction.member.roles]
+            if admin_role_id in role_ids:
+                flogger.debug(f"_check_is_admin: MATCH! admin_role_id={admin_role_id} found in roles={role_ids}")
+                return True
+            else:
+                flogger.debug(f"_check_is_admin: NO MATCH admin_role_id={admin_role_id} NOT in roles={role_ids}")
+    except Exception as e:  # pylint: disable=broad-exception-caught
+        flogger.debug(f"_check_is_admin: exception {type(e).__name__}: {e}")
 
     return False
 

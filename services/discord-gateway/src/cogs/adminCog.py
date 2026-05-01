@@ -46,14 +46,14 @@ async def _check_is_admin(interaction: discord.Interaction) -> bool:
         resp.raise_for_status()
         config_data = resp.json()
         admin_role_id = config_data.get("admin_role_id")
-        flogger.debug(f"_check_is_admin: guild={interaction.guild_id}, user={interaction.user.id}, admin_role_id={admin_role_id}, member={interaction.member}, member_roles={[r.id for r in interaction.member.roles] if interaction.member else None}")
-        if admin_role_id and interaction.member:
-            role_ids = [r.id for r in interaction.member.roles]
-            if admin_role_id in role_ids:
-                flogger.debug(f"_check_is_admin: MATCH! admin_role_id={admin_role_id} found in roles={role_ids}")
-                return True
-            else:
-                flogger.debug(f"_check_is_admin: NO MATCH admin_role_id={admin_role_id} NOT in roles={role_ids}")
+        member = getattr(interaction, "member", None)
+        role_ids = [r.id for r in member.roles] if member and hasattr(member, "roles") else []
+        flogger.debug(f"_check_is_admin: guild={interaction.guild_id}, user={interaction.user.id}, admin_role_id={admin_role_id}, member={member}, role_ids={role_ids}")
+        if admin_role_id and member and admin_role_id in role_ids:
+            flogger.debug(f"_check_is_admin: MATCH! admin_role_id={admin_role_id} in roles={role_ids}")
+            return True
+        else:
+            flogger.debug(f"_check_is_admin: NO MATCH admin_role_id={admin_role_id}, role_ids={role_ids}")
     except Exception as e:  # pylint: disable=broad-exception-caught
         flogger.debug(f"_check_is_admin: exception {type(e).__name__}: {e}")
 

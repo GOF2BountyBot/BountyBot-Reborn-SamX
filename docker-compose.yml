@@ -26,7 +26,7 @@ services:
       - "5432:5432"
 
   bot-core:
-    build: 
+    build:
       context: ./
       dockerfile: ./services/bot-core/Dockerfile
     container_name: bountybot-bot-core
@@ -36,6 +36,9 @@ services:
       - 8000:8000
     depends_on:
       db:
+        condition: service_healthy
+        restart: true
+      discord-gateway:
         condition: service_healthy
         restart: true
     env_file:
@@ -51,7 +54,7 @@ services:
     restart: unless-stopped
 
   discord-gateway:
-    build: 
+    build:
       context: ./
       dockerfile: ./services/discord-gateway/Dockerfile
     container_name: bountybot-discord-gateway
@@ -60,12 +63,6 @@ services:
     ports:
       - 7999:7999
     depends_on:
-      bot-core:
-        condition: service_healthy
-        restart: true
-      blender-service:
-        condition: service_healthy
-        restart: true
       db:
         condition: service_healthy
         restart: true
@@ -82,7 +79,7 @@ services:
     restart: unless-stopped
 
   blender-service:
-    build: 
+    build:
       context: ./
       dockerfile: ./services/blender-service/Dockerfile
     container_name: bountybot-blender-service
@@ -91,7 +88,10 @@ services:
     ports:
       - 8001:8001
     depends_on:
-      bot-core:
+      db:
+        condition: service_healthy
+        restart: true
+      discord-gateway:
         condition: service_healthy
         restart: true
     env_file:

@@ -11,9 +11,52 @@ Cross-ref: `E2E_TEST_CHECKLIST.md` (test-item references). All commit SHAs are l
 
 ## OPEN
 
+### B.43 — Zero-slot turret equip gives generic Discord API error
+
+🟡 medium · E2E · 2026-05-01 · **FIXED** `d6c1e0b`
+
+**Context**: Equip a turret on a ship with 0 turret slots (e.g., Specter has 0 turrets). Expected: helpful error "ship has 0 turret slots". Actual: generic "An error occurred while equipping the item" followed by Discord API 400 "This field is required" (empty Select options).
+
+**Root cause**: `services/discord-gateway/src/cogs/inventoryCog.py:752` slot_full handler tries to create WeaponSwapView with empty options when `max_slots=0`. Discord API rejects empty Select options.
+
+**Fix**: Added `max_slots == 0` check before creating the swap UI. Returns clear error: "❌ This ship has 0 {equipment_type} slots and cannot equip {equipment_type}."
+
+---
+
+### B.42 — Bounty expire executor runs before discord-gateway is ready
+
+🟡 medium · Runtime · 2026-05-01 · **FIXED** `7b4cb2c`
+
+**Context**: On stack startup, bot-core's `bounty-expire-executor` (APScheduler job) runs its recovery-sweep and attempts to delete stale bounty announcement messages from Discord channels. This fails because discord-gateway service hasn't started yet, resulting in:
+
+```
+bounty-expire-executor - WARNING - BountyExpireJob[recovery-sweep] failed to delete Discord message: [Errno -2] Name or service not known
+```
+
+The second attempt (moments later) succeeds once gateway is up.
+
+**Root cause**: Startup dependency chain was `db → bot-core → discord-gateway`. Bot-core runs recovery sweeps immediately on startup, but gateway hadn't started yet because it depended on bot-core being healthy.
+
+**Fix**: Reversed the dependency order in docker-compose.yml and docker-compose-gpu.yml:
+- `discord-gateway` now depends only on `db` (not on bot-core)
+- `bot-core` now depends on both `db` and `discord-gateway`
+- `blender-service` now depends on both `db` and `discord-gateway`
+
+New startup order: `db → discord-gateway → bot-core, blender-service`
+
+---
+
 ### B.41 — `/equip` autocomplete filter blocks duplicate equips of same item type
 
-🟡 medium · E2E · 2026-04-30
+🟡 medium · E2E · 2026-04-30 · **FIXED** `e4459c0`, **REGRESSION FOUND** `d6c1e0b`
+
+**Original context**: Player has multiple instances of the same item (e.g. 3x M6 A4 "Raccoon" primary weapons) and a ship with multiple primary slots. After equipping the first instance, the autocomplete dropdown removes the item from suggestions, even though the player still owns 2 more in inventory and the game rules allow multiple equips of the same weapon (e.g. 4x M6 A4 "Raccoon" on a 4-primary-slot ship).
+
+**Original fix** (e4459c0): Changed autocomplete filter from `set[str]` (blocked all duplicates) to `dict[str, int]` counter, allowing items where `inventory_quantity > equipped_count`.
+
+**Regression found** (d6c1e0b): Autocomplete still blocked the 3rd copy even though it should be available. Root cause: LoadoutConsistencyService allowed over-equipping (3 equipped when only 2 in inventory), creating DB inconsistency. The autocomplete logic is correct - it correctly filters `qty > equipped_count` (2 > 3 = False).
+
+**Regression fix** (d6c1e0b): Added inventory quantity validation in `LoadoutConsistencyService.equip_one()` that validates `equipped_count < inventory_quantity` before allowing any equip. Prevents over-equipped state.
 
 **Context**: Player has multiple instances of the same item (e.g. 3x M6 A4 "Raccoon" primary weapons) and a ship with multiple primary slots. After equipping the first instance, the autocomplete dropdown removes the item from suggestions, even though the player still owns 2 more in inventory and the game rules allow multiple equips of the same weapon (e.g. 4x M6 A4 "Raccoon" on a 4-primary-slot ship).
 
@@ -48,24 +91,18 @@ and item_name not in equipped_names  # Blocks ALL duplicates
 ---
 
 ### B.40 — Configured admin role not granting admin command access to Alt user
-> **Status**: OPEN, awaiting user investigation input.
 
-🟡 medium · E2E · 2026-04-30
+🟡 medium · E2E · 2026-04-30 · **FIXED** `d6c1e0b`
 
-**Context**: During E2E, the configured admin role (@Bounty Bot Admin, added to guild config via `/admin_setup`) was assigned to the Alt account, but admin commands (e.g. `/admin_spawn_bounty`, `/admin_give_ship`, etc.) remained inaccessible. Alt could not see or use admin-only slash commands despite having the admin role.
+**Context**: During E2E, the configured admin role (@Bounty Bot Admin) was assigned to the Alt account, but admin commands (e.g. `/admin_spawn_bounty`, `/admin_help`) remained inaccessible.
 
-**Empirical evidence**:
-- Admin role exists in guild and was assigned to Alt
-- Admin commands remained invisible/inaccessible to Alt
-- Main (server owner) can access admin commands fine
+**Root cause**: Two bugs:
+1. `services/discord-gateway/src/cogs/adminCog.py:48` used `interaction.user.roles` instead of `interaction.member.roles`. In Discord.py, guild roles are on the Member object, not the User object.
+2. `services/discord-gateway/src/cogs/helpCog.py:526` still had `@app_commands.default_permissions(administrator=True)` which hides commands from non-Discord-admin users in Discord's UI.
 
-**Possible causes to investigate**:
-1. `ADMIN_USER_IDS` env var is empty — the auth check in `admin.py` router may be falling through to a guild-level permission check that doesn't match Discord role assignment
-2. The cog command's `admin_check` decorator may check `ctx.author.id` against a hardcoded list rather than checking for the admin role
-3. Discord role hierarchy issue — admin role may need to be higher in the role list
-4. Command registration timing — admin commands may need a gateway restart after role assignment
-
-**User directive**: Hold for user input before investigating further.
+**Fix**:
+- Changed `interaction.user.roles` to `interaction.member.roles` with None-guard for DM contexts
+- Removed `@app_commands.default_permissions(administrator=True)` from `/admin_help`
 
 ---
 

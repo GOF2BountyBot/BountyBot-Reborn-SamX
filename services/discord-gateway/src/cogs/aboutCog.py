@@ -1,3 +1,4 @@
+import asyncio
 import io
 import os
 
@@ -39,60 +40,67 @@ class AboutCog(commands.Cog):
         await self.http_client.aclose()
 
     async def _preload_data(self):
-        """Preload all categories and objects at startup for responsiveness"""
+        """Preload all categories and objects at startup for responsiveness.
+
+        Uses 5-attempt exponential-backoff retry (5s, 10s, 20s, 40s, 60s) for the
+        categories fetch, matching the pattern in adminCog._preload_static_catalogs.
+        On terminal failure leaves _categories and _objects_by_category empty so the
+        cog degrades gracefully (commands still work, autocomplete returns nothing).
+        """
         await self.bot.wait_until_ready()
-        try:
-            flogger.info("Starting preload of about data...")
 
-            # Load categories
-            resp = await self.http_client.get(f"{api_base}/about/categories", timeout=5)
-            resp.raise_for_status()
-            self._categories = resp.json()
-            flogger.debug(f"Preloaded categories: {self._categories}")
-
-            # Load objects for each category
-            for category in self._categories:
-                try:
-                    resp = await self.http_client.get(f"{api_base}/about/categories/{category}/objects", timeout=10)
-                    resp.raise_for_status()
-                    objects = resp.json()
-                    self._objects_by_category[category] = objects
-                    flogger.debug(f"Preloaded {len(objects)} objects for category {category}")
-                except httpx.TimeoutException as e:
-                    flogger.warning(f"Timeout preloading objects for category {category}: {e}")
-                    self._objects_by_category[category] = []
-                except httpx.HTTPStatusError as e:
-                    flogger.warning(f"HTTP error preloading objects for category {category}: {e.response.status_code}")
-                    self._objects_by_category[category] = []
-                except httpx.RequestError as e:
-                    flogger.warning(f"Request error preloading objects for category {category}: {e}")
-                    self._objects_by_category[category] = []
-                except Exception as e:  # pylint: disable=broad-exception-caught
-                    flogger.warning(f"Failed to preload objects for category {category}: {e}")
-                    self._objects_by_category[category] = []
-
-            flogger.info(
-                f"Preload complete: {len(self._categories)} categories, "
-                f"{sum(len(objs) for objs in self._objects_by_category.values())} total objects"
+        # --- Step 1: fetch categories with retry ---
+        categories: list[str] = []
+        for attempt in range(5):
+            try:
+                flogger.info(f"Starting preload of about data (attempt {attempt + 1}/5)...")
+                resp = await self.http_client.get(f"{api_base}/about/categories", timeout=5)
+                resp.raise_for_status()
+                categories = resp.json()
+                flogger.debug(f"Preloaded categories: {categories}")
+                break
+            except Exception as exc:  # pylint: disable=broad-exception-caught
+                wait = min(5 * (2**attempt), 60)
+                flogger.warning(
+                    f"_preload_data: failed to fetch categories "
+                    f"(attempt {attempt + 1}/5): {type(exc).__name__}: {exc}, retrying in {wait}s"
+                )
+                await asyncio.sleep(wait)
+        else:
+            flogger.error(
+                "_preload_data: terminal failure fetching categories after 5 attempts; autocomplete will be empty"
             )
+            self._categories = []
+            self._objects_by_category = {}
+            return
 
-        except httpx.TimeoutException as e:
-            flogger.warning(f"Timeout preloading about data: {e}")
-            self._categories = []
-            self._objects_by_category = {}
-        except httpx.HTTPStatusError as e:
-            flogger.warning(f"HTTP error preloading about data: {e.response.status_code}")
-            self._categories = []
-            self._objects_by_category = {}
-        except httpx.RequestError as e:
-            flogger.warning(f"Request error preloading about data: {e}")
-            self._categories = []
-            self._objects_by_category = {}
-        except Exception as e:  # pylint: disable=broad-exception-caught
-            flogger.warning(f"Unexpected error preloading about data: {e}")
-            # Set defaults so the cog can still function
-            self._categories = []
-            self._objects_by_category = {}
+        self._categories = categories
+
+        # --- Step 2: fetch objects per category (each independently, no retry needed here) ---
+        for category in self._categories:
+            try:
+                resp = await self.http_client.get(f"{api_base}/about/categories/{category}/objects", timeout=10)
+                resp.raise_for_status()
+                objects = resp.json()
+                self._objects_by_category[category] = objects
+                flogger.debug(f"Preloaded {len(objects)} objects for category {category}")
+            except httpx.TimeoutException as e:
+                flogger.warning(f"Timeout preloading objects for category {category}: {e}")
+                self._objects_by_category[category] = []
+            except httpx.HTTPStatusError as e:
+                flogger.warning(f"HTTP error preloading objects for category {category}: {e.response.status_code}")
+                self._objects_by_category[category] = []
+            except httpx.RequestError as e:
+                flogger.warning(f"Request error preloading objects for category {category}: {e}")
+                self._objects_by_category[category] = []
+            except Exception as e:  # pylint: disable=broad-exception-caught
+                flogger.warning(f"Failed to preload objects for category {category}: {e}")
+                self._objects_by_category[category] = []
+
+        flogger.info(
+            f"Preload complete: {len(self._categories)} categories, "
+            f"{sum(len(objs) for objs in self._objects_by_category.values())} total objects"
+        )
 
     async def category_autocomplete(
         self, _interaction: discord.Interaction, current: str

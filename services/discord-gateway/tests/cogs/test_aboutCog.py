@@ -216,6 +216,10 @@ class TestPreloadData:
     Note: the mock_about_cog fixture replaces http_client with a MagicMock for
     most tests. The preload tests reinstall a real httpx.AsyncClient so that
     respx can intercept network calls and assert URL+method correctness.
+
+    Retry behaviour: _preload_data now retries the /about/categories fetch up to
+    5 times with exponential backoff (5s, 10s, 20s, 40s, 60s). Tests that exercise
+    the retry path patch asyncio.sleep to avoid real delays.
     """
 
     _API_BASE = "http://bot-core:8000/api/v1"
@@ -263,26 +267,68 @@ class TestPreloadData:
         assert "ship" in mock_about_cog._objects_by_category
         assert len(mock_about_cog._objects_by_category["ship"]) == 2
 
-    def test_preload_data_api_failure(self, mock_about_cog, request):
-        """_preload_data handles GET /about/categories failure gracefully
-        (resets to empty without raising)."""
+    def test_preload_data_api_failure_all_attempts(self, mock_about_cog, request):
+        """_preload_data retries 5 times then degrades gracefully when all attempts fail.
+
+        After 5 consecutive HTTP 503 responses, _categories and _objects_by_category
+        must both be left as empty (the for/else terminal-failure branch).
+        asyncio.sleep is patched to avoid real delays.
+        """
         import httpx
         import respx
 
         self._with_real_client(mock_about_cog, request)
         mock_about_cog.bot.wait_until_ready = AsyncMock()
 
-        with respx.mock(assert_all_called=True) as mock_router:
-            mock_router.get(f"{self._API_BASE}/about/categories").mock(
-                return_value=httpx.Response(503, json={"detail": "Service Unavailable"})
-            )
+        with patch("cogs.aboutCog.asyncio.sleep", new_callable=AsyncMock):
+            with respx.mock() as mock_router:
+                # respx will match all 5 retry attempts against the same route
+                mock_router.get(f"{self._API_BASE}/about/categories").mock(
+                    return_value=httpx.Response(503, json={"detail": "Service Unavailable"})
+                )
 
-            # Should not raise — failure is caught internally
-            asyncio.run(mock_about_cog._preload_data())
+                # Should not raise — failure is caught internally
+                asyncio.run(mock_about_cog._preload_data())
 
-        # On failure, categories should be reset to empty
+        # After terminal failure, categories must be empty
         assert mock_about_cog._categories == []
         assert mock_about_cog._objects_by_category == {}
+
+    def test_preload_data_retry_succeeds_on_second_attempt(self, mock_about_cog, request):
+        """_preload_data should succeed when the first attempt fails but the second succeeds.
+
+        Simulates bot-core being slow to start: first call raises ConnectError,
+        second call returns the categories list.
+        """
+        import httpx
+        import respx
+
+        self._with_real_client(mock_about_cog, request)
+        mock_about_cog.bot.wait_until_ready = AsyncMock()
+
+        call_count = 0
+
+        def _categories_side_effect(_request):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                raise httpx.ConnectError("Name or service not known")
+            return httpx.Response(200, json=["ship"])
+
+        with patch("cogs.aboutCog.asyncio.sleep", new_callable=AsyncMock):
+            with respx.mock() as mock_router:
+                mock_router.get(f"{self._API_BASE}/about/categories").mock(side_effect=_categories_side_effect)
+                mock_router.get(f"{self._API_BASE}/about/categories/ship/objects").mock(
+                    return_value=httpx.Response(200, json=[{"name": "Eagle", "aliases": []}])
+                )
+
+                asyncio.run(mock_about_cog._preload_data())
+
+        # Retry succeeded — data should be populated
+        assert mock_about_cog._categories == ["ship"]
+        assert len(mock_about_cog._objects_by_category["ship"]) == 1
+        # asyncio.sleep was called once (between attempt 1 and 2)
+        assert call_count == 2
 
     def test_preload_data_category_object_failure(self, mock_about_cog, request):
         """_preload_data handles per-category failure gracefully:
@@ -314,23 +360,28 @@ class TestPreloadData:
         # Module objects should be empty list (fallback on HTTP error)
         assert mock_about_cog._objects_by_category["module"] == []
 
-    def test_preload_data_network_error(self, mock_about_cog, request):
-        """_preload_data handles network-level ConnectError gracefully
-        (resets to empty without raising) — restores coverage lost when old
-        ConnectError test was replaced in the B.33 respx conversion."""
+    def test_preload_data_network_error_all_attempts(self, mock_about_cog, request):
+        """_preload_data handles network-level ConnectError across all 5 attempts gracefully
+        (resets to empty without raising).
+
+        This is the startup scenario described in the issue: bot-core is not yet
+        ready, so every attempt gets a ConnectError. After 5 attempts the cog
+        leaves its caches empty for graceful degradation.
+        """
         import httpx
         import respx
 
         self._with_real_client(mock_about_cog, request)
         mock_about_cog.bot.wait_until_ready = AsyncMock()
 
-        with respx.mock(assert_all_called=True) as mock_router:
-            mock_router.get(f"{self._API_BASE}/about/categories").mock(
-                side_effect=httpx.ConnectError("connection refused")
-            )
+        with patch("cogs.aboutCog.asyncio.sleep", new_callable=AsyncMock):
+            with respx.mock() as mock_router:
+                mock_router.get(f"{self._API_BASE}/about/categories").mock(
+                    side_effect=httpx.ConnectError("connection refused")
+                )
 
-            # Should not raise — failure is caught internally
-            asyncio.run(mock_about_cog._preload_data())
+                # Should not raise — failure is caught internally
+                asyncio.run(mock_about_cog._preload_data())
 
         # On network error, categories should be reset to empty
         assert mock_about_cog._categories == []

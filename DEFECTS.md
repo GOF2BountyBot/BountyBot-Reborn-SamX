@@ -25,13 +25,15 @@ Cross-ref: `E2E_TEST_CHECKLIST.md` (test-item references). All commit SHAs are l
 
 ### B.43 — Zero-slot turret equip gives generic Discord API error
 
-🟡 medium · E2E · 2026-05-01 · **FIXED** `d6c1e0b`
+🟡 medium · E2E · 2026-05-01 · **FIXED** `d6c1e0b` · **VERIFIED** 2026-05-01
 
-**Context**: Equip a turret on a ship with 0 turret slots (e.g., Specter has 0 turrets). Expected: helpful error "ship has 0 turret slots". Actual: generic "An error occurred while equipping the item" followed by Discord API 400 "This field is required" (empty Select options).
+**Context**: Equip a turret on a ship with 0 turret slots (e.g., Specter has 0 turrets). Expected: helpful error. Actual: generic API error.
 
-**Root cause**: `services/discord-gateway/src/cogs/inventoryCog.py:752` slot_full handler tries to create WeaponSwapView with empty options when `max_slots=0`. Discord API rejects empty Select options.
+**Root cause**: inventoryCog slot_full handler creates empty Select when max_slots=0, Discord rejects.
 
-**Fix**: Added `max_slots == 0` check before creating the swap UI. Returns clear error: "❌ This ship has 0 {equipment_type} slots and cannot equip {equipment_type}."
+**Fix**: Added `max_slots == 0` check, returns clear error message.
+
+**Verified**: `/equip item_name:Matador TS` on Specter shows "0 turrets slots" error.
 
 ---
 
@@ -60,15 +62,15 @@ New startup order: `db → discord-gateway → bot-core, blender-service`
 
 ### B.41 — `/equip` autocomplete filter blocks duplicate equips of same item type
 
-🟡 medium · E2E · 2026-04-30 · **FIXED** `e4459c0`, **REGRESSION FOUND** `d6c1e0b`
+🟡 medium · E2E · 2026-04-30 · **FIXED** `e4459c0` + `d6c1e0b` · **VERIFIED** 2026-05-01
 
-**Original context**: Player has multiple instances of the same item (e.g. 3x M6 A4 "Raccoon" primary weapons) and a ship with multiple primary slots. After equipping the first instance, the autocomplete dropdown removes the item from suggestions, even though the player still owns 2 more in inventory and the game rules allow multiple equips of the same weapon (e.g. 4x M6 A4 "Raccoon" on a 4-primary-slot ship).
+**Original context**: Player has multiple instances of the same item (e.g. 3x M6 A4 "Raccoon" primary weapons) and a ship with multiple primary slots. After equipping the first instance, the autocomplete dropdown removes the item from suggestions, even though the player still owns more in inventory.
 
-**Original fix** (e4459c0): Changed autocomplete filter from `set[str]` (blocked all duplicates) to `dict[str, int]` counter, allowing items where `inventory_quantity > equipped_count`.
+**Original fix** (e4459c0): Changed autocomplete filter to count equipped items, allowing `qty > equipped_count`.
 
-**Regression found** (d6c1e0b): Autocomplete still blocked the 3rd copy even though it should be available. Root cause: LoadoutConsistencyService allowed over-equipping (3 equipped when only 2 in inventory), creating DB inconsistency. The autocomplete logic is correct - it correctly filters `qty > equipped_count` (2 > 3 = False).
+**Regression** (d6c1e0b): LoadoutConsistencyService allowed over-equipping beyond inventory qty. Fixed by adding validation in `equip_one()` to ensure `equipped_count < inventory_quantity`.
 
-**Regression fix** (d6c1e0b): Added inventory quantity validation in `LoadoutConsistencyService.equip_one()` that validates `equipped_count < inventory_quantity` before allowing any equip. Prevents over-equipped state.
+**Verified**: Main can equip 2x Raccoon (shows remaining count), 3rd correctly rejected.
 
 **Context**: Player has multiple instances of the same item (e.g. 3x M6 A4 "Raccoon" primary weapons) and a ship with multiple primary slots. After equipping the first instance, the autocomplete dropdown removes the item from suggestions, even though the player still owns 2 more in inventory and the game rules allow multiple equips of the same weapon (e.g. 4x M6 A4 "Raccoon" on a 4-primary-slot ship).
 
@@ -104,17 +106,20 @@ and item_name not in equipped_names  # Blocks ALL duplicates
 
 ### B.40 — Configured admin role not granting admin command access to Alt user
 
-🟡 medium · E2E · 2026-04-30 · **FIXED** `d6c1e0b`
+🟡 medium · E2E · 2026-04-30 · **FIXED** `84a874b`
 
 **Context**: During E2E, the configured admin role (@Bounty Bot Admin) was assigned to the Alt account, but admin commands (e.g. `/admin_spawn_bounty`, `/admin_help`) remained inaccessible.
 
-**Root cause**: Two bugs:
-1. `services/discord-gateway/src/cogs/adminCog.py:48` used `interaction.user.roles` instead of `interaction.member.roles`. In Discord.py, guild roles are on the Member object, not the User object.
-2. `services/discord-gateway/src/cogs/helpCog.py:526` still had `@app_commands.default_permissions(administrator=True)` which hides commands from non-Discord-admin users in Discord's UI.
+**Root cause**: Multiple issues:
+1. adminCog used `interaction.user.roles` instead of `interaction.member.roles` (B.40 first fix in d6c1e0b)
+2. API response was missing `admin_role_id` even though DB had it (6db86ac)
+3. `interaction.member` can be None in some Discord contexts - need to use `guild.get_member()` instead (84a874b)
+4. helpCog had `@app_commands.default_permissions(administrator=True)` hiding `/admin_help`
 
-**Fix**:
-- Changed `interaction.user.roles` to `interaction.member.roles` with None-guard for DM contexts
-- Removed `@app_commands.default_permissions(administrator=True)` from `/admin_help`
+**Fix chain**:
+- d6c1e0b: Changed to interaction.member.roles
+- 6db86ac: Added admin_role_id to API response schema
+- 84a874b: Use `interaction.guild.get_member(user.id)` for reliable member lookup, removed decorator
 
 ---
 

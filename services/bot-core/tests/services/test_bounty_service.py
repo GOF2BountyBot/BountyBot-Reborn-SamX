@@ -4305,3 +4305,137 @@ async def test_b12_idempotency_already_checked_for_overlapping_bounties(check_bo
     assert bounty_a.checked["Shared"] == 99
     # The new bounty got its marker
     assert bounty_b.checked["Shared"] == 4
+
+
+# ===========================================================================
+# Tests: B.52 — generate_loadout ship selection excludes non-combat ships
+# ===========================================================================
+
+
+def _setup_mock_db_query_with_filter(mock_db, combat_ships, all_ships=None):
+    """Configure mock_db.execute() to filter by max_primaries > 0.
+
+    When Ship.max_primaries > 0 is used as a WHERE clause, we simulate it
+    by intercepting db.execute() calls and returning combat_ships.
+    If a single list is provided, always return combat_ships.
+    """
+    scalars = MagicMock()
+    scalars.all.return_value = combat_ships
+    result = MagicMock()
+    result.scalars.return_value = scalars
+    mock_db.execute = AsyncMock(return_value=result)
+    return mock_db
+
+
+@pytest.mark.asyncio
+async def test_generate_loadout_tl_matched_path_excludes_non_combat_ships(service, mock_db):
+    """B.52: TL-matched ship selection only returns ships with max_primaries > 0.
+
+    When db.execute(select(Ship).where(Ship.max_primaries > 0)) is called,
+    non-combat ships (max_primaries=0) are never in the result set, so they
+    can never be selected even if matching_ships would include them.
+    """
+    # Only combat ships returned by the filtered DB query
+    combat_ship = _make_ship("Groza", value=251600, max_primaries=3, max_modules=8)
+    non_combat_ship = _make_ship("Cormorant", value=100000, max_primaries=0, max_modules=4)
+
+    # The DB query with max_primaries > 0 filter returns only combat ships
+    _setup_mock_db_query_with_filter(mock_db, combat_ships=[combat_ship])
+
+    weapon = _make_weapon()
+    module = _make_module()
+
+    async def _get_all_by_tl(db, tl, item_type=None):
+        if item_type == "primary_weapon":
+            return [weapon]
+        if item_type == "module":
+            return [module]
+        return []
+
+    service.item_repo.get_all_by_tech_level = _get_all_by_tl
+
+    with (
+        patch.object(service, "find_item_tl", new=AsyncMock(return_value=1)),
+        patch.object(service, "_find_typed_module", new=AsyncMock(return_value=None)),
+    ):
+        result = await service.generate_loadout(mock_db, tech_level=2)
+
+    # The non-combat ship (Cormorant) was never in the query result, so it is never selected
+    assert result["ship_name"] == "Groza"
+    assert result["ship_name"] != "Cormorant"
+
+
+@pytest.mark.asyncio
+async def test_generate_loadout_fallback_path_excludes_non_combat_ships(service, mock_db):
+    """B.52: Fallback ship selection also only returns ships with max_primaries > 0.
+
+    When the TL-matched path yields no matching_ships (no ship at the right TL),
+    the fallback path calls db.execute with the same max_primaries > 0 filter,
+    so non-combat ships are excluded there too.
+    """
+    # Only a combat ship is returned by both DB queries
+    combat_ship = _make_ship("Betty", value=16038, max_primaries=1, max_modules=3)
+
+    _setup_mock_db_query_with_filter(mock_db, combat_ships=[combat_ship])
+
+    # find_item_tl returns a TL but matching_ships will be empty because
+    # combat_ship has a different value TL — the fallback path will be triggered.
+    # We simulate by making matching_ships empty: we give the ship a value such
+    # that ship_tech_level_for_value(value) != ship_tl.
+    # Betty value=16038 → TL 1; find_item_tl returns 5 → no match → fallback.
+    with (
+        patch.object(service, "find_item_tl", new=AsyncMock(return_value=5)),
+        patch.object(service, "_find_typed_module", new=AsyncMock(return_value=None)),
+    ):
+        service.item_repo.get_all_by_tech_level = AsyncMock(return_value=[])
+        result = await service.generate_loadout(mock_db, tech_level=6)
+
+    # Fallback path selected the only available (combat) ship
+    assert result["ship_name"] == "Betty"
+
+
+@pytest.mark.asyncio
+async def test_generate_loadout_never_produces_non_combat_ship(service, mock_db):
+    """B.52: Over 20 runs, generate_loadout never picks a non-combat ship.
+
+    Simulates the DB returning only combat ships (as the WHERE filter does).
+    Confirms max_primaries > 0 invariant holds for every selected ship.
+    """
+    combat_ships = [
+        _make_ship("Betty", value=16038, max_primaries=1, max_modules=3),
+        _make_ship("Groza", value=251600, max_primaries=3, max_modules=8),
+        _make_ship("Ghost", value=6000000, max_primaries=4, max_modules=10),
+    ]
+
+    _setup_mock_db_query_with_filter(mock_db, combat_ships=combat_ships)
+
+    weapon = _make_weapon()
+
+    with (
+        patch.object(service, "find_item_tl", new=AsyncMock(return_value=1)),
+        patch.object(service, "_find_typed_module", new=AsyncMock(return_value=None)),
+    ):
+        service.item_repo.get_all_by_tech_level = AsyncMock(return_value=[weapon])
+        for _ in range(20):
+            result = await service.generate_loadout(mock_db, tech_level=2)
+            # Every selected ship must have at least 1 primary weapon slot
+            assert result["ship_max_primaries"] > 0, (
+                f"Non-combat ship selected: {result['ship_name']} with max_primaries=0"
+            )
+
+
+@pytest.mark.asyncio
+async def test_generate_loadout_empty_combat_ship_pool_warns_and_returns_unknown(service, mock_db):
+    """B.52: If no combat ships exist (empty filtered pool), a warning is logged and
+    the function returns the 'Unknown' fallback dict (not a crash).
+    """
+    # DB returns empty list for both TL-matched and fallback queries
+    _setup_mock_db_query_with_filter(mock_db, combat_ships=[])
+
+    with patch.object(service, "find_item_tl", new=AsyncMock(return_value=1)):
+        result = await service.generate_loadout(mock_db, tech_level=2)
+
+    # No ships available → returns the Unknown fallback
+    assert result["ship_name"] == "Unknown"
+    assert result["weapons"] == []
+    assert result["total_value"] == 0

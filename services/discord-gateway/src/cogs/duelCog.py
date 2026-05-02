@@ -16,6 +16,23 @@ flogger = bblogger.get_logger("discord-gateway-DuelCog")
 api_base = os.environ.get("BOT_API_BASE_URL", "http://bot-core:8000/api/v1")
 flogger.debug(f"duelCog loading with API_BASE_URL: {api_base}")
 
+# Message shown when the guild hasn't been set up via /admin_setup
+_GUILD_NOT_CONFIGURED_MSG = (
+    "⚠️ This server hasn't been set up yet. An admin must run `/admin_setup` "
+    "to initialize BountyBot before you can use this command."
+)
+
+
+def _is_guild_not_configured(exc: httpx.HTTPStatusError) -> bool:
+    """Return True if the HTTPStatusError is a 'guild not configured' 400 response."""
+    if exc.response.status_code != 400:
+        return False
+    try:
+        detail = exc.response.json().get("detail", "")
+        return "not configured" in detail.lower() or "admin_setup" in detail.lower()
+    except Exception:  # pylint: disable=broad-exception-caught
+        return False
+
 
 class DuelCog(commands.Cog):
     def __init__(self, bot: commands.Bot):
@@ -26,6 +43,24 @@ class DuelCog(commands.Cog):
     async def cog_unload(self):
         await self.http_client.aclose()
 
+    async def _get_player_id(self, user_id: int, guild_id: int) -> int | None:
+        """Resolve a Discord user ID to a game player ID via the upsert endpoint.
+
+        Re-raises httpx.HTTPStatusError for guild-not-configured responses so callers
+        can surface a user-friendly message.
+        """
+        try:
+            user_data = {"discord_id": user_id, "guild_id": guild_id, "discord_username": None}
+            resp = await self.http_client.post(f"{api_base}/players/", json=user_data, timeout=5)
+            resp.raise_for_status()
+            return resp.json().get("id")
+        except httpx.HTTPStatusError as e:
+            if _is_guild_not_configured(e):
+                raise
+            return None
+        except Exception:  # pylint: disable=broad-exception-caught
+            return None
+
     # ------------------------------------------------------------------
     # Autocomplete
     # ------------------------------------------------------------------
@@ -35,9 +70,12 @@ class DuelCog(commands.Cog):
     ) -> list[app_commands.Choice[str]]:
         """Live autocomplete for pending duels where the user is the target."""
         try:
+            player_id = await self._get_player_id(interaction.user.id, interaction.guild_id)
+            if player_id is None:
+                return []
             resp = await self.http_client.get(
                 f"{api_base}/duels/pending",
-                params={"user_id": interaction.user.id, "guild_id": interaction.guild_id},
+                params={"user_id": player_id, "guild_id": interaction.guild_id},
                 timeout=5,
             )
             resp.raise_for_status()
@@ -77,11 +115,32 @@ class DuelCog(commands.Cog):
         )
 
         try:
+            # Resolve Discord user IDs to internal player PKs
+            try:
+                challenger_player_id = await self._get_player_id(interaction.user.id, interaction.guild_id)
+            except httpx.HTTPStatusError:
+                await interaction.followup.send(_GUILD_NOT_CONFIGURED_MSG, ephemeral=True)
+                return
+            if challenger_player_id is None:
+                await interaction.followup.send(
+                    "❌ Could not find your player profile. Have you run `/register`?", ephemeral=True
+                )
+                return
+
+            try:
+                target_player_id = await self._get_player_id(target.id, interaction.guild_id)
+            except httpx.HTTPStatusError:
+                await interaction.followup.send(_GUILD_NOT_CONFIGURED_MSG, ephemeral=True)
+                return
+            if target_player_id is None:
+                await interaction.followup.send("❌ Could not find target player profile.", ephemeral=True)
+                return
+
             resp = await self.http_client.post(
                 f"{api_base}/duels/challenge",
                 json={
-                    "challenger_id": interaction.user.id,
-                    "target_id": target.id,
+                    "challenger_id": challenger_player_id,
+                    "target_id": target_player_id,
                     "stakes": stakes,
                     "guild_id": interaction.guild_id,
                 },
@@ -178,9 +237,21 @@ class DuelCog(commands.Cog):
             return
 
         try:
+            # Resolve Discord user ID to internal player PK for authorization
+            try:
+                player_id = await self._get_player_id(interaction.user.id, interaction.guild_id)
+            except httpx.HTTPStatusError:
+                await interaction.followup.send(_GUILD_NOT_CONFIGURED_MSG, ephemeral=True)
+                return
+            if player_id is None:
+                await interaction.followup.send(
+                    "❌ Could not find your player profile. Have you run `/register`?", ephemeral=True
+                )
+                return
+
             resp = await self.http_client.post(
                 f"{api_base}/duels/{duel_id}/accept",
-                params={"user_id": interaction.user.id},
+                params={"user_id": player_id},
                 timeout=10,
             )
             resp.raise_for_status()
@@ -292,9 +363,21 @@ class DuelCog(commands.Cog):
             return
 
         try:
+            # Resolve Discord user ID to internal player PK for authorization
+            try:
+                player_id = await self._get_player_id(interaction.user.id, interaction.guild_id)
+            except httpx.HTTPStatusError:
+                await interaction.followup.send(_GUILD_NOT_CONFIGURED_MSG, ephemeral=True)
+                return
+            if player_id is None:
+                await interaction.followup.send(
+                    "❌ Could not find your player profile. Have you run `/register`?", ephemeral=True
+                )
+                return
+
             resp = await self.http_client.post(
                 f"{api_base}/duels/{duel_id}/reject",
-                params={"user_id": interaction.user.id},
+                params={"user_id": player_id},
                 timeout=10,
             )
             resp.raise_for_status()

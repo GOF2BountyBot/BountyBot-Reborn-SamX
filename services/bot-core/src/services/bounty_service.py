@@ -365,19 +365,21 @@ class BountyService:
             from persist.models.ship import Ship
             from sqlalchemy import select
 
-            result = await db.execute(select(Ship))
+            result = await db.execute(select(Ship).where(Ship.max_primaries > 0))
             all_ships = list(result.scalars().all())
             matching_ships = [s for s in all_ships if ship_tech_level_for_value(s.value) == ship_tl]
             if matching_ships:
                 ship = random.choice(matching_ships)
 
         if ship is None:
-            # Fallback: pick any ship
+            # Fallback: pick any combat-capable ship (max_primaries > 0)
             from persist.models.ship import Ship
             from sqlalchemy import select
 
-            result = await db.execute(select(Ship))
+            result = await db.execute(select(Ship).where(Ship.max_primaries > 0))
             all_ships = list(result.scalars().all())
+            if not all_ships:
+                flogger.warning("No combat-capable ships (max_primaries > 0) found in DB — this should never happen")
             if all_ships:
                 ship = random.choice(all_ships)
 

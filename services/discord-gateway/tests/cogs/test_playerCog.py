@@ -728,6 +728,112 @@ class TestPrestigeConfirmFlow:
         call_kwargs = interaction.followup.send.call_args
         assert call_kwargs[1].get("ephemeral", False)
 
+    def test_prestige_swaps_roles_correctly(self, mock_player_cog):
+        """B.53: /prestige confirm=CONFIRM must remove the old tier role (Platinum)
+        and add the Bronze role after a successful prestige API call."""
+        platinum_role_id = 111222004
+        bronze_role_id = 111222001
+
+        mock_platinum_role = MagicMock()
+        mock_platinum_role.id = platinum_role_id
+        mock_platinum_role.name = "Bounty Hunter Platinum"
+
+        mock_bronze_role = MagicMock()
+        mock_bronze_role.id = bronze_role_id
+        mock_bronze_role.name = "Bounty Hunter Bronze"
+
+        # User currently has Platinum role (pre-prestige state)
+        interaction = _create_interaction_with_roles(existing_roles=[mock_platinum_role])
+
+        def _get_role(role_id):
+            return {platinum_role_id: mock_platinum_role, bronze_role_id: mock_bronze_role}.get(role_id)
+
+        interaction.guild.get_role = MagicMock(side_effect=_get_role)
+
+        player_data = _make_player_data(tier="Platinum", prestige_count=0)
+        player_resp = MagicMock()
+        player_resp.raise_for_status = MagicMock()
+        player_resp.json.return_value = player_data
+
+        prestige_data = {
+            "player_id": 1,
+            "prestige_count": 1,
+            "tier_before": "Platinum",
+            "xp_before": 50000,
+        }
+        prestige_resp = MagicMock()
+        prestige_resp.raise_for_status = MagicMock()
+        prestige_resp.json.return_value = prestige_data
+
+        mock_player_cog.http_client.post = AsyncMock(side_effect=[player_resp, prestige_resp])
+
+        config_resp = _make_config_resp(
+            bh_role_id=None,
+            bronze_role_id=bronze_role_id,
+            silver_role_id=None,
+            gold_role_id=None,
+            platinum_role_id=platinum_role_id,
+        )
+        mock_player_cog.http_client.get = AsyncMock(return_value=config_resp)
+
+        asyncio.run(mock_player_cog.prestige.callback(mock_player_cog, interaction, confirm="CONFIRM"))
+
+        # Success embed must be sent
+        interaction.followup.send.assert_awaited_once()
+        call_kwargs = interaction.followup.send.call_args[1]
+        assert "embed" in call_kwargs
+
+        # Bronze role must be ADDED (add_roles called first per add-before-remove order)
+        interaction.user.add_roles.assert_awaited_once()
+        added_args = interaction.user.add_roles.call_args[0]
+        added_ids = {r.id for r in added_args}
+        assert bronze_role_id in added_ids, (
+            f"B.53: Bronze role must be added on prestige; added_ids={added_ids}"
+        )
+        assert platinum_role_id not in added_ids, "Platinum role must NOT be added"
+
+        # Platinum role must be REMOVED
+        interaction.user.remove_roles.assert_awaited_once()
+        removed_args = interaction.user.remove_roles.call_args[0]
+        removed_ids = {r.id for r in removed_args}
+        assert platinum_role_id in removed_ids, (
+            f"B.53: Platinum role must be removed on prestige; removed_ids={removed_ids}"
+        )
+        assert bronze_role_id not in removed_ids, "Bronze role must NOT appear in remove list"
+
+    def test_prestige_role_swap_failure_is_non_fatal(self, mock_player_cog):
+        """B.53: If the role swap fails (e.g. config API error), prestige still succeeds."""
+        interaction = _create_interaction_with_roles(existing_roles=[])
+
+        player_data = _make_player_data(tier="Platinum", prestige_count=0)
+        player_resp = MagicMock()
+        player_resp.raise_for_status = MagicMock()
+        player_resp.json.return_value = player_data
+
+        prestige_data = {
+            "player_id": 1,
+            "prestige_count": 1,
+            "tier_before": "Platinum",
+            "xp_before": 50000,
+        }
+        prestige_resp = MagicMock()
+        prestige_resp.raise_for_status = MagicMock()
+        prestige_resp.json.return_value = prestige_data
+
+        mock_player_cog.http_client.post = AsyncMock(side_effect=[player_resp, prestige_resp])
+        # Config fetch (role swap) fails
+        mock_player_cog.http_client.get = AsyncMock(side_effect=RuntimeError("config unavailable"))
+
+        asyncio.run(mock_player_cog.prestige.callback(mock_player_cog, interaction, confirm="CONFIRM"))
+
+        # Success embed must still be sent (role swap is non-fatal)
+        interaction.followup.send.assert_awaited_once()
+        call_kwargs = interaction.followup.send.call_args[1]
+        assert "embed" in call_kwargs
+        # Role methods not called because config was unavailable
+        interaction.user.add_roles.assert_not_awaited()
+        interaction.user.remove_roles.assert_not_awaited()
+
 
 # ---------------------------------------------------------------------------
 # _get_tier_color helper

@@ -11,6 +11,55 @@ Cross-ref: `E2E_TEST_CHECKLIST.md` (test-item references). All commit SHAs are l
 
 ## OPEN
 
+### B.53 — Prestige does not swap Discord tier roles (Platinum role not removed, Bronze role not added)
+
+🟠 high · E2E · 2026-05-02 · **OPEN**
+
+**Symptom**: After `/prestige confirm:CONFIRM`, the player's tier resets to Bronze in the DB but their Discord roles still show the pre-prestige tier role (e.g. Platinum) and the Bronze role is never added.
+
+**Root cause**: `playerCog.prestige()` (`services/discord-gateway/src/cogs/playerCog.py:343-385`) calls the prestige API and builds the success embed but contains no role management code. The `/promote` command (lines 441-484) has a full tier-role swap block (remove old tier role, add new tier role) that prestige is missing entirely.
+
+**Fix**: After a successful prestige API call, add the same role-swap logic used by `/promote`: remove the player's current tier role (from `prestige_data["tier_before"]`) and add the Bronze role. Should be non-fatal (wrapped in try/except) per the existing pattern. The `tier_before` field is already returned in the prestige API response so no additional API call is needed.
+
+**File**: `services/discord-gateway/src/cogs/playerCog.py` — prestige handler, after line 365
+
+---
+
+### B.52 — Criminal loadout generation can produce zero-weapon bounties when a non-combat ship is selected
+
+🟡 medium · Runtime · 2026-05-02 · **OPEN**
+
+**Symptom**: A bounty is spawned with an empty weapons list on the criminal's ship, resulting in a 0-DPS criminal that any player trivially defeats (or a confusing loadout embed with no weapons section).
+
+**Root cause**: `bounty_service.py:406` guards weapon selection behind `if ship.max_primaries > 0`. Seven ships in the DB have `max_primaries=0` (Cormorant, Rhino, Midorian/Nivelian/Terran/Vossk Freighters, Vossk Battlecruiser). These are non-combat cargo/transport ships. When the random ship selector at line 370 (TL-matched) or line 382 (fallback) picks one of these, the entire weapon block is silently skipped and `equipped_weapons = []`.
+
+**Affected code**:
+- `services/bot-core/src/services/bounty_service.py:368-382` — ship selection (both TL-matched and fallback paths pull from ALL ships including non-combat ones)
+- `services/bot-core/src/services/bounty_service.py:406` — weapon guard silently skips when `max_primaries=0`
+
+**Probability**: ~7/65 ships (~11%) have `max_primaries=0`. Both the TL-matched and fallback selection paths are affected.
+
+**Fix**: Filter non-combat ships out of criminal loadout ship selection. The simplest fix is to add `WHERE max_primaries > 0` (or equivalent ORM filter) to the ship query at lines 368 and 376-381, so only combat ships are eligible for criminal loadouts.
+
+Optionally add a warning log if a bounty is created with zero weapons as a belt-and-suspenders safety net.
+
+---
+
+### B.51 — duelCog passes Discord snowflake IDs as challenger_id/target_id but duels service expects player PKs
+
+🟠 high · E2E · 2026-05-02 · **OPEN**
+
+**Symptom**: `/duel-challenge target:@general_failure. stakes:100` returns:
+> ❌ Challenger player with ID 402296276617527306 could not be retrieved.
+
+**Root cause**: `duelCog.duel_challenge()` (`services/discord-gateway/src/cogs/duelCog.py:83`) posts `challenger_id: interaction.user.id` and `target_id: target.id` — both are Discord snowflake IDs (e.g. `402296276617527306`). The duels router passes these directly to `DuelService.create_challenge()` which calls `player_repo.get_by_id(db, challenger_id)` — a lookup by internal player PK (1, 2, etc.), not Discord user ID.
+
+**Fix**: The duel cog must resolve Discord user IDs to player PKs before posting to the duels API, using the same `_get_player_id()` pattern used by other cogs (e.g. `inventoryCog`, `bountyCog`). Both `challenger_id` and `target_id` need resolution. Alternatively, the duels router could accept Discord user IDs and resolve internally — but the cog-side resolution is consistent with the existing pattern.
+
+**Files**: `services/discord-gateway/src/cogs/duelCog.py:80-88`
+
+---
+
 ### B.49 — Audit hardcoded operational constants for per-guild configurability (enhancement)
 
 🔵 low · Enhancement · 2026-05-02 · **OPEN** · Future patch — not blocking

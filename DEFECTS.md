@@ -9,6 +9,26 @@ Cross-ref: `E2E_TEST_CHECKLIST.md` (test-item references). All commit SHAs are l
 
 ---
 
+## Testing Process (Read Before Every Session)
+
+> **Orchestrator never touches containers.** `sudo docker exec` for read-only DB/API/log inspection only. Only USER rebuilds/restarts the stack.
+
+> **Subagent roles**: `@researcher` (read-only), `@developer` (fixes + tests), `@architect` (design + refactor), `@tester` (adversarial review). Do NOT reuse prior task_id sessions — always start fresh.
+
+> **Test suites**: pipe ONCE to a log file, never rerun to change grep patterns.
+> `python -m pytest tests/ 2>&1 | tee /tmp/<descriptive>.log`
+
+> **Test presentation format** — always use this table:
+> | # | Account | Command | Notes |
+> |---|---------|---------|-------|
+> Account must be explicit (Main or Alt). Never omit it.
+
+> **Defect found** → add at top of OPEN section below → user decides stop-and-fix vs log-and-continue.
+
+> **Commits**: only when user explicitly asks. Stage only real changed files — not file-mode noise.
+
+---
+
 ## OPEN
 
 ### B.53 — Prestige does not swap Discord tier roles (Platinum role not removed, Bronze role not added)

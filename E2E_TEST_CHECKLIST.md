@@ -46,6 +46,12 @@ Work through each phase in order — later phases depend on earlier ones.
 > - **`@tester`** — adversarial QA, test review, edge case analysis
 >
 > All subagents have `sudo docker exec` access if needed. The orchestrator delegates — it does not write code directly.
+> **DO NOT reuse prior task_id sessions** — they re-process full session history and are token-expensive. Always start fresh.
+
+> 🔴 **TEST SUITE MANDATE**: Always pipe test runs to a log file ONCE. Never rerun a suite to change grep patterns — extract from the log.
+> `python -m pytest tests/ 2>&1 | tee /tmp/<descriptive>.log`
+
+> 🔴 **TEST PRESENTATION FORMAT**: Always present tests as a table with columns `# / Account / Command / Notes`. Account must be explicit (Main or Alt). Never omit the Account column.
 
 > **DB nuke procedure** (USER must execute): `docker compose down && rm -rf mappings/postgres-data/ && docker compose up --build`
 
@@ -502,12 +508,12 @@ Tier thresholds (lowered for fast testing via Session Setup): Bronze (0 XP) → 
 
 ### `[2P]` Bounty competition
 
-- [ ] **7.17** 2P race — only first correct wins. NOT YET TESTED.
+- [x] **7.17** 2P race — ✅ 2026-05-02: both accounts submitted correct answer for Ganfor Kant (Union); only one winner (Alt, win_user_id=2); second submission received "no bounty" response. DB-verified: status=completed, single win_user_id. Browser vs native client latency accounted for ordering.
 
 ### B.48 sanity checks (post-refactor)
 
-- [ ] **7.19** *(NEW post-B.48)* Successful `/check` on a bounty — verify reward embed/announcement contains NO "Level Up!" string and NO `level_before`/`level_after`/`leveled_up` references. If `tier_changed` is implemented as the replacement, verify it surfaces correctly when the player has crossed a tier-up XP threshold but has not yet `/promote`d.
-- [ ] **7.20** *(NEW post-B.48)* Run `/admin_player Set XP` to a value below the player's current tier threshold — confirm tier remains unchanged (orphan-tier behavior preserved unless architect declares this a separate defect to fix).
+- [x] **7.19** *(NEW post-B.48)* Successful `/check` on a bounty — ✅ 2026-05-02: bounty capture reward embed contains no "Level Up!" text, no level_before/level_after/leveled_up references; reward shows credits only
+- [x] **7.20** *(NEW post-B.48)* Run `/admin_player Set XP` to a value below the player's current tier threshold — ✅ 2026-05-02: XP set to 5 (below Silver threshold 10), Old Tier: Bronze, New Tier: Bronze — orphan-tier preserved as designed
 
 ---
 

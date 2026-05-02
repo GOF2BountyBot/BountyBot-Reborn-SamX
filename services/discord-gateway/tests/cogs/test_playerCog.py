@@ -591,6 +591,36 @@ class TestPrestigeConfirmFlow:
         embed = call_kwargs["embed"]
         assert "CONFIRM" in (embed.description or "")
 
+    def test_prestige_warning_embed_describes_b49_full_reset(self, mock_player_cog):
+        """B.49 regression guard: warning embed must accurately describe the
+        full-reset semantics (fleet wiped, inventory wiped, Betty starter
+        loadout) and must NOT claim the player keeps ships or credits.
+        """
+        interaction = _create_mock_interaction()
+
+        player_data = _make_player_data(tier="Platinum", prestige_count=0)
+        resp = MagicMock()
+        resp.raise_for_status = MagicMock()
+        resp.json.return_value = player_data
+        mock_player_cog.http_client.post = AsyncMock(return_value=resp)
+
+        asyncio.run(mock_player_cog.prestige.callback(mock_player_cog, interaction, confirm=None))
+
+        embed = interaction.followup.send.call_args[1]["embed"]
+        desc = (embed.description or "").lower()
+
+        # B.49: must mention starter Betty + fleet wipe + inventory wipe.
+        assert "betty" in desc, "Warning embed must mention starter Betty"
+        # Must NOT claim ships/credits are preserved (the original B.48 bug).
+        assert "keep your ships" not in desc, (
+            "Warning embed must NOT claim the player keeps their ships (B.49: fleet wiped)"
+        )
+        assert "keep your ships, credits" not in desc, (
+            "Warning embed must NOT claim the player keeps credits (B.48 F.3 + B.49)"
+        )
+        # Must describe what is preserved (lifetime credits, stats, prestige count).
+        assert "lifetime" in desc, "Warning embed must mention lifetime credits are preserved"
+
     def test_prestige_wrong_confirm_shows_warning(self, mock_player_cog):
         """/prestige with wrong confirm value shows warning embed."""
         interaction = _create_mock_interaction()

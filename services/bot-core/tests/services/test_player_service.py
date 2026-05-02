@@ -529,8 +529,64 @@ def _config_with_prestige(threshold: int = 50_000) -> MagicMock:
     return cfg
 
 
+def _patch_prestige_side_effects(service, *, existing_ships: list | None = None):
+    """B.49 helper: patch the service-side dependencies that prestige hits.
+
+    Patches in this single helper:
+      * ``player_ship_repo.get_player_ships`` → returns ``existing_ships`` list
+      * ``player_ship_repo.remove`` → no-op AsyncMock
+      * ``inventory_repo.clear_player_inventory`` (via repository module patch)
+      * ``service._create_starter_loadout`` → AsyncMock (verified separately
+        by its own dedicated test class — unit tests for prestige_player are
+        scoped to the reset/orchestration logic only).
+      * ``service.player_repo.update_active_ship`` already AsyncMock by fixture.
+
+    Returns a context manager that wraps ``patch`` so the caller can
+    ``with _patch_prestige_side_effects(service):``.
+    """
+    import contextlib
+
+    @contextlib.contextmanager
+    def _ctx():
+        from unittest.mock import patch as _patch
+
+        ships = existing_ships if existing_ships is not None else []
+        # _create_starter_loadout is the canonical first-time-registration
+        # helper; prestige delegates to it. Stub here to keep this unit-test
+        # class focused on the orchestration. (Direct test exists below.)
+        service._create_starter_loadout = AsyncMock()
+
+        with (
+            _patch(
+                "persist.repositories.inventory_repository.InventoryRepository.clear_player_inventory",
+                new_callable=AsyncMock,
+                return_value=0,
+            ),
+            _patch(
+                "persist.repositories.player_ship_repository.PlayerShipRepository.get_player_ships",
+                new_callable=AsyncMock,
+                return_value=ships,
+            ),
+            _patch(
+                "persist.repositories.player_ship_repository.PlayerShipRepository.remove",
+                new_callable=AsyncMock,
+                return_value=None,
+            ),
+        ):
+            yield
+
+    return _ctx()
+
+
 class TestPrestigePlayer:
-    """Tests for PlayerService.prestige_player."""
+    """Tests for PlayerService.prestige_player.
+
+    B.49: prestige now resets the player to first-time-registration starter
+    state (delete every ship + entire inventory, then recreate via
+    ``_create_starter_loadout``). The unit-test class focuses on the
+    orchestration; the starter-loadout side of the contract is exercised by
+    its own tests.
+    """
 
     @pytest.mark.asyncio
     async def test_prestige_resets_tier_xp_surplus_and_credits(
@@ -545,20 +601,7 @@ class TestPrestigePlayer:
         mock_player_repo.get_by_id.return_value = player
         mock_config_repo.get_by_guild_id.return_value = _config_with_prestige()
 
-        # Package G (B.19) Option P1: prestige now also clears ship loadouts.
-        # Patch the player_ship_repository so the per-ship clear loop is a no-op.
-        with (
-            patch(
-                "persist.repositories.inventory_repository.InventoryRepository.clear_player_inventory",
-                new_callable=AsyncMock,
-                return_value=0,
-            ),
-            patch(
-                "persist.repositories.player_ship_repository.PlayerShipRepository.get_player_ships",
-                new_callable=AsyncMock,
-                return_value=[],
-            ),
-        ):
+        with _patch_prestige_side_effects(service):
             result = await service.prestige_player(mock_db, player_id=1)
 
         assert player.tier == "Bronze"
@@ -574,15 +617,15 @@ class TestPrestigePlayer:
         assert "xp_before" in result
 
     @pytest.mark.asyncio
-    async def test_prestige_clears_ship_loadouts(
+    async def test_prestige_deletes_every_existing_ship(
         self, service, mock_db, mock_player_repo, mock_config_repo
     ):
-        """Package G (B.19) Option P1: prestige clears every ship's slot lists.
+        """B.49: prestige removes every PlayerShip row owned by the player.
 
-        This is the regression guard for the post-prestige phantom-item bug
-        (B.19 root cause #3) — pre-fix, inventory was wiped while ship JSON
-        loadouts were preserved, leaving every equipped item without an
-        inventory provenance.
+        This is the regression guard against the pre-B.49 behaviour where
+        prestige preserved ship hulls (only clearing their loadout JSON).
+        After B.49, the entire fleet is deleted, then recreated through
+        _create_starter_loadout (which produces exactly one Betty).
         """
         player = _make_player(xp=1_000_000, credits=5000, prestige_count=0)
         player.xp = 1_000_000
@@ -593,37 +636,111 @@ class TestPrestigePlayer:
         mock_config_repo.get_by_guild_id.return_value = _config_with_prestige()
 
         ship_a = MagicMock()
-        ship_a.weapons = ["Pulse Laser"]
-        ship_a.modules = ["E2 Exoclad"]
-        ship_a.turrets = []
-        ship_a.secondary_weapons = []
-
+        ship_a.id = 100
         ship_b = MagicMock()
-        ship_b.weapons = ["Rail Gun"]
-        ship_b.modules = ["Telta Quickscan"]
-        ship_b.turrets = ["Turret A"]
-        ship_b.secondary_weapons = ["Mine"]
+        ship_b.id = 101
+        ship_c = MagicMock()
+        ship_c.id = 102
+
+        from unittest.mock import patch as _patch
+
+        # Stub starter-loadout (verified by its own tests).
+        service._create_starter_loadout = AsyncMock()
 
         with (
-            patch(
+            _patch(
                 "persist.repositories.inventory_repository.InventoryRepository.clear_player_inventory",
                 new_callable=AsyncMock,
                 return_value=0,
             ),
-            patch(
+            _patch(
                 "persist.repositories.player_ship_repository.PlayerShipRepository.get_player_ships",
                 new_callable=AsyncMock,
-                return_value=[ship_a, ship_b],
+                return_value=[ship_a, ship_b, ship_c],
+            ),
+            _patch(
+                "persist.repositories.player_ship_repository.PlayerShipRepository.remove",
+                new_callable=AsyncMock,
+                return_value=None,
+            ) as remove_mock,
+        ):
+            await service.prestige_player(mock_db, player_id=1)
+
+        # Every ship was passed to remove(); the active_ship_id was nulled
+        # before the deletes (verified via the repo mock call list).
+        assert remove_mock.await_count == 3
+        removed_ships = {call.args[1] for call in remove_mock.await_args_list}
+        assert removed_ships == {ship_a, ship_b, ship_c}
+
+        # active_ship_id was nulled at least once before the recreate step.
+        update_active_calls = mock_player_repo.update_active_ship.await_args_list
+        assert any(call.args[1:] == (1, None) for call in update_active_calls), (
+            "active_ship_id must be set to None before deleting PlayerShip rows "
+            f"to avoid FK constraint violation. Calls: {update_active_calls}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_prestige_clears_inventory(
+        self, service, mock_db, mock_player_repo, mock_config_repo
+    ):
+        """B.49: prestige wipes the entire player_inventories rowset."""
+        player = _make_player(xp=1_000_000)
+        player.xp = 1_000_000
+        player.xp_surplus = 0
+        player.credits = 0
+        player.prestige_count = 0
+        mock_player_repo.get_by_id.return_value = player
+        mock_config_repo.get_by_guild_id.return_value = _config_with_prestige()
+
+        from unittest.mock import patch as _patch
+
+        service._create_starter_loadout = AsyncMock()
+        with (
+            _patch(
+                "persist.repositories.inventory_repository.InventoryRepository.clear_player_inventory",
+                new_callable=AsyncMock,
+                return_value=42,
+            ) as clear_inv,
+            _patch(
+                "persist.repositories.player_ship_repository.PlayerShipRepository.get_player_ships",
+                new_callable=AsyncMock,
+                return_value=[],
+            ),
+            _patch(
+                "persist.repositories.player_ship_repository.PlayerShipRepository.remove",
+                new_callable=AsyncMock,
+                return_value=None,
             ),
         ):
             await service.prestige_player(mock_db, player_id=1)
 
-        assert ship_a.weapons == []
-        assert ship_a.modules == []
-        assert ship_b.weapons == []
-        assert ship_b.modules == []
-        assert ship_b.turrets == []
-        assert ship_b.secondary_weapons == []
+        clear_inv.assert_awaited_once()
+        # Verify commit=False so the caller controls the transaction.
+        kwargs = clear_inv.call_args.kwargs
+        assert kwargs.get("commit") is False
+
+    @pytest.mark.asyncio
+    async def test_prestige_recreates_starter_loadout(
+        self, service, mock_db, mock_player_repo, mock_config_repo
+    ):
+        """B.49: prestige delegates to _create_starter_loadout (same as /register).
+
+        This is the contract that guarantees prestige and first-time
+        registration produce byte-identical starter state.
+        """
+        player = _make_player(xp=1_000_000)
+        player.xp = 1_000_000
+        player.xp_surplus = 0
+        player.credits = 0
+        player.prestige_count = 0
+        mock_player_repo.get_by_id.return_value = player
+        mock_config_repo.get_by_guild_id.return_value = _config_with_prestige()
+
+        with _patch_prestige_side_effects(service):
+            await service.prestige_player(mock_db, player_id=1)
+
+        # _create_starter_loadout was called exactly once with the player.
+        service._create_starter_loadout.assert_awaited_once_with(mock_db, player)
 
     @pytest.mark.asyncio
     async def test_raises_when_player_not_found(self, service, mock_db, mock_player_repo):
@@ -672,18 +789,7 @@ class TestPrestigePlayer:
         mock_player_repo.get_by_id.return_value = player
         mock_config_repo.get_by_guild_id.return_value = _config_with_prestige()
 
-        with (
-            patch(
-                "persist.repositories.inventory_repository.InventoryRepository.clear_player_inventory",
-                new_callable=AsyncMock,
-                return_value=0,
-            ),
-            patch(
-                "persist.repositories.player_ship_repository.PlayerShipRepository.get_player_ships",
-                new_callable=AsyncMock,
-                return_value=[],
-            ),
-        ):
+        with _patch_prestige_side_effects(service):
             result = await service.prestige_player(mock_db, player_id=1)
 
         assert player.prestige_count == 4
@@ -703,18 +809,7 @@ class TestPrestigePlayer:
         mock_player_repo.get_by_id.return_value = player
         mock_config_repo.get_by_guild_id.return_value = _config_with_prestige()
 
-        with (
-            patch(
-                "persist.repositories.inventory_repository.InventoryRepository.clear_player_inventory",
-                new_callable=AsyncMock,
-                return_value=0,
-            ),
-            patch(
-                "persist.repositories.player_ship_repository.PlayerShipRepository.get_player_ships",
-                new_callable=AsyncMock,
-                return_value=[],
-            ),
-        ):
+        with _patch_prestige_side_effects(service):
             await service.prestige_player(mock_db, player_id=1)
 
         # lifetime_credits must NOT be reset
@@ -749,18 +844,7 @@ class TestPrestigePlayer:
 
         # Now bump XP exactly to the default and verify the prestige succeeds.
         player.xp = _DEFAULT_PRESTIGE_XP_THRESHOLD
-        with (
-            patch(
-                "persist.repositories.inventory_repository.InventoryRepository.clear_player_inventory",
-                new_callable=AsyncMock,
-                return_value=0,
-            ),
-            patch(
-                "persist.repositories.player_ship_repository.PlayerShipRepository.get_player_ships",
-                new_callable=AsyncMock,
-                return_value=[],
-            ),
-        ):
+        with _patch_prestige_side_effects(service):
             result = await service.prestige_player(mock_db, player_id=1)
 
         assert result["tier_before"] == "Platinum"
@@ -780,18 +864,7 @@ class TestPrestigePlayer:
         mock_player_repo.get_by_id.return_value = player
         mock_config_repo.get_by_guild_id.return_value = _config_with_prestige()
 
-        with (
-            patch(
-                "persist.repositories.inventory_repository.InventoryRepository.clear_player_inventory",
-                new_callable=AsyncMock,
-                return_value=0,
-            ),
-            patch(
-                "persist.repositories.player_ship_repository.PlayerShipRepository.get_player_ships",
-                new_callable=AsyncMock,
-                return_value=[],
-            ),
-        ):
+        with _patch_prestige_side_effects(service):
             result = await service.prestige_player(mock_db, player_id=1)
 
         assert result["tier_before"] == "Platinum"

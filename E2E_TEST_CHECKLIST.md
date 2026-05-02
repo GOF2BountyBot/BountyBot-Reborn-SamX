@@ -428,24 +428,28 @@ Tier thresholds (lowered for fast testing via Session Setup): Bronze (0 XP) → 
 
 ### Prestige
 
-> 🔁 **B.48 RE-VERIFY REQUIRED post-refactor** for 6.12-6.15. The prestige flow is being refactored to use a configurable per-guild `Prestige` XP threshold (instead of hardcoded `level == 10` / 1,000,000 XP). After refactor:
+> 🔁 **B.48/B.49 RE-VERIFY REQUIRED post-refactor** for 6.12-6.15 and 6.20-6.21. Prestige now uses a configurable per-guild `Prestige` XP threshold **and** resets the player to the EXACT first-time-`/register` starter state (single Betty active with starter loadout, starter inventory, all other ships deleted). After this revision:
 > - 6.12 — Re-verify Set XP embed shows ONLY tier (no level field leak from any new code path)
-> - 6.13 — Re-verify warning embed text (no "level 10" reference; should reference configurable prestige threshold)
-> - 6.14 — UNBLOCKED post-refactor (currently blocked: requires 1,000,000 XP under old level system)
-> - 6.15 — UNBLOCKED post-refactor (depends on 6.14)
+> - 6.13 — Re-verify warning embed text (must describe full starter-Betty reset; must NOT claim ships/credits are preserved; must mention lifetime credits/duel/bounty stats ARE preserved)
+> - 6.14 — Re-run prestige confirm flow; post-prestige `/profile` must show: Bronze tier, 0 XP, 0 credits, single Betty active with the canonical starter loadout (Nirai Impulse EX 1 + E2 Exoclad + Telta Quickscan equipped, Micro Gun MK I in cargo)
+> - 6.15 — `/profile` after prestige must reflect starter-Betty-only inventory; pre-prestige fleet must be gone
 > - **NEW 6.18** — `/admin_config View Config` shows Prestige threshold in XP Thresholds section (Silver/Gold/Platinum/**Prestige**)
 > - **NEW 6.19** — `/admin_config_xp action:Update prestige:N` sets the prestige threshold (or equivalent admin command — architect to specify)
-> - **NEW 6.20** — `/prestige` error message when ineligible references the configured prestige XP threshold, NOT "level 10"
-> - **NEW 6.21** — Prestige confirmation embed shows "Previous Tier" (NOT "Previous Level")
+> - **NEW 6.20** — `/prestige` error message when ineligible references the configured prestige XP threshold, NOT "level 10"; warning embed must mention starter-Betty reset
+> - **NEW 6.21** — Prestige confirmation embed describes the starter-Betty reset semantics, shows "Previous Tier" (NOT "Previous Level"), and the resulting `/inventory` shows ONLY the starter items
+> - **NEW 6.22** — `/inventory` immediately after prestige must show exactly: 1× Nirai Impulse EX 1 (equipped), 1× E2 Exoclad (equipped), 1× Telta Quickscan (equipped), 1× Micro Gun MK I (cargo). No other items, no other ships.
+> - **NEW 6.23** — `/ships` immediately after prestige must list exactly one ship (Betty), and it must be the active ship.
 
 - [x] **6.12** `[ADMIN]` `/admin_player user:@you action:Set XP xp:35` — Max out XP to reach Platinum (above threshold of 30) — **RE-VERIFY post-B.48**
-- [x] **6.13** `/prestige` (without confirm) — Should show orange warning embed explaining what prestige does (reset to Bronze, keep ships/credits, gain prestige star) — **RE-VERIFY post-B.48: text must not reference "level"**
-- [ ] **6.14** `/prestige confirm:CONFIRM` — Resets level to 0, tier to Bronze, clears inventory; increments prestige_count; preserves ships and lifetime stats — **BLOCKED on B.48** (requires unattainable 1M XP under current level system)
-- [ ] **6.15** `/profile` — Shows prestige count, reset XP/tier, preserved lifetime stats — **BLOCKED on B.48** (depends on 6.14)
-- [ ] **6.18** *(NEW post-B.48)* `[ADMIN]` `/admin_config action:View Config` — Verify XP Thresholds section includes Prestige threshold alongside Silver/Gold/Platinum
-- [ ] **6.19** *(NEW post-B.48)* `[ADMIN]` `/admin_config_xp action:Update prestige:50` (or architect-specified equivalent) — Sets configurable prestige threshold per guild
-- [ ] **6.20** *(NEW post-B.48)* `/prestige` while ineligible — Error message references the configured prestige XP threshold, NOT a hardcoded level concept
-- [ ] **6.21** *(NEW post-B.48)* `/prestige confirm:CONFIRM` after eligible — Confirmation embed shows "Previous Tier: Platinum" (NOT "Previous Level: 10")
+- [x] **6.13** `/prestige` (without confirm) — ✅ 2026-05-02 (B.49): warning embed accurately describes full reset (fleet wiped, inventory wiped, starter Betty restored, preserved stats listed); no stale "keep your ships" language
+- [x] **6.14** `/prestige confirm:CONFIRM` — ✅ 2026-05-02 (B.49): DB-verified: tier→Bronze, XP→0, credits→0, all 5 prior ships deleted, fresh Betty (id=7) created active with starter loadout (Nirai Impulse EX 1 equipped, E2 Exoclad + Telta Quickscan equipped), inventory=1x Micro Gun MK I, lifetime_credits preserved (1,010,054,306), prestige_count 1→2, bounty/duel stats preserved
+- [x] **6.15** `/profile` — ✅ 2026-05-02 (B.49): front-end confirmed prestige_count=2, tier=Bronze, XP=0, credits=0, lifetime credits preserved
+- [x] **6.18** *(NEW post-B.48)* `[ADMIN]` `/admin_config action:View Config` — ✅ 2026-05-02: Prestige row present, displays "(default)" backward-compat marker since live guild config has no Prestige key (resolves to 50,000 default)
+- [x] **6.19** *(NEW post-B.48)* `[ADMIN]` `/admin_config_xp action:Update silver:10 gold:20 platinum:30 prestige:50` — ✅ 2026-05-02: Prestige threshold set to 50 successfully
+- [x] **6.20** *(NEW post-B.48)* `/prestige` while ineligible — ✅ 2026-05-02 (B.49): confirmed error/warning references XP threshold wording; warning embed describes starter Betty reset
+- [x] **6.21** *(NEW post-B.48)* `/prestige confirm:CONFIRM` after eligible — ✅ 2026-05-02 (B.49): confirmation embed shows "Previous Tier: Platinum", prestige_count=2, starter Betty state described accurately; no "Previous Level" language
+- [x] **6.22** *(NEW post-B.49)* `/inventory` immediately after prestige — ✅ 2026-05-02 (B.49): front-end confirmed canonical starter inventory (Nirai Impulse EX 1 equipped, E2 Exoclad + Telta Quickscan equipped, Micro Gun MK I in cargo); DB-verified
+- [x] **6.23** *(NEW post-B.49)* `/ships` immediately after prestige — ✅ 2026-05-02 (B.49): front-end confirmed exactly 1 ship (Betty id=7, active); all 5 pre-prestige ships gone; DB-verified
 
 ### Leaderboard
 

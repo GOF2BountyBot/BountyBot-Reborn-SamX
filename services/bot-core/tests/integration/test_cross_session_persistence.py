@@ -602,14 +602,14 @@ class TestOp07SellItemToShop:
 
 
 class TestOp10PrestigePlayer:
-    """Prestige player: XP/credits/tier reset, prestige_count++, ships
-    preserved (loadouts cleared), inventory cleared — all visible in fresh
-    session."""
+    """Prestige player (B.49): XP/credits/tier reset, prestige_count++,
+    EVERY existing ship deleted, entire inventory cleared, then Betty
+    recreated as the active starter ship — all visible in fresh session."""
 
     async def test_prestige_persists_reset_state_cross_session(self):
         engine, factory = await _fresh_sqlite_factory()
 
-        # B.48: prestige now gated on the per-guild ``Prestige`` XP threshold
+        # B.48: prestige gated on the per-guild ``Prestige`` XP threshold
         # (default 50,000 XP). Seed XP comfortably above the default.
         prestige_xp = 75_000
 
@@ -625,16 +625,25 @@ class TestOp10PrestigePlayer:
                 xp=prestige_xp,
                 prestige_count=2,
             )
-            ship = await _seed_player_ship(
+            ship_pre = await _seed_player_ship(
                 db, player.id, ship_name="Hammerhead", weapons=["Pulse Laser"], modules=["Shield"]
             )
             await _seed_inventory(db, player.id, "primary_weapon", "Pulse Laser", quantity=2)
             player_id = player.id
-            ship_id = ship.id
+            pre_ship_id = ship_pre.id
 
         from services.player_service import PlayerService
 
         svc = PlayerService()
+        # B.49: prestige calls _create_starter_loadout, which references the
+        # ``ship`` and ``item`` STI tables that the SQLite test schema does
+        # not include (per tests/integration/conftest.py — ARRAY columns are
+        # excluded). Stub the starter-loadout helper for this integration
+        # test; a dedicated unit test in test_player_service.py verifies
+        # delegation. The integration assertion here covers the reset side.
+        from unittest.mock import AsyncMock
+
+        svc._create_starter_loadout = AsyncMock()
         async with factory() as db, db.begin():
             await svc.prestige_player(db, player_id)
 
@@ -645,17 +654,26 @@ class TestOp10PrestigePlayer:
             assert p.credits == 0
             assert p.tier == "Bronze"
             assert p.prestige_count == 3
+            # active_ship_id was nulled (since we stubbed _create_starter_loadout
+            # the recreate step did not set a new active ship).
+            assert p.active_ship_id is None
 
-            # Ship hull preserved, loadout cleared
-            res = await fresh_db.execute(select(PlayerShip).where(PlayerShip.id == ship_id))
-            s = res.scalars().first()
-            assert s is not None, "Ship hull should be preserved"
-            assert s.weapons == []
-            assert s.modules == []
+            # B.49: pre-prestige ship hull deleted (NOT preserved).
+            res = await fresh_db.execute(select(PlayerShip).where(PlayerShip.id == pre_ship_id))
+            assert res.scalars().first() is None, "Pre-prestige ship hull must be deleted (B.49)."
 
-            # Inventory cleared
+            # No PlayerShip rows remain for this player (the starter helper was stubbed).
+            res = await fresh_db.execute(select(PlayerShip).where(PlayerShip.player_id == player_id))
+            assert list(res.scalars().all()) == [], (
+                "All player_ships rows must be removed before _create_starter_loadout runs (B.49)."
+            )
+
+            # Inventory cleared.
             res = await fresh_db.execute(select(PlayerInventory).where(PlayerInventory.player_id == player_id))
             assert list(res.scalars().all()) == []
+
+        # Verify _create_starter_loadout was invoked exactly once with the player.
+        svc._create_starter_loadout.assert_awaited_once()
 
         await engine.dispose()
 

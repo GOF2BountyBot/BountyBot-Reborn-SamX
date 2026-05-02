@@ -310,7 +310,7 @@ Core player management:
 - `update_player_credits(db, player_id, new_credits, update_lifetime)` — sets absolute credit balance; optionally updates lifetime_credits
 - `update_player_xp(db, player_id, new_xp)` — sets XP only. Tier is NOT auto-advanced; use `promote_player()` to explicitly cross a tier threshold.
 - `promote_player(db, player_id)` — explicit tier-up; gated by `xp_thresholds[next_tier]`
-- `prestige_player(db, player_id)` — B.48: gated on `xp_thresholds["Prestige"]` (default 50,000 when key absent); resets XP/credits/tier/inventory + ship loadouts; increments `prestige_count`; preserves lifetime_credits/ships/duel stats/bounty stats. Returns dict with `tier_before` and `xp_before`.
+- `prestige_player(db, player_id)` — B.49: gated on `xp_thresholds["Prestige"]` (default 50,000 when key absent); resets XP/credits/tier, deletes all ships/inventory, recreates the starter Betty loadout via `_create_starter_loadout()`, increments `prestige_count`; preserves lifetime_credits/duel stats/bounty stats. Returns dict with `tier_before` and `xp_before`.
 - `transfer_credits(db, source_id, target_id, amount)` — atomic transfer using `get_by_id_for_update` to prevent race conditions
 - `get_player_statistics(db, player_id)` — assembles comprehensive stats dict
 

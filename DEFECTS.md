@@ -11,9 +11,80 @@ Cross-ref: `E2E_TEST_CHECKLIST.md` (test-item references). All commit SHAs are l
 
 ## OPEN
 
-### B.48 — Dual progression systems (tier vs level) cause user-visible contradiction at prestige; level concept is vestigial and should be removed
+### B.49 — Audit hardcoded operational constants for per-guild configurability (enhancement)
+
+🔵 low · Enhancement · 2026-05-02 · **OPEN** · Future patch — not blocking
+
+**Context**: Discovered during B.48 live verification (E2E 6.18) when user noticed `/admin_config View Config` does not display the bounty-credit-to-XP payout factor. Investigation revealed `BOUNTY_REWARD_TO_XP_GAIN_MULT = 0.1` is a hardcoded global in `services/bot-core/src/services/game_constants.py:92`, with no guild override path.
+
+**The broader pattern**: B.48 successfully consolidated XP-tier-prestige progression into per-guild `xp_thresholds`. Several other operational constants in `game_constants.py` likely deserve similar treatment so per-guild balance/tuning is possible. Doing them piecemeal is wasteful — a single audit + batched refactor is more efficient and gives a single design pass on "which dial belongs in which command surface."
+
+**Candidate constants to audit** (initial list — architect should expand during scoping):
+
+| Constant | Current Value | Notes |
+|----------|---------------|-------|
+| `BOUNTY_REWARD_TO_XP_GAIN_MULT` | 0.1 | The trigger discovery — bounty payout determines XP gain, which feeds the now-configurable prestige threshold |
+| `MAX_BOUNTIES_PER_DIVISION` | (env-overridable) | Already supports `BOUNTYBOT_*` env override but not per-guild |
+| `BOUNTY_DELAY_RANDOM_MIN/MAX` | (env-overridable) | Same as above |
+| `CHECK_COOLDOWN` | (env-overridable) | Same as above |
+| `DUEL_VARIANCE_PERCENT` | (TBD) | Combat RNG knob — might affect per-guild competitive balance |
+| Shop refresh intervals | (TBD) | Already partially configurable per-guild via shop config; verify completeness |
+| Temperature decay rates / multipliers | (TBD) | Guild activity heat — clear per-guild candidate |
+| Module/equipment limits | (intentional non-overridable per game balance) | Excluded — these are game-rule invariants, not operational tuning |
+
+**Design questions for the audit**:
+
+1. **Per-guild vs env-only override**: Some constants are already env-overridable globally. Decide for each whether per-guild override is wanted or if global env tuning is sufficient.
+
+2. **Storage strategy**: Three options — (a) extend existing `guild_configs` JSON columns where a relevant one exists, (b) add dedicated typed columns (preferred for non-threshold values like multipliers/floats), (c) introduce a new generic `guild_config_overrides` JSON column.
+
+3. **Admin command surface**: Which existing commands extend (e.g., `/admin_config_payout`, `/admin_config_combat`)? Or a single `/admin_config Set key:... value:...` generic update path? Mix?
+
+4. **Default-fallback pattern**: All new configurable values must follow the B.48 pattern — `.get("Key", DEFAULT)` so backward-compat with existing guild rows works without migration. Where new columns are added, use `server_default` in Alembic.
+
+5. **Tier/division naming consistency**: B.48 noted that `tier_levels = {"Bronze": 1, "Silver": 2, ...}` exists as a local lookup in `shop_service.py:748`. Audit should consider whether to elevate this to a shared `TierRank` enum used everywhere tier-comparison is needed.
+
+**Estimated scope** (if all candidates above end up in scope): ~10-15 files, 1 Alembic migration (DB schema additions only, no data migration), ~250-400 lines including tests. Comparable to B.48 in shape but with one DB schema change.
+
+**Workflow recommendation when this is picked up**:
+1. `@researcher` first — full audit of `game_constants.py` against actual production usage; classify each constant as (a) per-guild candidate, (b) global env-overridable only, (c) hardcoded invariant. Output: design doc with the table above filled in completely.
+2. User reviews and ratifies the audit.
+3. Then `@architect` for design + implementation per the same loop pattern used for B.48.
+
+**Cross-refs**: Discovered during E2E phase 6.18 verification (B.48 live testing). Related to the broader theme of "guild-configurable operational tuning" started by B.48.
+
+---
+
+### B.50 — Refine confirmation UX and admin command syntax (enhancement)
+
+🔵 low · Enhancement · 2026-05-02 · **OPEN** · Future patch — not blocking
+
+**Context**: During the B.48/B.49 prestige and admin-config work, two recurring UX problems stood out:
+
+1. Several destructive / high-impact prompts still rely on typed `confirm:CONFIRM` style parameters.
+2. Some admin config command surfaces are awkward and easy to misuse, e.g. `/admin_player user:@samx.ai action:Set Credits credits:999999999` versus accidental parameter mix-ups like `/admin_player user:@samx.ai action:Set Credits xp:999`.
+
+**Future enhancement goals**:
+
+- Replace typed confirmation tokens with button-style confirmation embeds for destructive actions (`CONFIRM` becomes a UI button, not a text parameter).
+- Rework admin config/edit commands so the parameter flow is more fluid and less error-prone.
+- Audit the existing command surfaces to decide which ones should remain explicit sub-actions and which should move to a cleaner form/dialog or a more structured command layout.
+
+**Questions to resolve when this is picked up**:
+
+1. Which commands are destructive enough to require button confirmation?
+2. Which admin configuration flows are better served by a dedicated command vs a generic set/update surface?
+3. Which command patterns should be preserved for discoverability, and which should be replaced to reduce user error?
+
+**Scope**: Future UX/refactor work only. No behavior changes required for B.48/B.49 verification.
+
+---
+
+### B.48 — Prestige must reset the player to the starter Betty loadout; level concept is still vestigial and should be removed
 
 🟠 high · Architecture · 2026-05-02 · **OPEN** · Refactor required
+
+**Revision (2026-05-02)**: The earlier B.48 refactor removed the vestigial level/division gate from prestige. The user now wants prestige to be a *full reset* of owned ships/inventory back to the exact first-time `/register` starter state: the starter Betty loadout with Betty as the active ship.
 
 **Context**: BountyBot has two parallel and largely orthogonal progression systems:
 
@@ -45,6 +116,24 @@ The user is "Platinum" (configured-max tier), with XP that exceeds all configure
 **Additional disconnects discovered during investigation**:
 
 1. `/admin_player Set XP` does NOT auto-adjust tier. Setting Alt's XP from 927 → 2 left tier=Silver despite being far below Silver threshold (10). Tier and XP are independent columns; only `/promote` writes tier.
+
+**B.48 revision requirement (starter Betty reset)**:
+
+The prestige action must now:
+
+- Reset the player's owned ships and inventory to the exact starter registration state
+- Make Betty the active ship
+- Recreate the starter Betty loadout (same items/equipment as first-time `/register`)
+- Keep the new Prestige threshold behavior from B.48 intact (`xp_thresholds["Prestige"]`)
+
+This supersedes the earlier "preserve ship hulls" behavior. Prestige is now a true account reset with the starter ship/loadout restored.
+
+Implications:
+
+1. `player_service.prestige_player()` must delete/rebuild the player's ship/inventory rows to match the starter registration flow.
+2. Gateway prestige warning/success embed text and any docstrings must be updated to describe the starter Betty reset accurately.
+3. E2E tests 6.13-6.15 and 6.20-6.21 must be rerun against the revised behavior.
+4. Existing B.48 verification that the prestige flow preserves all ships is now superseded and no longer the desired behavior.
 
 2. `DIVISION_BOUNDARIES` defines only 3 divisions (`bronze`/`silver`/`gold`) but `TIER_TECH_LEVEL_CAPS` and `_TIER_NAMES` reference 4 tiers (Bronze/Silver/Gold/Platinum). System B has no Platinum equivalent.
 

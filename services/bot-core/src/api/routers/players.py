@@ -271,12 +271,16 @@ async def update_player_xp(
 
 @router.post("/{player_id}/prestige", response_model=PrestigeResponse)
 async def prestige_player(player_id: int, player_service: PlayerService = Depends(get_player_service)):
-    """Prestige a player — reset progress, increment prestige counter.
+    """Prestige a player — full reset to first-time-registration starter state.
 
     B.48: prestige is gated on the per-guild ``xp_thresholds["Prestige"]``
-    XP threshold (default 50,000 when the key is absent). Resets XP,
-    xp_surplus, credits, tier, inventory, AND ship loadouts. Preserves
-    lifetime_credits, ship hulls, duel stats, and bounty stats.
+    XP threshold (default 50,000 when the key is absent).
+
+    B.49: a successful prestige resets the player to the EXACT starter
+    Betty state. Deletes ALL owned ships and the entire player inventory,
+    then recreates Betty (active) plus the canonical starter loadout via
+    the same code path as ``/register``. Preserves lifetime_credits,
+    duel stats, bounty stats, and increments prestige_count.
     """
     flogger.info(f"Prestiging player {player_id}")
 

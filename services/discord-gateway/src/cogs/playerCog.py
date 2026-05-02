@@ -320,10 +320,19 @@ class PlayerCog(commands.Cog):
                 embed = discord.Embed(
                     title="⚠️ Prestige Confirmation",
                     description=(
-                        "Prestiging will reset you to **Bronze tier** with **0 XP**, **0 credits**, "
-                        "and **clear your inventory and ship loadouts**, "
-                        "but you'll keep your ships and gain a prestige star!\n\n"
-                        "Lifetime credits, duel stats, and bounty stats are preserved.\n\n"
+                        "Prestiging is a **full reset**. You will be reset to the brand-new "
+                        "starter state — exactly as if you had just `/register`-ed for the "
+                        "first time.\n\n"
+                        "**You will lose all of:**\n"
+                        "• Every ship you own (your fleet is wiped)\n"
+                        "• Your entire inventory\n"
+                        "• All XP, credits, and tier progress\n\n"
+                        "**You will start over with:**\n"
+                        "• A single Betty (active) with the starter loadout\n"
+                        "• The standard starter inventory\n"
+                        "• Bronze tier · 0 XP · 0 credits\n\n"
+                        "**Preserved across prestige:** lifetime credits, duel stats, "
+                        "bounty stats, and your prestige star count (which is incremented).\n\n"
                         "To confirm, run: `/prestige confirm:CONFIRM`"
                     ),
                     color=discord.Color.orange(),
@@ -340,7 +349,9 @@ class PlayerCog(commands.Cog):
                 title="⭐ Prestige Complete!",
                 description=(
                     f"Congratulations! You have prestiged successfully.\n\n"
-                    f"You are now back at **Bronze tier** with **0 XP**.\n"
+                    f"You are now back at **Bronze tier** with **0 XP** and **0 credits**, "
+                    f"flying a freshly-fitted **Betty** with the starter loadout — "
+                    f"exactly as if you had just registered for the first time.\n\n"
                     f"Your prestige count is now **{prestige_data['prestige_count']}** ⭐"
                 ),
                 color=discord.Color.gold(),

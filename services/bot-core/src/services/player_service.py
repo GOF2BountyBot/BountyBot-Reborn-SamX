@@ -345,29 +345,40 @@ class PlayerService:
         return int(thresholds.get("Prestige", _DEFAULT_PRESTIGE_XP_THRESHOLD))
 
     async def prestige_player(self, db: AsyncSession, player_id: int) -> dict:
-        """Prestige a player — reset progress, increment prestige counter.
+        """Prestige a player — full reset to first-time-registration starter state.
 
-        B.48: prestige is now gated on the guild's configurable Prestige XP
+        B.48: prestige is gated on the guild's configurable Prestige XP
         threshold (``xp_thresholds["Prestige"]``) rather than a hardcoded
         level==10 / 1,000,000 XP boundary. The legacy level/division system
         was removed entirely in B.48.
 
+        B.49 (supersedes earlier B.48 behaviour): a successful prestige now
+        resets the player to the EXACT starter Betty state produced by
+        first-time ``/register``. Previously prestige preserved ship hulls
+        while clearing loadouts, leaving prestige players with arbitrarily
+        large fleets. The new contract: after prestige, the player owns
+        exactly one ship (Betty, active) with the canonical starter loadout
+        and the canonical starter inventory — identical, byte for byte, to a
+        brand-new player.
+
         Requirements:
         - Player must have ``xp >= xp_thresholds["Prestige"]`` (default 50,000
           when key absent) to prestige.
-        - Resets: xp, xp_surplus, credits, tier, inventory, AND ship loadouts
-        - Preserves: lifetime_credits, ship hulls, prestige_count, duel stats,
-          bounty stats
-        - Kaamo storage preservation: not yet implemented (future feature)
+        - Resets: xp=0, xp_surplus=0, credits=0, tier=Bronze; deletes ALL
+          owned ships (not just loadouts) and the entire player_inventory;
+          recreates Betty + starter loadout + starter inventory via
+          :meth:`_create_starter_loadout`.
+        - Preserves: lifetime_credits, prestige_count (incremented), duel
+          stats, bounty stats. Kaamo storage handling out of scope here.
 
-        Package G (B.19) Option P1: ship loadouts are cleared alongside
-        inventory.  This aligns prestige's "reset progress" intent with the
-        consistency contract (no orphan slot references — invariants I1, I2).
-        Pre-fix behaviour preserved JSON loadouts while wiping inventory,
-        which created post-prestige phantom items.
+        The starter loadout is recreated through the same code path as
+        ``/register`` (and therefore through the
+        :class:`~services.loadout_consistency_service.LoadoutConsistencyService`
+        choke-point), guaranteeing invariants I1 (no duplication) and I2
+        (no materialisation from nothing).
 
-        The caller (router) should wrap this in ``async with db.begin()`` for
-        atomicity; the service uses no internal commit anymore.
+        The caller (router) MUST wrap in ``async with db.begin()`` for
+        atomicity; the service flushes but never commits.
 
         Returns dict with:
         - player_id: int
@@ -395,33 +406,52 @@ class PlayerService:
             tier_before = player.tier
             xp_before = player.xp
 
-            # Reset progression
+            # Reset progression columns. Note: lifetime_credits, duel stats,
+            # bounty stats are preserved by deliberately not touching them.
             player.xp = 0
             player.xp_surplus = 0
-            player.credits = 0  # Reset credits (legacy gives 0 starting credits on prestige)
+            player.credits = 0
             player.tier = "Bronze"
             player.prestige_count += 1
-            # Note: lifetime_credits, ship hulls, duel stats, bounty stats are preserved
 
-            # Clear all ship loadouts alongside inventory (Package G B.19, Option P1).
+            # B.49: full reset to starter Betty state — delete every existing
+            # ship and the entire inventory, then recreate via the canonical
+            # starter-loadout path used by /register.
             from persist.repositories.inventory_repository import InventoryRepository
             from persist.repositories.player_ship_repository import PlayerShipRepository
 
             inventory_repo = InventoryRepository()
             player_ship_repo = PlayerShipRepository()
 
-            ships = await player_ship_repo.get_player_ships(db, player_id)
-            for ship in ships:
-                ship.weapons = []
-                ship.modules = []
-                ship.turrets = []
-                ship.secondary_weapons = []
+            # 1. Break the active_ship_id FK before deleting PlayerShip rows
+            #    so the row delete doesn't violate the FK constraint.
+            await self.player_repo.update_active_ship(db, player_id, None, commit=False)
 
+            # 2. Delete every PlayerShip row for this player. This also drops
+            #    every loadout JSON column, since the rows are gone.
+            existing_ships = await player_ship_repo.get_player_ships(db, player_id)
+            for ship in existing_ships:
+                await player_ship_repo.remove(db, ship, commit=False)
+
+            # 3. Wipe all inventory rows.
             await inventory_repo.clear_player_inventory(db, player_id, commit=False)
+
+            # 4. Flush so the deletes are visible before the starter-loadout
+            #    INSERTs (avoids identity-map conflicts on Betty re-insert).
+            await db.flush()
+
+            # 5. Recreate the starter Betty + loadout via the same code path
+            #    a brand-new player would take. _create_starter_loadout sets
+            #    Betty active and seeds inventory + equips through the
+            #    LoadoutConsistencyService choke-point.
+            await self._create_starter_loadout(db, player)
 
             await db.flush()
 
-            flogger.info(f"Player {player_id} prestiged (count: {player.prestige_count})")
+            flogger.info(
+                f"Player {player_id} prestiged to starter Betty state "
+                f"(count: {player.prestige_count}, tier_before: {tier_before}, xp_before: {xp_before})"
+            )
 
             return {
                 "player_id": player_id,

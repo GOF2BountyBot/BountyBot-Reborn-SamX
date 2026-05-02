@@ -799,7 +799,17 @@ async def test_spawn_bounty_checked_dict_matches_route(spawn_service, mock_db):
 
 @pytest.mark.asyncio
 async def test_spawn_bounty_reward_calculation(spawn_service, mock_db):
-    """Reward must equal reward_per_sys * len(route)."""
+    """New formula: reward_per_sys = floor(consolation_pool / route_len).
+
+    Under the winner-reserve model:
+    - total_reward is seeded from the legacy rps formula.
+    - winner_reserve = int(total_reward * BOUNTY_WINNER_RESERVE_FACTOR)
+    - consolation_pool = total_reward - winner_reserve
+    - reward_per_sys = consolation_pool // len(route)
+    The stored reward_per_sys is therefore <= reward / len(route).
+    """
+    from services.game_constants import GameConstants
+
     criminal = _make_criminal("Viper", "terran")
     spawn_service.criminal_repo.list_all = AsyncMock(return_value=[criminal])
     spawn_service.bounty_repo.get_active_by_guild_and_division = AsyncMock(return_value=[])
@@ -817,7 +827,15 @@ async def test_spawn_bounty_reward_calculation(spawn_service, mock_db):
 
     assert len(captured_bounties) == 1
     b = captured_bounties[0]
-    assert b.reward == b.reward_per_sys * len(b.route)
+
+    # Verify the new formula: rps comes from consolation pool / route len
+    expected_winner_reserve = int(b.reward * GameConstants.BOUNTY_WINNER_RESERVE_FACTOR)
+    expected_consolation_pool = b.reward - expected_winner_reserve
+    expected_rps = expected_consolation_pool // len(b.route)
+    assert b.reward_per_sys == expected_rps, (
+        f"reward_per_sys={b.reward_per_sys!r} != expected {expected_rps!r} "
+        f"(reward={b.reward}, route_len={len(b.route)}, factor={GameConstants.BOUNTY_WINNER_RESERVE_FACTOR})"
+    )
 
 
 @pytest.mark.asyncio
@@ -1895,7 +1913,13 @@ def _make_full_player(
 
 @pytest.mark.asyncio
 async def test_calc_rewards_single_winner_only(service, mock_db):
-    """One player checked the answer system — they get the full pool."""
+    """One player checked the answer system; no non-winners → winner gets full pool.
+
+    Under the winner-reserve model with no consolation deductions:
+    winner_reserve = int(10000 * 0.25) = 2500
+    consolation_pool = 7500 (no deductions)
+    winner credits = 2500 + 7500 = 10000
+    """
     bounty = _make_reward_bounty(
         reward=10000,
         reward_per_sys=1000,
@@ -1910,18 +1934,21 @@ async def test_calc_rewards_single_winner_only(service, mock_db):
     winner = rewards[0]
     assert winner.player_id == 42
     assert winner.is_winner is True
-    assert winner.credits_earned == 10000
+    assert winner.credits_earned == 10000  # reserve + full consolation (no deductions)
     assert winner.systems_checked_count == 1
 
 
 @pytest.mark.asyncio
 async def test_calc_rewards_multi_contributor(service, mock_db):
-    """3 players checked systems; contributors get rps*count, winner gets remainder."""
-    # route: Alpha(p1), Beta(p2), Gamma(p2), Sol(p3=winner), Omega(-1)
-    # rps=1000, pool=5000
-    # p1: 1 check → 1000 credits
-    # p2: 2 checks → 2000 credits
-    # p3 (winner): 5000 - 1000 - 2000 = 2000 credits
+    """3 players checked systems; non-winners get rps*count (XP=0); winner gets reserve + remaining.
+
+    reward=5000, rps=1000
+    winner_reserve = int(5000 * 0.25) = 1250
+    consolation_pool = 3750
+    p1: 1 check → 1000 credits, XP=0, consolation_pool→2750
+    p2: 2 checks → 2000 credits, XP=0, consolation_pool→750
+    p3 (winner): 1250 + 750 = 2000, xp=int(2000*0.1)=200
+    """
     bounty = _make_reward_bounty(
         reward=5000,
         reward_per_sys=1000,
@@ -1938,14 +1965,17 @@ async def test_calc_rewards_multi_contributor(service, mock_db):
 
     assert by_id[1].credits_earned == 1000
     assert by_id[1].is_winner is False
+    assert by_id[1].xp_earned == 0  # Failed checkers earn no XP
     assert by_id[1].systems_checked_count == 1
 
     assert by_id[2].credits_earned == 2000
     assert by_id[2].is_winner is False
+    assert by_id[2].xp_earned == 0  # Failed checkers earn no XP
     assert by_id[2].systems_checked_count == 2
 
-    assert by_id[3].credits_earned == 2000
+    assert by_id[3].credits_earned == 2000  # winner_reserve(1250) + remaining_consolation(750)
     assert by_id[3].is_winner is True
+    assert by_id[3].xp_earned == int(2000 * 0.1)  # XP on full winner payout
     assert by_id[3].systems_checked_count == 1
 
 
@@ -1966,8 +1996,16 @@ async def test_calc_rewards_no_contributors(service, mock_db):
 
 
 @pytest.mark.asyncio
-async def test_calc_rewards_xp_calculation(service, mock_db):
-    """XP earned equals credits_earned * 0.1 (BOUNTY_REWARD_TO_XP_GAIN_MULT)."""
+async def test_calc_rewards_failed_checkers_xp_is_zero(service, mock_db):
+    """Non-winning (failed) checkers receive credits but XP = 0.
+
+    AC: Failed checkers: XP = 0 (no XP for missed checks).
+    reward=10000, rps=1000
+    winner_reserve = int(10000 * 0.25) = 2500
+    consolation_pool = 7500
+    p1 (non-winner): credits=1000, xp=0
+    p2 (winner): 2500 + 6500 = 9000, xp=900
+    """
     bounty = _make_reward_bounty(
         reward=10000,
         reward_per_sys=1000,
@@ -1980,21 +2018,88 @@ async def test_calc_rewards_xp_calculation(service, mock_db):
 
     by_id = {r.player_id: r for r in rewards}
 
-    # Contributor: 1000 credits → 100 xp
+    # Failed checker: gets credits but XP = 0
     assert by_id[1].credits_earned == 1000
-    assert by_id[1].xp_earned == int(1000 * 0.1)
+    assert by_id[1].xp_earned == 0, "Failed checkers must earn XP=0"
+    assert by_id[1].is_winner is False
 
-    # Winner: 10000 - 1000 = 9000 credits → 900 xp
+    # Winner: gets reserve + remaining consolation, XP on full payout
+    assert by_id[2].credits_earned == 9000  # 2500 + (7500 - 1000) = 2500 + 6500
+    assert by_id[2].xp_earned == int(9000 * 0.1)
+    assert by_id[2].is_winner is True
+
+
+@pytest.mark.asyncio
+async def test_calc_rewards_winner_xp_on_full_payout(service, mock_db):
+    """Winner XP is computed on the full winner credits (reserve + remaining consolation).
+
+    AC: Winner: xp_earned = int(total_winner_credits * BOUNTY_REWARD_TO_XP_GAIN_MULT)
+    reward=8000, rps=500
+    winner_reserve = int(8000 * 0.25) = 2000
+    consolation_pool = 6000
+    no non-winners, so winner gets 2000 + 6000 = 8000
+    xp = int(8000 * 0.1) = 800
+    """
+    bounty = _make_reward_bounty(
+        reward=8000,
+        reward_per_sys=500,
+        route=["A", "B", "Sol"],
+        answer="Sol",
+        checked={"A": -1, "B": -1, "Sol": 99},
+    )
+
+    rewards = await service.calc_rewards(mock_db, bounty)
+
+    assert len(rewards) == 1
+    winner = rewards[0]
+    assert winner.player_id == 99
+    assert winner.is_winner is True
+    assert winner.credits_earned == 8000
+    assert winner.xp_earned == int(8000 * 0.1), "Winner XP must be on full winner payout"
+
+
+@pytest.mark.asyncio
+async def test_calc_rewards_xp_calculation(service, mock_db):
+    """XP: failed checkers get 0; winner gets int(credits * BOUNTY_REWARD_TO_XP_GAIN_MULT).
+
+    Supersedes the old test where all contributors got XP.
+    reward=10000, rps=1000
+    winner_reserve = 2500, consolation_pool = 7500
+    p1 (checker): 1000 credits, xp=0
+    p2 (winner): 2500 + (7500-1000) = 9000 credits, xp=900
+    """
+    bounty = _make_reward_bounty(
+        reward=10000,
+        reward_per_sys=1000,
+        route=["Alpha", "Sol"],
+        answer="Sol",
+        checked={"Alpha": 1, "Sol": 2},
+    )
+
+    rewards = await service.calc_rewards(mock_db, bounty)
+
+    by_id = {r.player_id: r for r in rewards}
+
+    # Failed checker: credits but XP = 0
+    assert by_id[1].credits_earned == 1000
+    assert by_id[1].xp_earned == 0
+
+    # Winner: reserve + remaining consolation, XP on full amount
     assert by_id[2].credits_earned == 9000
     assert by_id[2].xp_earned == int(9000 * 0.1)
 
 
 @pytest.mark.asyncio
-async def test_calc_rewards_winner_gets_remainder(service, mock_db):
-    """Winner receives exactly pool - sum(contributor credits)."""
-    # rps=500, pool=3000
-    # contributor (p1): 2 checks → 1000 credits
-    # winner (p2): 3000 - 1000 = 2000
+async def test_calc_rewards_winner_gets_reserve_plus_remaining_consolation(service, mock_db):
+    """Winner receives winner_reserve + remaining consolation (not the full original pool).
+
+    reward=3000, rps=500
+    winner_reserve = int(3000 * 0.25) = 750
+    consolation_pool = 2250
+    p1 (contributor): 2 checks → min(1000, 2250) = 1000, consolation→1250, xp=0
+    p2 (winner): 750 + 1250 = 2000, xp=int(2000*0.1)=200
+    Total distributed: 1000 + 2000 = 3000 ✓
+    """
     bounty = _make_reward_bounty(
         reward=3000,
         reward_per_sys=500,
@@ -2011,6 +2116,82 @@ async def test_calc_rewards_winner_gets_remainder(service, mock_db):
 
     assert contributor_total + winner_credits == 3000
     assert winner_credits == 2000
+    assert by_id[1].xp_earned == 0  # No XP for failed checker
+    assert by_id[2].xp_earned == int(2000 * 0.1)
+
+
+@pytest.mark.asyncio
+async def test_calc_rewards_worst_case_gendol_ethor(service, mock_db):
+    """Worst-case scenario: all non-answer systems checked before winner captures.
+
+    AC verification: Gendol Ethor scenario
+    reward=7635, route_len=5, factor=0.25
+    winner_reserve = int(7635 * 0.25) = 1908
+    consolation_pool = 5727
+    reward_per_sys = 5727 // 5 = 1145 (as stored on bounty)
+
+    4 wrong systems checked by p2 (4 * 1145 = 4580 consumed):
+    consolation_pool after deductions = 5727 - 4580 = 1147
+    winner (p1): 1908 + 1147 = 3055
+    checker (p2): 4580, xp=0
+    """
+    bounty = _make_reward_bounty(
+        reward=7635,
+        reward_per_sys=1145,  # floor(5727 / 5)
+        route=["Sys1", "Sys2", "Sys3", "Sys4", "Answer"],
+        answer="Answer",
+        checked={"Sys1": 2, "Sys2": 2, "Sys3": 2, "Sys4": 2, "Answer": 1},  # p2 checked 4 wrong
+    )
+
+    rewards = await service.calc_rewards(mock_db, bounty)
+
+    by_id = {r.player_id: r for r in rewards}
+
+    # Non-winner checker (p2): 4 * 1145 = 4580 credits, xp=0
+    assert by_id[2].credits_earned == 4580
+    assert by_id[2].xp_earned == 0
+
+    # Winner (p1): 1908 + 1147 = 3055
+    assert by_id[1].credits_earned == 3055
+    assert by_id[1].is_winner is True
+    # Total must equal original reward
+    assert by_id[1].credits_earned + by_id[2].credits_earned == 7635
+
+
+@pytest.mark.asyncio
+async def test_calc_rewards_consolation_pool_never_goes_below_zero(service, mock_db):
+    """Cap: consolation_pool never goes below 0 even if many systems checked.
+
+    reward=1000, rps=400, winner_reserve=250, consolation_pool=750
+    p2 checks 2 systems: would deduct 800 but pool only has 750 → capped at 750
+    winner (p1): 250 + 0 = 250
+    checker (p2): 750 (capped), xp=0
+    total = 250 + 750 = 1000 ✓
+    """
+    bounty = _make_reward_bounty(
+        reward=1000,
+        reward_per_sys=400,
+        route=["A", "B", "Sol"],
+        answer="Sol",
+        checked={"A": 2, "B": 2, "Sol": 1},  # p2 checked 2 systems
+    )
+
+    rewards = await service.calc_rewards(mock_db, bounty)
+
+    by_id = {r.player_id: r for r in rewards}
+
+    # winner_reserve = int(1000 * 0.25) = 250
+    # consolation_pool = 750
+    # p2: 2 * 400 = 800 but capped at 750
+    assert by_id[2].credits_earned == 750
+    assert by_id[2].xp_earned == 0
+
+    # winner: 250 + 0 = 250
+    assert by_id[1].credits_earned == 250
+    assert by_id[1].is_winner is True
+
+    # Total must equal original reward
+    assert by_id[1].credits_earned + by_id[2].credits_earned == 1000
 
 
 # ===========================================================================
@@ -3621,12 +3802,68 @@ async def test_award_combat_bonus_adds_credits(service, mock_db):
 
 
 @pytest.mark.asyncio
+async def test_award_combat_bonus_adds_xp(service, mock_db):
+    """_award_combat_bonus also adds XP proportional to bonus credits.
+
+    AC: XP on the bonus = int(bonus_credits * BOUNTY_REWARD_TO_XP_GAIN_MULT)
+    bonus_credits=1000 → xp = int(1000 * 0.1) = 100
+    """
+    from services.game_constants import GameConstants
+
+    player = _make_full_player(player_id=1, credits=2000, xp=50, classic_mode=False)
+    service.player_repo.get_by_id = AsyncMock(return_value=player)
+
+    bonus = 1000
+    expected_xp = int(bonus * GameConstants.BOUNTY_REWARD_TO_XP_GAIN_MULT)
+
+    await service._award_combat_bonus(mock_db, player_id=1, bonus_credits=bonus)
+
+    assert player.credits == 3000
+    assert player.xp == 50 + expected_xp
+
+
+@pytest.mark.asyncio
+async def test_award_combat_bonus_no_xp_for_classic_mode(service, mock_db):
+    """_award_combat_bonus does not add XP for classic-mode players."""
+    player = _make_full_player(player_id=1, credits=1000, xp=0, classic_mode=True)
+    service.player_repo.get_by_id = AsyncMock(return_value=player)
+
+    await service._award_combat_bonus(mock_db, player_id=1, bonus_credits=500)
+
+    assert player.credits == 1500
+    assert player.xp == 0  # No XP for classic mode
+
+
+@pytest.mark.asyncio
 async def test_award_combat_bonus_player_not_found(service, mock_db):
     """_award_combat_bonus does nothing if player not found — no crash."""
     service.player_repo.get_by_id = AsyncMock(return_value=None)
 
     # Should not raise
     await service._award_combat_bonus(mock_db, player_id=999, bonus_credits=500)
+
+
+@pytest.mark.asyncio
+async def test_award_combat_bonus_bronze_2x_full_payout_xp(service, mock_db):
+    """Bronze 2x: bonus equals full winner payout; XP on full 2x amount.
+
+    AC: XP on bronze bonus = int(bonus_credits * BOUNTY_REWARD_TO_XP_GAIN_MULT)
+    where bonus_credits = full_winner_payout (not just the reserve portion).
+    This test simulates: winner_reward=3055, bonus=3055, total=6110.
+    XP on bonus = int(3055 * 0.1) = 305.
+    """
+    from services.game_constants import GameConstants
+
+    player = _make_full_player(player_id=1, credits=1000, xp=0, classic_mode=False)
+    service.player_repo.get_by_id = AsyncMock(return_value=player)
+
+    winner_reward = 3055
+    expected_bonus_xp = int(winner_reward * GameConstants.BOUNTY_REWARD_TO_XP_GAIN_MULT)
+
+    await service._award_combat_bonus(mock_db, player_id=1, bonus_credits=winner_reward)
+
+    assert player.credits == 1000 + winner_reward
+    assert player.xp == expected_bonus_xp
 
 
 # ===========================================================================

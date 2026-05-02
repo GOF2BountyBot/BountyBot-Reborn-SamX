@@ -75,6 +75,17 @@ class GameConstants:
     BOUNTY_REWARD_TO_XP_GAIN_MULT: float = 0.1
 
     # ------------------------------------------------------------------
+    # Bounty Winner Reserve Factor
+    # Fraction of the total bounty reward held back as the winner's
+    # guaranteed payout, protecting the captor from heavy consolation
+    # payouts. The remainder is the consolation pool, split evenly
+    # across route systems for non-winner checkers.
+    # Override via: BOUNTYBOT_BOUNTY_WINNER_RESERVE_FACTOR=0.25
+    # ------------------------------------------------------------------
+
+    BOUNTY_WINNER_RESERVE_FACTOR: float = 0.25
+
+    # ------------------------------------------------------------------
     # Ship Price Thresholds (10 entries; index 0 == TL1)
     # ------------------------------------------------------------------
 
@@ -330,6 +341,9 @@ class GameConstants:
 
         # XP multiplier
         cls.BOUNTY_REWARD_TO_XP_GAIN_MULT = _track_float("BOUNTY_REWARD_TO_XP_GAIN_MULT", 0.1)
+
+        # Bounty winner reserve factor
+        cls.BOUNTY_WINNER_RESERVE_FACTOR = _track_float("BOUNTY_WINNER_RESERVE_FACTOR", 0.25)
 
         if _overrides:
             _flogger.info(f"GameConstants env overrides detected: {', '.join(_overrides)}")

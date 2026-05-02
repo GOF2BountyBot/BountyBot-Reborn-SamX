@@ -45,6 +45,18 @@ Cross-ref: `E2E_TEST_CHECKLIST.md` (test-item references). All commit SHAs are l
 
 ---
 
+### B.54 — Bounty reward distribution undervalues the winner when many players miss (resolved)
+
+🟡 medium · Design · 2026-05-02 · **FIXED** (pending rebuild)
+
+**Issue**: Winner received remaining pool after consolation payouts, making it possible for a winner to receive less than consolation players in a fully-checked route. On a 5-system 7,635 cr bounty with 4 missed checks, winner received only 1,527 cr (20%) — same as a single missed check.
+
+**Fix**: Introduced `BOUNTY_WINNER_RESERVE_FACTOR = 0.25` (env-overridable via `BOUNTYBOT_BOUNTY_WINNER_RESERVE_FACTOR`). At spawn, `reward_per_sys = floor((reward × 0.75) / route_length)`. Winner always receives their reserve + any unconsumed consolation, guaranteeing ≥25% of posted bounty. Failed checkers receive credits only — XP removed from consolation payouts. Winner XP based on full payout. Bronze 2x combat bonus applies to full winner payout including XP.
+
+**Future**: `BOUNTY_WINNER_RESERVE_FACTOR` earmarked for per-guild configurability under B.49.
+
+---
+
 ### B.52 — Criminal loadout generation can produce zero-weapon bounties when a non-combat ship is selected
 
 🟡 medium · Runtime · 2026-05-02 · **OPEN**
@@ -92,7 +104,8 @@ Optionally add a warning log if a bounty is created with zero weapons as a belt-
 
 | Constant | Current Value | Notes |
 |----------|---------------|-------|
-| `BOUNTY_REWARD_TO_XP_GAIN_MULT` | 0.1 | The trigger discovery — bounty payout determines XP gain, which feeds the now-configurable prestige threshold |
+| `BOUNTY_REWARD_TO_XP_GAIN_MULT` | 0.1 | Bounty payout → XP gain multiplier |
+| `BOUNTY_WINNER_RESERVE_FACTOR` | 0.25 | Winner's guaranteed share of bounty pool (B.54); already env-overridable |
 | `MAX_BOUNTIES_PER_DIVISION` | (env-overridable) | Already supports `BOUNTYBOT_*` env override but not per-guild |
 | `BOUNTY_DELAY_RANDOM_MIN/MAX` | (env-overridable) | Same as above |
 | `CHECK_COOLDOWN` | (env-overridable) | Same as above |

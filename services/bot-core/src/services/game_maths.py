@@ -88,6 +88,13 @@ def reward_per_sys_check(tech_level: int, loadout_value: int) -> int:
     Implements the legacy formula from ``gameMaths.py`` lines 217-227.
     Tech-level 1 criminals receive a 1.3x multiplier as a beginner bonus.
 
+    .. deprecated::
+        This function is superseded for the spawn path by the new
+        ``consolation_pool / route_length`` formula introduced alongside
+        ``BOUNTY_WINNER_RESERVE_FACTOR``.  ``spawn_bounty()`` no longer calls
+        this function.  It is kept because ``tests/services/test_game_maths.py``
+        exercises it directly; do not delete until those tests are updated.
+
     Args:
         tech_level:    Bounty (criminal) tech level (1-10).
         loadout_value: Total credit value of the criminal's equipment.

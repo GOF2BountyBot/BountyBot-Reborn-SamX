@@ -651,21 +651,25 @@ class BountyService:
         """Award a combat bonus to a bronze-division player.
 
         Called when a Bronze player wins the optional post-capture combat.
-        Awards ``bonus_credits`` (equal to the base reward) to the player,
-        effectively doubling their total payout.
+        Awards ``bonus_credits`` (equal to the full winner payout) to the player,
+        effectively doubling their total payout.  Also awards XP proportional to
+        the bonus credits via ``BOUNTY_REWARD_TO_XP_GAIN_MULT``.
 
         Args:
             db:            Async database session.
             player_id:     ID of the player to award.
-            bonus_credits: Credits to add (should equal the base bounty reward).
+            bonus_credits: Credits to add (should equal the full winner payout).
         """
         player = await self.player_repo.get_by_id(db, player_id)
         if player is None:
             flogger.warning(f"Cannot award combat bonus: player {player_id} not found")
             return
+        bonus_xp = int(bonus_credits * GameConstants.BOUNTY_REWARD_TO_XP_GAIN_MULT)
         player.credits += bonus_credits
         player.lifetime_credits += bonus_credits
-        flogger.info(f"Awarded {bonus_credits:,} combat bonus to player {player_id}")
+        if not player.classic_mode:
+            player.xp += bonus_xp
+        flogger.info(f"Awarded {bonus_credits:,} combat bonus (+{bonus_xp} XP) to player {player_id}")
 
     # ------------------------------------------------------------------
     # Bounty Spawning
@@ -903,9 +907,16 @@ class BountyService:
         # Step 5: Generate loadout
         loadout = await self.generate_loadout(db, tech_level)
 
-        # Step 6: Calculate reward
-        rps = reward_per_sys_check(tech_level, loadout["total_value"])
-        total_reward = rps * len(route)
+        # Step 6: Calculate reward using the winner-reserve / consolation-pool model.
+        # The total reward is seeded by the legacy per-sys formula, but reward_per_sys
+        # is now derived from the consolation pool (total minus the winner's reserve),
+        # split evenly across the route length.
+        _legacy_rps = reward_per_sys_check(tech_level, loadout["total_value"])
+        total_reward = _legacy_rps * len(route)
+
+        winner_reserve = int(total_reward * GameConstants.BOUNTY_WINNER_RESERVE_FACTOR)
+        consolation_pool = total_reward - winner_reserve
+        rps = consolation_pool // len(route) if route else 0
 
         # Step 7: Set timing
         issue_time = datetime.now(UTC)
@@ -1436,11 +1447,15 @@ class BountyService:
     ) -> list[RewardInfo]:
         """Calculate rewards for all contributors to a completed bounty.
 
-        Algorithm:
-        1. Identify all players who checked systems (checked[system] != -1)
-        2. Each non-winner contributor gets reward_per_sys * systems_they_checked
-        3. Winner gets all remaining credits from the pool
-        4. XP = credits_earned * BOUNTY_REWARD_TO_XP_GAIN_MULT
+        Algorithm (winner-reserve / consolation-pool model):
+        1. Compute winner_reserve = max(0, floor(bounty.reward * BOUNTY_WINNER_RESERVE_FACTOR))
+        2. consolation_pool = bounty.reward - winner_reserve
+        3. For each non-winner player: credit_reward = reward_per_sys * systems_checked
+           (deducted from consolation_pool; pool is never allowed below 0)
+        4. Winner gets: winner_reserve + max(0, remaining consolation_pool)
+        5. XP rules:
+           - Failed checkers: XP = 0 (no XP for missed checks)
+           - Winner: xp_earned = int(total_winner_credits * BOUNTY_REWARD_TO_XP_GAIN_MULT)
 
         Args:
             db:     Async database session (unused directly, kept for API consistency).
@@ -1449,7 +1464,8 @@ class BountyService:
         Returns:
             List of RewardInfo for each contributing player.
         """
-        credits_pool = bounty.reward
+        winner_reserve = max(0, int(bounty.reward * GameConstants.BOUNTY_WINNER_RESERVE_FACTOR))
+        consolation_pool = bounty.reward - winner_reserve
         rps = bounty.reward_per_sys
         winner_id = bounty.checked.get(bounty.answer, -1)
 
@@ -1461,34 +1477,36 @@ class BountyService:
 
         rewards: list[RewardInfo] = []
 
-        # Non-winner contributors
+        # Non-winner contributors: pay rps * checks from consolation pool; XP = 0
         for player_id, check_count in player_checks.items():
             if player_id == winner_id:
                 continue
             credit_reward = rps * check_count
-            credits_pool -= credit_reward
-            xp_reward = int(credit_reward * GameConstants.BOUNTY_REWARD_TO_XP_GAIN_MULT)
+            # Cap deduction so consolation_pool never goes negative
+            credit_reward = min(credit_reward, consolation_pool)
+            consolation_pool -= credit_reward
 
             rewards.append(
                 RewardInfo(
                     player_id=player_id,
                     credits_earned=credit_reward,
-                    xp_earned=xp_reward,
+                    xp_earned=0,  # No XP for failed (non-winning) checkers
                     is_winner=False,
                     systems_checked_count=check_count,
                 )
             )
 
-        # Winner gets remaining pool
+        # Winner gets winner_reserve + any remaining consolation pool
         if winner_id != -1:
-            credits_pool = max(0, credits_pool)  # Safety
-            xp_reward = int(credits_pool * GameConstants.BOUNTY_REWARD_TO_XP_GAIN_MULT)
+            remaining_consolation = max(0, consolation_pool)
+            total_winner_credits = winner_reserve + remaining_consolation
+            xp_reward = int(total_winner_credits * GameConstants.BOUNTY_REWARD_TO_XP_GAIN_MULT)
             winner_checks = player_checks.get(winner_id, 0)
 
             rewards.append(
                 RewardInfo(
                     player_id=winner_id,
-                    credits_earned=credits_pool,
+                    credits_earned=total_winner_credits,
                     xp_earned=xp_reward,
                     is_winner=True,
                     systems_checked_count=winner_checks,

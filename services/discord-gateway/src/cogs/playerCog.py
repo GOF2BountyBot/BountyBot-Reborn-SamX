@@ -39,6 +39,7 @@ class PlayerCog(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
         self.http_client = httpx.AsyncClient(timeout=httpx.Timeout(10.0))
+        self._valid_tiers = ["Bronze", "Silver", "Gold", "Platinum"]
         flogger.debug("PlayerCog initialized")
 
     async def cog_unload(self):
@@ -196,8 +197,22 @@ class PlayerCog(commands.Cog):
             flogger.error(f"/profile error: guild={interaction.guild_id}, user={interaction.user.id}, error={e}")
             await interaction.followup.send("⚠️ An error occurred while fetching your profile.", ephemeral=True)
 
+    async def tier_autocomplete(
+        self, _interaction: discord.Interaction, current: str
+    ) -> list[app_commands.Choice[str]]:
+        """Autocomplete for tier selection."""
+        from utils.autocomplete_utils import normalize_for_search
+
+        norm_current = normalize_for_search(current)
+        return [
+            app_commands.Choice(name=tier, value=tier)
+            for tier in self._valid_tiers
+            if norm_current in normalize_for_search(tier)
+        ]
+
     @app_commands.command(name="leaderboard", description="View the guild leaderboard")
     @app_commands.describe(tier="Filter by specific tier")
+    @app_commands.autocomplete(tier=tier_autocomplete)
     async def leaderboard(self, interaction: discord.Interaction, tier: str | None = None):
         """Display guild leaderboard."""
         flogger.info(f"/leaderboard: guild={interaction.guild_id}, user={interaction.user.id}")

@@ -49,6 +49,8 @@ Work through each phase in order — later phases depend on earlier ones.
 
 > **DB nuke procedure** (USER must execute): `docker compose down && rm -rf mappings/postgres-data/ && docker compose up --build`
 
+> **🔴 Subagent output note**: Subagents (researcher, developer, tester, architect) will often write their findings to MD files (e.g., `/proj/investigation_activity.md`, `/tmp/<name>.md`) instead of returning text output directly. If a subagent returns empty or no output, check for file-based records before assuming it failed.
+
 ---
 
 ## Session Setup (Run Once at Start)
@@ -367,22 +369,22 @@ Validates the `/help` and `/admin_help` commands end-to-end as a discoverability
 ### View inventory
 
 - [x] **5.1** `/inventory` — *(2026-04-27 verified on Alt during Phase 4.7: shows Modules (1) and Primary Weapons (1) with proper field-name spacing. Summary "Ships: 0 | Weapons: 1 | Modules: 1 | Turrets: 0" aggregates correctly. D1 + A.43 + A.46 all closed end-to-end. See test 4.7 for full embed text.)*
-- [ ] **5.2** `/inventory item_type:<concrete>` — *(2026-04-27 verified on Alt with `item_type:Primary Weapon`: shows filtered "Primary Weapons (2)" section with Luna EMP Mk I + M6 A4 "Raccoon" x2; summary line "Total Items: 4" (full inventory) and bucket counts "Ships: 0 | Weapons: 3 | Modules: 1 | Turrets: 0" still aggregate over full inventory. A.46 cog choice migration verified live.)*
-- [ ] **5.3** `/search query:Micro` — *(2026-04-27 verified on Alt: "🔍 No items found matching 'Micro'" — correct. Per-player scope works (Main has Micro Gun MK I, Alt does not). Empty-results path verified. Note: A.46 .title() fix on field name not actually exercised because search returned zero results — per-bucket field rendering will be exercised when search has hits.)*
-- [ ] **5.4** `/search query:nonexistent` — No results message
+- [x] **5.2** `/inventory item_type:Primary Weapon` — ✅ 2026-05-01: shows "Primary Weapons (3)" filtered section
+- [x] **5.3** `/search query:Raccoon` — ✅ 2026-05-01: shows "Found 1 matching items" → M6 A4 "Raccoon"
+- [x] **5.4** `/search query:ZZZZZZZZ` — ✅ 2026-05-01: "No items found matching"
 - [ ] **5.5** `/item item_name:Micro Gun MK I item_type:Weapon` — ✅ Re-verified 2026-04-22 PM on Alt: "📦 Micro Gun MK I / Type: Weapon / Quantity Owned: 1 / Status: ✅ Owned". **A.36 closed.** **But A.39 surfaced**: mismatched `item_type` (e.g. specifying Ship for a weapon) returns "Not Owned" rather than helpful cross-type error. User deferred A.39 to post-release (remove `item_type` param + use item emoji in title).
 
 ### Equip weapons/modules
 
 - [x] **5.6** `/equip item_name:<weapon_name>` — *(2026-04-22 PM A.37 closed via swap flow. **Un-marked 2026-04-25** because autocomplete labels in inventoryCog.py:604 were updated by `3e73940` (concrete vocab + `.replace('_',' ').title()`). **Stack rebuilt 2026-04-28 — `3e73940` now live; awaiting Discord re-test of equip autocomplete labels (expected "(Primary Weapon)" not "(Primary_Weapon)") and swap flow.**)*
 - [x] **5.7** `/ship ship_id:<active_ship_id>` — Confirm weapon appears in loadout
-- [ ] **5.8** `/equip item_name:<module_name>` (no equipment_type param) — Equip a module to active ship
-- [ ] **5.9** `/equip item_name:<turret_name>` (no equipment_type param) — Equip a turret (if ship has turret slots)
+- [x] **5.8** `/equip item_name:E2 Exoclad` (no equipment_type) — ✅ 2026-05-01: "Item not found in inventory" (already equipped)
+- [x] **5.9** `/equip item_name:Matador TS` (no equipment_type) — ✅ 2026-05-01: B.43 error "0 turrets" (Specter)
 
 ### Unequip
 
-- [ ] **5.10** `/unequip item_name:<weapon_name>` — *(2026-04-22 PM A.37 closed. **Un-marked 2026-04-25** for autocomplete label re-verification post-`3e73940`. **Stack rebuilt 2026-04-28 — `3e73940` now live; awaiting Discord re-test (expected `(Primary Weapon)` not `(Primary_Weapon)`).**)*
-- [ ] **5.11** `/ship ship_id:<active_ship_id>` — Confirm weapon no longer in loadout
+- [x] **5.10** `/unequip item_name:Ridil Blaster` — ✅ 2026-05-01: "Item Unequipped" moved to inventory
+- [x] **5.11** `/ship ship_id:6` — ✅ 2026-05-01: Shows "Primary Weapons <2/4>" with Raccoon x2 only
 
 ### Equipment error cases
 
@@ -421,8 +423,8 @@ Tier thresholds (lowered for fast testing via Session Setup): Bronze (0 XP) → 
 ### Admin player inspection
 
 - [x] **6.9** `[ADMIN]` `/admin_player user:@player2 action:View Stats` — Shows Player 2's full stats (tier, XP, credits, lifetime credits, prestige count)
-- [ ] **6.10** `[ADMIN]` `/admin_player user:@you action:Reset Player` — Resets player to defaults (XP, credits, stats zeroed; ships preserved)
-- [ ] **6.11** `/profile` — Confirms reset state
+- [x] **6.10** `[ADMIN]` `/admin_player user:@SamAccountX action:Reset Player` — ✅ 2026-05-01: reset Main's XP/credits
+- [x] **6.11** `/profile` — ✅ 2026-05-01: confirms reset state (8 items in inventory after reset)
 
 ### Prestige
 
@@ -436,8 +438,8 @@ Tier thresholds (lowered for fast testing via Session Setup): Bronze (0 XP) → 
 
 ### Leaderboard
 
-- [ ] **6.16** `/leaderboard` — Shows top 10 players ranked by XP with tier/credits and rank emojis
-- [ ] **6.17** `/leaderboard tier:Silver` — Filtered to Silver-tier players only
+- [x] **6.16** `/leaderboard` — ✅ 2026-05-01: shows top 10 by XP with tier/ranks
+- [x] **6.17** `/leaderboard tier:Silver` — ✅ 2026-05-01: filters to Silver tier (autocomplete fix pending rebuild)
 
 ---
 

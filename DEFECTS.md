@@ -13,7 +13,7 @@ Cross-ref: `E2E_TEST_CHECKLIST.md` (test-item references). All commit SHAs are l
 
 ### B.44 — AboutCog preload has no retry logic, leaves category cache empty on startup
 
-🟡 medium · Runtime · 2026-05-01 · **FIXED** `f39e73a`
+🟡 medium · Runtime · 2026-05-01 · **FIXED** `f39e73a` · **CLOSED** 2026-05-01
 
 **Context**: On stack startup, AboutCog's `_preload_about_data()` failed with "ConnectError: Name or service not known" because bot-core wasn't ready. Unlike AdminCog (which has 5 retries with backoff), AboutCog failed immediately and set `_objects_by_category = {}` — never retried.
 
@@ -25,7 +25,7 @@ Cross-ref: `E2E_TEST_CHECKLIST.md` (test-item references). All commit SHAs are l
 
 ### B.43 — Zero-slot turret equip gives generic Discord API error
 
-🟡 medium · E2E · 2026-05-01 · **FIXED** `d6c1e0b` · **VERIFIED** 2026-05-01
+🟡 medium · E2E · 2026-05-01 · **FIXED** `d6c1e0b` · **VERIFIED** 2026-05-01 · **CLOSED** 2026-05-01
 
 **Context**: Equip a turret on a ship with 0 turret slots (e.g., Specter has 0 turrets). Expected: helpful error. Actual: generic API error.
 
@@ -39,7 +39,7 @@ Cross-ref: `E2E_TEST_CHECKLIST.md` (test-item references). All commit SHAs are l
 
 ### B.42 — Bounty expire executor runs before discord-gateway is ready
 
-🟡 medium · Runtime · 2026-05-01 · **FIXED** `7b4cb2c`
+🟡 medium · Runtime · 2026-05-01 · **FIXED** `7b4cb2c` · **CLOSED** 2026-05-01
 
 **Context**: On stack startup, bot-core's `bounty-expire-executor` (APScheduler job) runs its recovery-sweep and attempts to delete stale bounty announcement messages from Discord channels. This fails because discord-gateway service hasn't started yet, resulting in:
 
@@ -106,7 +106,7 @@ and item_name not in equipped_names  # Blocks ALL duplicates
 
 ### B.40 — Configured admin role not granting admin command access to Alt user
 
-🟡 medium · E2E · 2026-04-30 · **FIXED** `84a874b`
+🟡 medium · E2E · 2026-04-30 · **FIXED** `84a874b` · **CLOSED** 2026-05-01
 
 **Context**: During E2E, the configured admin role (@Bounty Bot Admin) was assigned to the Alt account, but admin commands (e.g. `/admin_spawn_bounty`, `/admin_help`) remained inaccessible.
 

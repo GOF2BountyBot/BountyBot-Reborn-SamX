@@ -346,6 +346,30 @@ async def test_get_config_summary(db_session: AsyncSession, repo: ConfigReposito
     assert "shop_config" in summary
 
 
+async def test_get_config_summary_includes_admin_role_id_null_by_default(
+    db_session: AsyncSession, repo: ConfigRepository
+):
+    """get_config_summary must include admin_role_id key; default is None."""
+    await repo.create_default_config(db_session, guild_id=2105)
+
+    summary = await repo.get_config_summary(db_session, guild_id=2105)
+
+    assert "admin_role_id" in summary
+    assert summary["admin_role_id"] is None
+
+
+async def test_get_config_summary_includes_admin_role_id_when_set(
+    db_session: AsyncSession, repo: ConfigRepository
+):
+    """get_config_summary must reflect admin_role_id after it is updated."""
+    await repo.create_default_config(db_session, guild_id=2106)
+    await repo.update_admin_role(db_session, guild_id=2106, role_id=555_000_111)
+
+    summary = await repo.get_config_summary(db_session, guild_id=2106)
+
+    assert summary["admin_role_id"] == 555_000_111
+
+
 async def test_get_config_summary_unconfigured(db_session: AsyncSession, repo: ConfigRepository):
     summary = await repo.get_config_summary(db_session, guild_id=9999)
 

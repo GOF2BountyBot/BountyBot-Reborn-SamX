@@ -66,11 +66,24 @@ class WeaponSwapView(discord.ui.View):
         self.equipped_items = equipped_items
         self.result: str | None = None  # "swapped" | "cancelled" | None (timeout)
 
-        # Build the select menu options from equipped items; description clarifies the swap action
-        options = [
-            discord.SelectOption(label=item["name"], value=item["name"], description="Swap this item out")
-            for item in equipped_items[:25]  # Discord limit: 25 options
-        ]
+        # Build the select menu options from equipped items.
+        # Use slot index in value to ensure uniqueness when duplicates exist
+        # (Discord rejects SelectOptions with duplicate values).
+        # Only add slot disambiguation to the label when the name appears multiple times.
+        from collections import Counter
+
+        name_counts = Counter(item["name"] for item in equipped_items[:25])
+        options = []
+        for i, item in enumerate(equipped_items[:25]):
+            name = item["name"]
+            label = f"{name} (slot {i + 1})" if name_counts[name] > 1 else name
+            options.append(
+                discord.SelectOption(
+                    label=label,
+                    value=f"{i}|{name}",
+                    description="Swap this item out",
+                )
+            )
         select = discord.ui.Select(
             placeholder="Choose an item to swap out…",
             options=options,
@@ -90,7 +103,9 @@ class WeaponSwapView(discord.ui.View):
 
     async def _on_select(self, interaction: discord.Interaction) -> None:
         """Called when the user selects an item to swap out."""
-        old_item_name = interaction.data["values"][0]
+        # Value format: "{slot_index}|{item_name}" — extract the name portion.
+        raw_value = interaction.data["values"][0]
+        _, _, old_item_name = raw_value.partition("|")
         await interaction.response.defer(thinking=True)
 
         try:
@@ -582,32 +597,22 @@ class InventoryCog(commands.Cog):
             choices = []
             seen: set[str] = set()
 
-            # Fetch active ship to count already-equipped instances per item name.
-            # Use a Counter so duplicate equips of the same item are counted correctly.
-            # An item remains available in autocomplete as long as:
-            #   inventory_quantity > equipped_count_on_active_ship
-            active_ship = await self._get_active_ship(player_id)
-            equipped_counts: dict[str, int] = {}
-            if active_ship:
-                for slot in ("weapons", "modules", "turrets", "secondary_weapons"):
-                    for name in active_ship.get(slot) or []:
-                        equipped_counts[name] = equipped_counts.get(name, 0) + 1
-
+            # inventory.quantity is the count of unequipped (cargo) copies only.
+            # Equipped copies are not in the inventory table. Show an item as long
+            # as the player has at least one unequipped copy available to equip.
             for item in items:
                 item_type = item.get("item_type", "")
                 item_name = item.get("item_name", "")
                 qty = item.get("quantity") or 0
-                equipped_count = equipped_counts.get(item_name, 0)
                 if (
                     item_type in _CURRENTLY_EQUIPPABLE_INVENTORY_TYPES
                     and item_name
                     and item_name not in seen
-                    and qty > equipped_count
+                    and qty >= 1
                     and norm_current in normalize_for_search(item_name)
                 ):
                     seen.add(item_name)
-                    remaining = qty - equipped_count
-                    qty_suffix = f" x{remaining}" if remaining > 1 else ""
+                    qty_suffix = f" x{qty}" if qty > 1 else ""
                     label = f"{item_name} ({item_type.replace('_', ' ').title()}){qty_suffix}"
                     choices.append(app_commands.Choice(name=label[:100], value=item_name))
             return choices[:25]

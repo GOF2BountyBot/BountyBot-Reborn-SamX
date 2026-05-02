@@ -860,3 +860,80 @@ class TestGetConfigWithNullJsonFields:
         assert response.status_code == 200
         data = response.json()
         assert data["guild_id"] == 67890
+
+
+# ===========================================================================
+# admin_role_id propagation — targeted regression tests for the admin_role_id fix
+# ===========================================================================
+
+
+class TestAdminRoleIdPropagation:
+    """Verify admin_role_id flows through every GuildConfigResponse constructor."""
+
+    @patch("api.routers.config.get_db_session")
+    def test_get_guild_config_returns_admin_role_id_when_set(self, mock_get_db, client, mock_config_service):
+        """GET /config/guild/{id} must include a non-None admin_role_id when configured."""
+        _configure_db_mock(mock_get_db)
+        mock_config_service.get_guild_config = AsyncMock(
+            return_value=make_mock_config(admin_role_id=1495550109381951549)
+        )
+
+        response = client.get("/api/v1/config/guild/67890")
+
+        assert response.status_code == 200
+        assert response.json()["admin_role_id"] == 1495550109381951549
+
+    @patch("api.routers.config.get_db_session")
+    def test_get_guild_config_returns_null_admin_role_id_when_not_configured(
+        self, mock_get_db, client, mock_config_service
+    ):
+        """GET /config/guild/{id} must return admin_role_id=null when not set."""
+        _configure_db_mock(mock_get_db)
+        mock_config_service.get_guild_config = AsyncMock(
+            return_value=make_mock_config(admin_role_id=None)
+        )
+
+        response = client.get("/api/v1/config/guild/67890")
+
+        assert response.status_code == 200
+        assert response.json()["admin_role_id"] is None
+
+    @patch("api.routers.config.get_db_session")
+    def test_update_guild_config_returns_admin_role_id(self, mock_get_db, client, mock_config_service):
+        """PUT /config/guild/{id} must propagate admin_role_id in response."""
+        _configure_db_mock(mock_get_db)
+        mock_config_service.create_or_update_config = AsyncMock(
+            return_value=make_mock_config(admin_role_id=99887766)
+        )
+        payload = {"guild_id": 67890, "admin_role_id": 99887766}
+
+        response = client.put("/api/v1/config/guild/67890", json=payload)
+
+        assert response.status_code == 200
+        assert response.json()["admin_role_id"] == 99887766
+
+    @patch("api.routers.config.get_db_session")
+    def test_update_admin_role_endpoint_returns_admin_role_id(self, mock_get_db, client, mock_config_service):
+        """PUT /config/guild/{id}/admin-role/{role} must reflect the new role in response."""
+        _configure_db_mock(mock_get_db)
+        mock_config_service.update_admin_role = AsyncMock(
+            return_value=make_mock_config(admin_role_id=12345678)
+        )
+
+        response = client.put("/api/v1/config/guild/67890/admin-role/12345678")
+
+        assert response.status_code == 200
+        assert response.json()["admin_role_id"] == 12345678
+
+    @patch("api.routers.config.get_db_session")
+    def test_reset_guild_config_returns_null_admin_role_id(self, mock_get_db, client, mock_config_service):
+        """POST /config/guild/{id}/reset must return admin_role_id=null (default after reset)."""
+        _configure_db_mock(mock_get_db)
+        mock_config_service.reset_to_defaults = AsyncMock(
+            return_value=make_mock_config(admin_role_id=None)
+        )
+
+        response = client.post("/api/v1/config/guild/67890/reset")
+
+        assert response.status_code == 200
+        assert response.json()["admin_role_id"] is None

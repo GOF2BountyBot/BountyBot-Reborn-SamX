@@ -133,10 +133,12 @@ class TransferCreditsResponse(BaseModel):
 
 
 class PrestigeResponse(BaseModel):
+    # B.48: level_before/division_before were renamed to tier_before/xp_before
+    # alongside the deletion of the level/division progression system.
     player_id: int
     prestige_count: int
-    level_before: int
-    division_before: str
+    tier_before: str
+    xp_before: int
 ```
 
 ---

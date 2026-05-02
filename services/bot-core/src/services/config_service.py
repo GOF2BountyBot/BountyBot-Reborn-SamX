@@ -144,6 +144,13 @@ class ConfigService:
             if not thresholds["Silver"] < thresholds["Gold"] < thresholds["Platinum"]:
                 raise ValueError("XP thresholds must be in ascending order")
 
+            # Optional Prestige threshold; if provided, must exceed Platinum.
+            if "Prestige" in thresholds:
+                if thresholds["Prestige"] <= 0:
+                    raise ValueError("Threshold for Prestige must be positive")
+                if thresholds["Prestige"] <= thresholds["Platinum"]:
+                    raise ValueError("Prestige threshold must be greater than Platinum threshold")
+
             await self.config_repo.update_xp_thresholds(db, guild_id, thresholds)
 
             flogger.info(f"Updated XP thresholds for guild {guild_id}")
@@ -289,6 +296,13 @@ class ConfigService:
 
             if not thresholds["Silver"] < thresholds["Gold"] < thresholds["Platinum"]:
                 raise ValueError("XP thresholds must be in ascending order")
+
+            # Prestige is optional but if provided must exceed Platinum.
+            if "Prestige" in thresholds:
+                if thresholds["Prestige"] <= 0:
+                    raise ValueError("Invalid threshold for Prestige")
+                if thresholds["Prestige"] <= thresholds["Platinum"]:
+                    raise ValueError("Prestige threshold must be greater than Platinum threshold")
 
         return validated_config
 

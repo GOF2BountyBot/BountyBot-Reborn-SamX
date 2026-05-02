@@ -609,10 +609,9 @@ class TestOp10PrestigePlayer:
     async def test_prestige_persists_reset_state_cross_session(self):
         engine, factory = await _fresh_sqlite_factory()
 
-        # Prestige requires level 10 — XP_LEVEL_BOUNDARIES[10] is the threshold.
-        from services.game_constants import GameConstants
-
-        level_10_xp = GameConstants.XP_LEVEL_BOUNDARIES[10]
+        # B.48: prestige now gated on the per-guild ``Prestige`` XP threshold
+        # (default 50,000 XP). Seed XP comfortably above the default.
+        prestige_xp = 75_000
 
         async with factory() as db:
             user = await _seed_user(db, user_id=15001)
@@ -623,7 +622,7 @@ class TestOp10PrestigePlayer:
                 guild_id=15000,
                 credits=99999,
                 tier="Platinum",
-                xp=level_10_xp + 1000,
+                xp=prestige_xp,
                 prestige_count=2,
             )
             ship = await _seed_player_ship(

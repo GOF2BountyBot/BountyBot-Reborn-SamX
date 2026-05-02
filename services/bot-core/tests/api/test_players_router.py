@@ -34,8 +34,8 @@ def mock_player_service():
         return_value={
             "player_id": 1,
             "prestige_count": 1,
-            "level_before": 10,
-            "division_before": "Elite",
+            "tier_before": "Platinum",
+            "xp_before": 50000,
         }
     )
     service.get_player_statistics = AsyncMock(
@@ -481,8 +481,9 @@ class TestPrestigePlayer:
         assert response.status_code == 200
         data = response.json()
         assert data["prestige_count"] == 1
-        assert data["level_before"] == 10
-        assert data["division_before"] == "Elite"
+        # B.48: level_before/division_before replaced with tier_before/xp_before.
+        assert data["tier_before"] == "Platinum"
+        assert data["xp_before"] == 50000
         assert data["player_id"] == 1
 
     def test_prestige_player_delegates_to_service(self, mock_db_session, client, mock_player_service):
@@ -494,14 +495,14 @@ class TestPrestigePlayer:
         mock_player_service.prestige_player.assert_called_once_with(mock_session, 55)
 
     def test_prestige_player_value_error_returns_400(self, client, mock_player_service):
-        """Validation error: service raises ValueError -> 400 (e.g. player below level 10)."""
-        err_msg = "Player must be level 10 to prestige (current level: 5)"
+        """Validation error: service raises ValueError -> 400 (e.g. XP below prestige threshold)."""
+        err_msg = "Not eligible for prestige. Need 50,000 XP to prestige, currently have 35"
         mock_player_service.prestige_player.side_effect = ValueError(err_msg)
 
         response = client.post("/api/v1/players/1/prestige")
 
         assert response.status_code == 400
-        assert "level 10" in response.json()["detail"]
+        assert "prestige" in response.json()["detail"].lower()
 
     def test_prestige_player_service_exception_returns_500(self, client, mock_player_service):
         """Server error: service raises Exception -> 500."""
@@ -517,15 +518,15 @@ class TestPrestigePlayer:
         mock_player_service.prestige_player.return_value = {
             "player_id": 1,
             "prestige_count": 3,
-            "level_before": 10,
-            "division_before": "Elite",
+            "tier_before": "Platinum",
+            "xp_before": 70000,
         }
 
         response = client.post("/api/v1/players/1/prestige")
 
         data = response.json()
         assert data["prestige_count"] == 3
-        assert data["level_before"] == 10
+        assert data["tier_before"] == "Platinum"
 
 
 # ---------------------------------------------------------------------------

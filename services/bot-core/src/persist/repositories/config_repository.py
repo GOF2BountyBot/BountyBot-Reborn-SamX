@@ -157,7 +157,7 @@ class ConfigRepository(IRepository[GuildConfig]):
                 "tech_level_probabilities": {"same_level": 0.70, "one_lower": 0.20, "two_lower": 0.10},
                 "sale_price_factor": 0.8,
                 "starting_credits": 0,
-                "xp_thresholds": {"Silver": 1000, "Gold": 5000, "Platinum": 15000},
+                "xp_thresholds": {"Silver": 1000, "Gold": 5000, "Platinum": 15000, "Prestige": 50000},
             }
 
             config = await self.create_or_update(db, default_config, commit=commit)
@@ -323,7 +323,8 @@ class ConfigRepository(IRepository[GuildConfig]):
             if not config:
                 raise ValueError(f"Config not found for guild {guild_id}")
 
-            # Validate thresholds
+            # Validate thresholds: Silver/Gold/Platinum required; Prestige optional but
+            # must be > Platinum if provided.
             required_tiers = ["Silver", "Gold", "Platinum"]
             for tier in required_tiers:
                 if tier not in thresholds or thresholds[tier] < 0:
@@ -332,6 +333,14 @@ class ConfigRepository(IRepository[GuildConfig]):
             # Ensure ascending order
             if not thresholds["Silver"] < thresholds["Gold"] < thresholds["Platinum"]:
                 raise ValueError("XP thresholds must be in ascending order")
+
+            if "Prestige" in thresholds:
+                # B.48 (F.5): rejected <= 0 to align with config_service.py's
+                # validation, which requires Prestige > 0.
+                if thresholds["Prestige"] <= 0:
+                    raise ValueError("Invalid threshold for Prestige")
+                if thresholds["Prestige"] <= thresholds["Platinum"]:
+                    raise ValueError("Prestige threshold must be greater than Platinum threshold")
 
             config.xp_thresholds = thresholds
             try:

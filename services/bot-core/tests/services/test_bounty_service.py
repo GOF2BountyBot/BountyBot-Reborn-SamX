@@ -2128,30 +2128,10 @@ async def test_distribute_rewards_increments_systems_checked(service, mock_db):
     assert player2.systems_checked == 6
 
 
-@pytest.mark.asyncio
-async def test_distribute_rewards_detects_level_up(service, mock_db):
-    """leveled_up is True when XP crosses a level boundary."""
-    from services.bounty_service import RewardInfo
-
-    # XP at 900 (level 1), adding 200 xp → 1100 (level 2, boundary at 1050)
-    player = _make_full_player(player_id=1, xp=900, classic_mode=False)
-    bounty = _make_reward_bounty()
-    bounty.status = "active"
-    reward = RewardInfo(
-        player_id=1,
-        credits_earned=2000,
-        xp_earned=200,
-        is_winner=True,
-    )
-
-    service.player_repo.get_by_id = AsyncMock(return_value=player)
-    service.bounty_repo.update = AsyncMock()
-
-    updated = await service.distribute_rewards(mock_db, bounty, [reward])
-
-    assert updated[0].leveled_up is True
-    assert updated[0].level_before == 1
-    assert updated[0].level_after == 2
+# B.48: test_distribute_rewards_detects_level_up was deleted along with
+# RewardInfo.level_before/level_after/leveled_up. Bounty rewards never
+# auto-advance tier (tier change requires explicit /promote) so there is
+# no equivalent surface to test.
 
 
 @pytest.mark.asyncio

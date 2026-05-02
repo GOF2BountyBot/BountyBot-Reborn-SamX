@@ -624,12 +624,16 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
                 embed.add_field(name="Sale Price Factor", value=f"{cfg['sale_price_factor']:.1%}", inline=True)
 
                 thresholds = cfg["xp_thresholds"]
-                threshold_text = (
-                    f"Silver: {thresholds['Silver']:,}\n"
-                    f"Gold: {thresholds['Gold']:,}\n"
-                    f"Platinum: {thresholds['Platinum']:,}"
-                )
-                embed.add_field(name="XP Thresholds", value=threshold_text, inline=True)
+                threshold_lines = [
+                    f"Silver: {thresholds['Silver']:,}",
+                    f"Gold: {thresholds['Gold']:,}",
+                    f"Platinum: {thresholds['Platinum']:,}",
+                ]
+                if "Prestige" in thresholds:
+                    threshold_lines.append(f"Prestige: {thresholds['Prestige']:,}")
+                else:
+                    threshold_lines.append("Prestige: (default)")
+                embed.add_field(name="XP Thresholds", value="\n".join(threshold_lines), inline=True)
                 embed.add_field(
                     name="Timestamps",
                     value=(
@@ -1285,6 +1289,7 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
         silver="XP threshold for Silver tier",
         gold="XP threshold for Gold tier",
         platinum="XP threshold for Platinum tier",
+        prestige="XP threshold required to /prestige (must exceed Platinum)",
     )
     @app_commands.choices(
         action=[
@@ -1299,6 +1304,7 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
         silver: int | None = None,
         gold: int | None = None,
         platinum: int | None = None,
+        prestige: int | None = None,
     ):
         """View or update XP tier thresholds for this guild."""
         await interaction.response.defer(thinking=True, ephemeral=True)
@@ -1319,24 +1325,34 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
                 silver_val = thresholds.get("Silver", "?")
                 gold_val = thresholds.get("Gold", "?")
                 platinum_val = thresholds.get("Platinum", "?")
+                prestige_val = thresholds.get("Prestige", "(default)")
+
+                def _fmt(label: str, val) -> str:
+                    if isinstance(val, int):
+                        return f"{label}: {val:,} XP"
+                    return f"{label}: {val}"
 
                 embed = discord.Embed(title="⚙️ XP Tier Thresholds", color=discord.Color.blue())
                 embed.add_field(
                     name="Thresholds",
-                    value=(
-                        f"Silver: {silver_val:,} XP\nGold: {gold_val:,} XP\nPlatinum: {platinum_val:,} XP"
-                        if isinstance(silver_val, int)
-                        else f"Silver: {silver_val}\nGold: {gold_val}\nPlatinum: {platinum_val}"
+                    value="\n".join(
+                        [
+                            _fmt("Silver", silver_val),
+                            _fmt("Gold", gold_val),
+                            _fmt("Platinum", platinum_val),
+                            _fmt("Prestige", prestige_val),
+                        ]
                     ),
                     inline=False,
                 )
                 await interaction.followup.send(embed=embed, ephemeral=True)
 
             elif action == "update":
-                # Require all three thresholds
+                # Require all three core thresholds (Silver/Gold/Platinum). Prestige is optional.
                 if silver is None or gold is None or platinum is None:
                     await interaction.followup.send(
-                        "❌ All three thresholds are required: silver, gold, and platinum.", ephemeral=True
+                        "❌ Silver, gold, and platinum are required (prestige is optional).",
+                        ephemeral=True,
                     )
                     return
 
@@ -1347,9 +1363,24 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
                     )
                     return
 
+                if prestige is not None and prestige <= platinum:
+                    await interaction.followup.send(
+                        "❌ Prestige threshold must be greater than the platinum threshold.",
+                        ephemeral=True,
+                    )
+                    return
+
+                threshold_payload: dict[str, int] = {
+                    "Silver": silver,
+                    "Gold": gold,
+                    "Platinum": platinum,
+                }
+                if prestige is not None:
+                    threshold_payload["Prestige"] = prestige
+
                 payload = {
                     "guild_id": interaction.guild_id,
-                    "thresholds": {"Silver": silver, "Gold": gold, "Platinum": platinum},
+                    "thresholds": threshold_payload,
                 }
                 resp = await self.http_client.put(
                     f"{api_base}/config/guild/{interaction.guild_id}/xp-thresholds",
@@ -1360,16 +1391,19 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
                 result = resp.json()
                 updated = result.get("xp_thresholds", payload["thresholds"])
 
+                lines = [
+                    f"Silver: {updated.get('Silver', silver):,} XP",
+                    f"Gold: {updated.get('Gold', gold):,} XP",
+                    f"Platinum: {updated.get('Platinum', platinum):,} XP",
+                ]
+                prestige_after = updated.get("Prestige")
+                if prestige_after is not None:
+                    lines.append(f"Prestige: {prestige_after:,} XP")
+                else:
+                    lines.append("Prestige: (default — not set per-guild)")
+
                 embed = discord.Embed(title="✅ XP Thresholds Updated", color=discord.Color.green())
-                embed.add_field(
-                    name="New Thresholds",
-                    value=(
-                        f"Silver: {updated.get('Silver', silver):,} XP\n"
-                        f"Gold: {updated.get('Gold', gold):,} XP\n"
-                        f"Platinum: {updated.get('Platinum', platinum):,} XP"
-                    ),
-                    inline=False,
-                )
+                embed.add_field(name="New Thresholds", value="\n".join(lines), inline=False)
                 await interaction.followup.send(embed=embed, ephemeral=True)
 
             flogger.info(f"Admin {interaction.user} performed XP config {action} in guild {interaction.guild_id}")

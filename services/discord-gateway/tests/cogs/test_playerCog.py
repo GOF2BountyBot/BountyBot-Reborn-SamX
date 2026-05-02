@@ -620,8 +620,8 @@ class TestPrestigeConfirmFlow:
         prestige_data = {
             "player_id": 1,
             "prestige_count": 1,
-            "level_before": 10,
-            "division_before": "Platinum",
+            "tier_before": "Platinum",
+            "xp_before": 50000,
         }
         prestige_resp = MagicMock()
         prestige_resp.raise_for_status = MagicMock()
@@ -638,8 +638,16 @@ class TestPrestigeConfirmFlow:
         embed = call_kwargs["embed"]
         assert "1" in (embed.description or "")  # prestige_count shown
 
-    def test_prestige_api_400_level_too_low(self, mock_player_cog):
-        """/prestige with confirm=CONFIRM shows error on API 400."""
+    def test_prestige_api_400_insufficient_xp(self, mock_player_cog):
+        """/prestige with confirm=CONFIRM shows error on API 400.
+
+        B.48: backend now returns the configurable-threshold error message
+        format ``"Not eligible for prestige. Need {N:,} XP to prestige,
+        currently have {M:,}"``. The mock's ``detail`` here is
+        character-identical to what ``player_service.prestige_player()``
+        actually produces when the player is below the configured Prestige
+        XP threshold.
+        """
         import httpx
 
         interaction = _create_mock_interaction()
@@ -651,7 +659,9 @@ class TestPrestigeConfirmFlow:
 
         error_response = MagicMock()
         error_response.status_code = 400
-        error_response.json.return_value = {"detail": "Player must be level 10 to prestige."}
+        error_response.json.return_value = {
+            "detail": "Not eligible for prestige. Need 50,000 XP to prestige, currently have 35"
+        }
         http_error = httpx.HTTPStatusError(
             "400 Bad Request",
             request=MagicMock(),
@@ -666,7 +676,10 @@ class TestPrestigeConfirmFlow:
         call_args = interaction.followup.send.call_args
         assert call_args[1].get("ephemeral", False)
         msg = call_args[0][0]
-        assert "level" in msg.lower() or "prestige" in msg.lower()
+        # Error message must reference XP / prestige threshold (not "level").
+        assert "prestige" in msg.lower()
+        assert "xp" in msg.lower()
+        assert "level" not in msg.lower()
 
     def test_prestige_api_failure_generic(self, mock_player_cog):
         """/prestige with confirm=CONFIRM handles generic failure from prestige endpoint."""

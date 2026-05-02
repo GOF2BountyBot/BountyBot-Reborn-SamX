@@ -27,7 +27,6 @@ from services.combat_models import ShipLoadout, WeaponStats
 from services.combat_service import CombatService
 from services.game_constants import GameConstants
 from services.game_maths import (
-    calculate_user_level,
     pick_random_item_tl,
     reward_per_sys_check,
     ship_tech_level_for_value,
@@ -146,16 +145,19 @@ class MultiCheckResponse:
 
 @dataclass
 class RewardInfo:
-    """Reward info for a single player."""
+    """Reward info for a single player.
+
+    B.48: removed vestigial ``level_before`` / ``level_after`` / ``leveled_up``
+    fields when the hardcoded level system was deleted. Bounty rewards never
+    auto-advance tier (tier change requires explicit ``/promote``), so there
+    is no level-equivalent surface to expose here.
+    """
 
     player_id: int
     credits_earned: int
     xp_earned: int
     is_winner: bool = False
     systems_checked_count: int = 0
-    level_before: int = 0
-    level_after: int = 0
-    leveled_up: bool = False
 
 
 class BountyService:
@@ -1506,8 +1508,9 @@ class BountyService:
         2. Add XP to player (skipped for classic mode players)
         3. Increment systems_checked count
         4. Increment bounty_wins for the winner
-        5. Check for level-up
-        6. Update bounty status to 'completed'
+        5. Update bounty status to 'completed'
+
+        B.48: previously also computed level-up flags, now removed.
 
         Args:
             db:      Async database session.
@@ -1515,7 +1518,7 @@ class BountyService:
             rewards: Pre-calculated reward list from :meth:`calc_rewards`.
 
         Returns:
-            Updated RewardInfo list with level information populated.
+            Updated RewardInfo list (post-mutation).
         """
         modified_players = []
         for reward in rewards:
@@ -1523,9 +1526,6 @@ class BountyService:
             if player is None:
                 flogger.warning(f"Player {reward.player_id} not found during reward distribution")
                 continue
-
-            # Record level before
-            reward.level_before = calculate_user_level(player.xp)
 
             # Apply credits
             player.credits += reward.credits_earned
@@ -1540,9 +1540,8 @@ class BountyService:
             if reward.is_winner:
                 player.bounty_wins += 1
 
-            # Check for level-up
-            reward.level_after = calculate_user_level(player.xp)
-            reward.leveled_up = reward.level_after > reward.level_before
+            # B.48: no level-up detection — the level concept was deleted
+            # along with the hardcoded XP_LEVEL_BOUNDARIES.
 
             modified_players.append(player)
 

@@ -5,7 +5,9 @@ Covers:
 - pick_random_item_tl  - probability distribution correctness
 - reward_per_sys_check - legacy reward formula
 - ship_tech_level_for_value - price-threshold classification
-- calculate_user_level  - XP to level mapping
+
+B.48: ``calculate_user_level`` and its tests were removed alongside the
+vestigial level/division progression system.
 """
 
 import random
@@ -14,7 +16,6 @@ from collections import Counter
 import pytest
 from src.services.game_constants import GameConstants
 from src.services.game_maths import (
-    calculate_user_level,
     pick_random_item_tl,
     reward_per_sys_check,
     ship_tech_level_for_value,
@@ -238,90 +239,4 @@ class TestShipTechLevelForValue:
         assert isinstance(ship_tech_level_for_value(100_000), int)
 
 
-# ---------------------------------------------------------------------------
-# TestCalculateUserLevel
-# ---------------------------------------------------------------------------
-
-
-class TestCalculateUserLevel:
-    """Tests for calculate_user_level()."""
-
-    def test_negative_xp_is_level_0(self) -> None:
-        """XP below 0 → level 0."""
-        assert calculate_user_level(-5) == 0
-
-    def test_xp_at_level1_boundary(self) -> None:
-        """XP == 0 → level 1 (boundary[1] == 0)."""
-        assert calculate_user_level(0) == 1
-
-    def test_xp_just_below_level2_is_level1(self) -> None:
-        """XP == 1049 → level 1 (just below the 1050 boundary)."""
-        assert calculate_user_level(1049) == 1
-
-    def test_xp_at_level2_boundary(self) -> None:
-        """XP == 1050 → level 2."""
-        assert calculate_user_level(1050) == 2
-
-    def test_xp_just_below_level3_is_level2(self) -> None:
-        """XP == 1999 → level 2."""
-        assert calculate_user_level(1999) == 2
-
-    def test_xp_at_level3_boundary(self) -> None:
-        """XP == 2000 → level 3."""
-        assert calculate_user_level(2000) == 3
-
-    def test_xp_at_level4_boundary(self) -> None:
-        """XP == 3500 → level 4."""
-        assert calculate_user_level(3500) == 4
-
-    def test_xp_at_level5_boundary(self) -> None:
-        """XP == 10 000 → level 5."""
-        assert calculate_user_level(10_000) == 5
-
-    def test_xp_at_level6_boundary(self) -> None:
-        """XP == 18 000 → level 6."""
-        assert calculate_user_level(18_000) == 6
-
-    def test_xp_at_level7_boundary(self) -> None:
-        """XP == 61 000 → level 7."""
-        assert calculate_user_level(61_000) == 7
-
-    def test_xp_at_level8_boundary(self) -> None:
-        """XP == 71 000 → level 8."""
-        assert calculate_user_level(71_000) == 8
-
-    def test_xp_at_level9_boundary(self) -> None:
-        """XP == 90 000 → level 9."""
-        assert calculate_user_level(90_000) == 9
-
-    def test_xp_just_below_level10_is_level9(self) -> None:
-        """XP == 999 999 → level 9."""
-        assert calculate_user_level(999_999) == 9
-
-    def test_xp_at_level10_boundary(self) -> None:
-        """XP == 1 000 000 → level 10."""
-        assert calculate_user_level(1_000_000) == 10
-
-    def test_xp_well_above_level10_boundary(self) -> None:
-        """XP >> max boundary → level 10 (capped)."""
-        assert calculate_user_level(9_999_999) == 10
-
-    def test_return_type_is_int(self) -> None:
-        """Return value must be an integer."""
-        assert isinstance(calculate_user_level(500), int)
-
-    @pytest.mark.parametrize(
-        ("xp", "expected_level"),
-        [
-            (-5, 0),
-            (0, 1),
-            (1049, 1),
-            (1050, 2),
-            (999_999, 9),
-            (1_000_000, 10),
-            (9_999_999, 10),
-        ],
-    )
-    def test_parametrized_xp_to_level(self, xp: int, expected_level: int) -> None:
-        """Parametrized coverage of key XP → level mappings."""
-        assert calculate_user_level(xp) == expected_level
+# B.48: TestCalculateUserLevel deleted along with calculate_user_level().

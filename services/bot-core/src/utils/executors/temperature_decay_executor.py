@@ -23,7 +23,10 @@ from shared.bblogger import get_logger
 flogger = get_logger("temperature-decay-executor")
 
 # ---------------------------------------------------------------------------
-# Supported bounty divisions (matches GameConstants.DIVISION_NAMES)
+# Supported bounty divisions
+# B.48: hardcoded list now (previously matched GameConstants.DIVISION_NAMES,
+# which only had 3 entries — bronze/silver/gold — and was deleted alongside
+# the level/division progression system).
 # ---------------------------------------------------------------------------
 _BOUNTY_DIVISIONS: list[str] = ["bronze", "silver", "gold", "platinum"]
 

@@ -99,17 +99,16 @@ services/bot-core/
     │   ├── models/                     # 21 SQLAlchemy ORM models (auto-imported)
     │   ├── repositories/               # 19 data-access repositories
     │   └── schemas/                    # schema_manager.py (legacy location)
-    ├── services/                       # 17 business-logic modules
+    ├── services/                       # 16 business-logic modules (B.48: division_service removed)
     │   ├── audit_service.py
     │   ├── bounty_service.py
     │   ├── combat_models.py            # Dataclasses only (NOT a service)
     │   ├── combat_service.py
     │   ├── config_service.py
-    │   ├── division_service.py
     │   ├── duel_service.py
     │   ├── equipment_service.py
     │   ├── game_constants.py           # GameConstants class (env-overridable)
-    │   ├── game_maths.py               # Pure math helpers (XP, levels)
+    │   ├── game_maths.py               # Pure math helpers (TL/reward formulas)
     │   ├── inventory_service.py
     │   ├── map_renderer.py             # Pillow-based star map rendering
     │   ├── pathfinding_service.py      # A* pathfinding across system graph
@@ -292,7 +291,7 @@ Base (DeclarativeBase)
 
 ---
 
-## All 17 Services
+## All 16 Services
 
 | File | Key Class(es) | Purpose |
 |---|---|---|
@@ -301,11 +300,11 @@ Base (DeclarativeBase)
 | `combat_models.py` | `WeaponStats`, `ModuleStats`, `ShipLoadout`, `CombatStats`, `FightResults`, `CombatResolver` (protocol) | Pure dataclasses + protocol; NOT a service class; imported by CombatService |
 | `combat_service.py` | `CombatService` | Duel combat resolution using SimpleTTKResolver; assembles loadouts, runs combat simulation |
 | `config_service.py` | `ConfigService` | GuildConfig CRUD with defaults; provides starting_credits, channel IDs |
-| `division_service.py` | `DivisionService` | Static helpers: get_division_for_level(), get_division_boundaries(); uses GameConstants |
+| `division_service.py` | *(REMOVED in B.48)* | Level/division progression system was deleted; tier progression is now driven by `xp_thresholds` JSON in GuildConfig |
 | `duel_service.py` | `DuelService` | create_challenge, accept_duel, decline_duel, resolve_duel, expire_duels; calls CombatService |
 | `equipment_service.py` | `EquipmentService` | Equip/unequip weapons and modules to PlayerShip; enforces per-type equip limits from GameConstants |
 | `game_constants.py` | `GameConstants` | Centralized constants class; operational constants overridable via `BOUNTYBOT_{KEY}` env vars; call `GameConstants.load()` at startup |
-| `game_maths.py` | `calculate_user_level()`, `calculate_xp_for_level()` | Pure functions; XP level boundaries from GameConstants.XP_LEVEL_BOUNDARIES |
+| `game_maths.py` | `pick_random_item_tl()`, `reward_per_sys_check()`, `ship_tech_level_for_value()` | Pure math helpers (TL selection, bounty reward formula). B.48: `calculate_user_level()` was removed. |
 | `inventory_service.py` | `InventoryService` | buy_item, sell_item, transfer_item, equip/unequip wrappers; calls ShopRepository, PlayerRepository |
 | `map_renderer.py` | `MapRenderer` | Pillow-based star map image generation; renders SystemGraph as PNG |
 | `pathfinding_service.py` | `PathfindingService` | A* pathfinding over the star system graph; MAX_ROUTE_LENGTH from GameConstants |

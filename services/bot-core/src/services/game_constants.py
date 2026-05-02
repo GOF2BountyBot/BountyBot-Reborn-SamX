@@ -60,30 +60,13 @@ class GameConstants:
     }
 
     # ------------------------------------------------------------------
-    # Divisions
+    # Divisions / Levels — REMOVED in B.48
     # ------------------------------------------------------------------
-
-    DIVISION_NAMES: list[str] = ["bronze", "silver", "gold"]
-    # (min_level, max_level) per division — index matches DIVISION_NAMES
-    DIVISION_BOUNDARIES: list[tuple[int, int]] = [(0, 3), (4, 7), (8, 10)]
-
-    # ------------------------------------------------------------------
-    # XP Level Boundaries (11 entries; index == level)
-    # ------------------------------------------------------------------
-
-    XP_LEVEL_BOUNDARIES: list[int] = [
-        -1,  # level 0  (sentinel)
-        0,  # level 1
-        1050,  # level 2
-        2000,  # level 3
-        3500,  # level 4
-        10000,  # level 5
-        18000,  # level 6
-        61000,  # level 7
-        71000,  # level 8
-        90000,  # level 9
-        1000000,  # level 10
-    ]
+    # ``DIVISION_NAMES``, ``DIVISION_BOUNDARIES``, and ``XP_LEVEL_BOUNDARIES``
+    # were deleted in B.48 along with the rest of the vestigial level/division
+    # progression system. Player progression now uses only the configurable
+    # per-guild ``xp_thresholds`` JSON (Bronze/Silver/Gold/Platinum + optional
+    # Prestige) on the GuildConfig row.
 
     # ------------------------------------------------------------------
     # XP Reward Multiplier
@@ -215,7 +198,10 @@ class GameConstants:
     # ------------------------------------------------------------------
 
     CLASSIC_CREDITS_PER_CHECK: int = 1000
-    CLASSIC_DIVISION_NAME: str = "bronze"
+    # B.48: ``CLASSIC_DIVISION_NAME`` removed alongside DIVISION_NAMES.
+    # No production code depended on it; classic_mode players are still
+    # tracked via player.tier (default "Bronze") and the player.classic_mode
+    # boolean column.
 
     # ------------------------------------------------------------------
     # Module Equip Limits

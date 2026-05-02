@@ -15,16 +15,18 @@ from persist.repositories.user_repository import UserRepository
 from shared import bblogger
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from services.division_service import DivisionService
 from services.exceptions import GuildNotConfiguredError
-from services.game_constants import GameConstants
-from services.game_maths import calculate_user_level
 
 flogger = bblogger.get_logger("player-service")
 
 # Tier ordering constants
 _TIER_ORDER = {"Bronze": 1, "Silver": 2, "Gold": 3, "Platinum": 4}
 _TIER_NAMES = {1: "Bronze", 2: "Silver", 3: "Gold", 4: "Platinum"}
+
+# Default prestige XP threshold used when a guild's xp_thresholds JSON has no
+# explicit "Prestige" key (B.48: backward-compat for guilds configured before
+# the prestige threshold was made user-configurable).
+_DEFAULT_PRESTIGE_XP_THRESHOLD = 50000
 
 
 class PlayerService:
@@ -331,13 +333,31 @@ class PlayerService:
             flogger.error(f"Error promoting player {player_id}: {e}")
             raise
 
+    def _get_prestige_threshold(self, thresholds: dict[str, int] | None) -> int:
+        """Resolve the XP required to prestige from a guild's xp_thresholds JSON.
+
+        Falls back to ``_DEFAULT_PRESTIGE_XP_THRESHOLD`` if the JSON is missing
+        or has no ``"Prestige"`` key (backward-compat for guilds configured
+        before B.48 added the per-guild Prestige threshold).
+        """
+        if not thresholds:
+            return _DEFAULT_PRESTIGE_XP_THRESHOLD
+        return int(thresholds.get("Prestige", _DEFAULT_PRESTIGE_XP_THRESHOLD))
+
     async def prestige_player(self, db: AsyncSession, player_id: int) -> dict:
         """Prestige a player — reset progress, increment prestige counter.
 
+        B.48: prestige is now gated on the guild's configurable Prestige XP
+        threshold (``xp_thresholds["Prestige"]``) rather than a hardcoded
+        level==10 / 1,000,000 XP boundary. The legacy level/division system
+        was removed entirely in B.48.
+
         Requirements:
-        - Player must be level 10 (max level) to prestige
+        - Player must have ``xp >= xp_thresholds["Prestige"]`` (default 50,000
+          when key absent) to prestige.
         - Resets: xp, xp_surplus, credits, tier, inventory, AND ship loadouts
-        - Preserves: lifetime_credits, ship hulls, prestige_count, duel stats, bounty stats
+        - Preserves: lifetime_credits, ship hulls, prestige_count, duel stats,
+          bounty stats
         - Kaamo storage preservation: not yet implemented (future feature)
 
         Package G (B.19) Option P1: ship loadouts are cleared alongside
@@ -352,22 +372,28 @@ class PlayerService:
         Returns dict with:
         - player_id: int
         - prestige_count: int (new count after increment)
-        - level_before: int
-        - division_before: str
+        - tier_before: str (e.g. "Platinum")
+        - xp_before: int
         """
         try:
             player = await self.player_repo.get_by_id(db, player_id)
             if not player:
                 raise ValueError(f"Player {player_id} not found")
 
-            # Check level, not tier
-            current_level = calculate_user_level(player.xp)
-            if current_level < 10:
-                raise ValueError(f"Player must be level 10 to prestige (current level: {current_level})")
+            # B.48: gate on configurable per-guild Prestige XP threshold.
+            config = await self.config_repo.get_by_guild_id(db, player.guild_id)
+            thresholds = config.xp_thresholds if config else None
+            prestige_threshold = self._get_prestige_threshold(thresholds)
+
+            if player.xp < prestige_threshold:
+                raise ValueError(
+                    f"Not eligible for prestige. Need {prestige_threshold:,} XP to prestige, "
+                    f"currently have {player.xp:,}"
+                )
 
             # Record state before prestige
-            level_before = current_level
-            division_before = DivisionService.get_division_for_level(level_before)
+            tier_before = player.tier
+            xp_before = player.xp
 
             # Reset progression
             player.xp = 0
@@ -400,8 +426,8 @@ class PlayerService:
             return {
                 "player_id": player_id,
                 "prestige_count": player.prestige_count,
-                "level_before": level_before,
-                "division_before": division_before,
+                "tier_before": tier_before,
+                "xp_before": xp_before,
             }
 
         except Exception as e:
@@ -526,105 +552,6 @@ class PlayerService:
             "target_new_credits": target_new,
         }
 
-    async def add_xp(self, db: AsyncSession, player_id: int, xp_amount: int) -> dict:
-        """Add XP to a player and handle level-up detection.
-
-        Returns dict with:
-        - player_id: int
-        - xp_added: int
-        - xp_total: int
-        - level_before: int
-        - level_after: int
-        - leveled_up: bool
-        - division_before: str
-        - division_after: str
-        - division_changed: bool
-        """
-        try:
-            player = await self.player_repo.get_by_id(db, player_id)
-            if not player:
-                raise ValueError(f"Player {player_id} not found")
-
-            level_before = calculate_user_level(player.xp)
-            division_before = DivisionService.get_division_for_level(level_before)
-
-            player.xp += xp_amount
-
-            level_after = calculate_user_level(player.xp)
-            leveled_up = level_after > level_before
-
-            # Always update xp_surplus so it stays fresh (not just on level-up)
-            boundaries = GameConstants.XP_LEVEL_BOUNDARIES
-            idx = min(level_after, len(boundaries) - 1)
-            player.xp_surplus = player.xp - boundaries[idx]
-
-            if leveled_up:
-                flogger.info(
-                    f"Player {player_id} leveled up: {level_before} -> {level_after} (surplus: {player.xp_surplus})"
-                )
-
-            division_after = DivisionService.get_division_for_level(level_after)
-            division_changed = division_after != division_before
-
-            await db.commit()
-            await db.refresh(player)
-
-            flogger.debug(
-                f"Added {xp_amount} XP to player {player_id}: total={player.xp}, level={level_before}->{level_after}"
-            )
-
-            return {
-                "player_id": player_id,
-                "xp_added": xp_amount,
-                "xp_total": player.xp,
-                "level_before": level_before,
-                "level_after": level_after,
-                "leveled_up": leveled_up,
-                "division_before": division_before,
-                "division_after": division_after,
-                "division_changed": division_changed,
-            }
-
-        except Exception as e:
-            flogger.error(f"Error adding XP for player {player_id}: {e}")
-            raise
-
-    @staticmethod
-    def get_level(xp: int) -> int:
-        """Return player level (0-10) from XP.
-
-        Thin wrapper around :func:`~services.game_maths.calculate_user_level`.
-
-        Args:
-            xp: Player's accumulated XP.
-
-        Returns:
-            Level in the range [0, 10].
-        """
-        return calculate_user_level(xp)
-
-    @staticmethod
-    def check_level_up(xp_before: int, xp_after: int) -> dict:
-        """Check if an XP change caused a level-up.
-
-        Returns dict with:
-        - level_before: int
-        - level_after: int
-        - leveled_up: bool
-        - division_before: str
-        - division_after: str
-        - division_changed: bool
-        """
-        level_before = calculate_user_level(xp_before)
-        level_after = calculate_user_level(xp_after)
-        division_before = DivisionService.get_division_for_level(level_before)
-        division_after = DivisionService.get_division_for_level(level_after)
-
-        return {
-            "level_before": level_before,
-            "level_after": level_after,
-            "leveled_up": level_after > level_before,
-            "division_before": division_before,
-            "division_after": division_after,
-            "division_changed": division_after != division_before,
-        }
+    # B.48: deleted vestigial level/division helpers — `add_xp`, `get_level`,
+    # `check_level_up`. The level/division system was wholly internal and
+    # replaced by the per-guild tier-threshold system.

@@ -320,8 +320,10 @@ class PlayerCog(commands.Cog):
                 embed = discord.Embed(
                     title="⚠️ Prestige Confirmation",
                     description=(
-                        "Prestiging will reset you to **Bronze tier** with **0 XP**, "
-                        "but you'll keep your ships, credits, and gain a prestige star!\n\n"
+                        "Prestiging will reset you to **Bronze tier** with **0 XP**, **0 credits**, "
+                        "and **clear your inventory and ship loadouts**, "
+                        "but you'll keep your ships and gain a prestige star!\n\n"
+                        "Lifetime credits, duel stats, and bounty stats are preserved.\n\n"
                         "To confirm, run: `/prestige confirm:CONFIRM`"
                     ),
                     color=discord.Color.orange(),
@@ -343,7 +345,7 @@ class PlayerCog(commands.Cog):
                 ),
                 color=discord.Color.gold(),
             )
-            embed.add_field(name="Previous Level", value=str(prestige_data["level_before"]), inline=True)
+            embed.add_field(name="Previous Tier", value=str(prestige_data["tier_before"]), inline=True)
             embed.add_field(name="Prestige Stars", value=str(prestige_data["prestige_count"]), inline=True)
 
             await interaction.followup.send(embed=embed)
@@ -361,9 +363,9 @@ class PlayerCog(commands.Cog):
                 await interaction.followup.send(_GUILD_NOT_CONFIGURED_MSG, ephemeral=True)
             elif e.response.status_code == 400:
                 try:
-                    detail = e.response.json().get("detail", "Level too low to prestige.")
+                    detail = e.response.json().get("detail", "Not enough XP to prestige.")
                 except Exception:  # pylint: disable=broad-exception-caught
-                    detail = "Level too low to prestige."
+                    detail = "Not enough XP to prestige."
                 await interaction.followup.send(f"❌ {detail}", ephemeral=True)
             else:
                 await report_api_error(interaction, e)

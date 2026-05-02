@@ -11,6 +11,106 @@ Cross-ref: `E2E_TEST_CHECKLIST.md` (test-item references). All commit SHAs are l
 
 ## OPEN
 
+### B.48 — Dual progression systems (tier vs level) cause user-visible contradiction at prestige; level concept is vestigial and should be removed
+
+🟠 high · Architecture · 2026-05-02 · **OPEN** · Refactor required
+
+**Context**: BountyBot has two parallel and largely orthogonal progression systems:
+
+**System A — Tier (user-visible, configurable)**:
+- Stored in `players.tier` (string column: Bronze/Silver/Gold/Platinum)
+- Set ONLY by `/promote` (manual) or admin commands
+- Promotion gated by configurable per-guild `xp_thresholds` JSON in `guild_configs` (e.g., Silver=10, Gold=20, Platinum=30)
+- Used by: `/profile` display, shop access, bounty board access, `/admin_player Set XP` embed
+
+**System B — Level/Division (hidden, hardcoded, vestigial)**:
+- Computed dynamically: `XP → calculate_user_level()` (1-10 buckets) `→ DivisionService.get_division_for_level()` (bronze/silver/gold)
+- Hardcoded boundaries in `GameConstants.XP_LEVEL_BOUNDARIES` (level 10 = 1,000,000 XP)
+- Hardcoded division mapping in `GameConstants.DIVISION_BOUNDARIES` (only 3 divisions — NO platinum)
+- Used by: `prestige_player()` gate (requires `level == 10`), bounty reward `leveled_up` flag, prestige embed "Previous Level" field
+
+**The contradiction (empirically verified 2026-05-02)**:
+
+Setup: Main account is Platinum tier with XP=35. Configured guild xp_thresholds: Silver=10, Gold=20, Platinum=30.
+
+| Surface | Output | Underlying system |
+|---------|--------|-------------------|
+| `/profile` | "Tier: Platinum / 🏆 Maximum Tier" | System A — `player.tier` column |
+| `/promote` | "Already at maximum tier (Platinum)" | System A — `_TIER_NAMES` lookup |
+| `/admin_config View Config` | "XP Thresholds: Silver:10, Gold:20, Platinum:30" | System A — `guild_configs.xp_thresholds` |
+| `/prestige` | **"Player must be level 10 to prestige (current level: 1)"** | System B — `XP_LEVEL_BOUNDARIES` |
+
+The user is "Platinum" (configured-max tier), with XP that exceeds all configured tier thresholds, yet is told they cannot prestige because they are "level 1" — a concept the user has never seen on any other surface and cannot influence via any command. The Platinum threshold (30 XP) and prestige requirement (1,000,000 XP) differ by 5 orders of magnitude with no discoverable explanation.
+
+**Additional disconnects discovered during investigation**:
+
+1. `/admin_player Set XP` does NOT auto-adjust tier. Setting Alt's XP from 927 → 2 left tier=Silver despite being far below Silver threshold (10). Tier and XP are independent columns; only `/promote` writes tier.
+
+2. `DIVISION_BOUNDARIES` defines only 3 divisions (`bronze`/`silver`/`gold`) but `TIER_TECH_LEVEL_CAPS` and `_TIER_NAMES` reference 4 tiers (Bronze/Silver/Gold/Platinum). System B has no Platinum equivalent.
+
+3. The hardcoded `XP_LEVEL_BOUNDARIES` curve is internally incoherent: level 6→7 costs 43,000 XP within Silver, but level 7→8 (Silver→Gold transition) costs only 10,000 XP. Level 9→10 jumps from 90,000 to 1,000,000 (10× wall) purely as an artificial prestige gate.
+
+4. `XP_LEVEL_BOUNDARIES` is documented as intentionally non-configurable ("to maintain game balance") but System A's tier thresholds are fully per-guild configurable, defeating that rationale.
+
+5. Player level appears in user-facing UI in exactly **two** places: the `/prestige` error message ("current level: 1") and the prestige confirmation embed ("Previous Level: 10"). Nowhere else — not `/profile`, not `/leaderboard`, not `/promote`, not bounty rewards.
+
+**Production call sites of `calculate_user_level()`** (5 total, all internal):
+- `bounty_service.py:1528,1544` — computes `leveled_up` flag for reward dict
+- `player_service.py:548-553` — computes `leveled_up` for XP-add response (transient, not persisted)
+- `player_service.py:364` — prestige gate
+- `player_service.py:618-619` — `check_level_up()` static helper
+- `division_service.py:108` — `get_division_for_player_xp()` convenience wrapper
+
+**No persisted columns reference level** — every `level_*` field is in transient API responses, recomputed Discord embeds, or runtime dataclasses. Verified via `grep level_before|level_after|leveled_up` across both services.
+
+**Proposed refactor**:
+
+1. **Add `Prestige` key to `xp_thresholds` JSON** in guild config (no schema migration — JSON column). Default value TBD by architect (suggest something like 50 for test thresholds, with sane prod default per architect recommendation).
+
+2. **Reroute `prestige_player()`** to check `xp >= xp_thresholds.get("Prestige", DEFAULT)` instead of `calculate_user_level(xp) == 10`.
+
+3. **Update `/admin_config Set` and `View`** to support and display the new Prestige threshold. The `View Config` embed's "XP Thresholds" field should show all four thresholds.
+
+4. **Delete entirely**:
+   - `GameConstants.XP_LEVEL_BOUNDARIES` (constant)
+   - `game_maths.calculate_user_level()` and `calculate_xp_for_level()` (functions)
+   - `DivisionService` class (entire file `division_service.py`)
+   - `PlayerService.get_level()`, `PlayerService.check_level_up()` (static helpers)
+   - All test fixtures/cases that exercise the level boundary system
+
+5. **Repurpose bounty reward `leveled_up`**:
+   - In `bounty_service.py:1520-1547`, replace `level_before/level_after/leveled_up` computation with `tier_before/tier_after/tier_changed`.
+   - Tier change happens only via explicit `/promote` so this would normally always be `False` after a bounty reward. Confirm with architect: should bounty rewards keep this concept at all? If used purely for the "Level Up!" announcement in bounty completion embeds, it can be removed entirely; otherwise repurpose to surface "you crossed an XP threshold — run `/promote` to advance" hint.
+
+6. **Update `playerCog.py:346`** prestige embed: "Previous Level: 10" → "Previous Tier: Platinum" (use `prestige_data["tier_before"]` after backend rename).
+
+7. **Update `PrestigeResponse` schema** (`players_schema.py:89`): rename `level_before` → `tier_before`. Update API contract docs.
+
+8. **Update `update_player_xp()` response** (`player_service.py:580-585`): remove `level_before/level_after/leveled_up/division_before/division_after/division_changed` from the dict. Optionally add `tier_unchanged_but_eligible_for_promotion: bool` if useful for UX hints.
+
+9. **NOT in scope of this refactor (separate decision)**: Should `/admin_player Set XP` auto-adjust tier when XP drops below current tier's threshold? Currently it does not, leading to the orphan-tier state (tier=Silver, xp=2). Architect should flag whether this is intentional (admin override scenario) or a separate defect.
+
+**Verification approach**: No DB wipe needed. The refactor touches code only; existing player rows (Main: Platinum/35XP, Alt: Silver/2XP) remain valid. After refactor + stack rebuild, re-run targeted E2E tests listed below.
+
+**Files in scope** (estimate, architect to refine):
+- `services/bot-core/src/services/game_constants.py` (delete `XP_LEVEL_BOUNDARIES`)
+- `services/bot-core/src/services/game_maths.py` (delete level functions)
+- `services/bot-core/src/services/division_service.py` (delete entire file)
+- `services/bot-core/src/services/player_service.py` (rewrite `prestige_player`, gut `update_player_xp` response, delete static helpers)
+- `services/bot-core/src/services/bounty_service.py` (replace `leveled_up` with `tier_changed` or remove)
+- `services/bot-core/src/services/config_service.py` (default `xp_thresholds` to include `Prestige`)
+- `services/bot-core/src/api/schemas/players_schema.py` (rename PrestigeResponse field)
+- `services/bot-core/src/api/schemas/config_schema.py` (verify Pydantic accepts new key)
+- `services/bot-core/src/api/routers/admin.py` (admin_config Set/View handle Prestige)
+- `services/bot-core/src/api/routers/players.py` (prestige docstring)
+- `services/discord-gateway/src/cogs/playerCog.py` (line 346 embed field rename)
+- `services/discord-gateway/src/cogs/adminCog.py` (`/admin_config_xp` accept Prestige param if applicable)
+- All test files referencing the deleted symbols (~10 files)
+
+**Cross-refs**: Uncovered during E2E phase 6.13-6.15 (prestige flow). Related: tier vs division mismatch found in earlier sessions but not previously documented as a defect.
+
+---
+
 ### B.44 — AboutCog preload has no retry logic, leaves category cache empty on startup
 
 🟡 medium · Runtime · 2026-05-01 · **FIXED** `f39e73a` · **CLOSED** 2026-05-01

@@ -1339,6 +1339,63 @@ class TestAdminConfigXp:
         call_kwargs = interaction.followup.send.call_args[1]
         assert "embed" in call_kwargs
 
+    def test_view_shows_prestige_threshold_when_present(self, mock_admin_cog):
+        """B.48 (F.2): View embed includes the Prestige threshold when configured."""
+        interaction = self._make_interaction()
+
+        config_data = {
+            "xp_thresholds": {
+                "Silver": 1000,
+                "Gold": 5000,
+                "Platinum": 15000,
+                "Prestige": 50000,
+            }
+        }
+        config_resp = MagicMock()
+        config_resp.raise_for_status = MagicMock()
+        config_resp.json.return_value = config_data
+
+        mock_admin_cog.http_client = MagicMock()
+        mock_admin_cog.http_client.get = AsyncMock(return_value=config_resp)
+
+        asyncio.run(
+            mock_admin_cog.admin_config_xp.callback(
+                mock_admin_cog, interaction, action="view", silver=None, gold=None, platinum=None, prestige=None
+            )
+        )
+
+        interaction.followup.send.assert_awaited_once()
+        embed = interaction.followup.send.call_args[1]["embed"]
+        # Find the threshold field and assert Prestige is shown with formatted XP value.
+        field_values = [f.value for f in embed.fields]
+        combined = "\n".join(field_values)
+        assert "Prestige" in combined
+        assert "50,000" in combined
+
+    def test_view_shows_default_marker_when_prestige_absent(self, mock_admin_cog):
+        """B.48 (F.2): backward-compat — guilds without Prestige key see '(default)' label."""
+        interaction = self._make_interaction()
+
+        config_data = {"xp_thresholds": {"Silver": 10, "Gold": 20, "Platinum": 30}}
+        config_resp = MagicMock()
+        config_resp.raise_for_status = MagicMock()
+        config_resp.json.return_value = config_data
+
+        mock_admin_cog.http_client = MagicMock()
+        mock_admin_cog.http_client.get = AsyncMock(return_value=config_resp)
+
+        asyncio.run(
+            mock_admin_cog.admin_config_xp.callback(
+                mock_admin_cog, interaction, action="view", silver=None, gold=None, platinum=None, prestige=None
+            )
+        )
+
+        interaction.followup.send.assert_awaited_once()
+        embed = interaction.followup.send.call_args[1]["embed"]
+        combined = "\n".join(f.value for f in embed.fields)
+        assert "Prestige" in combined
+        assert "default" in combined.lower()
+
     def test_update_action_success(self, mock_admin_cog):
         """Update action with valid ascending thresholds succeeds."""
         interaction = self._make_interaction()
@@ -1362,6 +1419,107 @@ class TestAdminConfigXp:
         assert "embed" in call_kwargs
         embed = call_kwargs["embed"]
         assert "Updated" in embed.title or "✅" in embed.title
+
+    def test_update_with_prestige_param_success(self, mock_admin_cog):
+        """B.48 (F.2): Update action with prestige param sends Prestige in payload and shows it."""
+        interaction = self._make_interaction()
+
+        result_data = {
+            "xp_thresholds": {"Silver": 2000, "Gold": 8000, "Platinum": 20000, "Prestige": 75000}
+        }
+        update_resp = MagicMock()
+        update_resp.raise_for_status = MagicMock()
+        update_resp.json.return_value = result_data
+
+        mock_admin_cog.http_client = MagicMock()
+        mock_admin_cog.http_client.put = AsyncMock(return_value=update_resp)
+
+        asyncio.run(
+            mock_admin_cog.admin_config_xp.callback(
+                mock_admin_cog,
+                interaction,
+                action="update",
+                silver=2000,
+                gold=8000,
+                platinum=20000,
+                prestige=75000,
+            )
+        )
+
+        # Verify the PUT body included Prestige
+        put_call = mock_admin_cog.http_client.put.call_args
+        sent_payload = put_call.kwargs["json"]
+        assert sent_payload["thresholds"]["Prestige"] == 75000
+        assert sent_payload["thresholds"]["Silver"] == 2000
+
+        # Verify the success embed surfaces the Prestige value
+        interaction.followup.send.assert_awaited_once()
+        embed = interaction.followup.send.call_args[1]["embed"]
+        combined = "\n".join(f.value for f in embed.fields)
+        assert "Prestige" in combined
+        assert "75,000" in combined
+
+    def test_update_prestige_below_platinum_shows_error(self, mock_admin_cog):
+        """B.48 (F.2): client-side guard — prestige <= platinum is rejected before HTTP call."""
+        interaction = self._make_interaction()
+
+        mock_admin_cog.http_client = MagicMock()
+        mock_admin_cog.http_client.put = AsyncMock()
+
+        asyncio.run(
+            mock_admin_cog.admin_config_xp.callback(
+                mock_admin_cog,
+                interaction,
+                action="update",
+                silver=1000,
+                gold=5000,
+                platinum=15000,
+                prestige=15000,  # equal to platinum — must be rejected
+            )
+        )
+
+        # No HTTP call should be made — the cog rejects locally
+        mock_admin_cog.http_client.put.assert_not_called()
+
+        interaction.followup.send.assert_awaited_once()
+        msg = interaction.followup.send.call_args[0][0]
+        assert "prestige" in msg.lower()
+        assert "platinum" in msg.lower() or "greater" in msg.lower()
+        assert interaction.followup.send.call_args[1].get("ephemeral", False)
+
+    def test_update_without_prestige_param_omits_prestige_from_payload(self, mock_admin_cog):
+        """B.48 (F.2): when prestige is not supplied, payload contains only Silver/Gold/Platinum.
+
+        Backward-compat: existing admins running /admin_config_xp without the
+        new prestige arg leave the per-guild Prestige key untouched (the
+        backend falls back to the default).
+        """
+        interaction = self._make_interaction()
+
+        result_data = {"xp_thresholds": {"Silver": 1000, "Gold": 5000, "Platinum": 15000}}
+        update_resp = MagicMock()
+        update_resp.raise_for_status = MagicMock()
+        update_resp.json.return_value = result_data
+
+        mock_admin_cog.http_client = MagicMock()
+        mock_admin_cog.http_client.put = AsyncMock(return_value=update_resp)
+
+        asyncio.run(
+            mock_admin_cog.admin_config_xp.callback(
+                mock_admin_cog,
+                interaction,
+                action="update",
+                silver=1000,
+                gold=5000,
+                platinum=15000,
+                prestige=None,
+            )
+        )
+
+        put_call = mock_admin_cog.http_client.put.call_args
+        sent = put_call.kwargs["json"]["thresholds"]
+        assert "Prestige" not in sent
+        assert sent == {"Silver": 1000, "Gold": 5000, "Platinum": 15000}
 
     def test_update_missing_threshold_shows_error(self, mock_admin_cog):
         """Update action with missing threshold shows error message."""

@@ -510,5 +510,5 @@ async def get_default_config():
         "tech_level_probabilities": {"same_level": 0.70, "one_lower": 0.20, "two_lower": 0.10},
         "sale_price_factor": 0.8,
         "starting_credits": 0,
-        "xp_thresholds": {"Silver": 1000, "Gold": 5000, "Platinum": 15000},
+        "xp_thresholds": {"Silver": 1000, "Gold": 5000, "Platinum": 15000, "Prestige": 50000},
     }

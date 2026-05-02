@@ -1,6 +1,6 @@
 # AGENTS.md - services
 
-Business logic layer for bot-core. All 17 service modules live here + 1 normalizer helper.
+Business logic layer for bot-core. All 16 service modules live here + 1 normalizer helper. (B.48: division_service.py was removed alongside the level/division progression system.)
 
 ---
 
@@ -129,7 +129,7 @@ async def get_or_create_player(self, db: AsyncSession, discord_id: int, ...) -> 
 
 ---
 
-## All 17 Service Modules
+## All 16 Service Modules (B.48: division_service removed)
 
 ### audit_service.py — `AuditService`
 
@@ -203,14 +203,13 @@ Uses: `ConfigRepository`
 
 ---
 
-### division_service.py — `DivisionService`
+### division_service.py — REMOVED in B.48
 
-Static utility methods for player division logic:
-- `get_division_for_level(level)` — maps player level to `"bronze"`, `"silver"`, or `"gold"` using `GameConstants.DIVISION_BOUNDARIES`
-- `get_division_boundaries()` — returns `{division: (min_level, max_level)}` dict
-- No instance state; all methods are `@staticmethod`
-
-Uses: `GameConstants`
+The `DivisionService` class and the level/division progression system were
+deleted in B.48. Player progression is now driven entirely by the configurable
+per-guild `xp_thresholds` JSON (Bronze/Silver/Gold/Platinum + optional
+`Prestige`) on the `GuildConfig` row. Consult `player_service.promote_player`
+and `player_service.prestige_player` for the canonical promotion/prestige flow.
 
 ---
 
@@ -250,20 +249,23 @@ BOUNTYBOT_BOUNTY_DELAY_RANDOM_MIN=3
 Call `GameConstants.load()` at application startup to apply overrides. **Non-operational constants** (XP boundaries, division definitions, module equip limits) are intentionally excluded from runtime overrides to maintain game balance.
 
 Key constant groups:
-- `DIVISION_NAMES` / `DIVISION_BOUNDARIES` — player division definitions
-- `XP_LEVEL_BOUNDARIES` — XP required per level (levels 0–10)
 - `MODULE_EQUIP_LIMITS` — per-module-type equip limits dict
 - `BOUNTY_DELAY_RANDOM_MIN/MAX` — bounty spawn frequency
 - `MAX_BOUNTIES_PER_DIVISION` — bounty cap (temperature-adjusted)
 - `SHOP_DEFAULT_*_NUM` — shop stock counts per category
+- B.48: `DIVISION_NAMES`, `DIVISION_BOUNDARIES`, and `XP_LEVEL_BOUNDARIES` were
+  deleted along with the level/division progression system.
 
 ---
 
 ### game_maths.py — Pure Functions
 
 Module-level functions only (no class):
-- `calculate_user_level(xp: int) -> int` — returns player level 1–10 using `GameConstants.XP_LEVEL_BOUNDARIES`
-- `calculate_xp_for_level(level: int) -> int` — returns XP threshold for the given level
+- `pick_random_item_tl(shop_tl)` — TL probability kernel
+- `reward_per_sys_check(tech_level, loadout_value)` — bounty reward formula
+- `ship_tech_level_for_value(value)` — TL classification
+
+B.48: `calculate_user_level` and `calculate_xp_for_level` were deleted.
 
 ---
 
@@ -306,12 +308,13 @@ Uses: `SystemRepository`, `SystemGraphService`
 Core player management:
 - `get_or_create_player(db, discord_id, guild_id, discord_username)` — creates user if needed, creates player with `starting_credits` from guild config
 - `update_player_credits(db, player_id, new_credits, update_lifetime)` — sets absolute credit balance; optionally updates lifetime_credits
-- `update_player_xp(db, player_id, new_xp)` — sets XP; **auto-computes tier** from level boundaries; calls `update_tier` if advancement detected
-- `prestige_player(db, player_id)` — requires level 10; resets XP, credits, tier, inventory; increments `prestige_count`; preserves ships, duel stats, bounty stats
+- `update_player_xp(db, player_id, new_xp)` — sets XP only. Tier is NOT auto-advanced; use `promote_player()` to explicitly cross a tier threshold.
+- `promote_player(db, player_id)` — explicit tier-up; gated by `xp_thresholds[next_tier]`
+- `prestige_player(db, player_id)` — B.48: gated on `xp_thresholds["Prestige"]` (default 50,000 when key absent); resets XP/credits/tier/inventory + ship loadouts; increments `prestige_count`; preserves lifetime_credits/ships/duel stats/bounty stats. Returns dict with `tier_before` and `xp_before`.
 - `transfer_credits(db, source_id, target_id, amount)` — atomic transfer using `get_by_id_for_update` to prevent race conditions
 - `get_player_statistics(db, player_id)` — assembles comprehensive stats dict
 
-Uses: `PlayerRepository`, `UserRepository`, `ConfigRepository`, `DivisionService`, `GameConstants`
+Uses: `PlayerRepository`, `UserRepository`, `ConfigRepository`
 
 ---
 
@@ -355,8 +358,6 @@ DuelService ──── CombatService ──── EquipmentService
                └─── PlayerService ─┴─── InventoryService
                           │
                           └─── ConfigService
-                          │
-                          └─── DivisionService ──── GameConstants
 
 BountyService ─── PathfindingService ─── SystemGraphService
              │

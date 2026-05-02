@@ -102,65 +102,8 @@ class TestDivisionMaxTL:
             )
 
 
-# ---------------------------------------------------------------------------
-# Divisions
-# ---------------------------------------------------------------------------
-
-
-class TestDivisions:
-    def test_division_names_order(self) -> None:
-        assert GameConstants.DIVISION_NAMES == ["bronze", "silver", "gold"]
-
-    def test_division_boundaries_length(self) -> None:
-        assert len(GameConstants.DIVISION_BOUNDARIES) == 3
-
-    def test_bronze_boundary(self) -> None:
-        assert GameConstants.DIVISION_BOUNDARIES[0] == (0, 3)
-
-    def test_silver_boundary(self) -> None:
-        assert GameConstants.DIVISION_BOUNDARIES[1] == (4, 7)
-
-    def test_gold_boundary(self) -> None:
-        assert GameConstants.DIVISION_BOUNDARIES[2] == (8, 10)
-
-    def test_boundaries_align_with_names(self) -> None:
-        """Each boundary tuple index corresponds to the same-index division name."""
-        for name, bounds in zip(GameConstants.DIVISION_NAMES, GameConstants.DIVISION_BOUNDARIES, strict=True):
-            min_lvl, max_lvl = bounds
-            assert min_lvl <= max_lvl, f"{name}: min must be <= max"
-
-
-# ---------------------------------------------------------------------------
-# XP Level Boundaries
-# ---------------------------------------------------------------------------
-
-
-class TestXPLevelBoundaries:
-    def test_length_is_11(self) -> None:
-        assert len(GameConstants.XP_LEVEL_BOUNDARIES) == 11
-
-    def test_level_0_sentinel(self) -> None:
-        assert GameConstants.XP_LEVEL_BOUNDARIES[0] == -1
-
-    def test_level_1_boundary(self) -> None:
-        assert GameConstants.XP_LEVEL_BOUNDARIES[1] == 0
-
-    def test_level_2_boundary(self) -> None:
-        assert GameConstants.XP_LEVEL_BOUNDARIES[2] == 1050
-
-    def test_level_5_boundary(self) -> None:
-        assert GameConstants.XP_LEVEL_BOUNDARIES[5] == 10000
-
-    def test_level_10_boundary(self) -> None:
-        assert GameConstants.XP_LEVEL_BOUNDARIES[10] == 1_000_000
-
-    def test_boundaries_are_strictly_increasing(self) -> None:
-        """XP requirements must grow with each level (excluding sentinel at index 0)."""
-        for i in range(1, len(GameConstants.XP_LEVEL_BOUNDARIES) - 1):
-            assert GameConstants.XP_LEVEL_BOUNDARIES[i] < GameConstants.XP_LEVEL_BOUNDARIES[i + 1], (
-                f"Level {i} boundary {GameConstants.XP_LEVEL_BOUNDARIES[i]} is not "
-                f"less than level {i + 1} boundary {GameConstants.XP_LEVEL_BOUNDARIES[i + 1]}"
-            )
+# B.48: TestDivisions and TestXPLevelBoundaries deleted along with
+# DIVISION_NAMES, DIVISION_BOUNDARIES, and XP_LEVEL_BOUNDARIES.
 
 
 # ---------------------------------------------------------------------------
@@ -360,8 +303,7 @@ class TestClassicMode:
     def test_classic_credits_per_check(self) -> None:
         assert GameConstants.CLASSIC_CREDITS_PER_CHECK == 1000
 
-    def test_classic_division_name(self) -> None:
-        assert GameConstants.CLASSIC_DIVISION_NAME == "bronze"
+    # B.48: ``CLASSIC_DIVISION_NAME`` deleted alongside DIVISION_NAMES.
 
 
 # ---------------------------------------------------------------------------

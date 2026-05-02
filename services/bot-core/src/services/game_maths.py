@@ -124,27 +124,6 @@ def ship_tech_level_for_value(value: int) -> int:
     return GameConstants.MAX_TECH_LEVEL
 
 
-def calculate_user_level(xp: int) -> int:
-    """Calculate a player's bounty-hunting level from their accumulated XP.
-
-    Uses ``GameConstants.XP_LEVEL_BOUNDARIES`` whose entries are indexed by
-    level (``boundaries[0]`` is the sentinel for level 0).
-
-    The algorithm mirrors the legacy one-liner::
-
-        next(i - 1 for i, v in enumerate(boundaries) if v > xp)
-
-    i.e. find the first boundary value that strictly exceeds *xp* and return
-    the preceding index.
-
-    Args:
-        xp: Player's current XP (may be negative).
-
-    Returns:
-        Level in the range [0, len(XP_LEVEL_BOUNDARIES) - 1].
-    """
-    boundaries = GameConstants.XP_LEVEL_BOUNDARIES
-    for i, threshold in enumerate(boundaries):
-        if threshold > xp:
-            return max(0, i - 1)
-    return len(boundaries) - 1
+# B.48: deleted vestigial ``calculate_user_level`` and ``calculate_xp_for_level``.
+# The level/division progression system was removed in favour of the
+# configurable per-guild tier-threshold system.

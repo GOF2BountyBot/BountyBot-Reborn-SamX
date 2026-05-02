@@ -388,9 +388,9 @@ Validates the `/help` and `/admin_help` commands end-to-end as a discoverability
 
 ### Equipment error cases
 
-- [ ] **5.12** `/equip item_name:<weapon> equipment_type:Weapon` repeatedly until primary slots full — Error: slot limit exceeded
-- [ ] **5.13** `/unequip item_name:<item_not_equipped> equipment_type:Weapon` — Error: item not equipped
-- [ ] **5.14** `/equip item_name:<item_not_in_inventory> equipment_type:Weapon` — Error: item not found in inventory
+- [x] **5.12** `/equip item_name:<weapon> equipment_type:Weapon` repeatedly until primary slots full — Prompts swap when slots full (B.47 fix verified)
+- [x] **5.13** `/unequip item_name:<item_not_equipped> equipment_type:Weapon` — Error: item not equipped
+- [x] **5.14** `/equip item_name:<item_not_in_inventory> equipment_type:Weapon` — Error: item not found in inventory
 
 ### Admin inventory view
 
@@ -428,13 +428,24 @@ Tier thresholds (lowered for fast testing via Session Setup): Bronze (0 XP) → 
 
 ### Prestige
 
-- [ ] **6.12** `[ADMIN]` `/admin_player user:@you action:Set XP xp:35` — Max out XP to reach Platinum (above threshold of 30)
+> 🔁 **B.48 RE-VERIFY REQUIRED post-refactor** for 6.12-6.15. The prestige flow is being refactored to use a configurable per-guild `Prestige` XP threshold (instead of hardcoded `level == 10` / 1,000,000 XP). After refactor:
+> - 6.12 — Re-verify Set XP embed shows ONLY tier (no level field leak from any new code path)
+> - 6.13 — Re-verify warning embed text (no "level 10" reference; should reference configurable prestige threshold)
+> - 6.14 — UNBLOCKED post-refactor (currently blocked: requires 1,000,000 XP under old level system)
+> - 6.15 — UNBLOCKED post-refactor (depends on 6.14)
+> - **NEW 6.18** — `/admin_config View Config` shows Prestige threshold in XP Thresholds section (Silver/Gold/Platinum/**Prestige**)
+> - **NEW 6.19** — `/admin_config_xp action:Update prestige:N` sets the prestige threshold (or equivalent admin command — architect to specify)
+> - **NEW 6.20** — `/prestige` error message when ineligible references the configured prestige XP threshold, NOT "level 10"
+> - **NEW 6.21** — Prestige confirmation embed shows "Previous Tier" (NOT "Previous Level")
 
-> ⚡ **Shortcut**: Use `/admin_config_xp action:Update platinum:30` (already done in Session Setup) so XP 35 exceeds the Platinum threshold trivially, making prestige reachable without grinding.
-
-- [ ] **6.13** `/prestige` (without confirm) — Should show orange warning embed explaining what prestige does (reset to Bronze, keep ships/credits, gain prestige star)
-- [ ] **6.14** `/prestige confirm:CONFIRM` — Resets level to 0, tier to Bronze, clears inventory; increments prestige_count; preserves ships and lifetime stats
-- [ ] **6.15** `/profile` — Shows prestige count, reset XP/tier, preserved lifetime stats
+- [x] **6.12** `[ADMIN]` `/admin_player user:@you action:Set XP xp:35` — Max out XP to reach Platinum (above threshold of 30) — **RE-VERIFY post-B.48**
+- [x] **6.13** `/prestige` (without confirm) — Should show orange warning embed explaining what prestige does (reset to Bronze, keep ships/credits, gain prestige star) — **RE-VERIFY post-B.48: text must not reference "level"**
+- [ ] **6.14** `/prestige confirm:CONFIRM` — Resets level to 0, tier to Bronze, clears inventory; increments prestige_count; preserves ships and lifetime stats — **BLOCKED on B.48** (requires unattainable 1M XP under current level system)
+- [ ] **6.15** `/profile` — Shows prestige count, reset XP/tier, preserved lifetime stats — **BLOCKED on B.48** (depends on 6.14)
+- [ ] **6.18** *(NEW post-B.48)* `[ADMIN]` `/admin_config action:View Config` — Verify XP Thresholds section includes Prestige threshold alongside Silver/Gold/Platinum
+- [ ] **6.19** *(NEW post-B.48)* `[ADMIN]` `/admin_config_xp action:Update prestige:50` (or architect-specified equivalent) — Sets configurable prestige threshold per guild
+- [ ] **6.20** *(NEW post-B.48)* `/prestige` while ineligible — Error message references the configured prestige XP threshold, NOT a hardcoded level concept
+- [ ] **6.21** *(NEW post-B.48)* `/prestige confirm:CONFIRM` after eligible — Confirmation embed shows "Previous Tier: Platinum" (NOT "Previous Level: 10")
 
 ### Leaderboard
 
@@ -488,6 +499,11 @@ Tier thresholds (lowered for fast testing via Session Setup): Bronze (0 XP) → 
 ### `[2P]` Bounty competition
 
 - [ ] **7.17** 2P race — only first correct wins. NOT YET TESTED.
+
+### B.48 sanity checks (post-refactor)
+
+- [ ] **7.19** *(NEW post-B.48)* Successful `/check` on a bounty — verify reward embed/announcement contains NO "Level Up!" string and NO `level_before`/`level_after`/`leveled_up` references. If `tier_changed` is implemented as the replacement, verify it surfaces correctly when the player has crossed a tier-up XP threshold but has not yet `/promote`d.
+- [ ] **7.20** *(NEW post-B.48)* Run `/admin_player Set XP` to a value below the player's current tier threshold — confirm tier remains unchanged (orphan-tier behavior preserved unless architect declares this a separate defect to fix).
 
 ---
 

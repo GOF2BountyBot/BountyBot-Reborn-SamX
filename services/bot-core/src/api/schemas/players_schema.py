@@ -82,12 +82,17 @@ class TransferCreditsResponse(BaseModel):
 
 
 class PrestigeResponse(BaseModel):
-    """Response returned after a successful prestige operation."""
+    """Response returned after a successful prestige operation.
+
+    `tier_before` is the player's tier just before prestige reset (e.g.
+    "Platinum"). The legacy `level_before` / `division_before` fields were
+    removed in B.48 along with the level/division progression system.
+    """
 
     player_id: int
     prestige_count: int
-    level_before: int
-    division_before: str
+    tier_before: str
+    xp_before: int
 
 
 class PromotionStatusResponse(BaseModel):

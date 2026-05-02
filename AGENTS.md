@@ -31,10 +31,10 @@ discord-gateway → blender-service → bot-core → db
 
 | Service | Source files | Test files | Routers | Models | Repos | Services | Cogs | Schemas |
 |---------|-------------|------------|---------|--------|-------|----------|------|---------|
-| bot-core | 125 | 85 | 15 | 21 | 19 | 17 | — | 13 |
+| bot-core | 124 | 84 | 15 | 21 | 19 | 16 | — | 13 |
 | discord-gateway | 43 | 63 | 10 | — | — | — | 14 | 7 |
 | blender-service | 17 | 14 | 6 | — | — | 6 | — | — |
-| **TOTAL** | **185** | **162** | **31** | **21** | **19** | **23** | **14** | **20** |
+| **TOTAL** | **184** | **161** | **31** | **21** | **19** | **22** | **14** | **20** |
 
 ---
 
@@ -81,7 +81,7 @@ BountyBot-Reborn-SamX/
     │   │   │   ├── interfaces/     # Abstract repository protocols
     │   │   │   ├── models/         # 21 SQLAlchemy ORM models
     │   │   │   └── repositories/   # 19 CRUD repositories
-    │   │   ├── services/           # 17 business-logic service modules
+    │   │   ├── services/           # 16 business-logic service modules (B.48: division_service removed)
     │   │   ├── message_builders/   # Discord embed builder framework
     │   │   └── utils/
     │   │       ├── auto_seeder.py

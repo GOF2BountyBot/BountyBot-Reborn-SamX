@@ -81,7 +81,6 @@ class WeaponSwapView(discord.ui.View):
                 discord.SelectOption(
                     label=label,
                     value=f"{i}|{name}",
-                    description="Swap this item out",
                 )
             )
         select = discord.ui.Select(

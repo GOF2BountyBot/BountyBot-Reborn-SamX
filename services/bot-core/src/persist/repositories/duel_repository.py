@@ -206,6 +206,30 @@ class DuelRepository(IRepository[DuelRequest]):
             flogger.error(f"Error getting active duel requests for guild {guild_id}: {e}")
             raise
 
+    async def get_pending_by_challenger(self, db: AsyncSession, challenger_id: int, guild_id: int) -> list[DuelRequest]:
+        """Get all currently-pending duel requests where the given player is the challenger.
+
+        Used for outgoing-duel autocomplete (for /duel-cancel).
+        Applies the same expires_at > NOW() guard (B.14 sibling fix) so that
+        stale un-expired duels do not pollute autocomplete results.
+        """
+        try:
+            result = await db.execute(
+                select(DuelRequest).where(
+                    and_(
+                        DuelRequest.challenger_id == challenger_id,
+                        DuelRequest.guild_id == guild_id,
+                        DuelRequest.status == "pending",
+                        # B.14 sibling: exclude duels that have passed their expiry
+                        (DuelRequest.expires_at.is_(None) | (DuelRequest.expires_at > func.now())),  # pylint: disable=not-callable
+                    )
+                )
+            )
+            return list(result.scalars().all())
+        except Exception as e:
+            flogger.error(f"Error getting pending duels for challenger={challenger_id} guild={guild_id}: {e}")
+            raise
+
     async def get_pending_by_target(self, db: AsyncSession, target_id: int, guild_id: int) -> list[DuelRequest]:
         """Get all currently-pending duel requests where the given player is the target.
 

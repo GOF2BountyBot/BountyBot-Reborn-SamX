@@ -378,6 +378,100 @@ class DuelService:
         return result
 
     # ------------------------------------------------------------------
+    # Cancel (B.64 / B.65)
+    # ------------------------------------------------------------------
+
+    async def cancel_duel(
+        self,
+        db,
+        duel_id: int,
+        requesting_player_id: int | None = None,
+    ) -> "DuelRequest":
+        """Cancel a pending duel challenge.
+
+        B.64 (challenger self-cancel): pass requesting_player_id to enforce
+        that only the challenger can cancel.
+        B.65 (admin cancel): omit requesting_player_id (or pass None) to skip
+        the ownership check.
+
+        Args:
+            db: SQLAlchemy async session.
+            duel_id: Primary key of the DuelRequest.
+            requesting_player_id: Player ID of the requester (None = admin bypass).
+
+        Returns:
+            The updated DuelRequest with status "cancelled".
+
+        Raises:
+            ValueError: If duel not found, not pending, or caller is not the challenger.
+        """
+        flogger.debug(
+            f"cancel_duel called: duel_id={duel_id} requesting_player_id={requesting_player_id}"
+        )
+
+        duel = await self.duel_repo.get_by_id(db, duel_id)
+        if duel is None:
+            flogger.error(f"Duel not found for cancel: duel_id={duel_id}")
+            raise ValueError("Duel not found.")
+
+        if duel.status != "pending":
+            flogger.error(
+                f"Invalid duel status for cancel: duel_id={duel_id} status={duel.status} (expected 'pending')"
+            )
+            raise ValueError("Only pending duels can be cancelled.")
+
+        if requesting_player_id is not None and requesting_player_id != duel.challenger_id:
+            flogger.warning(
+                f"Unauthorised cancel attempt: duel_id={duel_id} "
+                f"requesting_player_id={requesting_player_id} challenger_id={duel.challenger_id}"
+            )
+            raise ValueError("Only the challenger can cancel a duel.")
+
+        updated = await self.duel_repo.update_status(db, duel_id, "cancelled")
+        flogger.info(
+            f"Duel {duel_id} cancelled (requesting_player_id={requesting_player_id})."
+        )
+        return updated
+
+    # ------------------------------------------------------------------
+    # Query helpers (outgoing)
+    # ------------------------------------------------------------------
+
+    async def get_outgoing_for_challenger(
+        self, db, challenger_id: int, guild_id: int
+    ) -> list[tuple["DuelRequest", str | None]]:
+        """Return all pending duels where *challenger_id* is the challenger in the given guild,
+        together with the target's Discord username.
+
+        Used by the Discord gateway for autocomplete on /duel-cancel.
+
+        Args:
+            db: SQLAlchemy async session.
+            challenger_id: Player ID of the challenger.
+            guild_id: Guild the duels are scoped to.
+
+        Returns:
+            List of (DuelRequest, target_name) tuples. target_name is None
+            if the target's username cannot be resolved (e.g. missing user row).
+        """
+        duels = await self.duel_repo.get_pending_by_challenger(db, challenger_id, guild_id)
+
+        result = []
+        for duel in duels:
+            target_name: str | None = None
+            try:
+                target = await self.player_repo.get_by_id(db, duel.target_id)
+                if target is not None:
+                    user = await self.user_repo.get_by_id(db, target.user_id)
+                    if user and user.discord_username:
+                        target_name = user.discord_username
+            except Exception as exc:  # defensive — lookup failures must never break autocomplete
+                flogger.debug(f"Could not resolve target name for duel {duel.id}: {exc}")
+            result.append((duel, target_name))
+
+        return result
+
+    # ------------------------------------------------------------------
     # Expire
     # ------------------------------------------------------------------
 

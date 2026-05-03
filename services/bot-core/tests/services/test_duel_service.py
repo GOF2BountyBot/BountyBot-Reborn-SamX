@@ -915,3 +915,189 @@ class TestGetPendingForTarget:
         result = await svc.get_pending_for_target(db=None, target_id=20, guild_id=9999)
 
         assert result == []
+
+
+# ---------------------------------------------------------------------------
+# TestCancelDuel  (B.64 / B.65)
+# ---------------------------------------------------------------------------
+
+
+class TestCancelDuel:
+    """Tests for DuelService.cancel_duel()."""
+
+    @pytest.mark.asyncio
+    async def test_cancel_pending_duel_by_challenger(self):
+        """B.64: challenger can cancel their own pending duel."""
+        duel = make_duel(challenger_id=1, target_id=2, status="pending")
+        cancelled = make_duel(challenger_id=1, target_id=2, status="cancelled")
+
+        duel_repo = AsyncMock()
+        duel_repo.get_by_id.return_value = duel
+        duel_repo.update_status.return_value = cancelled
+
+        svc = make_service(duel_repo=duel_repo)
+        result = await svc.cancel_duel(db=None, duel_id=1, requesting_player_id=1)
+
+        duel_repo.update_status.assert_awaited_once_with(None, 1, "cancelled")
+        assert result.status == "cancelled"
+
+    @pytest.mark.asyncio
+    async def test_cancel_pending_duel_by_admin(self):
+        """B.65: admin can cancel any pending duel without ownership check."""
+        duel = make_duel(challenger_id=1, target_id=2, status="pending")
+        cancelled = make_duel(challenger_id=1, target_id=2, status="cancelled")
+
+        duel_repo = AsyncMock()
+        duel_repo.get_by_id.return_value = duel
+        duel_repo.update_status.return_value = cancelled
+
+        svc = make_service(duel_repo=duel_repo)
+        # No requesting_player_id → admin path
+        result = await svc.cancel_duel(db=None, duel_id=1)
+
+        duel_repo.update_status.assert_awaited_once_with(None, 1, "cancelled")
+        assert result.status == "cancelled"
+
+    @pytest.mark.asyncio
+    async def test_cancel_duel_not_found_raises(self):
+        """Cancelling a non-existent duel raises ValueError('Duel not found.')."""
+        duel_repo = AsyncMock()
+        duel_repo.get_by_id.return_value = None
+
+        svc = make_service(duel_repo=duel_repo)
+        with pytest.raises(ValueError, match="Duel not found"):
+            await svc.cancel_duel(db=None, duel_id=999, requesting_player_id=1)
+
+    @pytest.mark.asyncio
+    async def test_cancel_non_pending_duel_raises(self):
+        """Cancelling a completed duel raises ValueError('Only pending duels can be cancelled.')."""
+        duel = make_duel(status="completed")
+
+        duel_repo = AsyncMock()
+        duel_repo.get_by_id.return_value = duel
+
+        svc = make_service(duel_repo=duel_repo)
+        with pytest.raises(ValueError, match="Only pending duels can be cancelled"):
+            await svc.cancel_duel(db=None, duel_id=1, requesting_player_id=1)
+
+    @pytest.mark.asyncio
+    async def test_cancel_by_non_challenger_raises(self):
+        """B.64: target (non-challenger) cannot cancel a duel via the self-cancel path."""
+        duel = make_duel(challenger_id=1, target_id=2, status="pending")
+
+        duel_repo = AsyncMock()
+        duel_repo.get_by_id.return_value = duel
+
+        svc = make_service(duel_repo=duel_repo)
+        # requesting_player_id=2 is the target, not the challenger
+        with pytest.raises(ValueError, match="Only the challenger can cancel"):
+            await svc.cancel_duel(db=None, duel_id=1, requesting_player_id=2)
+
+    @pytest.mark.asyncio
+    async def test_admin_cancel_skips_ownership_check(self):
+        """B.65: passing requesting_player_id=None skips challenger ownership check."""
+        # Duel where challenger=5 — if ownership check ran with player_id=9, it would fail
+        duel = make_duel(challenger_id=5, target_id=6, status="pending")
+        cancelled = make_duel(challenger_id=5, target_id=6, status="cancelled")
+
+        duel_repo = AsyncMock()
+        duel_repo.get_by_id.return_value = duel
+        duel_repo.update_status.return_value = cancelled
+
+        svc = make_service(duel_repo=duel_repo)
+        # requesting_player_id=None means admin — ownership check skipped
+        result = await svc.cancel_duel(db=None, duel_id=1, requesting_player_id=None)
+
+        assert result.status == "cancelled"
+
+
+# ---------------------------------------------------------------------------
+# TestGetOutgoingForChallenger  (B.64)
+# ---------------------------------------------------------------------------
+
+
+class TestGetOutgoingForChallenger:
+    """Tests for DuelService.get_outgoing_for_challenger() — returns (duel, target_name) tuples."""
+
+    @pytest.mark.asyncio
+    async def test_returns_tuples_with_target_name(self):
+        """Happy path: target name is resolved from player → user chain."""
+        duel1 = make_duel(duel_id=1, challenger_id=10, target_id=20)
+        duel2 = make_duel(duel_id=2, challenger_id=10, target_id=30)
+
+        duel_repo = AsyncMock()
+        duel_repo.get_pending_by_challenger.return_value = [duel1, duel2]
+
+        target1 = MagicMock()
+        target1.user_id = 2000
+        target2 = MagicMock()
+        target2.user_id = 3000
+
+        user1 = MagicMock()
+        user1.discord_username = "TargetAlpha"
+        user2 = MagicMock()
+        user2.discord_username = "TargetBeta"
+
+        player_repo = AsyncMock()
+        player_repo.get_by_id.side_effect = lambda db, pid: {20: target1, 30: target2}.get(pid)
+
+        user_repo = AsyncMock()
+        user_repo.get_by_id.side_effect = lambda db, uid: {2000: user1, 3000: user2}.get(uid)
+
+        svc = make_service(duel_repo=duel_repo, player_repo=player_repo, user_repo=user_repo)
+        result = await svc.get_outgoing_for_challenger(db=None, challenger_id=10, guild_id=9999)
+
+        assert len(result) == 2
+        duel_a, name_a = result[0]
+        assert duel_a is duel1
+        assert name_a == "TargetAlpha"
+        duel_b, name_b = result[1]
+        assert duel_b is duel2
+        assert name_b == "TargetBeta"
+
+    @pytest.mark.asyncio
+    async def test_target_name_none_when_player_not_found(self):
+        """target_name is None when the target player row does not exist."""
+        duel = make_duel(duel_id=1, challenger_id=10, target_id=99)
+
+        duel_repo = AsyncMock()
+        duel_repo.get_pending_by_challenger.return_value = [duel]
+
+        player_repo = AsyncMock()
+        player_repo.get_by_id.return_value = None  # target player not found
+
+        svc = make_service(duel_repo=duel_repo, player_repo=player_repo)
+        result = await svc.get_outgoing_for_challenger(db=None, challenger_id=10, guild_id=9999)
+
+        assert len(result) == 1
+        _, name = result[0]
+        assert name is None
+
+    @pytest.mark.asyncio
+    async def test_lookup_exception_degrades_gracefully(self):
+        """A DB error during target resolution returns None name instead of raising."""
+        duel = make_duel(duel_id=1, challenger_id=10, target_id=20)
+
+        duel_repo = AsyncMock()
+        duel_repo.get_pending_by_challenger.return_value = [duel]
+
+        player_repo = AsyncMock()
+        player_repo.get_by_id.side_effect = RuntimeError("DB connection lost")
+
+        svc = make_service(duel_repo=duel_repo, player_repo=player_repo)
+        result = await svc.get_outgoing_for_challenger(db=None, challenger_id=10, guild_id=9999)
+
+        assert len(result) == 1
+        _, name = result[0]
+        assert name is None
+
+    @pytest.mark.asyncio
+    async def test_empty_outgoing_returns_empty_list(self):
+        """When no outgoing duels exist, returns an empty list."""
+        duel_repo = AsyncMock()
+        duel_repo.get_pending_by_challenger.return_value = []
+
+        svc = make_service(duel_repo=duel_repo)
+        result = await svc.get_outgoing_for_challenger(db=None, challenger_id=10, guild_id=9999)
+
+        assert result == []

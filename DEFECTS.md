@@ -31,6 +31,35 @@ Cross-ref: `E2E_TEST_CHECKLIST.md` (test-item references). All commit SHAs are l
 
 ## OPEN
 
+### B.65 — No admin command to cancel/clear duel requests
+
+🟡 medium · Feature gap · 2026-05-03 · **OPEN**
+
+**Issue**: There is no admin command to cancel a pending or stuck duel. If a duel gets wedged (e.g. challenger goes offline, data issue, test cleanup) the only resolution is a direct DB edit.
+
+**Required**:
+- `adminCog.py`: add an `admin_player` action or standalone `/admin_duel` command — e.g. `action: Cancel Duel` + `duel_id` parameter. Requires admin role.
+- `bot-core`: add `DELETE /api/v1/duels/{duel_id}` (or `POST /api/v1/duels/{duel_id}/cancel`) endpoint. Must produce an `AdminAuditLog` record.
+- `duel_service.py`: add `cancel_duel(db, duel_id)` — marks status `cancelled`, no credit transfer.
+
+---
+
+### B.64 — No `/duel-cancel` command for the challenger to withdraw their own challenge
+
+🟡 medium · Feature gap · 2026-05-03 · **OPEN**
+
+**Issue**: Once a challenger issues `/duel-challenge`, there is no way for them to take it back short of waiting for the 24-hour expiry. The target can reject, but the challenger cannot withdraw.
+
+**Required**:
+- `duelCog.py`: add `/duel-cancel` command. Autocomplete shows the invoking user's **outgoing** pending duels (challenger_id = invoking player). Only the challenger can cancel their own challenge.
+- `bot-core`: reuse or extend the reject endpoint — add a `POST /api/v1/duels/{duel_id}/cancel` that validates the requesting player is the challenger (not the target). Mark status `cancelled`.
+- `duel_service.py`: add `cancel_duel(db, duel_id, requesting_player_id)` — validates requester is challenger, marks `cancelled`, no credit change.
+- Autocomplete: new `outgoing_duel_autocomplete` function — mirrors `pending_duel_autocomplete` but filters on `challenger_id` instead of `target_id`. Label format: `"general_failure. — 100cr stakes"` (target name + stakes).
+
+**Note**: B.65 (admin cancel) can share the same service method — just without the challenger ownership check.
+
+---
+
 ### ℹ️ Discord slash command invocation banners are always public
 
 ℹ️ info · Design · 2026-05-03 · **BY DESIGN**

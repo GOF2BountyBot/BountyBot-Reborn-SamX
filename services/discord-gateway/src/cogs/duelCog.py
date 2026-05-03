@@ -100,6 +100,41 @@ class DuelCog(commands.Cog):
         except Exception:  # pylint: disable=broad-exception-caught
             return []
 
+    async def outgoing_duel_autocomplete(
+        self, interaction: discord.Interaction, current: str
+    ) -> list[app_commands.Choice[str]]:
+        """Live autocomplete for pending duels where the user is the challenger (for /duel-cancel)."""
+        try:
+            player_id = await self._get_player_id(interaction.user.id, interaction.guild_id)
+            if player_id is None:
+                return []
+            resp = await self.http_client.get(
+                f"{api_base}/duels/outgoing",
+                params={"user_id": player_id, "guild_id": interaction.guild_id},
+                timeout=5,
+            )
+            resp.raise_for_status()
+            duels = resp.json()
+            norm_current = normalize_for_search(current)
+            choices = []
+            for d in duels:
+                duel_id = d["id"]
+                stakes = d.get("stakes", 0)
+                target_name = d.get("target_name")
+                if target_name:
+                    label = (
+                        f"{target_name} — {stakes:,}cr stakes"
+                        if stakes
+                        else f"{target_name} — friendly duel"
+                    )
+                else:
+                    label = f"Duel #{duel_id} — {stakes:,}cr stakes" if stakes else f"Duel #{duel_id} — friendly duel"
+                if norm_current in normalize_for_search(label):
+                    choices.append(app_commands.Choice(name=label[:100], value=str(duel_id)))
+            return choices[:25]
+        except Exception:  # pylint: disable=broad-exception-caught
+            return []
+
     # ------------------------------------------------------------------
     # /duel-challenge <target> [stakes]
     # ------------------------------------------------------------------
@@ -462,6 +497,92 @@ class DuelCog(commands.Cog):
     @duel_reject.error
     async def duel_reject_error(self, interaction: discord.Interaction, error: app_commands.AppCommandError):
         flogger.exception("Error in /duel-reject", exc_info=error)
+        if not interaction.response.is_done():
+            await interaction.response.send_message("⚠️ An error occurred.", ephemeral=True)
+
+    # ------------------------------------------------------------------
+    # /duel-cancel <duel>  (B.64 — challenger self-cancel)
+    # ------------------------------------------------------------------
+
+    @app_commands.command(name="duel-cancel", description="Cancel a duel challenge you issued")
+    @app_commands.describe(duel="Select an outgoing duel challenge to cancel")
+    @app_commands.autocomplete(duel=outgoing_duel_autocomplete)
+    async def duel_cancel(self, interaction: discord.Interaction, duel: str):
+        """Cancel a pending duel challenge that the invoking user issued."""
+        await interaction.response.defer(thinking=True)
+        flogger.info(f"/duel-cancel invoked: guild={interaction.guild_id} user={interaction.user.id} duel={duel}")
+
+        try:
+            duel_id = int(duel)
+        except ValueError:
+            await interaction.followup.send(
+                "❌ Invalid duel selection. Please select from the dropdown.",
+                ephemeral=True,
+            )
+            return
+
+        try:
+            # Resolve Discord user ID to internal player PK
+            try:
+                player_id = await self._get_player_id(interaction.user.id, interaction.guild_id)
+            except httpx.HTTPStatusError:
+                await interaction.followup.send(_GUILD_NOT_CONFIGURED_MSG, ephemeral=True)
+                return
+            if player_id is None:
+                await interaction.followup.send(
+                    "❌ Could not find your player profile. Have you run `/register`?", ephemeral=True
+                )
+                return
+
+            resp = await self.http_client.post(
+                f"{api_base}/duels/{duel_id}/cancel",
+                params={"user_id": player_id},
+                timeout=10,
+            )
+            resp.raise_for_status()
+            data = resp.json()
+
+            target_name = data.get("target_name") or f"Player {data.get('target_id', '?')}"
+            embed = discord.Embed(
+                title="✅ Duel Cancelled",
+                description=(
+                    f"Your challenge against **{target_name}** has been withdrawn."
+                ),
+                color=discord.Color.orange(),
+            )
+            embed.add_field(name="Duel ID", value=f"#{duel_id}", inline=True)
+            await interaction.followup.send(embed=embed, ephemeral=True)
+            flogger.info(
+                f"/duel-cancel success: guild={interaction.guild_id} user={interaction.user.id} duel_id={duel_id}"
+            )
+
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code == 404:
+                await interaction.followup.send("❌ Duel not found.", ephemeral=True)
+            elif e.response.status_code == 400:
+                try:
+                    detail = e.response.json().get("detail", str(e))
+                except Exception:  # pylint: disable=broad-exception-caught
+                    detail = str(e)
+                await interaction.followup.send(f"❌ {detail}", ephemeral=True)
+            else:
+                flogger.error(
+                    f"/duel-cancel API error: guild={interaction.guild_id} user={interaction.user.id}"
+                    f" duel_id={duel_id} status={e.response.status_code}"
+                )
+                await interaction.followup.send(
+                    "⚠️ An error occurred while cancelling the duel.", ephemeral=True
+                )
+        except Exception as e:  # pylint: disable=broad-exception-caught
+            flogger.error(
+                f"/duel-cancel error: guild={interaction.guild_id} user={interaction.user.id}"
+                f" duel_id={duel_id} error={e}"
+            )
+            await interaction.followup.send("⚠️ An error occurred while cancelling the duel.", ephemeral=True)
+
+    @duel_cancel.error
+    async def duel_cancel_error(self, interaction: discord.Interaction, error: app_commands.AppCommandError):
+        flogger.exception("Error in /duel-cancel", exc_info=error)
         if not interaction.response.is_done():
             await interaction.response.send_message("⚠️ An error occurred.", ephemeral=True)
 

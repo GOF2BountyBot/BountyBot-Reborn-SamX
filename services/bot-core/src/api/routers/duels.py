@@ -10,6 +10,7 @@ Handles duel (PvP challenge) lifecycle operations including:
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from persist.database.manager import get_db_session
+from services.audit_service import AuditService
 from services.duel_service import DuelService
 from shared import bblogger
 
@@ -27,6 +28,36 @@ router = APIRouter(
     tags=["duels"],
     responses={404: {"description": "Duel not found"}},
 )
+
+
+# ---------------------------------------------------------------------------
+# GET /duels/outgoing
+# ---------------------------------------------------------------------------
+
+
+@router.get("/outgoing", response_model=list[DuelRequestResponse])
+async def get_outgoing_duels(
+    user_id: int,
+    guild_id: int,
+    service: DuelService = Depends(get_duel_service),
+):
+    """Get pending duel requests where the user is the challenger (for /duel-cancel autocomplete)."""
+    flogger.info(f"Get outgoing duels request: user_id={user_id} guild_id={guild_id}")
+    async with get_db_session() as db:
+        try:
+            duels_with_names = await service.get_outgoing_for_challenger(db, user_id, guild_id)
+            flogger.debug(
+                f"Retrieved {len(duels_with_names)} outgoing duels for user_id={user_id} guild_id={guild_id}"
+            )
+            result = []
+            for duel, target_name in duels_with_names:
+                resp = DuelRequestResponse.model_validate(duel)
+                resp.target_name = target_name
+                result.append(resp)
+            return result
+        except Exception as exc:
+            flogger.error(f"Get outgoing duels failed for user_id={user_id} guild_id={guild_id}: {exc}")
+            raise HTTPException(status_code=500, detail="Failed to retrieve outgoing duels") from exc
 
 
 # ---------------------------------------------------------------------------
@@ -250,4 +281,88 @@ async def reject_duel(
             raise HTTPException(
                 status_code=500,
                 detail="An internal error occurred while processing the duel rejection.",
+            ) from exc
+
+
+# ---------------------------------------------------------------------------
+# POST /duels/{duel_id}/cancel  (B.64 — challenger self-cancel)
+# ---------------------------------------------------------------------------
+
+
+@router.post("/{duel_id}/cancel", response_model=DuelRequestResponse)
+async def cancel_duel(
+    duel_id: int,
+    user_id: int = Query(..., description="ID of the player cancelling the duel (must be the challenger)"),
+    service: DuelService = Depends(get_duel_service),
+):
+    """Cancel a pending duel challenge.
+
+    Only the challenger (the player who issued the challenge) may cancel via this endpoint.
+    """
+    flogger.info(f"Duel cancel request: duel_id={duel_id} user_id={user_id}")
+    async with get_db_session() as db:
+        try:
+            updated = await service.cancel_duel(db, duel_id, requesting_player_id=user_id)
+            flogger.debug(
+                f"Duel cancel payload: duel_id={duel_id} status={updated.status}"
+                f" challenger_id={updated.challenger_id} target_id={updated.target_id}"
+            )
+            flogger.info(f"Duel cancelled: duel_id={duel_id} user_id={user_id}")
+            return DuelRequestResponse.model_validate(updated)
+        except ValueError as exc:
+            msg = str(exc)
+            flogger.error(f"Duel cancel failed: duel_id={duel_id} user_id={user_id}: {msg}")
+            status_code = 404 if "not found" in msg.lower() else 400
+            raise HTTPException(status_code=status_code, detail=msg) from exc
+        except Exception as exc:
+            flogger.error(
+                f"Unexpected error during duel cancel: duel_id={duel_id} user_id={user_id}: {exc}",
+                exc_info=True,
+            )
+            raise HTTPException(
+                status_code=500,
+                detail="An internal error occurred while processing the duel cancellation.",
+            ) from exc
+
+
+# ---------------------------------------------------------------------------
+# POST /duels/{duel_id}/admin-cancel  (B.65 — admin cancel, no ownership check)
+# ---------------------------------------------------------------------------
+
+
+@router.post("/{duel_id}/admin-cancel", response_model=DuelRequestResponse)
+async def admin_cancel_duel(
+    duel_id: int,
+    admin_user_id: int = Query(..., description="Discord user ID of the admin performing the action"),
+    service: DuelService = Depends(get_duel_service),
+):
+    """Admin cancel: cancel any pending duel without ownership check."""
+    flogger.info(f"Admin duel cancel request: duel_id={duel_id} by admin={admin_user_id}")
+    async with get_db_session() as db:
+        try:
+            updated = await service.cancel_duel(db, duel_id)
+            flogger.info(f"Duel admin-cancelled: duel_id={duel_id} by admin={admin_user_id}")
+            await AuditService.log_action(
+                db,
+                user_id=admin_user_id,
+                action="admin_cancel_duel",
+                guild_id=updated.guild_id,
+                resource_type="duel",
+                resource_id=str(duel_id),
+                details={"challenger_id": updated.challenger_id, "target_id": updated.target_id, "stakes": updated.stakes},
+            )
+            return DuelRequestResponse.model_validate(updated)
+        except ValueError as exc:
+            msg = str(exc)
+            flogger.error(f"Admin duel cancel failed: duel_id={duel_id}: {msg}")
+            status_code = 404 if "not found" in msg.lower() else 400
+            raise HTTPException(status_code=status_code, detail=msg) from exc
+        except Exception as exc:
+            flogger.error(
+                f"Unexpected error during admin duel cancel: duel_id={duel_id}: {exc}",
+                exc_info=True,
+            )
+            raise HTTPException(
+                status_code=500,
+                detail="An internal error occurred while processing the admin duel cancellation.",
             ) from exc

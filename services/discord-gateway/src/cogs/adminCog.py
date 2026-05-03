@@ -1963,6 +1963,75 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
         if not interaction.response.is_done():
             await interaction.response.send_message("⚠️ An error occurred.", ephemeral=True)
 
+    # ------------------------------------------------------------------
+    # /admin_duel — admin duel management (B.65)
+    # ------------------------------------------------------------------
+
+    @app_commands.command(name="admin_duel", description="[ADMIN] Manage duels — cancel any pending duel by ID")
+    @app_commands.describe(
+        action="Action to perform",
+        duel_id="Duel ID (required for Cancel Duel)",
+    )
+    @app_commands.choices(
+        action=[
+            app_commands.Choice(name="Cancel Duel", value="cancel"),
+        ]
+    )
+    async def admin_duel(
+        self,
+        interaction: discord.Interaction,
+        action: str,
+        duel_id: int | None = None,
+    ):
+        """Admin duel management commands."""
+        await interaction.response.defer(thinking=True, ephemeral=True)
+        if not await _check_is_admin(interaction):
+            await interaction.followup.send("❌ This command requires admin privileges.", ephemeral=True)
+            return
+
+        if action == "cancel":
+            if duel_id is None:
+                await interaction.followup.send("❌ `duel_id` is required for Cancel Duel.", ephemeral=True)
+                return
+
+            try:
+                resp = await self.http_client.post(
+                    f"{api_base}/duels/{duel_id}/admin-cancel",
+                    params={"admin_user_id": interaction.user.id},
+                    timeout=10,
+                )
+                if resp.status_code == 404:
+                    detail = resp.json().get("detail", "Duel not found.")
+                    await interaction.followup.send(f"❌ {detail}", ephemeral=True)
+                    return
+                if resp.status_code == 400:
+                    detail = resp.json().get("detail", "Invalid request.")
+                    await interaction.followup.send(f"❌ {detail}", ephemeral=True)
+                    return
+                resp.raise_for_status()
+
+                embed = discord.Embed(
+                    title="✅ Duel Cancelled",
+                    description=f"Duel **#{duel_id}** has been cancelled by admin.",
+                    color=discord.Color.orange(),
+                )
+                await interaction.followup.send(embed=embed, ephemeral=True)
+                flogger.info(
+                    f"Admin {interaction.user} cancelled duel_id={duel_id} in guild {interaction.guild_id}"
+                )
+
+            except httpx.HTTPStatusError as e:
+                await report_api_error(interaction, e)
+            except Exception as e:  # pylint: disable=broad-exception-caught
+                flogger.error(f"Error in /admin_duel cancel: {e}")
+                await interaction.followup.send("⚠️ An error occurred while cancelling the duel.", ephemeral=True)
+
+    @admin_duel.error
+    async def admin_duel_error(self, interaction: discord.Interaction, error: app_commands.AppCommandError):
+        flogger.exception("Error in /admin_duel", exc_info=error)
+        if not interaction.response.is_done():
+            await interaction.response.send_message("⚠️ An error occurred.", ephemeral=True)
+
 
 async def setup(bot: commands.Bot):
     flogger.debug("Setting up AdminCog...")

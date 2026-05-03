@@ -513,3 +513,101 @@ class TestCombatResolverProtocol:
         loadout2 = make_loadout(ship_name="Ship2", base_armour=500, weapon_dps=[50.0])
         result = service.fight_ships(loadout1, loadout2, variance_percent=0.0)
         assert result.winner_name == "MockWinner"
+
+
+# ---------------------------------------------------------------------------
+# TestArmourBuff — B.57: player_armour_buff parameter on fight_ships()
+# ---------------------------------------------------------------------------
+
+
+class TestArmourBuff:
+    """Tests for the player_armour_buff parameter added in B.57."""
+
+    def test_buff_1_0_is_identical_to_no_arg(self):
+        """fight_ships(buff=1.0) produces identical results to no buff argument.
+
+        AC: player_armour_buff=1.0 behaves identically to the default (no arg).
+        """
+        # Ship1 clearly stronger — deterministic at 0% variance.
+        loadout1 = make_loadout(ship_name="Player", base_armour=1000, weapon_dps=[200.0])
+        loadout2 = make_loadout(ship_name="Criminal", base_armour=500, weapon_dps=[50.0])
+        service = CombatService()
+
+        result_default = service.fight_ships(loadout1, loadout2, variance_percent=0.0)
+        result_explicit_1 = service.fight_ships(loadout1, loadout2, variance_percent=0.0, player_armour_buff=1.0)
+
+        assert result_default.winner_name == result_explicit_1.winner_name
+        assert result_default.loser_name == result_explicit_1.loser_name
+        assert result_default.is_stalemate == result_explicit_1.is_stalemate
+        assert result_default.ship1_stats.raw_hp == result_explicit_1.ship1_stats.raw_hp
+        assert result_default.ship1_stats.raw_dps == result_explicit_1.ship1_stats.raw_dps
+
+    def test_buff_1_5_changes_winner(self):
+        """fight_ships(buff=1.5) correctly multiplies ship1 armour and can flip the outcome.
+
+        AC: A ship that would normally lose wins after the 1.5x armour buff.
+
+        Setup (0% variance):
+          Ship1 (player):  armour=200, DPS=100 → HP=200, TTK=200/100=2.0s
+          Ship2 (criminal): armour=250, DPS=100 → HP=250, TTK=250/100=2.5s
+          Without buff: Ship2 wins (TTK2=2.5 > TTK1=2.0).
+
+          With 1.5x buff on ship1: armour=300 → HP=300, TTK=300/100=3.0s
+          TTK1=3.0 > TTK2=2.5 → Ship1 wins.
+        """
+        loadout1 = make_loadout(ship_name="Player", base_armour=200, weapon_dps=[100.0])
+        loadout2 = make_loadout(ship_name="Criminal", base_armour=250, weapon_dps=[100.0])
+        service = CombatService()
+
+        # Without buff: criminal wins.
+        result_no_buff = service.fight_ships(loadout1, loadout2, variance_percent=0.0)
+        assert result_no_buff.winner_name == "Criminal", "pre-condition: Criminal wins without buff"
+        assert result_no_buff.loser_name == "Player"
+
+        # With 1.5x buff: player wins.
+        result_buffed = service.fight_ships(loadout1, loadout2, variance_percent=0.0, player_armour_buff=1.5)
+        assert result_buffed.winner_name == "Player", "Player should win after 1.5x armour buff"
+        assert result_buffed.loser_name == "Criminal"
+        assert result_buffed.is_stalemate is False
+
+    def test_buff_applies_only_to_armour_not_shield_or_dps(self):
+        """Buff multiplies armour only — shield HP and DPS are unchanged.
+
+        AC: player_armour_buff=1.5 affects armour (and therefore total_hp via
+            armour contribution), but shield and DPS remain at their base values.
+
+        Setup:
+          Ship1: base_armour=200, ShieldModule(shield=100), weapon_dps=[150.0]
+            → raw_hp = armour(200) + shield(100) = 300, raw_dps = 150
+          With 1.5x buff on armour: buffed_armour = int(200 * 1.5) = 300
+            → buffed total_hp = 300 + 100 = 400  (shield 100 unchanged)
+            → dps = 150 (unchanged)
+
+        At 0% variance: raw_* == varied_*.
+        """
+        loadout1 = make_loadout(
+            ship_name="Player",
+            base_armour=200,
+            weapon_dps=[150.0],
+            modules=[ModuleStats(name="ShieldMod", shield=100)],
+        )
+        loadout2 = make_loadout(ship_name="Criminal", base_armour=1000, weapon_dps=[1.0])
+        service = CombatService()
+
+        result = service.fight_ships(loadout1, loadout2, variance_percent=0.0, player_armour_buff=1.5)
+        s1 = result.ship1_stats
+
+        # DPS unchanged: base DPS = 150.0, no module DPS bonus.
+        assert s1.raw_dps == pytest.approx(150.0), "DPS must not be affected by armour buff"
+
+        # raw_hp reflects buffed armour (300) + unchanged shield (100) = 400.
+        assert s1.raw_hp == 400, (
+            f"Expected raw_hp=400 (buffed armour 300 + shield 100), got {s1.raw_hp}"
+        )
+
+        # Verify shield component: without buff raw_hp would be 200+100=300.
+        # The extra 100 HP came from armour buff (300-200=100), not from shield change.
+        result_no_buff = service.fight_ships(loadout1, loadout2, variance_percent=0.0, player_armour_buff=1.0)
+        s1_no_buff = result_no_buff.ship1_stats
+        assert s1_no_buff.raw_hp == 300, "No-buff raw_hp should be armour(200)+shield(100)=300"
+        assert s1.raw_hp - s1_no_buff.raw_hp == 100, "Buff should add exactly int(200*0.5)=100 HP"

@@ -190,6 +190,7 @@ async def combat_bonus(
     """
     from services.bounty_service import _serialize_fight_results
     from services.combat_service import CombatService
+    from services.game_constants import GameConstants
     from services.loadout_builder import LoadoutBuilder
 
     flogger.info(f"Combat bonus request: player_id={request.player_id} base_reward={request.base_reward}")
@@ -199,9 +200,12 @@ async def combat_bonus(
             player_loadout = await LoadoutBuilder.from_player(db, request.player_id)
             criminal_loadout = LoadoutBuilder.from_criminal_ship(request.criminal_ship)
 
-            # Run combat
+            # Run combat with PvC armour buff applied to the player (loadout1 = ship1).
+            # PvP duels use the same CombatService.fight_ships() with default buff=1.0.
             combat_svc = CombatService()
-            fight_results = combat_svc.fight_ships(player_loadout, criminal_loadout)
+            fight_results = combat_svc.fight_ships(
+                player_loadout, criminal_loadout, player_armour_buff=GameConstants.BOUNTY_PVC_ARMOUR_BUFF_FACTOR
+            )
 
             # Determine outcome (stalemate = player wins for bounties)
             won = fight_results.is_stalemate or (fight_results.winner_name == player_loadout.ship_name)

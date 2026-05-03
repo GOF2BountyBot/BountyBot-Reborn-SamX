@@ -31,6 +31,80 @@ Cross-ref: `E2E_TEST_CHECKLIST.md` (test-item references). All commit SHAs are l
 
 ## OPEN
 
+### B.59 — `CombatBonusRequest.base_reward` lacks non-negative schema guard
+
+🔵 low · Code · 2026-05-03 · **OPEN**
+
+**Issue**: `CombatBonusRequest.base_reward: int` has no `Field(ge=0)` constraint. A negative value passed by a buggy caller would subtract credits from the player on a "win". The cog controls this value from the capture response so exploitation requires cog-level tampering, but the schema should guard it.
+
+**Fix**: Add `base_reward: int = Field(..., ge=0)` in `services/bot-core/src/api/schemas/bounty_schema.py`.
+
+---
+
+### B.58 — `combat_bonus` silently returns `won=True, bonus_credits=0` when player not found
+
+🟡 medium · Code · 2026-05-03 · **OPEN**
+
+**Issue**: If `player_repo.get_by_id()` returns `None` in the `combat_bonus` endpoint (race condition or data integrity gap between capture and bonus call), the response returns `won=True, message="Combat victory! +Xcr bonus (2x total)!"` but `bonus_credits=0`. No error is logged, no exception raised. Player is told they won credits they never received.
+
+**Fix**: Add a guard after `player_repo.get_by_id()` — if player is `None`, return an error response (or raise `HTTPException(404)`). Log at ERROR level.
+
+**File**: `services/bot-core/src/api/routers/bounties.py` lines 214–221.
+
+---
+
+### B.57 — Combat system refactor: unify PvP and PvC combat paths; introduce PvC player armour buff
+
+🟠 high · Design · 2026-05-03 · **FIXED** (pending rebuild)
+
+**Directive**: PvP duel combat and PvC (player vs criminal) bounty combat must follow the exact same code path through `CombatService.fight_ships()`. The only permitted difference is an optional armour buff applied to the player in PvC combat (proposed: +50% armour multiplier when fighting criminals). No separate combat logic should exist for duels vs bounties.
+
+**Current state**:
+- PvC (bounty combat bonus): `bounties.py` builds two `ShipLoadout` objects and calls `CombatService.fight_ships()` directly. ✅ Correct pattern.
+- PvP (duel accept): `duel_service.py` calls `CombatService.fight_ships()` via `LoadoutBuilder.from_player()`. ✅ Correct at the service layer.
+- Both paths already use `SimpleTTKResolver` via `CombatService`. ✅
+
+**Required changes**:
+1. Introduce an optional `player_armour_buff_factor: float = 1.0` parameter to `CombatService.fight_ships()` (or a wrapper) so the PvC path can pass `1.5` and the PvP path passes `1.0` (no buff).
+2. The buff must be applied ONLY to the player's armour stat, BEFORE variance rolls, NOT to shield or DPS.
+3. `get_armour()` or `collect_stats()` should accept an `armour_multiplier` override, OR the caller passes a modified `CombatStats` — whichever is cleaner.
+4. The bounty `combat_bonus` endpoint and the duel `accept_duel` service must both invoke the same `CombatService` method — no forking.
+5. `BOUNTY_PVC_ARMOUR_BUFF = 1.5` added to `GameConstants`, env-overridable, earmarked for per-guild configurability under B.49.
+
+**Files**: `services/bot-core/src/services/combat_service.py`, `services/bot-core/src/services/duel_service.py`, `services/bot-core/src/api/routers/bounties.py`, `services/bot-core/src/services/game_constants.py`
+
+**Note**: B.55 (duel response crash) is a blocker that will be fixed as part of this same pass. See B.55.
+
+---
+
+### B.56 — Duel challenge embed: target not pinged outside embed body
+
+🔵 low · UX · 2026-05-03 · **FIXED** (pending rebuild)
+
+**Symptom**: The duel challenge embed contains the target's mention inside the embed body only. Discord embed pings do not generate notifications for most users — the target is likely to miss the challenge entirely.
+
+**Expected**: Target mention sent as plain message content (outside the embed), matching the pattern used for bounty announcements. The embed body can still reference the target by name/mention.
+
+**File**: `services/discord-gateway/src/cogs/duelCog.py` — `duel_challenge` handler, challenge send call.
+
+---
+
+### B.55 — Duel accept crashes with AttributeError after successful combat resolution
+
+🟠 high · E2E · 2026-05-03 · **FIXED** (pending rebuild)
+
+**Symptom**: `/duel-accept` returns "Service issue, please try again" to the user. Duel resolves and credits transfer correctly in the DB, but the HTTP response crashes before reaching the gateway.
+
+**Root cause**: `duels.py:accept_duel` (line ~166) accesses `fight.challenger_health` and `fight.target_health` — fields that do not exist on `FightResults`. The correct fields are `fight.ship1_stats.varied_hp` and `fight.ship2_stats.varied_hp`.
+
+**Impact**: Duel result embed is never shown. Player has no idea who won or what the credit outcome was. Duel IS correctly marked `completed` in DB and credits DO transfer — data integrity is intact.
+
+**Fix**: Replace `fight.challenger_health` → `fight.ship1_stats.varied_hp` and `fight.target_health` → `fight.ship2_stats.varied_hp` in `duels.py`. Also audit whether the inline dict response is the right shape for what `duelCog.py` expects and align them.
+
+**File**: `services/bot-core/src/api/routers/duels.py` ~line 166
+
+---
+
 ### B.53 — Prestige does not swap Discord tier roles (Platinum role not removed, Bronze role not added)
 
 🟠 high · E2E · 2026-05-02 · **OPEN**

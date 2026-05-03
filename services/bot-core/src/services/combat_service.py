@@ -461,6 +461,7 @@ class CombatService:
         loadout1: ShipLoadout,
         loadout2: ShipLoadout,
         variance_percent: float | None = None,
+        player_armour_buff: float = 1.0,
     ) -> FightResults:
         """Simulate a fight between two ship loadouts.
 
@@ -468,10 +469,16 @@ class CombatService:
         CombatResolver for the actual fight computation.
 
         Args:
-            loadout1: First ship (initiator).
-            loadout2: Second ship (receiver).
+            loadout1: First ship (initiator / player in PvC combat).
+            loadout2: Second ship (receiver / criminal in PvC combat).
             variance_percent: Random variance to apply. Defaults to
                               GameConstants.DUEL_VARIANCE_PERCENT.
+            player_armour_buff: Multiplier applied to loadout1's armour before
+                                combat resolution. 1.0 = no buff (default).
+                                Used by PvC (bounty) combat to give the player
+                                a +50% armour advantage over criminals.
+                                Only armour is buffed — shield and DPS are
+                                unaffected. Has no effect in PvP duels.
 
         Returns:
             FightResults with winner, loser, stats, and stalemate flag.
@@ -486,6 +493,24 @@ class CombatService:
 
         flogger.debug(f"Collecting combat stats for {loadout1.ship_name} (initiator)")
         stats1 = self.collect_stats(loadout1)
+
+        # Apply optional armour buff to loadout1 (player in PvC combat).
+        # Only armour is modified — shield and DPS are unchanged.
+        if player_armour_buff != 1.0:
+            buffed_armour = int(stats1.armour * player_armour_buff)
+            flogger.debug(
+                f"PvC armour buff applied to {loadout1.ship_name}: "
+                f"armour {stats1.armour} → {buffed_armour} (×{player_armour_buff})"
+            )
+            stats1 = CombatStats(
+                ship_name=stats1.ship_name,
+                dps=stats1.dps,
+                armour=buffed_armour,
+                shield=stats1.shield,
+                total_hp=buffed_armour + stats1.shield,
+                accuracy=stats1.accuracy,
+                evasion=stats1.evasion,
+            )
 
         flogger.debug(f"Collecting combat stats for {loadout2.ship_name} (receiver)")
         stats2 = self.collect_stats(loadout2)

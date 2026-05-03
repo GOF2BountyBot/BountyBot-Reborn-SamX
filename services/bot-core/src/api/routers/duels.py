@@ -163,7 +163,8 @@ async def accept_duel(
         flogger.debug(
             f"Duel resolution details: duel_id={duel_id}"
             f" challenger_id={challenger.id} target_id={target.id}"
-            f" challenger_health={fight.challenger_health} target_health={fight.target_health}"
+            f" challenger_hp={fight.ship1_stats.varied_hp} target_hp={fight.ship2_stats.varied_hp}"
+            f" challenger_dps={fight.ship1_stats.varied_dps} target_dps={fight.ship2_stats.varied_dps}"
         )
 
         flogger.info(
@@ -181,8 +182,12 @@ async def accept_duel(
             "stakes": result["stakes"],
             "challenger_id": challenger.id,
             "challenger_credits": challenger.credits,
+            "challenger_hp": fight.ship1_stats.varied_hp,
+            "challenger_dps": fight.ship1_stats.varied_dps,
             "target_id": target.id,
             "target_credits": target.credits,
+            "target_hp": fight.ship2_stats.varied_hp,
+            "target_dps": fight.ship2_stats.varied_dps,
         }
 
 

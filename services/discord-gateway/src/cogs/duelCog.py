@@ -150,7 +150,7 @@ class DuelCog(commands.Cog):
             data = resp.json()
 
             embed = self._build_challenge_embed(interaction.user, target, data, stakes)
-            await interaction.followup.send(embed=embed)
+            await interaction.followup.send(content=target.mention, embed=embed)
             duel_id = data.get("id", "?")
             flogger.info(
                 f"/duel-challenge success: guild={interaction.guild_id} user={interaction.user.id}"

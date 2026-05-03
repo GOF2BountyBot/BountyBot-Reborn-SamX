@@ -17,7 +17,12 @@ from fastapi.testclient import TestClient
 
 
 def make_mock_duel(**overrides):
-    """Build a MagicMock that looks like a DuelRequest ORM object."""
+    """Build a MagicMock that looks like a DuelRequest ORM object.
+
+    All fields that DuelRequestResponse validates are explicitly set so that
+    model_validate(duel) does not trip on MagicMock attribute access.
+    challenger_name is None by default (it is populated by the router, not the ORM).
+    """
     now = datetime(2026, 1, 1, 12, 0, 0)
     expires = datetime(2026, 1, 2, 12, 0, 0)
     defaults = dict(
@@ -29,6 +34,7 @@ def make_mock_duel(**overrides):
         status="pending",
         created_at=now,
         expires_at=expires,
+        challenger_name=None,  # not on ORM; populated by router after get_pending_for_target
     )
     defaults.update(overrides)
     duel = MagicMock()
@@ -473,12 +479,16 @@ class TestGetPendingDuels:
 
     @patch("api.routers.duels.get_db_session")
     def test_get_pending_duels_returns_list(self, mock_get_db, client, mock_duel_service):
-        """Returns list of pending duels where the user is the target."""
+        """Returns list of pending duels where the user is the target.
+
+        get_pending_for_target now returns list[tuple[DuelRequest, str | None]]
+        so challenger_name is populated on each response object.
+        """
         _configure_db_mock(mock_get_db)
         mock_duel_service.get_pending_for_target = AsyncMock(
             return_value=[
-                make_mock_duel(id=1, target_id=200, challenger_id=100, status="pending"),
-                make_mock_duel(id=2, target_id=200, challenger_id=300, status="pending"),
+                (make_mock_duel(id=1, target_id=200, challenger_id=100, status="pending"), "SamAccountX"),
+                (make_mock_duel(id=2, target_id=200, challenger_id=300, status="pending"), None),
             ]
         )
 
@@ -488,7 +498,9 @@ class TestGetPendingDuels:
         data = response.json()
         assert len(data) == 2
         assert data[0]["id"] == 1
+        assert data[0]["challenger_name"] == "SamAccountX"
         assert data[1]["id"] == 2
+        assert data[1]["challenger_name"] is None
 
     @patch("api.routers.duels.get_db_session")
     def test_get_pending_duels_empty_list(self, mock_get_db, client, mock_duel_service):
@@ -500,3 +512,20 @@ class TestGetPendingDuels:
 
         assert response.status_code == 200
         assert response.json() == []
+
+    @patch("api.routers.duels.get_db_session")
+    def test_get_pending_duels_challenger_name_in_response(self, mock_get_db, client, mock_duel_service):
+        """challenger_name is passed through to the response when resolved."""
+        _configure_db_mock(mock_get_db)
+        mock_duel_service.get_pending_for_target = AsyncMock(
+            return_value=[
+                (make_mock_duel(id=5, target_id=200, challenger_id=100, stakes=500, status="pending"), "GunnerX"),
+            ]
+        )
+
+        response = client.get("/api/v1/duels/pending", params={"user_id": 200, "guild_id": 67890})
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data[0]["challenger_name"] == "GunnerX"
+        assert data[0]["stakes"] == 500

@@ -85,7 +85,15 @@ class DuelCog(commands.Cog):
             for d in duels:
                 duel_id = d["id"]
                 stakes = d.get("stakes", 0)
-                label = f"Duel #{duel_id} — {stakes:,}cr stakes" if stakes else f"Duel #{duel_id} — friendly duel"
+                challenger_name = d.get("challenger_name")
+                if challenger_name:
+                    label = (
+                        f"{challenger_name} — {stakes:,}cr stakes"
+                        if stakes
+                        else f"{challenger_name} — friendly duel"
+                    )
+                else:
+                    label = f"Duel #{duel_id} — {stakes:,}cr stakes" if stakes else f"Duel #{duel_id} — friendly duel"
                 if norm_current in normalize_for_search(label):
                     choices.append(app_commands.Choice(name=label[:100], value=str(duel_id)))
             return choices[:25]
@@ -324,11 +332,13 @@ class DuelCog(commands.Cog):
                 color=discord.Color.green(),
             )
             if stakes:
+                challenger_name = data.get("challenger_name") or f"Player {challenger_id}"
+                target_name = data.get("target_name") or f"Player {target_id}"
                 embed.add_field(
                     name="💳 Final Balances",
                     value=(
-                        f"Player <@{challenger_id}>: **{challenger_credits:,}** cr\n"
-                        f"Player <@{target_id}>: **{target_credits:,}** cr"
+                        f"{challenger_name}: **{challenger_credits:,}** cr\n"
+                        f"{target_name}: **{target_credits:,}** cr"
                     ),
                     inline=False,
                 )
@@ -388,10 +398,10 @@ class DuelCog(commands.Cog):
                 description=(f"**Duel #{duel_id}** has been rejected.\nThe challenge has been declined."),
                 color=discord.Color.red(),
             )
-            if data.get("challenger_id"):
+            if data.get("challenger_name"):
                 embed.add_field(
                     name="Details",
-                    value=f"Challenger: <@{data['challenger_id']}>",
+                    value=f"Challenger: {data['challenger_name']}",
                     inline=False,
                 )
             await interaction.followup.send(embed=embed)

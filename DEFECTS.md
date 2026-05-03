@@ -31,6 +31,28 @@ Cross-ref: `E2E_TEST_CHECKLIST.md` (test-item references). All commit SHAs are l
 
 ## OPEN
 
+### B.61 — Duel accept "Final Balances" embed shows `Player 2` for target — no target_name in accept response
+
+🔵 low · UX · 2026-05-03 · **OPEN**
+
+**Issue**: The duel accept embed "Final Balances" field shows `challenger_name` correctly (added in B.60) but falls back to `"Player {db_pk}"` for the target because the accept response does not include a `target_name` field. Challenger is shown by name, target is shown as e.g. "Player 2".
+
+**Fix**: Add `target_name: str | None = None` to the accept_duel response dict in `services/bot-core/src/api/routers/duels.py`, populated from the target Player's username (same pattern as `challenger_name`). Update `duelCog.py` to use it (already reads `data.get("target_name")` — the cog side is already correct).
+
+**Files**: `services/bot-core/src/api/routers/duels.py`, `services/bot-core/src/services/duel_service.py`
+
+---
+
+### B.60 — Duel accept/reject autocomplete shows Duel ID instead of challenger name
+
+🔵 low · UX · 2026-05-03 · **FIXED** (pending rebuild)
+
+**Issue**: `/duel-accept` and `/duel-reject` autocomplete dropdown showed `"Duel #2 — 100cr stakes"`. Target likely can't identify which challenge is which if they have multiple pending.
+
+**Fix**: Extended `DuelRequestResponse` with `challenger_name: str | None`. `get_pending_for_target()` now resolves challenger username via `player_repo → user_repo`. Autocomplete label is now `"SamAccountX — 100cr stakes"` with fallback to old format if name unavailable. Applies to both accept and reject (shared autocomplete function).
+
+---
+
 ### B.59 — `CombatBonusRequest.base_reward` lacks non-negative schema guard
 
 🔵 low · Code · 2026-05-03 · **OPEN**

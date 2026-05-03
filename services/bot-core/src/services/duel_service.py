@@ -14,6 +14,7 @@ from datetime import UTC, datetime, timedelta
 from persist.models.duel_request import DuelRequest
 from persist.repositories.duel_repository import DuelRepository
 from persist.repositories.player_repository import PlayerRepository
+from persist.repositories.user_repository import UserRepository
 from shared import bblogger
 
 from services.combat_service import CombatService
@@ -28,6 +29,7 @@ class DuelService:
     def __init__(self) -> None:
         self.duel_repo = DuelRepository()
         self.player_repo = PlayerRepository()
+        self.user_repo = UserRepository()
         self.combat_service = CombatService()
 
     # ------------------------------------------------------------------
@@ -311,8 +313,11 @@ class DuelService:
     # Query helpers
     # ------------------------------------------------------------------
 
-    async def get_pending_for_target(self, db, target_id: int, guild_id: int) -> list[DuelRequest]:
-        """Return all pending duels where *target_id* is the target in the given guild.
+    async def get_pending_for_target(
+        self, db, target_id: int, guild_id: int
+    ) -> list[tuple[DuelRequest, str | None]]:
+        """Return all pending duels where *target_id* is the target in the given guild,
+        together with the challenger's Discord username.
 
         Used by the Discord gateway for autocomplete on /duel-accept and /duel-reject.
 
@@ -322,9 +327,25 @@ class DuelService:
             guild_id: Guild the duels are scoped to.
 
         Returns:
-            List of pending DuelRequest objects.
+            List of (DuelRequest, challenger_name) tuples. challenger_name is None
+            if the challenger's username cannot be resolved (e.g. missing user row).
         """
-        return await self.duel_repo.get_pending_by_target(db, target_id, guild_id)
+        duels = await self.duel_repo.get_pending_by_target(db, target_id, guild_id)
+
+        result = []
+        for duel in duels:
+            challenger_name: str | None = None
+            try:
+                challenger = await self.player_repo.get_by_id(db, duel.challenger_id)
+                if challenger is not None:
+                    user = await self.user_repo.get_by_id(db, challenger.user_id)
+                    if user and user.discord_username:
+                        challenger_name = user.discord_username
+            except Exception as exc:  # defensive — lookup failures must never break autocomplete
+                flogger.debug(f"Could not resolve challenger name for duel {duel.id}: {exc}")
+            result.append((duel, challenger_name))
+
+        return result
 
     # ------------------------------------------------------------------
     # Expire

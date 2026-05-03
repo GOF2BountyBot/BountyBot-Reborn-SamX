@@ -21,6 +21,7 @@ class DuelRequestResponse(BaseModel):
     status: str
     created_at: datetime
     expires_at: datetime | None = None
+    challenger_name: str | None = None
 
 
 class DuelResultResponse(BaseModel):

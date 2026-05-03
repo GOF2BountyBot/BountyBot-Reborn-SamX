@@ -44,9 +44,15 @@ async def get_pending_duels(
     flogger.info(f"Get pending duels request: user_id={user_id} guild_id={guild_id}")
     async with get_db_session() as db:
         try:
-            duels = await service.get_pending_for_target(db, user_id, guild_id)
-            flogger.debug(f"Retrieved {len(duels)} pending duels for user_id={user_id} guild_id={guild_id}")
-            result = [DuelRequestResponse.model_validate(d) for d in duels]
+            duels_with_names = await service.get_pending_for_target(db, user_id, guild_id)
+            flogger.debug(
+                f"Retrieved {len(duels_with_names)} pending duels for user_id={user_id} guild_id={guild_id}"
+            )
+            result = []
+            for duel, challenger_name in duels_with_names:
+                resp = DuelRequestResponse.model_validate(duel)
+                resp.challenger_name = challenger_name
+                result.append(resp)
             return result
         except Exception as exc:
             flogger.error(f"Get pending duels failed for user_id={user_id} guild_id={guild_id}: {exc}")

@@ -112,11 +112,12 @@ def make_duel(
     )
 
 
-def make_service(*, duel_repo=None, player_repo=None, combat_service=None) -> DuelService:
+def make_service(*, duel_repo=None, player_repo=None, user_repo=None, combat_service=None) -> DuelService:
     """Instantiate DuelService with mocked repositories."""
     svc = DuelService.__new__(DuelService)
     svc.duel_repo = duel_repo or AsyncMock()
     svc.player_repo = player_repo or AsyncMock()
+    svc.user_repo = user_repo or AsyncMock()
     svc.combat_service = combat_service or CombatService()
     return svc
 
@@ -769,3 +770,148 @@ class TestExpireDuel:
         svc = make_service(duel_repo=duel_repo)
         with pytest.raises(ValueError, match="cannot be expired"):
             await svc.expire_duel(db=None, duel_id=1)
+
+
+# ---------------------------------------------------------------------------
+# TestGetPendingForTarget  (B.60: challenger_name resolution)
+# ---------------------------------------------------------------------------
+
+
+class TestGetPendingForTarget:
+    """Tests for DuelService.get_pending_for_target() — returns (duel, challenger_name) tuples."""
+
+    @pytest.mark.asyncio
+    async def test_returns_tuples_with_challenger_name(self):
+        """Happy path: challenger name is resolved from player → user chain."""
+        duel1 = make_duel(duel_id=1, challenger_id=10, target_id=20)
+        duel2 = make_duel(duel_id=2, challenger_id=30, target_id=20)
+
+        duel_repo = AsyncMock()
+        duel_repo.get_pending_by_target.return_value = [duel1, duel2]
+
+        # Build minimal player and user mocks
+        challenger1 = MagicMock()
+        challenger1.user_id = 1000
+        challenger2 = MagicMock()
+        challenger2.user_id = 2000
+
+        user1 = MagicMock()
+        user1.discord_username = "SamAccountX"
+        user2 = MagicMock()
+        user2.discord_username = "GunnerY"
+
+        player_repo = AsyncMock()
+        player_repo.get_by_id.side_effect = lambda db, pid: {10: challenger1, 30: challenger2}.get(pid)
+
+        user_repo = AsyncMock()
+        user_repo.get_by_id.side_effect = lambda db, uid: {1000: user1, 2000: user2}.get(uid)
+
+        svc = make_service(duel_repo=duel_repo, player_repo=player_repo, user_repo=user_repo)
+        result = await svc.get_pending_for_target(db=None, target_id=20, guild_id=9999)
+
+        assert len(result) == 2
+        duel_a, name_a = result[0]
+        assert duel_a is duel1
+        assert name_a == "SamAccountX"
+        duel_b, name_b = result[1]
+        assert duel_b is duel2
+        assert name_b == "GunnerY"
+
+    @pytest.mark.asyncio
+    async def test_challenger_name_none_when_player_not_found(self):
+        """challenger_name is None when the challenger player row does not exist."""
+        duel = make_duel(duel_id=1, challenger_id=99, target_id=20)
+
+        duel_repo = AsyncMock()
+        duel_repo.get_pending_by_target.return_value = [duel]
+
+        player_repo = AsyncMock()
+        player_repo.get_by_id.return_value = None  # player not found
+
+        svc = make_service(duel_repo=duel_repo, player_repo=player_repo)
+        result = await svc.get_pending_for_target(db=None, target_id=20, guild_id=9999)
+
+        assert len(result) == 1
+        _, name = result[0]
+        assert name is None
+
+    @pytest.mark.asyncio
+    async def test_challenger_name_none_when_user_not_found(self):
+        """challenger_name is None when the User row does not exist for the challenger player."""
+        duel = make_duel(duel_id=1, challenger_id=10, target_id=20)
+
+        duel_repo = AsyncMock()
+        duel_repo.get_pending_by_target.return_value = [duel]
+
+        challenger = MagicMock()
+        challenger.user_id = 1000
+
+        player_repo = AsyncMock()
+        player_repo.get_by_id.return_value = challenger
+
+        user_repo = AsyncMock()
+        user_repo.get_by_id.return_value = None  # user not found
+
+        svc = make_service(duel_repo=duel_repo, player_repo=player_repo, user_repo=user_repo)
+        result = await svc.get_pending_for_target(db=None, target_id=20, guild_id=9999)
+
+        assert len(result) == 1
+        _, name = result[0]
+        assert name is None
+
+    @pytest.mark.asyncio
+    async def test_challenger_name_none_when_username_empty(self):
+        """challenger_name is None when discord_username is None/empty on the User row."""
+        duel = make_duel(duel_id=1, challenger_id=10, target_id=20)
+
+        duel_repo = AsyncMock()
+        duel_repo.get_pending_by_target.return_value = [duel]
+
+        challenger = MagicMock()
+        challenger.user_id = 1000
+
+        user = MagicMock()
+        user.discord_username = None  # no username stored
+
+        player_repo = AsyncMock()
+        player_repo.get_by_id.return_value = challenger
+
+        user_repo = AsyncMock()
+        user_repo.get_by_id.return_value = user
+
+        svc = make_service(duel_repo=duel_repo, player_repo=player_repo, user_repo=user_repo)
+        result = await svc.get_pending_for_target(db=None, target_id=20, guild_id=9999)
+
+        assert len(result) == 1
+        _, name = result[0]
+        assert name is None
+
+    @pytest.mark.asyncio
+    async def test_lookup_exception_degrades_gracefully(self):
+        """A DB error during challenger resolution returns None name instead of raising."""
+        duel = make_duel(duel_id=1, challenger_id=10, target_id=20)
+
+        duel_repo = AsyncMock()
+        duel_repo.get_pending_by_target.return_value = [duel]
+
+        player_repo = AsyncMock()
+        player_repo.get_by_id.side_effect = RuntimeError("DB connection lost")
+
+        svc = make_service(duel_repo=duel_repo, player_repo=player_repo)
+        # Should NOT raise; should degrade gracefully to name=None
+        result = await svc.get_pending_for_target(db=None, target_id=20, guild_id=9999)
+
+        assert len(result) == 1
+        _, name = result[0]
+        assert name is None
+
+    @pytest.mark.asyncio
+    async def test_empty_duels_returns_empty_list(self):
+        """When no pending duels exist, returns an empty list."""
+        duel_repo = AsyncMock()
+        duel_repo.get_pending_by_target.return_value = []
+
+        svc = make_service(duel_repo=duel_repo)
+        result = await svc.get_pending_for_target(db=None, target_id=20, guild_id=9999)
+
+        assert result == []

@@ -314,26 +314,52 @@ class DuelCog(commands.Cog):
                 color=discord.Color.yellow(),
             )
         else:
-            winner_name = data.get("winner_name", "Unknown")
-            loser_name = data.get("loser_name", "Unknown")
             challenger_id = data.get("challenger_id")
+            challenger_name = data.get("challenger_name") or f"Player {challenger_id}"
             challenger_credits = data.get("challenger_credits", 0)
+            challenger_hp = data.get("challenger_hp", 0)
+            challenger_dps = data.get("challenger_dps", 0)
+
             target_id = data.get("target_id")
+            target_name = data.get("target_name") or f"Player {target_id}"
             target_credits = data.get("target_credits", 0)
+            target_hp = data.get("target_hp", 0)
+            target_dps = data.get("target_dps", 0)
+
+            # Determine which PLAYER won using time-to-kill (TTK) comparison.
+            # fight_ships(challenger_loadout, target_loadout) always assigns challenger
+            # as ship1, so challenger_hp/challenger_dps belong to ship1.
+            # The ship with the higher TTK wins (the opponent dies first).
+            # Fall back to the raw ship names when stats are unavailable.
+            try:
+                if challenger_dps > 0 and target_dps > 0:
+                    challenger_ttk = challenger_hp / target_dps
+                    target_ttk = target_hp / challenger_dps
+                    if challenger_ttk > target_ttk:
+                        winner_display = challenger_name
+                        loser_display = target_name
+                    else:
+                        winner_display = target_name
+                        loser_display = challenger_name
+                else:
+                    # Fallback: ship names from the API response
+                    winner_display = data.get("winner_name", "Unknown")
+                    loser_display = data.get("loser_name", "Unknown")
+            except Exception:  # pylint: disable=broad-exception-caught
+                winner_display = data.get("winner_name", "Unknown")
+                loser_display = data.get("loser_name", "Unknown")
 
             embed = discord.Embed(
                 title="⚔️ Duel Complete — Victory!",
                 description=(
                     f"**Duel #{duel_id}** has been resolved!\n\n"
-                    f"🏆 **Winner:** {winner_name}\n"
-                    f"💀 **Loser:** {loser_name}\n"
+                    f"🏆 **Winner:** {winner_display}\n"
+                    f"💀 **Loser:** {loser_display}\n"
                     f"💰 **Credits transferred:** {credits_transferred:,}"
                 ),
                 color=discord.Color.green(),
             )
             if stakes:
-                challenger_name = data.get("challenger_name") or f"Player {challenger_id}"
-                target_name = data.get("target_name") or f"Player {target_id}"
                 embed.add_field(
                     name="💳 Final Balances",
                     value=(

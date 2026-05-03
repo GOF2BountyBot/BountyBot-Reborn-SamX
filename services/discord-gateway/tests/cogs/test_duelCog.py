@@ -115,9 +115,15 @@ def _make_accept_result(
     credits_transferred=500,
     stakes=500,
     challenger_id=100,
+    challenger_name="challenger_player",
     challenger_credits=1500,
+    challenger_hp=1000,
+    challenger_dps=50.0,
     target_id=200,
+    target_name="target_player",
     target_credits=500,
+    target_hp=800,
+    target_dps=40.0,
 ):
     """Return a minimal accept result dict."""
     return {
@@ -128,9 +134,15 @@ def _make_accept_result(
         "credits_transferred": credits_transferred,
         "stakes": stakes,
         "challenger_id": challenger_id,
+        "challenger_name": challenger_name,
         "challenger_credits": challenger_credits,
+        "challenger_hp": challenger_hp,
+        "challenger_dps": challenger_dps,
         "target_id": target_id,
+        "target_name": target_name,
         "target_credits": target_credits,
+        "target_hp": target_hp,
+        "target_dps": target_dps,
     }
 
 
@@ -409,6 +421,179 @@ class TestDuelAcceptCommand:
         call_kwargs = interaction.followup.send.call_args
         assert call_kwargs[1].get("ephemeral", False)
         assert "invalid" in call_kwargs[0][0].lower()
+
+
+# ---------------------------------------------------------------------------
+# _build_accept_embed — winner/loser player-name display (B.63)
+# ---------------------------------------------------------------------------
+
+
+class TestBuildAcceptEmbedPlayerNames:
+    """Tests for _build_accept_embed showing player names instead of ship names (B.63)."""
+
+    def test_winner_is_challenger_when_challenger_ttk_higher(self, mock_duel_cog):
+        """When challenger TTK > target TTK, embed shows challenger_name as Winner."""
+        # challenger_ttk = 1000 / 40 = 25s;  target_ttk = 800 / 50 = 16s → challenger wins
+        data = _make_accept_result(
+            is_stalemate=False,
+            winner_name="Betty",
+            loser_name="Betty",
+            challenger_name="samx.ai",
+            challenger_hp=1000,
+            challenger_dps=50.0,
+            target_name="general_failure.",
+            target_hp=800,
+            target_dps=40.0,
+            credits_transferred=0,
+            stakes=0,
+        )
+        embed = mock_duel_cog._build_accept_embed(1, data)
+        assert "samx.ai" in embed.description
+        assert "general_failure." in embed.description
+        assert embed.description.index("samx.ai") < embed.description.index("general_failure.")
+
+    def test_winner_is_target_when_target_ttk_higher(self, mock_duel_cog):
+        """When target TTK > challenger TTK, embed shows target_name as Winner."""
+        # challenger_ttk = 500 / 80 = 6.25s;  target_ttk = 1000 / 30 = 33.3s → target wins
+        data = _make_accept_result(
+            is_stalemate=False,
+            winner_name="Betty",
+            loser_name="Betty",
+            challenger_name="samx.ai",
+            challenger_hp=500,
+            challenger_dps=30.0,
+            target_name="general_failure.",
+            target_hp=1000,
+            target_dps=80.0,
+            credits_transferred=0,
+            stakes=0,
+        )
+        embed = mock_duel_cog._build_accept_embed(1, data)
+        assert "general_failure." in embed.description
+        assert "samx.ai" in embed.description
+        assert embed.description.index("general_failure.") < embed.description.index("samx.ai")
+
+    def test_same_ship_name_different_players_shows_player_names(self, mock_duel_cog):
+        """When both players fly the same ship, player names appear instead of duplicated ship name."""
+        # Both fly "Betty" — old code would show "Winner: Betty / Loser: Betty"
+        # challenger_ttk = 1200 / 60 = 20s;  target_ttk = 900 / 50 = 18s → challenger wins
+        data = _make_accept_result(
+            is_stalemate=False,
+            winner_name="Betty",
+            loser_name="Betty",
+            challenger_name="player_one",
+            challenger_hp=1200,
+            challenger_dps=50.0,
+            target_name="player_two",
+            target_hp=900,
+            target_dps=60.0,
+            credits_transferred=0,
+            stakes=0,
+        )
+        embed = mock_duel_cog._build_accept_embed(1, data)
+        # Should NOT show raw ship names as winner/loser identifiers when player names available
+        description = embed.description
+        # Player names appear
+        assert "player_one" in description
+        assert "player_two" in description
+        # Challenger (player_one) won
+        assert description.index("player_one") < description.index("player_two")
+
+    def test_fallback_to_ship_names_when_dps_zero(self, mock_duel_cog):
+        """When DPS values are zero (edge case), embed falls back to ship names."""
+        data = _make_accept_result(
+            is_stalemate=False,
+            winner_name="Eagle",
+            loser_name="Wraith",
+            challenger_name="samx.ai",
+            challenger_hp=1000,
+            challenger_dps=0.0,  # zero DPS → fallback
+            target_name="general_failure.",
+            target_hp=800,
+            target_dps=0.0,
+            credits_transferred=0,
+            stakes=0,
+        )
+        embed = mock_duel_cog._build_accept_embed(1, data)
+        assert "Eagle" in embed.description
+        assert "Wraith" in embed.description
+
+    def test_fallback_to_ship_names_when_stats_absent(self, mock_duel_cog):
+        """When hp/dps fields are missing, embed falls back to ship names."""
+        # Minimal response with no hp/dps fields (should not raise)
+        data = {
+            "duel_id": 1,
+            "is_stalemate": False,
+            "winner_name": "Eagle",
+            "loser_name": "Wraith",
+            "credits_transferred": 0,
+            "stakes": 0,
+            "challenger_id": 100,
+            "target_id": 200,
+        }
+        embed = mock_duel_cog._build_accept_embed(1, data)
+        assert "Eagle" in embed.description
+        assert "Wraith" in embed.description
+
+    def test_stalemate_embed_unchanged(self, mock_duel_cog):
+        """Stalemate embed is not affected by the player-name fix."""
+        data = _make_accept_result(
+            is_stalemate=True,
+            winner_name="",
+            loser_name="",
+            credits_transferred=0,
+            stakes=0,
+        )
+        embed = mock_duel_cog._build_accept_embed(1, data)
+        assert "Stalemate" in embed.title
+        import discord
+
+        assert embed.color == discord.Color.yellow()
+
+    def test_player_names_used_without_stakes(self, mock_duel_cog):
+        """Player names appear in Winner/Loser even for friendly (stakes=0) duels."""
+        # challenger_ttk = 1000 / 50 = 20s;  target_ttk = 800 / 60 = 13.3s → challenger wins
+        data = _make_accept_result(
+            is_stalemate=False,
+            winner_name="Betty",
+            loser_name="Betty",
+            challenger_name="friendly_challenger",
+            challenger_hp=1000,
+            challenger_dps=60.0,
+            target_name="friendly_target",
+            target_hp=800,
+            target_dps=50.0,
+            credits_transferred=0,
+            stakes=0,
+        )
+        embed = mock_duel_cog._build_accept_embed(1, data)
+        assert "friendly_challenger" in embed.description
+        assert "friendly_target" in embed.description
+
+    def test_final_balances_field_uses_player_names_with_stakes(self, mock_duel_cog):
+        """Final Balances field still shows player names with correct credit values."""
+        data = _make_accept_result(
+            is_stalemate=False,
+            winner_name="Betty",
+            loser_name="Betty",
+            challenger_name="samx.ai",
+            challenger_credits=1500,
+            challenger_hp=1000,
+            challenger_dps=50.0,
+            target_name="general_failure.",
+            target_credits=500,
+            target_hp=800,
+            target_dps=40.0,
+            credits_transferred=500,
+            stakes=500,
+        )
+        embed = mock_duel_cog._build_accept_embed(1, data)
+        assert len(embed.fields) == 1
+        balance_field = embed.fields[0]
+        assert "samx.ai" in balance_field.value
+        assert "general_failure." in balance_field.value
+        assert "1,500" in balance_field.value
+        assert "500" in balance_field.value
 
 
 # ---------------------------------------------------------------------------

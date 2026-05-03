@@ -31,9 +31,40 @@ Cross-ref: `E2E_TEST_CHECKLIST.md` (test-item references). All commit SHAs are l
 
 ## OPEN
 
+### B.63 — Duel result embed shows ship name as winner/loser instead of player name
+
+🟡 medium · UX · 2026-05-03 · **FIXED** (pending rebuild)
+
+**Symptom**: Duel Complete embed shows `Winner: Betty` / `Loser: Betty` — both ships have the same name, making the result meaningless. Should show the player's display name instead.
+
+**Root cause**: `FightResults.winner_name` / `loser_name` are populated from `ShipLoadout.ship_name` (the ship model name), not the player's name. When both players fly the same ship model the result is ambiguous.
+
+**Fix**: The `accept_duel` service already has both `challenger` and `target` Player objects and knows who won. The router (or cog) should map `winner_name` → challenger/target display name based on which ship name matched, OR the service should return explicit `winner_player_name` / `loser_player_name` fields derived from the resolved display names (B.62). Using display_name (B.62) as the source is the right approach — fix B.62 first, then wire winner/loser display into this embed.
+
+**Files**: `services/bot-core/src/api/routers/duels.py`, `services/discord-gateway/src/cogs/duelCog.py`
+
+---
+
+### B.62 — Users table has no display_name column; all player-facing name fields show discord_username (e.g. samx.ai) instead of display name (e.g. SamAccountX)
+
+🟡 medium · Design · 2026-05-03 · **DEFERRED** (post-release)
+
+**Symptom**: Duel embeds, autocomplete, and profile show `samx.ai` / `general_failure.` (Discord usernames) instead of `SamAccountX` / `General_Failure` (Discord display names). Display names are what users actually recognise each other by.
+
+**Root cause**: `users` table only has `discord_username`. Discord's display name (the name shown in the server member list) is a separate field available at registration/interaction time via `interaction.user.display_name` but is never persisted.
+
+**Fix**:
+1. Add `display_name: str | None` column to the `users` table via Alembic migration.
+2. Populate it on `/register` (and update it on subsequent interactions) from `interaction.user.display_name` in the gateway.
+3. All name-resolution code (`get_pending_for_target`, `accept_duel`, profile cog, etc.) should prefer `display_name` over `discord_username`, falling back to `discord_username` if `display_name` is None.
+
+**Scope**: Alembic migration, User model, user_repository, player_service (register), all cogs that call `/register` or display player names, all bot-core endpoints that resolve usernames.
+
+---
+
 ### B.61 — Duel accept "Final Balances" embed shows `Player 2` for target — no target_name in accept response
 
-🔵 low · UX · 2026-05-03 · **OPEN**
+🔵 low · UX · 2026-05-03 · **FIXED** (pending rebuild)
 
 **Issue**: The duel accept embed "Final Balances" field shows `challenger_name` correctly (added in B.60) but falls back to `"Player {db_pk}"` for the target because the accept response does not include a `target_name` field. Challenger is shown by name, target is shown as e.g. "Player 2".
 

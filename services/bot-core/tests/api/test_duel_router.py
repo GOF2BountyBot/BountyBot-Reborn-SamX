@@ -74,8 +74,10 @@ def make_mock_accept_result(
     stakes=500,
     challenger_id=100,
     challenger_credits=1500,
+    challenger_name=None,
     target_id=200,
     target_credits=500,
+    target_name=None,
 ):
     """Build the dict returned by DuelService.accept_duel."""
     fight = make_mock_fight_result(
@@ -91,6 +93,8 @@ def make_mock_accept_result(
         "target": target,
         "stakes": stakes,
         "credits_transferred": credits_transferred,
+        "challenger_name": challenger_name,
+        "target_name": target_name,
     }
 
 
@@ -388,6 +392,59 @@ class TestAcceptDuel:
         detail = response.json()["detail"]
         assert "internal error" in detail.lower()
         assert "deadlock" not in detail.lower()
+
+    @patch("api.routers.duels.get_db_session")
+    def test_accept_duel_includes_challenger_and_target_names(self, mock_get_db, client, mock_duel_service):
+        """B.61: accept response includes challenger_name and target_name from service.
+
+        The cog's _build_accept_embed() reads data.get("challenger_name") and
+        data.get("target_name") for the Final Balances field. The router must
+        pass both values through from the service result dict.
+        """
+        _configure_db_mock(mock_get_db)
+        mock_duel_service.get_duel = AsyncMock(return_value=make_mock_duel(id=1, target_id=200))
+        mock_duel_service.accept_duel = AsyncMock(
+            return_value=make_mock_accept_result(
+                duel_id=1,
+                is_stalemate=False,
+                winner_name="Ship A",
+                loser_name="Ship B",
+                credits_transferred=500,
+                stakes=500,
+                challenger_id=100,
+                challenger_credits=1500,
+                challenger_name="ChallengerX",
+                target_id=200,
+                target_credits=500,
+                target_name="TargetY",
+            )
+        )
+
+        response = client.post("/api/v1/duels/1/accept?user_id=200")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["challenger_name"] == "ChallengerX"
+        assert data["target_name"] == "TargetY"
+
+    @patch("api.routers.duels.get_db_session")
+    def test_accept_duel_names_none_when_unresolved(self, mock_get_db, client, mock_duel_service):
+        """B.61: challenger_name and target_name are None when user lookup fails (defensive)."""
+        _configure_db_mock(mock_get_db)
+        mock_duel_service.get_duel = AsyncMock(return_value=make_mock_duel(id=1, target_id=200))
+        mock_duel_service.accept_duel = AsyncMock(
+            return_value=make_mock_accept_result(
+                challenger_name=None,
+                target_name=None,
+            )
+        )
+
+        response = client.post("/api/v1/duels/1/accept?user_id=200")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["challenger_name"] is None
+        assert data["target_name"] is None
 
 
 # ===========================================================================

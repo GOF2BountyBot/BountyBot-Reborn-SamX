@@ -31,6 +31,14 @@ Cross-ref: `E2E_TEST_CHECKLIST.md` (test-item references). All commit SHAs are l
 
 ## OPEN
 
+### ℹ️ Discord slash command invocation banners are always public
+
+ℹ️ info · Design · 2026-05-03 · **BY DESIGN**
+
+Discord always shows "X used /command" publicly regardless of whether the bot's response is ephemeral. Error responses from the bot ARE correctly ephemeral (only the invoker sees them), but the invocation banner itself is platform behaviour that cannot be suppressed without making the entire interaction ephemeral — which would prevent public announcements like duel challenge pings. Not a defect.
+
+---
+
 ### B.63 — Duel result embed shows ship name as winner/loser instead of player name
 
 🟡 medium · UX · 2026-05-03 · **FIXED** (pending rebuild)

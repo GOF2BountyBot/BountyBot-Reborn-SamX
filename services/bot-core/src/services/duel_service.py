@@ -116,9 +116,19 @@ class DuelService:
                 f"Duplicate duel attempt: duel_id={existing.id} already pending between "
                 f"challenger_id={challenger_id} and target_id={target_id} in guild_id={guild_id}"
             )
+            # Resolve display names for a friendly error message — fall back to "Player N" on any miss
+            try:
+                challenger_user = await self.user_repo.get_by_id(db, challenger.user_id)
+                challenger_label = challenger_user.discord_username if challenger_user and challenger_user.discord_username else f"Player {challenger_id}"
+            except Exception:
+                challenger_label = f"Player {challenger_id}"
+            try:
+                target_user = await self.user_repo.get_by_id(db, target.user_id)
+                target_label = target_user.discord_username if target_user and target_user.discord_username else f"Player {target_id}"
+            except Exception:
+                target_label = f"Player {target_id}"
             raise ValueError(
-                f"A pending duel already exists between player {challenger_id} "
-                f"and player {target_id} in guild {guild_id}."
+                f"A pending duel already exists between {challenger_label} and {target_label}."
             )
 
         # Create the duel request

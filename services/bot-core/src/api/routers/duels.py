@@ -326,6 +326,76 @@ async def cancel_duel(
 
 
 # ---------------------------------------------------------------------------
+# GET /duels/pending-all  — all pending duels for a guild (admin autocomplete)
+# ---------------------------------------------------------------------------
+
+
+@router.get("/pending-all", response_model=list[DuelRequestResponse])
+async def get_all_pending_duels(
+    guild_id: int,
+    service: DuelService = Depends(get_duel_service),
+):
+    """Get ALL pending duels for a guild, regardless of challenger or target.
+
+    Used by the Discord gateway admin autocomplete for /admin_duel so the
+    admin can see every open duel and pick one (or "all") to cancel.
+    Both challenger_name and target_name are populated on each response.
+    """
+    flogger.info(f"Get all pending duels request: guild_id={guild_id}")
+    async with get_db_session() as db:
+        try:
+            duels_with_names = await service.get_all_pending_for_guild(db, guild_id)
+            flogger.debug(f"Retrieved {len(duels_with_names)} pending duels for guild_id={guild_id}")
+            result = []
+            for duel, challenger_name, target_name in duels_with_names:
+                resp = DuelRequestResponse.model_validate(duel)
+                resp.challenger_name = challenger_name
+                resp.target_name = target_name
+                result.append(resp)
+            return result
+        except Exception as exc:
+            flogger.error(f"Get all pending duels failed for guild_id={guild_id}: {exc}")
+            raise HTTPException(status_code=500, detail="Failed to retrieve pending duels") from exc
+
+
+# ---------------------------------------------------------------------------
+# POST /duels/admin-cancel-all  — cancel ALL pending duels for a guild
+# ---------------------------------------------------------------------------
+
+
+@router.post("/admin-cancel-all")
+async def admin_cancel_all_duels(
+    guild_id: int = Query(..., description="Guild whose pending duels should all be cancelled"),
+    admin_user_id: int = Query(..., description="Discord user ID of the admin performing the action"),
+    service: DuelService = Depends(get_duel_service),
+):
+    """Admin bulk-cancel: cancel ALL pending duels for a guild in one call."""
+    flogger.info(f"Admin cancel-all duels request: guild_id={guild_id} by admin={admin_user_id}")
+    async with get_db_session() as db:
+        try:
+            cancelled = await service.cancel_all_pending_duels(db, guild_id)
+            duel_ids = [d.id for d in cancelled]
+            count = len(cancelled)
+            flogger.info(f"Admin bulk-cancelled {count} duels in guild={guild_id} by admin={admin_user_id}")
+            await AuditService.log_action(
+                db,
+                user_id=admin_user_id,
+                action="admin_cancel_all_duels",
+                guild_id=guild_id,
+                resource_type="duel",
+                resource_id=str(guild_id),
+                details={"count": count, "duel_ids": duel_ids},
+            )
+            return {"cancelled_count": count, "duel_ids": duel_ids}
+        except Exception as exc:
+            flogger.error(f"Admin cancel-all duels failed for guild_id={guild_id}: {exc}", exc_info=True)
+            raise HTTPException(
+                status_code=500,
+                detail="An internal error occurred while cancelling all pending duels.",
+            ) from exc
+
+
+# ---------------------------------------------------------------------------
 # POST /duels/{duel_id}/admin-cancel  (B.65 — admin cancel, no ownership check)
 # ---------------------------------------------------------------------------
 

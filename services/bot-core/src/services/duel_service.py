@@ -472,6 +472,78 @@ class DuelService:
         return result
 
     # ------------------------------------------------------------------
+    # Admin: get all pending for guild (autocomplete)
+    # ------------------------------------------------------------------
+
+    async def get_all_pending_for_guild(
+        self, db, guild_id: int
+    ) -> list[tuple[DuelRequest, str | None, str | None]]:
+        """Return all pending duels for a guild (any challenger, any target),
+        together with both participants' Discord usernames.
+
+        Used by the Discord gateway for admin autocomplete on /admin_duel.
+
+        Args:
+            db: SQLAlchemy async session.
+            guild_id: Guild the duels are scoped to.
+
+        Returns:
+            List of (DuelRequest, challenger_name, target_name) tuples.
+            Either name is None if it cannot be resolved.
+        """
+        duels = await self.duel_repo.get_all_pending_by_guild(db, guild_id)
+
+        result = []
+        for duel in duels:
+            challenger_name: str | None = None
+            target_name: str | None = None
+            try:
+                challenger = await self.player_repo.get_by_id(db, duel.challenger_id)
+                if challenger is not None:
+                    user = await self.user_repo.get_by_id(db, challenger.user_id)
+                    if user and user.discord_username:
+                        challenger_name = user.discord_username
+            except Exception as exc:  # defensive — lookup failures must never break autocomplete
+                flogger.debug(f"Could not resolve challenger name for duel {duel.id}: {exc}")
+            try:
+                target = await self.player_repo.get_by_id(db, duel.target_id)
+                if target is not None:
+                    user = await self.user_repo.get_by_id(db, target.user_id)
+                    if user and user.discord_username:
+                        target_name = user.discord_username
+            except Exception as exc:  # defensive — lookup failures must never break autocomplete
+                flogger.debug(f"Could not resolve target name for duel {duel.id}: {exc}")
+            result.append((duel, challenger_name, target_name))
+
+        return result
+
+    # ------------------------------------------------------------------
+    # Admin: cancel all pending duels for a guild
+    # ------------------------------------------------------------------
+
+    async def cancel_all_pending_duels(self, db, guild_id: int) -> list[DuelRequest]:
+        """Cancel ALL pending duels for a guild in one call.
+
+        Args:
+            db: SQLAlchemy async session.
+            guild_id: Guild whose pending duels should be cancelled.
+
+        Returns:
+            List of DuelRequest objects that were cancelled.
+        """
+        duels = await self.duel_repo.get_all_pending_by_guild(db, guild_id)
+
+        cancelled = []
+        for duel in duels:
+            # update_status commits each row individually — acceptable for admin-only bulk op
+            updated = await self.duel_repo.update_status(db, duel.id, "cancelled")
+            if updated is not None:
+                cancelled.append(updated)
+            flogger.info(f"Admin bulk-cancelled duel {duel.id} in guild {guild_id}.")
+
+        return cancelled
+
+    # ------------------------------------------------------------------
     # Expire
     # ------------------------------------------------------------------
 

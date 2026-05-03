@@ -115,6 +115,9 @@ def mock_duel_service():
     # B.64 / B.65 new methods
     service.cancel_duel = AsyncMock(return_value=make_mock_duel(status="cancelled"))
     service.get_outgoing_for_challenger = AsyncMock(return_value=[])
+    # admin touch-up new methods
+    service.get_all_pending_for_guild = AsyncMock(return_value=[])
+    service.cancel_all_pending_duels = AsyncMock(return_value=[])
     return service
 
 
@@ -759,6 +762,124 @@ class TestAdminCancelDuel:
         mock_duel_service.cancel_duel = AsyncMock(side_effect=RuntimeError("DB error"))
 
         response = client.post("/api/v1/duels/1/admin-cancel?admin_user_id=123456789")
+
+        assert response.status_code == 500
+        assert "internal error" in response.json()["detail"].lower()
+
+
+# ===========================================================================
+# 8. GET /duels/pending-all  (admin autocomplete endpoint)
+# ===========================================================================
+
+
+class TestGetAllPendingDuels:
+    """Tests for GET /api/v1/duels/pending-all."""
+
+    @patch("api.routers.duels.get_db_session")
+    def test_get_all_pending_returns_list_with_both_names(self, mock_get_db, client, mock_duel_service):
+        """Returns list of all pending duels with challenger_name and target_name populated."""
+        _configure_db_mock(mock_get_db)
+        mock_duel_service.get_all_pending_for_guild = AsyncMock(
+            return_value=[
+                (make_mock_duel(id=1, challenger_id=100, target_id=200, stakes=500), "ChallengerX", "TargetY"),
+                (make_mock_duel(id=2, challenger_id=300, target_id=400, stakes=0), None, "TargetZ"),
+            ]
+        )
+
+        response = client.get("/api/v1/duels/pending-all", params={"guild_id": 67890})
+
+        assert response.status_code == 200
+        data = response.json()
+        assert len(data) == 2
+        assert data[0]["id"] == 1
+        assert data[0]["challenger_name"] == "ChallengerX"
+        assert data[0]["target_name"] == "TargetY"
+        assert data[1]["id"] == 2
+        assert data[1]["challenger_name"] is None
+        assert data[1]["target_name"] == "TargetZ"
+
+    @patch("api.routers.duels.get_db_session")
+    def test_get_all_pending_empty_guild(self, mock_get_db, client, mock_duel_service):
+        """Returns empty list when guild has no pending duels."""
+        _configure_db_mock(mock_get_db)
+        mock_duel_service.get_all_pending_for_guild = AsyncMock(return_value=[])
+
+        response = client.get("/api/v1/duels/pending-all", params={"guild_id": 99999})
+
+        assert response.status_code == 200
+        assert response.json() == []
+
+    @patch("api.routers.duels.get_db_session")
+    def test_get_all_pending_service_error_returns_500(self, mock_get_db, client, mock_duel_service):
+        """Returns 500 when service raises an unexpected exception."""
+        _configure_db_mock(mock_get_db)
+        mock_duel_service.get_all_pending_for_guild = AsyncMock(side_effect=RuntimeError("DB failure"))
+
+        response = client.get("/api/v1/duels/pending-all", params={"guild_id": 67890})
+
+        assert response.status_code == 500
+        assert "failed to retrieve" in response.json()["detail"].lower()
+
+
+# ===========================================================================
+# 9. POST /duels/admin-cancel-all  (bulk admin cancel)
+# ===========================================================================
+
+
+class TestAdminCancelAllDuels:
+    """Tests for POST /api/v1/duels/admin-cancel-all."""
+
+    @patch("api.routers.duels.AuditService")
+    @patch("api.routers.duels.get_db_session")
+    def test_admin_cancel_all_returns_count_and_ids(self, mock_get_db, mock_audit, client, mock_duel_service):
+        """Returns cancelled_count and duel_ids when duels are cancelled."""
+        _configure_db_mock(mock_get_db)
+        mock_audit.log_action = AsyncMock()
+        mock_duel_service.cancel_all_pending_duels = AsyncMock(
+            return_value=[
+                make_mock_duel(id=1, status="cancelled"),
+                make_mock_duel(id=2, status="cancelled"),
+            ]
+        )
+
+        response = client.post(
+            "/api/v1/duels/admin-cancel-all",
+            params={"guild_id": 67890, "admin_user_id": 123456789},
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["cancelled_count"] == 2
+        assert set(data["duel_ids"]) == {1, 2}
+
+    @patch("api.routers.duels.AuditService")
+    @patch("api.routers.duels.get_db_session")
+    def test_admin_cancel_all_zero_duels(self, mock_get_db, mock_audit, client, mock_duel_service):
+        """Returns cancelled_count=0 and empty duel_ids when no pending duels exist."""
+        _configure_db_mock(mock_get_db)
+        mock_audit.log_action = AsyncMock()
+        mock_duel_service.cancel_all_pending_duels = AsyncMock(return_value=[])
+
+        response = client.post(
+            "/api/v1/duels/admin-cancel-all",
+            params={"guild_id": 67890, "admin_user_id": 123456789},
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["cancelled_count"] == 0
+        assert data["duel_ids"] == []
+
+    @patch("api.routers.duels.get_db_session")
+    def test_admin_cancel_all_service_error_returns_500(self, mock_get_db, client, mock_duel_service):
+        """Returns 500 when service raises an unexpected exception."""
+        _configure_db_mock(mock_get_db)
+        mock_duel_service.cancel_all_pending_duels = AsyncMock(side_effect=RuntimeError("DB failure"))
+
+        response = client.post(
+            "/api/v1/duels/admin-cancel-all",
+            params={"guild_id": 67890, "admin_user_id": 123456789},
+        )
 
         assert response.status_code == 500
         assert "internal error" in response.json()["detail"].lower()

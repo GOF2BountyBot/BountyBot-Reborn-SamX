@@ -253,3 +253,26 @@ class DuelRepository(IRepository[DuelRequest]):
         except Exception as e:
             flogger.error(f"Error getting pending duels for target={target_id} guild={guild_id}: {e}")
             raise
+
+    async def get_all_pending_by_guild(self, db: AsyncSession, guild_id: int) -> list[DuelRequest]:
+        """Get all currently-pending duel requests for any challenger/target in a guild.
+
+        Used by admin autocomplete and admin-cancel-all to show or cancel all
+        pending duels guild-wide.  Applies the same expires_at > NOW() guard
+        (B.14 sibling fix) so stale un-expired duels are excluded.
+        """
+        try:
+            result = await db.execute(
+                select(DuelRequest).where(
+                    and_(
+                        DuelRequest.guild_id == guild_id,
+                        DuelRequest.status == "pending",
+                        # B.14 sibling: exclude duels that have passed their expiry
+                        (DuelRequest.expires_at.is_(None) | (DuelRequest.expires_at > func.now())),  # pylint: disable=not-callable
+                    )
+                )
+            )
+            return list(result.scalars().all())
+        except Exception as e:
+            flogger.error(f"Error getting all pending duels for guild={guild_id}: {e}")
+            raise

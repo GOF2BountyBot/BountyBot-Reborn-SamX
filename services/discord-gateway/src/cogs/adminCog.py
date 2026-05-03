@@ -1964,34 +1964,100 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
             await interaction.response.send_message("⚠️ An error occurred.", ephemeral=True)
 
     # ------------------------------------------------------------------
-    # /admin_duel — admin duel management (B.65)
+    # /admin_duel — admin duel management (B.65 + touch-up)
     # ------------------------------------------------------------------
 
-    @app_commands.command(name="admin_duel", description="[ADMIN] Manage duels — cancel any pending duel by ID")
-    @app_commands.describe(
-        action="Action to perform",
-        duel_id="Duel ID (required for Cancel Duel)",
-    )
-    @app_commands.choices(
-        action=[
-            app_commands.Choice(name="Cancel Duel", value="cancel"),
-        ]
-    )
+    async def admin_duel_autocomplete(
+        self, interaction: discord.Interaction, current: str
+    ) -> list[app_commands.Choice[str]]:
+        """Autocomplete for /admin_duel duel parameter.
+
+        First choice is always "⚠️ Cancel ALL pending duels" (value="all").
+        Remaining choices are individual pending duels for this guild.
+        """
+        try:
+            guild_id = interaction.guild_id
+            resp = await self.http_client.get(
+                f"{api_base}/duels/pending-all",
+                params={"guild_id": guild_id},
+                timeout=10,
+            )
+            resp.raise_for_status()
+            duels = resp.json()
+
+            choices: list[app_commands.Choice[str]] = [
+                app_commands.Choice(name="⚠️ Cancel ALL pending duels", value="all"),
+            ]
+            for d in duels[:24]:  # max 24 duels + 1 "all" = 25 total (Discord limit)
+                duel_id = d.get("id")
+                challenger = d.get("challenger_name") or f"Player {d.get('challenger_id', '?')}"
+                target = d.get("target_name") or f"Player {d.get('target_id', '?')}"
+                stakes = d.get("stakes", 0)
+                if stakes:
+                    label = f"{challenger} vs {target} — {stakes:,} credits"
+                else:
+                    label = f"{challenger} vs {target} — friendly duel"
+                # Discord choice names are max 100 chars
+                if len(label) > 100:
+                    label = label[:97] + "..."
+                choices.append(app_commands.Choice(name=label, value=str(duel_id)))
+
+            return choices
+        except Exception as e:  # pylint: disable=broad-exception-caught
+            flogger.debug(f"admin_duel_autocomplete error: {e}")
+            return []
+
+    @app_commands.command(name="admin_duel", description="[ADMIN] Cancel a pending duel or all pending duels")
+    @app_commands.describe(duel="Select a pending duel to cancel, or 'All' to cancel everything")
+    @app_commands.autocomplete(duel=admin_duel_autocomplete)
     async def admin_duel(
         self,
         interaction: discord.Interaction,
-        action: str,
-        duel_id: int | None = None,
+        duel: str,
     ):
-        """Admin duel management commands."""
+        """Admin duel management: cancel any pending duel (or all of them)."""
         await interaction.response.defer(thinking=True, ephemeral=True)
         if not await _check_is_admin(interaction):
             await interaction.followup.send("❌ This command requires admin privileges.", ephemeral=True)
             return
 
-        if action == "cancel":
-            if duel_id is None:
-                await interaction.followup.send("❌ `duel_id` is required for Cancel Duel.", ephemeral=True)
+        if duel == "all":
+            # Cancel ALL pending duels for this guild
+            try:
+                resp = await self.http_client.post(
+                    f"{api_base}/duels/admin-cancel-all",
+                    params={
+                        "guild_id": interaction.guild_id,
+                        "admin_user_id": interaction.user.id,
+                    },
+                    timeout=10,
+                )
+                resp.raise_for_status()
+                data = resp.json()
+                count = data.get("cancelled_count", 0)
+                if count == 0:
+                    await interaction.followup.send("✅ No pending duels to cancel.", ephemeral=True)
+                else:
+                    embed = discord.Embed(
+                        title="✅ All Duels Cancelled",
+                        description=f"Cancelled **{count}** pending duel(s).",
+                        color=discord.Color.orange(),
+                    )
+                    await interaction.followup.send(embed=embed, ephemeral=True)
+                flogger.info(
+                    f"Admin {interaction.user} cancelled all {count} pending duels in guild {interaction.guild_id}"
+                )
+            except httpx.HTTPStatusError as e:
+                await report_api_error(interaction, e)
+            except Exception as e:  # pylint: disable=broad-exception-caught
+                flogger.error(f"Error in /admin_duel cancel-all: {e}")
+                await interaction.followup.send("⚠️ An error occurred while cancelling all duels.", ephemeral=True)
+        else:
+            # Cancel a specific duel by ID
+            try:
+                duel_id = int(duel)
+            except ValueError:
+                await interaction.followup.send("❌ Invalid duel selection.", ephemeral=True)
                 return
 
             try:

@@ -73,6 +73,7 @@ async def get_guild_config(guild_id: int, config_service: ConfigService = Depend
                 silver_role_id=config.get("silver_role_id"),
                 gold_role_id=config.get("gold_role_id"),
                 platinum_role_id=config.get("platinum_role_id"),
+                shop_announcements_role_id=config.get("shop_announcements_role_id"),
             )
 
     except GuildNotConfiguredError as e:
@@ -127,6 +128,7 @@ async def update_guild_config(
                 silver_role_id=config.get("silver_role_id"),
                 gold_role_id=config.get("gold_role_id"),
                 platinum_role_id=config.get("platinum_role_id"),
+                shop_announcements_role_id=config.get("shop_announcements_role_id"),
             )
 
     except ValueError as e:
@@ -177,6 +179,7 @@ async def update_shop_config(
                 silver_role_id=config.get("silver_role_id"),
                 gold_role_id=config.get("gold_role_id"),
                 platinum_role_id=config.get("platinum_role_id"),
+                shop_announcements_role_id=config.get("shop_announcements_role_id"),
             )
 
     except ValueError as e:
@@ -222,6 +225,7 @@ async def reset_guild_config(guild_id: int, config_service: ConfigService = Depe
                 silver_role_id=config.get("silver_role_id"),
                 gold_role_id=config.get("gold_role_id"),
                 platinum_role_id=config.get("platinum_role_id"),
+                shop_announcements_role_id=config.get("shop_announcements_role_id"),
             )
 
     except Exception as e:
@@ -265,6 +269,7 @@ async def update_admin_role(guild_id: int, role_id: int, config_service: ConfigS
                 silver_role_id=config.get("silver_role_id"),
                 gold_role_id=config.get("gold_role_id"),
                 platinum_role_id=config.get("platinum_role_id"),
+                shop_announcements_role_id=config.get("shop_announcements_role_id"),
             )
 
     except ValueError as e:
@@ -312,6 +317,7 @@ async def update_starting_credits(
                 silver_role_id=config.get("silver_role_id"),
                 gold_role_id=config.get("gold_role_id"),
                 platinum_role_id=config.get("platinum_role_id"),
+                shop_announcements_role_id=config.get("shop_announcements_role_id"),
             )
 
     except ValueError as e:
@@ -361,6 +367,7 @@ async def update_xp_thresholds(
                 silver_role_id=config.get("silver_role_id"),
                 gold_role_id=config.get("gold_role_id"),
                 platinum_role_id=config.get("platinum_role_id"),
+                shop_announcements_role_id=config.get("shop_announcements_role_id"),
             )
 
     except ValueError as e:

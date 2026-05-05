@@ -650,11 +650,12 @@ class PlayerCog(commands.Cog):
 
     @app_commands.command(name="notifications", description="Manage your BountyBot notification preferences")
     @app_commands.describe(
-        type="Which notifications to manage",
+        notification_type="Which notifications to manage",
         enabled="Turn notifications on or off",
     )
+    @app_commands.rename(notification_type="type")
     @app_commands.choices(
-        type=[
+        notification_type=[
             app_commands.Choice(name="Bounty Announcements", value="bounty"),
             app_commands.Choice(name="Shop Announcements", value="shop"),
         ],
@@ -663,11 +664,11 @@ class PlayerCog(commands.Cog):
             app_commands.Choice(name="Off", value=0),
         ],
     )
-    async def notifications(self, interaction: discord.Interaction, type: str, enabled: int) -> None:
+    async def notifications(self, interaction: discord.Interaction, notification_type: str, enabled: int) -> None:
         """Opt in/out of Discord role @-mentions for bounty or shop announcements."""
         flogger.info(
             f"/notifications: guild={interaction.guild_id}, user={interaction.user.id}, "
-            f"type={type}, enabled={enabled}"
+            f"type={notification_type}, enabled={enabled}"
         )
         await interaction.response.defer(thinking=True, ephemeral=True)
 
@@ -682,7 +683,7 @@ class PlayerCog(commands.Cog):
 
             guild = interaction.guild
 
-            if type == "bounty":
+            if notification_type == "bounty":
                 # Need player's tier to know which tier role to assign/remove
                 user_data = {
                     "discord_id": interaction.user.id,
@@ -750,7 +751,7 @@ class PlayerCog(commands.Cog):
                     f"guild={interaction.guild_id}, user={interaction.user.id}"
                 )
 
-            elif type == "shop":
+            elif notification_type == "shop":
                 shop_role_id = config.get("shop_announcements_role_id")
                 if not shop_role_id:
                     await interaction.followup.send(

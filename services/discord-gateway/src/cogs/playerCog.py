@@ -660,7 +660,9 @@ class PlayerCog(commands.Cog):
 
             bh_role_id = config.get("bounty_hunter_role_id")
             if not bh_role_id:
-                await interaction.followup.send("⚠️ No Bounty Hunter role is configured for this guild.", ephemeral=True)
+                await interaction.followup.send(
+                    "⚠️ No Bounty Hunter role is configured for this guild.", ephemeral=True
+                )
                 return
 
             guild = interaction.guild

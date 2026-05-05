@@ -15,7 +15,7 @@
   "maxTurrets": 0,
   "model": "/app/data/game-objects/items/ships/Kaamo Club/Phantom XT.bbship/sn_ship_058_modified.obj",
   "name": "Phantom XT",
-  "skinnable": false,
+  "skinnable": true,
   "textureRegions": 2,
   "value": 7430000,
   "wiki": "https://galaxyonfire.fandom.com/wiki/Phantom_XT",
@@ -33,5 +33,6 @@
     "/app/data/game-objects/items/ships/Kaamo Club/Phantom XT.bbship/sn_ship_058_modified_lights_add.obj",
     "/app/data/game-objects/items/ships/Kaamo Club/Phantom XT.bbship/sn_ship_058_modified_normal_specular.png"
   ],
-  "normSpec": "/app/data/game-objects/items/ships/Kaamo Club/Phantom XT.bbship/sn_ship_058_modified_normal_specular.png"
+  "normSpec": "/app/data/game-objects/items/ships/Kaamo Club/Phantom XT.bbship/sn_ship_058_modified_normal_specular.png",
+  "compatibleSkins": {}
 }

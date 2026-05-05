@@ -320,7 +320,7 @@ class TestShopCommand:
     """Tests for the /shop slash command."""
 
     def test_shop_happy_path_with_items(self, mock_shop_cog, make_mock_response):
-        """shop should display embed when items are available."""
+        """shop should display ephemeral embed when items are available (B.69)."""
         interaction = _create_mock_interaction()
 
         player_resp = make_mock_response(_make_player_data(tier="Bronze", credits=2000))
@@ -336,10 +336,12 @@ class TestShopCommand:
 
         asyncio.run(mock_shop_cog.shop.callback(mock_shop_cog, interaction, "Bronze"))
 
-        interaction.response.defer.assert_awaited_once_with(thinking=True)
+        interaction.response.defer.assert_awaited_once_with(thinking=True, ephemeral=True)
         interaction.followup.send.assert_awaited_once()
         call_kwargs = interaction.followup.send.call_args[1]
         assert "embed" in call_kwargs
+        # B.69: /shop browse response must be ephemeral
+        assert call_kwargs.get("ephemeral") is True
 
     def test_shop_empty_shop(self, mock_shop_cog, make_mock_response):
         """shop should send ephemeral message when shop is empty."""
@@ -1668,7 +1670,7 @@ class TestShopsCommand:
         }
 
     def test_shops_happy_path_with_player(self, mock_shop_cog, make_mock_response):
-        """shops should display summary embed with player tier info."""
+        """shops should display ephemeral summary embed with player tier info (B.69)."""
         interaction = _create_mock_interaction()
 
         summary_resp = make_mock_response(self._make_shops_summary())
@@ -1679,10 +1681,12 @@ class TestShopsCommand:
 
         asyncio.run(mock_shop_cog.shops.callback(mock_shop_cog, interaction))
 
-        interaction.response.defer.assert_awaited_once_with(thinking=True)
+        interaction.response.defer.assert_awaited_once_with(thinking=True, ephemeral=True)
         interaction.followup.send.assert_awaited_once()
         send_kwargs = interaction.followup.send.call_args[1]
         assert "embed" in send_kwargs
+        # B.69: /shops overview response must be ephemeral
+        assert send_kwargs.get("ephemeral") is True
 
     def test_shops_without_player_data(self, mock_shop_cog, make_mock_response):
         """shops should still work when player data is not found."""

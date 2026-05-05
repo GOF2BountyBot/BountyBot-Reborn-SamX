@@ -110,7 +110,7 @@ class ShopCog(commands.Cog):
     @app_commands.autocomplete(tier=tier_autocomplete, item_type=item_type_autocomplete)
     async def shop(self, interaction: discord.Interaction, tier: str | None = None, item_type: str | None = None):
         """Browse guild shop by tier. Defaults to your current tier when omitted."""
-        await interaction.response.defer(thinking=True)
+        await interaction.response.defer(thinking=True, ephemeral=True)
 
         try:
             # Validate explicit tier before hitting the API so we fail-fast on a
@@ -242,7 +242,7 @@ class ShopCog(commands.Cog):
 
             embed.set_footer(text=f"Use /buy <item_id> [quantity] to purchase items | Your tier: {raw_player_tier}")
 
-            await interaction.followup.send(embed=embed)
+            await interaction.followup.send(embed=embed, ephemeral=True)
             flogger.debug(f"/shop {tier} by {interaction.user} in guild {interaction.guild_id}")
 
         except httpx.HTTPStatusError as e:
@@ -533,7 +533,7 @@ class ShopCog(commands.Cog):
     @app_commands.command(name="shops", description="View summary of all guild shops")
     async def shops(self, interaction: discord.Interaction):
         """Display summary of all guild shops."""
-        await interaction.response.defer(thinking=True)
+        await interaction.response.defer(thinking=True, ephemeral=True)
 
         try:
             # Get shops summary
@@ -577,7 +577,7 @@ class ShopCog(commands.Cog):
 
             embed.set_footer(text="Use /shop <tier> to browse a specific shop")
 
-            await interaction.followup.send(embed=embed)
+            await interaction.followup.send(embed=embed, ephemeral=True)
             flogger.debug(f"/shops by {interaction.user} in guild {interaction.guild_id}")
 
         except httpx.HTTPStatusError as e:

@@ -89,12 +89,28 @@ def _evict_discord_modules():
 
 
 @pytest.fixture
-def mock_dev_cog(mock_bot):
-    """Create a mock devCog instance."""
+def mock_dev_cog(mock_bot, monkeypatch):
+    """Create a mock devCog instance.
+
+    Patches _check_is_super_admin to return True so that happy-path tests
+    exercise command logic without being blocked by the super-admin gate.
+    Tests that need to exercise the rejection path patch
+    _check_is_super_admin directly via cogs.devCog module attribute.
+    """
     _evict_discord_modules()
     from cogs.devCog import DevCog
 
     cog = DevCog(mock_bot)
+
+    # Bypass the super-admin gate for all tests in this file that don't
+    # explicitly test the gate.  Tests that need the gate patched for
+    # rejection do their own monkeypatching via cogs.devCog._check_is_super_admin.
+    import cogs.devCog as _dev_module
+
+    async def _always_super_admin(_interaction):
+        return True
+
+    monkeypatch.setattr(_dev_module, "_check_is_super_admin", _always_super_admin)
     return cog
 
 
@@ -694,25 +710,25 @@ class TestReloadAutocompletePackageE:
 
 
 class TestCrossOneDevCogDeferBeforeAdminCheck:
-    """Cross-1: Verify that defer() fires before _check_is_admin() in devCog commands."""
+    """Cross-1: Verify that defer() fires before _check_is_super_admin() in devCog commands."""
 
     async def _run_with_admin_blocked(self, cog, coro_fn):
         """Run a command callback tracking defer vs admin_check order.
 
-        Patches cogs.devCog._check_is_admin (the local name bound by the import)
-        rather than cogs.adminCog._check_is_admin.
+        Patches cogs.devCog._check_is_super_admin (the local name bound by the import)
+        rather than cogs.adminCog._check_is_super_admin.
         """
         import cogs.devCog as dev_module
 
-        original = dev_module._check_is_admin
+        original = dev_module._check_is_super_admin
         call_order = []
 
         async def track_defer(*a, **kw):
             call_order.append("defer")
 
-        async def fake_check_is_admin(interaction):
+        async def fake_check_is_super_admin(interaction):
             call_order.append("admin_check")
-            return False  # non-admin
+            return False  # non-super-admin
 
         interaction = MagicMock()
         interaction.guild_id = 123456789
@@ -725,16 +741,16 @@ class TestCrossOneDevCogDeferBeforeAdminCheck:
         interaction.response.defer = track_defer
         interaction.followup = AsyncMock()
 
-        dev_module._check_is_admin = fake_check_is_admin
+        dev_module._check_is_super_admin = fake_check_is_super_admin
         try:
             await coro_fn(interaction)
         finally:
-            dev_module._check_is_admin = original
+            dev_module._check_is_super_admin = original
 
         return call_order
 
     def test_load_data_defer_before_admin_check(self, mock_dev_cog):
-        """Cross-1: /load_data defers before checking admin status."""
+        """Cross-1: /load_data defers before checking super-admin status."""
 
         async def run():
             return await self._run_with_admin_blocked(
@@ -748,7 +764,7 @@ class TestCrossOneDevCogDeferBeforeAdminCheck:
         assert call_order.index("defer") < call_order.index("admin_check"), "defer must fire before admin check"
 
     def test_reload_autocomplete_defer_before_admin_check(self, mock_dev_cog):
-        """Cross-1: /reload_autocomplete defers before checking admin status."""
+        """Cross-1: /reload_autocomplete defers before checking super-admin status."""
 
         async def run():
             return await self._run_with_admin_blocked(
@@ -758,6 +774,71 @@ class TestCrossOneDevCogDeferBeforeAdminCheck:
 
         call_order = asyncio.run(run())
         assert call_order.index("defer") < call_order.index("admin_check")
+
+
+# ===========================================================================
+# TestSuperAdminGateDevCog — super-admin permission gate in devCog commands
+# ===========================================================================
+
+
+class TestSuperAdminGateDevCog:
+    """Tests verifying that devCog commands use _check_is_super_admin (not _check_is_admin)."""
+
+    def test_load_data_rejects_discord_admin_not_in_developers(self, mock_dev_cog):
+        """load_data rejects a Discord Administrator who is NOT in DEVELOPERS."""
+        import cogs.devCog as dev_module
+
+        interaction = MagicMock()
+        interaction.guild_id = 123456789
+        interaction.user = MagicMock()
+        interaction.user.id = 88888  # not in DEVELOPERS
+        interaction.user.guild_permissions = MagicMock()
+        interaction.user.guild_permissions.administrator = True  # Discord admin, but not super-admin
+        interaction.response = AsyncMock()
+        interaction.followup = AsyncMock()
+
+        original = dev_module._check_is_super_admin
+
+        async def fake_not_super_admin(inter):
+            return False  # even Discord admin is rejected by super-admin gate
+
+        dev_module._check_is_super_admin = fake_not_super_admin
+        try:
+            asyncio.run(mock_dev_cog.load_data.callback(mock_dev_cog, interaction, "ships"))
+        finally:
+            dev_module._check_is_super_admin = original
+
+        interaction.followup.send.assert_awaited_once()
+        msg = str(interaction.followup.send.call_args)
+        assert "super-admin" in msg.lower() or "privilege" in msg.lower()
+
+    def test_reload_autocomplete_rejects_discord_admin_not_in_developers(self, mock_dev_cog):
+        """reload_autocomplete rejects a Discord Administrator who is NOT in DEVELOPERS."""
+        import cogs.devCog as dev_module
+
+        interaction = MagicMock()
+        interaction.guild_id = 123456789
+        interaction.user = MagicMock()
+        interaction.user.id = 88888
+        interaction.user.guild_permissions = MagicMock()
+        interaction.user.guild_permissions.administrator = True
+        interaction.response = AsyncMock()
+        interaction.followup = AsyncMock()
+
+        original = dev_module._check_is_super_admin
+
+        async def fake_not_super_admin(inter):
+            return False
+
+        dev_module._check_is_super_admin = fake_not_super_admin
+        try:
+            asyncio.run(mock_dev_cog.reload_autocomplete.callback(mock_dev_cog, interaction))
+        finally:
+            dev_module._check_is_super_admin = original
+
+        interaction.followup.send.assert_awaited_once()
+        msg = str(interaction.followup.send.call_args)
+        assert "super-admin" in msg.lower() or "privilege" in msg.lower()
 
 
 if __name__ == "__main__":

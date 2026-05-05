@@ -115,7 +115,7 @@ async def execute_shop_refresh_job(job_id: str, payload: dict) -> dict:
                     # ── Announce shop refresh to discord-gateway ───────────
                     shop_channel_id = getattr(config, "shop_channel_id", None)
                     bounty_hunter_role_id = getattr(config, "bounty_hunter_role_id", None)
-                    await _announce_shop_refresh(job_id, gid, shop_channel_id, bounty_hunter_role_id)
+                    await _announce_shop_refresh(job_id, gid, shop_channel_id, bounty_hunter_role_id, tier=None)
 
             finally:
                 shop_service.clear_static_cache()
@@ -146,6 +146,7 @@ async def _announce_shop_refresh(
     guild_id: int,
     channel_id: int | None,
     bounty_hunter_role_id: int | None = None,
+    tier: str | None = None,
 ) -> None:
     """Thin wrapper around the shared ``announce_shop_refresh`` helper.
 
@@ -160,4 +161,5 @@ async def _announce_shop_refresh(
         guild_id=guild_id,
         channel_id=channel_id,
         bounty_hunter_role_id=bounty_hunter_role_id,
+        tier=tier,
     )

@@ -222,21 +222,62 @@ class ConfigRepository(IRepository[GuildConfig]):
             raise
 
     async def reset_to_defaults(self, db: AsyncSession, guild_id: int, *, commit: bool = True) -> GuildConfig:
-        """Reset guild configuration to default values.
+        """Reset guild configuration to default values, preserving infrastructure settings.
+
+        Infrastructure settings preserved: admin_role_id, all channel IDs, and all role IDs
+        (category_id, shop_channel_id, bronze/silver/gold/platinum_bounty_channel_id,
+        hunting_channel_id, discussion_channel_id, image_channel_id,
+        bounty_hunter_role_id, bronze/silver/gold/platinum_role_id).
+
+        Game settings reset: starting_credits, xp_thresholds, shop ranges, etc.
 
         Args:
             commit: When False, flush without committing (caller owns transaction).
         """
+        # Fields to preserve across a reset — infrastructure config that must not be cleared
+        _PRESERVED_FIELDS = [
+            "admin_role_id",
+            "category_id",
+            "shop_channel_id",
+            "bronze_bounty_channel_id",
+            "silver_bounty_channel_id",
+            "gold_bounty_channel_id",
+            "platinum_bounty_channel_id",
+            "hunting_channel_id",
+            "discussion_channel_id",
+            "image_channel_id",
+            "bounty_hunter_role_id",
+            "bronze_role_id",
+            "silver_role_id",
+            "gold_role_id",
+            "platinum_role_id",
+        ]
+
         try:
-            # Remove existing config
+            # Preserve infrastructure config before reset
             existing_config = await self.get_by_guild_id(db, guild_id)
+            preserved = {}
             if existing_config:
+                for field in _PRESERVED_FIELDS:
+                    if hasattr(existing_config, field):
+                        preserved[field] = getattr(existing_config, field)
                 await self.remove(db, existing_config, commit=commit)
 
             # Create new default config
-            config = await self.create_default_config(db, guild_id, commit=commit)
+            config = await self.create_default_config(db, guild_id, commit=False)
 
-            flogger.info(f"Reset config to defaults for guild {guild_id}")
+            # Re-apply preserved infrastructure values
+            for field, value in preserved.items():
+                if value is not None and hasattr(config, field):
+                    setattr(config, field, value)
+
+            if commit:
+                await db.commit()
+                await db.refresh(config)
+            else:
+                await db.flush()
+
+            flogger.info(f"Reset config to defaults for guild {guild_id} (preserved: {list(preserved.keys())})")
             return config
 
         except Exception as e:

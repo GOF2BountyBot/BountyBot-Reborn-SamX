@@ -48,7 +48,7 @@ Discord users interact with `discord-gateway` via slash commands. The gateway ca
 
 The bot implements the following game systems:
 
-- **Bounty hunting** — Bounties spawn on NPC criminals across star systems. Players check systems, track criminals, and claim bounties for credits.
+- **Bounty hunting** — Bounties spawn on NPC criminals across star systems. Players check systems, track criminals, and claim bounties for credits. Bounty spawn density is governed by a per-guild **activity temperature** that rises when bounties are claimed and decays hourly (×2/3, floored at 1.0) — idle guilds get fewer concurrent bounties; active guilds get more.
 - **Ship management** — Players own ships, set an active ship, equip modules and weapons, assign custom nicknames, and browse ship catalogues.
 - **PvP duels** — Players challenge each other to credit-stake duels. Combat is resolved server-side with configurable rules.
 - **Economy** — Guild-specific shops stock items at tiered prices. Players buy and sell from rotating inventory refreshed on a schedule.

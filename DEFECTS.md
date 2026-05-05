@@ -31,9 +31,101 @@ Cross-ref: `E2E_TEST_CHECKLIST.md` (test-item references). All commit SHAs are l
 
 ## OPEN
 
+### B.75 — High-res composite PNG "upload failed" for non-Nitro users
+
+ℹ️ info · discord-gateway · 2026-05-05 · **withdrawn**
+
+**Observed**: `/make_skin_texture` with 6K×4K source texture shows "1 File Uploading Failed" for non-Nitro users. Nitro users upload successfully (confirmed on Main account with Nitro sub).
+
+**Resolution**: This is a Discord account-level upload limit constraint, not a bot bug. Non-Nitro users are limited to 8MB uploads; Nitro removes this limit. Low-res assets work fine for all users. No fix required.
+
+---
+
+### B.74 — AEI conversion fails: render output dimensions not multiples of 4
+
+🟠 high · blender-service · 2026-05-04 · **OPEN**
+
+**Observed**: Clicking "AEI (Android/ETC1)" or "AEI (PC/DXT5)" buttons after a render returns `❌ Failed to convert texture to ETC1/DXT5: API error 400`. Blender logs: `AEI write failed: width or height not multiple of 4`. Render output was 594×274 — neither is a multiple of 4.
+
+**Root cause**: AEPi requires image dimensions to be multiples of 4. The `trim()` step in `RenderService` crops to the content bounds, which can produce arbitrary dimensions. `AEIConversionService.convert_to_aei()` passes the image directly to AEPi without padding.
+
+**Fix**: In `aei_conversion_service.py`, after the RGBA conversion and before calling `AEI()`, pad the image to the nearest multiple of 4 in both dimensions using `Image.new` + `Image.paste` (pad with transparent pixels — no visible difference on a pre-trimmed render).
+
+**Affected file**: `services/blender-service/src/services/aei_conversion_service.py`
+
+---
+
+### B.73 — `skinsCog._preload_ship_skins` has no retry logic — autocomplete permanently empty after startup ConnectError
+
+🟡 medium · Reliability · 2026-05-04 · **OPEN**
+
+**Observed**: On startup, `_preload_ship_skins` hits `ConnectError` (bot-core not ready yet) and fails with no retry. `self._ship_skins` stays empty permanently — ship and skin autocomplete never populate until service restart.
+
+**Root cause**: Same pattern as DevCog (fixed in B.XX) — no retry loop. DevCog fix used 5 retries with 5/10/20/40/60s delays.
+
+**Fix**: Apply the same retry pattern from `bountyCog._preload_data` to `skinsCog._preload_ship_skins`.
+
+---
+
+### B.72 — D.3 test expectation wrong: Vol Noor (texture_regions=0) is skinnable via static images
+
+ℹ️ info · Data/docs · 2026-05-04 · **OPEN**
+
+**Observed**: `/ship_skin ship:Vol Noor skin:Default` shows the ship icon correctly (same as D.1). Vol Noor has `texture_regions=0` but `skinnable=true` and a full `compatible_skins` JSON of pre-composited images. The cog correctly shows skin images for it.
+
+**Impact**: The checklist test expectation for D.3 ("Error: does not support custom skins") was wrong. The non-skinnable test should use a ship with `skinnable=false` (e.g. Phantom XT, Wraith, Dark Angel). Update checklist.
+
+---
+
+### B.71 — D.2 test ship (Phantom XT) has `skinnable=false` — no skins defined despite texture_regions=2
+
+ℹ️ info · Data/docs · 2026-05-04 · **OPEN**
+
+**Observed**: `/ship_skin ship:Phantom XT skin:urban-camo` returns "Skin not found" because `Phantom XT` has `skinnable=false` and `compatible_skins=null` in the DB. The checklist incorrectly listed it as a test ship for multi-region skin display.
+
+**Correct test ships**: Use `Aegir`, `Badger`, or `Furious` for 2-region; `Kinzer RS` or `Razor 6` for 3-region.
+
+---
+
+### B.70 — Shop refresh announcement always says "all tiers" even for single-tier admin refresh
+
+🔵 low · UX · 2026-05-03 · **closed**
+
+**Observed**: `/admin_refresh_shop tier:Bronze` posts "restocked with new items across all tiers" and "Tiers Available: Bronze · Silver · Gold · Platinum" regardless of which tier was refreshed.
+
+**Root cause**: `announce_shop_refresh()` in `utils/shop_announcement.py` has no `tier` parameter — copy is hardcoded.
+
+**Fix**: Add optional `tier` parameter. When provided: description says "the {tier} shop has been restocked", field shows only that tier. When None (full refresh from executor): existing "all tiers" copy applies.
+
+---
+
+### B.67 — `duel_expire` executor requires `duel_id` in payload but one-time fire without it logs ERROR silently
+
+🔵 low · 2026-05-03 · **OPEN**
+
+**Observed**: Firing `{"job_type": "duel_expire"}` without a `duel_id` logs `ERROR - missing duel_id in payload` and does nothing. Prior sessions used this to sweep all expired duels guild-wide but the executor actually requires a specific `duel_id`.
+
+**Impact**: The shortcut in E2E_TEST_CHECKLIST.md for 11.4 is wrong — the executor is per-duel, not a bulk sweeper. Duel expiry is correctly handled by the periodic `duel_expire_executor` which runs on schedule. Low severity since auto-expiry works; only the manual shortcut is misleading.
+
+**Fix**: Either (a) make the executor support bulk mode when `duel_id` is omitted (expire all past `expires_at`), or (b) update the checklist shortcut to clarify it needs a specific duel_id. Option (b) is the quick fix.
+
+---
+
+### B.66 — `/admin_config Reset to Defaults` nukes admin role configuration
+
+🟡 medium · UX · 2026-05-03 · **closed**
+
+**Observed**: `reset_to_defaults` in `config_repository.py` deletes the existing config row and creates a fresh one with `admin_role_id: None`. This means after a reset, no user has bot-admin access (except those with Discord native Administrator permission or in `DEVELOPERS`). A server admin must re-run `/admin_config Set Admin Role` to restore access.
+
+**Expected**: Reset should preserve `admin_role_id` (and ideally channel IDs) since those are infrastructure settings, not game settings. Only game-tuning values (starting_credits, xp_thresholds, shop ranges, etc.) should reset.
+
+**Fix**: In `reset_to_defaults`, read the existing `admin_role_id` before delete and re-apply it to the new default config. Same consideration for channel IDs.
+
+---
+
 ### B.65 — No admin command to cancel/clear duel requests
 
-🟡 medium · Feature gap · 2026-05-03 · **OPEN**
+🟡 medium · Feature gap · 2026-05-03 · **closed** (implemented: `/admin_duel` with cancel-all + per-duel autocomplete, commit `2c71dc6`)
 
 **Issue**: There is no admin command to cancel a pending or stuck duel. If a duel gets wedged (e.g. challenger goes offline, data issue, test cleanup) the only resolution is a direct DB edit.
 
@@ -46,7 +138,7 @@ Cross-ref: `E2E_TEST_CHECKLIST.md` (test-item references). All commit SHAs are l
 
 ### B.64 — No `/duel-cancel` command for the challenger to withdraw their own challenge
 
-🟡 medium · Feature gap · 2026-05-03 · **OPEN**
+🟡 medium · Feature gap · 2026-05-03 · **closed** (implemented: `/duel-cancel`, commit `f68e07a`)
 
 **Issue**: Once a challenger issues `/duel-challenge`, there is no way for them to take it back short of waiting for the 24-hour expiry. The target can reject, but the challenger cannot withdraw.
 

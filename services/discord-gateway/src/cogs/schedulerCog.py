@@ -5,7 +5,7 @@ from contextlib import suppress
 import discord
 import httpx
 from cogs._shared.http_error_handler import report_api_error
-from cogs.adminCog import _check_is_admin
+from cogs.adminCog import _check_is_super_admin
 from discord import app_commands
 from discord.ext import commands
 from shared import bblogger
@@ -66,8 +66,8 @@ class SchedulerCog(commands.Cog):
     async def scheduler_list(self, interaction: discord.Interaction):
         """List all currently scheduled APScheduler jobs relevant to this guild."""
         await interaction.response.defer(thinking=True, ephemeral=True)
-        if not await _check_is_admin(interaction):
-            await interaction.followup.send("❌ This command requires admin privileges.", ephemeral=True)
+        if not await _check_is_super_admin(interaction):
+            await interaction.followup.send("❌ This command requires super-admin privileges.", ephemeral=True)
             return
         flogger.debug(f"/scheduler_list invoked: guild={interaction.guild_id} user={interaction.user.id}")
 
@@ -151,8 +151,8 @@ class SchedulerCog(commands.Cog):
     async def scheduler_view(self, interaction: discord.Interaction, job_id: str):
         """View full details of a single scheduled job by its ID."""
         await interaction.response.defer(thinking=True, ephemeral=True)
-        if not await _check_is_admin(interaction):
-            await interaction.followup.send("❌ This command requires admin privileges.", ephemeral=True)
+        if not await _check_is_super_admin(interaction):
+            await interaction.followup.send("❌ This command requires super-admin privileges.", ephemeral=True)
             return
         flogger.debug(
             f"/scheduler_view invoked: guild={interaction.guild_id} user={interaction.user.id} job_id={job_id}"
@@ -251,8 +251,8 @@ class SchedulerCog(commands.Cog):
 
         # Only defer after validation passes — async I/O (including admin check) follows
         await interaction.response.defer(thinking=True, ephemeral=True)
-        if not await _check_is_admin(interaction):
-            await interaction.followup.send("❌ This command requires admin privileges.", ephemeral=True)
+        if not await _check_is_super_admin(interaction):
+            await interaction.followup.send("❌ This command requires super-admin privileges.", ephemeral=True)
             return
         flogger.debug(
             f"/scheduler_update invoked: guild={interaction.guild_id} user={interaction.user.id} job_id={job_id}"
@@ -326,8 +326,8 @@ class SchedulerCog(commands.Cog):
     async def scheduler_delete(self, interaction: discord.Interaction, job_id: str):
         """Delete a single scheduled job by its ID."""
         await interaction.response.defer(thinking=True, ephemeral=True)
-        if not await _check_is_admin(interaction):
-            await interaction.followup.send("❌ This command requires admin privileges.", ephemeral=True)
+        if not await _check_is_super_admin(interaction):
+            await interaction.followup.send("❌ This command requires super-admin privileges.", ephemeral=True)
             return
         flogger.debug(
             f"/scheduler_delete invoked: guild={interaction.guild_id} user={interaction.user.id} job_id={job_id}"
@@ -393,8 +393,8 @@ class SchedulerCog(commands.Cog):
     async def admin_reset_scheduler(self, interaction: discord.Interaction):
         """Remove all scheduled jobs and re-register the default recurring jobs."""
         await interaction.response.defer(thinking=True, ephemeral=True)
-        if not await _check_is_admin(interaction):
-            await interaction.followup.send("❌ This command requires admin privileges.", ephemeral=True)
+        if not await _check_is_super_admin(interaction):
+            await interaction.followup.send("❌ This command requires super-admin privileges.", ephemeral=True)
             return
         flogger.debug(f"/admin_reset_scheduler invoked: guild={interaction.guild_id} user={interaction.user.id}")
 
@@ -458,8 +458,8 @@ class SchedulerCog(commands.Cog):
     async def admin_clear_scheduler(self, interaction: discord.Interaction):
         """Delete all one-time jobs associated with the invoking guild."""
         await interaction.response.defer(thinking=True, ephemeral=True)
-        if not await _check_is_admin(interaction):
-            await interaction.followup.send("❌ This command requires admin privileges.", ephemeral=True)
+        if not await _check_is_super_admin(interaction):
+            await interaction.followup.send("❌ This command requires super-admin privileges.", ephemeral=True)
             return
         flogger.debug(f"/admin_clear_scheduler invoked: guild={interaction.guild_id} user={interaction.user.id}")
 

@@ -670,7 +670,7 @@ async def test_executor_reads_shop_channel_id_not_hunting_channel_id():
 
     announce_calls = []
 
-    async def _capture_announce(job_id, guild_id, channel_id, role_id=None):
+    async def _capture_announce(job_id, guild_id, channel_id, role_id=None, tier=None):
         announce_calls.append({"guild_id": guild_id, "channel_id": channel_id})
 
     with patch("utils.executors.shop_refresh_executor._announce_shop_refresh", new=_capture_announce):

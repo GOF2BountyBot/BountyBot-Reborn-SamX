@@ -1,13 +1,11 @@
+import asyncio
 import os
 
 import discord
 import httpx
-from cogs.adminCog import _check_is_admin
+from cogs.adminCog import _check_is_super_admin
 from discord import app_commands
 from discord.ext import commands
-from httpx import HTTPStatusError as HttpxHTTPStatusError
-from httpx import RequestError as HttpxRequestError
-from httpx import TimeoutException as HttpxTimeoutException
 from shared import bblogger
 from utils.autocomplete_utils import normalize_for_search
 
@@ -29,20 +27,27 @@ class DevCog(commands.Cog):
         await self.http_client.aclose()
 
     async def _preload_categories(self):
+        """Preload data category names at startup for autocomplete (with retries)."""
         await self.bot.wait_until_ready()
-        try:
-            resp = await self.http_client.get(f"{api_base}/data/categories", timeout=5)
-            resp.raise_for_status()
-            self._categories = resp.json()
-            flogger.debug(f"Preloaded data categories: {self._categories}")
-        except HttpxTimeoutException as e:
-            flogger.warning(f"Timeout preloading data categories: {e}")
-        except HttpxHTTPStatusError as e:
-            flogger.warning(f"HTTP error preloading data categories: {e.response.status_code}")
-        except HttpxRequestError as e:
-            flogger.warning(f"Request error preloading data categories: {e}")
-        except Exception as e:  # pylint: disable=broad-exception-caught
-            flogger.warning(f"Unexpected error preloading data categories: {e}")
+        delays = [5, 10, 20, 40, 60]
+        for attempt, delay in enumerate(delays, start=1):
+            try:
+                flogger.info("DevCog: Starting preload of data categories (attempt %d/%d)...", attempt, len(delays))
+                resp = await self.http_client.get(f"{api_base}/data/categories", timeout=5)
+                resp.raise_for_status()
+                self._categories = resp.json()
+                flogger.info("DevCog: Preloaded %d data categories", len(self._categories))
+                return
+            except (httpx.TimeoutException, httpx.RequestError, httpx.HTTPStatusError) as e:
+                flogger.warning(
+                    "DevCog: Preload attempt %d/%d failed: %s — retrying in %ds", attempt, len(delays), e, delay
+                )
+                await asyncio.sleep(delay)
+            except Exception as e:  # pylint: disable=broad-exception-caught
+                flogger.warning("DevCog: Unexpected error on preload attempt %d/%d: %s", attempt, len(delays), e)
+                await asyncio.sleep(delay)
+        flogger.error("DevCog: All preload attempts exhausted. Category autocomplete will be empty.")
+        self._categories = []
 
     async def category_autocomplete(
         self, _interaction: discord.Interaction, current: str
@@ -63,8 +68,8 @@ class DevCog(commands.Cog):
     # AdminCog's B.25 fix.
     async def load_data(self, interaction: discord.Interaction, category: str):
         await interaction.response.defer(thinking=True)
-        if not await _check_is_admin(interaction):
-            await interaction.followup.send("❌ This command requires admin privileges.", ephemeral=True)
+        if not await _check_is_super_admin(interaction):
+            await interaction.followup.send("❌ This command requires super-admin privileges.", ephemeral=True)
             return
         # virtual "All" path: iterate every category
         if category == "All":
@@ -118,8 +123,8 @@ class DevCog(commands.Cog):
     async def reload_autocomplete(self, interaction: discord.Interaction):
         """Call each cog's preload method so you don't have to restart."""
         await interaction.response.defer(thinking=True)
-        if not await _check_is_admin(interaction):
-            await interaction.followup.send("❌ This command requires admin privileges.", ephemeral=True)
+        if not await _check_is_super_admin(interaction):
+            await interaction.followup.send("❌ This command requires super-admin privileges.", ephemeral=True)
             return
         reloaded = []
         failed = []

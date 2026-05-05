@@ -36,7 +36,7 @@
   "name": "Blue Fyre",
   "saveDue": false,
   "shopSpawnRate": 7.214,
-  "skinnable": false,
+  "skinnable": true,
   "textureRegions": 2,
   "value": 4455000,
   "wiki": "https://galaxyonfire.fandom.com/wiki/Blue_Fyre",

@@ -265,6 +265,156 @@ class TestResetToDefaults:
         with pytest.raises(Exception, match="reset fail"):
             await repo.reset_to_defaults(mock_db, guild_id=100)
 
+    @pytest.mark.asyncio
+    async def test_reset_to_defaults_preserves_admin_role_id(self, repo, mock_db):
+        """B.66: reset_to_defaults must preserve admin_role_id from existing config."""
+        existing = _make_config(guild_id=100, admin_role_id=999_111_222)
+
+        # First call (get_by_guild_id for existing) returns the existing config
+        # Second call (get_by_guild_id inside create_default_config → create_or_update)
+        # returns None so a new config is created
+        mock_db.execute = AsyncMock(
+            side_effect=[
+                _make_scalars_result([existing]),   # get_by_guild_id → existing
+                _make_scalars_result([]),            # create_or_update lookup → not found
+            ]
+        )
+        mock_db.add = MagicMock()
+        mock_db.commit = AsyncMock()
+        mock_db.refresh = AsyncMock()
+        mock_db.delete = AsyncMock()
+        mock_db.flush = AsyncMock()
+
+        # Track what was passed to setattr on the new config by capturing db.add calls
+        created_configs = []
+
+        def capture_add(obj):
+            created_configs.append(obj)
+
+        mock_db.add.side_effect = capture_add
+
+        await repo.reset_to_defaults(mock_db, guild_id=100)
+
+        # Verify that admin_role_id was set back on the newly created config
+        assert len(created_configs) == 1
+        new_config = created_configs[0]
+        assert new_config.admin_role_id == 999_111_222
+
+    @pytest.mark.asyncio
+    async def test_reset_to_defaults_preserves_channel_ids(self, repo, mock_db):
+        """B.66: reset_to_defaults must preserve all channel and role IDs."""
+        existing = _make_config(
+            guild_id=200,
+            admin_role_id=1001,
+            category_id=2001,
+            shop_channel_id=3001,
+            bronze_bounty_channel_id=4001,
+            silver_bounty_channel_id=4002,
+            gold_bounty_channel_id=4003,
+            platinum_bounty_channel_id=4004,
+            hunting_channel_id=5001,
+            discussion_channel_id=6001,
+            image_channel_id=7001,
+            bounty_hunter_role_id=8001,
+            bronze_role_id=9001,
+            silver_role_id=9002,
+            gold_role_id=9003,
+            platinum_role_id=9004,
+        )
+
+        mock_db.execute = AsyncMock(
+            side_effect=[
+                _make_scalars_result([existing]),   # get_by_guild_id → existing
+                _make_scalars_result([]),            # create_or_update lookup → not found
+            ]
+        )
+        mock_db.add = MagicMock()
+        mock_db.commit = AsyncMock()
+        mock_db.refresh = AsyncMock()
+        mock_db.delete = AsyncMock()
+        mock_db.flush = AsyncMock()
+
+        created_configs = []
+
+        def capture_add(obj):
+            created_configs.append(obj)
+
+        mock_db.add.side_effect = capture_add
+
+        await repo.reset_to_defaults(mock_db, guild_id=200)
+
+        assert len(created_configs) == 1
+        new_config = created_configs[0]
+
+        # All infrastructure fields must be preserved
+        assert new_config.admin_role_id == 1001
+        assert new_config.category_id == 2001
+        assert new_config.shop_channel_id == 3001
+        assert new_config.bronze_bounty_channel_id == 4001
+        assert new_config.silver_bounty_channel_id == 4002
+        assert new_config.gold_bounty_channel_id == 4003
+        assert new_config.platinum_bounty_channel_id == 4004
+        assert new_config.hunting_channel_id == 5001
+        assert new_config.discussion_channel_id == 6001
+        assert new_config.image_channel_id == 7001
+        assert new_config.bounty_hunter_role_id == 8001
+        assert new_config.bronze_role_id == 9001
+        assert new_config.silver_role_id == 9002
+        assert new_config.gold_role_id == 9003
+        assert new_config.platinum_role_id == 9004
+
+    @pytest.mark.asyncio
+    async def test_reset_to_defaults_no_existing_config(self, repo, mock_db):
+        """B.66: reset_to_defaults with no existing config creates a fresh default."""
+        mock_db.execute = AsyncMock(
+            side_effect=[
+                _make_scalars_result([]),   # get_by_guild_id → none
+                _make_scalars_result([]),   # create_or_update lookup → not found
+            ]
+        )
+        mock_db.add = MagicMock()
+        mock_db.commit = AsyncMock()
+        mock_db.refresh = AsyncMock()
+        mock_db.flush = AsyncMock()
+
+        # Should not raise
+        await repo.reset_to_defaults(mock_db, guild_id=300)
+
+        # A new config was created (add was called)
+        mock_db.add.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_reset_to_defaults_null_infra_fields_not_preserved(self, repo, mock_db):
+        """B.66: None infrastructure fields must NOT be written back (no overwrite of new defaults)."""
+        existing = _make_config(guild_id=400, admin_role_id=None, shop_channel_id=None)
+
+        mock_db.execute = AsyncMock(
+            side_effect=[
+                _make_scalars_result([existing]),
+                _make_scalars_result([]),
+            ]
+        )
+        mock_db.add = MagicMock()
+        mock_db.commit = AsyncMock()
+        mock_db.refresh = AsyncMock()
+        mock_db.delete = AsyncMock()
+        mock_db.flush = AsyncMock()
+
+        created_configs = []
+
+        def capture_add(obj):
+            created_configs.append(obj)
+
+        mock_db.add.side_effect = capture_add
+
+        await repo.reset_to_defaults(mock_db, guild_id=400)
+
+        assert len(created_configs) == 1
+        new_config = created_configs[0]
+        # None values should remain as the default (None) not explicitly set
+        # The GuildConfig constructor sets admin_role_id=None by default, so this is fine
+        assert new_config.admin_role_id is None
+
 
 # ===================================================================
 # update_admin_role – inner rollback + outer (lines 219-221, 226-228)

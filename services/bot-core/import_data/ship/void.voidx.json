@@ -34,7 +34,7 @@
   "name": "VoidX",
   "saveDue": false,
   "shopSpawnRate": 9.585,
-  "skinnable": false,
+  "skinnable": true,
   "textureRegions": 2,
   "value": 8115900,
   "wiki": "https://galaxyonfire.fandom.com/wiki/VoidX",

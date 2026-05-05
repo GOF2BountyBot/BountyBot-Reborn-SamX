@@ -68,6 +68,32 @@ def is_admin():
     return app_commands.check(predicate)
 
 
+async def _check_is_super_admin(interaction: discord.Interaction) -> bool:
+    """
+    Super-admin check: only users listed in the DEVELOPERS env var are permitted.
+    No role fallback, no Discord Administrator fallback.
+    """
+    devs = os.getenv("DEVELOPERS", "")
+    return str(interaction.user.id) in [d.strip() for d in devs.split(",") if d.strip()]
+
+
+def is_super_admin():
+    """
+    Decorator: restricts command to users listed in the DEVELOPERS env var.
+    Use for commands that affect the global data layer (scheduler, data loading).
+    """
+
+    async def predicate(interaction: discord.Interaction) -> bool:
+        if not await _check_is_super_admin(interaction):
+            await interaction.response.send_message(
+                "❌ This command requires super-admin privileges.", ephemeral=True
+            )
+            return False
+        return True
+
+    return app_commands.check(predicate)
+
+
 class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
     def __init__(self, bot: commands.Bot):
         self.bot = bot

@@ -758,6 +758,7 @@ async def refresh_shop(
                 guild_id=request.guild_id,
                 channel_id=shop_channel_id,
                 bounty_hunter_role_id=bounty_hunter_role_id,
+                tier=request.tier,
             )
         except Exception as ann_exc:  # pylint: disable=broad-exception-caught
             # Should not reach here (announce_shop_refresh swallows its own errors),

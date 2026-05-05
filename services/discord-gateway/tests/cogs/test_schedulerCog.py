@@ -98,7 +98,7 @@ def mock_bot():
 
 
 @pytest.fixture
-def cog(mock_bot):
+def cog(mock_bot, monkeypatch):
     # Evict any stale cog module so it re-imports fresh with our mock logger
     for key in list(sys.modules.keys()):
         if "schedulerCog" in key or (key.startswith("cogs.") and "scheduler" in key.lower()):
@@ -108,7 +108,18 @@ def cog(mock_bot):
 
     from cogs.schedulerCog import SchedulerCog
 
-    return SchedulerCog(mock_bot)
+    sched_cog = SchedulerCog(mock_bot)
+
+    # Bypass the super-admin gate for all happy-path tests in this file.
+    # Tests that specifically test the gate do their own patching via
+    # cogs.schedulerCog._check_is_super_admin.
+    import cogs.schedulerCog as _sched_module
+
+    async def _always_super_admin(_interaction):
+        return True
+
+    monkeypatch.setattr(_sched_module, "_check_is_super_admin", _always_super_admin)
+    return sched_cog
 
 
 # ---------------------------------------------------------------------------
@@ -818,16 +829,15 @@ class TestB29CronTriggerDisplay:
 
 
 class TestCrossOneSchedulerDeferBeforeAdminCheck:
-    """Cross-1: Verify that defer() fires before _check_is_admin() in all scheduler commands.
+    """Cross-1: Verify that defer() fires before _check_is_super_admin() in all scheduler commands.
 
-    Non-admin users (Bot-Admin role only) trigger an HTTP call from _check_is_admin.
-    If the decorator fired before defer(), the 3-second Discord budget could be
-    consumed before the user sees a response.  The fix: all commands now defer first,
-    then call _check_is_admin inline.
+    Non-super-admin users are rejected after defer so the 3-second Discord budget
+    is not consumed before the user sees a response.  The fix: all commands now
+    defer first, then call _check_is_super_admin inline.
     """
 
     def _make_non_admin_interaction(self):
-        """Interaction where the user is NOT a guild administrator."""
+        """Interaction where the user is NOT in the DEVELOPERS env var."""
         interaction = _make_interaction()
         interaction.user.guild_permissions = MagicMock()
         interaction.user.guild_permissions.administrator = False
@@ -835,38 +845,38 @@ class TestCrossOneSchedulerDeferBeforeAdminCheck:
         return interaction
 
     async def _run_with_admin_blocked(self, coro_fn, *args):
-        """Run a command callback with admin check returning False; track defer order.
+        """Run a command callback with super-admin check returning False; track defer order.
 
-        Patches cogs.schedulerCog._check_is_admin (the local name bound by
-        ``from cogs.adminCog import _check_is_admin``) rather than the attribute
+        Patches cogs.schedulerCog._check_is_super_admin (the local name bound by
+        ``from cogs.adminCog import _check_is_super_admin``) rather than the attribute
         on the adminCog module, because the import already bound a local reference.
         """
         import cogs.schedulerCog as sched_module
 
-        original = sched_module._check_is_admin
+        original = sched_module._check_is_super_admin
         call_order = []
 
         async def track_defer(*a, **kw):
             call_order.append("defer")
 
-        async def fake_check_is_admin(interaction):
+        async def fake_check_is_super_admin(interaction):
             call_order.append("admin_check")
-            return False  # non-admin
+            return False  # non-super-admin
 
         interaction = self._make_non_admin_interaction()
         interaction.response.defer = track_defer
         interaction.followup.send = AsyncMock()
 
-        sched_module._check_is_admin = fake_check_is_admin
+        sched_module._check_is_super_admin = fake_check_is_super_admin
         try:
             await coro_fn(interaction, *args)
         finally:
-            sched_module._check_is_admin = original
+            sched_module._check_is_super_admin = original
 
         return call_order
 
     def test_scheduler_list_defer_before_admin_check(self, cog):
-        """Cross-1: /scheduler_list defers before checking admin status."""
+        """Cross-1: /scheduler_list defers before checking super-admin status."""
 
         async def run():
             return await self._run_with_admin_blocked(lambda i: cog.scheduler_list.callback(cog, i))
@@ -877,7 +887,7 @@ class TestCrossOneSchedulerDeferBeforeAdminCheck:
         assert call_order.index("defer") < call_order.index("admin_check"), "defer must fire before admin check"
 
     def test_scheduler_view_defer_before_admin_check(self, cog):
-        """Cross-1: /scheduler_view defers before checking admin status."""
+        """Cross-1: /scheduler_view defers before checking super-admin status."""
 
         async def run():
             return await self._run_with_admin_blocked(lambda i: cog.scheduler_view.callback(cog, i, "some-job-id"))
@@ -886,7 +896,7 @@ class TestCrossOneSchedulerDeferBeforeAdminCheck:
         assert call_order.index("defer") < call_order.index("admin_check")
 
     def test_scheduler_update_defer_before_admin_check(self, cog):
-        """Cross-1: /scheduler_update defers before checking admin status (after JSON parse)."""
+        """Cross-1: /scheduler_update defers before checking super-admin status (after JSON parse)."""
 
         async def run():
             return await self._run_with_admin_blocked(
@@ -897,7 +907,7 @@ class TestCrossOneSchedulerDeferBeforeAdminCheck:
         assert call_order.index("defer") < call_order.index("admin_check")
 
     def test_scheduler_delete_defer_before_admin_check(self, cog):
-        """Cross-1: /scheduler_delete defers before checking admin status."""
+        """Cross-1: /scheduler_delete defers before checking super-admin status."""
 
         async def run():
             return await self._run_with_admin_blocked(lambda i: cog.scheduler_delete.callback(cog, i, "some-job-id"))
@@ -906,7 +916,7 @@ class TestCrossOneSchedulerDeferBeforeAdminCheck:
         assert call_order.index("defer") < call_order.index("admin_check")
 
     def test_admin_reset_scheduler_defer_before_admin_check(self, cog):
-        """Cross-1: /admin_reset_scheduler defers before checking admin status."""
+        """Cross-1: /admin_reset_scheduler defers before checking super-admin status."""
 
         async def run():
             return await self._run_with_admin_blocked(lambda i: cog.admin_reset_scheduler.callback(cog, i))
@@ -915,7 +925,7 @@ class TestCrossOneSchedulerDeferBeforeAdminCheck:
         assert call_order.index("defer") < call_order.index("admin_check")
 
     def test_admin_clear_scheduler_defer_before_admin_check(self, cog):
-        """Cross-1: /admin_clear_scheduler defers before checking admin status."""
+        """Cross-1: /admin_clear_scheduler defers before checking super-admin status."""
 
         async def run():
             return await self._run_with_admin_blocked(lambda i: cog.admin_clear_scheduler.callback(cog, i))
@@ -924,24 +934,82 @@ class TestCrossOneSchedulerDeferBeforeAdminCheck:
         assert call_order.index("defer") < call_order.index("admin_check")
 
     def test_non_admin_is_rejected_after_defer(self, cog):
-        """Cross-1: Non-admin user gets rejection message via followup (post-defer)."""
+        """Cross-1: Non-super-admin user gets rejection message via followup (post-defer)."""
         import cogs.schedulerCog as sched_module
 
         interaction = self._make_non_admin_interaction()
-        original = sched_module._check_is_admin
+        original = sched_module._check_is_super_admin
 
-        async def fake_not_admin(inter):
+        async def fake_not_super_admin(inter):
             return False
 
-        sched_module._check_is_admin = fake_not_admin
+        sched_module._check_is_super_admin = fake_not_super_admin
         try:
             asyncio.run(cog.scheduler_list.callback(cog, interaction))
         finally:
-            sched_module._check_is_admin = original
+            sched_module._check_is_super_admin = original
 
         # defer must have been called
         interaction.response.defer.assert_awaited_once()
         # rejection must come via followup (not send_message), confirming post-defer
         interaction.followup.send.assert_awaited_once()
         msg = str(interaction.followup.send.call_args)
-        assert "admin" in msg.lower() or "privilege" in msg.lower()
+        assert "super-admin" in msg.lower() or "privilege" in msg.lower()
+
+
+# ===========================================================================
+# TestSuperAdminGate — super-admin permission gate in scheduler commands
+# ===========================================================================
+
+
+class TestSuperAdminGateScheduler:
+    """Tests verifying that scheduler commands use _check_is_super_admin (not _check_is_admin)."""
+
+    def test_scheduler_list_rejects_non_developer_discord_admin(self, cog):
+        """scheduler_list rejects a Discord Administrator who is NOT in DEVELOPERS."""
+        import cogs.schedulerCog as sched_module
+
+        interaction = _make_interaction(user_id=99999)  # not in DEVELOPERS
+        interaction.user.guild_permissions = MagicMock()
+        interaction.user.guild_permissions.administrator = True  # Discord admin, but not super-admin
+
+        original = sched_module._check_is_super_admin
+
+        async def fake_not_super_admin(inter):
+            return False  # even though Discord admin, DEVELOPERS check fails
+
+        sched_module._check_is_super_admin = fake_not_super_admin
+        try:
+            asyncio.run(cog.scheduler_list.callback(cog, interaction))
+        finally:
+            sched_module._check_is_super_admin = original
+
+        interaction.followup.send.assert_awaited_once()
+        msg = str(interaction.followup.send.call_args)
+        assert "super-admin" in msg.lower() or "privilege" in msg.lower()
+
+    def test_scheduler_list_allows_developer(self, cog):
+        """scheduler_list allows a user listed in DEVELOPERS env var."""
+        import os
+
+        import cogs.schedulerCog as sched_module
+
+        dev_user_id = 111222333
+        original_devs = os.environ.get("DEVELOPERS", "")
+        original_check = sched_module._check_is_super_admin
+        os.environ["DEVELOPERS"] = str(dev_user_id)
+
+        interaction = _make_interaction(user_id=dev_user_id)
+        cog.http_client.get = AsyncMock(return_value=_make_mock_response(_SAMPLE_JOBS))
+
+        try:
+            asyncio.run(cog.scheduler_list.callback(cog, interaction))
+        finally:
+            os.environ["DEVELOPERS"] = original_devs
+            sched_module._check_is_super_admin = original_check
+
+        # Should succeed (followup.send called with embed, not error message)
+        interaction.followup.send.assert_awaited_once()
+        call_kwargs = interaction.followup.send.call_args.kwargs
+        # Success path sends an embed, not a plain error string
+        assert call_kwargs.get("embed") is not None

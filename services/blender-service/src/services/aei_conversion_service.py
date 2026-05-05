@@ -95,6 +95,14 @@ class AEIConversionService:
             flogger.debug(f"Converting image from {image.mode} to RGBA before AEI encoding")
             image = image.convert("RGBA")
 
+        # --- Snap dimensions to nearest multiple of 4 (AEPi requirement) ---
+        w, h = image.size
+        new_w = round(w / 4) * 4 or 4
+        new_h = round(h / 4) * 4 or 4
+        if new_w != w or new_h != h:
+            flogger.debug(f"Rescaling image {w}x{h} → {new_w}x{new_h} to satisfy AEPi 4-pixel alignment")
+            image = image.resize((new_w, new_h), Image.NEAREST)
+
         # --- Resolve CompressionFormat enum member ---
         format_attr = SUPPORTED_FORMATS[target_format_lower]
         try:

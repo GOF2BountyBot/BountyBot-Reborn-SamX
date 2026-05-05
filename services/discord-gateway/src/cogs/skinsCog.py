@@ -1,3 +1,4 @@
+import asyncio
 import contextlib
 import os
 from io import BytesIO
@@ -258,43 +259,49 @@ class SkinsCog(commands.Cog):
         await self.blender_client.aclose()
 
     async def _preload_ship_skins(self):
+        """Preload ship skin data at startup for autocomplete (with retries)."""
         await self.bot.wait_until_ready()
-        try:
-            flogger.info("Preloading ship skins…")
-            resp = await self.http_client.get(f"{api_base}/about/categories/ship/objects", timeout=10)
-            resp.raise_for_status()
-            ships = resp.json()
-            for sh in ships:
-                name = sh.get("name")
-                if not name:
-                    continue
-                try:
-                    full = await self.http_client.get(f"{api_base}/about/object/name/{name}", timeout=10)
-                    full.raise_for_status()
-                    data = full.json()
-                    skins = data.get("compatible_skins") or {}
-                    self._ship_skins[name] = list(skins.keys())
-                except HttpxTimeoutException as e:
-                    flogger.warning(f"Timeout loading skins for {name}: {e}")
-                    self._ship_skins[name] = []
-                except HttpxHTTPStatusError as e:
-                    flogger.warning(f"HTTP error loading skins for {name}: {e.response.status_code}")
-                    self._ship_skins[name] = []
-                except HttpxRequestError as e:
-                    flogger.warning(f"Request error loading skins for {name}: {e}")
-                    self._ship_skins[name] = []
-                except Exception as e:  # pylint: disable=broad-exception-caught
-                    flogger.warning(f"Unexpected error loading skins for {name}: {e}")
-                    self._ship_skins[name] = []
-            flogger.info(f"Finished preloading skins for {len(self._ship_skins)} ships")
-        except HttpxTimeoutException as e:
-            flogger.error(f"Timeout preloading ship list: {e}")
-        except HttpxHTTPStatusError as e:
-            flogger.error(f"HTTP error preloading ship list: {e.response.status_code}")
-        except HttpxRequestError as e:
-            flogger.error(f"Request error preloading ship list: {e}")
-        except Exception as e:  # pylint: disable=broad-exception-caught
-            flogger.error(f"Could not preload ship list: {e}")
+        delays = [5, 10, 20, 40, 60]
+        for attempt, delay in enumerate(delays, start=1):
+            try:
+                flogger.info("SkinsCog: Starting preload of ship skins (attempt %d/%d)...", attempt, len(delays))
+                resp = await self.http_client.get(f"{api_base}/about/categories/ship/objects", timeout=10)
+                resp.raise_for_status()
+                ships = resp.json()
+                for sh in ships:
+                    name = sh.get("name")
+                    if not name:
+                        continue
+                    try:
+                        full = await self.http_client.get(f"{api_base}/about/object/name/{name}", timeout=10)
+                        full.raise_for_status()
+                        data = full.json()
+                        skins = data.get("compatible_skins") or {}
+                        self._ship_skins[name] = list(skins.keys())
+                    except HttpxTimeoutException as e:
+                        flogger.warning(f"Timeout loading skins for {name}: {e}")
+                        self._ship_skins[name] = []
+                    except HttpxHTTPStatusError as e:
+                        flogger.warning(f"HTTP error loading skins for {name}: {e.response.status_code}")
+                        self._ship_skins[name] = []
+                    except HttpxRequestError as e:
+                        flogger.warning(f"Request error loading skins for {name}: {e}")
+                        self._ship_skins[name] = []
+                    except Exception as e:  # pylint: disable=broad-exception-caught
+                        flogger.warning(f"Unexpected error loading skins for {name}: {e}")
+                        self._ship_skins[name] = []
+                flogger.info("SkinsCog: Preloaded skins for %d ships", len(self._ship_skins))
+                return
+            except (httpx.TimeoutException, httpx.RequestError, httpx.HTTPStatusError) as e:
+                flogger.warning(
+                    "SkinsCog: Preload attempt %d/%d failed: %s — retrying in %ds", attempt, len(delays), e, delay
+                )
+                await asyncio.sleep(delay)
+            except Exception as e:  # pylint: disable=broad-exception-caught
+                flogger.warning("SkinsCog: Unexpected error on preload attempt %d/%d: %s", attempt, len(delays), e)
+                await asyncio.sleep(delay)
+        flogger.error("SkinsCog: All preload attempts exhausted. Ship skin autocomplete will be empty.")
+        self._ship_skins = {}
 
     # ------------------------------------------------------------------
     # Autocomplete helpers

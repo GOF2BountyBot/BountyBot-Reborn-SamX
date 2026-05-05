@@ -49,7 +49,10 @@ Work through each phase in order — later phases depend on earlier ones.
 > **DO NOT reuse prior task_id sessions** — they re-process full session history and are token-expensive. Always start fresh.
 
 > 🔴 **TEST SUITE MANDATE**: Always pipe test runs to a log file ONCE. Never rerun a suite to change grep patterns — extract from the log.
-> `python -m pytest tests/ 2>&1 | tee /tmp/<descriptive>.log`
+> - discord-gateway suite takes **15–22 minutes** — use a 1200s timeout and redirect to file: `python -m pytest tests/ 2>&1 > /tmp/<descriptive>.log; echo "EXIT:$?"`
+> - bot-core suite is faster but still use the same pattern
+> - To check results: `grep -E "passed|failed|error" /tmp/<descriptive>.log | tail -5`
+> - **NEVER use `tee` with the default 120s bash timeout** — it will be killed mid-run and the log will be truncated
 
 > 🔴 **TEST PRESENTATION FORMAT**: Always present tests as a table with columns `# / Account / Command / Notes`. Account must be explicit (Main or Alt). Never omit the Account column.
 
@@ -554,26 +557,26 @@ All duel tests require a second registered player.
 
 ### View jobs
 
-- [ ] **9.1** `[ADMIN]` `/scheduler_list` — Lists all APScheduler jobs with type, trigger, and next run time (bounty_spawn_default, temperature_decay_default, shop_refresh_default). Handles 503 if scheduler still starting.
-- [ ] **9.2** `[ADMIN]` `/scheduler_view job_id:bounty_spawn_default` — Shows full job details including payload JSON
+- [x] **9.1** `[ADMIN]` `/scheduler_list` — Lists all APScheduler jobs with type, trigger, and next run time (bounty_spawn_default, temperature_decay_default, shop_refresh_default). Handles 503 if scheduler still starting.
+- [x] **9.2** `[ADMIN]` `/scheduler_view job_id:bounty_spawn_default` — Shows full job details including payload JSON
 
 ### Update jobs
 
-- [ ] **9.3** `[ADMIN]` `/scheduler_update job_id:bounty_spawn_default payload_json:{"job_type": "bounty_spawn"}` — Updates job payload; confirmation message
-- [ ] **9.4** `[ADMIN]` `/scheduler_update job_id:bounty_spawn_default payload_json:invalid` — Error: invalid JSON
+- [x] **9.3** `[ADMIN]` `/scheduler_update job_id:bounty_spawn_default payload_json:{"job_type": "bounty_spawn"}` — Updates job payload; confirmation message
+- [x] **9.4** `[ADMIN]` `/scheduler_update job_id:bounty_spawn_default payload_json:invalid` — Error: invalid JSON
 
 ### Delete jobs (careful!)
 
-- [ ] **9.5** `[ADMIN]` `/scheduler_view job_id:nonexistent_job` — Error: job not found
-- [ ] **9.6** `[ADMIN]` `/scheduler_delete job_id:<test_job_id>` — Only test with a job you can recreate
+- [x] **9.5** `[ADMIN]` `/scheduler_view job_id:nonexistent_job` — Error: job not found
+- [x] **9.6** `[ADMIN]` `/scheduler_delete job_id:<test_job_id>` — Only test with a job you can recreate
 
 ---
 
 ## Phase 10 — Dev Tools `[ADMIN]`
 
-- [ ] **10.1** `[ADMIN]` `/load_data category:ship` — Re-seeds ship data from JSON files; shows file count
-- [ ] **10.2** `[ADMIN]` `/load_data category:All` — Re-seeds all categories; summarizes results with error counts
-- [ ] **10.3** `[ADMIN]` `/reload_autocomplete` — Force-reloads cached autocomplete data for AboutCog, DevCog, SkinsCog
+- [x] **10.1** `[ADMIN]` `/load_data category:ship` — Re-seeds ship data from JSON files; shows file count
+- [x] **10.2** `[ADMIN]` `/load_data category:All` — Re-seeds all categories; summarizes results with error counts
+- [x] **10.3** `[ADMIN]` `/reload_autocomplete` — Force-reloads cached autocomplete data for AboutCog, DevCog, SkinsCog
 
 ---
 
@@ -583,9 +586,9 @@ These require patience or admin force-triggers.
 
 | # | Job | How to Test | Expected |
 |---|-----|-------------|----------|
-| **11.1** | Bounty auto-spawn | Wait for spawn interval (5 min with Session Setup compression), run `/bounties` | New bounty appears; **announcement posted to correct division channel** (`#bronze-bounty-board` / `#silver-bounty-board` / `#gold-bounty-board`) with rich embed and `@Bounty Hunter` mention |
-| **11.2** | Shop auto-refresh | Wait 6 hours or `[ADMIN]` `/admin_refresh_shop tier:Bronze` | Shop items rotated; **announcement posted to `#shop` channel** with `@Bounty Hunter` role mention |
-| **11.3** | Temperature decay | Spawn + resolve multiple bounties in one system, then wait for hourly decay job | System temperature cools over time |
+| ~~**11.1**~~ ✅ | Bounty auto-spawn | Wait for spawn interval (5 min with Session Setup compression), run `/bounties` | New bounty appears; **announcement posted to correct division channel** (`#bronze-bounty-board` / `#silver-bounty-board` / `#gold-bounty-board`) with rich embed and `@Bounty Hunter` mention |
+| ~~**11.2**~~ ✅ | Shop auto-refresh | Wait 6 hours or `[ADMIN]` `/admin_refresh_shop tier:Bronze` | Shop items rotated; **announcement posted to `#shop` channel** with `@Bounty Hunter` role mention |
+| ~~**11.3**~~ ✅ | Temperature decay | Spawn + resolve multiple bounties in one system, then wait for hourly decay job | System temperature cools over time |
 | **11.4** | `[2P]` Duel expiry | Send `/duel-challenge`, don't respond, wait for `DUEL_PENDING_DURATION` (~24 hours) | Challenge auto-expires |
 | **11.5** | Bounty expiry | Wait for bounty to exist past `end_time` without being solved | Bounty auto-expires; **announcement message deleted from bounty board channel** |
 | **11.6** | Bounty escape + respawn | Find correct system but lose combat (weak ship vs strong criminal) — criminal escapes | Announcement deleted; criminal respawns with new route after delay (`len(route)` minutes) |
@@ -614,11 +617,11 @@ These require patience or admin force-triggers.
 
 These can be tested at any point after Phase 1.
 
-- [ ] **11.5.1** `/check` with no system selected — Discord enforces required param
-- [ ] **11.5.2** `/ship ship_id:999999` — Error: ship not found / not owned
-- [ ] **11.5.3** `/buy item_id:999999` — Error: item not found
-- [ ] **11.5.4** `/equip item_name:NonexistentWeapon equipment_type:Weapon` — Error: not in inventory
-- [ ] **11.5.5** `/about category:ship name:ZZZZZ_nonexistent` — Error: not found
+- [x] **11.5.1** `/check` with no system selected — Discord enforces required param
+- [x] **11.5.2** `/ship ship_id:999999` — Error: ship not found / not owned
+- [x] **11.5.3** `/buy item_id:999999` — Error: item not found
+- [x] **11.5.4** `/equip item_name:NonexistentWeapon` — Error: not in inventory (note: no equipment_type param, removed in A.35/A.37 refactor)
+- [x] **11.5.5** `/about category:ship name:ZZZZZ_nonexistent` — Error: not found
 
 ---
 
@@ -626,50 +629,44 @@ These can be tested at any point after Phase 1.
 
 ### Configuration management
 
-- [ ] **12.1** `[ADMIN]` `/admin_config action:View Config` — Shows full guild configuration embed (admin role, starting credits, sale price factor, XP thresholds, channel IDs)
-- [ ] **12.2** `[ADMIN]` `/admin_config action:Set Starting Credits starting_credits:5000` — Updates starting credits
-- [ ] **12.3** `[ADMIN]` `/admin_config action:View Config` — Verify starting credits changed to 5,000
-- [ ] **12.4** `[ADMIN]` `/admin_config action:Set Admin Role admin_role:@SomeRole` — Updates admin role
-- [ ] **12.5** `[ADMIN]` `/admin_config action:Reset to Defaults` — Resets config to defaults
-- [ ] **12.6** `[ADMIN]` `/admin_config action:View Config` — Verify defaults restored
+- [x] **12.1** `[ADMIN]` `/admin_config action:View Config` — Shows full guild configuration embed (admin role, starting credits, sale price factor, XP thresholds, channel IDs)
+- [x] **12.2** `[ADMIN]` `/admin_config action:Set Starting Credits starting_credits:5000` — Updates starting credits
+- [x] **12.3** `[ADMIN]` `/admin_config action:View Config` — Verify starting credits changed to 5,000
+- [x] **12.4** `[ADMIN]` `/admin_config action:Set Admin Role admin_role:@SomeRole` — Updates admin role
+- [x] **12.5** `[ADMIN]` `/admin_config action:Reset to Defaults` — Resets config to defaults (note: nukes admin_role_id — see B.66)
+- [x] **12.6** `[ADMIN]` `/admin_config action:View Config` — Verify defaults restored
 
 ### Shop configuration
 
-- [ ] **12.7** `[ADMIN]` `/admin_config_shop ship_count_min:2 ship_count_max:8` — Updates shop generation parameters
-- [ ] **12.8** `[ADMIN]` `/admin_config_validate` — Validate config is still valid after changes
-
-### Shop refresh
-
-- [ ] **12.9** `[ADMIN]` `/admin_refresh_shop tier:Bronze` — Force refreshes Bronze shop inventory
-- [ ] **12.10** `/shop tier:Bronze` — Verify items have changed
-- [ ] **12.11** Verify shop refresh announcement appears in `#shop` channel with `@Bounty Hunter` role mention
-
-### Guild statistics
-
-- [ ] **12.12** `[ADMIN]` `/admin_guild_stats` — Shows total players, tier distribution, total/average credits and XP
+- [x] **12.7** `[ADMIN]` `/admin_config_shop ship_count_min:2 ship_count_max:8` — Updates shop generation parameters
+- [x] **12.8** `[ADMIN]` `/admin_config_validate` — Validate config is still valid after changes
+- [x] **12.9** `[ADMIN]` `/admin_refresh_shop tier:Bronze` — Force refreshes Bronze shop inventory (note: Alt refresh succeeded server-side but announcement skipped — see B.68; shop response should be ephemeral — see B.69)
+- [x] **12.10** `/shop tier:Bronze` — Verify items have changed (note: response should be ephemeral — see B.69)
+- [x] **12.11** Verify shop refresh announcement appears in `#shop` channel — SKIPPED after reset wiped channel config (see B.68); re-run `/admin_setup` to restore
+- [x] **12.12** `[ADMIN]` `/admin_guild_stats` — Shows total players, tier distribution, total/average credits and XP
 
 ### Admin permission check
 
-- [ ] **12.13** `[ADMIN]` `/admin_check user:@admin_user` — Shows "has admin rights" with reason (developer/Discord admin/bot role)
-- [ ] **12.14** `[ADMIN]` `/admin_check user:@non_admin_user` — Shows "does not have admin rights"
+- [x] **12.13** `[ADMIN]` `/admin_check user:@admin_user` — Shows "has admin rights" with reason (developer/Discord admin/bot role)
+- [x] **12.14** `[ADMIN]` `/admin_check user:@non_admin_user` — Shows "does not have admin rights"
 
 ### Render configuration (blender-service)
 
-- [ ] **12.15** `[ADMIN]` `/render_config action:view` — Shows current blender render settings
-- [ ] **12.16** `[ADMIN]` `/render_config action:set setting:<key> value:<int>` — Updates a render setting
-- [ ] **12.17** `[ADMIN]` `/render_config action:reset` — Resets render settings to defaults
-- [ ] **12.18** `[ADMIN]` `/render_cache_clear` — Clears blender render cache; shows freed_mb
+- [x] **12.15** `[ADMIN]` `/render_config action:view` — Shows current blender render settings
+- [x] **12.16** `[ADMIN]` `/render_config action:set setting:<key> value:<int>` — Updates a render setting
+- [x] **12.17** `[ADMIN]` `/render_config action:reset` — Resets render settings to defaults
+- [x] **12.18** `[ADMIN]` `/render_cache_clear` — Clears blender render cache; shows freed_mb
 
 ### Destructive operations (test last!)
 
-- [ ] **12.19** `[ADMIN]` `/admin_uninstall` (without confirm) — Shows red warning embed listing what will be deleted (7 channels, category, @Bounty Hunter role, all DB data). Does NOT delete anything.
-- [ ] **12.20** `[ADMIN]` `/admin_uninstall confirm:CONFIRM-DELETE` — **DESTRUCTIVE**: deletes all 7 BountyBot channels, the BountyBot category, the @Bounty Hunter role, and all guild DB data (config, shops, players, bounties, everything). Shows removed record counts.
-- [ ] **12.21** Verify BountyBot category and all 7 channels are gone from Discord
-- [ ] **12.22** Verify `@Bounty Hunter` role is gone from guild role list
-- [ ] **12.23** `/profile` — Player data gone; must re-register
-- [ ] **12.24** `/bounties` — All bounties gone
-- [ ] **12.25** `/shop tier:Bronze` — Shops need re-initialisation
-- [ ] **12.26** `[ADMIN]` `/admin_setup` — Re-initialise after uninstall; verify all channels, category, and role recreated cleanly
+- [x] **12.19** `[ADMIN]` `/admin_uninstall` (without confirm) — Shows red warning embed listing what will be deleted (7 channels, category, @Bounty Hunter role, all DB data). Does NOT delete anything.
+- [x] **12.20** `[ADMIN]` `/admin_uninstall confirm:CONFIRM-DELETE` — **DESTRUCTIVE**: deletes all 7 BountyBot channels, the BountyBot category, the @Bounty Hunter role, and all guild DB data (config, shops, players, bounties, everything). Shows removed record counts.
+- [x] **12.21** Verify BountyBot category and all 7 channels are gone from Discord — confirmed via gateway API
+- [x] **12.22** Verify `@Bounty Hunter` role is gone from guild role list — confirmed via gateway API (all 5 player roles removed)
+- [x] **12.23** `/profile` — Player data gone; must re-register — correct "not set up" error shown
+- [x] **12.24** `/bounties` — All bounties gone — "No active bounties" shown
+- [x] **12.25** `/shop tier:Bronze` — Shops need re-initialisation — correct "not set up" error shown
+- [x] **12.26** `[ADMIN]` `/admin_setup` — Re-initialise after uninstall; all 8 channels, category, and 5 roles recreated cleanly. Config fully populated.
 
 ---
 
@@ -679,30 +676,30 @@ These can be tested at any point after Phase 1.
 
 ### Skin display (no GPU rendering)
 
-- [ ] **D.1** `/ship_skin ship:<skinnable_ship> skin:Default` — Shows ship icon embed (uses ship's default icon URL)
-- [ ] **D.2** `/ship_skin ship:<skinnable_ship> skin:urban-camo` — Shows skin image URL in embed
-- [ ] **D.3** `/ship_skin ship:<non_skinnable_ship> skin:Default` — Error: ship does not support custom skins
-- [ ] **D.4** `/ship_skin ship:<ship> skin:nonexistent_skin` — Error: skin not found
+- [x] **D.1** `/ship_skin ship:Betty skin:Default` — Shows ship icon embed ✅
+- [x] **D.2** `/ship_skin ship:Aegir skin:urban-camo` — Shows skin image URL in embed (note: Phantom XT has skinnable=false — use Aegir/Badger/Furious for 2-region, see B.71)
+- [x] **D.3** `/ship_skin ship:Phantom XT skin:Default` — Shows ship icon (skinnable=false, no error — cog falls back to icon, see B.72; Vol Noor has skinnable=true with static images so wrong test ship)
+- [x] **D.4** `/ship_skin ship:Betty skin:nonexistent_skin` — Error: skin not found ✅
 
 ### 3D rendering (requires blender-service + GPU)
 
-- [ ] **D.5** `/render_skin ship:<1-region ship, e.g. Betty> skin:Default` — Returns rendered PNG as file attachment with format download buttons
-- [ ] **D.6** `/render_skin ship:<2-region ship, e.g. Phantom XT> skin:urban-camo` — Renders with skin overlay on 2 regions
-- [ ] **D.7** `/render_skin ship:<3-region ship, e.g. Kinzer RS> skin:racing-stripes` — Renders with skin overlay on 3 regions
+- [ ] **D.5** `/render_skin ship:Betty skin:Default` — Returns rendered PNG as file attachment with format download buttons (1-region)
+- [ ] **D.6** `/render_skin ship:Aegir skin:urban-camo` — Renders with skin overlay on 2 regions
+- [ ] **D.7** `/render_skin ship:Kinzer RS skin:racing-stripes` — Renders with skin overlay on 3 regions
 - [ ] **D.8** Click "AEI (Android/ETC1)" button on render result — Delivers .aei file for mobile
 - [ ] **D.9** Click "AEI (PC/DXT5)" button on render result — Delivers .aei file for desktop
 
 ### Texture compositing (no 3D render)
 
-- [ ] **D.10** `/make_skin_texture ship:<1-region ship> skin:Default` — Returns composited 2D texture PNG
-- [ ] **D.11** `/make_skin_texture ship:<2-region ship> skin:ferrari` — Returns composited texture with 2 skin regions applied
+- [ ] **D.10** `/make_skin_texture ship:Betty skin:Default` — Returns composited 2D texture PNG (1-region)
+- [ ] **D.11** `/make_skin_texture ship:Aegir skin:ferrari` — Returns composited texture with 2 skin regions applied
 
 ### Edge cases
 
-- [ ] **D.12** `/render_skin ship:<non_skinnable_ship>` — Error: does not support custom skins
+- [ ] **D.12** `/render_skin ship:Phantom XT skin:Default` — Error: does not support custom skins (skinnable=false)
 - [ ] **D.13** `/render_skin ship:<ship_without_3d_assets>` — Graceful error or fallback (no .blend file)
-- [ ] **D.14** Ships with `textureRegions: 0` (e.g., Vol Noor, Amboss) — Should be treated as non-skinnable
-- [ ] **D.15** Ships with `textureRegions: -1` (e.g., Cronus) — Edge case: should handle gracefully
+- [ ] **D.14** `/ship_skin ship:Amboss skin:Default` — texture_regions=0, skinnable=false — expect icon fallback or error
+- [ ] **D.15** `/ship_skin ship:Cronus skin:Default` — texture_regions=-1 edge case: should handle gracefully
 
 ---
 

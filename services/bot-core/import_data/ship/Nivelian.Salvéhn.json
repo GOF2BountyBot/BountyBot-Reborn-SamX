@@ -15,7 +15,7 @@
   "maxTurrets": 1,
   "model": "/app/data/game-objects/items/ships/Nivelian/Salvéhn.bbship/Salv_Full.obj",
   "name": "Salvéhn",
-  "skinnable": false,
+  "skinnable": true,
   "textureRegions": 2,
   "value": 94500,
   "wiki": "https://galaxyonfire.fandom.com/wiki/Salvéhn",
@@ -28,5 +28,6 @@
     "/app/data/game-objects/items/ships/Nivelian/Salvéhn.bbship/ship_031_nivelian_normal_specular.png",
     "/app/data/game-objects/items/ships/Nivelian/Salvéhn.bbship/skinBase.png"
   ],
-  "normSpec": "/app/data/game-objects/items/ships/Nivelian/Salvéhn.bbship/ship_031_nivelian_normal_specular.png"
+  "normSpec": "/app/data/game-objects/items/ships/Nivelian/Salvéhn.bbship/ship_031_nivelian_normal_specular.png",
+  "compatibleSkins": {}
 }

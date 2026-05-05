@@ -163,21 +163,205 @@ class TestShipSkinPreload:
         assert "Green Skin" in mock_skins_cog._ship_skins["Test Ship 2"]
 
     def test_preload_ship_skins_failure(self, mock_skins_cog):
-        """_preload_ship_skins handles GET /about/categories/ship/objects failure gracefully."""
+        """_preload_ship_skins handles GET /about/categories/ship/objects failure gracefully.
+
+        After all retries are exhausted, _ship_skins stays empty.
+        asyncio.sleep is patched to prevent real delays during testing.
+        """
         import httpx
         import respx
 
         mock_skins_cog.bot.wait_until_ready = AsyncMock()
 
-        with respx.mock(assert_all_called=True) as mock_router:
-            mock_router.get(f"{self._API_BASE}/about/categories/ship/objects").mock(
-                return_value=httpx.Response(500, json={"detail": "Internal Server Error"})
-            )
+        with patch("cogs.skinsCog.asyncio.sleep", new=AsyncMock()):
+            with respx.mock() as mock_router:
+                mock_router.get(f"{self._API_BASE}/about/categories/ship/objects").mock(
+                    return_value=httpx.Response(500, json={"detail": "Internal Server Error"})
+                )
 
-            asyncio.run(mock_skins_cog._preload_ship_skins())
+                asyncio.run(mock_skins_cog._preload_ship_skins())
 
         # Error should be caught and _ship_skins stays empty
         assert mock_skins_cog._ship_skins == {}
+
+
+class TestShipSkinPreloadRetry:
+    """Tests for B.73: retry logic in _preload_ship_skins.
+
+    Verifies that _preload_ship_skins retries up to 5 times (delays 5/10/20/40/60s)
+    when bot-core is not yet ready (ConnectError / RequestError / TimeoutException),
+    and that success on any retry populates _ship_skins correctly.
+    """
+
+    _API_BASE = "http://bot-core:8000/api/v1"
+
+    def test_preload_succeeds_on_first_attempt(self, mock_skins_cog):
+        """_preload_ship_skins succeeds on the first attempt and returns immediately (no sleep)."""
+        import httpx
+        import respx
+
+        mock_skins_cog.bot.wait_until_ready = AsyncMock()
+        sleep_mock = AsyncMock()
+
+        with patch("cogs.skinsCog.asyncio.sleep", new=sleep_mock):
+            with respx.mock(assert_all_called=True) as mock_router:
+                mock_router.get(f"{self._API_BASE}/about/categories/ship/objects").mock(
+                    return_value=httpx.Response(200, json=[{"name": "Eagle", "id": 1}])
+                )
+                mock_router.get(f"{self._API_BASE}/about/object/name/Eagle").mock(
+                    return_value=httpx.Response(
+                        200,
+                        json={"name": "Eagle", "compatible_skins": {"Lava": "http://example.com/lava.png"}},
+                    )
+                )
+                asyncio.run(mock_skins_cog._preload_ship_skins())
+
+        assert "Eagle" in mock_skins_cog._ship_skins
+        assert "Lava" in mock_skins_cog._ship_skins["Eagle"]
+        # No sleep on first success
+        sleep_mock.assert_not_called()
+
+    def test_preload_retries_on_connect_error_then_succeeds(self, mock_skins_cog):
+        """_preload_ship_skins retries after a ConnectError and succeeds on second attempt."""
+        import httpx
+        import respx
+
+        mock_skins_cog.bot.wait_until_ready = AsyncMock()
+        sleep_mock = AsyncMock()
+        call_count = {"n": 0}
+
+        def side_effect(request):
+            call_count["n"] += 1
+            if call_count["n"] == 1:
+                raise httpx.ConnectError("Connection refused")
+            return httpx.Response(200, json=[{"name": "Hawk", "id": 2}])
+
+        with patch("cogs.skinsCog.asyncio.sleep", new=sleep_mock):
+            with respx.mock() as mock_router:
+                mock_router.get(f"{self._API_BASE}/about/categories/ship/objects").mock(
+                    side_effect=side_effect
+                )
+                mock_router.get(f"{self._API_BASE}/about/object/name/Hawk").mock(
+                    return_value=httpx.Response(
+                        200, json={"name": "Hawk", "compatible_skins": {"Blue": "http://example.com/blue.png"}}
+                    )
+                )
+                asyncio.run(mock_skins_cog._preload_ship_skins())
+
+        # Should have data from successful second attempt
+        assert "Hawk" in mock_skins_cog._ship_skins
+        # Should have slept once (after first failure) with 5s delay
+        sleep_mock.assert_called_once_with(5)
+
+    def test_preload_exhausts_all_retries_leaves_ship_skins_empty(self, mock_skins_cog):
+        """_preload_ship_skins leaves _ship_skins={} after all 5 retries are exhausted."""
+        import httpx
+        import respx
+
+        mock_skins_cog.bot.wait_until_ready = AsyncMock()
+        sleep_mock = AsyncMock()
+        sleep_calls = []
+
+        async def track_sleep(delay):
+            sleep_calls.append(delay)
+
+        with patch("cogs.skinsCog.asyncio.sleep", new=track_sleep):
+            with respx.mock() as mock_router:
+                mock_router.get(f"{self._API_BASE}/about/categories/ship/objects").mock(
+                    side_effect=httpx.ConnectError("Connection refused")
+                )
+                asyncio.run(mock_skins_cog._preload_ship_skins())
+
+        assert mock_skins_cog._ship_skins == {}
+        # Should have attempted 5 times → 5 sleeps with delays 5,10,20,40,60
+        assert sleep_calls == [5, 10, 20, 40, 60]
+
+    def test_preload_retries_on_timeout_exception(self, mock_skins_cog):
+        """_preload_ship_skins retries when TimeoutException is raised on ship list fetch."""
+        import httpx
+        import respx
+
+        mock_skins_cog.bot.wait_until_ready = AsyncMock()
+        sleep_mock = AsyncMock()
+        call_count = {"n": 0}
+
+        def side_effect(request):
+            call_count["n"] += 1
+            if call_count["n"] <= 2:
+                raise httpx.TimeoutException("Timed out")
+            return httpx.Response(200, json=[])
+
+        with patch("cogs.skinsCog.asyncio.sleep", new=sleep_mock):
+            with respx.mock() as mock_router:
+                mock_router.get(f"{self._API_BASE}/about/categories/ship/objects").mock(
+                    side_effect=side_effect
+                )
+                asyncio.run(mock_skins_cog._preload_ship_skins())
+
+        # Success on third attempt (empty ship list)
+        assert mock_skins_cog._ship_skins == {}
+        # Two sleeps: 5s and 10s
+        assert sleep_mock.call_count == 2
+        sleep_mock.assert_any_call(5)
+        sleep_mock.assert_any_call(10)
+
+    def test_preload_retries_on_http_status_error(self, mock_skins_cog):
+        """_preload_ship_skins retries when HTTPStatusError (e.g. 503) is raised on ship list."""
+        import httpx
+        import respx
+
+        mock_skins_cog.bot.wait_until_ready = AsyncMock()
+        sleep_calls = []
+
+        async def track_sleep(delay):
+            sleep_calls.append(delay)
+
+        call_count = {"n": 0}
+
+        def side_effect(request):
+            call_count["n"] += 1
+            if call_count["n"] == 1:
+                return httpx.Response(503, json={"detail": "Service Unavailable"})
+            return httpx.Response(200, json=[{"name": "Condor", "id": 5}])
+
+        with patch("cogs.skinsCog.asyncio.sleep", new=track_sleep):
+            with respx.mock() as mock_router:
+                mock_router.get(f"{self._API_BASE}/about/categories/ship/objects").mock(
+                    side_effect=side_effect
+                )
+                mock_router.get(f"{self._API_BASE}/about/object/name/Condor").mock(
+                    return_value=httpx.Response(
+                        200, json={"name": "Condor", "compatible_skins": {}}
+                    )
+                )
+                asyncio.run(mock_skins_cog._preload_ship_skins())
+
+        assert "Condor" in mock_skins_cog._ship_skins
+        # Slept once (after 503 failure) with 5s delay
+        assert sleep_calls == [5]
+
+    def test_preload_retry_delays_follow_correct_sequence(self, mock_skins_cog):
+        """Retry delays must be exactly [5, 10, 20, 40, 60] in order (B.73)."""
+        import httpx
+        import respx
+
+        mock_skins_cog.bot.wait_until_ready = AsyncMock()
+        sleep_calls = []
+
+        async def track_sleep(delay):
+            sleep_calls.append(delay)
+
+        with patch("cogs.skinsCog.asyncio.sleep", new=track_sleep):
+            with respx.mock() as mock_router:
+                # All 5 attempts fail
+                mock_router.get(f"{self._API_BASE}/about/categories/ship/objects").mock(
+                    side_effect=httpx.ConnectError("bot-core not ready")
+                )
+                asyncio.run(mock_skins_cog._preload_ship_skins())
+
+        assert sleep_calls == [5, 10, 20, 40, 60], (
+            f"Expected retry delays [5, 10, 20, 40, 60], got {sleep_calls}"
+        )
 
 
 class TestShipAutocomplete:

@@ -40,6 +40,7 @@ async def announce_shop_refresh(
     guild_id: int,
     channel_id: int | None,
     bounty_hunter_role_id: int | None = None,
+    tier: str | None = None,
 ) -> None:
     """POST a shop-refresh announcement to the discord-gateway channel messages endpoint.
 
@@ -68,23 +69,35 @@ async def announce_shop_refresh(
             announcement is silently skipped with a warning.
         bounty_hunter_role_id: Optional role to mention in ``text_content``. When
             None no role ping is included.
+        tier: Optional tier name (e.g. "Bronze"). When provided, the announcement
+            targets that specific tier. When None, the announcement covers all tiers.
     """
     if channel_id is None:
         flogger.warning(f"{caller_label} guild={guild_id}: shop_channel_id not configured, skipping announcement")
         return
 
-    base_description = (
-        "The guild shop has been restocked with new items across all tiers. "
-        "Check out the latest offerings and upgrade your loadout!"
-    )
+    if tier is not None:
+        description = (
+            f"The {tier} shop has been restocked with new items. "
+            "Check out the latest offerings and upgrade your loadout!"
+        )
+        field_name = "Tier Refreshed"
+        field_value = tier
+    else:
+        description = (
+            "The guild shop has been restocked with new items across all tiers. "
+            "Check out the latest offerings and upgrade your loadout!"
+        )
+        field_name = "Tiers Refreshed"
+        field_value = "Bronze · Silver · Gold · Platinum"
 
     announcement = {
         "content": {  # embed payload
             "title": "🛒 Shop Refreshed!",
-            "description": base_description,
+            "description": description,
             "color": 3447003,  # Blue (#3498DB)
             "fields": [
-                {"name": "Tiers Available", "value": "Bronze · Silver · Gold · Platinum", "inline": False},
+                {"name": field_name, "value": field_value, "inline": False},
             ],
             "footer_text": "Use /shop to browse!",
         },

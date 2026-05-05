@@ -3080,5 +3080,222 @@ class TestAdminRoleAccessAdversarial:
         )
 
 
+# ===========================================================================
+# TestCheckIsSuperAdmin — unit tests for _check_is_super_admin
+# ===========================================================================
+
+
+class TestCheckIsSuperAdmin:
+    """Unit tests for the _check_is_super_admin function in adminCog.
+
+    _check_is_super_admin checks ONLY the DEVELOPERS env var — no role fallback,
+    no Discord Administrator fallback.
+    """
+
+    def test_returns_true_for_user_in_developers_env(self):
+        """Returns True when user ID appears in DEVELOPERS env var."""
+        from cogs.adminCog import _check_is_super_admin
+
+        interaction = _create_mock_interaction()
+        interaction.user.id = 123456789
+
+        with patch.dict("os.environ", {"DEVELOPERS": "123456789"}):
+            result = asyncio.run(_check_is_super_admin(interaction))
+
+        assert result is True
+
+    def test_returns_false_for_user_not_in_developers_env(self):
+        """Returns False when user ID is NOT in DEVELOPERS env var."""
+        from cogs.adminCog import _check_is_super_admin
+
+        interaction = _create_mock_interaction()
+        interaction.user.id = 999999999
+
+        with patch.dict("os.environ", {"DEVELOPERS": "123456789,111222333"}):
+            result = asyncio.run(_check_is_super_admin(interaction))
+
+        assert result is False
+
+    def test_returns_false_when_developers_env_is_empty(self):
+        """Returns False when DEVELOPERS env var is empty."""
+        from cogs.adminCog import _check_is_super_admin
+
+        interaction = _create_mock_interaction()
+        interaction.user.id = 123456789
+
+        with patch.dict("os.environ", {"DEVELOPERS": ""}):
+            result = asyncio.run(_check_is_super_admin(interaction))
+
+        assert result is False
+
+    def test_returns_false_when_developers_env_is_missing(self):
+        """Returns False when DEVELOPERS env var is not set at all."""
+        from cogs.adminCog import _check_is_super_admin
+        import os
+
+        interaction = _create_mock_interaction()
+        interaction.user.id = 123456789
+
+        # Remove DEVELOPERS from environment entirely
+        env_without_devs = {k: v for k, v in os.environ.items() if k != "DEVELOPERS"}
+        with patch.dict("os.environ", env_without_devs, clear=True):
+            result = asyncio.run(_check_is_super_admin(interaction))
+
+        assert result is False
+
+    def test_handles_whitespace_in_developers_list(self):
+        """Returns True when DEVELOPERS list has whitespace around IDs."""
+        from cogs.adminCog import _check_is_super_admin
+
+        interaction = _create_mock_interaction()
+        interaction.user.id = 111222333
+
+        with patch.dict("os.environ", {"DEVELOPERS": " 111222333 , 444555666 "}):
+            result = asyncio.run(_check_is_super_admin(interaction))
+
+        assert result is True
+
+    def test_handles_multiple_developers(self):
+        """Returns True for any user ID present in a comma-separated DEVELOPERS list."""
+        from cogs.adminCog import _check_is_super_admin
+
+        interaction = _create_mock_interaction()
+        interaction.user.id = 444555666
+
+        with patch.dict("os.environ", {"DEVELOPERS": "111222333,444555666,777888999"}):
+            result = asyncio.run(_check_is_super_admin(interaction))
+
+        assert result is True
+
+    def test_does_not_check_discord_administrator_permission(self):
+        """Returns False for a Discord Administrator who is NOT in DEVELOPERS.
+
+        Unlike _check_is_admin, the super-admin gate has NO Discord Administrator fallback.
+        """
+        from cogs.adminCog import _check_is_super_admin
+
+        interaction = _create_mock_interaction()
+        interaction.user.id = 999999999  # not in DEVELOPERS
+        interaction.user.guild_permissions = MagicMock()
+        interaction.user.guild_permissions.administrator = True  # Discord admin
+
+        with patch.dict("os.environ", {"DEVELOPERS": "111222333"}):
+            result = asyncio.run(_check_is_super_admin(interaction))
+
+        assert result is False, (
+            "_check_is_super_admin must NOT check Discord Administrator permission; "
+            "only DEVELOPERS env var is consulted."
+        )
+
+    def test_does_not_check_bot_admin_role(self):
+        """Returns False for a user with the configured Bot Admin role but NOT in DEVELOPERS.
+
+        Unlike _check_is_admin, the super-admin gate has NO role fallback.
+        """
+        from cogs.adminCog import _check_is_super_admin
+
+        interaction = _create_mock_interaction()
+        interaction.user.id = 999999999  # not in DEVELOPERS
+
+        # Give the user an admin role
+        admin_role = MagicMock()
+        admin_role.id = 111111111
+        interaction.member = MagicMock()
+        interaction.member.roles = [admin_role]
+
+        with patch.dict("os.environ", {"DEVELOPERS": "123456789"}):
+            result = asyncio.run(_check_is_super_admin(interaction))
+
+        assert result is False, (
+            "_check_is_super_admin must NOT check configured Bot Admin role; "
+            "only DEVELOPERS env var is consulted."
+        )
+
+
+# ===========================================================================
+# TestIsSuperAdmin — tests for the is_super_admin() decorator factory
+# ===========================================================================
+
+
+def _extract_is_super_admin_predicate():
+    """Import is_super_admin(), call it to get the decorator from app_commands.check,
+    then walk the decorator's closure to find and return the async predicate function."""
+    from cogs.adminCog import is_super_admin as _is_super_admin_fn
+
+    decorator = _is_super_admin_fn()
+    # app_commands.check wraps the predicate in a decorator whose closure
+    # contains the original coroutine function.
+    import asyncio as _asyncio
+
+    for cell in decorator.__closure__ or []:
+        try:
+            obj = cell.cell_contents
+            if callable(obj) and _asyncio.iscoroutinefunction(obj):
+                return obj
+        except ValueError:
+            continue
+    raise RuntimeError("Could not extract predicate from is_super_admin()")
+
+
+class TestIsSuperAdmin:
+    """Tests for the is_super_admin() decorator factory.
+
+    is_super_admin() wraps _check_is_super_admin as an app_commands.check predicate.
+    When the check fails it sends an ephemeral message and returns False.
+    """
+
+    def test_is_super_admin_returns_callable(self):
+        """is_super_admin() returns a callable (app_commands.check wrapper)."""
+        from cogs.adminCog import is_super_admin
+
+        decorator = is_super_admin()
+        assert callable(decorator)
+
+    def test_predicate_returns_true_for_developer(self):
+        """Predicate returns True when user is in DEVELOPERS."""
+        dev_user_id = 123456789
+        interaction = _create_mock_interaction()
+        interaction.user.id = dev_user_id
+        interaction.response.send_message = AsyncMock()
+
+        predicate = _extract_is_super_admin_predicate()
+
+        with patch.dict("os.environ", {"DEVELOPERS": str(dev_user_id)}):
+            result = asyncio.run(predicate(interaction))
+
+        assert result is True
+        interaction.response.send_message.assert_not_awaited()
+
+    def test_predicate_returns_false_and_sends_message_for_non_developer(self):
+        """Predicate returns False and sends ephemeral error message for non-developer."""
+        interaction = _create_mock_interaction()
+        interaction.user.id = 999999999  # not in DEVELOPERS
+        interaction.response.send_message = AsyncMock()
+
+        predicate = _extract_is_super_admin_predicate()
+
+        with patch.dict("os.environ", {"DEVELOPERS": "111222333"}):
+            result = asyncio.run(predicate(interaction))
+
+        assert result is False
+        interaction.response.send_message.assert_awaited_once()
+        call_args = str(interaction.response.send_message.call_args)
+        assert "super-admin" in call_args.lower() or "privilege" in call_args.lower()
+
+    def test_predicate_error_message_is_ephemeral(self):
+        """Error message sent by is_super_admin predicate is ephemeral."""
+        interaction = _create_mock_interaction()
+        interaction.user.id = 999999999
+        interaction.response.send_message = AsyncMock()
+
+        predicate = _extract_is_super_admin_predicate()
+
+        with patch.dict("os.environ", {"DEVELOPERS": "111222333"}):
+            asyncio.run(predicate(interaction))
+
+        call_kwargs = interaction.response.send_message.call_args.kwargs
+        assert call_kwargs.get("ephemeral") is True
+
+
 if __name__ == "__main__":
     pytest.main([__file__])

@@ -1,7 +1,7 @@
 # BountyBot Session Compaction
 
 **Generated**: 2026-05-05
-**Session**: All phases complete. Phase D (skins/rendering) done. Stack nuked post-testing.
+**Session**: All E2E phases complete. CI pipeline green. Bot permissions tightened. Stack nuked.
 
 ---
 
@@ -65,13 +65,21 @@
 - Completely clean slate on next rebuild: fresh DB, assets re-downloaded from GDrive on startup
 - Both accounts need `/profile` to re-register after next stack rebuild
 - Guild needs `/admin_setup` after next rebuild
-- **Update `GAME_OBJS_FILEID` before rebuilding** — new archive ID `1oGwq6fm4OwGAYvwG94hEEVGt5e7a5Z1_`
+- **Update `GAME_OBJS_FILEID` before rebuilding** — new archive ID `1oGwq6fm4OwGAYvwG94hEEVGt5e7a5Z1_` (already set in .env)
 
-### Guild Config (for re-setup)
-- Guild ID: `1490693399307616276`
-- Admin role: `BountyBot Admin` ID `1495550109381951549`
-- XP Thresholds to re-apply: `{"Silver": 10, "Gold": 20, "Platinum": 30, "Prestige": 50}`
-- Starting credits: 0 (default)
+---
+
+## CI Pipeline Status — ALL GREEN ✅
+
+| Suite | Result |
+|-------|--------|
+| blender-service | 127 passed |
+| bot-core | 3169 passed, 1 skipped |
+| discord-gateway | 2289 passed |
+| ruff lint | clean |
+| pylint | 10.00/10 |
+
+**Last commit**: `bd898ca`
 
 ---
 
@@ -98,52 +106,14 @@
 | 12 — Admin + config | ✅ Done |
 | D — Blender/skins | ✅ Done (D.5–D.11 tested; D.12–D.15 skipped as out of scope) |
 
-### Phase D Results
-| Item | Status | Notes |
-|------|--------|-------|
-| D.1 `/ship_skin ship:Betty skin:Default` | ✅ | Shows icon |
-| D.2 `/ship_skin ship:Aegir skin:urban-camo` | ✅ | Shows skin image |
-| D.3 `/ship_skin ship:Phantom XT skin:Default` | ✅ | Shows icon |
-| D.4 `/ship_skin ship:Betty skin:nonexistent` | ✅ | Error: skin not found |
-| D.5 `/render_skin ship:Betty skin:Default` | ✅ | PNG + AEI buttons; first render slow (warmup?) |
-| D.6 `/render_skin ship:Aegir skin:urban-camo` | ✅ | Rendered correctly |
-| D.7 `/render_skin ship:Kinzer RS skin:racing-stripes` | ✅ | 3-region render worked |
-| D.8 AEI (Android/ETC1) button | ✅ | Fixed by B.74 (4px alignment) |
-| D.9 AEI (PC/DXT5) button | ✅ | Fixed by B.74 |
-| D.10 `/make_skin_texture ship:Betty skin:Default` | ✅ | High-res (6K) works for Nitro users |
-| D.11 `/make_skin_texture ship:Aegir skin:ferrari` | ✅ | Returns base+skinBase (acceptable) |
-| D.12–D.15 | ⏳ skipped | Out of scope per user decision |
-
----
-
-## Uncommitted Changes (NOT yet in git)
-
-All changes are in the working tree and deployed/tested. User will request commit when ready.
-
-| File | Change |
-|------|--------|
-| `services/discord-gateway/src/cogs/adminCog.py` | `_check_is_super_admin` + `is_super_admin()` added |
-| `services/discord-gateway/src/cogs/devCog.py` | Super-admin gate + preload retry (5 attempts) |
-| `services/discord-gateway/src/cogs/schedulerCog.py` | Super-admin gate on all 6 commands |
-| `services/discord-gateway/src/cogs/shopCog.py` | `/shop` and `/shops` now ephemeral (B.69) |
-| `services/discord-gateway/src/cogs/skinsCog.py` | Preload retry fix (B.73) |
-| `services/bot-core/src/persist/repositories/config_repository.py` | `reset_to_defaults` preserves infra config (B.66) |
-| `services/bot-core/src/utils/shop_announcement.py` | Tier-aware shop announcement (B.70) |
-| `services/bot-core/src/utils/executors/shop_refresh_executor.py` | Passes tier to announcement |
-| `services/bot-core/import_data/ship/most_wanted.blue_fyre.json` | `skinnable: true` |
-| `services/bot-core/import_data/ship/void.voidx.json` | `skinnable: true` |
-| `services/bot-core/import_data/ship/kaamo_club.phantom_xt.json` | `skinnable: true` |
-| `services/bot-core/import_data/ship/Nivelian.Salvéhn.json` | `skinnable: true` |
-| `services/blender-service/src/services/aei_conversion_service.py` | 4px alignment snap before AEI encode (B.74) |
-
 ---
 
 ## Open Defects
 
 | ID | Sev | Summary | Status |
 |----|-----|---------|--------|
-| B.74 | 🟠 | AEI conversion fails — dimensions not multiples of 4 | **closed** — fixed this session |
-| B.73 | 🟡 | skinsCog preload retry missing | **closed** — fixed this session |
+| B.74 | 🟠 | AEI conversion fails — dimensions not multiples of 4 | **closed** — fixed |
+| B.73 | 🟡 | skinsCog preload retry missing | **closed** — fixed |
 | B.67 | 🔵 | `duel_expire` executor bulk mode missing | **OPEN** |
 | B.62 | 🟡 | No display_name column | **DEFERRED** post-release |
 | B.59 | 🔵 | `base_reward` lacks `ge=0` guard | **OPEN** |
@@ -153,6 +123,14 @@ All changes are in the working tree and deployed/tested. User will request commi
 ---
 
 ## Key Architecture Notes
+
+### Bot Discord Permissions
+- **Old**: `permissions=8` (Administrator — too broad)
+- **New**: `permissions=4507997674010673` (minimum required set)
+- **Invite URL**: `https://discord.com/oauth2/authorize?client_id=1379827884851593256&permissions=4507997674010673&integration_type=0&scope=bot`
+- **Permissions included**: VIEW_CHANNEL, MANAGE_ROLES, MANAGE_GUILD, SEND_MESSAGES, MANAGE_CHANNELS, MANAGE_MESSAGES, EMBED_LINKS, ATTACH_FILES, READ_MESSAGE_HISTORY, MANAGE_PERMISSIONS, USE_APPLICATION_COMMANDS
+- **Role hierarchy**: Bot's managed role must be above all game-created roles. Since `/admin_setup` creates all game roles, bot must join server BEFORE running setup — roles land below bot's role automatically.
+- Bot Admin role (pre-existing, user-specified at setup) is only READ for permission checks — bot never assigns it, so no hierarchy concern.
 
 ### Super-Admin Gate
 - `_check_is_super_admin(interaction)` + `is_super_admin()` in `adminCog.py`
@@ -180,23 +158,24 @@ flogger.error("XxxCog: All preload attempts exhausted.")
 - `skinnable=true` + `compatibleSkins` populated → static image support via `/ship_skin`
 - `skinnable=true` + `compatibleSkins={}` → Blender render only (Phantom XT, Salvéhn)
 - `texture_regions` → number of mask regions for Blender compositing (1, 2, or 3)
-- ALL 65 ships now have `skinnable=true` after this session's JSON fixes
+- ALL 65 ships now have `skinnable=true`
 
 ### AEI Conversion (B.74 fix)
 - AEPi requires image dimensions to be multiples of 4
 - Fix: `round(dim / 4) * 4` snap in `aei_conversion_service.py` before encoding
-- Uses `Image.NEAREST` — nearest-neighbor rescale, no interpolation
+- Uses `Image.NEAREST` — nearest-neighbor rescale
 
 ### GDrive Asset Archive
-- **Current file ID**: `1Z7S3ZtE7siZuSKuEob8cMmMicHXzVZLx` (old, pre-upscale)
-- **New archive**: `1oGwq6fm4OwGAYvwG94hEEVGt5e7a5Z1_` — 15.2GB, confirmed downloadable, sharing set to "Anyone with link"
-- **TODO**: Update `GAME_OBJS_FILEID` in `.env` and `.env.example` to new ID
+- **New file ID**: `1oGwq6fm4OwGAYvwG94hEEVGt5e7a5Z1_` — 15.2GB upscaled assets (already set in .env)
 - Archive must contain folder named `"game objects"` (with space) — entrypoint renames to `game-objects`
 - Skip check: entrypoint skips download if `.bmp` or `.jpg` found in target dir
 
-### Static Skin Images
-- Pre-composited skin PNGs hosted on **postimg.cc** — URLs in `compatibleSkins` JSON field
-- High-res (6K) textures work fine; Nitro users can upload, non-Nitro hit 8MB Discord limit (not a bug)
+### B.41 — Loadout consistency equip guard
+- `loadout_consistency_service.equip_one()` now raises `ValueError("No unequipped copies remain")` when all copies of an item are already equipped across ships
+- `inventoryCog` equip autocomplete now filters out fully-equipped items
+
+### adminCog._check_is_admin (B.40)
+- Now uses `interaction.member` directly (with fallback to `guild.get_member()`) rather than calling `get_member()` first
 
 ---
 
@@ -249,11 +228,12 @@ sudo docker exec bountybot-db psql -U bounty -d bountydb -c \
 | `/proj/DEFECTS.md` | All open/closed defects |
 | `/proj/E2E_TEST_CHECKLIST.md` | Full E2E checklist |
 | `/proj/COMPACTION.md` | This file |
-| `/proj/.env` | `GAME_OBJS_FILEID` needs updating to new archive ID |
-| `/proj/.env.example` | Same |
-| `services/discord-gateway/src/cogs/adminCog.py` | `_check_is_super_admin`, `is_super_admin` |
+| `/proj/.env` | `GAME_OBJS_FILEID` + bot invite URL (permissions updated) |
+| `services/discord-gateway/src/cogs/adminCog.py` | `_check_is_super_admin`, `is_super_admin`, `_check_is_admin` (B.40) |
 | `services/discord-gateway/src/cogs/skinsCog.py` | Skin/render commands + preload retry |
 | `services/discord-gateway/src/cogs/devCog.py` | `/load_data`, `/reload_autocomplete` + preload retry |
+| `services/discord-gateway/src/cogs/inventoryCog.py` | equip_autocomplete filters fully-equipped items |
+| `services/bot-core/src/services/loadout_consistency_service.py` | B.41 equip guard |
 | `services/bot-core/src/utils/shop_announcement.py` | Tier-aware shop announcement |
 | `services/bot-core/src/persist/repositories/config_repository.py` | `reset_to_defaults` preserves infra |
 | `services/bot-core/import_data/ship/` | Ship JSON seed data (skinnable fixes applied) |
@@ -263,8 +243,7 @@ sudo docker exec bountybot-db psql -U bounty -d bountydb -c \
 
 ## Next Steps
 
-1. **Update GDrive file ID**: set `GAME_OBJS_FILEID=1oGwq6fm4OwGAYvwG94hEEVGt5e7a5Z1_` in `.env` and `.env.example`
-2. **Commit all uncommitted changes** when user requests
-3. **Address remaining open defects** (B.67, B.59, B.58, A.20) — user decides priority
-4. **Phase 1.5** (non-admin permission denials) — deferred, revisit pre-release
-5. Stack is nuked — rebuild when ready for further testing
+1. Address remaining open defects (B.67, B.59, B.58, A.20) — user decides priority
+2. **Phase 1.5** (non-admin permission denials) — deferred, revisit pre-release
+3. Stack rebuild when ready — bot invite URL updated, use new permissions integer
+4. After rebuild: bot joins first, then `/admin_setup`, then `/profile` both accounts, then reseed ships

@@ -1,8 +1,12 @@
 """
-A* Pathfinding Service for star system routes.
+Pathfinding Service for star system routes.
 
-Finds the shortest path between two star systems using the A* algorithm
-with Euclidean distance as the heuristic. Edge weights are uniform (1 hop).
+Finds the shortest path between two star systems using a zero-heuristic A*
+(equivalent to Dijkstra / BFS), guaranteeing the shortest hop count.
+
+A Euclidean coordinate heuristic is inadmissible for uniform-hop-cost graphs
+because pixel distances do not reflect hop counts (B.77). With only ~34 nodes
+the zero heuristic is perfectly adequate.
 """
 
 from __future__ import annotations
@@ -53,13 +57,17 @@ class PathfindingService:
 
     @staticmethod
     def _heuristic(a: SystemNode, b: SystemNode) -> float:
-        """Euclidean distance heuristic."""
-        return SystemGraphService.euclidean_distance(a, b)
+        """Zero heuristic — degrades A* to Dijkstra, guaranteeing shortest hop count.
+
+        A Euclidean coordinate heuristic is inadmissible for uniform-hop-cost graphs
+        because pixel distances do not reflect hop counts (B.77).
+        """
+        return 0.0
 
     def make_route(self, start: str, end: str) -> list[str] | PathfindingError:
         """Find shortest path from start to end system.
 
-        Uses A* with Euclidean distance heuristic and uniform hop costs.
+        Uses zero-heuristic A* (Dijkstra) with uniform hop costs.
 
         Args:
             start: Name of starting system.

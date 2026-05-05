@@ -22,6 +22,7 @@ class InitializeGuildRequest(BaseModel):
     gold_role_id: int | None = None
     platinum_bounty_channel_id: int | None = None
     platinum_role_id: int | None = None
+    shop_announcements_role_id: int | None = None
 
 
 class GuildInitializationResponse(BaseModel):
@@ -35,6 +36,7 @@ class GuildInitializationResponse(BaseModel):
     silver_role_id: int | None = None
     gold_role_id: int | None = None
     platinum_role_id: int | None = None
+    shop_announcements_role_id: int | None = None
     message: str
 
 
@@ -95,8 +97,10 @@ class AdminGiveItemRequest(BaseModel):
     guild_id: int = Field(ge=1)
     user_id: int = Field(ge=1)
     item_name: str = Field(max_length=256)
-    # A.45: 4-value concrete set — ship is intentionally excluded; ships use AdminGiveShipRequest.
-    item_type: Literal["primary_weapon", "secondary_weapon", "turret_weapon", "module"]
+    # B.80: item_type is now optional — the server resolves the concrete type
+    # from the item catalog by name (same pattern as ShopService.sell_item A.42b).
+    # When provided, it must be a valid 4-value concrete set (ship excluded).
+    item_type: Literal["primary_weapon", "secondary_weapon", "turret_weapon", "module"] | None = None
     quantity: int = Field(gt=0, default=1)
 
 
@@ -104,8 +108,11 @@ class AdminRemoveItemRequest(BaseModel):
     guild_id: int = Field(ge=1)
     user_id: int = Field(ge=1)
     item_name: str = Field(max_length=256)
-    # A.45: 4-value concrete set — ship is intentionally excluded; ships use AdminRemoveShipRequest.
-    item_type: Literal["primary_weapon", "secondary_weapon", "turret_weapon", "module"]
+    # A.45 / B.80-style: item_type is now optional. When omitted, the server resolves
+    # the concrete type from the player's inventory by item_name (same pattern as
+    # AdminGiveItemRequest / ShopService.sell_item A.42b).
+    # Ship is intentionally excluded; ships use AdminRemoveShipRequest.
+    item_type: Literal["primary_weapon", "secondary_weapon", "turret_weapon", "module"] | None = None
     quantity: int = Field(gt=0, default=1)
 
 

@@ -137,6 +137,7 @@ async def initialize_guild(
                 "gold_role_id": request.gold_role_id,
                 "platinum_bounty_channel_id": request.platinum_bounty_channel_id,
                 "platinum_role_id": request.platinum_role_id,
+                "shop_announcements_role_id": request.shop_announcements_role_id,
             }
 
             await config_service.create_or_update_config(db, config_data)
@@ -185,6 +186,7 @@ async def initialize_guild(
                 silver_role_id=request.silver_role_id,
                 gold_role_id=request.gold_role_id,
                 platinum_role_id=request.platinum_role_id,
+                shop_announcements_role_id=request.shop_announcements_role_id,
                 message=f"Guild {request.guild_id} initialized successfully with {shops_created} shops",
             )
 
@@ -730,7 +732,11 @@ async def refresh_shop(
                 config_repo = ConfigRepository()
                 config = await config_repo.get_by_guild_id(db, request.guild_id)
                 shop_channel_id = getattr(config, "shop_channel_id", None) if config else None
-                bounty_hunter_role_id = getattr(config, "bounty_hunter_role_id", None) if config else None
+                # Prefer shop_announcements_role_id over bounty_hunter_role_id.
+                # Only use it when it's a real integer ID (guards against MagicMock attrs in tests).
+                _shop_ann_id = getattr(config, "shop_announcements_role_id", None) if config else None
+                _bh_role_id = getattr(config, "bounty_hunter_role_id", None) if config else None
+                bounty_hunter_role_id = _shop_ann_id if isinstance(_shop_ann_id, int) else _bh_role_id
             except Exception as cfg_exc:  # pylint: disable=broad-exception-caught
                 flogger.warning(
                     f"Admin shop refresh: could not look up guild config for guild={request.guild_id}, "
@@ -906,12 +912,16 @@ async def admin_give_item(
     admin_user_id: int,
     inventory_service: InventoryService = Depends(get_inventory_service),
 ):
-    """Give an item directly to a player's inventory (no credit cost). Requires admin permissions."""
+    """Give an item directly to a player's inventory (no credit cost). Requires admin permissions.
+
+    B.80: item_type is now optional in the request. When omitted, the concrete type is resolved
+    from the item catalog by name (same pattern as ShopService.sell_item, A.42b).
+    """
     if not await verify_admin_permissions(request.guild_id, admin_user_id):
         raise HTTPException(status_code=403, detail="Admin permissions required")
 
     flogger.info(
-        f"Admin giving {request.quantity}x {request.item_name} ({request.item_type}) "
+        f"Admin giving {request.quantity}x {request.item_name} (item_type={request.item_type!r}) "
         f"to user {request.user_id} in guild {request.guild_id}"
     )
 
@@ -932,10 +942,33 @@ async def admin_give_item(
                     status_code=404, detail=f"Player not found for user {request.user_id} in guild {request.guild_id}"
                 )
 
+            # B.80: resolve concrete item_type from the item catalog when not provided by caller.
+            # This mirrors the ShopService.sell_item pattern (A.42b) but looks up from the
+            # game catalog rather than the player's inventory (give-item doesn't require the
+            # item to already be in the player's inventory).
+            resolved_item_type = request.item_type
+            if resolved_item_type is None:
+                item_details = await inventory_service._get_item_details(db, request.item_name)
+                if not item_details:
+                    raise HTTPException(
+                        status_code=404,
+                        detail=f"Item '{request.item_name}' not found in game catalog",
+                    )
+                resolved_item_type = item_details["type"]
+                # Ships are not valid for /give-item — use /give-ship instead
+                if resolved_item_type == "ship":
+                    raise HTTPException(
+                        status_code=400,
+                        detail=(
+                            f"Item '{request.item_name}' is a ship. "
+                            "Use /admin_give_ship (or POST /admin/give-ship) to give ships."
+                        ),
+                    )
+
             transaction_details = await inventory_service.add_item_to_inventory(
                 db,
                 player.id,
-                request.item_type,
+                resolved_item_type,
                 request.item_name,
                 request.quantity,
             )
@@ -950,7 +983,7 @@ async def admin_give_item(
                 details={
                     "player_id": player.id,
                     "item_name": request.item_name,
-                    "item_type": request.item_type,
+                    "item_type": resolved_item_type,
                     "quantity": request.quantity,
                 },
             )
@@ -977,12 +1010,18 @@ async def admin_remove_item(
     admin_user_id: int,
     inventory_service: InventoryService = Depends(get_inventory_service),
 ):
-    """Remove an item from a player's inventory. Requires admin permissions."""
+    """Remove an item from a player's inventory. Requires admin permissions.
+
+    B.80-style: item_type is now optional in AdminRemoveItemRequest. When omitted, the
+    concrete type is resolved from the player's inventory by item_name (same pattern as
+    ShopService.sell_item A.42b). Returns 404 if the item is not found in the player's
+    inventory (the item must be owned to be removed).
+    """
     if not await verify_admin_permissions(request.guild_id, admin_user_id):
         raise HTTPException(status_code=403, detail="Admin permissions required")
 
     flogger.info(
-        f"Admin removing {request.quantity}x {request.item_name} ({request.item_type}) "
+        f"Admin removing {request.quantity}x {request.item_name} (item_type={request.item_type!r}) "
         f"from user {request.user_id} in guild {request.guild_id}"
     )
 
@@ -990,6 +1029,7 @@ async def admin_remove_item(
         async with get_db_session() as db:
             # Resolve Discord user_id → player_id
             player_repo = PlayerRepository()
+            from persist.repositories.inventory_repository import InventoryRepository
             from persist.repositories.user_repository import UserRepository
 
             user_repo = UserRepository()
@@ -1003,10 +1043,31 @@ async def admin_remove_item(
                     status_code=404, detail=f"Player not found for user {request.user_id} in guild {request.guild_id}"
                 )
 
+            # B.80-style: resolve concrete item_type from the player's inventory when not provided.
+            # The item must already be in the player's inventory to be removed.
+            resolved_item_type = request.item_type
+            if resolved_item_type is None:
+                inventory_repo = InventoryRepository()
+                inv_rows = await inventory_repo.get_player_items_by_name(db, player.id, request.item_name)
+                if not inv_rows:
+                    raise HTTPException(
+                        status_code=404,
+                        detail=(
+                            f"Item '{request.item_name}' not found in player {player.id}'s inventory"
+                        ),
+                    )
+                if len(inv_rows) > 1:
+                    # Defensive: cross-type name collision — shouldn't occur in current catalog
+                    flogger.warning(
+                        f"admin_remove_item: multiple inventory rows for item_name='{request.item_name}' "
+                        f"player_id={player.id}; using first row type='{inv_rows[0].item_type}'"
+                    )
+                resolved_item_type = inv_rows[0].item_type
+
             transaction_details = await inventory_service.remove_item_from_inventory(
                 db,
                 player.id,
-                request.item_type,
+                resolved_item_type,
                 request.item_name,
                 request.quantity,
             )
@@ -1021,7 +1082,7 @@ async def admin_remove_item(
                 details={
                     "player_id": player.id,
                     "item_name": request.item_name,
-                    "item_type": request.item_type,
+                    "item_type": resolved_item_type,
                     "quantity": request.quantity,
                 },
             )

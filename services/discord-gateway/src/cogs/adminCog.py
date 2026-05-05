@@ -295,6 +295,7 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
                 "silver_role_id": channel_ids.get("silver_role_id"),
                 "gold_role_id": channel_ids.get("gold_role_id"),
                 "platinum_role_id": channel_ids.get("platinum_role_id"),
+                "shop_announcements_role_id": channel_ids.get("shop_announcements_role_id"),
             }
             resp = await self.http_client.post(
                 f"{api_base}/admin/guilds/initialize",
@@ -348,6 +349,11 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
                 tier_rid = channel_ids.get(tier_key)
                 if tier_rid:
                     embed.add_field(name=f"Bounty Hunter {tier_label}", value=f"<@&{tier_rid}>", inline=True)
+
+            # Show Shop Announcements role if created
+            shop_ann_role_id = channel_ids.get("shop_announcements_role_id")
+            if shop_ann_role_id:
+                embed.add_field(name="Shop Announcements Role", value=f"<@&{shop_ann_role_id}>", inline=True)
 
             embed.set_footer(text="The bot is now ready for use in this guild!")
 
@@ -1599,7 +1605,13 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
     async def item_name_autocomplete(
         self, interaction: discord.Interaction, current: str
     ) -> list[app_commands.Choice[str]]:
-        """Autocomplete for item names — served from preloaded in-memory cache (zero HTTP per keystroke)."""
+        """Autocomplete for item names — served from preloaded in-memory cache (zero HTTP per keystroke).
+
+        Used by /admin_give_item: shows the full game catalog since we're giving items the
+        player may not own yet.  The item_type filter honours any item_type already filled
+        in the command, but item_type is not a parameter on /admin_give_item so it is
+        always None there (all categories shown).
+        """
         try:
             # Determine the item type category from the already-filled item_type parameter.
             item_type = getattr(interaction.namespace, "item_type", None)
@@ -1624,6 +1636,84 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
         except Exception:  # pylint: disable=broad-exception-caught
             return []
 
+    async def remove_item_autocomplete(
+        self, interaction: discord.Interaction, current: str
+    ) -> list[app_commands.Choice[str]]:
+        """Autocomplete for /admin_remove_item item_name — shows the target user's inventory.
+
+        When ``interaction.namespace.user`` is already selected:
+        1. Resolve the target user → player_id via POST /api/v1/players/ (upsert pattern).
+        2. Fetch their inventory via GET /api/v1/inventory/player/{player_id}.
+        3. Return choices filtered by ``current`` text, labelled "ItemName (Type) xN".
+
+        Falls back to showing all equippable game-catalog items when:
+        - No user is selected yet (namespace.user is None)
+        - Player resolution fails (guild not configured, network error, etc.)
+        - Inventory fetch fails
+
+        Degrades silently on any error (returns [] or catalog fallback) — autocomplete
+        must never raise.
+        """
+        try:
+            norm_current = normalize_for_search(current)
+            target_user = getattr(interaction.namespace, "user", None)
+
+            if target_user is None:
+                # No user selected yet — prompt the user to pick a user first
+                return [app_commands.Choice(name="— Select a user first —", value="__select_user_first__")]
+
+            from utils.autocomplete_helpers import resolve_player_id
+
+            player_id = await resolve_player_id(
+                self.http_client, api_base, target_user.id, interaction.guild_id, timeout=3.0
+            )
+            if player_id is not None:
+                try:
+                    inv_resp = await self.http_client.get(
+                        f"{api_base}/inventory/player/{player_id}", timeout=3
+                    )
+                    if inv_resp.status_code == 200:
+                        items = inv_resp.json()
+                        choices: list[app_commands.Choice[str]] = []
+                        seen: set[str] = set()
+                        for item in items:
+                            item_name = item.get("item_name") or ""
+                            item_type = item.get("item_type") or ""
+                            quantity = item.get("quantity") or 0
+                            if not item_name or item_name in seen:
+                                continue
+                            qty_suffix = f" x{quantity}" if quantity and quantity > 1 else ""
+                            label = f"{item_name} ({item_type.replace('_', ' ').title() or 'Item'}){qty_suffix}"
+                            if norm_current in normalize_for_search(label) or norm_current in normalize_for_search(
+                                item_name
+                            ):
+                                seen.add(item_name)
+                                choices.append(app_commands.Choice(name=label[:100], value=item_name))
+                        return choices[:25]
+                except Exception:  # pylint: disable=broad-exception-caught
+                    pass  # Fall through to catalog fallback
+
+            flogger.warning(
+                f"remove_item_autocomplete: could not resolve inventory for "
+                f"user={getattr(target_user, 'id', None)} guild={interaction.guild_id}; "
+                "falling back to all items"
+            )
+
+            # Fallback: show all game-catalog items across all equippable categories
+            choices_fb: list[app_commands.Choice[str]] = []
+            seen_fb: set[str] = set()
+            for category in ("primary_weapon", "secondary_weapon", "turret_weapon", "module"):
+                names = await self._item_catalog.get(category) or []
+                for name in names:
+                    if name and name not in seen_fb and norm_current in normalize_for_search(name):
+                        seen_fb.add(name)
+                        choices_fb.append(app_commands.Choice(name=name, value=name))
+                if len(choices_fb) >= 25:
+                    break
+            return choices_fb[:25]
+        except Exception:  # pylint: disable=broad-exception-caught
+            return []
+
     async def game_ship_autocomplete(
         self, _interaction: discord.Interaction, current: str
     ) -> list[app_commands.Choice[str]]:
@@ -1643,16 +1733,7 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
     @app_commands.describe(
         user="Target player",
         item_name="Item to give (autocomplete from game data)",
-        item_type="Type of item",
         quantity="Number of items to give (default: 1)",
-    )
-    @app_commands.choices(
-        item_type=[
-            app_commands.Choice(name="Primary Weapon", value="primary_weapon"),
-            app_commands.Choice(name="Secondary Weapon", value="secondary_weapon"),
-            app_commands.Choice(name="Turret", value="turret_weapon"),
-            app_commands.Choice(name="Module", value="module"),
-        ]
     )
     @app_commands.autocomplete(item_name=item_name_autocomplete)
     async def admin_give_item(
@@ -1660,20 +1741,22 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
         interaction: discord.Interaction,
         user: discord.User,
         item_name: str,
-        item_type: str,
         quantity: int = 1,
     ):
-        """Give an item directly to a player's inventory (no credit cost)."""
+        """Give an item directly to a player's inventory (no credit cost).
+
+        B.80: item_type parameter removed — the server resolves it from the item name.
+        """
         await interaction.response.defer(thinking=True, ephemeral=True)
         if not await _check_is_admin(interaction):
             await interaction.followup.send("❌ This command requires admin privileges.", ephemeral=True)
             return
         try:
+            # B.80: send only player_id, item_name, quantity — let the server resolve item_type
             payload = {
                 "guild_id": interaction.guild_id,
                 "user_id": user.id,
                 "item_name": item_name,
-                "item_type": item_type,
                 "quantity": quantity,
             }
             resp = await self.http_client.post(
@@ -1693,13 +1776,17 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
             resp.raise_for_status()
             result = resp.json()
 
+            # item_type is resolved server-side and returned in the response
+            resolved_type = result.get("item_type", "")
+            type_display = resolved_type.replace("_", " ").title() if resolved_type else "Unknown"
+
             embed = discord.Embed(
                 title="✅ Item Given",
                 description=result.get("message", "Item given successfully."),
                 color=discord.Color.green(),
             )
             embed.add_field(name="Item", value=item_name, inline=True)
-            embed.add_field(name="Type", value=item_type.replace("_", " ").title(), inline=True)
+            embed.add_field(name="Type", value=type_display, inline=True)
             embed.add_field(name="Quantity", value=str(quantity), inline=True)
             embed.add_field(name="Player", value=user.mention, inline=True)
             embed.add_field(name="New Total", value=str(result.get("new_total_quantity", "?")), inline=True)
@@ -1723,38 +1810,35 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
     @app_commands.command(name="admin_remove_item", description="[ADMIN] Remove an item from a player's inventory")
     @app_commands.describe(
         user="Target player",
-        item_name="Item to remove (autocomplete from game data)",
-        item_type="Type of item",
+        item_name="Item to remove (autocomplete from player's inventory)",
         quantity="Number of items to remove (default: 1)",
     )
-    @app_commands.choices(
-        item_type=[
-            app_commands.Choice(name="Primary Weapon", value="primary_weapon"),
-            app_commands.Choice(name="Secondary Weapon", value="secondary_weapon"),
-            app_commands.Choice(name="Turret", value="turret_weapon"),
-            app_commands.Choice(name="Module", value="module"),
-        ]
-    )
-    @app_commands.autocomplete(item_name=item_name_autocomplete)
+    @app_commands.autocomplete(item_name=remove_item_autocomplete)
     async def admin_remove_item(
         self,
         interaction: discord.Interaction,
         user: discord.User,
         item_name: str,
-        item_type: str,
         quantity: int = 1,
     ):
-        """Remove an item from a player's inventory."""
+        """Remove an item from a player's inventory.
+
+        item_type parameter removed — the server resolves it from the player's inventory
+        by item_name (same pattern as B.80 /admin_give_item and A.42b /sell).
+        """
         await interaction.response.defer(thinking=True, ephemeral=True)
+        if item_name == "__select_user_first__":
+            await interaction.followup.send("❌ Please select a user first.", ephemeral=True)
+            return
         if not await _check_is_admin(interaction):
             await interaction.followup.send("❌ This command requires admin privileges.", ephemeral=True)
             return
         try:
+            # item_type omitted — the server resolves it from the player's inventory
             payload = {
                 "guild_id": interaction.guild_id,
                 "user_id": user.id,
                 "item_name": item_name,
-                "item_type": item_type,
                 "quantity": quantity,
             }
             resp = await self.http_client.post(
@@ -1774,13 +1858,17 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
             resp.raise_for_status()
             result = resp.json()
 
+            # item_type resolved server-side and returned in the response
+            resolved_type = result.get("item_type", "")
+            type_display = resolved_type.replace("_", " ").title() if resolved_type else "Unknown"
+
             embed = discord.Embed(
                 title="✅ Item Removed",
                 description=result.get("message", "Item removed successfully."),
                 color=discord.Color.orange(),
             )
             embed.add_field(name="Item", value=item_name, inline=True)
-            embed.add_field(name="Type", value=item_type.replace("_", " ").title(), inline=True)
+            embed.add_field(name="Type", value=type_display, inline=True)
             embed.add_field(name="Quantity Removed", value=str(quantity), inline=True)
             embed.add_field(name="Player", value=user.mention, inline=True)
             embed.add_field(name="Remaining", value=str(result.get("new_quantity", 0)), inline=True)

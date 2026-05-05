@@ -240,6 +240,107 @@ class TestAdminGiveItem:
         resp = client.post("/api/v1/admin/give-item?admin_user_id=999", json=payload)
         assert resp.status_code == 422  # schema validation error
 
+    @patch("api.routers.admin.get_db_session")
+    @patch("api.routers.admin.PlayerRepository")
+    @patch("persist.repositories.user_repository.UserRepository")
+    def test_give_item_without_item_type_resolves_from_catalog(
+        self, mock_user_repo_cls, mock_player_repo_cls, mock_get_db, client, mock_inventory_service
+    ):
+        """B.80: item_type omitted — server resolves concrete type from item catalog."""
+        _configure_db_mock(mock_get_db)
+
+        mock_user_repo = AsyncMock()
+        mock_user_repo.get_by_discord_id = AsyncMock(return_value=make_mock_user())
+        mock_user_repo_cls.return_value = mock_user_repo
+
+        mock_player_repo = AsyncMock()
+        mock_player_repo.get_by_user_and_guild = AsyncMock(return_value=make_mock_player())
+        mock_player_repo_cls.return_value = mock_player_repo
+
+        # Simulate _get_item_details returning the resolved concrete type
+        mock_inventory_service._get_item_details = AsyncMock(
+            return_value={"name": "Pulse Laser", "type": "primary_weapon", "tech_level": 5, "value": 1000}
+        )
+
+        # B.80: no item_type in payload
+        payload = {
+            "guild_id": 67890,
+            "user_id": 111222333,
+            "item_name": "Pulse Laser",
+            "quantity": 1,
+        }
+        with patch("persist.repositories.user_repository.UserRepository", mock_user_repo_cls):
+            resp = client.post("/api/v1/admin/give-item?admin_user_id=999", json=payload)
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["item_name"] == "Pulse Laser"
+        assert data["new_total_quantity"] == 2
+        assert "message" in data
+
+    @patch("api.routers.admin.get_db_session")
+    @patch("api.routers.admin.PlayerRepository")
+    @patch("persist.repositories.user_repository.UserRepository")
+    def test_give_item_without_item_type_item_not_in_catalog(
+        self, mock_user_repo_cls, mock_player_repo_cls, mock_get_db, client, mock_inventory_service
+    ):
+        """B.80: item_type omitted and item not in catalog returns 404."""
+        _configure_db_mock(mock_get_db)
+
+        mock_user_repo = AsyncMock()
+        mock_user_repo.get_by_discord_id = AsyncMock(return_value=make_mock_user())
+        mock_user_repo_cls.return_value = mock_user_repo
+
+        mock_player_repo = AsyncMock()
+        mock_player_repo.get_by_user_and_guild = AsyncMock(return_value=make_mock_player())
+        mock_player_repo_cls.return_value = mock_player_repo
+
+        # _get_item_details returns None for unknown items
+        mock_inventory_service._get_item_details = AsyncMock(return_value=None)
+
+        payload = {
+            "guild_id": 67890,
+            "user_id": 111222333,
+            "item_name": "NonExistentItem",
+            "quantity": 1,
+        }
+        with patch("persist.repositories.user_repository.UserRepository", mock_user_repo_cls):
+            resp = client.post("/api/v1/admin/give-item?admin_user_id=999", json=payload)
+        assert resp.status_code == 404
+        assert "not found in game catalog" in resp.json()["detail"]
+
+    @patch("api.routers.admin.get_db_session")
+    @patch("api.routers.admin.PlayerRepository")
+    @patch("persist.repositories.user_repository.UserRepository")
+    def test_give_item_without_item_type_ship_rejected(
+        self, mock_user_repo_cls, mock_player_repo_cls, mock_get_db, client, mock_inventory_service
+    ):
+        """B.80: item_type omitted but item resolves to ship type returns 400 (use /give-ship)."""
+        _configure_db_mock(mock_get_db)
+
+        mock_user_repo = AsyncMock()
+        mock_user_repo.get_by_discord_id = AsyncMock(return_value=make_mock_user())
+        mock_user_repo_cls.return_value = mock_user_repo
+
+        mock_player_repo = AsyncMock()
+        mock_player_repo.get_by_user_and_guild = AsyncMock(return_value=make_mock_player())
+        mock_player_repo_cls.return_value = mock_player_repo
+
+        # _get_item_details returns ship type
+        mock_inventory_service._get_item_details = AsyncMock(
+            return_value={"name": "Sidewinder", "type": "ship", "tech_level": None, "value": 5000}
+        )
+
+        payload = {
+            "guild_id": 67890,
+            "user_id": 111222333,
+            "item_name": "Sidewinder",
+            "quantity": 1,
+        }
+        with patch("persist.repositories.user_repository.UserRepository", mock_user_repo_cls):
+            resp = client.post("/api/v1/admin/give-item?admin_user_id=999", json=payload)
+        assert resp.status_code == 400
+        assert "ship" in resp.json()["detail"].lower()
+
 
 # ===========================================================================
 # POST /admin/remove-item
@@ -394,13 +495,124 @@ class TestAdminGiveItemA45Rejection:
         assert resp.status_code == 422
 
 
+class TestAdminRemoveItemTypeResolution:
+    """B.80-style: item_type optional — resolved from player inventory when omitted."""
+
+    @patch("api.routers.admin.get_db_session")
+    @patch("api.routers.admin.PlayerRepository")
+    def test_remove_item_without_item_type_resolves_from_inventory(
+        self, mock_player_repo_cls, mock_get_db, client, mock_inventory_service
+    ):
+        """item_type omitted → resolved from player's inventory row by item_name → 200."""
+        _configure_db_mock(mock_get_db)
+
+        mock_user_repo = AsyncMock()
+        mock_user_repo.get_by_discord_id = AsyncMock(return_value=make_mock_user())
+
+        mock_player_repo = AsyncMock()
+        mock_player_repo.get_by_user_and_guild = AsyncMock(return_value=make_mock_player())
+        mock_player_repo_cls.return_value = mock_player_repo
+
+        # Fake inventory row with concrete type
+        mock_inv_row = MagicMock()
+        mock_inv_row.item_type = "primary_weapon"
+
+        mock_inventory_repo = AsyncMock()
+        mock_inventory_repo.get_player_items_by_name = AsyncMock(return_value=[mock_inv_row])
+
+        # No item_type in payload
+        payload = {
+            "guild_id": 67890,
+            "user_id": 111222333,
+            "item_name": "Pulse Laser",
+            "quantity": 1,
+        }
+        # InventoryRepository is imported inside the function body (deferred import),
+        # so we must patch at the source module level.
+        with (
+            patch("persist.repositories.user_repository.UserRepository") as mock_ur,
+            patch("persist.repositories.inventory_repository.InventoryRepository", return_value=mock_inventory_repo),
+        ):
+            mock_ur.return_value = mock_user_repo
+            resp = client.post("/api/v1/admin/remove-item?admin_user_id=999", json=payload)
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["item_name"] == "Pulse Laser"
+        assert "message" in data
+
+    @patch("api.routers.admin.get_db_session")
+    @patch("api.routers.admin.PlayerRepository")
+    def test_remove_item_without_item_type_not_in_inventory_returns_404(
+        self, mock_player_repo_cls, mock_get_db, client
+    ):
+        """item_type omitted → item not found in player's inventory → 404."""
+        _configure_db_mock(mock_get_db)
+
+        mock_user_repo = AsyncMock()
+        mock_user_repo.get_by_discord_id = AsyncMock(return_value=make_mock_user())
+
+        mock_player_repo = AsyncMock()
+        mock_player_repo.get_by_user_and_guild = AsyncMock(return_value=make_mock_player())
+        mock_player_repo_cls.return_value = mock_player_repo
+
+        mock_inventory_repo = AsyncMock()
+        mock_inventory_repo.get_player_items_by_name = AsyncMock(return_value=[])  # empty — not in inventory
+
+        payload = {
+            "guild_id": 67890,
+            "user_id": 111222333,
+            "item_name": "Nonexistent Item",
+            "quantity": 1,
+        }
+        # InventoryRepository is imported inside the function body (deferred import),
+        # so we must patch at the source module level.
+        with (
+            patch("persist.repositories.user_repository.UserRepository") as mock_ur,
+            patch("persist.repositories.inventory_repository.InventoryRepository", return_value=mock_inventory_repo),
+        ):
+            mock_ur.return_value = mock_user_repo
+            resp = client.post("/api/v1/admin/remove-item?admin_user_id=999", json=payload)
+        assert resp.status_code == 404
+        assert "not found" in resp.json()["detail"].lower()
+
+    @patch("api.routers.admin.get_db_session")
+    @patch("api.routers.admin.PlayerRepository")
+    def test_remove_item_with_explicit_item_type_still_works(
+        self, mock_player_repo_cls, mock_get_db, client, mock_inventory_service
+    ):
+        """item_type provided explicitly → passed through without inventory lookup (backward compat)."""
+        _configure_db_mock(mock_get_db)
+
+        mock_user_repo = AsyncMock()
+        mock_user_repo.get_by_discord_id = AsyncMock(return_value=make_mock_user())
+
+        mock_player_repo = AsyncMock()
+        mock_player_repo.get_by_user_and_guild = AsyncMock(return_value=make_mock_player())
+        mock_player_repo_cls.return_value = mock_player_repo
+
+        payload = {
+            "guild_id": 67890,
+            "user_id": 111222333,
+            "item_name": "Pulse Laser",
+            "item_type": "primary_weapon",  # explicit — no inventory lookup needed
+            "quantity": 1,
+        }
+        with patch("persist.repositories.user_repository.UserRepository") as mock_ur:
+            mock_ur.return_value = mock_user_repo
+            resp = client.post("/api/v1/admin/remove-item?admin_user_id=999", json=payload)
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["item_name"] == "Pulse Laser"
+
+
 class TestAdminRemoveItemA45Rejection:
     """A.45 alias rejection tests for POST /api/v1/admin/remove-item."""
 
     def test_admin_remove_item_rejects_alias_with_422(self, client):
         """A.45: posting item_type='weapon' (generic alias) is rejected at schema with HTTP 422.
 
-        AdminRemoveItemRequest now uses Literal[4 concrete values] — 'weapon' is not in the set.
+        AdminRemoveItemRequest allows None but NOT aliases.
+        'weapon' is not in the Literal set, so it is still rejected with 422.
         Mock budget: 0 (schema rejects before any handler is called).
         """
         payload = {

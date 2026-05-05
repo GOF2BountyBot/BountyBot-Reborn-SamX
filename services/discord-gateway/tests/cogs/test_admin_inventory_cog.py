@@ -136,10 +136,18 @@ def mock_admin_cog(mock_bot):
 
 
 class TestAdminGiveItem:
-    """Tests for the /admin_give_item command."""
+    """Tests for the /admin_give_item command.
+
+    B.80: item_type parameter removed from the slash command.
+    The server now resolves the concrete item type from the item name.
+    """
 
     def test_give_item_success(self, mock_admin_cog):
-        """/admin_give_item should give item and show success embed."""
+        """/admin_give_item should give item and show success embed.
+
+        B.80: no item_type in command signature; the server resolves it and returns
+        it in the response (item_type is shown in the embed from the API response).
+        """
         interaction = _create_mock_interaction()
         interaction.user = _create_mock_user(user_id=999888777)
         target_user = _create_mock_user()
@@ -149,7 +157,7 @@ class TestAdminGiveItem:
             {
                 "player_id": 10,
                 "item_name": "Pulse Laser",
-                "item_type": "weapon",
+                "item_type": "primary_weapon",
                 "new_total_quantity": 2,
                 "message": "Gave 1x Pulse Laser to player 10",
             },
@@ -162,7 +170,6 @@ class TestAdminGiveItem:
                 interaction,
                 user=target_user,
                 item_name="Pulse Laser",
-                item_type="weapon",
                 quantity=1,
             )
         )
@@ -172,6 +179,44 @@ class TestAdminGiveItem:
         interaction.followup.send.assert_awaited_once()
         call_kwargs = interaction.followup.send.call_args[1]
         assert "embed" in call_kwargs
+
+    def test_give_item_payload_has_no_item_type(self, mock_admin_cog):
+        """/admin_give_item must NOT send item_type in the HTTP payload (B.80)."""
+        interaction = _create_mock_interaction()
+        interaction.user = _create_mock_user(user_id=999888777)
+        target_user = _create_mock_user()
+
+        resp = _make_http_resp(
+            200,
+            {
+                "player_id": 10,
+                "item_name": "Pulse Laser",
+                "item_type": "primary_weapon",
+                "new_total_quantity": 2,
+                "message": "Gave 1x Pulse Laser to player 10",
+            },
+        )
+        mock_admin_cog.http_client.post = AsyncMock(return_value=resp)
+
+        asyncio.run(
+            mock_admin_cog.admin_give_item.callback(
+                mock_admin_cog,
+                interaction,
+                user=target_user,
+                item_name="Pulse Laser",
+                quantity=1,
+            )
+        )
+
+        # Verify the HTTP POST payload does NOT contain item_type (B.80 key assertion)
+        call_kwargs = mock_admin_cog.http_client.post.call_args[1]
+        sent_json = call_kwargs.get("json", {})
+        assert "item_type" not in sent_json, (
+            f"B.80: /admin_give_item must not send item_type in the payload, got: {sent_json}"
+        )
+        # Verify the required fields ARE present
+        assert sent_json.get("item_name") == "Pulse Laser"
+        assert sent_json.get("quantity") == 1
 
     def test_give_item_not_found_response(self, mock_admin_cog):
         """/admin_give_item should show error message on 404."""
@@ -188,7 +233,6 @@ class TestAdminGiveItem:
                 interaction,
                 user=target_user,
                 item_name="Pulse Laser",
-                item_type="weapon",
                 quantity=1,
             )
         )
@@ -213,7 +257,6 @@ class TestAdminGiveItem:
                 interaction,
                 user=target_user,
                 item_name="FakeItem",
-                item_type="weapon",
                 quantity=1,
             )
         )
@@ -236,7 +279,6 @@ class TestAdminGiveItem:
                 interaction,
                 user=target_user,
                 item_name="Pulse Laser",
-                item_type="weapon",
                 quantity=1,
             )
         )
@@ -252,10 +294,17 @@ class TestAdminGiveItem:
 
 
 class TestAdminRemoveItem:
-    """Tests for the /admin_remove_item command."""
+    """Tests for the /admin_remove_item command.
+
+    B.80-style: item_type parameter removed from the slash command.
+    The server now resolves the concrete type from the player's inventory by item_name.
+    """
 
     def test_remove_item_success(self, mock_admin_cog):
-        """/admin_remove_item should remove item and show success embed."""
+        """/admin_remove_item should remove item and show success embed.
+
+        B.80-style: item_type removed from slash command — not passed in callback.
+        """
         interaction = _create_mock_interaction()
         interaction.user = _create_mock_user(user_id=999888777)
         target_user = _create_mock_user()
@@ -265,6 +314,7 @@ class TestAdminRemoveItem:
             {
                 "player_id": 10,
                 "item_name": "Pulse Laser",
+                "item_type": "primary_weapon",
                 "quantity_removed": 1,
                 "new_quantity": 0,
                 "message": "Removed 1x Pulse Laser from player 10",
@@ -278,7 +328,6 @@ class TestAdminRemoveItem:
                 interaction,
                 user=target_user,
                 item_name="Pulse Laser",
-                item_type="weapon",
                 quantity=1,
             )
         )
@@ -288,6 +337,43 @@ class TestAdminRemoveItem:
         interaction.followup.send.assert_awaited_once()
         call_kwargs = interaction.followup.send.call_args[1]
         assert "embed" in call_kwargs
+
+    def test_remove_item_payload_has_no_item_type(self, mock_admin_cog):
+        """/admin_remove_item must NOT send item_type in the HTTP payload (B.80-style)."""
+        interaction = _create_mock_interaction()
+        interaction.user = _create_mock_user(user_id=999888777)
+        target_user = _create_mock_user()
+
+        resp = _make_http_resp(
+            200,
+            {
+                "player_id": 10,
+                "item_name": "Pulse Laser",
+                "item_type": "primary_weapon",
+                "quantity_removed": 1,
+                "new_quantity": 0,
+                "message": "Removed 1x Pulse Laser from player 10",
+            },
+        )
+        mock_admin_cog.http_client.post = AsyncMock(return_value=resp)
+
+        asyncio.run(
+            mock_admin_cog.admin_remove_item.callback(
+                mock_admin_cog,
+                interaction,
+                user=target_user,
+                item_name="Pulse Laser",
+                quantity=1,
+            )
+        )
+
+        call_kwargs = mock_admin_cog.http_client.post.call_args[1]
+        sent_json = call_kwargs.get("json", {})
+        assert "item_type" not in sent_json, (
+            f"B.80-style: /admin_remove_item must not send item_type in the payload, got: {sent_json}"
+        )
+        assert sent_json.get("item_name") == "Pulse Laser"
+        assert sent_json.get("quantity") == 1
 
     def test_remove_item_not_found(self, mock_admin_cog):
         """/admin_remove_item should show error on 404."""
@@ -304,7 +390,6 @@ class TestAdminRemoveItem:
                 interaction,
                 user=target_user,
                 item_name="Pulse Laser",
-                item_type="weapon",
                 quantity=1,
             )
         )
@@ -328,7 +413,6 @@ class TestAdminRemoveItem:
                 interaction,
                 user=target_user,
                 item_name="Pulse Laser",
-                item_type="weapon",
                 quantity=999,
             )
         )
@@ -336,6 +420,39 @@ class TestAdminRemoveItem:
         interaction.followup.send.assert_awaited_once()
         call_kwargs = interaction.followup.send.call_args[1]
         assert call_kwargs.get("ephemeral") is True
+
+    def test_remove_item_rejects_placeholder_sentinel(self, mock_admin_cog):
+        """/admin_remove_item should respond with an ephemeral error when the placeholder sentinel value is submitted.
+
+        If a user somehow submits '__select_user_first__' (the autocomplete placeholder),
+        the command must respond with '❌ Please select a user first.' and return early
+        without making any API calls.
+        """
+        interaction = _create_mock_interaction()
+        interaction.user = _create_mock_user(user_id=999888777)
+        target_user = _create_mock_user()
+
+        mock_admin_cog.http_client.post = AsyncMock()
+
+        asyncio.run(
+            mock_admin_cog.admin_remove_item.callback(
+                mock_admin_cog,
+                interaction,
+                user=target_user,
+                item_name="__select_user_first__",
+                quantity=1,
+            )
+        )
+
+        interaction.followup.send.assert_awaited_once()
+        call_args = interaction.followup.send.call_args
+        # Must be ephemeral
+        assert call_args[1].get("ephemeral") is True
+        # Must contain the expected error message
+        sent_message = call_args[0][0] if call_args[0] else call_args[1].get("content", "")
+        assert "Please select a user first" in sent_message
+        # Must NOT have called the API
+        mock_admin_cog.http_client.post.assert_not_awaited()
 
 
 # -------------------------------------------------------------------------
@@ -593,15 +710,129 @@ class TestAdminAutocomplete:
         result = asyncio.run(mock_admin_cog.player_ship_autocomplete(interaction, ""))
         assert result == []
 
+    def test_remove_item_autocomplete_returns_placeholder_when_no_user(self, mock_admin_cog):
+        """remove_item_autocomplete returns a single placeholder choice when no user is selected yet.
+
+        When interaction.namespace.user is None (user param not yet filled in),
+        the autocomplete must return exactly one choice with the sentinel value
+        '__select_user_first__' instead of falling back to the full game catalog.
+        This makes it visually clear in the Discord UI that the user field must
+        be filled before the item dropdown is useful.
+        """
+        interaction = _create_mock_interaction()
+        # No user selected yet
+        interaction.namespace = MagicMock()
+        interaction.namespace.user = None
+
+        result = asyncio.run(mock_admin_cog.remove_item_autocomplete(interaction, "pulse"))
+        assert isinstance(result, list)
+        assert len(result) == 1
+        assert result[0].name == "— Select a user first —"
+        assert result[0].value == "__select_user_first__"
+
+    def test_remove_item_autocomplete_fetches_inventory_when_user_selected(self, mock_admin_cog):
+        """remove_item_autocomplete fetches target user's inventory when user is selected.
+
+        When a target user is selected, the autocomplete should attempt to resolve
+        their player ID and fetch their inventory.
+        """
+        interaction = _create_mock_interaction()
+        target_user = _create_mock_user(user_id=111222333)
+        interaction.namespace = MagicMock()
+        interaction.namespace.user = target_user
+
+        # Mock player resolution: POST /players/ returns player ID
+        player_resp = _make_http_resp(200, {"id": 10, "discord_id": 111222333})
+        # Mock inventory fetch: GET /inventory/player/10 returns items
+        inv_resp = _make_http_resp(
+            200,
+            [
+                {"item_name": "Pulse Laser", "item_type": "primary_weapon", "quantity": 1},
+                {"item_name": "Shield Gen", "item_type": "module", "quantity": 2},
+            ],
+        )
+        mock_admin_cog.http_client.post = AsyncMock(return_value=player_resp)
+        mock_admin_cog.http_client.get = AsyncMock(return_value=inv_resp)
+
+        result = asyncio.run(mock_admin_cog.remove_item_autocomplete(interaction, ""))
+        assert isinstance(result, list)
+        # Both inventory items should appear
+        names = [c.value for c in result]
+        assert "Pulse Laser" in names
+        assert "Shield Gen" in names
+
+    def test_remove_item_autocomplete_filters_by_current(self, mock_admin_cog):
+        """remove_item_autocomplete filters inventory items by current text."""
+        interaction = _create_mock_interaction()
+        target_user = _create_mock_user(user_id=111222333)
+        interaction.namespace = MagicMock()
+        interaction.namespace.user = target_user
+
+        player_resp = _make_http_resp(200, {"id": 10, "discord_id": 111222333})
+        inv_resp = _make_http_resp(
+            200,
+            [
+                {"item_name": "Pulse Laser", "item_type": "primary_weapon", "quantity": 1},
+                {"item_name": "Shield Gen", "item_type": "module", "quantity": 1},
+            ],
+        )
+        mock_admin_cog.http_client.post = AsyncMock(return_value=player_resp)
+        mock_admin_cog.http_client.get = AsyncMock(return_value=inv_resp)
+
+        result = asyncio.run(mock_admin_cog.remove_item_autocomplete(interaction, "pulse"))
+        names = [c.value for c in result]
+        assert "Pulse Laser" in names
+        assert "Shield Gen" not in names
+
+    def test_remove_item_autocomplete_falls_back_on_api_failure(self, mock_admin_cog):
+        """remove_item_autocomplete falls back to catalog when API call fails."""
+        interaction = _create_mock_interaction()
+        target_user = _create_mock_user(user_id=111222333)
+        interaction.namespace = MagicMock()
+        interaction.namespace.user = target_user
+
+        # Player resolution fails
+        mock_admin_cog.http_client.post = AsyncMock(side_effect=Exception("Connection refused"))
+
+        # Pre-populate catalog (set is synchronous)
+        mock_admin_cog._item_catalog.set("primary_weapon", ["Pulse Laser"])
+        mock_admin_cog._item_catalog.set("secondary_weapon", [])
+        mock_admin_cog._item_catalog.set("turret_weapon", [])
+        mock_admin_cog._item_catalog.set("module", [])
+
+        result = asyncio.run(mock_admin_cog.remove_item_autocomplete(interaction, ""))
+        assert isinstance(result, list)
+        # Fallback to catalog
+        names = [c.value for c in result]
+        assert "Pulse Laser" in names
+
+    def test_remove_item_autocomplete_returns_placeholder_when_namespace_is_none(self, mock_admin_cog):
+        """remove_item_autocomplete returns the placeholder choice when namespace is None.
+
+        With the refactored code, ``getattr(None, 'user', None)`` returns None,
+        which is treated the same as 'no user selected yet' — the placeholder choice
+        is returned rather than an empty list or a raised exception.
+        Autocomplete must never raise regardless of namespace state.
+        """
+        interaction = _create_mock_interaction()
+        # Simulate a missing/None namespace
+        interaction.namespace = None
+
+        result = asyncio.run(mock_admin_cog.remove_item_autocomplete(interaction, ""))
+        assert isinstance(result, list)
+        assert len(result) == 1
+        assert result[0].value == "__select_user_first__"
+
 
 class TestAdminCogA46Choices:
-    """A.46: validates that /admin_give_item and /admin_remove_item use 4-value concrete choices."""
+    """A.46/B.80: validates item_type parameter behaviour on admin inventory commands."""
 
-    def test_admin_give_item_choices_are_concrete_vocab(self, mock_admin_cog):
-        """A.46: /admin_give_item item_type choices must be the 4-value concrete set (no ship).
+    def test_admin_give_item_has_no_item_type_parameter(self, mock_admin_cog):
+        """B.80: /admin_give_item must NOT have an item_type parameter.
 
-        Introspects the 'admin_give_item' command's app_commands.Choice list and asserts
-        the values match exactly: primary_weapon, secondary_weapon, turret_weapon, module.
+        The item_type was removed from the slash command (B.80). The server now
+        resolves the concrete type from the item catalog by name. Introspects the
+        'admin_give_item' command's parameters and asserts item_type is absent.
         Mock budget: 0.
         """
         give_item_cmd = None
@@ -611,25 +842,22 @@ class TestAdminCogA46Choices:
                 break
         assert give_item_cmd is not None, "Could not find 'admin_give_item' command on AdminCog"
 
-        item_type_param = None
-        for param in give_item_cmd.parameters:
-            if param.name == "item_type":
-                item_type_param = param
-                break
-        assert item_type_param is not None, "Could not find 'item_type' parameter on /admin_give_item"
-
-        choice_values = {c.value for c in (item_type_param.choices or [])}
-        expected = {"primary_weapon", "secondary_weapon", "turret_weapon", "module"}
-        assert choice_values == expected, (
-            f"/admin_give_item item_type choices mismatch. Expected {expected}, got {choice_values}"
+        param_names = {param.name for param in give_item_cmd.parameters}
+        assert "item_type" not in param_names, (
+            f"B.80: /admin_give_item must NOT have an 'item_type' parameter (server resolves it). "
+            f"Found parameters: {param_names}"
         )
-        # Ship must NOT be in the choices (handled by /admin_give_ship instead)
-        assert "ship" not in choice_values, "/admin_give_item must not have 'ship' — use /admin_give_ship"
+        # Required parameters must still be present
+        assert "user" in param_names, "Missing 'user' parameter on /admin_give_item"
+        assert "item_name" in param_names, "Missing 'item_name' parameter on /admin_give_item"
 
-    def test_admin_remove_item_choices_are_concrete_vocab(self, mock_admin_cog):
-        """A.46: /admin_remove_item item_type choices must be the 4-value concrete set (no ship).
+    def test_admin_remove_item_has_no_item_type_parameter(self, mock_admin_cog):
+        """B.80-style: /admin_remove_item must NOT have an item_type parameter.
 
-        Mock budget: 0.
+        The item_type parameter was removed from the slash command (same as B.80 for
+        /admin_give_item). The server now resolves the concrete type from the player's
+        inventory by item_name. Introspects the command's parameters and asserts
+        item_type is absent. Mock budget: 0.
         """
         remove_item_cmd = None
         for cmd in mock_admin_cog.__cog_app_commands__:
@@ -638,16 +866,11 @@ class TestAdminCogA46Choices:
                 break
         assert remove_item_cmd is not None, "Could not find 'admin_remove_item' command on AdminCog"
 
-        item_type_param = None
-        for param in remove_item_cmd.parameters:
-            if param.name == "item_type":
-                item_type_param = param
-                break
-        assert item_type_param is not None, "Could not find 'item_type' parameter on /admin_remove_item"
-
-        choice_values = {c.value for c in (item_type_param.choices or [])}
-        expected = {"primary_weapon", "secondary_weapon", "turret_weapon", "module"}
-        assert choice_values == expected, (
-            f"/admin_remove_item item_type choices mismatch. Expected {expected}, got {choice_values}"
+        param_names = {param.name for param in remove_item_cmd.parameters}
+        assert "item_type" not in param_names, (
+            f"B.80-style: /admin_remove_item must NOT have an 'item_type' parameter (server resolves it). "
+            f"Found parameters: {param_names}"
         )
-        assert "ship" not in choice_values, "/admin_remove_item must not have 'ship' — use /admin_remove_ship"
+        # Required parameters must still be present
+        assert "user" in param_names, "Missing 'user' parameter on /admin_remove_item"
+        assert "item_name" in param_names, "Missing 'item_name' parameter on /admin_remove_item"

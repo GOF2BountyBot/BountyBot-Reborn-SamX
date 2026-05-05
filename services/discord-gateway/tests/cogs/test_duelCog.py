@@ -212,9 +212,7 @@ class TestDuelChallengeCommand:
         challenger_player_resp = make_mock_response({"id": 1})
         target_player_resp = make_mock_response({"id": 2})
         duel_resp = make_mock_response(_make_mock_duel(duel_id=1, challenger_id=1, target_id=2))
-        mock_duel_cog.http_client.post = AsyncMock(
-            side_effect=[challenger_player_resp, target_player_resp, duel_resp]
-        )
+        mock_duel_cog.http_client.post = AsyncMock(side_effect=[challenger_player_resp, target_player_resp, duel_resp])
 
         asyncio.run(mock_duel_cog.duel_challenge.callback(mock_duel_cog, interaction, target, 500))
 
@@ -247,9 +245,7 @@ class TestDuelChallengeCommand:
                 return target_player_resp
             raise http_error
 
-        mock_duel_cog.http_client.post = AsyncMock(
-            side_effect=[challenger_player_resp, target_player_resp, http_error]
-        )
+        mock_duel_cog.http_client.post = AsyncMock(side_effect=[challenger_player_resp, target_player_resp, http_error])
 
         asyncio.run(mock_duel_cog.duel_challenge.callback(mock_duel_cog, interaction, target, 0))
 
@@ -271,9 +267,7 @@ class TestDuelChallengeCommand:
         error_response.status_code = 400
         error_response.json.return_value = {"detail": "Challenger has insufficient credits: has 100, needs 500."}
         http_error = httpx.HTTPStatusError("400 Bad Request", request=MagicMock(), response=error_response)
-        mock_duel_cog.http_client.post = AsyncMock(
-            side_effect=[challenger_player_resp, target_player_resp, http_error]
-        )
+        mock_duel_cog.http_client.post = AsyncMock(side_effect=[challenger_player_resp, target_player_resp, http_error])
 
         asyncio.run(mock_duel_cog.duel_challenge.callback(mock_duel_cog, interaction, target, 500))
 
@@ -313,9 +307,7 @@ class TestDuelChallengeCommand:
         error_response = MagicMock()
         error_response.status_code = 500
         http_error = httpx.HTTPStatusError("500 Server Error", request=MagicMock(), response=error_response)
-        mock_duel_cog.http_client.post = AsyncMock(
-            side_effect=[challenger_player_resp, target_player_resp, http_error]
-        )
+        mock_duel_cog.http_client.post = AsyncMock(side_effect=[challenger_player_resp, target_player_resp, http_error])
 
         asyncio.run(mock_duel_cog.duel_challenge.callback(mock_duel_cog, interaction, target, 0))
 
@@ -1050,9 +1042,7 @@ class TestDuelRejectPlayerResolution:
         interaction = _create_mock_interaction(user_id=402296276617527306)
 
         player_resp = make_mock_response({"id": 2})
-        reject_resp = make_mock_response(
-            _make_mock_duel(duel_id=1, challenger_id=1, target_id=2, status="rejected")
-        )
+        reject_resp = make_mock_response(_make_mock_duel(duel_id=1, challenger_id=1, target_id=2, status="rejected"))
 
         post_calls = [player_resp, reject_resp]
         mock_duel_cog.http_client.post = AsyncMock(side_effect=post_calls)

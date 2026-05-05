@@ -303,6 +303,17 @@ class LoadoutConsistencyService:
         if inv_item is None:
             raise ValueError(f"Item '{item_name}' (type={inventory_type}) not found in your inventory")
 
+        # 4b. B.41 — guard against equipping more copies than the player owns.
+        # Count how many copies are already equipped across ALL ships (cross-ship sum)
+        # to prevent inventory going negative.
+        all_ships = await self.player_ship_repo.get_player_ships(db, player_id)
+        already_equipped_count = sum(self._get_slot(s, equipment_type).count(item_name) for s in all_ships)
+        if already_equipped_count >= inv_item.quantity:
+            raise ValueError(
+                f"No unequipped copies remain: '{item_name}' has {inv_item.quantity} in inventory "
+                f"but {already_equipped_count} already equipped."
+            )
+
         # 5. Slot availability against static ship caps
         caps = await self._get_static_ship_caps(db, ship)
         current_slot = self._get_slot(ship, equipment_type)

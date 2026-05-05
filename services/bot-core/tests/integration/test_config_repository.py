@@ -150,7 +150,7 @@ async def test_create_default_config(db_session: AsyncSession, repo: ConfigRepos
     assert config.starting_credits == 0
     assert config.sale_price_factor == 0.8
     assert config.ship_count_range == {"min": 3, "max": 5}
-    assert config.xp_thresholds == {"Silver": 1000, "Gold": 5000, "Platinum": 15000}
+    assert config.xp_thresholds == {"Silver": 1000, "Gold": 5000, "Platinum": 15000, "Prestige": 50000}
 
 
 # -- update_shop_config --------------------------------------------------------
@@ -358,9 +358,7 @@ async def test_get_config_summary_includes_admin_role_id_null_by_default(
     assert summary["admin_role_id"] is None
 
 
-async def test_get_config_summary_includes_admin_role_id_when_set(
-    db_session: AsyncSession, repo: ConfigRepository
-):
+async def test_get_config_summary_includes_admin_role_id_when_set(db_session: AsyncSession, repo: ConfigRepository):
     """get_config_summary must reflect admin_role_id after it is updated."""
     await repo.create_default_config(db_session, guild_id=2106)
     await repo.update_admin_role(db_session, guild_id=2106, role_id=555_000_111)

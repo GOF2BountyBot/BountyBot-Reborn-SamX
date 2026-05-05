@@ -592,26 +592,43 @@ class InventoryCog(commands.Cog):
             # minus "ship").  See utils/autocomplete_helpers.py for the constant.
             from utils.autocomplete_helpers import _CURRENTLY_EQUIPPABLE_INVENTORY_TYPES
 
+            # B.41: Fetch the player's ships to count already-equipped copies.
+            # Items where inventory_qty <= equipped_count have no free copies to equip.
+            ships_resp = await self.http_client.get(f"{api_base}/ships/player/{player_id}", timeout=3)
+            ships_resp.raise_for_status()
+            ships = ships_resp.json()
+
+            # Count how many copies of each item are already equipped on the active ship
+            # across all slot types (weapons, modules, turrets, secondary_weapons).
+            equipped_counts: dict[str, int] = {}
+            _SLOT_KEYS = ("weapons", "modules", "turrets", "secondary_weapons")
+            for ship in ships:
+                if ship.get("is_active"):
+                    for slot_key in _SLOT_KEYS:
+                        for slot_item in ship.get(slot_key) or []:
+                            equipped_counts[slot_item] = equipped_counts.get(slot_item, 0) + 1
+                    break  # only count the active ship
+
             norm_current = normalize_for_search(current)
             choices = []
             seen: set[str] = set()
 
-            # inventory.quantity is the count of unequipped (cargo) copies only.
-            # Equipped copies are not in the inventory table. Show an item as long
-            # as the player has at least one unequipped copy available to equip.
             for item in items:
                 item_type = item.get("item_type", "")
                 item_name = item.get("item_name", "")
                 qty = item.get("quantity") or 0
+                # B.41: hide items where all copies are already equipped (no cargo copies free)
+                already_equipped = equipped_counts.get(item_name, 0)
                 if (
                     item_type in _CURRENTLY_EQUIPPABLE_INVENTORY_TYPES
                     and item_name
                     and item_name not in seen
-                    and qty >= 1
+                    and qty > already_equipped
                     and norm_current in normalize_for_search(item_name)
                 ):
                     seen.add(item_name)
-                    qty_suffix = f" x{qty}" if qty > 1 else ""
+                    free_qty = qty - already_equipped
+                    qty_suffix = f" x{free_qty}" if free_qty > 1 else ""
                     label = f"{item_name} ({item_type.replace('_', ' ').title()}){qty_suffix}"
                     choices.append(app_commands.Choice(name=label[:100], value=item_name))
             return choices[:25]

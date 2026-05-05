@@ -1116,7 +1116,11 @@ class TestIsAdminPredicateDirect:
 
     @patch("cogs.adminCog.httpx.AsyncClient")
     def test_predicate_returns_true_for_api_admin_role(self, mock_httpx_cls):
-        """Predicate returns True when user has the configured admin role (lines 33-42)."""
+        """Predicate returns True when user has the configured admin role (lines 33-42).
+
+        B.40: The check uses interaction.member.roles (not interaction.user.roles).
+        interaction.member is the guild-scoped discord.Member object with role assignments.
+        """
         predicate = _extract_is_admin_predicate()
 
         # Mock the async context manager returned by AsyncClient()
@@ -1137,7 +1141,9 @@ class TestIsAdminPredicateDirect:
         interaction.user.id = 123999
         interaction.user.guild_permissions = MagicMock()
         interaction.user.guild_permissions.administrator = False
-        interaction.user.roles = [role]
+        # B.40: set role on interaction.member (guild Member), NOT interaction.user
+        interaction.member = MagicMock()
+        interaction.member.roles = [role]
         interaction.guild_id = 987654321
 
         with patch.dict(os.environ, {"DEVELOPERS": ""}):

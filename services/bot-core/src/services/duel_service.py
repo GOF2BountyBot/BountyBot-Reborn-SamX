@@ -119,17 +119,23 @@ class DuelService:
             # Resolve display names for a friendly error message — fall back to "Player N" on any miss
             try:
                 challenger_user = await self.user_repo.get_by_id(db, challenger.user_id)
-                challenger_label = challenger_user.discord_username if challenger_user and challenger_user.discord_username else f"Player {challenger_id}"
+                challenger_label = (
+                    challenger_user.discord_username
+                    if challenger_user and challenger_user.discord_username
+                    else f"Player {challenger_id}"
+                )
             except Exception:
                 challenger_label = f"Player {challenger_id}"
             try:
                 target_user = await self.user_repo.get_by_id(db, target.user_id)
-                target_label = target_user.discord_username if target_user and target_user.discord_username else f"Player {target_id}"
+                target_label = (
+                    target_user.discord_username
+                    if target_user and target_user.discord_username
+                    else f"Player {target_id}"
+                )
             except Exception:
                 target_label = f"Player {target_id}"
-            raise ValueError(
-                f"A pending duel already exists between {challenger_label} and {target_label}."
-            )
+            raise ValueError(f"A pending duel already exists between {challenger_label} and {target_label}.")
 
         # Create the duel request
         duel = DuelRequest(
@@ -343,9 +349,7 @@ class DuelService:
     # Query helpers
     # ------------------------------------------------------------------
 
-    async def get_pending_for_target(
-        self, db, target_id: int, guild_id: int
-    ) -> list[tuple[DuelRequest, str | None]]:
+    async def get_pending_for_target(self, db, target_id: int, guild_id: int) -> list[tuple[DuelRequest, str | None]]:
         """Return all pending duels where *target_id* is the target in the given guild,
         together with the challenger's Discord username.
 
@@ -405,9 +409,7 @@ class DuelService:
         Raises:
             ValueError: If duel not found, not pending, or caller is not the challenger.
         """
-        flogger.debug(
-            f"cancel_duel called: duel_id={duel_id} requesting_player_id={requesting_player_id}"
-        )
+        flogger.debug(f"cancel_duel called: duel_id={duel_id} requesting_player_id={requesting_player_id}")
 
         duel = await self.duel_repo.get_by_id(db, duel_id)
         if duel is None:
@@ -428,9 +430,7 @@ class DuelService:
             raise ValueError("Only the challenger can cancel a duel.")
 
         updated = await self.duel_repo.update_status(db, duel_id, "cancelled")
-        flogger.info(
-            f"Duel {duel_id} cancelled (requesting_player_id={requesting_player_id})."
-        )
+        flogger.info(f"Duel {duel_id} cancelled (requesting_player_id={requesting_player_id}).")
         return updated
 
     # ------------------------------------------------------------------
@@ -475,9 +475,7 @@ class DuelService:
     # Admin: get all pending for guild (autocomplete)
     # ------------------------------------------------------------------
 
-    async def get_all_pending_for_guild(
-        self, db, guild_id: int
-    ) -> list[tuple[DuelRequest, str | None, str | None]]:
+    async def get_all_pending_for_guild(self, db, guild_id: int) -> list[tuple[DuelRequest, str | None, str | None]]:
         """Return all pending duels for a guild (any challenger, any target),
         together with both participants' Discord usernames.
 

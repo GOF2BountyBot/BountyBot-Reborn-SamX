@@ -4574,7 +4574,7 @@ async def test_generate_loadout_tl_matched_path_excludes_non_combat_ships(servic
     """
     # Only combat ships returned by the filtered DB query
     combat_ship = _make_ship("Groza", value=251600, max_primaries=3, max_modules=8)
-    non_combat_ship = _make_ship("Cormorant", value=100000, max_primaries=0, max_modules=4)
+    _make_ship("Cormorant", value=100000, max_primaries=0, max_modules=4)  # non-combat ship
 
     # The DB query with max_primaries > 0 filter returns only combat ships
     _setup_mock_db_query_with_filter(mock_db, combat_ships=[combat_ship])

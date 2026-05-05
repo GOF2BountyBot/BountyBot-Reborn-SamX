@@ -35,7 +35,7 @@ def make_mock_duel(**overrides):
         created_at=now,
         expires_at=expires,
         challenger_name=None,  # not on ORM; populated by router after get_pending_for_target
-        target_name=None,      # not on ORM; populated by router after get_outgoing_for_challenger
+        target_name=None,  # not on ORM; populated by router after get_outgoing_for_challenger
     )
     defaults.update(overrides)
     duel = MagicMock()
@@ -648,9 +648,7 @@ class TestCancelDuel:
     def test_cancel_duel_success(self, mock_get_db, client, mock_duel_service):
         """Returns the cancelled duel on success."""
         _configure_db_mock(mock_get_db)
-        mock_duel_service.cancel_duel = AsyncMock(
-            return_value=make_mock_duel(id=1, status="cancelled")
-        )
+        mock_duel_service.cancel_duel = AsyncMock(return_value=make_mock_duel(id=1, status="cancelled"))
 
         response = client.post("/api/v1/duels/1/cancel?user_id=100")
 
@@ -674,9 +672,7 @@ class TestCancelDuel:
     def test_cancel_duel_not_pending(self, mock_get_db, client, mock_duel_service):
         """Returns 400 when the duel is not pending."""
         _configure_db_mock(mock_get_db)
-        mock_duel_service.cancel_duel = AsyncMock(
-            side_effect=ValueError("Only pending duels can be cancelled.")
-        )
+        mock_duel_service.cancel_duel = AsyncMock(side_effect=ValueError("Only pending duels can be cancelled."))
 
         response = client.post("/api/v1/duels/1/cancel?user_id=100")
 
@@ -687,9 +683,7 @@ class TestCancelDuel:
     def test_cancel_duel_not_challenger(self, mock_get_db, client, mock_duel_service):
         """Returns 400 when the requesting user is not the challenger."""
         _configure_db_mock(mock_get_db)
-        mock_duel_service.cancel_duel = AsyncMock(
-            side_effect=ValueError("Only the challenger can cancel a duel.")
-        )
+        mock_duel_service.cancel_duel = AsyncMock(side_effect=ValueError("Only the challenger can cancel a duel."))
 
         response = client.post("/api/v1/duels/1/cancel?user_id=200")
 
@@ -720,9 +714,7 @@ class TestAdminCancelDuel:
     def test_admin_cancel_success(self, mock_get_db, client, mock_duel_service):
         """Returns the cancelled duel on admin cancel success."""
         _configure_db_mock(mock_get_db)
-        mock_duel_service.cancel_duel = AsyncMock(
-            return_value=make_mock_duel(id=1, status="cancelled")
-        )
+        mock_duel_service.cancel_duel = AsyncMock(return_value=make_mock_duel(id=1, status="cancelled"))
 
         response = client.post("/api/v1/duels/1/admin-cancel?admin_user_id=123456789")
 
@@ -746,9 +738,7 @@ class TestAdminCancelDuel:
     def test_admin_cancel_not_pending(self, mock_get_db, client, mock_duel_service):
         """Returns 400 when the duel is not pending."""
         _configure_db_mock(mock_get_db)
-        mock_duel_service.cancel_duel = AsyncMock(
-            side_effect=ValueError("Only pending duels can be cancelled.")
-        )
+        mock_duel_service.cancel_duel = AsyncMock(side_effect=ValueError("Only pending duels can be cancelled."))
 
         response = client.post("/api/v1/duels/1/admin-cancel?admin_user_id=123456789")
 

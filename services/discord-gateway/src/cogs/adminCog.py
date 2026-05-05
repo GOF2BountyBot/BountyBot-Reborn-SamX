@@ -46,9 +46,15 @@ async def _check_is_admin(interaction: discord.Interaction) -> bool:
         resp.raise_for_status()
         config_data = resp.json()
         admin_role_id = config_data.get("admin_role_id")
-        member = interaction.guild.get_member(interaction.user.id) if interaction.guild else None
+        # B.40: use interaction.member (guild-scoped Member with roles) rather than
+        # interaction.guild.get_member() which may return None in slash-command contexts.
+        # interaction.user is a discord.User (no guild role info); interaction.member
+        # is the discord.Member with .roles populated for guild interactions.
+        member = interaction.member or (
+            interaction.guild.get_member(interaction.user.id) if interaction.guild else None
+        )
         role_ids = [r.id for r in member.roles] if member and hasattr(member, "roles") else []
-        if admin_role_id and member and admin_role_id in role_ids:
+        if admin_role_id and admin_role_id in role_ids:
             return True
     except Exception:  # pylint: disable=broad-exception-caught
         pass
@@ -85,9 +91,7 @@ def is_super_admin():
 
     async def predicate(interaction: discord.Interaction) -> bool:
         if not await _check_is_super_admin(interaction):
-            await interaction.response.send_message(
-                "❌ This command requires super-admin privileges.", ephemeral=True
-            )
+            await interaction.response.send_message("❌ This command requires super-admin privileges.", ephemeral=True)
             return False
         return True
 
@@ -2108,9 +2112,7 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
                     color=discord.Color.orange(),
                 )
                 await interaction.followup.send(embed=embed, ephemeral=True)
-                flogger.info(
-                    f"Admin {interaction.user} cancelled duel_id={duel_id} in guild {interaction.guild_id}"
-                )
+                flogger.info(f"Admin {interaction.user} cancelled duel_id={duel_id} in guild {interaction.guild_id}")
 
             except httpx.HTTPStatusError as e:
                 await report_api_error(interaction, e)

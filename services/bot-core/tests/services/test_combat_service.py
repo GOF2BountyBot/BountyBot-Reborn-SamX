@@ -601,9 +601,7 @@ class TestArmourBuff:
         assert s1.raw_dps == pytest.approx(150.0), "DPS must not be affected by armour buff"
 
         # raw_hp reflects buffed armour (300) + unchanged shield (100) = 400.
-        assert s1.raw_hp == 400, (
-            f"Expected raw_hp=400 (buffed armour 300 + shield 100), got {s1.raw_hp}"
-        )
+        assert s1.raw_hp == 400, f"Expected raw_hp=400 (buffed armour 300 + shield 100), got {s1.raw_hp}"
 
         # Verify shield component: without buff raw_hp would be 200+100=300.
         # The extra 100 HP came from armour buff (300-200=100), not from shield change.

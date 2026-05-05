@@ -1424,9 +1424,7 @@ class TestAdminConfigXp:
         """B.48 (F.2): Update action with prestige param sends Prestige in payload and shows it."""
         interaction = self._make_interaction()
 
-        result_data = {
-            "xp_thresholds": {"Silver": 2000, "Gold": 8000, "Platinum": 20000, "Prestige": 75000}
-        }
+        result_data = {"xp_thresholds": {"Silver": 2000, "Gold": 8000, "Platinum": 20000, "Prestige": 75000}}
         update_resp = MagicMock()
         update_resp.raise_for_status = MagicMock()
         update_resp.json.return_value = result_data
@@ -2862,9 +2860,7 @@ class TestAdminRoleAccessGranted:
 
             result = asyncio.run(_check_is_admin(interaction))
 
-        assert result is False, (
-            "User without admin role or Discord Administrator should be denied access."
-        )
+        assert result is False, "User without admin role or Discord Administrator should be denied access."
 
     def test_admin_guild_stats_allows_admin_role_holder(self, mock_admin_cog):
         """B.40: admin_guild_stats must be accessible to a user with the admin role (not Discord admin)."""
@@ -2912,9 +2908,7 @@ class TestAdminRoleAccessGranted:
         # Must NOT be the rejection message
         assert "embed" in call_kwargs, "Admin-role holder must receive stats embed, not a rejection"
         embed = call_kwargs["embed"]
-        assert "Guild Statistics" in (embed.title or ""), (
-            f"Expected guild stats embed, got title: {embed.title!r}"
-        )
+        assert "Guild Statistics" in (embed.title or ""), f"Expected guild stats embed, got title: {embed.title!r}"
 
     def test_admin_commands_have_no_default_permissions_decorator(self, mock_admin_cog):
         """B.40: No admin command should carry a default_permissions restriction.
@@ -3130,8 +3124,9 @@ class TestCheckIsSuperAdmin:
 
     def test_returns_false_when_developers_env_is_missing(self):
         """Returns False when DEVELOPERS env var is not set at all."""
-        from cogs.adminCog import _check_is_super_admin
         import os
+
+        from cogs.adminCog import _check_is_super_admin
 
         interaction = _create_mock_interaction()
         interaction.user.id = 123456789
@@ -3207,8 +3202,7 @@ class TestCheckIsSuperAdmin:
             result = asyncio.run(_check_is_super_admin(interaction))
 
         assert result is False, (
-            "_check_is_super_admin must NOT check configured Bot Admin role; "
-            "only DEVELOPERS env var is consulted."
+            "_check_is_super_admin must NOT check configured Bot Admin role; only DEVELOPERS env var is consulted."
         )
 
 

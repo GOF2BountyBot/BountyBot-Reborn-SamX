@@ -617,9 +617,7 @@ class TestPrestigePlayer:
         assert "xp_before" in result
 
     @pytest.mark.asyncio
-    async def test_prestige_deletes_every_existing_ship(
-        self, service, mock_db, mock_player_repo, mock_config_repo
-    ):
+    async def test_prestige_deletes_every_existing_ship(self, service, mock_db, mock_player_repo, mock_config_repo):
         """B.49: prestige removes every PlayerShip row owned by the player.
 
         This is the regression guard against the pre-B.49 behaviour where
@@ -680,9 +678,7 @@ class TestPrestigePlayer:
         )
 
     @pytest.mark.asyncio
-    async def test_prestige_clears_inventory(
-        self, service, mock_db, mock_player_repo, mock_config_repo
-    ):
+    async def test_prestige_clears_inventory(self, service, mock_db, mock_player_repo, mock_config_repo):
         """B.49: prestige wipes the entire player_inventories rowset."""
         player = _make_player(xp=1_000_000)
         player.xp = 1_000_000
@@ -720,9 +716,7 @@ class TestPrestigePlayer:
         assert kwargs.get("commit") is False
 
     @pytest.mark.asyncio
-    async def test_prestige_recreates_starter_loadout(
-        self, service, mock_db, mock_player_repo, mock_config_repo
-    ):
+    async def test_prestige_recreates_starter_loadout(self, service, mock_db, mock_player_repo, mock_config_repo):
         """B.49: prestige delegates to _create_starter_loadout (same as /register).
 
         This is the contract that guarantees prestige and first-time
@@ -777,9 +771,7 @@ class TestPrestigePlayer:
             await service.prestige_player(mock_db, player_id=1)
 
     @pytest.mark.asyncio
-    async def test_increments_prestige_count_correctly(
-        self, service, mock_db, mock_player_repo, mock_config_repo
-    ):
+    async def test_increments_prestige_count_correctly(self, service, mock_db, mock_player_repo, mock_config_repo):
         """prestige_count increments from existing value."""
         player = _make_player(xp=1_000_000, prestige_count=3)
         player.xp = 1_000_000
@@ -796,9 +788,7 @@ class TestPrestigePlayer:
         assert result["prestige_count"] == 4
 
     @pytest.mark.asyncio
-    async def test_prestige_preserves_lifetime_credits(
-        self, service, mock_db, mock_player_repo, mock_config_repo
-    ):
+    async def test_prestige_preserves_lifetime_credits(self, service, mock_db, mock_player_repo, mock_config_repo):
         """lifetime_credits is NOT reset during prestige."""
         player = _make_player(xp=1_000_000, credits=1000, lifetime_credits=99999)
         player.xp = 1_000_000
@@ -851,9 +841,7 @@ class TestPrestigePlayer:
         assert result["xp_before"] == _DEFAULT_PRESTIGE_XP_THRESHOLD
 
     @pytest.mark.asyncio
-    async def test_prestige_returns_tier_and_xp_before(
-        self, service, mock_db, mock_player_repo, mock_config_repo
-    ):
+    async def test_prestige_returns_tier_and_xp_before(self, service, mock_db, mock_player_repo, mock_config_repo):
         """B.48: return dict contains tier_before/xp_before reflecting pre-prestige state."""
         player = _make_player(xp=1_000_000, tier="Platinum")
         player.xp = 1_000_000

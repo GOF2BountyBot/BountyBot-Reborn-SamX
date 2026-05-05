@@ -765,10 +765,11 @@ class TestAdminHelpCmdOverview:
         assert len(cog.admin_help_cmd.checks) >= 1
 
     def test_admin_help_has_default_permissions_decorator(self):
-        """AC-14: /admin_help must have default_permissions set to administrator.
+        """AC-14 (B.40 updated): /admin_help uses @is_admin() check, not @app_commands.default_permissions.
 
-        discord.app_commands.Command stores the value from @app_commands.default_permissions
-        in the `default_permissions` attribute (a discord.Permissions object).
+        B.40 removed @app_commands.default_permissions(administrator=True) from /admin_help because
+        it was hiding the command from admin-role holders who lack the built-in administrator perm.
+        /admin_help is now protected by @is_admin() check decorators only.
         """
         _evict_cog_modules()
         sys.modules["shared"] = _mock_shared
@@ -781,11 +782,17 @@ class TestAdminHelpCmdOverview:
         bot.tree.get_commands = MagicMock(return_value=[])
         cog = HelpCog(bot)
 
-        # The default_permissions attribute is set on the Command by @app_commands.default_permissions
+        # B.40: default_permissions is intentionally None (removed to fix admin-role holder hiding).
+        # The command is still protected by @is_admin() check in .checks.
         dmp = cog.admin_help_cmd.default_permissions
-        assert dmp is not None
-        # It should be an administrator permission
-        assert dmp.administrator is True
+        assert dmp is None, (
+            "B.40: /admin_help must NOT use @app_commands.default_permissions — "
+            "it hides the command from admin-role holders lacking built-in Administrator perm. "
+            "Use @is_admin() check decorator instead."
+        )
+        # @is_admin() must still be present as a check
+        assert hasattr(cog.admin_help_cmd, "checks")
+        assert len(cog.admin_help_cmd.checks) >= 1, "/admin_help must have at least one @is_admin() check"
 
     def test_help_cmd_does_not_have_default_permissions(self):
         """AC-14 (inverse): /help (user-facing) must NOT have restrictive default_permissions."""

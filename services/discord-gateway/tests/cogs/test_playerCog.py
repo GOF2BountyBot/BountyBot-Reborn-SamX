@@ -787,9 +787,7 @@ class TestPrestigeConfirmFlow:
         interaction.user.add_roles.assert_awaited_once()
         added_args = interaction.user.add_roles.call_args[0]
         added_ids = {r.id for r in added_args}
-        assert bronze_role_id in added_ids, (
-            f"B.53: Bronze role must be added on prestige; added_ids={added_ids}"
-        )
+        assert bronze_role_id in added_ids, f"B.53: Bronze role must be added on prestige; added_ids={added_ids}"
         assert platinum_role_id not in added_ids, "Platinum role must NOT be added"
 
         # Platinum role must be REMOVED
@@ -2592,18 +2590,14 @@ class TestPromoteTierRoleSwap:
         interaction.user.remove_roles.assert_awaited_once()
         removed_args = interaction.user.remove_roles.call_args[0]
         removed_ids = {r.id for r in removed_args}
-        assert bronze_role_id in removed_ids, (
-            f"Bronze role must be removed on promotion; removed_ids={removed_ids}"
-        )
+        assert bronze_role_id in removed_ids, f"Bronze role must be removed on promotion; removed_ids={removed_ids}"
         assert silver_role_id not in removed_ids, "New Silver role must NOT appear in remove list"
 
         # New Silver role must be added
         interaction.user.add_roles.assert_awaited_once()
         added_args = interaction.user.add_roles.call_args[0]
         added_ids = {r.id for r in added_args}
-        assert silver_role_id in added_ids, (
-            f"Silver role must be added on promotion; added_ids={added_ids}"
-        )
+        assert silver_role_id in added_ids, f"Silver role must be added on promotion; added_ids={added_ids}"
         assert bronze_role_id not in added_ids, "Old Bronze role must NOT be added"
 
     def test_promote_does_not_add_role_user_already_has(self, mock_player_cog):
@@ -2723,9 +2717,7 @@ class TestPromoteTierRoleSwap:
         # New Silver role added (user doesn't have it)
         interaction.user.add_roles.assert_awaited_once()
 
-    def test_promote_add_roles_fails_after_remove_roles_succeeds_leaves_user_roleless(
-        self, mock_player_cog
-    ):
+    def test_promote_add_roles_fails_after_remove_roles_succeeds_leaves_user_roleless(self, mock_player_cog):
         """DEF-B39-001 (adversarial): remove_roles succeeds but add_roles then fails.
 
         EXPECTED (correct) behaviour: if the new role cannot be added, the old role
@@ -2785,10 +2777,13 @@ class TestPromoteTierRoleSwap:
         # CORRECT expected outcome: if add_roles fails, remove_roles must NOT have run.
         # The user keeps their Bronze role rather than ending up with no role at all.
         # This assertion FAILS on the current implementation (proving DEF-B39-001).
-        interaction.user.remove_roles.assert_not_awaited(), (
-            "DEF-B39-001: When add_roles fails, remove_roles must not have fired. "
-            "The implementation must add the new role BEFORE removing the old one so that "
-            "a failure in add_roles aborts without stripping the user's existing tier role."
+        (
+            interaction.user.remove_roles.assert_not_awaited(),
+            (
+                "DEF-B39-001: When add_roles fails, remove_roles must not have fired. "
+                "The implementation must add the new role BEFORE removing the old one so that "
+                "a failure in add_roles aborts without stripping the user's existing tier role."
+            ),
         )
 
 

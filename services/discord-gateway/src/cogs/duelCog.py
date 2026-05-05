@@ -88,9 +88,7 @@ class DuelCog(commands.Cog):
                 challenger_name = d.get("challenger_name")
                 if challenger_name:
                     label = (
-                        f"{challenger_name} — {stakes:,}cr stakes"
-                        if stakes
-                        else f"{challenger_name} — friendly duel"
+                        f"{challenger_name} — {stakes:,}cr stakes" if stakes else f"{challenger_name} — friendly duel"
                     )
                 else:
                     label = f"Duel #{duel_id} — {stakes:,}cr stakes" if stakes else f"Duel #{duel_id} — friendly duel"
@@ -122,11 +120,7 @@ class DuelCog(commands.Cog):
                 stakes = d.get("stakes", 0)
                 target_name = d.get("target_name")
                 if target_name:
-                    label = (
-                        f"{target_name} — {stakes:,}cr stakes"
-                        if stakes
-                        else f"{target_name} — friendly duel"
-                    )
+                    label = f"{target_name} — {stakes:,}cr stakes" if stakes else f"{target_name} — friendly duel"
                 else:
                     label = f"Duel #{duel_id} — {stakes:,}cr stakes" if stakes else f"Duel #{duel_id} — friendly duel"
                 if norm_current in normalize_for_search(label):
@@ -398,8 +392,7 @@ class DuelCog(commands.Cog):
                 embed.add_field(
                     name="💳 Final Balances",
                     value=(
-                        f"{challenger_name}: **{challenger_credits:,}** cr\n"
-                        f"{target_name}: **{target_credits:,}** cr"
+                        f"{challenger_name}: **{challenger_credits:,}** cr\n{target_name}: **{target_credits:,}** cr"
                     ),
                     inline=False,
                 )
@@ -545,9 +538,7 @@ class DuelCog(commands.Cog):
             target_name = data.get("target_name") or f"Player {data.get('target_id', '?')}"
             embed = discord.Embed(
                 title="✅ Duel Cancelled",
-                description=(
-                    f"Your challenge against **{target_name}** has been withdrawn."
-                ),
+                description=(f"Your challenge against **{target_name}** has been withdrawn."),
                 color=discord.Color.orange(),
             )
             embed.add_field(name="Duel ID", value=f"#{duel_id}", inline=True)
@@ -570,9 +561,7 @@ class DuelCog(commands.Cog):
                     f"/duel-cancel API error: guild={interaction.guild_id} user={interaction.user.id}"
                     f" duel_id={duel_id} status={e.response.status_code}"
                 )
-                await interaction.followup.send(
-                    "⚠️ An error occurred while cancelling the duel.", ephemeral=True
-                )
+                await interaction.followup.send("⚠️ An error occurred while cancelling the duel.", ephemeral=True)
         except Exception as e:  # pylint: disable=broad-exception-caught
             flogger.error(
                 f"/duel-cancel error: guild={interaction.guild_id} user={interaction.user.id}"

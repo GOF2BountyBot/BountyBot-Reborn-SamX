@@ -2023,9 +2023,7 @@ class TestEquipAutocomplete:
 
         player_resp = make_mock_response({"id": 1})
         # Player has 3x "M6 A4 Raccoon" in inventory
-        items_resp = make_mock_response(
-            [_make_inventory_item('M6 A4 "Raccoon"', "primary_weapon", 3)]
-        )
+        items_resp = make_mock_response([_make_inventory_item('M6 A4 "Raccoon"', "primary_weapon", 3)])
         # Active ship already has 1x "M6 A4 Raccoon" equipped
         active_ship_resp = make_mock_response(
             [
@@ -2050,9 +2048,7 @@ class TestEquipAutocomplete:
             f"Item should appear in autocomplete when qty(3) > equipped(1), but got: {names}"
         )
 
-    def test_equip_autocomplete_hides_item_when_qty_equals_equipped_count(
-        self, mock_inventory_cog, make_mock_response
-    ):
+    def test_equip_autocomplete_hides_item_when_qty_equals_equipped_count(self, mock_inventory_cog, make_mock_response):
         """B.41: Player owns 3x same item, all 3 already equipped → autocomplete excludes it (0 remain in cargo).
 
         Acceptance criterion: inventory_quantity (3) == equipped_count (3), so item must NOT appear.
@@ -2061,9 +2057,7 @@ class TestEquipAutocomplete:
 
         player_resp = make_mock_response({"id": 1})
         # Player has 3x "M6 A4 Raccoon" in inventory
-        items_resp = make_mock_response(
-            [_make_inventory_item('M6 A4 "Raccoon"', "primary_weapon", 3)]
-        )
+        items_resp = make_mock_response([_make_inventory_item('M6 A4 "Raccoon"', "primary_weapon", 3)])
         # Active ship already has all 3x equipped
         active_ship_resp = make_mock_response(
             [
@@ -2088,9 +2082,7 @@ class TestEquipAutocomplete:
             f"Item should NOT appear in autocomplete when qty(3) == equipped(3), but got: {names}"
         )
 
-    def test_equip_autocomplete_shows_single_item_when_not_equipped(
-        self, mock_inventory_cog, make_mock_response
-    ):
+    def test_equip_autocomplete_shows_single_item_when_not_equipped(self, mock_inventory_cog, make_mock_response):
         """B.41: Player owns 1x item, 0 equipped → autocomplete shows it.
 
         Acceptance criterion: inventory_quantity (1) > equipped_count (0), so item must appear.
@@ -2098,9 +2090,7 @@ class TestEquipAutocomplete:
         interaction = _create_mock_interaction()
 
         player_resp = make_mock_response({"id": 1})
-        items_resp = make_mock_response(
-            [_make_inventory_item("PlasmaGun", "primary_weapon", 1)]
-        )
+        items_resp = make_mock_response([_make_inventory_item("PlasmaGun", "primary_weapon", 1)])
         # No items equipped yet
         active_ship_resp = make_mock_response(
             [
@@ -2125,9 +2115,7 @@ class TestEquipAutocomplete:
             f"Item should appear in autocomplete when qty(1) > equipped(0), but got: {names}"
         )
 
-    def test_equip_autocomplete_hides_single_item_when_fully_equipped(
-        self, mock_inventory_cog, make_mock_response
-    ):
+    def test_equip_autocomplete_hides_single_item_when_fully_equipped(self, mock_inventory_cog, make_mock_response):
         """B.41: Player owns 1x item, already equipped → autocomplete excludes it (0 remain in cargo).
 
         Acceptance criterion: inventory_quantity (1) == equipped_count (1), so item must NOT appear.
@@ -2135,9 +2123,7 @@ class TestEquipAutocomplete:
         interaction = _create_mock_interaction()
 
         player_resp = make_mock_response({"id": 1})
-        items_resp = make_mock_response(
-            [_make_inventory_item("PlasmaGun", "primary_weapon", 1)]
-        )
+        items_resp = make_mock_response([_make_inventory_item("PlasmaGun", "primary_weapon", 1)])
         # Item is already equipped once
         active_ship_resp = make_mock_response(
             [

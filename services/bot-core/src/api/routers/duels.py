@@ -46,9 +46,7 @@ async def get_outgoing_duels(
     async with get_db_session() as db:
         try:
             duels_with_names = await service.get_outgoing_for_challenger(db, user_id, guild_id)
-            flogger.debug(
-                f"Retrieved {len(duels_with_names)} outgoing duels for user_id={user_id} guild_id={guild_id}"
-            )
+            flogger.debug(f"Retrieved {len(duels_with_names)} outgoing duels for user_id={user_id} guild_id={guild_id}")
             result = []
             for duel, target_name in duels_with_names:
                 resp = DuelRequestResponse.model_validate(duel)
@@ -76,9 +74,7 @@ async def get_pending_duels(
     async with get_db_session() as db:
         try:
             duels_with_names = await service.get_pending_for_target(db, user_id, guild_id)
-            flogger.debug(
-                f"Retrieved {len(duels_with_names)} pending duels for user_id={user_id} guild_id={guild_id}"
-            )
+            flogger.debug(f"Retrieved {len(duels_with_names)} pending duels for user_id={user_id} guild_id={guild_id}")
             result = []
             for duel, challenger_name in duels_with_names:
                 resp = DuelRequestResponse.model_validate(duel)
@@ -419,7 +415,11 @@ async def admin_cancel_duel(
                 guild_id=updated.guild_id,
                 resource_type="duel",
                 resource_id=str(duel_id),
-                details={"challenger_id": updated.challenger_id, "target_id": updated.target_id, "stakes": updated.stakes},
+                details={
+                    "challenger_id": updated.challenger_id,
+                    "target_id": updated.target_id,
+                    "stakes": updated.stakes,
+                },
             )
             return DuelRequestResponse.model_validate(updated)
         except ValueError as exc:

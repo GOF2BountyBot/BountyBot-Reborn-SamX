@@ -280,15 +280,14 @@ class TestPreloadData:
         self._with_real_client(mock_about_cog, request)
         mock_about_cog.bot.wait_until_ready = AsyncMock()
 
-        with patch("cogs.aboutCog.asyncio.sleep", new_callable=AsyncMock):
-            with respx.mock() as mock_router:
-                # respx will match all 5 retry attempts against the same route
-                mock_router.get(f"{self._API_BASE}/about/categories").mock(
-                    return_value=httpx.Response(503, json={"detail": "Service Unavailable"})
-                )
+        with patch("cogs.aboutCog.asyncio.sleep", new_callable=AsyncMock), respx.mock() as mock_router:
+            # respx will match all 5 retry attempts against the same route
+            mock_router.get(f"{self._API_BASE}/about/categories").mock(
+                return_value=httpx.Response(503, json={"detail": "Service Unavailable"})
+            )
 
-                # Should not raise — failure is caught internally
-                asyncio.run(mock_about_cog._preload_data())
+            # Should not raise — failure is caught internally
+            asyncio.run(mock_about_cog._preload_data())
 
         # After terminal failure, categories must be empty
         assert mock_about_cog._categories == []
@@ -315,14 +314,13 @@ class TestPreloadData:
                 raise httpx.ConnectError("Name or service not known")
             return httpx.Response(200, json=["ship"])
 
-        with patch("cogs.aboutCog.asyncio.sleep", new_callable=AsyncMock):
-            with respx.mock() as mock_router:
-                mock_router.get(f"{self._API_BASE}/about/categories").mock(side_effect=_categories_side_effect)
-                mock_router.get(f"{self._API_BASE}/about/categories/ship/objects").mock(
-                    return_value=httpx.Response(200, json=[{"name": "Eagle", "aliases": []}])
-                )
+        with patch("cogs.aboutCog.asyncio.sleep", new_callable=AsyncMock), respx.mock() as mock_router:
+            mock_router.get(f"{self._API_BASE}/about/categories").mock(side_effect=_categories_side_effect)
+            mock_router.get(f"{self._API_BASE}/about/categories/ship/objects").mock(
+                return_value=httpx.Response(200, json=[{"name": "Eagle", "aliases": []}])
+            )
 
-                asyncio.run(mock_about_cog._preload_data())
+            asyncio.run(mock_about_cog._preload_data())
 
         # Retry succeeded — data should be populated
         assert mock_about_cog._categories == ["ship"]
@@ -374,14 +372,13 @@ class TestPreloadData:
         self._with_real_client(mock_about_cog, request)
         mock_about_cog.bot.wait_until_ready = AsyncMock()
 
-        with patch("cogs.aboutCog.asyncio.sleep", new_callable=AsyncMock):
-            with respx.mock() as mock_router:
-                mock_router.get(f"{self._API_BASE}/about/categories").mock(
-                    side_effect=httpx.ConnectError("connection refused")
-                )
+        with patch("cogs.aboutCog.asyncio.sleep", new_callable=AsyncMock), respx.mock() as mock_router:
+            mock_router.get(f"{self._API_BASE}/about/categories").mock(
+                side_effect=httpx.ConnectError("connection refused")
+            )
 
-                # Should not raise — failure is caught internally
-                asyncio.run(mock_about_cog._preload_data())
+            # Should not raise — failure is caught internally
+            asyncio.run(mock_about_cog._preload_data())
 
         # On network error, categories should be reset to empty
         assert mock_about_cog._categories == []

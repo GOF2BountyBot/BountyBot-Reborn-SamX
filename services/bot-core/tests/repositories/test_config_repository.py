@@ -275,8 +275,8 @@ class TestResetToDefaults:
         # returns None so a new config is created
         mock_db.execute = AsyncMock(
             side_effect=[
-                _make_scalars_result([existing]),   # get_by_guild_id → existing
-                _make_scalars_result([]),            # create_or_update lookup → not found
+                _make_scalars_result([existing]),  # get_by_guild_id → existing
+                _make_scalars_result([]),  # create_or_update lookup → not found
             ]
         )
         mock_db.add = MagicMock()
@@ -324,8 +324,8 @@ class TestResetToDefaults:
 
         mock_db.execute = AsyncMock(
             side_effect=[
-                _make_scalars_result([existing]),   # get_by_guild_id → existing
-                _make_scalars_result([]),            # create_or_update lookup → not found
+                _make_scalars_result([existing]),  # get_by_guild_id → existing
+                _make_scalars_result([]),  # create_or_update lookup → not found
             ]
         )
         mock_db.add = MagicMock()
@@ -368,8 +368,8 @@ class TestResetToDefaults:
         """B.66: reset_to_defaults with no existing config creates a fresh default."""
         mock_db.execute = AsyncMock(
             side_effect=[
-                _make_scalars_result([]),   # get_by_guild_id → none
-                _make_scalars_result([]),   # create_or_update lookup → not found
+                _make_scalars_result([]),  # get_by_guild_id → none
+                _make_scalars_result([]),  # create_or_update lookup → not found
             ]
         )
         mock_db.add = MagicMock()

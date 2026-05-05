@@ -889,9 +889,7 @@ class TestAdminRoleIdPropagation:
     ):
         """GET /config/guild/{id} must return admin_role_id=null when not set."""
         _configure_db_mock(mock_get_db)
-        mock_config_service.get_guild_config = AsyncMock(
-            return_value=make_mock_config(admin_role_id=None)
-        )
+        mock_config_service.get_guild_config = AsyncMock(return_value=make_mock_config(admin_role_id=None))
 
         response = client.get("/api/v1/config/guild/67890")
 
@@ -902,9 +900,7 @@ class TestAdminRoleIdPropagation:
     def test_update_guild_config_returns_admin_role_id(self, mock_get_db, client, mock_config_service):
         """PUT /config/guild/{id} must propagate admin_role_id in response."""
         _configure_db_mock(mock_get_db)
-        mock_config_service.create_or_update_config = AsyncMock(
-            return_value=make_mock_config(admin_role_id=99887766)
-        )
+        mock_config_service.create_or_update_config = AsyncMock(return_value=make_mock_config(admin_role_id=99887766))
         payload = {"guild_id": 67890, "admin_role_id": 99887766}
 
         response = client.put("/api/v1/config/guild/67890", json=payload)
@@ -916,9 +912,7 @@ class TestAdminRoleIdPropagation:
     def test_update_admin_role_endpoint_returns_admin_role_id(self, mock_get_db, client, mock_config_service):
         """PUT /config/guild/{id}/admin-role/{role} must reflect the new role in response."""
         _configure_db_mock(mock_get_db)
-        mock_config_service.update_admin_role = AsyncMock(
-            return_value=make_mock_config(admin_role_id=12345678)
-        )
+        mock_config_service.update_admin_role = AsyncMock(return_value=make_mock_config(admin_role_id=12345678))
 
         response = client.put("/api/v1/config/guild/67890/admin-role/12345678")
 
@@ -929,9 +923,7 @@ class TestAdminRoleIdPropagation:
     def test_reset_guild_config_returns_null_admin_role_id(self, mock_get_db, client, mock_config_service):
         """POST /config/guild/{id}/reset must return admin_role_id=null (default after reset)."""
         _configure_db_mock(mock_get_db)
-        mock_config_service.reset_to_defaults = AsyncMock(
-            return_value=make_mock_config(admin_role_id=None)
-        )
+        mock_config_service.reset_to_defaults = AsyncMock(return_value=make_mock_config(admin_role_id=None))
 
         response = client.post("/api/v1/config/guild/67890/reset")
 

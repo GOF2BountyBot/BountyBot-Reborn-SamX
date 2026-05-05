@@ -382,5 +382,234 @@ class TestOnGuildRemoveRespx:
             asyncio.run(mock_setup_cog.on_guild_remove(guild))
 
 
+# ---------------------------------------------------------------------------
+# TestOnGuildJoinCommandSync — tests for the slash-command sync block added to
+# on_guild_join (lines 76-82 of setupCog.py).
+#
+# Coverage gaps found during review (2026-05-05):
+#   • All existing TestOnGuildJoin tests inadvertently exercise the *except* path
+#     of the sync block because bot.tree.sync is a plain MagicMock (not an
+#     AsyncMock), so `await bot.tree.sync(...)` raises TypeError → caught →
+#     warning logged.  Line 80 (info log on success) was therefore at 0%.
+#   • No test verified that copy_global_to is called with the guild object.
+#   • No test verified that sync is called with discord.Object(id=guild.id).
+#   • No test verified the warning-log path is taken on sync failure.
+#   • No test verified the independence of the sync block from the welcome-
+#     message block (i.e. sync still runs even when welcome message fails).
+# ---------------------------------------------------------------------------
+
+
+class TestOnGuildJoinCommandSync:
+    """Tests for the command-sync block added at the end of on_guild_join."""
+
+    # ------------------------------------------------------------------
+    # Helpers
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _make_guild_with_sync_bot(bot):
+        """Return a mock guild AND configure bot.tree with AsyncMock so that
+        the sync succeeds (exercises the success/info-log path)."""
+        import discord
+
+        bot.tree.copy_global_to = MagicMock()  # synchronous — no await needed
+        bot.tree.sync = AsyncMock(return_value=[])
+
+        guild = _make_mock_guild()
+        return guild
+
+    # ------------------------------------------------------------------
+    # Happy path: sync succeeds
+    # ------------------------------------------------------------------
+
+    def test_sync_success_calls_copy_global_to_with_guild(self, mock_setup_cog, mock_bot):
+        """copy_global_to must be called with the exact guild object."""
+        guild = self._make_guild_with_sync_bot(mock_bot)
+        mock_setup_cog.bot = mock_bot
+
+        asyncio.run(mock_setup_cog.on_guild_join(guild))
+
+        mock_bot.tree.copy_global_to.assert_called_once_with(guild=guild)
+
+    def test_sync_success_calls_sync_with_guild_object(self, mock_setup_cog, mock_bot):
+        """sync must be awaited with discord.Object(id=guild.id)."""
+        import discord
+
+        guild = self._make_guild_with_sync_bot(mock_bot)
+        mock_setup_cog.bot = mock_bot
+
+        asyncio.run(mock_setup_cog.on_guild_join(guild))
+
+        mock_bot.tree.sync.assert_awaited_once()
+        call_kwargs = mock_bot.tree.sync.call_args
+        passed_guild = call_kwargs.kwargs.get("guild") or call_kwargs.args[0]
+        # Must be a discord.Object (not a full Guild) with the right ID
+        assert isinstance(passed_guild, discord.Object)
+        assert passed_guild.id == guild.id
+
+    def test_sync_success_does_not_raise(self, mock_setup_cog, mock_bot):
+        """on_guild_join must not propagate exceptions from a successful sync."""
+        guild = self._make_guild_with_sync_bot(mock_bot)
+        mock_setup_cog.bot = mock_bot
+
+        # Must not raise
+        asyncio.run(mock_setup_cog.on_guild_join(guild))
+
+    # ------------------------------------------------------------------
+    # Independence: sync block runs even when welcome message fails
+    # ------------------------------------------------------------------
+
+    def test_sync_runs_even_when_welcome_message_raises(self, mock_setup_cog, mock_bot):
+        """The sync try/except is independent: it executes even when the welcome
+        message block raises an unhandled exception."""
+        import discord
+
+        guild = self._make_guild_with_sync_bot(mock_bot)
+        mock_setup_cog.bot = mock_bot
+
+        system_channel = MagicMock(spec=discord.TextChannel)
+        system_channel.name = "general"
+        system_channel.send = AsyncMock(side_effect=RuntimeError("channel exploded"))
+        guild.system_channel = system_channel
+
+        asyncio.run(mock_setup_cog.on_guild_join(guild))
+
+        # Sync should still have been called despite the welcome-message failure
+        mock_bot.tree.sync.assert_awaited_once()
+
+    def test_sync_runs_even_when_forbidden_on_welcome(self, mock_setup_cog, mock_bot):
+        """Sync must still run after a discord.Forbidden on the welcome message."""
+        import discord
+
+        guild = self._make_guild_with_sync_bot(mock_bot)
+        mock_setup_cog.bot = mock_bot
+
+        system_channel = MagicMock(spec=discord.TextChannel)
+        system_channel.name = "general"
+        system_channel.send = AsyncMock(
+            side_effect=discord.Forbidden(MagicMock(status=403), "Forbidden")
+        )
+        guild.system_channel = system_channel
+
+        asyncio.run(mock_setup_cog.on_guild_join(guild))
+
+        mock_bot.tree.sync.assert_awaited_once()
+
+    # ------------------------------------------------------------------
+    # Error path: sync failure is swallowed (warning log, no propagation)
+    # ------------------------------------------------------------------
+
+    def test_sync_failure_does_not_raise(self, mock_setup_cog, mock_bot):
+        """A sync failure must be caught and swallowed — not re-raised."""
+        mock_bot.tree.copy_global_to = MagicMock()
+        mock_bot.tree.sync = AsyncMock(side_effect=Exception("Forbidden: missing scope"))
+        mock_setup_cog.bot = mock_bot
+
+        guild = _make_mock_guild()
+        guild.system_channel = None
+        guild.text_channels = []
+
+        # Must NOT raise
+        asyncio.run(mock_setup_cog.on_guild_join(guild))
+
+    def test_sync_http_exception_swallowed(self, mock_setup_cog, mock_bot):
+        """discord.HTTPException (e.g. missing applications.commands scope) must
+        be caught and swallowed, not propagate out of on_guild_join."""
+        import discord
+
+        mock_bot.tree.copy_global_to = MagicMock()
+        # Simulate the 403 that Discord returns when the bot lacks the
+        # applications.commands OAuth2 scope.
+        mock_response = MagicMock()
+        mock_response.status = 403
+        mock_response.reason = "Forbidden"
+        mock_bot.tree.sync = AsyncMock(
+            side_effect=discord.HTTPException(mock_response, "Missing Access")
+        )
+        mock_setup_cog.bot = mock_bot
+
+        guild = _make_mock_guild()
+        guild.system_channel = None
+        guild.text_channels = []
+
+        # Must NOT raise
+        asyncio.run(mock_setup_cog.on_guild_join(guild))
+
+    def test_sync_copy_global_failure_swallowed(self, mock_setup_cog, mock_bot):
+        """If copy_global_to itself raises, the exception must be swallowed
+        (it is inside the same try block as the sync)."""
+        mock_bot.tree.copy_global_to = MagicMock(side_effect=RuntimeError("tree not ready"))
+        mock_bot.tree.sync = AsyncMock()
+        mock_setup_cog.bot = mock_bot
+
+        guild = _make_mock_guild()
+        guild.system_channel = None
+        guild.text_channels = []
+
+        # Must NOT raise
+        asyncio.run(mock_setup_cog.on_guild_join(guild))
+
+        # sync should NOT be awaited because copy_global_to raised first
+        mock_bot.tree.sync.assert_not_awaited()
+
+    # ------------------------------------------------------------------
+    # Edge case: empty command tree
+    # ------------------------------------------------------------------
+
+    def test_sync_with_empty_command_tree(self, mock_setup_cog, mock_bot):
+        """Syncing a bot with no registered commands should not raise."""
+        mock_bot.tree.copy_global_to = MagicMock()
+        mock_bot.tree.sync = AsyncMock(return_value=[])  # Discord returns empty list
+        mock_setup_cog.bot = mock_bot
+
+        guild = _make_mock_guild()
+        guild.system_channel = None
+        guild.text_channels = []
+
+        asyncio.run(mock_setup_cog.on_guild_join(guild))
+        mock_bot.tree.sync.assert_awaited_once()
+
+    # ------------------------------------------------------------------
+    # Edge case: sync returns non-empty list (normal case)
+    # ------------------------------------------------------------------
+
+    def test_sync_with_commands_returns_list(self, mock_setup_cog, mock_bot):
+        """Sync returning a list of commands (normal success) must be handled."""
+        mock_bot.tree.copy_global_to = MagicMock()
+        mock_bot.tree.sync = AsyncMock(return_value=[MagicMock(), MagicMock()])
+        mock_setup_cog.bot = mock_bot
+
+        guild = _make_mock_guild()
+        guild.system_channel = None
+        guild.text_channels = []
+
+        # No exception, sync was awaited
+        asyncio.run(mock_setup_cog.on_guild_join(guild))
+        mock_bot.tree.sync.assert_awaited_once()
+
+    # ------------------------------------------------------------------
+    # Verify correct discord.Object id, not a string or wrong type
+    # ------------------------------------------------------------------
+
+    def test_sync_uses_guild_id_not_guild_name(self, mock_setup_cog, mock_bot):
+        """discord.Object must be constructed from guild.id (int), not name."""
+        import discord
+
+        mock_bot.tree.copy_global_to = MagicMock()
+        mock_bot.tree.sync = AsyncMock(return_value=[])
+        mock_setup_cog.bot = mock_bot
+
+        guild = _make_mock_guild(guild_id=555666777, name="SomeGuild")
+
+        asyncio.run(mock_setup_cog.on_guild_join(guild))
+
+        call_kwargs = mock_bot.tree.sync.call_args
+        passed_guild = call_kwargs.kwargs.get("guild") or call_kwargs.args[0]
+        assert isinstance(passed_guild, discord.Object)
+        assert passed_guild.id == 555666777, (
+            f"Expected discord.Object(id=555666777) but got id={passed_guild.id}"
+        )
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

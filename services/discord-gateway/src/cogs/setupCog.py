@@ -73,6 +73,14 @@ class SetupCog(commands.Cog):
         except Exception as e:  # pylint: disable=broad-exception-caught
             flogger.error(f"Error sending welcome message in guild {guild.id}: {e}")
 
+        # Sync slash commands to the newly joined guild
+        try:
+            self.bot.tree.copy_global_to(guild=guild)
+            await self.bot.tree.sync(guild=discord.Object(id=guild.id))
+            flogger.info(f"Slash commands synced to guild {guild.id} ({guild.name})")
+        except Exception as e:  # pylint: disable=broad-exception-caught
+            flogger.warning(f"Failed to sync commands to guild {guild.id}: {e}")
+
     # ------------------------------------------------------------------
     # on_guild_remove — cleanup when bot is removed from a guild
     # ------------------------------------------------------------------

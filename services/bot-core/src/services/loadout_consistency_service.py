@@ -303,20 +303,30 @@ class LoadoutConsistencyService:
         if inv_item is None:
             raise ValueError(f"Item '{item_name}' (type={inventory_type}) not found in your inventory")
 
-        # 4b. B.41 — guard against equipping more copies than the player owns.
-        # Count how many copies are already equipped across ALL ships (cross-ship sum)
-        # to prevent inventory going negative.
-        all_ships = await self.player_ship_repo.get_player_ships(db, player_id)
-        already_equipped_count = sum(self._get_slot(s, equipment_type).count(item_name) for s in all_ships)
-        if already_equipped_count >= inv_item.quantity:
-            raise ValueError(
-                f"No unequipped copies remain: '{item_name}' has {inv_item.quantity} in inventory "
-                f"but {already_equipped_count} already equipped."
-            )
-
-        # 5. Slot availability against static ship caps
+        # 5. Slot availability against static ship caps — resolved first so we can
+        # gate the B.41 guard on whether a free slot exists.
         caps = await self._get_static_ship_caps(db, ship)
         current_slot = self._get_slot(ship, equipment_type)
+
+        # 4b. B.41 — guard against equipping more copies than the player owns.
+        # Only runs when there IS a free slot available.  When slots are full, the
+        # slot-full path below fires instead, and the swap flow (unequip-then-equip)
+        # is handled by the caller (cog / EquipmentService).  After the unequip step
+        # the inventory quantity will have increased by one, so the B.41 guard will
+        # pass correctly on the subsequent equip call.
+        #
+        # This preserves B.41's original intent — prevent equipping MORE copies than
+        # owned when there is an empty slot to fill — while allowing the legitimate
+        # same-item swap case (e.g. 1× equipped + 1× in inventory, single-slot ship).
+        if len(current_slot) < caps[equipment_type]:
+            all_ships = await self.player_ship_repo.get_player_ships(db, player_id)
+            already_equipped_count = sum(self._get_slot(s, equipment_type).count(item_name) for s in all_ships)
+            if already_equipped_count >= inv_item.quantity:
+                raise ValueError(
+                    f"No unequipped copies remain: '{item_name}' has {inv_item.quantity} in inventory "
+                    f"but {already_equipped_count} already equipped."
+                )
+
         if len(current_slot) >= caps[equipment_type]:
             raise ValueError(
                 f"No available {equipment_type} slots on ship '{ship.ship_name}' "

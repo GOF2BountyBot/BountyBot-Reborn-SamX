@@ -228,6 +228,37 @@ class TestEquipOne:
             await svc.equip_one(mock_db, player_id=42, ship_id=1, item_name="X", equipment_type="weapons")
 
     @pytest.mark.asyncio
+    async def test_equip_one_same_item_swap_slot_full_raises_slot_full_not_b41(self, svc, mock_db):
+        """Regression: B.41 guard must NOT fire when slots are full (swap flow).
+
+        Scenario: player has 1× Ridil Blaster in inventory (qty=1) and 1× Ridil
+        Blaster already equipped on a 1-slot ship.  The swap UI is valid — the
+        cog will unequip first, then re-equip.  The equip call with full slots
+        must raise the slot-full ValueError (step 5), NOT the B.41 ValueError.
+
+        Before the fix: already_equipped_count=1 >= inv_item.quantity=1 → B.41
+        fired → HTTP 400 "No unequipped copies remain".
+        After the fix: B.41 is gated behind a free-slot check → step 5 fires →
+        "No available weapons slots" (correct; cog handles unequip-first).
+        """
+        ship = _make_player_ship(ship_id=1, player_id=42, weapons=["Ridil Blaster"])
+        static = _make_static_ship(max_primaries=1)  # single-slot ship
+        inv = _make_inv_item("Ridil Blaster", "primary_weapon", quantity=1)
+
+        svc.player_ship_repo.get_by_id = AsyncMock(return_value=ship)
+        svc.ship_repo.get_by_name = AsyncMock(return_value=static)
+        svc.item_repo.get_by_name = AsyncMock(return_value=_make_base_item("Ridil Blaster", "PrimaryWeapon"))
+        svc.inventory_repo.get_player_item = AsyncMock(return_value=inv)
+        # get_player_ships should NOT be called when slots are full (B.41 gated)
+        svc.player_ship_repo.get_player_ships = AsyncMock(return_value=[ship])
+
+        with pytest.raises(ValueError, match="slots"):
+            await svc.equip_one(mock_db, player_id=42, ship_id=1, item_name="Ridil Blaster", equipment_type="weapons")
+
+        # B.41 guard was skipped: get_player_ships must NOT have been called
+        svc.player_ship_repo.get_player_ships.assert_not_called()
+
+    @pytest.mark.asyncio
     async def test_equip_one_all_copies_already_equipped_raises(self, svc, mock_db):
         """B.41 — equip_one raises when inventory quantity <= already-equipped count.
 

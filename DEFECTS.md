@@ -31,6 +31,54 @@ Cross-ref: `E2E_TEST_CHECKLIST.md` (test-item references). All commit SHAs are l
 
 ## OPEN
 
+### B.80 — `/admin_give_item` requires redundant `item_type` parameter
+
+🔵 low · discord-gateway · 2026-05-05 · **OPEN**
+
+**Summary**: `/admin_give_item` has an `item_type` parameter that the user must fill in manually. Since the item name is already provided (with autocomplete), the concrete item type can be resolved server-side from the item name — the same pattern used by `/sell` (A.42b). The `item_type` field is redundant and error-prone.
+
+**Required work**: Remove `item_type` from the `/admin_give_item` slash command parameters in `adminCog.py`. POST only `{player_id, item_name, quantity}` to the API and let the server resolve the type from the item name, consistent with the `/sell` pattern.
+
+---
+
+### B.78 — Wah'noor system should have no neighboring systems (non-routable)
+
+ℹ️ info · Data · 2026-05-05 · **OPEN**
+
+**Summary**: Wah'noor is intended to be a dead-end / isolated system with no connections — non-routable. Current seed data may have it connected to neighboring systems, making it reachable via A* pathfinding when it should not be.
+
+**Required work**: Check `services/bot-core/import_data/system/` for Wah'noor's JSON and verify its `connections` array is empty `[]`. If not, remove all connections and reseed.
+
+---
+
+### B.77 — A* pathfinding produces suboptimal routes due to inadmissible heuristic
+
+🟡 medium · bot-core · 2026-05-05 · **OPEN**
+
+**Observed**: Vortt Baskk bounty (Discord message ID `1501255506281365605`) route Union→Prospero→Vulpes→Oom'Bak (3 hops) returned instead of optimal Union→Magnetar→Oom'Bak (2 hops).
+
+**Root cause**: The Euclidean coordinate distance heuristic is inadmissible for uniform-hop-cost graphs. Vulpes is geometrically closer to Oom'Bak (174.6 units) than Magnetar (210.8 units), so A* greedily prefers the longer 3-hop path. Since all edges have uniform cost (1 hop), the heuristic must never overestimate hop count — but raw pixel distances do exactly that, misleading the search.
+
+**Fix**: Replace the Euclidean heuristic with a constant `0` (degrades A* to Dijkstra/BFS, guaranteed shortest hop count) or normalise the heuristic so it is scaled to `≤ 1` per hop. Given the graph is small (34 nodes) BFS/Dijkstra is perfectly adequate and simpler.
+
+**File**: `services/bot-core/src/services/pathfinding_service.py` — `_heuristic()` method.
+
+---
+
+### B.76 — Test suite widespread mock overuse / tautological tests
+
+🟡 medium · All services · 2026-05-05 · **OPEN**
+
+**Summary**: The test suite across bot-core, discord-gateway, and blender-service has widespread tautological mock tests — tests that mock the subject under test, so they only verify mock behaviour rather than real code paths. This was first surfaced during B.33 remediation (4 tautological adminCog preload tests replaced with respx contract tests) and again during the `setupCog` command-sync fix (tester found existing `on_guild_join` tests were accidentally exercising the error path due to non-awaitable `MagicMock`). A `tests/AGENTS.md` policy was added to prevent new instances, but no suite-wide audit has been performed.
+
+**Impact**: Unknown number of tests are providing false confidence. Bugs may exist in code paths that appear covered.
+
+**Required work**: Full audit of all three test suites to identify and replace tautological/mock-only tests with real-behaviour tests (respx for HTTP contracts, real objects with deterministic inputs per the `test_combat_service.py` reference pattern). Max 2 mocks per test per code standards.
+
+**References**: B.33 fix (`452ac28`), setupCog tester review (2026-05-05), `tests/AGENTS.md` policy, `services/bot-core/tests/services/test_combat_service.py` (reference pattern).
+
+---
+
 ### B.75 — High-res composite PNG "upload failed" for non-Nitro users
 
 ℹ️ info · discord-gateway · 2026-05-05 · **withdrawn**

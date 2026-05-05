@@ -4,6 +4,64 @@ Business logic layer for bot-core. All 16 service modules live here + 1 normaliz
 
 ---
 
+## Inventory & Equipment Data Model — CANONICAL REFERENCE
+
+### Two Separate Pools
+
+The system uses **two completely separate pools** to track owned items. There is NO overlap between them.
+
+| Pool | Table / Column | Meaning |
+|------|---------------|---------|
+| **Cargo** | `player_inventories.quantity` | Number of **unequipped** copies the player has in cargo |
+| **Equipped** | `player_ships.weapons` / `modules` / `turrets` / `secondary_weapons` | JSON name arrays — each entry is one equipped copy |
+
+**`player_inventories.quantity` is CARGO-ONLY — it does NOT include equipped copies.**
+
+Equipped items live solely in the ship loadout JSON. They do NOT appear in `player_inventories`.
+
+### Total Ownership Invariant
+
+```
+Total owned (item X, player P) = P.inventory.quantity(X) + sum(count of X across all of P's ships)
+```
+
+Example: player owns 3× Ridil Blaster
+- `player_inventories`: `quantity=1` (1 in cargo)
+- Ship A `weapons`: `["Ridil Blaster", "Ridil Blaster"]` (2 equipped)
+- Total: 1 + 2 = 3 ✓
+
+### Equip / Unequip Transaction
+
+| Operation | `player_inventories.quantity` | `player_ships.{slot}` |
+|-----------|------------------------------|-----------------------|
+| **Equip** | Decreases by 1 (cargo copy consumed) | Item name appended |
+| **Unequip** | Increases by 1 (cargo copy returned) | Item name removed |
+| **Swap** | No net change | Item replaced in slot |
+
+Both operations use `commit=False` — the calling router wraps with `db.begin()` for atomicity.
+
+### B.41 Guard — Correct and Necessary
+
+The guard in `LoadoutConsistencyService.equip_one()` (look for "No unequipped copies remain"):
+
+```python
+already_equipped_count = sum(count of item across ALL ships)
+if already_equipped_count >= inv_item.quantity:  # quantity = cargo only
+    raise ValueError("No unequipped copies remain")
+```
+
+This prevents equipping more copies than exist in cargo (which would create phantom items).
+
+**The guard only runs when a slot is free** — it is skipped when slots are full (the swap path). For swaps: the cog unequips first (returning the copy to cargo, incrementing quantity), then equips (decrementing quantity). After the unequip, `quantity` increases so the guard passes on the subsequent equip call.
+
+**Do not remove or weaken this guard.** It is the primary defence against inventory corruption.
+
+### Autocomplete Filter (discord-gateway `inventoryCog.equip_autocomplete`)
+
+The cog filters the equip dropdown to `qty > already_equipped_on_active_ship`. It only counts the **active ship**, not all ships. This is intentional — typical UX is equipping on the active ship. In the rare case a player tries to equip on an inactive ship when all cargo copies are already equipped on other ships, the B.41 guard will catch it server-side.
+
+---
+
 ## Criminal-Only Module Dedup Invariant (A.48 fix, 2026-04-27)
 
 `LoadoutResponseService.build_bounty_loadout()` runs the criminal modules through

@@ -22,6 +22,20 @@ also excludes already-equipped items by fetching the active ship.
 `unequip_autocomplete` now includes `secondary_weapons` slot in its loadout scan
 (for future compatibility).
 
+#### Inventory model — CRITICAL for autocomplete correctness
+
+`player_inventories.quantity` is **cargo-only** — it represents unequipped copies only.
+Equipped items live solely in `player_ships.{weapons/modules/turrets/secondary_weapons}` JSON arrays.
+They are **not** reflected in `player_inventories`.
+
+The equip autocomplete filters using `qty > already_equipped_on_active_ship` where:
+- `qty` = `player_inventories.quantity` (cargo copies)
+- `already_equipped` = count of item in the **active ship's** slot arrays only
+
+An item appears in the dropdown if the player has at least one unequipped cargo copy that is not already accounted for by the active ship's loadout. The filter counts the active ship only (not all ships) — this is intentional for the common case. The server-side B.41 guard in `LoadoutConsistencyService` enforces the full cross-ship check.
+
+**Do NOT** conflate cargo quantity with total ownership. A player can have `quantity=1` in cargo AND the same item equipped on a ship simultaneously — those are two separate copies.
+
 ### /sell follows the same server-side resolution pattern (A.42/A.42b/A.42c, 2026-04-22)
 
 `shopCog.sell` no longer has `item_type` or `target_tier` parameters on the slash command:

@@ -126,9 +126,9 @@
 
 ### Bot Discord Permissions
 - **Old**: `permissions=8` (Administrator — too broad)
-- **New**: `permissions=4507997674010673` (minimum required set)
-- **Invite URL**: `https://discord.com/oauth2/authorize?client_id=1379827884851593256&permissions=4507997674010673&integration_type=0&scope=bot`
-- **Permissions included**: VIEW_CHANNEL, MANAGE_ROLES, MANAGE_GUILD, SEND_MESSAGES, MANAGE_CHANNELS, MANAGE_MESSAGES, EMBED_LINKS, ATTACH_FILES, READ_MESSAGE_HISTORY, MANAGE_PERMISSIONS, USE_APPLICATION_COMMANDS
+- **New**: `permissions=2416438320` (minimum required set)
+- **Invite URL**: `https://discord.com/oauth2/authorize?client_id=1379827884851593256&permissions=2416438320&integration_type=0&scope=bot`
+- **Permissions included**: VIEW_CHANNEL, SEND_MESSAGES, MANAGE_MESSAGES, EMBED_LINKS, ATTACH_FILES, READ_MESSAGE_HISTORY, MENTION_EVERYONE, USE_EXTERNAL_EMOJIS, MANAGE_CHANNELS, MANAGE_GUILD, MANAGE_ROLES, USE_APPLICATION_COMMANDS
 - **Role hierarchy**: Bot's managed role must be above all game-created roles. Since `/admin_setup` creates all game roles, bot must join server BEFORE running setup — roles land below bot's role automatically.
 - Bot Admin role (pre-existing, user-specified at setup) is only READ for permission checks — bot never assigns it, so no hierarchy concern.
 
@@ -247,3 +247,40 @@ sudo docker exec bountybot-db psql -U bounty -d bountydb -c \
 2. **Phase 1.5** (non-admin permission denials) — deferred, revisit pre-release
 3. Stack rebuild when ready — bot invite URL updated, use new permissions integer
 4. After rebuild: bot joins first, then `/admin_setup`, then `/profile` both accounts, then reseed ships
+
+---
+
+## Planned Feature: `/notifications`
+
+### Design
+
+New slash command: `/notifications type:bounty|shop enabled:true|false`
+
+**`type:bounty`**
+- `enabled:true` → assign user's current DB tier role (`@Bounty Hunter Bronze/Silver/Gold/Platinum`)
+- `enabled:false` → remove user's current tier role. `@Bounty Hunter` is NOT touched — user keeps full channel access, just won't be @-mentioned in bounty announcements
+
+**`type:shop`**
+- `enabled:true` → assign new `@Shop Announcements` role
+- `enabled:false` → remove `@Shop Announcements` role
+- Shop refresh announcements should @mention `@Shop Announcements` instead of `@Bounty Hunter`
+
+### Why this works
+Tier roles (`@Bounty Hunter Bronze/Silver/Gold/Platinum`) have **zero permission overwrites** on any channel — confirmed via live permission audit. They are purely cosmetic badges used for @-mentions in bounty announcements. `@Bounty Hunter` is the sole access gate for all BountyBot channels. Removing a tier role does not affect channel visibility or gameplay at all.
+
+### Implementation requirements
+
+| # | What | Where |
+|---|------|-------|
+| 1 | New role: `@Shop Announcements` created by `/admin_setup` | `guild_setup.py` |
+| 2 | New DB column: `shop_announcements_role_id` on `guild_configs` | New Alembic migration |
+| 3 | New slash command: `/notifications` | New cog or added to `playerCog.py` |
+| 4 | Shop refresh announcement mentions `@Shop Announcements` instead of `@Bounty Hunter` | `shop_refresh_executor.py` + gateway announcement endpoint |
+| 5 | `/unregister` also removes `@Shop Announcements` if present | `playerCog.py` |
+| 6 | `/promote` and `/prestige` gracefully handle missing tier role (already non-fatal, just document) | `playerCog.py` — already handled |
+| 7 | Update `/help` to include `/notifications` in the appropriate category | `adminCog.py` or help data |
+
+### Permission utilities to use
+- `GET /api/v1/permissions/convert/value-to-names` — decode bitfields
+- `GET /api/v1/permissions/convert/names-to-value` — encode permission sets
+- `GET /api/v1/permissions/calculate` — compute effective permissions with inheritance

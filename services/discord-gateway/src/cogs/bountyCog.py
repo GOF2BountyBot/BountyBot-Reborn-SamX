@@ -279,10 +279,7 @@ class BountyCog(commands.Cog):
         """
         result = outcome.get("result", "")
         criminal_name = outcome.get("criminal_name") or f"Bounty #{outcome.get('bounty_id')}"
-        bounty_id = outcome.get("bounty_id")
         title_prefix = f"🎯 {criminal_name}"
-        if bounty_id is not None:
-            title_prefix += f" (#{bounty_id})"
 
         if result == "correct":
             combat_won = outcome.get("combat_won")

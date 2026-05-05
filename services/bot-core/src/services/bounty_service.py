@@ -1144,6 +1144,7 @@ class BountyService:
                 CheckResponse(
                     result=CheckResult.ALREADY_CHECKED,
                     bounty_id=bounty.id,
+                    criminal_name=bounty.criminal_name,
                     message=f"System {system_name} already checked",
                 ),
                 None,
@@ -1289,6 +1290,7 @@ class BountyService:
             CheckResponse(
                 result=CheckResult.INCORRECT,
                 bounty_id=bounty.id,
+                criminal_name=bounty.criminal_name,
                 message=inc_message,
                 proximity_hint=proximity_hint,
                 distance_to_answer=distance,

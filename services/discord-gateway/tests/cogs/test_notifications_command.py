@@ -160,7 +160,7 @@ class TestNotificationsBountyEnable:
         cog.http_client.get = AsyncMock(return_value=config_resp)
         cog.http_client.post = AsyncMock(return_value=player_resp)
 
-        await cog.notifications.callback(cog, interaction, type="bounty", enabled=1)
+        await cog.notifications.callback(cog, interaction, notification_type="bounty", enabled=1)
 
         interaction.response.defer.assert_awaited_once_with(thinking=True, ephemeral=True)
         interaction.user.add_roles.assert_awaited_once_with(tier_role, reason="BountyBot bounty notification opt-in")
@@ -186,7 +186,7 @@ class TestNotificationsBountyEnable:
         cog.http_client.get = AsyncMock(return_value=config_resp)
         cog.http_client.post = AsyncMock(return_value=player_resp)
 
-        await cog.notifications.callback(cog, interaction, type="bounty", enabled=1)
+        await cog.notifications.callback(cog, interaction, notification_type="bounty", enabled=1)
 
         # add_roles should NOT be called (role already present)
         interaction.user.add_roles.assert_not_awaited()
@@ -214,7 +214,7 @@ class TestNotificationsBountyDisable:
         cog.http_client.get = AsyncMock(return_value=config_resp)
         cog.http_client.post = AsyncMock(return_value=player_resp)
 
-        await cog.notifications.callback(cog, interaction, type="bounty", enabled=0)
+        await cog.notifications.callback(cog, interaction, notification_type="bounty", enabled=0)
 
         interaction.user.remove_roles.assert_awaited_once_with(
             tier_role, reason="BountyBot bounty notification opt-out"
@@ -240,7 +240,7 @@ class TestNotificationsBountyDisable:
         cog.http_client.get = AsyncMock(return_value=config_resp)
         cog.http_client.post = AsyncMock(return_value=player_resp)
 
-        await cog.notifications.callback(cog, interaction, type="bounty", enabled=0)
+        await cog.notifications.callback(cog, interaction, notification_type="bounty", enabled=0)
 
         interaction.user.remove_roles.assert_not_awaited()
         interaction.followup.send.assert_awaited_once()
@@ -268,7 +268,7 @@ class TestNotificationsShopEnable:
         cog.http_client.get = AsyncMock(return_value=config_resp)
         cog.http_client.post = AsyncMock()  # Not called for shop type
 
-        await cog.notifications.callback(cog, interaction, type="shop", enabled=1)
+        await cog.notifications.callback(cog, interaction, notification_type="shop", enabled=1)
 
         interaction.user.add_roles.assert_awaited_once_with(shop_role, reason="BountyBot shop notification opt-in")
         call_kwargs = interaction.followup.send.call_args[1]
@@ -288,7 +288,7 @@ class TestNotificationsShopEnable:
         config_resp = _make_http_resp(200, config_data)
         cog.http_client.get = AsyncMock(return_value=config_resp)
 
-        await cog.notifications.callback(cog, interaction, type="shop", enabled=1)
+        await cog.notifications.callback(cog, interaction, notification_type="shop", enabled=1)
 
         interaction.user.add_roles.assert_not_awaited()
         interaction.followup.send.assert_awaited_once()
@@ -310,7 +310,7 @@ class TestNotificationsShopDisable:
         config_resp = _make_http_resp(200, config_data)
         cog.http_client.get = AsyncMock(return_value=config_resp)
 
-        await cog.notifications.callback(cog, interaction, type="shop", enabled=0)
+        await cog.notifications.callback(cog, interaction, notification_type="shop", enabled=0)
 
         interaction.user.remove_roles.assert_awaited_once_with(
             shop_role, reason="BountyBot shop notification opt-out"
@@ -338,7 +338,7 @@ class TestNotificationsErrorCases:
         config_resp.raise_for_status = MagicMock()
         cog.http_client.get = AsyncMock(return_value=config_resp)
 
-        await cog.notifications.callback(cog, interaction, type="shop", enabled=1)
+        await cog.notifications.callback(cog, interaction, notification_type="shop", enabled=1)
 
         interaction.followup.send.assert_awaited_once()
         call_args = interaction.followup.send.call_args
@@ -354,7 +354,7 @@ class TestNotificationsErrorCases:
         config_resp = _make_http_resp(200, config_data)
         cog.http_client.get = AsyncMock(return_value=config_resp)
 
-        await cog.notifications.callback(cog, interaction, type="shop", enabled=1)
+        await cog.notifications.callback(cog, interaction, notification_type="shop", enabled=1)
 
         interaction.followup.send.assert_awaited_once()
         call_args = interaction.followup.send.call_args
@@ -372,7 +372,7 @@ class TestNotificationsErrorCases:
         config_resp = _make_http_resp(200, config_data)
         cog.http_client.get = AsyncMock(return_value=config_resp)
 
-        await cog.notifications.callback(cog, interaction, type="shop", enabled=1)
+        await cog.notifications.callback(cog, interaction, notification_type="shop", enabled=1)
 
         interaction.followup.send.assert_awaited_once()
         call_args = interaction.followup.send.call_args
@@ -397,7 +397,7 @@ class TestNotificationsErrorCases:
         config_resp = _make_http_resp(200, config_data)
         cog.http_client.get = AsyncMock(return_value=config_resp)
 
-        await cog.notifications.callback(cog, interaction, type="shop", enabled=1)
+        await cog.notifications.callback(cog, interaction, notification_type="shop", enabled=1)
 
         # Command should handle the error gracefully — an error message was sent
         interaction.followup.send.assert_awaited_once()
@@ -421,7 +421,7 @@ class TestNotificationsErrorCases:
         cog.http_client.get = AsyncMock(return_value=config_resp)
         cog.http_client.post = AsyncMock(return_value=player_resp)
 
-        await cog.notifications.callback(cog, interaction, type="bounty", enabled=1)
+        await cog.notifications.callback(cog, interaction, notification_type="bounty", enabled=1)
 
         interaction.followup.send.assert_awaited_once()
         call_args = interaction.followup.send.call_args
@@ -443,7 +443,7 @@ class TestNotificationsErrorCases:
         cog.http_client.get = AsyncMock(return_value=config_resp)
         cog.http_client.post = AsyncMock(return_value=player_resp)
 
-        await cog.notifications.callback(cog, interaction, type="bounty", enabled=1)
+        await cog.notifications.callback(cog, interaction, notification_type="bounty", enabled=1)
 
         interaction.followup.send.assert_awaited_once()
         call_args = interaction.followup.send.call_args
@@ -519,7 +519,7 @@ class TestNotificationsShopDisableNoOp:
         config_resp = _make_http_resp(200, config_data)
         cog.http_client.get = AsyncMock(return_value=config_resp)
 
-        await cog.notifications.callback(cog, interaction, type="shop", enabled=0)
+        await cog.notifications.callback(cog, interaction, notification_type="shop", enabled=0)
 
         # No role removal should happen
         interaction.user.remove_roles.assert_not_awaited()
@@ -574,7 +574,7 @@ class TestNotificationsDiscordForbidden:
         config_resp = _make_http_resp(200, config_data)
         cog.http_client.get = AsyncMock(return_value=config_resp)
 
-        await cog.notifications.callback(cog, interaction, type="shop", enabled=1)
+        await cog.notifications.callback(cog, interaction, notification_type="shop", enabled=1)
 
         # Must always return some error response — either permission-specific or generic
         interaction.followup.send.assert_awaited_once()
@@ -601,7 +601,7 @@ class TestNotificationsDiscordForbidden:
         cog.http_client.get = AsyncMock(return_value=config_resp)
         cog.http_client.post = AsyncMock(return_value=player_resp)
 
-        await cog.notifications.callback(cog, interaction, type="bounty", enabled=1)
+        await cog.notifications.callback(cog, interaction, notification_type="bounty", enabled=1)
 
         interaction.followup.send.assert_awaited_once()
         call_args = interaction.followup.send.call_args
@@ -627,7 +627,7 @@ class TestNotificationsDiscordForbidden:
         cog.http_client.get = AsyncMock(return_value=config_resp)
         cog.http_client.post = AsyncMock(return_value=player_resp)
 
-        await cog.notifications.callback(cog, interaction, type="bounty", enabled=0)
+        await cog.notifications.callback(cog, interaction, notification_type="bounty", enabled=0)
 
         interaction.followup.send.assert_awaited_once()
         call_args = interaction.followup.send.call_args
@@ -656,7 +656,7 @@ class TestNotificationsBountyNonBronzeTiers:
         cog.http_client.get = AsyncMock(return_value=config_resp)
         cog.http_client.post = AsyncMock(return_value=player_resp)
 
-        await cog.notifications.callback(cog, interaction, type="bounty", enabled=1)
+        await cog.notifications.callback(cog, interaction, notification_type="bounty", enabled=1)
 
         interaction.user.add_roles.assert_awaited_once_with(
             silver_role, reason="BountyBot bounty notification opt-in"
@@ -680,7 +680,7 @@ class TestNotificationsBountyNonBronzeTiers:
         cog.http_client.get = AsyncMock(return_value=config_resp)
         cog.http_client.post = AsyncMock(return_value=player_resp)
 
-        await cog.notifications.callback(cog, interaction, type="bounty", enabled=0)
+        await cog.notifications.callback(cog, interaction, notification_type="bounty", enabled=0)
 
         interaction.user.remove_roles.assert_awaited_once_with(
             gold_role, reason="BountyBot bounty notification opt-out"

@@ -16,6 +16,7 @@ flogger = bblogger.get_logger("discord-gateway-GuildSetup")
 
 _BOUNTYBOT_CATEGORY = "BountyBot"
 _BOUNTY_HUNTER_ROLE = "Bounty Hunter"
+_SHOP_ANNOUNCEMENTS_ROLE = "Shop Announcements"
 
 _TIER_ROLE_NAMES = {
     "bronze": "Bounty Hunter Bronze",
@@ -328,6 +329,36 @@ async def _find_or_create_channel(
 # ── Public API ─────────────────────────────────────────────────────────────────
 
 
+async def _find_or_create_shop_announcements_role(guild: discord.Guild) -> discord.Role | None:
+    """Find (case-insensitive) or create the '@Shop Announcements' role.
+
+    This mentionable role is used for opt-in shop refresh notifications.
+    It does NOT control any channel access — only used for @-mentions.
+
+    Returns the role, or None if creation failed.
+    """
+    roles: list = list(guild.roles) if guild.roles else []
+    existing = next((r for r in roles if r.name.lower() == _SHOP_ANNOUNCEMENTS_ROLE.lower()), None)
+    if existing is not None:
+        flogger.debug(f"Role '{_SHOP_ANNOUNCEMENTS_ROLE}' already exists in guild {guild.id}")
+        return existing
+
+    try:
+        role = await guild.create_role(
+            name=_SHOP_ANNOUNCEMENTS_ROLE,
+            mentionable=True,
+            hoist=False,
+        )
+        flogger.info(f"Created role '{_SHOP_ANNOUNCEMENTS_ROLE}' in guild {guild.id}")
+        return role
+    except discord.Forbidden:
+        flogger.warning(f"Missing permissions to create role '{_SHOP_ANNOUNCEMENTS_ROLE}' in guild {guild.id}")
+        return None
+    except Exception as e:  # pylint: disable=broad-exception-caught
+        flogger.error(f"Error creating role '{_SHOP_ANNOUNCEMENTS_ROLE}' in guild {guild.id}: {e}")
+        return None
+
+
 async def ensure_bountybot_infrastructure(guild: discord.Guild) -> dict:
     """
     Idempotently create or find BountyBot Discord infrastructure.
@@ -335,6 +366,7 @@ async def ensure_bountybot_infrastructure(guild: discord.Guild) -> dict:
     Creates (or finds existing):
     - "@Bounty Hunter" role
     - "@Bounty Hunter Bronze/Silver/Gold/Platinum" tier roles (mentionable, for @-mentions)
+    - "@Shop Announcements" role (mentionable, for shop refresh @-mentions)
     - "BountyBot" category
     - 8 text channels under the category
 
@@ -343,7 +375,7 @@ async def ensure_bountybot_infrastructure(guild: discord.Guild) -> dict:
         gold_bounty_channel_id, platinum_bounty_channel_id, shop_channel_id,
         hunting_channel_id, discussion_channel_id, image_channel_id,
         bounty_hunter_role_id, bronze_role_id, silver_role_id, gold_role_id,
-        platinum_role_id
+        platinum_role_id, shop_announcements_role_id
     All values are int (Discord snowflake IDs) or None if creation failed.
     """
     result: dict[str, int | None] = {
@@ -361,6 +393,7 @@ async def ensure_bountybot_infrastructure(guild: discord.Guild) -> dict:
         "silver_role_id": None,
         "gold_role_id": None,
         "platinum_role_id": None,
+        "shop_announcements_role_id": None,
     }
 
     # ── Step 1: find or create @Bounty Hunter role ────────────────────────────
@@ -371,6 +404,11 @@ async def ensure_bountybot_infrastructure(guild: discord.Guild) -> dict:
     # ── Step 1b: find or create tier roles (Bronze/Silver/Gold/Platinum) ────────
     tier_role_ids = await _find_or_create_tier_roles(guild)
     result.update(tier_role_ids)
+
+    # ── Step 1c: find or create @Shop Announcements role ─────────────────────
+    shop_announcements_role = await _find_or_create_shop_announcements_role(guild)
+    if shop_announcements_role is not None:
+        result["shop_announcements_role_id"] = shop_announcements_role.id
 
     # ── Step 2: find or create BountyBot category ─────────────────────────────
     category = await _find_or_create_category(guild, bounty_hunter_role)

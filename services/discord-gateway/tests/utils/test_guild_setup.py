@@ -192,16 +192,17 @@ class TestEnsureBountyBotInfrastructure:
         Happy path: all infrastructure created fresh.
 
         Verifies:
-        - create_role called 5 times (1 general + 4 tier roles)
+        - create_role called 6 times (1 general + 4 tier roles + 1 shop announcements)
         - create_category called once
         - create_text_channel called 8 times
-        - all 14 result keys have non-None values
+        - all required keys have non-None values
         """
         guild = _make_guild()
         new_role = _make_role(role_id=555)
         tier_roles = _make_tier_role_side_effects(base_id=556)
-        # create_role called 5 times: general BH role + 4 tier roles
-        guild.create_role = AsyncMock(side_effect=[new_role, *tier_roles])
+        shop_ann_role = _make_role(name="Shop Announcements", role_id=560)
+        # create_role called 6 times: general BH role + 4 tier roles + 1 shop announcements
+        guild.create_role = AsyncMock(side_effect=[new_role, *tier_roles, shop_ann_role])
 
         new_cat = _make_category(cat_id=111)
         guild.create_category.return_value = new_cat
@@ -213,8 +214,8 @@ class TestEnsureBountyBotInfrastructure:
 
         result = asyncio.run(ensure_bountybot_infrastructure(guild))
 
-        # create_role called 5 times: 1 general + 4 tier
-        assert guild.create_role.call_count == 5
+        # create_role called 6 times: 1 general + 4 tier + 1 shop announcements
+        assert guild.create_role.call_count == 6
         guild.create_category.assert_called_once()
         assert guild.create_text_channel.call_count == 8
 
@@ -228,6 +229,7 @@ class TestEnsureBountyBotInfrastructure:
         assert result["silver_role_id"] == 557
         assert result["gold_role_id"] == 558
         assert result["platinum_role_id"] == 559
+        assert result["shop_announcements_role_id"] == 560
         assert result["category_id"] == 111
         assert result["bronze_bounty_channel_id"] == 201
         assert result["silver_bounty_channel_id"] == 202
@@ -316,12 +318,15 @@ class TestEnsureBountyBotInfrastructure:
 
         Tier roles are NOT pre-existing in this test, so create_role is called 4 times
         (once per tier role) but not for the general BH role.
+        Shop announcements role is NOT pre-existing, so create_role is called once more.
+        Total: 4 tier + 1 shop announcements = 5 calls.
         """
         existing_role = _make_role(name="bounty hunter", role_id=555)
         guild = _make_guild(roles=[existing_role])
 
         tier_roles = _make_tier_role_side_effects(base_id=556)
-        guild.create_role = AsyncMock(side_effect=tier_roles)
+        shop_ann_role = _make_role(name="Shop Announcements", role_id=560)
+        guild.create_role = AsyncMock(side_effect=[*tier_roles, shop_ann_role])
 
         new_cat = _make_category(cat_id=111)
         guild.create_category.return_value = new_cat
@@ -333,8 +338,8 @@ class TestEnsureBountyBotInfrastructure:
 
         result = asyncio.run(ensure_bountybot_infrastructure(guild))
 
-        # General BH role was found — not created. Tier roles were created (4 calls).
-        assert guild.create_role.call_count == 4
+        # General BH role was found — not created. Tier roles + shop announcements were created (5 calls).
+        assert guild.create_role.call_count == 5
         assert result["bounty_hunter_role_id"] == 555
         assert result["bronze_role_id"] == 556
         assert result["silver_role_id"] == 557
@@ -947,11 +952,14 @@ class TestEnsureBountyBotInfrastructure:
         When tier roles don't exist in guild.roles, create_role is called for each.
 
         Also verifies the roles are created with mentionable=True.
+        Now includes Shop Announcements role, so create_role is called 6 times total:
+        1 general + 4 tier + 1 shop announcements.
         """
         guild = _make_guild()
         new_role = _make_role(role_id=555)
         tier_roles = _make_tier_role_side_effects(base_id=600)
-        guild.create_role = AsyncMock(side_effect=[new_role, *tier_roles])
+        shop_ann_role = _make_role(name="Shop Announcements", role_id=604)
+        guild.create_role = AsyncMock(side_effect=[new_role, *tier_roles, shop_ann_role])
 
         new_cat = _make_category(cat_id=111)
         guild.create_category.return_value = new_cat
@@ -963,11 +971,12 @@ class TestEnsureBountyBotInfrastructure:
 
         asyncio.run(ensure_bountybot_infrastructure(guild))
 
-        # Should have called create_role 5 times: general + 4 tier
-        assert guild.create_role.call_count == 5
+        # Should have called create_role 6 times: general + 4 tier + 1 shop announcements
+        assert guild.create_role.call_count == 6
 
         # Each tier role should be created with mentionable=True and hoist=False
-        tier_calls = guild.create_role.call_args_list[1:]  # skip first (general BH role)
+        # Calls: [0]=general BH, [1:5]=tier roles, [5]=shop announcements
+        tier_calls = guild.create_role.call_args_list[1:5]
         tier_names = {"Bounty Hunter Bronze", "Bounty Hunter Silver", "Bounty Hunter Gold", "Bounty Hunter Platinum"}
         created_names = {call.kwargs.get("name") for call in tier_calls}
         assert created_names == tier_names, f"Expected tier role names {tier_names}, got {created_names}"
@@ -980,14 +989,19 @@ class TestEnsureBountyBotInfrastructure:
         """
         When all tier roles already exist (by case-insensitive name), create_role
         is not called for them; existing IDs are returned.
+
+        Shop Announcements role also pre-exists, so create_role is never called.
         """
         general_role = _make_role(name="Bounty Hunter", role_id=555)
         bronze_role = _make_role(name="bounty hunter bronze", role_id=600)
         silver_role = _make_role(name="BOUNTY HUNTER SILVER", role_id=601)
         gold_role = _make_role(name="Bounty Hunter Gold", role_id=602)
         platinum_role = _make_role(name="bounty hunter platinum", role_id=603)
+        shop_ann_role = _make_role(name="Shop Announcements", role_id=604)
 
-        guild = _make_guild(roles=[general_role, bronze_role, silver_role, gold_role, platinum_role])
+        guild = _make_guild(
+            roles=[general_role, bronze_role, silver_role, gold_role, platinum_role, shop_ann_role]
+        )
 
         new_cat = _make_category(cat_id=111)
         guild.create_category.return_value = new_cat
@@ -1007,6 +1021,7 @@ class TestEnsureBountyBotInfrastructure:
         assert result["silver_role_id"] == 601
         assert result["gold_role_id"] == 602
         assert result["platinum_role_id"] == 603
+        assert result["shop_announcements_role_id"] == 604
 
     def test_tier_roles_no_channel_overwrites(self):
         """

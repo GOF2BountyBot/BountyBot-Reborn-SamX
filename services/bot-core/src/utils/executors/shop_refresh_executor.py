@@ -114,8 +114,12 @@ async def execute_shop_refresh_job(job_id: str, payload: dict) -> dict:
 
                     # ── Announce shop refresh to discord-gateway ───────────
                     shop_channel_id = getattr(config, "shop_channel_id", None)
-                    bounty_hunter_role_id = getattr(config, "bounty_hunter_role_id", None)
-                    await _announce_shop_refresh(job_id, gid, shop_channel_id, bounty_hunter_role_id, tier=None)
+                    # Prefer shop_announcements_role_id over bounty_hunter_role_id.
+                    # Only use it when it's a real integer ID (guards against MagicMock attrs in tests).
+                    _shop_ann_id = getattr(config, "shop_announcements_role_id", None)
+                    _bh_role_id = getattr(config, "bounty_hunter_role_id", None)
+                    mention_role_id = _shop_ann_id if isinstance(_shop_ann_id, int) else _bh_role_id
+                    await _announce_shop_refresh(job_id, gid, shop_channel_id, mention_role_id, tier=None)
 
             finally:
                 shop_service.clear_static_cache()

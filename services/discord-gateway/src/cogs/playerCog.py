@@ -648,6 +648,175 @@ class PlayerCog(commands.Cog):
         if not interaction.response.is_done():
             await interaction.response.send_message("⚠️ An error occurred.", ephemeral=True)
 
+    @app_commands.command(name="notifications", description="Manage your BountyBot notification preferences")
+    @app_commands.describe(
+        type="Which notifications to manage",
+        enabled="Turn notifications on or off",
+    )
+    @app_commands.choices(
+        type=[
+            app_commands.Choice(name="Bounty Announcements", value="bounty"),
+            app_commands.Choice(name="Shop Announcements", value="shop"),
+        ],
+        enabled=[
+            app_commands.Choice(name="On", value=1),
+            app_commands.Choice(name="Off", value=0),
+        ],
+    )
+    async def notifications(self, interaction: discord.Interaction, type: str, enabled: int) -> None:
+        """Opt in/out of Discord role @-mentions for bounty or shop announcements."""
+        flogger.info(
+            f"/notifications: guild={interaction.guild_id}, user={interaction.user.id}, "
+            f"type={type}, enabled={enabled}"
+        )
+        await interaction.response.defer(thinking=True, ephemeral=True)
+
+        try:
+            # Fetch guild config (needed for both bounty and shop flows)
+            config_resp = await self.http_client.get(f"{api_base}/config/guild/{interaction.guild_id}", timeout=5)
+            if config_resp.status_code == 404:
+                await interaction.followup.send("❌ This server hasn't been set up yet.", ephemeral=True)
+                return
+            config_resp.raise_for_status()
+            config = config_resp.json()
+
+            guild = interaction.guild
+
+            if type == "bounty":
+                # Need player's tier to know which tier role to assign/remove
+                user_data = {
+                    "discord_id": interaction.user.id,
+                    "guild_id": interaction.guild_id,
+                    "discord_username": None,
+                }
+                player_resp = await self.http_client.post(f"{api_base}/players/", json=user_data, timeout=10)
+                if player_resp.status_code == 400:
+                    # Guild not configured or player not registered
+                    await interaction.followup.send(
+                        "❌ Run `/profile` first to register as a player.", ephemeral=True
+                    )
+                    return
+                player_resp.raise_for_status()
+                player_data = player_resp.json()
+
+                player_tier = (player_data.get("tier") or "bronze").lower()
+                tier_role_key = f"{player_tier}_role_id"
+                tier_role_id = config.get(tier_role_key)
+
+                if not tier_role_id:
+                    await interaction.followup.send(
+                        "❌ Notification role not found — ask an admin to re-run `/admin_setup`.", ephemeral=True
+                    )
+                    return
+
+                tier_role = guild.get_role(tier_role_id)
+                if not tier_role:
+                    await interaction.followup.send(
+                        "❌ Notification role not found — ask an admin to re-run `/admin_setup`.", ephemeral=True
+                    )
+                    return
+
+                try:
+                    member = interaction.user
+                    if enabled:
+                        if tier_role not in member.roles:
+                            await member.add_roles(tier_role, reason="BountyBot bounty notification opt-in")
+                        embed = discord.Embed(
+                            title="🔔 Bounty notifications enabled",
+                            description=(
+                                f"You will be mentioned when **{player_data['tier']}** bounties are announced."
+                            ),
+                            color=discord.Color.green(),
+                        )
+                    else:
+                        if tier_role in member.roles:
+                            await member.remove_roles(tier_role, reason="BountyBot bounty notification opt-out")
+                        embed = discord.Embed(
+                            title="🔕 Bounty notifications disabled",
+                            description=(
+                                f"You won't be mentioned when **{player_data['tier']}** bounties are announced."
+                            ),
+                            color=discord.Color.greyple(),
+                        )
+                except discord.Forbidden:
+                    await interaction.followup.send(
+                        "❌ Bot doesn't have permission to manage roles.", ephemeral=True
+                    )
+                    return
+
+                await interaction.followup.send(embed=embed, ephemeral=True)
+                flogger.info(
+                    f"/notifications bounty {'on' if enabled else 'off'}: "
+                    f"guild={interaction.guild_id}, user={interaction.user.id}"
+                )
+
+            elif type == "shop":
+                shop_role_id = config.get("shop_announcements_role_id")
+                if not shop_role_id:
+                    await interaction.followup.send(
+                        "❌ Shop notifications aren't configured yet — ask an admin to re-run `/admin_setup`.",
+                        ephemeral=True,
+                    )
+                    return
+
+                shop_role = guild.get_role(shop_role_id)
+                if not shop_role:
+                    await interaction.followup.send(
+                        "❌ Notification role not found — ask an admin to re-run `/admin_setup`.", ephemeral=True
+                    )
+                    return
+
+                try:
+                    member = interaction.user
+                    if enabled:
+                        if shop_role not in member.roles:
+                            await member.add_roles(shop_role, reason="BountyBot shop notification opt-in")
+                        embed = discord.Embed(
+                            title="🔔 Shop notifications enabled",
+                            description="You will be mentioned when the shop refreshes.",
+                            color=discord.Color.green(),
+                        )
+                    else:
+                        if shop_role in member.roles:
+                            await member.remove_roles(shop_role, reason="BountyBot shop notification opt-out")
+                        embed = discord.Embed(
+                            title="🔕 Shop notifications disabled",
+                            description="You won't be mentioned when the shop refreshes.",
+                            color=discord.Color.greyple(),
+                        )
+                except discord.Forbidden:
+                    await interaction.followup.send(
+                        "❌ Bot doesn't have permission to manage roles.", ephemeral=True
+                    )
+                    return
+
+                await interaction.followup.send(embed=embed, ephemeral=True)
+                flogger.info(
+                    f"/notifications shop {'on' if enabled else 'off'}: "
+                    f"guild={interaction.guild_id}, user={interaction.user.id}"
+                )
+
+        except httpx.HTTPStatusError as e:
+            flogger.error(
+                f"/notifications HTTP error: guild={interaction.guild_id}, user={interaction.user.id}, "
+                f"status={e.response.status_code}"
+            )
+            if _is_guild_not_configured(e):
+                await interaction.followup.send(_GUILD_NOT_CONFIGURED_MSG, ephemeral=True)
+            else:
+                await report_api_error(interaction, e)
+        except Exception as e:  # pylint: disable=broad-exception-caught
+            flogger.error(
+                f"/notifications error: guild={interaction.guild_id}, user={interaction.user.id}, error={e}"
+            )
+            await interaction.followup.send("⚠️ An error occurred.", ephemeral=True)
+
+    @notifications.error
+    async def notifications_error(self, interaction: discord.Interaction, error: app_commands.AppCommandError):
+        flogger.exception("Error in /notifications", exc_info=error)
+        if not interaction.response.is_done():
+            await interaction.response.send_message("⚠️ An error occurred.", ephemeral=True)
+
     @app_commands.command(name="unregister", description="Remove your Bounty Hunter role (keeps your player data)")
     async def unregister(self, interaction: discord.Interaction):
         """Remove the Bounty Hunter role(s) from the user. Does NOT delete player data."""
@@ -672,14 +841,15 @@ class PlayerCog(commands.Cog):
                 await interaction.followup.send("⚠️ Bounty Hunter role not found in this guild.", ephemeral=True)
                 return
 
-            # Collect all BH-related role IDs from config (generic + 4 tier roles)
-            tier_role_ids: list[int] = [
+            # Collect all BH-related role IDs from config (generic + 4 tier roles + shop announcements)
+            extra_role_ids: list[int] = [
                 rid
                 for rid in [
                     config.get("bronze_role_id"),
                     config.get("silver_role_id"),
                     config.get("gold_role_id"),
                     config.get("platinum_role_id"),
+                    config.get("shop_announcements_role_id"),
                 ]
                 if rid is not None
             ]
@@ -688,10 +858,10 @@ class PlayerCog(commands.Cog):
             roles_to_remove: list[discord.Role] = []
             if role in interaction.user.roles:
                 roles_to_remove.append(role)
-            for tier_id in tier_role_ids:
-                tier_role = guild.get_role(tier_id)
-                if tier_role is not None and tier_role in interaction.user.roles:
-                    roles_to_remove.append(tier_role)
+            for extra_id in extra_role_ids:
+                extra_role = guild.get_role(extra_id)
+                if extra_role is not None and extra_role in interaction.user.roles:
+                    roles_to_remove.append(extra_role)
 
             if not roles_to_remove:
                 await interaction.followup.send(

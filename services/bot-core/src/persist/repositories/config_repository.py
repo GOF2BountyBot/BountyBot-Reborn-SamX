@@ -251,6 +251,7 @@ class ConfigRepository(IRepository[GuildConfig]):
             "silver_role_id",
             "gold_role_id",
             "platinum_role_id",
+            "shop_announcements_role_id",
         ]
 
         try:
@@ -448,6 +449,7 @@ class ConfigRepository(IRepository[GuildConfig]):
                 "silver_role_id": config.silver_role_id,
                 "gold_role_id": config.gold_role_id,
                 "platinum_role_id": config.platinum_role_id,
+                "shop_announcements_role_id": config.shop_announcements_role_id,
                 "bounty_max_per_tier": config.bounty_max_per_tier,
                 "bounty_expiry_minutes": config.bounty_expiry_minutes,
                 "bounty_spawn_interval_minutes": config.bounty_spawn_interval_minutes,

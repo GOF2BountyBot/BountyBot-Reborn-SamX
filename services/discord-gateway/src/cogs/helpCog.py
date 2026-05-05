@@ -49,6 +49,7 @@ _COMMAND_CATEGORIES: dict[str, str] = {
     "profile": "Player Profile",
     "leaderboard": "Player Profile",
     "prestige": "Player Profile",
+    "notifications": "Player Profile",
     # Bounty Hunting
     "check": "Bounty Hunting",
     "bounties": "Bounty Hunting",
@@ -99,7 +100,7 @@ _USER_CATEGORY_ORDER: list[str] = [
 
 # Short descriptions for each user-facing category
 _USER_CATEGORY_DESCRIPTIONS: dict[str, str] = {
-    "Player Profile": "View your stats, level up, leaderboards",
+    "Player Profile": "View your stats, level up, leaderboards, manage notifications",
     "Bounty Hunting": "Hunt criminals across the galaxy for credits and XP",
     "Shop & Economy": "Buy and sell ships, weapons, modules",
     "Inventory & Equipment": "Manage your items and equipped loadout",

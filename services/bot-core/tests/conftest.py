@@ -141,6 +141,7 @@ def make_mock_player(**overrides):
         duel_credits_won=0,
         duel_credits_lost=0,
         active_ship_id=None,
+        display_name=None,
         xp_surplus=0,
         guild_transfer_cooldown=None,
         classic_mode=False,

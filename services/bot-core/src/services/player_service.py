@@ -36,7 +36,12 @@ class PlayerService:
         self.config_repo = ConfigRepository()
 
     async def get_or_create_player(
-        self, db: AsyncSession, discord_id: int, guild_id: int, discord_username: str | None = None
+        self,
+        db: AsyncSession,
+        discord_id: int,
+        guild_id: int,
+        discord_username: str | None = None,
+        display_name: str | None = None,
     ) -> Player:
         """
         Get existing player or create new one with starter loadout.
@@ -49,6 +54,10 @@ class PlayerService:
         ``async with db.begin():`` for atomic creation across the full
         users/players/player_ships/player_inventories cluster.
 
+        B.62: accepts ``display_name`` (Discord per-guild display name).
+        When provided, it is written to the player row on every call so
+        the stored value stays fresh even for existing players.
+
         Raises GuildNotConfiguredError if no guild_configs row exists
         (i.e. /admin_setup has not been run for this guild).
         """
@@ -58,6 +67,9 @@ class PlayerService:
             existing_player = await self.player_repo.get_by_user_and_guild(db, discord_id, guild_id)
             if existing_player:
                 flogger.debug(f"Found existing player {existing_player.id} for user {discord_id} in guild {guild_id}")
+                # B.62: refresh display_name on every interaction when provided
+                if display_name is not None:
+                    existing_player.display_name = display_name
                 return existing_player
 
             # New player path — guild must have a config row first.
@@ -71,6 +83,11 @@ class PlayerService:
 
             # Create new player with default configuration
             player = await self._create_new_player(db, user, guild_id)
+
+            # B.62: set display_name on newly created player
+            if display_name is not None:
+                player.display_name = display_name
+
             flogger.info(f"Created new player {player.id} for user {discord_id} in guild {guild_id}")
 
             return player

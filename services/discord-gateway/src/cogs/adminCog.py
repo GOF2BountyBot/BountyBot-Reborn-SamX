@@ -5,6 +5,7 @@ from typing import Literal
 import discord
 import httpx
 from cogs._shared.autocomplete_cache import AutocompleteCache
+from cogs._shared.confirm_view import ConfirmView
 from cogs._shared.http_error_handler import report_api_error
 from discord import app_commands
 from discord.ext import commands
@@ -398,7 +399,12 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
             return
         try:
             # Ensure player exists or create
-            user_data = {"discord_id": user.id, "guild_id": interaction.guild_id, "discord_username": str(user)}
+            user_data = {
+                "discord_id": user.id,
+                "guild_id": interaction.guild_id,
+                "discord_username": str(user),
+                "display_name": getattr(user, "display_name", None),
+            }
             player_resp = await self.http_client.post(f"{api_base}/players/", json=user_data, timeout=10)
             player_resp.raise_for_status()
             player = player_resp.json()
@@ -719,11 +725,9 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
             await interaction.followup.send("⚠️ An error occurred while managing configuration.", ephemeral=True)
 
     @app_commands.command(name="admin_uninstall", description="[ADMIN] Completely remove all bot data from this guild")
-    @app_commands.describe(confirm="Type CONFIRM-DELETE to confirm (this is IRREVERSIBLE)")
     async def admin_uninstall(
         self,
         interaction: discord.Interaction,
-        confirm: str | None = None,
     ):
         """Destructively remove all bot data for this guild."""
         await interaction.response.defer(thinking=True, ephemeral=True)
@@ -731,23 +735,29 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
             await interaction.followup.send("❌ This command requires admin privileges.", ephemeral=True)
             return
 
-        # 2-step confirmation: show warning if no/wrong confirmation string
-        if confirm != "CONFIRM-DELETE":
-            embed = discord.Embed(
-                title="⚠️ WARNING: Destructive Operation",
-                description=(
-                    "This will **permanently delete** all bot data for this guild including:\n"
-                    "• All player records and statistics\n"
-                    "• All shop configurations\n"
-                    "• All guild settings\n\n"
-                    "**This action cannot be undone.**\n\n"
-                    "To confirm, run:\n"
-                    "`/admin_uninstall confirm:CONFIRM-DELETE`"
-                ),
-                color=discord.Color.red(),
-            )
-            embed.set_footer(text="Bot data will NOT be deleted until you confirm.")
-            await interaction.followup.send(embed=embed, ephemeral=True)
+        # 2-step confirmation: show warning embed with button dialog
+        warning_embed = discord.Embed(
+            title="⚠️ WARNING: Destructive Operation",
+            description=(
+                "This will **permanently delete** all bot data for this guild including:\n"
+                "• All player records and statistics\n"
+                "• All shop configurations\n"
+                "• All guild settings\n\n"
+                "**This action cannot be undone.**\n\n"
+                "Press **Confirm** to proceed or **Cancel** to abort."
+            ),
+            color=discord.Color.red(),
+        )
+        warning_embed.set_footer(text="Bot data will NOT be deleted until you confirm.")
+        view = ConfirmView(action="uninstall the bot", timeout=60)
+        await interaction.followup.send(embed=warning_embed, view=view, ephemeral=True)
+        await view.wait()
+
+        if view.result is None:
+            await interaction.followup.send("⏱️ Confirmation timed out. Uninstall cancelled.", ephemeral=True)
+            return
+        if not view.result:
+            await interaction.followup.send("❌ Uninstall cancelled.", ephemeral=True)
             return
 
         try:
@@ -1134,7 +1144,6 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
     @app_commands.command(name="admin_clear_bounties", description="[ADMIN] Clear active bounties for this guild")
     @app_commands.describe(
         tier="Tier to clear (omit for all tiers)",
-        confirm="Type CONFIRM to execute this destructive action",
     )
     @app_commands.choices(
         tier=[
@@ -1144,17 +1153,32 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
             app_commands.Choice(name="Platinum", value="platinum"),
         ]
     )
-    async def admin_clear_bounties(self, interaction: discord.Interaction, confirm: str, tier: str | None = None):
+    async def admin_clear_bounties(self, interaction: discord.Interaction, tier: str | None = None):
         """Clear active bounties for this guild."""
         await interaction.response.defer(thinking=True, ephemeral=True)
         if not await _check_is_admin(interaction):
             await interaction.followup.send("❌ This command requires admin privileges.", ephemeral=True)
             return
 
-        if confirm != "CONFIRM":
-            await interaction.followup.send(
-                "❌ You must type CONFIRM to execute this destructive action.", ephemeral=True
-            )
+        tier_display = tier.title() if tier else "All"
+        warning_embed = discord.Embed(
+            title="⚠️ Clear Bounties",
+            description=(
+                f"This will **permanently delete** all active **{tier_display}** tier bounties in this guild.\n\n"
+                "**This action cannot be undone.**\n\n"
+                "Press **Confirm** to proceed or **Cancel** to abort."
+            ),
+            color=discord.Color.orange(),
+        )
+        view = ConfirmView(action="clear bounties", timeout=60)
+        await interaction.followup.send(embed=warning_embed, view=view, ephemeral=True)
+        await view.wait()
+
+        if view.result is None:
+            await interaction.followup.send("⏱️ Confirmation timed out. Clear cancelled.", ephemeral=True)
+            return
+        if not view.result:
+            await interaction.followup.send("❌ Clear bounties cancelled.", ephemeral=True)
             return
 
         try:

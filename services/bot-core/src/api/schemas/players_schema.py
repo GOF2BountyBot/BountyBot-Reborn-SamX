@@ -23,6 +23,7 @@ class PlayerResponse(BaseModel):
     duel_credits_won: int
     duel_credits_lost: int
     active_ship_id: int | None
+    display_name: str | None = None
     xp_surplus: int = 0
     guild_transfer_cooldown: datetime | None = None
     classic_mode: bool = False
@@ -50,6 +51,7 @@ class CreatePlayerRequest(BaseModel):
     discord_id: int
     guild_id: int
     discord_username: str | None = None
+    display_name: str | None = None
 
 
 class UpdateCreditsRequest(BaseModel):

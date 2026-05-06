@@ -50,14 +50,19 @@ class ShopCog(commands.Cog):
     async def cog_unload(self):
         await self.http_client.aclose()
 
-    async def _get_player_data(self, user_id: int, guild_id: int) -> dict | None:
+    async def _get_player_data(self, user_id: int, guild_id: int, display_name: str | None = None) -> dict | None:
         """Helper to get player data from Discord user ID.
 
         Returns None on any error, OR raises GuildNotConfigured sentinel
         string "GUILD_NOT_CONFIGURED" so callers can surface the right message.
         """
         try:
-            user_data = {"discord_id": user_id, "guild_id": guild_id, "discord_username": None}
+            user_data = {
+                "discord_id": user_id,
+                "guild_id": guild_id,
+                "discord_username": None,
+                "display_name": display_name,
+            }
 
             resp = await self.http_client.post(f"{api_base}/players/", json=user_data, timeout=5)
             resp.raise_for_status()
@@ -123,7 +128,11 @@ class ShopCog(commands.Cog):
 
             # Get player data — needed for tier resolution (when tier is None) and
             # for tier-access gating (always).
-            player = await self._get_player_data(interaction.user.id, interaction.guild_id)
+            player = await self._get_player_data(
+                interaction.user.id,
+                interaction.guild_id,
+                display_name=getattr(interaction.user, "display_name", None),
+            )
             if not player:
                 await interaction.followup.send("❌ Player not found.", ephemeral=True)
                 return
@@ -265,7 +274,11 @@ class ShopCog(commands.Cog):
         """
         try:
             # Player tier must always be resolved live (per-user, can change on prestige/tier-up).
-            player = await self._get_player_data(interaction.user.id, interaction.guild_id)
+            player = await self._get_player_data(
+                interaction.user.id,
+                interaction.guild_id,
+                display_name=getattr(interaction.user, "display_name", None),
+            )
             if not player:
                 return []
             # E.2: Guard against unrecognized tier values before indexing the list.
@@ -306,7 +319,11 @@ class ShopCog(commands.Cog):
                 return
 
             # Get player data
-            player = await self._get_player_data(interaction.user.id, interaction.guild_id)
+            player = await self._get_player_data(
+                interaction.user.id,
+                interaction.guild_id,
+                display_name=getattr(interaction.user, "display_name", None),
+            )
             if not player:
                 await interaction.followup.send("❌ Player not found.", ephemeral=True)
                 return
@@ -424,7 +441,11 @@ class ShopCog(commands.Cog):
         item_type is resolved server-side; no type filter exposed in autocomplete.
         """
         try:
-            player = await self._get_player_data(interaction.user.id, interaction.guild_id)
+            player = await self._get_player_data(
+                interaction.user.id,
+                interaction.guild_id,
+                display_name=getattr(interaction.user, "display_name", None),
+            )
             if not player:
                 return []
             resp = await self.http_client.get(f"{api_base}/inventory/player/{player['id']}", timeout=5)
@@ -472,7 +493,11 @@ class ShopCog(commands.Cog):
                 return
 
             # Get player data
-            player = await self._get_player_data(interaction.user.id, interaction.guild_id)
+            player = await self._get_player_data(
+                interaction.user.id,
+                interaction.guild_id,
+                display_name=getattr(interaction.user, "display_name", None),
+            )
             if not player:
                 await interaction.followup.send("❌ Player not found.", ephemeral=True)
                 return
@@ -542,7 +567,11 @@ class ShopCog(commands.Cog):
             summary = resp.json()
 
             # Get player data for tier info
-            player = await self._get_player_data(interaction.user.id, interaction.guild_id)
+            player = await self._get_player_data(
+                interaction.user.id,
+                interaction.guild_id,
+                display_name=getattr(interaction.user, "display_name", None),
+            )
 
             # Create summary embed
             embed = discord.Embed(

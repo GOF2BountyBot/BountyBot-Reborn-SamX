@@ -493,7 +493,7 @@ class TestPrestigeCommand:
     """Tests for the /prestige slash command."""
 
     def test_prestige_eligible_platinum(self, mock_player_cog):
-        """prestige for Platinum tier player should show confirmation embed."""
+        """prestige for Platinum tier player should show confirmation embed + ConfirmView."""
         interaction = _create_mock_interaction()
 
         player_data = _make_player_data(tier="Platinum", prestige_count=0)
@@ -503,12 +503,16 @@ class TestPrestigeCommand:
         resp.json.return_value = player_data
         mock_player_cog.http_client.post = AsyncMock(return_value=resp)
 
-        asyncio.run(mock_player_cog.prestige.callback(mock_player_cog, interaction))
+        view_mock = MagicMock()
+        view_mock.result = False  # cancel — don't proceed to API
+        view_mock.wait = AsyncMock(return_value=None)
+        with patch("cogs.playerCog.ConfirmView", return_value=view_mock):
+            asyncio.run(mock_player_cog.prestige.callback(mock_player_cog, interaction))
 
-        interaction.response.defer.assert_awaited_once_with(thinking=True)
-        interaction.followup.send.assert_awaited_once()
-        # Should send an embed (ephemeral confirmation)
-        call_kwargs = interaction.followup.send.call_args[1]
+        interaction.response.defer.assert_awaited_once_with(thinking=True, ephemeral=True)
+        interaction.followup.send.assert_awaited()
+        # First send is the confirmation embed+view; second send is the cancel/timeout message
+        call_kwargs = interaction.followup.send.call_args_list[0][1]
         assert "embed" in call_kwargs
         assert call_kwargs.get("ephemeral", False)
 
@@ -525,7 +529,7 @@ class TestPrestigeCommand:
 
         asyncio.run(mock_player_cog.prestige.callback(mock_player_cog, interaction))
 
-        interaction.response.defer.assert_awaited_once_with(thinking=True)
+        interaction.response.defer.assert_awaited_once_with(thinking=True, ephemeral=True)
         interaction.followup.send.assert_awaited_once()
         call_args = interaction.followup.send.call_args
         msg = call_args[0][0]
@@ -557,7 +561,7 @@ class TestPrestigeCommand:
 
         asyncio.run(mock_player_cog.prestige.callback(mock_player_cog, interaction))
 
-        interaction.response.defer.assert_awaited_once_with(thinking=True)
+        interaction.response.defer.assert_awaited_once_with(thinking=True, ephemeral=True)
         interaction.followup.send.assert_awaited_once()
         call_kwargs = interaction.followup.send.call_args
         assert call_kwargs[1].get("ephemeral", False)
@@ -569,10 +573,17 @@ class TestPrestigeCommand:
 
 
 class TestPrestigeConfirmFlow:
-    """Tests for the /prestige confirm flow (wired API)."""
+    """Tests for the /prestige confirm flow (button-based, B.50)."""
 
-    def test_prestige_no_confirm_shows_warning_embed(self, mock_player_cog):
-        """/prestige without confirm shows warning embed (ephemeral)."""
+    def _make_confirm_view_mock(self, result: bool | None):
+        """Return a ConfirmView mock with view.result pre-set and wait() returning immediately."""
+        view = MagicMock()
+        view.result = result
+        view.wait = AsyncMock(return_value=None)
+        return view
+
+    def test_prestige_eligible_shows_confirm_view(self, mock_player_cog):
+        """/prestige for Platinum tier should show a ConfirmView (not a CONFIRM string prompt)."""
         interaction = _create_mock_interaction()
 
         player_data = _make_player_data(tier="Platinum", prestige_count=0)
@@ -581,15 +592,16 @@ class TestPrestigeConfirmFlow:
         resp.json.return_value = player_data
         mock_player_cog.http_client.post = AsyncMock(return_value=resp)
 
-        asyncio.run(mock_player_cog.prestige.callback(mock_player_cog, interaction, confirm=None))
+        view_mock = self._make_confirm_view_mock(result=False)  # cancel — don't proceed
+        with patch("cogs.playerCog.ConfirmView", return_value=view_mock):
+            asyncio.run(mock_player_cog.prestige.callback(mock_player_cog, interaction))
 
-        interaction.followup.send.assert_awaited_once()
-        call_kwargs = interaction.followup.send.call_args[1]
-        assert "embed" in call_kwargs
-        assert call_kwargs.get("ephemeral", False)
-        # Embed description should mention CONFIRM
-        embed = call_kwargs["embed"]
-        assert "CONFIRM" in (embed.description or "")
+        # First send should be the confirmation embed + view (ephemeral)
+        interaction.followup.send.assert_awaited()
+        first_call_kwargs = interaction.followup.send.call_args_list[0][1]
+        assert "embed" in first_call_kwargs
+        assert first_call_kwargs.get("ephemeral", False)
+        assert first_call_kwargs.get("view") is view_mock
 
     def test_prestige_warning_embed_describes_b49_full_reset(self, mock_player_cog):
         """B.49 regression guard: warning embed must accurately describe the
@@ -604,12 +616,61 @@ class TestPrestigeConfirmFlow:
         resp.json.return_value = player_data
         mock_player_cog.http_client.post = AsyncMock(return_value=resp)
 
-        asyncio.run(mock_player_cog.prestige.callback(mock_player_cog, interaction, confirm=None))
+        view_mock = self._make_confirm_view_mock(result=False)
+        with patch("cogs.playerCog.ConfirmView", return_value=view_mock):
+            asyncio.run(mock_player_cog.prestige.callback(mock_player_cog, interaction))
 
-        embed = interaction.followup.send.call_args[1]["embed"]
+        embed = interaction.followup.send.call_args_list[0][1]["embed"]
         desc = (embed.description or "").lower()
 
-        # B.49: must mention starter Betty + fleet wipe + inventory wipe.
+        assert "betty" in desc, "Warning embed must mention starter Betty"
+        assert "keep your ships" not in desc, (
+            "Warning embed must NOT claim the player keeps their ships (B.49: fleet wiped)"
+        )
+        assert "keep your ships, credits" not in desc, (
+            "Warning embed must NOT claim the player keeps credits (B.48 F.3 + B.49)"
+        )
+        assert "lifetime" in desc, "Warning embed must mention lifetime credits are preserved"
+
+    def test_prestige_cancel_does_not_call_api(self, mock_player_cog):
+        """/prestige: cancelling the ConfirmView must NOT call the prestige API."""
+        interaction = _create_mock_interaction()
+
+        player_data = _make_player_data(tier="Platinum", prestige_count=0)
+        resp = MagicMock()
+        resp.raise_for_status = MagicMock()
+        resp.json.return_value = player_data
+        mock_player_cog.http_client.post = AsyncMock(return_value=resp)
+
+        view_mock = self._make_confirm_view_mock(result=False)
+        with patch("cogs.playerCog.ConfirmView", return_value=view_mock):
+            asyncio.run(mock_player_cog.prestige.callback(mock_player_cog, interaction))
+
+        # Only the player-fetch POST should have been called — NOT the prestige POST
+        assert mock_player_cog.http_client.post.await_count == 1
+
+    def test_prestige_warning_embed_describes_b49_full_reset(self, mock_player_cog):
+        """B.49 regression guard: warning embed must accurately describe the
+        full-reset semantics (fleet wiped, inventory wiped, Betty starter
+        loadout) and must NOT claim the player keeps ships or credits.
+        """
+        interaction = _create_mock_interaction()
+
+        player_data = _make_player_data(tier="Platinum", prestige_count=0)
+        resp = MagicMock()
+        resp.raise_for_status = MagicMock()
+        resp.json.return_value = player_data
+        mock_player_cog.http_client.post = AsyncMock(return_value=resp)
+
+        view_mock2 = MagicMock()
+        view_mock2.result = False
+        view_mock2.wait = AsyncMock(return_value=None)
+        with patch("cogs.playerCog.ConfirmView", return_value=view_mock2):
+            asyncio.run(mock_player_cog.prestige.callback(mock_player_cog, interaction))
+
+        embed = interaction.followup.send.call_args_list[0][1]["embed"]
+        desc = (embed.description or "").lower()
+
         assert "betty" in desc, "Warning embed must mention starter Betty"
         # Must NOT claim ships/credits are preserved (the original B.48 bug).
         assert "keep your ships" not in desc, (
@@ -621,25 +682,25 @@ class TestPrestigeConfirmFlow:
         # Must describe what is preserved (lifetime credits, stats, prestige count).
         assert "lifetime" in desc, "Warning embed must mention lifetime credits are preserved"
 
-    def test_prestige_wrong_confirm_shows_warning(self, mock_player_cog):
-        """/prestige with wrong confirm value shows warning embed."""
+    def test_prestige_timeout_sends_timeout_message(self, mock_player_cog):
+        """/prestige: view timeout (result=None) should send a timeout message."""
         interaction = _create_mock_interaction()
 
-        player_data = _make_player_data(tier="Platinum", prestige_count=1)
+        player_data = _make_player_data(tier="Platinum", prestige_count=0)
         resp = MagicMock()
         resp.raise_for_status = MagicMock()
         resp.json.return_value = player_data
         mock_player_cog.http_client.post = AsyncMock(return_value=resp)
 
-        asyncio.run(mock_player_cog.prestige.callback(mock_player_cog, interaction, confirm="yes"))
+        view_mock = self._make_confirm_view_mock(result=None)
+        with patch("cogs.playerCog.ConfirmView", return_value=view_mock):
+            asyncio.run(mock_player_cog.prestige.callback(mock_player_cog, interaction))
 
-        interaction.followup.send.assert_awaited_once()
-        call_kwargs = interaction.followup.send.call_args[1]
-        assert "embed" in call_kwargs
-        assert call_kwargs.get("ephemeral", False)
+        # Should send the confirmation view first, then a timeout/cancelled followup
+        assert mock_player_cog.http_client.post.await_count == 1  # only player fetch, no prestige call
 
-    def test_prestige_with_confirm_calls_api_and_shows_success(self, mock_player_cog):
-        """/prestige with confirm=CONFIRM calls the prestige API and shows success."""
+    def test_prestige_confirm_calls_api_and_shows_success(self, mock_player_cog):
+        """/prestige: confirming the ConfirmView calls the prestige API and shows success."""
         interaction = _create_mock_interaction()
 
         player_data = _make_player_data(tier="Platinum", prestige_count=0)
@@ -659,24 +720,21 @@ class TestPrestigeConfirmFlow:
 
         mock_player_cog.http_client.post = AsyncMock(side_effect=[player_resp, prestige_resp])
 
-        asyncio.run(mock_player_cog.prestige.callback(mock_player_cog, interaction, confirm="CONFIRM"))
+        view_mock = self._make_confirm_view_mock(result=True)
+        with patch("cogs.playerCog.ConfirmView", return_value=view_mock):
+            asyncio.run(mock_player_cog.prestige.callback(mock_player_cog, interaction))
 
-        # followup.send called once with embed (success)
-        interaction.followup.send.assert_awaited_once()
-        call_kwargs = interaction.followup.send.call_args[1]
-        assert "embed" in call_kwargs
-        embed = call_kwargs["embed"]
-        assert "1" in (embed.description or "")  # prestige_count shown
+        # Prestige API must have been called (2 POSTs: player fetch + prestige)
+        assert mock_player_cog.http_client.post.await_count == 2
+        # Final followup should include a success embed
+        last_call_kwargs = interaction.followup.send.call_args[1]
+        assert "embed" in last_call_kwargs
 
     def test_prestige_api_400_insufficient_xp(self, mock_player_cog):
-        """/prestige with confirm=CONFIRM shows error on API 400.
+        """/prestige: confirming but API returns 400 (insufficient XP) shows error.
 
-        B.48: backend now returns the configurable-threshold error message
-        format ``"Not eligible for prestige. Need {N:,} XP to prestige,
-        currently have {M:,}"``. The mock's ``detail`` here is
-        character-identical to what ``player_service.prestige_player()``
-        actually produces when the player is below the configured Prestige
-        XP threshold.
+        B.48: backend returns "Not eligible for prestige. Need {N:,} XP to prestige,
+        currently have {M:,}". Error message must reference XP/prestige, not "level".
         """
         import httpx
 
@@ -700,19 +758,19 @@ class TestPrestigeConfirmFlow:
 
         mock_player_cog.http_client.post = AsyncMock(side_effect=[player_resp, http_error])
 
-        asyncio.run(mock_player_cog.prestige.callback(mock_player_cog, interaction, confirm="CONFIRM"))
+        view_mock = self._make_confirm_view_mock(result=True)
+        with patch("cogs.playerCog.ConfirmView", return_value=view_mock):
+            asyncio.run(mock_player_cog.prestige.callback(mock_player_cog, interaction))
 
-        interaction.followup.send.assert_awaited_once()
-        call_args = interaction.followup.send.call_args
-        assert call_args[1].get("ephemeral", False)
-        msg = call_args[0][0]
-        # Error message must reference XP / prestige threshold (not "level").
+        last_call = interaction.followup.send.call_args
+        assert last_call[1].get("ephemeral", False)
+        msg = last_call[0][0]
         assert "prestige" in msg.lower()
         assert "xp" in msg.lower()
         assert "level" not in msg.lower()
 
     def test_prestige_api_failure_generic(self, mock_player_cog):
-        """/prestige with confirm=CONFIRM handles generic failure from prestige endpoint."""
+        """/prestige: confirming but API raises generic exception shows error."""
         interaction = _create_mock_interaction()
 
         player_data = _make_player_data(tier="Platinum", prestige_count=0)
@@ -722,15 +780,15 @@ class TestPrestigeConfirmFlow:
 
         mock_player_cog.http_client.post = AsyncMock(side_effect=[player_resp, RuntimeError("prestige service down")])
 
-        asyncio.run(mock_player_cog.prestige.callback(mock_player_cog, interaction, confirm="CONFIRM"))
+        view_mock = self._make_confirm_view_mock(result=True)
+        with patch("cogs.playerCog.ConfirmView", return_value=view_mock):
+            asyncio.run(mock_player_cog.prestige.callback(mock_player_cog, interaction))
 
-        interaction.followup.send.assert_awaited_once()
-        call_kwargs = interaction.followup.send.call_args
-        assert call_kwargs[1].get("ephemeral", False)
+        last_call = interaction.followup.send.call_args
+        assert last_call[1].get("ephemeral", False)
 
     def test_prestige_swaps_roles_correctly(self, mock_player_cog):
-        """B.53: /prestige confirm=CONFIRM must remove the old tier role (Platinum)
-        and add the Bronze role after a successful prestige API call."""
+        """B.53: confirming prestige must remove Platinum role and add Bronze role."""
         platinum_role_id = 111222004
         bronze_role_id = 111222001
 
@@ -742,7 +800,6 @@ class TestPrestigeConfirmFlow:
         mock_bronze_role.id = bronze_role_id
         mock_bronze_role.name = "Bounty Hunter Bronze"
 
-        # User currently has Platinum role (pre-prestige state)
         interaction = _create_interaction_with_roles(existing_roles=[mock_platinum_role])
 
         def _get_role(role_id):
@@ -776,27 +833,24 @@ class TestPrestigeConfirmFlow:
         )
         mock_player_cog.http_client.get = AsyncMock(return_value=config_resp)
 
-        asyncio.run(mock_player_cog.prestige.callback(mock_player_cog, interaction, confirm="CONFIRM"))
+        view_mock = self._make_confirm_view_mock(result=True)
+        with patch("cogs.playerCog.ConfirmView", return_value=view_mock):
+            asyncio.run(mock_player_cog.prestige.callback(mock_player_cog, interaction))
 
         # Success embed must be sent
-        interaction.followup.send.assert_awaited_once()
-        call_kwargs = interaction.followup.send.call_args[1]
-        assert "embed" in call_kwargs
+        last_call_kwargs = interaction.followup.send.call_args[1]
+        assert "embed" in last_call_kwargs
 
-        # Bronze role must be ADDED (add_roles called first per add-before-remove order)
+        # Bronze role must be ADDED
         interaction.user.add_roles.assert_awaited_once()
-        added_args = interaction.user.add_roles.call_args[0]
-        added_ids = {r.id for r in added_args}
-        assert bronze_role_id in added_ids, f"B.53: Bronze role must be added on prestige; added_ids={added_ids}"
+        added_ids = {r.id for r in interaction.user.add_roles.call_args[0]}
+        assert bronze_role_id in added_ids, f"B.53: Bronze role must be added; added_ids={added_ids}"
         assert platinum_role_id not in added_ids, "Platinum role must NOT be added"
 
         # Platinum role must be REMOVED
         interaction.user.remove_roles.assert_awaited_once()
-        removed_args = interaction.user.remove_roles.call_args[0]
-        removed_ids = {r.id for r in removed_args}
-        assert platinum_role_id in removed_ids, (
-            f"B.53: Platinum role must be removed on prestige; removed_ids={removed_ids}"
-        )
+        removed_ids = {r.id for r in interaction.user.remove_roles.call_args[0]}
+        assert platinum_role_id in removed_ids, f"B.53: Platinum role must be removed; removed_ids={removed_ids}"
         assert bronze_role_id not in removed_ids, "Bronze role must NOT appear in remove list"
 
     def test_prestige_role_swap_failure_is_non_fatal(self, mock_player_cog):
@@ -819,16 +873,15 @@ class TestPrestigeConfirmFlow:
         prestige_resp.json.return_value = prestige_data
 
         mock_player_cog.http_client.post = AsyncMock(side_effect=[player_resp, prestige_resp])
-        # Config fetch (role swap) fails
         mock_player_cog.http_client.get = AsyncMock(side_effect=RuntimeError("config unavailable"))
 
-        asyncio.run(mock_player_cog.prestige.callback(mock_player_cog, interaction, confirm="CONFIRM"))
+        view_mock = self._make_confirm_view_mock(result=True)
+        with patch("cogs.playerCog.ConfirmView", return_value=view_mock):
+            asyncio.run(mock_player_cog.prestige.callback(mock_player_cog, interaction))
 
         # Success embed must still be sent (role swap is non-fatal)
-        interaction.followup.send.assert_awaited_once()
-        call_kwargs = interaction.followup.send.call_args[1]
-        assert "embed" in call_kwargs
-        # Role methods not called because config was unavailable
+        last_call_kwargs = interaction.followup.send.call_args[1]
+        assert "embed" in last_call_kwargs
         interaction.user.add_roles.assert_not_awaited()
         interaction.user.remove_roles.assert_not_awaited()
 

@@ -2,6 +2,7 @@ import os
 
 import discord
 import httpx
+from cogs._shared.confirm_view import ConfirmView
 from cogs._shared.http_error_handler import report_api_error
 from cogs._shared.loadout_embed import build_loadout_embed, build_loadout_error_embed
 from cogs.adminCog import _check_is_admin
@@ -73,6 +74,7 @@ class PlayerCog(commands.Cog):
                 "discord_id": interaction.user.id,
                 "guild_id": interaction.guild_id,
                 "discord_username": str(interaction.user),
+                "display_name": getattr(interaction.user, "display_name", None),
             }
 
             resp = await self.http_client.post(f"{api_base}/players/", json=user_data, timeout=10)
@@ -285,12 +287,10 @@ class PlayerCog(commands.Cog):
             await interaction.followup.send("⚠️ An error occurred while fetching the leaderboard.", ephemeral=True)
 
     @app_commands.command(name="prestige", description="Prestige your character (Platinum tier only)")
-    @app_commands.describe(confirm="Type CONFIRM to execute the prestige")
-    async def prestige(self, interaction: discord.Interaction, confirm: str | None = None):
+    async def prestige(self, interaction: discord.Interaction):
         """Prestige player character."""
         flogger.info(f"/prestige: guild={interaction.guild_id}, user={interaction.user.id}")
-        flogger.debug(f"/prestige params: guild={interaction.guild_id}, user={interaction.user.id}, confirm={confirm}")
-        await interaction.response.defer(thinking=True)
+        await interaction.response.defer(thinking=True, ephemeral=True)
 
         try:
             # Get player data first
@@ -298,6 +298,7 @@ class PlayerCog(commands.Cog):
                 "discord_id": interaction.user.id,
                 "guild_id": interaction.guild_id,
                 "discord_username": str(interaction.user),
+                "display_name": getattr(interaction.user, "display_name", None),
             }
 
             resp = await self.http_client.post(f"{api_base}/players/", json=user_data, timeout=10)
@@ -312,32 +313,39 @@ class PlayerCog(commands.Cog):
                 await interaction.followup.send("❌ You must be Platinum tier to prestige!", ephemeral=True)
                 return
 
-            # If confirmation not provided or incorrect, show warning embed
-            if confirm != "CONFIRM":
-                flogger.debug(
-                    f"/prestige awaiting confirmation: guild={interaction.guild_id}, user={interaction.user.id}"
-                )
-                embed = discord.Embed(
-                    title="⚠️ Prestige Confirmation",
-                    description=(
-                        "Prestiging is a **full reset**. You will be reset to the brand-new "
-                        "starter state — exactly as if you had just `/register`-ed for the "
-                        "first time.\n\n"
-                        "**You will lose all of:**\n"
-                        "• Every ship you own (your fleet is wiped)\n"
-                        "• Your entire inventory\n"
-                        "• All XP, credits, and tier progress\n\n"
-                        "**You will start over with:**\n"
-                        "• A single Betty (active) with the starter loadout\n"
-                        "• The standard starter inventory\n"
-                        "• Bronze tier · 0 XP · 0 credits\n\n"
-                        "**Preserved across prestige:** lifetime credits, duel stats, "
-                        "bounty stats, and your prestige star count (which is incremented).\n\n"
-                        "To confirm, run: `/prestige confirm:CONFIRM`"
-                    ),
-                    color=discord.Color.orange(),
-                )
-                await interaction.followup.send(embed=embed, ephemeral=True)
+            # Show warning embed with button confirmation
+            flogger.debug(
+                f"/prestige awaiting confirmation: guild={interaction.guild_id}, user={interaction.user.id}"
+            )
+            warning_embed = discord.Embed(
+                title="⚠️ Prestige Confirmation",
+                description=(
+                    "Prestiging is a **full reset**. You will be reset to the brand-new "
+                    "starter state — exactly as if you had just `/register`-ed for the "
+                    "first time.\n\n"
+                    "**You will lose all of:**\n"
+                    "• Every ship you own (your fleet is wiped)\n"
+                    "• Your entire inventory\n"
+                    "• All XP, credits, and tier progress\n\n"
+                    "**You will start over with:**\n"
+                    "• A single Betty (active) with the starter loadout\n"
+                    "• The standard starter inventory\n"
+                    "• Bronze tier · 0 XP · 0 credits\n\n"
+                    "**Preserved across prestige:** lifetime credits, duel stats, "
+                    "bounty stats, and your prestige star count (which is incremented).\n\n"
+                    "Press **Confirm** to prestige or **Cancel** to abort."
+                ),
+                color=discord.Color.orange(),
+            )
+            view = ConfirmView(action="prestige your account", timeout=60)
+            await interaction.followup.send(embed=warning_embed, view=view, ephemeral=True)
+            await view.wait()
+
+            if view.result is None:
+                await interaction.followup.send("⏱️ Confirmation timed out. Prestige cancelled.", ephemeral=True)
+                return
+            if not view.result:
+                await interaction.followup.send("❌ Prestige cancelled.", ephemeral=True)
                 return
 
             # Execute the prestige via API
@@ -443,6 +451,7 @@ class PlayerCog(commands.Cog):
                 "discord_id": interaction.user.id,
                 "guild_id": interaction.guild_id,
                 "discord_username": str(interaction.user),
+                "display_name": getattr(interaction.user, "display_name", None),
             }
 
             resp = await self.http_client.post(f"{api_base}/players/", json=user_data, timeout=10)
@@ -582,6 +591,7 @@ class PlayerCog(commands.Cog):
                 "discord_id": target.id,
                 "guild_id": interaction.guild_id,
                 "discord_username": None,  # preserve existing username; only /profile updates it
+                "display_name": getattr(target, "display_name", None),
             }
             resp = await self.http_client.post(f"{api_base}/players/", json=user_data, timeout=10)
             resp.raise_for_status()
@@ -689,6 +699,7 @@ class PlayerCog(commands.Cog):
                     "discord_id": interaction.user.id,
                     "guild_id": interaction.guild_id,
                     "discord_username": None,
+                    "display_name": getattr(interaction.user, "display_name", None),
                 }
                 player_resp = await self.http_client.post(f"{api_base}/players/", json=user_data, timeout=10)
                 if player_resp.status_code == 400:

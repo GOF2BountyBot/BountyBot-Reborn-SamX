@@ -75,14 +75,19 @@ class BountyCog(commands.Cog):
         flogger.error("BountyCog: All preload attempts exhausted. System autocomplete will be empty.")
         self._systems = []
 
-    async def _get_player_id(self, user_id: int, guild_id: int) -> int | None:
+    async def _get_player_id(self, user_id: int, guild_id: int, display_name: str | None = None) -> int | None:
         """Resolve a Discord user ID to a game player ID via the upsert endpoint.
 
         Re-raises httpx.HTTPStatusError for guild-not-configured responses so callers
         can surface a user-friendly message.
         """
         try:
-            user_data = {"discord_id": user_id, "guild_id": guild_id, "discord_username": None}
+            user_data = {
+                "discord_id": user_id,
+                "guild_id": guild_id,
+                "discord_username": None,
+                "display_name": display_name,
+            }
             resp = await self.http_client.post(f"{api_base}/players/", json=user_data, timeout=5)
             resp.raise_for_status()
             return resp.json().get("id")
@@ -170,7 +175,11 @@ class BountyCog(commands.Cog):
             flogger.debug("/check: _systems not loaded, passing typed value through to bot-core: %s", system)
 
         try:
-            player_id = await self._get_player_id(interaction.user.id, interaction.guild_id)
+            player_id = await self._get_player_id(
+                interaction.user.id,
+                interaction.guild_id,
+                display_name=getattr(interaction.user, "display_name", None),
+            )
             if player_id is None:
                 await interaction.followup.send("❌ Player not found. Use `/profile` first.", ephemeral=True)
                 return

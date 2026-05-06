@@ -64,7 +64,11 @@ async def create_or_get_player(
         # Pre-fix the starter ship + inventory were silently rolled back.
         async with get_db_session() as db, db.begin():
             player = await player_service.get_or_create_player(
-                db, request.discord_id, request.guild_id, request.discord_username
+                db,
+                request.discord_id,
+                request.guild_id,
+                request.discord_username,
+                display_name=request.display_name,
             )
 
             return PlayerResponse(
@@ -83,6 +87,7 @@ async def create_or_get_player(
                 duel_credits_won=player.duel_credits_won,
                 duel_credits_lost=player.duel_credits_lost,
                 active_ship_id=player.active_ship_id,
+                display_name=player.display_name,
                 created_at=player.created_at.isoformat(),
                 updated_at=player.updated_at.isoformat(),
             )

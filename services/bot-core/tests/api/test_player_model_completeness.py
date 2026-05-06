@@ -390,6 +390,7 @@ class TestNewFieldsInApiResponse:
         mock_player.duel_credits_won = 50
         mock_player.duel_credits_lost = 0
         mock_player.active_ship_id = None
+        mock_player.display_name = None
         mock_player.xp_surplus = 250
         mock_player.guild_transfer_cooldown = None
         mock_player.classic_mode = True
@@ -426,6 +427,7 @@ class TestNewFieldsInApiResponse:
         mock_player.duel_credits_won = 0
         mock_player.duel_credits_lost = 0
         mock_player.active_ship_id = None
+        mock_player.display_name = None
         mock_player.xp_surplus = 0
         mock_player.guild_transfer_cooldown = None
         mock_player.classic_mode = False

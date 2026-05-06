@@ -43,14 +43,19 @@ class ShipsCog(commands.Cog):
     async def cog_unload(self):
         await self.http_client.aclose()
 
-    async def _get_player_id(self, user_id: int, guild_id: int) -> int | None:
+    async def _get_player_id(self, user_id: int, guild_id: int, display_name: str | None = None) -> int | None:
         """Helper to get player ID from Discord user ID.
 
         Re-raises httpx.HTTPStatusError for guild-not-configured responses so callers
         can surface a user-friendly message.
         """
         try:
-            user_data = {"discord_id": user_id, "guild_id": guild_id, "discord_username": None}
+            user_data = {
+                "discord_id": user_id,
+                "guild_id": guild_id,
+                "discord_username": None,
+                "display_name": display_name,
+            }
 
             resp = await self.http_client.post(f"{api_base}/players/", json=user_data, timeout=5)
             resp.raise_for_status()
@@ -85,7 +90,11 @@ class ShipsCog(commands.Cog):
                     return
                 flogger.debug(f"/ships: admin permission granted, viewing {target_user.id}'s ships")
 
-            player_id = await self._get_player_id(target_user.id, interaction.guild_id)
+            player_id = await self._get_player_id(
+                target_user.id,
+                interaction.guild_id,
+                display_name=getattr(target_user, "display_name", None),
+            )
             if not player_id:
                 flogger.debug(f"/ships: player not found for discord_id={target_user.id}")
                 await interaction.followup.send("❌ Player not found.", ephemeral=True)
@@ -207,7 +216,11 @@ class ShipsCog(commands.Cog):
             flogger.debug(f"/ship: retrieved ship_id={ship_id_int}, ship_name={ship.get('ship_name')}")
 
             # Verify ship belongs to user (basic security)
-            player_id = await self._get_player_id(interaction.user.id, interaction.guild_id)
+            player_id = await self._get_player_id(
+                interaction.user.id,
+                interaction.guild_id,
+                display_name=getattr(interaction.user, "display_name", None),
+            )
             if ship["player_id"] != player_id:
                 flogger.debug(f"/ship: ownership check failed for ship_id={ship_id_int}, user={interaction.user.id}")
                 await interaction.followup.send("❌ You don't own this ship.", ephemeral=True)
@@ -311,7 +324,11 @@ class ShipsCog(commands.Cog):
 
         try:
             flogger.debug(f"/setactive: resolving player for user={interaction.user.id}")
-            player_id = await self._get_player_id(interaction.user.id, interaction.guild_id)
+            player_id = await self._get_player_id(
+                interaction.user.id,
+                interaction.guild_id,
+                display_name=getattr(interaction.user, "display_name", None),
+            )
             if not player_id:
                 flogger.debug(f"/setactive: player not found for user={interaction.user.id}")
                 await interaction.followup.send("❌ Player not found.", ephemeral=True)
@@ -400,7 +417,11 @@ class ShipsCog(commands.Cog):
             resp.raise_for_status()
             ship = resp.json()
 
-            player_id = await self._get_player_id(interaction.user.id, interaction.guild_id)
+            player_id = await self._get_player_id(
+                interaction.user.id,
+                interaction.guild_id,
+                display_name=getattr(interaction.user, "display_name", None),
+            )
             if ship["player_id"] != player_id:
                 flogger.debug(
                     f"/nickname: ownership check failed for ship_id={ship_id_int}, user={interaction.user.id}"

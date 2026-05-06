@@ -721,6 +721,15 @@ def _make_mock_role(role_id, name):
 class TestAdminUninstallCommand:
     """Tests for admin_uninstall command (SEG-03: delete Discord infra before API call)."""
 
+    @pytest.fixture(autouse=True)
+    def _patch_confirm_view(self):
+        """Patch ConfirmView so tests don't block on view.wait(). result=True simulates user confirming."""
+        view_mock = MagicMock()
+        view_mock.result = True
+        view_mock.wait = AsyncMock(return_value=None)
+        with patch("cogs.adminCog.ConfirmView", return_value=view_mock):
+            yield
+
     def _make_guild_config_response(self, include_all=True):
         """Build a standard config API response payload."""
         cfg = {
@@ -779,17 +788,23 @@ class TestAdminUninstallCommand:
             guild.get_channel = MagicMock(return_value=None)
         return guild
 
-    def test_admin_uninstall_requires_confirmation(self, mock_admin_cog):
-        """admin_uninstall should show warning when confirm string is missing."""
+    def test_admin_uninstall_shows_confirm_view(self, mock_admin_cog):
+        """admin_uninstall should show a ConfirmView before proceeding (B.50)."""
         interaction = _create_mock_interaction()
         interaction.guild_id = 987654321
 
-        asyncio.run(mock_admin_cog.admin_uninstall.callback(mock_admin_cog, interaction, None))
+        # Override autouse fixture: cancel so we don't need the full API mock
+        view_mock = MagicMock()
+        view_mock.result = False
+        view_mock.wait = AsyncMock(return_value=None)
+        with patch("cogs.adminCog.ConfirmView", return_value=view_mock):
+            asyncio.run(mock_admin_cog.admin_uninstall.callback(mock_admin_cog, interaction))
 
         interaction.response.defer.assert_called_once_with(thinking=True, ephemeral=True)
-        interaction.followup.send.assert_called_once()
-        call_kwargs = interaction.followup.send.call_args[1]
-        assert "embed" in call_kwargs
+        interaction.followup.send.assert_called()
+        # First send is the confirmation embed+view
+        first_call_kwargs = interaction.followup.send.call_args_list[0][1]
+        assert "embed" in first_call_kwargs
 
     def test_admin_uninstall_fetches_config_before_deleting(self, mock_admin_cog):
         """admin_uninstall should GET the guild config to obtain channel/role IDs."""
@@ -808,7 +823,7 @@ class TestAdminUninstallCommand:
         guild = self._make_guild_with_roles()
         mock_admin_cog.bot.get_guild = MagicMock(return_value=guild)
 
-        asyncio.run(mock_admin_cog.admin_uninstall.callback(mock_admin_cog, interaction, "CONFIRM-DELETE"))
+        asyncio.run(mock_admin_cog.admin_uninstall.callback(mock_admin_cog, interaction))
 
         # Must have called GET config
         mock_admin_cog.http_client.get.assert_called_once()
@@ -849,7 +864,7 @@ class TestAdminUninstallCommand:
         )
         mock_admin_cog.bot.get_guild = MagicMock(return_value=guild)
 
-        asyncio.run(mock_admin_cog.admin_uninstall.callback(mock_admin_cog, interaction, "CONFIRM-DELETE"))
+        asyncio.run(mock_admin_cog.admin_uninstall.callback(mock_admin_cog, interaction))
 
         # All 8 channels should have been deleted
         for cid in [201, 202, 203, 204, 205, 206, 207, 208]:
@@ -886,7 +901,7 @@ class TestAdminUninstallCommand:
         mock_admin_cog.bot.get_guild = MagicMock(return_value=guild)
 
         # Should complete without raising
-        asyncio.run(mock_admin_cog.admin_uninstall.callback(mock_admin_cog, interaction, "CONFIRM-DELETE"))
+        asyncio.run(mock_admin_cog.admin_uninstall.callback(mock_admin_cog, interaction))
 
         # bot-core uninstall API should still have been called
         mock_admin_cog.http_client.delete.assert_called_once()
@@ -921,7 +936,7 @@ class TestAdminUninstallCommand:
         mock_admin_cog.bot.get_guild = MagicMock(return_value=guild)
 
         # Should NOT raise; should still call bot-core
-        asyncio.run(mock_admin_cog.admin_uninstall.callback(mock_admin_cog, interaction, "CONFIRM-DELETE"))
+        asyncio.run(mock_admin_cog.admin_uninstall.callback(mock_admin_cog, interaction))
 
         # bot-core API should still have been called despite Discord errors
         mock_admin_cog.http_client.delete.assert_called_once()
@@ -944,7 +959,7 @@ class TestAdminUninstallCommand:
         mock_admin_cog.bot.get_guild = MagicMock(return_value=guild)
 
         # Should NOT crash; should still call bot-core
-        asyncio.run(mock_admin_cog.admin_uninstall.callback(mock_admin_cog, interaction, "CONFIRM-DELETE"))
+        asyncio.run(mock_admin_cog.admin_uninstall.callback(mock_admin_cog, interaction))
 
         # bot-core uninstall API should still have been called
         mock_admin_cog.http_client.delete.assert_called_once()
@@ -968,7 +983,7 @@ class TestAdminUninstallCommand:
         guild = self._make_guild_with_roles()
         mock_admin_cog.bot.get_guild = MagicMock(return_value=guild)
 
-        asyncio.run(mock_admin_cog.admin_uninstall.callback(mock_admin_cog, interaction, "CONFIRM-DELETE"))
+        asyncio.run(mock_admin_cog.admin_uninstall.callback(mock_admin_cog, interaction))
 
         interaction.followup.send.assert_called_once()
         call_kwargs = interaction.followup.send.call_args[1]
@@ -1025,7 +1040,7 @@ class TestAdminUninstallCommand:
         )
         mock_admin_cog.bot.get_guild = MagicMock(return_value=guild)
 
-        asyncio.run(mock_admin_cog.admin_uninstall.callback(mock_admin_cog, interaction, "CONFIRM-DELETE"))
+        asyncio.run(mock_admin_cog.admin_uninstall.callback(mock_admin_cog, interaction))
 
         # All 5 BountyBot roles deleted (matched by name, not ID)
         bh_role.delete.assert_awaited_once()
@@ -1066,7 +1081,7 @@ class TestAdminUninstallCommand:
         )
         mock_admin_cog.bot.get_guild = MagicMock(return_value=guild)
 
-        asyncio.run(mock_admin_cog.admin_uninstall.callback(mock_admin_cog, interaction, "CONFIRM-DELETE"))
+        asyncio.run(mock_admin_cog.admin_uninstall.callback(mock_admin_cog, interaction))
 
         # All 5 BountyBot roles deleted
         bh_role.delete.assert_awaited_once()
@@ -2134,6 +2149,15 @@ class TestRenderSettingAutocomplete:
 class TestPlatinumTierChoices:
     """Tests that Platinum is included in tier choices for clear/spawn bounty commands."""
 
+    @pytest.fixture(autouse=True)
+    def _patch_confirm_view(self):
+        """Patch ConfirmView so clear_bounties tests don't block on view.wait()."""
+        view_mock = MagicMock()
+        view_mock.result = True
+        view_mock.wait = AsyncMock(return_value=None)
+        with patch("cogs.adminCog.ConfirmView", return_value=view_mock):
+            yield
+
     def test_admin_clear_bounties_includes_platinum_choice(self, mock_admin_cog):
         """admin_clear_bounties @app_commands.choices should include Platinum."""
         cmd = mock_admin_cog.admin_clear_bounties
@@ -2198,7 +2222,7 @@ class TestPlatinumTierChoices:
         clear_resp.json.return_value = {"cleared_count": 2, "announcements_deleted": 2}
         mock_admin_cog.http_client.delete = AsyncMock(return_value=clear_resp)
 
-        asyncio.run(mock_admin_cog.admin_clear_bounties.callback(mock_admin_cog, interaction, "CONFIRM", "platinum"))
+        asyncio.run(mock_admin_cog.admin_clear_bounties.callback(mock_admin_cog, interaction, "platinum"))
 
         # Should have called the API with platinum tier
         call_kwargs = mock_admin_cog.http_client.delete.call_args[1]

@@ -261,21 +261,28 @@ class DuelService:
         await db.refresh(challenger)
         await db.refresh(target)
 
-        # Resolve Discord usernames for both participants.
+        # Resolve display names for both participants.
+        # B.62: prefer player.display_name (per-guild nickname) over discord_username.
         # Defensive try/except — lookup failures must never break duel resolution.
         challenger_name: str | None = None
         try:
-            challenger_user = await self.user_repo.get_by_id(db, challenger.user_id)
-            if challenger_user and challenger_user.discord_username:
-                challenger_name = challenger_user.discord_username
+            if challenger.display_name:
+                challenger_name = challenger.display_name
+            else:
+                challenger_user = await self.user_repo.get_by_id(db, challenger.user_id)
+                if challenger_user and challenger_user.discord_username:
+                    challenger_name = challenger_user.discord_username
         except Exception as exc:  # defensive — lookup failures must never break duel resolution
             flogger.debug(f"Could not resolve challenger name for duel {duel_id}: {exc}")
 
         target_name: str | None = None
         try:
-            target_user = await self.user_repo.get_by_id(db, target.user_id)
-            if target_user and target_user.discord_username:
-                target_name = target_user.discord_username
+            if target.display_name:
+                target_name = target.display_name
+            else:
+                target_user = await self.user_repo.get_by_id(db, target.user_id)
+                if target_user and target_user.discord_username:
+                    target_name = target_user.discord_username
         except Exception as exc:  # defensive — lookup failures must never break duel resolution
             flogger.debug(f"Could not resolve target name for duel {duel_id}: {exc}")
 

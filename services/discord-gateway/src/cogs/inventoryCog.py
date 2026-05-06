@@ -262,14 +262,19 @@ class InventoryCog(commands.Cog):
     async def cog_unload(self):
         await self.http_client.aclose()
 
-    async def _get_player_id(self, user_id: int, guild_id: int) -> int | None:
+    async def _get_player_id(self, user_id: int, guild_id: int, display_name: str | None = None) -> int | None:
         """Helper to get player ID from Discord user ID.
 
         Re-raises httpx.HTTPStatusError for guild-not-configured responses so callers
         can surface a user-friendly message.
         """
         try:
-            user_data = {"discord_id": user_id, "guild_id": guild_id, "discord_username": None}
+            user_data = {
+                "discord_id": user_id,
+                "guild_id": guild_id,
+                "discord_username": None,
+                "display_name": display_name,
+            }
 
             resp = await self.http_client.post(f"{api_base}/players/", json=user_data, timeout=5)
             resp.raise_for_status()
@@ -316,7 +321,11 @@ class InventoryCog(commands.Cog):
                     )
                     return
 
-            player_id = await self._get_player_id(target_user.id, interaction.guild_id)
+            player_id = await self._get_player_id(
+                target_user.id,
+                interaction.guild_id,
+                display_name=getattr(target_user, "display_name", None),
+            )
             if not player_id:
                 await interaction.followup.send("❌ Player not found.", ephemeral=True)
                 return
@@ -412,7 +421,11 @@ class InventoryCog(commands.Cog):
         await interaction.response.defer(thinking=True)
 
         try:
-            player_id = await self._get_player_id(interaction.user.id, interaction.guild_id)
+            player_id = await self._get_player_id(
+                interaction.user.id,
+                interaction.guild_id,
+                display_name=getattr(interaction.user, "display_name", None),
+            )
             if not player_id:
                 await interaction.followup.send("❌ Player not found.", ephemeral=True)
                 return
@@ -512,7 +525,11 @@ class InventoryCog(commands.Cog):
         await interaction.response.defer(thinking=True)
 
         try:
-            player_id = await self._get_player_id(interaction.user.id, interaction.guild_id)
+            player_id = await self._get_player_id(
+                interaction.user.id,
+                interaction.guild_id,
+                display_name=getattr(interaction.user, "display_name", None),
+            )
             if not player_id:
                 await interaction.followup.send("❌ Player not found.", ephemeral=True)
                 return
@@ -575,6 +592,7 @@ class InventoryCog(commands.Cog):
                 "discord_id": interaction.user.id,
                 "guild_id": interaction.guild_id,
                 "discord_username": None,
+                "display_name": getattr(interaction.user, "display_name", None),
             }
             player_resp = await self.http_client.post(f"{api_base}/players/", json=user_data, timeout=3)
             player_resp.raise_for_status()
@@ -645,6 +663,7 @@ class InventoryCog(commands.Cog):
                 "discord_id": interaction.user.id,
                 "guild_id": interaction.guild_id,
                 "discord_username": None,
+                "display_name": getattr(interaction.user, "display_name", None),
             }
             player_resp = await self.http_client.post(f"{api_base}/players/", json=user_data, timeout=3)
             player_resp.raise_for_status()
@@ -703,7 +722,11 @@ class InventoryCog(commands.Cog):
         await interaction.response.defer(thinking=True)
 
         try:
-            player_id = await self._get_player_id(interaction.user.id, interaction.guild_id)
+            player_id = await self._get_player_id(
+                interaction.user.id,
+                interaction.guild_id,
+                display_name=getattr(interaction.user, "display_name", None),
+            )
             if not player_id:
                 await interaction.followup.send("❌ Player not found.", ephemeral=True)
                 return
@@ -858,7 +881,11 @@ class InventoryCog(commands.Cog):
         await interaction.response.defer(thinking=True)
 
         try:
-            player_id = await self._get_player_id(interaction.user.id, interaction.guild_id)
+            player_id = await self._get_player_id(
+                interaction.user.id,
+                interaction.guild_id,
+                display_name=getattr(interaction.user, "display_name", None),
+            )
             if not player_id:
                 await interaction.followup.send("❌ Player not found.", ephemeral=True)
                 return
@@ -935,6 +962,7 @@ class InventoryCog(commands.Cog):
                 "discord_id": interaction.user.id,
                 "guild_id": interaction.guild_id,
                 "discord_username": None,
+                "display_name": getattr(interaction.user, "display_name", None),
             }
             player_resp = await self.http_client.post(f"{api_base}/players/", json=user_data, timeout=3)
             player_resp.raise_for_status()
@@ -971,6 +999,7 @@ class InventoryCog(commands.Cog):
                 "discord_id": interaction.user.id,
                 "guild_id": interaction.guild_id,
                 "discord_username": None,
+                "display_name": getattr(interaction.user, "display_name", None),
             }
             player_resp = await self.http_client.post(f"{api_base}/players/", json=user_data, timeout=3)
             player_resp.raise_for_status()
@@ -1035,7 +1064,12 @@ class InventoryCog(commands.Cog):
             # Resolve both players
             source_player_resp = await self.http_client.post(
                 f"{api_base}/players/",
-                json={"discord_id": interaction.user.id, "guild_id": interaction.guild_id, "discord_username": None},
+                json={
+                    "discord_id": interaction.user.id,
+                    "guild_id": interaction.guild_id,
+                    "discord_username": None,
+                    "display_name": getattr(interaction.user, "display_name", None),
+                },
                 timeout=5,
             )
             source_player_resp.raise_for_status()
@@ -1043,7 +1077,12 @@ class InventoryCog(commands.Cog):
 
             target_player_resp = await self.http_client.post(
                 f"{api_base}/players/",
-                json={"discord_id": target.id, "guild_id": interaction.guild_id, "discord_username": None},
+                json={
+                    "discord_id": target.id,
+                    "guild_id": interaction.guild_id,
+                    "discord_username": None,
+                    "display_name": getattr(target, "display_name", None),
+                },
                 timeout=5,
             )
             target_player_resp.raise_for_status()

@@ -43,14 +43,19 @@ class DuelCog(commands.Cog):
     async def cog_unload(self):
         await self.http_client.aclose()
 
-    async def _get_player_id(self, user_id: int, guild_id: int) -> int | None:
+    async def _get_player_id(self, user_id: int, guild_id: int, display_name: str | None = None) -> int | None:
         """Resolve a Discord user ID to a game player ID via the upsert endpoint.
 
         Re-raises httpx.HTTPStatusError for guild-not-configured responses so callers
         can surface a user-friendly message.
         """
         try:
-            user_data = {"discord_id": user_id, "guild_id": guild_id, "discord_username": None}
+            user_data = {
+                "discord_id": user_id,
+                "guild_id": guild_id,
+                "discord_username": None,
+                "display_name": display_name,
+            }
             resp = await self.http_client.post(f"{api_base}/players/", json=user_data, timeout=5)
             resp.raise_for_status()
             return resp.json().get("id")
@@ -154,7 +159,11 @@ class DuelCog(commands.Cog):
         try:
             # Resolve Discord user IDs to internal player PKs
             try:
-                challenger_player_id = await self._get_player_id(interaction.user.id, interaction.guild_id)
+                challenger_player_id = await self._get_player_id(
+                    interaction.user.id,
+                    interaction.guild_id,
+                    display_name=getattr(interaction.user, "display_name", None),
+                )
             except httpx.HTTPStatusError:
                 await interaction.followup.send(_GUILD_NOT_CONFIGURED_MSG, ephemeral=True)
                 return
@@ -165,7 +174,11 @@ class DuelCog(commands.Cog):
                 return
 
             try:
-                target_player_id = await self._get_player_id(target.id, interaction.guild_id)
+                target_player_id = await self._get_player_id(
+                    target.id,
+                    interaction.guild_id,
+                    display_name=getattr(target, "display_name", None),
+                )
             except httpx.HTTPStatusError:
                 await interaction.followup.send(_GUILD_NOT_CONFIGURED_MSG, ephemeral=True)
                 return
@@ -276,7 +289,11 @@ class DuelCog(commands.Cog):
         try:
             # Resolve Discord user ID to internal player PK for authorization
             try:
-                player_id = await self._get_player_id(interaction.user.id, interaction.guild_id)
+                player_id = await self._get_player_id(
+                    interaction.user.id,
+                    interaction.guild_id,
+                    display_name=getattr(interaction.user, "display_name", None),
+                )
             except httpx.HTTPStatusError:
                 await interaction.followup.send(_GUILD_NOT_CONFIGURED_MSG, ephemeral=True)
                 return
@@ -429,7 +446,11 @@ class DuelCog(commands.Cog):
         try:
             # Resolve Discord user ID to internal player PK for authorization
             try:
-                player_id = await self._get_player_id(interaction.user.id, interaction.guild_id)
+                player_id = await self._get_player_id(
+                    interaction.user.id,
+                    interaction.guild_id,
+                    display_name=getattr(interaction.user, "display_name", None),
+                )
             except httpx.HTTPStatusError:
                 await interaction.followup.send(_GUILD_NOT_CONFIGURED_MSG, ephemeral=True)
                 return
@@ -515,9 +536,14 @@ class DuelCog(commands.Cog):
             return
 
         try:
-            # Resolve Discord user ID to internal player PK
+            # Resolve Discord user ID to internal player PK for authorization
             try:
-                player_id = await self._get_player_id(interaction.user.id, interaction.guild_id)
+                player_id = await self._get_player_id(
+                    interaction.user.id,
+                    interaction.guild_id,
+                    display_name=getattr(interaction.user, "display_name", None),
+                )
+
             except httpx.HTTPStatusError:
                 await interaction.followup.send(_GUILD_NOT_CONFIGURED_MSG, ephemeral=True)
                 return

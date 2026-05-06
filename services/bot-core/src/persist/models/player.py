@@ -41,6 +41,9 @@ class Player(Base):
     duel_credits_won: Mapped[int] = mapped_column(Integer, default=0)
     duel_credits_lost: Mapped[int] = mapped_column(Integer, default=0)
 
+    # Display name (server nickname or global display name, updated on each interaction)
+    display_name: Mapped[str | None] = mapped_column(String(100), nullable=True, default=None)
+
     # Extended progression fields
     xp_surplus: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     guild_transfer_cooldown: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class BountyResponse(BaseModel):
@@ -124,7 +124,7 @@ class CombatBonusRequest(BaseModel):
     """Request body for POST /bounties/combat-bonus (Bronze division only)."""
 
     player_id: int
-    base_reward: int
+    base_reward: int = Field(ge=0, description="Base bounty reward to double on combat win")
     criminal_ship: dict  # The criminal's ship/loadout data to fight against
 
 

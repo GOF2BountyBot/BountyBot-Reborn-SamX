@@ -1193,7 +1193,9 @@ class BountyService:
                 bonus_won = False
                 total_reward = winner_reward
                 if not _no_ship:
-                    fight_results = self.combat_service.fight_ships(player_loadout, criminal_loadout)
+                    fight_results = self.combat_service.fight_ships(
+                        player_loadout, criminal_loadout, player_armour_buff=GameConstants.BOUNTY_PVC_ARMOUR_BUFF_FACTOR
+                    )
                     combat_player_won = (
                         fight_results.winner_name == player_loadout.ship_name
                     ) or fight_results.is_stalemate
@@ -1225,7 +1227,9 @@ class BountyService:
                 duel_won = True
                 fight_results = None
             else:
-                fight_results = self.combat_service.fight_ships(player_loadout, criminal_loadout)
+                fight_results = self.combat_service.fight_ships(
+                    player_loadout, criminal_loadout, player_armour_buff=GameConstants.BOUNTY_PVC_ARMOUR_BUFF_FACTOR
+                )
                 duel_won = (fight_results.winner_name == player_loadout.ship_name) or fight_results.is_stalemate
 
             if duel_won:

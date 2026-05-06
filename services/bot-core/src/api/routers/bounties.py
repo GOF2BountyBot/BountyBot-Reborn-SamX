@@ -196,6 +196,12 @@ async def combat_bonus(
     flogger.info(f"Combat bonus request: player_id={request.player_id} base_reward={request.base_reward}")
     try:
         async with get_db_session() as db:
+            # Fetch player early — raise 404 immediately if not found
+            player = await service.player_repo.get_by_id(db, request.player_id)
+            if player is None:
+                flogger.info(f"combat_bonus: player_id={request.player_id} not found — returning 404")
+                raise HTTPException(status_code=404, detail=f"Player {request.player_id} not found")
+
             # Build loadouts
             player_loadout = await LoadoutBuilder.from_player(db, request.player_id)
             criminal_loadout = LoadoutBuilder.from_criminal_ship(request.criminal_ship)
@@ -212,13 +218,8 @@ async def combat_bonus(
             bonus_credits = 0
 
             if won:
-                # Award bonus credits directly to the player
-                player = await service.player_repo.get_by_id(db, request.player_id)
-                if player is not None:
-                    player.credits += request.base_reward
-                    player.lifetime_credits += request.base_reward
-                    await db.commit()
-                    bonus_credits = request.base_reward
+                await service._award_combat_bonus(db, request.player_id, request.base_reward)
+                bonus_credits = request.base_reward
 
             combat_dict = _serialize_fight_results(fight_results) or {}
             if won:
@@ -233,6 +234,8 @@ async def combat_bonus(
                 combat_result=combat_dict,
                 message=msg,
             )
+    except HTTPException:
+        raise
     except Exception as e:
         flogger.error(f"Combat bonus failed: player_id={request.player_id}: {e}")
         raise

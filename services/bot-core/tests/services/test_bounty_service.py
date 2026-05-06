@@ -4676,3 +4676,146 @@ async def test_generate_loadout_empty_combat_ship_pool_warns_and_returns_unknown
     assert result["ship_name"] == "Unknown"
     assert result["weapons"] == []
     assert result["total_value"] == 0
+
+
+# ===========================================================================
+# Kieth T Maxwell bonus — PvC armour buff at both fight_ships call sites
+# ===========================================================================
+
+
+@pytest.mark.asyncio
+async def test_pvc_fight_applies_armour_buff_bronze_path(combat_integration_setup):
+    """Kieth T Maxwell bonus: Bronze path fight_ships call passes
+    player_armour_buff=GameConstants.BOUNTY_PVC_ARMOUR_BUFF_FACTOR.
+
+    Verifies that ``_process_single_bounty_check`` passes the PvC armour
+    buff to ``combat_service.fight_ships`` on the Bronze (auto-capture)
+    code path, not just the Silver/Gold/Platinum gate path.
+
+    Max mocks used: 2 (combat_service, loadout_builder).
+    """
+    from services.bounty_service import RewardInfo
+    from services.combat_models import ShipLoadout
+    from services.game_constants import GameConstants
+
+    service, mock_db = combat_integration_setup
+
+    active_ship = SimpleNamespace(ship_name="Betty", armour=100)
+    player = _make_player(active_ship=active_ship, classic_mode=False, tier="Bronze")
+    bounty = _make_active_bounty(answer="Sol")
+    bounty.criminal_ship = {"ship_name": "Raider", "ship_armour": 80, "weapons": [], "turrets": []}
+
+    # Capture kwargs passed to fight_ships
+    captured_kwargs: dict = {}
+    _fight_stats1 = SimpleNamespace(
+        ship_name="Betty", raw_hp=100, raw_dps=10.0, varied_hp=100, varied_dps=10.0, ttk=8.0
+    )
+    _fight_stats2 = SimpleNamespace(
+        ship_name="Raider", raw_hp=80, raw_dps=5.0, varied_hp=80, varied_dps=5.0, ttk=16.0
+    )
+
+    def _capture_fight(p_loadout, c_loadout, **kwargs):
+        captured_kwargs.update(kwargs)
+        return SimpleNamespace(
+            winner_name="Betty",
+            loser_name="Raider",
+            is_stalemate=False,
+            ship1_stats=_fight_stats1,
+            ship2_stats=_fight_stats2,
+            variance_percent=0.0,
+        )
+
+    service.combat_service.fight_ships.side_effect = _capture_fight
+    service.player_repo.get_by_id.return_value = player
+    service.bounty_repo.get_active_by_guild_and_division.return_value = [bounty]
+    service.bounty_repo.update.return_value = bounty
+    service.calc_rewards = AsyncMock(
+        return_value=[RewardInfo(player_id=1, credits_earned=800, xp_earned=40, is_winner=True)]
+    )
+    service.distribute_rewards = AsyncMock(return_value=[])
+    service._award_combat_bonus = AsyncMock()
+
+    with patch(
+        "services.loadout_builder.LoadoutBuilder.from_player",
+        new=AsyncMock(return_value=ShipLoadout(ship_name="Betty", base_armour=100)),
+    ):
+        result = await service.check_bounty(mock_db, player_id=1, system_name="Sol", guild_id=1)
+
+    assert result.result == CheckResult.CORRECT
+    # The kwarg must have been passed
+    assert "player_armour_buff" in captured_kwargs, (
+        "fight_ships was not called with player_armour_buff kwarg on bronze path"
+    )
+    assert captured_kwargs["player_armour_buff"] == GameConstants.BOUNTY_PVC_ARMOUR_BUFF_FACTOR, (
+        f"Expected player_armour_buff={GameConstants.BOUNTY_PVC_ARMOUR_BUFF_FACTOR}, "
+        f"got {captured_kwargs.get('player_armour_buff')}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_pvc_fight_applies_armour_buff_silver_path(combat_integration_setup):
+    """Kieth T Maxwell bonus: Silver/Gold/Platinum mandatory combat gate also passes
+    player_armour_buff=GameConstants.BOUNTY_PVC_ARMOUR_BUFF_FACTOR.
+
+    Verifies that the second fight_ships call site (the Silver/Gold/Platinum
+    mandatory combat gate introduced in B.58) forwards the PvC armour buff.
+
+    Max mocks used: 2 (combat_service, loadout_builder).
+    """
+    from services.bounty_service import RewardInfo
+    from services.combat_models import ShipLoadout
+    from services.game_constants import GameConstants
+
+    service, mock_db = combat_integration_setup
+
+    active_ship = SimpleNamespace(ship_name="Falcon", armour=200)
+    # Silver tier — NOT bronze, so mandatory combat gate runs
+    player = _make_player(active_ship=active_ship, classic_mode=False, tier="Silver")
+    bounty = _make_active_bounty(answer="Sol")
+    bounty.criminal_ship = {"ship_name": "Guardian", "ship_armour": 150, "weapons": [], "turrets": []}
+
+    # Capture kwargs passed to fight_ships
+    captured_kwargs: dict = {}
+    _fight_stats1 = SimpleNamespace(
+        ship_name="Falcon", raw_hp=200, raw_dps=20.0, varied_hp=200, varied_dps=20.0, ttk=7.5
+    )
+    _fight_stats2 = SimpleNamespace(
+        ship_name="Guardian", raw_hp=150, raw_dps=10.0, varied_hp=150, varied_dps=10.0, ttk=20.0
+    )
+
+    def _capture_fight(p_loadout, c_loadout, **kwargs):
+        captured_kwargs.update(kwargs)
+        return SimpleNamespace(
+            winner_name="Falcon",
+            loser_name="Guardian",
+            is_stalemate=False,
+            ship1_stats=_fight_stats1,
+            ship2_stats=_fight_stats2,
+            variance_percent=0.0,
+        )
+
+    service.combat_service.fight_ships.side_effect = _capture_fight
+    service.player_repo.get_by_id.return_value = player
+    service.bounty_repo.get_active_by_guild_and_division.return_value = [bounty]
+    service.bounty_repo.update.return_value = bounty
+    service.calc_rewards = AsyncMock(
+        return_value=[RewardInfo(player_id=1, credits_earned=1200, xp_earned=60, is_winner=True)]
+    )
+    service.distribute_rewards = AsyncMock(return_value=[])
+
+    with patch(
+        "services.loadout_builder.LoadoutBuilder.from_player",
+        new=AsyncMock(return_value=ShipLoadout(ship_name="Falcon", base_armour=200)),
+    ):
+        result = await service.check_bounty(mock_db, player_id=1, system_name="Sol", guild_id=1)
+
+    assert result.result == CheckResult.CORRECT
+    assert result.combat_won is True
+    # The kwarg must have been passed on the silver path too
+    assert "player_armour_buff" in captured_kwargs, (
+        "fight_ships was not called with player_armour_buff kwarg on silver/gold/platinum path"
+    )
+    assert captured_kwargs["player_armour_buff"] == GameConstants.BOUNTY_PVC_ARMOUR_BUFF_FACTOR, (
+        f"Expected player_armour_buff={GameConstants.BOUNTY_PVC_ARMOUR_BUFF_FACTOR}, "
+        f"got {captured_kwargs.get('player_armour_buff')}"
+    )

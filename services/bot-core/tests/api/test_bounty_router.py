@@ -1524,7 +1524,12 @@ class TestCombatBonusEndpoint:
         mock_combat.fight_ships.return_value = mock_fight
         mock_combat_cls.return_value = mock_combat
 
-        mock_bounty_service.player_repo.get_by_id = AsyncMock(return_value=None)
+        # B.58: player must exist; supply a real (mocked) player so 404 guard passes.
+        # The test verifies the *combat loss* path (criminal wins), not missing player.
+        mock_player = MagicMock()
+        mock_player.credits = 500
+        mock_player.lifetime_credits = 2000
+        mock_bounty_service.player_repo.get_by_id = AsyncMock(return_value=mock_player)
 
         response = combat_client.post(
             "/api/v1/bounties/combat-bonus",
@@ -1592,3 +1597,200 @@ class TestCombatBonusEndpoint:
         data = response.json()
         assert data["won"] is True
         assert data["bonus_credits"] == 300
+
+
+# ===========================================================================
+# B.58 / B.59 Adversarial Tests: combat-bonus endpoint
+# ===========================================================================
+
+
+class TestCombatBonusAdversarial:
+    """Adversarial and edge-case tests for POST /api/v1/bounties/combat-bonus.
+
+    Covers:
+      - B.59: base_reward validation (ge=0) — zero allowed, negative rejected
+      - B.58: 404 guard when player not found
+      - B.58: _award_combat_bonus called with correct args on win
+    """
+
+    @pytest.fixture
+    def test_app_adv(self, mock_bounty_service):
+        app = FastAPI()
+        from api.routers.bounties import get_bounty_service
+        from api.routers.bounties import router as bounties_router
+
+        app.include_router(bounties_router, prefix="/api/v1")
+        app.dependency_overrides[get_bounty_service] = lambda: mock_bounty_service
+        yield app
+        app.dependency_overrides.clear()
+
+    @pytest.fixture
+    def adv_client(self, test_app_adv):
+        return TestClient(test_app_adv)
+
+    @patch("api.routers.bounties.get_db_session")
+    def test_combat_bonus_player_not_found_returns_404(self, mock_get_db, adv_client, mock_bounty_service):
+        """B.58: POST /combat-bonus with a player_id that doesn't exist returns 404.
+
+        The player existence check was added before combat in B.58. When
+        player_repo.get_by_id returns None the endpoint must return HTTP 404,
+        not silently proceed to combat or return 200.
+        """
+        _configure_db_mock(mock_get_db)
+        mock_bounty_service.player_repo.get_by_id = AsyncMock(return_value=None)
+
+        response = adv_client.post(
+            "/api/v1/bounties/combat-bonus",
+            json={
+                "player_id": 99999,
+                "base_reward": 500,
+                "criminal_ship": {"ship_name": "Bandit", "weapons": [], "turrets": []},
+            },
+        )
+
+        assert response.status_code == 404
+        detail = response.json()["detail"]
+        assert "99999" in detail or "not found" in detail.lower()
+
+    def test_combat_bonus_negative_base_reward_rejected(self, adv_client):
+        """B.59: base_reward=-1 is rejected with a 422 Unprocessable Entity.
+
+        The Field(ge=0) constraint on CombatBonusRequest.base_reward must
+        prevent negative values from reaching the handler.
+        """
+        response = adv_client.post(
+            "/api/v1/bounties/combat-bonus",
+            json={
+                "player_id": 42,
+                "base_reward": -1,
+                "criminal_ship": {"ship_name": "Bandit", "weapons": [], "turrets": []},
+            },
+        )
+
+        assert response.status_code == 422
+        # Validation error must mention base_reward
+        body = response.json()
+        field_errors = str(body)
+        assert "base_reward" in field_errors
+
+    @patch("api.routers.bounties.get_db_session")
+    @patch("services.loadout_builder.LoadoutBuilder")
+    @patch("services.combat_service.CombatService")
+    def test_combat_bonus_zero_base_reward_accepted(
+        self, mock_combat_cls, mock_lb_cls, mock_get_db, adv_client, mock_bounty_service
+    ):
+        """B.59: base_reward=0 is valid (ge=0 means zero is allowed).
+
+        Even with a zero reward the endpoint should return 200. If the player
+        wins, bonus_credits=0 (doubling zero is still zero).
+        """
+        from types import SimpleNamespace
+
+        _configure_db_mock(mock_get_db)
+
+        player_loadout = MagicMock()
+        player_loadout.ship_name = "Betty"
+        mock_lb_cls.from_player = AsyncMock(return_value=player_loadout)
+        mock_lb_cls.from_criminal_ship = MagicMock(return_value=MagicMock(ship_name="Bandit"))
+
+        mock_combat = MagicMock()
+        fight_stats1 = SimpleNamespace(
+            ship_name="Betty", raw_hp=200, raw_dps=10.0, varied_hp=195, varied_dps=10.5, ttk=18.57
+        )
+        fight_stats2 = SimpleNamespace(
+            ship_name="Bandit", raw_hp=100, raw_dps=5.0, varied_hp=98, varied_dps=5.1, ttk=38.2
+        )
+        mock_fight = MagicMock()
+        mock_fight.winner_name = "Betty"
+        mock_fight.loser_name = "Bandit"
+        mock_fight.is_stalemate = False
+        mock_fight.ship1_stats = fight_stats1
+        mock_fight.ship2_stats = fight_stats2
+        mock_fight.variance_percent = 0.05
+        mock_combat.fight_ships.return_value = mock_fight
+        mock_combat_cls.return_value = mock_combat
+
+        mock_player = MagicMock()
+        mock_player.credits = 1000
+        mock_player.lifetime_credits = 5000
+        mock_bounty_service.player_repo.get_by_id = AsyncMock(return_value=mock_player)
+        mock_bounty_service._award_combat_bonus = AsyncMock()
+
+        response = adv_client.post(
+            "/api/v1/bounties/combat-bonus",
+            json={
+                "player_id": 42,
+                "base_reward": 0,
+                "criminal_ship": {"ship_name": "Bandit", "ship_armour": 80, "weapons": [], "turrets": []},
+            },
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        # Won but reward was zero — bonus_credits must be 0 (ge=0 accepted, 0×2=0)
+        assert data["won"] is True
+        assert data["bonus_credits"] == 0
+
+    @patch("api.routers.bounties.get_db_session")
+    @patch("services.loadout_builder.LoadoutBuilder")
+    @patch("services.combat_service.CombatService")
+    def test_combat_bonus_win_calls_award_combat_bonus(
+        self, mock_combat_cls, mock_lb_cls, mock_get_db, adv_client, mock_bounty_service
+    ):
+        """B.58: On a win, _award_combat_bonus is called with (db, player_id, base_reward).
+
+        Verifies the delegation to BountyService._award_combat_bonus introduced
+        in B.58, ensuring the correct arguments are forwarded.
+        """
+        from types import SimpleNamespace
+
+        _configure_db_mock(mock_get_db)
+
+        player_loadout = MagicMock()
+        player_loadout.ship_name = "Betty"
+        mock_lb_cls.from_player = AsyncMock(return_value=player_loadout)
+        mock_lb_cls.from_criminal_ship = MagicMock(return_value=MagicMock(ship_name="Bandit"))
+
+        mock_combat = MagicMock()
+        fight_stats1 = SimpleNamespace(
+            ship_name="Betty", raw_hp=300, raw_dps=20.0, varied_hp=295, varied_dps=20.5, ttk=14.0
+        )
+        fight_stats2 = SimpleNamespace(
+            ship_name="Bandit", raw_hp=100, raw_dps=5.0, varied_hp=98, varied_dps=5.1, ttk=58.0
+        )
+        mock_fight = MagicMock()
+        mock_fight.winner_name = "Betty"
+        mock_fight.loser_name = "Bandit"
+        mock_fight.is_stalemate = False
+        mock_fight.ship1_stats = fight_stats1
+        mock_fight.ship2_stats = fight_stats2
+        mock_fight.variance_percent = 0.03
+        mock_combat.fight_ships.return_value = mock_fight
+        mock_combat_cls.return_value = mock_combat
+
+        mock_player = MagicMock()
+        mock_player.credits = 1000
+        mock_player.lifetime_credits = 5000
+        mock_bounty_service.player_repo.get_by_id = AsyncMock(return_value=mock_player)
+        mock_bounty_service._award_combat_bonus = AsyncMock()
+
+        response = adv_client.post(
+            "/api/v1/bounties/combat-bonus",
+            json={
+                "player_id": 42,
+                "base_reward": 750,
+                "criminal_ship": {"ship_name": "Bandit", "ship_armour": 80, "weapons": [], "turrets": []},
+            },
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["won"] is True
+        assert data["bonus_credits"] == 750
+
+        # Verify _award_combat_bonus was called with player_id=42 and base_reward=750
+        mock_bounty_service._award_combat_bonus.assert_awaited_once()
+        call_args = mock_bounty_service._award_combat_bonus.call_args
+        # Positional: (db, player_id, base_reward) — skip db (arg 0), check player_id and base_reward
+        assert call_args.args[1] == 42, f"Expected player_id=42, got {call_args.args[1]}"
+        assert call_args.args[2] == 750, f"Expected base_reward=750, got {call_args.args[2]}"

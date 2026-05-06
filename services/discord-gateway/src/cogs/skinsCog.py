@@ -11,7 +11,7 @@ from httpx import HTTPStatusError as HttpxHTTPStatusError
 from httpx import RequestError as HttpxRequestError
 from httpx import TimeoutException as HttpxTimeoutException
 from shared import bblogger
-from utils.autocomplete_utils import normalize_for_search
+from utils.autocomplete_utils import fuzzy_filter, normalize_for_search
 
 flogger = bblogger.get_logger("discord-gateway-SkinsCog")
 api_base = os.environ.get("BOT_API_BASE_URL", "http://bot-core:8000/api/v1")
@@ -310,13 +310,10 @@ class SkinsCog(commands.Cog):
     async def ship_autocomplete(
         self, _interaction: discord.Interaction, current: str
     ) -> list[app_commands.Choice[str]]:
-        norm_current = normalize_for_search(current)
-        choices = [
+        return [
             app_commands.Choice(name=name, value=name)
-            for name in self._ship_skins
-            if norm_current in normalize_for_search(name)
+            for name in fuzzy_filter(current, list(self._ship_skins.keys()))
         ]
-        return choices[:25]
 
     async def skin_autocomplete(self, interaction: discord.Interaction, current: str) -> list[app_commands.Choice[str]]:
         # read the already-selected ship from namespace
@@ -345,14 +342,15 @@ class SkinsCog(commands.Cog):
         Ships without cached render-info are included so the list is never
         artificially truncated to only previously-rendered ships.
         """
-        norm_current = normalize_for_search(current)
-        choices = [
-            app_commands.Choice(name=name, value=name)
+        skinnable_names = [
+            name
             for name in self._ship_skins
-            if norm_current in normalize_for_search(name)
-            and self._ship_render_info.get(name, {}).get("skinnable", True)
+            if self._ship_render_info.get(name, {}).get("skinnable", True)
         ]
-        return choices[:25]
+        return [
+            app_commands.Choice(name=name, value=name)
+            for name in fuzzy_filter(current, skinnable_names)
+        ]
 
     # ------------------------------------------------------------------
     # /ship_skin

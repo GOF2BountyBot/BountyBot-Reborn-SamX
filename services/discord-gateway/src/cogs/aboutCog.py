@@ -9,7 +9,7 @@ from cogs._shared.http_error_handler import report_api_error
 from discord import app_commands
 from discord.ext import commands
 from shared import bblogger
-from utils.autocomplete_utils import normalize_for_search
+from utils.autocomplete_utils import fuzzy_filter, normalize_for_search
 from utils.embed_converter import EmbedConverter  # <- grid-builder for 2-col layout
 
 # Set up logger
@@ -118,14 +118,12 @@ class AboutCog(commands.Cog):
         self, _interaction: discord.Interaction, current: str
     ) -> list[app_commands.Choice[str]]:
         """Autocomplete for system name selection using preloaded data."""
-        norm_current = normalize_for_search(current)
         systems = self._objects_by_category.get("system", [])
-        choices = [
-            app_commands.Choice(name=obj["name"], value=obj["name"])
-            for obj in systems
-            if norm_current in normalize_for_search(obj.get("name", ""))
+        names = [obj["name"] for obj in systems if obj.get("name")]
+        return [
+            app_commands.Choice(name=name, value=name)
+            for name in fuzzy_filter(current, names)
         ]
-        return choices[:25]
 
     async def object_autocomplete(
         self, interaction: discord.Interaction, current: str
@@ -135,15 +133,12 @@ class AboutCog(commands.Cog):
         if not category or category not in self._objects_by_category:
             return []
 
-        norm_current = normalize_for_search(current)
         objects = self._objects_by_category[category]
-        choices: list[app_commands.Choice[str]] = []
-        for obj in objects:
-            name = obj.get("name", "")
-            if norm_current in normalize_for_search(name):
-                choices.append(app_commands.Choice(name=name, value=name))
-
-        return choices[:25]
+        names = [obj["name"] for obj in objects if obj.get("name")]
+        return [
+            app_commands.Choice(name=name, value=name)
+            for name in fuzzy_filter(current, names)
+        ]
 
     @app_commands.command(
         name="about", description="Get detailed information about game objects (modules, weapons, etc.)"

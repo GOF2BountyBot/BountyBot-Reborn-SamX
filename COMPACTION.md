@@ -108,17 +108,64 @@
 
 ---
 
-## Open Defects
+## Defect Status
 
-| ID | Sev | Summary | Status |
-|----|-----|---------|--------|
-| B.74 | 🟠 | AEI conversion fails — dimensions not multiples of 4 | **closed** — fixed |
-| B.73 | 🟡 | skinsCog preload retry missing | **closed** — fixed |
-| B.67 | 🔵 | `duel_expire` executor bulk mode missing | **OPEN** |
-| B.62 | 🟡 | No display_name column | **DEFERRED** post-release |
-| B.59 | 🔵 | `base_reward` lacks `ge=0` guard | **OPEN** |
-| B.58 | 🟡 | `combat_bonus` silent win path (wrong player wins edge case) | **OPEN** — not exploitable |
-| A.20 | 🔵 | `/ping` visible to non-admins | **OPEN** |
+### OPEN — needs work
+
+| ID | Sev | Summary |
+|----|-----|---------|
+| B.76 | 🟡 | Suite-wide tautological mock audit — policy added, full audit never done |
+| B.67 | 🔵 | `duel_expire` executor no bulk mode; E2E Phase 11.4 shortcut broken (no `duel_id`) |
+| B.59 | 🔵 | `CombatBonusRequest.base_reward` missing `Field(ge=0)` — one-liner |
+| B.58 | 🟡 | `combat_bonus` silent success when player not found — needs 404 guard |
+| B.72 | ℹ️ | E2E checklist D.3 test expectation wrong — update to use `skinnable=false` ship |
+| B.71 | ℹ️ | E2E checklist D.2 test ship (Phantom XT) is `skinnable=false` — use Aegir/Badger/Furious |
+
+### OPEN — enhancements (not blocking release)
+
+| ID | Sev | Summary |
+|----|-----|---------|
+| B.50 | 🔵 | Typed `CONFIRM` string UX — replace with button dialogs (prestige/uninstall/clear-bounties) |
+| B.49 | 🔵 | Expose hardcoded game constants as per-guild config options — not started |
+
+### DEFERRED
+
+| ID | Sev | Summary | When |
+|----|-----|---------|------|
+| B.62 | 🟡 | No `display_name` column — names show `discord_username` everywhere | Post-release |
+| Phase 1.5 | — | Non-admin permission denial E2E tests | Pre-release |
+| D.5–D.15 | — | 3D rendering / blender edge case E2E tests | Requires GPU |
+
+### FIXED — pending live verification (code confirmed by researcher 2026-05-06)
+
+| ID | Sev | Summary | Evidence |
+|----|-----|---------|---------|
+| B.80 | 🔵 | `/admin_give_item` `item_type` param removed | `adminCog.py:1732-1802` |
+| B.77 | 🟡 | A* heuristic → `0.0` constant (Dijkstra) | `pathfinding_service.py:59-65` |
+| B.74 | 🟠 | AEI dimension snapped to nearest 4px | `aei_conversion_service.py:98-104` |
+| B.73 | 🟡 | skinsCog preload retry `[5,10,20,40,60]s` | `skinsCog.py:261-304` |
+| B.57 | 🟠 | PvC armour buff + unified PvP/PvC fight path | `combat_service.py:464`, `game_constants.py:176` |
+| B.55 | 🟠 | Duel accept uses `varied_hp` (not broken `challenger_health`) | `duels.py:199,219-220` |
+| B.53 | 🟠 | Prestige swaps tier roles (removes old, adds Bronze) | `playerCog.py:368-413` |
+| B.52 | 🟡 | Criminal ship selection filters `max_primaries > 0` | `bounty_service.py:368,379` |
+| B.51 | 🟠 | duelCog resolves Discord IDs → player PKs via `_get_player_id()` | `duelCog.py:155-184` |
+| B.48 | 🟠 | Prestige resets to starter Betty; level/division system deleted | `player_service.py:336-447` |
+| B.63 | 🟡 | Duel result embed shows player names not ship names | `duelCog.py:368-372` |
+| B.61 | 🔵 | Accept embed includes `target_name` | `duels.py:51-53` |
+| B.60 | 🔵 | Duel autocomplete shows challenger/target name not duel ID | `duelCog.py:88-91` |
+| B.39 | 🟡 | `/promote` removes old tier role when adding new one | `playerCog.py:488-533` |
+
+### CLOSED / WON'T FIX
+
+| ID | Summary |
+|----|---------|
+| B.78 | Wah'noor `neighbours: []` confirmed correct in seed data |
+| B.75 | Non-Nitro upload limit — Discord platform constraint, not a bot bug |
+| B.70 | Shop refresh tier-aware announcement — closed (fixed) |
+| B.66 | Reset to defaults preserves admin role — closed (fixed) |
+| B.65 | `/admin_duel` cancel command — closed (implemented, commit `2c71dc6`) |
+| B.64 | `/duel-cancel` challenger withdraw — closed (implemented, commit `f68e07a`) |
+| A.20 | `/ping` visibility — decorator correct; Discord client cache, not fixable from code |
 
 ---
 
@@ -243,10 +290,11 @@ sudo docker exec bountybot-db psql -U bounty -d bountydb -c \
 
 ## Next Steps
 
-1. Address remaining open defects (B.67, B.59, B.58, A.20) — user decides priority
-2. **Phase 1.5** (non-admin permission denials) — deferred, revisit pre-release
-3. Stack rebuild when ready — bot invite URL updated, use new permissions integer
-4. After rebuild: bot joins first, then `/admin_setup`, then `/profile` both accounts, then reseed ships
+1. **Stack rebuild** when ready — bot invite URL updated, use new permissions integer `2416438320`
+2. After rebuild: bot joins first → `/admin_setup` → `/profile` both accounts → reseed ships → apply golden config
+3. **Live verification** of all FIXED-PENDING-VERIFY items (B.39, B.48, B.51–B.53, B.55, B.57, B.60–B.61, B.63, B.73–B.74, B.77, B.80) against the rebuilt stack
+4. **Phase 1.5** (non-admin permission denials) — deferred, revisit pre-release
+5. Address remaining open defects — priority order: B.58, B.59, B.67, B.76 (user decides)
 
 ---
 

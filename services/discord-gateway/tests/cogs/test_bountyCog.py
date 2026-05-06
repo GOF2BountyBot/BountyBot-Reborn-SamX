@@ -541,6 +541,11 @@ class TestCheckCommand:
         """Patch _get_player_id to return a valid game player ID for all /check tests."""
         mock_bounty_cog._get_player_id = AsyncMock(return_value=42)
 
+    @pytest.fixture(autouse=True)
+    def _populate_systems(self, mock_bounty_cog):
+        """Populate _systems so resolve_system_name can resolve the test system names."""
+        mock_bounty_cog._systems = ["Alpha", "Beta", "Delta", "Sol"]
+
     def test_check_correct_result_green_embed(self, mock_bounty_cog, make_mock_response):
         """/check CORRECT result should display green embed."""
         interaction = _create_mock_interaction()
@@ -670,6 +675,11 @@ class TestCheckCommandRespx:
     """
 
     _BOT_API = "http://bot-core:8000/api/v1"
+
+    @pytest.fixture(autouse=True)
+    def _populate_systems(self, mock_bounty_cog):
+        """Populate _systems so resolve_system_name can resolve 'Sol'."""
+        mock_bounty_cog._systems = ["Sol"]
 
     def _with_real_client(self, cog, request):
         import httpx
@@ -1655,6 +1665,11 @@ class TestCheckCommandCombatResults:
         """Patch _get_player_id to return a valid game player ID."""
         mock_bounty_cog._get_player_id = AsyncMock(return_value=42)
 
+    @pytest.fixture(autouse=True)
+    def _populate_systems(self, mock_bounty_cog):
+        """Populate _systems so resolve_system_name can resolve 'Alpha'."""
+        mock_bounty_cog._systems = ["Alpha"]
+
     def _make_full_check_response(self, **kwargs):
         """Build a complete check response dict with sensible defaults."""
         base = {
@@ -1986,6 +2001,11 @@ class TestCheckCommandCooldownAndRecentlySpotted:
     def _patch_player_id(self, mock_bounty_cog):
         mock_bounty_cog._get_player_id = AsyncMock(return_value=42)
 
+    @pytest.fixture(autouse=True)
+    def _populate_systems(self, mock_bounty_cog):
+        """Populate _systems so resolve_system_name can resolve the test system names."""
+        mock_bounty_cog._systems = ["Sol", "Alpha"]
+
     def _make_on_cooldown_response(self, cooldown_until=None, message="On cooldown"):
         return {
             "result": "on_cooldown",
@@ -2119,6 +2139,11 @@ class TestCheckMultiBountyResponse:
     @pytest.fixture(autouse=True)
     def _patch_player_id(self, mock_bounty_cog):
         mock_bounty_cog._get_player_id = AsyncMock(return_value=42)
+
+    @pytest.fixture(autouse=True)
+    def _populate_systems(self, mock_bounty_cog):
+        """Populate _systems so resolve_system_name can resolve 'Sol'."""
+        mock_bounty_cog._systems = ["Sol"]
 
     def test_check_multi_outcomes_renders_consolidated_embed(self, mock_bounty_cog, make_mock_response):
         """When response has >1 outcome, exactly one embed is sent with N fields."""
@@ -2254,3 +2279,91 @@ class TestCheckMultiBountyResponse:
         # Title is the legacy "Bounty Captured!" not the multi-bounty title
         assert "Captured" in (embed.title or "")
         assert "Multiple" not in (embed.title or "")
+
+
+# ===========================================================================
+# DEF-BOUNTY-002 — /check empty _systems passthrough (guard fix)
+# ===========================================================================
+#
+# When _systems is empty (preload failed / not yet complete), the /check handler
+# must NOT return "Unknown system" — it must pass the typed value through to
+# bot-core unchanged and let bot-core decide whether the name is valid.
+
+
+class TestCheckCommandEmptySystemsPassthrough:
+    """DEF-BOUNTY-002: /check with empty _systems list passes typed value through to bot-core.
+
+    Before the fix, resolve_system_name was called unconditionally; with an empty
+    systems list it returned None, causing the handler to immediately reject the
+    typed value with "Unknown system". After the fix, the handler guards with
+    `if self._systems:` and only calls resolve_system_name when the list is
+    populated. When empty, the typed value passes through unmodified.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _patch_player_id(self, mock_bounty_cog):
+        """Patch _get_player_id to return a valid game player ID."""
+        mock_bounty_cog._get_player_id = AsyncMock(return_value=42)
+
+    @pytest.fixture(autouse=True)
+    def _empty_systems(self, mock_bounty_cog):
+        """Ensure _systems is empty (simulates failed preload)."""
+        mock_bounty_cog._systems = []
+
+    def test_check_empty_systems_does_not_send_unknown_system_error(self, mock_bounty_cog, make_mock_response):
+        """/check with _systems=[] must NOT return the 'Unknown system' ephemeral error.
+
+        The guard `if self._systems:` prevents resolve_system_name from running when
+        the list is empty, so the typed value passes through to bot-core instead of
+        being rejected client-side.
+        """
+        interaction = _create_mock_interaction()
+        resp = make_mock_response(_make_check_response("not_found"))
+        mock_bounty_cog.http_client.post = AsyncMock(return_value=resp)
+
+        asyncio.run(mock_bounty_cog.check.callback(mock_bounty_cog, interaction, "SomeSystem"))
+
+        # Must have sent exactly one followup — the bot-core response embed, NOT an error.
+        interaction.followup.send.assert_awaited_once()
+        call_args = interaction.followup.send.call_args
+        # The "Unknown system" error path sends a plain string ephemerally;
+        # the passthrough path sends an embed (any result type from bot-core).
+        assert call_args[1].get("embed") is not None, (
+            "Expected an embed from bot-core response, but got an ephemeral plain-text error. "
+            "The empty _systems guard is not working — 'Unknown system' was returned instead of passthrough."
+        )
+
+    def test_check_empty_systems_does_not_call_resolve_system_name(self, mock_bounty_cog, make_mock_response):
+        """/check with _systems=[] must skip the resolve_system_name call entirely.
+
+        Verifies the guard `if self._systems:` prevents the resolution function
+        from being called when the systems list has not been loaded.
+        """
+        interaction = _create_mock_interaction()
+        resp = make_mock_response(_make_check_response("incorrect"))
+        mock_bounty_cog.http_client.post = AsyncMock(return_value=resp)
+
+        with patch("cogs.bountyCog.resolve_system_name") as mock_resolve:
+            asyncio.run(mock_bounty_cog.check.callback(mock_bounty_cog, interaction, "AnySystem"))
+
+        # resolve_system_name must NOT have been called when _systems is empty.
+        mock_resolve.assert_not_called()
+
+    def test_check_empty_systems_passes_typed_value_to_bot_core(self, mock_bounty_cog, make_mock_response):
+        """/check with _systems=[] passes the user's typed string unchanged to the API.
+
+        Verifies that the POST to /bounties/check carries exactly the system name
+        the user typed, not a resolved canonical form and not empty/None.
+        """
+        interaction = _create_mock_interaction()
+        resp = make_mock_response(_make_check_response("not_found"))
+        mock_bounty_cog.http_client.post = AsyncMock(return_value=resp)
+
+        asyncio.run(mock_bounty_cog.check.callback(mock_bounty_cog, interaction, "UnknownStarSystem"))
+
+        # Verify the POST was called and the typed name was forwarded.
+        mock_bounty_cog.http_client.post.assert_awaited_once()
+        call_kwargs = mock_bounty_cog.http_client.post.call_args[1]
+        assert call_kwargs["json"]["system_name"] == "UnknownStarSystem", (
+            f"Expected system_name='UnknownStarSystem' in POST body but got: {call_kwargs['json']!r}"
+        )

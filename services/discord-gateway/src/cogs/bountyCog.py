@@ -8,7 +8,7 @@ from cogs._shared.loadout_embed import build_loadout_embed, build_loadout_error_
 from discord import app_commands
 from discord.ext import commands
 from shared import bblogger
-from utils.autocomplete_utils import normalize_for_search
+from utils.autocomplete_utils import fuzzy_filter, normalize_for_search, resolve_system_name
 from utils.timestamp_utils import iso_to_discord_ts
 
 # Set up logger
@@ -114,12 +114,10 @@ class BountyCog(commands.Cog):
         self, _interaction: discord.Interaction, current: str
     ) -> list[app_commands.Choice[str]]:
         """Autocomplete for star system names — includes ALL systems (game balance)."""
-        norm_current = normalize_for_search(current)
         return [
             app_commands.Choice(name=name, value=name)
-            for name in self._systems
-            if norm_current in normalize_for_search(name)
-        ][:25]
+            for name in fuzzy_filter(current, self._systems)
+        ]
 
     async def bounty_autocomplete(
         self, interaction: discord.Interaction, current: str
@@ -156,6 +154,20 @@ class BountyCog(commands.Cog):
         """Check a system for bounties."""
         await interaction.response.defer(thinking=True)
         flogger.info(f"/check invoked: guild={interaction.guild_id} user={interaction.user.id} system={system}")
+
+        # Only resolve if we have systems loaded — if preload failed, pass through
+        # and let bot-core return 404 for invalid names
+        if self._systems:
+            resolved = resolve_system_name(system, self._systems)
+            if resolved is None:
+                await interaction.followup.send(
+                    f"❌ Unknown system `{system}`. Use autocomplete or check the spelling.",
+                    ephemeral=True,
+                )
+                return
+            system = resolved
+        else:
+            flogger.debug("/check: _systems not loaded, passing typed value through to bot-core: %s", system)
 
         try:
             player_id = await self._get_player_id(interaction.user.id, interaction.guild_id)

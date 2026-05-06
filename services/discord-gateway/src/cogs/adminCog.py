@@ -9,7 +9,7 @@ from cogs._shared.http_error_handler import report_api_error
 from discord import app_commands
 from discord.ext import commands
 from shared import bblogger
-from utils.autocomplete_utils import normalize_for_search
+from utils.autocomplete_utils import fuzzy_filter, normalize_for_search
 from utils.guild_setup import ensure_bountybot_infrastructure
 from utils.timestamp_utils import iso_to_discord_ts
 
@@ -1615,24 +1615,27 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
         try:
             # Determine the item type category from the already-filled item_type parameter.
             item_type = getattr(interaction.namespace, "item_type", None)
-            norm_current = normalize_for_search(current)
-            choices: list[app_commands.Choice[str]] = []
-            seen: set[str] = set()
 
             categories = (
                 (item_type,)
                 if item_type in ("primary_weapon", "secondary_weapon", "turret_weapon", "module")
                 else ("primary_weapon", "secondary_weapon", "turret_weapon", "module")
             )
+
+            # Collect all candidate names across categories (deduplicated)
+            all_names: list[str] = []
+            seen: set[str] = set()
             for category in categories:
-                names = await self._item_catalog.get(category) or []
-                for name in names:
-                    if name and name not in seen and norm_current in normalize_for_search(name):
+                cat_names = await self._item_catalog.get(category) or []
+                for name in cat_names:
+                    if name and name not in seen:
                         seen.add(name)
-                        choices.append(app_commands.Choice(name=name, value=name))
-                if len(choices) >= 25:
-                    break
-            return choices[:25]
+                        all_names.append(name)
+
+            return [
+                app_commands.Choice(name=name, value=name)
+                for name in fuzzy_filter(current, all_names)
+            ]
         except Exception:  # pylint: disable=broad-exception-caught
             return []
 
@@ -1719,13 +1722,11 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
     ) -> list[app_commands.Choice[str]]:
         """Autocomplete for ship names — served from preloaded in-memory cache (zero HTTP per keystroke)."""
         try:
-            norm_current = normalize_for_search(current)
             names = await self._ship_catalog.get("all") or []
             return [
                 app_commands.Choice(name=name, value=name)
-                for name in names
-                if norm_current in normalize_for_search(name)
-            ][:25]
+                for name in fuzzy_filter(current, names)
+            ]
         except Exception:  # pylint: disable=broad-exception-caught
             return []
 

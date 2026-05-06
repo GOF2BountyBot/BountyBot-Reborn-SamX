@@ -33,35 +33,33 @@ Cross-ref: `E2E_TEST_CHECKLIST.md` (test-item references). All commit SHAs are l
 
 ### B.80 — `/admin_give_item` requires redundant `item_type` parameter
 
-🔵 low · discord-gateway · 2026-05-05 · **OPEN**
+🔵 low · discord-gateway · 2026-05-05 · **FIXED-PENDING-VERIFY**
 
-**Summary**: `/admin_give_item` has an `item_type` parameter that the user must fill in manually. Since the item name is already provided (with autocomplete), the concrete item type can be resolved server-side from the item name — the same pattern used by `/sell` (A.42b). The `item_type` field is redundant and error-prone.
+**Summary**: `/admin_give_item` had an `item_type` parameter that the user must fill in manually. Since the item name is already provided (with autocomplete), the concrete item type can be resolved server-side from the item name — the same pattern used by `/sell` (A.42b). The `item_type` field was redundant and error-prone.
 
-**Required work**: Remove `item_type` from the `/admin_give_item` slash command parameters in `adminCog.py`. POST only `{player_id, item_name, quantity}` to the API and let the server resolve the type from the item name, consistent with the `/sell` pattern.
+**Fix applied**: `adminCog.py:1732-1802` — `item_type` parameter removed from slash command; POST body contains only `{guild_id, user_id, item_name, quantity}`; server resolves type and returns `resolved_type` in response. Confirmed in code by researcher 2026-05-06.
 
 ---
 
 ### B.78 — Wah'noor system should have no neighboring systems (non-routable)
 
-ℹ️ info · Data · 2026-05-05 · **OPEN**
+ℹ️ info · Data · 2026-05-05 · **CLOSED**
 
-**Summary**: Wah'noor is intended to be a dead-end / isolated system with no connections — non-routable. Current seed data may have it connected to neighboring systems, making it reachable via A* pathfinding when it should not be.
+**Summary**: Wah'noor is intended to be a dead-end / isolated system with no connections — non-routable.
 
-**Required work**: Check `services/bot-core/import_data/system/` for Wah'noor's JSON and verify its `connections` array is empty `[]`. If not, remove all connections and reseed.
+**Resolution**: `import_data/system/vossk.wahnorr.json` has `"neighbours": []` — correctly isolated. Confirmed by researcher code audit 2026-05-06. No action required.
 
 ---
 
 ### B.77 — A* pathfinding produces suboptimal routes due to inadmissible heuristic
 
-🟡 medium · bot-core · 2026-05-05 · **OPEN**
+🟡 medium · bot-core · 2026-05-05 · **FIXED-PENDING-VERIFY**
 
 **Observed**: Vortt Baskk bounty (Discord message ID `1501255506281365605`) route Union→Prospero→Vulpes→Oom'Bak (3 hops) returned instead of optimal Union→Magnetar→Oom'Bak (2 hops).
 
 **Root cause**: The Euclidean coordinate distance heuristic is inadmissible for uniform-hop-cost graphs. Vulpes is geometrically closer to Oom'Bak (174.6 units) than Magnetar (210.8 units), so A* greedily prefers the longer 3-hop path. Since all edges have uniform cost (1 hop), the heuristic must never overestimate hop count — but raw pixel distances do exactly that, misleading the search.
 
-**Fix**: Replace the Euclidean heuristic with a constant `0` (degrades A* to Dijkstra/BFS, guaranteed shortest hop count) or normalise the heuristic so it is scaled to `≤ 1` per hop. Given the graph is small (34 nodes) BFS/Dijkstra is perfectly adequate and simpler.
-
-**File**: `services/bot-core/src/services/pathfinding_service.py` — `_heuristic()` method.
+**Fix applied**: `pathfinding_service.py:59-65` — `_heuristic()` now returns `0.0` (constant zero heuristic, degrades A* to Dijkstra guaranteeing shortest hop count). Docstring explicitly documents B.77 rationale. Confirmed in code by researcher 2026-05-06.
 
 ---
 
@@ -91,13 +89,13 @@ Cross-ref: `E2E_TEST_CHECKLIST.md` (test-item references). All commit SHAs are l
 
 ### B.74 — AEI conversion fails: render output dimensions not multiples of 4
 
-🟠 high · blender-service · 2026-05-04 · **OPEN**
+🟠 high · blender-service · 2026-05-04 · **FIXED-PENDING-VERIFY**
 
 **Observed**: Clicking "AEI (Android/ETC1)" or "AEI (PC/DXT5)" buttons after a render returns `❌ Failed to convert texture to ETC1/DXT5: API error 400`. Blender logs: `AEI write failed: width or height not multiple of 4`. Render output was 594×274 — neither is a multiple of 4.
 
 **Root cause**: AEPi requires image dimensions to be multiples of 4. The `trim()` step in `RenderService` crops to the content bounds, which can produce arbitrary dimensions. `AEIConversionService.convert_to_aei()` passes the image directly to AEPi without padding.
 
-**Fix**: In `aei_conversion_service.py`, after the RGBA conversion and before calling `AEI()`, pad the image to the nearest multiple of 4 in both dimensions using `Image.new` + `Image.paste` (pad with transparent pixels — no visible difference on a pre-trimmed render).
+**Fix applied**: `aei_conversion_service.py:98-104` — snaps dimensions to nearest multiple of 4 using `round(dim / 4) * 4 or 4` with `Image.NEAREST` resize before AEI encoding. Confirmed in code by researcher 2026-05-06.
 
 **Affected file**: `services/blender-service/src/services/aei_conversion_service.py`
 
@@ -105,13 +103,13 @@ Cross-ref: `E2E_TEST_CHECKLIST.md` (test-item references). All commit SHAs are l
 
 ### B.73 — `skinsCog._preload_ship_skins` has no retry logic — autocomplete permanently empty after startup ConnectError
 
-🟡 medium · Reliability · 2026-05-04 · **OPEN**
+🟡 medium · Reliability · 2026-05-04 · **FIXED-PENDING-VERIFY**
 
 **Observed**: On startup, `_preload_ship_skins` hits `ConnectError` (bot-core not ready yet) and fails with no retry. `self._ship_skins` stays empty permanently — ship and skin autocomplete never populate until service restart.
 
 **Root cause**: Same pattern as DevCog (fixed in B.XX) — no retry loop. DevCog fix used 5 retries with 5/10/20/40/60s delays.
 
-**Fix**: Apply the same retry pattern from `bountyCog._preload_data` to `skinsCog._preload_ship_skins`.
+**Fix applied**: `skinsCog.py:261-304` — retry loop with delays `[5, 10, 20, 40, 60]s` added, matching the `bountyCog._preload_data` pattern. Confirmed in code by researcher 2026-05-06.
 
 ---
 
@@ -337,7 +335,7 @@ Discord always shows "X used /command" publicly regardless of whether the bot's 
 
 ### B.53 — Prestige does not swap Discord tier roles (Platinum role not removed, Bronze role not added)
 
-🟠 high · E2E · 2026-05-02 · **OPEN**
+🟠 high · E2E · 2026-05-02 · **FIXED-PENDING-VERIFY**
 
 **Symptom**: After `/prestige confirm:CONFIRM`, the player's tier resets to Bronze in the DB but their Discord roles still show the pre-prestige tier role (e.g. Platinum) and the Bronze role is never added.
 
@@ -363,27 +361,19 @@ Discord always shows "X used /command" publicly regardless of whether the bot's 
 
 ### B.52 — Criminal loadout generation can produce zero-weapon bounties when a non-combat ship is selected
 
-🟡 medium · Runtime · 2026-05-02 · **OPEN**
+🟡 medium · Runtime · 2026-05-02 · **FIXED-PENDING-VERIFY**
 
 **Symptom**: A bounty is spawned with an empty weapons list on the criminal's ship, resulting in a 0-DPS criminal that any player trivially defeats (or a confusing loadout embed with no weapons section).
 
 **Root cause**: `bounty_service.py:406` guards weapon selection behind `if ship.max_primaries > 0`. Seven ships in the DB have `max_primaries=0` (Cormorant, Rhino, Midorian/Nivelian/Terran/Vossk Freighters, Vossk Battlecruiser). These are non-combat cargo/transport ships. When the random ship selector at line 370 (TL-matched) or line 382 (fallback) picks one of these, the entire weapon block is silently skipped and `equipped_weapons = []`.
 
-**Affected code**:
-- `services/bot-core/src/services/bounty_service.py:368-382` — ship selection (both TL-matched and fallback paths pull from ALL ships including non-combat ones)
-- `services/bot-core/src/services/bounty_service.py:406` — weapon guard silently skips when `max_primaries=0`
-
-**Probability**: ~7/65 ships (~11%) have `max_primaries=0`. Both the TL-matched and fallback selection paths are affected.
-
-**Fix**: Filter non-combat ships out of criminal loadout ship selection. The simplest fix is to add `WHERE max_primaries > 0` (or equivalent ORM filter) to the ship query at lines 368 and 376-381, so only combat ships are eligible for criminal loadouts.
-
-Optionally add a warning log if a bounty is created with zero weapons as a belt-and-suspenders safety net.
+**Fix applied**: `bounty_service.py:368` and `bounty_service.py:379` — both TL-matched and fallback ship selection queries now filter `Ship.max_primaries > 0`, ensuring only combat-capable ships are eligible for criminal loadouts. Confirmed in code by researcher 2026-05-06.
 
 ---
 
 ### B.51 — duelCog passes Discord snowflake IDs as challenger_id/target_id but duels service expects player PKs
 
-🟠 high · E2E · 2026-05-02 · **OPEN**
+🟠 high · E2E · 2026-05-02 · **FIXED-PENDING-VERIFY**
 
 **Symptom**: `/duel-challenge target:@general_failure. stakes:100` returns:
 > ❌ Challenger player with ID 402296276617527306 could not be retrieved.
@@ -468,7 +458,7 @@ Optionally add a warning log if a bounty is created with zero weapons as a belt-
 
 ### B.48 — Prestige must reset the player to the starter Betty loadout; level concept is still vestigial and should be removed
 
-🟠 high · Architecture · 2026-05-02 · **OPEN** · Refactor required
+🟠 high · Architecture · 2026-05-02 · **FIXED-PENDING-VERIFY**
 
 **Revision (2026-05-02)**: The earlier B.48 refactor removed the vestigial level/division gate from prestige. The user now wants prestige to be a *full reset* of owned ships/inventory back to the exact first-time `/register` starter state: the starter Betty loadout with Betty as the active ship.
 
@@ -666,7 +656,7 @@ and item_name not in equipped_names  # Blocks ALL duplicates
 
 ### B.39 — `/promote` adds new tier role but fails to remove previous tier role
 
-🟡 medium · E2E · 2026-04-30
+🟡 medium · E2E · 2026-04-30 · **FIXED-PENDING-VERIFY**
 
 **Context**: During E2E Phase 6, Main (SamAccountX) used `/promote` to advance from Bronze to Silver. The Silver tier role (@Bounty Hunter Silver) was correctly added, but the Bronze tier role (@Bounty Hunter Bronze) was NOT removed. Player ended up with both tier roles simultaneously.
 
@@ -675,7 +665,7 @@ and item_name not in equipped_names  # Blocks ALL duplicates
 - Expected: old tier role should be removed when new tier role is added
 - Affects: visual/role display; any future code that checks Discord role for tier determination
 
-**Fix location (tentative)**: `player_service.py` `update_tier` method or the cog handler — Discord role mutation logic needs to remove old tier role when adding new one.
+**Fix applied**: `playerCog.py:488-533` — promote handler now fetches guild config, resolves both old and new tier role IDs, removes old role and adds new role atomically. Non-fatal exception handling. Confirmed in code by researcher 2026-05-06.
 
 ---
 

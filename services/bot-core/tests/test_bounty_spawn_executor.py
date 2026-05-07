@@ -782,8 +782,10 @@ class TestSpawnOneTierNotConfigured:
 
         The cleanest approach: seed a full config, then monkey-patch
         _get_division_channel_id to return None for the requested tier.
-        # 1 mock — db_manager bridge (Tier B).
-        # Additional minimal patch: _get_division_channel_id to simulate missing tier channel.
+        # 2 patches — db_manager bridge (Tier B) + _get_division_channel_id helper (not a repo;
+        # see class docstring for structural justification: the eligibility guard and channel
+        # lookup share the same bronze_bounty_channel_id column, making pure DB seeding of
+        # this path impossible without also failing the eligibility check).
         """
         _engine, factory = sqlite_engine_and_factory
 

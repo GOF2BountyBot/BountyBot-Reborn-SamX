@@ -28,3 +28,4 @@ pytest-cov>=4.0.0
 pytest-mock>=3.10.0
 faker>=18.0.0
 aiosqlite
+pytest-timeout>=2.1.0

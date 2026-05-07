@@ -8,3 +8,5 @@ numpy
 pytest
 pytest-cov
 pytest-asyncio
+pytest-timeout>=2.1.0
+respx>=0.21.0,<1.0.0

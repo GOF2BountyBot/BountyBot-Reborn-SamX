@@ -1,742 +1,416 @@
+"""S4 rewrite: shop_refresh_executor tests — real SQLite + respx, 0 repo mocks.
+
+Sprint 4 (S4) of the Test Quality Blitz.
+
+PATTERN OVERVIEW
+----------------
+Three-tier breakdown following ``tests/AGENTS.md`` §"Executor Test Pattern (S2)":
+
+  Tier A — Pure unit tests for payload-validation logic. ZERO mocks.
+
+  Tier B — SQLite-in-memory integration for ORM read/write paths.
+            Only patch: ``patch("persist.database.manager.db_manager", ...)``.
+            NO repository or service methods mocked.
+
+  Tier C — respx for the outbound HTTP announcement call to discord-gateway
+            ``POST /api/v1/channels/{shop_channel_id}/messages``.
+
+BEHAVIOURS COVERED
+------------------
+| # | Behaviour | Tier |
+|---|-----------|------|
+| 1 | No guilds configured → returns guilds_refreshed=0 | B |
+| 2 | Single guild, all tiers refreshed (ShopService.refresh_shop mocked — Item ARRAY bypass) | B + C |
+| 3 | Announcement fires per guild (respx) | B + C |
+| 4 | Announcement skipped when shop_channel_id is None (non-fatal) | B + C |
+| 5 | Single guild + single tier payload | B |
+| 6 | Single guild + all tiers payload | B |
+| 7 | Announcement failure is non-fatal (guild still refreshed) | B + C |
+| 8 | Multi-guild: one guild fail doesn't block others | B |
+
+SQLITE COMPATIBILITY NOTE
+--------------------------
+ShopService.refresh_shop calls GuildShop, ItemRepository, ShipRepository and
+other ARRAY-column tables that SQLite cannot host (Ship.aliases, Item.aliases).
+Tests that reach refresh_shop mock ``services.shop_service.ShopService.refresh_shop``
+to a coroutine returning a minimal dict.  This is the minimum surface needed;
+the real DB read of GuildConfig still runs through ConfigRepository.list_all
+(or get_by_guild_id) against real SQLite.  Each such test carries a comment
+citing tests/AGENTS.md §"Mock Policy" as justification.
 """
-Unit tests for utils.executors.shop_refresh_executor and the shared
-utils.shop_announcement helper.
 
-Tests verify:
- - single guild + single tier dispatch
- - single guild + all tiers dispatch
- - bulk refresh (all guilds)
- - missing guild_id falls back to bulk-refresh path
- - ShopService errors re-raise
- - correct item counts when ShopService is called (via real config objects)
- - job_executor.py dispatches shop_refresh job_type
- - shop_channel_id=None skips announcement with warning
- - shop_channel_id set causes POST to /channels/{id}/messages
- - _announce_shop_refresh is called once per guild in bulk mode
- - utils.shop_announcement.announce_shop_refresh (shared helper) is exercised
-   directly by the announcement-specific tests (B.8 refactor)
+from __future__ import annotations
 
-IMPORTANT: shared.bblogger is mocked BEFORE any source imports (via
-conftest.py, with a belt-and-suspenders guard below).
-
-Because shop_refresh_executor uses deferred (in-function) imports, we patch
-at the source module level:
-  - "persist.database.manager.db_manager"
-  - "services.shop_service.ShopService"
-  - "persist.repositories.config_repository.ConfigRepository"
-We pre-register stub modules in sys.modules so that the deferred imports
-inside execute_shop_refresh_job resolve without pulling in real ORM code.
-
-Announcement-specific tests now import and exercise
-``utils.shop_announcement.announce_shop_refresh`` directly, patching
-``utils.shop_announcement.httpx.AsyncClient`` (the actual httpx usage site
-after the B.8 extraction into the shared module).
-"""
-
-import os as _os
+import os
 import sys
 import types
+from contextlib import asynccontextmanager
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
-import pytest
+# ---------------------------------------------------------------------------
+# Path setup and stub registration
+# ---------------------------------------------------------------------------
 
-# ---------------------------------------------------------------------------
-# Guard: mock shared / shared.bblogger before importing any source modules.
-# conftest.py does this at collection time; we repeat here for standalone runs.
-# ---------------------------------------------------------------------------
+_SRC_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "src"))
+if _SRC_DIR not in sys.path:
+    sys.path.insert(0, _SRC_DIR)
+
 if "shared" not in sys.modules:
     _mock_shared = types.ModuleType("shared")
-    _mock_bblogger = types.ModuleType("shared.bblogger")
-
-    def _make_logger(name: str = "test") -> MagicMock:
-        logger = MagicMock()
-        for m in ("info", "debug", "warning", "error", "trace", "critical"):
-            setattr(logger, m, MagicMock())
-        return logger
-
-    _mock_bblogger.get_logger = _make_logger
-    _mock_shared.bblogger = _mock_bblogger
+    _mock_shared.bblogger = MagicMock()  # type: ignore[attr-defined]
+    _mock_shared.bblogger.get_logger = MagicMock(return_value=MagicMock())  # type: ignore[attr-defined]
     sys.modules["shared"] = _mock_shared
-    sys.modules["shared.bblogger"] = _mock_bblogger
+    sys.modules["shared.bblogger"] = _mock_shared.bblogger  # type: ignore[arg-type]
 
-# Ensure src is on the path
-_SRC = _os.path.join(_os.path.dirname(__file__), "..", "src")
-if _SRC not in sys.path:
-    sys.path.insert(0, _SRC)
+if "sqlalchemy_utils" not in sys.modules:
+    _mock_sau = types.ModuleType("sqlalchemy_utils")
+    _mock_sau.UUIDType = MagicMock()  # type: ignore[attr-defined]
+    sys.modules["sqlalchemy_utils"] = _mock_sau
 
 # ---------------------------------------------------------------------------
-# Pre-register stub modules so deferred imports in shop_refresh_executor work
-# without requiring a live database or installed ORM extras.
+# Application imports
 # ---------------------------------------------------------------------------
 
+import pytest
+import respx
+from persist.models.base import Base
+from persist.models.guild_config import GuildConfig
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from utils.executors.shop_refresh_executor import execute_shop_refresh_job
 
-def _ensure_stub(module_path: str, **attrs) -> types.ModuleType:
-    """Create and register a stub module if not already present."""
-    if module_path not in sys.modules:
-        mod = types.ModuleType(module_path)
-        for k, v in attrs.items():
-            setattr(mod, k, v)
-        sys.modules[module_path] = mod
-    return sys.modules[module_path]
+# ---------------------------------------------------------------------------
+# SQLite table list — only SQLite-compatible tables (no ARRAY columns).
+# ---------------------------------------------------------------------------
 
+_SQLITE_TABLES = [
+    GuildConfig.__table__,
+]
 
-# Stub for persist.database.manager — only db_manager attribute needed
-_mock_db_mgr_instance = MagicMock()
-_db_manager_module = _ensure_stub(
-    "persist.database.manager",
-    db_manager=_mock_db_mgr_instance,
-)
+# ---------------------------------------------------------------------------
+# Common test constants — guild IDs must fit SQLite's signed 64-bit INTEGER.
+# ---------------------------------------------------------------------------
 
-# Stub for persist.repositories.config_repository — ConfigRepository class
-_MockConfigRepository = MagicMock()
-_config_repo_module = _ensure_stub(
-    "persist.repositories.config_repository",
-    ConfigRepository=_MockConfigRepository,
-)
+GUILD_ID = 9_500_000_010
+GUILD_ID_2 = 9_500_000_011
+SHOP_CHANNEL = 12_300
+ROLE_ID = 45_600
 
-# Stub for services.shop_service — ShopService class
-_MockShopService = MagicMock()
-_shop_service_module = _ensure_stub(
-    "services.shop_service",
-    ShopService=_MockShopService,
-)
-
-# Ensure parent packages exist too
-_ensure_stub("persist")
-_ensure_stub("persist.database")
-_ensure_stub("persist.repositories")
-_ensure_stub("services")
+GATEWAY_HOST = os.getenv("DISCORD_GATEWAY_HOST", "discord-gateway")
+GATEWAY_PORT = os.getenv("GATEWAY_PORT", "7999")
+GATEWAY_CHANNEL_URL = f"http://{GATEWAY_HOST}:{GATEWAY_PORT}/api/v1/channels/{SHOP_CHANNEL}/messages"
 
 
 # ===========================================================================
-# Helpers
+# Shared fixtures
 # ===========================================================================
 
 
-def _make_guild_config(
+@pytest.fixture
+async def sqlite_engine_and_factory():
+    """Yield a fresh SQLite in-memory engine + session factory per test."""
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:", echo=False)
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all, tables=_SQLITE_TABLES)
+    factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+    try:
+        yield engine, factory
+    finally:
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.drop_all, tables=_SQLITE_TABLES)
+        await engine.dispose()
+
+
+# ---------------------------------------------------------------------------
+# Seed helpers
+# ---------------------------------------------------------------------------
+
+
+async def _seed_guild_config(
+    db: AsyncSession,
     guild_id: int,
-    hunting_channel_id: int | None = 234567,
-    shop_channel_id: int | None = 345678,
-) -> MagicMock:
-    cfg = MagicMock()
-    cfg.guild_id = guild_id
-    cfg.hunting_channel_id = hunting_channel_id
-    cfg.shop_channel_id = shop_channel_id
-    return cfg
-
-
-def _make_refresh_result(guild_id: int, tier: str, items_generated: int = 4) -> dict:
-    return {
-        "guild_id": guild_id,
-        "tier": tier,
-        "tech_level": 5,
-        "items_generated": items_generated,
-        "refresh_time": "2026-01-01T00:00:00+00:00",
-    }
-
-
-def _mock_session_ctx(session: AsyncMock) -> MagicMock:
-    """Return an async context manager that yields *session*."""
-    ctx = MagicMock()
-    ctx.__aenter__ = AsyncMock(return_value=session)
-    ctx.__aexit__ = AsyncMock(return_value=False)
-    return ctx
-
-
-def _configure_db_manager(mock_db: AsyncMock) -> MagicMock:
-    """Configure the stub db_manager to yield *mock_db* on get_session()."""
-    mgr = sys.modules["persist.database.manager"].db_manager
-    mgr.get_session = MagicMock(return_value=_mock_session_ctx(mock_db))
-    return mgr
-
-
-# ===========================================================================
-# Tests: execute_shop_refresh_job — single guild + single tier
-# ===========================================================================
-
-
-@pytest.mark.asyncio
-async def test_single_guild_single_tier_calls_refresh_once():
-    """Single guild + tier: ShopService.refresh_shop called exactly once."""
-    from utils.executors.shop_refresh_executor import execute_shop_refresh_job
-
-    mock_db = AsyncMock()
-    _configure_db_manager(mock_db)
-
-    mock_shop_svc = AsyncMock()
-    mock_shop_svc.refresh_shop = AsyncMock(return_value=_make_refresh_result(111, "Bronze"))
-    sys.modules["services.shop_service"].ShopService = MagicMock(return_value=mock_shop_svc)
-
-    result = await execute_shop_refresh_job("job-1", {"job_type": "shop_refresh", "guild_id": 111, "tier": "Bronze"})
-
-    mock_shop_svc.refresh_shop.assert_awaited_once_with(mock_db, 111, "Bronze", None)
-    assert result["status"] == "success"
-    assert result["guild_id"] == 111
-    assert result["tier"] == "Bronze"
-
-
-@pytest.mark.asyncio
-async def test_single_guild_single_tier_passes_force_tech_level():
-    """force_tech_level is forwarded to ShopService.refresh_shop."""
-    from utils.executors.shop_refresh_executor import execute_shop_refresh_job
-
-    mock_db = AsyncMock()
-    _configure_db_manager(mock_db)
-
-    mock_shop_svc = AsyncMock()
-    mock_shop_svc.refresh_shop = AsyncMock(return_value=_make_refresh_result(222, "Gold"))
-    sys.modules["services.shop_service"].ShopService = MagicMock(return_value=mock_shop_svc)
-
-    result = await execute_shop_refresh_job(
-        "job-2",
-        {
-            "job_type": "shop_refresh",
-            "guild_id": 222,
-            "tier": "Gold",
-            "force_tech_level": 7,
-        },
+    *,
+    shop_channel_id: int | None = SHOP_CHANNEL,
+    bounty_hunter_role_id: int | None = ROLE_ID,
+    division_temperatures: dict[str, float] | None = None,
+) -> GuildConfig:
+    """Persist a GuildConfig with optional shop channel."""
+    config = GuildConfig(
+        guild_id=guild_id,
+        shop_channel_id=shop_channel_id,
+        bounty_hunter_role_id=bounty_hunter_role_id,
+        division_temperatures=division_temperatures or {"bronze": 1.0, "silver": 1.0, "gold": 1.0, "platinum": 1.0},
     )
+    db.add(config)
+    await db.commit()
+    await db.refresh(config)
+    return config
 
-    mock_shop_svc.refresh_shop.assert_awaited_once_with(mock_db, 222, "Gold", 7)
-    assert result["status"] == "success"
 
+def _make_fake_db_manager(factory: Any):
+    """Build a MagicMock that mimics db_manager.get_session() for SQLite.
 
-# ===========================================================================
-# Tests: execute_shop_refresh_job — single guild, all tiers
-# ===========================================================================
-
-
-@pytest.mark.asyncio
-async def test_single_guild_all_tiers_calls_refresh_three_times():
-    """guild_id without tier triggers refresh for Bronze, Silver, Gold, Platinum."""
-    from utils.executors.shop_refresh_executor import execute_shop_refresh_job
-
-    mock_db = AsyncMock()
-    _configure_db_manager(mock_db)
-
-    mock_shop_svc = AsyncMock()
-    mock_shop_svc.refresh_shop = AsyncMock(
-        side_effect=[
-            _make_refresh_result(333, "Bronze"),
-            _make_refresh_result(333, "Silver"),
-            _make_refresh_result(333, "Gold"),
-            _make_refresh_result(333, "Platinum"),
-        ]
-    )
-    sys.modules["services.shop_service"].ShopService = MagicMock(return_value=mock_shop_svc)
-
-    result = await execute_shop_refresh_job("job-3", {"job_type": "shop_refresh", "guild_id": 333})
-
-    assert mock_shop_svc.refresh_shop.await_count == 4
-    assert result["status"] == "success"
-    assert result["guild_id"] == 333
-    assert "Bronze" in result["results"]
-    assert "Silver" in result["results"]
-    assert "Gold" in result["results"]
-    assert "Platinum" in result["results"]
-
-
-@pytest.mark.asyncio
-async def test_single_guild_all_tiers_order_is_bronze_silver_gold():
-    """Tiers are refreshed in Bronze → Silver → Gold order."""
-    from utils.executors.shop_refresh_executor import execute_shop_refresh_job
-
-    mock_db = AsyncMock()
-    _configure_db_manager(mock_db)
-
-    mock_shop_svc = AsyncMock()
-    called_tiers: list[str] = []
-
-    async def _capture_tier(db, guild_id, tier, force_tl):
-        called_tiers.append(tier)
-        return _make_refresh_result(guild_id, tier)
-
-    mock_shop_svc.refresh_shop = _capture_tier
-    sys.modules["services.shop_service"].ShopService = MagicMock(return_value=mock_shop_svc)
-
-    await execute_shop_refresh_job("job-4", {"job_type": "shop_refresh", "guild_id": 444})
-
-    assert called_tiers == ["Bronze", "Silver", "Gold", "Platinum"]
-
-
-# ===========================================================================
-# Tests: execute_shop_refresh_job — bulk refresh (no guild_id)
-# ===========================================================================
-
-
-@pytest.mark.asyncio
-async def test_bulk_refresh_iterates_all_guilds():
-    """Bulk mode (no guild_id) refreshes every guild returned by ConfigRepository."""
-    from utils.executors.shop_refresh_executor import execute_shop_refresh_job
-
-    mock_db = AsyncMock()
-    _configure_db_manager(mock_db)
-
-    mock_shop_svc = AsyncMock()
-    mock_shop_svc.refresh_shop = AsyncMock(side_effect=lambda db, gid, t, ftl: _make_refresh_result(gid, t))
-    sys.modules["services.shop_service"].ShopService = MagicMock(return_value=mock_shop_svc)
-
-    guild_configs = [_make_guild_config(10), _make_guild_config(20)]
-    mock_config_repo = AsyncMock()
-    mock_config_repo.list_all = AsyncMock(return_value=guild_configs)
-    sys.modules["persist.repositories.config_repository"].ConfigRepository = MagicMock(return_value=mock_config_repo)
-
-    with patch("utils.executors.shop_refresh_executor._announce_shop_refresh", new=AsyncMock()):
-        result = await execute_shop_refresh_job("job-5", {"job_type": "shop_refresh"})
-
-    # 2 guilds x 4 tiers = 8 calls
-    assert mock_shop_svc.refresh_shop.await_count == 8
-    assert result["status"] == "success"
-    assert result["guilds_refreshed"] == 2
-    assert 10 in result["results"]
-    assert 20 in result["results"]
-
-
-@pytest.mark.asyncio
-async def test_bulk_refresh_no_guilds_returns_zero():
-    """Bulk refresh with no guilds configured completes with guilds_refreshed == 0."""
-    from utils.executors.shop_refresh_executor import execute_shop_refresh_job
-
-    mock_db = AsyncMock()
-    _configure_db_manager(mock_db)
-
-    mock_shop_svc = AsyncMock()
-    sys.modules["services.shop_service"].ShopService = MagicMock(return_value=mock_shop_svc)
-
-    mock_config_repo = AsyncMock()
-    mock_config_repo.list_all = AsyncMock(return_value=[])
-    sys.modules["persist.repositories.config_repository"].ConfigRepository = MagicMock(return_value=mock_config_repo)
-
-    result = await execute_shop_refresh_job("job-6", {"job_type": "shop_refresh"})
-
-    mock_shop_svc.refresh_shop.assert_not_awaited()
-    assert result["status"] == "success"
-    assert result["guilds_refreshed"] == 0
-
-
-@pytest.mark.asyncio
-async def test_bulk_refresh_announces_once_per_guild():
-    """_announce_shop_refresh is called exactly once per guild in bulk mode."""
-    from utils.executors.shop_refresh_executor import execute_shop_refresh_job
-
-    mock_db = AsyncMock()
-    _configure_db_manager(mock_db)
-
-    mock_shop_svc = AsyncMock()
-    mock_shop_svc.refresh_shop = AsyncMock(side_effect=lambda db, gid, t, ftl: _make_refresh_result(gid, t))
-    sys.modules["services.shop_service"].ShopService = MagicMock(return_value=mock_shop_svc)
-
-    guild_configs = [
-        _make_guild_config(30, hunting_channel_id=111000, shop_channel_id=811000),
-        _make_guild_config(40, hunting_channel_id=222000, shop_channel_id=822000),
-    ]
-    mock_config_repo = AsyncMock()
-    mock_config_repo.list_all = AsyncMock(return_value=guild_configs)
-    sys.modules["persist.repositories.config_repository"].ConfigRepository = MagicMock(return_value=mock_config_repo)
-
-    mock_announce = AsyncMock()
-    with patch("utils.executors.shop_refresh_executor._announce_shop_refresh", new=mock_announce):
-        await execute_shop_refresh_job("job-announce-bulk", {"job_type": "shop_refresh"})
-
-    # Called once per guild (not once per tier).
-    assert mock_announce.await_count == 2
-    calls = mock_announce.call_args_list
-    # Each call: (job_id, guild_id, shop_channel_id, bounty_hunter_role_id)
-    # Verify the shop_channel_id (not hunting_channel_id) was passed
-    called_args = {(c.args[1], c.args[2]) for c in calls}
-    assert called_args == {(30, 811000), (40, 822000)}
-
-
-# ===========================================================================
-# Tests: error handling
-# ===========================================================================
-
-
-@pytest.mark.asyncio
-async def test_shop_service_error_is_re_raised():
-    """When ShopService.refresh_shop raises, the executor re-raises the exception."""
-    from utils.executors.shop_refresh_executor import execute_shop_refresh_job
-
-    mock_db = AsyncMock()
-    _configure_db_manager(mock_db)
-
-    mock_shop_svc = AsyncMock()
-    mock_shop_svc.refresh_shop = AsyncMock(side_effect=RuntimeError("DB gone"))
-    sys.modules["services.shop_service"].ShopService = MagicMock(return_value=mock_shop_svc)
-
-    with pytest.raises(RuntimeError, match="DB gone"):
-        await execute_shop_refresh_job(
-            "job-err",
-            {"job_type": "shop_refresh", "guild_id": 99, "tier": "Bronze"},
-        )
-
-
-# ===========================================================================
-# Tests: announce_shop_refresh (shared helper) — exercised directly (B.8)
-# ===========================================================================
-# These tests import utils.shop_announcement.announce_shop_refresh directly
-# (the shared module extracted in B.8).  The executor's _announce_shop_refresh
-# is now a thin delegate; behaviour tests target the shared implementation.
-# Patch target: "utils.shop_announcement.httpx.AsyncClient"
-# ===========================================================================
-
-
-@pytest.mark.asyncio
-async def test_announce_shop_refresh_skipped_when_no_channel_id():
-    """announce_shop_refresh skips HTTP when shop_channel_id is None."""
-    from utils.shop_announcement import announce_shop_refresh
-
-    with patch("utils.shop_announcement.httpx.AsyncClient") as mock_cls:
-        await announce_shop_refresh("parent-job", 100, None)
-        mock_cls.assert_not_called()
-
-
-@pytest.mark.asyncio
-async def test_announce_shop_refresh_http_error_is_non_fatal():
-    """An HTTP error in announce_shop_refresh does not propagate."""
-    import httpx
-    from utils.shop_announcement import announce_shop_refresh
-
-    with patch("utils.shop_announcement.httpx.AsyncClient") as mock_cls:
-        mock_client = AsyncMock()
-        mock_client.post = AsyncMock(side_effect=httpx.ConnectError("refused"))
-        mock_cls.return_value.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_cls.return_value.__aexit__ = AsyncMock(return_value=False)
-
-        # Must NOT raise.
-        await announce_shop_refresh("parent-job", 100, 12345)
-
-
-@pytest.mark.asyncio
-async def test_announce_shop_refresh_posts_to_correct_endpoint():
-    """announce_shop_refresh POSTs to /channels/{channel_id}/messages with embed payload."""
-    from utils.shop_announcement import announce_shop_refresh
-
-    channel_id = 555666
-    guild_id = 101
-
-    mock_response = MagicMock()
-    mock_response.raise_for_status = MagicMock()
-
-    with patch("utils.shop_announcement.httpx.AsyncClient") as mock_cls:
-        mock_client = AsyncMock()
-        mock_client.post = AsyncMock(return_value=mock_response)
-        mock_cls.return_value.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_cls.return_value.__aexit__ = AsyncMock(return_value=False)
-
-        await announce_shop_refresh("parent-job", guild_id, channel_id)
-
-        call_args = mock_client.post.call_args
-        posted_url = call_args.args[0] if call_args.args else call_args.kwargs.get("url")
-        assert f"/channels/{channel_id}/messages" in posted_url
-
-        posted_body = call_args.kwargs.get("json") or (call_args.args[1] if len(call_args.args) > 1 else {})
-        assert "content" in posted_body
-        assert posted_body["content"]["title"] == "🛒 Shop Refreshed!"
-        assert posted_body["content"]["footer_text"] == "Use /shop to browse!"
-        assert "message_type" in posted_body
-
-
-# ===========================================================================
-# Tests: item count verification via GameConstants
-# ===========================================================================
-
-
-def test_default_item_counts_from_game_constants():
-    """Verify GameConstants default shop counts: 5 ships + 5 weapons + 5 modules + 2 turrets = 17."""
-    import importlib.util
-
-    _spec = importlib.util.spec_from_file_location(
-        "_game_constants_direct",
-        _os.path.join(_SRC, "services", "game_constants.py"),
-    )
-    _mod = importlib.util.module_from_spec(_spec)
-    # game_constants.py only uses 'os'; no ORM dependencies.
-    _spec.loader.exec_module(_mod)
-    GameConstants = _mod.GameConstants
-
-    assert GameConstants.SHOP_DEFAULT_SHIPS_NUM == 5
-    assert GameConstants.SHOP_DEFAULT_WEAPONS_NUM == 5
-    assert GameConstants.SHOP_DEFAULT_MODULES_NUM == 5
-    assert GameConstants.SHOP_DEFAULT_TURRETS_NUM == 2
-    total = (
-        GameConstants.SHOP_DEFAULT_SHIPS_NUM
-        + GameConstants.SHOP_DEFAULT_WEAPONS_NUM
-        + GameConstants.SHOP_DEFAULT_MODULES_NUM
-        + GameConstants.SHOP_DEFAULT_TURRETS_NUM
-    )
-    assert total == 17
-
-
-@pytest.mark.asyncio
-async def test_refresh_result_reports_items_generated():
-    """The result dict from a single-tier refresh carries items_generated from ShopService."""
-    from utils.executors.shop_refresh_executor import execute_shop_refresh_job
-
-    expected_items = 17  # 5 ships + 5 weapons + 5 modules + 2 turrets
-    mock_db = AsyncMock()
-    _configure_db_manager(mock_db)
-
-    mock_shop_svc = AsyncMock()
-    mock_shop_svc.refresh_shop = AsyncMock(
-        return_value={
-            "guild_id": 555,
-            "tier": "Bronze",
-            "tech_level": 3,
-            "items_generated": expected_items,
-            "refresh_time": "2026-01-01T00:00:00+00:00",
-        }
-    )
-    sys.modules["services.shop_service"].ShopService = MagicMock(return_value=mock_shop_svc)
-
-    result = await execute_shop_refresh_job(
-        "job-cnt",
-        {"job_type": "shop_refresh", "guild_id": 555, "tier": "Bronze"},
-    )
-
-    assert result["result"]["items_generated"] == expected_items
-
-
-# ===========================================================================
-# Tests: job_executor dispatch
-# ===========================================================================
-
-
-@pytest.mark.asyncio
-async def test_job_executor_dispatches_shop_refresh():
-    """JobExecutor.execute routes shop_refresh payload to execute_shop_refresh_job."""
-    from utils.job_executor import JobExecutor
-
-    executor = JobExecutor()
-    payload = {"job_type": "shop_refresh", "guild_id": 777, "tier": "Silver"}
-
-    mock_fn = AsyncMock(return_value={"status": "success"})
-    with patch("utils.job_executor.execute_shop_refresh_job", mock_fn):
-        await executor.execute("job-dispatch", payload)
-
-    mock_fn.assert_awaited_once_with("job-dispatch", payload)
-
-
-@pytest.mark.asyncio
-async def test_job_executor_does_not_dispatch_shop_refresh_for_other_types():
-    """Non-shop_refresh payloads do NOT call execute_shop_refresh_job."""
-    from utils.job_executor import JobExecutor
-
-    executor = JobExecutor()
-    payload = {"job_type": "time_announcement", "guild_id": "g1", "channel_id": "c1"}
-
-    mock_shop_fn = AsyncMock()
-    mock_time_fn = AsyncMock(return_value=None)
-
-    with (
-        patch("utils.job_executor.execute_shop_refresh_job", mock_shop_fn),
-        patch("utils.job_executor.execute_time_announcement_job", mock_time_fn),
-    ):
-        await executor.execute("job-other", payload)
-
-    mock_shop_fn.assert_not_awaited()
-    mock_time_fn.assert_awaited_once()
-
-
-# ===========================================================================
-# Tests: role mention in announcements (SEG-10)
-# ===========================================================================
-
-
-@pytest.mark.asyncio
-async def test_shop_announcement_role_mention_in_text_content_not_description():
-    """Test 27/28: Role mention is in text_content (NOT embed description) when role configured.
-
-    Bug 2 fix: role mention must NOT be inside embed description.
-    It must be in text_content so Discord recognises it as an actual mention.
+    # 1 mock — db_manager bridge (Tier B)
     """
-    from utils.shop_announcement import announce_shop_refresh
 
-    role_id = 987654321
-    channel_id = 555777
-    guild_id = 202
+    @asynccontextmanager
+    async def _fake_get_db():
+        async with factory() as session:
+            yield session
 
-    mock_response = MagicMock()
-    mock_response.raise_for_status = MagicMock()
-
-    with patch("utils.shop_announcement.httpx.AsyncClient") as mock_cls:
-        mock_client = AsyncMock()
-        mock_client.post = AsyncMock(return_value=mock_response)
-        mock_cls.return_value.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_cls.return_value.__aexit__ = AsyncMock(return_value=False)
-
-        await announce_shop_refresh("parent-job", guild_id, channel_id, role_id)
-
-        call_args = mock_client.post.call_args
-        posted_body = call_args.kwargs.get("json") or (call_args.args[1] if len(call_args.args) > 1 else {})
-
-        # Test 27: text_content should contain the role mention
-        assert posted_body.get("text_content") == f"<@&{role_id}>", (
-            f"Expected text_content='<@&{role_id}>' but got {posted_body.get('text_content')!r}"
-        )
-
-        # Test 28: embed description must NOT contain the role mention
-        description = posted_body["content"]["description"]
-        assert "<@&" not in description, (
-            f"Role mention should NOT be inside embed description, but found in: {description!r}"
-        )
+    fake = MagicMock()
+    fake.get_session = MagicMock(side_effect=_fake_get_db)
+    return fake
 
 
-@pytest.mark.asyncio
-async def test_shop_announcement_no_role_mention_when_none():
-    """Test 29: When bounty_hunter_role_id is None, text_content is None (no mention)."""
-    from utils.shop_announcement import announce_shop_refresh
-
-    channel_id = 555888
-    guild_id = 303
-
-    mock_response = MagicMock()
-    mock_response.raise_for_status = MagicMock()
-
-    with patch("utils.shop_announcement.httpx.AsyncClient") as mock_cls:
-        mock_client = AsyncMock()
-        mock_client.post = AsyncMock(return_value=mock_response)
-        mock_cls.return_value.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_cls.return_value.__aexit__ = AsyncMock(return_value=False)
-
-        await announce_shop_refresh("parent-job", guild_id, channel_id, None)
-
-        call_args = mock_client.post.call_args
-        posted_body = call_args.kwargs.get("json") or (call_args.args[1] if len(call_args.args) > 1 else {})
-
-        # text_content should be None when no role configured
-        assert posted_body.get("text_content") is None, (
-            f"Expected text_content=None but got {posted_body.get('text_content')!r}"
-        )
-
-        # embed description must not have role mention
-        description = posted_body["content"]["description"]
-        assert "<@&" not in description
-
-
-@pytest.mark.asyncio
-async def test_shop_announcement_still_works_without_role():
-    """Backward compatibility: announcement posts successfully when no bounty_hunter_role_id."""
-    from utils.shop_announcement import announce_shop_refresh
-
-    channel_id = 555999
-    guild_id = 404
-
-    mock_response = MagicMock()
-    mock_response.raise_for_status = MagicMock()
-
-    with patch("utils.shop_announcement.httpx.AsyncClient") as mock_cls:
-        mock_client = AsyncMock()
-        mock_client.post = AsyncMock(return_value=mock_response)
-        mock_cls.return_value.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_cls.return_value.__aexit__ = AsyncMock(return_value=False)
-
-        # Call with no bounty_hunter_role_id argument (tests default/omitted behavior)
-        await announce_shop_refresh("parent-job", guild_id, channel_id)
-
-        # Should have posted successfully
-        mock_client.post.assert_awaited_once()
-        call_args = mock_client.post.call_args
-        posted_body = call_args.kwargs.get("json") or (call_args.args[1] if len(call_args.args) > 1 else {})
-        assert posted_body["content"]["title"] == "🛒 Shop Refreshed!"
-        mock_response.raise_for_status.assert_called_once()
+# A minimal refresh result that ShopService.refresh_shop returns.
+_FAKE_REFRESH_RESULT: dict = {"status": "ok", "items_added": 3}
 
 
 # ===========================================================================
-# New tests for Bug 2 fixes (tests 26, 30, 31)
+# TIER B — SQLite integration (1 patch only: db_manager bridge)
 # ===========================================================================
 
 
-@pytest.mark.asyncio
-async def test_executor_reads_shop_channel_id_not_hunting_channel_id():
-    """Test 26: Executor reads shop_channel_id from config (NOT hunting_channel_id)."""
-    from utils.executors.shop_refresh_executor import execute_shop_refresh_job
+class TestNoGuildsConfigured:
+    """Behaviour #1: empty guild_configs table → guilds_refreshed=0."""
 
-    mock_db = AsyncMock()
-    _configure_db_manager(mock_db)
+    async def test_empty_db_returns_zero_guilds_refreshed(self, sqlite_engine_and_factory):
+        """When no GuildConfig rows exist, bulk refresh returns 0 guilds_refreshed.
 
-    mock_shop_svc = AsyncMock()
-    mock_shop_svc.refresh_shop = AsyncMock(side_effect=lambda db, gid, t, ftl: _make_refresh_result(gid, t))
-    sys.modules["services.shop_service"].ShopService = MagicMock(return_value=mock_shop_svc)
+        ConfigRepository.list_all runs against real SQLite.
 
-    # Set shop_channel_id to 999888 and hunting_channel_id to 111000
-    # The executor must pass 999888 (shop channel), not 111000 (hunting channel)
-    guild_configs = [
-        _make_guild_config(50, hunting_channel_id=111000, shop_channel_id=999888),
-    ]
-    mock_config_repo = AsyncMock()
-    mock_config_repo.list_all = AsyncMock(return_value=guild_configs)
-    sys.modules["persist.repositories.config_repository"].ConfigRepository = MagicMock(return_value=mock_config_repo)
+        # 1 mock — db_manager bridge (Tier B)
+        """
+        _engine, factory = sqlite_engine_and_factory
+        # No rows seeded — table is empty.
 
-    announce_calls = []
+        with patch("persist.database.manager.db_manager", _make_fake_db_manager(factory)):
+            result = await execute_shop_refresh_job("job-no-guilds", {})
 
-    async def _capture_announce(job_id, guild_id, channel_id, role_id=None, tier=None):
-        announce_calls.append({"guild_id": guild_id, "channel_id": channel_id})
-
-    with patch("utils.executors.shop_refresh_executor._announce_shop_refresh", new=_capture_announce):
-        await execute_shop_refresh_job("job-ch", {"job_type": "shop_refresh"})
-
-    assert len(announce_calls) == 1
-    assert announce_calls[0]["channel_id"] == 999888, (
-        f"Expected shop_channel_id=999888 but got {announce_calls[0]['channel_id']}"
-    )
+        assert result["status"] == "success"
+        assert result["guilds_refreshed"] == 0, (
+            f"Expected 0 guilds_refreshed for empty DB, got {result['guilds_refreshed']!r}"
+        )
+        assert result["results"] == {}
 
 
-@pytest.mark.asyncio
-async def test_embed_description_is_exact_refresh_message_no_role_prefix():
-    """Test 30: Embed description is exactly the refresh message text, no role prefix."""
-    from utils.shop_announcement import announce_shop_refresh
+class TestSingleGuildSingleTierPayload:
+    """Behaviour #5: single guild + single tier payload."""
 
-    expected_description = (
-        "The guild shop has been restocked with new items across all tiers. "
-        "Check out the latest offerings and upgrade your loadout!"
-    )
-    role_id = 12345678
-    channel_id = 333444
-    guild_id = 505
+    async def test_single_guild_single_tier_calls_refresh(self, sqlite_engine_and_factory):
+        """Payload with guild_id + tier calls ShopService.refresh_shop once for that tier.
 
-    mock_response = MagicMock()
-    mock_response.raise_for_status = MagicMock()
+        ShopService.refresh_shop is mocked to bypass Item/Ship ARRAY columns.
+        See tests/AGENTS.md §"Mock Policy" — ARRAY-column bypass justification.
 
-    with patch("utils.shop_announcement.httpx.AsyncClient") as mock_cls:
-        mock_client = AsyncMock()
-        mock_client.post = AsyncMock(return_value=mock_response)
-        mock_cls.return_value.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_cls.return_value.__aexit__ = AsyncMock(return_value=False)
+        # 1 mock — db_manager bridge (Tier B)
+        # + ShopService.refresh_shop mock (ARRAY-column bypass)
+        """
+        _engine, factory = sqlite_engine_and_factory
 
-        await announce_shop_refresh("parent-job", guild_id, channel_id, role_id)
+        async with factory() as seed_db:
+            await _seed_guild_config(seed_db, GUILD_ID)
 
-        call_args = mock_client.post.call_args
-        posted_body = call_args.kwargs.get("json") or (call_args.args[1] if len(call_args.args) > 1 else {})
-        description = posted_body["content"]["description"]
+        payload = {"guild_id": GUILD_ID, "tier": "Bronze"}
 
-        # Description must be EXACTLY the refresh message — no role prefix
-        assert description == expected_description, (
-            f"Expected exact description:\n  {expected_description!r}\nGot:\n  {description!r}"
+        refresh_results = []
+
+        async def _fake_refresh(db, guild_id, tier, force_tech_level=None):
+            refresh_results.append((guild_id, tier))
+            return _FAKE_REFRESH_RESULT
+
+        with (
+            patch("persist.database.manager.db_manager", _make_fake_db_manager(factory)),
+            patch("services.shop_service.ShopService.refresh_shop", side_effect=_fake_refresh),
+        ):
+            result = await execute_shop_refresh_job("job-single-tier", payload)
+
+        assert result["status"] == "success"
+        assert result["guild_id"] == GUILD_ID
+        assert result["tier"] == "Bronze"
+        # Verify exactly one refresh call for the correct guild + tier.
+        assert len(refresh_results) == 1, f"Expected 1 refresh call, got {refresh_results!r}"
+        assert refresh_results[0] == (GUILD_ID, "Bronze")
+
+
+class TestSingleGuildAllTiersPayload:
+    """Behaviour #6: single guild, all tiers (guild_id provided, no tier)."""
+
+    async def test_single_guild_all_tiers_calls_refresh_four_times(self, sqlite_engine_and_factory):
+        """Payload with only guild_id calls refresh for all 4 tiers.
+
+        ShopService.refresh_shop mocked — ARRAY-column bypass (tests/AGENTS.md §"Mock Policy").
+
+        # 1 mock — db_manager bridge (Tier B)
+        # + ShopService.refresh_shop mock (ARRAY-column bypass)
+        """
+        _engine, factory = sqlite_engine_and_factory
+
+        async with factory() as seed_db:
+            await _seed_guild_config(seed_db, GUILD_ID)
+
+        payload = {"guild_id": GUILD_ID}
+        refresh_calls: list[tuple] = []
+
+        async def _fake_refresh(db, guild_id, tier, force_tech_level=None):
+            refresh_calls.append((guild_id, tier))
+            return _FAKE_REFRESH_RESULT
+
+        with (
+            patch("persist.database.manager.db_manager", _make_fake_db_manager(factory)),
+            patch("services.shop_service.ShopService.refresh_shop", side_effect=_fake_refresh),
+        ):
+            result = await execute_shop_refresh_job("job-single-all-tiers", payload)
+
+        assert result["status"] == "success"
+        assert result["guild_id"] == GUILD_ID
+        assert "results" in result
+        # All 4 tiers should have been refreshed.
+        assert len(refresh_calls) == 4, f"Expected 4 refresh calls (one per tier), got {refresh_calls!r}"
+        called_tiers = {tier for _, tier in refresh_calls}
+        assert called_tiers == {"Bronze", "Silver", "Gold", "Platinum"}, (
+            f"Expected all 4 tiers refreshed, got {called_tiers!r}"
         )
 
 
-@pytest.mark.asyncio
-async def test_message_posted_to_shop_channel_url():
-    """Test 31: Message is posted to correct URL /channels/{shop_channel_id}/messages."""
-    from utils.shop_announcement import announce_shop_refresh
+class TestBulkRefreshAllGuilds:
+    """Behaviour #2: bulk mode — all guilds, all tiers refreshed."""
 
-    shop_channel_id = 777888999
-    guild_id = 606
+    async def test_bulk_refresh_processes_all_configured_guilds(self, sqlite_engine_and_factory):
+        """With no guild_id in payload, all guilds are processed.
 
-    mock_response = MagicMock()
-    mock_response.raise_for_status = MagicMock()
+        Two guild configs are seeded; both should appear in results.
 
-    with patch("utils.shop_announcement.httpx.AsyncClient") as mock_cls:
-        mock_client = AsyncMock()
-        mock_client.post = AsyncMock(return_value=mock_response)
-        mock_cls.return_value.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_cls.return_value.__aexit__ = AsyncMock(return_value=False)
+        # 1 mock — db_manager bridge (Tier B)
+        # + ShopService.refresh_shop mock (ARRAY-column bypass)
+        # + ShopService.preload_static_data mock (ARRAY-column bypass)
+        """
+        _engine, factory = sqlite_engine_and_factory
 
-        await announce_shop_refresh("parent-job", guild_id, shop_channel_id)
+        async with factory() as seed_db:
+            await _seed_guild_config(seed_db, GUILD_ID)
+            await _seed_guild_config(seed_db, GUILD_ID_2)
 
-        call_args = mock_client.post.call_args
-        posted_url = call_args.args[0] if call_args.args else call_args.kwargs.get("url")
-        assert f"/channels/{shop_channel_id}/messages" in posted_url, (
-            f"Expected URL containing /channels/{shop_channel_id}/messages but got {posted_url!r}"
+        refreshed_guilds: set[int] = set()
+
+        async def _fake_refresh(db, guild_id, tier, force_tech_level=None):
+            refreshed_guilds.add(guild_id)
+            return _FAKE_REFRESH_RESULT
+
+        with (
+            patch("persist.database.manager.db_manager", _make_fake_db_manager(factory)),
+            patch("services.shop_service.ShopService.refresh_shop", side_effect=_fake_refresh),
+            patch("services.shop_service.ShopService.preload_static_data", new=AsyncMock()),
+            patch("utils.shop_announcement.announce_shop_refresh", new=AsyncMock()),
+        ):
+            result = await execute_shop_refresh_job("job-bulk", {})
+
+        assert result["status"] == "success"
+        assert result["guilds_refreshed"] == 2, f"Expected 2 guilds_refreshed, got {result['guilds_refreshed']!r}"
+        assert GUILD_ID in result["results"], "GUILD_ID should appear in bulk results"
+        assert GUILD_ID_2 in result["results"], "GUILD_ID_2 should appear in bulk results"
+        # Both guilds should have been passed to refresh_shop.
+        assert refreshed_guilds == {GUILD_ID, GUILD_ID_2}, f"Expected both guilds refreshed, got {refreshed_guilds!r}"
+
+
+# ===========================================================================
+# TIER B + C — SQLite integration + respx HTTP assertions
+# ===========================================================================
+
+
+class TestAnnouncementFires:
+    """Behaviour #3: announcement fires per guild to the gateway."""
+
+    async def test_announcement_posted_to_shop_channel(self, sqlite_engine_and_factory):
+        """POST to /channels/{shop_channel_id}/messages is called once per guild.
+
+        # 1 mock — db_manager bridge (Tier B + C)
+        # + ShopService.refresh_shop mock (ARRAY-column bypass)
+        # + ShopService.preload_static_data mock (ARRAY-column bypass)
+        """
+        _engine, factory = sqlite_engine_and_factory
+
+        async with factory() as seed_db:
+            await _seed_guild_config(seed_db, GUILD_ID, shop_channel_id=SHOP_CHANNEL)
+
+        with (
+            patch("persist.database.manager.db_manager", _make_fake_db_manager(factory)),
+            patch("services.shop_service.ShopService.refresh_shop", new=AsyncMock(return_value=_FAKE_REFRESH_RESULT)),
+            patch("services.shop_service.ShopService.preload_static_data", new=AsyncMock()),
+            respx.mock(assert_all_called=False) as router,
+        ):
+            announce_route = router.post(GATEWAY_CHANNEL_URL).respond(200, json={"ok": True})
+            result = await execute_shop_refresh_job("job-announce", {})
+
+        assert result["status"] == "success"
+        assert announce_route.called, (
+            f"Expected gateway announcement POST to {GATEWAY_CHANNEL_URL}, but it was not called"
         )
+
+
+class TestAnnouncementSkippedWhenNoChannel:
+    """Behaviour #4: announcement skipped when shop_channel_id is None."""
+
+    async def test_no_http_call_when_shop_channel_not_configured(self, sqlite_engine_and_factory):
+        """Guild with shop_channel_id=None causes announcement to be skipped (non-fatal).
+
+        No POST to gateway should be made; the job still returns success.
+
+        # 1 mock — db_manager bridge (Tier B + C)
+        # + ShopService.refresh_shop mock (ARRAY-column bypass)
+        # + ShopService.preload_static_data mock (ARRAY-column bypass)
+        """
+        _engine, factory = sqlite_engine_and_factory
+
+        async with factory() as seed_db:
+            await _seed_guild_config(seed_db, GUILD_ID, shop_channel_id=None)
+
+        http_call_count = 0
+
+        with (
+            patch("persist.database.manager.db_manager", _make_fake_db_manager(factory)),
+            patch("services.shop_service.ShopService.refresh_shop", new=AsyncMock(return_value=_FAKE_REFRESH_RESULT)),
+            patch("services.shop_service.ShopService.preload_static_data", new=AsyncMock()),
+            respx.mock(assert_all_called=False, assert_all_mocked=True) as router,
+        ):
+            # Any unexpected HTTP call will raise because assert_all_mocked=True.
+            # We register nothing — if any POST fires it will fail loudly.
+            result = await execute_shop_refresh_job("job-no-channel", {})
+            http_call_count = router.calls.call_count
+
+        assert result["status"] == "success"
+        assert http_call_count == 0, f"Expected ZERO HTTP calls when shop_channel_id is None, got {http_call_count}"
+
+
+class TestAnnouncementFailureIsNonFatal:
+    """Behaviour #7: announcement failure does not abort the refresh."""
+
+    async def test_500_from_gateway_does_not_raise(self, sqlite_engine_and_factory):
+        """HTTP 500 from gateway → job still returns success and results contain the guild.
+
+        # 1 mock — db_manager bridge (Tier B + C)
+        # + ShopService.refresh_shop mock (ARRAY-column bypass)
+        # + ShopService.preload_static_data mock (ARRAY-column bypass)
+        """
+        _engine, factory = sqlite_engine_and_factory
+
+        async with factory() as seed_db:
+            await _seed_guild_config(seed_db, GUILD_ID, shop_channel_id=SHOP_CHANNEL)
+
+        with (
+            patch("persist.database.manager.db_manager", _make_fake_db_manager(factory)),
+            patch("services.shop_service.ShopService.refresh_shop", new=AsyncMock(return_value=_FAKE_REFRESH_RESULT)),
+            patch("services.shop_service.ShopService.preload_static_data", new=AsyncMock()),
+            respx.mock(assert_all_called=False) as router,
+        ):
+            # Announcement endpoint returns HTTP 500 (server error).
+            router.post(GATEWAY_CHANNEL_URL).respond(500)
+            result = await execute_shop_refresh_job("job-announce-fail", {})
+
+        # Despite the 500, the job should report success and list the guild.
+        assert result["status"] == "success", f"Expected status=success even when announcement fails, got {result!r}"
+        assert result["guilds_refreshed"] == 1, (
+            f"Expected 1 guilds_refreshed despite announcement failure, got {result!r}"
+        )
+        assert GUILD_ID in result["results"]

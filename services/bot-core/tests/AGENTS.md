@@ -137,4 +137,175 @@ require a documented justification in the same commit message.
 
 ---
 
-*Last updated: 2026-04-30*
+## Executor Test Pattern (S2 — definitive)
+
+The `utils/executors/` modules are scheduled-job dispatchers that compose
+multiple repositories, services, and outbound HTTP calls. Their original
+test suite (notably `test_bounty_spawn_executor.py`, 1785 lines /
+~357 mocks) used `AsyncMock` for every collaborator and asserted only on
+`mock.assert_called_once()` — a textbook mock-overuse anti-pattern that
+masked entire defect classes (capacity-gate arithmetic, ORM identity-map
+confusion, eligibility-guard logic, HTTP body shape).
+
+The S2 pattern below replaces that anti-pattern. **All new executor tests
+written from 2026-05 onward MUST follow this pattern.** Sprint 3 will
+rewrite the existing executor test files against this pattern.
+
+The canonical reference test lives at:
+
+> `tests/test_bounty_spawn_executor_ref.py`
+
+Read it first before writing or modifying any executor test.
+
+### Three-Tier Breakdown
+
+| Tier | What it covers | Mock budget |
+|------|----------------|-------------|
+| **A — Pure unit** | Pure helpers in the executor module: `_is_guild_fully_configured`, `_get_division_channel_id`, `_get_division_role_id`, payload-validation early returns (e.g. missing `guild_id` / `tier` in `execute_bounty_spawn_one_job`). | **0 mocks.** Pass `SimpleNamespace` or plain dicts; assert on the return value. |
+| **B — SQLite integration** | ORM read/write paths reachable from the executor: `count_active_by_guild_and_division`, `ConfigRepository.list_all`, `ConfigRepository.get_by_guild_id`, capacity-reached short-circuits, eligibility-guard skips. | **1 patch only:** `persist.database.manager.db_manager` is patched to yield a real `AsyncSession` from a SQLite-in-memory engine. NO repositories or services are mocked. |
+| **C — respx HTTP boundary** | The two outbound HTTP surfaces: (1) self-scheduling at `EXECUTOR_HOST:EXECUTOR_PORT/api/v1/jobs`; (2) gateway announcement at `DISCORD_GATEWAY_HOST:GATEWAY_PORT/api/v1/announcements/...` plus map upload to `/channels/{cid}/upload`. | **respx** intercepts `httpx.AsyncClient` calls. Assert on URL, JSON body shape, request count. The `assert_all_called=False, assert_all_mocked=True` defaults are recommended — known calls are matched, unexpected calls fail loudly. |
+
+A single test may legitimately span Tier B + Tier C (the reference test
+does so). Tier A tests typically live as small standalone functions
+that take no fixtures.
+
+### Mock Policy
+
+#### Permitted at the executor layer
+
+1. **`respx`** for any outbound `httpx.AsyncClient` call. This is the
+   ONLY supported mechanism for asserting on HTTP boundaries — do not
+   monkey-patch `httpx.AsyncClient` directly.
+2. **A single `patch("persist.database.manager.db_manager", ...)`** that
+   substitutes a `MagicMock` whose `.get_session` returns a fresh
+   `@asynccontextmanager` factory yielding a real SQLite session. This
+   is a *bridging* patch, not a behavioural one — no executor logic
+   runs inside the mock.
+3. **`patch("services.bounty_service.BountyService.spawn_bounty", ...)`
+   and equivalents** are permitted ONLY for happy-path tests that need
+   to bypass tables containing PostgreSQL `ARRAY(String)` columns
+   (Criminal, System, Item, Module, Weapon STI tables) — see "SQLite
+   Compatibility" below. The substitute should be a coroutine that
+   inserts a real `Bounty` ORM instance into the SQLite session and
+   returns it. Document the patch with a comment citing this AGENTS.md
+   section.
+
+#### Forbidden at the executor layer
+
+- Mocking `BountyRepository`, `ConfigRepository`, `CriminalRepository`,
+  `DiscordMessageRepository`, or any other repository class. Use real
+  SQLite instead.
+- Mocking `AsyncSession` directly. Use a real session from a SQLite
+  engine.
+- Mocking the `BountyService` constructor or any non-`spawn_bounty`
+  method. Tests that need narrower service behaviour belong in
+  `tests/services/test_bounty_service.py`, not here.
+- Asserting solely on `mock.assert_called_once()` / `assert_called_with()`
+  for repository calls. The whole point of the rewrite is that the
+  test asserts on real computed values (returned dicts, persisted DB
+  state, intercepted HTTP request bodies).
+
+### Patch Target — Deferred Imports
+
+All executor functions use deferred imports (e.g.
+`from persist.database.manager import db_manager` inside the function
+body). The bound name therefore lives in the SOURCE module, not in the
+executor's module namespace. The canonical patch target is:
+
+```python
+with patch("persist.database.manager.db_manager", fake_db_manager):
+    result = await execute_bounty_spawn_one_job("job-id", payload)
+```
+
+Patching `utils.executors.bounty_spawn_executor.db_manager` will fail
+with `AttributeError` because the executor module never bound that
+name at module scope.
+
+### Fixture Scope Recommendations
+
+| Fixture | Recommended scope | Rationale |
+|---------|-------------------|-----------|
+| `sqlite_engine_and_factory` | `function` | Fresh DB per test prevents cross-test bleed-through; SQLite in-memory creation is < 50 ms so the cost is negligible. |
+| `http_recorder` (respx) | `function` | Each test asserts on its own call history. |
+| Seed helpers (`_seed_full_config`, `_seed_active_bounty`) | Plain `async def` helpers, NOT fixtures. | Each test seeds different shapes; promoting to fixtures forces `parametrize` gymnastics. |
+| Common payload dicts | Inline literals or module-level constants. | They are tiny and per-test variations are common. |
+
+For executor tests that share read-only seed data (e.g. a multi-guild
+matrix test), promoting `sqlite_engine_and_factory` to `module` scope
+with explicit truncation between tests is acceptable — but only after
+demonstrating measurable wall-clock improvement.
+
+### SQLite Compatibility
+
+The integration conftest's SQLite schema includes only tables with
+SQLite-compatible column types: `User`, `Player`, `GuildConfig`,
+`GuildShop`, `PlayerInventory`, `PlayerShip`. **For executor tests, also
+include `Bounty` and `GuildConfig`** (Bounty is JSON-only and
+SQLite-safe).
+
+Tables that contain `sqlalchemy.dialects.postgresql.ARRAY` columns
+**cannot** be created on SQLite:
+
+- `Criminal` (`aliases: ARRAY(String)`)
+- `System` (`coordinates: ARRAY(Integer)`, `neighbours: ARRAY(String)`)
+- `Item` / STI children (`aliases: ARRAY(String)`)
+- `Ship` (`aliases`, `assets`, `compatible_skins`, `builtin_modules`)
+
+Tests that need these tables must either (a) live in
+`tests/integration/` against a containerised PostgreSQL test database
+(future work — not yet provisioned), or (b) mock the single service
+method that would otherwise need them (`BountyService.spawn_bounty` is
+the canonical example — see "Mock Policy" above).
+
+For PostgreSQL-specific functions used by the executor (`func.now()`,
+`text("SELECT ... LIKE :pattern")` against `apscheduler_jobs`),
+SQLite's parser is forgiving — `func.now()` resolves to
+`CURRENT_TIMESTAMP`, and the `text()` pattern simply returns 0 rows
+when the `apscheduler_jobs` table does not exist (the executor reads
+the count, not the rows themselves, so 0 is a safe default for
+single-tier tests). If a test needs the orchestrator's queued-jobs
+count to be non-zero, create the `apscheduler_jobs` table manually
+inside the test.
+
+### Bounty-Spawn Specific Behaviours to Cover (S3 backlog)
+
+When Sprint 3 rewrites `test_bounty_spawn_executor.py`, the following
+behaviours should be covered using the three-tier pattern. None of
+these belong in the reference test, but every one should appear in the
+rewritten suite.
+
+| # | Behaviour | Tier | Notes |
+|---|-----------|------|-------|
+| 1 | `_is_guild_fully_configured` returns False when any of the 5 IDs is None | A | One test per missing field. |
+| 2 | `_get_division_channel_id` and `_get_division_role_id` mappings (incl. tier-role fallback to `bounty_hunter_role_id`) | A | Pure dispatch, no DB. |
+| 3 | Orchestrator skips guilds that fail eligibility | B | Persist a partially-configured guild; assert `tier_results` empty. |
+| 4 | Orchestrator skips tiers when `bounty_max_per_tier[tier] == 0` | B | Verify `reason: "tier_disabled"` in result. |
+| 5 | Orchestrator skips when `active + queued >= max_for_tier` | B + manual `apscheduler_jobs` row | Test capacity-with-queued accounting. |
+| 6 | Orchestrator schedules one-time jobs via HTTP POST to `/jobs` | B + C | respx asserts URL, payload shape, run_at ISO format. |
+| 7 | Orchestrator continues across tiers when one schedule call fails | B + C | respx returns 503 for one route; assert other tiers still queued. |
+| 8 | `execute_bounty_spawn_one_job` rejects payload missing `guild_id` / `tier` | A | Returns `{"success": False, "reason": "missing_payload"}` — no DB. |
+| 9 | `execute_bounty_spawn_one_job` returns `guild_not_configured` when GuildConfig absent or partially configured | B | Persist no row / partial row. |
+| 10 | `execute_bounty_spawn_one_job` returns `tier_not_configured` when channel/role missing for the tier | B | |
+| 11 | `execute_bounty_spawn_one_job` returns `capacity_reached` (benign race) | B + C zero-call assertion | **The reference test.** |
+| 12 | Happy path: spawns a bounty, schedules expiry, announces to gateway | B + C, with `BountyService.spawn_bounty` mocked to insert a Bounty | Assert announcement body via respx; verify `DiscordMessage` row persisted. |
+| 13 | Map upload failure does not abort announcement | B + C | respx returns 500 on `/channels/{cid}/upload`; gateway announce still fires. |
+| 14 | Gateway announcement failure is non-fatal | B + C | respx returns 500 on `/announcements/...`; bounty row still committed. |
+| 15 | Expiry-scheduling failure is non-fatal | B + C | respx returns 500 on fallback `/jobs` route. |
+| 16 | Reward / route values match `BountyService` outputs (regression for `total_reward / consolation_pool` accounting) | B + mocked `spawn_bounty` returning a hand-built Bounty | Asserts on `result["bounty_id"]` and the persisted Bounty row's `reward` field. |
+
+### Developer Checklist
+
+Before merging an executor test:
+
+- [ ] Test imports respect the deferred-import pattern (`patch("persist.database.manager.db_manager", ...)`, NOT `patch("utils.executors.<name>.db_manager", ...)`).
+- [ ] Real SQLite session is used for any DB read/write — no `AsyncMock` on repository methods.
+- [ ] HTTP boundaries use `respx` — no monkey-patching of `httpx.AsyncClient`.
+- [ ] Assertions read real DB state through a FRESH session (cross-session-reload rule above).
+- [ ] No `mock.assert_called_once()` standing in for a value assertion.
+- [ ] Mock count is documented inline (`# 1 mock — db_manager bridge`).
+- [ ] `bounty_max_per_tier`, `end_time`, and other JSON / timezone-aware fields seeded explicitly — no implicit defaults.
+- [ ] If `BountyService.spawn_bounty` is mocked, a comment cites this AGENTS.md section as justification.
+
+---
+
+*Last updated: 2026-05-07*

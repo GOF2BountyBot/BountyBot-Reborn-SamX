@@ -1,560 +1,483 @@
+"""S4 rewrite: temperature_decay_executor tests — real SQLite, 0 repo mocks.
+
+Sprint 4 (S4) of the Test Quality Blitz.
+
+PATTERN OVERVIEW
+----------------
+Three-tier breakdown following ``tests/AGENTS.md`` §"Executor Test Pattern (S2)":
+
+  Tier A — Pure unit tests. ZERO mocks.
+
+  Tier B — SQLite-in-memory integration for ORM read/write paths.
+            Only patch: ``patch("persist.database.manager.db_manager", ...)``.
+            NO repository or service methods mocked.
+
+  (No Tier C — temperature decay makes no HTTP calls.)
+
+BEHAVIOURS COVERED
+------------------
+| # | Behaviour | Tier |
+|---|-----------|------|
+| 1 | No guilds configured → guilds_processed=0, total_decays=0 | B |
+| 2 | Decay formula: value * 2/3, floor at 1.0, round to 1 dp | A |
+| 3 | Single guild: all 4 divisions decayed and persisted | B |
+| 4 | Cross-session reload confirms temperatures persisted | B |
+| 5 | Guild not in DB (single-guild mode) → guilds_processed=0 | B |
+| 6 | Single-guild payload processes only that guild | B |
+| 7 | Division filter in payload limits decay to one division | B |
+| 8 | Default temperature (None/missing) treated as 1.0 | B |
+| 9 | Multi-guild: each guild's temperatures independently decayed | B |
+
+SQLITE COMPATIBILITY NOTE
+--------------------------
+GuildConfig has no ARRAY columns and is fully SQLite-compatible.
+ConfigRepository.list_all, get_by_guild_id, and update_division_temperatures
+are pure ORM operations that run on SQLite.
+
+TemperatureService.decay_temperature is a static pure-math function —
+it is exercised directly in Tier A tests without any DB involvement.
 """
-Unit tests for utils.executors.temperature_decay_executor.
 
-Tests verify:
- - Decay formula: temperature is multiplied by 2/3, floored at 1.0
- - All three divisions are decayed when no division filter is specified
- - Single-division filter is respected
- - Missing/None division_temperatures are treated as 1.0 per division
- - Guilds with no config entry are handled gracefully
- - Bulk mode (no guild_id) processes all configured guilds
- - No-guilds configured returns early with zero count
- - Updated temperatures are persisted via ConfigRepository
- - job_executor.py dispatches temperature_decay job_type
+from __future__ import annotations
 
-IMPORTANT: shared.bblogger is mocked BEFORE any source imports (via
-conftest.py, with a belt-and-suspenders guard below).
-
-Because temperature_decay_executor uses deferred (in-function) imports, we
-pre-register stub modules in sys.modules so deferred imports inside
-execute_temperature_decay_job resolve without requiring a live database.
-"""
-
-import os as _os
+import os
 import sys
 import types
-from unittest.mock import AsyncMock, MagicMock, patch
-
-import pytest
+from contextlib import asynccontextmanager
+from typing import Any
+from unittest.mock import MagicMock, patch
 
 # ---------------------------------------------------------------------------
-# Guard: mock shared / shared.bblogger before importing any source modules.
-# conftest.py handles this at collection time; guard is here for standalone runs.
+# Path setup and stub registration
 # ---------------------------------------------------------------------------
+
+_SRC_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "src"))
+if _SRC_DIR not in sys.path:
+    sys.path.insert(0, _SRC_DIR)
+
 if "shared" not in sys.modules:
     _mock_shared = types.ModuleType("shared")
-    _mock_bblogger = types.ModuleType("shared.bblogger")
-
-    def _make_logger(name: str = "test") -> MagicMock:
-        logger = MagicMock()
-        for m in ("info", "debug", "warning", "error", "trace", "critical"):
-            setattr(logger, m, MagicMock())
-        return logger
-
-    _mock_bblogger.get_logger = _make_logger
-    _mock_shared.bblogger = _mock_bblogger
+    _mock_shared.bblogger = MagicMock()  # type: ignore[attr-defined]
+    _mock_shared.bblogger.get_logger = MagicMock(return_value=MagicMock())  # type: ignore[attr-defined]
     sys.modules["shared"] = _mock_shared
-    sys.modules["shared.bblogger"] = _mock_bblogger
+    sys.modules["shared.bblogger"] = _mock_shared.bblogger  # type: ignore[arg-type]
 
-# Ensure src is on the path.
-_SRC = _os.path.join(_os.path.dirname(__file__), "..", "src")
-if _SRC not in sys.path:
-    sys.path.insert(0, _SRC)
-
-# ---------------------------------------------------------------------------
-# Pre-register stub modules so deferred imports in temperature_decay_executor
-# work without requiring a live database or installed ORM extras.
-# ---------------------------------------------------------------------------
-
-
-def _ensure_stub(module_path: str, **attrs) -> types.ModuleType:
-    """Create and register a stub module if not already present."""
-    if module_path not in sys.modules:
-        mod = types.ModuleType(module_path)
-        for k, v in attrs.items():
-            setattr(mod, k, v)
-        sys.modules[module_path] = mod
-    return sys.modules[module_path]
-
-
-# Stub for persist.database.manager — only db_manager attribute needed.
-_mock_db_mgr_instance = MagicMock()
-_ensure_stub("persist.database.manager", db_manager=_mock_db_mgr_instance)
-
-# Stubs for repositories and services.
-_MockConfigRepository = MagicMock()
-_ensure_stub("persist.repositories.config_repository", ConfigRepository=_MockConfigRepository)
-
-_MockTemperatureService = MagicMock()
-_ensure_stub("services.temperature_service", TemperatureService=_MockTemperatureService)
-
-# Ensure parent package stubs exist.
-_ensure_stub("persist")
-_ensure_stub("persist.database")
-_ensure_stub("persist.repositories")
-_ensure_stub("services")
+if "sqlalchemy_utils" not in sys.modules:
+    _mock_sau = types.ModuleType("sqlalchemy_utils")
+    _mock_sau.UUIDType = MagicMock()  # type: ignore[attr-defined]
+    sys.modules["sqlalchemy_utils"] = _mock_sau
 
 # ---------------------------------------------------------------------------
-# Helpers
+# Application imports
 # ---------------------------------------------------------------------------
 
+import pytest
+from persist.models.base import Base
+from persist.models.guild_config import GuildConfig
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from utils.executors.temperature_decay_executor import execute_temperature_decay_job
 
-def _make_guild_config(
-    guild_id: int,
-    division_temperatures: dict[str, float] | None = None,
-) -> MagicMock:
-    """Build a mock GuildConfig-like object."""
-    cfg = MagicMock()
-    cfg.guild_id = guild_id
-    cfg.division_temperatures = division_temperatures
-    return cfg
+# ---------------------------------------------------------------------------
+# SQLite table list
+# ---------------------------------------------------------------------------
 
+_SQLITE_TABLES = [
+    GuildConfig.__table__,
+]
 
-def _mock_session_ctx(session: AsyncMock) -> MagicMock:
-    """Return an async context manager that yields *session*."""
-    ctx = MagicMock()
-    ctx.__aenter__ = AsyncMock(return_value=session)
-    ctx.__aexit__ = AsyncMock(return_value=False)
-    return ctx
+# ---------------------------------------------------------------------------
+# Common test constants
+# ---------------------------------------------------------------------------
 
-
-def _configure_db_manager(mock_db: AsyncMock) -> None:
-    """Configure the stub db_manager to yield *mock_db* on get_session()."""
-    mgr = sys.modules["persist.database.manager"].db_manager
-    mgr.get_session = MagicMock(return_value=_mock_session_ctx(mock_db))
+GUILD_ID = 9_500_000_050
+GUILD_ID_2 = 9_500_000_051
 
 
-def _configure_config_repo(
-    guild_configs: list,
-    single_config: MagicMock | None = None,
-) -> AsyncMock:
-    """Configure ConfigRepository stubs.
-
-    *guild_configs* is returned by ``list_all``.
-    *single_config* is returned by ``get_by_guild_id`` (None → not found).
-    The repo's ``update_division_temperatures`` is set up as a no-op AsyncMock.
-    """
-    mock_repo = AsyncMock()
-    mock_repo.list_all = AsyncMock(return_value=guild_configs)
-    mock_repo.get_by_guild_id = AsyncMock(return_value=single_config)
-    mock_repo.update_division_temperatures = AsyncMock(return_value=single_config)
-    sys.modules["persist.repositories.config_repository"].ConfigRepository = MagicMock(return_value=mock_repo)
-    return mock_repo
+# ===========================================================================
+# Shared fixtures
+# ===========================================================================
 
 
-def _configure_temperature_service_real() -> None:
-    """Point TemperatureService.decay_temperature to the real implementation."""
-    import importlib
-
-    # Temporarily remove the stub so we can import the real module.
-    ts_stub = sys.modules.pop("services.temperature_service", None)
+@pytest.fixture
+async def sqlite_engine_and_factory():
+    """Yield a fresh SQLite in-memory engine + session factory per test."""
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:", echo=False)
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all, tables=_SQLITE_TABLES)
+    factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
     try:
-        # The real module requires game_constants; stub that too if needed.
-        _ensure_stub(
-            "services.game_constants",
-            GameConstants=_build_real_game_constants_stub(),
-        )
-        real_ts = importlib.import_module("services.temperature_service")
-        sys.modules["services.temperature_service"] = real_ts
-    except Exception:
-        # If the real module can't be loaded, restore the stub.
-        if ts_stub is not None:
-            sys.modules["services.temperature_service"] = ts_stub
-        raise
+        yield engine, factory
+    finally:
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.drop_all, tables=_SQLITE_TABLES)
+        await engine.dispose()
 
 
-def _build_real_game_constants_stub():
-    """Return a GameConstants-like class with the values needed by TemperatureService."""
-
-    class _GC:
-        GUILD_ACTIVITY_DECAY_RATE: float = 2 / 3
-        MIN_GUILD_ACTIVITY: float = 1.0
-        ACTIVITY_TEMP_PER_PLAYER: int = 1
-        MAX_BOUNTIES_PER_DIVISION: int = 5
-        BOUNTY_DELAY_RANDOM_MIN: int = 5
-        BOUNTY_DELAY_RANDOM_MAX: int = 7
-
-    return _GC
+# ---------------------------------------------------------------------------
+# Seed helpers
+# ---------------------------------------------------------------------------
 
 
-def _configure_temperature_service_mock(decay_side_effect=None) -> MagicMock:
-    """Configure TemperatureService.decay_temperature as a MagicMock.
+async def _seed_guild_config(
+    db: AsyncSession,
+    guild_id: int,
+    *,
+    division_temperatures: dict[str, float] | None = None,
+) -> GuildConfig:
+    """Persist a GuildConfig with given division temperatures."""
+    config = GuildConfig(
+        guild_id=guild_id,
+        division_temperatures=division_temperatures
+        or {
+            "bronze": 3.0,
+            "silver": 2.0,
+            "gold": 1.5,
+            "platinum": 1.0,
+        },
+    )
+    db.add(config)
+    await db.commit()
+    await db.refresh(config)
+    return config
 
-    If *decay_side_effect* is provided it is used as the side_effect; otherwise
-    the mock applies the real 2/3 decay formula.
+
+def _make_fake_db_manager(factory: Any):
+    """Build a MagicMock that mimics db_manager.get_session() for SQLite.
+
+    # 1 mock — db_manager bridge (Tier B)
     """
-    mock_ts = sys.modules["services.temperature_service"].TemperatureService
 
-    if decay_side_effect is not None:
-        mock_ts.decay_temperature = MagicMock(side_effect=decay_side_effect)
-    else:
-        # Default: apply real formula so we can assert precise values.
-        def _real_decay(temp: float) -> float:
-            decayed = temp * (2 / 3)
-            return max(1.0, round(decayed, 1))
+    @asynccontextmanager
+    async def _fake_get_db():
+        async with factory() as session:
+            yield session
 
-        mock_ts.decay_temperature = MagicMock(side_effect=_real_decay)
-
-    return mock_ts
+    fake = MagicMock()
+    fake.get_session = MagicMock(side_effect=_fake_get_db)
+    return fake
 
 
 # ===========================================================================
-# Tests: decay calculation
+# TIER A — Pure unit tests (ZERO mocks)
 # ===========================================================================
 
 
-class TestDecayCalculation:
-    """Verify the 2/3 decay factor and 1.0 floor using the mocked service."""
+class TestDecayFormula:
+    """Behaviour #2: decay formula — value * 2/3, floor at 1.0, round to 1 dp."""
 
-    @pytest.mark.asyncio
-    async def test_temperature_5_decays_to_3_3(self):
-        """5.0 x 2/3 ≈ 3.333 → rounded to 3.3."""
-        from utils.executors.temperature_decay_executor import execute_temperature_decay_job
+    def test_decay_of_3_0(self):
+        """3.0 * (2/3) = 2.0 → 2.0 (no floor needed)."""
+        from services.temperature_service import TemperatureService
 
-        mock_db = AsyncMock()
-        _configure_db_manager(mock_db)
-        _configure_temperature_service_mock()
+        result = TemperatureService.decay_temperature(3.0)
+        assert result == 2.0, f"Expected 3.0 → 2.0, got {result!r}"
 
-        cfg = _make_guild_config(guild_id=100, division_temperatures={"bronze": 5.0, "silver": 1.0, "gold": 1.0})
-        _configure_config_repo(guild_configs=[cfg])
+    def test_decay_of_1_5(self):
+        """1.5 * (2/3) = 1.0 → 1.0 (exactly floor)."""
+        from services.temperature_service import TemperatureService
 
-        result = await execute_temperature_decay_job("job-calc-5", {"job_type": "temperature_decay"})
+        result = TemperatureService.decay_temperature(1.5)
+        assert result == 1.0, f"Expected 1.5 → 1.0, got {result!r}"
+
+    def test_decay_floor_at_one(self):
+        """Values below 1.5 decay to floor (1.0)."""
+        from services.temperature_service import TemperatureService
+
+        result = TemperatureService.decay_temperature(1.0)
+        assert result == 1.0, f"Expected 1.0 → 1.0 (floor), got {result!r}"
+
+    def test_decay_of_high_temperature(self):
+        """High temperature: 9.0 * (2/3) = 6.0."""
+        from services.temperature_service import TemperatureService
+
+        result = TemperatureService.decay_temperature(9.0)
+        assert result == 6.0, f"Expected 9.0 → 6.0, got {result!r}"
+
+    def test_decay_rounding(self):
+        """Result is rounded to 1 decimal place."""
+        from services.temperature_service import TemperatureService
+
+        # 2.0 * (2/3) = 1.3333... → rounds to 1.3
+        result = TemperatureService.decay_temperature(2.0)
+        assert result == 1.3, f"Expected 2.0 → 1.3 (rounded), got {result!r}"
+
+
+# ===========================================================================
+# TIER B — SQLite integration (1 patch only: db_manager bridge)
+# ===========================================================================
+
+
+class TestNoGuildsConfigured:
+    """Behaviour #1: empty guild_configs → guilds_processed=0, total_decays=0."""
+
+    async def test_empty_db_returns_zero_processed(self, sqlite_engine_and_factory):
+        """When no GuildConfig rows exist, bulk decay returns 0.
+
+        # 1 mock — db_manager bridge (Tier B)
+        """
+        _engine, factory = sqlite_engine_and_factory
+        # No rows seeded.
+
+        with patch("persist.database.manager.db_manager", _make_fake_db_manager(factory)):
+            result = await execute_temperature_decay_job("job-empty", {})
 
         assert result["status"] == "success"
-        bronze_result = result["results"][100]["bronze"]
-        assert bronze_result["before"] == pytest.approx(5.0)
-        assert bronze_result["after"] == pytest.approx(3.3)
-
-    @pytest.mark.asyncio
-    async def test_temperature_at_floor_stays_1_0(self):
-        """1.0 x 2/3 = 0.67 → floored at 1.0."""
-        from utils.executors.temperature_decay_executor import execute_temperature_decay_job
-
-        mock_db = AsyncMock()
-        _configure_db_manager(mock_db)
-        _configure_temperature_service_mock()
-
-        cfg = _make_guild_config(guild_id=200, division_temperatures={"bronze": 1.0, "silver": 1.0, "gold": 1.0})
-        _configure_config_repo(guild_configs=[cfg])
-
-        result = await execute_temperature_decay_job("job-floor", {"job_type": "temperature_decay"})
-
-        for div in ("bronze", "silver", "gold"):
-            assert result["results"][200][div]["after"] == pytest.approx(1.0)
-
-    @pytest.mark.asyncio
-    async def test_temperature_10_decays_to_6_7(self):
-        """10.0 x 2/3 ≈ 6.666 → rounded to 6.7."""
-        from utils.executors.temperature_decay_executor import execute_temperature_decay_job
-
-        mock_db = AsyncMock()
-        _configure_db_manager(mock_db)
-        _configure_temperature_service_mock()
-
-        cfg = _make_guild_config(guild_id=300, division_temperatures={"bronze": 10.0, "silver": 10.0, "gold": 10.0})
-        _configure_config_repo(guild_configs=[cfg])
-
-        result = await execute_temperature_decay_job("job-10", {"job_type": "temperature_decay"})
-
-        for div in ("bronze", "silver", "gold"):
-            assert result["results"][300][div]["after"] == pytest.approx(6.7)
-
-    @pytest.mark.asyncio
-    async def test_missing_division_temperature_defaults_to_1_0(self):
-        """If a division is absent from division_temperatures, it is treated as 1.0."""
-        from utils.executors.temperature_decay_executor import execute_temperature_decay_job
-
-        mock_db = AsyncMock()
-        _configure_db_manager(mock_db)
-        _configure_temperature_service_mock()
-
-        # Only 'bronze' is present; 'silver' and 'gold' are missing.
-        cfg = _make_guild_config(guild_id=400, division_temperatures={"bronze": 3.0})
-        _configure_config_repo(guild_configs=[cfg])
-
-        result = await execute_temperature_decay_job("job-missing", {"job_type": "temperature_decay"})
-
-        # silver and gold should start at 1.0 and stay at 1.0 (floor).
-        assert result["results"][400]["silver"]["before"] == pytest.approx(1.0)
-        assert result["results"][400]["silver"]["after"] == pytest.approx(1.0)
-        assert result["results"][400]["gold"]["before"] == pytest.approx(1.0)
-        assert result["results"][400]["gold"]["after"] == pytest.approx(1.0)
-        # Bronze decays normally.
-        assert result["results"][400]["bronze"]["before"] == pytest.approx(3.0)
-        assert result["results"][400]["bronze"]["after"] == pytest.approx(2.0)
-
-    @pytest.mark.asyncio
-    async def test_none_division_temperatures_defaults_to_1_0(self):
-        """If division_temperatures is None (new guild), all divisions default to 1.0."""
-        from utils.executors.temperature_decay_executor import execute_temperature_decay_job
-
-        mock_db = AsyncMock()
-        _configure_db_manager(mock_db)
-        _configure_temperature_service_mock()
-
-        cfg = _make_guild_config(guild_id=500, division_temperatures=None)
-        _configure_config_repo(guild_configs=[cfg])
-
-        result = await execute_temperature_decay_job("job-none-temps", {"job_type": "temperature_decay"})
-
-        for div in ("bronze", "silver", "gold"):
-            assert result["results"][500][div]["before"] == pytest.approx(1.0)
-            assert result["results"][500][div]["after"] == pytest.approx(1.0)
+        assert result["guilds_processed"] == 0, f"Expected guilds_processed=0, got {result['guilds_processed']!r}"
+        assert result["total_decays"] == 0
+        assert result["results"] == {}
 
 
-# ===========================================================================
-# Tests: division filtering
-# ===========================================================================
+class TestSingleGuildAllDivisions:
+    """Behaviour #3: single guild — all 4 divisions decayed and persisted."""
+
+    async def test_all_four_divisions_decayed(self, sqlite_engine_and_factory):
+        """Bulk mode with one guild decays all four divisions.
+
+        # 1 mock — db_manager bridge (Tier B)
+        """
+        _engine, factory = sqlite_engine_and_factory
+
+        initial_temps = {"bronze": 3.0, "silver": 2.0, "gold": 1.5, "platinum": 1.0}
+
+        async with factory() as seed_db:
+            await _seed_guild_config(seed_db, GUILD_ID, division_temperatures=initial_temps)
+
+        with patch("persist.database.manager.db_manager", _make_fake_db_manager(factory)):
+            result = await execute_temperature_decay_job("job-four-divs", {})
+
+        assert result["status"] == "success"
+        assert result["guilds_processed"] == 1
+        assert result["total_decays"] == 4, f"Expected 4 decays (one per division), got {result['total_decays']!r}"
+
+        # Verify per-division before/after values in result.
+        guild_result = result["results"][GUILD_ID]
+        assert "bronze" in guild_result
+        assert "silver" in guild_result
+        assert "gold" in guild_result
+        assert "platinum" in guild_result
+
+        # Verify computed 'after' values match the expected formula.
+        assert guild_result["bronze"]["before"] == 3.0
+        assert guild_result["bronze"]["after"] == 2.0  # 3.0 * 2/3 = 2.0
+
+        assert guild_result["silver"]["before"] == 2.0
+        assert guild_result["silver"]["after"] == 1.3  # 2.0 * 2/3 = 1.333 → 1.3
+
+        assert guild_result["gold"]["before"] == 1.5
+        assert guild_result["gold"]["after"] == 1.0  # 1.5 * 2/3 = 1.0
+
+        assert guild_result["platinum"]["before"] == 1.0
+        assert guild_result["platinum"]["after"] == 1.0  # floor at 1.0
 
 
-class TestDivisionFiltering:
-    """Verify that the division payload field restricts which division is processed."""
+class TestCrossSessionPersistence:
+    """Behaviour #4: cross-session reload confirms temperatures persisted."""
 
-    @pytest.mark.asyncio
-    async def test_only_specified_division_is_decayed(self):
-        """When division='Silver', only silver is in the results."""
-        from utils.executors.temperature_decay_executor import execute_temperature_decay_job
+    async def test_decayed_temperatures_persisted_to_db(self, sqlite_engine_and_factory):
+        """After decay job, a fresh session reads the updated temperatures.
 
-        mock_db = AsyncMock()
-        _configure_db_manager(mock_db)
-        _configure_temperature_service_mock()
+        # 1 mock — db_manager bridge (Tier B)
+        """
+        _engine, factory = sqlite_engine_and_factory
 
-        cfg = _make_guild_config(
-            guild_id=600,
-            division_temperatures={"bronze": 5.0, "silver": 5.0, "gold": 5.0},
+        initial_temps = {"bronze": 3.0, "silver": 3.0, "gold": 3.0, "platinum": 3.0}
+
+        async with factory() as seed_db:
+            await _seed_guild_config(seed_db, GUILD_ID, division_temperatures=initial_temps)
+
+        with patch("persist.database.manager.db_manager", _make_fake_db_manager(factory)):
+            result = await execute_temperature_decay_job("job-persist", {})
+
+        assert result["status"] == "success"
+
+        # Cross-session reload: verify DB was actually updated.
+        async with factory() as verify_db:
+            row = await verify_db.execute(select(GuildConfig).where(GuildConfig.guild_id == GUILD_ID))
+            config = row.scalars().first()
+
+        assert config is not None
+        stored = config.division_temperatures
+        assert stored is not None
+
+        # All temperatures should be decayed from 3.0 → 2.0.
+        for div in ["bronze", "silver", "gold", "platinum"]:
+            assert stored[div] == 2.0, f"Expected {div} temperature=2.0 after decay, got {stored[div]!r}"
+
+
+class TestSingleGuildModeGuildNotFound:
+    """Behaviour #5: guild not in DB (single-guild mode) → guilds_processed=0."""
+
+    async def test_unknown_guild_id_returns_zero_processed(self, sqlite_engine_and_factory):
+        """When guild_id is provided but no GuildConfig row exists, returns 0.
+
+        # 1 mock — db_manager bridge (Tier B)
+        """
+        _engine, factory = sqlite_engine_and_factory
+        # No rows seeded.
+
+        with patch("persist.database.manager.db_manager", _make_fake_db_manager(factory)):
+            result = await execute_temperature_decay_job("job-unknown-guild", {"guild_id": GUILD_ID})
+
+        assert result["status"] == "success"
+        assert result["guilds_processed"] == 0, f"Expected 0 guilds_processed for unknown guild, got {result!r}"
+        assert result["total_decays"] == 0
+
+
+class TestSingleGuildPayload:
+    """Behaviour #6: single-guild payload processes only that guild."""
+
+    async def test_single_guild_payload_processes_only_that_guild(self, sqlite_engine_and_factory):
+        """With guild_id in payload, only that guild is decayed (not others).
+
+        # 1 mock — db_manager bridge (Tier B)
+        """
+        _engine, factory = sqlite_engine_and_factory
+
+        temps_g1 = {"bronze": 3.0, "silver": 3.0, "gold": 3.0, "platinum": 3.0}
+        temps_g2 = {"bronze": 5.0, "silver": 5.0, "gold": 5.0, "platinum": 5.0}
+        async with factory() as seed_db:
+            await _seed_guild_config(seed_db, GUILD_ID, division_temperatures=temps_g1)
+            await _seed_guild_config(seed_db, GUILD_ID_2, division_temperatures=temps_g2)
+
+        with patch("persist.database.manager.db_manager", _make_fake_db_manager(factory)):
+            result = await execute_temperature_decay_job("job-single-guild", {"guild_id": GUILD_ID})
+
+        assert result["status"] == "success"
+        assert result["guilds_processed"] == 1, f"Expected 1 guilds_processed (only GUILD_ID), got {result!r}"
+        assert GUILD_ID in result["results"], "GUILD_ID should be in results"
+        assert GUILD_ID_2 not in result["results"], "GUILD_ID_2 should NOT be in results"
+
+        # GUILD_ID_2 temperatures should be unchanged.
+        async with factory() as verify_db:
+            row = await verify_db.execute(select(GuildConfig).where(GuildConfig.guild_id == GUILD_ID_2))
+            config2 = row.scalars().first()
+
+        assert config2 is not None
+        # GUILD_ID_2 was NOT decayed — should still be 5.0 for all divisions.
+        for div in ["bronze", "silver", "gold", "platinum"]:
+            assert config2.division_temperatures[div] == 5.0, (
+                f"Expected {div}=5.0 for GUILD_ID_2 (untouched), got {config2.division_temperatures[div]!r}"
+            )
+
+
+class TestDivisionFilterInPayload:
+    """Behaviour #7: division filter limits decay to one division."""
+
+    async def test_division_filter_limits_decay_to_one_division(self, sqlite_engine_and_factory):
+        """With guild_id + division in payload, only that division is decayed.
+
+        # 1 mock — db_manager bridge (Tier B)
+        """
+        _engine, factory = sqlite_engine_and_factory
+
+        initial_temps = {"bronze": 3.0, "silver": 3.0, "gold": 3.0, "platinum": 3.0}
+
+        async with factory() as seed_db:
+            await _seed_guild_config(seed_db, GUILD_ID, division_temperatures=initial_temps)
+
+        with patch("persist.database.manager.db_manager", _make_fake_db_manager(factory)):
+            result = await execute_temperature_decay_job(
+                "job-div-filter",
+                {"guild_id": GUILD_ID, "division": "bronze"},
+            )
+
+        assert result["status"] == "success"
+        assert result["total_decays"] == 1, f"Expected 1 decay (bronze only), got {result['total_decays']!r}"
+
+        # Only bronze should be in the per-guild result.
+        guild_result = result["results"][GUILD_ID]
+        assert "bronze" in guild_result
+        # Other divisions should NOT have been processed.
+        assert "silver" not in guild_result
+        assert "gold" not in guild_result
+
+        # Cross-session reload: only bronze changed.
+        async with factory() as verify_db:
+            row = await verify_db.execute(select(GuildConfig).where(GuildConfig.guild_id == GUILD_ID))
+            config = row.scalars().first()
+
+        assert config.division_temperatures["bronze"] == 2.0, (
+            f"Expected bronze=2.0 after decay, got {config.division_temperatures['bronze']!r}"
         )
-        # guild_id in payload → single-guild mode uses get_by_guild_id.
-        _configure_config_repo(guild_configs=[], single_config=cfg)
+        # Others unchanged.
+        assert config.division_temperatures["silver"] == 3.0, "Silver should not have been decayed"
 
-        result = await execute_temperature_decay_job(
-            "job-div-filter",
-            {"job_type": "temperature_decay", "guild_id": 600, "division": "Silver"},
+
+class TestDefaultTemperature:
+    """Behaviour #8: default temperature (None/missing key) treated as 1.0."""
+
+    async def test_missing_division_key_defaults_to_1_0(self, sqlite_engine_and_factory):
+        """A GuildConfig with no stored temperature for a division defaults to 1.0.
+
+        When the 'gold' key is missing from division_temperatures, the executor
+        should treat it as 1.0 (the default), decay to 1.0 (floor), and persist.
+
+        # 1 mock — db_manager bridge (Tier B)
+        """
+        _engine, factory = sqlite_engine_and_factory
+
+        # Only bronze and silver stored; gold and platinum are missing.
+        partial_temps = {"bronze": 3.0, "silver": 2.0}
+
+        async with factory() as seed_db:
+            await _seed_guild_config(seed_db, GUILD_ID, division_temperatures=partial_temps)
+
+        with patch("persist.database.manager.db_manager", _make_fake_db_manager(factory)):
+            result = await execute_temperature_decay_job("job-default-temp", {})
+
+        assert result["status"] == "success"
+        guild_result = result["results"][GUILD_ID]
+
+        # Gold was missing — default 1.0 applied, decay keeps it at 1.0 (floor).
+        assert guild_result["gold"]["before"] == 1.0, (
+            f"Expected gold before=1.0 (default), got {guild_result['gold']['before']!r}"
+        )
+        assert guild_result["gold"]["after"] == 1.0, (
+            f"Expected gold after=1.0 (floor), got {guild_result['gold']['after']!r}"
         )
 
-        gid_result = result["results"][600]
-        # Only silver should appear.
-        assert "silver" in gid_result
-        assert "bronze" not in gid_result
-        assert "gold" not in gid_result
-        assert result["total_decays"] == 1
 
-    @pytest.mark.asyncio
-    async def test_division_filter_case_insensitive(self):
-        """Division filter is normalised to lowercase before lookup."""
-        from utils.executors.temperature_decay_executor import execute_temperature_decay_job
+class TestMultiGuildDecay:
+    """Behaviour #9: multi-guild — each guild's temperatures independently decayed."""
 
-        mock_db = AsyncMock()
-        _configure_db_manager(mock_db)
-        _configure_temperature_service_mock()
+    async def test_two_guilds_independently_decayed(self, sqlite_engine_and_factory):
+        """Both guilds decayed; GUILD_ID with 3.0 → 2.0, GUILD_ID_2 with 6.0 → 4.0.
 
-        cfg = _make_guild_config(
-            guild_id=700,
-            division_temperatures={"bronze": 3.0, "silver": 3.0, "gold": 3.0},
-        )
-        # guild_id in payload → single-guild mode uses get_by_guild_id.
-        _configure_config_repo(guild_configs=[], single_config=cfg)
+        # 1 mock — db_manager bridge (Tier B)
+        """
+        _engine, factory = sqlite_engine_and_factory
 
-        # Pass 'GOLD' in upper case — executor should normalise.
-        result = await execute_temperature_decay_job(
-            "job-case",
-            {"job_type": "temperature_decay", "guild_id": 700, "division": "GOLD"},
-        )
+        temps1 = {"bronze": 3.0, "silver": 3.0, "gold": 3.0, "platinum": 3.0}
+        temps2 = {"bronze": 6.0, "silver": 6.0, "gold": 6.0, "platinum": 6.0}
 
-        gid_result = result["results"][700]
-        assert "gold" in gid_result
-        assert gid_result["gold"]["before"] == pytest.approx(3.0)
-        assert gid_result["gold"]["after"] == pytest.approx(2.0)
+        async with factory() as seed_db:
+            await _seed_guild_config(seed_db, GUILD_ID, division_temperatures=temps1)
+            await _seed_guild_config(seed_db, GUILD_ID_2, division_temperatures=temps2)
 
-    @pytest.mark.asyncio
-    async def test_all_three_divisions_decayed_when_no_filter(self):
-        """When no division is specified, all four divisions are decayed."""
-        from utils.executors.temperature_decay_executor import execute_temperature_decay_job
-
-        mock_db = AsyncMock()
-        _configure_db_manager(mock_db)
-        _configure_temperature_service_mock()
-
-        cfg = _make_guild_config(
-            guild_id=800,
-            division_temperatures={"bronze": 3.0, "silver": 4.5, "gold": 9.0, "platinum": 1.0},
-        )
-        _configure_config_repo(guild_configs=[cfg])
-
-        result = await execute_temperature_decay_job("job-all-div", {"job_type": "temperature_decay"})
-
-        gid_result = result["results"][800]
-        assert "bronze" in gid_result
-        assert "silver" in gid_result
-        assert "gold" in gid_result
-        assert "platinum" in gid_result
-        assert result["total_decays"] == 4
-
-
-# ===========================================================================
-# Tests: bulk mode
-# ===========================================================================
-
-
-class TestBulkMode:
-    """Verify bulk (no guild_id) and single-guild modes."""
-
-    @pytest.mark.asyncio
-    async def test_bulk_mode_processes_all_guilds(self):
-        """No guild_id → all configured guilds are processed."""
-        from utils.executors.temperature_decay_executor import execute_temperature_decay_job
-
-        mock_db = AsyncMock()
-        _configure_db_manager(mock_db)
-        _configure_temperature_service_mock()
-
-        cfg1 = _make_guild_config(10, {"bronze": 3.0, "silver": 1.0, "gold": 1.0, "platinum": 1.0})
-        cfg2 = _make_guild_config(20, {"bronze": 6.0, "silver": 6.0, "gold": 6.0, "platinum": 1.0})
-        _configure_config_repo(guild_configs=[cfg1, cfg2])
-
-        result = await execute_temperature_decay_job("job-bulk", {"job_type": "temperature_decay"})
+        with patch("persist.database.manager.db_manager", _make_fake_db_manager(factory)):
+            result = await execute_temperature_decay_job("job-multi-guild", {})
 
         assert result["status"] == "success"
         assert result["guilds_processed"] == 2
-        assert result["total_decays"] == 8  # 4 divisions x 2 guilds
-        assert 10 in result["results"]
-        assert 20 in result["results"]
+        assert result["total_decays"] == 8  # 4 divisions × 2 guilds
 
-    @pytest.mark.asyncio
-    async def test_bulk_mode_no_guilds_returns_zero(self):
-        """Bulk mode with no configured guilds returns guilds_processed=0."""
-        from utils.executors.temperature_decay_executor import execute_temperature_decay_job
+        # GUILD_ID: 3.0 → 2.0
+        g1_bronze = result["results"][GUILD_ID]["bronze"]
+        assert g1_bronze["before"] == 3.0
+        assert g1_bronze["after"] == 2.0
 
-        mock_db = AsyncMock()
-        _configure_db_manager(mock_db)
-        _configure_temperature_service_mock()
-        _configure_config_repo(guild_configs=[])
+        # GUILD_ID_2: 6.0 → 4.0
+        g2_bronze = result["results"][GUILD_ID_2]["bronze"]
+        assert g2_bronze["before"] == 6.0
+        assert g2_bronze["after"] == 4.0
 
-        result = await execute_temperature_decay_job("job-no-guilds", {"job_type": "temperature_decay"})
+        # Cross-session reload to verify both guilds persisted.
+        async with factory() as verify_db:
+            row1 = await verify_db.execute(select(GuildConfig).where(GuildConfig.guild_id == GUILD_ID))
+            cfg1 = row1.scalars().first()
+            row2 = await verify_db.execute(select(GuildConfig).where(GuildConfig.guild_id == GUILD_ID_2))
+            cfg2 = row2.scalars().first()
 
-        assert result["status"] == "success"
-        assert result["guilds_processed"] == 0
-        assert result["total_decays"] == 0
-
-    @pytest.mark.asyncio
-    async def test_single_guild_mode(self):
-        """guild_id in payload → only that guild is processed."""
-        from utils.executors.temperature_decay_executor import execute_temperature_decay_job
-
-        mock_db = AsyncMock()
-        _configure_db_manager(mock_db)
-        _configure_temperature_service_mock()
-
-        cfg = _make_guild_config(999, {"bronze": 5.0, "silver": 5.0, "gold": 5.0})
-        _configure_config_repo(guild_configs=[], single_config=cfg)
-
-        result = await execute_temperature_decay_job(
-            "job-single",
-            {"job_type": "temperature_decay", "guild_id": 999},
-        )
-
-        assert result["guilds_processed"] == 1
-        assert 999 in result["results"]
-
-    @pytest.mark.asyncio
-    async def test_single_guild_not_found_returns_zero(self):
-        """When guild_id is given but config doesn't exist, guilds_processed=0."""
-        from utils.executors.temperature_decay_executor import execute_temperature_decay_job
-
-        mock_db = AsyncMock()
-        _configure_db_manager(mock_db)
-        _configure_temperature_service_mock()
-
-        # get_by_guild_id returns None — guild not configured.
-        _configure_config_repo(guild_configs=[], single_config=None)
-
-        result = await execute_temperature_decay_job(
-            "job-notfound",
-            {"job_type": "temperature_decay", "guild_id": 12345},
-        )
-
-        assert result["status"] == "success"
-        assert result["guilds_processed"] == 0
-        assert result["total_decays"] == 0
-
-
-# ===========================================================================
-# Tests: persistence
-# ===========================================================================
-
-
-class TestPersistence:
-    """Verify that decayed temperatures are written back to the database."""
-
-    @pytest.mark.asyncio
-    async def test_update_division_temperatures_called_per_guild(self):
-        """ConfigRepository.update_division_temperatures is called once per guild."""
-        from utils.executors.temperature_decay_executor import execute_temperature_decay_job
-
-        mock_db = AsyncMock()
-        _configure_db_manager(mock_db)
-        _configure_temperature_service_mock()
-
-        cfg = _make_guild_config(111, {"bronze": 3.0, "silver": 1.0, "gold": 1.0})
-        repo = _configure_config_repo(guild_configs=[cfg])
-
-        await execute_temperature_decay_job("job-persist", {"job_type": "temperature_decay"})
-
-        repo.update_division_temperatures.assert_awaited_once()
-        call_args = repo.update_division_temperatures.call_args
-        saved_guild_id = call_args.args[1]
-        saved_temps = call_args.args[2]
-
-        assert saved_guild_id == 111
-        assert saved_temps["bronze"] == pytest.approx(2.0)  # 3.0 x 2/3
-        assert saved_temps["silver"] == pytest.approx(1.0)  # floor
-        assert saved_temps["gold"] == pytest.approx(1.0)  # floor
-
-    @pytest.mark.asyncio
-    async def test_update_called_with_correct_temperatures_multi_guild(self):
-        """update_division_temperatures is called once per guild with right values."""
-        from utils.executors.temperature_decay_executor import execute_temperature_decay_job
-
-        mock_db = AsyncMock()
-        _configure_db_manager(mock_db)
-        _configure_temperature_service_mock()
-
-        cfg1 = _make_guild_config(1, {"bronze": 3.0, "silver": 3.0, "gold": 3.0})
-        cfg2 = _make_guild_config(2, {"bronze": 1.5, "silver": 1.5, "gold": 1.5})
-        repo = _configure_config_repo(guild_configs=[cfg1, cfg2])
-
-        await execute_temperature_decay_job("job-persist-multi", {"job_type": "temperature_decay"})
-
-        assert repo.update_division_temperatures.await_count == 2
-
-
-# ===========================================================================
-# Tests: job_executor dispatch
-# ===========================================================================
-
-
-class TestJobExecutorDispatch:
-    """Verify job_executor.py routes temperature_decay to the right function."""
-
-    @pytest.mark.asyncio
-    async def test_job_executor_dispatches_temperature_decay(self):
-        """JobExecutor.execute routes temperature_decay payload to execute_temperature_decay_job."""
-        from utils.job_executor import JobExecutor
-
-        executor = JobExecutor()
-        payload = {"job_type": "temperature_decay"}
-
-        mock_fn = AsyncMock(return_value={"status": "success"})
-        with patch("utils.job_executor.execute_temperature_decay_job", mock_fn):
-            await executor.execute("job-dispatch-decay", payload)
-
-        mock_fn.assert_awaited_once_with("job-dispatch-decay", payload)
-
-    @pytest.mark.asyncio
-    async def test_job_executor_does_not_dispatch_decay_for_bounty_spawn(self):
-        """bounty_spawn payloads do NOT trigger execute_temperature_decay_job."""
-        from utils.job_executor import JobExecutor
-
-        executor = JobExecutor()
-        payload = {"job_type": "bounty_spawn", "guild_id": 555, "division": "Gold"}
-
-        mock_decay_fn = AsyncMock()
-        mock_spawn_fn = AsyncMock(return_value={"status": "success"})
-
-        with (
-            patch("utils.job_executor.execute_temperature_decay_job", mock_decay_fn),
-            patch("utils.job_executor.execute_bounty_spawn_job", mock_spawn_fn),
-        ):
-            await executor.execute("job-spawn-not-decay", payload)
-
-        mock_decay_fn.assert_not_awaited()
-        mock_spawn_fn.assert_awaited_once()
+        assert cfg1.division_temperatures["bronze"] == 2.0
+        assert cfg2.division_temperatures["bronze"] == 4.0

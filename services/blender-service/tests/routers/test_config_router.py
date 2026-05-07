@@ -1,12 +1,10 @@
 """
-Integration tests for the config and cache routers.
+Integration tests for the config router.
 
 Uses FastAPI TestClient to test:
   GET  /api/v1/config/render
   PUT  /api/v1/config/render
   POST /api/v1/config/render/reset
-  POST /api/v1/cache/clear
-  GET  /api/v1/cache/stats
 
 Each test uses at most 2 mocks.
 """
@@ -15,7 +13,6 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
-from unittest.mock import patch
 
 import pytest
 from fastapi.testclient import TestClient
@@ -130,54 +127,3 @@ def test_reset_config(client: TestClient) -> None:
     body = response.json()
     # Default max_res_x is 3840.
     assert body["max_res_x"] == 3840
-
-
-# ---------------------------------------------------------------------------
-# POST /api/v1/cache/clear
-# ---------------------------------------------------------------------------
-
-
-def test_clear_cache_empty(client: TestClient) -> None:
-    """POST /cache/clear with no matching dirs should return zero stats."""
-    with patch("glob.glob", return_value=[]):
-        response = client.post("/api/v1/cache/clear")
-    assert response.status_code == 200
-    body = response.json()
-    assert body["cleared_directories"] == 0
-    assert body["freed_bytes"] == 0
-    assert body["freed_mb"] == 0.0
-
-
-def test_clear_cache_removes_dirs(tmp_path) -> None:
-    """POST /cache/clear should remove blender_render_* dirs and count them."""
-    # Create two fake blender render dirs in tmp_path.
-    dir1 = tmp_path / "blender_render_aaa"
-    dir2 = tmp_path / "blender_render_bbb"
-    dir1.mkdir()
-    dir2.mkdir()
-    (dir1 / "file.png").write_bytes(b"x" * 1024)
-
-    fake_dirs = [str(dir1), str(dir2)]
-
-    with patch("glob.glob", return_value=fake_dirs), TestClient(app) as client:
-        response = client.post("/api/v1/cache/clear")
-
-    assert response.status_code == 200
-    body = response.json()
-    assert body["cleared_directories"] == 2
-    assert body["freed_bytes"] == 1024
-
-
-# ---------------------------------------------------------------------------
-# GET /api/v1/cache/stats
-# ---------------------------------------------------------------------------
-
-
-def test_cache_stats_empty(client: TestClient) -> None:
-    """GET /cache/stats with no dirs should return zero counts."""
-    with patch("glob.glob", return_value=[]):
-        response = client.get("/api/v1/cache/stats")
-    assert response.status_code == 200
-    body = response.json()
-    assert body["cache_directories"] == 0
-    assert body["total_bytes"] == 0

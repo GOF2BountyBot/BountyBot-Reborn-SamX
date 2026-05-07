@@ -14,7 +14,7 @@ from __future__ import annotations
 import sys
 from io import BytesIO
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
@@ -136,6 +136,7 @@ def test_convert_quality_too_high_returns_400(client: TestClient) -> None:
         files=[_image_upload()],
     )
     assert response.status_code == 400
+    assert "quality" in response.json()["detail"].lower()
 
 
 def test_convert_aepi_unavailable_returns_422(client: TestClient) -> None:
@@ -436,7 +437,7 @@ def test_composite_compositing_failure_returns_500(client: TestClient, ship_dir:
     """When the compositing service raises an exception, the router returns HTTP 500."""
     with patch(
         "routers.textures._service.composite_textures",
-        side_effect=RuntimeError("Compositing failed"),
+        new=MagicMock(side_effect=RuntimeError("Compositing failed")),
     ):
         response = client.post(
             "/api/v1/textures/composite",

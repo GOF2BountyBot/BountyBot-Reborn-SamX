@@ -229,6 +229,7 @@ def test_download_result_processing_job_returns_409(client: TestClient, mock_job
     response = client.get("/api/v1/jobs/proc001/result")
 
     assert response.status_code == 409
+    assert "not complete" in response.json()["detail"].lower()
 
 
 def test_download_result_failed_job_returns_409(client: TestClient, mock_job_queue: MagicMock) -> None:
@@ -239,6 +240,7 @@ def test_download_result_failed_job_returns_409(client: TestClient, mock_job_que
     response = client.get("/api/v1/jobs/fail001/result")
 
     assert response.status_code == 409
+    assert "not complete" in response.json()["detail"].lower()
 
 
 def test_download_result_complete_result_file_missing_returns_404(

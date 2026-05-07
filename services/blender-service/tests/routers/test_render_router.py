@@ -219,6 +219,7 @@ def test_render_missing_texture(client: TestClient) -> None:
         # deliberately omit the texture file
     )
     assert response.status_code == 422
+    assert len(response.json()["detail"]) > 0
 
 
 def test_render_missing_model_path(client: TestClient) -> None:
@@ -234,6 +235,11 @@ def test_render_missing_model_path(client: TestClient) -> None:
         files=[_make_texture_upload()],
     )
     assert response.status_code == 422
+    detail = response.json()["detail"]
+    assert len(detail) > 0
+    # FastAPI places the missing field name in the loc array
+    locs = [str(err.get("loc", "")) for err in detail]
+    assert any("model_path" in loc for loc in locs)
 
 
 # ---------------------------------------------------------------------------
@@ -391,6 +397,7 @@ def test_async_render_missing_texture(client: TestClient) -> None:
         },
     )
     assert response.status_code == 422
+    assert len(response.json()["detail"]) > 0
 
 
 # ---------------------------------------------------------------------------

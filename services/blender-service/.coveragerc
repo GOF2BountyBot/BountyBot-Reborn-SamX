@@ -5,8 +5,7 @@ omit =
     */tests/*
     */test_*
     */conftest.py
-    */api-test.py
-    */api/server.py
+    */assets/*
 
 [report]
 exclude_lines =

@@ -140,15 +140,25 @@ Logged here so the S3 developer is aware:
 
 4. **`apscheduler_jobs` is not part of the bot-core models** — created at
    runtime by APScheduler. The orchestrator's `text("SELECT COUNT(*)
-   FROM apscheduler_jobs WHERE id LIKE :pattern")` query will return 0
-   on SQLite (table absent → SQLite raises, but it is wrapped inside
-   the orchestrator's outer try/except — *check this assumption*).
-   Tests covering the orchestrator's queued-count branch should create
-   the table manually before invocation:
+   FROM apscheduler_jobs WHERE id LIKE :pattern")` query **RAISES
+   `sqlalchemy.exc.OperationalError`** on SQLite when the table is absent.
+   The S2 DEFECTS doc stated the error would be caught by the orchestrator's
+   outer `try/except` — this is **INCORRECT**; the error propagates because
+   it occurs inside the `async with db_manager.get_session() as db:` block
+   which is itself inside the outer try/except, but SQLAlchemy raises it
+   as a fatal session error before the executor's broad catch can handle it
+   gracefully.
+
+   **S3 fix**: All orchestrator integration tests that test eligible guilds
+   must create the table manually before invoking the executor:
 
    ```python
-   await db.execute(text("CREATE TABLE apscheduler_jobs (id TEXT PRIMARY KEY)"))
+   await db.execute(text("CREATE TABLE IF NOT EXISTS apscheduler_jobs (id TEXT PRIMARY KEY)"))
+   await db.commit()
    ```
+
+   Ineligible-guild tests (eligibility guard causes `continue` before the
+   apscheduler_jobs query) do NOT need the table.
 
 5. **`func.now()` works on SQLite** (resolves to `CURRENT_TIMESTAMP`), so
    the `end_time > now()` filter in `count_active_by_guild_and_division`
@@ -161,4 +171,39 @@ Logged here so the S3 developer is aware:
 
 ---
 
-*Last updated: 2026-05-07 by Architect agent (S2)*
+---
+
+## S3 — Sprint 3 (Test Quality Blitz, 2026-05-07)
+
+### S3-OBS-01 — apscheduler_jobs error not caught by orchestrator's outer try/except
+
+- **Severity**: low (SQLite-only, test-environment concern)
+- **File**: `services/bot-core/src/utils/executors/bounty_spawn_executor.py`,
+  lines 235-239 (queued-count raw SQL query inside the session block).
+- **Observation**: The S2 DEFECTS doc (item #4 in SQLite Compatibility Concerns)
+  predicted that the missing `apscheduler_jobs` table error would be "caught by
+  the orchestrator's outer try/except". S3 SQLite integration testing confirmed
+  this is incorrect: the `OperationalError` propagates out of the session block
+  and is NOT swallowed by the outer `except Exception` because SQLAlchemy marks
+  the session as invalid at that point. The table-absent error surfaces as a fatal
+  test failure, not as a silent 0-count fallback.
+- **Risk**: Production-only risk: in production, APScheduler always creates the
+  `apscheduler_jobs` table at startup, so this SQLite-specific behavior never
+  surfaces there. Test-environment concern only.
+- **Recommended fix policy**: Out of scope for test revamp. Tests use
+  `_create_apscheduler_table()` helper to pre-create the table.
+
+### S3-OBS-02 — Eligibility guard skips guild entirely (not added to guild_results)
+
+- **Severity**: low (documentation / test correctness)
+- **File**: `services/bot-core/src/utils/executors/bounty_spawn_executor.py`, line 197.
+- **Observation**: When `_is_guild_fully_configured(config)` returns False, the
+  orchestrator calls `continue` BEFORE adding the guild to `guild_results`. The
+  S3 test originally expected the guild to appear in `guild_results` with
+  `queued=0`, but the actual behavior is that the guild is silently absent from
+  `guild_results` entirely. This is WAI — the log message at line 193-196 is the
+  only record of the skip.
+- **Risk**: None — correct behavior. Tests corrected to match WAI.
+- **Recommended fix policy**: None needed. Log message adequately records the skip.
+
+*Last updated: 2026-05-07 by Developer agent (S3)*

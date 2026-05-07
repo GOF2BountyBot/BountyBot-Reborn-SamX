@@ -207,3 +207,47 @@ Logged here so the S3 developer is aware:
 - **Recommended fix policy**: None needed. Log message adequately records the skip.
 
 *Last updated: 2026-05-07 by Developer agent (S3)*
+
+---
+
+## S5 — Sprint 5 (Structural Surgery on test_bounty_service.py, 2026-05-07)
+
+### S5-OBS-01 — sys.modules class-identity conflict between integration and unit tests
+
+- **Severity**: low (test-environment concern, no production impact)
+- **File**: All `tests/integration/test_*.py` that purge `services.*` from `sys.modules`.
+- **Observation**: When integration test files that purge `services.*` entries from
+  `sys.modules` (e.g. `test_cross_session_persistence.py`) are collected in the same
+  pytest run as `tests/services/test_bounty_service.py`, Python's class-identity
+  check (`isinstance(obj, SomeClass)`) and enum value comparisons can fail because
+  the class was loaded twice — once from the test discovery path and once from
+  `src/` after the purge. The symptom is `assert <Enum.X: 'x'> == <Enum.X: 'x'>`
+  printing as equal but `assert` failing (two distinct class objects).
+  This is NOT a production bug — it only manifests in the test harness when
+  both file types are collected together.
+- **Risk**: Confusing test failures when running the full suite. Each file passes
+  independently.
+- **Fix applied in S5**: `test_bounty_service_integration.py` omits the `services.*`
+  purge to preserve class identity with the co-collected unit tests. Other integration
+  files retain the purge as they previously worked around this issue through
+  collection ordering.
+- **Recommended fix policy**: Future integration test files that call services
+  directly (rather than via HTTP/ASGI) should follow the same pattern: purge
+  only `api.*` and `persist.*`, not `services.*`.
+
+### S5-OBS-02 — distribute_rewards contains an inner db.commit() inside check_bounty's outer commit loop
+
+- **Severity**: low (double-commit is idempotent in SQLAlchemy but adds overhead)
+- **File**: `services/bot-core/src/services/bounty_service.py`, line 1587.
+- **Observation**: `distribute_rewards` issues `await db.commit()` internally. The
+  calling method `check_bounty` also issues an explicit `await db.commit()` at
+  line 1074 to commit all per-bounty mutations atomically. The inner commit (in
+  `distribute_rewards`) fires first, committing credits/XP mutations. Then the outer
+  commit in `check_bounty` fires, which is a no-op (nothing pending). This is WAI
+  and intentional per the B.34 closure comment in the source (lines 1574-1583), but
+  the double-commit pattern is non-obvious and could surprise future maintainers.
+- **Risk**: None in production. Academic double-commit is safe in SQLAlchemy.
+- **Recommended fix policy**: Document only. A future refactor could hoist commit
+  authority exclusively to `check_bounty`, but this is out of scope for test revamp.
+
+*Last updated: 2026-05-07 by Developer agent (S5)*

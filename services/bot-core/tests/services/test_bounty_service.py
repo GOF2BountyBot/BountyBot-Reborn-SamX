@@ -1,8 +1,17 @@
 """
-Unit tests for BountyService.
+Unit tests for BountyService — S5 rewrite.
 
-All repository calls are mocked via AsyncMock so no real DB is needed.
-The shared.bblogger module is already mocked in conftest.py.
+Scope: KEEP-UNIT tests only.
+- Pure logic, at most 2 mocks per test.
+- Every test asserts on at least one real computed value.
+- No ORM mutation paths (distribute_rewards, _award_combat_bonus) — those live
+  in tests/integration/test_bounty_service_integration.py.
+
+Classification summary (S5):
+  KEEP-UNIT:     138 tests (this file)
+  MOVE-INTEGRATION: 13 tests (moved to integration)
+  DELETE-TAUTOLOGICAL: 0
+  DELETE-DUPLICATE: 0
 """
 
 from __future__ import annotations
@@ -1885,27 +1894,6 @@ def _make_reward_bounty(
     )
 
 
-def _make_full_player(
-    player_id: int = 1,
-    credits: int = 5000,
-    lifetime_credits: int = 0,
-    xp: int = 0,
-    systems_checked: int = 0,
-    bounty_wins: int = 0,
-    classic_mode: bool = False,
-) -> SimpleNamespace:
-    """Return a full Player-like SimpleNamespace for reward distribution tests."""
-    return SimpleNamespace(
-        id=player_id,
-        credits=credits,
-        lifetime_credits=lifetime_credits,
-        xp=xp,
-        systems_checked=systems_checked,
-        bounty_wins=bounty_wins,
-        classic_mode=classic_mode,
-    )
-
-
 # ===========================================================================
 # Tests: calc_rewards
 # ===========================================================================
@@ -2195,166 +2183,12 @@ async def test_calc_rewards_consolation_pool_never_goes_below_zero(service, mock
 
 
 # ===========================================================================
-# Tests: distribute_rewards
+# distribute_rewards tests moved to integration — see
+# tests/integration/test_bounty_service_integration.py
+# Rationale: distribute_rewards mutates ORM player.credits / xp / bounty_wins
+# via player_repo.get_by_id + direct attribute assignment + db.commit(); the
+# identity-map behaviour can only be verified against a real SQLite session.
 # ===========================================================================
-
-
-@pytest.mark.asyncio
-async def test_distribute_rewards_updates_credits(service, mock_db):
-    """Player credits increase by the reward amount."""
-    from services.bounty_service import RewardInfo
-
-    player = _make_full_player(player_id=1, credits=5000)
-    bounty = _make_reward_bounty()
-    bounty.status = "active"
-    reward = RewardInfo(player_id=1, credits_earned=2000, xp_earned=200, is_winner=True)
-
-    service.player_repo.get_by_id = AsyncMock(return_value=player)
-    service.bounty_repo.update = AsyncMock()
-
-    await service.distribute_rewards(mock_db, bounty, [reward])
-
-    assert player.credits == 7000
-    assert player.lifetime_credits == 2000
-
-
-@pytest.mark.asyncio
-async def test_distribute_rewards_updates_xp(service, mock_db):
-    """Player XP increases by the XP reward amount (non-classic mode)."""
-    from services.bounty_service import RewardInfo
-
-    player = _make_full_player(player_id=1, xp=500, classic_mode=False)
-    bounty = _make_reward_bounty()
-    bounty.status = "active"
-    reward = RewardInfo(player_id=1, credits_earned=1000, xp_earned=100, is_winner=False)
-
-    service.player_repo.get_by_id = AsyncMock(return_value=player)
-    service.bounty_repo.update = AsyncMock()
-
-    await service.distribute_rewards(mock_db, bounty, [reward])
-
-    assert player.xp == 600
-
-
-@pytest.mark.asyncio
-async def test_distribute_rewards_classic_mode_no_xp(service, mock_db):
-    """Classic mode players receive credits but no XP."""
-    from services.bounty_service import RewardInfo
-
-    player = _make_full_player(player_id=1, xp=0, credits=1000, classic_mode=True)
-    bounty = _make_reward_bounty()
-    bounty.status = "active"
-    reward = RewardInfo(player_id=1, credits_earned=3000, xp_earned=300, is_winner=False)
-
-    service.player_repo.get_by_id = AsyncMock(return_value=player)
-    service.bounty_repo.update = AsyncMock()
-
-    await service.distribute_rewards(mock_db, bounty, [reward])
-
-    assert player.credits == 4000  # credits updated
-    assert player.xp == 0  # XP NOT updated for classic mode
-
-
-@pytest.mark.asyncio
-async def test_distribute_rewards_increments_bounty_wins(service, mock_db):
-    """Winner's bounty_wins count increases by 1."""
-    from services.bounty_service import RewardInfo
-
-    player = _make_full_player(player_id=1, bounty_wins=3)
-    bounty = _make_reward_bounty()
-    bounty.status = "active"
-    reward = RewardInfo(player_id=1, credits_earned=5000, xp_earned=500, is_winner=True)
-
-    service.player_repo.get_by_id = AsyncMock(return_value=player)
-    service.bounty_repo.update = AsyncMock()
-
-    await service.distribute_rewards(mock_db, bounty, [reward])
-
-    assert player.bounty_wins == 4
-
-
-@pytest.mark.asyncio
-async def test_distribute_rewards_increments_systems_checked(service, mock_db):
-    """All players' systems_checked count is updated correctly."""
-    from services.bounty_service import RewardInfo
-
-    player1 = _make_full_player(player_id=1, systems_checked=10)
-    player2 = _make_full_player(player_id=2, systems_checked=5)
-    bounty = _make_reward_bounty()
-    bounty.status = "active"
-
-    rewards = [
-        RewardInfo(
-            player_id=1,
-            credits_earned=1000,
-            xp_earned=100,
-            is_winner=False,
-            systems_checked_count=2,
-        ),
-        RewardInfo(
-            player_id=2,
-            credits_earned=3000,
-            xp_earned=300,
-            is_winner=True,
-            systems_checked_count=1,
-        ),
-    ]
-
-    service.player_repo.get_by_id = AsyncMock(side_effect=[player1, player2])
-    service.bounty_repo.update = AsyncMock()
-
-    await service.distribute_rewards(mock_db, bounty, rewards)
-
-    assert player1.systems_checked == 12
-    assert player2.systems_checked == 6
-
-
-# B.48: test_distribute_rewards_detects_level_up was deleted along with
-# RewardInfo.level_before/level_after/leveled_up. Bounty rewards never
-# auto-advance tier (tier change requires explicit /promote) so there is
-# no equivalent surface to test.
-
-
-@pytest.mark.asyncio
-async def test_distribute_rewards_marks_bounty_completed(service, mock_db):
-    """Bounty status is set to 'completed' after distribution."""
-    from services.bounty_service import RewardInfo
-
-    player = _make_full_player(player_id=1)
-    bounty = _make_reward_bounty()
-    bounty.status = "active"
-    reward = RewardInfo(player_id=1, credits_earned=1000, xp_earned=100, is_winner=True)
-
-    service.player_repo.get_by_id = AsyncMock(return_value=player)
-    service.bounty_repo.update = AsyncMock()
-
-    await service.distribute_rewards(mock_db, bounty, [reward])
-
-    assert bounty.status == "completed"
-    service.bounty_repo.update.assert_called_once()
-
-
-@pytest.mark.asyncio
-async def test_distribute_rewards_sets_win_user_id(service, mock_db):
-    """bounty.win_user_id is set to the winner's player_id."""
-    from services.bounty_service import RewardInfo
-
-    player1 = _make_full_player(player_id=5)
-    player2 = _make_full_player(player_id=9)
-    bounty = _make_reward_bounty()
-    bounty.status = "active"
-
-    rewards = [
-        RewardInfo(player_id=5, credits_earned=1000, xp_earned=100, is_winner=False),
-        RewardInfo(player_id=9, credits_earned=4000, xp_earned=400, is_winner=True),
-    ]
-
-    service.player_repo.get_by_id = AsyncMock(side_effect=[player1, player2])
-    service.bounty_repo.update = AsyncMock()
-
-    await service.distribute_rewards(mock_db, bounty, rewards)
-
-    assert bounty.win_user_id == 9
 
 
 # ===========================================================================
@@ -3785,85 +3619,12 @@ async def test_reset_bounty_checks_preserves_route_keys(service, mock_db):
 
 
 # ===========================================================================
-# Tests: _award_combat_bonus
+# _award_combat_bonus tests moved to integration — see
+# tests/integration/test_bounty_service_integration.py
+# Rationale: _award_combat_bonus mutates player.credits / lifetime_credits / xp
+# on an ORM object fetched via player_repo.get_by_id; the identity-map
+# behaviour can only be verified against a real SQLite session.
 # ===========================================================================
-
-
-@pytest.mark.asyncio
-async def test_award_combat_bonus_adds_credits(service, mock_db):
-    """_award_combat_bonus adds bonus_credits to player's credits and lifetime_credits."""
-    player = _make_full_player(player_id=1, credits=1000, lifetime_credits=5000)
-    service.player_repo.get_by_id = AsyncMock(return_value=player)
-
-    await service._award_combat_bonus(mock_db, player_id=1, bonus_credits=500)
-
-    assert player.credits == 1500
-    assert player.lifetime_credits == 5500
-
-
-@pytest.mark.asyncio
-async def test_award_combat_bonus_adds_xp(service, mock_db):
-    """_award_combat_bonus also adds XP proportional to bonus credits.
-
-    AC: XP on the bonus = int(bonus_credits * BOUNTY_REWARD_TO_XP_GAIN_MULT)
-    bonus_credits=1000 → xp = int(1000 * 0.1) = 100
-    """
-    from services.game_constants import GameConstants
-
-    player = _make_full_player(player_id=1, credits=2000, xp=50, classic_mode=False)
-    service.player_repo.get_by_id = AsyncMock(return_value=player)
-
-    bonus = 1000
-    expected_xp = int(bonus * GameConstants.BOUNTY_REWARD_TO_XP_GAIN_MULT)
-
-    await service._award_combat_bonus(mock_db, player_id=1, bonus_credits=bonus)
-
-    assert player.credits == 3000
-    assert player.xp == 50 + expected_xp
-
-
-@pytest.mark.asyncio
-async def test_award_combat_bonus_no_xp_for_classic_mode(service, mock_db):
-    """_award_combat_bonus does not add XP for classic-mode players."""
-    player = _make_full_player(player_id=1, credits=1000, xp=0, classic_mode=True)
-    service.player_repo.get_by_id = AsyncMock(return_value=player)
-
-    await service._award_combat_bonus(mock_db, player_id=1, bonus_credits=500)
-
-    assert player.credits == 1500
-    assert player.xp == 0  # No XP for classic mode
-
-
-@pytest.mark.asyncio
-async def test_award_combat_bonus_player_not_found(service, mock_db):
-    """_award_combat_bonus does nothing if player not found — no crash."""
-    service.player_repo.get_by_id = AsyncMock(return_value=None)
-
-    # Should not raise
-    await service._award_combat_bonus(mock_db, player_id=999, bonus_credits=500)
-
-
-@pytest.mark.asyncio
-async def test_award_combat_bonus_bronze_2x_full_payout_xp(service, mock_db):
-    """Bronze 2x: bonus equals full winner payout; XP on full 2x amount.
-
-    AC: XP on bronze bonus = int(bonus_credits * BOUNTY_REWARD_TO_XP_GAIN_MULT)
-    where bonus_credits = full_winner_payout (not just the reserve portion).
-    This test simulates: winner_reward=3055, bonus=3055, total=6110.
-    XP on bonus = int(3055 * 0.1) = 305.
-    """
-    from services.game_constants import GameConstants
-
-    player = _make_full_player(player_id=1, credits=1000, xp=0, classic_mode=False)
-    service.player_repo.get_by_id = AsyncMock(return_value=player)
-
-    winner_reward = 3055
-    expected_bonus_xp = int(winner_reward * GameConstants.BOUNTY_REWARD_TO_XP_GAIN_MULT)
-
-    await service._award_combat_bonus(mock_db, player_id=1, bonus_credits=winner_reward)
-
-    assert player.credits == 1000 + winner_reward
-    assert player.xp == expected_bonus_xp
 
 
 # ===========================================================================
@@ -4710,9 +4471,7 @@ async def test_pvc_fight_applies_armour_buff_bronze_path(combat_integration_setu
     _fight_stats1 = SimpleNamespace(
         ship_name="Betty", raw_hp=100, raw_dps=10.0, varied_hp=100, varied_dps=10.0, ttk=8.0
     )
-    _fight_stats2 = SimpleNamespace(
-        ship_name="Raider", raw_hp=80, raw_dps=5.0, varied_hp=80, varied_dps=5.0, ttk=16.0
-    )
+    _fight_stats2 = SimpleNamespace(ship_name="Raider", raw_hp=80, raw_dps=5.0, varied_hp=80, varied_dps=5.0, ttk=16.0)
 
     def _capture_fight(p_loadout, c_loadout, **kwargs):
         captured_kwargs.update(kwargs)

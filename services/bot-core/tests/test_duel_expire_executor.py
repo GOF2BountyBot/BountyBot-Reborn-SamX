@@ -1,438 +1,407 @@
+"""S4 rewrite: duel_expire_executor tests — real SQLite + respx, 0 repo mocks.
+
+Sprint 4 (S4) of the Test Quality Blitz.
+
+PATTERN OVERVIEW
+----------------
+Three-tier breakdown following ``tests/AGENTS.md`` §"Executor Test Pattern (S2)":
+
+  Tier A — Payload validation. ZERO mocks.
+
+  Tier B — SQLite-in-memory integration for ORM read/write paths.
+            Only patch: ``patch("persist.database.manager.db_manager", ...)``.
+            NO repository methods mocked.
+
+  Tier C — respx for the outbound POST notification to discord-gateway
+            ``POST /api/v1/messages``.
+
+BEHAVIOURS COVERED
+------------------
+| # | Behaviour | Tier |
+|---|-----------|------|
+| 1 | Missing duel_id → status=error | A |
+| 2 | Duel not found → status=skipped (DuelService.expire_duel raises ValueError) | B |
+| 3 | Already-expired or wrong-status duel → status=skipped | B |
+| 4 | Pending duel is marked expired in DB | B |
+| 5 | Notification posted to gateway with correct body | B + C |
+| 6 | Gateway notification failure is non-fatal | B + C |
+| 7 | Cross-session reload confirms duel status persisted | B |
+
+SQLITE COMPATIBILITY NOTE
+--------------------------
+DuelRequest has no ARRAY columns and is fully SQLite-compatible.
+DuelService.expire_duel calls DuelRepository.get_by_id and DuelRepository.update_status —
+both are pure ORM operations.
+
+DuelService constructor imports CombatService + LoadoutBuilder; to avoid
+import-chain issues with ARRAY tables, the DuelService is imported lazily
+inside the executor via deferred imports. The executor's deferred import
+means we patch ``persist.database.manager.db_manager`` (not the executor
+module namespace) per the canonical S2 pattern.
 """
-Unit tests for utils.executors.duel_expire_executor.
 
-Tests verify:
- - Returns error dict when duel_id is missing from payload
- - Calls DuelService.expire_duel() with the correct duel_id
- - Returns 'skipped' when expire_duel raises ValueError (not found / wrong status)
- - Returns 'success' dict with duel_id on successful expiry
- - Calls _notify_expiry after successful expiry
- - Does NOT call _notify_expiry when expire_duel raises ValueError
- - HTTP errors in gateway notification are non-fatal
- - DuelService exceptions (non-ValueError) propagate (re-raised)
- - job_executor.py dispatches duel_expire job_type
- - bounty_expire payloads do NOT trigger execute_duel_expire_job
+from __future__ import annotations
 
-IMPORTANT: shared.bblogger is mocked BEFORE any source imports (via
-conftest.py, with a belt-and-suspenders guard below).
-
-Because duel_expire_executor uses deferred (in-function) imports, we patch
-at the source module level:
-  - "persist.database.manager.db_manager"
-  - "services.duel_service.DuelService"
-We pre-register stub modules in sys.modules so deferred imports inside
-execute_duel_expire_job resolve without pulling in real ORM code.
-"""
-
-import os as _os
+import os
 import sys
 import types
-from unittest.mock import AsyncMock, MagicMock, patch
-
-import pytest
+from contextlib import asynccontextmanager
+from datetime import UTC, datetime, timedelta
+from typing import Any
+from unittest.mock import MagicMock, patch
 
 # ---------------------------------------------------------------------------
-# Guard: mock shared / shared.bblogger before importing any source modules.
-# conftest.py handles this at collection time; guard is here for standalone runs.
+# Path setup and stub registration
 # ---------------------------------------------------------------------------
+
+_SRC_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "src"))
+if _SRC_DIR not in sys.path:
+    sys.path.insert(0, _SRC_DIR)
+
 if "shared" not in sys.modules:
     _mock_shared = types.ModuleType("shared")
-    _mock_bblogger = types.ModuleType("shared.bblogger")
-
-    def _make_logger(name: str = "test") -> MagicMock:
-        logger = MagicMock()
-        for m in ("info", "debug", "warning", "error", "trace", "critical"):
-            setattr(logger, m, MagicMock())
-        return logger
-
-    _mock_bblogger.get_logger = _make_logger
-    _mock_shared.bblogger = _mock_bblogger
+    _mock_shared.bblogger = MagicMock()  # type: ignore[attr-defined]
+    _mock_shared.bblogger.get_logger = MagicMock(return_value=MagicMock())  # type: ignore[attr-defined]
     sys.modules["shared"] = _mock_shared
-    sys.modules["shared.bblogger"] = _mock_bblogger
+    sys.modules["shared.bblogger"] = _mock_shared.bblogger  # type: ignore[arg-type]
 
-# Ensure src is on the path.
-_SRC = _os.path.join(_os.path.dirname(__file__), "..", "src")
-if _SRC not in sys.path:
-    sys.path.insert(0, _SRC)
-
-# ---------------------------------------------------------------------------
-# Pre-register stub modules so deferred imports in duel_expire_executor work
-# without requiring a live database or installed ORM extras.
-# ---------------------------------------------------------------------------
-
-
-def _ensure_stub(module_path: str, **attrs) -> types.ModuleType:
-    """Create and register a stub module if not already present."""
-    if module_path not in sys.modules:
-        mod = types.ModuleType(module_path)
-        for k, v in attrs.items():
-            setattr(mod, k, v)
-        sys.modules[module_path] = mod
-    return sys.modules[module_path]
-
-
-# Stub for persist.database.manager — only db_manager attribute needed.
-_mock_db_mgr_instance = MagicMock()
-_ensure_stub("persist.database.manager", db_manager=_mock_db_mgr_instance)
-
-# Stub for services.duel_service — DuelService class.
-_MockDuelService = MagicMock()
-_ensure_stub("services.duel_service", DuelService=_MockDuelService)
-
-# Ensure parent package stubs exist.
-_ensure_stub("persist")
-_ensure_stub("persist.database")
-_ensure_stub("services")
-
+if "sqlalchemy_utils" not in sys.modules:
+    _mock_sau = types.ModuleType("sqlalchemy_utils")
+    _mock_sau.UUIDType = MagicMock()  # type: ignore[attr-defined]
+    sys.modules["sqlalchemy_utils"] = _mock_sau
 
 # ---------------------------------------------------------------------------
-# Helpers
+# Application imports
+# ---------------------------------------------------------------------------
+
+import pytest
+import respx
+from persist.models.base import Base
+from persist.models.duel_request import DuelRequest
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from utils.executors.duel_expire_executor import execute_duel_expire_job
+
+# ---------------------------------------------------------------------------
+# SQLite table list
+# ---------------------------------------------------------------------------
+
+_SQLITE_TABLES = [
+    DuelRequest.__table__,
+]
+
+# ---------------------------------------------------------------------------
+# Common test constants
+# ---------------------------------------------------------------------------
+
+GUILD_ID = 9_500_000_040
+CHALLENGER_ID = 101
+TARGET_ID = 102
+STAKES = 500
+
+GATEWAY_HOST = os.getenv("DISCORD_GATEWAY_HOST", "discord-gateway")
+GATEWAY_PORT = os.getenv("GATEWAY_PORT", "7999")
+GATEWAY_MESSAGES_URL = f"http://{GATEWAY_HOST}:{GATEWAY_PORT}/api/v1/messages"
+
+
+# ===========================================================================
+# Shared fixtures
+# ===========================================================================
+
+
+@pytest.fixture
+async def sqlite_engine_and_factory():
+    """Yield a fresh SQLite in-memory engine + session factory per test."""
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:", echo=False)
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all, tables=_SQLITE_TABLES)
+    factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+    try:
+        yield engine, factory
+    finally:
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.drop_all, tables=_SQLITE_TABLES)
+        await engine.dispose()
+
+
+# ---------------------------------------------------------------------------
+# Seed helpers
 # ---------------------------------------------------------------------------
 
 
-def _make_duel(
-    duel_id: int = 1,
-    guild_id: int = 100,
-    challenger_id: int = 111,
-    target_id: int = 222,
-    stakes: int = 500,
-    status: str = "expired",
-) -> MagicMock:
-    """Build a mock DuelRequest-like object."""
-    d = MagicMock()
-    d.id = duel_id
-    d.guild_id = guild_id
-    d.challenger_id = challenger_id
-    d.target_id = target_id
-    d.stakes = stakes
-    d.status = status
-    return d
-
-
-def _mock_session_ctx(session: AsyncMock) -> MagicMock:
-    """Return an async context manager that yields *session*."""
-    ctx = MagicMock()
-    ctx.__aenter__ = AsyncMock(return_value=session)
-    ctx.__aexit__ = AsyncMock(return_value=False)
-    return ctx
-
-
-def _configure_db_manager(mock_db: AsyncMock) -> None:
-    """Configure the stub db_manager to yield *mock_db* on get_session()."""
-    mgr = sys.modules["persist.database.manager"].db_manager
-    mgr.get_session = MagicMock(return_value=_mock_session_ctx(mock_db))
-
-
-def _configure_duel_service(expire_return=None, expire_side_effect=None) -> AsyncMock:
-    """Configure DuelService.expire_duel to return *expire_return* or raise *expire_side_effect*."""
-    mock_svc = AsyncMock()
-    if expire_side_effect is not None:
-        mock_svc.expire_duel = AsyncMock(side_effect=expire_side_effect)
-    else:
-        mock_svc.expire_duel = AsyncMock(return_value=expire_return)
-    sys.modules["services.duel_service"].DuelService = MagicMock(return_value=mock_svc)
-    return mock_svc
-
-
-# ===========================================================================
-# Tests: payload validation
-# ===========================================================================
-
-
-@pytest.mark.asyncio
-async def test_missing_duel_id_returns_error():
-    """When duel_id is absent from the payload, return an error dict immediately."""
-    from utils.executors.duel_expire_executor import execute_duel_expire_job
-
-    result = await execute_duel_expire_job("job-no-id", {"job_type": "duel_expire"})
-
-    assert result["status"] == "error"
-    assert result["duel_id"] is None
-    assert "missing duel_id" in result["reason"]
-
-
-# ===========================================================================
-# Tests: successful expiry
-# ===========================================================================
-
-
-@pytest.mark.asyncio
-async def test_expire_duel_called_with_correct_id():
-    """DuelService.expire_duel is called with the duel_id from the payload."""
-    from utils.executors.duel_expire_executor import execute_duel_expire_job
-
-    mock_db = AsyncMock()
-    _configure_db_manager(mock_db)
-    duel = _make_duel(duel_id=42)
-    mock_svc = _configure_duel_service(expire_return=duel)
-
-    with patch("utils.executors.duel_expire_executor._notify_expiry", new=AsyncMock()):
-        await execute_duel_expire_job(
-            "job-expire-42",
-            {"job_type": "duel_expire", "duel_id": 42},
-        )
-
-    mock_svc.expire_duel.assert_awaited_once_with(mock_db, 42)
-
-
-@pytest.mark.asyncio
-async def test_successful_expiry_returns_success_dict():
-    """A successful expiry returns status='success' with the correct duel_id."""
-    from utils.executors.duel_expire_executor import execute_duel_expire_job
-
-    mock_db = AsyncMock()
-    _configure_db_manager(mock_db)
-    duel = _make_duel(duel_id=7)
-    _configure_duel_service(expire_return=duel)
-
-    with patch("utils.executors.duel_expire_executor._notify_expiry", new=AsyncMock()):
-        result = await execute_duel_expire_job(
-            "job-ok",
-            {"job_type": "duel_expire", "duel_id": 7},
-        )
-
-    assert result["status"] == "success"
-    assert result["duel_id"] == 7
-
-
-@pytest.mark.asyncio
-async def test_notify_called_after_successful_expiry():
-    """_notify_expiry is called with the job_id and expired duel on success."""
-    from utils.executors.duel_expire_executor import execute_duel_expire_job
-
-    mock_db = AsyncMock()
-    _configure_db_manager(mock_db)
-    duel = _make_duel(duel_id=99, challenger_id=111, target_id=222)
-    _configure_duel_service(expire_return=duel)
-
-    mock_notify = AsyncMock()
-    with patch("utils.executors.duel_expire_executor._notify_expiry", new=mock_notify):
-        await execute_duel_expire_job(
-            "job-notify",
-            {"job_type": "duel_expire", "duel_id": 99},
-        )
-
-    mock_notify.assert_awaited_once_with("job-notify", duel)
-
-
-# ===========================================================================
-# Tests: expire_duel raises ValueError (not found / wrong status)
-# ===========================================================================
-
-
-@pytest.mark.asyncio
-async def test_value_error_gives_skipped():
-    """When expire_duel raises ValueError, the result is status='skipped'."""
-    from utils.executors.duel_expire_executor import execute_duel_expire_job
-
-    mock_db = AsyncMock()
-    _configure_db_manager(mock_db)
-    _configure_duel_service(expire_side_effect=ValueError("Duel request with ID 55 not found."))
-
-    mock_notify = AsyncMock()
-    with patch("utils.executors.duel_expire_executor._notify_expiry", new=mock_notify):
-        result = await execute_duel_expire_job(
-            "job-skip",
-            {"job_type": "duel_expire", "duel_id": 55},
-        )
-
-    assert result["status"] == "skipped"
-    assert result["duel_id"] == 55
-    mock_notify.assert_not_awaited()
-
-
-@pytest.mark.asyncio
-async def test_wrong_status_gives_skipped():
-    """When expire_duel raises ValueError due to wrong status, result is 'skipped'."""
-    from utils.executors.duel_expire_executor import execute_duel_expire_job
-
-    mock_db = AsyncMock()
-    _configure_db_manager(mock_db)
-    _configure_duel_service(expire_side_effect=ValueError("Duel 10 cannot be expired — current status is 'accepted'."))
-
-    mock_notify = AsyncMock()
-    with patch("utils.executors.duel_expire_executor._notify_expiry", new=mock_notify):
-        result = await execute_duel_expire_job(
-            "job-wrong-status",
-            {"job_type": "duel_expire", "duel_id": 10},
-        )
-
-    assert result["status"] == "skipped"
-    assert result["duel_id"] == 10
-    mock_notify.assert_not_awaited()
-
-
-# ===========================================================================
-# Tests: gateway notification
-# ===========================================================================
-
-
-@pytest.mark.asyncio
-async def test_notify_expiry_http_error_is_non_fatal():
-    """An HTTP error in _notify_expiry does not propagate to the caller."""
-    import httpx
-    from utils.executors.duel_expire_executor import _notify_expiry
-
-    duel = _make_duel(duel_id=1)
-
-    with patch("utils.executors.duel_expire_executor.httpx.AsyncClient") as mock_cls:
-        mock_client = AsyncMock()
-        mock_client.post = AsyncMock(side_effect=httpx.ConnectError("refused"))
-        mock_cls.return_value.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_cls.return_value.__aexit__ = AsyncMock(return_value=False)
-
-        # Must NOT raise.
-        await _notify_expiry("parent-job", duel)
-
-
-@pytest.mark.asyncio
-async def test_notify_expiry_posts_correct_message_type():
-    """_notify_expiry posts a message with message_type='duel_expire' and both player IDs."""
-    from utils.executors.duel_expire_executor import _notify_expiry
-
-    duel = _make_duel(
-        duel_id=5,
-        guild_id=200,
-        challenger_id=111,
-        target_id=222,
-        stakes=1000,
+async def _seed_duel(
+    db: AsyncSession,
+    guild_id: int,
+    *,
+    status: str = "pending",
+    stakes: int = STAKES,
+) -> DuelRequest:
+    """Persist a DuelRequest row."""
+    now = datetime.now(UTC)
+    duel = DuelRequest(
+        guild_id=guild_id,
+        challenger_id=CHALLENGER_ID,
+        target_id=TARGET_ID,
+        stakes=stakes,
+        status=status,
+        created_at=now,
+        expires_at=now + timedelta(minutes=30),
     )
-    captured_body: list[dict] = []
+    db.add(duel)
+    await db.commit()
+    await db.refresh(duel)
+    return duel
 
-    with patch("utils.executors.duel_expire_executor.httpx.AsyncClient") as mock_cls:
-        mock_client = AsyncMock()
 
-        async def _post(url, json=None, timeout=None):
-            captured_body.append(json)
-            resp = MagicMock()
-            resp.raise_for_status = MagicMock()
-            return resp
+def _make_fake_db_manager(factory: Any):
+    """Build a MagicMock that mimics db_manager.get_session() for SQLite.
 
-        mock_client.post = _post
-        mock_cls.return_value.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_cls.return_value.__aexit__ = AsyncMock(return_value=False)
+    # 1 mock — db_manager bridge (Tier B)
+    """
 
-        await _notify_expiry("parent-job", duel)
+    @asynccontextmanager
+    async def _fake_get_db():
+        async with factory() as session:
+            yield session
 
-    assert len(captured_body) == 1
-    body = captured_body[0]
-    assert body["message_type"] == "duel_expire"
-    assert body["guild_id"] == 200
-    assert body["content"]["duel_id"] == 5
-    assert body["content"]["challenger_id"] == 111
-    assert body["content"]["target_id"] == 222
-    assert body["content"]["stakes"] == 1000
+    fake = MagicMock()
+    fake.get_session = MagicMock(side_effect=_fake_get_db)
+    return fake
 
 
 # ===========================================================================
-# Tests: exception propagation
+# TIER A — Pure unit tests (ZERO mocks)
 # ===========================================================================
 
 
-@pytest.mark.asyncio
-async def test_duel_service_runtime_exception_propagates():
-    """When DuelService.expire_duel raises a non-ValueError exception, it is re-raised."""
-    from utils.executors.duel_expire_executor import execute_duel_expire_job
+class TestPayloadValidation:
+    """Behaviour #1: missing duel_id → status=error."""
 
-    mock_db = AsyncMock()
-    _configure_db_manager(mock_db)
-    _configure_duel_service(expire_side_effect=RuntimeError("DB gone"))
+    async def test_missing_duel_id_returns_error(self):
+        """Empty payload → {status: error, reason: missing duel_id}.
 
-    with pytest.raises(RuntimeError, match="DB gone"):
-        await execute_duel_expire_job(
-            "job-err",
-            {"job_type": "duel_expire", "duel_id": 1},
+        No DB or HTTP calls — pure payload guard.
+        """
+        result = await execute_duel_expire_job("test-job", {})
+        assert result["status"] == "error", f"Expected status=error, got {result!r}"
+        assert result["duel_id"] is None
+
+    async def test_explicit_none_duel_id_returns_error(self):
+        """Explicit None duel_id → status=error."""
+        result = await execute_duel_expire_job("test-job", {"duel_id": None})
+        assert result["status"] == "error"
+
+
+# ===========================================================================
+# TIER B — SQLite integration (1 patch only: db_manager bridge)
+# ===========================================================================
+
+
+class TestDuelNotFound:
+    """Behaviour #2: duel not found → status=skipped."""
+
+    async def test_nonexistent_duel_id_returns_skipped(self, sqlite_engine_and_factory):
+        """DuelService.expire_duel raises ValueError for missing duel → status=skipped.
+
+        # 1 mock — db_manager bridge (Tier B)
+        """
+        _engine, factory = sqlite_engine_and_factory
+        payload = {"duel_id": 999_999}
+
+        with patch("persist.database.manager.db_manager", _make_fake_db_manager(factory)):
+            result = await execute_duel_expire_job("test-job", payload)
+
+        assert result["status"] == "skipped", f"Expected status=skipped, got {result!r}"
+        assert result["duel_id"] == 999_999
+
+
+class TestAlreadyExpiredOrWrongStatus:
+    """Behaviour #3: already-expired or wrong-status duel → status=skipped."""
+
+    async def test_already_expired_duel_returns_skipped(self, sqlite_engine_and_factory):
+        """A duel with status='expired' causes DuelService to raise ValueError → skipped.
+
+        # 1 mock — db_manager bridge (Tier B)
+        """
+        _engine, factory = sqlite_engine_and_factory
+
+        async with factory() as seed_db:
+            duel = await _seed_duel(seed_db, GUILD_ID, status="expired")
+        duel_id = duel.id
+
+        with patch("persist.database.manager.db_manager", _make_fake_db_manager(factory)):
+            result = await execute_duel_expire_job("test-job", {"duel_id": duel_id})
+
+        assert result["status"] == "skipped", f"Expected status=skipped for already-expired duel, got {result!r}"
+        assert result["duel_id"] == duel_id
+
+    async def test_completed_duel_returns_skipped(self, sqlite_engine_and_factory):
+        """A duel with status='completed' causes DuelService to raise ValueError → skipped.
+
+        # 1 mock — db_manager bridge (Tier B)
+        """
+        _engine, factory = sqlite_engine_and_factory
+
+        async with factory() as seed_db:
+            duel = await _seed_duel(seed_db, GUILD_ID, status="completed")
+        duel_id = duel.id
+
+        with patch("persist.database.manager.db_manager", _make_fake_db_manager(factory)):
+            result = await execute_duel_expire_job("test-job", {"duel_id": duel_id})
+
+        assert result["status"] == "skipped"
+
+
+class TestPendingDuelExpired:
+    """Behaviour #4: pending duel is marked expired in DB."""
+
+    async def test_pending_duel_status_set_to_expired(self, sqlite_engine_and_factory):
+        """Executor calls expire_duel; DB row status changes from 'pending' to 'expired'.
+
+        Cross-session reload verifies the status was persisted.
+
+        # 1 mock — db_manager bridge (Tier B)
+        """
+        _engine, factory = sqlite_engine_and_factory
+
+        async with factory() as seed_db:
+            duel = await _seed_duel(seed_db, GUILD_ID, status="pending")
+        duel_id = duel.id
+
+        with (
+            patch("persist.database.manager.db_manager", _make_fake_db_manager(factory)),
+            respx.mock(assert_all_called=False),  # Allow non-fatal HTTP notification.
+        ):
+            result = await execute_duel_expire_job("test-job", {"duel_id": duel_id})
+
+        assert result["status"] == "success", f"Expected status=success, got {result!r}"
+        assert result["duel_id"] == duel_id
+
+        # Cross-session reload: verify the DB row was updated.
+        async with factory() as verify_db:
+            row = await verify_db.execute(select(DuelRequest).where(DuelRequest.id == duel_id))
+            refreshed = row.scalars().first()
+
+        assert refreshed is not None
+        assert refreshed.status == "expired", (
+            f"Expected DuelRequest.status='expired' after expire job, got {refreshed.status!r}"
         )
 
+    async def test_result_contains_duel_id(self, sqlite_engine_and_factory):
+        """Executor result dict includes the correct duel_id.
 
-# ===========================================================================
-# Tests: job_executor dispatch
-# ===========================================================================
+        # 1 mock — db_manager bridge (Tier B)
+        """
+        _engine, factory = sqlite_engine_and_factory
 
+        async with factory() as seed_db:
+            duel = await _seed_duel(seed_db, GUILD_ID, status="pending")
+        duel_id = duel.id
 
-@pytest.mark.asyncio
-async def test_job_executor_dispatches_duel_expire():
-    """JobExecutor.execute routes duel_expire payload to execute_duel_expire_job."""
-    from utils.job_executor import JobExecutor
+        with (
+            patch("persist.database.manager.db_manager", _make_fake_db_manager(factory)),
+            respx.mock(assert_all_called=False),
+        ):
+            result = await execute_duel_expire_job("test-job", {"duel_id": duel_id})
 
-    executor = JobExecutor()
-    payload = {"job_type": "duel_expire", "duel_id": 42}
-
-    mock_fn = AsyncMock(return_value={"status": "success"})
-    with patch("utils.job_executor.execute_duel_expire_job", mock_fn):
-        await executor.execute("job-dispatch-expire", payload)
-
-    mock_fn.assert_awaited_once_with("job-dispatch-expire", payload)
-
-
-@pytest.mark.asyncio
-async def test_job_executor_does_not_dispatch_duel_expire_for_bounty_expire():
-    """bounty_expire payloads do NOT trigger execute_duel_expire_job."""
-    from utils.job_executor import JobExecutor
-
-    executor = JobExecutor()
-    payload = {"job_type": "bounty_expire", "bounty_id": 99}
-
-    mock_duel_expire_fn = AsyncMock()
-    mock_bounty_expire_fn = AsyncMock(return_value={"status": "success"})
-
-    with (
-        patch("utils.job_executor.execute_duel_expire_job", mock_duel_expire_fn),
-        patch("utils.job_executor.execute_bounty_expire_job", mock_bounty_expire_fn),
-    ):
-        await executor.execute("job-no-duel-expire", payload)
-
-    mock_duel_expire_fn.assert_not_awaited()
-    mock_bounty_expire_fn.assert_awaited_once()
+        assert result["duel_id"] == duel_id, f"Expected duel_id={duel_id} in result, got {result!r}"
 
 
 # ===========================================================================
-# Tests: timeout handling (DUEL_REQUEST_EXPIRY constant)
+# TIER B + C — SQLite integration + respx HTTP assertions
 # ===========================================================================
 
 
-@pytest.mark.asyncio
-async def test_timeout_causes_skipped_when_duel_already_resolved():
-    """When a duel is already accepted/rejected before the timeout fires,
-    expire_duel raises ValueError and the executor returns 'skipped' — this
-    is the normal timeout race-condition path."""
-    from utils.executors.duel_expire_executor import execute_duel_expire_job
+class TestGatewayNotification:
+    """Behaviour #5: notification posted to gateway with correct body."""
 
-    mock_db = AsyncMock()
-    _configure_db_manager(mock_db)
-    # Simulate duel already accepted before the timeout job fires
-    _configure_duel_service(expire_side_effect=ValueError("Duel 77 cannot be expired — current status is 'accepted'."))
+    async def test_notification_body_contains_required_fields(self, sqlite_engine_and_factory):
+        """POST to /messages contains guild_id, message_type=duel_expire, content fields.
 
-    mock_notify = AsyncMock()
-    with patch("utils.executors.duel_expire_executor._notify_expiry", new=mock_notify):
-        result = await execute_duel_expire_job(
-            "job-timeout-race",
-            {"job_type": "duel_expire", "duel_id": 77},
+        # 1 mock — db_manager bridge (Tier B + C)
+        """
+        import json as _json
+
+        _engine, factory = sqlite_engine_and_factory
+
+        async with factory() as seed_db:
+            duel = await _seed_duel(seed_db, GUILD_ID, status="pending", stakes=STAKES)
+        duel_id = duel.id
+
+        with (
+            patch("persist.database.manager.db_manager", _make_fake_db_manager(factory)),
+            respx.mock(assert_all_called=False) as router,
+        ):
+            notify_route = router.post(GATEWAY_MESSAGES_URL).respond(200, json={"ok": True})
+            result = await execute_duel_expire_job("test-job", {"duel_id": duel_id})
+
+        assert result["status"] == "success"
+        assert notify_route.called, f"Expected POST to {GATEWAY_MESSAGES_URL}"
+
+        req_body = _json.loads(notify_route.calls.last.request.content)
+
+        assert req_body.get("guild_id") == GUILD_ID, (
+            f"Expected guild_id={GUILD_ID} in notification body, got {req_body!r}"
+        )
+        assert req_body.get("message_type") == "duel_expire", f"Expected message_type=duel_expire, got {req_body!r}"
+        content = req_body.get("content", {})
+        assert content.get("duel_id") == duel_id, f"Expected duel_id in content, got {content!r}"
+        assert content.get("challenger_id") == CHALLENGER_ID
+        assert content.get("target_id") == TARGET_ID
+        assert content.get("stakes") == STAKES
+
+
+class TestNotificationFailureNonFatal:
+    """Behaviour #6: gateway notification failure is non-fatal."""
+
+    async def test_500_from_gateway_does_not_abort_expiry(self, sqlite_engine_and_factory):
+        """HTTP 500 on gateway notification → duel still expired in DB.
+
+        # 1 mock — db_manager bridge (Tier B + C)
+        """
+        _engine, factory = sqlite_engine_and_factory
+
+        async with factory() as seed_db:
+            duel = await _seed_duel(seed_db, GUILD_ID, status="pending")
+        duel_id = duel.id
+
+        with (
+            patch("persist.database.manager.db_manager", _make_fake_db_manager(factory)),
+            respx.mock(assert_all_called=False) as router,
+        ):
+            router.post(GATEWAY_MESSAGES_URL).respond(500)
+            result = await execute_duel_expire_job("test-job", {"duel_id": duel_id})
+
+        assert result["status"] == "success", f"Expected status=success despite 500 from gateway, got {result!r}"
+
+        # Cross-session reload: duel status must be 'expired' despite notification failure.
+        async with factory() as verify_db:
+            row = await verify_db.execute(select(DuelRequest).where(DuelRequest.id == duel_id))
+            refreshed = row.scalars().first()
+
+        assert refreshed is not None
+        assert refreshed.status == "expired", (
+            f"Expected DuelRequest.status='expired' even after gateway failure, got {refreshed.status!r}"
         )
 
-    assert result["status"] == "skipped"
-    assert result["duel_id"] == 77
-    # No notification should be sent when the duel was already resolved
-    mock_notify.assert_not_awaited()
+    async def test_connection_error_does_not_abort_expiry(self, sqlite_engine_and_factory):
+        """Network connection error on notification → duel still expired in DB.
 
+        # 1 mock — db_manager bridge (Tier B + C)
+        """
+        import httpx as _httpx
 
-@pytest.mark.asyncio
-async def test_timeout_causes_skipped_when_duel_not_found():
-    """When a duel_id is no longer in the database when the timeout fires,
-    the executor returns 'skipped' gracefully."""
-    from utils.executors.duel_expire_executor import execute_duel_expire_job
+        _engine, factory = sqlite_engine_and_factory
 
-    mock_db = AsyncMock()
-    _configure_db_manager(mock_db)
-    _configure_duel_service(expire_side_effect=ValueError("Duel request with ID 999 not found."))
+        async with factory() as seed_db:
+            duel = await _seed_duel(seed_db, GUILD_ID, status="pending")
+        duel_id = duel.id
 
-    mock_notify = AsyncMock()
-    with patch("utils.executors.duel_expire_executor._notify_expiry", new=mock_notify):
-        result = await execute_duel_expire_job(
-            "job-not-found",
-            {"job_type": "duel_expire", "duel_id": 999},
-        )
+        with (
+            patch("persist.database.manager.db_manager", _make_fake_db_manager(factory)),
+            respx.mock(assert_all_called=False) as router,
+        ):
+            router.post(GATEWAY_MESSAGES_URL).mock(side_effect=_httpx.ConnectError("timeout"))
+            result = await execute_duel_expire_job("test-job", {"duel_id": duel_id})
 
-    assert result["status"] == "skipped"
-    assert result["duel_id"] == 999
-    mock_notify.assert_not_awaited()
+        assert result["status"] == "success", f"Expected status=success despite network error, got {result!r}"

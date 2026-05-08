@@ -1211,6 +1211,7 @@ class TestGetChannelExceptionFallback:
             client = TestClient(app)
             response = client.get("/api/v1/threads/1234567890")
             assert response.status_code == 200
+            assert response.json()["status"] == "success"
 
     def test_update_thread_get_channel_exception_then_fetch(self):
         """update_thread: get_channel raises → falls to fetch_channel (lines 176-177)."""
@@ -1276,6 +1277,7 @@ class TestFetchChannelNotFoundForbidden:
             client = TestClient(app)
             response = client.get("/api/v1/threads/1234567890")
             assert response.status_code == 404
+            assert "thread" in response.json()["detail"].lower()
 
     def test_get_thread_fetch_channel_forbidden(self):
         """get_thread: fetch_channel raises Forbidden → 404 (lines 124-126)."""
@@ -1455,6 +1457,7 @@ class TestOuterExceptionHandlers:
             client = TestClient(app)
             response = client.put("/api/v1/threads/1234567890", json={"name": "test"})
             assert response.status_code == 500
+            assert "detail" in response.json()
 
     def test_close_thread_outer_exception(self):
         """close_thread: outer exception calls handle_discord_exception (lines 269-271)."""

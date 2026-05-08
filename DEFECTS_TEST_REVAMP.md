@@ -251,3 +251,52 @@ Logged here so the S3 developer is aware:
   authority exclusively to `check_bounty`, but this is out of scope for test revamp.
 
 *Last updated: 2026-05-07 by Developer agent (S5)*
+
+---
+
+## S6 — Sprint 6 (Integration Test Coverage for shop/player/inventory/duel services, 2026-05-08)
+
+### S6-OBS-01 — GuildConfig model has no `bounty_channel_id` / `announcement_channel_id` columns
+
+- **Severity**: trivia (test-authoring friction only)
+- **File**: `services/bot-core/src/persist/models/guild_config.py`
+- **Observation**: During S6 integration test authoring, the initial seed helper passed
+  `bounty_channel_id=111, announcement_channel_id=333` to the `GuildConfig()` constructor.
+  These column names do not exist in the current model (the actual channel columns are
+  `bronze_bounty_channel_id`, `silver_bounty_channel_id`, etc., and there is no generic
+  `announcement_channel_id`). SQLAlchemy raised `TypeError: 'bounty_channel_id' is an
+  invalid keyword argument for GuildConfig`. Corrected to `GuildConfig(guild_id=...,
+  starting_credits=...)` only — all other columns have SQLAlchemy defaults.
+- **Risk**: None in production. Test-authoring friction only.
+- **Recommended fix policy**: None needed. Column names were clarified by reading the model.
+  The AGENTS.md GuildConfig entry in bot-core AGENTS.md accurately lists all columns.
+
+### S6-OBS-02 — ShipLoadout dataclass uses `base_armour` not `armour`
+
+- **Severity**: trivia (test-authoring friction only)
+- **File**: `services/bot-core/src/services/combat_models.py`, line 122
+- **Observation**: `ShipLoadout` has `base_armour: int` (not `armour`). An S6 duel
+  integration test initially constructed `ShipLoadout(armour=100, handling=50, ...)`,
+  which raised `TypeError: ShipLoadout.__init__() got an unexpected keyword argument 'armour'`.
+  Fixed to `ShipLoadout(base_armour=100, ...)`. The `base_handling` field exists but is
+  an int default=0 (not a required arg) and does not appear in the interface for
+  LoadoutBuilder.from_player calls.
+- **Risk**: None in production. Test-authoring friction only.
+- **Recommended fix policy**: None needed. Reading the dataclass definition resolves this.
+
+### S6-OBS-03 — sell_item / sell_ship caller must commit — service uses commit=False pattern
+
+- **Severity**: low (documentation gap, not a bug)
+- **File**: `services/bot-core/src/services/shop_service.py`, `sell_item` (line ~490-495)
+  and `sell_ship` (line ~594-595)
+- **Observation**: Both `sell_item` and `sell_ship` call `player_repo.update_credits` and
+  `inventory_repo.remove_item` with `commit=False`. The service docstrings say "Transaction
+  is owned by the caller (router)." This means tests calling these service methods must
+  issue an explicit `await session.commit()` after the call — otherwise the transaction
+  never commits and cross-session assertions fail. This is WAI per the B.34 architecture,
+  but it is not immediately obvious from the service signature alone.
+- **Risk**: None in production — routers always wrap in `async with db.begin()`.
+- **Recommended fix policy**: Documentation only. S6 integration tests correctly model
+  this pattern (explicit `await session_a.commit()` after each sell_item/sell_ship call).
+
+*Last updated: 2026-05-08 by Developer agent (S6)*

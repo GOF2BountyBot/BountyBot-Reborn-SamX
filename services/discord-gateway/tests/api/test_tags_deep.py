@@ -368,6 +368,7 @@ class TestGetTagNonDictSetAttrRaises:
             response = client.get("/api/v1/tags/1234567890")
             # Either succeeds (200) or hits outer exception (500) — either is acceptable
             assert response.status_code in (200, 500)
+            assert "detail" in response.json() or response.status_code == 200
 
 
 # =============================================================================
@@ -460,6 +461,7 @@ class TestCreateForumTagDeep:
             client = TestClient(app)
             response = client.post("/api/v1/channels/555555/tags", json={"name": "New Tag"})
             assert response.status_code == 201
+            assert response.json()["status"] == "created"
 
     def test_create_dict_response_emoji_normalize_raises_silently(self):
         """Lines 174-175: emoji normalization in create dict response raises → silently ignored."""
@@ -495,6 +497,7 @@ class TestCreateForumTagDeep:
             response = client.post("/api/v1/channels/555555/tags", json={"name": "Tag"})
             # normalize_emoji fails silently → should still return 201
             assert response.status_code == 201
+            assert response.json()["status"] == "created"
 
     def test_create_object_response_setattr_raises_uses_dict_fallback(self):
         """Lines 179-186: create returns object payload, setattr raises → __dict__ fallback."""
@@ -539,6 +542,7 @@ class TestCreateForumTagDeep:
             client = TestClient(app)
             response = client.post("/api/v1/channels/555555/tags", json={"name": "Tag"})
             assert response.status_code == 201
+            assert response.json()["status"] == "created"
 
 
 # =============================================================================
@@ -628,6 +632,7 @@ class TestUpdateTagDeep:
             client = TestClient(app)
             response = client.put("/api/v1/tags/1234567890", json={"name": "Updated"})
             assert response.status_code == 200
+            assert response.json()["status"] == "updated"
 
     def test_update_tag_no_edit_no_edit_tag_edit_raises_attributeerror_proxy(self):
         """Lines 264-280: tags_to_edit fallback, channel.edit raises AttributeError → proxy."""
@@ -663,6 +668,7 @@ class TestUpdateTagDeep:
             client = TestClient(app)
             response = client.put("/api/v1/tags/1234567890", json={"name": "Updated"})
             assert response.status_code == 200
+            assert response.json()["status"] == "updated"
 
     def test_update_tag_refetch_by_name_when_id_lookup_fails(self):
         """Lines 289-290: after edit, id-lookup returns None → search by name."""
@@ -709,6 +715,7 @@ class TestUpdateTagDeep:
             client = TestClient(app)
             response = client.put("/api/v1/tags/1234567890", json={"name": "NewName"})
             assert response.status_code == 200
+            assert response.json()["status"] == "updated"
 
     def test_update_tag_refetch_falls_back_to_original(self):
         """Line 292: both id and name lookups fail → use original tag object."""
@@ -752,6 +759,7 @@ class TestUpdateTagDeep:
             response = client.put("/api/v1/tags/1234567890", json={"name": "NewName"})
             # Falls back to using original tag → 200
             assert response.status_code == 200
+            assert response.json()["status"] == "updated"
 
     def test_update_tag_dict_response_emoji_none_but_requested(self):
         """Lines 303-308: dict response has emoji=None but tag_data.emoji not None
@@ -786,6 +794,7 @@ class TestUpdateTagDeep:
             # Send emoji in request → response dict has emoji=None → best-effort reflect
             response = client.put("/api/v1/tags/1234567890", json={"name": "Tag", "emoji": "🚀"})
             assert response.status_code == 200
+            assert response.json()["status"] == "updated"
 
     def test_update_tag_dict_response_emoji_none_normalize_raises(self):
         """Lines 305-308: dict response emoji=None, normalize_emoji raises → use raw emoji string."""
@@ -831,6 +840,7 @@ class TestUpdateTagDeep:
             response = client.put("/api/v1/tags/1234567890", json={"name": "Tag", "emoji": "🚀"})
             # Should succeed — normalize failure in reflect is silently caught
             assert response.status_code == 200
+            assert response.json()["status"] == "updated"
 
     def test_update_tag_object_response_setattr_raises_uses_dict_fallback(self):
         """Lines 312-324: update returns object payload, setattr raises → __dict__ fallback."""
@@ -873,6 +883,7 @@ class TestUpdateTagDeep:
             client = TestClient(app)
             response = client.put("/api/v1/tags/1234567890", json={"name": "Tag"})
             assert response.status_code == 200
+            assert response.json()["status"] == "updated"
 
     def test_update_tag_object_response_setattr_raises_with_emoji(self):
         """Lines 315-324: dict fallback for update response, with emoji normalization."""
@@ -915,6 +926,7 @@ class TestUpdateTagDeep:
             client = TestClient(app)
             response = client.put("/api/v1/tags/1234567890", json={"name": "Tag"})
             assert response.status_code == 200
+            assert response.json()["status"] == "updated"
 
 
 # =============================================================================
@@ -1000,6 +1012,7 @@ class TestDeleteTagDeep:
             response = client.delete("/api/v1/tags/1234567890")
             # The inner exception re-raises → outer handler → 500
             assert response.status_code == 500
+            assert "detail" in response.json()
 
 
 # =============================================================================
@@ -1111,6 +1124,7 @@ class TestGetTagDictFallbackWithEmoji:
             response = client.get("/api/v1/tags/1234567890")
             # normalize fails silently at line 92-93, should still succeed
             assert response.status_code == 200
+            assert response.json()["status"] == "success"
 
 
 # =============================================================================
@@ -1223,9 +1237,11 @@ class TestCreateTagProxyToDictCalled:
             from api.routers.tags import router
 
             app.include_router(router, prefix="/api/v1")
+
             client = TestClient(app)
             response = client.post("/api/v1/channels/555555/tags", json={"name": "Tagged"})
             assert response.status_code == 201
+            assert response.json()["status"] == "created"
 
     def test_create_proxy_to_dict_with_non_int_id(self):
         """Lines 157-158: to_dict() proxy, id present but NOT int-convertible → except branch."""
@@ -1276,6 +1292,7 @@ class TestCreateTagProxyToDictCalled:
             client = TestClient(app)
             response = client.post("/api/v1/channels/555555/tags", json={"name": "NonIntId"})
             assert response.status_code == 201
+            assert response.json()["status"] == "created"
 
 
 # =============================================================================
@@ -1384,6 +1401,7 @@ class TestCreateFrozenPayloadWithEmoji:
             response = client.post("/api/v1/channels/555555/tags", json={"name": "Bad Emoji Create"})
             # normalize fails silently → still returns 201
             assert response.status_code == 201
+            assert response.json()["status"] == "created"
 
 
 # =============================================================================
@@ -1669,6 +1687,7 @@ class TestUpdateTagProxyToDictCalled:
             client = TestClient(app)
             response = client.put("/api/v1/tags/1234567890", json={"name": "Updated"})
             assert response.status_code == 200
+            assert response.json()["status"] == "updated"
 
     def test_update_proxy_to_dict_invoked_with_non_int_id(self):
         """Lines 275-276: to_dict() called, id present but NOT int-convertible → except branch."""
@@ -1720,6 +1739,7 @@ class TestUpdateTagProxyToDictCalled:
             client = TestClient(app)
             response = client.put("/api/v1/tags/1234567890", json={"name": "Updated"})
             assert response.status_code == 200
+            assert response.json()["status"] == "updated"
 
 
 # =============================================================================
@@ -1806,6 +1826,7 @@ class TestUpdateTagOuterExceptBlock:
             # channel.edit_tag raises RuntimeError → outer except (281-283) re-raises
             response = client.put("/api/v1/tags/1234567890", json={"name": "Updated"})
             assert response.status_code == 500
+            assert "detail" in response.json()
 
 
 # =============================================================================
@@ -1901,6 +1922,7 @@ class TestUpdateTagDictResponseEmojiNormalizeRaises:
             client = TestClient(app)
             response = client.put("/api/v1/tags/1234567890", json={"name": "Tag", "emoji": "🚀"})
             assert response.status_code == 200
+            assert response.json()["status"] == "updated"
 
 
 # =============================================================================
@@ -2014,6 +2036,7 @@ class TestUpdateTagNonDictResponseEmojiPaths:
             # frozen response with emoji=None → elif branch at 320 → normalize tag_data.emoji (321-322)
             response = client.put("/api/v1/tags/1234567890", json={"name": "Tag", "emoji": "🚀"})
             assert response.status_code == 200
+            assert response.json()["status"] == "updated"
 
     def test_update_non_dict_response_emoji_none_normalize_raises(self):
         """Lines 323-324: non-dict response, setattr raises, dict emoji=None, normalize raises → raw emoji."""
@@ -2071,6 +2094,7 @@ class TestUpdateTagNonDictResponseEmojiPaths:
             response = client.put("/api/v1/tags/1234567890", json={"name": "Tag", "emoji": "🚀"})
             # normalize raises for response → except: raw emoji is used (323-324) → 200
             assert response.status_code == 200
+            assert response.json()["status"] == "updated"
 
 
 # =============================================================================
@@ -2145,6 +2169,7 @@ class TestDeleteTagMalformedRemaining:
             client = TestClient(app)
             response = client.delete("/api/v1/tags/1234567890")
             assert response.status_code == 200
+            assert response.json()["deleted"] is True
 
 
 # =============================================================================
@@ -2230,6 +2255,7 @@ class TestDeleteTagProxyToDictCalled:
             client = TestClient(app)
             response = client.delete("/api/v1/tags/1234567890")
             assert response.status_code == 200
+            assert response.json()["deleted"] is True
 
     def test_delete_proxy_to_dict_invoked_with_non_int_id(self):
         """Lines 408-409: to_dict() called, proxy id NOT int-convertible → except branch."""
@@ -2271,3 +2297,4 @@ class TestDeleteTagProxyToDictCalled:
             client = TestClient(app)
             response = client.delete("/api/v1/tags/1234567890")
             assert response.status_code == 200
+            assert response.json()["deleted"] is True

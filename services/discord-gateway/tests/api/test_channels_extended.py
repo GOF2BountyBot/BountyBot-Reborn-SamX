@@ -314,16 +314,19 @@ class TestGetChannelExtended:
         """Should return 404 for unknown channel."""
         resp = channels_client.get("/api/v1/channels/9999999999")
         assert resp.status_code == 404
+        assert "detail" in resp.json()
 
     def test_get_voice_channel_success(self, channels_client):
         """Should return 200 for a voice channel."""
         resp = channels_client.get("/api/v1/channels/2222222222")
         assert resp.status_code == 200
+        assert resp.json()["status"] == "success"
 
     def test_get_forum_channel_success(self, channels_client):
         """Should return 200 for a forum channel (not category)."""
         resp = channels_client.get("/api/v1/channels/3333333333")
         assert resp.status_code == 200
+        assert resp.json()["status"] == "success"
 
 
 # ---------------------------------------------------------------------------
@@ -416,30 +419,35 @@ class TestUpdateChannel:
         payload = {"name": "new-name"}
         resp = channels_client.put("/api/v1/channels/9999999999", json=payload)
         assert resp.status_code == 404
+        assert "detail" in resp.json()
 
     def test_update_channel_position(self, channels_client):
         """PUT with position change should return 200."""
         payload = {"position": 5}
         resp = channels_client.put("/api/v1/channels/1234567890", json=payload)
         assert resp.status_code == 200
+        assert resp.json()["status"] == "updated"
 
     def test_update_channel_topic_nsfw_slowmode(self, channels_client):
         """PUT with topic, nsfw, slowmode should return 200."""
         payload = {"topic": "new topic", "nsfw": True, "slowmode_delay": 10}
         resp = channels_client.put("/api/v1/channels/1234567890", json=payload)
         assert resp.status_code == 200
+        assert resp.json()["status"] == "updated"
 
     def test_update_channel_empty_payload_no_edit(self, channels_client, channels_app_and_mocks):
         """PUT with empty payload (no fields) should still return 200 (no edit call needed)."""
         payload = {}
         resp = channels_client.put("/api/v1/channels/1234567890", json=payload)
         assert resp.status_code == 200
+        assert resp.json()["status"] == "updated"
 
     def test_update_voice_channel_bitrate(self, channels_client):
         """PUT with bitrate/user_limit on voice channel should return 200."""
         payload = {"bitrate": 96000, "user_limit": 10}
         resp = channels_client.put("/api/v1/channels/2222222222", json=payload)
         assert resp.status_code == 200
+        assert resp.json()["status"] == "updated"
 
     def test_update_category_returns_400(self, mock_bot_extended):
         """PUT on a category channel should return 400."""
@@ -488,6 +496,7 @@ class TestUpdateChannel:
             client = TestClient(app)
             resp = client.put("/api/v1/channels/1111111111", json={"name": "x"})
             assert resp.status_code == 400
+            assert "detail" in resp.json()
 
 
 # ---------------------------------------------------------------------------
@@ -510,6 +519,7 @@ class TestDeleteChannel:
         """DELETE on non-existent channel should return 404."""
         resp = channels_client.delete("/api/v1/channels/9999999999")
         assert resp.status_code == 404
+        assert "detail" in resp.json()
 
     def test_delete_voice_channel_success(self, channels_client):
         """DELETE a voice channel should return 200."""
@@ -539,16 +549,19 @@ class TestListChannelMessages:
         """GET messages for non-existent channel should return 404."""
         resp = channels_client.get("/api/v1/channels/9999999999/messages")
         assert resp.status_code == 404
+        assert "detail" in resp.json()
 
     def test_list_messages_with_limit(self, channels_client):
         """GET messages with limit param should work."""
         resp = channels_client.get("/api/v1/channels/1234567890/messages?limit=10")
         assert resp.status_code == 200
+        assert resp.json()["status"] == "success"
 
     def test_list_messages_limit_too_large(self, channels_client):
         """GET messages with limit > 100 should return 422."""
         resp = channels_client.get("/api/v1/channels/1234567890/messages?limit=200")
         assert resp.status_code == 422
+        assert "detail" in resp.json()
 
 
 # ---------------------------------------------------------------------------
@@ -623,6 +636,7 @@ class TestCreateChannelMessage:
         payload = {"content": {"title": "Hello"}}
         resp = channels_client.post("/api/v1/channels/9999999999/messages", json=payload)
         assert resp.status_code == 404
+        assert "detail" in resp.json()
 
 
 # ---------------------------------------------------------------------------
@@ -646,6 +660,7 @@ class TestGetChannelPermissions:
         """GET permissions on non-existent channel should return 404."""
         resp = channels_client.get("/api/v1/channels/9999999999/permissions")
         assert resp.status_code == 404
+        assert "detail" in resp.json()
 
     def test_get_permissions_with_overwrites(self, mock_bot_extended):
         """GET permissions on channel with overwrites should return them."""
@@ -725,6 +740,7 @@ class TestUpdateChannelPermissions:
         payload = {"overwrites": []}
         resp = channels_client.put("/api/v1/channels/9999999999/permissions", json=payload)
         assert resp.status_code == 404
+        assert "detail" in resp.json()
 
     def test_update_permissions_with_role_overwrite(self, mock_bot_extended):
         """PUT with role overwrite should apply permissions."""
@@ -775,6 +791,7 @@ class TestUpdateChannelPermissions:
             payload = {"overwrites": [{"target_id": 777, "type": "role", "allow": 0, "deny": 0}]}
             resp = client.put("/api/v1/channels/1234567890/permissions", json=payload)
             assert resp.status_code == 200
+            assert resp.json()["status"] == "updated"
 
     def test_update_permissions_member_not_found_skip(self, mock_bot_extended):
         """PUT with member overwrite where member doesn't exist should skip gracefully."""
@@ -821,6 +838,7 @@ class TestUpdateChannelPermissions:
             payload = {"overwrites": [{"target_id": 888, "type": "member", "allow": 0, "deny": 0}]}
             resp = client.put("/api/v1/channels/1234567890/permissions", json=payload)
             assert resp.status_code == 200
+            assert resp.json()["status"] == "updated"
 
 
 # ---------------------------------------------------------------------------
@@ -841,6 +859,7 @@ class TestListForumThreads:
         """GET threads on non-existent channel should return 404."""
         resp = channels_client.get("/api/v1/channels/9999999999/threads")
         assert resp.status_code == 404
+        assert "detail" in resp.json()
 
     def test_list_threads_on_forum_success(self, mock_bot_extended):
         """GET threads on a forum channel should return 200 with thread list."""
@@ -932,6 +951,7 @@ class TestCreateForumThread:
         payload = {"name": "my-thread"}
         resp = channels_client.post("/api/v1/channels/9999999999/threads", json=payload)
         assert resp.status_code == 404
+        assert "detail" in resp.json()
 
     def test_create_thread_on_forum_success(self):
         """POST thread on a forum channel should return 201."""
@@ -1025,6 +1045,7 @@ class TestListForumTags:
         """GET tags on non-existent channel should return 404."""
         resp = channels_client.get("/api/v1/channels/9999999999/tags")
         assert resp.status_code == 404
+        assert "detail" in resp.json()
 
     def test_list_tags_on_forum_success(self):
         """GET tags on a forum channel should return 200 with tag list."""
@@ -1157,11 +1178,13 @@ class TestMoveChannelToCategory:
         """PUT move non-existent channel should return 404."""
         resp = channels_client.put("/api/v1/channels/9999999999/category/1111111111")
         assert resp.status_code == 404
+        assert "detail" in resp.json()
 
     def test_move_channel_category_not_found(self, channels_client):
         """PUT move channel to non-existent category should return 404."""
         resp = channels_client.put("/api/v1/channels/1234567890/category/9999999999")
         assert resp.status_code == 404
+        assert "detail" in resp.json()
 
 
 # ===========================================================================
@@ -2019,6 +2042,7 @@ class TestDeleteChannelMessage:
 
         resp = client.delete("/api/v1/channels/9999999999/messages/9876543210")
         assert resp.status_code == 404
+        assert "detail" in resp.json()
 
 
 # ===========================================================================

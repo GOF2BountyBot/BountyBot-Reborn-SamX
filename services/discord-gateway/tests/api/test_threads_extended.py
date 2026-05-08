@@ -388,6 +388,7 @@ class TestUpdateThreadTags:
                 "/api/v1/threads/1234567890/tags", json={"tags": [{"id": 111, "name": "tag1", "channel_id": 555555555}]}
             )
             assert response.status_code == 200
+            assert response.json()["status"] == "updated"
 
     def test_update_thread_tags_with_tag_object_by_name(self):
         """PUT /threads/{id}/tags with ForumTag-like dict with null id resolves by name."""
@@ -402,6 +403,7 @@ class TestUpdateThreadTags:
                 "/api/v1/threads/1234567890/tags", json={"tags": [{"id": 111, "name": "tag1", "channel_id": 555555555}]}
             )
             assert response.status_code == 200
+            assert response.json()["status"] == "updated"
 
     def test_update_thread_tags_name_not_found_raises_404(self):
         """PUT /threads/{id}/tags with unmatched integer tag id raises 404."""
@@ -422,6 +424,7 @@ class TestUpdateThreadTags:
             client = TestClient(app)
             response = client.put("/api/v1/threads/1234567890/tags", json={"tags": []})
             assert response.status_code == 200
+            assert response.json()["status"] == "updated"
 
 
 # ---------------------------------------------------------------------------
@@ -627,6 +630,7 @@ class TestDeleteThreadMessage:
             client = TestClient(app)
             response = client.delete("/api/v1/threads/1234567890/messages/999999999")
             assert response.status_code == 200
+            assert response.json()["deleted"] is True
 
     def test_delete_message_insufficient_permissions_returns_403(self):
         """DELETE returns 403 when bot lacks manage_messages and isn't message author."""
@@ -669,6 +673,7 @@ class TestDeleteThreadMessage:
             client = TestClient(app)
             response = client.delete("/api/v1/threads/1234567890/messages/999999999")
             assert response.status_code == 404
+            assert "detail" in response.json()
 
     def test_delete_message_no_guild_member_returns_403(self):
         """DELETE returns 403 when bot member not in guild."""
@@ -683,6 +688,7 @@ class TestDeleteThreadMessage:
             client = TestClient(app)
             response = client.delete("/api/v1/threads/1234567890/messages/999999999")
             assert response.status_code == 403
+            assert "detail" in response.json()
 
 
 # ---------------------------------------------------------------------------
@@ -750,6 +756,7 @@ class TestThreadLookupFallbacks:
             client = TestClient(app)
             response = client.get("/api/v1/threads/1234567890")
             assert response.status_code == 200
+            assert response.json()["status"] == "success"
 
     def test_get_thread_via_fetch_channel_fallback(self):
         """get_thread uses bot.fetch_channel when find_thread_by_id and get_channel return None."""
@@ -785,6 +792,7 @@ class TestThreadLookupFallbacks:
             client = TestClient(app)
             response = client.get("/api/v1/threads/1234567890")
             assert response.status_code == 200
+            assert response.json()["status"] == "success"
 
     def test_update_thread_with_archived_and_locked_fields(self):
         """PUT /threads/{id} with archived and locked fields triggers edit call."""
@@ -1225,6 +1233,7 @@ class TestGetChannelExceptionFallback:
             client = TestClient(app)
             response = client.put("/api/v1/threads/1234567890", json={"name": "Updated"})
             assert response.status_code == 200
+            assert response.json()["status"] == "updated"
 
     def test_close_thread_get_channel_exception_then_fetch(self):
         """close_thread: get_channel raises → falls to fetch_channel (lines 246-247)."""
@@ -1238,6 +1247,7 @@ class TestGetChannelExceptionFallback:
             client = TestClient(app)
             response = client.put("/api/v1/threads/1234567890/close")
             assert response.status_code == 200
+            assert response.json()["status"] == "closed"
 
     def test_open_thread_get_channel_exception_then_fetch(self):
         """open_thread: get_channel raises → falls to fetch_channel (lines 292-293)."""
@@ -1251,6 +1261,7 @@ class TestGetChannelExceptionFallback:
             client = TestClient(app)
             response = client.put("/api/v1/threads/1234567890/open")
             assert response.status_code == 200
+            assert response.json()["status"] == "opened"
 
 
 # ---------------------------------------------------------------------------
@@ -1291,6 +1302,7 @@ class TestFetchChannelNotFoundForbidden:
             client = TestClient(app)
             response = client.get("/api/v1/threads/1234567890")
             assert response.status_code == 404
+            assert "detail" in response.json()
 
     def test_update_thread_fetch_channel_not_found(self):
         """update_thread: fetch_channel raises NotFound → 404 (lines 183-184)."""
@@ -1304,6 +1316,7 @@ class TestFetchChannelNotFoundForbidden:
             client = TestClient(app)
             response = client.put("/api/v1/threads/1234567890", json={"name": "Updated"})
             assert response.status_code == 404
+            assert "detail" in response.json()
 
     def test_update_thread_fetch_channel_forbidden(self):
         """update_thread: fetch_channel raises Forbidden → 404 (lines 185-186)."""
@@ -1317,6 +1330,7 @@ class TestFetchChannelNotFoundForbidden:
             client = TestClient(app)
             response = client.put("/api/v1/threads/1234567890", json={"name": "Updated"})
             assert response.status_code == 404
+            assert "detail" in response.json()
 
     def test_close_thread_fetch_channel_not_found(self):
         """close_thread: fetch_channel raises NotFound → 404 (lines 252-253)."""
@@ -1330,6 +1344,7 @@ class TestFetchChannelNotFoundForbidden:
             client = TestClient(app)
             response = client.put("/api/v1/threads/1234567890/close")
             assert response.status_code == 404
+            assert "detail" in response.json()
 
     def test_close_thread_fetch_channel_forbidden(self):
         """close_thread: fetch_channel raises Forbidden → 404 (lines 254-256)."""
@@ -1343,6 +1358,7 @@ class TestFetchChannelNotFoundForbidden:
             client = TestClient(app)
             response = client.put("/api/v1/threads/1234567890/close")
             assert response.status_code == 404
+            assert "detail" in response.json()
 
     def test_open_thread_fetch_channel_not_found(self):
         """open_thread: fetch_channel raises NotFound → 404 (lines 298-299)."""
@@ -1356,6 +1372,7 @@ class TestFetchChannelNotFoundForbidden:
             client = TestClient(app)
             response = client.put("/api/v1/threads/1234567890/open")
             assert response.status_code == 404
+            assert "detail" in response.json()
 
     def test_open_thread_fetch_channel_forbidden(self):
         """open_thread: fetch_channel raises Forbidden → 404 (lines 300-302)."""
@@ -1369,6 +1386,7 @@ class TestFetchChannelNotFoundForbidden:
             client = TestClient(app)
             response = client.put("/api/v1/threads/1234567890/open")
             assert response.status_code == 404
+            assert "detail" in response.json()
 
 
 # ---------------------------------------------------------------------------
@@ -1465,6 +1483,7 @@ class TestOuterExceptionHandlers:
             client = TestClient(app)
             response = client.put("/api/v1/threads/1234567890/close")
             assert response.status_code == 500
+            assert "detail" in response.json()
 
     def test_open_thread_outer_exception(self):
         """open_thread: outer exception calls handle_discord_exception (lines 315-317)."""
@@ -1472,6 +1491,7 @@ class TestOuterExceptionHandlers:
             client = TestClient(app)
             response = client.put("/api/v1/threads/1234567890/open")
             assert response.status_code == 500
+            assert "detail" in response.json()
 
     def test_update_thread_tags_outer_exception(self):
         """update_thread_tags: outer exception calls handle_discord_exception (lines 420-422)."""
@@ -1479,6 +1499,7 @@ class TestOuterExceptionHandlers:
             client = TestClient(app)
             response = client.put("/api/v1/threads/1234567890/tags", json={"tags": [111]})
             assert response.status_code == 500
+            assert "detail" in response.json()
 
     def test_list_thread_messages_outer_exception(self):
         """list_thread_messages: outer exception (lines 455-457)."""
@@ -1486,6 +1507,7 @@ class TestOuterExceptionHandlers:
             client = TestClient(app)
             response = client.get("/api/v1/threads/1234567890/messages")
             assert response.status_code == 500
+            assert "detail" in response.json()
 
     def test_create_thread_message_outer_exception(self):
         """create_thread_message: outer exception (lines 494-496)."""
@@ -1493,6 +1515,7 @@ class TestOuterExceptionHandlers:
             client = TestClient(app)
             response = client.post("/api/v1/threads/1234567890/messages", json={"content": {"title": "test"}})
             assert response.status_code == 500
+            assert "detail" in response.json()
 
     def test_get_thread_message_outer_exception(self):
         """get_thread_message: outer exception (lines 539-541)."""
@@ -1500,6 +1523,7 @@ class TestOuterExceptionHandlers:
             client = TestClient(app)
             response = client.get("/api/v1/threads/1234567890/messages/999999999")
             assert response.status_code == 500
+            assert "detail" in response.json()
 
     def test_edit_thread_message_outer_exception(self):
         """edit_thread_message: outer exception (lines 595-597)."""
@@ -1507,6 +1531,7 @@ class TestOuterExceptionHandlers:
             client = TestClient(app)
             response = client.put("/api/v1/threads/1234567890/messages/999999999", json={"content": {"title": "test"}})
             assert response.status_code == 500
+            assert "detail" in response.json()
 
     def test_delete_thread_message_outer_exception(self):
         """delete_thread_message: outer exception (lines 654-656)."""
@@ -1514,6 +1539,7 @@ class TestOuterExceptionHandlers:
             client = TestClient(app)
             response = client.delete("/api/v1/threads/1234567890/messages/999999999")
             assert response.status_code == 500
+            assert "detail" in response.json()
 
 
 # ---------------------------------------------------------------------------

@@ -304,35 +304,25 @@ def _make_init_response():
 class TestAdminSetupCommand:
     """Tests for admin_setup command."""
 
-    @patch("cogs.adminCog.httpx.AsyncClient")
-    def test_admin_setup_with_role(self, mock_httpx_client, mock_admin_cog):
+    def test_admin_setup_with_role(self, mock_admin_cog):
         """admin_setup should work with provided admin role."""
-        # Mock interaction
+        # Mock interaction — B.25 Fix A: Use a Discord Administrator so _check_is_admin passes
         interaction = _create_mock_interaction()
         interaction.guild = MagicMock()
         interaction.guild.id = 987654321
         interaction.guild.name = "Test Guild"
         interaction.guild.icon = None
-        user = _create_mock_user()
-        interaction.user = user
 
         # Mock provided role
         role = MagicMock()
         role.id = 222222222
         type(role).mention = PropertyMock(return_value="<@&222222222>")
 
-        # Mock HTTP client
-        mock_client = MagicMock()
-        mock_httpx_client.return_value = mock_client
-
-        # Mock API responses
-        guild_create_resp = MagicMock()
-        guild_create_resp.status_code = 200
-        guild_create_resp.json.return_value = {"data": {"id": 987654321}}
-
+        # Mock API response directly on the cog's http_client
         init_resp = _make_init_response()
-        mock_client.post.side_effect = [guild_create_resp, init_resp]
-        mock_client.aclose = AsyncMock()
+        init_resp.raise_for_status = MagicMock()
+        mock_admin_cog.http_client = MagicMock()
+        mock_admin_cog.http_client.post = AsyncMock(return_value=init_resp)
 
         with patch(
             "cogs.adminCog.ensure_bountybot_infrastructure", new=AsyncMock(return_value=_make_full_channel_ids())
@@ -342,6 +332,10 @@ class TestAdminSetupCommand:
         # Verify behavior
         interaction.response.defer.assert_called_once_with(thinking=True, ephemeral=True)
         interaction.followup.send.assert_called_once()
+        call_kwargs = interaction.followup.send.call_args[1]
+        assert "embed" in call_kwargs
+        embed = call_kwargs["embed"]
+        assert embed.title is not None
 
     def test_admin_setup_payload_contains_all_9_new_keys(self, mock_admin_cog):
         """admin_setup should build init_payload with all channel/role keys (including platinum).
@@ -722,8 +716,14 @@ class TestAdminUninstallCommand:
     """Tests for admin_uninstall command (SEG-03: delete Discord infra before API call)."""
 
     @pytest.fixture(autouse=True)
-    def _patch_confirm_view(self):
-        """Patch ConfirmView so tests don't block on view.wait(). result=True simulates user confirming."""
+    def _patch_confirm_view(self, mock_admin_cog):
+        """Patch ConfirmView so tests don't block on view.wait(). result=True simulates user confirming.
+
+        Depends on mock_admin_cog to ensure this fixture runs AFTER the cog fixture has
+        evicted and re-imported cogs.adminCog.  Without this dependency, pytest may patch
+        the old module object before mock_admin_cog evicts it, leaving the freshly-imported
+        cogs.adminCog.ConfirmView unpatched and causing view.wait() to block forever.
+        """
         view_mock = MagicMock()
         view_mock.result = True
         view_mock.wait = AsyncMock(return_value=None)
@@ -805,6 +805,9 @@ class TestAdminUninstallCommand:
         # First send is the confirmation embed+view
         first_call_kwargs = interaction.followup.send.call_args_list[0][1]
         assert "embed" in first_call_kwargs
+        emb = first_call_kwargs["embed"]
+        assert emb.title is not None
+        assert any(w in emb.title.lower() for w in ["confirm", "uninstall", "warning", "danger", "are you sure"])
 
     def test_admin_uninstall_fetches_config_before_deleting(self, mock_admin_cog):
         """admin_uninstall should GET the guild config to obtain channel/role IDs."""
@@ -907,7 +910,8 @@ class TestAdminUninstallCommand:
         mock_admin_cog.http_client.delete.assert_called_once()
 
         interaction.response.defer.assert_called_once_with(thinking=True, ephemeral=True)
-        interaction.followup.send.assert_called_once()
+        # Command sends ConfirmView embed first, then result embed — at least one send
+        interaction.followup.send.assert_called()
 
     def test_admin_uninstall_calls_botcore_api_even_if_discord_deletions_fail(self, mock_admin_cog):
         """admin_uninstall should call bot-core API even if Discord channel/role deletion raises."""
@@ -942,7 +946,8 @@ class TestAdminUninstallCommand:
         mock_admin_cog.http_client.delete.assert_called_once()
 
         interaction.response.defer.assert_called_once_with(thinking=True, ephemeral=True)
-        interaction.followup.send.assert_called_once()
+        # Command sends ConfirmView embed first, then result embed — at least one send
+        interaction.followup.send.assert_called()
 
     def test_admin_uninstall_handles_config_fetch_failure(self, mock_admin_cog):
         """admin_uninstall should proceed with bot-core API even if config fetch fails."""
@@ -965,7 +970,8 @@ class TestAdminUninstallCommand:
         mock_admin_cog.http_client.delete.assert_called_once()
 
         interaction.response.defer.assert_called_once_with(thinking=True, ephemeral=True)
-        interaction.followup.send.assert_called_once()
+        # Command sends ConfirmView embed first, then result embed — at least one send
+        interaction.followup.send.assert_called()
 
     def test_admin_uninstall_sends_success_embed(self, mock_admin_cog):
         """admin_uninstall should send a success embed after uninstall."""
@@ -985,10 +991,12 @@ class TestAdminUninstallCommand:
 
         asyncio.run(mock_admin_cog.admin_uninstall.callback(mock_admin_cog, interaction))
 
-        interaction.followup.send.assert_called_once()
-        call_kwargs = interaction.followup.send.call_args[1]
-        assert "embed" in call_kwargs
-        embed = call_kwargs["embed"]
+        # Command sends ConfirmView embed first, then result embed — check at least 2 sends
+        interaction.followup.send.assert_called()
+        # The last call is the result embed (success after uninstall)
+        last_call_kwargs = interaction.followup.send.call_args_list[-1][1]
+        assert "embed" in last_call_kwargs
+        embed = last_call_kwargs["embed"]
         assert "Uninstalled" in embed.title or "Bot Uninstalled" in embed.title
 
     def test_admin_uninstall_deletes_roles_by_name_when_id_not_stored(self, mock_admin_cog):
@@ -1100,23 +1108,19 @@ class TestAdminUninstallCommand:
 class TestAdminPlayerCommand:
     """Tests for admin_player command."""
 
-    @patch("cogs.adminCog.httpx.AsyncClient")
-    def test_admin_player_view_stats(self, mock_httpx_client, mock_admin_cog):
+    def test_admin_player_view_stats(self, mock_admin_cog):
         """admin_player should show player statistics."""
         # Mock interaction
         interaction = _create_mock_interaction()
         interaction.guild_id = 987654321
 
-        # Mock user
+        # Mock user (target player)
         user = _create_mock_user(user_id=111111111, name="Test User")
 
-        # Mock HTTP client
-        mock_client = MagicMock()
-        mock_httpx_client.return_value = mock_client
-
-        # Mock API responses
+        # Mock API responses directly on the cog's http_client
         player_create_resp = MagicMock()
         player_create_resp.status_code = 200
+        player_create_resp.raise_for_status = MagicMock()
         player_create_resp.json.return_value = {
             "id": 1,
             "discord_id": 111111111,
@@ -1131,50 +1135,55 @@ class TestAdminPlayerCommand:
 
         stats_resp = MagicMock()
         stats_resp.status_code = 200
+        stats_resp.raise_for_status = MagicMock()
         stats_resp.json.return_value = {"total_games": 5, "total_victory": 2, "total_defeat": 3}
 
-        mock_client.post.return_value = player_create_resp
-        mock_client.get.return_value = stats_resp
-        mock_client.aclose = AsyncMock()
+        mock_admin_cog.http_client = MagicMock()
+        mock_admin_cog.http_client.post = AsyncMock(return_value=player_create_resp)
+        mock_admin_cog.http_client.get = AsyncMock(return_value=stats_resp)
 
         asyncio.run(mock_admin_cog.admin_player.callback(mock_admin_cog, interaction, user, "view_stats", None, None))
 
         # Verify behavior
         interaction.response.defer.assert_called_once_with(thinking=True, ephemeral=True)
         interaction.followup.send.assert_called_once()
+        call_kwargs = interaction.followup.send.call_args[1]
+        assert "embed" in call_kwargs
+        embed = call_kwargs["embed"]
+        all_text = (embed.description or "") + " ".join(f.value for f in embed.fields if f.value)
+        assert len(all_text) > 0
 
-    @patch("cogs.adminCog.httpx.AsyncClient")
-    def test_admin_player_set_credits(self, mock_httpx_client, mock_admin_cog):
+    def test_admin_player_set_credits(self, mock_admin_cog):
         """admin_player should set player credits."""
         # Mock interaction
         interaction = _create_mock_interaction()
         interaction.guild_id = 987654321
 
-        # Mock user
+        # Mock user (target player)
         user = _create_mock_user(user_id=111111111, name="Test User")
 
-        # Mock HTTP client
-        mock_client = MagicMock()
-        mock_httpx_client.return_value = mock_client
-
-        # Mock API responses
+        # Mock API responses directly on the cog's http_client
         player_create_resp = MagicMock()
         player_create_resp.status_code = 200
+        player_create_resp.raise_for_status = MagicMock()
         player_create_resp.json.return_value = {"id": 1}
 
         update_resp = MagicMock()
         update_resp.status_code = 200
+        update_resp.raise_for_status = MagicMock()
         update_resp.json.return_value = {"old_credits": 500, "new_credits": 1000}
 
-        mock_client.post.return_value = player_create_resp
-        mock_client.put.return_value = update_resp
-        mock_client.aclose = AsyncMock()
+        mock_admin_cog.http_client = MagicMock()
+        mock_admin_cog.http_client.post = AsyncMock(return_value=player_create_resp)
+        mock_admin_cog.http_client.put = AsyncMock(return_value=update_resp)
 
         asyncio.run(mock_admin_cog.admin_player.callback(mock_admin_cog, interaction, user, "set_credits", 1000, None))
 
         # Verify behavior
         interaction.response.defer.assert_called_once_with(thinking=True, ephemeral=True)
         interaction.followup.send.assert_called_once()
+        call_kwargs = interaction.followup.send.call_args[1]
+        assert "embed" in call_kwargs or "content" in call_kwargs
 
     def test_admin_player_reset_success(self, mock_admin_cog):
         """admin_player reset should reset player stats and send confirmation embed."""
@@ -1217,6 +1226,9 @@ class TestAdminPlayerCommand:
         # Verify an embed was sent (not a plain string error)
         call_kwargs = interaction.followup.send.call_args[1]
         assert "embed" in call_kwargs
+        embed = call_kwargs["embed"]
+        title_or_desc = (embed.title or "") + (embed.description or "")
+        assert any(w in title_or_desc.lower() for w in ["reset", "success", "player"])
 
     def test_admin_player_reset_player_not_found(self, mock_admin_cog):
         """admin_player reset should handle player-not-found (404) gracefully."""
@@ -2150,8 +2162,12 @@ class TestPlatinumTierChoices:
     """Tests that Platinum is included in tier choices for clear/spawn bounty commands."""
 
     @pytest.fixture(autouse=True)
-    def _patch_confirm_view(self):
-        """Patch ConfirmView so clear_bounties tests don't block on view.wait()."""
+    def _patch_confirm_view(self, mock_admin_cog):
+        """Patch ConfirmView so clear_bounties tests don't block on view.wait().
+
+        Depends on mock_admin_cog to ensure this fixture runs AFTER the cog fixture has
+        evicted and re-imported cogs.adminCog (same ordering fix as TestAdminUninstallCommand).
+        """
         view_mock = MagicMock()
         view_mock.result = True
         view_mock.wait = AsyncMock(return_value=None)
@@ -2227,7 +2243,8 @@ class TestPlatinumTierChoices:
         # Should have called the API with platinum tier
         call_kwargs = mock_admin_cog.http_client.delete.call_args[1]
         assert call_kwargs["params"].get("tier") == "platinum"
-        interaction.followup.send.assert_awaited_once()
+        # Command sends ConfirmView embed first, then result embed — at least one send
+        interaction.followup.send.assert_awaited()
 
     def test_admin_spawn_bounty_platinum_tier_accepted(self, mock_admin_cog):
         """admin_spawn_bounty should accept platinum tier value and call API."""
@@ -3313,6 +3330,1945 @@ class TestIsSuperAdmin:
 
         call_kwargs = interaction.response.send_message.call_args.kwargs
         assert call_kwargs.get("ephemeral") is True
+
+
+# ===========================================================================
+# S10: New tests — adminCog coverage gap-fill
+# ===========================================================================
+
+
+class TestAdminRefreshShop:
+    """Tests for admin_refresh_shop command (lines 542-588)."""
+
+    def test_refresh_shop_success(self, mock_admin_cog):
+        """admin_refresh_shop sends success embed on valid tier."""
+        interaction = _create_mock_interaction()
+        interaction.guild_id = 987654321
+
+        resp = MagicMock()
+        resp.raise_for_status = MagicMock()
+        resp.json.return_value = {"message": "Shop refreshed successfully"}
+        mock_admin_cog.http_client.post = AsyncMock(return_value=resp)
+
+        asyncio.run(mock_admin_cog.admin_refresh_shop.callback(mock_admin_cog, interaction, "Bronze", None))
+
+        interaction.response.defer.assert_called_once_with(thinking=True, ephemeral=True)
+        interaction.followup.send.assert_awaited_once()
+        call_kwargs = interaction.followup.send.call_args[1]
+        assert "embed" in call_kwargs
+        embed = call_kwargs["embed"]
+        assert "Refreshed" in embed.title or "✅" in embed.title
+
+    def test_refresh_shop_invalid_tier_sends_error(self, mock_admin_cog):
+        """admin_refresh_shop rejects invalid tier without calling API."""
+        interaction = _create_mock_interaction()
+        interaction.guild_id = 987654321
+        mock_admin_cog.http_client.post = AsyncMock()
+
+        asyncio.run(mock_admin_cog.admin_refresh_shop.callback(mock_admin_cog, interaction, "InvalidTier", None))
+
+        interaction.followup.send.assert_awaited_once()
+        msg = interaction.followup.send.call_args[0][0]
+        assert "Invalid tier" in msg or "❌" in msg
+        # API must not be called
+        mock_admin_cog.http_client.post.assert_not_called()
+
+    def test_refresh_shop_invalid_tech_level_sends_error(self, mock_admin_cog):
+        """admin_refresh_shop rejects tech level out of 1-9 range."""
+        interaction = _create_mock_interaction()
+        interaction.guild_id = 987654321
+        mock_admin_cog.http_client.post = AsyncMock()
+
+        asyncio.run(mock_admin_cog.admin_refresh_shop.callback(mock_admin_cog, interaction, "Bronze", 10))
+
+        interaction.followup.send.assert_awaited_once()
+        msg = interaction.followup.send.call_args[0][0]
+        assert "tech level" in msg.lower() or "❌" in msg
+        mock_admin_cog.http_client.post.assert_not_called()
+
+    def test_refresh_shop_with_force_tech_level(self, mock_admin_cog):
+        """admin_refresh_shop sends force_tech_level in request."""
+        interaction = _create_mock_interaction()
+        interaction.guild_id = 987654321
+
+        resp = MagicMock()
+        resp.raise_for_status = MagicMock()
+        resp.json.return_value = {"message": "Shop refreshed"}
+        mock_admin_cog.http_client.post = AsyncMock(return_value=resp)
+
+        asyncio.run(mock_admin_cog.admin_refresh_shop.callback(mock_admin_cog, interaction, "Gold", 5))
+
+        interaction.followup.send.assert_awaited_once()
+        call_kwargs = interaction.followup.send.call_args[1]
+        assert "embed" in call_kwargs
+
+    def test_refresh_shop_http_error(self, mock_admin_cog):
+        """admin_refresh_shop handles HTTP error gracefully."""
+        import httpx
+
+        interaction = _create_mock_interaction()
+        interaction.guild_id = 987654321
+
+        err_resp = MagicMock()
+        err_resp.status_code = 500
+        mock_admin_cog.http_client.post = AsyncMock(
+            side_effect=httpx.HTTPStatusError("error", request=MagicMock(), response=err_resp)
+        )
+
+        asyncio.run(mock_admin_cog.admin_refresh_shop.callback(mock_admin_cog, interaction, "Bronze", None))
+
+        interaction.followup.send.assert_awaited_once()
+
+    def test_refresh_shop_not_admin_sends_denial(self, mock_admin_cog):
+        """admin_refresh_shop rejects non-admin user."""
+        interaction = _create_mock_interaction()
+        interaction.user.guild_permissions.administrator = False
+        interaction.member = MagicMock()
+        interaction.member.roles = []
+
+        with patch("cogs.adminCog._check_is_admin", AsyncMock(return_value=False)):
+            asyncio.run(mock_admin_cog.admin_refresh_shop.callback(mock_admin_cog, interaction, "Bronze", None))
+
+        interaction.followup.send.assert_awaited_once()
+        msg = interaction.followup.send.call_args[0][0]
+        assert "admin" in msg.lower() or "❌" in msg
+
+
+class TestAdminGuildStats:
+    """Tests for admin_guild_stats command (lines 590-625)."""
+
+    def test_guild_stats_success(self, mock_admin_cog):
+        """admin_guild_stats sends stats embed on success."""
+        interaction = _create_mock_interaction()
+        interaction.guild_id = 987654321
+        interaction.guild = MagicMock()
+        interaction.guild.name = "Test Guild"
+        interaction.guild.icon = None
+
+        stats_data = {
+            "guild_id": 987654321,
+            "total_players": 10,
+            "tier_distribution": {"Bronze": 5, "Silver": 3, "Gold": 2},
+            "total_credits": 5000,
+            "total_xp": 2500,
+            "average_credits": 500.0,
+            "average_xp": 250.0,
+        }
+        resp = MagicMock()
+        resp.raise_for_status = MagicMock()
+        resp.json.return_value = stats_data
+        mock_admin_cog.http_client.get = AsyncMock(return_value=resp)
+
+        asyncio.run(mock_admin_cog.admin_guild_stats.callback(mock_admin_cog, interaction))
+
+        interaction.response.defer.assert_called_once_with(thinking=True, ephemeral=True)
+        interaction.followup.send.assert_awaited_once()
+        call_kwargs = interaction.followup.send.call_args[1]
+        assert "embed" in call_kwargs
+        embed = call_kwargs["embed"]
+        assert "Statistics" in embed.title or "📊" in embed.title
+
+    def test_guild_stats_not_admin(self, mock_admin_cog):
+        """admin_guild_stats rejects non-admin user."""
+        interaction = _create_mock_interaction()
+        interaction.guild_id = 987654321
+
+        with patch("cogs.adminCog._check_is_admin", AsyncMock(return_value=False)):
+            asyncio.run(mock_admin_cog.admin_guild_stats.callback(mock_admin_cog, interaction))
+
+        interaction.followup.send.assert_awaited_once()
+        msg = interaction.followup.send.call_args[0][0]
+        assert "admin" in msg.lower() or "❌" in msg
+
+    def test_guild_stats_http_error(self, mock_admin_cog):
+        """admin_guild_stats handles API HTTP error gracefully."""
+        import httpx
+
+        interaction = _create_mock_interaction()
+        interaction.guild_id = 987654321
+
+        err_resp = MagicMock()
+        err_resp.status_code = 500
+        mock_admin_cog.http_client.get = AsyncMock(
+            side_effect=httpx.HTTPStatusError("error", request=MagicMock(), response=err_resp)
+        )
+
+        asyncio.run(mock_admin_cog.admin_guild_stats.callback(mock_admin_cog, interaction))
+
+        interaction.followup.send.assert_awaited_once()
+
+    def test_guild_stats_generic_exception(self, mock_admin_cog):
+        """admin_guild_stats handles unexpected exception."""
+        interaction = _create_mock_interaction()
+        interaction.guild_id = 987654321
+
+        mock_admin_cog.http_client.get = AsyncMock(side_effect=Exception("Connection lost"))
+
+        asyncio.run(mock_admin_cog.admin_guild_stats.callback(mock_admin_cog, interaction))
+
+        interaction.followup.send.assert_awaited_once()
+        msg = interaction.followup.send.call_args[0][0]
+        assert "⚠️" in msg or "error" in msg.lower()
+
+    def test_guild_stats_no_tier_distribution(self, mock_admin_cog):
+        """admin_guild_stats handles missing tier_distribution gracefully."""
+        interaction = _create_mock_interaction()
+        interaction.guild_id = 987654321
+        interaction.guild = MagicMock()
+        interaction.guild.name = "Test Guild"
+        interaction.guild.icon = None
+
+        stats_data = {
+            "guild_id": 987654321,
+            "total_players": 0,
+            "total_credits": 0,
+            "total_xp": 0,
+            "average_credits": 0.0,
+            "average_xp": 0.0,
+            # No tier_distribution
+        }
+        resp = MagicMock()
+        resp.raise_for_status = MagicMock()
+        resp.json.return_value = stats_data
+        mock_admin_cog.http_client.get = AsyncMock(return_value=resp)
+
+        asyncio.run(mock_admin_cog.admin_guild_stats.callback(mock_admin_cog, interaction))
+
+        interaction.followup.send.assert_awaited_once()
+        call_kwargs = interaction.followup.send.call_args[1]
+        assert "embed" in call_kwargs
+
+
+class TestAdminConfig:
+    """Tests for admin_config command (lines 627-725)."""
+
+    def test_admin_config_view_success(self, mock_admin_cog):
+        """admin_config view returns embed with config data."""
+        interaction = _create_mock_interaction()
+        interaction.guild_id = 987654321
+
+        cfg_data = {
+            "guild_id": 987654321,
+            "configured": True,
+            "admin_role_configured": True,
+            "starting_credits": 500,
+            "sale_price_factor": 0.8,
+            "xp_thresholds": {"Silver": 1000, "Gold": 5000, "Platinum": 15000},
+            "created_at": "2024-01-01T00:00:00",
+            "updated_at": "2024-01-01T00:00:00",
+        }
+        resp = MagicMock()
+        resp.raise_for_status = MagicMock()
+        resp.json.return_value = cfg_data
+        mock_admin_cog.http_client.get = AsyncMock(return_value=resp)
+
+        asyncio.run(mock_admin_cog.admin_config.callback(mock_admin_cog, interaction, "view", None, None))
+
+        interaction.response.defer.assert_called_once_with(thinking=True, ephemeral=True)
+        interaction.followup.send.assert_awaited_once()
+        call_kwargs = interaction.followup.send.call_args[1]
+        assert "embed" in call_kwargs
+
+    def test_admin_config_set_credits_success(self, mock_admin_cog):
+        """admin_config set_credits updates starting credits."""
+        interaction = _create_mock_interaction()
+        interaction.guild_id = 987654321
+
+        resp = MagicMock()
+        resp.raise_for_status = MagicMock()
+        resp.json.return_value = {}
+        mock_admin_cog.http_client.put = AsyncMock(return_value=resp)
+
+        asyncio.run(mock_admin_cog.admin_config.callback(mock_admin_cog, interaction, "set_credits", 1000, None))
+
+        interaction.followup.send.assert_awaited_once()
+        msg = interaction.followup.send.call_args[0][0]
+        assert "✅" in msg or "credits" in msg.lower()
+
+    def test_admin_config_set_credits_missing_amount(self, mock_admin_cog):
+        """admin_config set_credits sends error when credits amount not provided."""
+        interaction = _create_mock_interaction()
+        interaction.guild_id = 987654321
+
+        asyncio.run(mock_admin_cog.admin_config.callback(mock_admin_cog, interaction, "set_credits", None, None))
+
+        interaction.followup.send.assert_awaited_once()
+        msg = interaction.followup.send.call_args[0][0]
+        assert "required" in msg.lower() or "❌" in msg
+
+    def test_admin_config_set_role_success(self, mock_admin_cog):
+        """admin_config set_role updates admin role."""
+        interaction = _create_mock_interaction()
+        interaction.guild_id = 987654321
+
+        resp = MagicMock()
+        resp.raise_for_status = MagicMock()
+        resp.json.return_value = {}
+        mock_admin_cog.http_client.put = AsyncMock(return_value=resp)
+
+        role = MagicMock()
+        role.id = 888888888
+        from unittest.mock import PropertyMock
+
+        type(role).mention = PropertyMock(return_value="<@&888888888>")
+
+        asyncio.run(mock_admin_cog.admin_config.callback(mock_admin_cog, interaction, "set_role", None, role))
+
+        interaction.followup.send.assert_awaited_once()
+        msg = interaction.followup.send.call_args[0][0]
+        assert "✅" in msg or "role" in msg.lower()
+
+    def test_admin_config_set_role_missing_role(self, mock_admin_cog):
+        """admin_config set_role sends error when no role provided."""
+        interaction = _create_mock_interaction()
+        interaction.guild_id = 987654321
+
+        asyncio.run(mock_admin_cog.admin_config.callback(mock_admin_cog, interaction, "set_role", None, None))
+
+        interaction.followup.send.assert_awaited_once()
+        msg = interaction.followup.send.call_args[0][0]
+        assert "required" in msg.lower() or "❌" in msg
+
+    def test_admin_config_reset_success(self, mock_admin_cog):
+        """admin_config reset resets guild config to defaults."""
+        interaction = _create_mock_interaction()
+        interaction.guild_id = 987654321
+
+        resp = MagicMock()
+        resp.raise_for_status = MagicMock()
+        resp.json.return_value = {}
+        mock_admin_cog.http_client.post = AsyncMock(return_value=resp)
+
+        asyncio.run(mock_admin_cog.admin_config.callback(mock_admin_cog, interaction, "reset", None, None))
+
+        interaction.followup.send.assert_awaited_once()
+        msg = interaction.followup.send.call_args[0][0]
+        assert "✅" in msg or "reset" in msg.lower()
+
+    def test_admin_config_not_admin(self, mock_admin_cog):
+        """admin_config rejects non-admin user."""
+        interaction = _create_mock_interaction()
+        interaction.guild_id = 987654321
+
+        with patch("cogs.adminCog._check_is_admin", AsyncMock(return_value=False)):
+            asyncio.run(mock_admin_cog.admin_config.callback(mock_admin_cog, interaction, "view", None, None))
+
+        interaction.followup.send.assert_awaited_once()
+        msg = interaction.followup.send.call_args[0][0]
+        assert "admin" in msg.lower() or "❌" in msg
+
+    def test_admin_config_http_error(self, mock_admin_cog):
+        """admin_config handles HTTP errors gracefully."""
+        import httpx
+
+        interaction = _create_mock_interaction()
+        interaction.guild_id = 987654321
+
+        err_resp = MagicMock()
+        err_resp.status_code = 500
+        mock_admin_cog.http_client.get = AsyncMock(
+            side_effect=httpx.HTTPStatusError("error", request=MagicMock(), response=err_resp)
+        )
+
+        asyncio.run(mock_admin_cog.admin_config.callback(mock_admin_cog, interaction, "view", None, None))
+
+        interaction.followup.send.assert_awaited_once()
+
+    def test_admin_config_generic_exception(self, mock_admin_cog):
+        """admin_config handles unexpected exception."""
+        interaction = _create_mock_interaction()
+        interaction.guild_id = 987654321
+
+        mock_admin_cog.http_client.get = AsyncMock(side_effect=Exception("Connection failed"))
+
+        asyncio.run(mock_admin_cog.admin_config.callback(mock_admin_cog, interaction, "view", None, None))
+
+        interaction.followup.send.assert_awaited_once()
+        msg = interaction.followup.send.call_args[0][0]
+        assert "⚠️" in msg or "error" in msg.lower()
+
+    def test_admin_config_xp_threshold_prestige_default(self, mock_admin_cog):
+        """admin_config view: XP thresholds embed shows Prestige (default) when absent."""
+        interaction = _create_mock_interaction()
+        interaction.guild_id = 987654321
+
+        cfg_data = {
+            "guild_id": 987654321,
+            "configured": True,
+            "admin_role_configured": True,
+            "starting_credits": 500,
+            "sale_price_factor": 0.8,
+            "xp_thresholds": {"Silver": 1000, "Gold": 5000, "Platinum": 15000},
+            "created_at": "2024-01-01T00:00:00",
+            "updated_at": "2024-01-01T00:00:00",
+        }
+        resp = MagicMock()
+        resp.raise_for_status = MagicMock()
+        resp.json.return_value = cfg_data
+        mock_admin_cog.http_client.get = AsyncMock(return_value=resp)
+
+        asyncio.run(mock_admin_cog.admin_config.callback(mock_admin_cog, interaction, "view", None, None))
+
+        call_kwargs = interaction.followup.send.call_args[1]
+        embed = call_kwargs.get("embed")
+        assert embed is not None
+        combined = " ".join(f.value for f in embed.fields)
+        # Should show Prestige default
+        assert "Prestige" in combined
+
+
+class TestAdminConfigShop:
+    """Tests for admin_config_shop command (lines 865-971)."""
+
+    def test_admin_config_shop_success(self, mock_admin_cog):
+        """admin_config_shop updates shop config and sends embed."""
+        interaction = _create_mock_interaction()
+        interaction.guild_id = 987654321
+
+        cfg_result = {
+            "shop_config": {
+                "item_count_ranges": {
+                    "ships": {"min": 2, "max": 4},
+                    "weapons": {"min": 3, "max": 6},
+                    "modules": {"min": 2, "max": 5},
+                    "turrets": {"min": 1, "max": 3},
+                }
+            },
+            "sale_price_factor": 0.8,
+        }
+        resp = MagicMock()
+        resp.raise_for_status = MagicMock()
+        resp.json.return_value = cfg_result
+        mock_admin_cog.http_client.put = AsyncMock(return_value=resp)
+
+        asyncio.run(
+            mock_admin_cog.admin_config_shop.callback(
+                mock_admin_cog,
+                interaction,
+                ship_count_min=2,
+                ship_count_max=4,
+                weapon_count_min=3,
+                weapon_count_max=6,
+                module_count_min=None,
+                module_count_max=None,
+                turret_count_min=None,
+                turret_count_max=None,
+                sale_factor=None,
+            )
+        )
+
+        interaction.response.defer.assert_called_once_with(thinking=True, ephemeral=True)
+        interaction.followup.send.assert_awaited_once()
+        call_kwargs = interaction.followup.send.call_args[1]
+        assert "embed" in call_kwargs
+
+    def test_admin_config_shop_with_sale_factor(self, mock_admin_cog):
+        """admin_config_shop also updates sale_price_factor when provided."""
+        interaction = _create_mock_interaction()
+        interaction.guild_id = 987654321
+
+        shop_cfg = {"shop_config": {"item_count_ranges": {}}, "sale_price_factor": 0.75}
+        sale_cfg = {"shop_config": {"item_count_ranges": {}}, "sale_price_factor": 0.75}
+
+        resp1 = MagicMock()
+        resp1.raise_for_status = MagicMock()
+        resp1.json.return_value = shop_cfg
+
+        resp2 = MagicMock()
+        resp2.raise_for_status = MagicMock()
+        resp2.json.return_value = sale_cfg
+
+        mock_admin_cog.http_client.put = AsyncMock(side_effect=[resp1, resp2])
+
+        asyncio.run(
+            mock_admin_cog.admin_config_shop.callback(
+                mock_admin_cog,
+                interaction,
+                ship_count_min=None,
+                ship_count_max=None,
+                weapon_count_min=None,
+                weapon_count_max=None,
+                module_count_min=None,
+                module_count_max=None,
+                turret_count_min=None,
+                turret_count_max=None,
+                sale_factor=0.75,
+            )
+        )
+
+        # Two PUT calls: one for shop config, one for sale factor
+        assert mock_admin_cog.http_client.put.await_count == 2
+
+    def test_admin_config_shop_not_admin(self, mock_admin_cog):
+        """admin_config_shop rejects non-admin user."""
+        interaction = _create_mock_interaction()
+
+        with patch("cogs.adminCog._check_is_admin", AsyncMock(return_value=False)):
+            asyncio.run(
+                mock_admin_cog.admin_config_shop.callback(
+                    mock_admin_cog,
+                    interaction,
+                    ship_count_min=None,
+                    ship_count_max=None,
+                    weapon_count_min=None,
+                    weapon_count_max=None,
+                    module_count_min=None,
+                    module_count_max=None,
+                    turret_count_min=None,
+                    turret_count_max=None,
+                    sale_factor=None,
+                )
+            )
+
+        interaction.followup.send.assert_awaited_once()
+        msg = interaction.followup.send.call_args[0][0]
+        assert "admin" in msg.lower() or "❌" in msg
+
+    def test_admin_config_shop_http_error(self, mock_admin_cog):
+        """admin_config_shop handles HTTP error gracefully."""
+        import httpx
+
+        interaction = _create_mock_interaction()
+        interaction.guild_id = 987654321
+
+        err_resp = MagicMock()
+        err_resp.status_code = 500
+        mock_admin_cog.http_client.put = AsyncMock(
+            side_effect=httpx.HTTPStatusError("error", request=MagicMock(), response=err_resp)
+        )
+
+        asyncio.run(
+            mock_admin_cog.admin_config_shop.callback(
+                mock_admin_cog,
+                interaction,
+                ship_count_min=2,
+                ship_count_max=4,
+                weapon_count_min=None,
+                weapon_count_max=None,
+                module_count_min=None,
+                module_count_max=None,
+                turret_count_min=None,
+                turret_count_max=None,
+                sale_factor=None,
+            )
+        )
+
+        interaction.followup.send.assert_awaited_once()
+
+    def test_admin_config_shop_generic_exception(self, mock_admin_cog):
+        """admin_config_shop handles unexpected exception."""
+        interaction = _create_mock_interaction()
+        interaction.guild_id = 987654321
+
+        mock_admin_cog.http_client.put = AsyncMock(side_effect=Exception("Unexpected"))
+
+        asyncio.run(
+            mock_admin_cog.admin_config_shop.callback(
+                mock_admin_cog,
+                interaction,
+                ship_count_min=None,
+                ship_count_max=None,
+                weapon_count_min=None,
+                weapon_count_max=None,
+                module_count_min=None,
+                module_count_max=None,
+                turret_count_min=None,
+                turret_count_max=None,
+                sale_factor=None,
+            )
+        )
+
+        interaction.followup.send.assert_awaited_once()
+        msg = interaction.followup.send.call_args[0][0]
+        assert "⚠️" in msg or "error" in msg.lower()
+
+
+class TestAdminConfigValidate:
+    """Tests for admin_config_validate command (lines 973-1026)."""
+
+    def test_config_validate_success_valid(self, mock_admin_cog):
+        """admin_config_validate shows valid config embed."""
+        interaction = _create_mock_interaction()
+        interaction.guild_id = 987654321
+        interaction.guild = MagicMock()
+        interaction.guild.name = "Test Guild"
+
+        validate_data = {"valid": True, "errors": [], "warnings": [], "guild_id": 987654321}
+        resp = MagicMock()
+        resp.raise_for_status = MagicMock()
+        resp.json.return_value = validate_data
+        mock_admin_cog.http_client.get = AsyncMock(return_value=resp)
+
+        asyncio.run(mock_admin_cog.admin_config_validate.callback(mock_admin_cog, interaction))
+
+        interaction.response.defer.assert_called_once_with(thinking=True, ephemeral=True)
+        interaction.followup.send.assert_awaited_once()
+        call_kwargs = interaction.followup.send.call_args[1]
+        assert "embed" in call_kwargs
+        embed = call_kwargs["embed"]
+        assert "Valid" in embed.title or "✅" in embed.title
+
+    def test_config_validate_with_errors_and_warnings(self, mock_admin_cog):
+        """admin_config_validate shows errors and warnings in embed."""
+        interaction = _create_mock_interaction()
+        interaction.guild_id = 987654321
+        interaction.guild = MagicMock()
+        interaction.guild.name = "Test Guild"
+
+        validate_data = {
+            "valid": False,
+            "errors": ["Missing admin role", "No channels configured"],
+            "warnings": ["Low starting credits"],
+            "guild_id": 987654321,
+        }
+        resp = MagicMock()
+        resp.raise_for_status = MagicMock()
+        resp.json.return_value = validate_data
+        mock_admin_cog.http_client.get = AsyncMock(return_value=resp)
+
+        asyncio.run(mock_admin_cog.admin_config_validate.callback(mock_admin_cog, interaction))
+
+        call_kwargs = interaction.followup.send.call_args[1]
+        embed = call_kwargs["embed"]
+        assert "Invalid" in embed.title or "❌" in embed.title
+        # Errors should appear in fields
+        combined = " ".join(f.value for f in embed.fields)
+        assert "Missing admin role" in combined
+
+    def test_config_validate_not_admin(self, mock_admin_cog):
+        """admin_config_validate rejects non-admin user."""
+        interaction = _create_mock_interaction()
+
+        with patch("cogs.adminCog._check_is_admin", AsyncMock(return_value=False)):
+            asyncio.run(mock_admin_cog.admin_config_validate.callback(mock_admin_cog, interaction))
+
+        interaction.followup.send.assert_awaited_once()
+        msg = interaction.followup.send.call_args[0][0]
+        assert "admin" in msg.lower() or "❌" in msg
+
+    def test_config_validate_http_error(self, mock_admin_cog):
+        """admin_config_validate handles HTTP error gracefully."""
+        import httpx
+
+        interaction = _create_mock_interaction()
+        interaction.guild_id = 987654321
+
+        err_resp = MagicMock()
+        err_resp.status_code = 500
+        mock_admin_cog.http_client.get = AsyncMock(
+            side_effect=httpx.HTTPStatusError("error", request=MagicMock(), response=err_resp)
+        )
+
+        asyncio.run(mock_admin_cog.admin_config_validate.callback(mock_admin_cog, interaction))
+
+        interaction.followup.send.assert_awaited_once()
+
+    def test_config_validate_generic_exception(self, mock_admin_cog):
+        """admin_config_validate handles unexpected exception."""
+        interaction = _create_mock_interaction()
+        interaction.guild_id = 987654321
+
+        mock_admin_cog.http_client.get = AsyncMock(side_effect=Exception("Service down"))
+
+        asyncio.run(mock_admin_cog.admin_config_validate.callback(mock_admin_cog, interaction))
+
+        interaction.followup.send.assert_awaited_once()
+        msg = interaction.followup.send.call_args[0][0]
+        assert "⚠️" in msg or "error" in msg.lower()
+
+
+class TestRenderConfig:
+    """Tests for render_config command (lines 1032-1109)."""
+
+    def test_render_config_view_success(self, mock_admin_cog):
+        """render_config view returns embed with current config."""
+        interaction = _create_mock_interaction()
+        interaction.guild_id = 987654321
+
+        config_data = {"max_res_x": 3840, "max_res_y": 2160, "default_samples": 64}
+        resp = MagicMock()
+        resp.raise_for_status = MagicMock()
+        resp.json.return_value = config_data
+        mock_admin_cog.http_client.get = AsyncMock(return_value=resp)
+
+        with patch.dict("os.environ", {"BLENDER_API_BASE_URL": "http://blender-service:8001/api/v1"}):
+            asyncio.run(mock_admin_cog.render_config.callback(mock_admin_cog, interaction, "view", None, None))
+
+        interaction.response.defer.assert_called_once_with(thinking=True, ephemeral=True)
+        interaction.followup.send.assert_awaited_once()
+        call_kwargs = interaction.followup.send.call_args[1]
+        assert "embed" in call_kwargs
+
+    def test_render_config_set_success(self, mock_admin_cog):
+        """render_config set updates a render config setting."""
+        interaction = _create_mock_interaction()
+        interaction.guild_id = 987654321
+        mock_admin_cog._render_settings = ["max_res_x", "default_samples"]
+
+        resp = MagicMock()
+        resp.raise_for_status = MagicMock()
+        resp.json.return_value = {"max_res_x": 1920}
+        mock_admin_cog.http_client.put = AsyncMock(return_value=resp)
+
+        with patch.dict("os.environ", {"BLENDER_API_BASE_URL": "http://blender-service:8001/api/v1"}):
+            asyncio.run(mock_admin_cog.render_config.callback(mock_admin_cog, interaction, "set", "max_res_x", 1920))
+
+        interaction.followup.send.assert_awaited_once()
+        msg = interaction.followup.send.call_args[0][0]
+        assert "✅" in msg or "max_res_x" in msg
+
+    def test_render_config_set_missing_params_sends_usage(self, mock_admin_cog):
+        """render_config set without setting or value sends usage message."""
+        interaction = _create_mock_interaction()
+        mock_admin_cog._render_settings = ["max_res_x"]
+
+        with patch.dict("os.environ", {"BLENDER_API_BASE_URL": "http://blender-service:8001/api/v1"}):
+            asyncio.run(mock_admin_cog.render_config.callback(mock_admin_cog, interaction, "set", None, None))
+
+        interaction.followup.send.assert_awaited_once()
+        msg = interaction.followup.send.call_args[0][0]
+        assert "Usage" in msg or "⚠️" in msg
+
+    def test_render_config_set_unknown_setting_sends_error(self, mock_admin_cog):
+        """render_config set with unknown setting name sends validation error."""
+        interaction = _create_mock_interaction()
+        mock_admin_cog._render_settings = ["max_res_x", "default_samples"]
+
+        with patch.dict("os.environ", {"BLENDER_API_BASE_URL": "http://blender-service:8001/api/v1"}):
+            asyncio.run(
+                mock_admin_cog.render_config.callback(mock_admin_cog, interaction, "set", "unknown_setting", 100)
+            )
+
+        interaction.followup.send.assert_awaited_once()
+        msg = interaction.followup.send.call_args[0][0]
+        assert "Unknown setting" in msg or "⚠️" in msg
+
+    def test_render_config_set_preload_not_ready_sends_error(self, mock_admin_cog):
+        """render_config set when preload not ready (empty list) fails closed."""
+        interaction = _create_mock_interaction()
+        mock_admin_cog._render_settings = []  # preload not done
+
+        with patch.dict("os.environ", {"BLENDER_API_BASE_URL": "http://blender-service:8001/api/v1"}):
+            asyncio.run(mock_admin_cog.render_config.callback(mock_admin_cog, interaction, "set", "max_res_x", 1920))
+
+        interaction.followup.send.assert_awaited_once()
+        msg = interaction.followup.send.call_args[0][0]
+        assert "not yet ready" in msg or "⚠️" in msg
+
+    def test_render_config_reset_success(self, mock_admin_cog):
+        """render_config reset sends confirmation message."""
+        interaction = _create_mock_interaction()
+
+        resp = MagicMock()
+        resp.raise_for_status = MagicMock()
+        resp.json.return_value = {}
+        mock_admin_cog.http_client.post = AsyncMock(return_value=resp)
+
+        with patch.dict("os.environ", {"BLENDER_API_BASE_URL": "http://blender-service:8001/api/v1"}):
+            asyncio.run(mock_admin_cog.render_config.callback(mock_admin_cog, interaction, "reset", None, None))
+
+        interaction.followup.send.assert_awaited_once()
+        msg = interaction.followup.send.call_args[0][0]
+        assert "✅" in msg or "reset" in msg.lower()
+
+    def test_render_config_not_admin(self, mock_admin_cog):
+        """render_config rejects non-admin user."""
+        interaction = _create_mock_interaction()
+
+        with patch("cogs.adminCog._check_is_admin", AsyncMock(return_value=False)):
+            asyncio.run(mock_admin_cog.render_config.callback(mock_admin_cog, interaction, "view", None, None))
+
+        interaction.followup.send.assert_awaited_once()
+        msg = interaction.followup.send.call_args[0][0]
+        assert "admin" in msg.lower() or "❌" in msg
+
+    def test_render_config_http_error(self, mock_admin_cog):
+        """render_config handles HTTP error gracefully."""
+        import httpx
+
+        interaction = _create_mock_interaction()
+
+        err_resp = MagicMock()
+        err_resp.status_code = 503
+        mock_admin_cog.http_client.get = AsyncMock(
+            side_effect=httpx.HTTPStatusError("error", request=MagicMock(), response=err_resp)
+        )
+
+        with patch.dict("os.environ", {"BLENDER_API_BASE_URL": "http://blender-service:8001/api/v1"}):
+            asyncio.run(mock_admin_cog.render_config.callback(mock_admin_cog, interaction, "view", None, None))
+
+        interaction.followup.send.assert_awaited_once()
+
+    def test_render_config_generic_exception(self, mock_admin_cog):
+        """render_config handles generic exception."""
+        interaction = _create_mock_interaction()
+
+        mock_admin_cog.http_client.get = AsyncMock(side_effect=Exception("Blender down"))
+
+        with patch.dict("os.environ", {"BLENDER_API_BASE_URL": "http://blender-service:8001/api/v1"}):
+            asyncio.run(mock_admin_cog.render_config.callback(mock_admin_cog, interaction, "view", None, None))
+
+        interaction.followup.send.assert_awaited_once()
+        msg = interaction.followup.send.call_args[0][0]
+        assert "⚠️" in msg or "error" in msg.lower()
+
+
+class TestRenderCacheClear:
+    """Tests for render_cache_clear command (lines 1111-1138)."""
+
+    def test_render_cache_clear_success(self, mock_admin_cog):
+        """render_cache_clear sends success embed with cleared stats."""
+        interaction = _create_mock_interaction()
+
+        resp = MagicMock()
+        resp.raise_for_status = MagicMock()
+        resp.json.return_value = {"cleared_directories": 3, "freed_mb": 150}
+        mock_admin_cog.http_client.post = AsyncMock(return_value=resp)
+
+        with patch.dict("os.environ", {"BLENDER_API_BASE_URL": "http://blender-service:8001/api/v1"}):
+            asyncio.run(mock_admin_cog.render_cache_clear.callback(mock_admin_cog, interaction))
+
+        interaction.response.defer.assert_called_once_with(thinking=True, ephemeral=True)
+        interaction.followup.send.assert_awaited_once()
+        call_kwargs = interaction.followup.send.call_args[1]
+        assert "embed" in call_kwargs
+        embed = call_kwargs["embed"]
+        assert "Cache" in embed.title or "🗑️" in embed.title
+
+    def test_render_cache_clear_not_admin(self, mock_admin_cog):
+        """render_cache_clear rejects non-admin user."""
+        interaction = _create_mock_interaction()
+
+        with patch("cogs.adminCog._check_is_admin", AsyncMock(return_value=False)):
+            asyncio.run(mock_admin_cog.render_cache_clear.callback(mock_admin_cog, interaction))
+
+        interaction.followup.send.assert_awaited_once()
+        msg = interaction.followup.send.call_args[0][0]
+        assert "admin" in msg.lower() or "❌" in msg
+
+    def test_render_cache_clear_http_error(self, mock_admin_cog):
+        """render_cache_clear handles HTTP error gracefully."""
+        import httpx
+
+        interaction = _create_mock_interaction()
+
+        err_resp = MagicMock()
+        err_resp.status_code = 503
+        mock_admin_cog.http_client.post = AsyncMock(
+            side_effect=httpx.HTTPStatusError("error", request=MagicMock(), response=err_resp)
+        )
+
+        with patch.dict("os.environ", {"BLENDER_API_BASE_URL": "http://blender-service:8001/api/v1"}):
+            asyncio.run(mock_admin_cog.render_cache_clear.callback(mock_admin_cog, interaction))
+
+        interaction.followup.send.assert_awaited_once()
+
+    def test_render_cache_clear_generic_exception(self, mock_admin_cog):
+        """render_cache_clear handles generic exception."""
+        interaction = _create_mock_interaction()
+
+        mock_admin_cog.http_client.post = AsyncMock(side_effect=Exception("Unexpected"))
+
+        with patch.dict("os.environ", {"BLENDER_API_BASE_URL": "http://blender-service:8001/api/v1"}):
+            asyncio.run(mock_admin_cog.render_cache_clear.callback(mock_admin_cog, interaction))
+
+        interaction.followup.send.assert_awaited_once()
+        msg = interaction.followup.send.call_args[0][0]
+        assert "⚠️" in msg or "error" in msg.lower()
+
+
+class TestAdminClearBountiesTimeoutAndCancel:
+    """Tests for admin_clear_bounties ConfirmView timeout and cancel paths."""
+
+    @pytest.fixture(autouse=True)
+    def _use_confirm_view_fixture(self, mock_admin_cog):
+        """Keep real ConfirmView for these tests to test timeout/cancel paths."""
+        pass
+
+    def test_clear_bounties_not_admin(self, mock_admin_cog):
+        """admin_clear_bounties rejects non-admin user before showing confirm view."""
+        interaction = _create_mock_interaction()
+        interaction.guild_id = 987654321
+
+        with patch("cogs.adminCog._check_is_admin", AsyncMock(return_value=False)):
+            asyncio.run(mock_admin_cog.admin_clear_bounties.callback(mock_admin_cog, interaction, None))
+
+        interaction.followup.send.assert_awaited_once()
+        msg = interaction.followup.send.call_args[0][0]
+        assert "admin" in msg.lower() or "❌" in msg
+
+    def test_clear_bounties_timeout_sends_cancelled(self, mock_admin_cog):
+        """admin_clear_bounties sends timeout message when ConfirmView times out."""
+        interaction = _create_mock_interaction()
+        interaction.guild_id = 987654321
+
+        view_mock = MagicMock()
+        view_mock.result = None  # timeout
+        view_mock.wait = AsyncMock(return_value=None)
+
+        with patch("cogs.adminCog.ConfirmView", return_value=view_mock):
+            asyncio.run(mock_admin_cog.admin_clear_bounties.callback(mock_admin_cog, interaction, None))
+
+        msgs = [str(c) for c in interaction.followup.send.call_args_list]
+        assert any("timed out" in m.lower() or "timeout" in m.lower() for m in msgs)
+
+    def test_clear_bounties_cancel_sends_cancelled(self, mock_admin_cog):
+        """admin_clear_bounties sends cancel message when user clicks Cancel."""
+        interaction = _create_mock_interaction()
+        interaction.guild_id = 987654321
+
+        view_mock = MagicMock()
+        view_mock.result = False  # cancelled
+        view_mock.wait = AsyncMock(return_value=None)
+
+        with patch("cogs.adminCog.ConfirmView", return_value=view_mock):
+            asyncio.run(mock_admin_cog.admin_clear_bounties.callback(mock_admin_cog, interaction, None))
+
+        msgs = [str(c) for c in interaction.followup.send.call_args_list]
+        assert any("cancel" in m.lower() for m in msgs)
+
+    def test_clear_bounties_with_tier_success(self, mock_admin_cog):
+        """admin_clear_bounties with specific tier sends correct request."""
+        interaction = _create_mock_interaction()
+        interaction.guild_id = 987654321
+
+        view_mock = MagicMock()
+        view_mock.result = True
+        view_mock.wait = AsyncMock(return_value=None)
+
+        resp = MagicMock()
+        resp.raise_for_status = MagicMock()
+        resp.json.return_value = {"cleared_count": 3, "announcements_deleted": 3}
+        mock_admin_cog.http_client.delete = AsyncMock(return_value=resp)
+
+        with patch("cogs.adminCog.ConfirmView", return_value=view_mock):
+            asyncio.run(mock_admin_cog.admin_clear_bounties.callback(mock_admin_cog, interaction, "gold"))
+
+        delete_kwargs = mock_admin_cog.http_client.delete.call_args[1]
+        assert delete_kwargs["params"].get("tier") == "gold"
+
+    def test_clear_bounties_all_tiers_omits_tier_param(self, mock_admin_cog):
+        """admin_clear_bounties without tier omits tier from API request."""
+        interaction = _create_mock_interaction()
+        interaction.guild_id = 987654321
+
+        view_mock = MagicMock()
+        view_mock.result = True
+        view_mock.wait = AsyncMock(return_value=None)
+
+        resp = MagicMock()
+        resp.raise_for_status = MagicMock()
+        resp.json.return_value = {"cleared_count": 5, "announcements_deleted": 5}
+        mock_admin_cog.http_client.delete = AsyncMock(return_value=resp)
+
+        with patch("cogs.adminCog.ConfirmView", return_value=view_mock):
+            asyncio.run(mock_admin_cog.admin_clear_bounties.callback(mock_admin_cog, interaction, None))
+
+        delete_kwargs = mock_admin_cog.http_client.delete.call_args[1]
+        assert "tier" not in delete_kwargs.get("params", {})
+
+
+class TestAdminUninstallTimeoutPath:
+    """Tests for admin_uninstall ConfirmView timeout path (line 757-758)."""
+
+    def test_admin_uninstall_timeout_sends_cancel(self, mock_admin_cog):
+        """admin_uninstall sends timeout message when confirm view times out."""
+        interaction = _create_mock_interaction()
+        interaction.guild_id = 987654321
+
+        view_mock = MagicMock()
+        view_mock.result = None  # timeout
+        view_mock.wait = AsyncMock(return_value=None)
+
+        with patch("cogs.adminCog.ConfirmView", return_value=view_mock):
+            asyncio.run(mock_admin_cog.admin_uninstall.callback(mock_admin_cog, interaction))
+
+        msgs = [str(c) for c in interaction.followup.send.call_args_list]
+        assert any("timed out" in m.lower() or "timeout" in m.lower() for m in msgs)
+
+    def test_admin_uninstall_not_admin(self, mock_admin_cog):
+        """admin_uninstall rejects non-admin user before showing confirm view."""
+        interaction = _create_mock_interaction()
+        interaction.guild_id = 987654321
+
+        with patch("cogs.adminCog._check_is_admin", AsyncMock(return_value=False)):
+            asyncio.run(mock_admin_cog.admin_uninstall.callback(mock_admin_cog, interaction))
+
+        interaction.followup.send.assert_awaited()
+        msgs = [str(c) for c in interaction.followup.send.call_args_list]
+        assert any("admin" in m.lower() or "❌" in m for m in msgs)
+
+
+class TestAdminPlayerAdditional:
+    """Additional tests for admin_player add_credits and set_xp paths."""
+
+    def test_admin_player_add_credits_success(self, mock_admin_cog):
+        """admin_player add_credits computes new total and sends embed."""
+        interaction = _create_mock_interaction()
+        interaction.guild_id = 987654321
+        user = _create_mock_user(user_id=111111111, name="Test User")
+
+        player_create_resp = MagicMock()
+        player_create_resp.status_code = 200
+        player_create_resp.raise_for_status = MagicMock()
+        player_create_resp.json.return_value = {
+            "id": 1,
+            "credits": 500,
+        }
+
+        update_resp = MagicMock()
+        update_resp.status_code = 200
+        update_resp.raise_for_status = MagicMock()
+        update_resp.json.return_value = {"old_credits": 500, "new_credits": 750}
+
+        mock_admin_cog.http_client = MagicMock()
+        mock_admin_cog.http_client.post = AsyncMock(return_value=player_create_resp)
+        mock_admin_cog.http_client.put = AsyncMock(return_value=update_resp)
+
+        asyncio.run(mock_admin_cog.admin_player.callback(mock_admin_cog, interaction, user, "add_credits", 250, None))
+
+        interaction.followup.send.assert_called_once()
+        call_kwargs = interaction.followup.send.call_args[1]
+        assert "embed" in call_kwargs
+        embed = call_kwargs["embed"]
+        assert "Added" in embed.title or "✅" in embed.title
+
+    def test_admin_player_add_credits_missing_amount(self, mock_admin_cog):
+        """admin_player add_credits sends error when credit_amount not provided."""
+        interaction = _create_mock_interaction()
+        interaction.guild_id = 987654321
+        user = _create_mock_user()
+
+        player_create_resp = MagicMock()
+        player_create_resp.status_code = 200
+        player_create_resp.raise_for_status = MagicMock()
+        player_create_resp.json.return_value = {"id": 1, "credits": 500}
+
+        mock_admin_cog.http_client = MagicMock()
+        mock_admin_cog.http_client.post = AsyncMock(return_value=player_create_resp)
+
+        asyncio.run(mock_admin_cog.admin_player.callback(mock_admin_cog, interaction, user, "add_credits", None, None))
+
+        interaction.followup.send.assert_called_once()
+        msg = interaction.followup.send.call_args[0][0]
+        assert "required" in msg.lower() or "❌" in msg
+
+    def test_admin_player_set_xp_success(self, mock_admin_cog):
+        """admin_player set_xp sends XP updated embed."""
+        interaction = _create_mock_interaction()
+        interaction.guild_id = 987654321
+        user = _create_mock_user()
+
+        player_create_resp = MagicMock()
+        player_create_resp.status_code = 200
+        player_create_resp.raise_for_status = MagicMock()
+        player_create_resp.json.return_value = {"id": 1}
+
+        update_resp = MagicMock()
+        update_resp.status_code = 200
+        update_resp.raise_for_status = MagicMock()
+        update_resp.json.return_value = {
+            "old_xp": 100,
+            "new_xp": 5000,
+            "old_tier": "Bronze",
+            "new_tier": "Silver",
+            "tier_changed": True,
+        }
+
+        mock_admin_cog.http_client = MagicMock()
+        mock_admin_cog.http_client.post = AsyncMock(return_value=player_create_resp)
+        mock_admin_cog.http_client.put = AsyncMock(return_value=update_resp)
+
+        asyncio.run(mock_admin_cog.admin_player.callback(mock_admin_cog, interaction, user, "set_xp", None, 5000))
+
+        interaction.followup.send.assert_called_once()
+        call_kwargs = interaction.followup.send.call_args[1]
+        assert "embed" in call_kwargs
+        embed = call_kwargs["embed"]
+        assert "XP" in embed.title or "✅" in embed.title
+
+    def test_admin_player_set_xp_missing_amount(self, mock_admin_cog):
+        """admin_player set_xp sends error when xp amount not provided."""
+        interaction = _create_mock_interaction()
+        interaction.guild_id = 987654321
+        user = _create_mock_user()
+
+        player_create_resp = MagicMock()
+        player_create_resp.status_code = 200
+        player_create_resp.raise_for_status = MagicMock()
+        player_create_resp.json.return_value = {"id": 1}
+
+        mock_admin_cog.http_client = MagicMock()
+        mock_admin_cog.http_client.post = AsyncMock(return_value=player_create_resp)
+
+        asyncio.run(mock_admin_cog.admin_player.callback(mock_admin_cog, interaction, user, "set_xp", None, None))
+
+        interaction.followup.send.assert_called_once()
+        msg = interaction.followup.send.call_args[0][0]
+        assert "required" in msg.lower() or "❌" in msg
+
+    def test_admin_player_set_credits_missing_amount(self, mock_admin_cog):
+        """admin_player set_credits sends error when credit_amount not provided."""
+        interaction = _create_mock_interaction()
+        interaction.guild_id = 987654321
+        user = _create_mock_user()
+
+        player_create_resp = MagicMock()
+        player_create_resp.status_code = 200
+        player_create_resp.raise_for_status = MagicMock()
+        player_create_resp.json.return_value = {"id": 1}
+
+        mock_admin_cog.http_client = MagicMock()
+        mock_admin_cog.http_client.post = AsyncMock(return_value=player_create_resp)
+
+        asyncio.run(mock_admin_cog.admin_player.callback(mock_admin_cog, interaction, user, "set_credits", None, None))
+
+        interaction.followup.send.assert_called_once()
+        msg = interaction.followup.send.call_args[0][0]
+        assert "required" in msg.lower() or "❌" in msg
+
+
+class TestAdminGiveItem:
+    """Tests for admin_give_item command (lines 1757-1827)."""
+
+    def test_admin_give_item_success(self, mock_admin_cog):
+        """admin_give_item sends success embed on success."""
+        interaction = _create_mock_interaction()
+        interaction.guild_id = 987654321
+        user = _create_mock_user()
+
+        resp = MagicMock()
+        resp.status_code = 200
+        resp.raise_for_status = MagicMock()
+        resp.json.return_value = {
+            "message": "Item given successfully.",
+            "item_type": "primary_weapon",
+            "new_total_quantity": 2,
+        }
+        mock_admin_cog.http_client.post = AsyncMock(return_value=resp)
+
+        asyncio.run(mock_admin_cog.admin_give_item.callback(mock_admin_cog, interaction, user, "Laser Cannon", 1))
+
+        interaction.response.defer.assert_called_once_with(thinking=True, ephemeral=True)
+        interaction.followup.send.assert_awaited_once()
+        call_kwargs = interaction.followup.send.call_args[1]
+        assert "embed" in call_kwargs
+        embed = call_kwargs["embed"]
+        assert "Given" in embed.title or "✅" in embed.title
+
+    def test_admin_give_item_404_sends_not_found(self, mock_admin_cog):
+        """admin_give_item sends not-found error on 404."""
+        interaction = _create_mock_interaction()
+        interaction.guild_id = 987654321
+        user = _create_mock_user()
+
+        resp = MagicMock()
+        resp.status_code = 404
+        resp.json.return_value = {"detail": "Item not found."}
+        mock_admin_cog.http_client.post = AsyncMock(return_value=resp)
+
+        asyncio.run(mock_admin_cog.admin_give_item.callback(mock_admin_cog, interaction, user, "Unknown Item", 1))
+
+        interaction.followup.send.assert_awaited_once()
+        msg = interaction.followup.send.call_args[0][0]
+        assert "not found" in msg.lower() or "❌" in msg
+
+    def test_admin_give_item_400_sends_validation_error(self, mock_admin_cog):
+        """admin_give_item sends validation error on 400."""
+        interaction = _create_mock_interaction()
+        interaction.guild_id = 987654321
+        user = _create_mock_user()
+
+        resp = MagicMock()
+        resp.status_code = 400
+        resp.json.return_value = {"detail": "Invalid quantity."}
+        mock_admin_cog.http_client.post = AsyncMock(return_value=resp)
+
+        asyncio.run(mock_admin_cog.admin_give_item.callback(mock_admin_cog, interaction, user, "Laser Cannon", -1))
+
+        interaction.followup.send.assert_awaited_once()
+        msg = interaction.followup.send.call_args[0][0]
+        assert "Invalid" in msg or "❌" in msg
+
+    def test_admin_give_item_not_admin(self, mock_admin_cog):
+        """admin_give_item rejects non-admin user."""
+        interaction = _create_mock_interaction()
+        user = _create_mock_user()
+
+        with patch("cogs.adminCog._check_is_admin", AsyncMock(return_value=False)):
+            asyncio.run(mock_admin_cog.admin_give_item.callback(mock_admin_cog, interaction, user, "Laser Cannon", 1))
+
+        interaction.followup.send.assert_awaited_once()
+        msg = interaction.followup.send.call_args[0][0]
+        assert "admin" in msg.lower() or "❌" in msg
+
+    def test_admin_give_item_http_error(self, mock_admin_cog):
+        """admin_give_item handles HTTP error gracefully."""
+        import httpx
+
+        interaction = _create_mock_interaction()
+        interaction.guild_id = 987654321
+        user = _create_mock_user()
+
+        err_resp = MagicMock()
+        err_resp.status_code = 500
+        mock_admin_cog.http_client.post = AsyncMock(
+            side_effect=httpx.HTTPStatusError("error", request=MagicMock(), response=err_resp)
+        )
+
+        asyncio.run(mock_admin_cog.admin_give_item.callback(mock_admin_cog, interaction, user, "Laser Cannon", 1))
+
+        interaction.followup.send.assert_awaited_once()
+
+
+class TestAdminRemoveItem:
+    """Tests for admin_remove_item command (lines 1835-1909)."""
+
+    def test_admin_remove_item_success(self, mock_admin_cog):
+        """admin_remove_item sends success embed."""
+        interaction = _create_mock_interaction()
+        interaction.guild_id = 987654321
+        user = _create_mock_user()
+
+        resp = MagicMock()
+        resp.status_code = 200
+        resp.raise_for_status = MagicMock()
+        resp.json.return_value = {
+            "message": "Item removed.",
+            "item_type": "primary_weapon",
+            "new_quantity": 0,
+        }
+        mock_admin_cog.http_client.post = AsyncMock(return_value=resp)
+
+        asyncio.run(mock_admin_cog.admin_remove_item.callback(mock_admin_cog, interaction, user, "Laser Cannon", 1))
+
+        interaction.response.defer.assert_called_once_with(thinking=True, ephemeral=True)
+        interaction.followup.send.assert_awaited_once()
+        call_kwargs = interaction.followup.send.call_args[1]
+        assert "embed" in call_kwargs
+
+    def test_admin_remove_item_select_user_first_sentinel(self, mock_admin_cog):
+        """admin_remove_item sends error for __select_user_first__ sentinel."""
+        interaction = _create_mock_interaction()
+        user = _create_mock_user()
+
+        asyncio.run(
+            mock_admin_cog.admin_remove_item.callback(mock_admin_cog, interaction, user, "__select_user_first__", 1)
+        )
+
+        interaction.followup.send.assert_awaited_once()
+        msg = interaction.followup.send.call_args[0][0]
+        assert "select a user" in msg.lower() or "❌" in msg
+
+    def test_admin_remove_item_404_sends_not_found(self, mock_admin_cog):
+        """admin_remove_item sends not-found error on 404."""
+        interaction = _create_mock_interaction()
+        interaction.guild_id = 987654321
+        user = _create_mock_user()
+
+        resp = MagicMock()
+        resp.status_code = 404
+        resp.json.return_value = {"detail": "Item not found."}
+        mock_admin_cog.http_client.post = AsyncMock(return_value=resp)
+
+        asyncio.run(mock_admin_cog.admin_remove_item.callback(mock_admin_cog, interaction, user, "Nonexistent Item", 1))
+
+        interaction.followup.send.assert_awaited_once()
+        msg = interaction.followup.send.call_args[0][0]
+        assert "not found" in msg.lower() or "❌" in msg
+
+    def test_admin_remove_item_400_sends_validation_error(self, mock_admin_cog):
+        """admin_remove_item sends validation error on 400."""
+        interaction = _create_mock_interaction()
+        interaction.guild_id = 987654321
+        user = _create_mock_user()
+
+        resp = MagicMock()
+        resp.status_code = 400
+        resp.json.return_value = {"detail": "Cannot remove equipped item."}
+        mock_admin_cog.http_client.post = AsyncMock(return_value=resp)
+
+        asyncio.run(mock_admin_cog.admin_remove_item.callback(mock_admin_cog, interaction, user, "Laser Cannon", 1))
+
+        interaction.followup.send.assert_awaited_once()
+        msg = interaction.followup.send.call_args[0][0]
+        assert "Cannot" in msg or "❌" in msg
+
+    def test_admin_remove_item_not_admin(self, mock_admin_cog):
+        """admin_remove_item rejects non-admin user."""
+        interaction = _create_mock_interaction()
+        user = _create_mock_user()
+
+        with patch("cogs.adminCog._check_is_admin", AsyncMock(return_value=False)):
+            asyncio.run(mock_admin_cog.admin_remove_item.callback(mock_admin_cog, interaction, user, "Laser Cannon", 1))
+
+        interaction.followup.send.assert_awaited_once()
+        msg = interaction.followup.send.call_args[0][0]
+        assert "admin" in msg.lower() or "❌" in msg
+
+
+class TestAdminGiveShip:
+    """Tests for admin_give_ship command (lines 1917-1973)."""
+
+    def test_admin_give_ship_success(self, mock_admin_cog):
+        """admin_give_ship sends success embed."""
+        interaction = _create_mock_interaction()
+        interaction.guild_id = 987654321
+        user = _create_mock_user()
+
+        resp = MagicMock()
+        resp.status_code = 200
+        resp.raise_for_status = MagicMock()
+        resp.json.return_value = {"message": "Ship given.", "ship_id": 42}
+        mock_admin_cog.http_client.post = AsyncMock(return_value=resp)
+
+        asyncio.run(mock_admin_cog.admin_give_ship.callback(mock_admin_cog, interaction, user, "Eagle"))
+
+        interaction.response.defer.assert_called_once_with(thinking=True, ephemeral=True)
+        interaction.followup.send.assert_awaited_once()
+        call_kwargs = interaction.followup.send.call_args[1]
+        assert "embed" in call_kwargs
+
+    def test_admin_give_ship_404(self, mock_admin_cog):
+        """admin_give_ship handles 404 gracefully."""
+        interaction = _create_mock_interaction()
+        interaction.guild_id = 987654321
+        user = _create_mock_user()
+
+        resp = MagicMock()
+        resp.status_code = 404
+        resp.json.return_value = {"detail": "Ship not found."}
+        mock_admin_cog.http_client.post = AsyncMock(return_value=resp)
+
+        asyncio.run(mock_admin_cog.admin_give_ship.callback(mock_admin_cog, interaction, user, "Unknown Ship"))
+
+        interaction.followup.send.assert_awaited_once()
+        msg = interaction.followup.send.call_args[0][0]
+        assert "not found" in msg.lower() or "❌" in msg
+
+    def test_admin_give_ship_400(self, mock_admin_cog):
+        """admin_give_ship handles 400 gracefully."""
+        interaction = _create_mock_interaction()
+        interaction.guild_id = 987654321
+        user = _create_mock_user()
+
+        resp = MagicMock()
+        resp.status_code = 400
+        resp.json.return_value = {"detail": "Player already owns this ship."}
+        mock_admin_cog.http_client.post = AsyncMock(return_value=resp)
+
+        asyncio.run(mock_admin_cog.admin_give_ship.callback(mock_admin_cog, interaction, user, "Eagle"))
+
+        interaction.followup.send.assert_awaited_once()
+        msg = interaction.followup.send.call_args[0][0]
+        assert "already owns" in msg or "❌" in msg
+
+    def test_admin_give_ship_not_admin(self, mock_admin_cog):
+        """admin_give_ship rejects non-admin user."""
+        interaction = _create_mock_interaction()
+        user = _create_mock_user()
+
+        with patch("cogs.adminCog._check_is_admin", AsyncMock(return_value=False)):
+            asyncio.run(mock_admin_cog.admin_give_ship.callback(mock_admin_cog, interaction, user, "Eagle"))
+
+        interaction.followup.send.assert_awaited_once()
+        msg = interaction.followup.send.call_args[0][0]
+        assert "admin" in msg.lower() or "❌" in msg
+
+
+class TestAdminRemoveShip:
+    """Tests for admin_remove_ship command (lines 2038-2107)."""
+
+    def test_admin_remove_ship_success(self, mock_admin_cog):
+        """admin_remove_ship sends success embed."""
+        interaction = _create_mock_interaction()
+        interaction.guild_id = 987654321
+        user = _create_mock_user()
+
+        resp = MagicMock()
+        resp.status_code = 200
+        resp.raise_for_status = MagicMock()
+        resp.json.return_value = {
+            "message": "Ship removed.",
+            "items_returned_to_inventory": ["Laser Cannon", "Engine Core"],
+        }
+        mock_admin_cog.http_client.post = AsyncMock(return_value=resp)
+
+        asyncio.run(mock_admin_cog.admin_remove_ship.callback(mock_admin_cog, interaction, user, "Eagle"))
+
+        interaction.response.defer.assert_called_once_with(thinking=True, ephemeral=True)
+        interaction.followup.send.assert_awaited_once()
+        call_kwargs = interaction.followup.send.call_args[1]
+        assert "embed" in call_kwargs
+
+    def test_admin_remove_ship_404(self, mock_admin_cog):
+        """admin_remove_ship handles 404 gracefully."""
+        interaction = _create_mock_interaction()
+        interaction.guild_id = 987654321
+        user = _create_mock_user()
+
+        resp = MagicMock()
+        resp.status_code = 404
+        resp.json.return_value = {"detail": "Ship not found."}
+        mock_admin_cog.http_client.post = AsyncMock(return_value=resp)
+
+        asyncio.run(mock_admin_cog.admin_remove_ship.callback(mock_admin_cog, interaction, user, "Unknown"))
+
+        interaction.followup.send.assert_awaited_once()
+        msg = interaction.followup.send.call_args[0][0]
+        assert "not found" in msg.lower() or "❌" in msg
+
+    def test_admin_remove_ship_400(self, mock_admin_cog):
+        """admin_remove_ship handles 400 gracefully."""
+        interaction = _create_mock_interaction()
+        interaction.guild_id = 987654321
+        user = _create_mock_user()
+
+        resp = MagicMock()
+        resp.status_code = 400
+        resp.json.return_value = {"detail": "Cannot remove only active ship."}
+        mock_admin_cog.http_client.post = AsyncMock(return_value=resp)
+
+        asyncio.run(mock_admin_cog.admin_remove_ship.callback(mock_admin_cog, interaction, user, "Eagle"))
+
+        interaction.followup.send.assert_awaited_once()
+        msg = interaction.followup.send.call_args[0][0]
+        assert "Cannot" in msg or "❌" in msg
+
+    def test_admin_remove_ship_not_admin(self, mock_admin_cog):
+        """admin_remove_ship rejects non-admin user."""
+        interaction = _create_mock_interaction()
+        user = _create_mock_user()
+
+        with patch("cogs.adminCog._check_is_admin", AsyncMock(return_value=False)):
+            asyncio.run(mock_admin_cog.admin_remove_ship.callback(mock_admin_cog, interaction, user, "Eagle"))
+
+        interaction.followup.send.assert_awaited_once()
+        msg = interaction.followup.send.call_args[0][0]
+        assert "admin" in msg.lower() or "❌" in msg
+
+    def test_admin_remove_ship_with_items_returned(self, mock_admin_cog):
+        """admin_remove_ship embed includes returned items when present."""
+        interaction = _create_mock_interaction()
+        interaction.guild_id = 987654321
+        user = _create_mock_user()
+
+        resp = MagicMock()
+        resp.status_code = 200
+        resp.raise_for_status = MagicMock()
+        resp.json.return_value = {
+            "message": "Ship removed.",
+            "items_returned_to_inventory": ["Laser Cannon", "Engine Core", "Shield"],
+        }
+        mock_admin_cog.http_client.post = AsyncMock(return_value=resp)
+
+        asyncio.run(mock_admin_cog.admin_remove_ship.callback(mock_admin_cog, interaction, user, "Eagle"))
+
+        call_kwargs = interaction.followup.send.call_args[1]
+        embed = call_kwargs["embed"]
+        field_names = [f.name for f in embed.fields]
+        assert any("Items" in n or "Return" in n for n in field_names)
+
+
+class TestAdminDuel:
+    """Tests for admin_duel command (lines 2153-2234)."""
+
+    def test_admin_duel_cancel_all_success(self, mock_admin_cog):
+        """admin_duel 'all' cancels all pending duels."""
+        interaction = _create_mock_interaction()
+        interaction.guild_id = 987654321
+
+        resp = MagicMock()
+        resp.raise_for_status = MagicMock()
+        resp.json.return_value = {"cancelled_count": 3}
+        mock_admin_cog.http_client.post = AsyncMock(return_value=resp)
+
+        asyncio.run(mock_admin_cog.admin_duel.callback(mock_admin_cog, interaction, "all"))
+
+        interaction.response.defer.assert_called_once_with(thinking=True, ephemeral=True)
+        interaction.followup.send.assert_awaited_once()
+
+    def test_admin_duel_cancel_all_none_pending(self, mock_admin_cog):
+        """admin_duel 'all' with no pending duels shows no-op message."""
+        interaction = _create_mock_interaction()
+        interaction.guild_id = 987654321
+
+        resp = MagicMock()
+        resp.raise_for_status = MagicMock()
+        resp.json.return_value = {"cancelled_count": 0}
+        mock_admin_cog.http_client.post = AsyncMock(return_value=resp)
+
+        asyncio.run(mock_admin_cog.admin_duel.callback(mock_admin_cog, interaction, "all"))
+
+        interaction.followup.send.assert_awaited_once()
+        msg = interaction.followup.send.call_args[0][0]
+        assert "No pending" in msg or "✅" in msg
+
+    def test_admin_duel_cancel_specific_success(self, mock_admin_cog):
+        """admin_duel with valid duel ID sends success embed."""
+        interaction = _create_mock_interaction()
+        interaction.guild_id = 987654321
+
+        resp = MagicMock()
+        resp.status_code = 200
+        resp.raise_for_status = MagicMock()
+        resp.json.return_value = {}
+        mock_admin_cog.http_client.post = AsyncMock(return_value=resp)
+
+        asyncio.run(mock_admin_cog.admin_duel.callback(mock_admin_cog, interaction, "42"))
+
+        interaction.followup.send.assert_awaited_once()
+        call_kwargs = interaction.followup.send.call_args[1]
+        assert "embed" in call_kwargs
+
+    def test_admin_duel_invalid_duel_id_sends_error(self, mock_admin_cog):
+        """admin_duel with non-numeric duel ID sends error message."""
+        interaction = _create_mock_interaction()
+
+        asyncio.run(mock_admin_cog.admin_duel.callback(mock_admin_cog, interaction, "not-an-id"))
+
+        interaction.followup.send.assert_awaited_once()
+        msg = interaction.followup.send.call_args[0][0]
+        assert "Invalid" in msg or "❌" in msg
+
+    def test_admin_duel_cancel_specific_404(self, mock_admin_cog):
+        """admin_duel with duel ID sends not-found error on 404."""
+        interaction = _create_mock_interaction()
+        interaction.guild_id = 987654321
+
+        resp = MagicMock()
+        resp.status_code = 404
+        resp.json.return_value = {"detail": "Duel not found."}
+        mock_admin_cog.http_client.post = AsyncMock(return_value=resp)
+
+        asyncio.run(mock_admin_cog.admin_duel.callback(mock_admin_cog, interaction, "99"))
+
+        interaction.followup.send.assert_awaited_once()
+        msg = interaction.followup.send.call_args[0][0]
+        assert "not found" in msg.lower() or "❌" in msg
+
+    def test_admin_duel_cancel_specific_400(self, mock_admin_cog):
+        """admin_duel with duel ID sends error on 400."""
+        interaction = _create_mock_interaction()
+        interaction.guild_id = 987654321
+
+        resp = MagicMock()
+        resp.status_code = 400
+        resp.json.return_value = {"detail": "Duel already resolved."}
+        mock_admin_cog.http_client.post = AsyncMock(return_value=resp)
+
+        asyncio.run(mock_admin_cog.admin_duel.callback(mock_admin_cog, interaction, "99"))
+
+        interaction.followup.send.assert_awaited_once()
+        msg = interaction.followup.send.call_args[0][0]
+        assert "resolved" in msg or "❌" in msg
+
+    def test_admin_duel_not_admin(self, mock_admin_cog):
+        """admin_duel rejects non-admin user."""
+        interaction = _create_mock_interaction()
+
+        with patch("cogs.adminCog._check_is_admin", AsyncMock(return_value=False)):
+            asyncio.run(mock_admin_cog.admin_duel.callback(mock_admin_cog, interaction, "all"))
+
+        interaction.followup.send.assert_awaited_once()
+        msg = interaction.followup.send.call_args[0][0]
+        assert "admin" in msg.lower() or "❌" in msg
+
+    def test_admin_duel_cancel_all_http_error(self, mock_admin_cog):
+        """admin_duel 'all' handles HTTP error gracefully."""
+        import httpx
+
+        interaction = _create_mock_interaction()
+        interaction.guild_id = 987654321
+
+        err_resp = MagicMock()
+        err_resp.status_code = 500
+        mock_admin_cog.http_client.post = AsyncMock(
+            side_effect=httpx.HTTPStatusError("error", request=MagicMock(), response=err_resp)
+        )
+
+        asyncio.run(mock_admin_cog.admin_duel.callback(mock_admin_cog, interaction, "all"))
+
+        interaction.followup.send.assert_awaited_once()
+
+    def test_admin_duel_cancel_specific_generic_exception(self, mock_admin_cog):
+        """admin_duel with specific ID handles generic exception."""
+        interaction = _create_mock_interaction()
+        interaction.guild_id = 987654321
+
+        mock_admin_cog.http_client.post = AsyncMock(side_effect=Exception("Network error"))
+
+        asyncio.run(mock_admin_cog.admin_duel.callback(mock_admin_cog, interaction, "42"))
+
+        interaction.followup.send.assert_awaited_once()
+        msg = interaction.followup.send.call_args[0][0]
+        assert "⚠️" in msg or "error" in msg.lower()
+
+
+class TestAdminDuelAutocomplete:
+    """Tests for admin_duel_autocomplete (lines 2113-2151)."""
+
+    def test_admin_duel_autocomplete_success(self, mock_admin_cog):
+        """admin_duel_autocomplete returns 'cancel all' plus pending duels."""
+        interaction = _create_mock_interaction()
+        interaction.guild_id = 987654321
+
+        duels_data = [
+            {
+                "id": 1,
+                "challenger_name": "Alice",
+                "target_name": "Bob",
+                "challenger_id": 111,
+                "target_id": 222,
+                "stakes": 500,
+            }
+        ]
+        resp = MagicMock()
+        resp.raise_for_status = MagicMock()
+        resp.json.return_value = duels_data
+        mock_admin_cog.http_client.get = AsyncMock(return_value=resp)
+
+        choices = asyncio.run(mock_admin_cog.admin_duel_autocomplete(interaction, ""))
+
+        # First choice should be "Cancel ALL"
+        assert choices[0].value == "all"
+        assert len(choices) == 2  # 1 "all" + 1 duel
+
+    def test_admin_duel_autocomplete_no_pending_duels(self, mock_admin_cog):
+        """admin_duel_autocomplete returns only 'cancel all' when no duels."""
+        interaction = _create_mock_interaction()
+        interaction.guild_id = 987654321
+
+        resp = MagicMock()
+        resp.raise_for_status = MagicMock()
+        resp.json.return_value = []
+        mock_admin_cog.http_client.get = AsyncMock(return_value=resp)
+
+        choices = asyncio.run(mock_admin_cog.admin_duel_autocomplete(interaction, ""))
+
+        assert len(choices) == 1
+        assert choices[0].value == "all"
+
+    def test_admin_duel_autocomplete_error_returns_empty(self, mock_admin_cog):
+        """admin_duel_autocomplete returns empty list on API error."""
+        interaction = _create_mock_interaction()
+        interaction.guild_id = 987654321
+
+        mock_admin_cog.http_client.get = AsyncMock(side_effect=Exception("API down"))
+
+        choices = asyncio.run(mock_admin_cog.admin_duel_autocomplete(interaction, ""))
+
+        assert choices == []
+
+    def test_admin_duel_autocomplete_friendly_duel_label(self, mock_admin_cog):
+        """admin_duel_autocomplete labels friendly duel without stakes."""
+        interaction = _create_mock_interaction()
+        interaction.guild_id = 987654321
+
+        duels_data = [
+            {
+                "id": 5,
+                "challenger_name": "Alice",
+                "target_name": "Bob",
+                "challenger_id": 111,
+                "target_id": 222,
+                "stakes": 0,
+            }
+        ]
+        resp = MagicMock()
+        resp.raise_for_status = MagicMock()
+        resp.json.return_value = duels_data
+        mock_admin_cog.http_client.get = AsyncMock(return_value=resp)
+
+        choices = asyncio.run(mock_admin_cog.admin_duel_autocomplete(interaction, ""))
+
+        # The duel choice should be present
+        duel_choice = choices[1]
+        assert "friendly" in duel_choice.name.lower() or "Alice" in duel_choice.name
+
+
+class TestAdminSpawnBountyAdditional:
+    """Additional tests for admin_spawn_bounty command."""
+
+    def test_admin_spawn_bounty_success_with_spawned(self, mock_admin_cog):
+        """admin_spawn_bounty shows bounty details when spawned."""
+        interaction = _create_mock_interaction()
+        interaction.guild_id = 987654321
+
+        resp = MagicMock()
+        resp.raise_for_status = MagicMock()
+        resp.json.return_value = {
+            "spawned": [
+                {"division": "bronze", "criminal_name": "Darko", "tech_level": 3, "reward": 500},
+            ],
+            "skipped_tiers": ["silver"],
+            "errors": [],
+        }
+        mock_admin_cog.http_client.post = AsyncMock(return_value=resp)
+
+        asyncio.run(mock_admin_cog.admin_spawn_bounty.callback(mock_admin_cog, interaction, None))
+
+        interaction.response.defer.assert_called_once_with(thinking=True, ephemeral=True)
+        interaction.followup.send.assert_awaited_once()
+        call_kwargs = interaction.followup.send.call_args[1]
+        assert "embed" in call_kwargs
+
+    def test_admin_spawn_bounty_not_admin(self, mock_admin_cog):
+        """admin_spawn_bounty rejects non-admin user."""
+        interaction = _create_mock_interaction()
+
+        with patch("cogs.adminCog._check_is_admin", AsyncMock(return_value=False)):
+            asyncio.run(mock_admin_cog.admin_spawn_bounty.callback(mock_admin_cog, interaction, None))
+
+        interaction.followup.send.assert_awaited_once()
+        msg = interaction.followup.send.call_args[0][0]
+        assert "admin" in msg.lower() or "❌" in msg
+
+    def test_admin_spawn_bounty_with_errors_in_response(self, mock_admin_cog):
+        """admin_spawn_bounty shows errors when API returns error list."""
+        interaction = _create_mock_interaction()
+        interaction.guild_id = 987654321
+
+        resp = MagicMock()
+        resp.raise_for_status = MagicMock()
+        resp.json.return_value = {
+            "spawned": [],
+            "skipped_tiers": [],
+            "errors": ["Failed to post to bronze channel"],
+        }
+        mock_admin_cog.http_client.post = AsyncMock(return_value=resp)
+
+        asyncio.run(mock_admin_cog.admin_spawn_bounty.callback(mock_admin_cog, interaction, None))
+
+        interaction.followup.send.assert_awaited_once()
+        call_kwargs = interaction.followup.send.call_args[1]
+        assert "embed" in call_kwargs
+        embed = call_kwargs["embed"]
+        field_names = [f.name for f in embed.fields]
+        assert any("Error" in n for n in field_names)
+
+    def test_admin_spawn_bounty_http_error(self, mock_admin_cog):
+        """admin_spawn_bounty handles HTTP error gracefully."""
+        import httpx
+
+        interaction = _create_mock_interaction()
+        interaction.guild_id = 987654321
+
+        err_resp = MagicMock()
+        err_resp.status_code = 500
+        mock_admin_cog.http_client.post = AsyncMock(
+            side_effect=httpx.HTTPStatusError("error", request=MagicMock(), response=err_resp)
+        )
+
+        asyncio.run(mock_admin_cog.admin_spawn_bounty.callback(mock_admin_cog, interaction, None))
+
+        interaction.followup.send.assert_awaited_once()
+
+
+class TestAdminConfigBounty:
+    """Tests for admin_config_bounty command (lines 1214-1344)."""
+
+    def test_admin_config_bounty_view(self, mock_admin_cog):
+        """admin_config_bounty view action sends bounty config embed."""
+        interaction = _create_mock_interaction()
+        interaction.guild_id = 987654321
+
+        cfg_data = {
+            "max_bounties_per_tier": {"bronze": 3, "silver": 2, "gold": 2},
+            "active_bounties_per_tier": {"bronze": 1, "silver": 0, "gold": 0},
+            "bounty_expiry_minutes": 1440,
+            "bounty_spawn_interval_minutes": 60,
+            "next_spawn_check_at": "2024-01-01T12:00:00",
+        }
+        resp = MagicMock()
+        resp.raise_for_status = MagicMock()
+        resp.json.return_value = cfg_data
+        mock_admin_cog.http_client.get = AsyncMock(return_value=resp)
+
+        asyncio.run(
+            mock_admin_cog.admin_config_bounty.callback(
+                mock_admin_cog,
+                interaction,
+                action="view",
+                max_bronze=None,
+                max_silver=None,
+                max_gold=None,
+                max_platinum=None,
+                expiry_minutes=None,
+                spawn_interval=None,
+            )
+        )
+
+        interaction.response.defer.assert_called_once_with(thinking=True, ephemeral=True)
+        interaction.followup.send.assert_awaited_once()
+        call_kwargs = interaction.followup.send.call_args[1]
+        assert "embed" in call_kwargs
+
+    def test_admin_config_bounty_update(self, mock_admin_cog):
+        """admin_config_bounty update action sends updated config embed."""
+        interaction = _create_mock_interaction()
+        interaction.guild_id = 987654321
+
+        result_data = {
+            "max_bounties_per_tier": {"bronze": 5, "silver": 3},
+            "bounty_expiry_minutes": 2880,
+            "bounty_spawn_interval_minutes": None,
+        }
+        resp = MagicMock()
+        resp.raise_for_status = MagicMock()
+        resp.json.return_value = result_data
+        mock_admin_cog.http_client.put = AsyncMock(return_value=resp)
+
+        asyncio.run(
+            mock_admin_cog.admin_config_bounty.callback(
+                mock_admin_cog,
+                interaction,
+                action="update",
+                max_bronze=5,
+                max_silver=3,
+                max_gold=None,
+                max_platinum=None,
+                expiry_minutes=2880,
+                spawn_interval=None,
+            )
+        )
+
+        interaction.followup.send.assert_awaited_once()
+        call_kwargs = interaction.followup.send.call_args[1]
+        assert "embed" in call_kwargs
+
+    def test_admin_config_bounty_not_admin(self, mock_admin_cog):
+        """admin_config_bounty rejects non-admin user."""
+        interaction = _create_mock_interaction()
+
+        with patch("cogs.adminCog._check_is_admin", AsyncMock(return_value=False)):
+            asyncio.run(
+                mock_admin_cog.admin_config_bounty.callback(
+                    mock_admin_cog,
+                    interaction,
+                    action="view",
+                    max_bronze=None,
+                    max_silver=None,
+                    max_gold=None,
+                    max_platinum=None,
+                    expiry_minutes=None,
+                    spawn_interval=None,
+                )
+            )
+
+        interaction.followup.send.assert_awaited_once()
+        msg = interaction.followup.send.call_args[0][0]
+        assert "admin" in msg.lower() or "❌" in msg
+
+    def test_admin_config_bounty_http_error(self, mock_admin_cog):
+        """admin_config_bounty handles HTTP error gracefully."""
+        import httpx
+
+        interaction = _create_mock_interaction()
+        interaction.guild_id = 987654321
+
+        err_resp = MagicMock()
+        err_resp.status_code = 500
+        mock_admin_cog.http_client.get = AsyncMock(
+            side_effect=httpx.HTTPStatusError("error", request=MagicMock(), response=err_resp)
+        )
+
+        asyncio.run(
+            mock_admin_cog.admin_config_bounty.callback(
+                mock_admin_cog,
+                interaction,
+                action="view",
+                max_bronze=None,
+                max_silver=None,
+                max_gold=None,
+                max_platinum=None,
+                expiry_minutes=None,
+                spawn_interval=None,
+            )
+        )
+
+        interaction.followup.send.assert_awaited_once()
+
+
+class TestRemoveItemAutocomplete:
+    """Tests for remove_item_autocomplete (lines 1666-1742)."""
+
+    def test_autocomplete_no_user_returns_select_user_choice(self, mock_admin_cog):
+        """remove_item_autocomplete prompts to select user when namespace.user is None."""
+        interaction = _create_mock_interaction()
+        interaction.namespace = MagicMock()
+        interaction.namespace.user = None
+
+        choices = asyncio.run(mock_admin_cog.remove_item_autocomplete(interaction, ""))
+
+        assert len(choices) == 1
+        assert choices[0].value == "__select_user_first__"
+
+    def test_autocomplete_with_user_shows_inventory(self, mock_admin_cog):
+        """remove_item_autocomplete shows player inventory when user selected."""
+        target_user = MagicMock()
+        target_user.id = 42
+
+        interaction = _create_mock_interaction()
+        interaction.guild_id = 987654321
+        interaction.namespace = MagicMock()
+        interaction.namespace.user = target_user
+
+        # resolve_player_id → player_id=7
+        player_resp = MagicMock()
+        player_resp.status_code = 200
+        player_resp.raise_for_status = MagicMock()
+        player_resp.json = MagicMock(return_value={"id": 7})
+
+        # GET /inventory/player/7
+        inv_resp = MagicMock()
+        inv_resp.status_code = 200
+        inv_resp.json = MagicMock(
+            return_value=[
+                {"item_name": "Laser Cannon", "item_type": "primary_weapon", "quantity": 2},
+                {"item_name": "Engine Core", "item_type": "module", "quantity": 1},
+            ]
+        )
+
+        mock_admin_cog.http_client.post = AsyncMock(return_value=player_resp)
+        mock_admin_cog.http_client.get = AsyncMock(return_value=inv_resp)
+
+        choices = asyncio.run(mock_admin_cog.remove_item_autocomplete(interaction, ""))
+
+        names = [c.name for c in choices]
+        assert any("Laser Cannon" in n for n in names)
+        assert any("Engine Core" in n for n in names)
+
+    def test_autocomplete_falls_back_to_catalog_on_player_resolution_failure(self, mock_admin_cog):
+        """remove_item_autocomplete falls back to catalog when player resolution fails."""
+        target_user = MagicMock()
+        target_user.id = 42
+
+        interaction = _create_mock_interaction()
+        interaction.guild_id = 987654321
+        interaction.namespace = MagicMock()
+        interaction.namespace.user = target_user
+
+        # Player resolution fails
+        player_resp = MagicMock()
+        player_resp.status_code = 400
+        player_resp.raise_for_status = MagicMock(side_effect=Exception("guild not configured"))
+        mock_admin_cog.http_client.post = AsyncMock(return_value=player_resp)
+
+        # Catalog has some items
+        mock_admin_cog._item_catalog.set("primary_weapon", ["Laser Cannon"])
+        mock_admin_cog._item_catalog.set("secondary_weapon", [])
+        mock_admin_cog._item_catalog.set("turret_weapon", [])
+        mock_admin_cog._item_catalog.set("module", [])
+        mock_admin_cog.http_client.get = AsyncMock()
+
+        choices = asyncio.run(mock_admin_cog.remove_item_autocomplete(interaction, ""))
+
+        # Should fall back to catalog
+        names = [c.name for c in choices]
+        assert "Laser Cannon" in names
+        # No HTTP GET calls (served from cache)
+        mock_admin_cog.http_client.get.assert_not_called()
 
 
 if __name__ == "__main__":

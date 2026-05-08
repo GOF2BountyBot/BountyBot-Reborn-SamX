@@ -315,6 +315,7 @@ class TestPayloadStructure:
             "color",
             "footer_text",
             "image_url",
+            "captured",
             "prefix_fields",
             "suffix_fields",
         }

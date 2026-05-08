@@ -197,6 +197,7 @@ class TestGetTagEmojiNormFailure:
             response = client.get("/api/v1/tags/1234567890")
             # normalize_emoji failure is silently ignored; should still succeed
             assert response.status_code == 200
+            assert response.json()["status"] == "success"
 
 
 # ---------------------------------------------------------------------------
@@ -241,6 +242,7 @@ class TestGetTagObjectPayload:
             client = TestClient(app)
             response = client.get("/api/v1/tags/1234567890")
             assert response.status_code == 200
+            assert response.json()["status"] == "success"
 
 
 # ---------------------------------------------------------------------------
@@ -297,6 +299,7 @@ class TestCreateForumTagPayloadPaths:
             client = TestClient(app)
             response = client.post("/api/v1/channels/555555555/tags", json={"name": "New Tag", "emoji": "🎯"})
             assert response.status_code == 201
+            assert response.json()["status"] == "created"
 
     def test_create_forum_tag_object_payload_response(self):
         """Lines 176-186: create returns object payload → setattr path."""
@@ -340,6 +343,7 @@ class TestCreateForumTagPayloadPaths:
             client = TestClient(app)
             response = client.post("/api/v1/channels/555555555/tags", json={"name": "New Tag"})
             assert response.status_code == 201
+            assert response.json()["status"] == "created"
 
     def test_create_forum_tag_outer_exception_handler(self):
         """Lines 192-194: outer exception handler in create_forum_tag."""
@@ -383,6 +387,7 @@ class TestCreateForumTagPayloadPaths:
             client = TestClient(app)
             response = client.post("/api/v1/channels/555555555/tags", json={"name": "New Tag"})
             assert response.status_code == 500
+            assert "detail" in response.json()
 
     def test_create_forum_tag_attributeerror_proxy_fallback(self):
         """Lines 146-162: channel.edit raises AttributeError → proxy fallback in create."""
@@ -439,6 +444,7 @@ class TestCreateForumTagPayloadPaths:
             response = client.post("/api/v1/channels/555555555/tags", json={"name": "Fallback Tag"})
             # Should succeed (proxy fallback was used)
             assert response.status_code == 201
+            assert response.json()["status"] == "created"
 
 
 # ---------------------------------------------------------------------------
@@ -494,6 +500,7 @@ class TestUpdateTagPaths:
             client = TestClient(app)
             response = client.put("/api/v1/tags/1234567890", json={"name": "Updated Tag", "emoji": "🚀"})
             assert response.status_code == 200
+            assert response.json()["status"] == "updated"
 
     def test_update_tag_object_payload_with_emoji_in_response(self):
         """Lines 312-324: update returns object payload."""
@@ -510,6 +517,7 @@ class TestUpdateTagPaths:
             client = TestClient(app)
             response = client.put("/api/v1/tags/1234567890", json={"name": "Updated"})
             assert response.status_code == 200
+            assert response.json()["status"] == "updated"
 
     def test_update_tag_outer_exception_handler(self):
         """Lines 330-332: outer exception handler in update_tag."""
@@ -547,6 +555,7 @@ class TestUpdateTagPaths:
             client = TestClient(app)
             response = client.put("/api/v1/tags/1234567890", json={"name": "New"})
             assert response.status_code == 500
+            assert "detail" in response.json()
 
     def test_update_tag_refetch_by_name_when_id_gone(self):
         """Lines 289-292: re-fetch updated tag by name when id lookup fails after edit."""
@@ -578,6 +587,7 @@ class TestUpdateTagPaths:
             client = TestClient(app)
             response = client.put("/api/v1/tags/1234567890", json={"name": "New Name"})
             assert response.status_code == 200
+            assert response.json()["status"] == "updated"
 
 
 # ---------------------------------------------------------------------------
@@ -655,6 +665,7 @@ class TestDeleteTagPaths:
             client = TestClient(app)
             response = client.delete("/api/v1/tags/1234567890")
             assert response.status_code == 200
+            assert response.json()["deleted"] is True
 
     def test_delete_tag_outer_exception_handler(self):
         """Lines 432-434: outer exception handler in delete_tag."""
@@ -693,3 +704,4 @@ class TestDeleteTagPaths:
             client = TestClient(app)
             response = client.delete("/api/v1/tags/1234567890")
             assert response.status_code == 500
+            assert "detail" in response.json()

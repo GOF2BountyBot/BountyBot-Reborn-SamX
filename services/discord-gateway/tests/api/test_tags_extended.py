@@ -278,6 +278,7 @@ class TestGetTagEmojiHandling:
             response = client.get("/api/v1/tags/1234567890")
             # The route should succeed; emoji normalisation was called
             assert response.status_code == 200
+            assert response.json()["status"] == "success"
 
     def test_get_tag_not_found_in_any_guild(self):
         """GET /tags/{tag_id} returns 404 when no guild has the tag."""
@@ -346,6 +347,7 @@ class TestGetTagEmojiHandling:
             client = TestClient(app)
             response = client.get("/api/v1/tags/1234567890")
             assert response.status_code == 404
+            assert "detail" in response.json()
 
 
 # ---------------------------------------------------------------------------
@@ -431,6 +433,7 @@ class TestCreateForumTagExtended:
             client = TestClient(app)
             response = client.post("/api/v1/channels/555555555/tags", json={"name": "Emoji Tag", "emoji": "🚀"})
             assert response.status_code == 201
+            assert response.json()["status"] == "created"
 
     def test_create_tag_without_emoji(self, mock_bot_with_forum):
         """POST /channels/{channel_id}/tags without emoji succeeds."""
@@ -438,6 +441,7 @@ class TestCreateForumTagExtended:
             client = TestClient(app)
             response = client.post("/api/v1/channels/555555555/tags", json={"name": "No Emoji Tag"})
             assert response.status_code == 201
+            assert response.json()["status"] == "created"
 
     def test_create_tag_attributeerror_fallback(self):
         """POST creates tag via edit fallback when create_tag raises AttributeError."""
@@ -496,6 +500,7 @@ class TestCreateForumTagExtended:
             client = TestClient(app)
             response = client.post("/api/v1/channels/555555555/tags", json={"name": "Fallback Tag"})
             assert response.status_code == 201
+            assert response.json()["status"] == "created"
 
 
 # ---------------------------------------------------------------------------
@@ -579,6 +584,7 @@ class TestUpdateTagExtended:
             client = TestClient(app)
             response = client.put("/api/v1/tags/1234567890", json={"name": "New Name", "emoji": "🚀"})
             assert response.status_code == 200
+            assert response.json()["status"] == "updated"
 
     def test_update_tag_not_found_in_any_channel(self):
         """PUT /tags/{tag_id} returns 404 when tag doesn't exist."""
@@ -596,6 +602,7 @@ class TestUpdateTagExtended:
             client = TestClient(app)
             response = client.put("/api/v1/tags/1234567890", json={})
             assert response.status_code == 200
+            assert response.json()["status"] == "updated"
 
     def test_update_tag_with_edit_tag_on_channel(self):
         """PUT /tags/{tag_id} calls channel.edit_tag when available on channel."""
@@ -608,6 +615,7 @@ class TestUpdateTagExtended:
             client = TestClient(app)
             response = client.put("/api/v1/tags/1234567890", json={"name": "Via edit_tag"})
             assert response.status_code == 200
+            assert response.json()["status"] == "updated"
 
 
 # ---------------------------------------------------------------------------
@@ -705,6 +713,7 @@ class TestDeleteTagExtended:
             client = TestClient(app)
             response = client.delete("/api/v1/tags/9999999999")
             assert response.status_code == 404
+            assert "detail" in response.json()
 
     def test_delete_tag_via_edit_fallback(self):
         """DELETE falls back to channel.edit(available_tags=...) when no delete methods."""
@@ -788,6 +797,7 @@ class TestGetTagAcrossGuilds:
             client = TestClient(app)
             response = client.get("/api/v1/tags/1234567890")
             assert response.status_code == 200
+            assert response.json()["status"] == "success"
 
     def test_get_tag_channel_not_forum_is_skipped(self):
         """GET /tags/{tag_id} skips non-forum channels in the guild."""
@@ -840,6 +850,7 @@ class TestGetTagAcrossGuilds:
             client = TestClient(app)
             response = client.get("/api/v1/tags/1234567890")
             assert response.status_code == 200
+            assert response.json()["status"] == "success"
 
 
 # ---------------------------------------------------------------------------
@@ -897,18 +908,22 @@ class TestTagRequestValidation:
         """POST /channels/{id}/tags without 'name' field returns 422."""
         response = app_and_client.post("/api/v1/channels/555555555/tags", json={})
         assert response.status_code == 422
+        assert "detail" in response.json()
 
     def test_get_tag_invalid_id_type_returns_422(self, app_and_client):
         """GET /tags/{tag_id} with non-integer tag_id returns 422."""
         response = app_and_client.get("/api/v1/tags/not-an-id")
         assert response.status_code == 422
+        assert "detail" in response.json()
 
     def test_put_tag_invalid_id_type_returns_422(self, app_and_client):
         """PUT /tags/{tag_id} with non-integer tag_id returns 422."""
         response = app_and_client.put("/api/v1/tags/not-an-id", json={"name": "x"})
         assert response.status_code == 422
+        assert "detail" in response.json()
 
     def test_delete_tag_invalid_id_type_returns_422(self, app_and_client):
         """DELETE /tags/{tag_id} with non-integer tag_id returns 422."""
         response = app_and_client.delete("/api/v1/tags/not-an-id")
         assert response.status_code == 422
+        assert "detail" in response.json()

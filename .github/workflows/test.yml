@@ -69,6 +69,7 @@ jobs:
         run: cp services/shared/bblogger.py services/bot-core/src/shared/bblogger.py || true
 
       - name: Run tests
+        id: pytest
         working-directory: services/bot-core
         env:
           POSTGRES_HOST: localhost
@@ -80,9 +81,52 @@ jobs:
           python -m pytest tests/ \
             --cov=src \
             --cov-report=xml \
+            --cov-report=term-missing \
             --cov-branch \
             --timeout=60 \
-            -v
+            --junitxml=junit.xml \
+            -q
+
+      - name: Publish test & coverage summary
+        if: always()
+        working-directory: services/bot-core
+        run: |
+          python - <<'EOF'
+          import xml.etree.ElementTree as ET, os, pathlib
+
+          # --- test results from JUnit XML ---
+          junit = ET.parse("junit.xml").getroot()
+          suite = junit if junit.tag == "testsuite" else junit.find("testsuite")
+          total   = int(suite.get("tests",   0))
+          failed  = int(suite.get("failures",0)) + int(suite.get("errors", 0))
+          skipped = int(suite.get("skipped", 0))
+          passed  = total - failed - skipped
+          duration = float(suite.get("time", 0))
+
+          # --- coverage from XML ---
+          cov = ET.parse("coverage.xml").getroot()
+          line_rate   = float(cov.get("line-rate",   0)) * 100
+          branch_rate = float(cov.get("branch-rate", 0)) * 100
+
+          status = "✅ passed" if failed == 0 else f"❌ {failed} failed"
+
+          summary = f"""## bot-core test results
+
+          | Metric | Value |
+          |--------|-------|
+          | Result | {status} |
+          | Tests | {total} |
+          | Passed | {passed} |
+          | Failed | {failed} |
+          | Skipped | {skipped} |
+          | Duration | {duration:.1f}s |
+          | Line coverage | {line_rate:.1f}% |
+          | Branch coverage | {branch_rate:.1f}% |
+          """
+
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as f:
+              f.write(summary)
+          EOF
 
       - name: Upload coverage report
         uses: actions/upload-artifact@v4
@@ -114,14 +158,56 @@ jobs:
         run: cp services/shared/bblogger.py services/discord-gateway/src/shared/bblogger.py || true
 
       - name: Run tests
+        id: pytest
         working-directory: services/discord-gateway
         run: |
           python -m pytest tests/ \
             --cov=src \
             --cov-report=xml \
+            --cov-report=term-missing \
             --cov-branch \
             --timeout=60 \
-            -v
+            --junitxml=junit.xml \
+            -q
+
+      - name: Publish test & coverage summary
+        if: always()
+        working-directory: services/discord-gateway
+        run: |
+          python - <<'EOF'
+          import xml.etree.ElementTree as ET, os
+
+          junit = ET.parse("junit.xml").getroot()
+          suite = junit if junit.tag == "testsuite" else junit.find("testsuite")
+          total   = int(suite.get("tests",   0))
+          failed  = int(suite.get("failures",0)) + int(suite.get("errors", 0))
+          skipped = int(suite.get("skipped", 0))
+          passed  = total - failed - skipped
+          duration = float(suite.get("time", 0))
+
+          cov = ET.parse("coverage.xml").getroot()
+          line_rate   = float(cov.get("line-rate",   0)) * 100
+          branch_rate = float(cov.get("branch-rate", 0)) * 100
+
+          status = "✅ passed" if failed == 0 else f"❌ {failed} failed"
+
+          summary = f"""## discord-gateway test results
+
+          | Metric | Value |
+          |--------|-------|
+          | Result | {status} |
+          | Tests | {total} |
+          | Passed | {passed} |
+          | Failed | {failed} |
+          | Skipped | {skipped} |
+          | Duration | {duration:.1f}s |
+          | Line coverage | {line_rate:.1f}% |
+          | Branch coverage | {branch_rate:.1f}% |
+          """
+
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as f:
+              f.write(summary)
+          EOF
 
       - name: Upload coverage report
         uses: actions/upload-artifact@v4
@@ -153,14 +239,56 @@ jobs:
         run: cp services/shared/bblogger.py services/blender-service/src/shared/bblogger.py || true
 
       - name: Run tests
+        id: pytest
         working-directory: services/blender-service
         run: |
           python -m pytest tests/ \
             --cov=src \
             --cov-report=xml \
+            --cov-report=term-missing \
             --cov-branch \
             --timeout=60 \
-            -v
+            --junitxml=junit.xml \
+            -q
+
+      - name: Publish test & coverage summary
+        if: always()
+        working-directory: services/blender-service
+        run: |
+          python - <<'EOF'
+          import xml.etree.ElementTree as ET, os
+
+          junit = ET.parse("junit.xml").getroot()
+          suite = junit if junit.tag == "testsuite" else junit.find("testsuite")
+          total   = int(suite.get("tests",   0))
+          failed  = int(suite.get("failures",0)) + int(suite.get("errors", 0))
+          skipped = int(suite.get("skipped", 0))
+          passed  = total - failed - skipped
+          duration = float(suite.get("time", 0))
+
+          cov = ET.parse("coverage.xml").getroot()
+          line_rate   = float(cov.get("line-rate",   0)) * 100
+          branch_rate = float(cov.get("branch-rate", 0)) * 100
+
+          status = "✅ passed" if failed == 0 else f"❌ {failed} failed"
+
+          summary = f"""## blender-service test results
+
+          | Metric | Value |
+          |--------|-------|
+          | Result | {status} |
+          | Tests | {total} |
+          | Passed | {passed} |
+          | Failed | {failed} |
+          | Skipped | {skipped} |
+          | Duration | {duration:.1f}s |
+          | Line coverage | {line_rate:.1f}% |
+          | Branch coverage | {branch_rate:.1f}% |
+          """
+
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as f:
+              f.write(summary)
+          EOF
 
       - name: Upload coverage report
         uses: actions/upload-artifact@v4

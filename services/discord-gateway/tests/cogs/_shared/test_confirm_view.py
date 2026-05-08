@@ -43,6 +43,22 @@ for _mod in ["discord", "discord.ext", "discord.ext.commands", "discord.app_comm
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "..", "src"))
 
 
+def _evict_discord_and_cog_modules() -> None:
+    """Evict discord and cog modules so each fixture gets a consistent import identity.
+
+    Under xdist --dist loadfile, another test file running on the same worker may
+    evict and re-import discord between tests in this module.  If confirm_view.py
+    is cached under a *different* discord identity than the one a test's
+    ``import discord`` resolves to, isinstance/issubclass checks fail even though
+    the objects are functionally identical.  Evicting before each ConfirmView
+    construction ensures both sides of the isinstance check come from the same
+    sys.modules entry.
+    """
+    to_evict = [k for k in sys.modules if k == "discord" or k.startswith("discord.") or k.startswith("cogs.")]
+    for k in to_evict:
+        sys.modules.pop(k, None)
+
+
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
@@ -58,7 +74,13 @@ def _make_interaction():
 
 @pytest.fixture
 def view():
-    """Return a default ConfirmView with action='this action' and default timeout."""
+    """Return a default ConfirmView with action='this action' and default timeout.
+
+    Evicts discord/cog modules before import so the ConfirmView class and any
+    ``import discord`` inside the test body share the same sys.modules identity.
+    This prevents isinstance/issubclass failures under xdist parallel execution.
+    """
+    _evict_discord_and_cog_modules()
     from cogs._shared.confirm_view import ConfirmView
 
     return ConfirmView()
@@ -67,6 +89,7 @@ def view():
 @pytest.fixture
 def custom_view():
     """Return a ConfirmView with custom action and timeout."""
+    _evict_discord_and_cog_modules()
     from cogs._shared.confirm_view import ConfirmView
 
     return ConfirmView(action="delete all bounties", timeout=30)
@@ -425,6 +448,7 @@ class TestDiscordViewSubclassContract:
 
     def test_is_discord_ui_view_subclass(self):
         """ConfirmView must be a subclass of discord.ui.View."""
+        _evict_discord_and_cog_modules()
         import discord
         from cogs._shared.confirm_view import ConfirmView
 

@@ -58,7 +58,7 @@ async def create_bounty_announcement(
                 detail=f"Channel {channel_id} cannot receive messages",
             )
 
-        embed = _build_bounty_embed(payload)
+        embed = _build_bounty_embed(payload, captured=payload.metadata.captured)
 
         message = await channel.send(content=payload.text_content, embed=embed)
 
@@ -135,12 +135,18 @@ async def edit_bounty_announcement(
             )
 
         # Resolve the effective image URL before building the embed.
-        # When the caller passes image_url=None (state-transition edits in
-        # bounty_service._edit_bounty_announcement), we carry forward the
-        # URL that was embedded in the original announcement so the route
-        # map is not silently erased by Discord's full-embed-replace semantics.
-        effective_image_url = payload.metadata.image_url
-        if effective_image_url is None:
+        # Three cases:
+        #   - image_url is a non-empty string → use it explicitly (add/replace image)
+        #   - image_url is "" (empty string sentinel) → clear the image (captured state)
+        #   - image_url is None → preserve the existing message's image (state-transition edits)
+        raw_image_url = payload.metadata.image_url
+        if raw_image_url == "":
+            # Explicit clear — captured state, no route map wanted.
+            effective_image_url = None
+            flogger.debug(f"edit_bounty_announcement: clearing image for message_id={message_id} (captured)")
+        elif raw_image_url is None:
+            # Preserve existing route map image across non-captured state-transition edits.
+            effective_image_url = None
             existing_embeds = getattr(message, "embeds", []) or []
             if existing_embeds:
                 existing_image = getattr(existing_embeds[0], "image", None)
@@ -152,8 +158,10 @@ async def edit_bounty_announcement(
                             f"edit_bounty_announcement: preserving existing image_url={existing_url!r} "
                             f"for message_id={message_id}"
                         )
+        else:
+            effective_image_url = raw_image_url
 
-        embed = _build_bounty_embed(payload, image_url_override=effective_image_url)
+        embed = _build_bounty_embed(payload, image_url_override=effective_image_url, captured=payload.metadata.captured)
         await message.edit(embed=embed)
 
         updated_data = MessageConverter.message_to_payload(message)
@@ -174,6 +182,7 @@ async def edit_bounty_announcement(
 def _build_bounty_embed(
     payload: BountyAnnouncementRequest,
     image_url_override: str | None = None,
+    captured: bool = False,
 ) -> discord.Embed:
     """Render a `discord.Embed` from a BountyAnnouncementRequest using build_loadout_embed.
 
@@ -186,6 +195,9 @@ def _build_bounty_embed(
             instead of ``payload.metadata.image_url``.  The edit handler uses this
             to forward the URL recovered from the existing message so that the route
             map image is preserved across state-transition edits.
+        captured: When True, the loadout sections (Active Ship, Ship Stats, weapons,
+            modules, cargo) are suppressed — only title, description, prefix fields,
+            and suffix fields are shown.
     """
     meta = payload.metadata
     resolved_image_url = image_url_override if image_url_override is not None else meta.image_url
@@ -198,4 +210,5 @@ def _build_bounty_embed(
         image_url=resolved_image_url,
         prefix_fields=list(meta.prefix_fields),
         suffix_fields=list(meta.suffix_fields),
+        captured=captured,
     )

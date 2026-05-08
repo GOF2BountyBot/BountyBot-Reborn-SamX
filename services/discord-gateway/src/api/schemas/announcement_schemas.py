@@ -20,6 +20,7 @@ class BountyAnnouncementMetadata(BaseModel):
     color: int = Field(..., description="Embed color (faction color, or green when captured)")
     footer_text: str | None = Field(None, description="Embed footer text (criminal faction)")
     image_url: str | None = Field(None, description="Embed large image URL (route map)")
+    captured: bool = Field(False, description="When True, suppress loadout sections (ship/weapons/modules/cargo)")
     prefix_fields: list[dict[str, Any]] = Field(
         default_factory=list,
         description="Fields rendered before the loadout sections (Difficulty, Reward, Bounty Ends, etc.)",

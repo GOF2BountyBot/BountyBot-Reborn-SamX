@@ -54,6 +54,7 @@ def build_loadout_embed(
     image_url: str | None = None,
     prefix_fields: list[dict] | None = None,
     suffix_fields: list[dict] | None = None,
+    captured: bool = False,
 ) -> discord.Embed:
     """Build the unified loadout embed for either player or criminal.
 
@@ -75,6 +76,10 @@ def build_loadout_embed(
             BEFORE Active Ship. Continuation-split applies if any value > 1024 chars.
         suffix_fields: Optional list of `{name, value, inline}` field dicts appended
             AFTER all loadout sections. Continuation-split applies likewise.
+        captured: When True, the Active Ship, Ship Stats, and all loadout sections
+            (weapons, modules, cargo) are omitted. Only title, description, thumbnail,
+            prefix fields, and suffix fields are rendered. Used for captured-state
+            bounty announcements where the loadout detail is no longer relevant.
 
     Returns:
         A fully-populated discord.Embed, or a short red error embed if
@@ -115,25 +120,26 @@ def build_loadout_embed(
     if prefix_fields:
         used = _render_extra_fields(embed, prefix_fields, budget, used)
 
-    # 1. Active Ship (never truncated)
-    name, value = _format_active_ship_field(response)
-    _add_field_safe(embed, name, value)
-    used += len(name) + len(value)
+    if not captured:
+        # 1. Active Ship (never truncated)
+        name, value = _format_active_ship_field(response)
+        _add_field_safe(embed, name, value)
+        used += len(name) + len(value)
 
-    # 2. Ship Stats (never dropped as a field, but Total Value may be omitted)
-    name, value = _format_ship_stats_field(response)
-    _add_field_safe(embed, name, value)
-    used += len(name) + len(value)
+        # 2. Ship Stats (never dropped as a field, but Total Value may be omitted)
+        name, value = _format_ship_stats_field(response)
+        _add_field_safe(embed, name, value)
+        used += len(name) + len(value)
 
-    # Apply 4-tier truncation strategy and render remaining sections.
-    sections = _apply_truncation_strategy(
-        response,
-        budget_remaining=budget - used,
-        show_cargo=viewer_is_owner_or_admin,
-    )
+        # Apply 4-tier truncation strategy and render remaining sections.
+        sections = _apply_truncation_strategy(
+            response,
+            budget_remaining=budget - used,
+            show_cargo=viewer_is_owner_or_admin,
+        )
 
-    for section_header, lines in sections:
-        used = _render_section(embed, section_header, lines, budget, used)
+        for section_header, lines in sections:
+            used = _render_section(embed, section_header, lines, budget, used)
 
     # Trailing suffix fields (e.g. Route, Checked Systems for bounty announcements).
     if suffix_fields:

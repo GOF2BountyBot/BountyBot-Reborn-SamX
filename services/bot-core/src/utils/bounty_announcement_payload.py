@@ -93,11 +93,16 @@ async def build_bounty_announcement_request(
     title = _build_title(bounty.criminal_name or "Unknown", captured)
     color = _build_color(bounty.criminal_faction or "", captured)
 
+    # When captured, pass an empty string as image_url so the gateway edit
+    # handler clears the route map instead of preserving it.
+    effective_image_url = "" if captured else route_map_url
+
     metadata = {
         "title": title,
         "color": color,
         "footer_text": bounty.criminal_faction or None,
-        "image_url": route_map_url,
+        "image_url": effective_image_url,
+        "captured": captured,
         "prefix_fields": _build_prefix_fields(bounty, captured),
         "suffix_fields": _build_suffix_fields(bounty),
     }

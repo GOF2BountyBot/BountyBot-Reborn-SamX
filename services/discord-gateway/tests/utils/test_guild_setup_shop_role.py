@@ -158,12 +158,17 @@ class TestEnsureBountyBotInfrastructureShopRole:
 
         with (
             patch("utils.guild_setup._find_or_create_role", AsyncMock(return_value=None)),
-            patch("utils.guild_setup._find_or_create_tier_roles", AsyncMock(return_value={
-                "bronze_role_id": None,
-                "silver_role_id": None,
-                "gold_role_id": None,
-                "platinum_role_id": None,
-            })),
+            patch(
+                "utils.guild_setup._find_or_create_tier_roles",
+                AsyncMock(
+                    return_value={
+                        "bronze_role_id": None,
+                        "silver_role_id": None,
+                        "gold_role_id": None,
+                        "platinum_role_id": None,
+                    }
+                ),
+            ),
             patch("utils.guild_setup._find_or_create_shop_announcements_role", AsyncMock(return_value=shop_role)),
             patch("utils.guild_setup._find_or_create_category", AsyncMock(return_value=None)),
         ):
@@ -181,12 +186,17 @@ class TestEnsureBountyBotInfrastructureShopRole:
 
         with (
             patch("utils.guild_setup._find_or_create_role", AsyncMock(return_value=None)),
-            patch("utils.guild_setup._find_or_create_tier_roles", AsyncMock(return_value={
-                "bronze_role_id": None,
-                "silver_role_id": None,
-                "gold_role_id": None,
-                "platinum_role_id": None,
-            })),
+            patch(
+                "utils.guild_setup._find_or_create_tier_roles",
+                AsyncMock(
+                    return_value={
+                        "bronze_role_id": None,
+                        "silver_role_id": None,
+                        "gold_role_id": None,
+                        "platinum_role_id": None,
+                    }
+                ),
+            ),
             patch("utils.guild_setup._find_or_create_shop_announcements_role", AsyncMock(return_value=None)),
             patch("utils.guild_setup._find_or_create_category", AsyncMock(return_value=None)),
         ):

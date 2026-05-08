@@ -183,6 +183,19 @@ def _make_8_channel_side_effects():
 class TestEnsureBountyBotInfrastructure:
     """Tests for ensure_bountybot_infrastructure."""
 
+    @pytest.fixture(autouse=True)
+    def _evict_modules_before_each_test(self):
+        """Evict discord and utils modules before each test to avoid cross-worker contamination.
+
+        xdist workers share a process between multiple test files. Some test files
+        do module-level sys.modules.pop("discord", None) evictions which cause the
+        discord module identity to change. This autouse fixture re-evicts and lets
+        each test import a consistent discord version alongside its production code.
+        """
+        to_evict = [k for k in sys.modules if k == "discord" or k.startswith("discord.") or k.startswith("utils.")]
+        for k in to_evict:
+            sys.modules.pop(k, None)
+
     # ------------------------------------------------------------------
     # Test 1: Happy path — creates everything from scratch
     # ------------------------------------------------------------------
@@ -999,9 +1012,7 @@ class TestEnsureBountyBotInfrastructure:
         platinum_role = _make_role(name="bounty hunter platinum", role_id=603)
         shop_ann_role = _make_role(name="Shop Announcements", role_id=604)
 
-        guild = _make_guild(
-            roles=[general_role, bronze_role, silver_role, gold_role, platinum_role, shop_ann_role]
-        )
+        guild = _make_guild(roles=[general_role, bronze_role, silver_role, gold_role, platinum_role, shop_ann_role])
 
         new_cat = _make_category(cat_id=111)
         guild.create_category.return_value = new_cat

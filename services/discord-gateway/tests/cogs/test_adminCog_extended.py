@@ -59,7 +59,7 @@ def _close_coro(coro):
     return MagicMock()
 
 
-@pytest.fixture
+@pytest.fixture(scope="module")
 def mock_bot():
     """Create a mock Discord bot for adminCog testing."""
     bot = DiscordMockUtils.create_mock_bot(user_id=123456789, username="TestBot")
@@ -88,7 +88,7 @@ def _evict_discord_modules():
         sys.modules.pop(k, None)
 
 
-@pytest.fixture
+@pytest.fixture(scope="module")
 def mock_admin_cog(mock_bot):
     """Create a mock adminCog instance."""
     sys.modules["shared"] = _mock_shared

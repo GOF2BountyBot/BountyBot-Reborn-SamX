@@ -141,7 +141,7 @@ def _create_mock_interaction(user_id: int = 111111111, guild_id: int = 987654321
 # ---------------------------------------------------------------------------
 
 
-@pytest.fixture
+@pytest.fixture(scope="module")
 def mock_bot():
     """Create a mock bot with a configured tree."""
     _evict_cog_modules()

@@ -52,7 +52,7 @@ def _close_coro(coro):
     return MagicMock()
 
 
-@pytest.fixture
+@pytest.fixture(scope="module")
 def mock_bot():
     """Create a mock Discord bot for skinsCog testing."""
     loop = MagicMock()

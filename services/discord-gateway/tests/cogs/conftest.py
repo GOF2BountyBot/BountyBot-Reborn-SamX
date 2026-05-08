@@ -1,12 +1,12 @@
 """Cogs-level test fixtures and factories for httpx response mocking."""
 
 from typing import Any
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
 
-@pytest.fixture
+@pytest.fixture(scope="module")
 def make_mock_response():
     """Factory fixture for creating consistent mock HTTP response objects.
 
@@ -39,3 +39,30 @@ def make_mock_response():
         return resp
 
     return factory
+
+
+@pytest.fixture(autouse=True)
+def _block_background_tasks():
+    """Prevent cog __init__ preload tasks from blocking the event loop.
+
+    Five cogs (AboutCog, AdminCog, BountyCog, DevCog, SkinsCog) call
+    bot.loop.create_task(_preload_data()) in __init__. Those preload functions
+    contain asyncio.sleep([5,10,20,40,60]s) retry chains. When multiple test
+    files run in the same pytest session these tasks accumulate on the shared
+    event loop and cause the suite to hang.
+
+    Each per-file mock_bot fixture already patches bot.loop.create_task, but
+    that only covers the bot.loop path. This fixture additionally patches
+    asyncio.create_task at module level so any coroutine scheduled via that
+    path is closed immediately and never reaches the event loop.
+
+    The per-file patches are left in place as belt-and-suspenders — this
+    fixture is the safety net that catches anything that slips through.
+    """
+
+    def _close_coro(coro):
+        coro.close()
+        return MagicMock()
+
+    with patch("asyncio.create_task", side_effect=_close_coro):
+        yield

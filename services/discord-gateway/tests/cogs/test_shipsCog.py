@@ -130,7 +130,7 @@ def _make_loadout(weapons=None, modules=None, turrets=None):
 # ---------------------------------------------------------------------------
 
 
-@pytest.fixture
+@pytest.fixture(scope="module")
 def mock_bot():
     """Mock Discord bot for shipsCog testing."""
     bot = DiscordMockUtils.create_mock_bot(user_id=123456789, username="TestBot")
@@ -140,7 +140,7 @@ def mock_bot():
     return bot
 
 
-@pytest.fixture
+@pytest.fixture(scope="module")
 def mock_ships_cog(mock_bot):
     """Create a ShipsCog instance with mocked bot and http_client."""
     sys.modules["shared"] = _mock_shared

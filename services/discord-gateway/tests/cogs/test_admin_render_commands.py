@@ -104,9 +104,28 @@ def _close_coro(coro):
     return MagicMock()
 
 
-@pytest.fixture()
+def _evict_discord_modules():
+    """Remove cached discord/source modules so they re-import with real discord."""
+    to_evict = [
+        k
+        for k in sys.modules
+        if k == "discord"
+        or k.startswith("discord.")
+        or k in ("api", "bot", "utils")
+        or k.startswith("api.")
+        or k.startswith("utils.")
+        or k.startswith("cogs.")
+    ]
+    for k in to_evict:
+        sys.modules.pop(k, None)
+
+
+@pytest.fixture
 def admin_cog():
     """Return a fresh AdminCog instance with a mocked http_client."""
+    sys.modules["shared"] = _mock_shared
+    sys.modules["shared.bblogger"] = _mock_bblogger
+    _evict_discord_modules()
     from cogs.adminCog import AdminCog
     from discord.ext import commands
 

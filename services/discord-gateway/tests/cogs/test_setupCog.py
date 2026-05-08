@@ -110,7 +110,7 @@ def _make_mock_category(guild_id: int = 123456789):
 # -------------------------------------------------------------------------
 
 
-@pytest.fixture
+@pytest.fixture(scope="module")
 def mock_bot():
     sys.modules["shared"] = _mock_shared
     sys.modules["shared.bblogger"] = _mock_bblogger
@@ -410,7 +410,6 @@ class TestOnGuildJoinCommandSync:
     def _make_guild_with_sync_bot(bot):
         """Return a mock guild AND configure bot.tree with AsyncMock so that
         the sync succeeds (exercises the success/info-log path)."""
-        import discord
 
         bot.tree.copy_global_to = MagicMock()  # synchronous — no await needed
         bot.tree.sync = AsyncMock(return_value=[])
@@ -486,9 +485,7 @@ class TestOnGuildJoinCommandSync:
 
         system_channel = MagicMock(spec=discord.TextChannel)
         system_channel.name = "general"
-        system_channel.send = AsyncMock(
-            side_effect=discord.Forbidden(MagicMock(status=403), "Forbidden")
-        )
+        system_channel.send = AsyncMock(side_effect=discord.Forbidden(MagicMock(status=403), "Forbidden"))
         guild.system_channel = system_channel
 
         asyncio.run(mock_setup_cog.on_guild_join(guild))
@@ -523,9 +520,7 @@ class TestOnGuildJoinCommandSync:
         mock_response = MagicMock()
         mock_response.status = 403
         mock_response.reason = "Forbidden"
-        mock_bot.tree.sync = AsyncMock(
-            side_effect=discord.HTTPException(mock_response, "Missing Access")
-        )
+        mock_bot.tree.sync = AsyncMock(side_effect=discord.HTTPException(mock_response, "Missing Access"))
         mock_setup_cog.bot = mock_bot
 
         guild = _make_mock_guild()
@@ -606,9 +601,7 @@ class TestOnGuildJoinCommandSync:
         call_kwargs = mock_bot.tree.sync.call_args
         passed_guild = call_kwargs.kwargs.get("guild") or call_kwargs.args[0]
         assert isinstance(passed_guild, discord.Object)
-        assert passed_guild.id == 555666777, (
-            f"Expected discord.Object(id=555666777) but got id={passed_guild.id}"
-        )
+        assert passed_guild.id == 555666777, f"Expected discord.Object(id=555666777) but got id={passed_guild.id}"
 
 
 if __name__ == "__main__":

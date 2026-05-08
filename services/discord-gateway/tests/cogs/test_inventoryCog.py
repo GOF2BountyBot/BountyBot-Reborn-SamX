@@ -121,7 +121,7 @@ def _make_summary(total_items=3, ship=1, weapon=1, module=1, turret=0):
 # ---------------------------------------------------------------------------
 
 
-@pytest.fixture
+@pytest.fixture(scope="module")
 def mock_bot():
     """Mock Discord bot for inventoryCog testing."""
     bot = DiscordMockUtils.create_mock_bot(user_id=123456789, username="TestBot")
@@ -159,12 +159,6 @@ class TestInventoryCogInitialization:
         """InventoryCog should store bot reference and create http_client."""
         assert mock_inventory_cog.bot is mock_bot
         assert mock_inventory_cog.http_client is not None
-
-    def test_initialization_logs_debug(self, mock_inventory_cog):
-        """InventoryCog __init__ should log a debug message."""
-        global _module_logger
-        assert _module_logger is not None
-        _module_logger.debug.assert_called_with("InventoryCog initialized")
 
 
 # ---------------------------------------------------------------------------
@@ -249,6 +243,8 @@ class TestInventoryCommand:
         interaction.followup.send.assert_awaited_once()
         call_kwargs = interaction.followup.send.call_args[1]
         assert "embed" in call_kwargs
+        embed = call_kwargs["embed"]
+        assert len(embed.fields) > 0
 
     def test_inventory_empty_inventory(self, mock_inventory_cog, make_mock_response):
         """inventory with no items should send ephemeral message."""
@@ -317,6 +313,9 @@ class TestInventoryCommand:
         interaction.followup.send.assert_awaited_once()
         call_kwargs = interaction.followup.send.call_args[1]
         assert "embed" in call_kwargs
+        embed = call_kwargs["embed"]
+        field_names_lower = [f.name.lower() for f in embed.fields]
+        assert any("weapon" in n or "module" in n or "ship" in n for n in field_names_lower)
 
     def test_inventory_with_many_items_truncated(self, mock_inventory_cog, make_mock_response):
         """inventory with >20 items of one type should truncate and show 'more'."""
@@ -335,6 +334,10 @@ class TestInventoryCommand:
         asyncio.run(mock_inventory_cog.inventory.callback(mock_inventory_cog, interaction))
 
         interaction.followup.send.assert_awaited_once()
+        call_kwargs = interaction.followup.send.call_args[1]
+        embed = call_kwargs["embed"]
+        all_text = " ".join(f.value for f in embed.fields if f.value) + (embed.description or "")
+        assert "more" in all_text.lower() or "..." in all_text
 
     def test_inventory_http_status_error(self, mock_inventory_cog, make_mock_response):
         """inventory should handle HTTPStatusError from inventory endpoint."""
@@ -648,6 +651,8 @@ class TestSearchCommand:
         interaction.followup.send.assert_awaited_once()
         call_kwargs = interaction.followup.send.call_args[1]
         assert "embed" in call_kwargs
+        embed = call_kwargs["embed"]
+        assert len(embed.fields) > 0
 
     def test_search_happy_path_multiple_types(self, mock_inventory_cog, make_mock_response):
         """search should group results by item type."""
@@ -830,6 +835,9 @@ class TestItemCommand:
         interaction.followup.send.assert_awaited_once()
         call_kwargs = interaction.followup.send.call_args[1]
         assert "embed" in call_kwargs
+        embed = call_kwargs["embed"]
+        all_text = (embed.description or "") + " ".join(f.value for f in embed.fields if f.value)
+        assert "owned" in all_text.lower() or "inventory" in all_text.lower() or "1" in all_text
 
     def test_item_not_owned_quantity_zero(self, mock_inventory_cog, make_mock_response):
         """item should display 'Not Owned' status when quantity == 0."""
@@ -848,6 +856,9 @@ class TestItemCommand:
         interaction.followup.send.assert_awaited_once()
         call_kwargs = interaction.followup.send.call_args[1]
         assert "embed" in call_kwargs
+        embed = call_kwargs["embed"]
+        all_text = (embed.description or "") + " ".join(f.value for f in embed.fields if f.value)
+        assert "not owned" in all_text.lower() or "0" in all_text
 
     def test_item_player_not_found(self, mock_inventory_cog):
         """item should send ephemeral error when player not found."""

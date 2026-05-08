@@ -151,7 +151,7 @@ def _make_accept_result(
 # ---------------------------------------------------------------------------
 
 
-@pytest.fixture
+@pytest.fixture(scope="module")
 def mock_bot():
     """Mock Discord bot for DuelCog testing."""
     bot = DiscordMockUtils.create_mock_bot(user_id=123456789, username="TestBot")
@@ -160,7 +160,7 @@ def mock_bot():
     return bot
 
 
-@pytest.fixture
+@pytest.fixture(scope="module")
 def mock_duel_cog(mock_bot):
     """Create a DuelCog instance with mocked bot and http_client."""
     sys.modules["shared"] = _mock_shared

@@ -81,7 +81,7 @@ def _evict_discord_modules():
 # ---------------------------------------------------------------------------
 
 
-@pytest.fixture
+@pytest.fixture(scope="module")
 def mock_bot():
     loop = MagicMock()
     loop.create_task = MagicMock(side_effect=_close_coro)

@@ -31,6 +31,20 @@ Cross-ref: `E2E_TEST_CHECKLIST.md` (test-item references). All commit SHAs are l
 
 ## OPEN
 
+### B.82 — Combat summary embed should call out the Kieth T Maxwell (PvC armour buff) when active
+
+🔵 low · UX · 2026-05-07 · **OPEN**
+
+**Context**: The combat summary shown after a bounty capture (e.g. "Your Ship (Phantom) — HP: 360 → 357 | DPS: 48.0 | Time to Kill: 6.1s") does not indicate that the player's armour was boosted by the `BOUNTY_PVC_ARMOUR_BUFF_FACTOR` (1.5×). Compare to `/loadout` which shows raw armour stats (e.g. "Armour: 200") — the player has no way of knowing their effective HP was 360 rather than 240 without understanding the hidden buff.
+
+**Expected UX**: The combat summary embed field for the player's ship should include a note such as "⚔️ Kieth T Maxwell bonus active (+50% armour)" or show the base vs buffed armour side-by-side, so the mechanic is discoverable and the numbers are self-explaining.
+
+**Scope**: `services/discord-gateway/src/cogs/bountyCog.py` — combat summary embed builder. The `BOUNTY_PVC_ARMOUR_BUFF_FACTOR` value and whether it applied should be surfaced from the combat response (bot-core may need to include a `pvc_armour_buff_applied: bool` and `pvc_armour_buff_factor: float` field in the `/combat-bonus` response payload for the cog to read).
+
+**Cross-ref**: Kieth T Maxwell buff fix (session 2026-05-07), `BOUNTY_PVC_ARMOUR_BUFF_FACTOR` in `game_constants.py`.
+
+---
+
 ### B.80 — `/admin_give_item` requires redundant `item_type` parameter
 
 🔵 low · discord-gateway · 2026-05-05 · **FIXED-PENDING-VERIFY**
@@ -63,9 +77,24 @@ Cross-ref: `E2E_TEST_CHECKLIST.md` (test-item references). All commit SHAs are l
 
 ---
 
+### B.81 — Gateway test suite hangs when multiple cog files run together
+
+🟡 medium · discord-gateway · 2026-05-07 · **FIXED-PENDING-VERIFY**
+
+**Summary**: Running `pytest tests/cogs/` as a full suite caused an indefinite hang. Five cogs (AboutCog, AdminCog, BountyCog, DevCog, SkinsCog) call `bot.loop.create_task(_preload_data())` in `__init__`. The preload functions contain `asyncio.sleep([5,10,20,40,60]s)` retry chains. When multiple test files ran together, background tasks accumulated on the shared event loop, plus ConfirmView (B.50) `view.wait()` deadlocked when `_patch_confirm_view` ran before the cog re-imported.
+
+**Fix applied** (2026-05-07):
+1. `tests/cogs/conftest.py` — added `_block_background_tasks` autouse fixture that patches `asyncio.create_task` globally, closing coroutines immediately before they reach the event loop.
+2. `tests/cogs/test_adminCog.py` — `_patch_confirm_view` fixture made to depend on `mock_admin_cog` so it runs after the cog's `_evict_discord_modules()` re-import.
+3. `tests/cogs/test_devCog.py` — preload error-path tests now patch `cogs.devCog.asyncio.sleep` with `AsyncMock` so retry chains don't execute real sleeps.
+
+**Verification**: Full cog suite (1,346 tests) exits 0 in ~150s. 12 pre-existing B.50 failures remain (expected — `test_adminCog_bounty_commands.py` and `test_adminCog_new_commands.py` still use the old `confirm=` param that B.50 removed).
+
+---
+
 ### B.76 — Test suite widespread mock overuse / tautological tests
 
-🟡 medium · All services · 2026-05-05 · **OPEN**
+🟡 medium · All services · 2026-05-05 · **FIXED-PENDING-VERIFY**
 
 **Summary**: The test suite across bot-core, discord-gateway, and blender-service has widespread tautological mock tests — tests that mock the subject under test, so they only verify mock behaviour rather than real code paths. This was first surfaced during B.33 remediation (4 tautological adminCog preload tests replaced with respx contract tests) and again during the `setupCog` command-sync fix (tester found existing `on_guild_join` tests were accidentally exercising the error path due to non-awaitable `MagicMock`). A `tests/AGENTS.md` policy was added to prevent new instances, but no suite-wide audit has been performed.
 
@@ -74,6 +103,8 @@ Cross-ref: `E2E_TEST_CHECKLIST.md` (test-item references). All commit SHAs are l
 **Required work**: Full audit of all three test suites to identify and replace tautological/mock-only tests with real-behaviour tests (respx for HTTP contracts, real objects with deterministic inputs per the `test_combat_service.py` reference pattern). Max 2 mocks per test per code standards.
 
 **References**: B.33 fix (`452ac28`), setupCog tester review (2026-05-05), `tests/AGENTS.md` policy, `services/bot-core/tests/services/test_combat_service.py` (reference pattern).
+
+**S11 Verification (2026-05-08)**: Blitz sprints S1–S10 performed substantial work across all three services. Blender-service router coverage increased from 27–47% → 100%. discord-gateway cog coverage achieved: confirm_view 39%→100%, duelCog 68%→95%, skinsCog 75%→98%, adminCog 85%→89%. bot-core executor tests fully rewritten with real SQLite + respx. However, B.76 closure blocked by: (1) `test_bounty_orchestrator.py` sys.modules pollution causing 36 bot-core failures in full-suite run (DEF-S11-001 in DEFECTS_TEST_REVAMP.md); (2) discord-gateway timing 14m20s vs ≤8min target (DEF-S11-002); (3) 15 tautological tests in new S10 code unresolved (DEF-S10-001/002 in activity.md). **Status remains FIXED-PENDING-VERIFY until DEF-S11-001 is resolved and bot-core achieves 100% pass rate.**
 
 ---
 

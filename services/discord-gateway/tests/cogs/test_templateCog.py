@@ -41,7 +41,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "src"))
 import discord
 
 
-@pytest.fixture
+@pytest.fixture(scope="module")
 def mock_bot():
     """Create a mock Discord bot for templateCog testing."""
     bot = MagicMock()
@@ -69,7 +69,7 @@ def _evict_discord_modules():
         sys.modules.pop(k, None)
 
 
-@pytest.fixture
+@pytest.fixture(scope="module")
 def mock_template_cog(mock_bot):
     """Create a mock templateCog instance."""
     sys.modules["shared"] = _mock_shared

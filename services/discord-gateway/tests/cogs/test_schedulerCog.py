@@ -90,7 +90,7 @@ def _make_mock_response(json_data, status_code: int = 200, raise_status: bool = 
 # ---------------------------------------------------------------------------
 
 
-@pytest.fixture
+@pytest.fixture(scope="module")
 def mock_bot():
     bot = MagicMock()
     bot.add_cog = AsyncMock()

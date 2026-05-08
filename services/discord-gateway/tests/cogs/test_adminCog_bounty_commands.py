@@ -9,7 +9,7 @@ import asyncio
 import os
 import sys
 import types
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -98,7 +98,7 @@ def _create_mock_user(user_id: int = 111111111, name: str = "TestAdmin"):
 # -------------------------------------------------------------------------
 
 
-@pytest.fixture
+@pytest.fixture(scope="module")
 def mock_bot():
     bot = DiscordMockUtils.create_mock_bot(user_id=123456789, username="TestBot")
     bot.add_cog = AsyncMock()
@@ -108,7 +108,7 @@ def mock_bot():
     return bot
 
 
-@pytest.fixture
+@pytest.fixture(scope="module")
 def mock_admin_cog(mock_bot):
     sys.modules["shared"] = _mock_shared
     sys.modules["shared.bblogger"] = _mock_bblogger
@@ -195,33 +195,51 @@ def _make_admin_spawn_response(spawned_count=2, skipped_tiers=None):
 
 
 class TestAdminClearBounties:
-    """Tests for /admin_clear_bounties command."""
+    """Tests for /admin_clear_bounties command (B.50: ConfirmView button dialog)."""
 
-    def test_clear_bounties_requires_confirm(self, mock_admin_cog):
-        """Without CONFIRM, user gets ephemeral error message."""
+    @pytest.fixture(autouse=True)
+    def _patch_confirm_view(self, mock_admin_cog):
+        """Patch ConfirmView so tests don't block on view.wait(). Default: result=True (user confirmed).
+
+        Depends on mock_admin_cog to ensure this fixture runs AFTER the cog fixture has
+        evicted and re-imported cogs.adminCog.  Without this dependency, pytest may patch
+        the old module object before mock_admin_cog evicts it, leaving the freshly-imported
+        cogs.adminCog.ConfirmView unpatched and causing view.wait() to block forever.
+        """
+        view_mock = MagicMock()
+        view_mock.result = True
+        view_mock.wait = AsyncMock(return_value=None)
+        with patch("cogs.adminCog.ConfirmView", return_value=view_mock):
+            yield
+
+    def test_clear_bounties_cancel_flow(self, mock_admin_cog):
+        """User clicks Cancel → DELETE API is NOT called; cancellation message is sent."""
         interaction = _create_mock_interaction()
         interaction.user = _create_mock_user()
 
-        asyncio.run(
-            mock_admin_cog.admin_clear_bounties.callback(mock_admin_cog, interaction, confirm="wrong", tier=None)
-        )
+        mock_admin_cog.http_client.delete = AsyncMock()
+
+        # Override autouse fixture: simulate user clicking Cancel
+        view_mock = MagicMock()
+        view_mock.result = False
+        view_mock.wait = AsyncMock(return_value=None)
+        with patch("cogs.adminCog.ConfirmView", return_value=view_mock):
+            asyncio.run(mock_admin_cog.admin_clear_bounties.callback(mock_admin_cog, interaction, tier=None))
 
         interaction.response.defer.assert_called_once_with(thinking=True, ephemeral=True)
-        interaction.followup.send.assert_called_once()
-        # Should be an ephemeral error message, not a success embed
-        call_kwargs = interaction.followup.send.call_args[1]
-        assert call_kwargs.get("ephemeral") is True
+        # DELETE must NOT have been called
+        mock_admin_cog.http_client.delete.assert_not_called()
+        # A cancellation message should have been sent (at least one followup send)
+        interaction.followup.send.assert_called()
 
     def test_clear_bounties_all_tiers_success(self, mock_admin_cog):
-        """CONFIRM + no tier → clears all tiers, sends embed with orange color."""
+        """User confirms (result=True) + no tier → clears all tiers, sends embed with orange color."""
         interaction = _create_mock_interaction()
         interaction.user = _create_mock_user()
 
         mock_admin_cog.http_client.delete = AsyncMock(return_value=_make_clear_bounties_response())
 
-        asyncio.run(
-            mock_admin_cog.admin_clear_bounties.callback(mock_admin_cog, interaction, confirm="CONFIRM", tier=None)
-        )
+        asyncio.run(mock_admin_cog.admin_clear_bounties.callback(mock_admin_cog, interaction, tier=None))
 
         interaction.response.defer.assert_called_once_with(thinking=True, ephemeral=True)
         mock_admin_cog.http_client.delete.assert_called_once()
@@ -229,21 +247,20 @@ class TestAdminClearBounties:
         call_url = mock_admin_cog.http_client.delete.call_args[0][0]
         assert "bounties/guild" in call_url
         assert "clear" in call_url
-        # Should send an embed response
-        interaction.followup.send.assert_called_once()
-        call_kwargs = interaction.followup.send.call_args[1]
-        assert "embed" in call_kwargs
+        # Should send an embed response (prompt + result, at least one embed send)
+        assert interaction.followup.send.call_count >= 1
+        # The last send should contain the success embed
+        last_kwargs = interaction.followup.send.call_args_list[-1][1]
+        assert "embed" in last_kwargs
 
     def test_clear_bounties_with_tier_filter(self, mock_admin_cog):
-        """CONFIRM + tier=bronze → includes tier in query params."""
+        """User confirms + tier=bronze → includes tier in query params."""
         interaction = _create_mock_interaction()
         interaction.user = _create_mock_user()
 
         mock_admin_cog.http_client.delete = AsyncMock(return_value=_make_clear_bounties_response(tier="bronze"))
 
-        asyncio.run(
-            mock_admin_cog.admin_clear_bounties.callback(mock_admin_cog, interaction, confirm="CONFIRM", tier="bronze")
-        )
+        asyncio.run(mock_admin_cog.admin_clear_bounties.callback(mock_admin_cog, interaction, tier="bronze"))
 
         mock_admin_cog.http_client.delete.assert_called_once()
         call_kwargs = mock_admin_cog.http_client.delete.call_args[1]
@@ -258,16 +275,16 @@ class TestAdminClearBounties:
 
         mock_admin_cog.http_client.delete = AsyncMock(return_value=_make_clear_bounties_response())
 
-        asyncio.run(
-            mock_admin_cog.admin_clear_bounties.callback(mock_admin_cog, interaction, confirm="CONFIRM", tier=None)
-        )
+        asyncio.run(mock_admin_cog.admin_clear_bounties.callback(mock_admin_cog, interaction, tier=None))
 
-        call_kwargs = interaction.followup.send.call_args[1]
-        embed = call_kwargs["embed"]
-        assert embed.color.value == 0xFFA500
+        # Find the call that has the success embed (last send after the confirmation prompt)
+        embed_calls = [call[1] for call in interaction.followup.send.call_args_list if "embed" in call[1]]
+        # The success result embed is the last embed sent
+        result_embed = embed_calls[-1]["embed"]
+        assert result_embed.color.value == 0xFFA500
 
     def test_clear_bounties_api_error(self, mock_admin_cog):
-        """API error → sends ephemeral error message."""
+        """API error on confirm path → sends ephemeral error embed."""
         interaction = _create_mock_interaction()
         interaction.user = _create_mock_user()
 
@@ -277,11 +294,9 @@ class TestAdminClearBounties:
         http_err = httpx.HTTPStatusError("Not Found", request=mock_req, response=MagicMock(status_code=404))
         mock_admin_cog.http_client.delete = AsyncMock(side_effect=http_err)
 
-        asyncio.run(
-            mock_admin_cog.admin_clear_bounties.callback(mock_admin_cog, interaction, confirm="CONFIRM", tier=None)
-        )
+        asyncio.run(mock_admin_cog.admin_clear_bounties.callback(mock_admin_cog, interaction, tier=None))
 
-        interaction.followup.send.assert_called_once()
+        assert interaction.followup.send.call_count >= 1
         # B.31b: helper now sends a sanitized embed instead of a raw URL string.
         embed = interaction.followup.send.call_args.kwargs.get("embed")
         assert embed is not None, "Expected embed-based error reply from report_api_error"
@@ -289,17 +304,15 @@ class TestAdminClearBounties:
         assert "http://" not in (embed.description or "")
 
     def test_clear_bounties_generic_error(self, mock_admin_cog):
-        """Generic exception → sends ephemeral warning."""
+        """Generic exception on confirm path → sends ephemeral warning."""
         interaction = _create_mock_interaction()
         interaction.user = _create_mock_user()
 
         mock_admin_cog.http_client.delete = AsyncMock(side_effect=RuntimeError("oops"))
 
-        asyncio.run(
-            mock_admin_cog.admin_clear_bounties.callback(mock_admin_cog, interaction, confirm="CONFIRM", tier=None)
-        )
+        asyncio.run(mock_admin_cog.admin_clear_bounties.callback(mock_admin_cog, interaction, tier=None))
 
-        interaction.followup.send.assert_called_once()
+        assert interaction.followup.send.call_count >= 1
         call_args = interaction.followup.send.call_args[0][0]
         assert "⚠️" in call_args
 
@@ -310,9 +323,7 @@ class TestAdminClearBounties:
 
         mock_admin_cog.http_client.delete = AsyncMock(return_value=_make_clear_bounties_response())
 
-        asyncio.run(
-            mock_admin_cog.admin_clear_bounties.callback(mock_admin_cog, interaction, confirm="CONFIRM", tier=None)
-        )
+        asyncio.run(mock_admin_cog.admin_clear_bounties.callback(mock_admin_cog, interaction, tier=None))
 
         call_kwargs = mock_admin_cog.http_client.delete.call_args[1]
         params = call_kwargs.get("params", {})

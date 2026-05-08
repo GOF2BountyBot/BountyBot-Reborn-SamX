@@ -343,12 +343,24 @@ sys.modules["shared.bblogger"] = _mock_bblogger
 
 ```bash
 # From services/discord-gateway directory
-pytest                              # All tests
+pytest                              # All tests (parallel: -n 2 --dist loadfile, from pytest.ini)
 pytest tests/cogs/                  # Cog tests only
 pytest tests/api/                   # API router tests only
 pytest tests/cogs/test_aboutCog.py  # Single test file
 pytest --cov=src --cov-report=html  # With coverage
+pytest -p no:xdist                  # Disable parallelism (for debugging)
 ```
+
+### Test Performance (DEF-S11-002)
+
+The test suite is configured for **parallel execution with module-scoped fixtures** to stay within the ≤8-minute target (actual: ~6m 21s):
+
+- **`pytest.ini`** sets `addopts = -n 2 --dist loadfile` — 2 workers, all tests from one file on the same worker
+- **`--dist loadfile` is mandatory** — ensures module-scoped fixtures are created once per file per worker, not once per worker per test
+- **Module-scoped fixtures** — `mock_bot` and `mock_<cog>_cog` fixtures are widened to `scope="module"` in all cog test files (except the 3 UNSAFE files below)
+- **UNSAFE files** (`test_aboutCog.py`, `test_skinsCog.py`, `test_bountyCog.py`) — only `mock_bot` is module-scoped; cog fixtures remain function-scoped due to direct per-test mutations of cog internal state
+- **`_block_background_tasks`** in `tests/cogs/conftest.py` must remain **function-scoped** and `autouse=True` — do not change its scope
+- When adding a **new cog test file**, widen `mock_bot` and `mock_<cog>_cog` to `scope="module"` as the default convention
 
 ---
 

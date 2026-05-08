@@ -128,7 +128,7 @@ def _make_mock_bot_with_loop():
 # ---------------------------------------------------------------------------
 
 
-@pytest.fixture
+@pytest.fixture(scope="module")
 def mock_bot():
     """Mock Discord bot for aboutCog testing."""
     return _make_mock_bot_with_loop()
@@ -157,6 +157,15 @@ def mock_about_cog(mock_bot):
 
 class TestAboutCogInitialization:
     """Tests for AboutCog initialization."""
+
+    @pytest.fixture(autouse=True)
+    def _reset_bot_mock(self, mock_bot):
+        """Reset mock_bot call counters before each test.
+
+        Required because mock_bot is module-scoped and accumulates create_task
+        calls from mock_about_cog (function-scoped) across prior tests.
+        """
+        mock_bot.loop.create_task.reset_mock()
 
     def test_initialization(self, mock_about_cog, mock_bot):
         """AboutCog should store bot reference and create http_client."""

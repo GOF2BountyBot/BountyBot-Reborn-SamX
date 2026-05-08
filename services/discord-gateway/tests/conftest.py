@@ -110,7 +110,7 @@ def mock_httpx_module() -> Generator[None, None, None]:
         yield mock_httpx
 
 
-@pytest.fixture
+@pytest.fixture(scope="module")
 def mock_discord_bot() -> Generator[MagicMock, None, None]:
     """Mock Discord bot instance with comprehensive methods."""
     bot = MagicMock()
@@ -133,7 +133,7 @@ def mock_discord_bot() -> Generator[MagicMock, None, None]:
     bot.reset_mock()
 
 
-@pytest.fixture
+@pytest.fixture(scope="module")
 def test_app() -> Generator[FastAPI, None, None]:
     """Create a test FastAPI app for discord-gateway with all routers."""
     app = FastAPI(title="Discord Gateway API Test")
@@ -167,7 +167,7 @@ def test_app() -> Generator[FastAPI, None, None]:
     app.state = {}
 
 
-@pytest.fixture
+@pytest.fixture(scope="module")
 def client(test_app: FastAPI) -> Generator[TestClient, None, None]:
     """Create a test client for the discord-gateway API."""
     client = TestClient(test_app)
@@ -178,7 +178,7 @@ def client(test_app: FastAPI) -> Generator[TestClient, None, None]:
     client.close()
 
 
-@pytest.fixture
+@pytest.fixture(scope="module")
 def mock_discord_guild() -> MagicMock:
     """Factory function for mock Discord guild."""
     guild = MagicMock()
@@ -193,7 +193,7 @@ def mock_discord_guild() -> MagicMock:
     return guild
 
 
-@pytest.fixture
+@pytest.fixture(scope="module")
 def mock_discord_channel() -> MagicMock:
     """Factory function for mock Discord channel."""
     channel = MagicMock()
@@ -206,7 +206,7 @@ def mock_discord_channel() -> MagicMock:
     return channel
 
 
-@pytest.fixture
+@pytest.fixture(scope="module")
 def mock_discord_user() -> MagicMock:
     """Factory function for mock Discord user."""
     user = MagicMock()
@@ -217,7 +217,7 @@ def mock_discord_user() -> MagicMock:
     return user
 
 
-@pytest.fixture
+@pytest.fixture(scope="module")
 def mock_discord_message() -> MagicMock:
     """Factory function for mock Discord message."""
     message = MagicMock()
@@ -239,7 +239,7 @@ def mock_discord_message() -> MagicMock:
     return message
 
 
-@pytest.fixture
+@pytest.fixture(scope="module")
 def mock_discord_role() -> MagicMock:
     """Factory function for mock Discord role."""
     role = MagicMock()
@@ -250,7 +250,7 @@ def mock_discord_role() -> MagicMock:
     return role
 
 
-@pytest.fixture
+@pytest.fixture(scope="module")
 def mock_discord_member() -> MagicMock:
     """Factory function for mock Discord member."""
     member = MagicMock()
@@ -267,7 +267,7 @@ def mock_discord_member() -> MagicMock:
     return member
 
 
-@pytest.fixture
+@pytest.fixture(scope="module")
 def mock_discord_embed() -> MagicMock:
     """Factory function for mock Discord embed."""
     embed = MagicMock()
@@ -278,7 +278,7 @@ def mock_discord_embed() -> MagicMock:
     return embed
 
 
-@pytest.fixture
+@pytest.fixture(scope="module")
 def mock_discord_intents() -> MagicMock:
     """Factory function for mock Discord intents."""
     intents = MagicMock()
@@ -290,7 +290,7 @@ def mock_discord_intents() -> MagicMock:
     return intents
 
 
-@pytest.fixture
+@pytest.fixture(scope="module")
 def mock_async_discord_method() -> Generator[AsyncMock, None, None]:
     """Fixture for mocking async Discord methods."""
     mock_method = AsyncMock()
@@ -301,7 +301,7 @@ def mock_async_discord_method() -> Generator[AsyncMock, None, None]:
     mock_method.reset_mock()
 
 
-@pytest.fixture
+@pytest.fixture(scope="module")
 def mock_sync_discord_method() -> Generator[MagicMock, None, None]:
     """Fixture for mocking sync Discord methods."""
     mock_method = MagicMock()
@@ -312,7 +312,7 @@ def mock_sync_discord_method() -> Generator[MagicMock, None, None]:
     mock_method.reset_mock()
 
 
-@pytest.fixture
+@pytest.fixture(scope="module")
 def mock_http_response() -> MagicMock:
     """Factory function for mock HTTP response."""
     response = MagicMock()
@@ -333,7 +333,7 @@ def _make_mock_http_response() -> MagicMock:
     return response
 
 
-@pytest.fixture
+@pytest.fixture(scope="module")
 def mock_httpx_client() -> Generator[MagicMock, None, None]:
     """Mock httpx client with common methods."""
     client = MagicMock()
@@ -349,7 +349,7 @@ def mock_httpx_client() -> Generator[MagicMock, None, None]:
     client.reset_mock()
 
 
-@pytest.fixture
+@pytest.fixture(scope="module")
 def mock_database_session() -> Generator[MagicMock, None, None]:
     """Mock database session for testing."""
     session = MagicMock()
@@ -366,7 +366,7 @@ def mock_database_session() -> Generator[MagicMock, None, None]:
     session.reset_mock()
 
 
-@pytest.fixture
+@pytest.fixture(scope="module")
 def mock_fastapi_request() -> MagicMock:
     """Factory function for mock FastAPI request."""
     request = MagicMock()
@@ -381,7 +381,7 @@ def mock_fastapi_request() -> MagicMock:
     return request
 
 
-@pytest.fixture
+@pytest.fixture(scope="module")
 def mock_fastapi_response() -> MagicMock:
     """Factory function for mock FastAPI response."""
     response = MagicMock()

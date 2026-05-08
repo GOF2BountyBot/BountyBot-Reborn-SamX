@@ -39,7 +39,7 @@ for _mod in ["discord", "discord.ext", "discord.ext.commands", "discord.app_comm
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "src"))
 
 
-@pytest.fixture
+@pytest.fixture(scope="module")
 def mock_bot():
     """Create a mock Discord bot for testCog testing."""
     bot = MagicMock()
@@ -64,7 +64,7 @@ def _evict_discord_modules():
         sys.modules.pop(k, None)
 
 
-@pytest.fixture
+@pytest.fixture(scope="module")
 def mock_test_cog(mock_bot):
     """Create a mock testCog instance."""
     sys.modules["shared"] = _mock_shared

@@ -60,7 +60,7 @@ def _close_coro(coro):
     return MagicMock()
 
 
-@pytest.fixture
+@pytest.fixture(scope="module")
 def mock_bot():
     """Create a mock Discord bot for adminCog testing."""
     bot = DiscordMockUtils.create_mock_bot(user_id=123456789, username="TestBot")
@@ -1927,6 +1927,16 @@ class TestPreloadRenderSettings:
 
     _DEFAULT_BLENDER_URL = "http://blender-service:8001/api/v1"
     _RENDER_CONFIG_URL = "http://blender-service:8001/api/v1/config/render"
+
+    @pytest.fixture(autouse=True)
+    def _reset_bot_create_task(self, mock_bot):
+        """Reset mock_bot.loop.create_task call counter before each test.
+
+        Required because mock_bot is module-scoped: mock_admin_cog (function-scoped)
+        creates a new AdminCog per test, each calling bot.loop.create_task twice.
+        Tests that assert exact call_count need a fresh counter.
+        """
+        mock_bot.loop.create_task.reset_mock()
 
     def _with_real_client(self, cog, request):
         """Replace cog.http_client with a real httpx.AsyncClient for respx interception.

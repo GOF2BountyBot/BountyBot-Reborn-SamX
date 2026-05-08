@@ -9,7 +9,7 @@ import asyncio
 import os
 import sys
 import types
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -98,7 +98,7 @@ def _create_mock_user(user_id: int = 111111111, name: str = "TestUser"):
 # -------------------------------------------------------------------------
 
 
-@pytest.fixture
+@pytest.fixture(scope="module")
 def mock_bot():
     bot = DiscordMockUtils.create_mock_bot(user_id=123456789, username="TestBot")
     bot.add_cog = AsyncMock()
@@ -108,7 +108,7 @@ def mock_bot():
     return bot
 
 
-@pytest.fixture
+@pytest.fixture(scope="module")
 def mock_admin_cog(mock_bot):
     sys.modules["shared"] = _mock_shared
     sys.modules["shared.bblogger"] = _mock_bblogger
@@ -125,10 +125,25 @@ def mock_admin_cog(mock_bot):
 
 
 class TestAdminUninstall:
-    """Tests for the /admin_uninstall command."""
+    """Tests for the /admin_uninstall command (B.50: ConfirmView button dialog)."""
 
-    def test_admin_uninstall_with_correct_confirmation(self, mock_admin_cog):
-        """/admin_uninstall should proceed when confirm == 'CONFIRM-DELETE'."""
+    @pytest.fixture(autouse=True)
+    def _patch_confirm_view(self, mock_admin_cog):
+        """Patch ConfirmView so tests don't block on view.wait(). Default: result=True (user confirmed).
+
+        Depends on mock_admin_cog to ensure this fixture runs AFTER the cog fixture has
+        evicted and re-imported cogs.adminCog.  Without this dependency, pytest may patch
+        the old module object before mock_admin_cog evicts it, leaving the freshly-imported
+        cogs.adminCog.ConfirmView unpatched and causing view.wait() to block forever.
+        """
+        view_mock = MagicMock()
+        view_mock.result = True
+        view_mock.wait = AsyncMock(return_value=None)
+        with patch("cogs.adminCog.ConfirmView", return_value=view_mock):
+            yield
+
+    def test_admin_uninstall_confirm_flow(self, mock_admin_cog):
+        """/admin_uninstall should call the delete API when user clicks Confirm (result=True)."""
         interaction = _create_mock_interaction()
         interaction.user = _create_mock_user()
 
@@ -141,77 +156,107 @@ class TestAdminUninstall:
             "removed_counts": {"players": 5, "shops": 4, "configs": 1},
             "warning": "All data has been permanently deleted",
         }
+        # Also mock GET config (called before delete to fetch channel/role IDs)
+        cfg_resp = MagicMock()
+        cfg_resp.raise_for_status = MagicMock()
+        cfg_resp.json.return_value = {"guild_id": 987654321}
+        mock_admin_cog.http_client.get = AsyncMock(return_value=cfg_resp)
         mock_admin_cog.http_client.delete = AsyncMock(return_value=uninstall_resp)
+        mock_admin_cog.bot.get_guild = MagicMock(return_value=None)
 
-        asyncio.run(mock_admin_cog.admin_uninstall.callback(mock_admin_cog, interaction, "CONFIRM-DELETE"))
+        asyncio.run(mock_admin_cog.admin_uninstall.callback(mock_admin_cog, interaction))
 
         interaction.response.defer.assert_called_once_with(thinking=True, ephemeral=True)
+        # DELETE to bot-core must have been called
         mock_admin_cog.http_client.delete.assert_called_once()
-        interaction.followup.send.assert_called_once()
-        call_kwargs = interaction.followup.send.call_args[1]
-        assert "embed" in call_kwargs
+        # At least one followup send with an embed (confirmation prompt + result embed)
+        assert interaction.followup.send.call_count >= 1
+        # The last followup send should contain the success embed
+        last_call_kwargs = interaction.followup.send.call_args_list[-1][1]
+        assert "embed" in last_call_kwargs
 
-    def test_admin_uninstall_with_wrong_confirmation(self, mock_admin_cog):
-        """/admin_uninstall should show warning embed when confirmation is wrong."""
+    def test_admin_uninstall_cancel_flow(self, mock_admin_cog):
+        """/admin_uninstall should NOT call delete API when user clicks Cancel (result=False)."""
         interaction = _create_mock_interaction()
         interaction.user = _create_mock_user()
 
-        asyncio.run(mock_admin_cog.admin_uninstall.callback(mock_admin_cog, interaction, "wrong-string"))
-
-        interaction.response.defer.assert_called_once_with(thinking=True, ephemeral=True)
-        # API should NOT have been called
         mock_admin_cog.http_client.delete = AsyncMock()
-        mock_admin_cog.http_client.delete.assert_not_called()
-        # Warning embed should have been sent
-        interaction.followup.send.assert_called_once()
-        call_kwargs = interaction.followup.send.call_args[1]
-        assert "embed" in call_kwargs
 
-    def test_admin_uninstall_without_confirm_param(self, mock_admin_cog):
-        """/admin_uninstall without confirm parameter should show warning embed."""
+        # Override autouse fixture: simulate user clicking Cancel
+        view_mock = MagicMock()
+        view_mock.result = False
+        view_mock.wait = AsyncMock(return_value=None)
+        with patch("cogs.adminCog.ConfirmView", return_value=view_mock):
+            asyncio.run(mock_admin_cog.admin_uninstall.callback(mock_admin_cog, interaction))
+
+        interaction.response.defer.assert_called_once_with(thinking=True, ephemeral=True)
+        # DELETE must NOT have been called
+        mock_admin_cog.http_client.delete.assert_not_called()
+        # A cancellation message should have been sent
+        interaction.followup.send.assert_called()
+
+    def test_admin_uninstall_timeout_flow(self, mock_admin_cog):
+        """/admin_uninstall should NOT call delete API when ConfirmView times out (result=None)."""
         interaction = _create_mock_interaction()
         interaction.user = _create_mock_user()
 
-        asyncio.run(mock_admin_cog.admin_uninstall.callback(mock_admin_cog, interaction, None))
+        mock_admin_cog.http_client.delete = AsyncMock()
+
+        # Override autouse fixture: simulate timeout (result stays None)
+        view_mock = MagicMock()
+        view_mock.result = None
+        view_mock.wait = AsyncMock(return_value=None)
+        with patch("cogs.adminCog.ConfirmView", return_value=view_mock):
+            asyncio.run(mock_admin_cog.admin_uninstall.callback(mock_admin_cog, interaction))
 
         interaction.response.defer.assert_called_once_with(thinking=True, ephemeral=True)
-        # Warning embed — not the uninstall confirmation
-        interaction.followup.send.assert_called_once()
-        call_kwargs = interaction.followup.send.call_args[1]
-        assert "embed" in call_kwargs
-        embed = call_kwargs["embed"]
-        # The embed title should mention "WARNING"
-        assert "WARNING" in embed.title or "warning" in embed.title.lower()
+        # DELETE must NOT have been called on timeout
+        mock_admin_cog.http_client.delete.assert_not_called()
+        # A timeout message should have been sent
+        interaction.followup.send.assert_called()
 
     def test_admin_uninstall_api_error(self, mock_admin_cog):
-        """/admin_uninstall should handle API errors gracefully."""
+        """/admin_uninstall should handle API errors gracefully (result=True path)."""
         interaction = _create_mock_interaction()
         interaction.user = _create_mock_user()
 
         import httpx
 
+        # Mock GET config first (may succeed or fail; use a simple ok response)
+        cfg_resp = MagicMock()
+        cfg_resp.raise_for_status = MagicMock()
+        cfg_resp.json.return_value = {"guild_id": 987654321}
+        mock_admin_cog.http_client.get = AsyncMock(return_value=cfg_resp)
+        mock_admin_cog.bot.get_guild = MagicMock(return_value=None)
+
         mock_req = MagicMock()
         http_error = httpx.HTTPStatusError("Forbidden", request=mock_req, response=MagicMock(status_code=403))
         mock_admin_cog.http_client.delete = AsyncMock(side_effect=http_error)
 
-        asyncio.run(mock_admin_cog.admin_uninstall.callback(mock_admin_cog, interaction, "CONFIRM-DELETE"))
+        asyncio.run(mock_admin_cog.admin_uninstall.callback(mock_admin_cog, interaction))
 
-        interaction.followup.send.assert_called_once()
-        # B.31b: helper now sends a sanitized embed instead of a raw URL string.
+        # B.31b: helper sends a sanitized embed instead of a raw URL string.
+        # At least one followup.send must have been called (warning embed + error embed)
+        assert interaction.followup.send.call_count >= 1
         embed = interaction.followup.send.call_args.kwargs.get("embed")
         assert embed is not None, "Expected embed-based error reply from report_api_error"
         assert "bot-core" not in (embed.description or "")
 
     def test_admin_uninstall_generic_error(self, mock_admin_cog):
-        """/admin_uninstall should handle unexpected errors gracefully."""
+        """/admin_uninstall should handle unexpected errors gracefully (result=True path)."""
         interaction = _create_mock_interaction()
         interaction.user = _create_mock_user()
 
+        cfg_resp = MagicMock()
+        cfg_resp.raise_for_status = MagicMock()
+        cfg_resp.json.return_value = {"guild_id": 987654321}
+        mock_admin_cog.http_client.get = AsyncMock(return_value=cfg_resp)
+        mock_admin_cog.bot.get_guild = MagicMock(return_value=None)
         mock_admin_cog.http_client.delete = AsyncMock(side_effect=Exception("Connection error"))
 
-        asyncio.run(mock_admin_cog.admin_uninstall.callback(mock_admin_cog, interaction, "CONFIRM-DELETE"))
+        asyncio.run(mock_admin_cog.admin_uninstall.callback(mock_admin_cog, interaction))
 
-        interaction.followup.send.assert_called_once()
+        assert interaction.followup.send.call_count >= 1
         call_args = interaction.followup.send.call_args[0][0]
         assert "⚠️" in call_args
 

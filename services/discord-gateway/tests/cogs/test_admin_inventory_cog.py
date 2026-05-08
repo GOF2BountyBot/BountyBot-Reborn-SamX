@@ -109,7 +109,7 @@ def _make_http_resp(status_code=200, json_data=None):
 # -------------------------------------------------------------------------
 
 
-@pytest.fixture
+@pytest.fixture(scope="module")
 def mock_bot():
     bot = DiscordMockUtils.create_mock_bot(user_id=123456789, username="TestBot")
     bot.add_cog = AsyncMock()
@@ -119,7 +119,7 @@ def mock_bot():
     return bot
 
 
-@pytest.fixture
+@pytest.fixture(scope="module")
 def mock_admin_cog(mock_bot):
     sys.modules["shared"] = _mock_shared
     sys.modules["shared.bblogger"] = _mock_bblogger

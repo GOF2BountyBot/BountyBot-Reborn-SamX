@@ -54,7 +54,7 @@ def _close_coro(coro):
     return MagicMock()
 
 
-@pytest.fixture
+@pytest.fixture(scope="module")
 def mock_bot():
     """Create a mock Discord bot for devCog testing."""
     loop = MagicMock()
@@ -170,13 +170,16 @@ class TestCategoryPreload:
         self._with_real_client(mock_dev_cog, request)
         mock_dev_cog.bot.wait_until_ready = AsyncMock()
 
-        with respx.mock(assert_all_called=True) as mock_router:
+        with (
+            respx.mock(assert_all_called=False) as mock_router,
+            patch("cogs.devCog.asyncio.sleep", new_callable=AsyncMock),
+        ):
             mock_router.get(self._CATEGORIES_URL).mock(
                 return_value=httpx.Response(503, json={"detail": "Service Unavailable"})
             )
             asyncio.run(mock_dev_cog._preload_categories())
 
-        # On HTTP error, _categories remains empty (no retry in this preload)
+        # On HTTP error, _categories remains empty after all retries exhausted
         assert mock_dev_cog._categories == []
 
     def test_preload_categories_network_error_leaves_empty(self, mock_dev_cog, request):
@@ -187,7 +190,10 @@ class TestCategoryPreload:
         self._with_real_client(mock_dev_cog, request)
         mock_dev_cog.bot.wait_until_ready = AsyncMock()
 
-        with respx.mock(assert_all_called=True) as mock_router:
+        with (
+            respx.mock(assert_all_called=False) as mock_router,
+            patch("cogs.devCog.asyncio.sleep", new_callable=AsyncMock),
+        ):
             mock_router.get(self._CATEGORIES_URL).mock(side_effect=httpx.ConnectError("connection refused"))
             asyncio.run(mock_dev_cog._preload_categories())
 

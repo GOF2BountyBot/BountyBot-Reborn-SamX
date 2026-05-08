@@ -116,7 +116,7 @@ def _make_http_resp(status_code: int, data: dict) -> MagicMock:
 # ---------------------------------------------------------------------------
 
 
-@pytest.fixture
+@pytest.fixture(scope="module")
 def mock_bot():
     bot = MagicMock()
     bot.loop = MagicMock()
@@ -124,7 +124,7 @@ def mock_bot():
     return bot
 
 
-@pytest.fixture
+@pytest.fixture(scope="module")
 def cog(mock_bot):
     from cogs.playerCog import PlayerCog
 
@@ -312,9 +312,7 @@ class TestNotificationsShopDisable:
 
         await cog.notifications.callback(cog, interaction, notification_type="shop", enabled=0)
 
-        interaction.user.remove_roles.assert_awaited_once_with(
-            shop_role, reason="BountyBot shop notification opt-out"
-        )
+        interaction.user.remove_roles.assert_awaited_once_with(shop_role, reason="BountyBot shop notification opt-out")
         call_kwargs = interaction.followup.send.call_args[1]
         embed = call_kwargs["embed"]
         assert "disabled" in embed.title.lower()
@@ -553,6 +551,7 @@ class TestNotificationsDiscordForbidden:
     def _make_discord_forbidden(self):
         """Build a discord.Forbidden instance from the currently-loaded discord module."""
         import importlib
+
         _discord = importlib.import_module("discord")
         fake_response = MagicMock()
         fake_response.status = 403
@@ -658,9 +657,7 @@ class TestNotificationsBountyNonBronzeTiers:
 
         await cog.notifications.callback(cog, interaction, notification_type="bounty", enabled=1)
 
-        interaction.user.add_roles.assert_awaited_once_with(
-            silver_role, reason="BountyBot bounty notification opt-in"
-        )
+        interaction.user.add_roles.assert_awaited_once_with(silver_role, reason="BountyBot bounty notification opt-in")
 
     @pytest.mark.asyncio
     async def test_bounty_disable_gold_tier_removes_gold_role(self, cog):

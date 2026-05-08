@@ -208,6 +208,7 @@ class TestListPermissionsErrors:
             client = TestClient(app)
             response = client.get("/api/v1/permissions")
             assert response.status_code == 500
+            assert "detail" in response.json()
 
     def test_list_role_permissions_exception(self, perm_ext_app):
         """list_role_permissions should return 500 on exception."""
@@ -217,6 +218,7 @@ class TestListPermissionsErrors:
             client = TestClient(app)
             response = client.get("/api/v1/permissions/roles")
             assert response.status_code == 500
+            assert "detail" in response.json()
 
     def test_list_user_permissions_exception(self, perm_ext_app):
         """list_user_permissions should return 500 on exception."""
@@ -226,6 +228,7 @@ class TestListPermissionsErrors:
             client = TestClient(app)
             response = client.get("/api/v1/permissions/users")
             assert response.status_code == 500
+            assert "detail" in response.json()
 
     def test_list_channel_permissions_exception(self, perm_ext_app):
         """list_channel_permissions should return 500 on exception."""
@@ -235,6 +238,7 @@ class TestListPermissionsErrors:
             client = TestClient(app)
             response = client.get("/api/v1/permissions/channels")
             assert response.status_code == 500
+            assert "detail" in response.json()
 
     def test_list_category_permissions_exception(self, perm_ext_app):
         """list_category_permissions should return 500 on exception."""
@@ -244,6 +248,7 @@ class TestListPermissionsErrors:
             client = TestClient(app)
             response = client.get("/api/v1/permissions/categories")
             assert response.status_code == 500
+            assert "detail" in response.json()
 
 
 class TestGetPermissionOverwriteExtended:
@@ -268,6 +273,7 @@ class TestGetPermissionOverwriteExtended:
         client = TestClient(app)
         response = client.get("/api/v1/permissions/5555555555:111111111")
         assert response.status_code == 200
+        assert response.json()["status"] == "success"
 
     def test_get_overwrite_channel_fetch_fails_404(self, perm_ext_app):
         """get_permission_overwrite should return 404 when channel fetch fails."""
@@ -279,6 +285,7 @@ class TestGetPermissionOverwriteExtended:
         client = TestClient(app)
         response = client.get("/api/v1/permissions/9999999999:111111111")
         assert response.status_code == 404
+        assert "detail" in response.json()
 
     def test_get_overwrite_exception_path(self, perm_ext_app):
         """get_permission_overwrite should return 500 on unexpected exception."""
@@ -292,6 +299,7 @@ class TestGetPermissionOverwriteExtended:
         client = TestClient(app)
         response = client.get("/api/v1/permissions/1234567890:111111111")
         assert response.status_code == 500
+        assert "detail" in response.json()
 
 
 class TestUpdatePermissionOverwriteExtended:
@@ -314,6 +322,7 @@ class TestUpdatePermissionOverwriteExtended:
         client = TestClient(app)
         response = client.put("/api/v1/permissions/1234567890:222222222", json={"allow": 8, "deny": 0})
         assert response.status_code == 200
+        assert response.json()["status"] == "updated"
 
     def test_update_overwrite_target_not_found_404(self, perm_ext_app):
         """update_permission_overwrite should return 404 when target not found."""
@@ -329,6 +338,7 @@ class TestUpdatePermissionOverwriteExtended:
         client = TestClient(app)
         response = client.put("/api/v1/permissions/1234567890:888888888", json={"allow": 8, "deny": 0})
         assert response.status_code == 404
+        assert "detail" in response.json()
 
     def test_update_overwrite_exception_path(self, perm_ext_app):
         """update_permission_overwrite should return 500 on unexpected exception."""
@@ -342,6 +352,7 @@ class TestUpdatePermissionOverwriteExtended:
         client = TestClient(app)
         response = client.put("/api/v1/permissions/1234567890:111111111", json={"allow": 8, "deny": 0})
         assert response.status_code == 500
+        assert "detail" in response.json()
 
 
 class TestRemovePermissionOverwriteExtended:
@@ -366,6 +377,7 @@ class TestRemovePermissionOverwriteExtended:
         client = TestClient(app)
         response = client.delete("/api/v1/permissions/5555555555:111111111")
         assert response.status_code == 200
+        assert response.json()["status"] == "deleted"
 
     def test_remove_overwrite_exception_path(self, perm_ext_app):
         """remove_permission_overwrite should return 500 on unexpected exception."""
@@ -379,6 +391,7 @@ class TestRemovePermissionOverwriteExtended:
         client = TestClient(app)
         response = client.delete("/api/v1/permissions/1234567890:111111111")
         assert response.status_code == 500
+        assert "detail" in response.json()
 
 
 class TestCheckComprehensivePermissionsExtended:
@@ -405,6 +418,7 @@ class TestCheckComprehensivePermissionsExtended:
         }
         response = ext_perm_client.post("/api/v1/permissions/check", json=body)
         assert response.status_code == 200
+        assert response.json()["status"] == "success"
 
     def test_check_permissions_role_subject_channel_target(self, perm_ext_app):
         """check_comprehensive_permissions with role subject and channel target."""
@@ -438,6 +452,7 @@ class TestCheckComprehensivePermissionsExtended:
         }
         response = client.post("/api/v1/permissions/check", json=body)
         assert response.status_code == 200
+        assert response.json()["status"] == "success"
 
     def test_check_permissions_evaluate_mode_channel_user(self, ext_perm_client):
         """check_comprehensive_permissions evaluate mode for channel + user subject."""
@@ -501,6 +516,7 @@ class TestCheckComprehensivePermissionsExtended:
         }
         response = client.post("/api/v1/permissions/check", json=body)
         assert response.status_code == 404
+        assert "detail" in response.json()
 
     def test_check_permissions_guild_from_fetch(self, perm_ext_app):
         """check_comprehensive_permissions should fetch guild when not cached."""
@@ -525,6 +541,7 @@ class TestCheckComprehensivePermissionsExtended:
         }
         response = client.post("/api/v1/permissions/check", json=body)
         assert response.status_code == 200
+        assert response.json()["status"] == "success"
 
     def test_check_permissions_channel_not_found_404(self, perm_ext_app):
         """check_comprehensive_permissions should return 404 when channel not found."""
@@ -541,6 +558,7 @@ class TestCheckComprehensivePermissionsExtended:
         }
         response = client.post("/api/v1/permissions/check", json=body)
         assert response.status_code == 404
+        assert "detail" in response.json()
 
     def test_check_permissions_channel_no_guild_400(self, perm_ext_app):
         """check_comprehensive_permissions should return 400 when channel has no guild."""
@@ -560,6 +578,7 @@ class TestCheckComprehensivePermissionsExtended:
         }
         response = client.post("/api/v1/permissions/check", json=body)
         assert response.status_code == 400
+        assert "detail" in response.json()
 
     def test_check_permissions_unknown_target_type_400(self, ext_perm_client):
         """check_comprehensive_permissions should return 400 for unknown target type."""
@@ -570,6 +589,7 @@ class TestCheckComprehensivePermissionsExtended:
         }
         response = ext_perm_client.post("/api/v1/permissions/check", json=body)
         assert response.status_code == 400
+        assert "detail" in response.json()
 
     def test_check_permissions_member_not_in_guild_404(self, perm_ext_app):
         """check_comprehensive_permissions should return 404 when member not in guild."""
@@ -590,6 +610,7 @@ class TestCheckComprehensivePermissionsExtended:
         }
         response = client.post("/api/v1/permissions/check", json=body)
         assert response.status_code == 404
+        assert "detail" in response.json()
 
     def test_check_permissions_role_not_in_guild_404(self, perm_ext_app):
         """check_comprehensive_permissions should return 404 when role not in guild."""
@@ -609,6 +630,7 @@ class TestCheckComprehensivePermissionsExtended:
         }
         response = client.post("/api/v1/permissions/check", json=body)
         assert response.status_code == 404
+        assert "detail" in response.json()
 
     def test_check_permissions_exception_path(self, perm_ext_app):
         """check_comprehensive_permissions should handle generic exceptions."""
@@ -627,3 +649,4 @@ class TestCheckComprehensivePermissionsExtended:
         }
         response = client.post("/api/v1/permissions/check", json=body)
         assert response.status_code == 500
+        assert "detail" in response.json()

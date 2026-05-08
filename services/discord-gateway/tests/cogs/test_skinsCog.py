@@ -478,9 +478,12 @@ class TestShipSkinCommand:
             )
         )
 
-        # Verify behavior - we don't care about the specific response here
+        # Verify behavior
         interaction.response.defer.assert_called_once_with(thinking=True)
-        interaction.followup.send.assert_called_once()
+        assert interaction.followup.send.await_count >= 1
+        last_call_kwargs = interaction.followup.send.call_args[1]
+        # Success response should not be ephemeral (it's a public embed)
+        assert not last_call_kwargs.get("ephemeral", False)
 
     @patch("cogs.skinsCog.httpx")
     def test_ship_skin_invalid_skin(self, mock_httpx, mock_skins_cog):
@@ -519,6 +522,15 @@ class TestShipSkinCommand:
         # Verify behavior - should report skin not found
         interaction.response.defer.assert_called_once_with(thinking=True)
         interaction.followup.send.assert_called_once()
+        last_call_args = interaction.followup.send.call_args
+        last_call_kwargs = last_call_args[1]
+        # Collect content from positional arg, keyword content=, or embed fields
+        content = str(last_call_args[0][0]) if last_call_args[0] else ""
+        content += last_call_kwargs.get("content", "") or ""
+        if "embed" in last_call_kwargs:
+            emb = last_call_kwargs["embed"]
+            content += (emb.title or "") + (emb.description or "")
+        assert any(w in content.lower() for w in ["not found", "invalid", "skin", "unknown", "error"])
 
 
 class TestCogUnload:
@@ -1846,6 +1858,1202 @@ class TestRegionIndicesCorrectness:
         # Should have 2 region_textures (for regions 1 and 3)
         region_texture_files = [f for f in files if f[0] == "region_textures"]
         assert len(region_texture_files) == 2
+
+
+# ===========================================================================
+# S10: New tests — skinsCog coverage gap-fill
+# ===========================================================================
+
+
+class TestSquareCheckViewButtons:
+    """Tests for SquareCheckView button callbacks (lines 34-52)."""
+
+    def test_crop_button_sets_result_and_stops(self):
+        """crop_button sets result='crop' and stops the view."""
+        from cogs.skinsCog import SquareCheckView
+
+        async def run():
+            view = SquareCheckView()
+            interaction = MagicMock()
+            interaction.response.defer = AsyncMock()
+            await view.children[0].callback(interaction)  # crop button
+            return view.result, view.is_finished()
+
+        result, finished = asyncio.run(run())
+        assert result == "crop"
+        assert finished is True
+
+    def test_stretch_button_sets_result_and_stops(self):
+        """stretch_button sets result='stretch' and stops the view."""
+        from cogs.skinsCog import SquareCheckView
+
+        async def run():
+            view = SquareCheckView()
+            interaction = MagicMock()
+            interaction.response.defer = AsyncMock()
+            await view.children[1].callback(interaction)  # stretch button
+            return view.result, view.is_finished()
+
+        result, finished = asyncio.run(run())
+        assert result == "stretch"
+        assert finished is True
+
+    def test_cancel_button_sets_result_none_and_stops(self):
+        """cancel_button sets result=None and stops the view."""
+        from cogs.skinsCog import SquareCheckView
+
+        async def run():
+            view = SquareCheckView()
+            view.result = "crop"  # pre-set to verify cancel resets
+            interaction = MagicMock()
+            interaction.response.defer = AsyncMock()
+            await view.children[2].callback(interaction)  # cancel button
+            return view.result, view.is_finished()
+
+        result, finished = asyncio.run(run())
+        assert result is None
+        assert finished is True
+
+    def test_initial_state_is_none(self):
+        """SquareCheckView starts with result=None and 3 buttons."""
+        from cogs.skinsCog import SquareCheckView
+
+        view = SquareCheckView(timeout=30)
+        assert view.result is None
+        assert len(view.children) == 3
+
+
+class TestFormatDownloadViewButtons:
+    """Tests for FormatDownloadView button callbacks (lines 183-235)."""
+
+    def _make_cog(self, mock_bot):
+        """Helper to create a minimal SkinsCog for use in view tests."""
+        from cogs.skinsCog import SkinsCog
+
+        cog = SkinsCog(mock_bot)
+        return cog
+
+    def test_png_button_sends_render_bytes_when_available(self, mock_bot):
+        """png_button uses render_bytes when available."""
+        from cogs.skinsCog import FormatDownloadView
+
+        _evict_discord_modules()
+        cog = self._make_cog(mock_bot)
+
+        render_bytes = b"render_data"
+        texture_bytes = b"texture_data"
+        view = FormatDownloadView(cog, texture_bytes, "TestShip", render_bytes=render_bytes)
+
+        interaction = MagicMock()
+        interaction.response.defer = AsyncMock()
+        interaction.followup.send = AsyncMock()
+
+        # Button 0 = "Download PNG" — invoke via children[0].callback
+        asyncio.run(view.children[0].callback(interaction))
+
+        interaction.followup.send.assert_awaited_once()
+        call_kwargs = interaction.followup.send.call_args[1]
+        assert "file" in call_kwargs
+
+    def test_png_button_uses_texture_when_no_render(self, mock_bot):
+        """png_button falls back to texture_bytes when render_bytes is None."""
+        from cogs.skinsCog import FormatDownloadView
+
+        _evict_discord_modules()
+        cog = self._make_cog(mock_bot)
+
+        texture_bytes = b"texture_data"
+        view = FormatDownloadView(cog, texture_bytes, "TestShip")  # no render_bytes
+
+        interaction = MagicMock()
+        interaction.response.defer = AsyncMock()
+        interaction.followup.send = AsyncMock()
+
+        asyncio.run(view.children[0].callback(interaction))
+
+        interaction.followup.send.assert_awaited_once()
+
+    def test_etc1_button_calls_convert_and_send(self, mock_bot):
+        """etc1_button triggers _convert_and_send with 'etc1'."""
+        from cogs.skinsCog import FormatDownloadView
+
+        _evict_discord_modules()
+        cog = self._make_cog(mock_bot)
+        texture_bytes = b"texture"
+        view = FormatDownloadView(cog, texture_bytes, "TestShip")
+
+        interaction = MagicMock()
+        interaction.response.defer = AsyncMock()
+        interaction.followup.send = AsyncMock()
+
+        mock_resp = MagicMock()
+        mock_resp.content = b"aei_etc1"
+        mock_resp.raise_for_status = MagicMock()
+        cog.blender_client.post = AsyncMock(return_value=mock_resp)
+
+        # Button 1 = "AEI (Android/ETC1)"
+        asyncio.run(view.children[1].callback(interaction))
+
+        cog.blender_client.post.assert_awaited_once()
+        call_url = cog.blender_client.post.call_args[0][0]
+        assert "/textures/convert" in call_url
+        call_data = cog.blender_client.post.call_args[1]["data"]
+        assert call_data["format"] == "etc1"
+
+    def test_dxt5_button_calls_convert_and_send(self, mock_bot):
+        """dxt5_button triggers _convert_and_send with 'dxt5'."""
+        from cogs.skinsCog import FormatDownloadView
+
+        _evict_discord_modules()
+        cog = self._make_cog(mock_bot)
+        texture_bytes = b"texture"
+        view = FormatDownloadView(cog, texture_bytes, "TestShip")
+
+        interaction = MagicMock()
+        interaction.response.defer = AsyncMock()
+        interaction.followup.send = AsyncMock()
+
+        mock_resp = MagicMock()
+        mock_resp.content = b"aei_dxt5"
+        mock_resp.raise_for_status = MagicMock()
+        cog.blender_client.post = AsyncMock(return_value=mock_resp)
+
+        # Button 2 = "AEI (PC/DXT5)"
+        asyncio.run(view.children[2].callback(interaction))
+
+        call_data = cog.blender_client.post.call_args[1]["data"]
+        assert call_data["format"] == "dxt5"
+
+    def test_convert_and_send_http_error(self, mock_bot):
+        """_convert_and_send sends ephemeral error on HTTP status error."""
+        import httpx
+        from cogs.skinsCog import FormatDownloadView
+
+        _evict_discord_modules()
+        cog = self._make_cog(mock_bot)
+        view = FormatDownloadView(cog, b"tex", "Ship")
+
+        interaction = MagicMock()
+        interaction.response.defer = AsyncMock()
+        interaction.followup.send = AsyncMock()
+
+        err_resp = MagicMock()
+        err_resp.status_code = 500
+        cog.blender_client.post = AsyncMock(
+            side_effect=httpx.HTTPStatusError("error", request=MagicMock(), response=err_resp)
+        )
+
+        asyncio.run(view._convert_and_send(interaction, "etc1"))
+
+        interaction.followup.send.assert_awaited_once()
+        call_kwargs = interaction.followup.send.call_args[1]
+        assert call_kwargs.get("ephemeral") is True
+        msg = interaction.followup.send.call_args[0][0]
+        assert "Failed" in msg or "❌" in msg
+
+    def test_convert_and_send_generic_exception(self, mock_bot):
+        """_convert_and_send sends ephemeral error on generic exception."""
+        from cogs.skinsCog import FormatDownloadView
+
+        _evict_discord_modules()
+        cog = self._make_cog(mock_bot)
+        view = FormatDownloadView(cog, b"tex", "Ship")
+
+        interaction = MagicMock()
+        interaction.response.defer = AsyncMock()
+        interaction.followup.send = AsyncMock()
+
+        cog.blender_client.post = AsyncMock(side_effect=Exception("Network failure"))
+
+        asyncio.run(view._convert_and_send(interaction, "dxt5"))
+
+        interaction.followup.send.assert_awaited_once()
+        call_kwargs = interaction.followup.send.call_args[1]
+        assert call_kwargs.get("ephemeral") is True
+        msg = interaction.followup.send.call_args[0][0]
+        assert "Failed" in msg or "❌" in msg
+
+
+class TestSkinnableShipAutocomplete:
+    """Tests for skinnable_ship_autocomplete (lines 335-353)."""
+
+    def test_returns_all_ships_when_no_render_info(self, mock_skins_cog):
+        """skinnable_ship_autocomplete includes all ships with no render info cached."""
+        mock_skins_cog._ship_skins = {"Eagle": [], "Hawk": [], "Condor": []}
+        mock_skins_cog._ship_render_info = {}
+
+        choices = asyncio.run(mock_skins_cog.skinnable_ship_autocomplete(MagicMock(), ""))
+        names = [c.name for c in choices]
+        assert "Eagle" in names
+        assert "Hawk" in names
+        assert "Condor" in names
+
+    def test_excludes_non_skinnable_ships(self, mock_skins_cog):
+        """skinnable_ship_autocomplete excludes ships with skinnable=False in cache."""
+        mock_skins_cog._ship_skins = {"Eagle": [], "Hawk": [], "Condor": []}
+        mock_skins_cog._ship_render_info = {
+            "Hawk": {"skinnable": False},
+        }
+
+        choices = asyncio.run(mock_skins_cog.skinnable_ship_autocomplete(MagicMock(), ""))
+        names = [c.name for c in choices]
+        assert "Eagle" in names
+        assert "Condor" in names
+        assert "Hawk" not in names
+
+    def test_includes_ships_with_skinnable_true(self, mock_skins_cog):
+        """skinnable_ship_autocomplete includes ships with skinnable=True."""
+        mock_skins_cog._ship_skins = {"Eagle": [], "Hawk": []}
+        mock_skins_cog._ship_render_info = {
+            "Eagle": {"skinnable": True},
+            "Hawk": {"skinnable": False},
+        }
+
+        choices = asyncio.run(mock_skins_cog.skinnable_ship_autocomplete(MagicMock(), ""))
+        names = [c.name for c in choices]
+        assert "Eagle" in names
+        assert "Hawk" not in names
+
+    def test_filters_by_current_string(self, mock_skins_cog):
+        """skinnable_ship_autocomplete filters by current prefix."""
+        mock_skins_cog._ship_skins = {"Eagle": [], "Hawk": [], "Condor": []}
+        mock_skins_cog._ship_render_info = {}
+
+        choices = asyncio.run(mock_skins_cog.skinnable_ship_autocomplete(MagicMock(), "ea"))
+        names = [c.name for c in choices]
+        assert "Eagle" in names
+        assert "Hawk" not in names
+
+
+class TestFetchRenderInfo:
+    """Tests for _fetch_render_info helper (lines 887-917)."""
+
+    def test_fetch_render_info_success_skinnable(self, mock_skins_cog):
+        """_fetch_render_info returns render info when ship is skinnable."""
+        interaction = MagicMock()
+        interaction.followup.send = AsyncMock()
+
+        render_data = {
+            "skinnable": True,
+            "bbship_dir": "/path/ship",
+            "diffuse_path": "/path/diffuse.bmp",
+            "model_path": "/path/model.obj",
+        }
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.raise_for_status = MagicMock()
+        mock_resp.json.return_value = render_data
+        mock_skins_cog.http_client.get = AsyncMock(return_value=mock_resp)
+
+        result = asyncio.run(mock_skins_cog._fetch_render_info(interaction, "TestShip"))
+
+        assert result is not None
+        assert result["skinnable"] is True
+        assert mock_skins_cog._ship_render_info["TestShip"] == result
+
+    def test_fetch_render_info_404_sends_not_found(self, mock_skins_cog):
+        """_fetch_render_info sends not-found message and returns None on 404."""
+        interaction = MagicMock()
+        interaction.followup.send = AsyncMock()
+
+        mock_resp = MagicMock()
+        mock_resp.status_code = 404
+        mock_resp.raise_for_status = MagicMock()
+        mock_skins_cog.http_client.get = AsyncMock(return_value=mock_resp)
+
+        result = asyncio.run(mock_skins_cog._fetch_render_info(interaction, "Missing Ship"))
+
+        assert result is None
+        interaction.followup.send.assert_awaited_once()
+        msg = interaction.followup.send.call_args[0][0]
+        assert "not found" in msg.lower() or "Missing Ship" in msg
+
+    def test_fetch_render_info_http_error_returns_none(self, mock_skins_cog):
+        """_fetch_render_info returns None on HTTP status error."""
+        import httpx
+
+        interaction = MagicMock()
+        interaction.followup.send = AsyncMock()
+
+        err_resp = MagicMock()
+        err_resp.status_code = 500
+        mock_skins_cog.http_client.get = AsyncMock(
+            side_effect=httpx.HTTPStatusError("error", request=MagicMock(), response=err_resp)
+        )
+
+        result = asyncio.run(mock_skins_cog._fetch_render_info(interaction, "TestShip"))
+
+        assert result is None
+        interaction.followup.send.assert_awaited_once()
+
+    def test_fetch_render_info_timeout_returns_none(self, mock_skins_cog):
+        """_fetch_render_info returns None on timeout."""
+        from httpx import TimeoutException
+
+        interaction = MagicMock()
+        interaction.followup.send = AsyncMock()
+
+        mock_skins_cog.http_client.get = AsyncMock(side_effect=TimeoutException("timeout"))
+
+        result = asyncio.run(mock_skins_cog._fetch_render_info(interaction, "TestShip"))
+
+        assert result is None
+        interaction.followup.send.assert_awaited_once()
+
+    def test_fetch_render_info_generic_exception_returns_none(self, mock_skins_cog):
+        """_fetch_render_info returns None on unexpected exception."""
+        interaction = MagicMock()
+        interaction.followup.send = AsyncMock()
+
+        mock_skins_cog.http_client.get = AsyncMock(side_effect=Exception("Unknown error"))
+
+        result = asyncio.run(mock_skins_cog._fetch_render_info(interaction, "TestShip"))
+
+        assert result is None
+        interaction.followup.send.assert_awaited_once()
+
+    def test_fetch_render_info_not_skinnable_returns_none(self, mock_skins_cog):
+        """_fetch_render_info returns None when ship is not skinnable."""
+        interaction = MagicMock()
+        interaction.followup.send = AsyncMock()
+
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.raise_for_status = MagicMock()
+        mock_resp.json.return_value = {"skinnable": False}
+        mock_skins_cog.http_client.get = AsyncMock(return_value=mock_resp)
+
+        result = asyncio.run(mock_skins_cog._fetch_render_info(interaction, "Unskinnable"))
+
+        assert result is None
+        interaction.followup.send.assert_awaited_once()
+        msg = interaction.followup.send.call_args[0][0]
+        assert "not support" in msg.lower() or "skin" in msg.lower()
+
+
+class TestDownloadSkinImage:
+    """Tests for _download_skin_image helper (lines 919-941)."""
+
+    def test_download_skin_success(self, mock_skins_cog):
+        """_download_skin_image returns bytes on success."""
+        interaction = MagicMock()
+        interaction.followup.send = AsyncMock()
+
+        render_info = {"compatible_skins": {"lava": "http://example.com/lava.png"}}
+
+        mock_resp = MagicMock()
+        mock_resp.content = b"lava_image_data"
+        mock_resp.raise_for_status = MagicMock()
+        mock_skins_cog.http_client.get = AsyncMock(return_value=mock_resp)
+
+        result = asyncio.run(mock_skins_cog._download_skin_image(interaction, "Eagle", "lava", render_info))
+
+        assert result == b"lava_image_data"
+        interaction.followup.send.assert_not_awaited()
+
+    def test_download_skin_not_in_skins_map_returns_none(self, mock_skins_cog):
+        """_download_skin_image returns None when skin URL not in compatible_skins."""
+        interaction = MagicMock()
+        interaction.followup.send = AsyncMock()
+
+        render_info = {"compatible_skins": {"other_skin": "http://example.com/other.png"}}
+
+        result = asyncio.run(mock_skins_cog._download_skin_image(interaction, "Eagle", "missing_skin", render_info))
+
+        assert result is None
+        interaction.followup.send.assert_awaited_once()
+        msg = interaction.followup.send.call_args[0][0]
+        assert "not found" in msg.lower() or "❌" in msg
+
+    def test_download_skin_http_error_returns_none(self, mock_skins_cog):
+        """_download_skin_image returns None when download HTTP request fails."""
+        interaction = MagicMock()
+        interaction.followup.send = AsyncMock()
+
+        render_info = {"compatible_skins": {"lava": "http://example.com/lava.png"}}
+
+        mock_skins_cog.http_client.get = AsyncMock(side_effect=Exception("Download failed"))
+
+        result = asyncio.run(mock_skins_cog._download_skin_image(interaction, "Eagle", "lava", render_info))
+
+        assert result is None
+        interaction.followup.send.assert_awaited_once()
+
+    def test_download_skin_empty_compatible_skins_returns_none(self, mock_skins_cog):
+        """_download_skin_image returns None when compatible_skins is empty."""
+        interaction = MagicMock()
+        interaction.followup.send = AsyncMock()
+
+        render_info = {"compatible_skins": None}
+
+        result = asyncio.run(mock_skins_cog._download_skin_image(interaction, "Eagle", "lava", render_info))
+
+        assert result is None
+        interaction.followup.send.assert_awaited_once()
+
+
+class TestCompositeTextures:
+    """Tests for _composite_textures helper (lines 993-1047)."""
+
+    def test_composite_textures_success_no_skin(self, mock_skins_cog):
+        """_composite_textures returns bytes on success (no skin overlay)."""
+        interaction = MagicMock()
+        interaction.followup.send = AsyncMock()
+
+        mock_resp = MagicMock()
+        mock_resp.content = b"composited_png"
+        mock_resp.raise_for_status = MagicMock()
+        mock_skins_cog.blender_client.post = AsyncMock(return_value=mock_resp)
+
+        result = asyncio.run(mock_skins_cog._composite_textures(interaction, "Eagle", "/ship", "/diffuse.bmp", None))
+
+        assert result == b"composited_png"
+        call_kwargs = mock_skins_cog.blender_client.post.call_args[1]
+        # No files when no skin
+        assert call_kwargs["files"] is None
+
+    def test_composite_textures_success_with_skin(self, mock_skins_cog):
+        """_composite_textures sends skin bytes as base_texture when provided."""
+        interaction = MagicMock()
+        interaction.followup.send = AsyncMock()
+
+        mock_resp = MagicMock()
+        mock_resp.content = b"composited_with_skin"
+        mock_resp.raise_for_status = MagicMock()
+        mock_skins_cog.blender_client.post = AsyncMock(return_value=mock_resp)
+
+        result = asyncio.run(
+            mock_skins_cog._composite_textures(interaction, "Eagle", "/ship", "/diffuse.bmp", b"skin_bytes")
+        )
+
+        assert result == b"composited_with_skin"
+        call_kwargs = mock_skins_cog.blender_client.post.call_args[1]
+        # Files should contain base_texture
+        assert call_kwargs["files"] is not None
+
+    def test_composite_textures_http_error_returns_none(self, mock_skins_cog):
+        """_composite_textures returns None on HTTP error."""
+        import httpx
+
+        interaction = MagicMock()
+        interaction.followup.send = AsyncMock()
+
+        err_resp = MagicMock()
+        err_resp.status_code = 500
+        mock_skins_cog.blender_client.post = AsyncMock(
+            side_effect=httpx.HTTPStatusError("error", request=MagicMock(), response=err_resp)
+        )
+
+        result = asyncio.run(mock_skins_cog._composite_textures(interaction, "Eagle", "/ship", "/diffuse.bmp", None))
+
+        assert result is None
+        interaction.followup.send.assert_awaited()
+        msg = interaction.followup.send.call_args[0][0]
+        assert "❌" in msg or "failed" in msg.lower()
+
+    def test_composite_textures_timeout_returns_none(self, mock_skins_cog):
+        """_composite_textures returns None on timeout."""
+        from httpx import TimeoutException
+
+        interaction = MagicMock()
+        interaction.followup.send = AsyncMock()
+
+        mock_skins_cog.blender_client.post = AsyncMock(side_effect=TimeoutException("timeout"))
+
+        result = asyncio.run(mock_skins_cog._composite_textures(interaction, "Eagle", "/ship", "/diffuse.bmp", None))
+
+        assert result is None
+        msg = interaction.followup.send.call_args[0][0]
+        assert "timed out" in msg.lower() or "❌" in msg
+
+    def test_composite_textures_generic_exception_returns_none(self, mock_skins_cog):
+        """_composite_textures returns None on generic exception."""
+        interaction = MagicMock()
+        interaction.followup.send = AsyncMock()
+
+        mock_skins_cog.blender_client.post = AsyncMock(side_effect=Exception("Unknown failure"))
+
+        result = asyncio.run(mock_skins_cog._composite_textures(interaction, "Eagle", "/ship", "/diffuse.bmp", None))
+
+        assert result is None
+        msg = interaction.followup.send.call_args[0][0]
+        assert "failed" in msg.lower() or "❌" in msg
+
+    def test_composite_textures_passes_square_mode(self, mock_skins_cog):
+        """_composite_textures passes square_mode to the blender endpoint."""
+        interaction = MagicMock()
+        interaction.followup.send = AsyncMock()
+
+        mock_resp = MagicMock()
+        mock_resp.content = b"result"
+        mock_resp.raise_for_status = MagicMock()
+        mock_skins_cog.blender_client.post = AsyncMock(return_value=mock_resp)
+
+        asyncio.run(mock_skins_cog._composite_textures(interaction, "Eagle", "/ship", "/diffuse.bmp", None, "crop"))
+
+        call_data = mock_skins_cog.blender_client.post.call_args[1]["data"]
+        assert call_data["square_mode"] == "crop"
+
+
+class TestCompositeTexturesWithUpload:
+    """Tests for _composite_textures_with_upload helper (lines 943-991)."""
+
+    def test_composite_with_upload_success(self, mock_skins_cog):
+        """_composite_textures_with_upload returns bytes on success."""
+        interaction = MagicMock()
+        interaction.followup.send = AsyncMock()
+
+        mock_resp = MagicMock()
+        mock_resp.content = b"uploaded_composite"
+        mock_resp.raise_for_status = MagicMock()
+        mock_skins_cog.blender_client.post = AsyncMock(return_value=mock_resp)
+
+        result = asyncio.run(
+            mock_skins_cog._composite_textures_with_upload(interaction, "Eagle", "/ship", b"base_bytes", "none")
+        )
+
+        assert result == b"uploaded_composite"
+        call_kwargs = mock_skins_cog.blender_client.post.call_args[1]
+        assert call_kwargs["files"] is not None
+
+    def test_composite_with_upload_http_error_returns_none(self, mock_skins_cog):
+        """_composite_textures_with_upload returns None on HTTP error."""
+        import httpx
+
+        interaction = MagicMock()
+        interaction.followup.send = AsyncMock()
+
+        err_resp = MagicMock()
+        err_resp.status_code = 500
+        mock_skins_cog.blender_client.post = AsyncMock(
+            side_effect=httpx.HTTPStatusError("error", request=MagicMock(), response=err_resp)
+        )
+
+        result = asyncio.run(
+            mock_skins_cog._composite_textures_with_upload(interaction, "Eagle", "/ship", b"base_bytes", "stretch")
+        )
+
+        assert result is None
+        interaction.followup.send.assert_awaited()
+
+    def test_composite_with_upload_timeout_returns_none(self, mock_skins_cog):
+        """_composite_textures_with_upload returns None on timeout."""
+        from httpx import TimeoutException
+
+        interaction = MagicMock()
+        interaction.followup.send = AsyncMock()
+
+        mock_skins_cog.blender_client.post = AsyncMock(side_effect=TimeoutException("timeout"))
+
+        result = asyncio.run(
+            mock_skins_cog._composite_textures_with_upload(interaction, "Eagle", "/ship", b"base_bytes", "none")
+        )
+
+        assert result is None
+
+    def test_composite_with_upload_generic_exception_returns_none(self, mock_skins_cog):
+        """_composite_textures_with_upload returns None on generic exception."""
+        interaction = MagicMock()
+        interaction.followup.send = AsyncMock()
+
+        mock_skins_cog.blender_client.post = AsyncMock(side_effect=Exception("Unexpected"))
+
+        result = asyncio.run(
+            mock_skins_cog._composite_textures_with_upload(interaction, "Eagle", "/ship", b"base_bytes", "none")
+        )
+
+        assert result is None
+
+
+class TestRenderSkinErrorPaths:
+    """Tests for render_skin error paths not yet covered (lines 693-791)."""
+
+    def _make_render_info(self, has_diffuse=True):
+        return {
+            "skinnable": True,
+            "bbship_dir": "/path/ship.bbship",
+            "diffuse_path": "/path/diffuse.bmp" if has_diffuse else "",
+            "model_path": "/path/model.obj",
+            "mask_paths": [],
+        }
+
+    def test_render_skin_no_diffuse_path_sends_error(self, mock_skins_cog):
+        """render_skin sends error when no diffuse_path in render info."""
+        interaction = MagicMock()
+        interaction.response.defer = AsyncMock()
+        interaction.followup.send = AsyncMock()
+
+        render_info = self._make_render_info(has_diffuse=False)
+        mock_skins_cog._fetch_render_info = AsyncMock(return_value=render_info)
+
+        asyncio.run(mock_skins_cog.render_skin.callback(mock_skins_cog, interaction=interaction, ship="TestShip"))
+
+        interaction.followup.send.assert_called()
+        msgs = [str(c) for c in interaction.followup.send.call_args_list]
+        assert any("texture" in m.lower() or "❌" in m for m in msgs)
+
+    def test_render_skin_failed_image_read_sends_error(self, mock_skins_cog):
+        """render_skin sends error when uploaded image cannot be read."""
+        interaction = MagicMock()
+        interaction.response.defer = AsyncMock()
+        interaction.followup.send = AsyncMock()
+
+        render_info = self._make_render_info()
+        mock_skins_cog._fetch_render_info = AsyncMock(return_value=render_info)
+        mock_skins_cog._resolve_region_mode = AsyncMock(return_value="all")
+
+        # image attachment that raises when read
+        image = MagicMock()
+        image.read = AsyncMock(side_effect=Exception("Read failed"))
+        image.width = None
+        image.height = None
+
+        asyncio.run(
+            mock_skins_cog.render_skin.callback(mock_skins_cog, interaction=interaction, ship="TestShip", image=image)
+        )
+
+        interaction.followup.send.assert_called()
+        msgs = [str(c) for c in interaction.followup.send.call_args_list]
+        assert any("failed" in m.lower() or "❌" in m for m in msgs)
+
+    def test_render_skin_non_square_image_cancel_aborts(self, mock_skins_cog):
+        """render_skin aborts when user cancels the non-square image prompt."""
+        from cogs.skinsCog import SquareCheckView
+
+        interaction = MagicMock()
+        interaction.response.defer = AsyncMock()
+        interaction.followup.send = AsyncMock()
+
+        render_info = self._make_render_info()
+        mock_skins_cog._fetch_render_info = AsyncMock(return_value=render_info)
+        mock_skins_cog._composite_textures = AsyncMock()
+
+        # image is non-square
+        image = MagicMock()
+        image.read = AsyncMock(return_value=b"image_data")
+        image.width = 1920
+        image.height = 1080
+
+        # Simulate SquareCheckView returning None (cancel)
+        original_wait = SquareCheckView.wait
+
+        async def mock_view_wait(self):
+            self.result = None
+
+        SquareCheckView.wait = mock_view_wait
+
+        try:
+            asyncio.run(
+                mock_skins_cog.render_skin.callback(
+                    mock_skins_cog, interaction=interaction, ship="TestShip", image=image
+                )
+            )
+        finally:
+            SquareCheckView.wait = original_wait
+
+        # Should abort - no composite called
+        mock_skins_cog._composite_textures.assert_not_called()
+
+    def test_render_skin_non_square_image_crop_proceeds(self, mock_skins_cog):
+        """render_skin proceeds with square_mode='crop' after user selects Crop."""
+        from cogs.skinsCog import SquareCheckView
+
+        interaction = MagicMock()
+        interaction.response.defer = AsyncMock()
+        interaction.followup.send = AsyncMock()
+
+        render_info = self._make_render_info()
+        mock_skins_cog._fetch_render_info = AsyncMock(return_value=render_info)
+        mock_skins_cog._composite_textures = AsyncMock(return_value=b"composite")
+        mock_skins_cog._resolve_region_mode = AsyncMock(return_value="all")
+
+        # blender render success
+        mock_render_resp = MagicMock()
+        mock_render_resp.content = b"render_result"
+        mock_render_resp.raise_for_status = MagicMock()
+        mock_skins_cog.blender_client.post = AsyncMock(return_value=mock_render_resp)
+
+        # image is non-square
+        image = MagicMock()
+        image.read = AsyncMock(return_value=b"image_data")
+        image.width = 1920
+        image.height = 1080
+
+        original_wait = SquareCheckView.wait
+
+        async def mock_view_wait(self):
+            self.result = "crop"
+
+        SquareCheckView.wait = mock_view_wait
+
+        try:
+            asyncio.run(
+                mock_skins_cog.render_skin.callback(
+                    mock_skins_cog, interaction=interaction, ship="TestShip", image=image
+                )
+            )
+        finally:
+            SquareCheckView.wait = original_wait
+
+        # composite was called (with square_mode='crop')
+        mock_skins_cog._composite_textures.assert_called_once()
+
+    def test_render_skin_http_error_from_render_endpoint(self, mock_skins_cog):
+        """render_skin sends error when blender render returns HTTP error."""
+        import httpx
+
+        interaction = MagicMock()
+        interaction.response.defer = AsyncMock()
+        interaction.followup.send = AsyncMock()
+
+        render_info = self._make_render_info()
+        mock_skins_cog._fetch_render_info = AsyncMock(return_value=render_info)
+        mock_skins_cog._composite_textures = AsyncMock(return_value=b"composite")
+        mock_skins_cog._resolve_region_mode = AsyncMock(return_value="all")
+
+        err_resp = MagicMock()
+        err_resp.status_code = 500
+        mock_skins_cog.blender_client.post = AsyncMock(
+            side_effect=httpx.HTTPStatusError("error", request=MagicMock(), response=err_resp)
+        )
+
+        asyncio.run(mock_skins_cog.render_skin.callback(mock_skins_cog, interaction=interaction, ship="TestShip"))
+
+        interaction.followup.send.assert_called()
+        msgs = " ".join(str(c) for c in interaction.followup.send.call_args_list)
+        assert "failed" in msgs.lower() or "❌" in msgs
+
+    def test_render_skin_timeout_from_render_endpoint(self, mock_skins_cog):
+        """render_skin sends error when blender render times out."""
+        from httpx import TimeoutException
+
+        interaction = MagicMock()
+        interaction.response.defer = AsyncMock()
+        interaction.followup.send = AsyncMock()
+
+        render_info = self._make_render_info()
+        mock_skins_cog._fetch_render_info = AsyncMock(return_value=render_info)
+        mock_skins_cog._composite_textures = AsyncMock(return_value=b"composite")
+        mock_skins_cog._resolve_region_mode = AsyncMock(return_value="all")
+
+        mock_skins_cog.blender_client.post = AsyncMock(side_effect=TimeoutException("timeout"))
+
+        asyncio.run(mock_skins_cog.render_skin.callback(mock_skins_cog, interaction=interaction, ship="TestShip"))
+
+        interaction.followup.send.assert_called()
+        msgs = " ".join(str(c) for c in interaction.followup.send.call_args_list)
+        assert "timed out" in msgs.lower() or "❌" in msgs
+
+    def test_render_skin_generic_exception_from_render_endpoint(self, mock_skins_cog):
+        """render_skin sends error on unexpected exception from blender render."""
+        interaction = MagicMock()
+        interaction.response.defer = AsyncMock()
+        interaction.followup.send = AsyncMock()
+
+        render_info = self._make_render_info()
+        mock_skins_cog._fetch_render_info = AsyncMock(return_value=render_info)
+        mock_skins_cog._composite_textures = AsyncMock(return_value=b"composite")
+        mock_skins_cog._resolve_region_mode = AsyncMock(return_value="all")
+
+        mock_skins_cog.blender_client.post = AsyncMock(side_effect=Exception("Unknown"))
+
+        asyncio.run(mock_skins_cog.render_skin.callback(mock_skins_cog, interaction=interaction, ship="TestShip"))
+
+        interaction.followup.send.assert_called()
+
+    def test_render_skin_composite_none_aborts(self, mock_skins_cog):
+        """render_skin aborts when composite returns None."""
+        interaction = MagicMock()
+        interaction.response.defer = AsyncMock()
+        interaction.followup.send = AsyncMock()
+
+        render_info = self._make_render_info()
+        mock_skins_cog._fetch_render_info = AsyncMock(return_value=render_info)
+        mock_skins_cog._composite_textures = AsyncMock(return_value=None)
+        mock_skins_cog._resolve_region_mode = AsyncMock(return_value="all")
+        # Replace blender_client.post with AsyncMock so we can assert not called
+        mock_skins_cog.blender_client.post = AsyncMock()
+
+        asyncio.run(mock_skins_cog.render_skin.callback(mock_skins_cog, interaction=interaction, ship="TestShip"))
+
+        # blender render endpoint should NOT have been called
+        mock_skins_cog.blender_client.post.assert_not_called()
+
+    def test_render_skin_skin_download_failure_aborts(self, mock_skins_cog):
+        """render_skin aborts when skin download fails."""
+        interaction = MagicMock()
+        interaction.response.defer = AsyncMock()
+        interaction.followup.send = AsyncMock()
+
+        render_info = self._make_render_info()
+        mock_skins_cog._fetch_render_info = AsyncMock(return_value=render_info)
+        mock_skins_cog._download_skin_image = AsyncMock(return_value=None)  # download fails
+        mock_skins_cog.blender_client.post = AsyncMock()
+
+        asyncio.run(
+            mock_skins_cog.render_skin.callback(
+                mock_skins_cog, interaction=interaction, ship="TestShip", skin="missing_skin"
+            )
+        )
+
+        # blender should not be called
+        mock_skins_cog.blender_client.post.assert_not_called()
+
+
+class TestMakeSkinTextureErrorPaths:
+    """Tests for make_skin_texture error paths (lines 820-872)."""
+
+    def test_make_skin_texture_no_diffuse_prompts_upload(self, mock_skins_cog):
+        """make_skin_texture requests base texture upload when no diffuse_path."""
+        interaction = MagicMock()
+        interaction.response.defer = AsyncMock()
+        interaction.followup.send = AsyncMock()
+        interaction.user.id = 12345
+
+        render_info = {
+            "skinnable": True,
+            "bbship_dir": "/path/ship",
+            "diffuse_path": "",  # no diffuse
+            "mask_paths": [],
+        }
+        mock_skins_cog._fetch_render_info = AsyncMock(return_value=render_info)
+
+        # Mock _collect_base_texture to return None (user cancelled)
+        mock_skins_cog._collect_base_texture = AsyncMock(return_value=(None, ""))
+
+        asyncio.run(mock_skins_cog.make_skin_texture.callback(mock_skins_cog, interaction=interaction, ship="TestShip"))
+
+        mock_skins_cog._collect_base_texture.assert_awaited_once()
+
+    def test_make_skin_texture_with_upload_success(self, mock_skins_cog):
+        """make_skin_texture proceeds with upload composite when no diffuse_path."""
+        interaction = MagicMock()
+        interaction.response.defer = AsyncMock()
+        interaction.followup.send = AsyncMock()
+        interaction.user.id = 12345
+
+        render_info = {
+            "skinnable": True,
+            "bbship_dir": "/path/ship",
+            "diffuse_path": "",  # no diffuse
+            "mask_paths": [],
+        }
+        mock_skins_cog._fetch_render_info = AsyncMock(return_value=render_info)
+        mock_skins_cog._collect_base_texture = AsyncMock(return_value=(b"base_bytes", "none"))
+        mock_skins_cog._composite_textures_with_upload = AsyncMock(return_value=b"composite")
+
+        asyncio.run(mock_skins_cog.make_skin_texture.callback(mock_skins_cog, interaction=interaction, ship="TestShip"))
+
+        mock_skins_cog._composite_textures_with_upload.assert_awaited_once()
+        # Success embed should be sent
+        interaction.followup.send.assert_called()
+
+    def test_make_skin_texture_composite_none_aborts(self, mock_skins_cog):
+        """make_skin_texture aborts when composite returns None."""
+        interaction = MagicMock()
+        interaction.response.defer = AsyncMock()
+        interaction.followup.send = AsyncMock()
+
+        render_info = {
+            "skinnable": True,
+            "bbship_dir": "/path/ship",
+            "diffuse_path": "/path/diffuse.bmp",
+            "mask_paths": [],
+        }
+        mock_skins_cog._fetch_render_info = AsyncMock(return_value=render_info)
+        mock_skins_cog._composite_textures = AsyncMock(return_value=None)
+        mock_skins_cog._resolve_region_mode = AsyncMock(return_value="all")
+
+        asyncio.run(mock_skins_cog.make_skin_texture.callback(mock_skins_cog, interaction=interaction, ship="TestShip"))
+
+        # Only composite was called; no final send with file
+        calls = [str(c) for c in interaction.followup.send.call_args_list]
+        # No "texture" file send should be present
+        assert not any("texture.png" in c for c in calls)
+
+    def test_make_skin_texture_skin_download_fails_aborts(self, mock_skins_cog):
+        """make_skin_texture aborts when skin download fails."""
+        interaction = MagicMock()
+        interaction.response.defer = AsyncMock()
+        interaction.followup.send = AsyncMock()
+
+        render_info = {
+            "skinnable": True,
+            "bbship_dir": "/path/ship",
+            "diffuse_path": "/path/diffuse.bmp",
+            "mask_paths": [],
+        }
+        mock_skins_cog._fetch_render_info = AsyncMock(return_value=render_info)
+        mock_skins_cog._download_skin_image = AsyncMock(return_value=None)  # download fails
+        mock_skins_cog.blender_client.post = AsyncMock()
+
+        asyncio.run(
+            mock_skins_cog.make_skin_texture.callback(
+                mock_skins_cog, interaction=interaction, ship="TestShip", skin="lava"
+            )
+        )
+
+        # Should abort before composite
+        mock_skins_cog.blender_client.post.assert_not_called()
+
+    def test_make_skin_texture_multiregion_cancel_sends_message(self, mock_skins_cog):
+        """make_skin_texture sends cancel message when per-region choices is None."""
+        interaction = MagicMock()
+        interaction.response.defer = AsyncMock()
+        interaction.followup.send = AsyncMock()
+
+        render_info = {
+            "skinnable": True,
+            "bbship_dir": "/path/ship",
+            "diffuse_path": "/path/diffuse.bmp",
+            "mask_paths": ["/m1.jpg", "/m2.jpg"],
+            "compatible_skins": {},
+        }
+        mock_skins_cog._fetch_render_info = AsyncMock(return_value=render_info)
+        mock_skins_cog._download_skin_image = AsyncMock(return_value=b"skin")
+        mock_skins_cog._resolve_region_mode = AsyncMock(return_value="custom")
+        mock_skins_cog._collect_per_region_choices = AsyncMock(return_value=None)
+
+        asyncio.run(
+            mock_skins_cog.make_skin_texture.callback(
+                mock_skins_cog, interaction=interaction, ship="TestShip", skin="lava"
+            )
+        )
+
+        msgs = " ".join(str(c) for c in interaction.followup.send.call_args_list)
+        assert "cancel" in msgs.lower() or "❌" in msgs
+
+
+class TestShipSkinCommandAdditional:
+    """Additional tests for ship_skin to cover HTTP 500 and generic error paths."""
+
+    def test_ship_skin_http_500_sends_api_error(self, mock_skins_cog):
+        """ship_skin sends API error message on 500 response."""
+        import httpx
+
+        err_resp = MagicMock()
+        err_resp.status_code = 500
+        mock_skins_cog.http_client.get = AsyncMock(
+            side_effect=httpx.HTTPStatusError("Server error", request=MagicMock(), response=err_resp)
+        )
+
+        interaction = MagicMock()
+        interaction.response.defer = AsyncMock()
+        interaction.followup.send = AsyncMock()
+
+        asyncio.run(
+            mock_skins_cog.ship_skin.callback(mock_skins_cog, interaction=interaction, ship="TestShip", skin="Default")
+        )
+
+        interaction.followup.send.assert_called_once()
+        msg = interaction.followup.send.call_args[0][0]
+        assert "API error" in msg or "❌" in msg
+
+    def test_ship_skin_generic_exception_sends_warning(self, mock_skins_cog):
+        """ship_skin sends warning message on generic exception."""
+        mock_skins_cog.http_client.get = AsyncMock(side_effect=Exception("Connection dropped"))
+
+        interaction = MagicMock()
+        interaction.response.defer = AsyncMock()
+        interaction.followup.send = AsyncMock()
+
+        asyncio.run(
+            mock_skins_cog.ship_skin.callback(mock_skins_cog, interaction=interaction, ship="TestShip", skin="Default")
+        )
+
+        interaction.followup.send.assert_called_once()
+        msg = interaction.followup.send.call_args[0][0]
+        assert "⚠️" in msg or "error" in msg.lower()
+
+
+class TestCollectBaseTexture:
+    """Tests for _collect_base_texture helper (lines 400-449)."""
+
+    def test_collect_base_texture_timeout_returns_none(self, mock_skins_cog):
+        """_collect_base_texture returns (None, '') on message wait timeout."""
+        interaction = MagicMock()
+        interaction.user.id = 12345
+        interaction.followup.send = AsyncMock(return_value=MagicMock())
+
+        # Simulate timeout when waiting for message
+        mock_skins_cog.bot.wait_for = AsyncMock(side_effect=TimeoutError())
+
+        result_bytes, result_mode = asyncio.run(mock_skins_cog._collect_base_texture(interaction, "TestShip"))
+
+        assert result_bytes is None
+        assert result_mode == ""
+        interaction.followup.send.assert_called()
+
+    def test_collect_base_texture_square_image_returns_bytes(self, mock_skins_cog):
+        """_collect_base_texture returns (bytes, 'none') for square image."""
+        interaction = MagicMock()
+        interaction.user.id = 12345
+        interaction.followup.send = AsyncMock(return_value=MagicMock())
+
+        attachment = MagicMock()
+        attachment.width = 2048
+        attachment.height = 2048
+        attachment.read = AsyncMock(return_value=b"square_image")
+
+        message = MagicMock()
+        message.attachments = [attachment]
+        mock_skins_cog.bot.wait_for = AsyncMock(return_value=message)
+
+        result_bytes, result_mode = asyncio.run(mock_skins_cog._collect_base_texture(interaction, "TestShip"))
+
+        assert result_bytes == b"square_image"
+        assert result_mode == "none"
+
+    def test_collect_base_texture_non_square_crop_returns_bytes(self, mock_skins_cog):
+        """_collect_base_texture returns (bytes, 'crop') when user selects Crop."""
+        from cogs.skinsCog import SquareCheckView
+
+        interaction = MagicMock()
+        interaction.user.id = 12345
+        interaction.followup.send = AsyncMock(return_value=MagicMock())
+
+        attachment = MagicMock()
+        attachment.width = 1920
+        attachment.height = 1080
+        attachment.read = AsyncMock(return_value=b"non_square")
+
+        message = MagicMock()
+        message.attachments = [attachment]
+        mock_skins_cog.bot.wait_for = AsyncMock(return_value=message)
+
+        original_wait = SquareCheckView.wait
+
+        async def mock_view_wait(self):
+            self.result = "crop"
+
+        SquareCheckView.wait = mock_view_wait
+
+        try:
+            result_bytes, result_mode = asyncio.run(mock_skins_cog._collect_base_texture(interaction, "TestShip"))
+        finally:
+            SquareCheckView.wait = original_wait
+
+        assert result_bytes == b"non_square"
+        assert result_mode == "crop"
+
+    def test_collect_base_texture_non_square_cancel_returns_none(self, mock_skins_cog):
+        """_collect_base_texture returns (None, '') when user cancels non-square prompt."""
+        from cogs.skinsCog import SquareCheckView
+
+        interaction = MagicMock()
+        interaction.user.id = 12345
+        interaction.followup.send = AsyncMock(return_value=MagicMock())
+
+        attachment = MagicMock()
+        attachment.width = 1920
+        attachment.height = 1080
+        attachment.read = AsyncMock(return_value=b"non_square")
+
+        message = MagicMock()
+        message.attachments = [attachment]
+        mock_skins_cog.bot.wait_for = AsyncMock(return_value=message)
+
+        original_wait = SquareCheckView.wait
+
+        async def mock_view_wait(self):
+            self.result = None  # user cancelled
+
+        SquareCheckView.wait = mock_view_wait
+
+        try:
+            result_bytes, result_mode = asyncio.run(mock_skins_cog._collect_base_texture(interaction, "TestShip"))
+        finally:
+            SquareCheckView.wait = original_wait
+
+        assert result_bytes is None
+        assert result_mode == ""
+
+
+class TestPreloadShipSkinsEdgeCases:
+    """Additional tests for preload edge cases (per-ship errors)."""
+
+    _API_BASE = "http://bot-core:8000/api/v1"
+
+    def test_preload_per_ship_request_error_gives_empty_list(self, mock_skins_cog):
+        """_preload_ship_skins gives empty skins list on RequestError for individual ship."""
+        import httpx
+        import respx
+
+        mock_skins_cog.bot.wait_until_ready = AsyncMock()
+
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.get(f"{self._API_BASE}/about/categories/ship/objects").mock(
+                return_value=httpx.Response(200, json=[{"name": "Hawk", "id": 1}])
+            )
+            # Individual ship request fails with RequestError
+            mock_router.get(f"{self._API_BASE}/about/object/name/Hawk").mock(
+                side_effect=httpx.ConnectError("connection refused")
+            )
+
+            asyncio.run(mock_skins_cog._preload_ship_skins())
+
+        assert "Hawk" in mock_skins_cog._ship_skins
+        assert mock_skins_cog._ship_skins["Hawk"] == []
+
+    def test_preload_per_ship_timeout_gives_empty_list(self, mock_skins_cog):
+        """_preload_ship_skins gives empty skins list on TimeoutException for individual ship."""
+        import httpx
+        import respx
+
+        mock_skins_cog.bot.wait_until_ready = AsyncMock()
+
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.get(f"{self._API_BASE}/about/categories/ship/objects").mock(
+                return_value=httpx.Response(200, json=[{"name": "Condor", "id": 2}])
+            )
+            mock_router.get(f"{self._API_BASE}/about/object/name/Condor").mock(
+                side_effect=httpx.TimeoutException("timeout")
+            )
+
+            asyncio.run(mock_skins_cog._preload_ship_skins())
+
+        assert "Condor" in mock_skins_cog._ship_skins
+        assert mock_skins_cog._ship_skins["Condor"] == []
+
+    def test_preload_per_ship_generic_exception_gives_empty_list(self, mock_skins_cog):
+        """_preload_ship_skins gives empty skins list on generic exception for individual ship."""
+        import httpx
+        import respx
+
+        mock_skins_cog.bot.wait_until_ready = AsyncMock()
+
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.get(f"{self._API_BASE}/about/categories/ship/objects").mock(
+                return_value=httpx.Response(200, json=[{"name": "Eagle", "id": 3}])
+            )
+            mock_router.get(f"{self._API_BASE}/about/object/name/Eagle").mock(side_effect=Exception("Unexpected error"))
+
+            asyncio.run(mock_skins_cog._preload_ship_skins())
+
+        assert "Eagle" in mock_skins_cog._ship_skins
+        assert mock_skins_cog._ship_skins["Eagle"] == []
+
+    def test_preload_outer_generic_exception_triggers_retry(self, mock_skins_cog):
+        """_preload_ship_skins retries on unexpected outer exception."""
+        import httpx
+        import respx
+
+        mock_skins_cog.bot.wait_until_ready = AsyncMock()
+        sleep_mock = AsyncMock()
+        call_count = {"n": 0}
+
+        def side_effect(request):
+            call_count["n"] += 1
+            if call_count["n"] == 1:
+                raise RuntimeError("unexpected outer error")
+            return httpx.Response(200, json=[])
+
+        with patch("cogs.skinsCog.asyncio.sleep", new=sleep_mock), respx.mock() as mock_router:
+            mock_router.get(f"{self._API_BASE}/about/categories/ship/objects").mock(side_effect=side_effect)
+            asyncio.run(mock_skins_cog._preload_ship_skins())
+
+        # Should have slept once after the outer exception
+        assert sleep_mock.await_count >= 1
 
 
 if __name__ == "__main__":

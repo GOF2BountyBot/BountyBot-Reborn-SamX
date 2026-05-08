@@ -78,48 +78,13 @@ if _SRC not in sys.path:
     sys.path.insert(0, _SRC)
 
 # ---------------------------------------------------------------------------
-# Stub sqlalchemy if not installed
+# NOTE: The sqlalchemy stub that was previously injected at module level
+# has been moved into _inject_persist_stubs() / the _isolate_persist_stubs
+# fixture to prevent collection-time sys.modules contamination (DEF-S11-001).
+# Since sqlalchemy IS installed in the test environment, the real package is
+# used directly; the stub is injected only during the lifetime of this module's
+# fixture scope and is fully restored on teardown.
 # ---------------------------------------------------------------------------
-if "sqlalchemy" not in sys.modules:
-    _mock_sa = types.ModuleType("sqlalchemy")
-    _mock_sa.func = MagicMock()
-    _mock_sa.select = MagicMock()
-    _mock_sa.text = MagicMock()
-    _mock_sa.Integer = MagicMock()
-    _mock_sa.BigInteger = MagicMock()
-    _mock_sa.String = MagicMock()
-    _mock_sa.Float = MagicMock()
-    _mock_sa.JSON = MagicMock()
-    _mock_sa.DateTime = MagicMock()
-    _mock_sa.Boolean = MagicMock()
-    _mock_sa.Text = MagicMock()
-    _mock_sa.ForeignKey = MagicMock()
-    _mock_sa.Column = MagicMock()
-    _mock_sa.UniqueConstraint = MagicMock()
-    _mock_sa.Index = MagicMock()
-    _mock_sa.event = MagicMock()
-    _mock_sa.inspect = MagicMock()
-    _mock_sa.orm = types.ModuleType("sqlalchemy.orm")
-    _mock_sa.orm.DeclarativeBase = MagicMock()
-    _mock_sa.orm.Mapped = MagicMock()
-    _mock_sa.orm.mapped_column = MagicMock()
-    _mock_sa.orm.relationship = MagicMock()
-    _mock_sa.orm.Session = MagicMock()
-    _mock_sa.orm.selectinload = MagicMock()
-    _mock_sa.ext = types.ModuleType("sqlalchemy.ext")
-    _mock_sa.ext.asyncio = types.ModuleType("sqlalchemy.ext.asyncio")
-    _mock_sa.ext.asyncio.AsyncSession = MagicMock()
-    _mock_sa.ext.asyncio.create_async_engine = MagicMock()
-    _mock_sa.ext.asyncio.async_sessionmaker = MagicMock()
-    _mock_sa.dialects = types.ModuleType("sqlalchemy.dialects")
-    _mock_sa.dialects.postgresql = types.ModuleType("sqlalchemy.dialects.postgresql")
-    _mock_sa.dialects.postgresql.ARRAY = MagicMock()
-    sys.modules["sqlalchemy"] = _mock_sa
-    sys.modules["sqlalchemy.orm"] = _mock_sa.orm
-    sys.modules["sqlalchemy.ext"] = _mock_sa.ext
-    sys.modules["sqlalchemy.ext.asyncio"] = _mock_sa.ext.asyncio
-    sys.modules["sqlalchemy.dialects"] = _mock_sa.dialects
-    sys.modules["sqlalchemy.dialects.postgresql"] = _mock_sa.dialects.postgresql
 
 
 # ---------------------------------------------------------------------------
@@ -128,6 +93,7 @@ if "sqlalchemy" not in sys.modules:
 
 
 def _ensure_stub(module_path: str, **attrs) -> types.ModuleType:
+    """Inject a stub module into sys.modules (idempotent if already present)."""
     if module_path not in sys.modules:
         mod = types.ModuleType(module_path)
         for k, v in attrs.items():
@@ -136,33 +102,91 @@ def _ensure_stub(module_path: str, **attrs) -> types.ModuleType:
     return sys.modules[module_path]
 
 
-_mock_db_mgr_instance = MagicMock()
-_ensure_stub("persist.database.manager", db_manager=_mock_db_mgr_instance)
+def _force_stub(module_path: str, **attrs) -> types.ModuleType:
+    """Unconditionally inject a stub module into sys.modules (overrides real modules)."""
+    mod = types.ModuleType(module_path)
+    for k, v in attrs.items():
+        setattr(mod, k, v)
+    sys.modules[module_path] = mod
+    return mod
 
-_MockBountyRepository = MagicMock()
-_ensure_stub("persist.repositories.bounty_repository", BountyRepository=_MockBountyRepository)
 
-_MockConfigRepository = MagicMock()
-_ensure_stub("persist.repositories.config_repository", ConfigRepository=_MockConfigRepository)
+def _inject_persist_stubs() -> None:
+    """Inject all persist.* and services.* stubs required by this test module.
 
-_MockBountyService = MagicMock()
-_ensure_stub("services.bounty_service", BountyService=_MockBountyService)
+    Uses _force_stub (unconditional) so that real packages already loaded by
+    earlier test modules are temporarily replaced for the lifetime of this
+    module's fixture scope.  The fixture restores sys.modules on teardown.
+    """
+    global _mock_db_mgr_instance, _MockBountyRepository, _MockConfigRepository
+    global _MockBountyService, _MockTemperatureService, _MockDiscordMessageRepository
+    global _MockCriminalRepository, _mock_criminal_repo_instance
 
-_MockTemperatureService = MagicMock()
-_ensure_stub("services.temperature_service", TemperatureService=_MockTemperatureService)
+    _mock_db_mgr_instance = MagicMock()
+    _force_stub("persist.database.manager", db_manager=_mock_db_mgr_instance)
 
-_MockDiscordMessageRepository = MagicMock()
-_ensure_stub("persist.repositories.discord_message_repository", DiscordMessageRepository=_MockDiscordMessageRepository)
+    _MockBountyRepository = MagicMock()
+    _force_stub("persist.repositories.bounty_repository", BountyRepository=_MockBountyRepository)
 
-_mock_criminal_repo_instance = AsyncMock()
-_mock_criminal_repo_instance.get_by_name = AsyncMock(return_value=None)
-_MockCriminalRepository = MagicMock(return_value=_mock_criminal_repo_instance)
-_ensure_stub("persist.repositories.criminal_repository", CriminalRepository=_MockCriminalRepository)
+    _MockConfigRepository = MagicMock()
+    _force_stub("persist.repositories.config_repository", ConfigRepository=_MockConfigRepository)
 
-_ensure_stub("persist")
-_ensure_stub("persist.database")
-_ensure_stub("persist.repositories")
-_ensure_stub("services")
+    _MockBountyService = MagicMock()
+    _force_stub("services.bounty_service", BountyService=_MockBountyService)
+
+    _MockTemperatureService = MagicMock()
+    _force_stub("services.temperature_service", TemperatureService=_MockTemperatureService)
+
+    _MockDiscordMessageRepository = MagicMock()
+    _force_stub(
+        "persist.repositories.discord_message_repository",
+        DiscordMessageRepository=_MockDiscordMessageRepository,
+    )
+
+    _mock_criminal_repo_instance = AsyncMock()
+    _mock_criminal_repo_instance.get_by_name = AsyncMock(return_value=None)
+    _MockCriminalRepository = MagicMock(return_value=_mock_criminal_repo_instance)
+    _force_stub("persist.repositories.criminal_repository", CriminalRepository=_MockCriminalRepository)
+
+    _force_stub("persist")
+    _force_stub("persist.database")
+    _force_stub("persist.repositories")
+    _force_stub("services")
+
+
+# Module-level placeholders so helper functions below can reference these names.
+# The real instances are created inside _isolate_persist_stubs before any test runs.
+_mock_db_mgr_instance: MagicMock = MagicMock()
+_MockBountyRepository: MagicMock = MagicMock()
+_MockConfigRepository: MagicMock = MagicMock()
+_MockBountyService: MagicMock = MagicMock()
+_MockTemperatureService: MagicMock = MagicMock()
+_MockDiscordMessageRepository: MagicMock = MagicMock()
+_mock_criminal_repo_instance: AsyncMock = AsyncMock()
+_MockCriminalRepository: MagicMock = MagicMock()
+
+
+@pytest.fixture(autouse=True, scope="module")
+def _isolate_persist_stubs():
+    """
+    Module-scoped autouse fixture that injects persist.* / services.* stubs
+    into sys.modules for the duration of this test module ONLY, then fully
+    restores the original sys.modules state so that later test modules (e.g.
+    test_bounty_spawn_executor.py) can import the real packages without
+    encountering a contaminated 'persist' stub.
+
+    This fixture replaces the previous module-level _ensure_stub() calls that
+    caused DEF-S11-001: sys.modules contamination across the full pytest session.
+    """
+    _saved = dict(sys.modules)
+
+    _inject_persist_stubs()
+
+    yield
+
+    # Restore sys.modules exactly as it was before this module was collected.
+    sys.modules.clear()
+    sys.modules.update(_saved)
 
 
 # ---------------------------------------------------------------------------

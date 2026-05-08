@@ -1478,6 +1478,7 @@ class TestUpdateChannelCategoryResolution:
         payload = {"category_id": 0}
         resp = client.put("/api/v1/channels/1234567890", json=payload)
         assert resp.status_code == 200
+        assert resp.json()["status"] == "updated"
         # Verify that channel.edit was called with category=None
         text_ch.edit.assert_called_once()
         call_kwargs = text_ch.edit.call_args[1]
@@ -1511,6 +1512,7 @@ class TestUpdateChannelCategoryResolution:
         payload = {"category_id": 1111111111, "name": "moved"}
         resp = client.put("/api/v1/channels/1234567890", json=payload)
         assert resp.status_code == 200
+        assert resp.json()["status"] == "updated"
         text_ch.edit.assert_called_once()
         call_kwargs = text_ch.edit.call_args[1]
         assert call_kwargs["category"] is cat_ch
@@ -1609,6 +1611,7 @@ class TestUpdateChannelTypeSpecificFields:
         payload = {"bitrate": 96000, "user_limit": 10}
         resp = client.put("/api/v1/channels/2222222222", json=payload)
         assert resp.status_code == 200
+        assert resp.json()["status"] == "updated"
         voice_ch.edit.assert_called_once()
         kw = voice_ch.edit.call_args[1]
         assert kw["bitrate"] == 96000
@@ -1631,6 +1634,7 @@ class TestUpdateChannelTypeSpecificFields:
         payload = {"topic": "new forum topic", "default_auto_archive_duration": 4320}
         resp = client.put("/api/v1/channels/3333333333", json=payload)
         assert resp.status_code == 200
+        assert resp.json()["status"] == "updated"
         forum_ch.edit.assert_called_once()
         kw = forum_ch.edit.call_args[1]
         assert kw["topic"] == "new forum topic"
@@ -1864,6 +1868,7 @@ class TestUpdatePermissionsEdgeCases:
         payload = {"overwrites": [{"target_id": 9999, "type": "role", "allow": 8, "deny": 0}]}
         resp = client.put("/api/v1/channels/1234567890/permissions", json=payload)
         assert resp.status_code == 200
+        assert resp.json()["status"] == "updated"
         # set_permissions should NOT have been called (role was skipped)
         text_ch.set_permissions.assert_not_called()
 

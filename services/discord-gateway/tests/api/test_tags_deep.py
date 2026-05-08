@@ -1489,6 +1489,7 @@ class TestUpdateTagEditTagPath:
             client = TestClient(app)
             response = client.put("/api/v1/tags/1234567890", json={"name": "Updated", "emoji": "🚀"})
             assert response.status_code == 200
+            assert response.json()["status"] == "updated"
             ch.edit_tag.assert_called_once()
 
 
@@ -1498,86 +1499,58 @@ class TestUpdateTagEditTagPath:
 
 
 class TestUpdateTagIntConversionFails:
-    """Lines 257-259: int(tag_id) raises in the tags_to_edit_payload fallback."""
+    """Lines 253-259: tags_to_edit_payload fallback path when tag has no edit/edit_tag."""
 
     def test_update_tag_int_tag_id_raises_uses_raw_key(self):
-        """Lines 257-259: int(tag_id) raises → fallback to using raw tag_id as dict key."""
-        import asyncio
+        """Lines 253-259: tag_id is int via HTTP; int(tag_id) branch succeeds normally.
 
-        from api.schemas.channel_schemas import ForumTagUpdateRequest
-
+        NOTE: The except branch at lines 257-259 (raw tag_id fallback when int() raises)
+        is unreachable via the HTTP endpoint because FastAPI enforces `tag_id: int` in the
+        path parameter declaration — any non-integer path value is rejected with HTTP 422
+        before the handler runs.  The reachable path exercised here is the try-branch
+        (lines 253-256): int(tag_id) succeeds, upd_map is keyed by int, and the response
+        body contains {"status": "updated"}.
+        """
         bot = DiscordMockUtils.create_mock_bot(user_id=11111, username="B")
-
-        # Create a tag_id that equals a real tag's id for lookup BUT makes int() raise
-        class _NonIntId:
-            """Looks like 1234567890 but int() conversion raises."""
-
-            _val = 1234567890
-
-            def __eq__(self, other):
-                if isinstance(other, _NonIntId):
-                    return True
-                return other == self._val
-
-            def __ne__(self, other):
-                return not self.__eq__(other)
-
-            def __hash__(self):
-                return hash(self._val)
-
-            def __int__(self):
-                raise ValueError("Cannot convert to int")
-
-            def __str__(self):
-                return str(self._val)
-
-        tag_id_obj = _NonIntId()
         tag = _make_tag(tag_id=1234567890, name="Tag")
-        # Remove edit and edit_tag so fallback path is taken
+        # Remove both edit and edit_tag so the fallback (tags_to_edit_payload) path runs
         del tag.edit
         ch = _make_forum_channel(tags=[tag])
+        del ch.edit_tag
         guild = MagicMock()
         guild.channels = [ch]
         bot.guilds = [guild]
 
-        request_mock = MagicMock()
+        app = FastAPI()
+        app.state.bot = bot
+        _mock_discord_deep.utils.get = _utils_get
 
-        # Import the ALREADY-LOADED module (NOT via importlib.reload) so coverage tracks it
-        from api.routers import tags as _tags_mod
+        with (
+            patch("api.routers.tags.resolve_bot", new_callable=AsyncMock) as mock_resolve,
+            patch("api.routers.tags.handle_discord_exception", new_callable=AsyncMock),
+            patch("api.routers.tags.ChannelConverter") as mock_conv,
+            patch("api.routers.tags.get_entity_or_404", new_callable=AsyncMock),
+            patch("api.routers.tags.discord", _mock_discord_deep),
+            patch(
+                "api.routers.tags.tags_to_edit_payload",
+                return_value=[{"id": 1234567890, "name": "Updated", "emoji": None}],
+            ),
+        ):
 
-        async def _run():
-            with (
-                patch("api.routers.tags.resolve_bot", new_callable=AsyncMock) as mock_resolve,
-                patch("api.routers.tags.handle_discord_exception", new_callable=AsyncMock),
-                patch("api.routers.tags.ChannelConverter") as mock_conv,
-                patch("api.routers.tags.discord", _mock_discord_deep),
-                patch(
-                    "api.routers.tags.tags_to_edit_payload",
-                    return_value=[{"id": 1234567890, "name": "Updated", "emoji": None}],
-                ),
-            ):
+            async def _resolve(req):
+                return bot
 
-                async def _resolve(req):
-                    return bot
+            mock_resolve.side_effect = _resolve
+            mock_conv.forum_tag_to_payload.return_value = _forum_tag_payload()
 
-                mock_resolve.side_effect = _resolve
-                mock_conv.forum_tag_to_payload.return_value = _forum_tag_payload()
-                _mock_discord_deep.utils.get = _utils_get
+            from api.routers.tags import router
 
-                result = await _tags_mod.update_tag(
-                    request_mock,
-                    tag_id_obj,  # type: ignore[arg-type]
-                    ForumTagUpdateRequest(name="Updated"),
-                )
-                return result
-
-        try:
-            result = asyncio.run(_run())
-            # If we get here, the int() failure was caught and fallback was used
-            assert result is not None
-        except Exception:
-            # Any exception means the code path was still exercised (257-259 ran)
-            pass
+            app.include_router(router, prefix="/api/v1")
+            client = TestClient(app)
+            response = client.put("/api/v1/tags/1234567890", json={"name": "Updated"})
+            assert response.status_code == 200
+            assert response.json()["status"] == "updated"
+            ch.edit.assert_called_once()
 
 
 # =============================================================================

@@ -1136,3 +1136,685 @@ class TestAutocompletePlayerResolution:
         result = asyncio.run(mock_duel_cog.pending_duel_autocomplete(interaction, ""))
 
         assert result == []
+
+
+# ---------------------------------------------------------------------------
+# /duel-accept — additional error paths (403, 400, 500)
+# ---------------------------------------------------------------------------
+
+
+class TestDuelAcceptAdditionalErrors:
+    """Tests for /duel-accept 403, 400, and generic Exception paths."""
+
+    def test_accept_forbidden_403_shows_error(self, mock_duel_cog, make_mock_response):
+        """/duel-accept 403 should tell user they can only accept their own duels."""
+        import httpx
+
+        interaction = _create_mock_interaction(user_id=200)
+        player_resp = make_mock_response({"id": 2})
+        error_response = MagicMock()
+        error_response.status_code = 403
+        error_response.json.return_value = {}
+        http_error = httpx.HTTPStatusError("403 Forbidden", request=MagicMock(), response=error_response)
+        mock_duel_cog.http_client.post = AsyncMock(side_effect=[player_resp, http_error])
+
+        asyncio.run(mock_duel_cog.duel_accept.callback(mock_duel_cog, interaction, "1"))
+
+        interaction.followup.send.assert_awaited_once()
+        call_kwargs = interaction.followup.send.call_args
+        assert call_kwargs[1].get("ephemeral", False)
+        assert "only accept" in call_kwargs[0][0].lower()
+
+    def test_accept_400_shows_detail_message(self, mock_duel_cog, make_mock_response):
+        """/duel-accept 400 should show the detail from the response."""
+        import httpx
+
+        interaction = _create_mock_interaction(user_id=200)
+        player_resp = make_mock_response({"id": 2})
+        error_response = MagicMock()
+        error_response.status_code = 400
+        error_response.json.return_value = {"detail": "Duel has already been resolved."}
+        http_error = httpx.HTTPStatusError("400 Bad Request", request=MagicMock(), response=error_response)
+        mock_duel_cog.http_client.post = AsyncMock(side_effect=[player_resp, http_error])
+
+        asyncio.run(mock_duel_cog.duel_accept.callback(mock_duel_cog, interaction, "1"))
+
+        interaction.followup.send.assert_awaited_once()
+        call_kwargs = interaction.followup.send.call_args
+        assert call_kwargs[1].get("ephemeral", False)
+        assert "already been resolved" in call_kwargs[0][0].lower()
+
+    def test_accept_generic_exception_shows_error(self, mock_duel_cog, make_mock_response):
+        """/duel-accept generic Exception should show generic error message."""
+        interaction = _create_mock_interaction(user_id=200)
+        player_resp = make_mock_response({"id": 2})
+        mock_duel_cog.http_client.post = AsyncMock(side_effect=[player_resp, RuntimeError("connection refused")])
+
+        asyncio.run(mock_duel_cog.duel_accept.callback(mock_duel_cog, interaction, "1"))
+
+        interaction.followup.send.assert_awaited_once()
+        call_kwargs = interaction.followup.send.call_args
+        assert call_kwargs[1].get("ephemeral", False)
+        assert "error occurred" in call_kwargs[0][0].lower()
+
+    def test_accept_500_uses_sanitized_embed(self, mock_duel_cog, make_mock_response):
+        """B.31b: non-400/403/404 HTTPStatusError flows through report_api_error."""
+        import httpx
+
+        interaction = _create_mock_interaction(user_id=200)
+        player_resp = make_mock_response({"id": 2})
+        error_response = MagicMock()
+        error_response.status_code = 500
+        error_response.json.return_value = {}
+        http_error = httpx.HTTPStatusError("500 Server Error", request=MagicMock(), response=error_response)
+        mock_duel_cog.http_client.post = AsyncMock(side_effect=[player_resp, http_error])
+
+        asyncio.run(mock_duel_cog.duel_accept.callback(mock_duel_cog, interaction, "1"))
+
+        interaction.followup.send.assert_awaited_once()
+        call_kwargs = interaction.followup.send.call_args.kwargs
+        assert call_kwargs.get("ephemeral", False)
+        embed = call_kwargs.get("embed")
+        assert embed is not None
+        assert "bot-core" not in (embed.description or "")
+
+
+# ---------------------------------------------------------------------------
+# /duel-reject — additional error paths (403, 400, 500, generic)
+# ---------------------------------------------------------------------------
+
+
+class TestDuelRejectAdditionalErrors:
+    """Tests for /duel-reject 403, 400, 500, and generic Exception paths."""
+
+    def test_reject_forbidden_403_shows_error(self, mock_duel_cog, make_mock_response):
+        """/duel-reject 403 should tell user they can only reject their own duels."""
+        import httpx
+
+        interaction = _create_mock_interaction(user_id=200)
+        player_resp = make_mock_response({"id": 2})
+        error_response = MagicMock()
+        error_response.status_code = 403
+        error_response.json.return_value = {}
+        http_error = httpx.HTTPStatusError("403 Forbidden", request=MagicMock(), response=error_response)
+        mock_duel_cog.http_client.post = AsyncMock(side_effect=[player_resp, http_error])
+
+        asyncio.run(mock_duel_cog.duel_reject.callback(mock_duel_cog, interaction, "1"))
+
+        interaction.followup.send.assert_awaited_once()
+        call_kwargs = interaction.followup.send.call_args
+        assert call_kwargs[1].get("ephemeral", False)
+        assert "only reject" in call_kwargs[0][0].lower()
+
+    def test_reject_400_shows_detail_message(self, mock_duel_cog, make_mock_response):
+        """/duel-reject 400 should show the detail from the response."""
+        import httpx
+
+        interaction = _create_mock_interaction(user_id=200)
+        player_resp = make_mock_response({"id": 2})
+        error_response = MagicMock()
+        error_response.status_code = 400
+        error_response.json.return_value = {"detail": "Duel has already been resolved."}
+        http_error = httpx.HTTPStatusError("400 Bad Request", request=MagicMock(), response=error_response)
+        mock_duel_cog.http_client.post = AsyncMock(side_effect=[player_resp, http_error])
+
+        asyncio.run(mock_duel_cog.duel_reject.callback(mock_duel_cog, interaction, "1"))
+
+        interaction.followup.send.assert_awaited_once()
+        call_kwargs = interaction.followup.send.call_args
+        assert call_kwargs[1].get("ephemeral", False)
+        assert "already been resolved" in call_kwargs[0][0].lower()
+
+    def test_reject_500_uses_sanitized_embed(self, mock_duel_cog, make_mock_response):
+        """B.31b: non-404/403/400 HTTPStatusError flows through report_api_error."""
+        import httpx
+
+        interaction = _create_mock_interaction(user_id=200)
+        player_resp = make_mock_response({"id": 2})
+        error_response = MagicMock()
+        error_response.status_code = 500
+        error_response.json.return_value = {}
+        http_error = httpx.HTTPStatusError("500 Server Error", request=MagicMock(), response=error_response)
+        mock_duel_cog.http_client.post = AsyncMock(side_effect=[player_resp, http_error])
+
+        asyncio.run(mock_duel_cog.duel_reject.callback(mock_duel_cog, interaction, "1"))
+
+        interaction.followup.send.assert_awaited_once()
+        call_kwargs = interaction.followup.send.call_args.kwargs
+        assert call_kwargs.get("ephemeral", False)
+        embed = call_kwargs.get("embed")
+        assert embed is not None
+        assert "bot-core" not in (embed.description or "")
+
+    def test_reject_generic_exception_shows_error(self, mock_duel_cog, make_mock_response):
+        """/duel-reject generic Exception should show generic error message."""
+        interaction = _create_mock_interaction(user_id=200)
+        player_resp = make_mock_response({"id": 2})
+        mock_duel_cog.http_client.post = AsyncMock(side_effect=[player_resp, RuntimeError("connection refused")])
+
+        asyncio.run(mock_duel_cog.duel_reject.callback(mock_duel_cog, interaction, "1"))
+
+        interaction.followup.send.assert_awaited_once()
+        call_kwargs = interaction.followup.send.call_args
+        assert call_kwargs[1].get("ephemeral", False)
+        assert "error occurred" in call_kwargs[0][0].lower()
+
+    def test_reject_with_challenger_name_shows_field(self, mock_duel_cog, make_mock_response):
+        """/duel-reject when data has challenger_name should include it in the embed field."""
+        interaction = _create_mock_interaction(user_id=200)
+        player_resp = make_mock_response({"id": 2})
+        reject_resp = make_mock_response(
+            {
+                "id": 1,
+                "challenger_id": 100,
+                "target_id": 200,
+                "status": "rejected",
+                "challenger_name": "BigBoss",
+            }
+        )
+        mock_duel_cog.http_client.post = AsyncMock(side_effect=[player_resp, reject_resp])
+
+        asyncio.run(mock_duel_cog.duel_reject.callback(mock_duel_cog, interaction, "1"))
+
+        interaction.followup.send.assert_awaited_once()
+        call_kwargs = interaction.followup.send.call_args[1]
+        assert "embed" in call_kwargs
+        embed = call_kwargs["embed"]
+        # Challenger name appears in Details field
+        field_values = [f.value for f in embed.fields]
+        assert any("BigBoss" in v for v in field_values)
+
+
+# ---------------------------------------------------------------------------
+# /duel-cancel command
+# ---------------------------------------------------------------------------
+
+
+class TestDuelCancelCommand:
+    """Tests for the /duel-cancel slash command (B.64 challenger self-cancel)."""
+
+    def test_cancel_success_shows_confirmation_embed(self, mock_duel_cog, make_mock_response):
+        """/duel-cancel success should show a confirmation embed."""
+        interaction = _create_mock_interaction(user_id=100)
+        player_resp = make_mock_response({"id": 1})
+        cancel_resp = make_mock_response({"id": 1, "target_id": 200, "target_name": "TargetUser"})
+        mock_duel_cog.http_client.post = AsyncMock(side_effect=[player_resp, cancel_resp])
+
+        asyncio.run(mock_duel_cog.duel_cancel.callback(mock_duel_cog, interaction, "1"))
+
+        interaction.response.defer.assert_awaited_once_with(thinking=True)
+        interaction.followup.send.assert_awaited_once()
+        call_kwargs = interaction.followup.send.call_args[1]
+        assert "embed" in call_kwargs
+        embed = call_kwargs["embed"]
+        assert "Cancelled" in embed.title or "✅" in embed.title
+
+    def test_cancel_success_embed_has_target_name(self, mock_duel_cog, make_mock_response):
+        """/duel-cancel embed description should mention the target's name."""
+        interaction = _create_mock_interaction(user_id=100)
+        player_resp = make_mock_response({"id": 1})
+        cancel_resp = make_mock_response({"id": 1, "target_id": 200, "target_name": "TargetPlayer"})
+        mock_duel_cog.http_client.post = AsyncMock(side_effect=[player_resp, cancel_resp])
+
+        asyncio.run(mock_duel_cog.duel_cancel.callback(mock_duel_cog, interaction, "1"))
+
+        call_kwargs = interaction.followup.send.call_args[1]
+        embed = call_kwargs["embed"]
+        assert "TargetPlayer" in embed.description
+
+    def test_cancel_success_uses_target_id_fallback_when_no_name(self, mock_duel_cog, make_mock_response):
+        """/duel-cancel embed should fall back to 'Player {id}' when target_name is absent."""
+        interaction = _create_mock_interaction(user_id=100)
+        player_resp = make_mock_response({"id": 1})
+        cancel_resp = make_mock_response({"id": 1, "target_id": 999})
+        mock_duel_cog.http_client.post = AsyncMock(side_effect=[player_resp, cancel_resp])
+
+        asyncio.run(mock_duel_cog.duel_cancel.callback(mock_duel_cog, interaction, "1"))
+
+        call_kwargs = interaction.followup.send.call_args[1]
+        embed = call_kwargs["embed"]
+        assert "Player 999" in embed.description
+
+    def test_cancel_success_is_ephemeral(self, mock_duel_cog, make_mock_response):
+        """/duel-cancel success is sent ephemeral."""
+        interaction = _create_mock_interaction(user_id=100)
+        player_resp = make_mock_response({"id": 1})
+        cancel_resp = make_mock_response({"id": 1, "target_id": 200, "target_name": "TargetUser"})
+        mock_duel_cog.http_client.post = AsyncMock(side_effect=[player_resp, cancel_resp])
+
+        asyncio.run(mock_duel_cog.duel_cancel.callback(mock_duel_cog, interaction, "1"))
+
+        call_kwargs = interaction.followup.send.call_args[1]
+        assert call_kwargs.get("ephemeral") is True
+
+    def test_cancel_invalid_duel_string(self, mock_duel_cog):
+        """/duel-cancel with non-numeric duel string should show error."""
+        interaction = _create_mock_interaction(user_id=100)
+
+        asyncio.run(mock_duel_cog.duel_cancel.callback(mock_duel_cog, interaction, "not-a-number"))
+
+        interaction.followup.send.assert_awaited_once()
+        call_kwargs = interaction.followup.send.call_args
+        assert call_kwargs[1].get("ephemeral", False)
+        assert "invalid" in call_kwargs[0][0].lower()
+
+    def test_cancel_404_shows_not_found(self, mock_duel_cog, make_mock_response):
+        """/duel-cancel 404 should show duel not found error."""
+        import httpx
+
+        interaction = _create_mock_interaction(user_id=100)
+        player_resp = make_mock_response({"id": 1})
+        error_response = MagicMock()
+        error_response.status_code = 404
+        error_response.json.return_value = {}
+        http_error = httpx.HTTPStatusError("404 Not Found", request=MagicMock(), response=error_response)
+        mock_duel_cog.http_client.post = AsyncMock(side_effect=[player_resp, http_error])
+
+        asyncio.run(mock_duel_cog.duel_cancel.callback(mock_duel_cog, interaction, "999"))
+
+        interaction.followup.send.assert_awaited_once()
+        call_kwargs = interaction.followup.send.call_args
+        assert call_kwargs[1].get("ephemeral", False)
+        assert "not found" in call_kwargs[0][0].lower()
+
+    def test_cancel_400_shows_detail_message(self, mock_duel_cog, make_mock_response):
+        """/duel-cancel 400 should show the detail from the response."""
+        import httpx
+
+        interaction = _create_mock_interaction(user_id=100)
+        player_resp = make_mock_response({"id": 1})
+        error_response = MagicMock()
+        error_response.status_code = 400
+        error_response.json.return_value = {"detail": "You are not the challenger."}
+        http_error = httpx.HTTPStatusError("400 Bad Request", request=MagicMock(), response=error_response)
+        mock_duel_cog.http_client.post = AsyncMock(side_effect=[player_resp, http_error])
+
+        asyncio.run(mock_duel_cog.duel_cancel.callback(mock_duel_cog, interaction, "1"))
+
+        interaction.followup.send.assert_awaited_once()
+        call_kwargs = interaction.followup.send.call_args
+        assert call_kwargs[1].get("ephemeral", False)
+        assert "not the challenger" in call_kwargs[0][0].lower()
+
+    def test_cancel_500_shows_generic_error(self, mock_duel_cog, make_mock_response):
+        """/duel-cancel non-404/400 HTTP error should show generic error message."""
+        import httpx
+
+        interaction = _create_mock_interaction(user_id=100)
+        player_resp = make_mock_response({"id": 1})
+        error_response = MagicMock()
+        error_response.status_code = 500
+        error_response.json.return_value = {}
+        http_error = httpx.HTTPStatusError("500 Server Error", request=MagicMock(), response=error_response)
+        mock_duel_cog.http_client.post = AsyncMock(side_effect=[player_resp, http_error])
+
+        asyncio.run(mock_duel_cog.duel_cancel.callback(mock_duel_cog, interaction, "1"))
+
+        interaction.followup.send.assert_awaited_once()
+        call_kwargs = interaction.followup.send.call_args
+        assert call_kwargs[1].get("ephemeral", False)
+        assert "error occurred" in call_kwargs[0][0].lower()
+
+    def test_cancel_generic_exception_shows_error(self, mock_duel_cog, make_mock_response):
+        """/duel-cancel generic Exception should show generic error message."""
+        interaction = _create_mock_interaction(user_id=100)
+        player_resp = make_mock_response({"id": 1})
+        mock_duel_cog.http_client.post = AsyncMock(side_effect=[player_resp, RuntimeError("connection refused")])
+
+        asyncio.run(mock_duel_cog.duel_cancel.callback(mock_duel_cog, interaction, "1"))
+
+        interaction.followup.send.assert_awaited_once()
+        call_kwargs = interaction.followup.send.call_args
+        assert call_kwargs[1].get("ephemeral", False)
+        assert "error occurred" in call_kwargs[0][0].lower()
+
+    def test_cancel_guild_not_configured_shows_setup_message(self, mock_duel_cog):
+        """/duel-cancel when guild not configured should show setup message."""
+        import httpx
+
+        interaction = _create_mock_interaction(user_id=100)
+        error_response = MagicMock()
+        error_response.status_code = 400
+        error_response.json.return_value = {"detail": "Guild not configured"}
+        http_error = httpx.HTTPStatusError("400", request=MagicMock(), response=error_response)
+        mock_duel_cog.http_client.post = AsyncMock(side_effect=http_error)
+
+        asyncio.run(mock_duel_cog.duel_cancel.callback(mock_duel_cog, interaction, "1"))
+
+        interaction.followup.send.assert_awaited_once()
+        call_kwargs = interaction.followup.send.call_args
+        assert call_kwargs[1].get("ephemeral", False)
+        msg = call_kwargs[0][0]
+        assert "admin_setup" in msg.lower() or "set up" in msg.lower()
+
+    def test_cancel_player_not_found_shows_error(self, mock_duel_cog):
+        """/duel-cancel when user has no player profile should show error."""
+        import httpx
+
+        interaction = _create_mock_interaction(user_id=100)
+        error_response = MagicMock()
+        error_response.status_code = 404
+        error_response.json.return_value = {"detail": "Not found"}
+        http_error = httpx.HTTPStatusError("404", request=MagicMock(), response=error_response)
+        mock_duel_cog.http_client.post = AsyncMock(side_effect=http_error)
+
+        asyncio.run(mock_duel_cog.duel_cancel.callback(mock_duel_cog, interaction, "1"))
+
+        interaction.followup.send.assert_awaited_once()
+        call_kwargs = interaction.followup.send.call_args
+        assert call_kwargs[1].get("ephemeral", False)
+        msg = call_kwargs[0][0]
+        assert "profile" in msg.lower() or "register" in msg.lower()
+
+
+# ---------------------------------------------------------------------------
+# /duel-cancel error handler
+# ---------------------------------------------------------------------------
+
+
+class TestDuelCancelErrorHandler:
+    """Tests for the duel_cancel_error handler."""
+
+    def test_duel_cancel_error_handler_response_not_done(self, mock_duel_cog):
+        """duel_cancel_error should send message when response is not done."""
+        interaction = _create_mock_interaction()
+        interaction.response.is_done = MagicMock(return_value=False)
+        error = MagicMock()
+
+        asyncio.run(mock_duel_cog.duel_cancel_error(interaction, error))
+
+        interaction.response.send_message.assert_awaited_once()
+        call_kwargs = interaction.response.send_message.call_args[1]
+        assert call_kwargs.get("ephemeral", False)
+
+    def test_duel_cancel_error_handler_response_already_done(self, mock_duel_cog):
+        """duel_cancel_error should NOT send message if response already done."""
+        interaction = _create_mock_interaction()
+        interaction.response.is_done = MagicMock(return_value=True)
+        error = MagicMock()
+
+        asyncio.run(mock_duel_cog.duel_cancel_error(interaction, error))
+
+        interaction.response.send_message.assert_not_awaited()
+
+
+# ---------------------------------------------------------------------------
+# outgoing_duel_autocomplete
+# ---------------------------------------------------------------------------
+
+
+class TestOutgoingDuelAutocomplete:
+    """Tests for outgoing_duel_autocomplete (for /duel-cancel)."""
+
+    def test_outgoing_autocomplete_returns_formatted_choices(self, mock_duel_cog, make_mock_response):
+        """outgoing_duel_autocomplete returns formatted choices for challenger's duels."""
+        from datetime import datetime
+
+        outgoing_duels = [
+            {
+                "id": 5,
+                "challenger_id": 100,
+                "target_id": 200,
+                "stakes": 1000,
+                "status": "pending",
+                "target_name": "TargetPlayer",
+                "created_at": datetime(2026, 1, 1, 12, 0, 0).isoformat(),
+            },
+            {
+                "id": 6,
+                "challenger_id": 100,
+                "target_id": 300,
+                "stakes": 0,
+                "status": "pending",
+                "target_name": "FriendlyTarget",
+                "created_at": datetime(2026, 1, 1, 12, 0, 0).isoformat(),
+            },
+        ]
+        player_resp = make_mock_response({"id": 100})
+        duels_resp = make_mock_response(outgoing_duels)
+        mock_duel_cog.http_client.post = AsyncMock(return_value=player_resp)
+        mock_duel_cog.http_client.get = AsyncMock(return_value=duels_resp)
+        interaction = _create_mock_interaction(user_id=100)
+
+        result = asyncio.run(mock_duel_cog.outgoing_duel_autocomplete(interaction, ""))
+
+        assert len(result) == 2
+        # First duel has stakes
+        assert result[0].value == "5"
+        assert "1,000" in result[0].name or "TargetPlayer" in result[0].name
+        # Second duel is friendly
+        assert result[1].value == "6"
+        assert "friendly" in result[1].name.lower() or "FriendlyTarget" in result[1].name
+
+    def test_outgoing_autocomplete_without_target_name(self, mock_duel_cog, make_mock_response):
+        """outgoing_duel_autocomplete falls back to 'Duel #{id}' when target_name absent."""
+        from datetime import datetime
+
+        outgoing_duels = [
+            {
+                "id": 7,
+                "challenger_id": 100,
+                "target_id": 999,
+                "stakes": 500,
+                "status": "pending",
+                "created_at": datetime(2026, 1, 1, 12, 0, 0).isoformat(),
+            },
+        ]
+        player_resp = make_mock_response({"id": 100})
+        duels_resp = make_mock_response(outgoing_duels)
+        mock_duel_cog.http_client.post = AsyncMock(return_value=player_resp)
+        mock_duel_cog.http_client.get = AsyncMock(return_value=duels_resp)
+        interaction = _create_mock_interaction(user_id=100)
+
+        result = asyncio.run(mock_duel_cog.outgoing_duel_autocomplete(interaction, ""))
+
+        assert len(result) == 1
+        assert "7" in result[0].name or "Duel" in result[0].name
+
+    def test_outgoing_autocomplete_player_not_found_returns_empty(self, mock_duel_cog):
+        """outgoing_duel_autocomplete returns [] when player resolution returns None."""
+        import httpx
+
+        interaction = _create_mock_interaction(user_id=100)
+        error_response = MagicMock()
+        error_response.status_code = 404
+        error_response.json.return_value = {"detail": "Not found"}
+        http_error = httpx.HTTPStatusError("404", request=MagicMock(), response=error_response)
+        mock_duel_cog.http_client.post = AsyncMock(side_effect=http_error)
+
+        result = asyncio.run(mock_duel_cog.outgoing_duel_autocomplete(interaction, ""))
+
+        assert result == []
+
+    def test_outgoing_autocomplete_api_failure_returns_empty(self, mock_duel_cog, make_mock_response):
+        """outgoing_duel_autocomplete returns [] on API failure fetching duels."""
+        player_resp = make_mock_response({"id": 100})
+        mock_duel_cog.http_client.post = AsyncMock(return_value=player_resp)
+        mock_duel_cog.http_client.get = AsyncMock(side_effect=RuntimeError("connection refused"))
+        interaction = _create_mock_interaction(user_id=100)
+
+        result = asyncio.run(mock_duel_cog.outgoing_duel_autocomplete(interaction, ""))
+
+        assert result == []
+
+    def test_outgoing_autocomplete_filters_by_current_input(self, mock_duel_cog, make_mock_response):
+        """outgoing_duel_autocomplete filters by current input."""
+        from datetime import datetime
+
+        outgoing_duels = [
+            {
+                "id": 8,
+                "challenger_id": 100,
+                "target_id": 200,
+                "stakes": 500,
+                "status": "pending",
+                "target_name": "AlphaTarget",
+                "created_at": datetime(2026, 1, 1, 12, 0, 0).isoformat(),
+            },
+            {
+                "id": 9,
+                "challenger_id": 100,
+                "target_id": 300,
+                "stakes": 500,
+                "status": "pending",
+                "target_name": "BetaTarget",
+                "created_at": datetime(2026, 1, 1, 12, 0, 0).isoformat(),
+            },
+        ]
+        player_resp = make_mock_response({"id": 100})
+        duels_resp = make_mock_response(outgoing_duels)
+        mock_duel_cog.http_client.post = AsyncMock(return_value=player_resp)
+        mock_duel_cog.http_client.get = AsyncMock(return_value=duels_resp)
+        interaction = _create_mock_interaction(user_id=100)
+
+        result = asyncio.run(mock_duel_cog.outgoing_duel_autocomplete(interaction, "alpha"))
+
+        assert len(result) == 1
+        assert "AlphaTarget" in result[0].name
+
+
+# ---------------------------------------------------------------------------
+# _build_challenge_embed — expires_at absent path
+# ---------------------------------------------------------------------------
+
+
+class TestBuildChallengeEmbed:
+    """Tests for _build_challenge_embed helper."""
+
+    def test_build_challenge_embed_with_expires_at(self, mock_duel_cog):
+        """_build_challenge_embed with expires_at uses discord timestamp."""
+        import discord
+
+        challenger = DiscordMockUtils.create_mock_user(user_id=100, username="Challenger")
+        challenger.mention = "<@100>"
+        target = DiscordMockUtils.create_mock_user(user_id=200, username="Target")
+        target.mention = "<@200>"
+        data = {"id": 1, "expires_at": "2026-01-02T12:00:00"}
+
+        embed = mock_duel_cog._build_challenge_embed(challenger, target, data, stakes=500)
+
+        assert isinstance(embed, discord.Embed)
+        assert "Duel Challenge" in embed.title or "⚔️" in embed.title
+
+    def test_build_challenge_embed_without_expires_at_uses_fallback(self, mock_duel_cog):
+        """_build_challenge_embed without expires_at uses '24 hours' fallback text."""
+        challenger = DiscordMockUtils.create_mock_user(user_id=100, username="Challenger")
+        challenger.mention = "<@100>"
+        target = DiscordMockUtils.create_mock_user(user_id=200, username="Target")
+        target.mention = "<@200>"
+        data = {"id": 1}  # no expires_at key
+
+        embed = mock_duel_cog._build_challenge_embed(challenger, target, data, stakes=0)
+
+        # Verify fallback text is present
+        field_values = " ".join(f.value for f in embed.fields)
+        assert "24 hours" in field_values
+
+    def test_build_challenge_embed_friendly_duel_no_stakes(self, mock_duel_cog):
+        """_build_challenge_embed with stakes=0 shows 'Friendly duel' text."""
+        challenger = DiscordMockUtils.create_mock_user(user_id=100, username="Challenger")
+        challenger.mention = "<@100>"
+        target = DiscordMockUtils.create_mock_user(user_id=200, username="Target")
+        target.mention = "<@200>"
+        data = {"id": 1}
+
+        embed = mock_duel_cog._build_challenge_embed(challenger, target, data, stakes=0)
+
+        assert "Friendly duel" in embed.description or "friendly" in embed.description.lower()
+
+    def test_build_challenge_embed_with_stakes_shows_amount(self, mock_duel_cog):
+        """_build_challenge_embed with non-zero stakes shows credit amount."""
+        challenger = DiscordMockUtils.create_mock_user(user_id=100, username="Challenger")
+        challenger.mention = "<@100>"
+        target = DiscordMockUtils.create_mock_user(user_id=200, username="Target")
+        target.mention = "<@200>"
+        data = {"id": 1}
+
+        embed = mock_duel_cog._build_challenge_embed(challenger, target, data, stakes=1000)
+
+        assert "1,000" in embed.description
+
+
+# ---------------------------------------------------------------------------
+# Cog setup function
+# ---------------------------------------------------------------------------
+
+
+class TestDuelCogSetup:
+    """Tests for the setup function."""
+
+    def test_setup_function(self, mock_bot):
+        """setup function should add DuelCog to bot."""
+        from cogs.duelCog import setup
+
+        mock_bot.add_cog = AsyncMock()
+
+        asyncio.run(setup(mock_bot))
+
+        mock_bot.add_cog.assert_awaited_once()
+
+
+# ---------------------------------------------------------------------------
+# pending_duel_autocomplete with challenger_name label
+# ---------------------------------------------------------------------------
+
+
+class TestPendingDuelAutocompleteLabels:
+    """Tests for pending_duel_autocomplete label formatting edge cases."""
+
+    def test_autocomplete_with_challenger_name_in_label(self, mock_duel_cog, make_mock_response):
+        """pending_duel_autocomplete uses challenger_name in label when present."""
+        from datetime import datetime
+
+        duels = [
+            {
+                "id": 3,
+                "challenger_id": 100,
+                "target_id": 200,
+                "stakes": 250,
+                "status": "pending",
+                "challenger_name": "TheChallengerPerson",
+                "created_at": datetime(2026, 1, 1, 12, 0, 0).isoformat(),
+            },
+        ]
+        player_resp = make_mock_response({"id": 200})
+        duels_resp = make_mock_response(duels)
+        mock_duel_cog.http_client.post = AsyncMock(return_value=player_resp)
+        mock_duel_cog.http_client.get = AsyncMock(return_value=duels_resp)
+        interaction = _create_mock_interaction(user_id=200)
+
+        result = asyncio.run(mock_duel_cog.pending_duel_autocomplete(interaction, ""))
+
+        assert len(result) == 1
+        assert "TheChallengerPerson" in result[0].name
+
+    def test_autocomplete_with_challenger_name_friendly_label(self, mock_duel_cog, make_mock_response):
+        """pending_duel_autocomplete uses 'friendly duel' label when stakes=0 and challenger_name present."""
+        from datetime import datetime
+
+        duels = [
+            {
+                "id": 4,
+                "challenger_id": 100,
+                "target_id": 200,
+                "stakes": 0,
+                "status": "pending",
+                "challenger_name": "FriendlyChallenger",
+                "created_at": datetime(2026, 1, 1, 12, 0, 0).isoformat(),
+            },
+        ]
+        player_resp = make_mock_response({"id": 200})
+        duels_resp = make_mock_response(duels)
+        mock_duel_cog.http_client.post = AsyncMock(return_value=player_resp)
+        mock_duel_cog.http_client.get = AsyncMock(return_value=duels_resp)
+        interaction = _create_mock_interaction(user_id=200)
+
+        result = asyncio.run(mock_duel_cog.pending_duel_autocomplete(interaction, ""))
+
+        assert len(result) == 1
+        assert "FriendlyChallenger" in result[0].name
+        assert "friendly" in result[0].name.lower()
+
+
+if __name__ == "__main__":
+    pytest.main([__file__])

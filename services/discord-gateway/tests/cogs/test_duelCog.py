@@ -1816,5 +1816,192 @@ class TestPendingDuelAutocompleteLabels:
         assert "friendly" in result[0].name.lower()
 
 
+# ---------------------------------------------------------------------------
+# URL-contract tests using respx (B.33 remediation / S9 fix)
+# ---------------------------------------------------------------------------
+
+
+class TestDuelCommandRespx:
+    """respx-backed URL+method contract tests for duelCog HTTP calls.
+
+    Each test verifies the exact bot-core URL and HTTP method used by a
+    specific command path, following the policy in
+    services/discord-gateway/tests/AGENTS.md (B.33 followup).
+
+    URLs verified against bot-core registered routes:
+      POST /api/v1/players/              — player upsert (GET_OR_CREATE)
+      POST /api/v1/duels/challenge       — create duel challenge
+      POST /api/v1/duels/{id}/accept     — accept duel
+      POST /api/v1/duels/{id}/reject     — reject duel
+      POST /api/v1/duels/{id}/cancel     — cancel duel (B.64)
+      GET  /api/v1/duels/pending         — pending-duel autocomplete
+    """
+
+    _BOT_API = "http://bot-core:8000/api/v1"
+
+    def _with_real_client(self, cog, request):
+        """Replace cog.http_client with a real httpx.AsyncClient for respx interception.
+
+        Registers a pytest finalizer to close the client after the test so no
+        httpx.AsyncClient instances are leaked between tests.
+        """
+        import httpx
+
+        cog.http_client = httpx.AsyncClient(timeout=httpx.Timeout(10.0))
+        request.addfinalizer(lambda: asyncio.run(cog.http_client.aclose()))
+        return cog
+
+    # ------------------------------------------------------------------
+    # 1. /duel-challenge → POST /api/v1/players/ + POST /api/v1/duels/challenge
+    # ------------------------------------------------------------------
+
+    def test_duel_challenge_calls_correct_urls(self, mock_duel_cog, request):
+        """/duel-challenge must POST /players/ (×2) and POST /duels/challenge."""
+        import httpx
+        import respx
+
+        self._with_real_client(mock_duel_cog, request)
+        interaction = _create_mock_interaction(user_id=100)
+        target = DiscordMockUtils.create_mock_user(user_id=200, username="TargetUser")
+        target.mention = "<@200>"
+
+        duel_data = _make_mock_duel(duel_id=42, challenger_id=1, target_id=2)
+
+        with respx.mock(assert_all_called=True) as mock_router:
+            # Two player upserts (challenger + target)
+            mock_router.post(f"{self._BOT_API}/players/").mock(
+                side_effect=[
+                    httpx.Response(200, json={"id": 1}),
+                    httpx.Response(200, json={"id": 2}),
+                ]
+            )
+            mock_router.post(f"{self._BOT_API}/duels/challenge").mock(return_value=httpx.Response(200, json=duel_data))
+
+            asyncio.run(mock_duel_cog.duel_challenge.callback(mock_duel_cog, interaction, target, 500))
+
+        interaction.response.defer.assert_awaited_once_with(thinking=True)
+        interaction.followup.send.assert_awaited_once()
+        # Embed must contain challenge title
+        call_kwargs = interaction.followup.send.call_args[1]
+        assert "embed" in call_kwargs
+        embed = call_kwargs["embed"]
+        assert "Duel Challenge" in embed.title or "⚔️" in embed.title
+
+    # ------------------------------------------------------------------
+    # 2. /duel-accept → POST /api/v1/players/ + POST /api/v1/duels/{id}/accept
+    # ------------------------------------------------------------------
+
+    def test_duel_accept_calls_correct_url(self, mock_duel_cog, request):
+        """/duel-accept must POST /players/ and POST /duels/{id}/accept."""
+        import httpx
+        import respx
+
+        self._with_real_client(mock_duel_cog, request)
+        interaction = _create_mock_interaction(user_id=200)
+
+        accept_data = _make_accept_result(
+            duel_id=7,
+            is_stalemate=False,
+            winner_name="Ship A",
+            loser_name="Ship B",
+            credits_transferred=500,
+            challenger_hp=1000,
+            challenger_dps=50.0,
+            target_hp=800,
+            target_dps=40.0,
+        )
+
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.post(f"{self._BOT_API}/players/").mock(return_value=httpx.Response(200, json={"id": 2}))
+            mock_router.post(f"{self._BOT_API}/duels/7/accept").mock(return_value=httpx.Response(200, json=accept_data))
+
+            asyncio.run(mock_duel_cog.duel_accept.callback(mock_duel_cog, interaction, "7"))
+
+        interaction.response.defer.assert_awaited_once_with(thinking=True)
+        interaction.followup.send.assert_awaited_once()
+        call_kwargs = interaction.followup.send.call_args[1]
+        assert "embed" in call_kwargs
+
+    # ------------------------------------------------------------------
+    # 3. /duel-reject → POST /api/v1/players/ + POST /api/v1/duels/{id}/reject
+    # ------------------------------------------------------------------
+
+    def test_duel_reject_calls_correct_url(self, mock_duel_cog, request):
+        """/duel-reject must POST /players/ and POST /duels/{id}/reject."""
+        import httpx
+        import respx
+
+        self._with_real_client(mock_duel_cog, request)
+        interaction = _create_mock_interaction(user_id=200)
+
+        reject_data = _make_mock_duel(duel_id=3, challenger_id=1, target_id=2, status="rejected")
+
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.post(f"{self._BOT_API}/players/").mock(return_value=httpx.Response(200, json={"id": 2}))
+            mock_router.post(f"{self._BOT_API}/duels/3/reject").mock(return_value=httpx.Response(200, json=reject_data))
+
+            asyncio.run(mock_duel_cog.duel_reject.callback(mock_duel_cog, interaction, "3"))
+
+        interaction.response.defer.assert_awaited_once_with(thinking=True)
+        interaction.followup.send.assert_awaited_once()
+        call_kwargs = interaction.followup.send.call_args[1]
+        assert "embed" in call_kwargs
+        embed = call_kwargs["embed"]
+        assert "Reject" in embed.title or "🚫" in embed.title
+
+    # ------------------------------------------------------------------
+    # 4. /duel-cancel → POST /api/v1/players/ + POST /api/v1/duels/{id}/cancel
+    # ------------------------------------------------------------------
+
+    def test_duel_cancel_calls_correct_url(self, mock_duel_cog, request):
+        """/duel-cancel must POST /players/ and POST /duels/{id}/cancel."""
+        import httpx
+        import respx
+
+        self._with_real_client(mock_duel_cog, request)
+        interaction = _create_mock_interaction(user_id=100)
+
+        cancel_data = {"id": 5, "target_id": 200, "target_name": "TargetUser"}
+
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.post(f"{self._BOT_API}/players/").mock(return_value=httpx.Response(200, json={"id": 1}))
+            mock_router.post(f"{self._BOT_API}/duels/5/cancel").mock(return_value=httpx.Response(200, json=cancel_data))
+
+            asyncio.run(mock_duel_cog.duel_cancel.callback(mock_duel_cog, interaction, "5"))
+
+        interaction.response.defer.assert_awaited_once_with(thinking=True)
+        interaction.followup.send.assert_awaited_once()
+        call_kwargs = interaction.followup.send.call_args[1]
+        assert "embed" in call_kwargs
+        embed = call_kwargs["embed"]
+        assert "Cancelled" in embed.title or "✅" in embed.title
+
+    # ------------------------------------------------------------------
+    # 5. Autocomplete → GET /api/v1/duels/pending with user_id param
+    # ------------------------------------------------------------------
+
+    def test_pending_duel_autocomplete_calls_correct_url(self, mock_duel_cog, request):
+        """pending_duel_autocomplete must POST /players/ and GET /duels/pending?user_id=<pk>."""
+        import httpx
+        import respx
+
+        self._with_real_client(mock_duel_cog, request)
+        interaction = _create_mock_interaction(user_id=111111111)
+
+        pending_duels = [
+            _make_mock_duel(duel_id=10, challenger_id=99, target_id=2, stakes=750),
+        ]
+
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.post(f"{self._BOT_API}/players/").mock(return_value=httpx.Response(200, json={"id": 2}))
+            # Exact URL match — must include correct path segment
+            mock_router.get(f"{self._BOT_API}/duels/pending").mock(return_value=httpx.Response(200, json=pending_duels))
+
+            result = asyncio.run(mock_duel_cog.pending_duel_autocomplete(interaction, ""))
+
+        assert len(result) == 1
+        assert result[0].value == "10"
+
+
 if __name__ == "__main__":
     pytest.main([__file__])

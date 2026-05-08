@@ -2995,3 +2995,144 @@ class TestCheckErrorHandlerResponseDone:
         interaction.followup.send.assert_awaited_once()
         call_kwargs = interaction.followup.send.call_args
         assert call_kwargs[1].get("ephemeral", False)
+
+
+# ===========================================================================
+# URL-contract tests using respx — /bounties, /route, /criminal-loadout
+# (S9 fix / B.33 remediation)
+# ===========================================================================
+
+
+class TestBountyCommandsRespx:
+    """respx-backed URL+method contract tests for bountyCog HTTP calls.
+
+    Verifies the exact bot-core URLs and HTTP methods used by the commands
+    that were previously only covered with AsyncMock on http_client.
+    Follows the policy in services/discord-gateway/tests/AGENTS.md (B.33 followup).
+
+    URLs verified against bot-core registered routes:
+      GET  /api/v1/bounties/               — /bounties list (with ?guild_id= and optional ?division=)
+      GET  /api/v1/bounties/{id}/route     — /route bounty route
+      GET  /api/v1/bounties/{id}/loadout   — /criminal-loadout criminal loadout
+    """
+
+    _BOT_API = "http://bot-core:8000/api/v1"
+
+    def _with_real_client(self, cog, request):
+        """Replace cog.http_client with a real httpx.AsyncClient for respx interception.
+
+        Registers a pytest finalizer to close the client after the test so no
+        httpx.AsyncClient instances are leaked between tests.
+        """
+        import httpx
+
+        cog.http_client = httpx.AsyncClient(timeout=httpx.Timeout(10.0))
+        request.addfinalizer(lambda: asyncio.run(cog.http_client.aclose()))
+        return cog
+
+    # ------------------------------------------------------------------
+    # 1. /bounties → GET /api/v1/bounties/ with ?guild_id= param
+    # ------------------------------------------------------------------
+
+    def test_bounties_calls_correct_url_no_division(self, mock_bounty_cog, request):
+        """/bounties (no division filter) must GET /bounties/ with guild_id param."""
+        import httpx
+        import respx
+
+        self._with_real_client(mock_bounty_cog, request)
+        interaction = _create_mock_interaction(guild_id=987654321)
+
+        bounty_list = [_make_bounty_public(1, "BlackViper", "bronze")]
+
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.get(f"{self._BOT_API}/bounties/").mock(return_value=httpx.Response(200, json=bounty_list))
+
+            asyncio.run(mock_bounty_cog.bounties.callback(mock_bounty_cog, interaction))
+
+        interaction.response.defer.assert_awaited_once_with(thinking=True)
+        interaction.followup.send.assert_awaited_once()
+        call_kwargs = interaction.followup.send.call_args[1]
+        assert "embed" in call_kwargs
+
+    def test_bounties_calls_correct_url_with_division(self, mock_bounty_cog, request):
+        """/bounties with division filter must GET /bounties/ passing ?division= param."""
+        import httpx
+        import respx
+
+        self._with_real_client(mock_bounty_cog, request)
+        interaction = _create_mock_interaction(guild_id=987654321)
+
+        bounty_list = [_make_bounty_public(2, "GoldHawk", "gold")]
+
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.get(f"{self._BOT_API}/bounties/").mock(return_value=httpx.Response(200, json=bounty_list))
+
+            asyncio.run(mock_bounty_cog.bounties.callback(mock_bounty_cog, interaction, division="gold"))
+
+        interaction.followup.send.assert_awaited_once()
+        call_kwargs = interaction.followup.send.call_args[1]
+        assert "embed" in call_kwargs
+        embed = call_kwargs["embed"]
+        # Verify division filter was reflected in the embed title
+        assert "Gold" in embed.title
+
+    # ------------------------------------------------------------------
+    # 2. /route → GET /api/v1/bounties/{id}/route
+    # ------------------------------------------------------------------
+
+    def test_route_calls_correct_url(self, mock_bounty_cog, request):
+        """/route must GET /bounties/{id}/route."""
+        import httpx
+        import respx
+
+        self._with_real_client(mock_bounty_cog, request)
+        interaction = _create_mock_interaction()
+
+        route_data = _make_route_response(
+            bounty_id=42,
+            criminal_name="RouteViper",
+            route=["Alpha", "Beta"],
+            system_statuses={"Alpha": "checked"},
+        )
+
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.get(f"{self._BOT_API}/bounties/42/route").mock(
+                return_value=httpx.Response(200, json=route_data)
+            )
+
+            asyncio.run(mock_bounty_cog.route.callback(mock_bounty_cog, interaction, "42"))
+
+        interaction.response.defer.assert_awaited_once_with(thinking=True)
+        interaction.followup.send.assert_awaited_once()
+        call_kwargs = interaction.followup.send.call_args[1]
+        assert "embed" in call_kwargs
+        embed = call_kwargs["embed"]
+        assert "RouteViper" in embed.title
+
+    # ------------------------------------------------------------------
+    # 3. /criminal-loadout → GET /api/v1/bounties/{id}/loadout
+    # ------------------------------------------------------------------
+
+    def test_criminal_loadout_calls_correct_url(self, mock_bounty_cog, request):
+        """/criminal-loadout must GET /bounties/{id}/loadout."""
+        import httpx
+        import respx
+
+        self._with_real_client(mock_bounty_cog, request)
+        interaction = _create_mock_interaction()
+
+        loadout_data = _make_loadout_response(bounty_id=99, criminal_name="LoadoutBoss")
+
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.get(f"{self._BOT_API}/bounties/99/loadout").mock(
+                return_value=httpx.Response(200, json=loadout_data)
+            )
+
+            asyncio.run(mock_bounty_cog.criminal_loadout.callback(mock_bounty_cog, interaction, "99"))
+
+        interaction.response.defer.assert_awaited_once_with(thinking=True)
+        interaction.followup.send.assert_awaited_once()
+        call_kwargs = interaction.followup.send.call_args[1]
+        assert "embed" in call_kwargs
+        # Public (not ephemeral) response for successful loadout
+        assert call_kwargs.get("ephemeral") is not True

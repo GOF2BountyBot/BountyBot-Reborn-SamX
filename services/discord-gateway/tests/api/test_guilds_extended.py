@@ -348,6 +348,7 @@ class TestListGuildMembersExtended:
         for client in self._build_app(guild):
             response = client.get("/api/v1/guilds/987654321/members")
             assert response.status_code == 200
+            assert response.json()["status"] == "success"
             # guild.chunk should have been called
             guild.chunk.assert_called_once_with(cache=True)
 
@@ -464,6 +465,7 @@ class TestCreateChannel:
         for client in self._build_app_with_guild(guild):
             response = client.post("/api/v1/guilds/987654321/channels", json={"name": "forum-channel", "type": "forum"})
             assert response.status_code == 201
+            assert response.json()["status"] == "created"
 
     def test_create_channel_guild_not_found(self):
         """POST /guilds/{id}/channels returns 404 for unknown guild."""
@@ -472,6 +474,7 @@ class TestCreateChannel:
         for client in self._build_app_with_guild(guild):
             response = client.post("/api/v1/guilds/9999999999/channels", json={"name": "test", "type": "text"})
             assert response.status_code == 404
+            assert "detail" in response.json()
 
     def test_create_channel_missing_name_returns_422(self):
         """POST /guilds/{id}/channels without 'name' returns 422."""
@@ -480,6 +483,7 @@ class TestCreateChannel:
         for client in self._build_app_with_guild(guild):
             response = client.post("/api/v1/guilds/987654321/channels", json={"type": "text"})
             assert response.status_code == 422
+            assert "detail" in response.json()
 
     def test_create_channel_with_invalid_category(self):
         """POST /guilds/{id}/channels returns 404 when category_id doesn't exist."""
@@ -491,6 +495,7 @@ class TestCreateChannel:
                 "/api/v1/guilds/987654321/channels", json={"name": "test", "type": "text", "category_id": 9999999}
             )
             assert response.status_code == 404
+            assert "detail" in response.json()
 
 
 # ---------------------------------------------------------------------------
@@ -572,6 +577,7 @@ class TestCreateCategory:
         for client in self._build_app_with_guild(guild):
             response = client.post("/api/v1/guilds/987654321/categories", json={"name": "Positioned", "position": 5})
             assert response.status_code == 201
+            assert response.json()["status"] == "created"
 
     def test_create_category_guild_not_found(self):
         """POST /guilds/{id}/categories returns 404 for unknown guild."""
@@ -580,6 +586,7 @@ class TestCreateCategory:
         for client in self._build_app_with_guild(guild):
             response = client.post("/api/v1/guilds/9999999999/categories", json={"name": "Test Cat"})
             assert response.status_code == 404
+            assert "detail" in response.json()
 
     def test_create_category_missing_name_returns_422(self):
         """POST /guilds/{id}/categories without name returns 422."""
@@ -588,6 +595,7 @@ class TestCreateCategory:
         for client in self._build_app_with_guild(guild):
             response = client.post("/api/v1/guilds/987654321/categories", json={})
             assert response.status_code == 422
+            assert "detail" in response.json()
 
 
 # ---------------------------------------------------------------------------
@@ -672,6 +680,7 @@ class TestCreateRole:
                 json={"name": "perms-role", "permissions": 8},  # 8 = Administrator
             )
             assert response.status_code == 201
+            assert response.json()["status"] == "created"
 
     def test_create_role_with_color(self):
         """POST /guilds/{id}/roles with color creates colored role."""
@@ -683,6 +692,7 @@ class TestCreateRole:
         for client in self._build_app_with_guild(guild):
             response = client.post("/api/v1/guilds/987654321/roles", json={"name": "colored-role", "color": 0xFF5733})
             assert response.status_code == 201
+            assert response.json()["status"] == "created"
 
     def test_create_role_negative_permissions_returns_error(self):
         """POST /guilds/{id}/roles with negative permissions returns server error."""
@@ -738,6 +748,7 @@ class TestCreateRole:
             # Negative permissions triggers an AttributeError (status.HTTP_422 is not defined)
             # which is caught by outer except and routed to handle_discord_exception → 500
             assert response.status_code in (422, 500, 503)
+            assert "detail" in response.json()
 
     def test_create_role_guild_not_found(self):
         """POST /guilds/{id}/roles returns 404 for unknown guild."""
@@ -746,6 +757,7 @@ class TestCreateRole:
         for client in self._build_app_with_guild(guild):
             response = client.post("/api/v1/guilds/9999999999/roles", json={"name": "Test Role"})
             assert response.status_code == 404
+            assert "detail" in response.json()
 
     def test_create_role_with_hoist_and_mentionable(self):
         """POST /guilds/{id}/roles creates hoisted, mentionable role."""
@@ -759,6 +771,7 @@ class TestCreateRole:
                 "/api/v1/guilds/987654321/roles", json={"name": "hoisted", "hoist": True, "mentionable": True}
             )
             assert response.status_code == 201
+            assert response.json()["status"] == "created"
 
 
 # ---------------------------------------------------------------------------
@@ -782,6 +795,7 @@ class TestListGuildRolesExtended:
         """GET /guilds/{id}/roles returns 404 for unknown guild."""
         response = guilds_client.get("/api/v1/guilds/9999999999/roles")
         assert response.status_code == 404
+        assert "detail" in response.json()
 
 
 # ---------------------------------------------------------------------------
@@ -804,6 +818,7 @@ class TestListGuildChannelsExtended:
         """GET /guilds/{id}/channels returns 404 for unknown guild."""
         response = guilds_client.get("/api/v1/guilds/9999999999/channels")
         assert response.status_code == 404
+        assert "detail" in response.json()
 
 
 # ---------------------------------------------------------------------------
@@ -879,6 +894,7 @@ class TestListCategoriesExtended:
         """GET /guilds/{id}/categories returns 404 for unknown guild."""
         response = guilds_client.get("/api/v1/guilds/9999999999/categories")
         assert response.status_code == 404
+        assert "detail" in response.json()
 
 
 # ---------------------------------------------------------------------------
@@ -976,6 +992,7 @@ class TestExceptionHandlers:
         ):
             response = client.get("/api/v1/guilds")
             assert response.status_code == 500
+            assert "detail" in response.json()
             mock_handle.assert_called_once()
             assert "list guilds" in mock_handle.call_args[0][0]
 
@@ -986,6 +1003,7 @@ class TestExceptionHandlers:
         ):
             response = client.get("/api/v1/guilds/987654321")
             assert response.status_code == 500
+            assert "detail" in response.json()
             mock_handle.assert_called_once()
             assert "get guild details" in mock_handle.call_args[0][0]
 
@@ -996,6 +1014,7 @@ class TestExceptionHandlers:
         ):
             response = client.get("/api/v1/guilds/987654321/members")
             assert response.status_code == 500
+            assert "detail" in response.json()
             mock_handle.assert_called_once()
             assert "list guild members" in mock_handle.call_args[0][0]
 
@@ -1006,6 +1025,7 @@ class TestExceptionHandlers:
         ):
             response = client.get("/api/v1/guilds/987654321/channels")
             assert response.status_code == 500
+            assert "detail" in response.json()
             mock_handle.assert_called_once()
             assert "list guild channels" in mock_handle.call_args[0][0]
 
@@ -1020,6 +1040,7 @@ class TestExceptionHandlers:
                 json={"name": "test", "type": "text"},
             )
             assert response.status_code == 500
+            assert "detail" in response.json()
             mock_handle.assert_called_once()
             assert "create channel" in mock_handle.call_args[0][0]
 
@@ -1030,6 +1051,7 @@ class TestExceptionHandlers:
         ):
             response = client.get("/api/v1/guilds/987654321/categories")
             assert response.status_code == 500
+            assert "detail" in response.json()
             mock_handle.assert_called_once()
             assert "list categories" in mock_handle.call_args[0][0]
 
@@ -1044,6 +1066,7 @@ class TestExceptionHandlers:
                 json={"name": "Test Cat"},
             )
             assert response.status_code == 500
+            assert "detail" in response.json()
             mock_handle.assert_called_once()
             assert "create category" in mock_handle.call_args[0][0]
 
@@ -1054,6 +1077,7 @@ class TestExceptionHandlers:
         ):
             response = client.get("/api/v1/guilds/987654321/roles")
             assert response.status_code == 500
+            assert "detail" in response.json()
             mock_handle.assert_called_once()
             assert "list guild roles" in mock_handle.call_args[0][0]
 
@@ -1264,6 +1288,7 @@ class TestCreateRolePermsBitmask:
                 # because status.HTTP_422 doesn't exist → caught by outer except → 500)
                 # OR if the code uses a valid status, it returns 422.
                 assert response.status_code in (422, 500)
+                assert "detail" in response.json()
 
 
 # ---------------------------------------------------------------------------
@@ -1430,6 +1455,7 @@ class TestCreateRoleRetryLogic:
                 json={"name": "retry-5xx-role"},
             )
             assert response.status_code == 201
+            assert response.json()["status"] == "created"
             assert guild.create_role.call_count == 2
             assert mock_sleep.call_count == 1
 
@@ -1492,6 +1518,7 @@ class TestCreateRoleRetryLogic:
             # 4xx is re-raised immediately → caught by outer except Exception →
             # handle_discord_exception → HTTPException(500)
             assert response.status_code == 500
+            assert "detail" in response.json()
             assert guild.create_role.call_count == 1
             assert mock_sleep.call_count == 0
 
@@ -1553,5 +1580,6 @@ class TestCreateRoleRetryLogic:
             )
             # On the 3rd attempt, attempt == max_attempts so it raises (line 457)
             assert response.status_code == 500
+            assert "detail" in response.json()
             assert guild.create_role.call_count == 3
             assert mock_sleep.call_count == 2

@@ -200,6 +200,7 @@ class TestGetMessageExtended:
         resp = messages_client.get("/api/v1/messages/-1")
         # Negative integer path params may be rejected at FastAPI level (422) or our level (400)
         assert resp.status_code in (400, 422)
+        assert "detail" in resp.json()
 
     def test_get_message_data_shape(self, messages_client):
         """GET message data should include id and author_id."""
@@ -266,12 +267,14 @@ class TestUpdateMessageExtended:
         payload = {"content": {"title": "x"}}
         resp = messages_client.put("/api/v1/messages/9999999999", json=payload)
         assert resp.status_code == 404
+        assert "detail" in resp.json()
 
     def test_update_message_zero_id_returns_400(self, messages_client):
         """PUT with message_id=0 returns 400."""
         payload = {"content": {"title": "x"}}
         resp = messages_client.put("/api/v1/messages/0", json=payload)
         assert resp.status_code == 400
+        assert "detail" in resp.json()
 
     def test_update_message_not_bots_own_returns_403(self, mock_bot):
         """PUT on another user's message returns 403."""
@@ -314,6 +317,7 @@ class TestUpdateMessageExtended:
         payload = {}  # content is required
         resp = messages_client.put("/api/v1/messages/1234567890", json=payload)
         assert resp.status_code == 422
+        assert "detail" in resp.json()
 
 
 # ---------------------------------------------------------------------------
@@ -336,11 +340,13 @@ class TestDeleteMessageExtended:
         """DELETE non-existent message returns 404."""
         resp = messages_client.delete("/api/v1/messages/9999999999")
         assert resp.status_code == 404
+        assert "detail" in resp.json()
 
     def test_delete_message_zero_id_returns_400(self, messages_client):
         """DELETE with message_id=0 returns 400."""
         resp = messages_client.delete("/api/v1/messages/0")
         assert resp.status_code == 400
+        assert "detail" in resp.json()
 
     def test_delete_message_no_permission_returns_403(self, mock_bot):
         """DELETE message where bot lacks manage_messages permission returns 403."""
@@ -427,6 +433,7 @@ class TestDeleteMessageExtended:
             client = TestClient(app)
             resp = client.delete("/api/v1/messages/1234567890")
             assert resp.status_code == 403
+            assert "detail" in resp.json()
 
 
 # ---------------------------------------------------------------------------
@@ -925,6 +932,7 @@ class TestGetMessageExceptionHandlers:
             client = TestClient(app, raise_server_exceptions=False)
             resp = client.get("/api/v1/messages/1234567890")
             assert resp.status_code == 500
+            assert "detail" in resp.json()
             assert len(captured_calls) == 1
             assert captured_calls[0][0] == "get message"
             assert isinstance(captured_calls[0][1], RuntimeError)
@@ -964,6 +972,7 @@ class TestGetMessageExceptionHandlers:
             client = TestClient(app, raise_server_exceptions=False)
             resp = client.get("/api/v1/messages/1234567890")
             assert resp.status_code == 500
+            assert "detail" in resp.json()
             assert len(captured_calls) == 1
             assert captured_calls[0][0] == "get message"
             assert isinstance(captured_calls[0][1], ConnectionError)
@@ -1055,6 +1064,7 @@ class TestUpdateMessageExceptionHandlers:
             payload = {"content": {"title": "Updated"}}
             resp = client.put("/api/v1/messages/1234567890", json=payload)
             assert resp.status_code == 500
+            assert "detail" in resp.json()
             assert len(captured_calls) == 1
             assert captured_calls[0][0] == "update message"
             assert isinstance(captured_calls[0][1], RuntimeError)
@@ -1096,6 +1106,7 @@ class TestUpdateMessageExceptionHandlers:
             payload = {"content": {"title": "test"}}
             resp = client.put("/api/v1/messages/1234567890", json=payload)
             assert resp.status_code == 500
+            assert "detail" in resp.json()
             assert len(captured_calls) == 1
             assert captured_calls[0][0] == "update message"
             assert isinstance(captured_calls[0][1], ValueError)
@@ -1183,6 +1194,7 @@ class TestDeleteMessageExceptionHandlers:
             client = TestClient(app, raise_server_exceptions=False)
             resp = client.delete("/api/v1/messages/1234567890")
             assert resp.status_code == 500
+            assert "detail" in resp.json()
             assert len(captured_calls) == 1
             assert captured_calls[0][0] == "delete message"
             assert isinstance(captured_calls[0][1], RuntimeError)
@@ -1223,6 +1235,7 @@ class TestDeleteMessageExceptionHandlers:
             client = TestClient(app, raise_server_exceptions=False)
             resp = client.delete("/api/v1/messages/1234567890")
             assert resp.status_code == 500
+            assert "detail" in resp.json()
             assert len(captured_calls) == 1
             assert captured_calls[0][0] == "delete message"
             assert isinstance(captured_calls[0][1], OSError)

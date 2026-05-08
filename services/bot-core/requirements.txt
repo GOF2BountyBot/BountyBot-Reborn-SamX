@@ -29,3 +29,4 @@ pytest-mock>=3.10.0
 faker>=18.0.0
 aiosqlite
 pytest-timeout>=2.1.0
+respx>=0.21.0,<1.0.0

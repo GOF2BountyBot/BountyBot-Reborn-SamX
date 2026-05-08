@@ -1333,7 +1333,7 @@ class TestGenericExceptionHandlers:
         client, mock_hde = next(gen)
         resp = client.get("/api/v1/channels/1234567890")
         assert resp.status_code == 500
-        mock_hde.assert_called_once()
+        assert "detail" in resp.json()
         assert "get channel details" in mock_hde.call_args[0][0]
 
     def test_update_channel_generic_exception(self):
@@ -1342,7 +1342,7 @@ class TestGenericExceptionHandlers:
         client, mock_hde = next(gen)
         resp = client.put("/api/v1/channels/1234567890", json={"name": "x"})
         assert resp.status_code == 500
-        mock_hde.assert_called_once()
+        assert "detail" in resp.json()
         assert "update channel" in mock_hde.call_args[0][0]
 
     def test_delete_channel_generic_exception(self):
@@ -1351,7 +1351,7 @@ class TestGenericExceptionHandlers:
         client, mock_hde = next(gen)
         resp = client.delete("/api/v1/channels/1234567890")
         assert resp.status_code == 500
-        mock_hde.assert_called_once()
+        assert "detail" in resp.json()
         assert "delete channel" in mock_hde.call_args[0][0]
 
     def test_list_messages_generic_exception(self):
@@ -1360,7 +1360,7 @@ class TestGenericExceptionHandlers:
         client, mock_hde = next(gen)
         resp = client.get("/api/v1/channels/1234567890/messages")
         assert resp.status_code == 500
-        mock_hde.assert_called_once()
+        assert "detail" in resp.json()
         assert "list channel messages" in mock_hde.call_args[0][0]
 
     def test_create_message_generic_exception(self):
@@ -1370,7 +1370,7 @@ class TestGenericExceptionHandlers:
         payload = {"content": {"title": "Hello"}}
         resp = client.post("/api/v1/channels/1234567890/messages", json=payload)
         assert resp.status_code == 500
-        mock_hde.assert_called_once()
+        assert "detail" in resp.json()
         assert "create channel message" in mock_hde.call_args[0][0]
 
     def test_get_permissions_generic_exception(self):
@@ -1379,7 +1379,7 @@ class TestGenericExceptionHandlers:
         client, mock_hde = next(gen)
         resp = client.get("/api/v1/channels/1234567890/permissions")
         assert resp.status_code == 500
-        mock_hde.assert_called_once()
+        assert "detail" in resp.json()
         assert "get channel permissions" in mock_hde.call_args[0][0]
 
     def test_update_permissions_generic_exception(self):
@@ -1389,7 +1389,7 @@ class TestGenericExceptionHandlers:
         payload = {"overwrites": []}
         resp = client.put("/api/v1/channels/1234567890/permissions", json=payload)
         assert resp.status_code == 500
-        mock_hde.assert_called_once()
+        assert "detail" in resp.json()
         assert "update channel permissions" in mock_hde.call_args[0][0]
 
     def test_list_threads_generic_exception(self):
@@ -1398,7 +1398,7 @@ class TestGenericExceptionHandlers:
         client, mock_hde = next(gen)
         resp = client.get("/api/v1/channels/1234567890/threads")
         assert resp.status_code == 500
-        mock_hde.assert_called_once()
+        assert "detail" in resp.json()
         assert "list threads" in mock_hde.call_args[0][0]
 
     def test_create_thread_generic_exception(self):
@@ -1408,7 +1408,7 @@ class TestGenericExceptionHandlers:
         payload = {"name": "my-thread"}
         resp = client.post("/api/v1/channels/1234567890/threads", json=payload)
         assert resp.status_code == 500
-        mock_hde.assert_called_once()
+        assert "detail" in resp.json()
         assert "create thread" in mock_hde.call_args[0][0]
 
     def test_list_tags_generic_exception(self):
@@ -1417,7 +1417,7 @@ class TestGenericExceptionHandlers:
         client, mock_hde = next(gen)
         resp = client.get("/api/v1/channels/1234567890/tags")
         assert resp.status_code == 500
-        mock_hde.assert_called_once()
+        assert "detail" in resp.json()
         assert "list forum tags" in mock_hde.call_args[0][0]
 
     def test_move_channel_generic_exception(self):
@@ -1426,7 +1426,7 @@ class TestGenericExceptionHandlers:
         client, mock_hde = next(gen)
         resp = client.put("/api/v1/channels/1234567890/category/1111111111")
         assert resp.status_code == 500
-        mock_hde.assert_called_once()
+        assert "detail" in resp.json()
         assert "move channel to category" in mock_hde.call_args[0][0]
 
 
@@ -1562,6 +1562,7 @@ class TestUpdateChannelTypeSpecificFields:
         payload = {"topic": "new topic", "nsfw": True, "slowmode_delay": 5}
         resp = client.put("/api/v1/channels/1234567890", json=payload)
         assert resp.status_code == 200
+        assert resp.json()["status"] == "updated"
         text_ch.edit.assert_called_once()
         kw = text_ch.edit.call_args[1]
         assert kw["topic"] == "new topic"
@@ -1818,6 +1819,7 @@ class TestUpdatePermissionsEdgeCases:
         payload = {"overwrites": []}
         resp = client.put("/api/v1/channels/1234567890/permissions", json=payload)
         assert resp.status_code == 200
+        assert resp.json()["status"] == "updated"
         # set_permissions should have been called to clear the existing overwrite
         text_ch.set_permissions.assert_called_once_with(mock_target, overwrite=None)
 

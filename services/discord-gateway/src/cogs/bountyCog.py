@@ -119,10 +119,7 @@ class BountyCog(commands.Cog):
         self, _interaction: discord.Interaction, current: str
     ) -> list[app_commands.Choice[str]]:
         """Autocomplete for star system names — includes ALL systems (game balance)."""
-        return [
-            app_commands.Choice(name=name, value=name)
-            for name in fuzzy_filter(current, self._systems)
-        ]
+        return [app_commands.Choice(name=name, value=name) for name in fuzzy_filter(current, self._systems)]
 
     async def bounty_autocomplete(
         self, interaction: discord.Interaction, current: str

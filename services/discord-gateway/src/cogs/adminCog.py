@@ -1656,10 +1656,7 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
                         seen.add(name)
                         all_names.append(name)
 
-            return [
-                app_commands.Choice(name=name, value=name)
-                for name in fuzzy_filter(current, all_names)
-            ]
+            return [app_commands.Choice(name=name, value=name) for name in fuzzy_filter(current, all_names)]
         except Exception:  # pylint: disable=broad-exception-caught
             return []
 
@@ -1696,9 +1693,7 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
             )
             if player_id is not None:
                 try:
-                    inv_resp = await self.http_client.get(
-                        f"{api_base}/inventory/player/{player_id}", timeout=3
-                    )
+                    inv_resp = await self.http_client.get(f"{api_base}/inventory/player/{player_id}", timeout=3)
                     if inv_resp.status_code == 200:
                         items = inv_resp.json()
                         choices: list[app_commands.Choice[str]] = []
@@ -1747,10 +1742,7 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
         """Autocomplete for ship names — served from preloaded in-memory cache (zero HTTP per keystroke)."""
         try:
             names = await self._ship_catalog.get("all") or []
-            return [
-                app_commands.Choice(name=name, value=name)
-                for name in fuzzy_filter(current, names)
-            ]
+            return [app_commands.Choice(name=name, value=name) for name in fuzzy_filter(current, names)]
         except Exception:  # pylint: disable=broad-exception-caught
             return []
 

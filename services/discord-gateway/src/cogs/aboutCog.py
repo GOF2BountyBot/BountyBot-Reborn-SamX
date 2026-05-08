@@ -120,10 +120,7 @@ class AboutCog(commands.Cog):
         """Autocomplete for system name selection using preloaded data."""
         systems = self._objects_by_category.get("system", [])
         names = [obj["name"] for obj in systems if obj.get("name")]
-        return [
-            app_commands.Choice(name=name, value=name)
-            for name in fuzzy_filter(current, names)
-        ]
+        return [app_commands.Choice(name=name, value=name) for name in fuzzy_filter(current, names)]
 
     async def object_autocomplete(
         self, interaction: discord.Interaction, current: str
@@ -135,10 +132,7 @@ class AboutCog(commands.Cog):
 
         objects = self._objects_by_category[category]
         names = [obj["name"] for obj in objects if obj.get("name")]
-        return [
-            app_commands.Choice(name=name, value=name)
-            for name in fuzzy_filter(current, names)
-        ]
+        return [app_commands.Choice(name=name, value=name) for name in fuzzy_filter(current, names)]
 
     @app_commands.command(
         name="about", description="Get detailed information about game objects (modules, weapons, etc.)"

@@ -49,13 +49,7 @@ def normalize_for_search(text: str) -> str:
     nfkd = unicodedata.normalize("NFKD", text)
     stripped = "".join(c for c in nfkd if not unicodedata.combining(c))
     # Remove apostrophes, hyphens, and spaces that users might skip when typing
-    stripped = (
-        stripped.replace("'", "")
-        .replace("\u2019", "")
-        .replace("\u02bc", "")
-        .replace("-", "")
-        .replace(" ", "")
-    )
+    stripped = stripped.replace("'", "").replace("\u2019", "").replace("\u02bc", "").replace("-", "").replace(" ", "")
     return stripped.lower()
 
 

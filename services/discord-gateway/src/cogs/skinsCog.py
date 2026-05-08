@@ -311,8 +311,7 @@ class SkinsCog(commands.Cog):
         self, _interaction: discord.Interaction, current: str
     ) -> list[app_commands.Choice[str]]:
         return [
-            app_commands.Choice(name=name, value=name)
-            for name in fuzzy_filter(current, list(self._ship_skins.keys()))
+            app_commands.Choice(name=name, value=name) for name in fuzzy_filter(current, list(self._ship_skins.keys()))
         ]
 
     async def skin_autocomplete(self, interaction: discord.Interaction, current: str) -> list[app_commands.Choice[str]]:
@@ -343,14 +342,9 @@ class SkinsCog(commands.Cog):
         artificially truncated to only previously-rendered ships.
         """
         skinnable_names = [
-            name
-            for name in self._ship_skins
-            if self._ship_render_info.get(name, {}).get("skinnable", True)
+            name for name in self._ship_skins if self._ship_render_info.get(name, {}).get("skinnable", True)
         ]
-        return [
-            app_commands.Choice(name=name, value=name)
-            for name in fuzzy_filter(current, skinnable_names)
-        ]
+        return [app_commands.Choice(name=name, value=name) for name in fuzzy_filter(current, skinnable_names)]
 
     # ------------------------------------------------------------------
     # /ship_skin

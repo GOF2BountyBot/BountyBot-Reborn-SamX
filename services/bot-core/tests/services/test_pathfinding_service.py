@@ -630,8 +630,7 @@ class TestB77KnownBadCase:
         assert result[0] == "Union"
         assert result[-1] == "Oom'Bak"
         assert len(result) == 3, (
-            f"B.77 regression: expected 3-node route (2 hops via Magnetar), "
-            f"got {len(result)} nodes: {result}"
+            f"B.77 regression: expected 3-node route (2 hops via Magnetar), got {len(result)} nodes: {result}"
         )
         assert result == ["Union", "Magnetar", "Oom'Bak"], (
             f"B.77 regression: expected ['Union', 'Magnetar', 'Oom'Bak'], got {result}"
@@ -644,9 +643,7 @@ class TestB77KnownBadCase:
         svc = PathfindingService(graph)
         result = svc.make_route("Union", "Oom'Bak")
         assert isinstance(result, list)
-        assert "Prospero" not in result, (
-            f"B.77 regression: Prospero should NOT be in the optimal route, got {result}"
-        )
+        assert "Prospero" not in result, f"B.77 regression: Prospero should NOT be in the optimal route, got {result}"
 
     def test_union_to_oombak_not_via_vulpes(self) -> None:
         """Confirm Vulpes does NOT appear in the optimal route (B.77)."""
@@ -654,9 +651,7 @@ class TestB77KnownBadCase:
         svc = PathfindingService(graph)
         result = svc.make_route("Union", "Oom'Bak")
         assert isinstance(result, list)
-        assert "Vulpes" not in result, (
-            f"B.77 regression: Vulpes should NOT be in the optimal route, got {result}"
-        )
+        assert "Vulpes" not in result, f"B.77 regression: Vulpes should NOT be in the optimal route, got {result}"
 
     def test_reverse_oombak_to_union_also_2_hops(self) -> None:
         """Reverse route should also be 2 hops (graph is undirected)."""
@@ -755,17 +750,13 @@ class TestB78WahNorrIsolation:
         """B.78: K'Ontrr's neighbour list must NOT contain Wah'Norr."""
         graph = self._vossk_subgraph()
         neighbours = graph.get_neighbours("K'Ontrr")
-        assert "Wah'Norr" not in neighbours, (
-            f"B.78: K'Ontrr neighbours should not include Wah'Norr; got {neighbours}"
-        )
+        assert "Wah'Norr" not in neighbours, f"B.78: K'Ontrr neighbours should not include Wah'Norr; got {neighbours}"
 
     def test_nimrrod_neighbours_do_not_include_wahnorr(self) -> None:
         """B.78: Ni'Mrrod's neighbour list must NOT contain Wah'Norr."""
         graph = self._vossk_subgraph()
         neighbours = graph.get_neighbours("Ni'Mrrod")
-        assert "Wah'Norr" not in neighbours, (
-            f"B.78: Ni'Mrrod neighbours should not include Wah'Norr; got {neighbours}"
-        )
+        assert "Wah'Norr" not in neighbours, f"B.78: Ni'Mrrod neighbours should not include Wah'Norr; got {neighbours}"
 
     def test_kontrr_to_nimrrod_still_connected(self) -> None:
         """B.78: After isolating Wah'Norr, K'Ontrr → Ni'Mrrod must still be reachable."""

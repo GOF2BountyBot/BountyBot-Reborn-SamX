@@ -314,9 +314,7 @@ class PlayerCog(commands.Cog):
                 return
 
             # Show warning embed with button confirmation
-            flogger.debug(
-                f"/prestige awaiting confirmation: guild={interaction.guild_id}, user={interaction.user.id}"
-            )
+            flogger.debug(f"/prestige awaiting confirmation: guild={interaction.guild_id}, user={interaction.user.id}")
             warning_embed = discord.Embed(
                 title="⚠️ Prestige Confirmation",
                 description=(
@@ -704,9 +702,7 @@ class PlayerCog(commands.Cog):
                 player_resp = await self.http_client.post(f"{api_base}/players/", json=user_data, timeout=10)
                 if player_resp.status_code == 400:
                     # Guild not configured or player not registered
-                    await interaction.followup.send(
-                        "❌ Run `/profile` first to register as a player.", ephemeral=True
-                    )
+                    await interaction.followup.send("❌ Run `/profile` first to register as a player.", ephemeral=True)
                     return
                 player_resp.raise_for_status()
                 player_data = player_resp.json()
@@ -751,9 +747,7 @@ class PlayerCog(commands.Cog):
                             color=discord.Color.greyple(),
                         )
                 except discord.Forbidden:
-                    await interaction.followup.send(
-                        "❌ Bot doesn't have permission to manage roles.", ephemeral=True
-                    )
+                    await interaction.followup.send("❌ Bot doesn't have permission to manage roles.", ephemeral=True)
                     return
 
                 await interaction.followup.send(embed=embed, ephemeral=True)
@@ -797,9 +791,7 @@ class PlayerCog(commands.Cog):
                             color=discord.Color.greyple(),
                         )
                 except discord.Forbidden:
-                    await interaction.followup.send(
-                        "❌ Bot doesn't have permission to manage roles.", ephemeral=True
-                    )
+                    await interaction.followup.send("❌ Bot doesn't have permission to manage roles.", ephemeral=True)
                     return
 
                 await interaction.followup.send(embed=embed, ephemeral=True)
@@ -818,9 +810,7 @@ class PlayerCog(commands.Cog):
             else:
                 await report_api_error(interaction, e)
         except Exception as e:  # pylint: disable=broad-exception-caught
-            flogger.error(
-                f"/notifications error: guild={interaction.guild_id}, user={interaction.user.id}, error={e}"
-            )
+            flogger.error(f"/notifications error: guild={interaction.guild_id}, user={interaction.user.id}, error={e}")
             await interaction.followup.send("⚠️ An error occurred.", ephemeral=True)
 
     @notifications.error
@@ -841,9 +831,7 @@ class PlayerCog(commands.Cog):
 
             bh_role_id = config.get("bounty_hunter_role_id")
             if not bh_role_id:
-                await interaction.followup.send(
-                    "⚠️ No Bounty Hunter role is configured for this guild.", ephemeral=True
-                )
+                await interaction.followup.send("⚠️ No Bounty Hunter role is configured for this guild.", ephemeral=True)
                 return
 
             guild = interaction.guild

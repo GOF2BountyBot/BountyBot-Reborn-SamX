@@ -1052,9 +1052,7 @@ async def admin_remove_item(
                 if not inv_rows:
                     raise HTTPException(
                         status_code=404,
-                        detail=(
-                            f"Item '{request.item_name}' not found in player {player.id}'s inventory"
-                        ),
+                        detail=(f"Item '{request.item_name}' not found in player {player.id}'s inventory"),
                     )
                 if len(inv_rows) > 1:
                     # Defensive: cross-type name collision — shouldn't occur in current catalog

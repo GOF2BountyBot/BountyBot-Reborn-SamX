@@ -72,6 +72,7 @@ class TestShopAnnouncementsRoleSelectionLogic:
     def test_non_int_shop_announcement_falls_back(self):
         """A non-int shop_announcements_role_id (e.g. MagicMock) falls back to bounty_hunter."""
         from unittest.mock import MagicMock
+
         mention_role_id = self._select_mention_role(MagicMock(), 33333)
         assert mention_role_id == 33333
 
@@ -89,9 +90,7 @@ class TestShopRefreshExecutorSourceContainsFallback:
         )
         with open(executor_path) as f:
             source = f.read()
-        assert "shop_announcements_role_id" in source, (
-            "shop_refresh_executor.py must use shop_announcements_role_id"
-        )
+        assert "shop_announcements_role_id" in source, "shop_refresh_executor.py must use shop_announcements_role_id"
 
     def test_executor_source_has_fallback_pattern(self):
         """shop_refresh_executor source must have the fallback to bounty_hunter_role_id."""
@@ -122,9 +121,7 @@ class TestAdminRouterShopRefreshSourceContainsFallback:
         )
         with open(admin_path) as f:
             source = f.read()
-        assert "shop_announcements_role_id" in source, (
-            "admin.py refresh_shop must use shop_announcements_role_id"
-        )
+        assert "shop_announcements_role_id" in source, "admin.py refresh_shop must use shop_announcements_role_id"
 
 
 class TestGuildConfigModelHasField:
@@ -158,9 +155,7 @@ class TestMigrationFileExists:
             "versions",
             "0003_add_shop_announcements_role_id.py",
         )
-        assert os.path.exists(migration_path), (
-            "Migration file 0003_add_shop_announcements_role_id.py must exist"
-        )
+        assert os.path.exists(migration_path), "Migration file 0003_add_shop_announcements_role_id.py must exist"
         with open(migration_path) as f:
             source = f.read()
         assert "shop_announcements_role_id" in source

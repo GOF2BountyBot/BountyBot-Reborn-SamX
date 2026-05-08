@@ -315,6 +315,7 @@ class TestGetTagNonDictSetAttrRaises:
             response = client.get("/api/v1/tags/1234567890")
             # Should succeed — fallback to __dict__ then reconstruct
             assert response.status_code == 200
+            assert response.json()["status"] == "success"
 
     def test_get_tag_object_payload_no_dict_attribute(self):
         """When payload object has no __dict__ and setattr raises, channel_id still added."""
@@ -416,6 +417,7 @@ class TestCreateForumTagDeep:
             # → outer exception catches it → handle_discord_exception → 500
             response = client.post("/api/v1/channels/555555/tags", json={"name": "Tag", "emoji": "bad_emoji_str"})
             assert response.status_code == 500
+            assert "detail" in response.json()
 
     def test_create_channel_edit_attributeerror_uses_proxy_fallback(self):
         """Lines 153-159: channel.edit(payloads) raises AttributeError → _TagProxy fallback."""
@@ -592,6 +594,7 @@ class TestUpdateTagDeep:
             response = client.put("/api/v1/tags/1234567890", json={"emoji": "❌bad"})
             # normalize_emoji raises → status.HTTP_422 AttributeError → outer handler → 500
             assert response.status_code == 500
+            assert "detail" in response.json()
 
     def test_update_tag_no_edit_no_edit_tag_uses_payload_fallback(self):
         """Lines 250-283: no tag.edit, no channel.edit_tag → tags_to_edit_payload fallback."""
@@ -1058,6 +1061,7 @@ class TestGetTagDictFallbackWithEmoji:
             response = client.get("/api/v1/tags/1234567890")
             # normalize_emoji should have been called (line 91)
             assert response.status_code == 200
+            assert response.json()["status"] == "success"
             mock_norm.assert_called()
 
     def test_get_tag_frozen_payload_with_emoji_normalize_raises(self):
@@ -1172,6 +1176,7 @@ class TestCreateTagProxyToDictCalled:
             client = TestClient(app)
             response = client.post("/api/v1/channels/555555/tags", json={"name": "New Tag"})
             assert response.status_code == 201
+            assert response.json()["status"] == "created"
 
     def test_create_proxy_to_dict_is_invoked_with_id(self):
         """Lines 153-159: to_dict() called on proxy, payload HAS 'id' field (int-convertible)."""
@@ -1331,6 +1336,7 @@ class TestCreateFrozenPayloadWithEmoji:
             client = TestClient(app)
             response = client.post("/api/v1/channels/555555/tags", json={"name": "Emoji Create Tag"})
             assert response.status_code == 201
+            assert response.json()["status"] == "created"
             mock_norm.assert_called()
 
     def test_create_frozen_payload_with_emoji_normalize_raises(self):
@@ -1425,6 +1431,7 @@ class TestUpdateTagEditTagPath:
             client = TestClient(app)
             response = client.put("/api/v1/tags/1234567890", json={"name": "Updated"})
             assert response.status_code == 200
+            assert response.json()["status"] == "updated"
             # Verify edit_tag was called (not tag.edit)
             ch.edit_tag.assert_called_once()
 
@@ -1610,6 +1617,7 @@ class TestUpdateTagProxyToDictCalled:
             client = TestClient(app)
             response = client.put("/api/v1/tags/1234567890", json={"name": "Updated"})
             assert response.status_code == 200
+            assert response.json()["status"] == "updated"
 
     def test_update_proxy_to_dict_invoked_with_int_id(self):
         """Lines 271-274, 277: to_dict() called, payload has int-convertible 'id'."""
@@ -1759,6 +1767,7 @@ class TestUpdateTagOuterExceptBlock:
             # tag.edit raises RuntimeError → outer except (281-283) re-raises → handle_discord_exception → 500
             response = client.put("/api/v1/tags/1234567890", json={"name": "Updated"})
             assert response.status_code == 500
+            assert "detail" in response.json()
 
     def test_update_tag_edit_tag_raises_runtime_error(self):
         """Lines 281-283: channel.edit_tag() raises RuntimeError → outer except → re-raised."""
@@ -1846,6 +1855,7 @@ class TestUpdateTagDictResponseEmojiNormalizeRaises:
             # Dict response has emoji → normalize called at line 300 → raises → caught (301-302)
             response = client.put("/api/v1/tags/1234567890", json={"name": "Tag"})
             assert response.status_code == 200
+            assert response.json()["status"] == "updated"
 
     def test_update_dict_response_emoji_normalize_raises_with_emoji_in_request(self):
         """Lines 299-302: dict response emoji, normalize raises after update_kwargs normalize."""
@@ -1951,6 +1961,7 @@ class TestUpdateTagNonDictResponseEmojiPaths:
             # No emoji in request → tag.edit called → response is frozen object with emoji → normalize raises (318-319)
             response = client.put("/api/v1/tags/1234567890", json={"name": "Tag"})
             assert response.status_code == 200
+            assert response.json()["status"] == "updated"
 
     def test_update_non_dict_response_emoji_none_with_requested_emoji(self):
         """Lines 321-322: non-dict response, setattr raises, dict emoji=None, request emoji not None."""
@@ -2179,6 +2190,7 @@ class TestDeleteTagProxyToDictCalled:
             client = TestClient(app)
             response = client.delete("/api/v1/tags/1234567890")
             assert response.status_code == 200
+            assert response.json()["deleted"] is True
 
     def test_delete_proxy_to_dict_invoked_with_int_id(self):
         """Lines 404-407, 410: to_dict() called, payload dict has int-convertible 'id'."""

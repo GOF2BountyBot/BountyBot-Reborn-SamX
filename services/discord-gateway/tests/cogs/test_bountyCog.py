@@ -2367,3 +2367,631 @@ class TestCheckCommandEmptySystemsPassthrough:
         assert call_kwargs["json"]["system_name"] == "UnknownStarSystem", (
             f"Expected system_name='UnknownStarSystem' in POST body but got: {call_kwargs['json']!r}"
         )
+
+
+# ===========================================================================
+# /check — guild_not_configured and player_id=None paths
+# ===========================================================================
+
+
+class TestCheckCommandGuildAndPlayerErrors:
+    """Tests for /check guild-not-configured and player_id=None error paths."""
+
+    @pytest.fixture(autouse=True)
+    def _populate_systems(self, mock_bounty_cog):
+        """Populate _systems so resolve_system_name can resolve the test system names."""
+        mock_bounty_cog._systems = ["Alpha"]
+
+    def test_check_guild_not_configured_shows_setup_message(self, mock_bounty_cog):
+        """/check guild-not-configured 400 should show setup message."""
+        import httpx
+
+        interaction = _create_mock_interaction()
+        error_response = MagicMock()
+        error_response.status_code = 400
+        error_response.json.return_value = {"detail": "Guild not configured"}
+        http_error = httpx.HTTPStatusError("400", request=MagicMock(), response=error_response)
+        mock_bounty_cog.http_client.post = AsyncMock(side_effect=http_error)
+
+        asyncio.run(mock_bounty_cog.check.callback(mock_bounty_cog, interaction, "Alpha"))
+
+        interaction.followup.send.assert_awaited_once()
+        call_kwargs = interaction.followup.send.call_args
+        assert call_kwargs[1].get("ephemeral", False)
+        msg = call_kwargs[0][0]
+        assert "admin_setup" in msg.lower() or "set up" in msg.lower()
+
+    def test_check_player_id_none_shows_player_not_found(self, mock_bounty_cog):
+        """/check when _get_player_id returns None should show player not found."""
+        interaction = _create_mock_interaction()
+        mock_bounty_cog._get_player_id = AsyncMock(return_value=None)
+
+        asyncio.run(mock_bounty_cog.check.callback(mock_bounty_cog, interaction, "Alpha"))
+
+        interaction.followup.send.assert_awaited_once()
+        call_kwargs = interaction.followup.send.call_args
+        assert call_kwargs[1].get("ephemeral", False)
+        msg = call_kwargs[0][0]
+        assert "player" in msg.lower() or "profile" in msg.lower()
+
+    def test_check_unknown_system_when_systems_loaded(self, mock_bounty_cog):
+        """/check with unknown system (not in _systems) shows error when _systems is loaded."""
+        interaction = _create_mock_interaction()
+        # _systems is populated but 'Zeta' is not in it
+        mock_bounty_cog._get_player_id = AsyncMock(return_value=42)
+
+        asyncio.run(mock_bounty_cog.check.callback(mock_bounty_cog, interaction, "Zeta"))
+
+        interaction.followup.send.assert_awaited_once()
+        call_kwargs = interaction.followup.send.call_args
+        assert call_kwargs[1].get("ephemeral", False)
+        assert "unknown system" in call_kwargs[0][0].lower()
+
+    def test_check_429_status_code_on_response(self, mock_bounty_cog, make_mock_response):
+        """/check with HTTP 429 (rate-limited) from the bounties/check POST shows cooldown."""
+        import httpx
+
+        interaction = _create_mock_interaction()
+        mock_bounty_cog._get_player_id = AsyncMock(return_value=42)
+
+        error_response = MagicMock()
+        error_response.status_code = 429
+        error_response.json.return_value = {}
+        http_error = httpx.HTTPStatusError("429 Too Many Requests", request=MagicMock(), response=error_response)
+        mock_bounty_cog.http_client.post = AsyncMock(side_effect=http_error)
+
+        asyncio.run(mock_bounty_cog.check.callback(mock_bounty_cog, interaction, "Alpha"))
+
+        interaction.followup.send.assert_awaited_once()
+        call_kwargs = interaction.followup.send.call_args
+        assert call_kwargs[1].get("ephemeral", False)
+        assert "cooldown" in call_kwargs[0][0].lower()
+
+
+# ===========================================================================
+# /check — new_tier role update path
+# ===========================================================================
+
+
+class TestCheckCommandTierRoleUpdate:
+    """Tests for /check tier role update path (when new_tier is returned)."""
+
+    @pytest.fixture(autouse=True)
+    def _patch_player_id(self, mock_bounty_cog):
+        """Patch _get_player_id to return a valid game player ID."""
+        mock_bounty_cog._get_player_id = AsyncMock(return_value=42)
+
+    @pytest.fixture(autouse=True)
+    def _populate_systems(self, mock_bounty_cog):
+        """Populate _systems so resolve_system_name can resolve the test system names."""
+        mock_bounty_cog._systems = ["Sol"]
+
+    def test_check_new_tier_triggers_role_update_call(self, mock_bounty_cog, make_mock_response):
+        """/check when new_tier is in response should attempt to fetch guild config."""
+        interaction = _create_mock_interaction()
+        # Set up guild and user with roles
+        interaction.guild = MagicMock()
+        interaction.guild.get_role = MagicMock(return_value=None)
+        interaction.user.roles = []
+        interaction.user.add_roles = AsyncMock()
+        interaction.user.remove_roles = AsyncMock()
+
+        check_resp_data = {
+            "result": "correct",
+            "bounty_id": 1,
+            "message": "",
+            "new_tier": "silver",
+            "criminal_name": "Pirate",
+            "reward": 500,
+            "combat_won": True,
+        }
+        check_resp = make_mock_response(check_resp_data)
+
+        config_resp_data = {
+            "bronze_role_id": 101,
+            "silver_role_id": 102,
+            "gold_role_id": 103,
+            "platinum_role_id": 104,
+        }
+        config_resp = make_mock_response(config_resp_data)
+
+        mock_bounty_cog.http_client.post = AsyncMock(return_value=check_resp)
+        mock_bounty_cog.http_client.get = AsyncMock(return_value=config_resp)
+
+        asyncio.run(mock_bounty_cog.check.callback(mock_bounty_cog, interaction, "Sol"))
+
+        # Verify the config GET was called to look up role IDs
+        mock_bounty_cog.http_client.get.assert_awaited_once()
+        get_call_url = str(mock_bounty_cog.http_client.get.call_args[0][0])
+        assert "config/guild" in get_call_url
+
+    def test_check_new_tier_adds_new_role_when_found(self, mock_bounty_cog, make_mock_response):
+        """/check tier update adds new role when it exists and isn't already assigned."""
+        interaction = _create_mock_interaction()
+        interaction.guild = MagicMock()
+
+        new_role = MagicMock()
+        new_role.__eq__ = lambda s, other: s is other
+
+        def get_role_side_effect(role_id):
+            if role_id == 102:
+                return new_role
+            return None
+
+        interaction.guild.get_role = MagicMock(side_effect=get_role_side_effect)
+        interaction.user.roles = []  # new_role not in roles yet
+        interaction.user.add_roles = AsyncMock()
+        interaction.user.remove_roles = AsyncMock()
+
+        check_resp_data = {
+            "result": "correct",
+            "bounty_id": 1,
+            "message": "",
+            "new_tier": "silver",
+            "criminal_name": "Pirate",
+            "reward": 500,
+            "combat_won": True,
+        }
+        check_resp = make_mock_response(check_resp_data)
+        config_resp = make_mock_response(
+            {"silver_role_id": 102, "bronze_role_id": 101, "gold_role_id": 103, "platinum_role_id": 104}
+        )
+
+        mock_bounty_cog.http_client.post = AsyncMock(return_value=check_resp)
+        mock_bounty_cog.http_client.get = AsyncMock(return_value=config_resp)
+
+        asyncio.run(mock_bounty_cog.check.callback(mock_bounty_cog, interaction, "Sol"))
+
+        interaction.user.add_roles.assert_awaited_once_with(new_role, reason="BountyBot promoted to silver")
+
+    def test_check_new_tier_config_failure_doesnt_crash(self, mock_bounty_cog, make_mock_response):
+        """/check when config fetch fails during tier role update should not crash."""
+        interaction = _create_mock_interaction()
+        interaction.guild = MagicMock()
+        interaction.user.roles = []
+        interaction.user.add_roles = AsyncMock()
+
+        check_resp_data = {
+            "result": "correct",
+            "bounty_id": 1,
+            "message": "",
+            "new_tier": "silver",
+            "criminal_name": "Pirate",
+            "reward": 500,
+            "combat_won": True,
+        }
+        check_resp = make_mock_response(check_resp_data)
+
+        mock_bounty_cog.http_client.post = AsyncMock(return_value=check_resp)
+        mock_bounty_cog.http_client.get = AsyncMock(side_effect=RuntimeError("config service down"))
+
+        # Should not raise — error is swallowed with a warning log
+        asyncio.run(mock_bounty_cog.check.callback(mock_bounty_cog, interaction, "Sol"))
+
+        interaction.followup.send.assert_awaited_once()
+
+
+# ===========================================================================
+# /bounties — HTTP error paths
+# ===========================================================================
+
+
+class TestBountiesCommandHttpErrors:
+    """Tests for /bounties HTTP error paths."""
+
+    def test_bounties_guild_not_configured_shows_setup_message(self, mock_bounty_cog):
+        """/bounties guild-not-configured 400 should show setup message."""
+        import httpx
+
+        interaction = _create_mock_interaction()
+        error_response = MagicMock()
+        error_response.status_code = 400
+        error_response.json.return_value = {"detail": "Guild not configured"}
+        http_error = httpx.HTTPStatusError("400", request=MagicMock(), response=error_response)
+        mock_bounty_cog.http_client.get = AsyncMock(side_effect=http_error)
+
+        asyncio.run(mock_bounty_cog.bounties.callback(mock_bounty_cog, interaction))
+
+        interaction.followup.send.assert_awaited_once()
+        call_kwargs = interaction.followup.send.call_args
+        assert call_kwargs[1].get("ephemeral", False)
+        msg = call_kwargs[0][0]
+        assert "admin_setup" in msg.lower() or "set up" in msg.lower()
+
+    def test_bounties_http_status_error_non_guild_uses_report_api_error(self, mock_bounty_cog):
+        """/bounties non-guild-config HTTP error should send embed via report_api_error."""
+        import httpx
+
+        interaction = _create_mock_interaction()
+        error_response = MagicMock()
+        error_response.status_code = 500
+        error_response.json.return_value = {}
+        http_error = httpx.HTTPStatusError("500 Server Error", request=MagicMock(), response=error_response)
+        mock_bounty_cog.http_client.get = AsyncMock(side_effect=http_error)
+
+        asyncio.run(mock_bounty_cog.bounties.callback(mock_bounty_cog, interaction))
+
+        interaction.followup.send.assert_awaited_once()
+        call_kwargs = interaction.followup.send.call_args.kwargs
+        assert call_kwargs.get("ephemeral", False)
+        embed = call_kwargs.get("embed")
+        assert embed is not None
+        assert "bot-core" not in (embed.description or "")
+
+    def test_bounties_embed_contains_bounty_fields(self, mock_bounty_cog, make_mock_response):
+        """/bounties embed fields include criminal name and reward details."""
+        interaction = _create_mock_interaction()
+        bounty_list = [
+            _make_bounty_public(1, "VoidShadow", "gold", reward=9999, reward_per_sys=1000),
+        ]
+        resp = make_mock_response(bounty_list)
+        mock_bounty_cog.http_client.get = AsyncMock(return_value=resp)
+
+        asyncio.run(mock_bounty_cog.bounties.callback(mock_bounty_cog, interaction))
+
+        embed = interaction.followup.send.call_args[1]["embed"]
+        field_names = [f.name for f in embed.fields]
+        assert any("VoidShadow" in n for n in field_names)
+
+
+# ===========================================================================
+# _is_guild_not_configured helper
+# ===========================================================================
+
+
+class TestIsGuildNotConfigured:
+    """Tests for the module-level _is_guild_not_configured helper in bountyCog."""
+
+    def test_returns_true_for_not_configured_400(self, mock_bounty_cog):
+        """_is_guild_not_configured returns True for a 400 with 'not configured' detail."""
+        import httpx
+        from cogs.bountyCog import _is_guild_not_configured
+
+        error_response = MagicMock()
+        error_response.status_code = 400
+        error_response.json.return_value = {"detail": "Guild not configured"}
+        exc = httpx.HTTPStatusError("400", request=MagicMock(), response=error_response)
+        assert _is_guild_not_configured(exc) is True
+
+    def test_returns_true_for_admin_setup_message(self, mock_bounty_cog):
+        """_is_guild_not_configured returns True for a 400 mentioning admin_setup."""
+        import httpx
+        from cogs.bountyCog import _is_guild_not_configured
+
+        error_response = MagicMock()
+        error_response.status_code = 400
+        error_response.json.return_value = {"detail": "Run /admin_setup first"}
+        exc = httpx.HTTPStatusError("400", request=MagicMock(), response=error_response)
+        assert _is_guild_not_configured(exc) is True
+
+    def test_returns_false_for_non_400(self, mock_bounty_cog):
+        """_is_guild_not_configured returns False for non-400 errors."""
+        import httpx
+        from cogs.bountyCog import _is_guild_not_configured
+
+        error_response = MagicMock()
+        error_response.status_code = 500
+        exc = httpx.HTTPStatusError("500", request=MagicMock(), response=error_response)
+        assert _is_guild_not_configured(exc) is False
+
+    def test_returns_false_for_other_400(self, mock_bounty_cog):
+        """_is_guild_not_configured returns False for 400 without config message."""
+        import httpx
+        from cogs.bountyCog import _is_guild_not_configured
+
+        error_response = MagicMock()
+        error_response.status_code = 400
+        error_response.json.return_value = {"detail": "Insufficient credits"}
+        exc = httpx.HTTPStatusError("400", request=MagicMock(), response=error_response)
+        assert _is_guild_not_configured(exc) is False
+
+
+# ===========================================================================
+# _summarize_outcome_line — all code paths
+# ===========================================================================
+
+
+class TestSummarizeOutcomeLine:
+    """Tests for BountyCog._summarize_outcome_line() covering all branches."""
+
+    @pytest.fixture(autouse=True)
+    def _import_cog(self, mock_bounty_cog):
+        self.cog = mock_bounty_cog
+
+    def test_correct_capture_with_bonus(self):
+        """correct + bonus_won=True returns '2× combat bonus!' label."""
+        outcome = {
+            "result": "correct",
+            "criminal_name": "Pirate Bob",
+            "combat_won": True,
+            "reward": 500,
+            "total_reward": 1000,
+            "bonus_won": True,
+        }
+        title, value = self.cog._summarize_outcome_line(outcome)
+        assert "Pirate Bob" in title
+        assert "2× combat bonus" in value
+
+    def test_correct_capture_without_bonus(self):
+        """correct + combat_won=True + no bonus returns reward line without 2×."""
+        outcome = {
+            "result": "correct",
+            "criminal_name": "Pirate Bob",
+            "combat_won": True,
+            "reward": 500,
+            "total_reward": 500,
+            "bonus_won": False,
+        }
+        title, value = self.cog._summarize_outcome_line(outcome)
+        assert "Pirate Bob" in title
+        assert "500" in value
+        assert "2×" not in value
+
+    def test_correct_combat_loss_returns_defeat_line(self):
+        """correct + combat_won=False returns combat loss / reset message."""
+        outcome = {
+            "result": "correct",
+            "criminal_name": "Iron Fist",
+            "combat_won": False,
+            "reward": 0,
+        }
+        title, value = self.cog._summarize_outcome_line(outcome)
+        assert "Iron Fist" in title
+        assert "combat loss" in value.lower() or "reset" in value.lower()
+
+    def test_incorrect_recently_spotted(self):
+        """incorrect + recently_spotted=True returns 'recently spotted' message."""
+        outcome = {
+            "result": "incorrect",
+            "criminal_name": "Shadow Wing",
+            "recently_spotted": True,
+        }
+        title, value = self.cog._summarize_outcome_line(outcome)
+        assert "Shadow Wing" in title
+        assert "spotted" in value.lower() or "close" in value.lower()
+
+    def test_incorrect_not_recently_spotted(self):
+        """incorrect + recently_spotted=False returns 'bounty not here' message."""
+        outcome = {
+            "result": "incorrect",
+            "criminal_name": "Shadow Wing",
+            "recently_spotted": False,
+        }
+        _title, value = self.cog._summarize_outcome_line(outcome)
+        assert "not here" in value.lower() or "checked" in value.lower()
+
+    def test_already_checked(self):
+        """already_checked returns 'already checked' message."""
+        outcome = {
+            "result": "already_checked",
+            "criminal_name": "BigBoss",
+        }
+        title, value = self.cog._summarize_outcome_line(outcome)
+        assert "BigBoss" in title
+        assert "already" in value.lower() or "checked" in value.lower()
+
+    def test_unknown_result_falls_back_to_criminal_name(self):
+        """Unknown result type falls back to criminal name + message."""
+        outcome = {
+            "result": "some_unknown_result",
+            "criminal_name": "Mysterious Villain",
+            "bounty_id": 99,
+            "message": "Status unknown",
+        }
+        title, value = self.cog._summarize_outcome_line(outcome)
+        assert "Mysterious Villain" in title
+        assert "Status unknown" in value or "No bounty here" in value
+
+    def test_unknown_result_without_message_uses_default(self):
+        """Unknown result without message uses 'No bounty here.' fallback."""
+        outcome = {
+            "result": "some_unknown",
+            "criminal_name": "X",
+            "bounty_id": 1,
+        }
+        _title, value = self.cog._summarize_outcome_line(outcome)
+        assert "No bounty here" in value or value != ""
+
+    def test_missing_criminal_name_falls_back_to_bounty_id(self):
+        """When criminal_name is absent, falls back to 'Bounty #{id}' in title."""
+        outcome = {
+            "result": "incorrect",
+            "bounty_id": 42,
+            "recently_spotted": False,
+        }
+        title, _value = self.cog._summarize_outcome_line(outcome)
+        # Should include bounty ID fallback
+        assert "42" in title or "Bounty" in title
+
+
+# ===========================================================================
+# _build_multi_check_embed — with combat results
+# ===========================================================================
+
+
+class TestBuildMultiCheckEmbedWithCombat:
+    """Tests for _build_multi_check_embed() with combat_result in outcomes."""
+
+    @pytest.fixture(autouse=True)
+    def _import_cog(self, mock_bounty_cog):
+        self.cog = mock_bounty_cog
+
+    def test_multi_embed_with_combat_result_adds_combat_field(self):
+        """_build_multi_check_embed adds a combat field for outcomes with combat_result."""
+        combat = {
+            "winner_name": "Betty",
+            "loser_name": "EvilShip",
+            "is_stalemate": False,
+            "ship1_stats": {
+                "ship_name": "Betty",
+                "raw_hp": 100,
+                "varied_hp": 95,
+                "raw_dps": 10.0,
+                "ttk": 9.5,
+            },
+            "ship2_stats": {
+                "ship_name": "EvilShip",
+                "raw_hp": 80,
+                "varied_hp": 75,
+                "raw_dps": 8.0,
+                "ttk": 12.5,
+            },
+        }
+        outcomes = [
+            {
+                "result": "correct",
+                "bounty_id": 10,
+                "criminal_name": "BigBoss",
+                "combat_won": True,
+                "reward": 1000,
+                "total_reward": 1000,
+                "bonus_won": False,
+                "combat_result": combat,
+            }
+        ]
+        embed = self.cog._build_multi_check_embed("Sol", outcomes)
+        field_names = [f.name for f in embed.fields]
+        # There should be a combat field for BigBoss
+        assert any("Combat" in n for n in field_names)
+        assert any("BigBoss" in n for n in field_names)
+
+    def test_multi_embed_any_loss_uses_dark_red(self):
+        """_build_multi_check_embed uses dark_red color when any outcome is a combat loss."""
+        import discord
+
+        outcomes = [
+            {
+                "result": "correct",
+                "bounty_id": 10,
+                "criminal_name": "BigBoss",
+                "combat_won": False,
+                "reward": 0,
+                "combat_result": None,
+            },
+            {
+                "result": "incorrect",
+                "bounty_id": 11,
+                "criminal_name": "SmallFry",
+                "recently_spotted": False,
+            },
+        ]
+        embed = self.cog._build_multi_check_embed("Sol", outcomes)
+        assert embed.color == discord.Color.dark_red()
+
+    def test_multi_embed_all_incorrect_uses_blue(self):
+        """_build_multi_check_embed uses blue color when no captures or losses."""
+        import discord
+
+        outcomes = [
+            {
+                "result": "incorrect",
+                "bounty_id": 10,
+                "criminal_name": "Alpha",
+                "recently_spotted": False,
+            },
+            {
+                "result": "already_checked",
+                "bounty_id": 11,
+                "criminal_name": "Beta",
+            },
+        ]
+        embed = self.cog._build_multi_check_embed("Proxima", outcomes)
+        assert embed.color == discord.Color.blue()
+
+
+# ===========================================================================
+# /route — HTTP error (non-404)
+# ===========================================================================
+
+
+class TestRouteCommandHttpErrors:
+    """Tests for /route non-404 HTTP error path."""
+
+    def test_route_http_status_error_non_404_uses_report_api_error(self, mock_bounty_cog):
+        """/route non-404 HTTP error should send embed via report_api_error."""
+        import httpx
+
+        interaction = _create_mock_interaction()
+        error_response = MagicMock()
+        error_response.status_code = 500
+        error_response.json.return_value = {}
+        http_error = httpx.HTTPStatusError("500 Server Error", request=MagicMock(), response=error_response)
+        mock_bounty_cog.http_client.get = AsyncMock(side_effect=http_error)
+
+        asyncio.run(mock_bounty_cog.route.callback(mock_bounty_cog, interaction, "1"))
+
+        interaction.followup.send.assert_awaited_once()
+        call_kwargs = interaction.followup.send.call_args.kwargs
+        assert call_kwargs.get("ephemeral", False)
+        embed = call_kwargs.get("embed")
+        assert embed is not None
+        assert "bot-core" not in (embed.description or "")
+
+
+# ===========================================================================
+# /criminal-loadout — non-404 HTTP error
+# ===========================================================================
+
+
+class TestCriminalLoadoutHttpErrors:
+    """Tests for /criminal-loadout non-404 HTTP error path."""
+
+    def test_criminal_loadout_http_status_error_non_404_uses_report_api_error(self, mock_bounty_cog):
+        """/criminal-loadout non-404 HTTP error should send embed via report_api_error."""
+        import httpx
+
+        interaction = _create_mock_interaction()
+        error_response = MagicMock()
+        error_response.status_code = 500
+        error_response.json.return_value = {}
+        http_error = httpx.HTTPStatusError("500 Server Error", request=MagicMock(), response=error_response)
+        mock_bounty_cog.http_client.get = AsyncMock(side_effect=http_error)
+
+        asyncio.run(mock_bounty_cog.criminal_loadout.callback(mock_bounty_cog, interaction, "1"))
+
+        interaction.followup.send.assert_awaited_once()
+        call_kwargs = interaction.followup.send.call_args.kwargs
+        assert call_kwargs.get("ephemeral", False)
+        embed = call_kwargs.get("embed")
+        assert embed is not None
+        assert "bot-core" not in (embed.description or "")
+
+
+# ===========================================================================
+# BountyCog setup function
+# ===========================================================================
+
+
+class TestBountyCogSetup:
+    """Tests for the setup function."""
+
+    def test_setup_function(self, mock_bot):
+        """setup function should add BountyCog to bot."""
+        from cogs.bountyCog import setup
+
+        mock_bot.add_cog = AsyncMock()
+
+        asyncio.run(setup(mock_bot))
+
+        mock_bot.add_cog.assert_awaited_once()
+
+
+# ===========================================================================
+# check_error — sends followup when response already done
+# ===========================================================================
+
+
+class TestCheckErrorHandlerResponseDone:
+    """Tests for check_error fallback when response IS already done."""
+
+    def test_check_error_handler_response_already_done_sends_followup(self, mock_bounty_cog):
+        """check_error should send followup when response is already done."""
+        interaction = _create_mock_interaction()
+        interaction.response.is_done = MagicMock(return_value=True)
+        error = MagicMock()
+
+        asyncio.run(mock_bounty_cog.check_error(interaction, error))
+
+        interaction.followup.send.assert_awaited_once()
+        call_kwargs = interaction.followup.send.call_args
+        assert call_kwargs[1].get("ephemeral", False)

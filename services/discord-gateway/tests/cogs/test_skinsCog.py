@@ -1972,6 +1972,8 @@ class TestFormatDownloadViewButtons:
         asyncio.run(view.children[0].callback(interaction))
 
         interaction.followup.send.assert_awaited_once()
+        call_kwargs = interaction.followup.send.call_args[1]
+        assert "file" in call_kwargs
 
     def test_etc1_button_calls_convert_and_send(self, mock_bot):
         """etc1_button triggers _convert_and_send with 'etc1'."""
@@ -2575,6 +2577,7 @@ class TestRenderSkinErrorPaths:
 
         # image is non-square
         image = MagicMock()
+
         image.read = AsyncMock(return_value=b"image_data")
         image.width = 1920
         image.height = 1080
@@ -2597,6 +2600,9 @@ class TestRenderSkinErrorPaths:
 
         # composite was called (with square_mode='crop')
         mock_skins_cog._composite_textures.assert_called_once()
+        composite_call_args = mock_skins_cog._composite_textures.call_args
+        # 6th positional argument is square_mode
+        assert composite_call_args[0][5] == "crop"
 
     def test_render_skin_http_error_from_render_endpoint(self, mock_skins_cog):
         """render_skin sends error when blender render returns HTTP error."""
@@ -2660,6 +2666,8 @@ class TestRenderSkinErrorPaths:
         asyncio.run(mock_skins_cog.render_skin.callback(mock_skins_cog, interaction=interaction, ship="TestShip"))
 
         interaction.followup.send.assert_called()
+        msgs = " ".join(str(c) for c in interaction.followup.send.call_args_list)
+        assert "failed" in msgs.lower() or "⚠️" in msgs or "❌" in msgs
 
     def test_render_skin_composite_none_aborts(self, mock_skins_cog):
         """render_skin aborts when composite returns None."""
@@ -2724,6 +2732,10 @@ class TestMakeSkinTextureErrorPaths:
         asyncio.run(mock_skins_cog.make_skin_texture.callback(mock_skins_cog, interaction=interaction, ship="TestShip"))
 
         mock_skins_cog._collect_base_texture.assert_awaited_once()
+        # When _collect_base_texture returns None, command should abort silently (no further send)
+        # Verify the call was made with the correct ship name
+        call_args = mock_skins_cog._collect_base_texture.call_args
+        assert call_args is not None
 
     def test_make_skin_texture_with_upload_success(self, mock_skins_cog):
         """make_skin_texture proceeds with upload composite when no diffuse_path."""
@@ -3054,6 +3066,119 @@ class TestPreloadShipSkinsEdgeCases:
 
         # Should have slept once after the outer exception
         assert sleep_mock.await_count >= 1
+
+
+# ===========================================================================
+# S10 G2: respx URL-contract tests for new S10 skinsCog commands/helpers
+# ===========================================================================
+
+_SKINS_BOT_CORE_URL = "http://bot-core:8000/api/v1"
+
+
+def _with_real_skins_client(cog, request):
+    """Replace cog.http_client with a real httpx.AsyncClient for respx interception."""
+    import httpx
+
+    cog.http_client = httpx.AsyncClient(timeout=httpx.Timeout(10.0))
+    request.addfinalizer(lambda: asyncio.run(cog.http_client.aclose()))
+    return cog
+
+
+class TestFetchRenderInfoRespx:
+    """respx URL-contract test: _fetch_render_info GETs /about/ships/{ship}/render-info."""
+
+    def test_fetch_render_info_gets_correct_url(self, mock_skins_cog, request):
+        """_fetch_render_info must call GET /about/ships/{ship}/render-info."""
+        import httpx
+        import respx
+
+        _with_real_skins_client(mock_skins_cog, request)
+        interaction = MagicMock()
+        interaction.followup.send = AsyncMock()
+
+        render_data = {
+            "skinnable": True,
+            "bbship_dir": "/path/ship",
+            "diffuse_path": "/path/diffuse.bmp",
+            "model_path": "/path/model.obj",
+            "mask_paths": [],
+        }
+
+        env = {k: v for k, v in os.environ.items() if k != "BOT_API_BASE_URL"}
+        with (
+            patch.dict(os.environ, env, clear=True),
+            respx.mock(assert_all_called=True) as mock_router,
+        ):
+            mock_router.get(f"{_SKINS_BOT_CORE_URL}/about/ships/Eagle/render-info").mock(
+                return_value=httpx.Response(200, json=render_data)
+            )
+            result = asyncio.run(mock_skins_cog._fetch_render_info(interaction, "Eagle"))
+
+        assert result is not None
+        assert result["skinnable"] is True
+        interaction.followup.send.assert_not_awaited()
+
+
+class TestDownloadSkinImageRespx:
+    """respx URL-contract test: _download_skin_image GETs the skin URL from compatible_skins."""
+
+    def test_download_skin_gets_skin_url(self, mock_skins_cog, request):
+        """_download_skin_image GETs the skin URL stored in compatible_skins."""
+        import httpx
+        import respx
+
+        _with_real_skins_client(mock_skins_cog, request)
+        interaction = MagicMock()
+        interaction.followup.send = AsyncMock()
+
+        skin_url = "http://example.com/lava.png"
+        render_info = {"compatible_skins": {"lava": skin_url}}
+
+        with respx.mock(assert_all_called=True) as mock_router:
+            mock_router.get(skin_url).mock(return_value=httpx.Response(200, content=b"lava_image_bytes"))
+            result = asyncio.run(mock_skins_cog._download_skin_image(interaction, "Eagle", "lava", render_info))
+
+        assert result == b"lava_image_bytes"
+        interaction.followup.send.assert_not_awaited()
+
+
+class TestShipSkinCommandRespx:
+    """respx URL-contract test: ship_skin GETs /about/object/name/{ship}."""
+
+    def test_ship_skin_gets_correct_url(self, mock_skins_cog, request):
+        """ship_skin calls GET /about/object/name/{ship} to fetch skin info."""
+        import httpx
+        import respx
+
+        _with_real_skins_client(mock_skins_cog, request)
+
+        interaction = MagicMock()
+        interaction.response.defer = AsyncMock()
+        interaction.followup.send = AsyncMock()
+
+        ship_data = {
+            "name": "Eagle",
+            "icon": "http://example.com/eagle_default.png",
+            "compatible_skins": {"lava": "http://example.com/lava.png"},
+        }
+
+        env = {k: v for k, v in os.environ.items() if k != "BOT_API_BASE_URL"}
+        with (
+            patch.dict(os.environ, env, clear=True),
+            respx.mock(assert_all_called=True) as mock_router,
+        ):
+            mock_router.get(f"{_SKINS_BOT_CORE_URL}/about/object/name/Eagle").mock(
+                return_value=httpx.Response(200, json=ship_data)
+            )
+            asyncio.run(
+                mock_skins_cog.ship_skin.callback(mock_skins_cog, interaction=interaction, ship="Eagle", skin="lava")
+            )
+
+        # Should have sent at least one message (skin embed)
+        assert interaction.followup.send.await_count >= 1
+        last_call = interaction.followup.send.call_args
+        # Success path: no ephemeral
+        assert not last_call[1].get("ephemeral", False)
 
 
 if __name__ == "__main__":

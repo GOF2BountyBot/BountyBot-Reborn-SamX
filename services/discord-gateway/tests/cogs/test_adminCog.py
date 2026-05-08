@@ -3418,6 +3418,8 @@ class TestAdminRefreshShop:
         asyncio.run(mock_admin_cog.admin_refresh_shop.callback(mock_admin_cog, interaction, "Bronze", None))
 
         interaction.followup.send.assert_awaited_once()
+        call_args = interaction.followup.send.call_args
+        assert call_args[1].get("ephemeral") is True
 
     def test_refresh_shop_not_admin_sends_denial(self, mock_admin_cog):
         """admin_refresh_shop rejects non-admin user."""
@@ -3496,6 +3498,8 @@ class TestAdminGuildStats:
         asyncio.run(mock_admin_cog.admin_guild_stats.callback(mock_admin_cog, interaction))
 
         interaction.followup.send.assert_awaited_once()
+        call_args = interaction.followup.send.call_args
+        assert call_args[1].get("ephemeral") is True
 
     def test_guild_stats_generic_exception(self, mock_admin_cog):
         """admin_guild_stats handles unexpected exception."""
@@ -3673,6 +3677,8 @@ class TestAdminConfig:
         asyncio.run(mock_admin_cog.admin_config.callback(mock_admin_cog, interaction, "view", None, None))
 
         interaction.followup.send.assert_awaited_once()
+        call_args = interaction.followup.send.call_args
+        assert call_args[1].get("ephemeral") is True
 
     def test_admin_config_generic_exception(self, mock_admin_cog):
         """admin_config handles unexpected exception."""
@@ -3854,6 +3860,8 @@ class TestAdminConfigShop:
         )
 
         interaction.followup.send.assert_awaited_once()
+        call_args = interaction.followup.send.call_args
+        assert call_args[1].get("ephemeral") is True
 
     def test_admin_config_shop_generic_exception(self, mock_admin_cog):
         """admin_config_shop handles unexpected exception."""
@@ -3962,6 +3970,8 @@ class TestAdminConfigValidate:
         asyncio.run(mock_admin_cog.admin_config_validate.callback(mock_admin_cog, interaction))
 
         interaction.followup.send.assert_awaited_once()
+        call_args = interaction.followup.send.call_args
+        assert call_args[1].get("ephemeral") is True
 
     def test_config_validate_generic_exception(self, mock_admin_cog):
         """admin_config_validate handles unexpected exception."""
@@ -4098,6 +4108,8 @@ class TestRenderConfig:
             asyncio.run(mock_admin_cog.render_config.callback(mock_admin_cog, interaction, "view", None, None))
 
         interaction.followup.send.assert_awaited_once()
+        call_args = interaction.followup.send.call_args
+        assert call_args[1].get("ephemeral") is True
 
     def test_render_config_generic_exception(self, mock_admin_cog):
         """render_config handles generic exception."""
@@ -4162,6 +4174,8 @@ class TestRenderCacheClear:
             asyncio.run(mock_admin_cog.render_cache_clear.callback(mock_admin_cog, interaction))
 
         interaction.followup.send.assert_awaited_once()
+        call_args = interaction.followup.send.call_args
+        assert call_args[1].get("ephemeral") is True
 
     def test_render_cache_clear_generic_exception(self, mock_admin_cog):
         """render_cache_clear handles generic exception."""
@@ -4519,6 +4533,8 @@ class TestAdminGiveItem:
         asyncio.run(mock_admin_cog.admin_give_item.callback(mock_admin_cog, interaction, user, "Laser Cannon", 1))
 
         interaction.followup.send.assert_awaited_once()
+        call_args = interaction.followup.send.call_args
+        assert call_args[1].get("ephemeral") is True
 
 
 class TestAdminRemoveItem:
@@ -4890,6 +4906,8 @@ class TestAdminDuel:
         asyncio.run(mock_admin_cog.admin_duel.callback(mock_admin_cog, interaction, "all"))
 
         interaction.followup.send.assert_awaited_once()
+        call_args = interaction.followup.send.call_args
+        assert call_args[1].get("ephemeral") is True
 
     def test_admin_duel_cancel_specific_generic_exception(self, mock_admin_cog):
         """admin_duel with specific ID handles generic exception."""
@@ -5063,6 +5081,8 @@ class TestAdminSpawnBountyAdditional:
         asyncio.run(mock_admin_cog.admin_spawn_bounty.callback(mock_admin_cog, interaction, None))
 
         interaction.followup.send.assert_awaited_once()
+        call_args = interaction.followup.send.call_args
+        assert call_args[1].get("ephemeral") is True
 
 
 class TestAdminConfigBounty:
@@ -5188,6 +5208,8 @@ class TestAdminConfigBounty:
         )
 
         interaction.followup.send.assert_awaited_once()
+        call_args = interaction.followup.send.call_args
+        assert call_args[1].get("ephemeral") is True
 
 
 class TestRemoveItemAutocomplete:
@@ -5269,6 +5291,356 @@ class TestRemoveItemAutocomplete:
         assert "Laser Cannon" in names
         # No HTTP GET calls (served from cache)
         mock_admin_cog.http_client.get.assert_not_called()
+
+
+# ===========================================================================
+# S10 G2: respx URL-contract tests for new S10 adminCog commands
+# ===========================================================================
+
+_BOT_CORE_URL = "http://bot-core:8000/api/v1"
+_BLENDER_URL = "http://blender-service:8001/api/v1"
+
+
+def _with_real_http_client(cog, request):
+    """Replace cog.http_client with a real httpx.AsyncClient for respx interception."""
+    import httpx
+
+    cog.http_client = httpx.AsyncClient(timeout=httpx.Timeout(10.0))
+    request.addfinalizer(lambda: asyncio.run(cog.http_client.aclose()))
+    return cog
+
+
+class TestAdminRefreshShopRespx:
+    """respx URL-contract test: admin_refresh_shop POSTs to /admin/shops/refresh."""
+
+    def test_refresh_shop_posts_to_correct_url(self, mock_admin_cog, request):
+        import httpx
+        import respx
+
+        _with_real_http_client(mock_admin_cog, request)
+        interaction = _create_mock_interaction()
+        interaction.guild_id = 987654321
+
+        env = {k: v for k, v in os.environ.items() if k != "BOT_API_BASE_URL"}
+        with (
+            patch.dict(os.environ, env, clear=True),
+            patch("os.getenv", side_effect=lambda k, d="": "" if k == "DEVELOPERS" else os.environ.get(k, d)),
+            respx.mock(assert_all_called=True) as mock_router,
+        ):
+            mock_router.post(f"{_BOT_CORE_URL}/admin/shops/refresh").mock(
+                return_value=httpx.Response(200, json={"message": "Shop refreshed"})
+            )
+            asyncio.run(mock_admin_cog.admin_refresh_shop.callback(mock_admin_cog, interaction, "Bronze", None))
+
+        interaction.followup.send.assert_awaited_once()
+        embed = interaction.followup.send.call_args[1]["embed"]
+        assert "Refreshed" in embed.title or "✅" in embed.title
+
+
+class TestAdminGuildStatsRespx:
+    """respx URL-contract test: admin_guild_stats GETs /admin/guilds/{guild_id}/stats."""
+
+    def test_guild_stats_gets_correct_url(self, mock_admin_cog, request):
+        import httpx
+        import respx
+
+        _with_real_http_client(mock_admin_cog, request)
+        interaction = _create_mock_interaction()
+        interaction.guild_id = 987654321
+        interaction.guild = MagicMock()
+        interaction.guild.name = "Test Guild"
+        interaction.guild.icon = None
+
+        stats_json = {
+            "guild_id": 987654321,
+            "total_players": 5,
+            "tier_distribution": {"Bronze": 3},
+            "total_credits": 1000,
+            "total_xp": 500,
+            "average_credits": 200.0,
+            "average_xp": 100.0,
+        }
+
+        env = {k: v for k, v in os.environ.items() if k != "BOT_API_BASE_URL"}
+        with (
+            patch.dict(os.environ, env, clear=True),
+            patch("os.getenv", side_effect=lambda k, d="": "" if k == "DEVELOPERS" else os.environ.get(k, d)),
+            respx.mock(assert_all_called=True) as mock_router,
+        ):
+            mock_router.get(f"{_BOT_CORE_URL}/admin/guilds/987654321/stats").mock(
+                return_value=httpx.Response(200, json=stats_json)
+            )
+            asyncio.run(mock_admin_cog.admin_guild_stats.callback(mock_admin_cog, interaction))
+
+        interaction.followup.send.assert_awaited_once()
+        embed = interaction.followup.send.call_args[1]["embed"]
+        assert "Statistics" in embed.title or "📊" in embed.title
+
+
+class TestAdminConfigRespx:
+    """respx URL-contract test: admin_config view GETs /config/guild/{guild_id}."""
+
+    def test_admin_config_view_gets_correct_url(self, mock_admin_cog, request):
+        import httpx
+        import respx
+
+        _with_real_http_client(mock_admin_cog, request)
+        interaction = _create_mock_interaction()
+        interaction.guild_id = 987654321
+
+        cfg_json = {
+            "guild_id": 987654321,
+            "configured": True,
+            "admin_role_configured": True,
+            "starting_credits": 500,
+            "sale_price_factor": 0.8,
+            "xp_thresholds": {"Silver": 1000, "Gold": 5000, "Platinum": 15000},
+            "created_at": "2024-01-01T00:00:00",
+            "updated_at": "2024-01-01T00:00:00",
+        }
+
+        env = {k: v for k, v in os.environ.items() if k != "BOT_API_BASE_URL"}
+        with (
+            patch.dict(os.environ, env, clear=True),
+            patch("os.getenv", side_effect=lambda k, d="": "" if k == "DEVELOPERS" else os.environ.get(k, d)),
+            respx.mock(assert_all_called=True) as mock_router,
+        ):
+            mock_router.get(f"{_BOT_CORE_URL}/config/guild/987654321").mock(
+                return_value=httpx.Response(200, json=cfg_json)
+            )
+            asyncio.run(mock_admin_cog.admin_config.callback(mock_admin_cog, interaction, "view", None, None))
+
+        interaction.followup.send.assert_awaited_once()
+        call_kwargs = interaction.followup.send.call_args[1]
+        assert "embed" in call_kwargs
+
+
+class TestAdminConfigShopRespx:
+    """respx URL-contract test: admin_config_shop PUTs /config/guild/{guild_id}/shop."""
+
+    def test_config_shop_puts_correct_url(self, mock_admin_cog, request):
+        import httpx
+        import respx
+
+        _with_real_http_client(mock_admin_cog, request)
+        interaction = _create_mock_interaction()
+        interaction.guild_id = 987654321
+
+        shop_resp = {"shop_config": {"item_count_ranges": {"ships": {"min": 2, "max": 4}}}, "sale_price_factor": 0.8}
+
+        env = {k: v for k, v in os.environ.items() if k != "BOT_API_BASE_URL"}
+        with (
+            patch.dict(os.environ, env, clear=True),
+            patch("os.getenv", side_effect=lambda k, d="": "" if k == "DEVELOPERS" else os.environ.get(k, d)),
+            respx.mock(assert_all_called=True) as mock_router,
+        ):
+            mock_router.put(f"{_BOT_CORE_URL}/config/guild/987654321/shop").mock(
+                return_value=httpx.Response(200, json=shop_resp)
+            )
+            asyncio.run(
+                mock_admin_cog.admin_config_shop.callback(
+                    mock_admin_cog,
+                    interaction,
+                    ship_count_min=2,
+                    ship_count_max=4,
+                    weapon_count_min=None,
+                    weapon_count_max=None,
+                    module_count_min=None,
+                    module_count_max=None,
+                    turret_count_min=None,
+                    turret_count_max=None,
+                    sale_factor=None,
+                )
+            )
+
+        interaction.followup.send.assert_awaited_once()
+        call_kwargs = interaction.followup.send.call_args[1]
+        assert "embed" in call_kwargs
+
+
+class TestAdminGiveItemRespx:
+    """respx URL-contract test: admin_give_item POSTs /admin/give-item."""
+
+    def test_give_item_posts_correct_url(self, mock_admin_cog, request):
+        import httpx
+        import respx
+
+        _with_real_http_client(mock_admin_cog, request)
+        interaction = _create_mock_interaction()
+        interaction.guild_id = 987654321
+        user = _create_mock_user(user_id=111111111)
+
+        give_resp = {"message": "Item given.", "item_type": "primary_weapon", "new_total_quantity": 2}
+
+        env = {k: v for k, v in os.environ.items() if k != "BOT_API_BASE_URL"}
+        with (
+            patch.dict(os.environ, env, clear=True),
+            patch("os.getenv", side_effect=lambda k, d="": "" if k == "DEVELOPERS" else os.environ.get(k, d)),
+            respx.mock(assert_all_called=True) as mock_router,
+        ):
+            mock_router.post(f"{_BOT_CORE_URL}/admin/give-item").mock(return_value=httpx.Response(200, json=give_resp))
+            asyncio.run(mock_admin_cog.admin_give_item.callback(mock_admin_cog, interaction, user, "Laser Cannon", 1))
+
+        interaction.followup.send.assert_awaited_once()
+        embed = interaction.followup.send.call_args[1]["embed"]
+        assert "Given" in embed.title or "✅" in embed.title
+
+
+class TestAdminDuelCancelAllRespx:
+    """respx URL-contract test: admin_duel cancel-all POSTs /duels/admin-cancel-all."""
+
+    def test_duel_cancel_all_posts_correct_url(self, mock_admin_cog, request):
+        import httpx
+        import respx
+
+        _with_real_http_client(mock_admin_cog, request)
+        interaction = _create_mock_interaction()
+        interaction.guild_id = 987654321
+
+        cancel_resp = {"cancelled_count": 2}
+
+        env = {k: v for k, v in os.environ.items() if k != "BOT_API_BASE_URL"}
+        with (
+            patch.dict(os.environ, env, clear=True),
+            patch("os.getenv", side_effect=lambda k, d="": "" if k == "DEVELOPERS" else os.environ.get(k, d)),
+            respx.mock(assert_all_called=True) as mock_router,
+        ):
+            mock_router.post(f"{_BOT_CORE_URL}/duels/admin-cancel-all").mock(
+                return_value=httpx.Response(200, json=cancel_resp)
+            )
+            asyncio.run(mock_admin_cog.admin_duel.callback(mock_admin_cog, interaction, "all"))
+
+        interaction.followup.send.assert_awaited_once()
+        embed = interaction.followup.send.call_args[1]["embed"]
+        assert "Cancelled" in embed.title or "✅" in embed.title
+
+
+class TestAdminSpawnBountyRespx:
+    """respx URL-contract test: admin_spawn_bounty POSTs /bounties/guild/{guild_id}/admin-spawn."""
+
+    def test_spawn_bounty_posts_correct_url(self, mock_admin_cog, request):
+        import httpx
+        import respx
+
+        _with_real_http_client(mock_admin_cog, request)
+        interaction = _create_mock_interaction()
+        interaction.guild_id = 987654321
+
+        spawn_resp = {
+            "spawned": [{"division": "bronze", "criminal_name": "Darko", "tech_level": 3, "reward": 500}],
+            "skipped_tiers": [],
+            "errors": [],
+        }
+
+        env = {k: v for k, v in os.environ.items() if k != "BOT_API_BASE_URL"}
+        with (
+            patch.dict(os.environ, env, clear=True),
+            patch("os.getenv", side_effect=lambda k, d="": "" if k == "DEVELOPERS" else os.environ.get(k, d)),
+            respx.mock(assert_all_called=True) as mock_router,
+        ):
+            mock_router.post(f"{_BOT_CORE_URL}/bounties/guild/987654321/admin-spawn").mock(
+                return_value=httpx.Response(200, json=spawn_resp)
+            )
+            asyncio.run(mock_admin_cog.admin_spawn_bounty.callback(mock_admin_cog, interaction, None))
+
+        interaction.followup.send.assert_awaited_once()
+        embed = interaction.followup.send.call_args[1]["embed"]
+        assert "Bounties" in embed.title or "🎯" in embed.title
+
+
+class TestAdminConfigBountyRespx:
+    """respx URL-contract test: admin_config_bounty view GETs /config/guild/{guild_id}/bounty."""
+
+    def test_config_bounty_view_gets_correct_url(self, mock_admin_cog, request):
+        import httpx
+        import respx
+
+        _with_real_http_client(mock_admin_cog, request)
+        interaction = _create_mock_interaction()
+        interaction.guild_id = 987654321
+
+        cfg_json = {
+            "max_bounties_per_tier": {"bronze": 3, "silver": 2, "gold": 2},
+            "active_bounties_per_tier": {"bronze": 1, "silver": 0, "gold": 0},
+            "bounty_expiry_minutes": 1440,
+            "bounty_spawn_interval_minutes": 60,
+            "next_spawn_check_at": "2024-01-01T12:00:00",
+        }
+
+        env = {k: v for k, v in os.environ.items() if k != "BOT_API_BASE_URL"}
+        with (
+            patch.dict(os.environ, env, clear=True),
+            patch("os.getenv", side_effect=lambda k, d="": "" if k == "DEVELOPERS" else os.environ.get(k, d)),
+            respx.mock(assert_all_called=True) as mock_router,
+        ):
+            mock_router.get(f"{_BOT_CORE_URL}/config/guild/987654321/bounty").mock(
+                return_value=httpx.Response(200, json=cfg_json)
+            )
+            asyncio.run(
+                mock_admin_cog.admin_config_bounty.callback(
+                    mock_admin_cog,
+                    interaction,
+                    action="view",
+                    max_bronze=None,
+                    max_silver=None,
+                    max_gold=None,
+                    max_platinum=None,
+                    expiry_minutes=None,
+                    spawn_interval=None,
+                )
+            )
+
+        interaction.followup.send.assert_awaited_once()
+        call_kwargs = interaction.followup.send.call_args[1]
+        assert "embed" in call_kwargs
+
+
+class TestRenderConfigRespx:
+    """respx URL-contract tests: render_config GETs/PUTs/POSTs blender-service config endpoints."""
+
+    def test_render_config_view_gets_correct_url(self, mock_admin_cog, request):
+        import httpx
+        import respx
+
+        _with_real_http_client(mock_admin_cog, request)
+        interaction = _create_mock_interaction()
+
+        config_data = {"max_res_x": 3840, "default_samples": 64}
+
+        env = {k: v for k, v in os.environ.items() if k != "BLENDER_API_BASE_URL"}
+        with (
+            patch.dict(os.environ, env, clear=True),
+            patch("os.getenv", side_effect=lambda k, d="": "" if k == "DEVELOPERS" else os.environ.get(k, d)),
+            respx.mock(assert_all_called=True) as mock_router,
+        ):
+            mock_router.get(f"{_BLENDER_URL}/config/render").mock(return_value=httpx.Response(200, json=config_data))
+            asyncio.run(mock_admin_cog.render_config.callback(mock_admin_cog, interaction, "view", None, None))
+
+        interaction.followup.send.assert_awaited_once()
+        call_kwargs = interaction.followup.send.call_args[1]
+        assert "embed" in call_kwargs
+
+    def test_render_cache_clear_posts_correct_url(self, mock_admin_cog, request):
+        import httpx
+        import respx
+
+        _with_real_http_client(mock_admin_cog, request)
+        interaction = _create_mock_interaction()
+
+        clear_resp = {"cleared_directories": 3, "freed_mb": 150}
+
+        env = {k: v for k, v in os.environ.items() if k != "BLENDER_API_BASE_URL"}
+        with (
+            patch.dict(os.environ, env, clear=True),
+            patch("os.getenv", side_effect=lambda k, d="": "" if k == "DEVELOPERS" else os.environ.get(k, d)),
+            respx.mock(assert_all_called=True) as mock_router,
+        ):
+            mock_router.post(f"{_BLENDER_URL}/cache/clear").mock(return_value=httpx.Response(200, json=clear_resp))
+            asyncio.run(mock_admin_cog.render_cache_clear.callback(mock_admin_cog, interaction))
+
+        interaction.followup.send.assert_awaited_once()
+        embed = interaction.followup.send.call_args[1]["embed"]
+        assert "Cache" in embed.title or "🗑️" in embed.title
 
 
 if __name__ == "__main__":

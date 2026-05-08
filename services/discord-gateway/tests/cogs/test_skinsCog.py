@@ -1974,6 +1974,10 @@ class TestFormatDownloadViewButtons:
         interaction.followup.send.assert_awaited_once()
         call_kwargs = interaction.followup.send.call_args[1]
         assert "file" in call_kwargs
+        # Verify the file contains texture_bytes (not render_bytes, since none was provided)
+        sent_file = call_kwargs["file"]
+        assert sent_file is not None
+        assert sent_file.fp.read() == texture_bytes
 
     def test_etc1_button_calls_convert_and_send(self, mock_bot):
         """etc1_button triggers _convert_and_send with 'etc1'."""
@@ -2733,9 +2737,9 @@ class TestMakeSkinTextureErrorPaths:
 
         mock_skins_cog._collect_base_texture.assert_awaited_once()
         # When _collect_base_texture returns None, command should abort silently (no further send)
-        # Verify the call was made with the correct ship name
+        # Verify the call was made with the correct ship name as the second positional argument
         call_args = mock_skins_cog._collect_base_texture.call_args
-        assert call_args is not None
+        assert call_args[0][1] == "TestShip"
 
     def test_make_skin_texture_with_upload_success(self, mock_skins_cog):
         """make_skin_texture proceeds with upload composite when no diffuse_path."""

@@ -15,12 +15,17 @@ Strategy
   _MockCronTrigger) so we can inspect which cron expression was used.
 * ``shared.bblogger`` is already patched by conftest.py; an additional
   belt-and-suspenders guard is included for direct pytest invocations.
+* Stub injection is performed inside a module-scoped autouse fixture so that
+  it is unconditionally applied regardless of prior test module execution
+  order (DEF-S11-001 / session-contamination defence).
 """
 
 import os as _os
 import sys
 import types
 from unittest.mock import MagicMock
+
+import pytest
 
 # ---------------------------------------------------------------------------
 # Ensure src/ is at the front of sys.path, and that the shadow
@@ -133,18 +138,16 @@ _ensure_apscheduler_stubs()
 # ---------------------------------------------------------------------------
 
 # ---------------------------------------------------------------------------
-# Import main.DEFAULT_SCHEDULER_JOBS and main.register_default_jobs.
-#
-# main.py has many module-level imports (persist, utils.auto_seeder, etc.)
-# that are not installed in the test environment.  We stub them temporarily
-# in sys.modules for the duration of the import, then — crucially — remove
-# the stubs so later test files can import the real src/ implementations.
-#
-# This "borrow-and-restore" pattern avoids polluting sys.modules for the
-# entire test session.
+# _MOCK_RUN_JOB is a module-level placeholder.  The actual MagicMock instance
+# used for a given test session is created inside _inject_startup_stubs() and
+# stored back here (via the global) so all test methods can reference it.
 # ---------------------------------------------------------------------------
+_MOCK_RUN_JOB: MagicMock = MagicMock()
 
-_MOCK_RUN_JOB = MagicMock()
+# Module-level placeholders for the imported symbols — populated by the
+# module-scoped fixture before any test runs.
+DEFAULT_SCHEDULER_JOBS = None  # type: ignore[assignment]
+register_default_jobs = None  # type: ignore[assignment]
 
 
 def _make_stub(module_path: str, **attrs) -> types.ModuleType:
@@ -154,47 +157,66 @@ def _make_stub(module_path: str, **attrs) -> types.ModuleType:
     return mod
 
 
-# Modules we need to inject — only if they are not already present (i.e.,
-# the real version has already been loaded by a different test file).
-_TEMP_STUBS: dict[str, types.ModuleType] = {}
+def _inject_startup_stubs() -> None:
+    """Unconditionally inject all stubs required to import main.
 
-_STUB_SPECS: dict[str, dict] = {
-    "persist": {},
-    "persist.database": {},
-    "persist.database.manager": {"db_manager": MagicMock()},
-    "persist.schemas": {},
-    "persist.schemas.schema_manager": {"initialize_schema": MagicMock()},
-    "utils.auto_seeder": {"auto_seed_data": MagicMock()},
-    "utils.job_executor": {"run_job": _MOCK_RUN_JOB},
-}
+    Uses force-replacement so that real packages loaded by earlier test
+    modules are temporarily overridden for the lifetime of this module's
+    fixture scope.  The fixture restores sys.modules on teardown.
+    """
+    global _MOCK_RUN_JOB
 
-for _mod_path, _attrs in _STUB_SPECS.items():
-    if _mod_path not in sys.modules:
-        _stub = _make_stub(_mod_path, **_attrs)
-        sys.modules[_mod_path] = _stub
-        _TEMP_STUBS[_mod_path] = _stub  # record that WE added this
+    _MOCK_RUN_JOB = MagicMock()
 
-# ---------------------------------------------------------------------------
-# Now it is safe to import from main (only the symbols we need).
-# ---------------------------------------------------------------------------
-from main import DEFAULT_SCHEDULER_JOBS, register_default_jobs
+    def _force_stub(module_path: str, **attrs) -> types.ModuleType:
+        mod = types.ModuleType(module_path)
+        for k, v in attrs.items():
+            setattr(mod, k, v)
+        sys.modules[module_path] = mod
+        return mod
 
-# ---------------------------------------------------------------------------
-# Restore: selectively remove temporary stubs that could interfere with other
-# test files that import the real implementations.
-#
-# Rules:
-# - utils.auto_seeder: restore — test_auto_seed.py imports the real module
-# - utils.job_executor: restore — executor tests import the real module
-# - persist.*: keep — they are lightweight stubs and other tests that need the
-#   real persist code set up their own mocks via @patch
-# - main: restore — no other test file needs it, safe to clean up
-# ---------------------------------------------------------------------------
-_RESTORE_PATHS = ("utils.auto_seeder", "utils.job_executor", "main")
-for _mod_path in _RESTORE_PATHS:
-    if _mod_path in _TEMP_STUBS and sys.modules.get(_mod_path) is _TEMP_STUBS[_mod_path]:
-        del sys.modules[_mod_path]
-sys.modules.pop("main", None)
+    _force_stub("persist")
+    _force_stub("persist.database")
+    _force_stub("persist.database.manager", db_manager=MagicMock())
+    _force_stub("persist.schemas")
+    _force_stub("persist.schemas.schema_manager", initialize_schema=MagicMock())
+    _force_stub("utils.auto_seeder", auto_seed_data=MagicMock())
+    _force_stub("utils.job_executor", run_job=_MOCK_RUN_JOB)
+
+    # Evict main so it re-imports with fresh stubs
+    sys.modules.pop("main", None)
+
+
+@pytest.fixture(autouse=True, scope="module")
+def _isolate_startup_stubs():
+    """
+    Module-scoped autouse fixture that unconditionally injects stubs into
+    sys.modules for the duration of this test module, then fully restores
+    the original sys.modules state so that later test modules can import
+    the real packages without encountering contaminated stubs.
+
+    This replaces the previous module-level conditional stub injection that
+    caused DEF-S11-001: sys.modules contamination / binding mismatch across
+    the full pytest session.
+    """
+    _saved = dict(sys.modules)
+
+    _inject_startup_stubs()
+
+    # Now import the symbols under test — they are bound to the fresh stubs.
+    import importlib
+
+    _main = importlib.import_module("main")
+
+    global DEFAULT_SCHEDULER_JOBS, register_default_jobs
+    DEFAULT_SCHEDULER_JOBS = _main.DEFAULT_SCHEDULER_JOBS
+    register_default_jobs = _main.register_default_jobs
+
+    yield
+
+    # Restore sys.modules exactly as it was before this module was collected.
+    sys.modules.clear()
+    sys.modules.update(_saved)
 
 
 # ---------------------------------------------------------------------------
@@ -500,7 +522,8 @@ class TestRegisterDefaultJobs:
         register_default_jobs(scheduler)
 
         for call in scheduler.add_job.call_args_list:
-            # First positional argument to add_job should be run_job
+            # First positional argument to add_job should be run_job (the stub
+            # injected by _inject_startup_stubs via _isolate_startup_stubs).
             assert call.args[0] is _MOCK_RUN_JOB, (
                 f"Expected run_job callable but got {call.args[0]} for job '{call.kwargs.get('id')}'"
             )

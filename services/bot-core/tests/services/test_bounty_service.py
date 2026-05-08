@@ -3667,6 +3667,31 @@ def test_serialize_fight_results_win():
     assert result["ship1_stats"]["ship_name"] == "Betty"
     assert result["ship1_stats"]["ttk"] == 18.57
     assert result["ship2_stats"]["ship_name"] == "Bandit"
+    # pvc_armour_buff absent when not passed
+    assert "pvc_armour_buff" not in result
+
+
+def test_serialize_fight_results_win_with_pvc_buff():
+    """pvc_armour_buff is included in the dict when passed."""
+    from services.bounty_service import _serialize_fight_results
+
+    fight_stats1 = SimpleNamespace(
+        ship_name="Betty", raw_hp=200, raw_dps=10.0, varied_hp=300, varied_dps=10.5, ttk=18.57
+    )
+    fight_stats2 = SimpleNamespace(ship_name="Bandit", raw_hp=100, raw_dps=8.0, varied_hp=98, varied_dps=8.2, ttk=23.78)
+    fight = SimpleNamespace(
+        winner_name="Betty",
+        loser_name="Bandit",
+        is_stalemate=False,
+        ship1_stats=fight_stats1,
+        ship2_stats=fight_stats2,
+        variance_percent=0.05,
+    )
+
+    result = _serialize_fight_results(fight, pvc_armour_buff=1.5)
+
+    assert result is not None
+    assert result["pvc_armour_buff"] == 1.5
 
 
 def test_serialize_fight_results_stalemate():
@@ -3690,6 +3715,7 @@ def test_serialize_fight_results_stalemate():
     assert result["winner_name"] is None
     assert result["is_stalemate"] is True
     assert result["ship1_stats"]["ttk"] is None
+    assert "pvc_armour_buff" not in result
 
 
 # ===========================================================================

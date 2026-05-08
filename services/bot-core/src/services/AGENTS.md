@@ -45,12 +45,17 @@ Both operations use `commit=False` — the calling router wraps with `db.begin()
 The guard in `LoadoutConsistencyService.equip_one()` (look for "No unequipped copies remain"):
 
 ```python
-already_equipped_count = sum(count of item across ALL ships)
-if already_equipped_count >= inv_item.quantity:  # quantity = cargo only
+if inv_item.quantity <= 0:
     raise ValueError("No unequipped copies remain")
 ```
 
-This prevents equipping more copies than exist in cargo (which would create phantom items).
+This prevents equipping when there are no cargo copies left to consume, which would create phantom items.
+
+**Why `quantity <= 0` and NOT `already_equipped >= quantity`:**
+`player_inventories.quantity` is **cargo-only**. With 1 equipped + 1 in cargo:
+- `quantity = 1` (one cargo copy available to consume — equip should PASS)
+- The old condition `already_equipped(1) >= quantity(1)` = True → incorrectly blocked it
+- The correct condition `quantity <= 0` = False → correctly allows it
 
 **The guard only runs when a slot is free** — it is skipped when slots are full (the swap path). For swaps: the cog unequips first (returning the copy to cargo, incrementing quantity), then equips (decrementing quantity). After the unequip, `quantity` increases so the guard passes on the subsequent equip call.
 

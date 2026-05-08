@@ -37,13 +37,16 @@ from services.system_graph_service import SystemGraphService
 flogger = bblogger.get_logger("bounty-service")
 
 
-def _serialize_fight_results(fight_results) -> dict | None:
+def _serialize_fight_results(fight_results, *, pvc_armour_buff: float | None = None) -> dict | None:
     """Serialize a FightResults dataclass to a plain dict for API responses.
 
     Returns None if fight_results is None.
 
     Args:
-        fight_results: FightResults instance (or None).
+        fight_results:    FightResults instance (or None).
+        pvc_armour_buff:  When provided, included in the dict so the gateway
+                          can surface the Kieth T Maxwell buff callout in the
+                          combat summary embed. Pass None for PvP (duel) results.
 
     Returns:
         Dict representation suitable for JSON serialization, or None.
@@ -61,7 +64,7 @@ def _serialize_fight_results(fight_results) -> dict | None:
             "ttk": fs.ttk,
         }
 
-    return {
+    result = {
         "winner_name": fight_results.winner_name,
         "loser_name": fight_results.loser_name,
         "is_stalemate": fight_results.is_stalemate,
@@ -69,6 +72,9 @@ def _serialize_fight_results(fight_results) -> dict | None:
         "ship2_stats": _stats_to_dict(fight_results.ship2_stats),
         "variance_percent": fight_results.variance_percent,
     }
+    if pvc_armour_buff is not None:
+        result["pvc_armour_buff"] = pvc_armour_buff
+    return result
 
 
 class CheckResult(enum.Enum):
@@ -1214,7 +1220,7 @@ class BountyService:
                         division=division,
                         criminal_name=bounty.criminal_name,
                         reward=winner_reward,
-                        combat_result=_serialize_fight_results(fight_results) if fight_results else None,
+                        combat_result=_serialize_fight_results(fight_results, pvc_armour_buff=GameConstants.BOUNTY_PVC_ARMOUR_BUFF_FACTOR) if fight_results else None,
                         bonus_won=bonus_won,
                         total_reward=total_reward,
                         criminal_ship=bounty.criminal_ship,
@@ -1245,7 +1251,7 @@ class BountyService:
                         division=division,
                         criminal_name=bounty.criminal_name,
                         reward=winner_reward,
-                        combat_result=_serialize_fight_results(fight_results) if fight_results else None,
+                        combat_result=_serialize_fight_results(fight_results, pvc_armour_buff=GameConstants.BOUNTY_PVC_ARMOUR_BUFF_FACTOR) if fight_results else None,
                     ),
                     (bounty, True),
                 )
@@ -1260,7 +1266,7 @@ class BountyService:
                     combat_won=False,
                     division=division,
                     criminal_name=bounty.criminal_name,
-                    combat_result=_serialize_fight_results(fight_results) if fight_results else None,
+                    combat_result=_serialize_fight_results(fight_results, pvc_armour_buff=GameConstants.BOUNTY_PVC_ARMOUR_BUFF_FACTOR) if fight_results else None,
                 ),
                 (bounty, False),
             )

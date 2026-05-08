@@ -308,23 +308,25 @@ class LoadoutConsistencyService:
         caps = await self._get_static_ship_caps(db, ship)
         current_slot = self._get_slot(ship, equipment_type)
 
-        # 4b. B.41 — guard against equipping more copies than the player owns.
+        # 4b. B.41 — guard against equipping when no cargo copies remain.
         # Only runs when there IS a free slot available.  When slots are full, the
         # slot-full path below fires instead, and the swap flow (unequip-then-equip)
         # is handled by the caller (cog / EquipmentService).  After the unequip step
-        # the inventory quantity will have increased by one, so the B.41 guard will
+        # the inventory quantity will have increased by one, so the guard will
         # pass correctly on the subsequent equip call.
         #
-        # This preserves B.41's original intent — prevent equipping MORE copies than
-        # owned when there is an empty slot to fill — while allowing the legitimate
-        # same-item swap case (e.g. 1× equipped + 1× in inventory, single-slot ship).
+        # INVARIANT: player_inventories.quantity is CARGO-ONLY — it does NOT count
+        # equipped copies.  Equipped copies live solely in player_ships JSON slots.
+        # Total owned = quantity(cargo) + sum(equipped across all ships).
+        #
+        # The correct guard is therefore: block if quantity <= 0 (no cargo copies
+        # available to consume).  The previous condition (already_equipped >= quantity)
+        # was wrong: with 1 equipped + 1 in cargo, already_equipped(1) >= quantity(1)
+        # = True, which incorrectly blocked a legitimate equip of the cargo copy.
         if len(current_slot) < caps[equipment_type]:
-            all_ships = await self.player_ship_repo.get_player_ships(db, player_id)
-            already_equipped_count = sum(self._get_slot(s, equipment_type).count(item_name) for s in all_ships)
-            if already_equipped_count >= inv_item.quantity:
+            if inv_item.quantity <= 0:
                 raise ValueError(
-                    f"No unequipped copies remain: '{item_name}' has {inv_item.quantity} in inventory "
-                    f"but {already_equipped_count} already equipped."
+                    f"No unequipped copies remain: '{item_name}' has {inv_item.quantity} in cargo."
                 )
 
         if len(current_slot) >= caps[equipment_type]:

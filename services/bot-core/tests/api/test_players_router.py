@@ -132,7 +132,9 @@ class TestCreateOrGetPlayer:
             json={"discord_id": 99999, "guild_id": 11111, "discord_username": "SomeUser"},
         )
 
-        mock_player_service.get_or_create_player.assert_called_once_with(mock_session, 99999, 11111, "SomeUser", display_name=None)
+        mock_player_service.get_or_create_player.assert_called_once_with(
+            mock_session, 99999, 11111, "SomeUser", display_name=None
+        )
 
     def test_create_player_without_username(self, mock_db_session, client, mock_player_service):
         """Happy path: discord_username is optional (None)."""
@@ -144,7 +146,9 @@ class TestCreateOrGetPlayer:
         )
 
         assert response.status_code == 201
-        mock_player_service.get_or_create_player.assert_called_once_with(mock_session, 12345, 67890, None, display_name=None)
+        mock_player_service.get_or_create_player.assert_called_once_with(
+            mock_session, 12345, 67890, None, display_name=None
+        )
 
     def test_create_player_service_exception_returns_500(self, client, mock_player_service):
         """Server error: service raises Exception -> 500."""

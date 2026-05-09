@@ -1,0 +1,66 @@
+name: CodeQL (source SAST)
+
+# Runs GitHub's CodeQL static analyzer against the Python source.
+# Results are uploaded to the repo's Security tab as code-scanning alerts.
+#
+# Triggers:
+#   - Push to main/master      → full scan, blocks merges via branch protection if rules added
+#   - Pull request → main/master → scan diff
+#   - Weekly schedule          → re-scan with latest CodeQL queries (catches newly-disclosed patterns)
+#   - Manual dispatch          → on-demand
+#
+# Failure policy:
+#   CodeQL alerts surface in the PR/Security tab. By default this workflow does NOT fail the
+#   pipeline on findings — alerts are reviewed in the Security tab. To enforce blocking, enable
+#   "Required status checks" → "CodeQL" in branch protection, and configure code-scanning
+#   default-setup severity gates in repo Settings → Code security.
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+  schedule:
+    # Every Monday at 06:00 UTC — re-scan to catch newly-published CodeQL queries / CVEs
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+
+jobs:
+  analyze:
+    name: Analyze (${{ matrix.language }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      # Required to upload SARIF results to the Security tab
+      security-events: write
+      # Required for actions/checkout
+      contents: read
+      # Required to read PR metadata
+      actions: read
+
+    strategy:
+      fail-fast: false
+      matrix:
+        language: [python]
+
+    steps:
+      - name: Checkout (with submodules)
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: ${{ matrix.language }}
+          # security-extended adds higher-confidence security queries beyond the default suite.
+          # Use 'security-and-quality' for even broader (noisier) coverage.
+          queries: security-extended
+
+      - name: Autobuild
+        uses: github/codeql-action/autobuild@v3
+
+      - name: Perform CodeQL analysis
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: "/language:${{ matrix.language }}"

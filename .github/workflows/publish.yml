@@ -15,11 +15,11 @@ name: Test, Build & Publish
 #   ghcr.io/gof2bountybot/bountybot-reborn-samx/blender-service        (CPU, python:3.13-slim-trixie)
 #   ghcr.io/gof2bountybot/bountybot-reborn-samx/blender-service-gpu    (CUDA runtime, Python 3.13)
 #
-# Tags applied:
+# Image tags applied:
 #   On push to main/master:
 #     - sha-<short-sha>   (immutable, per-commit)
 #     - latest            (floating, always newest main)
-#   On git tag (e.g. v1.2.3):
+#   On git tag push (e.g. git tag v1.2.3 && git push origin v1.2.3):
 #     - 1.2.3             (exact version)
 #     - 1.2               (minor stream, moves on patch bumps)
 #     - 1                 (major stream, moves on minor/patch bumps)
@@ -38,42 +38,12 @@ env:
   REGISTRY: ghcr.io
   IMAGE_PREFIX: ghcr.io/gof2bountybot/bountybot-reborn-samx
 
-# ── Phase 0: Tag check ───────────────────────────────────────────────────────
-# Merges to master must be accompanied by a semver git tag (vX.Y.Z).
-# This job fails on pull_request if the HEAD commit of the PR branch has no tag,
-# blocking the merge via branch protection required status checks.
-# On push events (tag push or direct push) it is skipped — tags are applied
-# before/during the push so enforcement only matters at PR merge time.
-
-jobs:
-  require-tag:
-    name: Require semver tag
-    runs-on: ubuntu-latest
-    if: github.event_name == 'pull_request'
-
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Check for semver tag on PR head
-        run: |
-          HEAD_SHA="${{ github.event.pull_request.head.sha }}"
-          TAGS=$(git tag --points-at "$HEAD_SHA" | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' || true)
-          if [ -z "$TAGS" ]; then
-            echo "ERROR: No semver tag (vX.Y.Z) found on commit ${HEAD_SHA}."
-            echo "Tag the commit before merging: git tag vX.Y.Z <sha> && git push origin vX.Y.Z"
-            exit 1
-          fi
-          echo "Found tag(s): $TAGS"
-
 # ── Phase 1: Lint ────────────────────────────────────────────────────────────
 
+jobs:
   lint:
     name: Ruff lint & format check
     runs-on: ubuntu-latest
-    needs: [require-tag]
-    if: always() && (needs.require-tag.result == 'success' || needs.require-tag.result == 'skipped')
 
     steps:
       - uses: actions/checkout@v4

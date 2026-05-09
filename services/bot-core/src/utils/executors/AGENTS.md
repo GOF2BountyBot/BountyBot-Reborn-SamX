@@ -1,6 +1,6 @@
 # AGENTS.md - utils/executors
 
-APScheduler job executor modules for bot-core. All 7 executor functions live here.
+APScheduler job executor modules for bot-core. All 8 executor functions live here.
 
 ---
 
@@ -202,6 +202,33 @@ resp.raise_for_status()
 1. Uses `MessageBuilderFactory.create_builder("time_announcement")` to build the embed payload
 2. POSTs the announcement to `{GATEWAY_BASE_URL}/messages`
 3. Response is logged; failure is non-fatal
+
+---
+
+### bounty_failsafe_cleanup_executor.py
+
+**Function**: `execute_bounty_failsafe_cleanup_job(job_id, payload)`  
+**Triggered by**: `bounty_failsafe_cleanup_default` (every hour at :30 — offset from temperature_decay at :00)  
+**Payload fields**:
+- `guild_id` (int, optional) — restrict sweep to one guild; omit for all guilds
+
+**Problem it solves (B.83)**:  
+The primary cleanup path (`bounty_expire_executor`) fires a one-time job at `bounty.end_time`. When that job is silently dropped (gateway timeout, APScheduler restart, transient DB error), the Discord post stays visible in the channel permanently even though the bounty has expired or been captured.
+
+**Strategy (Discord-first)**:
+1. For each guild config, iterate all configured bounty channel IDs (one per division).
+2. Fetch the most recent messages from each channel via the gateway `GET /channels/{cid}/messages?limit=100`.
+3. For every message ID returned, look it up in the `discord_message` table (`message_type = "bounty_announcement"`).
+4. Fetch the referenced bounty from the DB and classify it:
+   - **active + end_time > now** → legitimately live, leave it alone
+   - **active + end_time ≤ now** → stale active (expire job was lost); set `status = "expired"`, then delete post
+   - **non-active status** (expired, captured, cleared, …) → delete post
+   - **bounty row missing / null reference_id** → orphan announcement; delete post
+5. For all non-live cases: DELETE the Discord post via gateway + remove the `DiscordMessage` DB record.
+
+**Non-fatal design**: failures in any individual guild, channel, or message are logged and skipped; they never abort the sweep for remaining items.
+
+**Returns**: `{"status": "success", "guilds_processed": N, "total_messages_inspected": M, "total_cleaned": K, "total_errors": E, "results": {...}}`
 
 ---
 

@@ -5,6 +5,7 @@ from shared.bblogger import get_logger
 
 # dispatch job-type specific executor module
 from utils.executors.bounty_expire_executor import execute_bounty_expire_job
+from utils.executors.bounty_failsafe_cleanup_executor import execute_bounty_failsafe_cleanup_job
 from utils.executors.bounty_respawn_executor import execute_bounty_respawn_job
 from utils.executors.bounty_spawn_executor import (
     execute_bounty_spawn_job,
@@ -73,17 +74,22 @@ class JobExecutor:
                 flogger.debug(f"Dispatching bounty_respawn for job {job_id}")
                 return await execute_bounty_respawn_job(job_id, payload)
 
-            # 6) duel-expire jobs
+            # 6) bounty failsafe cleanup (hourly Discord-driven sweep)
+            if payload.get("job_type") == "bounty_failsafe_cleanup":
+                flogger.debug(f"Dispatching bounty_failsafe_cleanup for job {job_id}")
+                return await execute_bounty_failsafe_cleanup_job(job_id, payload)
+
+            # 7) duel-expire jobs
             if payload.get("job_type") == "duel_expire":
                 flogger.debug(f"Dispatching duel_expire for job {job_id}")
                 return await execute_duel_expire_job(job_id, payload)
 
-            # 7) temperature-decay jobs
+            # 8) temperature-decay jobs
             if payload.get("job_type") == "temperature_decay":
                 flogger.debug(f"Dispatching temperature_decay for job {job_id}")
                 return await execute_temperature_decay_job(job_id, payload)
 
-            # 8) fallback for other payloads
+            # 9) fallback for other payloads
             flogger.debug(f"Job '{job_id}': executing generic payload handler")
             # … your existing task/logic here …
 

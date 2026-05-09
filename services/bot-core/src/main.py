@@ -57,6 +57,11 @@ DEFAULT_SCHEDULER_JOBS: list[dict] = [
         "cron": "0 * * * *",
         "payload": {"job_type": "temperature_decay"},
     },
+    {
+        "job_id": "bounty_failsafe_cleanup_default",
+        "cron": "30 * * * *",  # :30 past every hour (offset from temperature_decay at :00)
+        "payload": {"job_type": "bounty_failsafe_cleanup"},
+    },
 ]
 
 

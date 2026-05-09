@@ -1,11 +1,21 @@
-# DEV — local build, CPU blender (no GPU required)
-# Builds all service images from source on this machine.
-# Usage: docker compose up --build
+# PROD — pre-built GHCR images, CPU blender (no GPU required)
+# Pulls images from GitHub Container Registry. No source code needed on the host.
+# Usage:
+#   docker compose -f docker-compose.prod.yml pull
+#   docker compose -f docker-compose.prod.yml up -d
 #
-# For GPU rendering: use docker-compose-gpu.yml
-# For production (pre-built GHCR images): use docker-compose.prod.yml
+# Version pinning:
+#   By default all service images use the 'latest' tag.
+#   To pin to a specific release (e.g. for rollback), set BOUNTYBOT_VERSION:
+#     BOUNTYBOT_VERSION=1.2.3 docker compose -f docker-compose.prod.yml up -d
+#   Or export it in your shell / .env file:
+#     BOUNTYBOT_VERSION=sha-a715af7
+#
+# For GPU rendering: use docker-compose.prod-gpu.yml
+# For local dev builds: use docker-compose.yml
 
 name: bountybot-stack
+
 services:
   db:
     image: postgres:18
@@ -15,7 +25,7 @@ services:
       - botnetv2
     env_file:
       - path: ./.env
-        required: false 
+        required: false
     environment:
       - PUID=${PUID:-1000}
       - PGID=${PGID:-1000}
@@ -33,9 +43,7 @@ services:
       - "5432:5432"
 
   bot-core:
-    build:
-      context: ./
-      dockerfile: ./services/bot-core/Dockerfile
+    image: ghcr.io/gof2bountybot/bountybot-reborn-samx/bot-core:${BOUNTYBOT_VERSION:-latest}
     container_name: bountybot-bot-core
     networks:
       - botnetv2
@@ -50,7 +58,7 @@ services:
         restart: true
     env_file:
       - path: ./.env
-        required: false 
+        required: false
     environment:
       - PUID=${PUID:-1000}
       - PGID=${PGID:-1000}
@@ -61,9 +69,7 @@ services:
     restart: unless-stopped
 
   discord-gateway:
-    build:
-      context: ./
-      dockerfile: ./services/discord-gateway/Dockerfile
+    image: ghcr.io/gof2bountybot/bountybot-reborn-samx/discord-gateway:${BOUNTYBOT_VERSION:-latest}
     container_name: bountybot-discord-gateway
     networks:
       - botnetv2
@@ -75,7 +81,7 @@ services:
         restart: true
     env_file:
       - path: ./.env
-        required: false 
+        required: false
     environment:
       - PUID=${PUID:-1000}
       - PGID=${PGID:-1000}
@@ -86,9 +92,7 @@ services:
     restart: unless-stopped
 
   blender-service:
-    build:
-      context: ./
-      dockerfile: ./services/blender-service/Dockerfile.cpu
+    image: ghcr.io/gof2bountybot/bountybot-reborn-samx/blender-service:${BOUNTYBOT_VERSION:-latest}
     container_name: bountybot-blender-service
     networks:
       - botnetv2
@@ -103,7 +107,7 @@ services:
         restart: true
     env_file:
       - path: ./.env
-        required: false 
+        required: false
     environment:
       - PUID=${PUID:-1000}
       - PGID=${PGID:-1000}

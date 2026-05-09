@@ -1,3 +1,10 @@
+# DEV — local build, GPU blender (requires nvidia-docker + NVIDIA GPU)
+# Builds all service images from source on this machine.
+# Usage: docker compose -f docker-compose-gpu.yml up --build
+#
+# For CPU-only dev: use docker-compose.yml
+# For production (pre-built GHCR images): use docker-compose.prod-gpu.yml
+
 name: bountybot-stack
 services:
   db:

@@ -42,7 +42,7 @@ skipped; they never abort the sweep for the remaining items.
 
 import os as _os
 import traceback
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import httpx
 from shared.bblogger import get_logger
@@ -57,8 +57,21 @@ _GATEWAY_HOST = _os.getenv("DISCORD_GATEWAY_HOST", "discord-gateway")
 _GATEWAY_PORT = _os.getenv("GATEWAY_PORT", "7999")
 _GATEWAY_BASE_URL = f"http://{_GATEWAY_HOST}:{_GATEWAY_PORT}/api/v1"
 
+# The bot's Discord user ID — used to identify bot-authored messages in the
+# secondary orphan sweep. Read from BOTAPPID env var (same var used by the
+# gateway). Falls back to 0 (matches nothing) if unset, making the sweep a
+# safe no-op in environments without the var.
+_BOT_USER_ID: int = int(_os.getenv("BOTAPPID", "0"))
+
 # Maximum messages to fetch per channel per sweep (Discord API max is 100).
 _CHANNEL_MESSAGE_LIMIT = 100
+
+# Minimum age (in seconds) a bot-authored, untracked message must be before
+# the secondary orphan sweep will delete it. Set to 2× the default
+# bounty_expiry_minutes (480 min = 8 h) so we never touch a brand-new
+# post that simply hasn't had its DB record written yet. The per-guild
+# expiry is used when available; this is the hard floor.
+_ORPHAN_AGE_FLOOR_SECONDS = 960 * 60  # 16 hours
 
 
 # ---------------------------------------------------------------------------
@@ -148,6 +161,7 @@ async def execute_bounty_failsafe_cleanup_job(job_id: str, payload: dict) -> dic
                         guild_id=gid,
                         division=division,
                         channel_id=channel_id,
+                        guild_config=config,
                     )
                     g_inspected += inspected
                     g_cleaned += cleaned
@@ -205,16 +219,28 @@ async def _sweep_channel(
     guild_id: int,
     division: str,
     channel_id: int,
+    guild_config=None,
 ) -> tuple[int, int, int]:
     """Sweep one bounty channel and clean up any non-live bounty posts.
+
+    Two-pass strategy
+    -----------------
+    Pass 1 (DB-tracked): look up each message in the discord_message table.
+      - Known live bounty → skip.
+      - Known expired/captured/orphan → delete post + DB record.
+
+    Pass 2 (untracked bot messages): for messages that had no DB record
+      and were authored by the bot, apply an age-based heuristic:
+      if the message is older than max(guild_expiry_minutes×2, 16 hours),
+      treat it as an untracked stale bounty post and delete it from Discord.
+      This handles posts whose DiscordMessage record was never written
+      (e.g. DB write failed silently, or posted before a stack rebuild).
 
     Returns
     -------
     tuple[int, int, int]
         (messages_inspected, posts_cleaned, errors)
     """
-    # Deferred imports
-
     inspected = 0
     cleaned = 0
     errors = 0
@@ -250,8 +276,16 @@ async def _sweep_channel(
         f"channel={channel_id}: got {len(messages_data)} messages to inspect"
     )
 
+    # Compute the orphan age threshold for Pass 2.
+    # Use 2× the guild's bounty_expiry_minutes, with a hard floor of
+    # _ORPHAN_AGE_FLOOR_SECONDS so we never delete a just-announced post
+    # whose DB record hasn't landed yet.
+    guild_expiry_seconds = getattr(guild_config, "bounty_expiry_minutes", 480) * 60
+    orphan_threshold_seconds = max(guild_expiry_seconds * 2, _ORPHAN_AGE_FLOOR_SECONDS)
+    orphan_cutoff = datetime.now(UTC) - timedelta(seconds=orphan_threshold_seconds)
+
     # ------------------------------------------------------------------
-    # Step 2: For each message, look it up as a bounty_announcement
+    # Step 2: For each message, run Pass 1 (DB lookup) then Pass 2
     # ------------------------------------------------------------------
     for msg in messages_data:
         discord_message_id: int | None = None
@@ -285,10 +319,26 @@ async def _sweep_channel(
                     f"channel={channel_id}: msg_id={discord_message_id} is live — skip"
                 )
             elif action == "skip":
+                # Pass 1 found no DB record. Run Pass 2: if the message was
+                # posted by the bot and is old enough, treat it as an untracked
+                # stale bounty post and delete it from Discord only (no DB record
+                # to clean up).
                 flogger.trace(
                     f"BountyFailsafeCleanup[{job_id}] guild={guild_id} div={division} "
-                    f"channel={channel_id}: msg_id={discord_message_id} not a bounty announcement — skip"
+                    f"channel={channel_id}: msg_id={discord_message_id} not in DB — checking orphan heuristic"
                 )
+                orphan_cleaned = await _maybe_delete_untracked_bot_message(
+                    job_id=job_id,
+                    guild_id=guild_id,
+                    division=division,
+                    channel_id=channel_id,
+                    discord_message_id=discord_message_id,
+                    msg=msg,
+                    orphan_cutoff=orphan_cutoff,
+                )
+                if orphan_cleaned:
+                    cleaned += 1
+
         except Exception as msg_err:  # pylint: disable=broad-exception-caught
             errors += 1
             flogger.warning(
@@ -298,6 +348,89 @@ async def _sweep_channel(
             flogger.trace(traceback.format_exc())
 
     return inspected, cleaned, errors
+
+
+async def _maybe_delete_untracked_bot_message(
+    job_id: str,
+    guild_id: int,
+    division: str,
+    channel_id: int,
+    discord_message_id: int,
+    msg: dict,
+    orphan_cutoff: datetime,
+) -> bool:
+    """Secondary orphan sweep (Pass 2): delete an untracked bot-authored message
+    if it is old enough to be a stale bounty post.
+
+    Heuristic
+    ---------
+    - Message author_id == _BOT_USER_ID (bot posted it)
+    - Message timestamp < orphan_cutoff (older than 2× guild expiry, min 16 h)
+
+    If both conditions hold, the Discord message is deleted (Discord-only —
+    there is no DB record to clean). Returns True if deleted, False otherwise.
+    """
+    if _BOT_USER_ID == 0:
+        # BOTAPPID not set — cannot safely identify bot messages; skip.
+        flogger.trace(f"BountyFailsafeCleanup[{job_id}] BOTAPPID not configured — orphan heuristic disabled")
+        return False
+
+    author_id_raw = msg.get("author_id") or msg.get("author", {}).get("id")
+    try:
+        author_id = int(author_id_raw) if author_id_raw is not None else None
+    except (TypeError, ValueError):
+        author_id = None
+
+    if author_id != _BOT_USER_ID:
+        flogger.trace(
+            f"BountyFailsafeCleanup[{job_id}] guild={guild_id} div={division} "
+            f"channel={channel_id}: msg_id={discord_message_id} not from bot (author={author_id}) — skip"
+        )
+        return False
+
+    # Parse the message timestamp
+    raw_ts = msg.get("timestamp")
+    msg_ts: datetime | None = None
+    if raw_ts:
+        try:
+            msg_ts = datetime.fromisoformat(str(raw_ts).replace("Z", "+00:00"))
+            if msg_ts.tzinfo is None:
+                msg_ts = msg_ts.replace(tzinfo=UTC)
+        except (ValueError, TypeError):
+            msg_ts = None
+
+    if msg_ts is None or msg_ts >= orphan_cutoff:
+        flogger.trace(
+            f"BountyFailsafeCleanup[{job_id}] guild={guild_id} div={division} "
+            f"channel={channel_id}: msg_id={discord_message_id} too recent (ts={raw_ts}) — skip"
+        )
+        return False
+
+    # Both conditions met — delete from Discord (Discord-only, no DB record).
+    flogger.info(
+        f"BountyFailsafeCleanup[{job_id}] guild={guild_id} div={division} "
+        f"channel={channel_id}: msg_id={discord_message_id} is untracked bot post "
+        f"from {raw_ts} (cutoff={orphan_cutoff.isoformat()}) — deleting as orphan"
+    )
+    try:
+        async with httpx.AsyncClient() as client:
+            resp = await client.delete(
+                f"{_GATEWAY_BASE_URL}/channels/{channel_id}/messages/{discord_message_id}",
+                timeout=10,
+            )
+        if resp.status_code not in (200, 204, 404):
+            resp.raise_for_status()
+        flogger.debug(
+            f"BountyFailsafeCleanup[{job_id}] deleted untracked orphan post "
+            f"channel={channel_id} msg_id={discord_message_id} (HTTP {resp.status_code})"
+        )
+        return True
+    except Exception as e:  # pylint: disable=broad-exception-caught
+        flogger.warning(
+            f"BountyFailsafeCleanup[{job_id}] failed to delete untracked orphan "
+            f"channel={channel_id} msg_id={discord_message_id}: {e}"
+        )
+        return False
 
 
 # ---------------------------------------------------------------------------

@@ -136,6 +136,7 @@ async def _seed_guild_config(
     gold_channel_id: int | None = None,
     platinum_channel_id: int | None = None,
     bounty_hunter_role_id: int | None = 12345,
+    bounty_expiry_minutes: int = 480,
 ) -> GuildConfig:
     """Persist a minimal GuildConfig with configurable bounty channels."""
     config = GuildConfig(
@@ -145,6 +146,7 @@ async def _seed_guild_config(
         gold_bounty_channel_id=gold_channel_id,
         platinum_bounty_channel_id=platinum_channel_id,
         bounty_hunter_role_id=bounty_hunter_role_id,
+        bounty_expiry_minutes=bounty_expiry_minutes,
     )
     db.add(config)
     await db.commit()
@@ -693,3 +695,193 @@ class TestGuildIdFilter:
         assert result["guilds_processed"] == 1
         assert GUILD_A in result["results"]
         assert GUILD_B not in result["results"]
+
+
+# ===========================================================================
+# TIER B+C — Secondary orphan sweep (untracked bot-authored messages)
+# ===========================================================================
+
+
+def _channel_messages_with_author(message_id: int, author_id: int, timestamp: str) -> dict:
+    """Build a gateway /channels/{id}/messages response with full message metadata."""
+    return {
+        "status": "success",
+        "data": [
+            {
+                "id": str(message_id),
+                "author_id": str(author_id),
+                "timestamp": timestamp,
+            }
+        ],
+    }
+
+
+BOT_USER_ID = 1_379_827_884_851_593_256
+OTHER_USER_ID = 999_000_000_000_000_001
+
+
+class TestUntrackedOrphanSweep:
+    """Behaviour: untracked bot-authored messages older than the threshold are deleted.
+
+    These tests cover the secondary orphan sweep (Pass 2) in _sweep_channel,
+    which handles posts whose DiscordMessage DB record was never written
+    (e.g. DB write failed silently after announcement, or posted before a
+    stack rebuild wiped the discord_message table).
+    """
+
+    async def test_old_untracked_bot_message_is_deleted(self, sqlite_engine_and_factory):
+        """Untracked bot message older than 2×expiry threshold → deleted from Discord.
+
+        No DiscordMessage record in DB. Message is from the bot user and is
+        25 hours old (well past the 16-hour floor). Expect Discord DELETE called.
+
+        # 1 mock — db_manager bridge (Tier B)
+        """
+        _engine, factory = sqlite_engine_and_factory
+        async with factory() as seed_db:
+            await _seed_guild_config(seed_db, bounty_expiry_minutes=480)
+            # No DiscordMessage record seeded — this is the untracked scenario.
+
+        old_ts = (datetime.now(UTC) - timedelta(hours=25)).isoformat()
+        delete_url = f"{_GATEWAY_BASE}/channels/{BRONZE_CHANNEL_ID}/messages/{MESSAGE_ID_1}"
+
+        with (
+            patch("persist.database.manager.db_manager", _make_fake_db_manager(factory)),
+            patch(
+                "utils.executors.bounty_failsafe_cleanup_executor._BOT_USER_ID",
+                BOT_USER_ID,
+            ),
+            respx.mock(assert_all_called=True, assert_all_mocked=True) as router,
+        ):
+            router.get(_MESSAGES_URL).respond(
+                200, json=_channel_messages_with_author(MESSAGE_ID_1, BOT_USER_ID, old_ts)
+            )
+            router.delete(delete_url).respond(204)
+
+            result = await execute_bounty_failsafe_cleanup_job("test-job", {})
+
+        assert result["total_cleaned"] == 1
+
+    async def test_recent_untracked_bot_message_is_not_deleted(self, sqlite_engine_and_factory):
+        """Untracked bot message newer than the threshold → NOT deleted.
+
+        Message is only 1 hour old — could be a just-announced bounty whose
+        DB record hasn't been written yet. Must not be touched.
+
+        # 1 mock — db_manager bridge (Tier B)
+        """
+        _engine, factory = sqlite_engine_and_factory
+        async with factory() as seed_db:
+            await _seed_guild_config(seed_db, bounty_expiry_minutes=480)
+
+        recent_ts = (datetime.now(UTC) - timedelta(hours=1)).isoformat()
+
+        with (
+            patch("persist.database.manager.db_manager", _make_fake_db_manager(factory)),
+            patch(
+                "utils.executors.bounty_failsafe_cleanup_executor._BOT_USER_ID",
+                BOT_USER_ID,
+            ),
+            respx.mock(assert_all_called=False, assert_all_mocked=True) as router,
+        ):
+            router.get(_MESSAGES_URL).respond(
+                200, json=_channel_messages_with_author(MESSAGE_ID_1, BOT_USER_ID, recent_ts)
+            )
+            # DELETE route intentionally NOT registered — any DELETE call would
+            # raise respx.RequestNotMocked and fail the test.
+
+            result = await execute_bounty_failsafe_cleanup_job("test-job", {})
+
+        assert result["total_cleaned"] == 0
+
+    async def test_untracked_non_bot_message_is_not_deleted(self, sqlite_engine_and_factory):
+        """Untracked message from a human user → never deleted, regardless of age.
+
+        Only bot-authored messages are eligible for the secondary orphan sweep.
+
+        # 1 mock — db_manager bridge (Tier B)
+        """
+        _engine, factory = sqlite_engine_and_factory
+        async with factory() as seed_db:
+            await _seed_guild_config(seed_db, bounty_expiry_minutes=480)
+
+        old_ts = (datetime.now(UTC) - timedelta(hours=48)).isoformat()
+
+        with (
+            patch("persist.database.manager.db_manager", _make_fake_db_manager(factory)),
+            patch(
+                "utils.executors.bounty_failsafe_cleanup_executor._BOT_USER_ID",
+                BOT_USER_ID,
+            ),
+            respx.mock(assert_all_called=False, assert_all_mocked=True) as router,
+        ):
+            router.get(_MESSAGES_URL).respond(
+                200, json=_channel_messages_with_author(MESSAGE_ID_1, OTHER_USER_ID, old_ts)
+            )
+            # No DELETE route — any DELETE would raise respx.RequestNotMocked.
+
+            result = await execute_bounty_failsafe_cleanup_job("test-job", {})
+
+        assert result["total_cleaned"] == 0
+
+    async def test_orphan_sweep_disabled_when_bot_user_id_zero(self, sqlite_engine_and_factory):
+        """When BOTAPPID is not set (_BOT_USER_ID=0), orphan heuristic is a no-op.
+
+        Safety valve: without knowing the bot's user ID we cannot safely
+        identify bot-authored messages, so the sweep must do nothing.
+
+        # 1 mock — db_manager bridge (Tier B)
+        """
+        _engine, factory = sqlite_engine_and_factory
+        async with factory() as seed_db:
+            await _seed_guild_config(seed_db, bounty_expiry_minutes=480)
+
+        old_ts = (datetime.now(UTC) - timedelta(hours=48)).isoformat()
+
+        with (
+            patch("persist.database.manager.db_manager", _make_fake_db_manager(factory)),
+            patch("utils.executors.bounty_failsafe_cleanup_executor._BOT_USER_ID", 0),
+            respx.mock(assert_all_called=False, assert_all_mocked=True) as router,
+        ):
+            router.get(_MESSAGES_URL).respond(
+                200, json=_channel_messages_with_author(MESSAGE_ID_1, BOT_USER_ID, old_ts)
+            )
+            # No DELETE route — any DELETE would raise respx.RequestNotMocked.
+
+            result = await execute_bounty_failsafe_cleanup_job("test-job", {})
+
+        assert result["total_cleaned"] == 0
+
+    async def test_tracked_message_still_takes_db_path(self, sqlite_engine_and_factory):
+        """A message that IS in the DB takes Pass 1 (DB path), not Pass 2.
+
+        Even if the message is old and bot-authored, the DB record classifies
+        it — in this case as a live bounty — so it must NOT be deleted.
+
+        # 1 mock — db_manager bridge (Tier B)
+        """
+        _engine, factory = sqlite_engine_and_factory
+        async with factory() as seed_db:
+            await _seed_guild_config(seed_db, bounty_expiry_minutes=480)
+            bounty = await _seed_bounty(seed_db, end_time_offset_hours=4)
+            await _seed_discord_message(seed_db, bounty_id=bounty.id)
+
+        old_ts = (datetime.now(UTC) - timedelta(hours=25)).isoformat()
+
+        with (
+            patch("persist.database.manager.db_manager", _make_fake_db_manager(factory)),
+            patch(
+                "utils.executors.bounty_failsafe_cleanup_executor._BOT_USER_ID",
+                BOT_USER_ID,
+            ),
+            respx.mock(assert_all_called=False, assert_all_mocked=True) as router,
+        ):
+            router.get(_MESSAGES_URL).respond(
+                200, json=_channel_messages_with_author(MESSAGE_ID_1, BOT_USER_ID, old_ts)
+            )
+            # No DELETE route — any DELETE would raise respx.RequestNotMocked.
+
+            result = await execute_bounty_failsafe_cleanup_job("test-job", {})
+
+        # Live bounty → not cleaned, even though message is old and bot-authored
+        assert result["total_cleaned"] == 0

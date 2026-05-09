@@ -958,7 +958,15 @@ async def _announce_bounty(parent_job_id: str, bounty, config, db) -> None:
                 f"bounty id={bounty.id} guild={bounty.guild_id}"
             )
         except Exception as e:  # pylint: disable=broad-exception-caught
+            # Non-fatal: the bounty is already live and announced. Failing to write
+            # the DiscordMessage record means the failsafe cleanup executor will not
+            # be able to identify this post by DB lookup and will treat it as an
+            # untracked bot message — the secondary orphan sweep (age-based heuristic)
+            # will catch and clean it up on the next :30 run.
             flogger.error(
-                f"BountySpawnJob[{parent_job_id}] failed to persist DiscordMessage for bounty id={bounty.id}: {e}"
+                f"BountySpawnJob[{parent_job_id}] failed to persist DiscordMessage for "
+                f"bounty id={bounty.id} guild={bounty.guild_id} "
+                f"channel={target_channel_id} msg_id={discord_message_id}: {e} "
+                f"— post is live but untracked; failsafe cleanup will handle it"
             )
             flogger.trace(traceback.format_exc())

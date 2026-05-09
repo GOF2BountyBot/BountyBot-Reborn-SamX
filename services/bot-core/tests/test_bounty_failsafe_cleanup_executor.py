@@ -366,9 +366,7 @@ class TestExpiredBountyPost:
 
         # Cross-session reload: DiscordMessage row should be gone.
         async with factory() as verify_db:
-            rows = await verify_db.execute(
-                select(DiscordMessage).where(DiscordMessage.reference_id == bounty_id)
-            )
+            rows = await verify_db.execute(select(DiscordMessage).where(DiscordMessage.reference_id == bounty_id))
             remaining = list(rows.scalars().all())
 
         assert len(remaining) == 0, (
@@ -412,9 +410,7 @@ class TestCapturedBountyPost:
 
         # Cross-session reload: DiscordMessage row should be gone.
         async with factory() as verify_db:
-            rows = await verify_db.execute(
-                select(DiscordMessage).where(DiscordMessage.reference_id == bounty_id)
-            )
+            rows = await verify_db.execute(select(DiscordMessage).where(DiscordMessage.reference_id == bounty_id))
             remaining = list(rows.scalars().all())
         assert len(remaining) == 0
 
@@ -456,9 +452,7 @@ class TestLiveActiveBounty:
 
         # Cross-session reload: DiscordMessage row still present.
         async with factory() as verify_db:
-            rows = await verify_db.execute(
-                select(DiscordMessage).where(DiscordMessage.reference_id == bounty_id)
-            )
+            rows = await verify_db.execute(select(DiscordMessage).where(DiscordMessage.reference_id == bounty_id))
             remaining = list(rows.scalars().all())
         assert len(remaining) == 1, "DiscordMessage should still exist for live bounty"
 
@@ -511,9 +505,7 @@ class TestStaleActiveBounty:
 
         # DiscordMessage should also be removed.
         async with factory() as verify_db2:
-            msg_rows = await verify_db2.execute(
-                select(DiscordMessage).where(DiscordMessage.reference_id == bounty_id)
-            )
+            msg_rows = await verify_db2.execute(select(DiscordMessage).where(DiscordMessage.reference_id == bounty_id))
             remaining = list(msg_rows.scalars().all())
         assert len(remaining) == 0, "DiscordMessage should be deleted for stale active bounty"
 
@@ -660,13 +652,9 @@ class TestGatewayDelete500:
 
         # DiscordMessage should still be removed from DB despite Discord failure.
         async with factory() as verify_db:
-            rows = await verify_db.execute(
-                select(DiscordMessage).where(DiscordMessage.reference_id == bounty_id)
-            )
+            rows = await verify_db.execute(select(DiscordMessage).where(DiscordMessage.reference_id == bounty_id))
             remaining = list(rows.scalars().all())
-        assert len(remaining) == 0, (
-            "DiscordMessage record should be deleted even when Discord DELETE returns 500"
-        )
+        assert len(remaining) == 0, "DiscordMessage record should be deleted even when Discord DELETE returns 500"
 
 
 # ===========================================================================
@@ -699,9 +687,7 @@ class TestGuildIdFilter:
             # Only GUILD_A's bronze channel should be queried.
             router.get(_MESSAGES_URL).respond(200, json=_channel_messages_payload([]))
 
-            result = await execute_bounty_failsafe_cleanup_job(
-                "test-job", {"guild_id": GUILD_A}
-            )
+            result = await execute_bounty_failsafe_cleanup_job("test-job", {"guild_id": GUILD_A})
 
         # Only 1 guild processed.
         assert result["guilds_processed"] == 1

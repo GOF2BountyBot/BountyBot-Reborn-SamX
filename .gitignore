@@ -3,6 +3,9 @@ __pycache__/
 *.py[cod]
 *$py.class
 
+# Local CodeQL CLI install + databases (used for security triage, not committed)
+.codeql/
+
 # C extensions
 *.so
 

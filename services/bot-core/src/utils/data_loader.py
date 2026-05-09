@@ -112,9 +112,10 @@ async def load_data(category: str, data_root: str | Path | None = None) -> list[
         try:
             payload = json.loads(json_path.read_text())
         except json.JSONDecodeError as e:
-            warn = f"Skipping invalid JSON {json_path.name}: {e}"
-            flogger.warning(warn)
-            results.append(warn)
+            # Log full exception server-side; only return a generic note to the caller
+            # (the caller is the HTTP API and we must not expose stack-trace information).
+            flogger.warning(f"Skipping invalid JSON {json_path.name}: {e}")
+            results.append(f"Skipping invalid JSON: {json_path.name}")
             continue
 
         # Attempt emoji-resolution on the loaded payload
@@ -129,10 +130,11 @@ async def load_data(category: str, data_root: str | Path | None = None) -> list[
                 msg = f"Upserted {obj!r} from {json_path.name}"
                 flogger.debug(msg)
                 results.append(msg)
-            except Exception as e:  # pylint: disable=broad-exception-caught
-                err = f"Error upserting {json_path.name}: {e}"
-                flogger.exception(err)
-                results.append(err)
+            except Exception:  # pylint: disable=broad-exception-caught
+                # Log the full exception (with traceback) server-side; return only a
+                # generic, non-sensitive marker to the HTTP layer.
+                flogger.exception(f"Error upserting {json_path.name}")
+                results.append(f"Error upserting: {json_path.name}")
 
     flogger.info(f"Completed load_data for '{category}', processed {len(results)} items")
     return results

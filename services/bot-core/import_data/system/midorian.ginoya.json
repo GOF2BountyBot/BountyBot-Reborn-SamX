@@ -1,0 +1,15 @@
+{
+    "aliases": [],
+    "coordinates": [
+        145,
+        118
+    ],
+    "faction": "midorian",
+    "name": "Ginoya",
+    "neighbours": [
+        "Talidor",
+        "Eanya"
+    ],
+    "security": 3,
+    "wiki": "https://galaxyonfire.fandom.com/wiki/Category:Ginoya"
+}

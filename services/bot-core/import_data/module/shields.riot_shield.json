@@ -1,0 +1,14 @@
+{
+  "aliases": [
+    "Riot"
+  ],
+  "builtIn": false,
+  "emoji": "<:riotshield:723706780508749964>",
+  "icon": "https://i.postimg.cc/SRp3FFGn/riot-shield.png",
+  "name": "Riot Shield",
+  "shield": 80,
+  "techLevel": 3,
+  "type": "ShieldModule",
+  "value": 5306,
+  "wiki": "https://galaxyonfire.fandom.com/wiki/Riot_Shield"
+}

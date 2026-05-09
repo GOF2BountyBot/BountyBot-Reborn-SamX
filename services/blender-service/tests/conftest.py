@@ -1,0 +1,30 @@
+"""
+Shared fixtures and import path setup for blender-service tests.
+
+Ensures that:
+1. src/ is at position 0 in sys.path (so service modules are importable)
+2. services/ parent is on sys.path (so shared bblogger is importable)
+"""
+
+import os
+import sys
+
+# ---------------------------------------------------------------------------
+# 1. Ensure src/ is first on sys.path
+# ---------------------------------------------------------------------------
+_SRC_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "src"))
+if _SRC_DIR not in sys.path:
+    sys.path.insert(0, _SRC_DIR)
+elif sys.path[0] != _SRC_DIR:
+    sys.path.remove(_SRC_DIR)
+    sys.path.insert(0, _SRC_DIR)
+
+# ---------------------------------------------------------------------------
+# 2. Ensure services/ parent is on sys.path (for `from shared import bblogger`)
+# ---------------------------------------------------------------------------
+_SERVICES_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
+# Walk up to find the directory containing the 'shared' package
+# The shared module lives at /proj/services/shared/
+_SHARED_PARENT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+if _SHARED_PARENT not in sys.path:
+    sys.path.insert(1, _SHARED_PARENT)

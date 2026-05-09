@@ -1,0 +1,17 @@
+{
+  "aliases": [
+    "E6",
+    "D-X Plating",
+    "E6 Plating",
+    "E6 D-X"
+  ],
+  "armour": 110,
+  "builtIn": false,
+  "emoji": "<:e6dxplating:723706394775257168>",
+  "icon": "https://i.postimg.cc/X71GsVL7/e6-d-x-plating.png",
+  "name": "E6 D-X Plating",
+  "techLevel": 5,
+  "type": "ArmourModule",
+  "value": 20171,
+  "wiki": "https://galaxyonfire.fandom.com/wiki/E6_D-X_Plating"
+}

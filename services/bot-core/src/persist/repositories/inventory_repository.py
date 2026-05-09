@@ -1,0 +1,421 @@
+"""
+Inventory repository for the BountyBot inventory system.
+
+Handles database operations for PlayerInventory entities including
+item management, quantity tracking, and inventory queries.
+"""
+
+from collections.abc import Sequence
+
+from shared import bblogger
+from sqlalchemy import and_, delete, select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from persist.interfaces.repository_interface import IRepository
+from persist.models.player_inventory import PlayerInventory
+
+flogger = bblogger.get_logger("inventory-repository")
+
+
+class InventoryRepository(IRepository[PlayerInventory]):
+    async def get_by_id(self, db: AsyncSession, obj_id: int) -> PlayerInventory | None:
+        """Get inventory item by ID."""
+        try:
+            return await db.get(PlayerInventory, obj_id)
+        except Exception as e:
+            flogger.error(f"Error getting inventory item by ID {obj_id}: {e}")
+            raise
+
+    async def get_by_name(self, db: AsyncSession, name: str) -> PlayerInventory | None:
+        """Not applicable for inventory items."""
+        raise NotImplementedError("Inventory items don't have searchable names")
+
+    async def list_all(self, db: AsyncSession) -> list[PlayerInventory]:
+        """Get all inventory items."""
+        try:
+            result = await db.execute(select(PlayerInventory))
+            return list(result.scalars().all())
+        except Exception as e:
+            flogger.error(f"Error listing all inventory items: {e}")
+            raise
+
+    async def add(self, db: AsyncSession, obj: PlayerInventory, commit: bool = True) -> PlayerInventory:
+        """Add new inventory item to database.
+
+        Args:
+            commit: When False, flush changes without committing (use when the caller
+                owns the transaction, e.g. inside a router-level db.begin() context).
+        """
+        try:
+            db.add(obj)
+            if commit:
+                await db.commit()
+            else:
+                await db.flush()
+            await db.refresh(obj)
+            flogger.info(f"Added inventory item: {obj.item_name} for player {obj.player_id}")
+            return obj
+        except Exception as e:
+            flogger.error(f"Error adding inventory item: {e}")
+            if commit:
+                await db.rollback()
+            raise
+
+    async def create_or_update(self, db: AsyncSession, raw: dict, commit: bool = True) -> PlayerInventory:
+        """Create or update inventory item from raw data.
+
+        Args:
+            commit: When False, flush changes without committing (use when the caller
+                owns the transaction, e.g. inside a router-level db.begin() context).
+        """
+        try:
+            player_id = raw.get("player_id")
+            item_type = raw.get("item_type")
+            item_name = raw.get("item_name")
+            quantity = raw.get("quantity", 1)
+
+            if not all([player_id, item_type, item_name]):
+                raise ValueError("player_id, item_type, and item_name are required")
+
+            # Check if item already exists
+            existing_item = await self.get_player_item(db, player_id, item_type, item_name)
+
+            if existing_item:
+                # Update existing item quantity
+                existing_item.quantity += quantity
+                if commit:
+                    try:
+                        await db.commit()
+                        await db.refresh(existing_item)
+                    except Exception:
+                        await db.rollback()
+                        raise
+                else:
+                    await db.flush()
+                    await db.refresh(existing_item)
+                flogger.debug(f"Updated inventory item quantity: {item_name} for player {player_id}")
+                return existing_item
+
+            # Create new inventory item
+            inventory_item = PlayerInventory(**raw)
+            return await self.add(db, inventory_item, commit=commit)
+
+        except Exception as e:
+            flogger.error(f"Error creating/updating inventory item: {e}")
+            raise
+
+    async def remove(self, db: AsyncSession, obj: PlayerInventory, commit: bool = True) -> None:
+        """Remove inventory item from database.
+
+        Args:
+            commit: When False, flush changes without committing (use when the caller
+                owns the transaction, e.g. inside a router-level db.begin() context).
+        """
+        try:
+            await db.delete(obj)
+            if commit:
+                await db.commit()
+            else:
+                await db.flush()
+            flogger.info(f"Removed inventory item: {obj.item_name}")
+        except Exception as e:
+            flogger.error(f"Error removing inventory item: {e}")
+            if commit:
+                await db.rollback()
+            raise
+
+    async def get_player_items(
+        self, db: AsyncSession, player_id: int, item_type: str | None = None
+    ) -> list[PlayerInventory]:
+        """Get all inventory items for a player, optionally filtered by type."""
+        try:
+            query = select(PlayerInventory).where(PlayerInventory.player_id == player_id)
+
+            if item_type:
+                query = query.where(PlayerInventory.item_type == item_type)
+
+            result = await db.execute(query.order_by(PlayerInventory.item_type, PlayerInventory.item_name))
+            return list(result.scalars().all())
+        except Exception as e:
+            flogger.error(f"Error getting items for player {player_id}: {e}")
+            raise
+
+    async def get_player_items_by_types(
+        self, db: AsyncSession, player_id: int, item_types: Sequence[str]
+    ) -> list[PlayerInventory]:
+        """Get all inventory items for a player filtered by a set of concrete types.
+
+        Designed for use after generic alias expansion (e.g. ``"weapon"`` →
+        ``["primary_weapon", "turret_weapon"]``).  The repository always receives
+        concrete types — generic aliases must be expanded by the service layer
+        before calling this method.
+        """
+        try:
+            query = (
+                select(PlayerInventory)
+                .where(
+                    and_(
+                        PlayerInventory.player_id == player_id,
+                        PlayerInventory.item_type.in_(item_types),
+                    )
+                )
+                .order_by(PlayerInventory.item_type, PlayerInventory.item_name)
+            )
+            result = await db.execute(query)
+            return list(result.scalars().all())
+        except Exception as e:
+            flogger.error(f"Error getting items by types {item_types} for player {player_id}: {e}")
+            raise
+
+    async def get_player_item_by_types(
+        self, db: AsyncSession, player_id: int, item_types: Sequence[str], item_name: str
+    ) -> PlayerInventory | None:
+        """Get a specific named item from player's inventory, matching any of the given concrete types.
+
+        Returns the first matching row or ``None``.  Used when a generic alias
+        (e.g. ``"weapon"``) has been expanded to multiple concrete types and we
+        need to find a particular item regardless of its exact concrete type.
+        """
+        try:
+            result = await db.execute(
+                select(PlayerInventory).where(
+                    and_(
+                        PlayerInventory.player_id == player_id,
+                        PlayerInventory.item_type.in_(item_types),
+                        PlayerInventory.item_name == item_name,
+                    )
+                )
+            )
+            return result.scalars().first()
+        except Exception as e:
+            flogger.error(f"Error getting item '{item_name}' by types {item_types} for player {player_id}: {e}")
+            raise
+
+    async def get_player_items_by_name(self, db: AsyncSession, player_id: int, item_name: str) -> list[PlayerInventory]:
+        """Get all inventory rows for a player matching a given item_name across all concrete types.
+
+        Used by ``ShopService.sell_item`` (A.42b) to resolve the concrete item_type
+        from the player's inventory by name.  Returns all matching rows so the caller
+        can detect cross-type name collisions (impossible in the current catalog, but
+        checked defensively).
+        """
+        try:
+            result = await db.execute(
+                select(PlayerInventory).where(
+                    and_(
+                        PlayerInventory.player_id == player_id,
+                        PlayerInventory.item_name == item_name,
+                    )
+                )
+            )
+            return list(result.scalars().all())
+        except Exception as e:
+            flogger.error(f"Error getting items by name '{item_name}' for player {player_id}: {e}")
+            raise
+
+    async def get_player_item(
+        self, db: AsyncSession, player_id: int, item_type: str, item_name: str
+    ) -> PlayerInventory | None:
+        """Get a specific item from player's inventory."""
+        try:
+            result = await db.execute(
+                select(PlayerInventory).where(
+                    and_(
+                        PlayerInventory.player_id == player_id,
+                        PlayerInventory.item_type == item_type,
+                        PlayerInventory.item_name == item_name,
+                    )
+                )
+            )
+            return result.scalars().first()
+        except Exception as e:
+            flogger.error(f"Error getting item {item_name} for player {player_id}: {e}")
+            raise
+
+    async def add_item(
+        self,
+        db: AsyncSession,
+        player_id: int,
+        item_type: str,
+        item_name: str,
+        quantity: int,
+        commit: bool = True,
+    ) -> PlayerInventory:
+        """Add items to player's inventory (or increase existing quantity).
+
+        Args:
+            commit: When False, flush changes without committing (use when the caller
+                owns the transaction, e.g. inside a router-level db.begin() context).
+        """
+        try:
+            if quantity <= 0:
+                raise ValueError("Quantity must be positive")
+
+            existing_item = await self.get_player_item(db, player_id, item_type, item_name)
+
+            if existing_item:
+                # Update existing item
+                new_quantity = existing_item.quantity + quantity
+                await self.update_quantity(db, existing_item.id, new_quantity, commit=commit)
+                await db.refresh(existing_item)
+                return existing_item
+
+            # Create new item
+            item_data = {"player_id": player_id, "item_type": item_type, "item_name": item_name, "quantity": quantity}
+            return await self.create_or_update(db, item_data, commit=commit)
+
+        except Exception as e:
+            flogger.error(f"Error adding item {item_name} to player {player_id}: {e}")
+            raise
+
+    async def remove_item(
+        self,
+        db: AsyncSession,
+        player_id: int,
+        item_type: str,
+        item_name: str,
+        quantity: int,
+        commit: bool = True,
+    ) -> None:
+        """Remove items from player's inventory.
+
+        Args:
+            commit: When False, flush changes without committing (use when the caller
+                owns the transaction, e.g. inside a router-level db.begin() context).
+        """
+        try:
+            if quantity <= 0:
+                raise ValueError("Quantity must be positive")
+
+            item = await self.get_player_item(db, player_id, item_type, item_name)
+            if not item:
+                raise ValueError(f"Item {item_name} not found in player inventory")
+
+            if item.quantity < quantity:
+                raise ValueError(f"Insufficient quantity. Available: {item.quantity}, Requested: {quantity}")
+
+            new_quantity = item.quantity - quantity
+
+            if new_quantity <= 0:
+                # Remove item entirely
+                await self.remove(db, item, commit=commit)
+            else:
+                # Update quantity
+                await self.update_quantity(db, item.id, new_quantity, commit=commit)
+
+            flogger.debug(f"Removed {quantity}x {item_name} from player {player_id}")
+
+        except Exception as e:
+            flogger.error(f"Error removing item {item_name} from player {player_id}: {e}")
+            raise
+
+    async def update_quantity(
+        self, db: AsyncSession, inventory_id: int, new_quantity: int, commit: bool = True
+    ) -> PlayerInventory:
+        """Update the quantity of an inventory item.
+
+        Mutates the ORM-tracked PlayerInventory instance via ``setattr`` (NOT a Core UPDATE).
+        See ``persist/repositories/AGENTS.md`` for the rationale.
+
+        Args:
+            commit: When False, flush changes without committing (use when the caller
+                owns the transaction, e.g. inside a router-level db.begin() context).
+
+        Raises:
+            ValueError: If quantity is negative or no inventory item exists with the given ID.
+        """
+        try:
+            if new_quantity < 0:
+                raise ValueError("Quantity cannot be negative")
+
+            item = await self.get_by_id(db, inventory_id)
+            if item is None:
+                raise ValueError(f"Inventory item {inventory_id} not found")
+            item.quantity = new_quantity
+            if commit:
+                await db.commit()
+            else:
+                await db.flush()
+
+            flogger.debug(f"Updated inventory item {inventory_id} quantity: {new_quantity}")
+            return item
+        except ValueError:
+            raise
+        except Exception as e:
+            flogger.error(f"Error updating quantity for inventory item {inventory_id}: {e}")
+            if commit:
+                await db.rollback()
+            raise
+
+    async def get_item_count_by_type(self, db: AsyncSession, player_id: int, item_type: str) -> int:
+        """Get total count of items of a specific type for a player."""
+        try:
+            result = await db.execute(
+                select(PlayerInventory).where(
+                    and_(PlayerInventory.player_id == player_id, PlayerInventory.item_type == item_type)
+                )
+            )
+            items = result.scalars().all()
+            return sum(item.quantity for item in items)
+        except Exception as e:
+            flogger.error(f"Error getting item count for player {player_id}, type {item_type}: {e}")
+            raise
+
+    async def clear_player_inventory(self, db: AsyncSession, player_id: int, *, commit: bool = True) -> int:
+        """Delete all inventory items for a player (used during prestige reset).
+
+        Args:
+            commit: When False, flush changes without committing (use when the caller
+                owns the transaction, e.g. inside a router-level db.begin() context).
+                When True (default), commit on success and rollback on exception.
+
+        Returns the number of rows deleted.
+        """
+        try:
+            result = await db.execute(delete(PlayerInventory).where(PlayerInventory.player_id == player_id))
+            if commit:
+                await db.commit()
+            else:
+                await db.flush()
+            deleted_count = result.rowcount
+            flogger.info(f"Cleared {deleted_count} inventory items for player {player_id}")
+            return deleted_count
+        except Exception as e:
+            flogger.error(f"Error clearing inventory for player {player_id}: {e}")
+            if commit:
+                await db.rollback()
+            raise
+
+    async def get_inventory_summary(self, db: AsyncSession, player_id: int) -> dict:
+        """Get a summary of player's inventory by item type.
+
+        Post-A.36: player_inventories.item_type stores concrete types only
+        (ship, primary_weapon, secondary_weapon, turret_weapon, module).
+        Generic aliases (weapon, turret) are never persisted.
+
+        Returns a dict keyed by concrete type with total_items as the grand total.
+        Callers that display a human-readable summary should aggregate on their side,
+        e.g. Weapons = primary_weapon + secondary_weapon.
+        """
+        try:
+            items = await self.get_player_items(db, player_id)
+
+            # Keys are concrete item types (A.36 storage invariant — no generic aliases in DB)
+            summary = {
+                "ship": 0,
+                "primary_weapon": 0,
+                "secondary_weapon": 0,
+                "turret_weapon": 0,
+                "module": 0,
+                "total_items": 0,
+            }
+
+            for item in items:
+                if item.item_type in summary:
+                    summary[item.item_type] += item.quantity
+                summary["total_items"] += item.quantity
+
+            return summary
+        except Exception as e:
+            flogger.error(f"Error getting inventory summary for player {player_id}: {e}")
+            raise

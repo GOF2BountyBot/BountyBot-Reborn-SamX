@@ -1,0 +1,12 @@
+{
+    "aliases": [
+        "gendol",
+        "ethor"
+    ],
+    "builtIn": false,
+    "faction": "terran",
+    "icon": "https://i.postimg.cc/QtN11VB3/gendol-ethor.png",
+    "isPlayer": false,
+    "name": "Gendol Ethor",
+    "wiki": "https://galaxyonfire.fandom.com/wiki/Gendol_Ethor"
+}

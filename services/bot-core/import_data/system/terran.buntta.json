@@ -1,0 +1,19 @@
+{
+    "aliases": [],
+    "coordinates": [
+        454,
+        807
+    ],
+    "faction": "terran",
+    "name": "Buntta",
+    "neighbours": [
+        "Suteo",
+        "Beh\u00e9n",
+        "Augmenta",
+        "V'Ikka",
+        "Pescal Inartu",
+        "Pan"
+    ],
+    "security": 1,
+    "wiki": "https://galaxyonfire.fandom.com/wiki/Category:Buntta"
+}

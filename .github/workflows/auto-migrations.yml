@@ -1,0 +1,120 @@
+name: Auto-Generate Alembic Migrations
+
+# Triggers whenever SQLAlchemy models change, either on a push to main or
+# inside a pull request.  The workflow applies existing migrations to a
+# clean PostgreSQL instance, then runs autogenerate to detect whether the
+# model changes require a new revision file.  If they do, the file is
+# committed back to the branch (push events only).
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'services/bot-core/src/persist/models/**'
+  pull_request:
+    paths:
+      - 'services/bot-core/src/persist/models/**'
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  generate-migration:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: bounty
+          POSTGRES_PASSWORD: bounty
+          POSTGRES_DB: bountydb
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      POSTGRES_HOST: localhost
+      POSTGRES_PORT: "5432"
+      POSTGRES_DB: bountydb
+      POSTGRES_USER: bounty
+      POSTGRES_PASSWORD: bounty
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.13
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+          cache: pip
+          cache-dependency-path: services/bot-core/requirements.txt
+
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -r services/bot-core/requirements.txt
+
+      - name: Apply existing migrations
+        working-directory: services/bot-core/src
+        env:
+          PYTHONPATH: ${{ github.workspace }}/services/bot-core/src:${{ github.workspace }}/services/shared
+        run: |
+          python -m persist.database.run_migration upgrade
+
+      - name: Detect schema drift and generate revision
+        id: check
+        working-directory: services/bot-core/src
+        env:
+          PYTHONPATH: ${{ github.workspace }}/services/bot-core/src:${{ github.workspace }}/services/shared
+        run: |
+          # Compose a descriptive message from the latest commit subject.
+          GIT_MSG=$(git log -1 --pretty=%s | head -c 60)
+          REVISION_MSG="auto: ${GIT_MSG}"
+
+          # Generate a candidate revision file via autogenerate.
+          python -m persist.database.run_migration revision -m "${REVISION_MSG}"
+
+          # Locate the newest file in the versions directory.
+          VERSIONS_DIR="persist/database/revisions/versions"
+          LATEST=$(ls -t "${VERSIONS_DIR}"/*.py | head -1)
+          echo "Generated revision file: ${LATEST}"
+
+          # Determine whether the file contains actual schema operations or
+          # is empty (Alembic emits a "pass" body when nothing has changed).
+          if grep -q "op\." "${LATEST}"; then
+            echo "Schema changes detected — keeping revision file."
+            echo "has_changes=true"  >> "${GITHUB_OUTPUT}"
+            echo "revision_file=${LATEST}" >> "${GITHUB_OUTPUT}"
+          else
+            echo "No schema changes — discarding empty revision file."
+            rm "${LATEST}"
+            echo "has_changes=false" >> "${GITHUB_OUTPUT}"
+          fi
+
+      - name: Commit and push migration
+        # Only commit on direct pushes to main when there are real schema changes.
+        if: steps.check.outputs.has_changes == 'true' && github.event_name == 'push'
+        env:
+          REVISION_FILE: ${{ steps.check.outputs.revision_file }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          # Stage only the newly generated versions file.
+          git add "services/bot-core/src/${REVISION_FILE}"
+          git commit -m "chore: auto-generate Alembic migration [skip ci]"
+          git push
+
+      - name: Summary
+        if: always()
+        run: |
+          if [ "${{ steps.check.outputs.has_changes }}" == "true" ]; then
+            echo "### ✅ New migration generated" >> "${GITHUB_STEP_SUMMARY}"
+            echo "File: \`${{ steps.check.outputs.revision_file }}\`" >> "${GITHUB_STEP_SUMMARY}"
+          else
+            echo "### ℹ️ No schema changes detected — no migration needed." >> "${GITHUB_STEP_SUMMARY}"
+          fi

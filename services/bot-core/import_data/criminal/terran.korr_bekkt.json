@@ -1,0 +1,12 @@
+{
+    "aliases": [
+        "korr",
+        "bekkt"
+    ],
+    "builtIn": false,
+    "faction": "terran",
+    "icon": "https://i.postimg.cc/nVPB9Fpy/korr-bekkt.png",
+    "isPlayer": false,
+    "name": "Korr Bekkt",
+    "wiki": "https://galaxyonfire.fandom.com/wiki/Korr_Bekkt"
+}

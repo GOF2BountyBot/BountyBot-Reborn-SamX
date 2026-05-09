@@ -1,0 +1,16 @@
+{
+    "aliases": [],
+    "coordinates": [
+        823,
+        195
+    ],
+    "faction": "terran",
+    "name": "Aquila",
+    "neighbours": [
+        "Wolf-Reiser",
+        "Loma",
+        "Union"
+    ],
+    "security": 2,
+    "wiki": "https://galaxyonfire.fandom.com/wiki/Aquila_system"
+}

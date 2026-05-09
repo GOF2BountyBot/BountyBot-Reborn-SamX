@@ -1,0 +1,19 @@
+{
+  "aliases": [
+    "Luna Mk I",
+    "Luna EMP",
+    "Luna",
+    "EMP Mk I",
+    "EMP I"
+  ],
+  "builtIn": false,
+  "dps": 8.57,
+  "emoji": "<:lunaempmki:723709689149390888>",
+  "icon": "https://i.postimg.cc/RCRvTXdM/luna-emp-mk-i.png",
+  "name": "Luna EMP Mk I",
+  "techLevel": 4,
+  "value": 5942,
+  "wiki": "https://galaxyonfire.fandom.com/wiki/Luna_EMP_Mk_I",
+  "type": "PrimaryWeapon",
+  "subtype": "emp_blasters"
+}

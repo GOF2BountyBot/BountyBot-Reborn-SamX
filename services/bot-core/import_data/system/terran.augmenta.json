@@ -1,0 +1,17 @@
+{
+    "aliases": [],
+    "coordinates": [
+        544,
+        592
+    ],
+    "faction": "terran",
+    "name": "Augmenta",
+    "neighbours": [
+        "Weymire",
+        "Magnetar",
+        "V'Ikka",
+        "Buntta"
+    ],
+    "security": 0,
+    "wiki": "https://galaxyonfire.fandom.com/wiki/Augmenta_system"
+}

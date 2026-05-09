@@ -56,7 +56,7 @@ cover/
 *.pot
 
 # Django stuff:
-*.log
+#*.log
 local_settings.py
 db.sqlite3
 db.sqlite3-journal
@@ -192,3 +192,30 @@ cython_debug/
 #  refer to https://docs.cursor.com/context/ignore-files
 .cursorignore
 .cursorindexingignore
+
+# Project-specific additional ignores...
+.vscode
+.idea
+saveData
+.DS_STORE
+.env
+mappings
+.ralph
+RULES.md
+opencode.json
+.mcp.json
+.opencode
+.claude
+old-refs
+.log
+*.log
+**/*.log
+
+# Local working artifacts (not committed)
+scripts/
+benchmarking/
+kv-quant-benchmarks.zip
+node_modules/
+package.json
+package-lock.json
+activity.md

@@ -1,0 +1,14 @@
+{
+  "aliases": [
+    "Autopacker"
+  ],
+  "builtIn": false,
+  "cargoMultiplier": 1.25,
+  "emoji": "<:autopacker2:723706540825116743>",
+  "icon": "https://i.postimg.cc/3JkJJ2jY/autopacker-2.png",
+  "name": "Autopacker 2",
+  "techLevel": 3,
+  "type": "CompressorModule",
+  "value": 5747,
+  "wiki": "https://galaxyonfire.fandom.com/wiki/Autopacker_2"
+}

@@ -1,0 +1,17 @@
+{
+    "aliases":  [
+                    "64MJ",
+                    "64MJ Railgun",
+                    "64 Rail"
+                ],
+    "builtIn":  false,
+    "dps":  14.28,
+    "emoji":  "<:64mjrailgun:723709599051677756>",
+    "icon":  "https://i.postimg.cc/CMtm9VmJ/64mj-railgun.png",
+    "name":  "64MJ Railgun",
+    "techLevel":  3,
+    "value":  15343,
+    "wiki":  "https://galaxyonfire.fandom.com/wiki/64MJ_Railgun",
+    "type":  "PrimaryWeapon",
+    "subtype":  "auto_cannons"
+}

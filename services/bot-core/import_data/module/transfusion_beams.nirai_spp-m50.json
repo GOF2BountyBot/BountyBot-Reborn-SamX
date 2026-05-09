@@ -1,0 +1,16 @@
+{
+  "aliases": [
+    "SPP-M50",
+    "Nirai M50"
+  ],
+  "builtIn": false,
+  "count": 3,
+  "effect": 2,
+  "emoji": "<:niraisppm50:723706682278150340>",
+  "icon": "https://i.postimg.cc/qqRBK39c/nirai-spp-m50.png",
+  "name": "Nirai SPP-M50",
+  "techLevel": 8,
+  "type": "RepairBeamModule",
+  "value": 365681,
+  "wiki": "https://galaxyonfire.fandom.com/wiki/Nirai_SPP-M50"
+}

@@ -1,0 +1,15 @@
+{
+  "aliases": [
+    "Vortex"
+  ],
+  "builtIn": false,
+  "duration": 15,
+  "effect": 0.5,
+  "emoji": "<:rhodavortex:723707119328690196>",
+  "icon": "https://i.postimg.cc/BvHjZ20X/rhoda-vortex.png",
+  "name": "Rhoda Vortex",
+  "techLevel": 9,
+  "type": "TimeExtenderModule",
+  "value": 370064,
+  "wiki": "https://galaxyonfire.fandom.com/wiki/Rhoda_Vortex"
+}

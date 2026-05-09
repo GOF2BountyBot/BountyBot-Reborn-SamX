@@ -1,0 +1,14 @@
+{
+  "aliases": [
+    "Tormentor"
+  ],
+  "builtIn": false,
+  "damage": 0,
+  "icon": "https://i.postimg.cc/cL1ZjYDQ/amr-tormentor.png",
+  "loading speed": 0,
+  "name": "AMR Tormentor",
+  "value": 0,
+  "wiki": "",
+  "type": "SecondaryWeapon",
+  "subtype": "nukes"
+}

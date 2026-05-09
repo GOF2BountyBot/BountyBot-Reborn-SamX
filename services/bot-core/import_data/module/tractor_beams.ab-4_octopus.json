@@ -1,0 +1,16 @@
+{
+  "aliases": [
+    "Octopus",
+    "\"Octopus\"",
+    "AB-4 Octopus"
+  ],
+  "builtIn": false,
+  "emoji": "<:ab4octopus:723707140967235697>",
+  "icon": "https://i.postimg.cc/LsQmpXqn/ab-4-octopus.png",
+  "name": "AB-4 \"Octopus\"",
+  "techLevel": 8,
+  "timeToLock": 0,
+  "type": "TractorBeamModule",
+  "value": 199026,
+  "wiki": "https://galaxyonfire.fandom.com/wiki/AB-4_\"Octopus\""
+}

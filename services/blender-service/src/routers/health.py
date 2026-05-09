@@ -1,0 +1,137 @@
+"""
+Health check router for the Blender service API.
+"""
+
+import platform
+import sys
+from datetime import UTC, datetime
+from typing import Any
+
+from fastapi import APIRouter, Request, status
+from pydantic import BaseModel
+from shared import bblogger
+
+flogger = bblogger.get_logger("blender-healthcheck-api-router")
+
+router = APIRouter(
+    prefix="/health",
+    tags=["health"],
+    responses={200: {"description": "Service is healthy"}, 503: {"description": "Service is unhealthy"}},
+)
+
+
+class HealthResponse(BaseModel):
+    """Health check response model."""
+
+    status: str
+    timestamp: datetime
+    version: str
+    service: str
+    environment: dict[str, Any]
+    checks: dict[str, bool]
+
+
+class SimpleHealthResponse(BaseModel):
+    """Simple health check response."""
+
+    status: str
+    timestamp: datetime
+
+
+@router.get(
+    "/",
+    response_model=HealthResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Comprehensive Health Check",
+    description="Returns detailed health information about the Blender service",
+)
+async def health_check(request: Request) -> HealthResponse:
+    """
+    Comprehensive health check endpoint.
+
+    Returns detailed information about the service status,
+    environment, and various system checks.
+    """
+    flogger.debug("Inside health_check method...")
+
+    try:
+        # Basic system checks (unchanged)
+        checks = {
+            "python_version": sys.version_info >= (3, 8),
+            "memory_available": True,  # Could implement actual memory check
+            "disk_space": True,  # Could implement actual disk check
+        }
+
+        # Determine overall status
+        all_checks_passed = all(checks.values())
+        flogger.debug(f"All checks passed: {all_checks_passed}, checks={checks}")
+
+        # UPDATED: Consider database and schema health in overall status
+        service_status = "healthy" if all_checks_passed else "unhealthy"
+
+        response = HealthResponse(
+            status=service_status,
+            timestamp=datetime.now(UTC),
+            version="1.0.0",  # Should come from your app config
+            service="BountyBot API",
+            environment={
+                "python_version": platform.python_version(),
+                "platform": platform.platform(),
+                "architecture": platform.architecture()[0],
+            },
+            checks=checks,
+        )
+        flogger.debug(
+            f"Comprehensive health check response: status={response.status}, "
+            f"version={response.version}, checks={checks}"
+        )
+        return response
+    except Exception as exc:
+        flogger.error(f"Error in health_check: {exc}")
+        raise
+
+
+@router.get(
+    "/simple",
+    response_model=SimpleHealthResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Simple Health Check",
+    description="Returns basic health status for load balancer checks",
+)
+async def simple_health_check() -> SimpleHealthResponse:
+    """
+    Simple health check endpoint for load balancers.
+
+    Returns minimal response for quick health verification.
+    """
+    flogger.debug("Inside simple_health_check method...")
+    try:
+        response = SimpleHealthResponse(status="healthy", timestamp=datetime.now(UTC))
+        flogger.debug(f"Simple health check response: status={response.status}")
+        return response
+    except Exception as exc:
+        flogger.error(f"Error in simple_health_check: {exc}")
+        raise
+
+
+@router.get(
+    "/liveness",
+    status_code=status.HTTP_200_OK,
+    summary="Liveness Check",
+    description="Checks if the service is alive and responsive",
+)
+async def liveness_check() -> dict[str, str]:
+    """
+    Liveness probe endpoint.
+
+    Used by orchestrators to determine if the service
+    should be restarted.
+    """
+    flogger.debug("Inside liveness_check method...")
+    try:
+        result = {"status": "alive"}
+        flogger.debug(f"Liveness check response: {result}")
+        return result
+    except Exception as exc:
+        flogger.error(f"Error in liveness_check: {exc}")
+        raise

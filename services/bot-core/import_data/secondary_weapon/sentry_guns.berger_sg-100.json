@@ -1,0 +1,16 @@
+{
+  "aliases": [
+    "SG-100",
+    "Berger SG 100",
+    "SG 100"
+  ],
+  "builtIn": false,
+  "damage": 0,
+  "icon": "https://i.postimg.cc/NMnw2zYD/berger-sg-100.png",
+  "loading speed": 0,
+  "name": "Berger SG-100",
+  "value": 0,
+  "wiki": "",
+  "type": "SecondaryWeapon",
+  "subtype": "sentry_guns"
+}

@@ -1,0 +1,12 @@
+{
+    "aliases": [
+        "pal",
+        "tyyrt"
+    ],
+    "builtIn": false,
+    "faction": "terran",
+    "icon": "https://i.postimg.cc/JndDXxVN/pal-tyyrt.png",
+    "isPlayer": false,
+    "name": "Pal Tyyrt",
+    "wiki": "https://galaxyonfire.fandom.com/wiki/Pal_Tyyrt"
+}

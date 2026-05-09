@@ -1,0 +1,19 @@
+{
+  "aliases": [
+    "IMT Extract 4",
+    "IMT 4.0X",
+    "IMT 4",
+    "Extract 4.0X",
+    "Extract 4"
+  ],
+  "builtIn": false,
+  "emoji": "<:imtextract4:723706605970915339>",
+  "drillHandling": 1.6,
+  "icon": "https://i.postimg.cc/2yRRkBC8/imt-extract-4-0x.png",
+  "name": "IMT Extract 4.0X",
+  "oreYield": 1.8,
+  "techLevel": 7,
+  "type": "MiningDrillModule",
+  "value": 73093,
+  "wiki": "https://galaxyonfire.fandom.com/wiki/IMT_Extract_4.0X"
+}

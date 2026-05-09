@@ -1,0 +1,20 @@
+{
+  "aliases": [
+    "Skuld XR",
+    "Skuld",
+    "AT XR",
+    "Skuld AT",
+    "XR"
+  ],
+  "builtIn": false,
+  "dps": 47.36,
+  "emoji": "<:skuldatxr:723707369573449809>",
+  "icon": "https://i.postimg.cc/X74pjrHv/skuld-at-xr.png",
+  "name": "Skuld AT XR",
+  "techLevel": 6,
+  "value": 407793,
+  "automatic": true,
+  "wiki": "https://galaxyonfire.fandom.com/wiki/Skuld_AT_XR",
+  "type": "TurretWeapon",
+  "subtype": "auto"
+}

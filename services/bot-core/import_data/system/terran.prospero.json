@@ -1,0 +1,15 @@
+{
+    "aliases": [],
+    "coordinates": [
+        965,
+        406
+    ],
+    "faction": "terran",
+    "name": "Prospero",
+    "neighbours": [
+        "Union",
+        "Vulpes"
+    ],
+    "security": 2,
+    "wiki": "https://galaxyonfire.fandom.com/wiki/Category:Prospero"
+}

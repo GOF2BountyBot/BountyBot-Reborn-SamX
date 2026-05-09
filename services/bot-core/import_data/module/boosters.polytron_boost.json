@@ -1,0 +1,15 @@
+{
+  "aliases": [
+    "Polytron"
+  ],
+  "builtIn": false,
+  "duration": 6,
+  "effect": 4,
+  "emoji": "<:polytronboost:723706427251752991>",
+  "icon": "https://i.postimg.cc/QdV5DBCT/polytron-boost.png",
+  "name": "Polytron Boost",
+  "techLevel": 8,
+  "type": "BoosterModule",
+  "value": 86815,
+  "wiki": "https://galaxyonfire.fandom.com/wiki/Polytron_Boost"
+}

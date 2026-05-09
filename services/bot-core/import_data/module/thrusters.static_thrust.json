@@ -1,0 +1,12 @@
+{
+  "aliases": [],
+  "builtIn": false,
+  "emoji": "<:staticthrust:723707097652658178>",
+  "handlingMultiplier": 1.2,
+  "icon": "https://i.postimg.cc/YCp7LgYv/static-thrust.png",
+  "name": "Static Thrust",
+  "techLevel": 1,
+  "type": "ThrusterModule",
+  "value": 1398,
+  "wiki": "https://galaxyonfire.fandom.com/wiki/Static_Thrust"
+}

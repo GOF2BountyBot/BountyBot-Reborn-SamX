@@ -1,0 +1,14 @@
+{
+    "aliases": [
+        "Tyol"
+    ],
+    "armour": 250,
+    "builtIn": false,
+    "emoji": "<:tyol:723706394821525595>",
+    "icon": "https://i.postimg.cc/vZp1d3CJ/t-yol.png",
+    "name": "T'yol",
+    "techLevel": 10,
+    "type": "ArmourModule",
+    "value": 117922,
+    "wiki": "https://galaxyonfire.fandom.com/wiki/T%27yol"
+}

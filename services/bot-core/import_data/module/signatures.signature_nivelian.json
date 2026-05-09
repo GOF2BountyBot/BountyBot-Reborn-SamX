@@ -1,0 +1,14 @@
+{
+  "aliases": [
+    "Nivelian Signature"
+  ],
+  "builtIn": false,
+  "emoji": "<:signaturenivelian:723706652817227897>",
+  "icon": "https://i.postimg.cc/kXP6Z13L/signature-nivelian.png",
+  "manufacturer": "nivelian",
+  "name": "Signature Nivelian",
+  "techLevel": 8,
+  "type": "SignatureModule",
+  "value": 7500,
+  "wiki": "https://galaxyonfire.fandom.com/wiki/Signature"
+}

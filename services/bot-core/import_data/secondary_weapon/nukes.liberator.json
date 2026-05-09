@@ -1,0 +1,12 @@
+{
+  "aliases": [],
+  "builtIn": false,
+  "damage": 0,
+  "icon": "https://i.postimg.cc/5yMWmFYQ/liberator.png",
+  "loading speed": 0,
+  "name": "Liberator",
+  "value": 0,
+  "wiki": "",
+  "type": "SecondaryWeapon",
+  "subtype": "nukes"
+}

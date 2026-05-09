@@ -1,0 +1,14 @@
+{
+    "aliases":  [
+                    "skoon"
+                ],
+    "builtIn":  false,
+    "damage":  0,
+    "icon":  "https://i.postimg.cc/nVk0cDFR/sh-koom.png",
+    "loading speed":  0,
+    "name":  "S'koon",
+    "value":  0,
+    "wiki":  "",
+    "type":  "SecondaryWeapon",
+    "subtype":  "missiles"
+}

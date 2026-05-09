@@ -1,0 +1,16 @@
+{
+  "aliases": [
+    "Gamma Shield 2",
+    "Gamma 2",
+    "Gamma II"
+  ],
+  "builtIn": false,
+  "effect": 0.4,
+  "emoji": "<:gammashieldii:723706563558113392>",
+  "icon": "https://i.postimg.cc/W3cJ0XnG/gamma-shield-ii.png",
+  "name": "Gamma Shield II",
+  "techLevel": 8,
+  "type": "GammaShieldModule",
+  "value": 43202,
+  "wiki": "https://galaxyonfire.fandom.com/wiki/Gamma_Shield_II"
+}

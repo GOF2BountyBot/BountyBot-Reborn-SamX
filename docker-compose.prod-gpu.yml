@@ -1,0 +1,139 @@
+# PROD — pre-built GHCR images, GPU blender (requires nvidia-docker + NVIDIA GPU)
+# Pulls images from GitHub Container Registry. No source code needed on the host.
+# Usage:
+#   docker compose -f docker-compose.prod-gpu.yml pull
+#   docker compose -f docker-compose.prod-gpu.yml up -d
+#
+# Version pinning:
+#   By default all service images use the 'latest' tag.
+#   To pin to a specific release (e.g. for rollback), set BOUNTYBOT_VERSION:
+#     BOUNTYBOT_VERSION=1.2.3 docker compose -f docker-compose.prod-gpu.yml up -d
+#   Or export it in your shell / .env file:
+#     BOUNTYBOT_VERSION=sha-a715af7
+#
+# For CPU-only prod: use docker-compose.prod.yml
+# For local dev builds: use docker-compose-gpu.yml
+
+name: bountybot-stack
+
+services:
+  db:
+    image: postgres:18
+    container_name: bountybot-db
+    restart: unless-stopped
+    networks:
+      - botnetv2
+    env_file:
+      - path: ./.env
+        required: false
+    environment:
+      - PUID=${PUID:-1000}
+      - PGID=${PGID:-1000}
+    volumes:
+      - /etc/localtime:/etc/localtime:ro
+      - /etc/timezone:/etc/timezone:ro
+      - ./mappings/postgres-data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -d bountydb -U bounty && psql -U bounty -d bountydb -c 'SELECT 1' >/dev/null 2>&1"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 30s
+    ports:
+      - "5432:5432"
+
+  bot-core:
+    image: ghcr.io/gof2bountybot/bountybot-reborn-samx/bot-core:${BOUNTYBOT_VERSION:-latest}
+    container_name: bountybot-bot-core
+    networks:
+      - botnetv2
+    ports:
+      - 8000:8000
+    depends_on:
+      db:
+        condition: service_healthy
+        restart: true
+      discord-gateway:
+        condition: service_healthy
+        restart: true
+    env_file:
+      - path: ./.env
+        required: false
+    environment:
+      - PUID=${PUID:-1000}
+      - PGID=${PGID:-1000}
+    volumes:
+      - /etc/localtime:/etc/localtime:ro
+      - /etc/timezone:/etc/timezone:ro
+      - ./mappings/bot-core:/app/data
+    restart: unless-stopped
+
+  discord-gateway:
+    image: ghcr.io/gof2bountybot/bountybot-reborn-samx/discord-gateway:${BOUNTYBOT_VERSION:-latest}
+    container_name: bountybot-discord-gateway
+    networks:
+      - botnetv2
+    ports:
+      - 7999:7999
+    depends_on:
+      db:
+        condition: service_healthy
+        restart: true
+    env_file:
+      - path: ./.env
+        required: false
+    environment:
+      - PUID=${PUID:-1000}
+      - PGID=${PGID:-1000}
+    volumes:
+      - /etc/localtime:/etc/localtime:ro
+      - /etc/timezone:/etc/timezone:ro
+      - ./mappings/discord-gateway:/app/data
+    restart: unless-stopped
+
+  blender-service:
+    image: ghcr.io/gof2bountybot/bountybot-reborn-samx/blender-service-gpu:${BOUNTYBOT_VERSION:-latest}
+    container_name: bountybot-blender-service
+    # Comment out/remove the deploy block if you don't have an NVIDIA GPU
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    networks:
+      - botnetv2
+    ports:
+      - 8001:8001
+    depends_on:
+      db:
+        condition: service_healthy
+        restart: true
+      discord-gateway:
+        condition: service_healthy
+        restart: true
+    env_file:
+      - path: ./.env
+        required: false
+    environment:
+      - PUID=${PUID:-1000}
+      - PGID=${PGID:-1000}
+    volumes:
+      - /etc/localtime:/etc/localtime:ro
+      - /etc/timezone:/etc/timezone:ro
+      - ./mappings/blender-renderer:/app/data
+    healthcheck:
+      test: curl -s -o /dev/null -f http://localhost:8001/api/v1/health/ || exit 1
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 360s
+    restart: unless-stopped
+
+networks:
+  botnetv2:
+    name: bountybot-net
+    driver: bridge
+    driver_opts:
+      com.docker.network.bridge.name: bountybot-br

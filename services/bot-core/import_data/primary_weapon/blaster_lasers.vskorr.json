@@ -1,0 +1,15 @@
+{
+    "aliases":  [
+                    "vskorr"
+                ],
+    "builtIn":  false,
+    "dps":  14,
+    "emoji":  "<:vskorr:723709563823718402>",
+    "icon":  "https://i.postimg.cc/WzXn9QYL/v-skorr.png",
+    "name":  "V'skorr",
+    "techLevel":  6,
+    "value":  9528,
+    "wiki":  "https://galaxyonfire.fandom.com/wiki/V%27skorr",
+    "type":  "PrimaryWeapon",
+    "subtype":  "blaster_lasers"
+}

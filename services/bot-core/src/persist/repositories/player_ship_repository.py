@@ -1,0 +1,395 @@
+"""
+Ship repository for the BountyBot inventory system.
+
+Handles database operations for PlayerShip entities including
+ship ownership, loadout management, and active ship tracking.
+"""
+
+from typing import Any
+
+from shared import bblogger
+from sqlalchemy import and_, select, update
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from persist.interfaces.repository_interface import IRepository
+from persist.models.player_ship import PlayerShip
+
+flogger = bblogger.get_logger("ship-repository")
+
+
+class PlayerShipRepository(IRepository[PlayerShip]):
+    async def get_by_id(self, db: AsyncSession, obj_id: int) -> PlayerShip | None:
+        """Get ship by ID."""
+        try:
+            return await db.get(PlayerShip, obj_id)
+        except Exception as e:
+            flogger.error(f"Error getting ship by ID {obj_id}: {e}")
+            raise
+
+    async def get_by_name(self, db: AsyncSession, name: str) -> PlayerShip | None:
+        """Not applicable for ships - they don't have unique names."""
+        raise NotImplementedError("Ships don't have globally unique names")
+
+    async def list_all(self, db: AsyncSession) -> list[PlayerShip]:
+        """Get all ships."""
+        try:
+            result = await db.execute(select(PlayerShip))
+            return list(result.scalars().all())
+        except Exception as e:
+            flogger.error(f"Error listing all ships: {e}")
+            raise
+
+    async def add(self, db: AsyncSession, obj: PlayerShip, commit: bool = True) -> PlayerShip:
+        """Add new ship to database.
+
+        Args:
+            commit: When False, flush changes without committing (use when the caller
+                owns the transaction, e.g. inside a router-level db.begin() context).
+        """
+        try:
+            db.add(obj)
+            if commit:
+                await db.commit()
+            else:
+                await db.flush()
+            await db.refresh(obj)
+            flogger.info(f"Added ship: {obj.ship_name} for player {obj.player_id}")
+            return obj
+        except Exception as e:
+            flogger.error(f"Error adding ship: {e}")
+            if commit:
+                await db.rollback()
+            raise
+
+    async def create_or_update(self, db: AsyncSession, raw: dict, commit: bool = True) -> PlayerShip:
+        """Create or update ship from raw data.
+
+        Args:
+            commit: When False, flush changes without committing (use when the caller
+                owns the transaction, e.g. inside a router-level db.begin() context).
+        """
+        try:
+            player_id = raw.get("player_id")
+            ship_name = raw.get("ship_name")
+
+            if not player_id or not ship_name:
+                raise ValueError("player_id and ship_name are required")
+
+            # For ships, we typically create new instances rather than update
+            # unless we're updating an existing ship by ID
+            ship_id = raw.get("id")
+
+            if ship_id:
+                # Update existing ship
+                ship = await self.get_by_id(db, ship_id)
+                if ship:
+                    for key, value in raw.items():
+                        if hasattr(ship, key) and key not in ["id", "player_id", "created_at"]:
+                            setattr(ship, key, value)
+                    if commit:
+                        await db.commit()
+                    else:
+                        await db.flush()
+                    await db.refresh(ship)
+                    flogger.debug(f"Updated ship: {ship_id}")
+                    return ship
+
+            # Create new ship
+            ship = PlayerShip(**raw)
+            return await self.add(db, ship, commit=commit)
+
+        except Exception as e:
+            flogger.error(f"Error creating/updating ship: {e}")
+            raise
+
+    async def remove(self, db: AsyncSession, obj: PlayerShip, commit: bool = True) -> None:
+        """Remove ship from database.
+
+        Args:
+            commit: When False, flush changes without committing (use when the caller
+                owns the transaction, e.g. inside a router-level db.begin() context).
+        """
+        try:
+            await db.delete(obj)
+            if commit:
+                await db.commit()
+            else:
+                await db.flush()
+            flogger.info(f"Removed ship: {obj.id}")
+        except Exception as e:
+            flogger.error(f"Error removing ship {obj.id}: {e}")
+            if commit:
+                await db.rollback()
+            raise
+
+    async def get_player_ships(self, db: AsyncSession, player_id: int) -> list[PlayerShip]:
+        """Get all ships owned by a player."""
+        try:
+            result = await db.execute(
+                select(PlayerShip)
+                .where(PlayerShip.player_id == player_id)
+                .order_by(PlayerShip.is_active.desc(), PlayerShip.created_at)
+            )
+            return list(result.scalars().all())
+        except Exception as e:
+            flogger.error(f"Error getting ships for player {player_id}: {e}")
+            raise
+
+    async def get_active_ship(self, db: AsyncSession, player_id: int) -> PlayerShip | None:
+        """Get the active ship for a player."""
+        try:
+            result = await db.execute(
+                select(PlayerShip).where(
+                    and_(
+                        PlayerShip.player_id == player_id,
+                        PlayerShip.is_active == True,  # pylint: disable=singleton-comparison
+                    )
+                )
+            )
+            return result.scalars().first()
+        except Exception as e:
+            flogger.error(f"Error getting active ship for player {player_id}: {e}")
+            raise
+
+    async def set_active_ship(self, db: AsyncSession, player_id: int, ship_id: int, commit: bool = True) -> PlayerShip:
+        """Set a ship as the active ship for a player.
+
+        Hybrid pattern (see ``persist/repositories/AGENTS.md``):
+        - Deactivate-all step uses Core UPDATE with ``synchronize_session="fetch"``
+          to safely expire any identity-mapped PlayerShip rows for this player.
+        - Activate step is an ORM ``setattr`` on the already-loaded target ``ship``
+          instance, so the returned object reflects the in-memory state correctly.
+
+        Args:
+            commit: When False, flush changes without committing (use when the caller
+                owns the transaction, e.g. inside a router-level db.begin() context).
+        """
+        try:
+            # Verify ship belongs to player
+            ship = await self.get_by_id(db, ship_id)
+            if not ship or ship.player_id != player_id:
+                raise ValueError(f"Ship {ship_id} not found or doesn't belong to player {player_id}")
+
+            # Deactivate all other ships for this player.
+            # Bulk Core UPDATE is acceptable here ONLY because synchronize_session="fetch"
+            # forces SQLAlchemy to expire any identity-mapped rows in this session.
+            await db.execute(
+                update(PlayerShip)
+                .where(PlayerShip.player_id == player_id)
+                .values(is_active=False)
+                .execution_options(synchronize_session="fetch")
+            )
+
+            # Activate the target ship via ORM mutation (in-place, identity-map safe)
+            ship.is_active = True
+
+            if commit:
+                await db.commit()
+            else:
+                await db.flush()
+
+            # Refresh and return the ship
+            await db.refresh(ship)
+            flogger.info(f"Set ship {ship_id} as active for player {player_id}")
+            return ship
+
+        except ValueError:
+            raise
+        except Exception as e:
+            flogger.error(f"Error setting active ship {ship_id} for player {player_id}: {e}")
+            if commit:
+                await db.rollback()
+            raise
+
+    async def update_loadout(
+        self, db: AsyncSession, ship_id: int, loadout: dict[str, list[str]], commit: bool = True
+    ) -> PlayerShip:
+        """Update a ship's equipment loadout.
+
+        Args:
+            commit: When False, flush changes without committing (use when the caller
+                owns the transaction, e.g. inside a router-level db.begin() context).
+        """
+        try:
+            ship = await self.get_by_id(db, ship_id)
+            if not ship:
+                raise ValueError(f"Ship {ship_id} not found")
+
+            # Update loadout fields
+            if "weapons" in loadout:
+                ship.weapons = loadout["weapons"]
+            if "modules" in loadout:
+                ship.modules = loadout["modules"]
+            if "turrets" in loadout:
+                ship.turrets = loadout["turrets"]
+            if "secondary_weapons" in loadout:
+                ship.secondary_weapons = loadout["secondary_weapons"]
+
+            if commit:
+                await db.commit()
+            else:
+                await db.flush()
+            await db.refresh(ship)
+
+            flogger.debug(f"Updated loadout for ship {ship_id}")
+            return ship
+
+        except ValueError:
+            raise
+        except Exception as e:
+            flogger.error(f"Error updating loadout for ship {ship_id}: {e}")
+            if commit:
+                await db.rollback()
+            raise
+
+    async def add_equipment(
+        self, db: AsyncSession, ship_id: int, equipment_type: str, item_name: str, commit: bool = True
+    ) -> PlayerShip:
+        """Add a piece of equipment to a ship's loadout.
+
+        Args:
+            commit: When False, flush changes without committing (use when the caller
+                owns the transaction, e.g. inside a router-level db.begin() context).
+        """
+        try:
+            ship = await self.get_by_id(db, ship_id)
+            if not ship:
+                raise ValueError(f"Ship {ship_id} not found")
+
+            # Get current loadout
+            current_loadout: list[str] = []
+            if equipment_type == "weapons":
+                current_loadout = list(ship.weapons or [])
+            elif equipment_type == "modules":
+                current_loadout = list(ship.modules or [])
+            elif equipment_type == "turrets":
+                current_loadout = list(ship.turrets or [])
+            elif equipment_type == "secondary_weapons":
+                current_loadout = list(ship.secondary_weapons or [])
+            else:
+                raise ValueError(f"Invalid equipment type: {equipment_type}")
+
+            # Add item to loadout
+            updated_loadout = list(current_loadout)
+            updated_loadout.append(item_name)
+
+            # Update ship
+            await self.update_loadout(db, ship_id, {equipment_type: updated_loadout}, commit=commit)
+
+            flogger.debug(f"Added {item_name} to {equipment_type} on ship {ship_id}")
+            return ship
+
+        except Exception as e:
+            flogger.error(f"Error adding equipment to ship {ship_id}: {e}")
+            raise
+
+    async def remove_equipment(
+        self, db: AsyncSession, ship_id: int, equipment_type: str, item_name: str, commit: bool = True
+    ) -> PlayerShip:
+        """Remove a piece of equipment from a ship's loadout.
+
+        Args:
+            commit: When False, flush changes without committing (use when the caller
+                owns the transaction, e.g. inside a router-level db.begin() context).
+        """
+        try:
+            ship = await self.get_by_id(db, ship_id)
+            if not ship:
+                raise ValueError(f"Ship {ship_id} not found")
+
+            # Get current loadout
+            current_loadout: list[str] = []
+            if equipment_type == "weapons":
+                current_loadout = list(ship.weapons or [])
+            elif equipment_type == "modules":
+                current_loadout = list(ship.modules or [])
+            elif equipment_type == "turrets":
+                current_loadout = list(ship.turrets or [])
+            elif equipment_type == "secondary_weapons":
+                current_loadout = list(ship.secondary_weapons or [])
+            else:
+                raise ValueError(f"Invalid equipment type: {equipment_type}")
+
+            # Remove item from loadout
+            if item_name not in current_loadout:
+                raise ValueError(f"Item {item_name} not equipped in {equipment_type}")
+
+            updated_loadout = list(current_loadout)
+            updated_loadout.remove(item_name)
+
+            # Update ship
+            await self.update_loadout(db, ship_id, {equipment_type: updated_loadout}, commit=commit)
+
+            flogger.debug(f"Removed {item_name} from {equipment_type} on ship {ship_id}")
+            return ship
+
+        except Exception as e:
+            flogger.error(f"Error removing equipment from ship {ship_id}: {e}")
+            raise
+
+    async def update_nickname(self, db: AsyncSession, ship_id: int, nickname: str, commit: bool = True) -> PlayerShip:
+        """Update a ship's nickname.
+
+        Args:
+            commit: When False, flush changes without committing (use when the caller
+                owns the transaction, e.g. inside a router-level db.begin() context).
+        """
+        try:
+            ship = await self.get_by_id(db, ship_id)
+            if not ship:
+                raise ValueError(f"Ship {ship_id} not found")
+
+            ship.nickname = nickname
+            if commit:
+                await db.commit()
+            else:
+                await db.flush()
+            await db.refresh(ship)
+
+            flogger.debug(f"Updated nickname for ship {ship_id}: {nickname}")
+            return ship
+
+        except ValueError:
+            raise
+        except Exception as e:
+            flogger.error(f"Error updating nickname for ship {ship_id}: {e}")
+            if commit:
+                await db.rollback()
+            raise
+
+    async def get_ships_by_name(self, db: AsyncSession, player_id: int, ship_name: str) -> list[PlayerShip]:
+        """Get all ships of a specific type owned by a player."""
+        try:
+            result = await db.execute(
+                select(PlayerShip)
+                .where(and_(PlayerShip.player_id == player_id, PlayerShip.ship_name == ship_name))
+                .order_by(PlayerShip.created_at)
+            )
+            return list(result.scalars().all())
+        except Exception as e:
+            flogger.error(f"Error getting ships by name for player {player_id}: {e}")
+            raise
+
+    async def get_ship_loadout_summary(self, db: AsyncSession, ship_id: int) -> dict[str, Any]:
+        """Get a summary of a ship's current loadout."""
+        try:
+            ship = await self.get_by_id(db, ship_id)
+            if not ship:
+                raise ValueError(f"Ship {ship_id} not found")
+
+            return {
+                "ship_id": ship.id,
+                "ship_name": ship.ship_name,
+                "nickname": ship.nickname,
+                "is_active": ship.is_active,
+                "weapons": ship.weapons or [],
+                "modules": ship.modules or [],
+                "turrets": ship.turrets or [],
+                "weapons_count": len(ship.weapons) if ship.weapons else 0,
+                "modules_count": len(ship.modules) if ship.modules else 0,
+                "turrets_count": len(ship.turrets) if ship.turrets else 0,
+            }
+
+        except Exception as e:
+            flogger.error(f"Error getting loadout summary for ship {ship_id}: {e}")
+            raise

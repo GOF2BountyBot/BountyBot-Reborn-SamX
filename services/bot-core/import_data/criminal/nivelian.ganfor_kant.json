@@ -1,0 +1,12 @@
+{
+    "aliases": [
+        "ganfor",
+        "kant"
+    ],
+    "builtIn": false,
+    "faction": "nivelian",
+    "icon": "https://i.postimg.cc/QMJcFcdm/ganfor-kant.png",
+    "isPlayer": false,
+    "name": "Ganfor Kant",
+    "wiki": "https://galaxyonfire.fandom.com/wiki/Ganfor_Kant"
+}

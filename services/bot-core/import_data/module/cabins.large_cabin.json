@@ -1,0 +1,12 @@
+{
+  "aliases": [],
+  "builtIn": false,
+  "cabinSize": 10,
+  "emoji": "<:largecabin:723706494801149973>",
+  "icon": "https://i.postimg.cc/1zPWMcJQ/large-cabin.png",
+  "name": "Large Cabin",
+  "techLevel": 7,
+  "type": "CabinModule",
+  "value": 14190,
+  "wiki": "https://galaxyonfire.fandom.com/wiki/Large_Cabin"
+}

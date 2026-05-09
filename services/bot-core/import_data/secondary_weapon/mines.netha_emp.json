@@ -1,0 +1,16 @@
+{
+    "aliases":  [
+                    "Neetha EMP",
+                    "Neétha",
+                    "Neetha"
+                ],
+    "builtIn":  false,
+    "damage":  0,
+    "icon":  "https://i.postimg.cc/y6PpMShF/neetha-emp.png",
+    "loading speed":  0,
+    "name":  "Neétha EMP",
+    "value":  0,
+    "wiki":  "",
+    "type":  "SecondaryWeapon",
+    "subtype":  "mines"
+}

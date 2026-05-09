@@ -22,6 +22,7 @@ from pathlib import Path
 
 from PIL import Image, ImageChops
 from shared import bblogger
+from utils.safe_path import validate_user_path
 
 from services.render_config_service import RenderConfig
 
@@ -162,6 +163,11 @@ class RenderService:
         """
         self.validate_params(res_x, res_y, num_samples)
 
+        # Validate model_path is within the allowed data directory.
+        # This is a defence-in-depth check; the router layer also validates
+        # before calling this service.
+        validated_obj_path = validate_user_path(model_path, description="model_path")
+
         render_id = str(uuid.uuid4())
         temp_dir = Path(f"/tmp/blender_render_{render_id}")
         temp_dir.mkdir(parents=True, exist_ok=True)
@@ -173,7 +179,7 @@ class RenderService:
         # append ``map_Kd`` to the temp MTL and have Blender resolve it
         # correctly.  Blender's OBJ importer reads the ``mtllib`` directive
         # relative to the OBJ file, so both files must be co-located.
-        obj_path = Path(model_path)
+        obj_path = validated_obj_path
 
         temp_obj_path = temp_dir / obj_path.name
         shutil.copy2(str(obj_path), str(temp_obj_path))

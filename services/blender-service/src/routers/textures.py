@@ -8,7 +8,6 @@ a composited PNG image as a streaming response.
 from __future__ import annotations
 
 from io import BytesIO
-from pathlib import Path
 
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile, status
 from fastapi.responses import StreamingResponse
@@ -21,6 +20,7 @@ from services.aei_conversion_service import (
 from services.image_utils import crop_to_square, stretch_to_square
 from services.texture_compositing_service import TextureCompositingService
 from shared import bblogger
+from utils.safe_path import validate_user_path_http
 
 flogger = bblogger.get_logger("blender-textures-api-router")
 
@@ -101,8 +101,8 @@ async def composite_textures(
         f"square_mode={square_mode!r}"
     )
 
-    # --- Validate ship_path ---
-    ship_dir = Path(ship_path)
+    # --- Validate ship_path against allowed data directory ---
+    ship_dir = validate_user_path_http(ship_path, description="ship_path")
     if not ship_dir.exists():
         flogger.error(f"Ship path not found: {ship_path}")
         raise HTTPException(
@@ -189,8 +189,9 @@ async def composite_textures(
                 detail=f"Failed to read base_texture upload: {exc}",
             ) from exc
     elif base_texture_path:
-        # Fall back to loading from disk (e.g. the ship's diffuse BMP)
-        disk_path = Path(base_texture_path)
+        # Fall back to loading from disk (e.g. the ship's diffuse BMP).
+        # Validate the user-supplied path before touching the filesystem.
+        disk_path = validate_user_path_http(base_texture_path, description="base_texture_path")
         if not disk_path.exists():
             flogger.error(f"base_texture_path not found: {base_texture_path}")
             raise HTTPException(

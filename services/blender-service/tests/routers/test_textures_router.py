@@ -368,13 +368,17 @@ def test_composite_no_base_texture_or_path_returns_422(client: TestClient, ship_
     assert "base_texture" in response.json()["detail"].lower()
 
 
-def test_composite_base_texture_path_not_found_returns_404(client: TestClient, ship_dir: Path) -> None:
-    """composite with a base_texture_path that does not exist returns HTTP 404."""
+def test_composite_base_texture_path_not_found_returns_404(client: TestClient, ship_dir: Path, tmp_path: Path) -> None:
+    """composite with a base_texture_path that does not exist (but is within the allowed
+    data dir) returns HTTP 404."""
+    # Use a path under tmp_path so it passes path validation (BLENDER_DATA_ROOT=/tmp)
+    # but the file itself does not exist.
+    missing_texture = tmp_path / "nonexistent_texture.png"
     response = client.post(
         "/api/v1/textures/composite",
         data={
             "ship_path": str(ship_dir),
-            "base_texture_path": "/nonexistent/path/texture.png",
+            "base_texture_path": str(missing_texture),
         },
     )
     assert response.status_code == 404

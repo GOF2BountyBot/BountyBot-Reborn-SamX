@@ -94,8 +94,9 @@ RUN BLENDER_MAJOR_MINOR=$(echo "$BLENDER_VERSION" | cut -d. -f1,2) && \
     mkdir -p /opt/blender && \
     tar -xf "/tmp/${TARBALL}" --strip-components=1 -C /opt/blender && \
     ln -s /opt/blender/blender /usr/local/bin/blender && \
-    rm -f "/tmp/${TARBALL}" && \
-    blender --version
+    rm -f "/tmp/${TARBALL}"
+# Note: blender --version is intentionally omitted here — GPU libs are only
+# available at runtime via nvidia-docker. The health endpoint validates the binary.
 
 # Create a virtual environment using Python 3.13
 RUN python3.13 -m venv /opt/venv

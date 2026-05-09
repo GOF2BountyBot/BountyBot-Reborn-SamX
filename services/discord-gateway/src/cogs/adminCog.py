@@ -2099,6 +2099,305 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
             await interaction.response.send_message("⚠️ An error occurred.", ephemeral=True)
 
     # ------------------------------------------------------------------
+    # B.49/B.50: /admin_config_constants — per-guild game-constant overrides
+    # ------------------------------------------------------------------
+
+    # All 25 per-guild game-constant override field names (must match _OVERRIDE_FIELDS in bot-core config router)
+    _GAME_CONSTANT_FIELDS: tuple[str, ...] = (
+        "division_max_tl",
+        "ship_value_reward_percentage",
+        "criminal_equip_damageless_weapon_chance",
+        "criminal_max_gear_upgrade",
+        "bounty_reward_to_xp_gain_mult",
+        "bounty_winner_reserve_factor",
+        "bounty_pvc_armour_buff_factor",
+        "duel_variance_percent",
+        "duel_cloak_chance",
+        "close_bounty_threshold",
+        "max_route_length",
+        "bounty_delay_random_min",
+        "bounty_delay_random_max",
+        "bounty_spawn_jitter",
+        "check_cooldown",
+        "duel_request_expiry",
+        "guild_activity_decay_rate",
+        "min_guild_activity",
+        "activity_temp_per_player",
+        "shop_default_ships_num",
+        "shop_default_weapons_num",
+        "shop_default_modules_num",
+        "shop_default_turrets_num",
+        "turret_spawn_probability",
+        "kaamo_max_capacity",
+        "classic_credits_per_check",
+    )
+
+    async def constants_autocomplete(
+        self, _interaction: discord.Interaction, current: str
+    ) -> list[app_commands.Choice[str]]:
+        """Autocomplete for game-constant field names."""
+        current_lower = current.lower()
+        return [app_commands.Choice(name=f, value=f) for f in self._GAME_CONSTANT_FIELDS if current_lower in f.lower()][
+            :25
+        ]
+
+    @app_commands.command(
+        name="admin_config_constants",
+        description="[ADMIN] View or set a per-guild game-constant override (B.49)",
+    )
+    @app_commands.describe(
+        setting="The game-constant field name (leave blank to list all)",
+        int_value="Integer value to set",
+        float_value="Float value to set",
+        json_value="JSON value to set (for dict fields like division_max_tl)",
+    )
+    @app_commands.autocomplete(setting=constants_autocomplete)
+    async def admin_config_constants(
+        self,
+        interaction: discord.Interaction,
+        setting: str | None = None,
+        int_value: int | None = None,
+        float_value: float | None = None,
+        json_value: str | None = None,
+    ):
+        """View or set a per-guild game-constant override."""
+        await interaction.response.defer(thinking=True, ephemeral=True)
+        if not await _check_is_admin(interaction):
+            await interaction.followup.send("❌ This command requires admin privileges.", ephemeral=True)
+            return
+
+        guild_id = interaction.guild_id
+
+        # No setting specified → show all current overrides (compact view)
+        if setting is None:
+            try:
+                resp = await self.http_client.get(
+                    f"{api_base}/config/guild/{guild_id}/game-constants",
+                    timeout=10,
+                )
+                resp.raise_for_status()
+                data = resp.json()
+                lines = []
+                for field in self._GAME_CONSTANT_FIELDS:
+                    val = data.get(field)
+                    display = f"`{val}`" if val is not None else "*default*"
+                    lines.append(f"**{field}**: {display}")
+                desc = "\n".join(lines) or "No overrides set."
+                embed = discord.Embed(
+                    title=f"Game Constant Overrides — Guild {guild_id}",
+                    description=desc[:4096],
+                    color=discord.Color.blue(),
+                )
+                await interaction.followup.send(embed=embed, ephemeral=True)
+            except httpx.HTTPStatusError as e:
+                await report_api_error(interaction, e)
+            except Exception as e:  # pylint: disable=broad-exception-caught
+                flogger.error(f"admin_config_constants list error: {e}")
+                await interaction.followup.send("⚠️ Failed to fetch game constants.", ephemeral=True)
+            return
+
+        # Validate setting name
+        if setting not in self._GAME_CONSTANT_FIELDS:
+            await interaction.followup.send(
+                f"❌ Unknown setting `{setting}`. Use autocomplete to pick a valid field.",
+                ephemeral=True,
+            )
+            return
+
+        # No value provided → show current value of the specific setting
+        if int_value is None and float_value is None and json_value is None:
+            try:
+                resp = await self.http_client.get(
+                    f"{api_base}/config/guild/{guild_id}/game-constants",
+                    timeout=10,
+                )
+                resp.raise_for_status()
+                data = resp.json()
+                val = data.get(setting)
+                display = f"`{val}`" if val is not None else "*using global default*"
+                await interaction.followup.send(
+                    f"**{setting}**: {display}",
+                    ephemeral=True,
+                )
+            except httpx.HTTPStatusError as e:
+                await report_api_error(interaction, e)
+            except Exception as e:  # pylint: disable=broad-exception-caught
+                flogger.error(f"admin_config_constants get error: {e}")
+                await interaction.followup.send("⚠️ Failed to fetch game constant.", ephemeral=True)
+            return
+
+        # Determine new value
+        import json as _json
+
+        new_value = None
+        if json_value is not None:
+            try:
+                new_value = _json.loads(json_value)
+            except _json.JSONDecodeError as e:
+                await interaction.followup.send(f"❌ Invalid JSON: {e}", ephemeral=True)
+                return
+        elif float_value is not None:
+            new_value = float_value
+        elif int_value is not None:
+            new_value = int_value
+
+        # PATCH the config
+        try:
+            resp = await self.http_client.put(
+                f"{api_base}/config/guild/{guild_id}",
+                json={"guild_id": guild_id, setting: new_value},
+                timeout=10,
+            )
+            resp.raise_for_status()
+            embed = discord.Embed(
+                title="✅ Game Constant Updated",
+                description=f"**{setting}** set to `{new_value}` for guild {guild_id}.",
+                color=discord.Color.green(),
+            )
+            await interaction.followup.send(embed=embed, ephemeral=True)
+            flogger.info(f"Admin {interaction.user} set game constant {setting}={new_value!r} in guild {guild_id}")
+        except httpx.HTTPStatusError as e:
+            await report_api_error(interaction, e)
+        except Exception as e:  # pylint: disable=broad-exception-caught
+            flogger.error(f"admin_config_constants set error: {e}")
+            await interaction.followup.send("⚠️ Failed to update game constant.", ephemeral=True)
+
+    @admin_config_constants.error
+    async def admin_config_constants_error(self, interaction: discord.Interaction, error: app_commands.AppCommandError):
+        flogger.exception("Error in /admin_config_constants", exc_info=error)
+        if not interaction.response.is_done():
+            await interaction.response.send_message("⚠️ An error occurred.", ephemeral=True)
+
+    @app_commands.command(
+        name="admin_config_constants_view",
+        description="[ADMIN] Compact read-only view of all per-guild game-constant overrides (B.49)",
+    )
+    async def admin_config_constants_view(self, interaction: discord.Interaction):
+        """Read-only compact view of all per-guild game-constant overrides."""
+        await interaction.response.defer(thinking=True, ephemeral=True)
+        if not await _check_is_admin(interaction):
+            await interaction.followup.send("❌ This command requires admin privileges.", ephemeral=True)
+            return
+
+        guild_id = interaction.guild_id
+        try:
+            resp = await self.http_client.get(
+                f"{api_base}/config/guild/{guild_id}/game-constants",
+                timeout=10,
+            )
+            resp.raise_for_status()
+            data = resp.json()
+
+            set_fields = [(f, data[f]) for f in self._GAME_CONSTANT_FIELDS if data.get(f) is not None]
+            if not set_fields:
+                await interaction.followup.send(
+                    "ℹ️ No per-guild overrides set — all constants use global defaults.",
+                    ephemeral=True,
+                )
+                return
+
+            lines = [f"**{f}**: `{v}`" for f, v in set_fields]
+            embed = discord.Embed(
+                title=f"Active Game Constant Overrides — Guild {guild_id}",
+                description="\n".join(lines)[:4096],
+                color=discord.Color.blue(),
+            )
+            await interaction.followup.send(embed=embed, ephemeral=True)
+        except httpx.HTTPStatusError as e:
+            await report_api_error(interaction, e)
+        except Exception as e:  # pylint: disable=broad-exception-caught
+            flogger.error(f"admin_config_constants_view error: {e}")
+            await interaction.followup.send("⚠️ Failed to fetch game constants.", ephemeral=True)
+
+    @admin_config_constants_view.error
+    async def admin_config_constants_view_error(
+        self, interaction: discord.Interaction, error: app_commands.AppCommandError
+    ):
+        flogger.exception("Error in /admin_config_constants_view", exc_info=error)
+        if not interaction.response.is_done():
+            await interaction.response.send_message("⚠️ An error occurred.", ephemeral=True)
+
+    @app_commands.command(
+        name="admin_config_constants_reset",
+        description="[ADMIN] Reset per-guild game-constant overrides to global defaults (B.49/B.50)",
+    )
+    @app_commands.describe(
+        setting="Specific field to reset (leave blank to reset ALL 25 overrides)",
+    )
+    @app_commands.autocomplete(setting=constants_autocomplete)
+    async def admin_config_constants_reset(
+        self,
+        interaction: discord.Interaction,
+        setting: str | None = None,
+    ):
+        """Reset per-guild game-constant overrides with button confirmation (B.50)."""
+        await interaction.response.defer(thinking=True, ephemeral=True)
+        if not await _check_is_admin(interaction):
+            await interaction.followup.send("❌ This command requires admin privileges.", ephemeral=True)
+            return
+
+        guild_id = interaction.guild_id
+
+        if setting is not None and setting not in self._GAME_CONSTANT_FIELDS:
+            await interaction.followup.send(
+                f"❌ Unknown setting `{setting}`. Use autocomplete to pick a valid field.",
+                ephemeral=True,
+            )
+            return
+
+        action_desc = f"reset override for **{setting}**" if setting else "reset **all 25** game-constant overrides"
+
+        view = ConfirmView(action=f"{action_desc} for guild {guild_id}", timeout=60)
+        warning_embed = discord.Embed(
+            title="⚠️ Confirm Reset",
+            description=(
+                f"You are about to {action_desc} to global defaults.\n"
+                "This cannot be undone. Click **Confirm** to proceed."
+            ),
+            color=discord.Color.orange(),
+        )
+        await interaction.followup.send(embed=warning_embed, view=view, ephemeral=True)
+        await view.wait()
+
+        if view.result is None:
+            await interaction.followup.send("⏱️ Reset timed out — no changes made.", ephemeral=True)
+            return
+
+        if not view.result:
+            await interaction.followup.send("❌ Reset cancelled — no changes made.", ephemeral=True)
+            return
+
+        # Confirmed — call the reset endpoint
+        try:
+            body = {"fields": [setting] if setting else None}
+            resp = await self.http_client.post(
+                f"{api_base}/config/guild/{guild_id}/game-constants/reset",
+                json=body,
+                timeout=10,
+            )
+            resp.raise_for_status()
+            embed = discord.Embed(
+                title="✅ Game Constants Reset",
+                description=f"Successfully {action_desc} for guild {guild_id}.",
+                color=discord.Color.green(),
+            )
+            await interaction.followup.send(embed=embed, ephemeral=True)
+            flogger.info(f"Admin {interaction.user} reset game constants (setting={setting!r}) in guild {guild_id}")
+        except httpx.HTTPStatusError as e:
+            await report_api_error(interaction, e)
+        except Exception as e:  # pylint: disable=broad-exception-caught
+            flogger.error(f"admin_config_constants_reset error: {e}")
+            await interaction.followup.send("⚠️ Failed to reset game constants.", ephemeral=True)
+
+    @admin_config_constants_reset.error
+    async def admin_config_constants_reset_error(
+        self, interaction: discord.Interaction, error: app_commands.AppCommandError
+    ):
+        flogger.exception("Error in /admin_config_constants_reset", exc_info=error)
+        if not interaction.response.is_done():
+            await interaction.response.send_message("⚠️ An error occurred.", ephemeral=True)
+
+    # ------------------------------------------------------------------
     # /admin_duel — admin duel management (B.65 + touch-up)
     # ------------------------------------------------------------------
 

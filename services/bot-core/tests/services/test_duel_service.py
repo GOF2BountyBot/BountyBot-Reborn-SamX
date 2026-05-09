@@ -113,12 +113,20 @@ def make_duel(
 
 
 def make_service(*, duel_repo=None, player_repo=None, user_repo=None, combat_service=None) -> DuelService:
-    """Instantiate DuelService with mocked repositories."""
+    """Instantiate DuelService with mocked repositories.
+
+    B.49: config_repo is also initialised so that create_challenge can call
+    get_by_guild_id without an AttributeError. Defaults to returning None
+    (global GameConstants fallback).
+    """
     svc = DuelService.__new__(DuelService)
     svc.duel_repo = duel_repo or AsyncMock()
     svc.player_repo = player_repo or AsyncMock()
     svc.user_repo = user_repo or AsyncMock()
     svc.combat_service = combat_service or CombatService()
+    config_repo = AsyncMock()
+    config_repo.get_by_guild_id = AsyncMock(return_value=None)
+    svc.config_repo = config_repo
     return svc
 
 

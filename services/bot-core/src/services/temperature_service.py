@@ -14,7 +14,7 @@ import random
 
 from shared import bblogger
 
-from services.game_constants import GameConstants
+from services.game_constants import GameConstants, resolve_constant
 
 flogger = bblogger.get_logger(__name__)
 
@@ -50,25 +50,28 @@ class TemperatureService:
         return new_temp
 
     @staticmethod
-    def decay_temperature(current_temp: float) -> float:
+    def decay_temperature(current_temp: float, guild_config=None) -> float:
         """Decay temperature by multiplying by the decay rate (2/3).
 
         The result is floored at ``MIN_GUILD_ACTIVITY`` (1.0) and rounded to
         one decimal place.
 
         Args:
-            current_temp: Current temperature value.
+            current_temp:  Current temperature value.
+            guild_config:  Optional GuildConfig for per-guild overrides (B.49).
 
         Returns:
             New temperature after decay.
         """
-        flogger.trace(f"Decay calculation: {current_temp} * {GameConstants.GUILD_ACTIVITY_DECAY_RATE}")
-        decayed = current_temp * GameConstants.GUILD_ACTIVITY_DECAY_RATE
-        flogger.trace(f"After multiplication (before clamp/round): {decayed}")
-        new_temp = max(GameConstants.MIN_GUILD_ACTIVITY, round(decayed, 1))
-        flogger.info(
-            f"Temperature decayed: {current_temp} → {new_temp} (rate={GameConstants.GUILD_ACTIVITY_DECAY_RATE})"
+        decay_rate = resolve_constant(
+            guild_config, "guild_activity_decay_rate", GameConstants.GUILD_ACTIVITY_DECAY_RATE
         )
+        min_activity = resolve_constant(guild_config, "min_guild_activity", GameConstants.MIN_GUILD_ACTIVITY)
+        flogger.trace(f"Decay calculation: {current_temp} * {decay_rate}")
+        decayed = current_temp * decay_rate
+        flogger.trace(f"After multiplication (before clamp/round): {decayed}")
+        new_temp = max(min_activity, round(decayed, 1))
+        flogger.info(f"Temperature decayed: {current_temp} → {new_temp} (rate={decay_rate})")
         return new_temp
 
     @staticmethod
@@ -101,7 +104,7 @@ class TemperatureService:
         return max_bounties
 
     @staticmethod
-    def calculate_spawn_delay(temperature: float, route_length: int) -> float:
+    def calculate_spawn_delay(temperature: float, route_length: int, guild_config=None) -> float:
         """Calculate the spawn delay in minutes for the next bounty.
 
         Formula: ``random(5-7 min) * temperature^-0.1 * route_length``
@@ -110,8 +113,9 @@ class TemperatureService:
         respawns).  Longer routes produce a proportionally longer delay.
 
         Args:
-            temperature: Current activity temperature.
+            temperature:  Current activity temperature.
             route_length: Number of systems in the bounty route.
+            guild_config: Optional GuildConfig for per-guild overrides (B.49).
 
         Returns:
             Spawn delay in minutes.
@@ -121,18 +125,15 @@ class TemperatureService:
         # system invariants, but we clamp defensively.
         flogger.trace(f"calculate_spawn_delay: input temperature={temperature}, route_length={route_length}")
         original_temperature = temperature
-        temperature = max(GameConstants.MIN_GUILD_ACTIVITY, temperature)
+        min_activity = resolve_constant(guild_config, "min_guild_activity", GameConstants.MIN_GUILD_ACTIVITY)
+        temperature = max(min_activity, temperature)
         if temperature != original_temperature:  # Was clamped
-            flogger.trace(f"Temperature clamped to MIN_GUILD_ACTIVITY={GameConstants.MIN_GUILD_ACTIVITY}")
+            flogger.trace(f"Temperature clamped to MIN_GUILD_ACTIVITY={min_activity}")
 
-        base_delay = random.uniform(
-            GameConstants.BOUNTY_DELAY_RANDOM_MIN,
-            GameConstants.BOUNTY_DELAY_RANDOM_MAX,
-        )
-        flogger.trace(
-            f"Random base_delay: {base_delay:.2f} (range={GameConstants.BOUNTY_DELAY_RANDOM_MIN}"
-            f"-{GameConstants.BOUNTY_DELAY_RANDOM_MAX})"
-        )
+        delay_min = resolve_constant(guild_config, "bounty_delay_random_min", GameConstants.BOUNTY_DELAY_RANDOM_MIN)
+        delay_max = resolve_constant(guild_config, "bounty_delay_random_max", GameConstants.BOUNTY_DELAY_RANDOM_MAX)
+        base_delay = random.uniform(delay_min, delay_max)
+        flogger.trace(f"Random base_delay: {base_delay:.2f} (range={delay_min}-{delay_max})")
         temp_factor = temperature**-0.1  # Higher temp → smaller factor → shorter delay
         flogger.trace(f"Temperature factor: {temp_factor:.4f} (temperature^-0.1)")
         spawn_delay = base_delay * temp_factor * route_length
@@ -143,7 +144,7 @@ class TemperatureService:
         return spawn_delay
 
     @staticmethod
-    def decay_temperature_n_hours(current_temp: float, hours: int) -> float:
+    def decay_temperature_n_hours(current_temp: float, hours: int, guild_config=None) -> float:
         """Simulate *hours* hours of temperature decay.
 
         Applies :meth:`decay_temperature` iteratively for the given number of
@@ -151,8 +152,9 @@ class TemperatureService:
         (e.g. server downtime).
 
         Args:
-            current_temp: Current temperature value.
-            hours: Number of decay intervals (hours) to simulate.
+            current_temp:  Current temperature value.
+            hours:         Number of decay intervals (hours) to simulate.
+            guild_config:  Optional GuildConfig for per-guild overrides (B.49).
 
         Returns:
             Temperature after *hours* of decay (never below ``MIN_GUILD_ACTIVITY``).
@@ -161,6 +163,6 @@ class TemperatureService:
         temp = current_temp
         for hour_num in range(hours):
             flogger.trace(f"Decay iteration {hour_num + 1}/{hours}: temp={temp}")
-            temp = TemperatureService.decay_temperature(temp)
+            temp = TemperatureService.decay_temperature(temp, guild_config=guild_config)
         flogger.debug(f"Temperature decay complete after {hours} hours: {current_temp} → {temp}")
         return temp

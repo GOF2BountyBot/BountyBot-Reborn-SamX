@@ -17,6 +17,7 @@ from datetime import UTC, datetime, timedelta
 from persist.models.bounty import Bounty
 from persist.models.criminal import Criminal
 from persist.repositories.bounty_repository import BountyRepository
+from persist.repositories.config_repository import ConfigRepository
 from persist.repositories.criminal_repository import CriminalRepository
 from persist.repositories.item_repository import ItemRepository
 from persist.repositories.player_repository import PlayerRepository
@@ -25,7 +26,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from services.combat_models import ShipLoadout, WeaponStats
 from services.combat_service import CombatService
-from services.game_constants import GameConstants
+from services.game_constants import GameConstants, resolve_constant
 from services.game_maths import (
     pick_random_item_tl,
     reward_per_sys_check,
@@ -174,6 +175,7 @@ class BountyService:
         self.criminal_repo = CriminalRepository()
         self.item_repo = ItemRepository()
         self.player_repo = PlayerRepository()
+        self.config_repo = ConfigRepository()
         self.graph_service = SystemGraphService()
         self.pathfinding_service = PathfindingService(self.graph_service)
         self.combat_service = CombatService()
@@ -319,7 +321,7 @@ class BountyService:
     # Loadout Generation
     # ------------------------------------------------------------------
 
-    async def generate_loadout(self, db: AsyncSession, tech_level: int) -> dict:
+    async def generate_loadout(self, db: AsyncSession, tech_level: int, cfg=None) -> dict:
         """Generate a criminal's ship loadout for the given tech level.
 
         At tech level 0 a fixed beginner loadout (Betty) is returned.
@@ -357,12 +359,15 @@ class BountyService:
         # ----------------------------------------------------------------
         # Ship selection
         # ----------------------------------------------------------------
+        _criminal_max_gear_upgrade = resolve_constant(
+            cfg, "criminal_max_gear_upgrade", GameConstants.CRIMINAL_MAX_GEAR_UPGRADE
+        )
         ship_tl = await self.find_item_tl(
             db,
             center=item_tl,
             min_tl=GameConstants.MIN_TECH_LEVEL,
             max_tl=GameConstants.MAX_TECH_LEVEL,
-            upper_bound=GameConstants.CRIMINAL_MAX_GEAR_UPGRADE,
+            upper_bound=_criminal_max_gear_upgrade,
             item_type="ship",
         )
 
@@ -411,13 +416,16 @@ class BountyService:
         # Primary weapon selection
         # ----------------------------------------------------------------
         equipped_weapons = []
+        _criminal_equip_damageless_chance = resolve_constant(
+            cfg, "criminal_equip_damageless_weapon_chance", GameConstants.CRIMINAL_EQUIP_DAMAGELESS_WEAPON_CHANCE
+        )
         if ship.max_primaries > 0:
             weapon_tl = await self.find_item_tl(
                 db,
                 center=item_tl,
                 min_tl=GameConstants.MIN_TECH_LEVEL,
                 max_tl=GameConstants.MAX_TECH_LEVEL,
-                upper_bound=GameConstants.CRIMINAL_MAX_GEAR_UPGRADE,
+                upper_bound=_criminal_max_gear_upgrade,
                 item_type="primary_weapon",
             )
             if weapon_tl != -1:
@@ -427,9 +435,7 @@ class BountyService:
 
                 for _ in range(ship.max_primaries):
                     # 20% chance to pick a non-damaging weapon (if available)
-                    pick_non_damaging = (
-                        non_damaging and random.randint(1, 100) <= GameConstants.CRIMINAL_EQUIP_DAMAGELESS_WEAPON_CHANCE
-                    )
+                    pick_non_damaging = non_damaging and random.randint(1, 100) <= _criminal_equip_damageless_chance
                     pool = non_damaging if pick_non_damaging else (damaging or all_weapons)
                     if pool:
                         equipped_weapons.append(random.choice(pool))
@@ -495,7 +501,7 @@ class BountyService:
                 center=item_tl,
                 min_tl=GameConstants.MIN_TECH_LEVEL,
                 max_tl=GameConstants.MAX_TECH_LEVEL,
-                upper_bound=GameConstants.CRIMINAL_MAX_GEAR_UPGRADE,
+                upper_bound=_criminal_max_gear_upgrade,
                 item_type="turret_weapon",
             )
             if turret_tl != -1:
@@ -670,6 +676,7 @@ class BountyService:
         if player is None:
             flogger.warning(f"Cannot award combat bonus: player {player_id} not found")
             return
+        # Note: guild_config not available in this helper — use global default
         bonus_xp = int(bonus_credits * GameConstants.BOUNTY_REWARD_TO_XP_GAIN_MULT)
         player.credits += bonus_credits
         player.lifetime_credits += bonus_credits
@@ -865,6 +872,9 @@ class BountyService:
         Returns:
             Bounty object if spawn succeeds, None if it fails.
         """
+        # Load per-guild config for override resolution
+        cfg = await self.config_repo.get_by_guild_id(db, guild_id)
+
         # Step 1: Select criminal
         criminal = await self.select_criminal(db, guild_id, division)
         if criminal is None:
@@ -878,7 +888,8 @@ class BountyService:
             center_tl = division_tl_map.get(division, 5)
             tech_level = pick_random_item_tl(center_tl)
             # Enforce per-division TL cap so new players are never overwhelmed
-            max_tl = GameConstants.DIVISION_MAX_TL.get(division, 10)
+            _division_max_tl = resolve_constant(cfg, "division_max_tl", GameConstants.DIVISION_MAX_TL)
+            max_tl = _division_max_tl.get(division, 10)
             tech_level = min(tech_level, max_tl)
 
         # Step 3: Generate route (up to 3 attempts)
@@ -911,7 +922,7 @@ class BountyService:
         answer = random.choice(route)
 
         # Step 5: Generate loadout
-        loadout = await self.generate_loadout(db, tech_level)
+        loadout = await self.generate_loadout(db, tech_level, cfg=cfg)
 
         # Step 6: Calculate reward using the winner-reserve / consolation-pool model.
         # The total reward is seeded by the legacy per-sys formula, but reward_per_sys
@@ -920,7 +931,10 @@ class BountyService:
         _legacy_rps = reward_per_sys_check(tech_level, loadout["total_value"])
         total_reward = _legacy_rps * len(route)
 
-        winner_reserve = int(total_reward * GameConstants.BOUNTY_WINNER_RESERVE_FACTOR)
+        _winner_reserve_factor = resolve_constant(
+            cfg, "bounty_winner_reserve_factor", GameConstants.BOUNTY_WINNER_RESERVE_FACTOR
+        )
+        winner_reserve = int(total_reward * _winner_reserve_factor)
         consolation_pool = total_reward - winner_reserve
         rps = consolation_pool // len(route) if route else 0
 
@@ -1054,7 +1068,8 @@ class BountyService:
         outcomes: list[CheckResponse] = []
         bounties_to_announce: list[tuple[Bounty, bool]] = []  # (bounty, captured)
         cooldown_applied = False
-        cooldown_seconds = getattr(GameConstants, "CHECK_COOLDOWN", 180)
+        cfg = await self.config_repo.get_by_guild_id(db, guild_id)
+        cooldown_seconds = resolve_constant(cfg, "check_cooldown", GameConstants.CHECK_COOLDOWN)
         tier_before = player.tier
 
         for bounty in matching_bounties:
@@ -1066,6 +1081,7 @@ class BountyService:
                 system_name=system_name,
                 division=division,
                 now=now,
+                cfg=cfg,
             )
             outcomes.append(outcome)
             if announce_info is not None:
@@ -1128,6 +1144,7 @@ class BountyService:
         system_name: str,
         division: str,
         now: datetime,
+        cfg=None,
     ) -> tuple[CheckResponse, tuple[Bounty, bool] | None]:
         """Process a single bounty for a /check invocation.
 
@@ -1189,9 +1206,12 @@ class BountyService:
             player_loadout = await LoadoutBuilder.from_player(db, player_id)
             criminal_loadout = LoadoutBuilder.from_criminal_ship(bounty.criminal_ship or {})
 
+            _pvc_buff = resolve_constant(
+                cfg, "bounty_pvc_armour_buff_factor", GameConstants.BOUNTY_PVC_ARMOUR_BUFF_FACTOR
+            )
             if is_bronze:
                 # BRONZE: Auto-capture always succeeds. Optional combat bonus.
-                rewards = await self.calc_rewards(db, bounty)
+                rewards = await self.calc_rewards(db, bounty, cfg=cfg)
                 await self.distribute_rewards(db, bounty, rewards)
 
                 winner_reward = next((r.credits_earned for r in rewards if r.is_winner), 0)
@@ -1200,7 +1220,7 @@ class BountyService:
                 total_reward = winner_reward
                 if not _no_ship:
                     fight_results = self.combat_service.fight_ships(
-                        player_loadout, criminal_loadout, player_armour_buff=GameConstants.BOUNTY_PVC_ARMOUR_BUFF_FACTOR
+                        player_loadout, criminal_loadout, player_armour_buff=_pvc_buff
                     )
                     combat_player_won = (
                         fight_results.winner_name == player_loadout.ship_name
@@ -1220,9 +1240,9 @@ class BountyService:
                         division=division,
                         criminal_name=bounty.criminal_name,
                         reward=winner_reward,
-                        combat_result=_serialize_fight_results(
-                            fight_results, pvc_armour_buff=GameConstants.BOUNTY_PVC_ARMOUR_BUFF_FACTOR
-                        ) if fight_results else None,
+                        combat_result=_serialize_fight_results(fight_results, pvc_armour_buff=_pvc_buff)
+                        if fight_results
+                        else None,
                         bonus_won=bonus_won,
                         total_reward=total_reward,
                         criminal_ship=bounty.criminal_ship,
@@ -1236,12 +1256,12 @@ class BountyService:
                 fight_results = None
             else:
                 fight_results = self.combat_service.fight_ships(
-                    player_loadout, criminal_loadout, player_armour_buff=GameConstants.BOUNTY_PVC_ARMOUR_BUFF_FACTOR
+                    player_loadout, criminal_loadout, player_armour_buff=_pvc_buff
                 )
                 duel_won = (fight_results.winner_name == player_loadout.ship_name) or fight_results.is_stalemate
 
             if duel_won:
-                rewards = await self.calc_rewards(db, bounty)
+                rewards = await self.calc_rewards(db, bounty, cfg=cfg)
                 await self.distribute_rewards(db, bounty, rewards)
                 winner_reward = next((r.credits_earned for r in rewards if r.is_winner), 0)
                 return (
@@ -1253,9 +1273,9 @@ class BountyService:
                         division=division,
                         criminal_name=bounty.criminal_name,
                         reward=winner_reward,
-                        combat_result=_serialize_fight_results(
-                            fight_results, pvc_armour_buff=GameConstants.BOUNTY_PVC_ARMOUR_BUFF_FACTOR
-                        ) if fight_results else None,
+                        combat_result=_serialize_fight_results(fight_results, pvc_armour_buff=_pvc_buff)
+                        if fight_results
+                        else None,
                     ),
                     (bounty, True),
                 )
@@ -1270,9 +1290,9 @@ class BountyService:
                     combat_won=False,
                     division=division,
                     criminal_name=bounty.criminal_name,
-                    combat_result=_serialize_fight_results(
-                        fight_results, pvc_armour_buff=GameConstants.BOUNTY_PVC_ARMOUR_BUFF_FACTOR
-                    ) if fight_results else None,
+                    combat_result=_serialize_fight_results(fight_results, pvc_armour_buff=_pvc_buff)
+                    if fight_results
+                    else None,
                 ),
                 (bounty, False),
             )
@@ -1285,7 +1305,7 @@ class BountyService:
             answer_idx = bounty.route.index(bounty.answer)
             system_idx = bounty.route.index(system_name)
             distance = answer_idx - system_idx
-            close_threshold = getattr(GameConstants, "CLOSE_BOUNTY_THRESHOLD", 4)
+            close_threshold = resolve_constant(cfg, "close_bounty_threshold", GameConstants.CLOSE_BOUNTY_THRESHOLD)
             if 0 < distance < close_threshold:
                 proximity_hint = True
             # recently_spotted: criminal was here 1-2 stops ago (answer is 1-2 stops ahead)
@@ -1462,6 +1482,7 @@ class BountyService:
         self,
         db: AsyncSession,
         bounty: Bounty,
+        cfg=None,
     ) -> list[RewardInfo]:
         """Calculate rewards for all contributors to a completed bounty.
 
@@ -1482,7 +1503,10 @@ class BountyService:
         Returns:
             List of RewardInfo for each contributing player.
         """
-        winner_reserve = max(0, int(bounty.reward * GameConstants.BOUNTY_WINNER_RESERVE_FACTOR))
+        _winner_reserve_factor = resolve_constant(
+            cfg, "bounty_winner_reserve_factor", GameConstants.BOUNTY_WINNER_RESERVE_FACTOR
+        )
+        winner_reserve = max(0, int(bounty.reward * _winner_reserve_factor))
         consolation_pool = bounty.reward - winner_reserve
         rps = bounty.reward_per_sys
         winner_id = bounty.checked.get(bounty.answer, -1)
@@ -1518,7 +1542,10 @@ class BountyService:
         if winner_id != -1:
             remaining_consolation = max(0, consolation_pool)
             total_winner_credits = winner_reserve + remaining_consolation
-            xp_reward = int(total_winner_credits * GameConstants.BOUNTY_REWARD_TO_XP_GAIN_MULT)
+            _xp_mult = resolve_constant(
+                cfg, "bounty_reward_to_xp_gain_mult", GameConstants.BOUNTY_REWARD_TO_XP_GAIN_MULT
+            )
+            xp_reward = int(total_winner_credits * _xp_mult)
             winner_checks = player_checks.get(winner_id, 0)
 
             rewards.append(

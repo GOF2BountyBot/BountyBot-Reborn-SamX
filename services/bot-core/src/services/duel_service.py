@@ -12,12 +12,14 @@ which commit individually (as implemented in the repository layer).
 from datetime import UTC, datetime, timedelta
 
 from persist.models.duel_request import DuelRequest
+from persist.repositories.config_repository import ConfigRepository
 from persist.repositories.duel_repository import DuelRepository
 from persist.repositories.player_repository import PlayerRepository
 from persist.repositories.user_repository import UserRepository
 from shared import bblogger
 
 from services.combat_service import CombatService
+from services.game_constants import GameConstants, resolve_constant
 from services.loadout_builder import LoadoutBuilder
 
 flogger = bblogger.get_logger("duel-service")
@@ -30,6 +32,7 @@ class DuelService:
         self.duel_repo = DuelRepository()
         self.player_repo = PlayerRepository()
         self.user_repo = UserRepository()
+        self.config_repo = ConfigRepository()
         self.combat_service = CombatService()
 
     # ------------------------------------------------------------------
@@ -137,6 +140,10 @@ class DuelService:
                 target_label = f"Player {target_id}"
             raise ValueError(f"A pending duel already exists between {challenger_label} and {target_label}.")
 
+        # Resolve per-guild duel expiry
+        cfg = await self.config_repo.get_by_guild_id(db, guild_id)
+        expiry_seconds = resolve_constant(cfg, "duel_request_expiry", GameConstants.DUEL_REQUEST_EXPIRY)
+
         # Create the duel request
         duel = DuelRequest(
             guild_id=guild_id,
@@ -144,7 +151,7 @@ class DuelService:
             target_id=target_id,
             stakes=stakes,
             status="pending",
-            expires_at=datetime.now(UTC) + timedelta(days=1),
+            expires_at=datetime.now(UTC) + timedelta(seconds=expiry_seconds),
         )
         created = await self.duel_repo.create(db, duel)
         flogger.info(

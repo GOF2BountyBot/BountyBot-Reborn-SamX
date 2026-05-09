@@ -135,7 +135,7 @@ async def execute_temperature_decay_job(job_id: str, payload: dict) -> dict:
 
                 for div in divisions_to_decay:
                     before: float = float(stored.get(div, _DEFAULT_TEMPERATURE))
-                    after: float = TemperatureService.decay_temperature(before)
+                    after: float = TemperatureService.decay_temperature(before, guild_config=config)
                     updated_temperatures[div] = after
 
                     division_decay_results[div] = {"before": before, "after": after}

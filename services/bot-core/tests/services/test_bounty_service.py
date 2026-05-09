@@ -137,12 +137,19 @@ def _setup_mock_db_query(mock_db, return_value):
 
 @pytest.fixture
 def service() -> BountyService:
-    """Return a BountyService with all repositories replaced by MagicMocks."""
+    """Return a BountyService with all repositories replaced by MagicMocks.
+
+    B.49: config_repo is also replaced so that check_bounty / spawn_bounty can
+    call get_by_guild_id without going to the real DB.  The default return value
+    is None which causes resolve_constant to fall back to global GameConstants.
+    """
     svc = BountyService()
     svc.bounty_repo = MagicMock()
     svc.criminal_repo = MagicMock()
     svc.item_repo = MagicMock()
     svc.player_repo = MagicMock()
+    svc.config_repo = MagicMock()
+    svc.config_repo.get_by_guild_id = AsyncMock(return_value=None)
     return svc
 
 

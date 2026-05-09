@@ -160,12 +160,19 @@ def _make_discord_message(
 
 @pytest.fixture
 def service() -> BountyService:
-    """Return a BountyService with all repositories replaced by MagicMocks."""
+    """Return a BountyService with all repositories replaced by MagicMocks.
+
+    B.49: config_repo is also replaced so that check_bounty can call
+    get_by_guild_id without hitting the real DB.  Returns None by default
+    so resolve_constant falls back to global GameConstants values.
+    """
     svc = BountyService()
     svc.bounty_repo = MagicMock()
     svc.criminal_repo = MagicMock()
     svc.item_repo = MagicMock()
     svc.player_repo = MagicMock()
+    svc.config_repo = MagicMock()
+    svc.config_repo.get_by_guild_id = AsyncMock(return_value=None)
     return svc
 
 

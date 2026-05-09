@@ -18,7 +18,9 @@ from api.schemas.config_schema import (
     BountyConfigResponse,
     BountyConfigStatusResponse,
     ConfigValidationResponse,
+    GameConstantsOverridesMixin,
     GuildConfigResponse,
+    ResetGameConstantsRequest,
     UpdateBountyConfigRequest,
     UpdateConfigRequest,
     UpdateShopConfigRequest,
@@ -32,6 +34,71 @@ router = APIRouter(
     tags=["config"],
     responses={404: {"description": "Configuration not found"}, 500: {"description": "Internal server error"}},
 )
+
+# ---------------------------------------------------------------------------
+# B.49: all 25 per-guild override field names
+# ---------------------------------------------------------------------------
+_OVERRIDE_FIELDS: tuple[str, ...] = (
+    "division_max_tl",
+    "ship_value_reward_percentage",
+    "criminal_equip_damageless_weapon_chance",
+    "criminal_max_gear_upgrade",
+    "bounty_reward_to_xp_gain_mult",
+    "bounty_winner_reserve_factor",
+    "bounty_pvc_armour_buff_factor",
+    "duel_variance_percent",
+    "duel_cloak_chance",
+    "close_bounty_threshold",
+    "max_route_length",
+    "bounty_delay_random_min",
+    "bounty_delay_random_max",
+    "bounty_spawn_jitter",
+    "check_cooldown",
+    "duel_request_expiry",
+    "guild_activity_decay_rate",
+    "min_guild_activity",
+    "activity_temp_per_player",
+    "shop_default_ships_num",
+    "shop_default_weapons_num",
+    "shop_default_modules_num",
+    "shop_default_turrets_num",
+    "turret_spawn_probability",
+    "kaamo_max_capacity",
+    "classic_credits_per_check",
+)
+
+
+def _build_config_response(config: dict[str, Any]) -> GuildConfigResponse:
+    """Assemble a GuildConfigResponse from a config summary dict."""
+    override_kwargs = {field: config.get(field) for field in _OVERRIDE_FIELDS}
+    return GuildConfigResponse(
+        guild_id=config["guild_id"],
+        configured=config["configured"],
+        admin_role_configured=config["admin_role_configured"],
+        starting_credits=config["starting_credits"],
+        sale_price_factor=config["sale_price_factor"],
+        xp_thresholds=config["xp_thresholds"],
+        shop_config=config["shop_config"],
+        created_at=config["created_at"],
+        updated_at=config["updated_at"],
+        category_id=config.get("category_id"),
+        shop_channel_id=config.get("shop_channel_id"),
+        bronze_bounty_channel_id=config.get("bronze_bounty_channel_id"),
+        silver_bounty_channel_id=config.get("silver_bounty_channel_id"),
+        gold_bounty_channel_id=config.get("gold_bounty_channel_id"),
+        platinum_bounty_channel_id=config.get("platinum_bounty_channel_id"),
+        hunting_channel_id=config.get("hunting_channel_id"),
+        discussion_channel_id=config.get("discussion_channel_id"),
+        image_channel_id=config.get("image_channel_id"),
+        admin_role_id=config.get("admin_role_id"),
+        bounty_hunter_role_id=config.get("bounty_hunter_role_id"),
+        bronze_role_id=config.get("bronze_role_id"),
+        silver_role_id=config.get("silver_role_id"),
+        gold_role_id=config.get("gold_role_id"),
+        platinum_role_id=config.get("platinum_role_id"),
+        shop_announcements_role_id=config.get("shop_announcements_role_id"),
+        **override_kwargs,
+    )
 
 
 # Dependency injection
@@ -47,34 +114,7 @@ async def get_guild_config(guild_id: int, config_service: ConfigService = Depend
     try:
         async with get_db_session() as db:
             config = await config_service.get_guild_config(db, guild_id)
-
-            return GuildConfigResponse(
-                guild_id=config["guild_id"],
-                configured=config["configured"],
-                admin_role_configured=config["admin_role_configured"],
-                starting_credits=config["starting_credits"],
-                sale_price_factor=config["sale_price_factor"],
-                xp_thresholds=config["xp_thresholds"],
-                shop_config=config["shop_config"],
-                created_at=config["created_at"],
-                updated_at=config["updated_at"],
-                category_id=config.get("category_id"),
-                shop_channel_id=config.get("shop_channel_id"),
-                bronze_bounty_channel_id=config.get("bronze_bounty_channel_id"),
-                silver_bounty_channel_id=config.get("silver_bounty_channel_id"),
-                gold_bounty_channel_id=config.get("gold_bounty_channel_id"),
-                platinum_bounty_channel_id=config.get("platinum_bounty_channel_id"),
-                hunting_channel_id=config.get("hunting_channel_id"),
-                discussion_channel_id=config.get("discussion_channel_id"),
-                image_channel_id=config.get("image_channel_id"),
-                admin_role_id=config.get("admin_role_id"),
-                bounty_hunter_role_id=config.get("bounty_hunter_role_id"),
-                bronze_role_id=config.get("bronze_role_id"),
-                silver_role_id=config.get("silver_role_id"),
-                gold_role_id=config.get("gold_role_id"),
-                platinum_role_id=config.get("platinum_role_id"),
-                shop_announcements_role_id=config.get("shop_announcements_role_id"),
-            )
+            return _build_config_response(config)
 
     except GuildNotConfiguredError as e:
         flogger.warning(f"Guild {guild_id} not configured: {e}")
@@ -102,34 +142,7 @@ async def update_guild_config(
 
         async with get_db_session() as db:
             config = await config_service.create_or_update_config(db, request.model_dump(exclude_unset=True))
-
-            return GuildConfigResponse(
-                guild_id=config["guild_id"],
-                configured=config["configured"],
-                admin_role_configured=config["admin_role_configured"],
-                starting_credits=config["starting_credits"],
-                sale_price_factor=config["sale_price_factor"],
-                xp_thresholds=config["xp_thresholds"],
-                shop_config=config["shop_config"],
-                created_at=config["created_at"],
-                updated_at=config["updated_at"],
-                category_id=config.get("category_id"),
-                shop_channel_id=config.get("shop_channel_id"),
-                bronze_bounty_channel_id=config.get("bronze_bounty_channel_id"),
-                silver_bounty_channel_id=config.get("silver_bounty_channel_id"),
-                gold_bounty_channel_id=config.get("gold_bounty_channel_id"),
-                platinum_bounty_channel_id=config.get("platinum_bounty_channel_id"),
-                hunting_channel_id=config.get("hunting_channel_id"),
-                discussion_channel_id=config.get("discussion_channel_id"),
-                image_channel_id=config.get("image_channel_id"),
-                admin_role_id=config.get("admin_role_id"),
-                bounty_hunter_role_id=config.get("bounty_hunter_role_id"),
-                bronze_role_id=config.get("bronze_role_id"),
-                silver_role_id=config.get("silver_role_id"),
-                gold_role_id=config.get("gold_role_id"),
-                platinum_role_id=config.get("platinum_role_id"),
-                shop_announcements_role_id=config.get("shop_announcements_role_id"),
-            )
+            return _build_config_response(config)
 
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
@@ -153,34 +166,7 @@ async def update_shop_config(
 
         async with get_db_session() as db:
             config = await config_service.update_shop_config(db, request.model_dump(exclude_unset=True))
-
-            return GuildConfigResponse(
-                guild_id=config["guild_id"],
-                configured=config["configured"],
-                admin_role_configured=config["admin_role_configured"],
-                starting_credits=config["starting_credits"],
-                sale_price_factor=config["sale_price_factor"],
-                xp_thresholds=config["xp_thresholds"],
-                shop_config=config["shop_config"],
-                created_at=config["created_at"],
-                updated_at=config["updated_at"],
-                category_id=config.get("category_id"),
-                shop_channel_id=config.get("shop_channel_id"),
-                bronze_bounty_channel_id=config.get("bronze_bounty_channel_id"),
-                silver_bounty_channel_id=config.get("silver_bounty_channel_id"),
-                gold_bounty_channel_id=config.get("gold_bounty_channel_id"),
-                platinum_bounty_channel_id=config.get("platinum_bounty_channel_id"),
-                hunting_channel_id=config.get("hunting_channel_id"),
-                discussion_channel_id=config.get("discussion_channel_id"),
-                image_channel_id=config.get("image_channel_id"),
-                admin_role_id=config.get("admin_role_id"),
-                bounty_hunter_role_id=config.get("bounty_hunter_role_id"),
-                bronze_role_id=config.get("bronze_role_id"),
-                silver_role_id=config.get("silver_role_id"),
-                gold_role_id=config.get("gold_role_id"),
-                platinum_role_id=config.get("platinum_role_id"),
-                shop_announcements_role_id=config.get("shop_announcements_role_id"),
-            )
+            return _build_config_response(config)
 
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
@@ -199,34 +185,7 @@ async def reset_guild_config(guild_id: int, config_service: ConfigService = Depe
     try:
         async with get_db_session() as db:
             config = await config_service.reset_to_defaults(db, guild_id)
-
-            return GuildConfigResponse(
-                guild_id=config["guild_id"],
-                configured=config["configured"],
-                admin_role_configured=config["admin_role_configured"],
-                starting_credits=config["starting_credits"],
-                sale_price_factor=config["sale_price_factor"],
-                xp_thresholds=config["xp_thresholds"],
-                shop_config=config["shop_config"],
-                created_at=config["created_at"],
-                updated_at=config["updated_at"],
-                category_id=config.get("category_id"),
-                shop_channel_id=config.get("shop_channel_id"),
-                bronze_bounty_channel_id=config.get("bronze_bounty_channel_id"),
-                silver_bounty_channel_id=config.get("silver_bounty_channel_id"),
-                gold_bounty_channel_id=config.get("gold_bounty_channel_id"),
-                platinum_bounty_channel_id=config.get("platinum_bounty_channel_id"),
-                hunting_channel_id=config.get("hunting_channel_id"),
-                discussion_channel_id=config.get("discussion_channel_id"),
-                image_channel_id=config.get("image_channel_id"),
-                admin_role_id=config.get("admin_role_id"),
-                bounty_hunter_role_id=config.get("bounty_hunter_role_id"),
-                bronze_role_id=config.get("bronze_role_id"),
-                silver_role_id=config.get("silver_role_id"),
-                gold_role_id=config.get("gold_role_id"),
-                platinum_role_id=config.get("platinum_role_id"),
-                shop_announcements_role_id=config.get("shop_announcements_role_id"),
-            )
+            return _build_config_response(config)
 
     except Exception as e:
         flogger.error(f"Error resetting guild config: {e}")
@@ -243,34 +202,7 @@ async def update_admin_role(guild_id: int, role_id: int, config_service: ConfigS
     try:
         async with get_db_session() as db:
             config = await config_service.update_admin_role(db, guild_id, role_id)
-
-            return GuildConfigResponse(
-                guild_id=config["guild_id"],
-                configured=config["configured"],
-                admin_role_configured=config["admin_role_configured"],
-                starting_credits=config["starting_credits"],
-                sale_price_factor=config["sale_price_factor"],
-                xp_thresholds=config["xp_thresholds"],
-                shop_config=config["shop_config"],
-                created_at=config["created_at"],
-                updated_at=config["updated_at"],
-                category_id=config.get("category_id"),
-                shop_channel_id=config.get("shop_channel_id"),
-                bronze_bounty_channel_id=config.get("bronze_bounty_channel_id"),
-                silver_bounty_channel_id=config.get("silver_bounty_channel_id"),
-                gold_bounty_channel_id=config.get("gold_bounty_channel_id"),
-                platinum_bounty_channel_id=config.get("platinum_bounty_channel_id"),
-                hunting_channel_id=config.get("hunting_channel_id"),
-                discussion_channel_id=config.get("discussion_channel_id"),
-                image_channel_id=config.get("image_channel_id"),
-                admin_role_id=config.get("admin_role_id"),
-                bounty_hunter_role_id=config.get("bounty_hunter_role_id"),
-                bronze_role_id=config.get("bronze_role_id"),
-                silver_role_id=config.get("silver_role_id"),
-                gold_role_id=config.get("gold_role_id"),
-                platinum_role_id=config.get("platinum_role_id"),
-                shop_announcements_role_id=config.get("shop_announcements_role_id"),
-            )
+            return _build_config_response(config)
 
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
@@ -291,34 +223,7 @@ async def update_starting_credits(
     try:
         async with get_db_session() as db:
             config = await config_service.update_starting_credits(db, guild_id, starting_credits)
-
-            return GuildConfigResponse(
-                guild_id=config["guild_id"],
-                configured=config["configured"],
-                admin_role_configured=config["admin_role_configured"],
-                starting_credits=config["starting_credits"],
-                sale_price_factor=config["sale_price_factor"],
-                xp_thresholds=config["xp_thresholds"],
-                shop_config=config["shop_config"],
-                created_at=config["created_at"],
-                updated_at=config["updated_at"],
-                category_id=config.get("category_id"),
-                shop_channel_id=config.get("shop_channel_id"),
-                bronze_bounty_channel_id=config.get("bronze_bounty_channel_id"),
-                silver_bounty_channel_id=config.get("silver_bounty_channel_id"),
-                gold_bounty_channel_id=config.get("gold_bounty_channel_id"),
-                platinum_bounty_channel_id=config.get("platinum_bounty_channel_id"),
-                hunting_channel_id=config.get("hunting_channel_id"),
-                discussion_channel_id=config.get("discussion_channel_id"),
-                image_channel_id=config.get("image_channel_id"),
-                admin_role_id=config.get("admin_role_id"),
-                bounty_hunter_role_id=config.get("bounty_hunter_role_id"),
-                bronze_role_id=config.get("bronze_role_id"),
-                silver_role_id=config.get("silver_role_id"),
-                gold_role_id=config.get("gold_role_id"),
-                platinum_role_id=config.get("platinum_role_id"),
-                shop_announcements_role_id=config.get("shop_announcements_role_id"),
-            )
+            return _build_config_response(config)
 
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
@@ -341,34 +246,7 @@ async def update_xp_thresholds(
     try:
         async with get_db_session() as db:
             config = await config_service.update_xp_thresholds(db, guild_id, request.thresholds)
-
-            return GuildConfigResponse(
-                guild_id=config["guild_id"],
-                configured=config["configured"],
-                admin_role_configured=config["admin_role_configured"],
-                starting_credits=config["starting_credits"],
-                sale_price_factor=config["sale_price_factor"],
-                xp_thresholds=config["xp_thresholds"],
-                shop_config=config["shop_config"],
-                created_at=config["created_at"],
-                updated_at=config["updated_at"],
-                category_id=config.get("category_id"),
-                shop_channel_id=config.get("shop_channel_id"),
-                bronze_bounty_channel_id=config.get("bronze_bounty_channel_id"),
-                silver_bounty_channel_id=config.get("silver_bounty_channel_id"),
-                gold_bounty_channel_id=config.get("gold_bounty_channel_id"),
-                platinum_bounty_channel_id=config.get("platinum_bounty_channel_id"),
-                hunting_channel_id=config.get("hunting_channel_id"),
-                discussion_channel_id=config.get("discussion_channel_id"),
-                image_channel_id=config.get("image_channel_id"),
-                admin_role_id=config.get("admin_role_id"),
-                bounty_hunter_role_id=config.get("bounty_hunter_role_id"),
-                bronze_role_id=config.get("bronze_role_id"),
-                silver_role_id=config.get("silver_role_id"),
-                gold_role_id=config.get("gold_role_id"),
-                platinum_role_id=config.get("platinum_role_id"),
-                shop_announcements_role_id=config.get("shop_announcements_role_id"),
-            )
+            return _build_config_response(config)
 
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
@@ -519,3 +397,72 @@ async def get_default_config():
         "starting_credits": 0,
         "xp_thresholds": {"Silver": 1000, "Gold": 5000, "Platinum": 15000, "Prestige": 50000},
     }
+
+
+@router.get("/guild/{guild_id}/game-constants", response_model=GameConstantsOverridesMixin)
+async def get_game_constants(guild_id: int, config_service: ConfigService = Depends(get_config_service)):
+    """Get per-guild game-constant overrides (B.49). NULL fields use global defaults."""
+    flogger.debug(f"Getting game constants overrides for guild {guild_id}")
+
+    try:
+        async with get_db_session() as db:
+            config = await config_service.get_guild_config(db, guild_id)
+            override_data = {field: config.get(field) for field in _OVERRIDE_FIELDS}
+            return GameConstantsOverridesMixin(**override_data)
+
+    except GuildNotConfiguredError as e:
+        flogger.warning(f"Guild {guild_id} not configured: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Guild {guild_id} has not been configured. An admin must run /admin_setup first.",
+        ) from e
+    except Exception as e:
+        flogger.error(f"Error getting game constants for guild {guild_id}: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to get game constants"
+        ) from e
+
+
+@router.post("/guild/{guild_id}/game-constants/reset", response_model=GuildConfigResponse)
+async def reset_game_constants(
+    guild_id: int,
+    request: ResetGameConstantsRequest,
+    config_service: ConfigService = Depends(get_config_service),
+):
+    """Reset per-guild game-constant overrides to NULL (global defaults).
+
+    Pass ``fields`` list to reset specific fields, or omit/pass null to reset all 25.
+    """
+    flogger.info(f"Resetting game constants for guild {guild_id}: fields={request.fields}")
+
+    try:
+        # Determine fields to reset
+        if request.fields is not None:
+            # Validate that all requested fields are valid override fields
+            invalid = [f for f in request.fields if f not in _OVERRIDE_FIELDS]
+            if invalid:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Unknown game-constant fields: {invalid}. Valid fields are: {list(_OVERRIDE_FIELDS)}",
+                )
+            fields_to_reset = request.fields
+        else:
+            fields_to_reset = list(_OVERRIDE_FIELDS)
+
+        async with get_db_session() as db:
+            config = await config_service.reset_game_constants(db, guild_id, fields_to_reset)
+            return _build_config_response(config)
+
+    except GuildNotConfiguredError as e:
+        flogger.warning(f"Guild {guild_id} not configured: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Guild {guild_id} has not been configured. An admin must run /admin_setup first.",
+        ) from e
+    except HTTPException:
+        raise
+    except Exception as e:
+        flogger.error(f"Error resetting game constants for guild {guild_id}: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to reset game constants"
+        ) from e

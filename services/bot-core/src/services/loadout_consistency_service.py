@@ -324,9 +324,7 @@ class LoadoutConsistencyService:
         # was wrong: with 1 equipped + 1 in cargo, already_equipped(1) >= quantity(1)
         # = True, which incorrectly blocked a legitimate equip of the cargo copy.
         if len(current_slot) < caps[equipment_type] and inv_item.quantity <= 0:
-            raise ValueError(
-                f"No unequipped copies remain: '{item_name}' has {inv_item.quantity} in cargo."
-            )
+            raise ValueError(f"No unequipped copies remain: '{item_name}' has {inv_item.quantity} in cargo.")
 
         if len(current_slot) >= caps[equipment_type]:
             raise ValueError(

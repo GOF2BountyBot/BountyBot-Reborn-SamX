@@ -361,3 +361,21 @@ class GameConstants:
             _flogger.info(f"GameConstants env overrides detected: {', '.join(_overrides)}")
         else:
             _flogger.info("GameConstants.load() — no env overrides, using defaults")
+
+
+from typing import Any
+
+
+def resolve_constant[T](guild_config: Any | None, field: str, fallback: T) -> T:
+    """Resolve a GameConstants value with per-guild override.
+
+    Returns guild_config.<field> if it exists and is not None, else `fallback`.
+    A value of 0 or 0.0 is a valid override and is NOT treated as None.
+    Pass None for guild_config when no per-guild context is available.
+    """
+    if guild_config is None:
+        return fallback
+    val = getattr(guild_config, field, None)
+    if val is None:
+        return fallback
+    return val

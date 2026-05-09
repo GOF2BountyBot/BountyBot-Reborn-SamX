@@ -121,8 +121,20 @@ def client(test_app):
 
 
 def _configure_db_mock(mock_get_db):
-    """Configure mock_get_db to act as an async context manager."""
+    """Configure mock_get_db to act as an async context manager.
+
+    Also configures the mock session so that ``await db.execute(...)`` returns
+    an object whose ``.scalars().first()`` chain returns ``None``.  This allows
+    B.49 code paths (e.g. ``ConfigRepository.get_by_guild_id``) to fall through
+    gracefully to the global-default fallback without raising AttributeError.
+    """
+    from unittest.mock import MagicMock
+
     mock_session = AsyncMock()
+    # Make execute()'s awaited result support the synchronous .scalars().first() chain.
+    mock_result = MagicMock()
+    mock_result.scalars.return_value.first.return_value = None
+    mock_session.execute.return_value = mock_result
     mock_get_db.return_value.__aenter__ = AsyncMock(return_value=mock_session)
     mock_get_db.return_value.__aexit__ = AsyncMock(return_value=False)
     return mock_session

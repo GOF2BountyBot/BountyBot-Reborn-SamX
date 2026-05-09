@@ -82,6 +82,47 @@ class GuildConfig(Base):
     bounty_spawn_interval_minutes: Mapped[int | None] = mapped_column(Integer, default=60, nullable=True)
     next_spawn_check_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
+    # ------------------------------------------------------------------
+    # B.49: Per-guild game-balance overrides
+    # NULL means "use the global GameConstants default" (fallback in service layer)
+    # ------------------------------------------------------------------
+
+    # Combat / Balance
+    division_max_tl: Mapped[dict[str, int] | None] = mapped_column(JSON, nullable=True, default=None)
+    ship_value_reward_percentage: Mapped[float | None] = mapped_column(Float, nullable=True, default=None)
+    criminal_equip_damageless_weapon_chance: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
+    criminal_max_gear_upgrade: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
+    bounty_reward_to_xp_gain_mult: Mapped[float | None] = mapped_column(Float, nullable=True, default=None)
+    bounty_winner_reserve_factor: Mapped[float | None] = mapped_column(Float, nullable=True, default=None)
+    bounty_pvc_armour_buff_factor: Mapped[float | None] = mapped_column(Float, nullable=True, default=None)
+    duel_variance_percent: Mapped[float | None] = mapped_column(Float, nullable=True, default=None)
+    duel_cloak_chance: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
+
+    # Bounty mechanics
+    close_bounty_threshold: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
+    max_route_length: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
+    bounty_delay_random_min: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
+    bounty_delay_random_max: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
+    bounty_spawn_jitter: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
+    check_cooldown: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
+    duel_request_expiry: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
+
+    # Activity / Temperature
+    guild_activity_decay_rate: Mapped[float | None] = mapped_column(Float, nullable=True, default=None)
+    min_guild_activity: Mapped[float | None] = mapped_column(Float, nullable=True, default=None)
+    activity_temp_per_player: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
+
+    # Shop
+    shop_default_ships_num: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
+    shop_default_weapons_num: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
+    shop_default_modules_num: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
+    shop_default_turrets_num: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
+    turret_spawn_probability: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
+
+    # Inventory / Economy
+    kaamo_max_capacity: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
+    classic_credits_per_check: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
+
     # Timestamps
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(UTC))
     updated_at: Mapped[datetime] = mapped_column(

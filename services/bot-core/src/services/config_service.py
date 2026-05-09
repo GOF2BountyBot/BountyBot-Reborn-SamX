@@ -395,6 +395,35 @@ class ConfigService:
             flogger.error(f"Error updating bounty config for guild {guild_id}: {e}")
             raise
 
+    async def reset_game_constants(self, db: AsyncSession, guild_id: int, fields: list[str]) -> dict[str, Any]:
+        """Reset per-guild game-constant overrides to NULL (global defaults).
+
+        Args:
+            db:       Async database session.
+            guild_id: Discord guild ID.
+            fields:   List of field names to reset to NULL.
+
+        Returns:
+            Updated config summary dict.
+
+        Raises:
+            GuildNotConfiguredError if no config row exists.
+        """
+        config = await self.config_repo.get_by_guild_id(db, guild_id)
+        if config is None:
+            raise GuildNotConfiguredError(guild_id)
+        for f in fields:
+            if hasattr(config, f):
+                setattr(config, f, None)
+        try:
+            await db.commit()
+            await db.refresh(config)
+        except Exception:
+            await db.rollback()
+            raise
+        flogger.info(f"Reset game constants for guild {guild_id}: {fields}")
+        return await self.config_repo.get_config_summary(db, guild_id)
+
     async def _validate_shop_config(self, config_updates: dict[str, Any]) -> dict[str, Any]:
         """Validate shop configuration updates.
 

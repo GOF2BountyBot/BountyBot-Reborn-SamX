@@ -139,8 +139,7 @@ async def execute_bounty_failsafe_cleanup_job(job_id: str, payload: dict) -> dic
                     continue
 
                 flogger.debug(
-                    f"BountyFailsafeCleanup[{job_id}] guild={gid} div={division}: "
-                    f"scanning channel={channel_id}"
+                    f"BountyFailsafeCleanup[{job_id}] guild={gid} div={division}: scanning channel={channel_id}"
                 )
 
                 try:
@@ -360,9 +359,7 @@ async def _classify_and_clean_message(
                 f"BountyFailsafeCleanup[{job_id}] discord_message id={discord_msg.id} "
                 f"has null reference_id — treating as orphan"
             )
-            await _delete_post_and_db_record(
-                job_id, channel_id, discord_message_id, db, msg_repo, discord_msg
-            )
+            await _delete_post_and_db_record(job_id, channel_id, discord_message_id, db, msg_repo, discord_msg)
             return "cleaned", None
 
         # ------------------------------------------------------------------
@@ -394,19 +391,13 @@ async def _classify_and_clean_message(
             try:
                 bounty.status = "expired"
                 await db.commit()
-                flogger.info(
-                    f"BountyFailsafeCleanup[{job_id}] bounty_id={bounty_id} status set to 'expired'"
-                )
+                flogger.info(f"BountyFailsafeCleanup[{job_id}] bounty_id={bounty_id} status set to 'expired'")
             except Exception as upd_err:  # pylint: disable=broad-exception-caught
-                flogger.error(
-                    f"BountyFailsafeCleanup[{job_id}] failed to expire bounty_id={bounty_id}: {upd_err}"
-                )
+                flogger.error(f"BountyFailsafeCleanup[{job_id}] failed to expire bounty_id={bounty_id}: {upd_err}")
                 await db.rollback()
 
         # For all non-live cases: delete the Discord post and clean the DB record.
-        await _delete_post_and_db_record(
-            job_id, channel_id, discord_message_id, db, msg_repo, discord_msg
-        )
+        await _delete_post_and_db_record(job_id, channel_id, discord_message_id, db, msg_repo, discord_msg)
 
     return "cleaned", bounty_id
 
@@ -466,6 +457,5 @@ async def _delete_post_and_db_record(
         )
     except Exception as db_err:  # pylint: disable=broad-exception-caught
         flogger.warning(
-            f"BountyFailsafeCleanup[{job_id}] failed to delete DiscordMessage record "
-            f"id={discord_msg.id}: {db_err}"
+            f"BountyFailsafeCleanup[{job_id}] failed to delete DiscordMessage record id={discord_msg.id}: {db_err}"
         )

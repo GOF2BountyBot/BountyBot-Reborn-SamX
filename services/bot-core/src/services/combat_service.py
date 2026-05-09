@@ -24,7 +24,7 @@ from services.combat_models import (
     FightStats,
     ShipLoadout,
 )
-from services.game_constants import GameConstants
+from services.game_constants import GameConstants, resolve_constant
 
 flogger = bblogger.get_logger(__name__)
 
@@ -462,6 +462,7 @@ class CombatService:
         loadout2: ShipLoadout,
         variance_percent: float | None = None,
         player_armour_buff: float = 1.0,
+        guild_config=None,
     ) -> FightResults:
         """Simulate a fight between two ship loadouts.
 
@@ -485,10 +486,12 @@ class CombatService:
         """
         flogger.debug(f"fight_ships initiated: {loadout1.ship_name} vs {loadout2.ship_name}")
         if variance_percent is None:
-            variance_percent = GameConstants.DUEL_VARIANCE_PERCENT
+            variance_percent = resolve_constant(
+                guild_config, "duel_variance_percent", GameConstants.DUEL_VARIANCE_PERCENT
+            )
+            source = "per-guild override" if guild_config is not None else "GameConstants"
             flogger.debug(
-                f"Variance percent not specified, using GameConstants"
-                f".DUEL_VARIANCE_PERCENT={variance_percent * 100:.1f}%"
+                f"Variance percent not specified, using {source}.DUEL_VARIANCE_PERCENT={variance_percent * 100:.1f}%"
             )
 
         flogger.debug(f"Collecting combat stats for {loadout1.ship_name} (initiator)")

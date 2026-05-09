@@ -90,7 +90,7 @@ def test_render_validation_res_too_high(client: TestClient) -> None:
         response = client.post(
             "/api/v1/render/",
             data={
-                "model_path": "/some/model.obj",
+                "model_path": "/tmp/model.obj",
                 "res_x": 4001,
                 "res_y": 1080,
                 "num_samples": 64,
@@ -110,7 +110,7 @@ def test_render_validation_res_too_low(client: TestClient) -> None:
         response = client.post(
             "/api/v1/render/",
             data={
-                "model_path": "/some/model.obj",
+                "model_path": "/tmp/model.obj",
                 "res_x": 100,
                 "res_y": 1080,
                 "num_samples": 64,
@@ -130,7 +130,7 @@ def test_render_validation_res_y_too_high(client: TestClient) -> None:
         response = client.post(
             "/api/v1/render/",
             data={
-                "model_path": "/some/model.obj",
+                "model_path": "/tmp/model.obj",
                 "res_x": 1920,
                 "res_y": 9999,
                 "num_samples": 64,
@@ -150,7 +150,7 @@ def test_render_validation_res_y_too_low(client: TestClient) -> None:
         response = client.post(
             "/api/v1/render/",
             data={
-                "model_path": "/some/model.obj",
+                "model_path": "/tmp/model.obj",
                 "res_x": 1920,
                 "res_y": 10,
                 "num_samples": 64,
@@ -170,7 +170,7 @@ def test_render_validation_samples_too_low(client: TestClient) -> None:
         response = client.post(
             "/api/v1/render/",
             data={
-                "model_path": "/some/model.obj",
+                "model_path": "/tmp/model.obj",
                 "res_x": 1920,
                 "res_y": 1080,
                 "num_samples": 0,
@@ -190,7 +190,7 @@ def test_render_validation_samples_too_high(client: TestClient) -> None:
         response = client.post(
             "/api/v1/render/",
             data={
-                "model_path": "/some/model.obj",
+                "model_path": "/tmp/model.obj",
                 "res_x": 1920,
                 "res_y": 1080,
                 "num_samples": 200,
@@ -211,7 +211,7 @@ def test_render_missing_texture(client: TestClient) -> None:
     response = client.post(
         "/api/v1/render/",
         data={
-            "model_path": "/some/model.obj",
+            "model_path": "/tmp/model.obj",
             "res_x": 1920,
             "res_y": 1080,
             "num_samples": 64,
@@ -262,7 +262,7 @@ def test_render_success_returns_png(tmp_path: Path, client: TestClient) -> None:
         response = client.post(
             "/api/v1/render/",
             data={
-                "model_path": "/some/model.obj",
+                "model_path": "/tmp/model.obj",
                 "res_x": 1920,
                 "res_y": 1080,
                 "num_samples": 64,
@@ -287,7 +287,7 @@ def test_render_success_has_content_disposition(tmp_path: Path, client: TestClie
         response = client.post(
             "/api/v1/render/",
             data={
-                "model_path": "/some/model.obj",
+                "model_path": "/tmp/model.obj",
                 "res_x": 1920,
                 "res_y": 1080,
                 "num_samples": 64,
@@ -316,7 +316,7 @@ def test_render_blender_failure_returns_500(client: TestClient) -> None:
         response = client.post(
             "/api/v1/render/",
             data={
-                "model_path": "/some/model.obj",
+                "model_path": "/tmp/model.obj",
                 "res_x": 1920,
                 "res_y": 1080,
                 "num_samples": 64,
@@ -337,7 +337,7 @@ def test_render_unexpected_exception_returns_500(client: TestClient) -> None:
         response = client.post(
             "/api/v1/render/",
             data={
-                "model_path": "/some/model.obj",
+                "model_path": "/tmp/model.obj",
                 "res_x": 1920,
                 "res_y": 1080,
                 "num_samples": 64,
@@ -358,7 +358,7 @@ def test_async_render_validation_res_too_high(client: TestClient) -> None:
     response = client.post(
         "/api/v1/render/async",
         data={
-            "model_path": "/some/model.obj",
+            "model_path": "/tmp/model.obj",
             "res_x": 9999,
             "res_y": 1080,
             "num_samples": 64,
@@ -374,7 +374,7 @@ def test_async_render_validation_samples_too_low(client: TestClient) -> None:
     response = client.post(
         "/api/v1/render/async",
         data={
-            "model_path": "/some/model.obj",
+            "model_path": "/tmp/model.obj",
             "res_x": 1920,
             "res_y": 1080,
             "num_samples": 0,
@@ -390,7 +390,7 @@ def test_async_render_missing_texture(client: TestClient) -> None:
     response = client.post(
         "/api/v1/render/async",
         data={
-            "model_path": "/some/model.obj",
+            "model_path": "/tmp/model.obj",
             "res_x": 1920,
             "res_y": 1080,
             "num_samples": 64,
@@ -416,7 +416,7 @@ def test_async_render_success_returns_202(client: TestClient, mock_job_queue: Ma
         response = client.post(
             "/api/v1/render/async",
             data={
-                "model_path": "/some/model.obj",
+                "model_path": "/tmp/model.obj",
                 "res_x": 1920,
                 "res_y": 1080,
                 "num_samples": 64,
@@ -442,7 +442,7 @@ def test_async_render_success_poll_url_format(client: TestClient, mock_job_queue
         response = client.post(
             "/api/v1/render/async",
             data={
-                "model_path": "/some/model.obj",
+                "model_path": "/tmp/model.obj",
                 "res_x": 1920,
                 "res_y": 1080,
                 "num_samples": 64,
@@ -473,7 +473,7 @@ def test_render_output_read_failure_returns_500(tmp_path: Path, client: TestClie
         response = client.post(
             "/api/v1/render/",
             data={
-                "model_path": "/some/model.obj",
+                "model_path": "/tmp/model.obj",
                 "res_x": 1920,
                 "res_y": 1080,
                 "num_samples": 64,
@@ -493,7 +493,7 @@ def test_async_render_texture_upload_failure_returns_400(client: TestClient, moc
         response = client.post(
             "/api/v1/render/async",
             data={
-                "model_path": "/some/model.obj",
+                "model_path": "/tmp/model.obj",
                 "res_x": 1920,
                 "res_y": 1080,
                 "num_samples": 64,
@@ -510,7 +510,7 @@ def test_render_texture_save_failure_returns_400(client: TestClient) -> None:
         response = client.post(
             "/api/v1/render/",
             data={
-                "model_path": "/some/model.obj",
+                "model_path": "/tmp/model.obj",
                 "res_x": 1920,
                 "res_y": 1080,
                 "num_samples": 64,

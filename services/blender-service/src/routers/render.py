@@ -20,6 +20,7 @@ from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile, s
 from fastapi.responses import StreamingResponse
 from services.render_service import RenderError, RenderService
 from shared import bblogger
+from utils.safe_path import validate_user_path_http
 
 flogger = bblogger.get_logger("blender-render-api-router")
 
@@ -61,6 +62,9 @@ async def render_ship(
     """
     flogger.info(f"render_ship request: model_path={model_path!r}, res={res_x}x{res_y}, num_samples={num_samples}")
 
+    # --- Validate model_path against allowed data directory ---
+    validated_model_path = validate_user_path_http(model_path, description="model_path")
+
     # Use live config from app state if available, else fall back to module-level service.
     render_config = getattr(getattr(request.app, "state", None), "render_config", None)
     service = RenderService(render_config.config if render_config is not None else None)
@@ -98,7 +102,7 @@ async def render_ship(
         # --- Invoke Blender render pipeline ---
         try:
             result_path = await service.render_ship(
-                model_path=model_path,
+                model_path=str(validated_model_path),
                 texture_path=texture_path,
                 output_path=output_path,
                 res_x=res_x,
@@ -166,6 +170,9 @@ async def submit_render_job(
         f"submit_render_job request: model_path={model_path!r}, res={res_x}x{res_y}, num_samples={num_samples}"
     )
 
+    # --- Validate model_path against allowed data directory ---
+    validated_model_path = validate_user_path_http(model_path, description="model_path")
+
     # Use live config from app state if available.
     render_config = getattr(getattr(request.app, "state", None), "render_config", None)
     async_service = RenderService(render_config.config if render_config is not None else None)
@@ -183,7 +190,7 @@ async def submit_render_job(
     # --- Create the job first to get a job_id ---
     job_queue = request.app.state.job_queue
     job = job_queue.create_job(
-        model_path=model_path,
+        model_path=str(validated_model_path),
         res_x=res_x,
         res_y=res_y,
         num_samples=num_samples,
@@ -216,7 +223,7 @@ async def submit_render_job(
 
     # --- Build the render coroutine and submit to job queue ---
     render_coro = async_service.render_ship(
-        model_path=model_path,
+        model_path=str(validated_model_path),
         texture_path=texture_path,
         output_path=output_path,
         res_x=res_x,

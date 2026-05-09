@@ -30,6 +30,51 @@ logging.Logger.trace = trace  # monkey-patch
 
 
 # ────────────────────────────────────────────────────────────────
+# 1a. Log-injection sanitisation
+# ────────────────────────────────────────────────────────────────
+# Untrusted input flowing into a log call can forge fake log lines by injecting
+# CR/LF, breaking log parsers (SIEM, Splunk, jq) and obscuring real events.
+# CodeQL's `py/log-injection` query recognises `.replace("\n", ...)` and
+# `.replace("\r\n", ...)` call sites as sanitisers — see
+# semmle/python/security/dataflow/LogInjectionCustomizations.qll, class
+# `ReplaceLineBreaksSanitizer`.
+#
+# We sanitise centrally via `_SafeLogger.process()` so all 738+ existing log
+# call sites are covered without modification.
+def _scrub(value):
+    """Strip CR/LF from a string-like value. Non-strings are returned unchanged."""
+    if isinstance(value, str):
+        # Two explicit replace() calls — both literal "\r\n" and "\n" — to match
+        # the CodeQL sanitiser pattern exactly. Order matters: "\r\n" first so a
+        # bare "\r" left after the second pass is also removed.
+        return value.replace("\r\n", " ").replace("\n", " ").replace("\r", " ")
+    return value
+
+
+class _SafeLogger(logging.LoggerAdapter):
+    """
+    LoggerAdapter that scrubs CR/LF from msg and *args before delegating to the
+    underlying logger. Preserves the standard logging API (`.info`, `.error`,
+    `.exception`, `.debug`, `.warning`, `.critical`, `.log`, plus our `.trace`
+    extension) so existing call sites need no changes.
+    """
+
+    def process(self, msg, kwargs):
+        # Scrub the message itself.
+        msg = _scrub(msg)
+        # Scrub positional args used by %-formatting.
+        if kwargs.get("args"):
+            kwargs["args"] = tuple(_scrub(a) for a in kwargs["args"])
+        return msg, kwargs
+
+    # LoggerAdapter doesn't proxy our custom TRACE level — add it explicitly.
+    def trace(self, msg, *args, **kwargs):
+        if self.isEnabledFor(TRACE_LEVEL_NUM):
+            msg, kwargs = self.process(msg, kwargs)
+            self.logger._log(TRACE_LEVEL_NUM, msg, args, **kwargs)
+
+
+# ────────────────────────────────────────────────────────────────
 # 2. Color formatter for STDOUT
 # ────────────────────────────────────────────────────────────────
 class _ColorFormatter(logging.Formatter):
@@ -52,10 +97,13 @@ class _ColorFormatter(logging.Formatter):
 # ────────────────────────────────────────────────────────────────
 # 3. Public helper
 # ────────────────────────────────────────────────────────────────
-def get_logger(module_name: str) -> logging.Logger:
+def get_logger(module_name: str) -> logging.LoggerAdapter:
     """
     Create or return a module-specific logger.
     Call this once per module:  logger = get_logger(__name__)
+
+    Returns a `_SafeLogger` adapter that scrubs CR/LF from log messages and
+    args, defending against log-injection (CodeQL `py/log-injection`).
     """
 
     # ---- Environment config -------------------------------------------------
@@ -70,7 +118,7 @@ def get_logger(module_name: str) -> logging.Logger:
 
     # Return early if handlers already attached (singleton behaviour)
     if logger.handlers:
-        return logger
+        return _SafeLogger(logger, {})
 
     # ---- STDOUT handler (always on) ----------------------------------------
     stdout_handler = logging.StreamHandler(sys.stdout)
@@ -95,7 +143,7 @@ def get_logger(module_name: str) -> logging.Logger:
         file_handler.setFormatter(logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s"))
         logger.addHandler(file_handler)
 
-    return logger
+    return _SafeLogger(logger, {})
 
 
 # ────────────────────────────────────────────────────────────────

@@ -608,7 +608,16 @@ class InventoryCog(commands.Cog):
             # Filter to equippable item types using concrete types that match
             # _CURRENTLY_EQUIPPABLE_INVENTORY_TYPES (mirrors bot-core CURRENTLY_ENABLED_TYPES
             # minus "ship").  See utils/autocomplete_helpers.py for the constant.
+            # Legacy-alias compat: rows written before A.36 may store "weapon" or "turret"
+            # instead of "primary_weapon" / "turret_weapon".  Accept both forms here;
+            # the server resolves by item_name regardless of item_type on write paths.
             from utils.autocomplete_helpers import _CURRENTLY_EQUIPPABLE_INVENTORY_TYPES
+
+            _LEGACY_ALIAS_MAP: dict[str, str] = {
+                "weapon": "primary_weapon",
+                "turret": "turret_weapon",
+            }
+            _EQUIPPABLE_WITH_LEGACY = _CURRENTLY_EQUIPPABLE_INVENTORY_TYPES | frozenset(_LEGACY_ALIAS_MAP)
 
             # B.41: Fetch the player's ships to count already-equipped copies.
             # Items where inventory_qty <= equipped_count have no free copies to equip.
@@ -633,12 +642,14 @@ class InventoryCog(commands.Cog):
 
             for item in items:
                 item_type = item.get("item_type", "")
+                # Normalise legacy aliases to concrete type for display; filter still passes both.
+                display_type = _LEGACY_ALIAS_MAP.get(item_type, item_type)
                 item_name = item.get("item_name", "")
                 qty = item.get("quantity") or 0
                 # B.41: hide items where all copies are already equipped (no cargo copies free)
                 already_equipped = equipped_counts.get(item_name, 0)
                 if (
-                    item_type in _CURRENTLY_EQUIPPABLE_INVENTORY_TYPES
+                    item_type in _EQUIPPABLE_WITH_LEGACY
                     and item_name
                     and item_name not in seen
                     and qty > already_equipped
@@ -647,7 +658,7 @@ class InventoryCog(commands.Cog):
                     seen.add(item_name)
                     free_qty = qty - already_equipped
                     qty_suffix = f" x{free_qty}" if free_qty > 1 else ""
-                    label = f"{item_name} ({item_type.replace('_', ' ').title()}){qty_suffix}"
+                    label = f"{item_name} ({display_type.replace('_', ' ').title()}){qty_suffix}"
                     choices.append(app_commands.Choice(name=label[:100], value=item_name))
             return choices[:25]
         except Exception:  # pylint: disable=broad-exception-caught

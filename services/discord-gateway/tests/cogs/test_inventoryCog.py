@@ -1945,20 +1945,7 @@ class TestEquipAutocomplete:
         )
         # Mock both POST (player ID) and GET (inventory, active ship)
         mock_inventory_cog.http_client.post = AsyncMock(return_value=player_resp)
-        active_ship_resp = make_mock_response(
-            [
-                {
-                    "id": 1,
-                    "ship_name": "Betty",
-                    "is_active": True,
-                    "weapons": [],
-                    "modules": [],
-                    "turrets": [],
-                    "secondary_weapons": [],
-                }
-            ]
-        )
-        mock_inventory_cog.http_client.get = AsyncMock(side_effect=[items_resp, active_ship_resp])
+        mock_inventory_cog.http_client.get = AsyncMock(return_value=items_resp)
 
         choices = asyncio.run(mock_inventory_cog.equip_autocomplete(interaction, ""))
 
@@ -1981,21 +1968,8 @@ class TestEquipAutocomplete:
                 _make_inventory_item("ShieldModule", "module", 1),
             ]
         )
-        active_ship_resp = make_mock_response(
-            [
-                {
-                    "id": 1,
-                    "ship_name": "Betty",
-                    "is_active": True,
-                    "weapons": [],
-                    "modules": [],
-                    "turrets": [],
-                    "secondary_weapons": [],
-                }
-            ]
-        )
         mock_inventory_cog.http_client.post = AsyncMock(return_value=player_resp)
-        mock_inventory_cog.http_client.get = AsyncMock(side_effect=[items_resp, active_ship_resp])
+        mock_inventory_cog.http_client.get = AsyncMock(return_value=items_resp)
 
         choices = asyncio.run(mock_inventory_cog.equip_autocomplete(interaction, "Cannon"))
 
@@ -2023,140 +1997,93 @@ class TestEquipAutocomplete:
 
         assert choices == []
 
-    def test_equip_autocomplete_shows_item_when_qty_exceeds_equipped_count(
+    def test_equip_autocomplete_shows_item_when_qty_is_multiple(
         self, mock_inventory_cog, make_mock_response
     ):
-        """B.41: Player owns 3x same item, 1 already equipped → autocomplete still shows it (2 remain in cargo).
+        """Player owns 3 cargo copies → autocomplete shows it with x3 suffix.
 
-        Acceptance criterion: inventory_quantity (3) > equipped_count (1), so item must appear.
+        player_inventories.quantity is cargo-only; all 3 copies are available to equip.
         """
         interaction = _create_mock_interaction()
 
         player_resp = make_mock_response({"id": 1})
-        # Player has 3x "M6 A4 Raccoon" in inventory
         items_resp = make_mock_response([_make_inventory_item('M6 A4 "Raccoon"', "primary_weapon", 3)])
-        # Active ship already has 1x "M6 A4 Raccoon" equipped
-        active_ship_resp = make_mock_response(
-            [
-                {
-                    "id": 1,
-                    "ship_name": "Specter",
-                    "is_active": True,
-                    "weapons": ['M6 A4 "Raccoon"'],
-                    "modules": [],
-                    "turrets": [],
-                    "secondary_weapons": [],
-                }
-            ]
-        )
         mock_inventory_cog.http_client.post = AsyncMock(return_value=player_resp)
-        mock_inventory_cog.http_client.get = AsyncMock(side_effect=[items_resp, active_ship_resp])
+        mock_inventory_cog.http_client.get = AsyncMock(return_value=items_resp)
 
         choices = asyncio.run(mock_inventory_cog.equip_autocomplete(interaction, ""))
 
         names = [c.name for c in choices]
         assert any('M6 A4 "Raccoon"' in n for n in names), (
-            f"Item should appear in autocomplete when qty(3) > equipped(1), but got: {names}"
+            f"Item with qty=3 should appear in autocomplete, but got: {names}"
         )
+        # qty suffix should show x3
+        assert any("x3" in n for n in names), f"Expected x3 suffix for qty=3 item, but got: {names}"
 
-    def test_equip_autocomplete_hides_item_when_qty_equals_equipped_count(self, mock_inventory_cog, make_mock_response):
-        """B.41: Player owns 3x same item, all 3 already equipped → autocomplete excludes it (0 remain in cargo).
+    def test_equip_autocomplete_hides_item_when_qty_is_zero(self, mock_inventory_cog, make_mock_response):
+        """B.41: player_inventories.quantity is cargo-only. An item with qty=0 has no free copies.
 
-        Acceptance criterion: inventory_quantity (3) == equipped_count (3), so item must NOT appear.
+        Under the correct data model, qty=0 means there are no cargo copies available to equip,
+        regardless of what is on the ship's loadout (those are a separate pool). The autocomplete
+        should exclude items with qty=0.
         """
         interaction = _create_mock_interaction()
 
         player_resp = make_mock_response({"id": 1})
-        # Player has 3x "M6 A4 Raccoon" in inventory
-        items_resp = make_mock_response([_make_inventory_item('M6 A4 "Raccoon"', "primary_weapon", 3)])
-        # Active ship already has all 3x equipped
-        active_ship_resp = make_mock_response(
-            [
-                {
-                    "id": 1,
-                    "ship_name": "Specter",
-                    "is_active": True,
-                    "weapons": ['M6 A4 "Raccoon"', 'M6 A4 "Raccoon"', 'M6 A4 "Raccoon"'],
-                    "modules": [],
-                    "turrets": [],
-                    "secondary_weapons": [],
-                }
-            ]
-        )
+        # qty=0 means no cargo copies — cannot equip another
+        items_resp = make_mock_response([_make_inventory_item('M6 A4 "Raccoon"', "primary_weapon", 0)])
         mock_inventory_cog.http_client.post = AsyncMock(return_value=player_resp)
-        mock_inventory_cog.http_client.get = AsyncMock(side_effect=[items_resp, active_ship_resp])
+        mock_inventory_cog.http_client.get = AsyncMock(return_value=items_resp)
 
         choices = asyncio.run(mock_inventory_cog.equip_autocomplete(interaction, ""))
 
         names = [c.name for c in choices]
         assert not any('M6 A4 "Raccoon"' in n for n in names), (
-            f"Item should NOT appear in autocomplete when qty(3) == equipped(3), but got: {names}"
+            f"Item should NOT appear in autocomplete when qty=0, but got: {names}"
         )
 
     def test_equip_autocomplete_shows_single_item_when_not_equipped(self, mock_inventory_cog, make_mock_response):
-        """B.41: Player owns 1x item, 0 equipped → autocomplete shows it.
+        """Player owns 1x item in cargo → autocomplete shows it.
 
-        Acceptance criterion: inventory_quantity (1) > equipped_count (0), so item must appear.
+        Acceptance criterion: qty=1 in player_inventories (cargo-only pool) → item appears.
         """
         interaction = _create_mock_interaction()
 
         player_resp = make_mock_response({"id": 1})
         items_resp = make_mock_response([_make_inventory_item("PlasmaGun", "primary_weapon", 1)])
-        # No items equipped yet
-        active_ship_resp = make_mock_response(
-            [
-                {
-                    "id": 1,
-                    "ship_name": "Eagle",
-                    "is_active": True,
-                    "weapons": [],
-                    "modules": [],
-                    "turrets": [],
-                    "secondary_weapons": [],
-                }
-            ]
-        )
         mock_inventory_cog.http_client.post = AsyncMock(return_value=player_resp)
-        mock_inventory_cog.http_client.get = AsyncMock(side_effect=[items_resp, active_ship_resp])
+        mock_inventory_cog.http_client.get = AsyncMock(return_value=items_resp)
 
         choices = asyncio.run(mock_inventory_cog.equip_autocomplete(interaction, ""))
 
         names = [c.name for c in choices]
         assert any("PlasmaGun" in n for n in names), (
-            f"Item should appear in autocomplete when qty(1) > equipped(0), but got: {names}"
+            f"Item should appear in autocomplete when qty=1 in cargo, but got: {names}"
         )
 
-    def test_equip_autocomplete_hides_single_item_when_fully_equipped(self, mock_inventory_cog, make_mock_response):
-        """B.41: Player owns 1x item, already equipped → autocomplete excludes it (0 remain in cargo).
+    def test_equip_autocomplete_shows_item_when_qty_positive_and_also_equipped(
+        self, mock_inventory_cog, make_mock_response
+    ):
+        """Cargo pool and equipped pool are separate. qty=1 in cargo means 1 copy available to equip,
+        even if another copy of the same item is already equipped on the ship.
 
-        Acceptance criterion: inventory_quantity (1) == equipped_count (1), so item must NOT appear.
+        This is the real-world scenario that was incorrectly hidden before the fix: player has
+        qty=1 cargo copy of Ridil Blaster AND one Ridil already equipped → the cargo copy should
+        appear in /equip. The server-side B.41 guard handles the actual slot-cap enforcement.
         """
         interaction = _create_mock_interaction()
 
         player_resp = make_mock_response({"id": 1})
+        # qty=1 cargo copy available; a separate copy is already on the ship (different pool)
         items_resp = make_mock_response([_make_inventory_item("PlasmaGun", "primary_weapon", 1)])
-        # Item is already equipped once
-        active_ship_resp = make_mock_response(
-            [
-                {
-                    "id": 1,
-                    "ship_name": "Eagle",
-                    "is_active": True,
-                    "weapons": ["PlasmaGun"],
-                    "modules": [],
-                    "turrets": [],
-                    "secondary_weapons": [],
-                }
-            ]
-        )
         mock_inventory_cog.http_client.post = AsyncMock(return_value=player_resp)
-        mock_inventory_cog.http_client.get = AsyncMock(side_effect=[items_resp, active_ship_resp])
+        mock_inventory_cog.http_client.get = AsyncMock(return_value=items_resp)
 
         choices = asyncio.run(mock_inventory_cog.equip_autocomplete(interaction, ""))
 
         names = [c.name for c in choices]
-        assert not any("PlasmaGun" in n for n in names), (
-            f"Item should NOT appear in autocomplete when qty(1) == equipped(1), but got: {names}"
+        assert any("PlasmaGun" in n for n in names), (
+            f"Item with qty=1 cargo copy must appear even if also equipped elsewhere, but got: {names}"
         )
 
 

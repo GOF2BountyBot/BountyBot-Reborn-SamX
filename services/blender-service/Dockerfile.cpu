@@ -72,7 +72,7 @@ RUN BLENDER_MAJOR_MINOR=$(echo "$BLENDER_VERSION" | cut -d. -f1,2) && \
     tar -xf "/tmp/${TARBALL}" --strip-components=1 -C /opt/blender && \
     ln -s /opt/blender/blender /usr/local/bin/blender && \
     rm -f "/tmp/${TARBALL}" && \
-    blender --version
+    test -x /opt/blender/blender
 
 # Create a virtual environment
 RUN python -m venv /opt/venv

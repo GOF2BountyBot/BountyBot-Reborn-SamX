@@ -21,6 +21,7 @@ from __future__ import annotations
 import io
 import os
 import time
+from urllib.parse import urlparse, urlunparse
 
 from alembic import command
 from alembic.config import Config
@@ -67,6 +68,29 @@ def _async_to_sync_url(async_url: str) -> str:
     that Alembic (which requires a synchronous DBAPI) can use it.
     """
     return async_url.replace("postgresql+asyncpg://", "postgresql://")
+
+
+def _mask_url_password(url: str) -> str:
+    """Return ``url`` with the password component replaced by ``***``.
+
+    Used purely for logging: the password is replaced with a constant string
+    so the original credential value never reaches a log sink (defends against
+    CodeQL ``py/clear-text-logging-sensitive-data``). Falls back to a generic
+    masked placeholder if the URL cannot be parsed.
+    """
+    try:
+        parsed = urlparse(url)
+    except Exception:
+        return "<unparseable-url>"
+    if parsed.password is None:
+        # No password to mask; return the original URL unchanged.
+        return url
+    # Reassemble the netloc with the password replaced by a constant.
+    user = parsed.username or ""
+    host = parsed.hostname or ""
+    port = f":{parsed.port}" if parsed.port else ""
+    new_netloc = f"{user}:***@{host}{port}"
+    return urlunparse(parsed._replace(netloc=new_netloc))
 
 
 # ---------------------------------------------------------------------------
@@ -134,23 +158,9 @@ class MigrationManager:
             ``postgresql+asyncpg://user:pw@host:5432/dbname``.
         """
         flogger.debug("from_async_url: Converting asyncpg URL to sync psycopg2 URL")
-        # Mask the password in the URL for logging
-        masked_async_url = async_url
-        if "@" in async_url:
-            # Extract and mask password
-            scheme_and_creds, host_part = async_url.rsplit("@", 1)
-            if ":" in scheme_and_creds:
-                scheme_and_user = scheme_and_creds.rsplit(":", 1)[0]
-                masked_async_url = f"{scheme_and_user}:***@{host_part}"
-        flogger.debug(f"from_async_url: Input URL: {masked_async_url}")
+        flogger.debug(f"from_async_url: Input URL: {_mask_url_password(async_url)}")
         sync_url = _async_to_sync_url(async_url)
-        masked_sync_url = sync_url
-        if "@" in sync_url:
-            scheme_and_creds, host_part = sync_url.rsplit("@", 1)
-            if ":" in scheme_and_creds:
-                scheme_and_user = scheme_and_creds.rsplit(":", 1)[0]
-                masked_sync_url = f"{scheme_and_user}:***@{host_part}"
-        flogger.debug(f"from_async_url: Converted to sync URL: {masked_sync_url}")
+        flogger.debug(f"from_async_url: Converted to sync URL: {_mask_url_password(sync_url)}")
         return cls(sync_url)
 
     # ------------------------------------------------------------------

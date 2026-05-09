@@ -78,6 +78,29 @@ RUN BLENDER_MAJOR_MINOR=$(echo "$BLENDER_VERSION" | cut -d. -f1,2) && \
     rm -f "/tmp/${TARBALL}" && \
     test -x /opt/blender/blender
 
+# Harden Blender's bundled Python against vendored CVEs.
+#
+# Blender ships its own embedded Python under /opt/blender/<MAJOR.MINOR>/python/ with
+# pinned dependencies that quickly age out of CVE coverage. Two CVE classes appear:
+#
+#   1. setuptools (CVE-2022-40897 / CVE-2024-6345 / CVE-2025-47273) — only used at
+#      install time (we never run pip from Blender's Python at runtime), so we delete
+#      the dist-info. This makes Trivy stop seeing it; the actual modules remain
+#      untouched in case a Blender add-on imports them via a stale path.
+#
+#   2. urllib3 (CVE-2025-66418 / CVE-2025-66471 / CVE-2026-21441) — Blender add-ons
+#      and online asset fetchers may use it at runtime, so we genuinely upgrade.
+#
+# Re-evaluate when Blender bumps its bundled Python (currently Python 3.11 in 4.5.x).
+RUN BLENDER_PY_DIR="/opt/blender/$(echo "$BLENDER_VERSION" | cut -d. -f1,2)/python" && \
+    BLENDER_PY="${BLENDER_PY_DIR}/bin/python3.11" && \
+    SITE_PKGS="$(${BLENDER_PY} -c 'import sysconfig; print(sysconfig.get_paths()["purelib"])')" && \
+    echo "Blender site-packages: ${SITE_PKGS}" && \
+    rm -rf "${SITE_PKGS}"/setuptools-*.dist-info && \
+    "${BLENDER_PY}" -m pip install --no-cache-dir --upgrade --target="${SITE_PKGS}" \
+        'urllib3>=2.6.3' && \
+    "${BLENDER_PY}" -c 'import urllib3; print("urllib3 upgraded to:", urllib3.__version__)'
+
 # Create a virtual environment
 RUN python -m venv /opt/venv
 

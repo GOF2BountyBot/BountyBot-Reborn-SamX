@@ -52,6 +52,10 @@ RUN echo 'tzdata tzdata/Areas select Etc' | debconf-set-selections && \
         wget \
         git \
         openssl \
+        # Required to decompress the Blender .tar.xz tarball
+        xz-utils \
+        # Required to build tex2img (AEPi dependency, no pre-built wheel)
+        build-essential \
         python3.13 \
         python3.13-venv \
         python3.13-dev \

@@ -1,0 +1,16 @@
+{
+  "aliases": [
+    "SPP-C1",
+    "Nirai C1"
+  ],
+  "builtIn": false,
+  "count": 1,
+  "effect": 1.6,
+  "emoji": "<:niraisppc1:723706682605043723>",
+  "icon": "https://i.postimg.cc/3R9JWBbJ/nirai-spp-c1.png",
+  "name": "Nirai SPP-C1",
+  "techLevel": 8,
+  "type": "RepairBeamModule",
+  "value": 68336,
+  "wiki": "https://galaxyonfire.fandom.com/wiki/Nirai_SPP-C1"
+}

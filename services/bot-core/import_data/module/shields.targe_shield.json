@@ -1,0 +1,14 @@
+{
+  "aliases": [
+    "Targe"
+  ],
+  "builtIn": false,
+  "emoji": "<:targeshield:723706780156297298>",
+  "icon": "https://i.postimg.cc/qqXYpbmj/targe-shield.png",
+  "name": "Targe Shield",
+  "shield": 50,
+  "techLevel": 1,
+  "type": "ShieldModule",
+  "value": 1620,
+  "wiki": "https://galaxyonfire.fandom.com/wiki/Targe_Shield"
+}

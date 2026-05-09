@@ -1,0 +1,24 @@
+{
+  "aliases": [
+    "Ion Lambda MK 1",
+    "Lambda MK1",
+    "Lambda MK 1",
+    "Ion MK1",
+    "Ion MK 1",
+    "Ion Lambda MK I",
+    "Lambda MKI",
+    "Lambda MK I",
+    "Ion MKI",
+    "Ion MK I",
+    "Ion Lambda MKI"
+  ],
+  "builtIn": false,
+  "damage": 0,
+  "icon": "https://i.postimg.cc/HxwQVfQD/ion-lambda-mk1.png",
+  "loading speed": 0,
+  "name": "Ion Lambda MK1",
+  "value": 0,
+  "wiki": "",
+  "type": "SecondaryWeapon",
+  "subtype": "ionizing_missiles"
+}

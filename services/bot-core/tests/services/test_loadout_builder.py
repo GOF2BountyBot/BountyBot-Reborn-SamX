@@ -1,0 +1,938 @@
+"""
+Unit tests for LoadoutBuilder.
+
+Tests cover:
+- from_criminal_ship(): pure dict → ShipLoadout, no DB needed
+- from_player(): async DB-driven loadout construction (mocked)
+- Integration with CombatService.collect_stats() to verify HP/DPS computation
+"""
+
+from __future__ import annotations
+
+import sys
+import types
+from unittest.mock import AsyncMock, MagicMock
+
+import pytest
+
+# Guard: ensure shared.bblogger is mocked if running in isolation.
+if "shared" not in sys.modules:
+    _mock_shared = types.ModuleType("shared")
+    _mock_bblogger = types.ModuleType("shared.bblogger")
+    _mock_bblogger.get_logger = MagicMock(return_value=MagicMock())
+    _mock_shared.bblogger = _mock_bblogger
+    sys.modules["shared"] = _mock_shared
+    sys.modules["shared.bblogger"] = _mock_bblogger
+
+# Stub sqlalchemy_utils (needed by model auto-import via DiscordMessage model)
+if "sqlalchemy_utils" not in sys.modules:
+    _sqla_utils = types.ModuleType("sqlalchemy_utils")
+    _sqla_utils.UUIDType = MagicMock()
+    sys.modules["sqlalchemy_utils"] = _sqla_utils
+
+from services.combat_models import ModuleStats, ShipLoadout
+from services.combat_service import CombatService
+from services.loadout_builder import LoadoutBuilder, _module_stats_from_extra
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+
+def make_criminal_ship(
+    ship_name: str = "Betty",
+    ship_armour: int = 95,
+    weapons: list[dict] | None = None,
+    turrets: list[dict] | None = None,
+    modules: list[dict] | None = None,
+) -> dict:
+    """Create a criminal_ship dict matching the format from BountyService."""
+    return {
+        "ship_name": ship_name,
+        "ship_emoji": "<:betty:123>",
+        "ship_armour": ship_armour,
+        "armor_hp": ship_armour,
+        "shield_hp": 0,
+        "total_hp": ship_armour,
+        "weapons": weapons or [],
+        "turrets": turrets or [],
+        "modules": modules or [],
+    }
+
+
+def make_weapon_dict(name: str = "128MJ Railgun", dps: float = 25.0, value: int = 24675) -> dict:
+    """Create a weapon dict matching the BountyService format."""
+    return {"name": name, "emoji": "<:weapon:1>", "dps": dps, "value": value}
+
+
+def make_turret_dict(name: str = "Turret X", dps: float = 10.0, value: int = 5000) -> dict:
+    """Create a turret dict matching the BountyService format."""
+    return {"name": name, "emoji": "<:turret:1>", "dps": dps, "value": value}
+
+
+def make_module_dict(
+    name: str = "E2 Exoclad",
+    module_type: str = "ArmourModule",
+    value: int = 1070,
+    tech_level: int = 1,
+    extra_atts: dict | None = None,
+) -> dict:
+    """Create a module dict matching the BountyService format."""
+    return {
+        "name": name,
+        "emoji": "<:module:1>",
+        "type": module_type,
+        "value": value,
+        "tech_level": tech_level,
+        "extra_atts": extra_atts or {},
+    }
+
+
+def make_mock_player(player_id: int = 1, active_ship_id: int | None = 1) -> MagicMock:
+    """Create a Player-like MagicMock."""
+    p = MagicMock()
+    p.id = player_id
+    p.active_ship_id = active_ship_id
+    return p
+
+
+def make_mock_player_ship(
+    ship_id: int = 1,
+    ship_name: str = "Betty",
+    weapons: list[str] | None = None,
+    turrets: list[str] | None = None,
+    modules: list[str] | None = None,
+) -> MagicMock:
+    """Create a PlayerShip-like MagicMock."""
+    ps = MagicMock()
+    ps.id = ship_id
+    ps.ship_name = ship_name
+    ps.weapons = weapons
+    ps.turrets = turrets
+    ps.modules = modules
+    return ps
+
+
+def make_mock_ship(name: str = "Betty", armour: int = 300) -> MagicMock:
+    """Create a Ship-like MagicMock (static ship definition)."""
+    s = MagicMock()
+    s.name = name
+    s.armour = armour
+    return s
+
+
+def make_mock_weapon(name: str = "128MJ Railgun", dps: float = 25.0) -> MagicMock:
+    """Create a weapon-like MagicMock."""
+    w = MagicMock()
+    w.name = name
+    w.dps = dps
+    return w
+
+
+def make_mock_module(name: str = "E2 Exoclad", extra_atts: dict | None = None) -> MagicMock:
+    """Create a Module-like MagicMock."""
+    m = MagicMock()
+    m.name = name
+    m.extra_atts = extra_atts or {}
+    return m
+
+
+# ---------------------------------------------------------------------------
+# TestFromCriminalShipBasic
+# ---------------------------------------------------------------------------
+
+
+class TestFromCriminalShipBasic:
+    """AC: from_criminal_ship with a basic criminal_ship dict returns correct ShipLoadout."""
+
+    def test_ship_name_and_armour_extracted(self):
+        """ship_name and base_armour are read from the dict."""
+        criminal_ship = make_criminal_ship(ship_name="Vossk Warrior", ship_armour=200)
+        loadout = LoadoutBuilder.from_criminal_ship(criminal_ship)
+
+        assert isinstance(loadout, ShipLoadout)
+        assert loadout.ship_name == "Vossk Warrior"
+        assert loadout.base_armour == 200
+
+    def test_returns_ship_loadout_type(self):
+        """Return type is ShipLoadout."""
+        loadout = LoadoutBuilder.from_criminal_ship(make_criminal_ship())
+        assert isinstance(loadout, ShipLoadout)
+
+    def test_defaults_for_missing_keys(self):
+        """Missing ship_name and ship_armour fall back to defaults."""
+        loadout = LoadoutBuilder.from_criminal_ship({})
+        assert loadout.ship_name == "Unknown"
+        assert loadout.base_armour == 100
+
+    def test_empty_equipment_lists(self):
+        """Empty weapons/turrets/modules produce empty lists in loadout."""
+        loadout = LoadoutBuilder.from_criminal_ship(make_criminal_ship())
+        assert loadout.weapons == []
+        assert loadout.turrets == []
+        assert loadout.modules == []
+
+
+# ---------------------------------------------------------------------------
+# TestFromCriminalShipEmptyLoadout
+# ---------------------------------------------------------------------------
+
+
+class TestFromCriminalShipEmptyLoadout:
+    """AC: from_criminal_ship with ship only, no equipment."""
+
+    def test_ship_only_no_equipment(self):
+        """Criminal ship with no weapons, turrets, or modules → minimal loadout."""
+        criminal_ship = make_criminal_ship(ship_name="Solo Ship", ship_armour=150)
+        loadout = LoadoutBuilder.from_criminal_ship(criminal_ship)
+
+        assert loadout.ship_name == "Solo Ship"
+        assert loadout.base_armour == 150
+        assert len(loadout.weapons) == 0
+        assert len(loadout.turrets) == 0
+        assert len(loadout.modules) == 0
+
+    def test_zero_dps_from_no_weapons(self):
+        """No weapons → CombatService computes 0 DPS."""
+        criminal_ship = make_criminal_ship(ship_armour=200)
+        loadout = LoadoutBuilder.from_criminal_ship(criminal_ship)
+        service = CombatService()
+        stats = service.collect_stats(loadout)
+
+        assert stats.dps == 0.0
+
+    def test_base_armour_becomes_total_hp(self):
+        """No modules → total HP equals base armour."""
+        criminal_ship = make_criminal_ship(ship_armour=200)
+        loadout = LoadoutBuilder.from_criminal_ship(criminal_ship)
+        service = CombatService()
+        stats = service.collect_stats(loadout)
+
+        assert stats.armour == 200
+        assert stats.shield == 0
+        assert stats.total_hp == 200
+
+
+# ---------------------------------------------------------------------------
+# TestFromCriminalShipWithWeaponsAndTurrets
+# ---------------------------------------------------------------------------
+
+
+class TestFromCriminalShipWithWeaponsAndTurrets:
+    """AC: from_criminal_ship with weapons and turrets — verifies DPS."""
+
+    def test_single_weapon_dps(self):
+        """Single weapon DPS is correctly mapped to WeaponStats."""
+        criminal_ship = make_criminal_ship(
+            weapons=[make_weapon_dict(name="Rail Gun", dps=30.0)],
+        )
+        loadout = LoadoutBuilder.from_criminal_ship(criminal_ship)
+
+        assert len(loadout.weapons) == 1
+        assert loadout.weapons[0].name == "Rail Gun"
+        assert loadout.weapons[0].dps == 30.0
+
+    def test_multiple_weapons_dps_summed_by_combat_service(self):
+        """Multiple weapons: CombatService sums all weapon DPS."""
+        criminal_ship = make_criminal_ship(
+            weapons=[
+                make_weapon_dict(name="Weapon1", dps=25.0),
+                make_weapon_dict(name="Weapon2", dps=15.0),
+            ],
+        )
+        loadout = LoadoutBuilder.from_criminal_ship(criminal_ship)
+        service = CombatService()
+        stats = service.collect_stats(loadout)
+
+        assert stats.dps == pytest.approx(40.0)
+
+    def test_single_turret_dps(self):
+        """Single turret DPS is correctly mapped."""
+        criminal_ship = make_criminal_ship(
+            turrets=[make_turret_dict(name="Turret X", dps=12.5)],
+        )
+        loadout = LoadoutBuilder.from_criminal_ship(criminal_ship)
+
+        assert len(loadout.turrets) == 1
+        assert loadout.turrets[0].name == "Turret X"
+        assert loadout.turrets[0].dps == 12.5
+
+    def test_weapons_and_turrets_combined_dps(self):
+        """Weapons + turrets: total DPS is sum of all."""
+        criminal_ship = make_criminal_ship(
+            ship_armour=100,
+            weapons=[make_weapon_dict(name="W1", dps=20.0)],
+            turrets=[make_turret_dict(name="T1", dps=10.0)],
+        )
+        loadout = LoadoutBuilder.from_criminal_ship(criminal_ship)
+        service = CombatService()
+        stats = service.collect_stats(loadout)
+
+        assert stats.dps == pytest.approx(30.0)
+
+    def test_weapon_names_preserved(self):
+        """Weapon names are preserved exactly."""
+        criminal_ship = make_criminal_ship(
+            weapons=[make_weapon_dict(name="128MJ Railgun", dps=25.0)],
+            turrets=[make_turret_dict(name="Tug Beam", dps=5.0)],
+        )
+        loadout = LoadoutBuilder.from_criminal_ship(criminal_ship)
+
+        assert loadout.weapons[0].name == "128MJ Railgun"
+        assert loadout.turrets[0].name == "Tug Beam"
+
+    def test_missing_dps_defaults_to_zero(self):
+        """Weapon dict without 'dps' key defaults to 0.0."""
+        criminal_ship = make_criminal_ship(
+            weapons=[{"name": "Mystery Gun", "emoji": "<:gun:1>", "value": 100}],
+        )
+        loadout = LoadoutBuilder.from_criminal_ship(criminal_ship)
+
+        assert loadout.weapons[0].dps == 0.0
+
+
+# ---------------------------------------------------------------------------
+# TestFromCriminalShipWithModules
+# ---------------------------------------------------------------------------
+
+
+class TestFromCriminalShipWithModules:
+    """AC: from_criminal_ship with armour and shield modules."""
+
+    def test_armour_module_increases_armour_hp(self):
+        """Armour module's extra_atts['armour'] adds to effective armour."""
+        criminal_ship = make_criminal_ship(
+            ship_armour=100,
+            modules=[
+                make_module_dict(
+                    name="E2 Exoclad",
+                    module_type="ArmourModule",
+                    extra_atts={"armour": 40},
+                )
+            ],
+        )
+        loadout = LoadoutBuilder.from_criminal_ship(criminal_ship)
+        service = CombatService()
+        stats = service.collect_stats(loadout)
+
+        assert stats.armour == 140  # 100 base + 40 module
+        assert stats.shield == 0
+
+    def test_shield_module_adds_shield_hp(self):
+        """Shield module's extra_atts['shield'] provides shield HP."""
+        criminal_ship = make_criminal_ship(
+            ship_armour=100,
+            modules=[
+                make_module_dict(
+                    name="Particle Shield",
+                    module_type="ShieldModule",
+                    extra_atts={"shield": 380},
+                )
+            ],
+        )
+        loadout = LoadoutBuilder.from_criminal_ship(criminal_ship)
+        service = CombatService()
+        stats = service.collect_stats(loadout)
+
+        assert stats.armour == 100  # base only
+        assert stats.shield == 380
+        assert stats.total_hp == 480
+
+    def test_armour_and_shield_modules_combined(self):
+        """Both armour and shield modules contribute to total HP."""
+        criminal_ship = make_criminal_ship(
+            ship_armour=200,
+            modules=[
+                make_module_dict(name="Diol", extra_atts={"armour": 160}),
+                make_module_dict(name="Particle Shield", extra_atts={"shield": 380}),
+            ],
+        )
+        loadout = LoadoutBuilder.from_criminal_ship(criminal_ship)
+        service = CombatService()
+        stats = service.collect_stats(loadout)
+
+        assert stats.armour == 360  # 200 + 160
+        assert stats.shield == 380
+        assert stats.total_hp == 740
+
+    def test_dps_multiplier_module_scales_dps(self):
+        """DPS multiplier module (camelCase key) scales total DPS."""
+        criminal_ship = make_criminal_ship(
+            ship_armour=100,
+            weapons=[make_weapon_dict(name="Rail Gun", dps=100.0)],
+            modules=[
+                make_module_dict(
+                    name="Nirai Overcharge",
+                    module_type="PrimaryWeaponModModule",
+                    extra_atts={"dpsMultiplier": 1.1},
+                )
+            ],
+        )
+        loadout = LoadoutBuilder.from_criminal_ship(criminal_ship)
+        service = CombatService()
+        stats = service.collect_stats(loadout)
+
+        assert stats.dps == pytest.approx(110.0)
+
+    def test_snake_case_dps_multiplier_also_works(self):
+        """DPS multiplier module (snake_case key) also scales DPS."""
+        criminal_ship = make_criminal_ship(
+            ship_armour=100,
+            weapons=[make_weapon_dict(name="Rail Gun", dps=100.0)],
+            modules=[
+                make_module_dict(
+                    name="Nirai Overcharge",
+                    module_type="PrimaryWeaponModModule",
+                    extra_atts={"dps_multiplier": 1.1},
+                )
+            ],
+        )
+        loadout = LoadoutBuilder.from_criminal_ship(criminal_ship)
+        service = CombatService()
+        stats = service.collect_stats(loadout)
+
+        assert stats.dps == pytest.approx(110.0)
+
+    def test_module_with_no_combat_stats(self):
+        """Module with no combat-relevant extra_atts has zero effect."""
+        criminal_ship = make_criminal_ship(
+            ship_armour=100,
+            modules=[
+                make_module_dict(
+                    name="Autopacker 2",
+                    module_type="CompressorModule",
+                    extra_atts={"cargoMultiplier": 1.25},  # no combat stats
+                )
+            ],
+        )
+        loadout = LoadoutBuilder.from_criminal_ship(criminal_ship)
+        service = CombatService()
+        stats = service.collect_stats(loadout)
+
+        assert stats.armour == 100  # unchanged
+        assert stats.shield == 0
+        assert stats.dps == 0.0
+
+    def test_empty_module_extra_atts(self):
+        """Module with empty extra_atts dict has zero effect."""
+        criminal_ship = make_criminal_ship(
+            ship_armour=100,
+            modules=[make_module_dict(name="Scanner", extra_atts={})],
+        )
+        loadout = LoadoutBuilder.from_criminal_ship(criminal_ship)
+        service = CombatService()
+        stats = service.collect_stats(loadout)
+
+        assert stats.armour == 100
+        assert stats.shield == 0
+        assert stats.dps == 0.0
+
+    def test_module_count_preserved(self):
+        """All modules in the list are added to the loadout."""
+        criminal_ship = make_criminal_ship(
+            modules=[
+                make_module_dict(name="Module A", extra_atts={"armour": 10}),
+                make_module_dict(name="Module B", extra_atts={"shield": 50}),
+                make_module_dict(name="Module C", extra_atts={}),
+            ],
+        )
+        loadout = LoadoutBuilder.from_criminal_ship(criminal_ship)
+        assert len(loadout.modules) == 3
+
+
+# ---------------------------------------------------------------------------
+# TestModuleStatsFromExtra (unit test for private helper)
+# ---------------------------------------------------------------------------
+
+
+class TestModuleStatsFromExtra:
+    """Unit tests for the _module_stats_from_extra helper function."""
+
+    def test_armour_extracted(self):
+        """armour field is mapped to ModuleStats.armour."""
+        stats = _module_stats_from_extra("Test", {"armour": 160})
+        assert stats.armour == 160
+
+    def test_shield_extracted(self):
+        """shield field is mapped to ModuleStats.shield."""
+        stats = _module_stats_from_extra("Test", {"shield": 380})
+        assert stats.shield == 380
+
+    def test_camel_case_dps_multiplier(self):
+        """camelCase dpsMultiplier → ModuleStats.dps_multiplier."""
+        stats = _module_stats_from_extra("Test", {"dpsMultiplier": 1.1})
+        assert stats.dps_multiplier == pytest.approx(1.1)
+
+    def test_snake_case_dps_multiplier(self):
+        """snake_case dps_multiplier → ModuleStats.dps_multiplier."""
+        stats = _module_stats_from_extra("Test", {"dps_multiplier": 1.2})
+        assert stats.dps_multiplier == pytest.approx(1.2)
+
+    def test_snake_case_takes_priority_over_camel_case(self):
+        """When both snake_case and camelCase exist, snake_case wins."""
+        stats = _module_stats_from_extra("Test", {"dps_multiplier": 1.5, "dpsMultiplier": 1.1})
+        assert stats.dps_multiplier == pytest.approx(1.5)
+
+    def test_defaults_all_neutral(self):
+        """Empty dict → all defaults: armour=0, shield=0, multipliers=1.0, dps=0."""
+        stats = _module_stats_from_extra("Empty", {})
+        assert stats.name == "Empty"
+        assert stats.armour == 0
+        assert stats.armour_multiplier == pytest.approx(1.0)
+        assert stats.shield == 0
+        assert stats.shield_multiplier == pytest.approx(1.0)
+        assert stats.dps == 0
+        assert stats.dps_multiplier == pytest.approx(1.0)
+
+    def test_name_preserved(self):
+        """Module name is preserved in ModuleStats."""
+        stats = _module_stats_from_extra("My Module", {})
+        assert stats.name == "My Module"
+
+    def test_returns_module_stats_type(self):
+        """Return type is ModuleStats."""
+        stats = _module_stats_from_extra("Test", {})
+        assert isinstance(stats, ModuleStats)
+
+
+# ---------------------------------------------------------------------------
+# TestFromPlayer
+# ---------------------------------------------------------------------------
+
+
+class TestFromPlayer:
+    """AC: from_player() builds correct ShipLoadout via mocked DB calls.
+
+    Since LoadoutBuilder.from_player() uses deferred imports (imports inside
+    the function body), we patch at the definition module level:
+    - 'persist.repositories.player_repository.PlayerRepository'
+    - 'persist.repositories.item_repository.ItemRepository'
+    """
+
+    @pytest.mark.asyncio
+    async def test_player_not_found_returns_unarmed(self):
+        """Player not found in DB → default unarmed loadout."""
+        player_repo = MagicMock()
+        player_repo.get_by_id = AsyncMock(return_value=None)
+
+        from unittest.mock import patch
+
+        db = AsyncMock()
+        with patch("persist.repositories.player_repository.PlayerRepository", return_value=player_repo):
+            loadout = await LoadoutBuilder.from_player(db, player_id=99)
+
+        assert loadout.ship_name == "Unarmed"
+        assert loadout.base_armour == 100
+        assert loadout.weapons == []
+        assert loadout.turrets == []
+        assert loadout.modules == []
+
+    @pytest.mark.asyncio
+    async def test_player_with_no_active_ship_returns_unarmed(self):
+        """Player with active_ship_id=None → default unarmed loadout."""
+        player = make_mock_player(active_ship_id=None)
+        player_repo = MagicMock()
+        player_repo.get_by_id = AsyncMock(return_value=player)
+
+        from unittest.mock import patch
+
+        db = AsyncMock()
+        with patch("persist.repositories.player_repository.PlayerRepository", return_value=player_repo):
+            loadout = await LoadoutBuilder.from_player(db, player_id=1)
+
+        assert loadout.ship_name == "Unarmed"
+        assert loadout.base_armour == 100
+
+    @pytest.mark.asyncio
+    async def test_player_with_active_ship_no_equipment(self):
+        """Player with active ship but no equipped items → base armour only, 0 DPS."""
+        player = make_mock_player(active_ship_id=10)
+        player_ship = make_mock_player_ship(
+            ship_id=10,
+            ship_name="Betty",
+            weapons=None,
+            turrets=None,
+            modules=None,
+        )
+        ship = make_mock_ship(name="Betty", armour=300)
+
+        player_repo = MagicMock()
+        player_repo.get_by_id = AsyncMock(return_value=player)
+
+        item_repo = MagicMock()
+        item_repo.get_by_name = AsyncMock(return_value=None)
+
+        # Build a mock db.execute() that returns different scalars per query
+        def make_execute_result(scalar_value):
+            result = MagicMock()
+            scalars_result = MagicMock()
+            scalars_result.first.return_value = scalar_value
+            result.scalars.return_value = scalars_result
+            return result
+
+        db = MagicMock()
+        db.execute = AsyncMock(
+            side_effect=[
+                make_execute_result(player_ship),  # PlayerShip query
+                make_execute_result(ship),  # Ship query
+            ]
+        )
+
+        from unittest.mock import patch
+
+        with (
+            patch("persist.repositories.player_repository.PlayerRepository", return_value=player_repo),
+            patch("persist.repositories.item_repository.ItemRepository", return_value=item_repo),
+        ):
+            loadout = await LoadoutBuilder.from_player(db, player_id=1)
+
+        assert loadout.ship_name == "Betty"
+        assert loadout.base_armour == 300
+        assert loadout.weapons == []
+        assert loadout.turrets == []
+        assert loadout.modules == []
+
+    @pytest.mark.asyncio
+    async def test_player_with_weapons_builds_weapon_stats(self):
+        """Player with equipped weapons → WeaponStats with DPS from DB."""
+        player = make_mock_player(active_ship_id=10)
+        player_ship = make_mock_player_ship(
+            ship_id=10,
+            ship_name="Betty",
+            weapons=["128MJ Railgun"],
+            turrets=[],
+            modules=[],
+        )
+        ship = make_mock_ship(name="Betty", armour=300)
+        weapon = make_mock_weapon(name="128MJ Railgun", dps=25.0)
+
+        player_repo = MagicMock()
+        player_repo.get_by_id = AsyncMock(return_value=player)
+
+        item_repo = MagicMock()
+        item_repo.get_by_name = AsyncMock(return_value=weapon)
+
+        def make_execute_result(scalar_value):
+            result = MagicMock()
+            scalars_result = MagicMock()
+            scalars_result.first.return_value = scalar_value
+            result.scalars.return_value = scalars_result
+            return result
+
+        db = MagicMock()
+        db.execute = AsyncMock(
+            side_effect=[
+                make_execute_result(player_ship),  # PlayerShip query
+                make_execute_result(ship),  # Ship query
+            ]
+        )
+
+        from unittest.mock import patch
+
+        with (
+            patch("persist.repositories.player_repository.PlayerRepository", return_value=player_repo),
+            patch("persist.repositories.item_repository.ItemRepository", return_value=item_repo),
+        ):
+            loadout = await LoadoutBuilder.from_player(db, player_id=1)
+
+        assert len(loadout.weapons) == 1
+        assert loadout.weapons[0].name == "128MJ Railgun"
+        assert loadout.weapons[0].dps == 25.0
+
+    @pytest.mark.asyncio
+    async def test_player_with_modules_builds_module_stats(self):
+        """Player with equipped armour module → ModuleStats with armour from extra_atts."""
+        player = make_mock_player(active_ship_id=10)
+        player_ship = make_mock_player_ship(
+            ship_id=10,
+            ship_name="Betty",
+            weapons=[],
+            turrets=[],
+            modules=["E2 Exoclad"],
+        )
+        ship = make_mock_ship(name="Betty", armour=300)
+        module = make_mock_module(name="E2 Exoclad", extra_atts={"armour": 40})
+
+        player_repo = MagicMock()
+        player_repo.get_by_id = AsyncMock(return_value=player)
+
+        item_repo = MagicMock()
+        item_repo.get_by_name = AsyncMock(return_value=None)
+
+        def make_execute_result(scalar_value):
+            result = MagicMock()
+            scalars_result = MagicMock()
+            scalars_result.first.return_value = scalar_value
+            result.scalars.return_value = scalars_result
+            return result
+
+        db = MagicMock()
+        db.execute = AsyncMock(
+            side_effect=[
+                make_execute_result(player_ship),  # PlayerShip query
+                make_execute_result(ship),  # Ship query
+                make_execute_result(module),  # Module query
+            ]
+        )
+
+        from unittest.mock import patch
+
+        with (
+            patch("persist.repositories.player_repository.PlayerRepository", return_value=player_repo),
+            patch("persist.repositories.item_repository.ItemRepository", return_value=item_repo),
+        ):
+            loadout = await LoadoutBuilder.from_player(db, player_id=1)
+
+        assert len(loadout.modules) == 1
+        assert loadout.modules[0].name == "E2 Exoclad"
+        assert loadout.modules[0].armour == 40
+
+    @pytest.mark.asyncio
+    async def test_from_player_full_loadout_collect_stats(self):
+        """Full player loadout with weapon + shield module → correct HP and DPS."""
+        player = make_mock_player(active_ship_id=10)
+        player_ship = make_mock_player_ship(
+            ship_id=10,
+            ship_name="Betty",
+            weapons=["128MJ Railgun"],
+            turrets=["Tug Beam"],
+            modules=["Particle Shield"],
+        )
+        ship = make_mock_ship(name="Betty", armour=300)
+        weapon = make_mock_weapon(name="128MJ Railgun", dps=25.0)
+        turret = make_mock_weapon(name="Tug Beam", dps=10.0)
+        shield_module = make_mock_module(name="Particle Shield", extra_atts={"shield": 380})
+
+        player_repo = MagicMock()
+        player_repo.get_by_id = AsyncMock(return_value=player)
+
+        # item_repo returns weapon for primary_weapon lookup, turret for turret_weapon
+        item_repo = MagicMock()
+
+        async def item_repo_get_by_name(db_arg, name, item_type=None):
+            if name == "128MJ Railgun":
+                return weapon
+            if name == "Tug Beam":
+                return turret
+            return None
+
+        item_repo.get_by_name = item_repo_get_by_name
+
+        def make_execute_result(scalar_value):
+            result = MagicMock()
+            scalars_result = MagicMock()
+            scalars_result.first.return_value = scalar_value
+            result.scalars.return_value = scalars_result
+            return result
+
+        db = MagicMock()
+        db.execute = AsyncMock(
+            side_effect=[
+                make_execute_result(player_ship),  # PlayerShip query
+                make_execute_result(ship),  # Ship query
+                make_execute_result(shield_module),  # Module query
+            ]
+        )
+
+        from unittest.mock import patch
+
+        with (
+            patch("persist.repositories.player_repository.PlayerRepository", return_value=player_repo),
+            patch("persist.repositories.item_repository.ItemRepository", return_value=item_repo),
+        ):
+            loadout = await LoadoutBuilder.from_player(db, player_id=1)
+
+        # Verify loadout structure
+        assert loadout.ship_name == "Betty"
+        assert loadout.base_armour == 300
+        assert len(loadout.weapons) == 1
+        assert len(loadout.turrets) == 1
+        assert len(loadout.modules) == 1
+
+        # Verify combat stats
+        service = CombatService()
+        stats = service.collect_stats(loadout)
+
+        assert stats.dps == pytest.approx(35.0)  # 25.0 + 10.0
+        assert stats.armour == 300  # base only, no armour module
+        assert stats.shield == 380  # from shield module
+        assert stats.total_hp == 680  # 300 + 380
+
+    @pytest.mark.asyncio
+    async def test_weapon_not_in_db_defaults_to_zero_dps(self):
+        """Weapon name not found in DB → WeaponStats with dps=0."""
+        player = make_mock_player(active_ship_id=10)
+        player_ship = make_mock_player_ship(
+            ship_id=10,
+            ship_name="Betty",
+            weapons=["Unknown Weapon"],
+            turrets=[],
+            modules=[],
+        )
+        ship = make_mock_ship(name="Betty", armour=100)
+
+        player_repo = MagicMock()
+        player_repo.get_by_id = AsyncMock(return_value=player)
+
+        item_repo = MagicMock()
+        item_repo.get_by_name = AsyncMock(return_value=None)  # not found
+
+        def make_execute_result(scalar_value):
+            result = MagicMock()
+            scalars_result = MagicMock()
+            scalars_result.first.return_value = scalar_value
+            result.scalars.return_value = scalars_result
+            return result
+
+        db = MagicMock()
+        db.execute = AsyncMock(
+            side_effect=[
+                make_execute_result(player_ship),
+                make_execute_result(ship),
+            ]
+        )
+
+        from unittest.mock import patch
+
+        with (
+            patch("persist.repositories.player_repository.PlayerRepository", return_value=player_repo),
+            patch("persist.repositories.item_repository.ItemRepository", return_value=item_repo),
+        ):
+            loadout = await LoadoutBuilder.from_player(db, player_id=1)
+
+        assert len(loadout.weapons) == 1
+        assert loadout.weapons[0].name == "Unknown Weapon"
+        assert loadout.weapons[0].dps == 0.0
+
+    @pytest.mark.asyncio
+    async def test_module_not_in_db_uses_zero_effect_module(self):
+        """Module name not found in DB → ModuleStats with all-zero/neutral stats."""
+        player = make_mock_player(active_ship_id=10)
+        player_ship = make_mock_player_ship(
+            ship_id=10,
+            ship_name="Betty",
+            weapons=[],
+            turrets=[],
+            modules=["Ghost Module"],
+        )
+        ship = make_mock_ship(name="Betty", armour=100)
+
+        player_repo = MagicMock()
+        player_repo.get_by_id = AsyncMock(return_value=player)
+
+        item_repo = MagicMock()
+        item_repo.get_by_name = AsyncMock(return_value=None)
+
+        def make_execute_result(scalar_value):
+            result = MagicMock()
+            scalars_result = MagicMock()
+            scalars_result.first.return_value = scalar_value
+            result.scalars.return_value = scalars_result
+            return result
+
+        db = MagicMock()
+        db.execute = AsyncMock(
+            side_effect=[
+                make_execute_result(player_ship),
+                make_execute_result(ship),
+                make_execute_result(None),  # module not found in DB
+            ]
+        )
+
+        from unittest.mock import patch
+
+        with (
+            patch("persist.repositories.player_repository.PlayerRepository", return_value=player_repo),
+            patch("persist.repositories.item_repository.ItemRepository", return_value=item_repo),
+        ):
+            loadout = await LoadoutBuilder.from_player(db, player_id=1)
+
+        assert len(loadout.modules) == 1
+        assert loadout.modules[0].name == "Ghost Module"
+        assert loadout.modules[0].armour == 0
+        assert loadout.modules[0].shield == 0
+        assert loadout.modules[0].dps_multiplier == pytest.approx(1.0)
+
+
+# ---------------------------------------------------------------------------
+# TestCollectStatsIntegration
+# ---------------------------------------------------------------------------
+
+
+class TestCollectStatsIntegration:
+    """AC: ShipLoadout from LoadoutBuilder passes CombatService.collect_stats() correctly."""
+
+    def test_full_criminal_ship_combat_stats(self):
+        """Full criminal ship dict → correct CombatStats from collect_stats()."""
+        criminal_ship = {
+            "ship_name": "Betty",
+            "ship_armour": 95,
+            "weapons": [
+                {"name": "128MJ Railgun", "dps": 25.0, "value": 24675},
+                {"name": "64MJ Railgun", "dps": 15.0, "value": 12000},
+            ],
+            "turrets": [
+                {"name": "Tug Beam", "dps": 8.0, "value": 3000},
+            ],
+            "modules": [
+                {
+                    "name": "E2 Exoclad",
+                    "type": "ArmourModule",
+                    "value": 1070,
+                    "tech_level": 1,
+                    "extra_atts": {"armour": 40},
+                },
+                {
+                    "name": "Particle Shield",
+                    "type": "ShieldModule",
+                    "value": 189194,
+                    "tech_level": 10,
+                    "extra_atts": {"shield": 380},
+                },
+            ],
+        }
+
+        loadout = LoadoutBuilder.from_criminal_ship(criminal_ship)
+        service = CombatService()
+        stats = service.collect_stats(loadout)
+
+        # DPS: 25.0 + 15.0 + 8.0 = 48.0 (no multiplier modules)
+        assert stats.dps == pytest.approx(48.0)
+
+        # Armour: 95 base + 40 module = 135
+        assert stats.armour == 135
+
+        # Shield: 380
+        assert stats.shield == 380
+
+        # Total HP: 135 + 380 = 515
+        assert stats.total_hp == 515
+
+        assert stats.ship_name == "Betty"
+
+    def test_criminal_ship_with_dps_multiplier_combat_stats(self):
+        """Criminal ship with DPS multiplier module scales total DPS."""
+        criminal_ship = {
+            "ship_name": "Raider",
+            "ship_armour": 200,
+            "weapons": [{"name": "Blaster", "dps": 100.0, "value": 50000}],
+            "turrets": [],
+            "modules": [
+                {
+                    "name": "Nirai Overcharge",
+                    "type": "PrimaryWeaponModModule",
+                    "value": 29224,
+                    "tech_level": 5,
+                    "extra_atts": {"dpsMultiplier": 1.1},
+                }
+            ],
+        }
+
+        loadout = LoadoutBuilder.from_criminal_ship(criminal_ship)
+        service = CombatService()
+        stats = service.collect_stats(loadout)
+
+        # DPS: 100.0 * 1.1 = 110.0
+        assert stats.dps == pytest.approx(110.0)
+        # Armour: 200 (no armour module)
+        assert stats.armour == 200

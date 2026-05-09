@@ -1,0 +1,12 @@
+{
+    "aliases": [
+        "merson",
+        "surr"
+    ],
+    "builtIn": false,
+    "faction": "nivelian",
+    "icon": "https://i.postimg.cc/wjhmrDLz/merson-surr.png",
+    "isPlayer": false,
+    "name": "Merson Surr",
+    "wiki": "https://galaxyonfire.fandom.com/wiki/Merson_Surr"
+}

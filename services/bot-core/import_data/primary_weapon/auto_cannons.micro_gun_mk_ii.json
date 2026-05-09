@@ -1,0 +1,19 @@
+{
+    "aliases":  [
+                    "Micro MK II",
+                    "Micro II",
+                    "Micro Gun Mk 2",
+                    "Micro MK 2",
+                    "Micro 2"
+                ],
+    "builtIn":  false,
+    "dps":  11.76,
+    "emoji":  "<:microgunmkii:723709599244353606>",
+    "icon":  "https://i.postimg.cc/nL0128X4/micro-gun-mkii.png",
+    "name":  "Micro Gun MK II",
+    "techLevel":  2,
+    "value":  5538,
+    "wiki":  "https://galaxyonfire.fandom.com/wiki/Micro_Gun_MK_II",
+    "type":  "PrimaryWeapon",
+    "subtype":  "auto_cannons"
+}

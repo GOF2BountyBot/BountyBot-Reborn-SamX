@@ -1,0 +1,12 @@
+{
+    "aliases": [
+        "vortt",
+        "baskk"
+    ],
+    "builtIn": false,
+    "faction": "vossk",
+    "icon": "https://i.postimg.cc/d0sLSpJR/vortt-baskk.png",
+    "isPlayer": false,
+    "name": "Vortt Baskk",
+    "wiki": "https://galaxyonfire.fandom.com/wiki/Vortt_Baskk"
+}

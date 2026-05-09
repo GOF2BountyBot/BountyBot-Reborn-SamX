@@ -1,0 +1,15 @@
+{
+    "aliases": [],
+    "coordinates": [
+        174,
+        219
+    ],
+    "faction": "midorian",
+    "name": "Eanya",
+    "neighbours": [
+        "Nesla",
+        "Ginoya"
+    ],
+    "security": 3,
+    "wiki": "https://galaxyonfire.fandom.com/wiki/Category:Eanya"
+}

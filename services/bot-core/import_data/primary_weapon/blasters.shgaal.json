@@ -1,0 +1,15 @@
+{
+    "aliases":  [
+                    "Shgaal"
+                ],
+    "builtIn":  false,
+    "dps":  20.93,
+    "emoji":  "<:shgaal:723709620518125620>",
+    "icon":  "https://i.postimg.cc/J45K0BRY/sh-gaal.png",
+    "name":  "Sh'gaal",
+    "techLevel":  4,
+    "value":  24527,
+    "wiki":  "https://galaxyonfire.fandom.com/wiki/Sh%27gaal",
+    "type":  "PrimaryWeapon",
+    "subtype":  "blasters"
+}

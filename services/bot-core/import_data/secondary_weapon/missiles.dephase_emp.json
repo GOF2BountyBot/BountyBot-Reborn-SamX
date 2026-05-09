@@ -1,0 +1,14 @@
+{
+  "aliases": [
+    "dephase"
+  ],
+  "builtIn": false,
+  "damage": 0,
+  "icon": "https://i.postimg.cc/4ybk2NVL/dephase-emp.png",
+  "loading speed": 0,
+  "name": "Dephase EMP",
+  "value": 0,
+  "wiki": "",
+  "type": "SecondaryWeapon",
+  "subtype": "missiles"
+}

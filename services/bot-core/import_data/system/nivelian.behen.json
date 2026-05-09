@@ -1,0 +1,19 @@
+{
+    "aliases": [
+        "behen"
+    ],
+    "coordinates": [
+        285,
+        518
+    ],
+    "faction": "nivelian",
+    "name": "Beh\u00e9n",
+    "neighbours": [
+        "Nesla",
+        "Suteo",
+        "Weymire",
+        "Buntta"
+    ],
+    "security": 2,
+    "wiki": "https://galaxyonfire.fandom.com/wiki/Category:Beh\u00e9n"
+}

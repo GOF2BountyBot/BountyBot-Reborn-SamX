@@ -1,0 +1,15 @@
+{
+    "aliases":  [
+                    "Nsaan"
+                ],
+    "builtIn":  false,
+    "dps":  13.33,
+    "emoji":  "<:nsaan:723709620476182579>",
+    "icon":  "https://i.postimg.cc/sfSTFNqr/n-saan.png",
+    "name":  "N'saan",
+    "techLevel":  1,
+    "value":  12894,
+    "wiki":  "https://galaxyonfire.fandom.com/wiki/N%27saan",
+    "type":  "PrimaryWeapon",
+    "subtype":  "blasters"
+}

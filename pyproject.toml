@@ -1,0 +1,50 @@
+[tool.pylint]
+rcfile = "utils/pylintrc"
+
+[tool.isort]
+profile = "black"
+line_length = 120
+include_trailing_comma = true
+use_parentheses = true
+ensure_newline_before_comments = false
+skip_glob = ["**/lib/AEPi/**"]
+
+[tool.pytest.ini_options]
+testpaths = ["services"]
+python_files = "test_*.py"
+python_classes = "Test*"
+python_functions = "test_*"
+addopts = "-v --tb=short --ignore=services/blender-service/src/lib/AEPi"
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "module"
+filterwarnings = [
+    "ignore::DeprecationWarning:discord.player",
+    "ignore::DeprecationWarning:fastapi.routing",
+    "ignore:.*audioop.*:DeprecationWarning",
+    "ignore:.*HTTP_422_UNPROCESSABLE_ENTITY.*:DeprecationWarning",
+    "ignore:Pydantic serializer warnings.*:UserWarning",
+]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 120
+exclude = [
+    "services/blender-service/src/lib/AEPi/**",
+    "api-test.py",
+]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "SIM", "RUF"]
+ignore = [
+    "E712",   # true-false-comparison (SQLAlchemy filter style)
+    "E402",   # module-level import not at top
+    "B008",   # function-call-in-default-argument (FastAPI Depends())
+    "B017",   # assert-raises-exception (intentional broad catches in tests)
+    "RUF001", # ambiguous-unicode-character-string (game UI text, intentional)
+    "RUF002", # ambiguous-unicode-character-docstring (game data, intentional)
+    "RUF003", # ambiguous-unicode-character-comment (game data, intentional)
+    "RUF012", # mutable-class-default (SQLAlchemy model columns)
+]
+
+[tool.ruff.lint.per-file-ignores]
+"services/bot-core/src/persist/models/*.py" = ["F821"]

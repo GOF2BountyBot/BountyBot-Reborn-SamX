@@ -1,0 +1,14 @@
+{
+    "aliases": [],
+    "coordinates": [
+        259,
+        73
+    ],
+    "faction": "midorian",
+    "name": "Talidor",
+    "neighbours": [
+        "Ginoya"
+    ],
+    "security": 3,
+    "wiki": "https://galaxyonfire.fandom.com/wiki/Category:Talidor"
+}

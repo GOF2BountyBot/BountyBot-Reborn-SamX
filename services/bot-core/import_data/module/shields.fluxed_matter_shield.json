@@ -1,0 +1,16 @@
+{
+  "aliases": [
+    "Fluxed",
+    "Matter Shield",
+    "Fluxed Shield"
+  ],
+  "builtIn": false,
+  "emoji": "<:fluxedmattershield:723706780445835274>",
+  "icon": "https://i.postimg.cc/0y2gyv1m/fluxed-matter-shield.png",
+  "name": "Fluxed Matter Shield",
+  "shield": 220,
+  "techLevel": 10,
+  "type": "ShieldModule",
+  "value": 101914,
+  "wiki": "https://galaxyonfire.fandom.com/wiki/Fluxed_Matter_Shield"
+}

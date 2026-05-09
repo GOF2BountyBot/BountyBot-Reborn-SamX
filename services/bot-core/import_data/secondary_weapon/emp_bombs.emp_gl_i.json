@@ -1,0 +1,16 @@
+{
+  "aliases": [
+    "EMP GL 1",
+    "GL I",
+    "GL 1"
+  ],
+  "builtIn": false,
+  "damage": 0,
+  "icon": "https://i.postimg.cc/2SyF29fh/emp-gl-i.png",
+  "loading speed": 0,
+  "name": "EMP GL I",
+  "value": 0,
+  "wiki": "",
+  "type": "SecondaryWeapon",
+  "subtype": "emp_bombs"
+}

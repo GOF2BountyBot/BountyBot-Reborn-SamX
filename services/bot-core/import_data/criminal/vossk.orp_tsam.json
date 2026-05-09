@@ -1,0 +1,12 @@
+{
+    "aliases": [
+        "orp",
+        "tsam"
+    ],
+    "builtIn": false,
+    "faction": "vossk",
+    "icon": "https://i.postimg.cc/Y9SLjVV2/orp-tsam.png",
+    "isPlayer": false,
+    "name": "Orp Tsam",
+    "wiki": "https://galaxyonfire.fandom.com/wiki/Orp_Tsam"
+}

@@ -1,0 +1,14 @@
+{
+  "aliases": [
+    "Overdrive"
+  ],
+  "builtIn": false,
+  "dpsMultiplier": 1.1,
+  "emoji": "<:niraioverdrive:723707184667689023>",
+  "icon": "https://i.postimg.cc/FKN4cSSf/nirai-overdrive.png",
+  "name": "Nirai Overdrive",
+  "techLevel": 5,
+  "type": "PrimaryWeaponModModule",
+  "value": 30143,
+  "wiki": "https://galaxyonfire.fandom.com/wiki/Nirai_Overdrive"
+}

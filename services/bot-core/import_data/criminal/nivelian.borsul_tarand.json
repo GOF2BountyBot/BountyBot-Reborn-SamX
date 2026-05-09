@@ -1,0 +1,12 @@
+{
+    "aliases": [
+        "borsul",
+        "tarand"
+    ],
+    "builtIn": false,
+    "faction": "nivelian",
+    "icon": "https://i.postimg.cc/RZf7zkrj/borsul-tarand.png",
+    "isPlayer": false,
+    "name": "Borsul Tarand",
+    "wiki": "https://galaxyonfire.fandom.com/wiki/Borsul_Tarand"
+}

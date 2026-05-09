@@ -1,0 +1,15 @@
+{
+  "HPps": 7,
+  "aliases": [
+    "Repair Bot",
+    "Ketar Bot"
+  ],
+  "builtIn": false,
+  "emoji": "<:ketarrepairbot:723706704373481543>",
+  "icon": "https://i.postimg.cc/kXGD60Cr/ketar-repair-bot.png",
+  "name": "Ketar Repair Bot",
+  "techLevel": 4,
+  "type": "RepairBotModule",
+  "value": 15285,
+  "wiki": "https://galaxyonfire.fandom.com/wiki/Ketar_Repair_Bot"
+}

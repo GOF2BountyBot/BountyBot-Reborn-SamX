@@ -1,0 +1,15 @@
+{
+    "aliases":  [
+                    "Kbooskk"
+                ],
+    "builtIn":  false,
+    "dps":  15.9,
+    "emoji":  "<:kbooskk:723709619968671765>",
+    "icon":  "https://i.postimg.cc/q7510Vpk/k-booskk.png",
+    "name":  "K'booskk",
+    "techLevel":  2,
+    "value":  16743,
+    "wiki":  "https://galaxyonfire.fandom.com/wiki/K%27booskk",
+    "type":  "PrimaryWeapon",
+    "subtype":  "blasters"
+}

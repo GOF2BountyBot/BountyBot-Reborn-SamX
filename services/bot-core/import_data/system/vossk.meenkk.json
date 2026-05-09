@@ -1,0 +1,17 @@
+{
+    "aliases": [
+        "meenkk"
+    ],
+    "coordinates": [
+        1013,
+        1139
+    ],
+    "faction": "vossk",
+    "name": "Me'Enkk",
+    "neighbours": [
+        "Ni'Mrrod",
+        "K'Ontrr"
+    ],
+    "security": 3,
+    "wiki": "https://galaxyonfire.fandom.com/wiki/Category:Me'Enkk"
+}

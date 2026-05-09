@@ -1,0 +1,18 @@
+{
+    "aliases": [],
+    "coordinates": [
+        475,
+        372
+    ],
+    "faction": "nivelian",
+    "name": "Weymire",
+    "neighbours": [
+        "Augmenta",
+        "Beh\u00e9n",
+        "Union",
+        "Nesla",
+        "Shima"
+    ],
+    "security": 1,
+    "wiki": "https://galaxyonfire.fandom.com/wiki/Category:Weymire"
+}

@@ -1,0 +1,14 @@
+{
+    "aliases": [
+        "Diol"
+    ],
+    "armour": 160,
+    "builtIn": false,
+    "emoji": "<:diol:723706394687307803>",
+    "icon": "https://i.postimg.cc/D02JM0Rm/d-iol.png",
+    "name": "D'iol",
+    "techLevel": 7,
+    "type": "ArmourModule",
+    "value": 51449,
+    "wiki": "https://galaxyonfire.fandom.com/wiki/D%27iol"
+}

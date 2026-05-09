@@ -1,0 +1,17 @@
+{
+  "aliases": [
+    "dark matter",
+    "dark laser",
+    "matter laser"
+  ],
+  "builtIn": false,
+  "dps": 88.23,
+  "emoji": "<:darkmatterlaser:723709564347744456>",
+  "icon": "https://i.postimg.cc/437SYNLK/dark-matter-laser.png",
+  "name": "Dark Matter Laser",
+  "techLevel": 9,
+  "value": 523757,
+  "wiki": "https://galaxyonfire.fandom.com/wiki/Dark_Matter_Laser",
+  "type": "PrimaryWeapon",
+  "subtype": "blaster_lasers"
+}

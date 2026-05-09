@@ -1,0 +1,14 @@
+{
+  "aliases": [
+    "Overcharge"
+  ],
+  "builtIn": false,
+  "dpsMultiplier": 1.1,
+  "emoji": "<:niraiovercharge:723707184478945302>",
+  "icon": "https://i.postimg.cc/Mpywv5n2/nirai-overcharge.png",
+  "name": "Nirai Overcharge",
+  "techLevel": 5,
+  "type": "PrimaryWeaponModModule",
+  "value": 29224,
+  "wiki": "https://galaxyonfire.fandom.com/wiki/Nirai_Overcharge"
+}

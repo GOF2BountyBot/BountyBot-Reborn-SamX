@@ -1,0 +1,16 @@
+{
+  "aliases": [
+    "Glue Gun",
+    "\"Glue Gun\"",
+    "AB-2 Glue Gun"
+  ],
+  "builtIn": false,
+  "emoji": "<:ab2gluegun:723707141105516604>",
+  "icon": "https://i.postimg.cc/0yxkGhR2/ab-2-glue-gun.png",
+  "name": "AB-2 \"Glue Gun\"",
+  "techLevel": 5,
+  "timeToLock": 1.8,
+  "type": "TractorBeamModule",
+  "value": 27464,
+  "wiki": "https://galaxyonfire.fandom.com/wiki/AB-2_\"Glue Gun\""
+}

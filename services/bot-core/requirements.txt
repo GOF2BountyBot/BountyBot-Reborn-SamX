@@ -1,0 +1,32 @@
+fastapi[standard]
+fastapi-health
+fastapi-sqlalchemy
+#fastapi-healthcheck
+#fastapi-healthcheck-sqlalchemy  
+uvicorn[standard]
+hypercorn[uvloop]
+aiohttp[speedups]
+SQLAlchemy[asyncio]
+sqlalchemy-utils
+# Used for syncronous database operations in some parts of the codebase like migration of data
+psycopg2-binary
+# Used for asyncronous database operations in most of the app runtime environment
+asyncpg
+alembic
+pydantic
+httpx
+# Scheduling library
+apscheduler
+python-dotenv
+Pillow
+
+# Testing & QC
+pylint>=3.0.0
+pytest>=7.0.0
+pytest-asyncio>=0.21.0
+pytest-cov>=4.0.0
+pytest-mock>=3.10.0
+faker>=18.0.0
+aiosqlite
+pytest-timeout>=2.1.0
+respx>=0.21.0,<1.0.0

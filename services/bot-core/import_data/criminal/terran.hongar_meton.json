@@ -1,0 +1,12 @@
+{
+    "aliases": [
+        "hongar",
+        "meton"
+    ],
+    "builtIn": false,
+    "faction": "terran",
+    "icon": "https://i.postimg.cc/mkt9pqNp/hongar-meton.png",
+    "isPlayer": false,
+    "name": "Hongar Meton",
+    "wiki": "https://galaxyonfire.fandom.com/wiki/Hongar_Meton"
+}

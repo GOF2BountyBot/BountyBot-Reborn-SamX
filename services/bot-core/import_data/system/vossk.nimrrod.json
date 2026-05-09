@@ -1,0 +1,17 @@
+{
+    "aliases": [
+        "nimrrod"
+    ],
+    "coordinates": [
+        1124,
+        1082
+    ],
+    "faction": "vossk",
+    "name": "Ni'Mrrod",
+    "neighbours": [
+        "K'Ontrr",
+        "Me'Enkk"
+    ],
+    "security": 3,
+    "wiki": "https://galaxyonfire.fandom.com/wiki/Category:Ni'Mrrod"
+}

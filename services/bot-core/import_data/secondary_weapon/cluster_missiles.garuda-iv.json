@@ -1,0 +1,17 @@
+{
+  "aliases": [
+    "garuda",
+    "garuda IV",
+    "garuda 4",
+    "garuda-4"
+  ],
+  "builtIn": false,
+  "damage": 0,
+  "icon": "https://i.postimg.cc/g0fDwVQR/garuda-iv.png",
+  "loading speed": 0,
+  "name": "Garuda-IV",
+  "value": 0,
+  "wiki": "",
+  "type": "SecondaryWeapon",
+  "subtype": "cluster_missiles"
+}

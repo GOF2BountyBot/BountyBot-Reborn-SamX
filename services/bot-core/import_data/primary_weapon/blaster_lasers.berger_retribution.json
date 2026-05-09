@@ -1,0 +1,15 @@
+{
+  "aliases": [
+    "retribution"
+  ],
+  "builtIn": false,
+  "dps": 24,
+  "emoji": "<:bergerretribution:723709564150611999>",
+  "icon": "https://i.postimg.cc/RZ08zTwL/berger-retribution.png",
+  "name": "Berger Retribution",
+  "techLevel": 7,
+  "value": 37744,
+  "wiki": "https://galaxyonfire.fandom.com/wiki/Berger_Retribution",
+  "type": "PrimaryWeapon",
+  "subtype": "blaster_lasers"
+}

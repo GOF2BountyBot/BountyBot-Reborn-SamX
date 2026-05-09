@@ -1,0 +1,12 @@
+{
+  "aliases": [],
+  "builtIn": false,
+  "damage": 0,
+  "icon": "https://i.postimg.cc/LsZW08Mt/jet-rocket.png",
+  "loading speed": 0,
+  "name": "Jet Rocket",
+  "value": 0,
+  "wiki": "",
+  "type": "SecondaryWeapon",
+  "subtype": "rockets"
+}

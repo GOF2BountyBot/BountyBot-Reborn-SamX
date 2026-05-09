@@ -1,0 +1,14 @@
+{
+  "aliases": [
+    "intellijet"
+  ],
+  "builtIn": false,
+  "damage": 0,
+  "icon": "https://i.postimg.cc/t4gQDbTk/intelli-jet.png",
+  "loading speed": 0,
+  "name": "Intelli Jet",
+  "value": 0,
+  "wiki": "",
+  "type": "SecondaryWeapon",
+  "subtype": "missiles"
+}

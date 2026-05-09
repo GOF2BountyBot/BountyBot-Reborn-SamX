@@ -1,0 +1,127 @@
+# DEV — local build, CPU blender (no GPU required)
+# Builds all service images from source on this machine.
+# Usage: docker compose up --build
+#
+# For GPU rendering: use docker-compose-gpu.yml
+# For production (pre-built GHCR images): use docker-compose.prod.yml
+
+name: bountybot-stack
+services:
+  db:
+    image: postgres:18
+    container_name: bountybot-db
+    restart: unless-stopped
+    networks:
+      - botnetv2
+    env_file:
+      - path: ./.env
+        required: false 
+    environment:
+      - PUID=${PUID:-1000}
+      - PGID=${PGID:-1000}
+    volumes:
+      - /etc/localtime:/etc/localtime:ro
+      - /etc/timezone:/etc/timezone:ro
+      - ./mappings/postgres-data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -d bountydb -U bounty && psql -U bounty -d bountydb -c 'SELECT 1' >/dev/null 2>&1"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 30s
+    ports:
+      - "5432:5432"
+
+  bot-core:
+    build:
+      context: ./
+      dockerfile: ./services/bot-core/Dockerfile
+    container_name: bountybot-bot-core
+    networks:
+      - botnetv2
+    ports:
+      - 8000:8000
+    depends_on:
+      db:
+        condition: service_healthy
+        restart: true
+      discord-gateway:
+        condition: service_healthy
+        restart: true
+    env_file:
+      - path: ./.env
+        required: false 
+    environment:
+      - PUID=${PUID:-1000}
+      - PGID=${PGID:-1000}
+    volumes:
+      - /etc/localtime:/etc/localtime:ro
+      - /etc/timezone:/etc/timezone:ro
+      - ./mappings/bot-core:/app/data
+    restart: unless-stopped
+
+  discord-gateway:
+    build:
+      context: ./
+      dockerfile: ./services/discord-gateway/Dockerfile
+    container_name: bountybot-discord-gateway
+    networks:
+      - botnetv2
+    ports:
+      - 7999:7999
+    depends_on:
+      db:
+        condition: service_healthy
+        restart: true
+    env_file:
+      - path: ./.env
+        required: false 
+    environment:
+      - PUID=${PUID:-1000}
+      - PGID=${PGID:-1000}
+    volumes:
+      - /etc/localtime:/etc/localtime:ro
+      - /etc/timezone:/etc/timezone:ro
+      - ./mappings/discord-gateway:/app/data
+    restart: unless-stopped
+
+  blender-service:
+    build:
+      context: ./
+      dockerfile: ./services/blender-service/Dockerfile.cpu
+    container_name: bountybot-blender-service
+    networks:
+      - botnetv2
+    ports:
+      - 8001:8001
+    depends_on:
+      db:
+        condition: service_healthy
+        restart: true
+      discord-gateway:
+        condition: service_healthy
+        restart: true
+    env_file:
+      - path: ./.env
+        required: false 
+    environment:
+      - PUID=${PUID:-1000}
+      - PGID=${PGID:-1000}
+    volumes:
+      - /etc/localtime:/etc/localtime:ro
+      - /etc/timezone:/etc/timezone:ro
+      - ./mappings/blender-renderer:/app/data
+    healthcheck:
+      test: curl -s -o /dev/null -f http://localhost:8001/api/v1/health/ || exit 1
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 90s
+    restart: unless-stopped
+
+networks:
+  botnetv2:
+    name: bountybot-net
+    driver: bridge
+    driver_opts:
+      com.docker.network.bridge.name: bountybot-br

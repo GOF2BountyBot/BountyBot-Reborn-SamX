@@ -1997,9 +1997,7 @@ class TestEquipAutocomplete:
 
         assert choices == []
 
-    def test_equip_autocomplete_shows_item_when_qty_is_multiple(
-        self, mock_inventory_cog, make_mock_response
-    ):
+    def test_equip_autocomplete_shows_item_when_qty_is_multiple(self, mock_inventory_cog, make_mock_response):
         """Player owns 3 cargo copies → autocomplete shows it with x3 suffix.
 
         player_inventories.quantity is cargo-only; all 3 copies are available to equip.

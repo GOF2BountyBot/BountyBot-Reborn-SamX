@@ -221,7 +221,11 @@ async def combat_bonus(
                 await service._award_combat_bonus(db, request.player_id, request.base_reward)
                 bonus_credits = request.base_reward
 
-            combat_dict = _serialize_fight_results(fight_results, pvc_armour_buff=GameConstants.BOUNTY_PVC_ARMOUR_BUFF_FACTOR) or {}
+            combat_dict = (
+                _serialize_fight_results(
+                    fight_results, pvc_armour_buff=GameConstants.BOUNTY_PVC_ARMOUR_BUFF_FACTOR
+                ) or {}
+            )
             if won:
                 msg = f"Combat victory! +{bonus_credits:,}cr bonus (2x total)!"
             else:

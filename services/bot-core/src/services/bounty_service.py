@@ -1220,7 +1220,9 @@ class BountyService:
                         division=division,
                         criminal_name=bounty.criminal_name,
                         reward=winner_reward,
-                        combat_result=_serialize_fight_results(fight_results, pvc_armour_buff=GameConstants.BOUNTY_PVC_ARMOUR_BUFF_FACTOR) if fight_results else None,
+                        combat_result=_serialize_fight_results(
+                            fight_results, pvc_armour_buff=GameConstants.BOUNTY_PVC_ARMOUR_BUFF_FACTOR
+                        ) if fight_results else None,
                         bonus_won=bonus_won,
                         total_reward=total_reward,
                         criminal_ship=bounty.criminal_ship,
@@ -1251,7 +1253,9 @@ class BountyService:
                         division=division,
                         criminal_name=bounty.criminal_name,
                         reward=winner_reward,
-                        combat_result=_serialize_fight_results(fight_results, pvc_armour_buff=GameConstants.BOUNTY_PVC_ARMOUR_BUFF_FACTOR) if fight_results else None,
+                        combat_result=_serialize_fight_results(
+                            fight_results, pvc_armour_buff=GameConstants.BOUNTY_PVC_ARMOUR_BUFF_FACTOR
+                        ) if fight_results else None,
                     ),
                     (bounty, True),
                 )
@@ -1266,7 +1270,9 @@ class BountyService:
                     combat_won=False,
                     division=division,
                     criminal_name=bounty.criminal_name,
-                    combat_result=_serialize_fight_results(fight_results, pvc_armour_buff=GameConstants.BOUNTY_PVC_ARMOUR_BUFF_FACTOR) if fight_results else None,
+                    combat_result=_serialize_fight_results(
+                        fight_results, pvc_armour_buff=GameConstants.BOUNTY_PVC_ARMOUR_BUFF_FACTOR
+                    ) if fight_results else None,
                 ),
                 (bounty, False),
             )

@@ -272,7 +272,9 @@ class TestEquipOne:
         svc.inventory_repo.get_player_item = AsyncMock(return_value=inv)
         svc.player_ship_repo.get_player_ships = AsyncMock(return_value=[ship])
 
-        result = await svc.equip_one(mock_db, player_id=42, ship_id=1, item_name="Ridil Blaster", equipment_type="weapons")
+        result = await svc.equip_one(
+            mock_db, player_id=42, ship_id=1, item_name="Ridil Blaster", equipment_type="weapons"
+        )
         assert result["success"] is True
         svc.inventory_repo.remove_item.assert_called_once()
 

@@ -43,9 +43,15 @@ RUN echo 'tzdata tzdata/Areas select Etc' | debconf-set-selections && \
         libxkbcommon-x11-dev \
         libsm6 \
         libice6 \
+        # GL dispatch stubs
         libgl1 \
         libglx0 \
         libopengl0 \
+        # Mesa software GL/EGL implementation — required on slim images that lack
+        # the nvidia/cuda base libs. Provides the DRI backend that libGL dispatches to.
+        libgl1-mesa-dri \
+        libegl-mesa0 \
+        libegl1 \
         libxt6 \
         # 7zip for extraction of assets on container startup
         7zip \
@@ -65,10 +71,8 @@ RUN BLENDER_MAJOR_MINOR=$(echo "$BLENDER_VERSION" | cut -d. -f1,2) && \
     mkdir -p /opt/blender && \
     tar -xf "/tmp/${TARBALL}" --strip-components=1 -C /opt/blender && \
     ln -s /opt/blender/blender /usr/local/bin/blender && \
-    rm -f "/tmp/${TARBALL}"
-# Note: blender --version is intentionally omitted here — slim-trixie lacks the
-# GPU/display libs needed to run Blender at build time. The health endpoint
-# (GET /api/v1/health/) validates the binary at runtime.
+    rm -f "/tmp/${TARBALL}" && \
+    blender --version
 
 # Create a virtual environment
 RUN python -m venv /opt/venv

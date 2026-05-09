@@ -16,14 +16,15 @@ name: Test, Build & Publish
 #   ghcr.io/gof2bountybot/bountybot-reborn-samx/blender-service-gpu    (CUDA runtime, Python 3.13)
 #
 # Image tags applied:
-#   On push to main/master:
+#   On push to main/master or manual dispatch:
 #     - sha-<short-sha>   (immutable, per-commit)
-#     - latest            (floating, always newest main)
+#     - latest
 #   On git tag push (e.g. git tag v1.2.3 && git push origin v1.2.3):
-#     - 1.2.3             (exact version)
-#     - 1.2               (minor stream, moves on patch bumps)
-#     - 1                 (major stream, moves on minor/patch bumps)
-#     - latest            (also moves to newest tag)
+#     - sha-<short-sha>   (immutable)
+#     - 1.2.3             (exact semver)
+#     - latest
+#   On pull request:
+#     - sha-<short-sha>   (build smoke test only, not pushed)
 
 on:
   push:
@@ -362,9 +363,7 @@ jobs:
           tags: |
             type=sha,prefix=sha-,format=short
             type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
-            type=semver,pattern={{major}}
-            type=raw,value=latest,enable={{is_default_branch}}
+            type=raw,value=latest,enable=${{ github.event_name != 'pull_request' }}
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -410,9 +409,7 @@ jobs:
           tags: |
             type=sha,prefix=sha-,format=short
             type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
-            type=semver,pattern={{major}}
-            type=raw,value=latest,enable={{is_default_branch}}
+            type=raw,value=latest,enable=${{ github.event_name != 'pull_request' }}
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -458,9 +455,7 @@ jobs:
           tags: |
             type=sha,prefix=sha-,format=short
             type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
-            type=semver,pattern={{major}}
-            type=raw,value=latest,enable={{is_default_branch}}
+            type=raw,value=latest,enable=${{ github.event_name != 'pull_request' }}
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -509,9 +504,7 @@ jobs:
           tags: |
             type=sha,prefix=sha-,format=short
             type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
-            type=semver,pattern={{major}}
-            type=raw,value=latest,enable={{is_default_branch}}
+            type=raw,value=latest,enable=${{ github.event_name != 'pull_request' }}
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3

@@ -81,7 +81,7 @@ services:
   blender-service:
     build:
       context: ./
-      dockerfile: ./services/blender-service/Dockerfile
+      dockerfile: ./services/blender-service/Dockerfile.cpu
     container_name: bountybot-blender-service
     networks:
       - botnetv2

@@ -1,0 +1,600 @@
+name: Test, Build & Publish
+
+# Runs lint → tests → image builds in sequence.
+# Images are only built (and pushed to GHCR) when all tests pass.
+#
+# Triggers:
+#   - Push to main/master  → tests + build + push to GHCR
+#   - Push a git tag       → tests + build + push to GHCR  (semver tags)
+#   - Pull request         → tests + build only (no push)
+#   - Manual dispatch      → tests + build + push to GHCR
+#
+# Images published:
+#   ghcr.io/gof2bountybot/bountybot-reborn-samx/bot-core
+#   ghcr.io/gof2bountybot/bountybot-reborn-samx/discord-gateway
+#   ghcr.io/gof2bountybot/bountybot-reborn-samx/blender-service        (CPU, python:3.13-slim-trixie)
+#   ghcr.io/gof2bountybot/bountybot-reborn-samx/blender-service-gpu    (CUDA runtime, Python 3.13)
+#
+# Tags applied:
+#   On push to main/master:
+#     - sha-<short-sha>   (immutable, per-commit)
+#     - latest            (floating, always newest main)
+#   On git tag (e.g. v1.2.3):
+#     - 1.2.3             (exact version)
+#     - 1.2               (minor stream, moves on patch bumps)
+#     - 1                 (major stream, moves on minor/patch bumps)
+#     - latest            (also moves to newest tag)
+
+on:
+  push:
+    branches: [main, master]
+    tags: ["v*.*.*"]
+  pull_request:
+    branches: [main, master]
+  workflow_dispatch:
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  REGISTRY: ghcr.io
+  IMAGE_PREFIX: ghcr.io/gof2bountybot/bountybot-reborn-samx
+
+# ── Phase 0: Tag check ───────────────────────────────────────────────────────
+# Merges to master must be accompanied by a semver git tag (vX.Y.Z).
+# This job fails on pull_request if the HEAD commit of the PR branch has no tag,
+# blocking the merge via branch protection required status checks.
+# On push events (tag push or direct push) it is skipped — tags are applied
+# before/during the push so enforcement only matters at PR merge time.
+
+jobs:
+  require-tag:
+    name: Require semver tag
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check for semver tag on PR head
+        run: |
+          HEAD_SHA="${{ github.event.pull_request.head.sha }}"
+          TAGS=$(git tag --points-at "$HEAD_SHA" | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' || true)
+          if [ -z "$TAGS" ]; then
+            echo "ERROR: No semver tag (vX.Y.Z) found on commit ${HEAD_SHA}."
+            echo "Tag the commit before merging: git tag vX.Y.Z <sha> && git push origin vX.Y.Z"
+            exit 1
+          fi
+          echo "Found tag(s): $TAGS"
+
+# ── Phase 1: Lint ────────────────────────────────────────────────────────────
+
+  lint:
+    name: Ruff lint & format check
+    runs-on: ubuntu-latest
+    needs: [require-tag]
+    if: always() && (needs.require-tag.result == 'success' || needs.require-tag.result == 'skipped')
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.13
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install Ruff
+        run: pip install ruff
+
+      - name: Ruff check (lint)
+        run: ruff check services/bot-core/src services/bot-core/tests services/discord-gateway/src services/discord-gateway/tests services/blender-service/src services/blender-service/tests
+
+      - name: Ruff format check
+        run: ruff format --check services/bot-core/src services/bot-core/tests services/discord-gateway/src services/discord-gateway/tests services/blender-service/src services/blender-service/tests
+
+# ── Phase 2: Tests ───────────────────────────────────────────────────────────
+
+  test-bot-core:
+    name: bot-core tests
+    runs-on: ubuntu-latest
+    needs: lint
+
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_DB: bountydb
+          POSTGRES_USER: bounty
+          POSTGRES_PASSWORD: bounty
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Set up Python 3.13
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install dependencies
+        working-directory: services/bot-core
+        run: pip install -r requirements.txt
+
+      - name: Copy shared bblogger
+        run: cp services/shared/bblogger.py services/bot-core/src/shared/bblogger.py || true
+
+      - name: Run tests
+        id: pytest
+        working-directory: services/bot-core
+        env:
+          POSTGRES_HOST: localhost
+          POSTGRES_PORT: 5432
+          POSTGRES_DB: bountydb
+          POSTGRES_USER: bounty
+          POSTGRES_PASSWORD: bounty
+        run: |
+          python -m pytest tests/ \
+            --cov=src \
+            --cov-report=xml \
+            --cov-report=term-missing \
+            --cov-branch \
+            --timeout=60 \
+            --junitxml=junit.xml \
+            -q
+
+      - name: Publish test & coverage summary
+        if: always()
+        working-directory: services/bot-core
+        run: |
+          python - <<'EOF'
+          import xml.etree.ElementTree as ET, os, pathlib
+
+          junit = ET.parse("junit.xml").getroot()
+          suite = junit if junit.tag == "testsuite" else junit.find("testsuite")
+          total   = int(suite.get("tests",   0))
+          failed  = int(suite.get("failures",0)) + int(suite.get("errors", 0))
+          skipped = int(suite.get("skipped", 0))
+          passed  = total - failed - skipped
+          duration = float(suite.get("time", 0))
+
+          cov = ET.parse("coverage.xml").getroot()
+          line_rate   = float(cov.get("line-rate",   0)) * 100
+          branch_rate = float(cov.get("branch-rate", 0)) * 100
+
+          status = "passed" if failed == 0 else f"{failed} failed"
+
+          summary = f"""## bot-core test results
+
+          | Metric | Value |
+          |--------|-------|
+          | Result | {status} |
+          | Tests | {total} |
+          | Passed | {passed} |
+          | Failed | {failed} |
+          | Skipped | {skipped} |
+          | Duration | {duration:.1f}s |
+          | Line coverage | {line_rate:.1f}% |
+          | Branch coverage | {branch_rate:.1f}% |
+          """
+
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as f:
+              f.write(summary)
+          EOF
+
+      - name: Upload coverage report
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-bot-core
+          path: services/bot-core/coverage.xml
+          if-no-files-found: warn
+
+  test-discord-gateway:
+    name: discord-gateway tests
+    runs-on: ubuntu-latest
+    needs: lint
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Set up Python 3.13
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install dependencies
+        working-directory: services/discord-gateway
+        run: pip install -r requirements.txt
+
+      - name: Copy shared bblogger
+        run: cp services/shared/bblogger.py services/discord-gateway/src/shared/bblogger.py || true
+
+      - name: Run tests
+        id: pytest
+        working-directory: services/discord-gateway
+        run: |
+          python -m pytest tests/ \
+            --cov=src \
+            --cov-report=xml \
+            --cov-report=term-missing \
+            --cov-branch \
+            --timeout=60 \
+            --junitxml=junit.xml \
+            -q
+
+      - name: Publish test & coverage summary
+        if: always()
+        working-directory: services/discord-gateway
+        run: |
+          python - <<'EOF'
+          import xml.etree.ElementTree as ET, os
+
+          junit = ET.parse("junit.xml").getroot()
+          suite = junit if junit.tag == "testsuite" else junit.find("testsuite")
+          total   = int(suite.get("tests",   0))
+          failed  = int(suite.get("failures",0)) + int(suite.get("errors", 0))
+          skipped = int(suite.get("skipped", 0))
+          passed  = total - failed - skipped
+          duration = float(suite.get("time", 0))
+
+          cov = ET.parse("coverage.xml").getroot()
+          line_rate   = float(cov.get("line-rate",   0)) * 100
+          branch_rate = float(cov.get("branch-rate", 0)) * 100
+
+          status = "passed" if failed == 0 else f"{failed} failed"
+
+          summary = f"""## discord-gateway test results
+
+          | Metric | Value |
+          |--------|-------|
+          | Result | {status} |
+          | Tests | {total} |
+          | Passed | {passed} |
+          | Failed | {failed} |
+          | Skipped | {skipped} |
+          | Duration | {duration:.1f}s |
+          | Line coverage | {line_rate:.1f}% |
+          | Branch coverage | {branch_rate:.1f}% |
+          """
+
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as f:
+              f.write(summary)
+          EOF
+
+      - name: Upload coverage report
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-discord-gateway
+          path: services/discord-gateway/coverage.xml
+          if-no-files-found: warn
+
+  test-blender-service:
+    name: blender-service tests
+    runs-on: ubuntu-latest
+    needs: lint
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Set up Python 3.13
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install dependencies
+        working-directory: services/blender-service
+        run: pip install -r requirements.txt
+
+      - name: Copy shared bblogger
+        run: cp services/shared/bblogger.py services/blender-service/src/shared/bblogger.py || true
+
+      - name: Run tests
+        id: pytest
+        working-directory: services/blender-service
+        run: |
+          python -m pytest tests/ \
+            --cov=src \
+            --cov-report=xml \
+            --cov-report=term-missing \
+            --cov-branch \
+            --timeout=60 \
+            --junitxml=junit.xml \
+            -q
+
+      - name: Publish test & coverage summary
+        if: always()
+        working-directory: services/blender-service
+        run: |
+          python - <<'EOF'
+          import xml.etree.ElementTree as ET, os
+
+          junit = ET.parse("junit.xml").getroot()
+          suite = junit if junit.tag == "testsuite" else junit.find("testsuite")
+          total   = int(suite.get("tests",   0))
+          failed  = int(suite.get("failures",0)) + int(suite.get("errors", 0))
+          skipped = int(suite.get("skipped", 0))
+          passed  = total - failed - skipped
+          duration = float(suite.get("time", 0))
+
+          cov = ET.parse("coverage.xml").getroot()
+          line_rate   = float(cov.get("line-rate",   0)) * 100
+          branch_rate = float(cov.get("branch-rate", 0)) * 100
+
+          status = "passed" if failed == 0 else f"{failed} failed"
+
+          summary = f"""## blender-service test results
+
+          | Metric | Value |
+          |--------|-------|
+          | Result | {status} |
+          | Tests | {total} |
+          | Passed | {passed} |
+          | Failed | {failed} |
+          | Skipped | {skipped} |
+          | Duration | {duration:.1f}s |
+          | Line coverage | {line_rate:.1f}% |
+          | Branch coverage | {branch_rate:.1f}% |
+          """
+
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as f:
+              f.write(summary)
+          EOF
+
+      - name: Upload coverage report
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-blender-service
+          path: services/blender-service/coverage.xml
+          if-no-files-found: warn
+
+# ── Phase 3: Build & Publish ─────────────────────────────────────────────────
+# All four build jobs require every test job to pass before they run.
+# On pull_request events images are built but not pushed (smoke test only).
+
+  build-bot-core:
+    name: bot-core image
+    runs-on: ubuntu-latest
+    needs: [test-bot-core, test-discord-gateway, test-blender-service]
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout (with submodules)
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Log in to GHCR
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE_PREFIX }}/bot-core
+          tags: |
+            type=sha,prefix=sha-,format=short
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}}
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: services/bot-core/Dockerfile
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=bot-core
+          cache-to: type=gha,scope=bot-core,mode=max
+
+  build-discord-gateway:
+    name: discord-gateway image
+    runs-on: ubuntu-latest
+    needs: [test-bot-core, test-discord-gateway, test-blender-service]
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout (with submodules)
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Log in to GHCR
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE_PREFIX }}/discord-gateway
+          tags: |
+            type=sha,prefix=sha-,format=short
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}}
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: services/discord-gateway/Dockerfile
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=discord-gateway
+          cache-to: type=gha,scope=discord-gateway,mode=max
+
+  build-blender-cpu:
+    name: blender-service (CPU) image
+    runs-on: ubuntu-latest
+    needs: [test-bot-core, test-discord-gateway, test-blender-service]
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout (with submodules)
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Log in to GHCR
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE_PREFIX }}/blender-service
+          tags: |
+            type=sha,prefix=sha-,format=short
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}}
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: services/blender-service/Dockerfile.cpu
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=blender-cpu
+          cache-to: type=gha,scope=blender-cpu,mode=max
+
+  build-blender-gpu:
+    name: blender-service (GPU) image
+    runs-on: ubuntu-latest
+    needs: [test-bot-core, test-discord-gateway, test-blender-service]
+    permissions:
+      contents: read
+      packages: write
+    # NOTE: GPU builds run on standard ubuntu-latest — no GPU hardware is needed
+    # to BUILD the image, only to RUN it. The CUDA runtime libs are baked in from
+    # the nvidia/cuda base; actual GPU access requires nvidia-docker at runtime.
+
+    steps:
+      - name: Checkout (with submodules)
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Log in to GHCR
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE_PREFIX }}/blender-service-gpu
+          tags: |
+            type=sha,prefix=sha-,format=short
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}}
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: services/blender-service/Dockerfile.gpu
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=blender-gpu
+          cache-to: type=gha,scope=blender-gpu,mode=max
+
+# ── Summary ──────────────────────────────────────────────────────────────────
+
+  summary:
+    name: Pipeline summary
+    runs-on: ubuntu-latest
+    needs: [build-bot-core, build-discord-gateway, build-blender-cpu, build-blender-gpu]
+    if: always()
+
+    steps:
+      - name: Write job summary
+        run: |
+          SHA_SHORT="${GITHUB_SHA::7}"
+          PUSHED="${{ github.event_name != 'pull_request' }}"
+
+          if [ "$PUSHED" = "true" ]; then
+            STATUS_LINE="All tests passed. Images **pushed** to GHCR."
+          else
+            STATUS_LINE="PR build — tests ran, images built but **not pushed**."
+          fi
+
+          cat >> "${GITHUB_STEP_SUMMARY}" <<EOF
+          ## Pipeline results
+
+          ${STATUS_LINE}
+
+          | Image | Tag |
+          |-------|-----|
+          | \`bot-core\` | \`sha-${SHA_SHORT}\`, \`latest\` |
+          | \`discord-gateway\` | \`sha-${SHA_SHORT}\`, \`latest\` |
+          | \`blender-service\` (CPU) | \`sha-${SHA_SHORT}\`, \`latest\` |
+          | \`blender-service-gpu\` (GPU) | \`sha-${SHA_SHORT}\`, \`latest\` |
+
+          ### Pull from GHCR
+
+          \`\`\`bash
+          docker pull ghcr.io/gof2bountybot/bountybot-reborn-samx/bot-core:latest
+          docker pull ghcr.io/gof2bountybot/bountybot-reborn-samx/discord-gateway:latest
+          docker pull ghcr.io/gof2bountybot/bountybot-reborn-samx/blender-service:latest
+          docker pull ghcr.io/gof2bountybot/bountybot-reborn-samx/blender-service-gpu:latest
+          \`\`\`
+          EOF

@@ -1,114 +1,65 @@
-# Below should always be the latest LTS release
-ARG UBUNTU_RELEASE=24.04
-# Below should be a reasonably current Cuda version
-ARG CUDA_VERSION=13.0.0
-
-# Might be able to change this to something a bit smaller (like runtime instead of devel) 
-# from https://hub.docker.com/r/nvidia/cuda/tags
-FROM nvidia/cuda:${CUDA_VERSION}-cudnn-devel-ubuntu${UBUNTU_RELEASE} AS base
+FROM python:3.13-slim-trixie AS base
 
 ENV DEBIAN_FRONTEND=noninteractive
 ENV LANG=C.UTF-8
 ENV LC_ALL=C.UTF-8
 ENV PYTHONUNBUFFERED=1
-ENV CUDA_HOME=/usr/local/cuda-13
-ENV PATH=/opt/venv/bin:/usr/local/nvidia/bin:/usr/local/cuda/bin:${PATH}
 ENV PYTHONDONTWRITEBYTECODE=1
+ENV PATH=/opt/venv/bin:${PATH}
 ENV PYTHONPATH=/opt/venv/
 
-# Update cuda apt repo
-RUN apt-key del 7fa2af80 && \
-    sed -i '/developer\.download\.nvidia\.com\/compute\/cuda\/repos/d' /etc/apt/sources.list.d/* && \
-    sed -i '/developer\.download\.nvidia\.com\/compute\/machine-learning\/repos/d' /etc/apt/sources.list.d/* && \
+RUN echo 'tzdata tzdata/Areas select Etc' | debconf-set-selections && \
+    echo 'tzdata tzdata/Zones/Etc select UTC' | debconf-set-selections && \
     apt-get update && \
     apt-get install -y --no-install-recommends \
-        wget && \
-    wget https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/x86_64/cuda-keyring_1.1-1_all.deb && \
-    dpkg -i cuda-keyring_1.1-1_all.deb 
-
-# Install system dependencies and Python
-RUN echo 'tzdata tzdata/Areas select Etc' | debconf-set-selections; \
-    echo 'tzdata tzdata/Zones/Etc select UTC' | debconf-set-selections; \
-    apt-get update && \
-    apt-get --with-new-pkgs upgrade -y && \
-    apt-get install -y --no-install-recommends \
-        software-properties-common \
-        autoconf \
-        apt-utils \
-        pkg-config && \
-    # Add deadsnakes ppa for added python versions
-    add-apt-repository ppa:deadsnakes/ppa
-        
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends \
-        build-essential \
-        wget \
         curl \
+        wget \
         git \
-        python3-pip \
-        python3-dev \
-        python3-venv \
-        libpython3-dev \
         openssl \
-        # Extras for bountybot
+        # PostgreSQL client for migration tooling
         postgresql-client \
-        g++-14 \
-        gcc-14 \
-        # Temp install vim and sudo for debugging...
-        vim \
-        sudo \
-        # 7zip for extraction of assets on container startup...
-        7zip && \
-    apt-get autoremove -y && \
-    apt-get clean && \
-    rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
-
-
-
-RUN ln -s /usr/bin/python3 /usr/bin/python
+        # 7zip for extraction of assets on container startup
+        7zip \
+        # vim and sudo for debugging — comment out once stable
+        # vim \
+        # sudo \
+    && apt-get autoremove -y \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
 
 # Create a virtual environment
-RUN python3 -m venv /opt/venv
+RUN python -m venv /opt/venv
 
 WORKDIR /app
 
-# Activate the virtual environment and upgrade pip
-RUN chmod +x /opt/venv/bin/activate && \
-    /opt/venv/bin/pip install --upgrade --no-cache-dir \
-        pip \
-        setuptools \
-        wheel  \
-        ninja \
-        meson
+# Upgrade pip toolchain
+RUN /opt/venv/bin/pip install --upgrade --no-cache-dir \
+    pip \
+    setuptools \
+    wheel
 
-## Copy requirements files
-COPY services/bot-core/requirements.txt ./requirements.txt 
+# Copy and install requirements
+COPY services/bot-core/requirements.txt ./requirements.txt
 
-## Install dependencies
 RUN /opt/venv/bin/pip install --upgrade --no-cache-dir --prefer-binary \
     -r requirements.txt
-#    -r aepi.requirements.txt
 
 # Install gdown for pulling assets from Google Drive
 RUN /opt/venv/bin/pip install --upgrade --no-cache-dir --prefer-binary \
     gdown
-    
-# mainly for debugging - catalog all pip packages and versions
+
+# Catalog installed packages (useful for debugging)
 RUN /opt/venv/bin/pip freeze
 
-## Copy remaining app code...
+# Copy app code
 COPY services/bot-core/ .
 
 # Copy shared libs
 COPY ./services/shared /app/src/shared
 
-# create a non-root user and update permissions...
+# Create a non-root user
 RUN groupadd --gid 1002 botuser && \
     useradd --uid 1001 --gid botuser --shell /bin/bash --create-home botuser && \
-    # sudo stuff - nuke eventually once stable to prevent non-priv user from being able to elevate...
-    usermod -aG sudo botuser && \
-    echo "botuser:botuser" | chpasswd && \
-    echo "%sudo ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers && \
     chown -R botuser /home/botuser && \
     chown -R botuser /app && \
     chmod -R 1777 /home/botuser && \
@@ -119,10 +70,6 @@ USER botuser
 HEALTHCHECK --interval=30s --timeout=5s --start-period=45s --retries=3 \
   CMD curl -s -o /dev/null -f http://localhost:8000/api/v1/health/ || exit 1
 
-# The ' & tail -f /dev/null' in the entrypoint below is a hack to keep the container running if the app crashes.
-# This can be handy for being able to connect to the container CLI and check files/logs since it will still be running.
-# ENTRYPOINT ["/bin/bash", "-c", "source /opt/venv/bin/activate & tail -f /dev/null"]
-# ENTRYPOINT ["/bin/bash", "-c", "source /opt/venv/bin/activate && /opt/venv/bin/python /app/src/shared/logging.py & tail -f /dev/null"]
+# The '& tail -f /dev/null' keeps the container running if the app crashes,
+# allowing exec access for debugging.
 ENTRYPOINT ["/bin/bash", "-c", "source /opt/venv/bin/activate && cd /app/src && /opt/venv/bin/python -m persist.database.run_migration upgrade && /opt/venv/bin/python /app/src/main.py & tail -f /dev/null"]
-# ENTRYPOINT ["/bin/bash", "-c", "source /opt/venv/bin/activate && /app/bountybot/docker-entrypoint.sh & tail -f /dev/null"]
-# ENTRYPOINT ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]

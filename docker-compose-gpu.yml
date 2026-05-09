@@ -81,7 +81,7 @@ services:
   blender-service:
     build:
       context: ./
-      dockerfile: ./services/blender-service/Dockerfile
+      dockerfile: ./services/blender-service/Dockerfile.gpu
     container_name: bountybot-blender-service
     depends_on:
       db:

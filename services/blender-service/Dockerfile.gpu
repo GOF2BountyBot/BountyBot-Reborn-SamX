@@ -1,0 +1,142 @@
+# GPU / CUDA build — full NVIDIA CUDA runtime for GPU-accelerated Blender rendering.
+# Use this with docker-compose-gpu.yml (GPU stack).
+#
+# Base image is nvidia/cuda runtime (not devel) — includes CUDA runtime libs and cuDNN
+# but not the compiler toolchain, keeping the image significantly smaller than devel.
+#
+# To update Blender, change the version string below.
+#   Browse available releases: https://download.blender.org/release/
+#   Prefer LTS releases for stability: https://www.blender.org/download/lts/
+# NOTE: If you bump to a new minor or major version (e.g. 4.5 → 5.0), also update
+#   the URL folder name in the tarball install RUN step below (e.g. Blender4.5 → Blender5.0).
+ARG UBUNTU_RELEASE=24.04
+ARG CUDA_VERSION=13.0.0
+ARG BLENDER_VERSION=4.5.7
+
+FROM nvidia/cuda:${CUDA_VERSION}-cudnn-runtime-ubuntu${UBUNTU_RELEASE} AS base
+
+ARG BLENDER_VERSION=4.5.7
+
+ENV DEBIAN_FRONTEND=noninteractive
+ENV LANG=C.UTF-8
+ENV LC_ALL=C.UTF-8
+ENV PYTHONUNBUFFERED=1
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV CUDA_HOME=/usr/local/cuda-13
+ENV PATH=/opt/venv/bin:/usr/local/nvidia/bin:/usr/local/cuda/bin:${PATH}
+ENV PYTHONPATH=/opt/venv/
+
+# Update CUDA apt repo keys
+RUN apt-key del 7fa2af80 2>/dev/null || true && \
+    sed -i '/developer\.download\.nvidia\.com\/compute\/cuda\/repos/d' /etc/apt/sources.list.d/* 2>/dev/null || true && \
+    sed -i '/developer\.download\.nvidia\.com\/compute\/machine-learning\/repos/d' /etc/apt/sources.list.d/* 2>/dev/null || true && \
+    apt-get update && \
+    apt-get install -y --no-install-recommends wget && \
+    wget -q https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/x86_64/cuda-keyring_1.1-1_all.deb && \
+    dpkg -i cuda-keyring_1.1-1_all.deb && \
+    rm -f cuda-keyring_1.1-1_all.deb
+
+# Install system dependencies and Python 3.13 via deadsnakes PPA
+# (Ubuntu 24.04 ships Python 3.12; deadsnakes provides 3.13)
+RUN echo 'tzdata tzdata/Areas select Etc' | debconf-set-selections && \
+    echo 'tzdata tzdata/Zones/Etc select UTC' | debconf-set-selections && \
+    apt-get update && \
+    apt-get --with-new-pkgs upgrade -y && \
+    apt-get install -y --no-install-recommends \
+        software-properties-common \
+        apt-utils && \
+    add-apt-repository ppa:deadsnakes/ppa && \
+    apt-get update && \
+    apt-get install -y --no-install-recommends \
+        curl \
+        wget \
+        git \
+        openssl \
+        python3.13 \
+        python3.13-venv \
+        python3.13-dev \
+        python3-pip \
+        # Blender runtime dependencies (X11, Wayland, OpenGL)
+        libwayland-client0 \
+        libwayland-egl1 \
+        libx11-6 \
+        libxxf86vm1 \
+        libxcursor1 \
+        libxi6 \
+        libxrandr2 \
+        libxinerama1 \
+        libxkbcommon-dev \
+        libxkbcommon-x11-dev \
+        libsm6 \
+        libice6 \
+        libgl1 \
+        libglx0 \
+        libopengl0 \
+        libxt6t64 \
+        # 7zip for extraction of assets on container startup
+        7zip \
+        # vim and sudo for debugging — comment out once stable
+        # vim \
+        # sudo \
+    && apt-get autoremove -y \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
+
+RUN ln -sf /usr/bin/python3.13 /usr/bin/python3 && \
+    ln -sf /usr/bin/python3 /usr/bin/python
+
+# Install Blender from the official tarball.
+# We do NOT use apt (Ubuntu 24.04 ships only 4.0.2 which lacks sm_120/Blackwell support)
+# and NOT snap (requires systemd, unavailable in Docker).
+RUN BLENDER_MAJOR_MINOR=$(echo "$BLENDER_VERSION" | cut -d. -f1,2) && \
+    TARBALL="blender-${BLENDER_VERSION}-linux-x64.tar.xz" && \
+    wget -q "https://download.blender.org/release/Blender${BLENDER_MAJOR_MINOR}/${TARBALL}" -O "/tmp/${TARBALL}" && \
+    mkdir -p /opt/blender && \
+    tar -xf "/tmp/${TARBALL}" --strip-components=1 -C /opt/blender && \
+    ln -s /opt/blender/blender /usr/local/bin/blender && \
+    rm -f "/tmp/${TARBALL}" && \
+    blender --version
+
+# Create a virtual environment using Python 3.13
+RUN python3.13 -m venv /opt/venv
+
+WORKDIR /app
+
+# Upgrade pip toolchain
+RUN /opt/venv/bin/pip install --upgrade --no-cache-dir \
+    pip \
+    setuptools \
+    wheel
+
+# Copy and install requirements
+COPY services/blender-service/requirements.txt .
+COPY services/blender-service/src/lib/AEPi/requirements.txt ./aepi.requirements.txt
+
+RUN /opt/venv/bin/pip install --upgrade --no-cache-dir --prefer-binary \
+    -r requirements.txt \
+    -r aepi.requirements.txt
+
+# Install gdown for pulling assets from Google Drive
+RUN /opt/venv/bin/pip install --upgrade --no-cache-dir --prefer-binary \
+    gdown
+
+# Catalog installed packages (useful for debugging)
+RUN /opt/venv/bin/pip freeze
+
+# Copy app code
+COPY services/blender-service/ .
+
+# Copy shared libs
+COPY ./services/shared /app/src/shared
+
+# Create a non-root user
+RUN groupadd --gid 1002 botuser && \
+    useradd --uid 1001 --gid botuser --shell /bin/bash --create-home botuser && \
+    chown -R botuser /home/botuser && \
+    chown -R botuser /app && \
+    chmod -R 1777 /home/botuser && \
+    chmod -R 1777 /app
+
+USER botuser
+
+ENTRYPOINT ["/bin/bash", "-c", "source /opt/venv/bin/activate && /app/docker-entrypoint.sh & tail -f /dev/null"]

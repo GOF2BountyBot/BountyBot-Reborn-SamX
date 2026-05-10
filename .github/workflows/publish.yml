@@ -1,13 +1,21 @@
 name: Test, Build & Publish
 
-# Runs lint → tests → image builds in sequence.
-# Images are only built (and pushed to GHCR) when all tests pass.
+# Pipeline phases:
+#   1. Lint                                — ruff check + format
+#   2. Tests   (3 parallel)                — bot-core / discord-gateway / blender-service
+#   3. Build   (4 parallel, needs tests)   — push sha-<short> (+ semver) to GHCR
+#                                            On PR: build local only, no push
+#   4. Scan    (4 parallel, needs build)   — Trivy pulls pushed image, scans
+#                                            On pass : promote `latest` tag
+#                                            On fail : delete the sha-<short> tag from GHCR
+#                                            On PR   : scans the locally-built image (no promote/delete)
+#   5. Summary (needs all scans)           — final report
 #
 # Triggers:
-#   - Push to main/master  → tests + build + push to GHCR
-#   - Push a git tag       → tests + build + push to GHCR  (semver tags)
-#   - Pull request         → tests + build only (no push)
-#   - Manual dispatch      → tests + build + push to GHCR
+#   - Push to main/master  → tests + build + push sha → scan → promote latest
+#   - Push a git tag       → tests + build + push sha + semver → scan → promote latest
+#   - Pull request         → tests + build local + scan local (no push)
+#   - Manual dispatch      → tests + build + push sha → scan → promote latest
 #
 # Images published:
 #   ghcr.io/gof2bountybot/bountybot-reborn-samx/bot-core
@@ -15,16 +23,11 @@ name: Test, Build & Publish
 #   ghcr.io/gof2bountybot/bountybot-reborn-samx/blender-service        (CPU, python:3.13-slim-trixie)
 #   ghcr.io/gof2bountybot/bountybot-reborn-samx/blender-service-gpu    (CUDA runtime, Python 3.13)
 #
-# Image tags applied:
-#   On push to main/master or manual dispatch:
-#     - sha-<short-sha>   (immutable, per-commit)
-#     - latest
-#   On git tag push (e.g. git tag v1.2.3 && git push origin v1.2.3):
-#     - sha-<short-sha>   (immutable)
-#     - 1.2.3             (exact semver)
-#     - latest
-#   On pull request:
-#     - sha-<short-sha>   (build smoke test only, not pushed)
+# Image tag lifecycle:
+#   Build phase pushes:    sha-<short>   (+ {{version}} on git tag pushes)
+#   Scan phase, on PASS:   adds `latest` (via `docker buildx imagetools create`)
+#   Scan phase, on FAIL:   deletes the sha-<short> package version via `gh api`
+#                          → the vulnerable image cannot be pulled from GHCR
 
 on:
   push:
@@ -38,17 +41,20 @@ env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
   REGISTRY: ghcr.io
   IMAGE_PREFIX: ghcr.io/gof2bountybot/bountybot-reborn-samx
+  IMAGE_OWNER: gof2bountybot
+  IMAGE_REPO: bountybot-reborn-samx
 
   # ── Trivy image-scan tuning ────────────────────────────────────────────────
   # FAIL_SEVERITY: comma-separated severities that BLOCK the push.
-  #   strict       → "CRITICAL,HIGH"           (default — recommended)
+  #   strict        → "CRITICAL,HIGH"           (default — recommended)
   #   critical-only → "CRITICAL"
-  #   report-only  → ""    (set SCAN_MODE=report-only below; severities ignored)
+  #   report-only   → ""    (set SCAN_MODE=report-only below; severities ignored)
   TRIVY_FAIL_SEVERITY: "CRITICAL,HIGH"
 
   # SCAN_MODE: gate behaviour
-  #   enforce      → fail the job if vulns at FAIL_SEVERITY are found (default)
-  #   report-only  → upload SARIF + summary, never fail
+  #   enforce      → fail the job (and delete the pushed image) if vulns at
+  #                  FAIL_SEVERITY are found
+  #   report-only  → upload SARIF + summary, never fail, keep the image tagged
   TRIVY_SCAN_MODE: "enforce"
 
   # Trivy DB scan timeout (image scans of large CUDA bases can be slow)
@@ -344,19 +350,15 @@ jobs:
           path: services/blender-service/coverage.xml
           if-no-files-found: warn
 
-# ── Phase 3: Build, Scan & Publish ───────────────────────────────────────────
-# All four build jobs require every test job to pass before they run.
+# ── Phase 3: Build ───────────────────────────────────────────────────────────
+# Build jobs push only `sha-<short>` (and `{{version}}` on tag pushes) to GHCR.
+# The floating `latest` tag is added later, by the scan job, only if Trivy passes.
 #
-# Per-image pipeline:
-#   1. Build image with load:true (single-platform, into local Docker daemon)
-#   2. Trivy SARIF scan → upload to GitHub Security tab (always runs)
-#   3. Trivy enforcement scan → fails the job if TRIVY_SCAN_MODE=enforce and
-#      vulns at TRIVY_FAIL_SEVERITY are present
-#   4. Push to GHCR — only if scan passed AND event is not pull_request
+# On pull requests, the image is built locally (load:true) and NOT pushed; the
+# scan job picks up the local image instead of pulling from GHCR.
 #
-# Tunable knobs (set at workflow env block, top of file):
-#   TRIVY_FAIL_SEVERITY   — "CRITICAL,HIGH" (default), "CRITICAL", or ""
-#   TRIVY_SCAN_MODE       — "enforce" (default) or "report-only"
+# Each build job exposes `image_ref` (the sha-tagged ref) as an output so the
+# downstream scan job knows exactly which tag to pull.
 
   build-bot-core:
     name: bot-core image
@@ -365,7 +367,9 @@ jobs:
     permissions:
       contents: read
       packages: write
-      security-events: write   # Trivy SARIF upload
+    outputs:
+      image_ref: ${{ steps.refs.outputs.image_ref }}
+      sha_tag: ${{ steps.refs.outputs.sha_tag }}
 
     steps:
       - name: Checkout (with submodules)
@@ -386,88 +390,37 @@ jobs:
         uses: docker/metadata-action@v5
         with:
           images: ${{ env.IMAGE_PREFIX }}/bot-core
+          # NOTE: deliberately no `latest` here — that tag is applied by the scan job on pass
           tags: |
             type=sha,prefix=sha-,format=short
             type=semver,pattern={{version}}
-            type=raw,value=latest,enable=${{ github.event_name != 'pull_request' }}
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Build (load locally for scan)
+      - name: Build & push (sha-tagged only)
         id: build
         uses: docker/build-push-action@v6
         with:
           context: .
           file: services/bot-core/Dockerfile
-          load: true
-          push: false
+          # On PR: load locally for the scan job to pick up (no push to GHCR)
+          # Otherwise: push to GHCR with sha-<short> (+ semver if applicable)
+          load: ${{ github.event_name == 'pull_request' }}
+          push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha,scope=bot-core
           cache-to: type=gha,scope=bot-core,mode=max
 
-      - name: Pick scan target tag
-        id: scantag
-        run: echo "tag=$(echo '${{ steps.meta.outputs.tags }}' | head -n1)" >> "$GITHUB_OUTPUT"
-
-      - name: Trivy scan (SARIF → Security tab)
-        uses: aquasecurity/trivy-action@v0.36.0
-        with:
-          image-ref: ${{ steps.scantag.outputs.tag }}
-          format: sarif
-          output: trivy-bot-core.sarif
-          ignore-unfixed: true
-          vuln-type: os,library
-          timeout: ${{ env.TRIVY_TIMEOUT }}
-        env:
-          TRIVY_DISABLE_VEX_NOTICE: "true"
-
-      - name: Upload Trivy SARIF
-        if: always()
-        uses: github/codeql-action/upload-sarif@v3
-        with:
-          sarif_file: trivy-bot-core.sarif
-          category: trivy-bot-core
-
-      - name: Trivy scan (enforcement gate)
-        id: trivy-gate
-        uses: aquasecurity/trivy-action@v0.36.0
-        with:
-          image-ref: ${{ steps.scantag.outputs.tag }}
-          format: table
-          severity: ${{ env.TRIVY_FAIL_SEVERITY }}
-          exit-code: ${{ env.TRIVY_SCAN_MODE == 'enforce' && '1' || '0' }}
-          ignore-unfixed: true
-          vuln-type: os,library
-          timeout: ${{ env.TRIVY_TIMEOUT }}
-          output: trivy-bot-core.txt
-        env:
-          TRIVY_DISABLE_VEX_NOTICE: "true"
-
-      - name: Append scan results to job summary
-        if: always()
+      - name: Compute image refs for downstream scan
+        id: refs
         run: |
-          {
-            echo "## Trivy scan — bot-core"
-            echo ""
-            echo "Mode: \`${TRIVY_SCAN_MODE}\` · Fail severity: \`${TRIVY_FAIL_SEVERITY:-none}\` · Result: ${{ steps.trivy-gate.outcome }}"
-            echo ""
-            echo '```'
-            cat trivy-bot-core.txt 2>/dev/null || echo "(no findings file)"
-            echo '```'
-          } >> "$GITHUB_STEP_SUMMARY"
-
-      - name: Push to GHCR (post-scan)
-        if: github.event_name != 'pull_request' && success()
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: services/bot-core/Dockerfile
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha,scope=bot-core
+          # First tag from metadata-action is always the sha-<short> tag
+          IMAGE_REF=$(echo '${{ steps.meta.outputs.tags }}' | head -n1)
+          SHA_TAG="${IMAGE_REF##*:}"
+          echo "image_ref=${IMAGE_REF}" >> "$GITHUB_OUTPUT"
+          echo "sha_tag=${SHA_TAG}"     >> "$GITHUB_OUTPUT"
 
   build-discord-gateway:
     name: discord-gateway image
@@ -476,7 +429,9 @@ jobs:
     permissions:
       contents: read
       packages: write
-      security-events: write
+    outputs:
+      image_ref: ${{ steps.refs.outputs.image_ref }}
+      sha_tag: ${{ steps.refs.outputs.sha_tag }}
 
     steps:
       - name: Checkout (with submodules)
@@ -500,85 +455,30 @@ jobs:
           tags: |
             type=sha,prefix=sha-,format=short
             type=semver,pattern={{version}}
-            type=raw,value=latest,enable=${{ github.event_name != 'pull_request' }}
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Build (load locally for scan)
+      - name: Build & push (sha-tagged only)
         id: build
         uses: docker/build-push-action@v6
         with:
           context: .
           file: services/discord-gateway/Dockerfile
-          load: true
-          push: false
+          load: ${{ github.event_name == 'pull_request' }}
+          push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha,scope=discord-gateway
           cache-to: type=gha,scope=discord-gateway,mode=max
 
-      - name: Pick scan target tag
-        id: scantag
-        run: echo "tag=$(echo '${{ steps.meta.outputs.tags }}' | head -n1)" >> "$GITHUB_OUTPUT"
-
-      - name: Trivy scan (SARIF → Security tab)
-        uses: aquasecurity/trivy-action@v0.36.0
-        with:
-          image-ref: ${{ steps.scantag.outputs.tag }}
-          format: sarif
-          output: trivy-discord-gateway.sarif
-          ignore-unfixed: true
-          vuln-type: os,library
-          timeout: ${{ env.TRIVY_TIMEOUT }}
-        env:
-          TRIVY_DISABLE_VEX_NOTICE: "true"
-
-      - name: Upload Trivy SARIF
-        if: always()
-        uses: github/codeql-action/upload-sarif@v3
-        with:
-          sarif_file: trivy-discord-gateway.sarif
-          category: trivy-discord-gateway
-
-      - name: Trivy scan (enforcement gate)
-        id: trivy-gate
-        uses: aquasecurity/trivy-action@v0.36.0
-        with:
-          image-ref: ${{ steps.scantag.outputs.tag }}
-          format: table
-          severity: ${{ env.TRIVY_FAIL_SEVERITY }}
-          exit-code: ${{ env.TRIVY_SCAN_MODE == 'enforce' && '1' || '0' }}
-          ignore-unfixed: true
-          vuln-type: os,library
-          timeout: ${{ env.TRIVY_TIMEOUT }}
-          output: trivy-discord-gateway.txt
-        env:
-          TRIVY_DISABLE_VEX_NOTICE: "true"
-
-      - name: Append scan results to job summary
-        if: always()
+      - name: Compute image refs for downstream scan
+        id: refs
         run: |
-          {
-            echo "## Trivy scan — discord-gateway"
-            echo ""
-            echo "Mode: \`${TRIVY_SCAN_MODE}\` · Fail severity: \`${TRIVY_FAIL_SEVERITY:-none}\` · Result: ${{ steps.trivy-gate.outcome }}"
-            echo ""
-            echo '```'
-            cat trivy-discord-gateway.txt 2>/dev/null || echo "(no findings file)"
-            echo '```'
-          } >> "$GITHUB_STEP_SUMMARY"
-
-      - name: Push to GHCR (post-scan)
-        if: github.event_name != 'pull_request' && success()
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: services/discord-gateway/Dockerfile
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha,scope=discord-gateway
+          IMAGE_REF=$(echo '${{ steps.meta.outputs.tags }}' | head -n1)
+          SHA_TAG="${IMAGE_REF##*:}"
+          echo "image_ref=${IMAGE_REF}" >> "$GITHUB_OUTPUT"
+          echo "sha_tag=${SHA_TAG}"     >> "$GITHUB_OUTPUT"
 
   build-blender-cpu:
     name: blender-service (CPU) image
@@ -587,7 +487,9 @@ jobs:
     permissions:
       contents: read
       packages: write
-      security-events: write
+    outputs:
+      image_ref: ${{ steps.refs.outputs.image_ref }}
+      sha_tag: ${{ steps.refs.outputs.sha_tag }}
 
     steps:
       - name: Checkout (with submodules)
@@ -611,85 +513,30 @@ jobs:
           tags: |
             type=sha,prefix=sha-,format=short
             type=semver,pattern={{version}}
-            type=raw,value=latest,enable=${{ github.event_name != 'pull_request' }}
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Build (load locally for scan)
+      - name: Build & push (sha-tagged only)
         id: build
         uses: docker/build-push-action@v6
         with:
           context: .
           file: services/blender-service/Dockerfile.cpu
-          load: true
-          push: false
+          load: ${{ github.event_name == 'pull_request' }}
+          push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha,scope=blender-cpu
           cache-to: type=gha,scope=blender-cpu,mode=max
 
-      - name: Pick scan target tag
-        id: scantag
-        run: echo "tag=$(echo '${{ steps.meta.outputs.tags }}' | head -n1)" >> "$GITHUB_OUTPUT"
-
-      - name: Trivy scan (SARIF → Security tab)
-        uses: aquasecurity/trivy-action@v0.36.0
-        with:
-          image-ref: ${{ steps.scantag.outputs.tag }}
-          format: sarif
-          output: trivy-blender-cpu.sarif
-          ignore-unfixed: true
-          vuln-type: os,library
-          timeout: ${{ env.TRIVY_TIMEOUT }}
-        env:
-          TRIVY_DISABLE_VEX_NOTICE: "true"
-
-      - name: Upload Trivy SARIF
-        if: always()
-        uses: github/codeql-action/upload-sarif@v3
-        with:
-          sarif_file: trivy-blender-cpu.sarif
-          category: trivy-blender-cpu
-
-      - name: Trivy scan (enforcement gate)
-        id: trivy-gate
-        uses: aquasecurity/trivy-action@v0.36.0
-        with:
-          image-ref: ${{ steps.scantag.outputs.tag }}
-          format: table
-          severity: ${{ env.TRIVY_FAIL_SEVERITY }}
-          exit-code: ${{ env.TRIVY_SCAN_MODE == 'enforce' && '1' || '0' }}
-          ignore-unfixed: true
-          vuln-type: os,library
-          timeout: ${{ env.TRIVY_TIMEOUT }}
-          output: trivy-blender-cpu.txt
-        env:
-          TRIVY_DISABLE_VEX_NOTICE: "true"
-
-      - name: Append scan results to job summary
-        if: always()
+      - name: Compute image refs for downstream scan
+        id: refs
         run: |
-          {
-            echo "## Trivy scan — blender-service (CPU)"
-            echo ""
-            echo "Mode: \`${TRIVY_SCAN_MODE}\` · Fail severity: \`${TRIVY_FAIL_SEVERITY:-none}\` · Result: ${{ steps.trivy-gate.outcome }}"
-            echo ""
-            echo '```'
-            cat trivy-blender-cpu.txt 2>/dev/null || echo "(no findings file)"
-            echo '```'
-          } >> "$GITHUB_STEP_SUMMARY"
-
-      - name: Push to GHCR (post-scan)
-        if: github.event_name != 'pull_request' && success()
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: services/blender-service/Dockerfile.cpu
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha,scope=blender-cpu
+          IMAGE_REF=$(echo '${{ steps.meta.outputs.tags }}' | head -n1)
+          SHA_TAG="${IMAGE_REF##*:}"
+          echo "image_ref=${IMAGE_REF}" >> "$GITHUB_OUTPUT"
+          echo "sha_tag=${SHA_TAG}"     >> "$GITHUB_OUTPUT"
 
   build-blender-gpu:
     name: blender-service (GPU) image
@@ -698,7 +545,9 @@ jobs:
     permissions:
       contents: read
       packages: write
-      security-events: write
+    outputs:
+      image_ref: ${{ steps.refs.outputs.image_ref }}
+      sha_tag: ${{ steps.refs.outputs.sha_tag }}
     # NOTE: GPU builds run on standard ubuntu-latest — no GPU hardware is needed
     # to BUILD the image, only to RUN it. The CUDA runtime libs are baked in from
     # the nvidia/cuda base; actual GPU access requires nvidia-docker at runtime.
@@ -725,32 +574,400 @@ jobs:
           tags: |
             type=sha,prefix=sha-,format=short
             type=semver,pattern={{version}}
-            type=raw,value=latest,enable=${{ github.event_name != 'pull_request' }}
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Build (load locally for scan)
+      - name: Build & push (sha-tagged only)
         id: build
         uses: docker/build-push-action@v6
         with:
           context: .
           file: services/blender-service/Dockerfile.gpu
-          load: true
-          push: false
+          load: ${{ github.event_name == 'pull_request' }}
+          push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha,scope=blender-gpu
           cache-to: type=gha,scope=blender-gpu,mode=max
 
-      - name: Pick scan target tag
-        id: scantag
-        run: echo "tag=$(echo '${{ steps.meta.outputs.tags }}' | head -n1)" >> "$GITHUB_OUTPUT"
+      - name: Compute image refs for downstream scan
+        id: refs
+        run: |
+          IMAGE_REF=$(echo '${{ steps.meta.outputs.tags }}' | head -n1)
+          SHA_TAG="${IMAGE_REF##*:}"
+          echo "image_ref=${IMAGE_REF}" >> "$GITHUB_OUTPUT"
+          echo "sha_tag=${SHA_TAG}"     >> "$GITHUB_OUTPUT"
+
+# ── Phase 4: Scan ────────────────────────────────────────────────────────────
+# One scan job per image, each `needs:` its own build job. Pulls the pushed
+# `sha-<short>` ref from GHCR (or uses the locally-loaded image on PR), runs:
+#
+#   1. Trivy → SARIF → upload to GitHub Security tab (always runs, never fails)
+#   2. Trivy → table → enforcement gate; sets failure if vulns ≥ FAIL_SEVERITY
+#   3. On PASS  + non-PR: tag the image as `latest` via `docker buildx imagetools create`
+#   4. On FAIL  + non-PR: delete the sha-<short> package version from GHCR
+#                         (the vulnerable image becomes unpullable)
+#
+# The job's overall success/failure mirrors the enforcement gate, so the
+# Pipeline summary correctly reflects whether the image survived scanning.
+
+  scan-bot-core:
+    name: bot-core scan & promote
+    runs-on: ubuntu-latest
+    needs: build-bot-core
+    permissions:
+      contents: read
+      packages: write
+      security-events: write   # Trivy SARIF upload
+
+    env:
+      IMAGE_NAME: bot-core
+      IMAGE_REF:  ${{ needs.build-bot-core.outputs.image_ref }}
+      SHA_TAG:    ${{ needs.build-bot-core.outputs.sha_tag }}
+
+    steps:
+      - name: Log in to GHCR
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Trivy scan (SARIF → Security tab)
         uses: aquasecurity/trivy-action@v0.36.0
         with:
-          image-ref: ${{ steps.scantag.outputs.tag }}
+          image-ref: ${{ env.IMAGE_REF }}
+          format: sarif
+          output: trivy-${{ env.IMAGE_NAME }}.sarif
+          ignore-unfixed: true
+          vuln-type: os,library
+          timeout: ${{ env.TRIVY_TIMEOUT }}
+        env:
+          TRIVY_DISABLE_VEX_NOTICE: "true"
+
+      - name: Upload Trivy SARIF
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy-${{ env.IMAGE_NAME }}.sarif
+          category: trivy-${{ env.IMAGE_NAME }}
+
+      - name: Trivy scan (enforcement gate)
+        id: trivy-gate
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: ${{ env.IMAGE_REF }}
+          format: table
+          severity: ${{ env.TRIVY_FAIL_SEVERITY }}
+          exit-code: ${{ env.TRIVY_SCAN_MODE == 'enforce' && '1' || '0' }}
+          ignore-unfixed: true
+          vuln-type: os,library
+          timeout: ${{ env.TRIVY_TIMEOUT }}
+          output: trivy-${{ env.IMAGE_NAME }}.txt
+        env:
+          TRIVY_DISABLE_VEX_NOTICE: "true"
+
+      - name: Append scan results to job summary
+        if: always()
+        run: |
+          {
+            echo "## Trivy scan — ${IMAGE_NAME}"
+            echo ""
+            echo "Image: \`${IMAGE_REF}\`"
+            echo "Mode: \`${TRIVY_SCAN_MODE}\` · Fail severity: \`${TRIVY_FAIL_SEVERITY:-none}\` · Result: ${{ steps.trivy-gate.outcome }}"
+            echo ""
+            echo '```'
+            cat "trivy-${IMAGE_NAME}.txt" 2>/dev/null || echo "(no findings file)"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # ─── Pass path: promote `latest` ──────────────────────────────────────
+      - name: Promote `latest` tag (on scan pass)
+        if: success() && github.event_name != 'pull_request'
+        run: |
+          set -euo pipefail
+          SRC="${IMAGE_REF}"
+          DST="${IMAGE_PREFIX}/${IMAGE_NAME}:latest"
+          echo "Promoting ${SRC}  →  ${DST}"
+          docker buildx imagetools create --tag "${DST}" "${SRC}"
+
+      # ─── Fail path: nuke the vulnerable image ─────────────────────────────
+      # `gh api` deletes the package VERSION whose tag matches sha-<short>.
+      # The version_id has to be looked up first; container package names use
+      # `/` URL-encoded as `%2F`.
+      - name: Delete vulnerable image from GHCR (on scan fail)
+        if: failure() && steps.trivy-gate.conclusion == 'failure' && github.event_name != 'pull_request'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          PKG_NAME_ENC="${IMAGE_REPO}%2F${IMAGE_NAME}"
+          echo "Looking up version for tag ${SHA_TAG} in package ${PKG_NAME_ENC}"
+
+          VERSION_ID=$(
+            gh api -H "Accept: application/vnd.github+json" \
+              "/orgs/${IMAGE_OWNER}/packages/container/${PKG_NAME_ENC}/versions" \
+              --paginate \
+              --jq ".[] | select(.metadata.container.tags | index(\"${SHA_TAG}\")) | .id" \
+              | head -n1
+          )
+
+          if [ -z "${VERSION_ID}" ]; then
+            echo "::warning::Could not find package version for tag ${SHA_TAG} — skipping delete"
+            exit 0
+          fi
+
+          echo "Deleting package version ${VERSION_ID} (tag ${SHA_TAG})"
+          gh api -X DELETE \
+            -H "Accept: application/vnd.github+json" \
+            "/orgs/${IMAGE_OWNER}/packages/container/${PKG_NAME_ENC}/versions/${VERSION_ID}"
+          echo "::warning::Deleted vulnerable image ${IMAGE_REF} from GHCR (Trivy scan failed)"
+
+  scan-discord-gateway:
+    name: discord-gateway scan & promote
+    runs-on: ubuntu-latest
+    needs: build-discord-gateway
+    permissions:
+      contents: read
+      packages: write
+      security-events: write
+
+    env:
+      IMAGE_NAME: discord-gateway
+      IMAGE_REF:  ${{ needs.build-discord-gateway.outputs.image_ref }}
+      SHA_TAG:    ${{ needs.build-discord-gateway.outputs.sha_tag }}
+
+    steps:
+      - name: Log in to GHCR
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Trivy scan (SARIF → Security tab)
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: ${{ env.IMAGE_REF }}
+          format: sarif
+          output: trivy-${{ env.IMAGE_NAME }}.sarif
+          ignore-unfixed: true
+          vuln-type: os,library
+          timeout: ${{ env.TRIVY_TIMEOUT }}
+        env:
+          TRIVY_DISABLE_VEX_NOTICE: "true"
+
+      - name: Upload Trivy SARIF
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy-${{ env.IMAGE_NAME }}.sarif
+          category: trivy-${{ env.IMAGE_NAME }}
+
+      - name: Trivy scan (enforcement gate)
+        id: trivy-gate
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: ${{ env.IMAGE_REF }}
+          format: table
+          severity: ${{ env.TRIVY_FAIL_SEVERITY }}
+          exit-code: ${{ env.TRIVY_SCAN_MODE == 'enforce' && '1' || '0' }}
+          ignore-unfixed: true
+          vuln-type: os,library
+          timeout: ${{ env.TRIVY_TIMEOUT }}
+          output: trivy-${{ env.IMAGE_NAME }}.txt
+        env:
+          TRIVY_DISABLE_VEX_NOTICE: "true"
+
+      - name: Append scan results to job summary
+        if: always()
+        run: |
+          {
+            echo "## Trivy scan — ${IMAGE_NAME}"
+            echo ""
+            echo "Image: \`${IMAGE_REF}\`"
+            echo "Mode: \`${TRIVY_SCAN_MODE}\` · Fail severity: \`${TRIVY_FAIL_SEVERITY:-none}\` · Result: ${{ steps.trivy-gate.outcome }}"
+            echo ""
+            echo '```'
+            cat "trivy-${IMAGE_NAME}.txt" 2>/dev/null || echo "(no findings file)"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Promote `latest` tag (on scan pass)
+        if: success() && github.event_name != 'pull_request'
+        run: |
+          set -euo pipefail
+          SRC="${IMAGE_REF}"
+          DST="${IMAGE_PREFIX}/${IMAGE_NAME}:latest"
+          echo "Promoting ${SRC}  →  ${DST}"
+          docker buildx imagetools create --tag "${DST}" "${SRC}"
+
+      - name: Delete vulnerable image from GHCR (on scan fail)
+        if: failure() && steps.trivy-gate.conclusion == 'failure' && github.event_name != 'pull_request'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          PKG_NAME_ENC="${IMAGE_REPO}%2F${IMAGE_NAME}"
+          echo "Looking up version for tag ${SHA_TAG} in package ${PKG_NAME_ENC}"
+
+          VERSION_ID=$(
+            gh api -H "Accept: application/vnd.github+json" \
+              "/orgs/${IMAGE_OWNER}/packages/container/${PKG_NAME_ENC}/versions" \
+              --paginate \
+              --jq ".[] | select(.metadata.container.tags | index(\"${SHA_TAG}\")) | .id" \
+              | head -n1
+          )
+
+          if [ -z "${VERSION_ID}" ]; then
+            echo "::warning::Could not find package version for tag ${SHA_TAG} — skipping delete"
+            exit 0
+          fi
+
+          echo "Deleting package version ${VERSION_ID} (tag ${SHA_TAG})"
+          gh api -X DELETE \
+            -H "Accept: application/vnd.github+json" \
+            "/orgs/${IMAGE_OWNER}/packages/container/${PKG_NAME_ENC}/versions/${VERSION_ID}"
+          echo "::warning::Deleted vulnerable image ${IMAGE_REF} from GHCR (Trivy scan failed)"
+
+  scan-blender-cpu:
+    name: blender-service (CPU) scan & promote
+    runs-on: ubuntu-latest
+    needs: build-blender-cpu
+    permissions:
+      contents: read
+      packages: write
+      security-events: write
+
+    env:
+      IMAGE_NAME: blender-service
+      IMAGE_REF:  ${{ needs.build-blender-cpu.outputs.image_ref }}
+      SHA_TAG:    ${{ needs.build-blender-cpu.outputs.sha_tag }}
+
+    steps:
+      - name: Log in to GHCR
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Trivy scan (SARIF → Security tab)
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: ${{ env.IMAGE_REF }}
+          format: sarif
+          output: trivy-blender-cpu.sarif
+          ignore-unfixed: true
+          vuln-type: os,library
+          timeout: ${{ env.TRIVY_TIMEOUT }}
+        env:
+          TRIVY_DISABLE_VEX_NOTICE: "true"
+
+      - name: Upload Trivy SARIF
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy-blender-cpu.sarif
+          category: trivy-blender-cpu
+
+      - name: Trivy scan (enforcement gate)
+        id: trivy-gate
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: ${{ env.IMAGE_REF }}
+          format: table
+          severity: ${{ env.TRIVY_FAIL_SEVERITY }}
+          exit-code: ${{ env.TRIVY_SCAN_MODE == 'enforce' && '1' || '0' }}
+          ignore-unfixed: true
+          vuln-type: os,library
+          timeout: ${{ env.TRIVY_TIMEOUT }}
+          output: trivy-blender-cpu.txt
+        env:
+          TRIVY_DISABLE_VEX_NOTICE: "true"
+
+      - name: Append scan results to job summary
+        if: always()
+        run: |
+          {
+            echo "## Trivy scan — blender-service (CPU)"
+            echo ""
+            echo "Image: \`${IMAGE_REF}\`"
+            echo "Mode: \`${TRIVY_SCAN_MODE}\` · Fail severity: \`${TRIVY_FAIL_SEVERITY:-none}\` · Result: ${{ steps.trivy-gate.outcome }}"
+            echo ""
+            echo '```'
+            cat trivy-blender-cpu.txt 2>/dev/null || echo "(no findings file)"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Promote `latest` tag (on scan pass)
+        if: success() && github.event_name != 'pull_request'
+        run: |
+          set -euo pipefail
+          SRC="${IMAGE_REF}"
+          DST="${IMAGE_PREFIX}/${IMAGE_NAME}:latest"
+          echo "Promoting ${SRC}  →  ${DST}"
+          docker buildx imagetools create --tag "${DST}" "${SRC}"
+
+      - name: Delete vulnerable image from GHCR (on scan fail)
+        if: failure() && steps.trivy-gate.conclusion == 'failure' && github.event_name != 'pull_request'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          PKG_NAME_ENC="${IMAGE_REPO}%2F${IMAGE_NAME}"
+          echo "Looking up version for tag ${SHA_TAG} in package ${PKG_NAME_ENC}"
+
+          VERSION_ID=$(
+            gh api -H "Accept: application/vnd.github+json" \
+              "/orgs/${IMAGE_OWNER}/packages/container/${PKG_NAME_ENC}/versions" \
+              --paginate \
+              --jq ".[] | select(.metadata.container.tags | index(\"${SHA_TAG}\")) | .id" \
+              | head -n1
+          )
+
+          if [ -z "${VERSION_ID}" ]; then
+            echo "::warning::Could not find package version for tag ${SHA_TAG} — skipping delete"
+            exit 0
+          fi
+
+          echo "Deleting package version ${VERSION_ID} (tag ${SHA_TAG})"
+          gh api -X DELETE \
+            -H "Accept: application/vnd.github+json" \
+            "/orgs/${IMAGE_OWNER}/packages/container/${PKG_NAME_ENC}/versions/${VERSION_ID}"
+          echo "::warning::Deleted vulnerable image ${IMAGE_REF} from GHCR (Trivy scan failed)"
+
+  scan-blender-gpu:
+    name: blender-service (GPU) scan & promote
+    runs-on: ubuntu-latest
+    needs: build-blender-gpu
+    permissions:
+      contents: read
+      packages: write
+      security-events: write
+
+    env:
+      IMAGE_NAME: blender-service-gpu
+      IMAGE_REF:  ${{ needs.build-blender-gpu.outputs.image_ref }}
+      SHA_TAG:    ${{ needs.build-blender-gpu.outputs.sha_tag }}
+
+    steps:
+      - name: Log in to GHCR
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Trivy scan (SARIF → Security tab)
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: ${{ env.IMAGE_REF }}
           format: sarif
           output: trivy-blender-gpu.sarif
           ignore-unfixed: true
@@ -770,7 +987,7 @@ jobs:
         id: trivy-gate
         uses: aquasecurity/trivy-action@v0.36.0
         with:
-          image-ref: ${{ steps.scantag.outputs.tag }}
+          image-ref: ${{ env.IMAGE_REF }}
           format: table
           severity: ${{ env.TRIVY_FAIL_SEVERITY }}
           exit-code: ${{ env.TRIVY_SCAN_MODE == 'enforce' && '1' || '0' }}
@@ -787,6 +1004,7 @@ jobs:
           {
             echo "## Trivy scan — blender-service (GPU)"
             echo ""
+            echo "Image: \`${IMAGE_REF}\`"
             echo "Mode: \`${TRIVY_SCAN_MODE}\` · Fail severity: \`${TRIVY_FAIL_SEVERITY:-none}\` · Result: ${{ steps.trivy-gate.outcome }}"
             echo ""
             echo '```'
@@ -794,23 +1012,49 @@ jobs:
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Push to GHCR (post-scan)
-        if: github.event_name != 'pull_request' && success()
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: services/blender-service/Dockerfile.gpu
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha,scope=blender-gpu
+      - name: Promote `latest` tag (on scan pass)
+        if: success() && github.event_name != 'pull_request'
+        run: |
+          set -euo pipefail
+          SRC="${IMAGE_REF}"
+          DST="${IMAGE_PREFIX}/${IMAGE_NAME}:latest"
+          echo "Promoting ${SRC}  →  ${DST}"
+          docker buildx imagetools create --tag "${DST}" "${SRC}"
 
-# ── Summary ──────────────────────────────────────────────────────────────────
+      - name: Delete vulnerable image from GHCR (on scan fail)
+        if: failure() && steps.trivy-gate.conclusion == 'failure' && github.event_name != 'pull_request'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          PKG_NAME_ENC="${IMAGE_REPO}%2F${IMAGE_NAME}"
+          echo "Looking up version for tag ${SHA_TAG} in package ${PKG_NAME_ENC}"
+
+          VERSION_ID=$(
+            gh api -H "Accept: application/vnd.github+json" \
+              "/orgs/${IMAGE_OWNER}/packages/container/${PKG_NAME_ENC}/versions" \
+              --paginate \
+              --jq ".[] | select(.metadata.container.tags | index(\"${SHA_TAG}\")) | .id" \
+              | head -n1
+          )
+
+          if [ -z "${VERSION_ID}" ]; then
+            echo "::warning::Could not find package version for tag ${SHA_TAG} — skipping delete"
+            exit 0
+          fi
+
+          echo "Deleting package version ${VERSION_ID} (tag ${SHA_TAG})"
+          gh api -X DELETE \
+            -H "Accept: application/vnd.github+json" \
+            "/orgs/${IMAGE_OWNER}/packages/container/${PKG_NAME_ENC}/versions/${VERSION_ID}"
+          echo "::warning::Deleted vulnerable image ${IMAGE_REF} from GHCR (Trivy scan failed)"
+
+# ── Phase 5: Summary ─────────────────────────────────────────────────────────
 
   summary:
     name: Pipeline summary
     runs-on: ubuntu-latest
-    needs: [build-bot-core, build-discord-gateway, build-blender-cpu, build-blender-gpu]
+    needs: [scan-bot-core, scan-discord-gateway, scan-blender-cpu, scan-blender-gpu]
     if: always()
 
     steps:
@@ -820,9 +1064,9 @@ jobs:
           PUSHED="${{ github.event_name != 'pull_request' }}"
 
           if [ "$PUSHED" = "true" ]; then
-            STATUS_LINE="All tests passed. Images **pushed** to GHCR."
+            STATUS_LINE="All tests + scans passed. Images **pushed** to GHCR with \`latest\` promoted."
           else
-            STATUS_LINE="PR build — tests ran, images built but **not pushed**."
+            STATUS_LINE="PR build — tests + scans ran on locally-built images. Nothing pushed."
           fi
 
           cat >> "${GITHUB_STEP_SUMMARY}" <<EOF
@@ -845,4 +1089,7 @@ jobs:
           docker pull ghcr.io/gof2bountybot/bountybot-reborn-samx/blender-service:latest
           docker pull ghcr.io/gof2bountybot/bountybot-reborn-samx/blender-service-gpu:latest
           \`\`\`
+
+          > Failed scans: the corresponding \`sha-\` tag is **deleted from GHCR** automatically;
+          > \`latest\` is **not** moved.
           EOF

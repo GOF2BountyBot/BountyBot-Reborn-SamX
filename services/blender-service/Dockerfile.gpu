@@ -153,10 +153,20 @@ RUN python3.13 -m venv /opt/venv
 # under /usr/lib/python3/dist-packages/. We use /opt/venv/bin/pip for actual
 # installs, so the system pip is dead weight after the venv exists. PEP 706's
 # tarfile filters in Python 3.13 provide the actual CVE-2025-8869 mitigation.
-RUN SYS_SITE_PURELIB=$(python3.13 -c 'import sysconfig; print(sysconfig.get_paths()["purelib"])') && \
+#
+# IMPORTANT: We invoke the system Python by its absolute path (/usr/bin/python3.13)
+# rather than `python3.13`, because `ENV PATH=/opt/venv/bin:...` at the top of
+# this Dockerfile means the bare `python3.13` could resolve to /opt/venv (the
+# venv interpreter is hard-linked there as `python3.13`). Asking the venv for
+# its purelib would target /opt/venv, nuking the venv pip we depend on.
+RUN SYS_PY=/usr/bin/python3.13 && \
+    SYS_SITE_PURELIB=$("${SYS_PY}" -c 'import sysconfig; print(sysconfig.get_paths()["purelib"])') && \
     DEB_SITE=/usr/lib/python3/dist-packages && \
-    echo "System site-packages: ${SYS_SITE_PURELIB}" && \
-    echo "Debian dist-packages: ${DEB_SITE}" && \
+    echo "System interpreter:    ${SYS_PY}" && \
+    echo "System site-packages:  ${SYS_SITE_PURELIB}" && \
+    echo "Debian dist-packages:  ${DEB_SITE}" && \
+    # Sanity guard — refuse to nuke the venv if path detection ever points there \
+    case "${SYS_SITE_PURELIB}" in /opt/venv/*) echo "ERROR: refusing to scrub venv site-packages"; exit 1 ;; esac && \
     rm -rf "${SYS_SITE_PURELIB}"/pip "${SYS_SITE_PURELIB}"/pip-*.dist-info && \
     rm -rf "${DEB_SITE}"/pip "${DEB_SITE}"/pip-*.dist-info && \
     # Hard-fail if any pip dist-info survived in either tree \
@@ -164,7 +174,7 @@ RUN SYS_SITE_PURELIB=$(python3.13 -c 'import sysconfig; print(sysconfig.get_path
        ls "${DEB_SITE}"/pip-*.dist-info >/dev/null 2>&1; then \
         echo "ERROR: system pip dist-info still present"; exit 1; \
     fi && \
-    # Verify venv pip still works (it has its own bundled pip, independent of system pip) \
+    # Verify venv pip is unaffected (different tree, must still import) \
     /opt/venv/bin/python -c 'import pip; print("venv pip OK:", pip.__version__)'
 
 WORKDIR /app

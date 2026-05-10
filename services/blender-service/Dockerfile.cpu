@@ -155,15 +155,25 @@ RUN python -m venv /opt/venv
 
 # ── System-Python pip hardening (CVE-2025-8869 alert #756) ──────────────────
 # The base image (python:3.13-slim-trixie) ships pip 26.0.1 in the SYSTEM
-# Python at /usr/lib/python3.13/site-packages/. We use /opt/venv/bin/pip for
-# all our actual installs, so the system pip is dead weight after the venv
+# Python at /usr/local/lib/python3.13/site-packages/. We use /opt/venv/bin/pip
+# for all our actual installs, so the system pip is dead weight after the venv
 # has been created above. CVE-2025-8869's runtime mitigation comes from
 # Python 3.12+'s PEP 706 tarfile filters (already present in 3.13), not from
 # pip itself; deleting the dist-info clears Trivy without losing protection.
-RUN SYS_SITE_PURELIB=$(python -c 'import sysconfig; print(sysconfig.get_paths()["purelib"])') && \
+#
+# IMPORTANT: We invoke the system Python by its absolute path
+# (/usr/local/bin/python3) rather than `python`, because `ENV PATH=/opt/venv/bin:...`
+# at the top of this Dockerfile makes the bare `python` name resolve to the
+# venv's interpreter. Asking the venv for its purelib would target /opt/venv,
+# nuking the venv pip we depend on for the rest of the build.
+RUN SYS_PY=/usr/local/bin/python3 && \
+    SYS_SITE_PURELIB=$("${SYS_PY}" -c 'import sysconfig; print(sysconfig.get_paths()["purelib"])') && \
     DEB_SITE=/usr/lib/python3/dist-packages && \
-    echo "System site-packages: ${SYS_SITE_PURELIB}" && \
-    echo "Debian dist-packages (if present): ${DEB_SITE}" && \
+    echo "System interpreter:    ${SYS_PY}" && \
+    echo "System site-packages:  ${SYS_SITE_PURELIB}" && \
+    echo "Debian dist-packages:  ${DEB_SITE} (if present)" && \
+    # Sanity guard — refuse to nuke the venv if path detection ever points there \
+    case "${SYS_SITE_PURELIB}" in /opt/venv/*) echo "ERROR: refusing to scrub venv site-packages"; exit 1 ;; esac && \
     rm -rf "${SYS_SITE_PURELIB}"/pip "${SYS_SITE_PURELIB}"/pip-*.dist-info && \
     rm -rf "${DEB_SITE}"/pip "${DEB_SITE}"/pip-*.dist-info && \
     # Hard-fail if any pip dist-info survived in either tree \
@@ -171,7 +181,7 @@ RUN SYS_SITE_PURELIB=$(python -c 'import sysconfig; print(sysconfig.get_paths()[
        ls "${DEB_SITE}"/pip-*.dist-info >/dev/null 2>&1; then \
         echo "ERROR: system pip dist-info still present"; exit 1; \
     fi && \
-    # Verify venv pip still works (it has its own bundled pip, independent of system pip) \
+    # Verify venv pip is unaffected (different tree, must still import) \
     /opt/venv/bin/python -c 'import pip; print("venv pip OK:", pip.__version__)'
 
 WORKDIR /app

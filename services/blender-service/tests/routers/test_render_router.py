@@ -82,7 +82,7 @@ def mock_job_queue() -> MagicMock:
 
 
 def test_render_validation_res_too_high(client: TestClient) -> None:
-    """res_x above the 3840 limit should return HTTP 400."""
+    """res_x above the configured max should return HTTP 400."""
     with patch(
         "services.render_service.RenderService.render_ship",
         new_callable=AsyncMock,
@@ -92,17 +92,17 @@ def test_render_validation_res_too_high(client: TestClient) -> None:
             data={
                 "model_path": "/tmp/model.obj",
                 "res_x": 4001,
-                "res_y": 1080,
-                "num_samples": 64,
+                "res_y": 720,
+                "num_samples": 32,
             },
             files=[_make_texture_upload()],
         )
     assert response.status_code == 400
-    assert "above 2160p/4k" in response.json()["detail"]
+    assert "exceeds configured max_res_x" in response.json()["detail"]
 
 
 def test_render_validation_res_too_low(client: TestClient) -> None:
-    """res_x below 352 should return HTTP 400."""
+    """res_x below the configured min should return HTTP 400."""
     with patch(
         "services.render_service.RenderService.render_ship",
         new_callable=AsyncMock,
@@ -112,17 +112,17 @@ def test_render_validation_res_too_low(client: TestClient) -> None:
             data={
                 "model_path": "/tmp/model.obj",
                 "res_x": 100,
-                "res_y": 1080,
-                "num_samples": 64,
+                "res_y": 720,
+                "num_samples": 32,
             },
             files=[_make_texture_upload()],
         )
     assert response.status_code == 400
-    assert "below 240p" in response.json()["detail"]
+    assert "is below configured min_res_x" in response.json()["detail"]
 
 
 def test_render_validation_res_y_too_high(client: TestClient) -> None:
-    """res_y above 2160 should return HTTP 400."""
+    """res_y above the configured max should return HTTP 400."""
     with patch(
         "services.render_service.RenderService.render_ship",
         new_callable=AsyncMock,
@@ -131,18 +131,18 @@ def test_render_validation_res_y_too_high(client: TestClient) -> None:
             "/api/v1/render/",
             data={
                 "model_path": "/tmp/model.obj",
-                "res_x": 1920,
+                "res_x": 1280,
                 "res_y": 9999,
-                "num_samples": 64,
+                "num_samples": 32,
             },
             files=[_make_texture_upload()],
         )
     assert response.status_code == 400
-    assert "above 2160p/4k" in response.json()["detail"]
+    assert "exceeds configured max_res_y" in response.json()["detail"]
 
 
 def test_render_validation_res_y_too_low(client: TestClient) -> None:
-    """res_y below 240 should return HTTP 400."""
+    """res_y below the configured min should return HTTP 400."""
     with patch(
         "services.render_service.RenderService.render_ship",
         new_callable=AsyncMock,
@@ -151,14 +151,14 @@ def test_render_validation_res_y_too_low(client: TestClient) -> None:
             "/api/v1/render/",
             data={
                 "model_path": "/tmp/model.obj",
-                "res_x": 1920,
+                "res_x": 1280,
                 "res_y": 10,
-                "num_samples": 64,
+                "num_samples": 32,
             },
             files=[_make_texture_upload()],
         )
     assert response.status_code == 400
-    assert "below 240p" in response.json()["detail"]
+    assert "is below configured min_res_y" in response.json()["detail"]
 
 
 def test_render_validation_samples_too_low(client: TestClient) -> None:
@@ -171,18 +171,18 @@ def test_render_validation_samples_too_low(client: TestClient) -> None:
             "/api/v1/render/",
             data={
                 "model_path": "/tmp/model.obj",
-                "res_x": 1920,
-                "res_y": 1080,
+                "res_x": 1280,
+                "res_y": 720,
                 "num_samples": 0,
             },
             files=[_make_texture_upload()],
         )
     assert response.status_code == 400
-    assert "numSamples" in response.json()["detail"]
+    assert "num_samples" in response.json()["detail"]
 
 
 def test_render_validation_samples_too_high(client: TestClient) -> None:
-    """num_samples above 128 should return HTTP 400."""
+    """num_samples above the configured max should return HTTP 400."""
     with patch(
         "services.render_service.RenderService.render_ship",
         new_callable=AsyncMock,
@@ -191,14 +191,14 @@ def test_render_validation_samples_too_high(client: TestClient) -> None:
             "/api/v1/render/",
             data={
                 "model_path": "/tmp/model.obj",
-                "res_x": 1920,
-                "res_y": 1080,
+                "res_x": 1280,
+                "res_y": 720,
                 "num_samples": 200,
             },
             files=[_make_texture_upload()],
         )
     assert response.status_code == 400
-    assert "numSamples" in response.json()["detail"]
+    assert "num_samples" in response.json()["detail"]
 
 
 # ---------------------------------------------------------------------------
@@ -354,19 +354,19 @@ def test_render_unexpected_exception_returns_500(client: TestClient) -> None:
 
 
 def test_async_render_validation_res_too_high(client: TestClient) -> None:
-    """Async endpoint: res_x above limit should return HTTP 400."""
+    """Async endpoint: res_x above the configured max should return HTTP 400."""
     response = client.post(
         "/api/v1/render/async",
         data={
             "model_path": "/tmp/model.obj",
             "res_x": 9999,
-            "res_y": 1080,
-            "num_samples": 64,
+            "res_y": 720,
+            "num_samples": 32,
         },
         files=[_make_texture_upload()],
     )
     assert response.status_code == 400
-    assert "above 2160p/4k" in response.json()["detail"]
+    assert "exceeds configured max_res_x" in response.json()["detail"]
 
 
 def test_async_render_validation_samples_too_low(client: TestClient) -> None:
@@ -375,14 +375,14 @@ def test_async_render_validation_samples_too_low(client: TestClient) -> None:
         "/api/v1/render/async",
         data={
             "model_path": "/tmp/model.obj",
-            "res_x": 1920,
-            "res_y": 1080,
+            "res_x": 1280,
+            "res_y": 720,
             "num_samples": 0,
         },
         files=[_make_texture_upload()],
     )
     assert response.status_code == 400
-    assert "numSamples" in response.json()["detail"]
+    assert "num_samples" in response.json()["detail"]
 
 
 def test_async_render_missing_texture(client: TestClient) -> None:

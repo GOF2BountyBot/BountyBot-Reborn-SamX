@@ -175,16 +175,18 @@ app.state.job_queue.shutdown()
 
 ```
 RenderConfig (dataclass):   # All fields mutable
-  max_res_x: int            # default 3840
-  max_res_y: int            # default 2160
+  # Defaults are tuned for a small CPU-only VPS (4-core / 8GB RAM).
+  # Override via env vars (RENDER_MAX_RES_X, etc.) on beefier hosts.
+  max_res_x: int            # default 1920    (1080p ceiling)
+  max_res_y: int            # default 1080
   min_res_x: int            # default 352
   min_res_y: int            # default 240
-  max_samples: int          # default 128
+  max_samples: int          # default 64
   min_samples: int          # default 1
-  default_res_x: int        # default 1920
-  default_res_y: int        # default 1080
-  default_samples: int      # default 64
-  max_concurrent_renders: int   # default 2
+  default_res_x: int        # default 1280    (720p default)
+  default_res_y: int        # default 720
+  default_samples: int      # default 32
+  max_concurrent_renders: int   # default 1   (CPU rendering saturates a 4-core box)
   job_ttl_hours: int            # default 1
   to_dict() → dict
 

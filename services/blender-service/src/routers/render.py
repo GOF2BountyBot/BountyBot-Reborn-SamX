@@ -50,9 +50,9 @@ async def render_ship(
     request: Request,
     texture: UploadFile = File(..., description="Composited texture image (PNG/JPG)"),
     model_path: str = Form(..., description="Absolute path to the .obj file on disk"),
-    res_x: int = Form(default=1920, description="Render width in pixels (352-3840)"),
-    res_y: int = Form(default=1080, description="Render height in pixels (240-2160)"),
-    num_samples: int = Form(default=64, description="CYCLES samples per pixel (1-128)"),
+    res_x: int = Form(default=1280, description="Render width in pixels (352-1920)"),
+    res_y: int = Form(default=720, description="Render height in pixels (240-1080)"),
+    num_samples: int = Form(default=32, description="CYCLES samples per pixel (1-64)"),
 ) -> StreamingResponse:
     """Render a ship model with the supplied texture and return a PNG.
 
@@ -161,9 +161,9 @@ async def submit_render_job(
     request: Request,
     texture: UploadFile = File(..., description="Composited texture image (PNG/JPG)"),
     model_path: str = Form(..., description="Absolute path to the .obj file on disk"),
-    res_x: int = Form(default=1920, description="Render width in pixels (352-3840)"),
-    res_y: int = Form(default=1080, description="Render height in pixels (240-2160)"),
-    num_samples: int = Form(default=64, description="CYCLES samples per pixel (1-128)"),
+    res_x: int = Form(default=1280, description="Render width in pixels (352-1920)"),
+    res_y: int = Form(default=720, description="Render height in pixels (240-1080)"),
+    num_samples: int = Form(default=32, description="CYCLES samples per pixel (1-64)"),
 ) -> dict:
     """Submit an async render job. Returns job_id immediately."""
     flogger.info(

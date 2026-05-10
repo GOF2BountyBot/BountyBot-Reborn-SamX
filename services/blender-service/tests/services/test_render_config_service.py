@@ -29,18 +29,22 @@ def svc() -> RenderConfigService:
 
 
 def test_default_config_values(svc: RenderConfigService) -> None:
-    """Default config values should match the documented spec."""
+    """Default config values should match the documented spec.
+
+    Defaults are tuned for a small CPU-only VPS (4-core / 8GB):
+    720p default render, 1080p ceiling, 32/64 samples, 1 concurrent render.
+    """
     cfg = svc.config
-    assert cfg.max_res_x == 3840
-    assert cfg.max_res_y == 2160
+    assert cfg.max_res_x == 1920
+    assert cfg.max_res_y == 1080
     assert cfg.min_res_x == 352
     assert cfg.min_res_y == 240
-    assert cfg.max_samples == 128
+    assert cfg.max_samples == 64
     assert cfg.min_samples == 1
-    assert cfg.default_res_x == 3840
-    assert cfg.default_res_y == 2160
-    assert cfg.default_samples == 128
-    assert cfg.max_concurrent_renders == 2
+    assert cfg.default_res_x == 1280
+    assert cfg.default_res_y == 720
+    assert cfg.default_samples == 32
+    assert cfg.max_concurrent_renders == 1
     assert cfg.job_ttl_hours == 1
 
 
@@ -109,8 +113,8 @@ def test_reset_to_defaults(svc: RenderConfigService) -> None:
 
     svc.reset()
     # Back to compiled-in defaults (no env vars set).
-    assert svc.config.max_res_x == 3840
-    assert svc.config.default_samples == 128
+    assert svc.config.max_res_x == 1920
+    assert svc.config.default_samples == 32
 
 
 # ---------------------------------------------------------------------------
@@ -145,6 +149,6 @@ def test_to_dict_complete(svc: RenderConfigService) -> None:
 def test_render_config_dataclass_defaults() -> None:
     """RenderConfig instantiated without arguments should have hardcoded defaults."""
     cfg = RenderConfig()
-    assert cfg.max_res_x == 3840
+    assert cfg.max_res_x == 1920
     assert cfg.min_samples == 1
-    assert cfg.default_samples == 128
+    assert cfg.default_samples == 32

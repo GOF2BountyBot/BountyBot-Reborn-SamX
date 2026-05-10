@@ -382,13 +382,13 @@ Server-side:
 | `BLENDER_HOST` | `0.0.0.0` | Uvicorn bind host |
 | `BLENDER_PORT` / `PORT` | `8001` | Uvicorn bind port |
 | `ACCESS_LOG` | `true` | Set to `false` to disable uvicorn access logging |
-| `RENDER_MAX_RES_X` | `3840` | Maximum render width |
-| `RENDER_MAX_RES_Y` | `2160` | Maximum render height |
-| `RENDER_DEFAULT_RES_X` | `1920` | Default render width |
-| `RENDER_DEFAULT_RES_Y` | `1080` | Default render height |
-| `RENDER_DEFAULT_SAMPLES` | `64` | Default CYCLES samples |
-| `RENDER_MAX_SAMPLES` | `128` | Maximum CYCLES samples |
-| `RENDER_MAX_CONCURRENT` | `2` | Maximum simultaneous Blender renders |
+| `RENDER_MAX_RES_X` | `1920` | Maximum render width (defaults sized for a 4-core / 8GB CPU VPS) |
+| `RENDER_MAX_RES_Y` | `1080` | Maximum render height |
+| `RENDER_DEFAULT_RES_X` | `1280` | Default render width (720p) |
+| `RENDER_DEFAULT_RES_Y` | `720` | Default render height |
+| `RENDER_DEFAULT_SAMPLES` | `32` | Default CYCLES samples |
+| `RENDER_MAX_SAMPLES` | `64` | Maximum CYCLES samples |
+| `RENDER_MAX_CONCURRENT` | `1` | Maximum simultaneous Blender renders (raise on hosts with spare cores/RAM) |
 
 ---
 

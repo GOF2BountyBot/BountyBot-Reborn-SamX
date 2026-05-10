@@ -16,23 +16,26 @@ flogger = bblogger.get_logger("blender-render-config-service")
 class RenderConfig:
     """Current render configuration. All fields are mutable at runtime."""
 
-    # Resolution limits
-    max_res_x: int = 3840
-    max_res_y: int = 2160
+    # Resolution limits — tuned for a 4-core / 8GB CPU-only VPS doing CYCLES renders.
+    # Override via env vars (RENDER_MAX_RES_X, etc.) on beefier hosts.
+    max_res_x: int = 1920
+    max_res_y: int = 1080
     min_res_x: int = 352
     min_res_y: int = 240
 
     # Sample limits
-    max_samples: int = 128
+    max_samples: int = 64
     min_samples: int = 1
 
-    # Defaults (used when user doesn't specify)
-    default_res_x: int = 3840
-    default_res_y: int = 2160
-    default_samples: int = 128
+    # Defaults (used when user doesn't specify) — 720p / 32 samples is a reasonable
+    # cost/quality tradeoff for CPU CYCLES on a small VPS.
+    default_res_x: int = 1280
+    default_res_y: int = 720
+    default_samples: int = 32
 
-    # Job queue
-    max_concurrent_renders: int = 2
+    # Job queue — CPU rendering eats all 4 cores; running two concurrently
+    # halves throughput and risks OOM on 8GB RAM. Bump on hosts with more headroom.
+    max_concurrent_renders: int = 1
     job_ttl_hours: int = 1
 
     def to_dict(self) -> dict:
@@ -57,13 +60,13 @@ class RenderConfigService:
 
     def __init__(self) -> None:
         self._config = RenderConfig(
-            max_res_x=int(os.getenv("RENDER_MAX_RES_X", "3840")),
-            max_res_y=int(os.getenv("RENDER_MAX_RES_Y", "2160")),
-            default_res_x=int(os.getenv("RENDER_DEFAULT_RES_X", "3840")),
-            default_res_y=int(os.getenv("RENDER_DEFAULT_RES_Y", "2160")),
-            default_samples=int(os.getenv("RENDER_DEFAULT_SAMPLES", "128")),
-            max_samples=int(os.getenv("RENDER_MAX_SAMPLES", "128")),
-            max_concurrent_renders=int(os.getenv("RENDER_MAX_CONCURRENT", "2")),
+            max_res_x=int(os.getenv("RENDER_MAX_RES_X", "1920")),
+            max_res_y=int(os.getenv("RENDER_MAX_RES_Y", "1080")),
+            default_res_x=int(os.getenv("RENDER_DEFAULT_RES_X", "1280")),
+            default_res_y=int(os.getenv("RENDER_DEFAULT_RES_Y", "720")),
+            default_samples=int(os.getenv("RENDER_DEFAULT_SAMPLES", "32")),
+            max_samples=int(os.getenv("RENDER_MAX_SAMPLES", "64")),
+            max_concurrent_renders=int(os.getenv("RENDER_MAX_CONCURRENT", "1")),
         )
         flogger.info(f"RenderConfig initialized: {self._config.to_dict()}")
 

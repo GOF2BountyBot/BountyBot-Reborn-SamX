@@ -50,7 +50,7 @@ def svc() -> RenderService:
 
 def test_validate_params_valid(svc: RenderService) -> None:
     """Normal parameters within bounds should not raise."""
-    svc.validate_params(1920, 1080, 64)  # must not raise
+    svc.validate_params(1280, 720, 32)  # must not raise
 
 
 # ---------------------------------------------------------------------------
@@ -59,27 +59,27 @@ def test_validate_params_valid(svc: RenderService) -> None:
 
 
 def test_validate_params_res_x_too_high(svc: RenderService) -> None:
-    """res_x > 3840 should raise ValueError."""
-    with pytest.raises(ValueError, match="above 2160p/4k"):
-        svc.validate_params(4001, 1080, 64)
+    """res_x above the configured max_res_x should raise ValueError."""
+    with pytest.raises(ValueError, match=r"res_x=\d+ exceeds configured max_res_x="):
+        svc.validate_params(4001, 720, 32)
 
 
 def test_validate_params_res_x_too_low(svc: RenderService) -> None:
-    """res_x < 352 should raise ValueError."""
-    with pytest.raises(ValueError, match="below 240p"):
-        svc.validate_params(100, 1080, 64)
+    """res_x below min_res_x should raise ValueError."""
+    with pytest.raises(ValueError, match=r"res_x=\d+ is below configured min_res_x="):
+        svc.validate_params(100, 720, 32)
 
 
 def test_validate_params_res_y_too_high(svc: RenderService) -> None:
-    """res_y > 2160 should raise ValueError."""
-    with pytest.raises(ValueError, match="above 2160p/4k"):
-        svc.validate_params(1920, 2161, 64)
+    """res_y above max_res_y should raise ValueError."""
+    with pytest.raises(ValueError, match=r"res_y=\d+ exceeds configured max_res_y="):
+        svc.validate_params(1280, 2161, 32)
 
 
 def test_validate_params_res_y_too_low(svc: RenderService) -> None:
-    """res_y < 240 should raise ValueError."""
-    with pytest.raises(ValueError, match="below 240p"):
-        svc.validate_params(1920, 100, 64)
+    """res_y below min_res_y should raise ValueError."""
+    with pytest.raises(ValueError, match=r"res_y=\d+ is below configured min_res_y="):
+        svc.validate_params(1280, 100, 32)
 
 
 # ---------------------------------------------------------------------------
@@ -88,15 +88,15 @@ def test_validate_params_res_y_too_low(svc: RenderService) -> None:
 
 
 def test_validate_params_samples_too_high(svc: RenderService) -> None:
-    """num_samples > 128 should raise ValueError."""
-    with pytest.raises(ValueError, match="maximum numSamples is 128"):
-        svc.validate_params(1920, 1080, 129)
+    """num_samples above max_samples should raise ValueError."""
+    with pytest.raises(ValueError, match=r"num_samples=\d+ exceeds configured max_samples="):
+        svc.validate_params(1280, 720, 999)
 
 
 def test_validate_params_samples_too_low(svc: RenderService) -> None:
-    """num_samples < 1 should raise ValueError."""
-    with pytest.raises(ValueError, match="numSamples must be at least 1"):
-        svc.validate_params(1920, 1080, 0)
+    """num_samples below min_samples should raise ValueError."""
+    with pytest.raises(ValueError, match=r"num_samples=\d+ is below configured min_samples="):
+        svc.validate_params(1280, 720, 0)
 
 
 # ---------------------------------------------------------------------------

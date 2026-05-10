@@ -125,5 +125,5 @@ def test_reset_config(client: TestClient) -> None:
     response = client.post("/api/v1/config/render/reset")
     assert response.status_code == 200
     body = response.json()
-    # Default max_res_x is 3840.
-    assert body["max_res_x"] == 3840
+    # Default max_res_x is 1920 (1080p ceiling, tuned for small CPU VPS).
+    assert body["max_res_x"] == 1920

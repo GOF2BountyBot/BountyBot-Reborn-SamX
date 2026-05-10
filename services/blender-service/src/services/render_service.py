@@ -91,17 +91,17 @@ class RenderService:
         """
         cfg = self._config
         if res_x > cfg.max_res_x:
-            raise ValueError(f"Attempted to render an image above 2160p/4k (width={res_x})")
+            raise ValueError(f"res_x={res_x} exceeds configured max_res_x={cfg.max_res_x}")
         if res_x < cfg.min_res_x:
-            raise ValueError(f"Attempted to render an image below 240p (width={res_x})")
+            raise ValueError(f"res_x={res_x} is below configured min_res_x={cfg.min_res_x}")
         if res_y > cfg.max_res_y:
-            raise ValueError(f"Attempted to render an image above 2160p/4k (height={res_y})")
+            raise ValueError(f"res_y={res_y} exceeds configured max_res_y={cfg.max_res_y}")
         if res_y < cfg.min_res_y:
-            raise ValueError(f"Attempted to render an image below 240p (height={res_y})")
+            raise ValueError(f"res_y={res_y} is below configured min_res_y={cfg.min_res_y}")
         if num_samples < cfg.min_samples:
-            raise ValueError("numSamples must be at least 1")
+            raise ValueError(f"num_samples={num_samples} is below configured min_samples={cfg.min_samples}")
         if num_samples > cfg.max_samples:
-            raise ValueError("maximum numSamples is 128")
+            raise ValueError(f"num_samples={num_samples} exceeds configured max_samples={cfg.max_samples}")
 
     @staticmethod
     def trim(image: Image.Image) -> Image.Image:

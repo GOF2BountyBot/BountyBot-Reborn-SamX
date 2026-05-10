@@ -107,10 +107,23 @@ RUN BLENDER_PY_DIR="/opt/blender/$(echo "$BLENDER_VERSION" | cut -d. -f1,2)/pyth
     BLENDER_PY="${BLENDER_PY_DIR}/bin/python3.11" && \
     SITE_PKGS="$(${BLENDER_PY} -c 'import sysconfig; print(sysconfig.get_paths()["purelib"])')" && \
     echo "Blender site-packages: ${SITE_PKGS}" && \
+    # 1. setuptools — remove dist-info (Trivy's detection target). Modules left intact. \
     rm -rf "${SITE_PKGS}"/setuptools-*.dist-info && \
-    "${BLENDER_PY}" -m pip install --no-cache-dir --upgrade --target="${SITE_PKGS}" \
+    # 2. urllib3 — must DELETE the bundled 2.4.0 first, including its dist-info, \
+    #    because `pip install --target=<existing-dir>` does NOT replace existing \
+    #    packages cleanly: the old urllib3-2.4.0.dist-info/METADATA file is left \
+    #    behind even after a successful "upgrade", and Trivy keeps reporting it. \
+    rm -rf "${SITE_PKGS}"/urllib3 "${SITE_PKGS}"/urllib3-*.dist-info && \
+    "${BLENDER_PY}" -m pip install --no-cache-dir --target="${SITE_PKGS}" \
         'urllib3>=2.6.3' && \
-    "${BLENDER_PY}" -c 'import urllib3; print("urllib3 upgraded to:", urllib3.__version__)'
+    NEW_VER=$("${BLENDER_PY}" -c 'import urllib3; print(urllib3.__version__)') && \
+    echo "urllib3 reinstalled at version: ${NEW_VER}" && \
+    DIST_INFO=$(ls -d "${SITE_PKGS}"/urllib3-*.dist-info) && \
+    echo "urllib3 dist-info on disk: ${DIST_INFO}" && \
+    case "${NEW_VER}" in 2.[6-9].*|2.[1-9][0-9].*|[3-9].*) ;; *) echo "urllib3 upgrade failed: ${NEW_VER}"; exit 1 ;; esac && \
+    if ls "${SITE_PKGS}"/urllib3-2.4.* >/dev/null 2>&1; then \
+        echo "ERROR: stale urllib3 2.4.x dist-info still present"; exit 1; \
+    fi
 
 # Create a virtual environment using Python 3.13
 RUN python3.13 -m venv /opt/venv

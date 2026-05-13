@@ -137,6 +137,7 @@ class GameConstants:
     SHOP_REFRESH_INTERVAL: int = 21600  # 6 hours
     CHECK_COOLDOWN: int = 180  # 3 minutes
     DUEL_REQUEST_EXPIRY: int = 86400  # 1 day
+    TIER_CHANGE_COOLDOWN: int = 86400  # 24 hours — gates /promote and /demote
 
     # ------------------------------------------------------------------
     # Shop Stock Generation
@@ -327,6 +328,7 @@ class GameConstants:
         cls.SHOP_REFRESH_INTERVAL = _track_int("SHOP_REFRESH_INTERVAL", 21600)
         cls.CHECK_COOLDOWN = _track_int("CHECK_COOLDOWN", 180)
         cls.DUEL_REQUEST_EXPIRY = _track_int("DUEL_REQUEST_EXPIRY", 86400)
+        cls.TIER_CHANGE_COOLDOWN = _track_int("TIER_CHANGE_COOLDOWN", 86400)
 
         # Shop stock generation
         cls.SHOP_DEFAULT_SHIPS_NUM = _track_int("SHOP_DEFAULT_SHIPS_NUM", 5)

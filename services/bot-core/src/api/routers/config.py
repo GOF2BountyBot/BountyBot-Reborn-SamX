@@ -55,6 +55,7 @@ _OVERRIDE_FIELDS: tuple[str, ...] = (
     "bounty_spawn_jitter",
     "check_cooldown",
     "duel_request_expiry",
+    "tier_change_cooldown",
     "guild_activity_decay_rate",
     "min_guild_activity",
     "activity_temp_per_player",

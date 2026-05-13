@@ -106,6 +106,7 @@ class GuildConfig(Base):
     bounty_spawn_jitter: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
     check_cooldown: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
     duel_request_expiry: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
+    tier_change_cooldown: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
 
     # Activity / Temperature
     guild_activity_decay_rate: Mapped[float | None] = mapped_column(Float, nullable=True, default=None)

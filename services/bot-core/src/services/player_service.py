@@ -5,6 +5,7 @@ Handles business logic for player management including creation,
 progression, and guild-isolated operations.
 """
 
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from persist.models.player import Player
@@ -16,6 +17,7 @@ from shared import bblogger
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from services.exceptions import GuildNotConfiguredError
+from services.game_constants import GameConstants, resolve_constant
 
 flogger = bblogger.get_logger("player-service")
 
@@ -27,6 +29,21 @@ _TIER_NAMES = {1: "Bronze", 2: "Silver", 3: "Gold", 4: "Platinum"}
 # explicit "Prestige" key (B.48: backward-compat for guilds configured before
 # the prestige threshold was made user-configurable).
 _DEFAULT_PRESTIGE_XP_THRESHOLD = 50000
+
+
+class TierChangeCooldownError(ValueError):
+    """Raised when a player attempts /promote, /demote, or /prestige while their
+    tier-change cooldown is still active.
+
+    Subclasses ``ValueError`` for backward-compatibility with existing router
+    error handling (which converts ValueError to HTTP 400), but carries a
+    ``cooldown_end`` attribute (timezone-aware datetime) so dedicated handlers
+    can convert to HTTP 429 with a structured response.
+    """
+
+    def __init__(self, message: str, cooldown_end: datetime):
+        super().__init__(message)
+        self.cooldown_end = cooldown_end
 
 
 class PlayerService:
@@ -299,12 +316,64 @@ class PlayerService:
             flogger.error(f"Error getting promotion status for player {player_id}: {e}")
             raise
 
+    def _check_tier_change_cooldown(self, player: Player) -> None:
+        """Raise TierChangeCooldownError if the player's tier-change cooldown is active."""
+        end = player.tier_change_cooldown_end
+        if end is None:
+            return
+        now = datetime.now(UTC)
+        if end <= now:
+            return
+        remaining = int((end - now).total_seconds())
+        raise TierChangeCooldownError(
+            f"Tier change is on cooldown for {remaining}s (ends {end.isoformat()})",
+            cooldown_end=end,
+        )
+
+    def _apply_tier_change_cooldown(self, player: Player, config) -> None:
+        """Set player.tier_change_cooldown_end = now + tier_change_cooldown seconds.
+
+        Reads the cooldown duration via resolve_constant (per-guild override falls
+        back to GameConstants.TIER_CHANGE_COOLDOWN). Caller is responsible for the
+        commit; this method only mutates the player instance.
+        """
+        cooldown_seconds = resolve_constant(config, "tier_change_cooldown", GameConstants.TIER_CHANGE_COOLDOWN)
+        player.tier_change_cooldown_end = datetime.now(UTC) + timedelta(seconds=cooldown_seconds)
+
+    async def _scrub_orphaned_checks_after_tier_change(
+        self,
+        db: AsyncSession,
+        player_id: int,
+        guild_id: int,
+        new_tier: str,
+    ) -> int:
+        """Delegate to BountyService.scrub_player_checks_outside_tier.
+
+        Imported locally to avoid a circular import between bounty_service and
+        player_service (BountyService imports nothing from PlayerService, but
+        a top-level import here would still introduce a load-order edge case
+        through their shared repositories).
+        """
+        from services.bounty_service import BountyService
+
+        bounty_service = BountyService()
+        return await bounty_service.scrub_player_checks_outside_tier(
+            db, player_id=player_id, guild_id=guild_id, new_tier=new_tier
+        )
+
     async def promote_player(self, db: AsyncSession, player_id: int) -> dict:
-        """Promote a player to the next tier if eligible."""
+        """Promote a player to the next tier if eligible.
+
+        Enforces the per-guild tier-change cooldown (24h default) and forfeits
+        the player's check entries on bounties they can no longer reach via the
+        FORFEITED_CHECK sentinel (see BountyService.scrub_player_checks_outside_tier).
+        """
         try:
             player = await self.player_repo.get_by_id(db, player_id)
             if not player:
                 raise ValueError(f"Player {player_id} not found")
+
+            self._check_tier_change_cooldown(player)
 
             current_level = _TIER_ORDER.get(player.tier, 1)
             if current_level >= 4:  # Platinum
@@ -327,10 +396,17 @@ class PlayerService:
 
             old_tier = player.tier
             player.tier = next_tier
+            self._apply_tier_change_cooldown(player, config)
+            scrubbed = await self._scrub_orphaned_checks_after_tier_change(
+                db, player_id=player_id, guild_id=player.guild_id, new_tier=next_tier
+            )
             await db.commit()
             await db.refresh(player)
 
-            flogger.info(f"Player {player_id} promoted from {old_tier} to {next_tier}")
+            flogger.info(
+                f"Player {player_id} promoted from {old_tier} to {next_tier} "
+                f"(scrubbed {scrubbed} cross-tier bounties)"
+            )
 
             # Check if eligible for further promotion
             further_level = next_level + 1
@@ -348,6 +424,59 @@ class PlayerService:
 
         except Exception as e:
             flogger.error(f"Error promoting player {player_id}: {e}")
+            raise
+
+    async def demote_player(self, db: AsyncSession, player_id: int) -> dict:
+        """Demote a player to the previous tier.
+
+        Mirrors ``promote_player`` for direction: enforces the tier-change cooldown,
+        sets a fresh cooldown on success, and forfeits the player's checks on any
+        bounty outside the new (lower) tier via the FORFEITED_CHECK sentinel.
+
+        Demotion is unconditional on XP — a player can choose to drop a tier even
+        when they meet the next-tier threshold (this is a deliberate gameplay
+        choice, not an automatic effect of losing XP). Already at Bronze raises
+        ValueError.
+        """
+        try:
+            player = await self.player_repo.get_by_id(db, player_id)
+            if not player:
+                raise ValueError(f"Player {player_id} not found")
+
+            self._check_tier_change_cooldown(player)
+
+            current_level = _TIER_ORDER.get(player.tier, 1)
+            if current_level <= 1:  # Bronze
+                raise ValueError("Already at minimum tier (Bronze)")
+
+            prev_level = current_level - 1
+            prev_tier = _TIER_NAMES[prev_level]
+
+            config = await self.config_repo.get_by_guild_id(db, player.guild_id)
+
+            old_tier = player.tier
+            player.tier = prev_tier
+            self._apply_tier_change_cooldown(player, config)
+            scrubbed = await self._scrub_orphaned_checks_after_tier_change(
+                db, player_id=player_id, guild_id=player.guild_id, new_tier=prev_tier
+            )
+            await db.commit()
+            await db.refresh(player)
+
+            flogger.info(
+                f"Player {player_id} demoted from {old_tier} to {prev_tier} "
+                f"(scrubbed {scrubbed} cross-tier bounties)"
+            )
+
+            return {
+                "player_id": player.id,
+                "old_tier": old_tier,
+                "new_tier": prev_tier,
+                "xp": player.xp,
+            }
+
+        except Exception as e:
+            flogger.error(f"Error demoting player {player_id}: {e}")
             raise
 
     def _get_prestige_threshold(self, thresholds: dict[str, int] | None) -> int:
@@ -419,6 +548,9 @@ class PlayerService:
                     f"currently have {player.xp:,}"
                 )
 
+            # Enforce tier-change cooldown (prestige is a tier transition).
+            self._check_tier_change_cooldown(player)
+
             # Record state before prestige
             tier_before = player.tier
             xp_before = player.xp
@@ -430,6 +562,12 @@ class PlayerService:
             player.credits = 0
             player.tier = "Bronze"
             player.prestige_count += 1
+            self._apply_tier_change_cooldown(player, config)
+
+            # Forfeit checks on bounties outside the new (Bronze) tier.
+            await self._scrub_orphaned_checks_after_tier_change(
+                db, player_id=player_id, guild_id=player.guild_id, new_tier="Bronze"
+            )
 
             # B.49: full reset to starter Betty state — delete every existing
             # ship and the entire inventory, then recreate via the canonical

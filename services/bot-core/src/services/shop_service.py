@@ -261,6 +261,11 @@ class ShopService:  # pylint: disable=too-many-instance-attributes
             if shop_item.item_type != "ship":
                 raise ValueError(f"Shop item {shop_item_id} is not a ship (type={shop_item.item_type})")
 
+            # Validate tier access (mirrors purchase_item — closes a privilege-escalation
+            # gap where ships from any tier shop could be purchased without restriction).
+            if not self._can_access_tier(player.tier, shop_item.tier):
+                raise ValueError(f"Player tier {player.tier} cannot access {shop_item.tier} shop")
+
             # Get static ship data for the new ship (slot limits)
             new_ship_static = await self.ship_repo.get_by_name(db, shop_item.item_name)
             if not new_ship_static:
@@ -744,11 +749,18 @@ class ShopService:  # pylint: disable=too-many-instance-attributes
             raise
 
     def _can_access_tier(self, player_tier: str, shop_tier: str) -> bool:
-        """Check if a player tier can access a shop tier."""
+        """Check if a player tier can access a shop tier.
+
+        Strict same-tier policy: a player may only transact at the shop
+        matching their current tier. Promotion / demotion is the only path
+        between tiers (no buy-down to lower tiers, no preview of higher
+        tiers). Sells are already routed to ``player.tier`` server-side
+        (see A.42c), so this guard primarily gates the buy paths.
+        """
         tier_levels = {"Bronze": 1, "Silver": 2, "Gold": 3, "Platinum": 4}
         player_level = tier_levels.get(player_tier, 1)
         shop_level = tier_levels.get(shop_tier, 1)
-        return player_level >= shop_level
+        return player_level == shop_level
 
     def _select_item_tech_level(self, shop_tech_level: int, probabilities: dict[str, float]) -> int:
         """Select item tech level based on shop tech level and probability distribution."""

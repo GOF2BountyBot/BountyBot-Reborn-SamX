@@ -28,6 +28,7 @@ from api.schemas.players_schema import (
     UpdateCreditsRequest,
     UpdateXPRequest,
 )
+from services.combat_preflight_service import CombatPreflightService, PreflightVerdict
 from services.player_service import TierChangeCooldownError
 
 flogger = bblogger.get_logger("players-api-router")
@@ -350,6 +351,48 @@ async def get_promotion_status(player_id: int, player_service: PlayerService = D
         flogger.error(f"Error getting promotion status for player {player_id}: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to get promotion status"
+        ) from e
+
+
+@router.get("/{player_id}/combat-preflight")
+async def combat_preflight(player_id: int, target_tier: str, num_sims: int = 20):
+    """Estimate the player's win rate against criminals at ``target_tier``.
+
+    Advisory only — used by /promote to surface a power-check verdict to the
+    user. Returns ``{verdict, player_win_rate, criminal_win_rate, sims_run,
+    target_tier, sample_size}``. ``verdict`` is one of: ``green``, ``yellow``,
+    ``red``, ``no_data`` (no active bounties to sample at the target tier).
+    """
+    flogger.debug(f"Combat preflight for player {player_id} target_tier={target_tier} sims={num_sims}")
+    try:
+        async with get_db_session() as db:
+            # Resolve player → guild
+            from services.player_service import PlayerService as _PS
+
+            player = await _PS().player_repo.get_by_id(db, player_id)
+            if not player:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Player {player_id} not found")
+            result = await CombatPreflightService().estimate(
+                db,
+                player_id=player_id,
+                guild_id=player.guild_id,
+                target_tier=target_tier,
+                num_sims=num_sims,
+            )
+            return {
+                "verdict": result.verdict.value,
+                "player_win_rate": result.player_win_rate,
+                "criminal_win_rate": result.criminal_win_rate,
+                "sims_run": result.sims_run,
+                "target_tier": result.target_tier,
+                "sample_size": result.sample_size,
+            }
+    except HTTPException:
+        raise
+    except Exception as e:
+        flogger.error(f"Error in combat_preflight for player {player_id}: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to estimate combat preflight"
         ) from e
 
 

@@ -99,6 +99,17 @@ def is_super_admin():
     return app_commands.check(predicate)
 
 
+# B.91: semantic grouping of blender-service render config settings, mirrored
+# from RenderConfig.PARAM_GROUPS so /render_config view can present the flat
+# settings dict grouped by category instead of as an unordered field dump.
+_RENDER_PARAM_GROUPS: dict[str, tuple[str, ...]] = {
+    "resolution_limits": ("min_res_x", "max_res_x", "min_res_y", "max_res_y"),
+    "sample_limits": ("min_samples", "max_samples"),
+    "defaults": ("default_res_x", "default_res_y", "default_samples"),
+    "concurrency": ("max_concurrent_renders", "job_ttl_hours"),
+}
+
+
 class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
     def __init__(self, bot: commands.Bot):
         self.bot = bot
@@ -1097,9 +1108,32 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
                 resp = await self.http_client.get(f"{blender_base}/config/render")
                 resp.raise_for_status()
                 config = resp.json()
-                embed = discord.Embed(title="🎨 Render Configuration", color=discord.Color.blue())
-                for key, val in config.items():
-                    embed.add_field(name=key, value=str(val), inline=True)
+                # B.91: present the flat settings dict grouped by semantic category.
+                embed = discord.Embed(
+                    title="🎨 Render Configuration",
+                    description="Settings grouped by category — change one with `/render_config set`.",
+                    color=discord.Color.blue(),
+                )
+                shown: set[str] = set()
+                for group_name, fields in _RENDER_PARAM_GROUPS.items():
+                    lines = [f"`{f}` = `{config[f]}`" for f in fields if f in config]
+                    if not lines:
+                        continue
+                    shown.update(f for f in fields if f in config)
+                    embed.add_field(name=group_name.replace("_", " ").title(), value="\n".join(lines), inline=False)
+                # Forward-compat: surface any settings the gateway has no group for.
+                ungrouped = [f"`{k}` = `{v}`" for k, v in config.items() if k not in shown]
+                if ungrouped:
+                    embed.add_field(name="Other", value="\n".join(ungrouped), inline=False)
+                embed.add_field(
+                    name="⚙️ Invariants",
+                    value=(
+                        "• `min_* ≤ default_* ≤ max_*` for resolution and samples\n"
+                        "• all resolution / sample bounds must be positive\n"
+                        "Updates that would break these are rejected."
+                    ),
+                    inline=False,
+                )
                 await interaction.followup.send(embed=embed, ephemeral=True)
 
             elif action == "set":

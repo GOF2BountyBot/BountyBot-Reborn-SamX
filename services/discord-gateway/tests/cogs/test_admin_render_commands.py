@@ -185,6 +185,66 @@ async def test_render_config_view(admin_cog) -> None:
 
 
 # -------------------------------------------------------------------------
+# /render_config view — B.91: settings grouped by semantic category
+# -------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_render_config_view_groups_settings(admin_cog) -> None:
+    """B.91: render_config view presents the flat config grouped by category + invariants."""
+    config_data = {
+        "max_res_x": 1920,
+        "max_res_y": 1080,
+        "min_res_x": 352,
+        "min_res_y": 240,
+        "max_samples": 64,
+        "min_samples": 1,
+        "default_res_x": 1280,
+        "default_res_y": 720,
+        "default_samples": 32,
+        "max_concurrent_renders": 1,
+        "job_ttl_hours": 1,
+    }
+    admin_cog.http_client.get = AsyncMock(return_value=_make_mock_http_response(config_data))
+
+    interaction = _make_mock_interaction(is_admin_user=True)
+    await admin_cog.render_config.callback(admin_cog, interaction, action="view")
+
+    _, kwargs = interaction.followup.send.call_args
+    embed = kwargs["embed"]
+    field_names = [f.name for f in embed.fields]
+    assert "Resolution Limits" in field_names
+    assert "Sample Limits" in field_names
+    assert "Defaults" in field_names
+    assert "Concurrency" in field_names
+    assert "⚙️ Invariants" in field_names
+    # Every setting must appear somewhere in the grouped field values.
+    all_values = "\n".join(f.value for f in embed.fields)
+    for key in config_data:
+        assert key in all_values, f"{key} missing from grouped view"
+
+
+@pytest.mark.asyncio
+async def test_render_config_view_handles_partial_config(admin_cog) -> None:
+    """B.91: a partial config response only renders the groups it has data for (no crash)."""
+    admin_cog.http_client.get = AsyncMock(
+        return_value=_make_mock_http_response({"max_res_x": 1920, "default_samples": 32})
+    )
+
+    interaction = _make_mock_interaction(is_admin_user=True)
+    await admin_cog.render_config.callback(admin_cog, interaction, action="view")
+
+    _, kwargs = interaction.followup.send.call_args
+    embed = kwargs["embed"]
+    field_names = [f.name for f in embed.fields]
+    assert "Resolution Limits" in field_names
+    assert "Defaults" in field_names
+    # Groups with no present keys are omitted entirely.
+    assert "Sample Limits" not in field_names
+    assert "Concurrency" not in field_names
+
+
+# -------------------------------------------------------------------------
 # /render_config set — B.25 Fix B
 # -------------------------------------------------------------------------
 

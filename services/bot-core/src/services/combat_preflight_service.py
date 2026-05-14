@@ -27,7 +27,7 @@ from __future__ import annotations
 
 import random
 from dataclasses import dataclass
-from enum import Enum
+from enum import StrEnum
 
 from persist.repositories.bounty_repository import BountyRepository
 from shared import bblogger
@@ -39,7 +39,7 @@ from services.loadout_builder import LoadoutBuilder
 flogger = bblogger.get_logger("combat-preflight-service")
 
 
-class PreflightVerdict(str, Enum):
+class PreflightVerdict(StrEnum):
     GREEN = "green"
     YELLOW = "yellow"
     RED = "red"

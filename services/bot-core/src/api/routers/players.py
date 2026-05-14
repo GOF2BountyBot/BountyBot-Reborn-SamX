@@ -8,9 +8,10 @@ must be done via REST API.
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from persist.database.manager import get_db_session
+from services.combat_preflight_service import CombatPreflightService
 from services.exceptions import GuildNotConfiguredError
 from services.loadout_response_service import LoadoutResponseService
-from services.player_service import PlayerService
+from services.player_service import PlayerService, TierChangeCooldownError
 from shared import bblogger
 from sqlalchemy.exc import IntegrityError
 
@@ -28,8 +29,6 @@ from api.schemas.players_schema import (
     UpdateCreditsRequest,
     UpdateXPRequest,
 )
-from services.combat_preflight_service import CombatPreflightService, PreflightVerdict
-from services.player_service import TierChangeCooldownError
 
 flogger = bblogger.get_logger("players-api-router")
 

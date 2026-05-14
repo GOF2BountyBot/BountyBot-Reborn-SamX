@@ -757,7 +757,10 @@ class PlayerCog(commands.Cog):
 
             embed = discord.Embed(
                 title="⬇️ Tier Demoted",
-                description=f"You have stepped down from **{demote_data['old_tier']}** to **{demote_data['new_tier']}**.",
+                description=(
+                    f"You have stepped down from **{demote_data['old_tier']}** "
+                    f"to **{demote_data['new_tier']}**."
+                ),
                 color=self._get_tier_color(demote_data["new_tier"]),
             )
             embed.add_field(name="New Tier", value=f"**{demote_data['new_tier']}**", inline=True)

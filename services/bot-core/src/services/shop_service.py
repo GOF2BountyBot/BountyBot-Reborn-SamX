@@ -316,45 +316,11 @@ class ShopService:  # pylint: disable=too-many-instance-attributes
             db.add(new_player_ship)
             await db.flush()  # Get the new ship's ID
 
-            # b. Transfer equipped items from old ship to new ship via the
-            # LoadoutConsistencyService choke-point (B.19 fix).
-            # The service clears the old ship's slot lists as part of the
-            # transfer — fixes the cross-ship duplication bug observed in
-            # B.19 (recon root cause #2).  Overflow items go to inventory
-            # using concrete item types resolved via STI discriminator.
-            from services.loadout_consistency_service import LoadoutConsistencyService
-
-            # Share repo handles so service-level test mocks propagate.
-            consistency = LoadoutConsistencyService(
-                player_ship_repo=self.player_ship_repo,
-                inventory_repo=self.inventory_repo,
-                item_repo=self.item_repo,
-                ship_repo=self.ship_repo,
-            )
-
-            slot_limits = {
-                "weapons": new_ship_static.max_primaries,
-                "modules": new_ship_static.max_modules,
-                "turrets": new_ship_static.max_turrets,
-                "secondary_weapons": getattr(new_ship_static, "max_secondaries", 0) or 0,
-            }
-            transfer_result = await consistency.transfer_loadout_to_new_ship(
-                db,
-                player_id=player_id,
-                src_ship=old_player_ship,
-                dst_ship=new_player_ship,
-                slot_limits=slot_limits,
-            )
-            # Translate breakdown to legacy shape used by transaction_details below.
-            items_transferred: dict[str, list[str]] = {
-                kind: list(transfer_result["breakdown"][kind]["transferred"]) for kind in slot_limits
-            }
-            items_unequipped: dict[str, list[str]] = {
-                kind: list(transfer_result["breakdown"][kind]["overflowed"]) for kind in slot_limits
-            }
-
-            # c. Handle old ship trade-in
-            if sell_old_ship and old_player_ship:
+            # b. Handle old ship trade-in BEFORE activation so the old ship
+            # is removed from the DB before the activate_ship choke-point
+            # looks up the current active ship.
+            did_trade_in = sell_old_ship and old_player_ship is not None
+            if did_trade_in:
                 # Add old ship to shop stock (commit=False — caller's transaction controls commit)
                 await self._add_item_to_shop(
                     db,
@@ -369,29 +335,55 @@ class ShopService:  # pylint: disable=too-many-instance-attributes
                 # Delete old PlayerShip record
                 await db.delete(old_player_ship)
                 await db.flush()
+                old_player_ship = None  # Mark as gone; activate_ship will see no active ship
 
-            # d. Set new ship as active (deactivate all others first)
-            from sqlalchemy import update as sa_update
+            # c. Activate the new ship via the canonical choke-point (B.94/B.95 fix).
+            # This replaces the hand-rolled activation code that was missing
+            # player_repo.update_active_ship() — the root cause of B.94.
+            # The choke-point: reconciles slots → transfers loadout from current
+            # active ship (if any) → flips is_active → updates active_ship_id.
+            from services.loadout_consistency_service import LoadoutConsistencyService
 
-            await db.execute(sa_update(PlayerShip).where(PlayerShip.player_id == player_id).values(is_active=False))
-            new_player_ship.is_active = True
+            # Share repo handles so service-level test mocks propagate.
+            consistency = LoadoutConsistencyService(
+                player_ship_repo=self.player_ship_repo,
+                inventory_repo=self.inventory_repo,
+                item_repo=self.item_repo,
+                ship_repo=self.ship_repo,
+            )
+            activation_result = await consistency.activate_ship(
+                db,
+                player_id=player_id,
+                target_ship_id=new_player_ship.id,
+                player_repo=self.player_repo,
+            )
 
-            # e. Calculate and set final credit balance in a single update
-            if sell_old_ship and old_player_ship:
+            # Translate breakdown to legacy shape used by transaction_details below.
+            transfer_breakdown = activation_result.get("transfer_breakdown", {})
+            slot_kinds = ("weapons", "modules", "turrets", "secondary_weapons")
+            items_transferred: dict[str, list[str]] = {
+                kind: list(transfer_breakdown.get(kind, {}).get("transferred", [])) for kind in slot_kinds
+            }
+            items_unequipped: dict[str, list[str]] = {
+                kind: list(transfer_breakdown.get(kind, {}).get("overflowed", [])) for kind in slot_kinds
+            }
+
+            # d. Calculate and set final credit balance in a single update
+            if did_trade_in:
                 updated_credits = player.credits + old_ship_value - new_ship_price
             else:
                 updated_credits = player.credits - new_ship_price
             await self.player_repo.update_credits(db, player_id, updated_credits, commit=False)
 
-            # f. Remove new ship from shop stock (commit=False — caller's transaction controls commit)
+            # e. Remove new ship from shop stock (commit=False — caller's transaction controls commit)
             new_shop_quantity = shop_item.quantity - 1
             if new_shop_quantity <= 0:
                 await self.shop_repo.remove(db, shop_item, commit=False)
             else:
                 await self.shop_repo.update_quantity(db, shop_item_id, new_shop_quantity, commit=False)
 
-            total_overflow = sum(len(v) for v in items_unequipped.values()) if old_player_ship else 0
-            total_transferred = sum(len(v) for v in items_transferred.values()) if old_player_ship else 0
+            total_overflow = sum(len(v) for v in items_unequipped.values())
+            total_transferred = sum(len(v) for v in items_transferred.values())
 
             transaction_details = {
                 "player_id": player_id,
@@ -400,8 +392,8 @@ class ShopService:  # pylint: disable=too-many-instance-attributes
                 "quantity": 1,
                 "unit_price": new_ship_price,
                 "total_cost": new_ship_price,
-                "trade_in_value": old_ship_value if sell_old_ship and old_player_ship else 0,
-                "net_cost": new_ship_price - (old_ship_value if sell_old_ship and old_player_ship else 0),
+                "trade_in_value": old_ship_value if did_trade_in else 0,
+                "net_cost": new_ship_price - (old_ship_value if did_trade_in else 0),
                 "remaining_credits": updated_credits,
                 "items_transferred": total_transferred,
                 "items_unequipped_to_inventory": total_overflow,
@@ -410,7 +402,7 @@ class ShopService:  # pylint: disable=too-many-instance-attributes
 
             flogger.info(
                 f"Player {player_id} purchased ship '{shop_item.item_name}' for {new_ship_price} credits"
-                + (f" (trade-in: {old_ship_value})" if sell_old_ship and old_player_ship else "")
+                + (f" (trade-in: {old_ship_value})" if did_trade_in else "")
             )
             return transaction_details
 

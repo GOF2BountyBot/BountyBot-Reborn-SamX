@@ -241,28 +241,33 @@ async def get_active_ship(
 async def set_active_ship(
     ship_id: int,
     player_id: int,
-    player_ship_repo: PlayerShipRepository = Depends(get_player_ship_repository),
     player_repo: PlayerRepository = Depends(get_player_repository),
     consistency=Depends(get_loadout_consistency_service),
 ):
     """Set a ship as the active ship for a player.
 
-    Package G (B.19): the target ship's loadout is reconciled against its
-    static slot caps (invariant I4).  Overflow items are evacuated to
-    inventory atomically with the active-flag flip.  The response includes
-    ``evacuated_items`` for cogs that wish to render a "X items moved to
-    cargo" notice.
+    B.94/B.95: delegates entirely to the canonical ``activate_ship`` choke-point on
+    ``LoadoutConsistencyService``, which:
+    1. Reconciles the target ship's loadout against its static slot caps (I4).
+    2. Transfers the loadout from the currently-active ship to the target with
+       merge-with-overflow semantics (B.95 — gear follows the active ship).
+    3. Flips the ``is_active`` flag.
+    4. Updates ``Player.active_ship_id`` (fixes the B.94 stale-reference bug).
+
+    The response includes ``evacuated_items`` for cogs that wish to render a
+    "X items moved to cargo" notice.
     """
     flogger.info(f"Setting ship {ship_id} as active for player {player_id}")
 
     try:
         async with get_db_session() as db, db.begin():
-            # 1. Reconcile target ship's slots against static max_* caps.
-            reconcile = await consistency.reconcile_active_ship_slots(db, player_id=player_id, target_ship_id=ship_id)
-
-            # 2. Flip active flag; update player.active_ship_id (single transaction).
-            ship = await player_ship_repo.set_active_ship(db, player_id, ship_id, commit=False)
-            await player_repo.update_active_ship(db, player_id, ship_id, commit=False)
+            result = await consistency.activate_ship(
+                db,
+                player_id=player_id,
+                target_ship_id=ship_id,
+                player_repo=player_repo,
+            )
+            ship = result["ship"]
 
             return ShipResponse(
                 id=ship.id,
@@ -274,8 +279,8 @@ async def set_active_ship(
                 modules=ship.modules,
                 turrets=ship.turrets,
                 created_at=ship.created_at.isoformat(),
-                evacuated_items=reconcile["evacuated_items"],
-                any_evacuated=reconcile["any_evacuated"],
+                evacuated_items=result["evacuated_items"],
+                any_evacuated=result["any_evacuated"],
             )
 
     except ValueError as e:

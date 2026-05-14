@@ -56,7 +56,12 @@ async def render_ship(
 ) -> StreamingResponse:
     """Render a ship model with the supplied texture and return a PNG.
 
-    Validation errors (out-of-range resolution / samples) return HTTP 400.
+    B.93: out-of-range ``res_x`` / ``res_y`` / ``num_samples`` are **clamped**
+    to the nearest valid config bound rather than rejected. When at least one
+    parameter was adjusted the response includes an ``X-Render-Clamped`` header
+    with the format ``field:requested->actual`` (comma-separated for multiple
+    clamps). Fully in-bounds requests have no such header.
+
     Missing required fields return HTTP 422 (FastAPI default).
     Blender failures return HTTP 500.
     """

@@ -1137,6 +1137,12 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
                 await interaction.followup.send(embed=embed, ephemeral=True)
 
             elif action == "set":
+                # DEF-U1-001: mutating render config requires super-admin (DEVELOPERS only).
+                if not await _check_is_super_admin(interaction):
+                    await interaction.followup.send(
+                        "❌ Changing render config requires super-admin privileges.", ephemeral=True
+                    )
+                    return
                 if not setting or value is None:
                     await interaction.followup.send("⚠️ Usage: `/render_config set <setting> <value>`", ephemeral=True)
                     return
@@ -1173,6 +1179,12 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
                 flogger.info(f"Admin {interaction.user} updated render config: {setting}={value}")
 
             elif action == "reset":
+                # DEF-U1-001: resetting render config requires super-admin (DEVELOPERS only).
+                if not await _check_is_super_admin(interaction):
+                    await interaction.followup.send(
+                        "❌ Resetting render config requires super-admin privileges.", ephemeral=True
+                    )
+                    return
                 resp = await self.http_client.post(f"{blender_base}/config/render/reset")
                 resp.raise_for_status()
                 await interaction.followup.send("✅ Render config reset to defaults.", ephemeral=True)

@@ -44,59 +44,87 @@ def svc() -> RenderService:
 
 
 # ---------------------------------------------------------------------------
-# validate_params — valid inputs
+# clamp_params — in-bounds inputs (B.93)
+#
+# RenderService() with no config uses RenderConfig() defaults:
+#   res_x   [352, 1920]    res_y [240, 1080]    samples [1, 64]
 # ---------------------------------------------------------------------------
 
 
-def test_validate_params_valid(svc: RenderService) -> None:
-    """Normal parameters within bounds should not raise."""
-    svc.validate_params(1280, 720, 32)  # must not raise
+def test_clamp_params_within_bounds_unchanged(svc: RenderService) -> None:
+    """Parameters already within config bounds are returned unchanged and unflagged."""
+    result = svc.clamp_params(1280, 720, 32)
+    assert (result.res_x, result.res_y, result.num_samples) == (1280, 720, 32)
+    assert result.was_clamped is False
+    assert result.clamped == {}
+
+
+def test_clamp_params_at_bounds_not_clamped(svc: RenderService) -> None:
+    """Values exactly on the min/max bounds are valid and not clamped."""
+    result = svc.clamp_params(1920, 240, 64)
+    assert (result.res_x, result.res_y, result.num_samples) == (1920, 240, 64)
+    assert result.was_clamped is False
 
 
 # ---------------------------------------------------------------------------
-# validate_params — resolution bounds
+# clamp_params — resolution bounds (B.93)
 # ---------------------------------------------------------------------------
 
 
-def test_validate_params_res_x_too_high(svc: RenderService) -> None:
-    """res_x above the configured max_res_x should raise ValueError."""
-    with pytest.raises(ValueError, match=r"res_x=\d+ exceeds configured max_res_x="):
-        svc.validate_params(4001, 720, 32)
+def test_clamp_params_res_x_too_high(svc: RenderService) -> None:
+    """res_x above max_res_x is clamped down to max_res_x and recorded."""
+    result = svc.clamp_params(4001, 720, 32)
+    assert result.res_x == 1920
+    assert result.clamped["res_x"] == {"requested": 4001, "actual": 1920}
+    assert result.was_clamped is True
 
 
-def test_validate_params_res_x_too_low(svc: RenderService) -> None:
-    """res_x below min_res_x should raise ValueError."""
-    with pytest.raises(ValueError, match=r"res_x=\d+ is below configured min_res_x="):
-        svc.validate_params(100, 720, 32)
+def test_clamp_params_res_x_too_low(svc: RenderService) -> None:
+    """res_x below min_res_x is clamped up to min_res_x."""
+    result = svc.clamp_params(100, 720, 32)
+    assert result.res_x == 352
+    assert result.clamped["res_x"] == {"requested": 100, "actual": 352}
 
 
-def test_validate_params_res_y_too_high(svc: RenderService) -> None:
-    """res_y above max_res_y should raise ValueError."""
-    with pytest.raises(ValueError, match=r"res_y=\d+ exceeds configured max_res_y="):
-        svc.validate_params(1280, 2161, 32)
+def test_clamp_params_res_y_too_high(svc: RenderService) -> None:
+    """res_y above max_res_y is clamped down to max_res_y."""
+    result = svc.clamp_params(1280, 2161, 32)
+    assert result.res_y == 1080
+    assert result.clamped["res_y"] == {"requested": 2161, "actual": 1080}
 
 
-def test_validate_params_res_y_too_low(svc: RenderService) -> None:
-    """res_y below min_res_y should raise ValueError."""
-    with pytest.raises(ValueError, match=r"res_y=\d+ is below configured min_res_y="):
-        svc.validate_params(1280, 100, 32)
+def test_clamp_params_res_y_too_low(svc: RenderService) -> None:
+    """res_y below min_res_y is clamped up to min_res_y."""
+    result = svc.clamp_params(1280, 100, 32)
+    assert result.res_y == 240
+    assert result.clamped["res_y"] == {"requested": 100, "actual": 240}
 
 
 # ---------------------------------------------------------------------------
-# validate_params — sample bounds
+# clamp_params — sample bounds (B.93)
 # ---------------------------------------------------------------------------
 
 
-def test_validate_params_samples_too_high(svc: RenderService) -> None:
-    """num_samples above max_samples should raise ValueError."""
-    with pytest.raises(ValueError, match=r"num_samples=\d+ exceeds configured max_samples="):
-        svc.validate_params(1280, 720, 999)
+def test_clamp_params_samples_too_high(svc: RenderService) -> None:
+    """num_samples above max_samples is clamped down to max_samples."""
+    result = svc.clamp_params(1280, 720, 999)
+    assert result.num_samples == 64
+    assert result.clamped["num_samples"] == {"requested": 999, "actual": 64}
 
 
-def test_validate_params_samples_too_low(svc: RenderService) -> None:
-    """num_samples below min_samples should raise ValueError."""
-    with pytest.raises(ValueError, match=r"num_samples=\d+ is below configured min_samples="):
-        svc.validate_params(1280, 720, 0)
+def test_clamp_params_samples_too_low(svc: RenderService) -> None:
+    """num_samples below min_samples is clamped up to min_samples."""
+    result = svc.clamp_params(1280, 720, 0)
+    assert result.num_samples == 1
+    assert result.clamped["num_samples"] == {"requested": 0, "actual": 1}
+
+
+def test_clamp_params_multiple_fields_all_recorded(svc: RenderService) -> None:
+    """Several out-of-bounds params are all clamped and recorded in one result."""
+    result = svc.clamp_params(99999, 1, 99999)
+    assert (result.res_x, result.res_y, result.num_samples) == (1920, 240, 64)
+    assert set(result.clamped.keys()) == {"res_x", "res_y", "num_samples"}
+    assert result.was_clamped is True
 
 
 # ---------------------------------------------------------------------------

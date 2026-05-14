@@ -400,7 +400,7 @@ class BountyCog(commands.Cog):
         lines.append(f"HP: {s1.get('raw_hp', 0)} → {s1.get('varied_hp', 0)} | DPS: {s1.get('raw_dps', 0):.1f}")
         armour_buff = combat.get("pvc_armour_buff")
         if armour_buff is not None and armour_buff != 1.0:
-            lines.append(f"🛡️ Kieth T Maxwell armour buff active (×{armour_buff:g} HP)")
+            lines.append(f"🛡️ Keith T Maxwell armour buff active (×{armour_buff:g} HP)")
         ttk1 = s1.get("ttk")
         lines.append(f"Time to Kill: {f'{ttk1:.1f}s' if ttk1 is not None else '∞'}")
         lines.append("")

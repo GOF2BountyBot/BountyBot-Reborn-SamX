@@ -16,7 +16,7 @@ Last updated: 2026-05-14
 
 | ID | Sev | Summary | Notes |
 |----|-----|---------|-------|
-| B.82 | 🔵 | Combat summary embed should surface the PvC armour buff (Kieth T Maxwell bonus) | Add `pvc_armour_buff_applied: bool` + `pvc_armour_buff_factor: float` to `/combat-bonus` response (`bot-core/src/api/routers/bounties.py`); read in `bountyCog.py` combat summary embed builder |
+| B.82 | 🔵 | Combat summary embed should surface the PvC armour buff (Keith T Maxwell bonus) | Add `pvc_armour_buff_applied: bool` + `pvc_armour_buff_factor: float` to `/combat-bonus` response (`bot-core/src/api/routers/bounties.py`); read in `bountyCog.py` combat summary embed builder |
 | B.67 | 🔵 | `duel_expire` executor has no bulk sweep mode — requires `duel_id` in payload; firing without one returns error and does nothing | Option A: add bulk mode when `duel_id` omitted (expire all past `expires_at`) in `bot-core/src/utils/executors/duel_expire_executor.py`. Option B: document the limitation. |
 | B.63 | 🟡 | Duel result embed is ambiguous when both players use the same ship model (both show e.g. "Betty") | Blocked by B.62. Files: `bot-core/src/api/routers/duels.py`, `discord-gateway/src/cogs/duelCog.py` |
 | B.62 | 🟡 | No `display_name` column — all player-facing name fields show `discord_username` (e.g. `samx.ai`) instead of display name (e.g. `SamAccountX`) | Requires: Alembic migration adding `display_name: str \| None` to `users` table; populate on `/register` from `interaction.user.display_name`; update all name-resolution in cogs and bot-core |

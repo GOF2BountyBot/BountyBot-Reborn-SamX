@@ -4473,13 +4473,13 @@ async def test_generate_loadout_empty_combat_ship_pool_warns_and_returns_unknown
 
 
 # ===========================================================================
-# Kieth T Maxwell bonus — PvC armour buff at both fight_ships call sites
+# Keith T Maxwell bonus — PvC armour buff at both fight_ships call sites
 # ===========================================================================
 
 
 @pytest.mark.asyncio
 async def test_pvc_fight_applies_armour_buff_bronze_path(combat_integration_setup):
-    """Kieth T Maxwell bonus: Bronze path fight_ships call passes
+    """Keith T Maxwell bonus: Bronze path fight_ships call passes
     player_armour_buff=GameConstants.BOUNTY_PVC_ARMOUR_BUFF_FACTOR.
 
     Verifies that ``_process_single_bounty_check`` passes the PvC armour
@@ -4546,7 +4546,7 @@ async def test_pvc_fight_applies_armour_buff_bronze_path(combat_integration_setu
 
 @pytest.mark.asyncio
 async def test_pvc_fight_applies_armour_buff_silver_path(combat_integration_setup):
-    """Kieth T Maxwell bonus: Silver/Gold/Platinum mandatory combat gate also passes
+    """Keith T Maxwell bonus: Silver/Gold/Platinum mandatory combat gate also passes
     player_armour_buff=GameConstants.BOUNTY_PVC_ARMOUR_BUFF_FACTOR.
 
     Verifies that the second fight_ships call site (the Silver/Gold/Platinum

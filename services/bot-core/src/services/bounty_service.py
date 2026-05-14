@@ -55,7 +55,7 @@ def _serialize_fight_results(fight_results, *, pvc_armour_buff: float | None = N
     Args:
         fight_results:    FightResults instance (or None).
         pvc_armour_buff:  When provided, included in the dict so the gateway
-                          can surface the Kieth T Maxwell buff callout in the
+                          can surface the Keith T Maxwell buff callout in the
                           combat summary embed. Pass None for PvP (duel) results.
 
     Returns:

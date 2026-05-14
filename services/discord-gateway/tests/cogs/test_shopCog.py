@@ -353,16 +353,29 @@ class TestShopCommand:
         assert call_kwargs[1].get("ephemeral", False)
         assert "empty" in call_kwargs[0][0].lower()
 
-    def test_shop_invalid_tier(self, mock_shop_cog):
-        """shop should send error message for invalid tier."""
+    def test_shop_player_not_found_via_http_error(self, mock_shop_cog):
+        """shop should send 'Player not found' when the player API returns a non-guild HTTP error.
+
+        The /shop command no longer accepts a tier parameter — it always uses the
+        invoking player's own tier (strict same-tier enforcement).  This test
+        verifies the player-not-found path via a 404 HTTPStatusError.
+        """
+        import httpx
+
         interaction = _create_mock_interaction()
 
-        asyncio.run(mock_shop_cog.shop.callback(mock_shop_cog, interaction, "Diamond"))
+        error_resp = MagicMock()
+        error_resp.status_code = 404
+        mock_shop_cog.http_client.post = AsyncMock(
+            side_effect=httpx.HTTPStatusError("404 Not Found", request=MagicMock(), response=error_resp)
+        )
+
+        asyncio.run(mock_shop_cog.shop.callback(mock_shop_cog, interaction))
 
         interaction.followup.send.assert_awaited_once()
         call_kwargs = interaction.followup.send.call_args
         assert call_kwargs[1].get("ephemeral", False)
-        assert "Invalid tier" in call_kwargs[0][0]
+        assert "Player not found" in call_kwargs[0][0]
 
     def test_shop_player_not_found(self, mock_shop_cog):
         """shop should send error when player not found."""
@@ -376,20 +389,32 @@ class TestShopCommand:
         call_kwargs = interaction.followup.send.call_args
         assert call_kwargs[1].get("ephemeral", False)
 
-    def test_shop_tier_access_locked(self, mock_shop_cog, make_mock_response):
-        """shop should deny access to higher tier than player's."""
+    def test_shop_strict_same_tier_bronze_sees_bronze_shop(self, mock_shop_cog, make_mock_response):
+        """Strict same-tier: Bronze player always sees the Bronze shop.
+
+        The /shop command no longer accepts a tier parameter — the player's own
+        tier is used unconditionally.  This test verifies that the GET request
+        targets the Bronze-tier shop endpoint for a Bronze player.
+        """
         interaction = _create_mock_interaction()
 
         player_resp = make_mock_response(_make_player_data(tier="Bronze"))
+        items_resp = make_mock_response([_make_shop_item(1, "BronzeItem", "module", "Bronze", 100, 5, 1)])
 
         mock_shop_cog.http_client.post = AsyncMock(return_value=player_resp)
+        mock_shop_cog.http_client.get = AsyncMock(return_value=items_resp)
 
-        asyncio.run(mock_shop_cog.shop.callback(mock_shop_cog, interaction, "Gold"))
+        asyncio.run(mock_shop_cog.shop.callback(mock_shop_cog, interaction))
 
         interaction.followup.send.assert_awaited_once()
-        call_kwargs = interaction.followup.send.call_args
-        assert call_kwargs[1].get("ephemeral", False)
-        assert "Gold" in call_kwargs[0][0]
+        send_kwargs = interaction.followup.send.call_args[1]
+        assert send_kwargs.get("ephemeral", False)
+        # GET must target the player's own tier (Bronze), not any other tier
+        get_url = mock_shop_cog.http_client.get.call_args[0][0]
+        assert "/tier/Bronze" in get_url
+        # Embed footer confirms the player's tier
+        embed = send_kwargs["embed"]
+        assert "Bronze" in (embed.footer.text or "")
 
     def test_shop_http_status_error(self, mock_shop_cog, make_mock_response):
         """shop should handle HTTPStatusError gracefully."""
@@ -896,7 +921,7 @@ class TestShopCommandBranches:
         mock_shop_cog.http_client.post = AsyncMock(return_value=player_resp)
         mock_shop_cog.http_client.get = AsyncMock(return_value=items_resp)
 
-        asyncio.run(mock_shop_cog.shop.callback(mock_shop_cog, interaction, "Bronze", item_type="weapon"))
+        asyncio.run(mock_shop_cog.shop.callback(mock_shop_cog, interaction, item_type="weapon"))
 
         # Verify item_type param was passed to the GET request
         call_kwargs = mock_shop_cog.http_client.get.call_args[1]
@@ -916,7 +941,7 @@ class TestShopCommandBranches:
         mock_shop_cog.http_client.post = AsyncMock(return_value=player_resp)
         mock_shop_cog.http_client.get = AsyncMock(return_value=items_resp)
 
-        asyncio.run(mock_shop_cog.shop.callback(mock_shop_cog, interaction, "Bronze", item_type="ship"))
+        asyncio.run(mock_shop_cog.shop.callback(mock_shop_cog, interaction, item_type="ship"))
 
         interaction.followup.send.assert_awaited_once()
         msg = interaction.followup.send.call_args[0][0]
@@ -2075,8 +2100,13 @@ class TestBuyItemAutocompleteEdgeCases:
     # Test #26 — Silver player sees Bronze + Silver items
     # ------------------------------------------------------------------
 
-    def test_silver_player_sees_bronze_and_silver_items(self, mock_shop_cog):
-        """Silver player's autocomplete includes items from Bronze and Silver tiers."""
+    def test_silver_player_sees_only_silver_items(self, mock_shop_cog):
+        """Strict same-tier: Silver player's autocomplete includes only Silver items.
+
+        The buy_item_autocomplete previously showed items from all accessible tiers
+        (Bronze + Silver for a Silver player). With strict same-tier enforcement,
+        only the player's own tier is shown in autocomplete.
+        """
         player = _make_player_data(tier="Silver")
         bronze_items = _make_shop_items_for_tier("Bronze", 2)
         silver_items = _make_shop_items_for_tier("Silver", 2)
@@ -2095,13 +2125,11 @@ class TestBuyItemAutocompleteEdgeCases:
         interaction = self._make_interaction()
         result = asyncio.run(mock_shop_cog.buy_item_autocomplete(interaction, ""))
 
-        # Should show all 4 items (2 Bronze + 2 Silver)
-        assert len(result) == 4
+        # Strict same-tier: only the 2 Silver items are shown (not Bronze+Silver=4)
+        assert len(result) == 2
+        # Autocomplete format is "ItemName (price cr)" — no tier label embedded
         names = [c.name for c in result]
-        assert any("[Bronze]" in n for n in names)
-        assert any("[Silver]" in n for n in names)
-        # Gold tier items should NOT appear
-        assert not any("[Gold]" in n for n in names)
+        assert all("Item" in n for n in names)
 
     # ------------------------------------------------------------------
     # Test E.2 — WARNING logged when player_tier is not in _valid_tiers

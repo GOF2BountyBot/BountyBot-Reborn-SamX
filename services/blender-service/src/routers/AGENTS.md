@@ -99,7 +99,7 @@ Routers are responsible for mapping service exceptions to HTTP responses:
 
 | Exception / condition | HTTP status | Notes |
 |-----------------------|-------------|-------|
-| `ValueError` from `validate_params()` | 400 Bad Request | Invalid resolution or sample count |
+| `RenderConfigError` from `RenderConfigService.update()` | 422 Unprocessable Entity | B.91: config-invariant violation on `PUT /config/render` |
 | `RenderError` from `RenderService` | 500 Internal Server Error | Blender subprocess failed |
 | `AEIConversionError` with "not available" | 422 Unprocessable Entity | AEPi library missing |
 | `AEIConversionError` (other) | 400 Bad Request | Codec failure |
@@ -220,8 +220,8 @@ Always include identifying context (job IDs, file paths, sizes) in log messages.
 ### `render.py`
 | Method | Path | Status | Response |
 |--------|------|--------|----------|
-| `POST` | `/api/v1/render/` | 200/400/422/500 | `StreamingResponse` (image/png) |
-| `POST` | `/api/v1/render/async` | 202/400/422 | `{job_id, status, poll_url}` |
+| `POST` | `/api/v1/render/` | 200/400/422/500 | `StreamingResponse` (image/png) — B.93: out-of-bounds `res_x`/`res_y`/`num_samples` are clamped (not rejected); when clamped, the `X-Render-Clamped` response header records `field:requested->actual` |
+| `POST` | `/api/v1/render/async` | 202/400/422 | `{job_id, status, poll_url, clamped}` — B.93: `clamped` is `{}` when nothing was adjusted, else `{field: {requested, actual}}`; the job is queued with the clamped values |
 
 ### `textures.py`
 | Method | Path | Status | Response |

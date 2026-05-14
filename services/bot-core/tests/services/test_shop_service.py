@@ -364,7 +364,7 @@ class TestPurchaseItem:
     ):
         """Returns transaction details for a valid purchase."""
         player = _make_player(tier="Silver", credits=500)
-        shop_item = _make_shop_item(tier="Bronze", quantity=5, price=100)
+        shop_item = _make_shop_item(tier="Silver", quantity=5, price=100)
         mock_player_repo.get_by_id.return_value = player
         # purchase_item re-fetches under lock; use same player object so credits is a real int
         mock_player_repo.get_by_id_for_update.return_value = player
@@ -751,18 +751,22 @@ class TestCanAccessTier:
         svc = ShopService.__new__(ShopService)
         assert svc._can_access_tier("Bronze", "Bronze") is True
 
-    def test_silver_can_access_bronze(self):
+    def test_silver_cannot_access_bronze(self):
+        """Strict same-tier policy: Silver cannot buy from Bronze shop."""
         svc = ShopService.__new__(ShopService)
-        assert svc._can_access_tier("Silver", "Bronze") is True
+        assert svc._can_access_tier("Silver", "Bronze") is False
 
     def test_bronze_cannot_access_silver(self):
         svc = ShopService.__new__(ShopService)
         assert svc._can_access_tier("Bronze", "Silver") is False
 
-    def test_platinum_can_access_all_tiers(self):
+    def test_platinum_can_only_access_platinum(self):
+        """Strict same-tier policy: Platinum can only access Platinum shop."""
         svc = ShopService.__new__(ShopService)
-        for tier in ["Bronze", "Silver", "Gold", "Platinum"]:
-            assert svc._can_access_tier("Platinum", tier) is True
+        assert svc._can_access_tier("Platinum", "Platinum") is True
+        assert svc._can_access_tier("Platinum", "Gold") is False
+        assert svc._can_access_tier("Platinum", "Silver") is False
+        assert svc._can_access_tier("Platinum", "Bronze") is False
 
     def test_unknown_tier_treated_as_bronze_level(self):
         """Unknown tier defaults to level 1 (Bronze equivalent)."""

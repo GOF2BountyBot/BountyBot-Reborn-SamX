@@ -107,6 +107,7 @@ _OVERRIDE_FIELD_NAMES = [
     "turret_spawn_probability",
     "kaamo_max_capacity",
     "classic_credits_per_check",
+    "tier_change_cooldown",
 ]
 
 

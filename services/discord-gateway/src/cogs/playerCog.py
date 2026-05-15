@@ -563,7 +563,9 @@ class PlayerCog(commands.Cog):
             target_tier = status_data["next_tier"]
 
             # Power-check: run a 20-sim Monte-Carlo against criminals in the target tier.
-            verdict_line = ""
+            # Default fallback — shown if anything goes wrong
+            verdict_line = "\n**Power Check** ⚠️ Unavailable — proceeding without verdict."
+
             try:
                 pre_resp = await self.http_client.get(
                     f"{api_base}/players/{player_id}/combat-preflight",
@@ -580,8 +582,15 @@ class PlayerCog(commands.Cog):
                         f"{pre['sims_run']} simulated fights against "
                         f"active {target_tier} criminals."
                     )
+                else:
+                    # NO_DATA: player has no active ship (should not occur in normal play)
+                    verdict_line = (
+                        "\n**Power Check** ⚪ Could not evaluate combat readiness"
+                        " — ensure you have a ship equipped."
+                    )
             except Exception as e:  # pylint: disable=broad-exception-caught
                 flogger.warning(f"/promote: preflight failed (continuing without verdict): {e}")
+                # verdict_line already set to the ⚠️ fallback above
 
             warning_embed = discord.Embed(
                 title=f"⬆️ Promote to {target_tier}?",

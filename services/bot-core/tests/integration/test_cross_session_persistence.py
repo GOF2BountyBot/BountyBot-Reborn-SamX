@@ -1264,7 +1264,7 @@ class TestOp04BuyShipFromShop:
             svc = ShopService()
             # purchase_ship is a transaction-PARTICIPANT — caller wraps.
             async with factory() as db, db.begin():
-                await svc.purchase_ship(db, player_id=player_id, shop_item_id=shop_item_id, sell_old_ship=False)
+                await svc.purchase_ship(db, player_id=player_id, shop_item_id=shop_item_id)
         finally:
             ShipRepository.get_by_name = original_ship_get
 

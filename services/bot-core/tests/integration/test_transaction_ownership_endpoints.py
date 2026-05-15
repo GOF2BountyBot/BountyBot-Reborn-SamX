@@ -336,7 +336,7 @@ class TestShopsPurchaseShipEndpoint:
                     ) as client:
                         response = await client.post(
                             "/api/v1/shops/purchase-ship",
-                            json={"player_id": player_id, "shop_item_id": shop_item_id, "sell_old_ship": False},
+                            json={"player_id": player_id, "shop_item_id": shop_item_id},
                         )
         finally:
             ShipRepository.get_by_name = original_ship_get
@@ -413,7 +413,7 @@ class TestShopsPurchaseShipEndpoint:
                     ) as client:
                         response = await client.post(
                             "/api/v1/shops/purchase-ship",
-                            json={"player_id": player_id, "shop_item_id": shop_item_id, "sell_old_ship": False},
+                            json={"player_id": player_id, "shop_item_id": shop_item_id},
                         )
         finally:
             ShipRepository.get_by_name = original_ship_get

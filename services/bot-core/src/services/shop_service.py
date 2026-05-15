@@ -234,14 +234,15 @@ class ShopService:  # pylint: disable=too-many-instance-attributes
         db: AsyncSession,
         player_id: int,
         shop_item_id: int,
-        sell_old_ship: bool = False,
     ) -> dict[str, Any]:
-        """Purchase a ship from the shop with optional trade-in.
+        """Purchase a ship from the shop.
+
+        The old active ship remains in the player's fleet as an inactive PlayerShip.
+        Gear is transferred from the old ship to the new one (B.95).
 
         Args:
             player_id: The purchasing player
             shop_item_id: The shop item to buy (must be a ship)
-            sell_old_ship: If True, sell old active ship for credit toward purchase
 
         Returns:
             Transaction details dict
@@ -273,16 +274,6 @@ class ShopService:  # pylint: disable=too-many-instance-attributes
 
             new_ship_price = shop_item.price
 
-            # Get player's current active ship
-            old_player_ship = await self.player_ship_repo.get_active_ship(db, player_id)
-            old_ship_value = 0
-            old_ship_static = None
-
-            if old_player_ship:
-                old_ship_static = await self.ship_repo.get_by_name(db, old_player_ship.ship_name)
-                if old_ship_static:
-                    old_ship_value = old_ship_static.value
-
             # Transaction is owned by the caller (router).
             # Lock the player row to prevent concurrent credit modifications.
             player = await self.player_repo.get_by_id_for_update(db, player_id)
@@ -290,18 +281,8 @@ class ShopService:  # pylint: disable=too-many-instance-attributes
                 raise ValueError(f"Player {player_id} not found")
 
             # Re-check credits under lock (prevents TOCTOU race)
-            if sell_old_ship and old_player_ship:
-                effective_cost = new_ship_price - old_ship_value
-                if player.credits < effective_cost:
-                    raise ValueError(
-                        f"Insufficient credits. Cost: {new_ship_price}, "
-                        f"Trade-in value: {old_ship_value}, "
-                        f"Net cost: {effective_cost}, "
-                        f"Available: {player.credits}"
-                    )
-            else:
-                if player.credits < new_ship_price:
-                    raise ValueError(f"Insufficient credits. Cost: {new_ship_price}, Available: {player.credits}")
+            if player.credits < new_ship_price:
+                raise ValueError(f"Insufficient credits. Cost: {new_ship_price}, Available: {player.credits}")
 
             # a. Create new PlayerShip record for the player (inactive for now)
             new_player_ship = PlayerShip(
@@ -316,32 +297,11 @@ class ShopService:  # pylint: disable=too-many-instance-attributes
             db.add(new_player_ship)
             await db.flush()  # Get the new ship's ID
 
-            # b. Handle old ship trade-in BEFORE activation so the old ship
-            # is removed from the DB before the activate_ship choke-point
-            # looks up the current active ship.
-            did_trade_in = sell_old_ship and old_player_ship is not None
-            if did_trade_in:
-                # Add old ship to shop stock (commit=False — caller's transaction controls commit)
-                await self._add_item_to_shop(
-                    db,
-                    player.guild_id,
-                    shop_item.tier,
-                    "ship",
-                    old_player_ship.ship_name,
-                    1,
-                    old_ship_value,
-                    commit=False,
-                )
-                # Delete old PlayerShip record
-                await db.delete(old_player_ship)
-                await db.flush()
-                old_player_ship = None  # Mark as gone; activate_ship will see no active ship
-
-            # c. Activate the new ship via the canonical choke-point (B.94/B.95 fix).
-            # This replaces the hand-rolled activation code that was missing
-            # player_repo.update_active_ship() — the root cause of B.94.
-            # The choke-point: reconciles slots → transfers loadout from current
-            # active ship (if any) → flips is_active → updates active_ship_id.
+            # b. Activate the new ship via the canonical choke-point (B.94/B.95 fix).
+            # The old active ship remains in the fleet as an inactive PlayerShip — it is
+            # never deleted here.  Gear transfers from the old ship to the new one (B.95).
+            # The choke-point: reconciles slots → transfers loadout from current active
+            # ship (if any) → flips is_active → updates active_ship_id.
             from services.loadout_consistency_service import LoadoutConsistencyService
 
             # Share repo handles so service-level test mocks propagate.
@@ -368,14 +328,11 @@ class ShopService:  # pylint: disable=too-many-instance-attributes
                 kind: list(transfer_breakdown.get(kind, {}).get("overflowed", [])) for kind in slot_kinds
             }
 
-            # d. Calculate and set final credit balance in a single update
-            if did_trade_in:
-                updated_credits = player.credits + old_ship_value - new_ship_price
-            else:
-                updated_credits = player.credits - new_ship_price
+            # c. Calculate and set final credit balance in a single update
+            updated_credits = player.credits - new_ship_price
             await self.player_repo.update_credits(db, player_id, updated_credits, commit=False)
 
-            # e. Remove new ship from shop stock (commit=False — caller's transaction controls commit)
+            # d. Remove new ship from shop stock (commit=False — caller's transaction controls commit)
             new_shop_quantity = shop_item.quantity - 1
             if new_shop_quantity <= 0:
                 await self.shop_repo.remove(db, shop_item, commit=False)
@@ -392,8 +349,8 @@ class ShopService:  # pylint: disable=too-many-instance-attributes
                 "quantity": 1,
                 "unit_price": new_ship_price,
                 "total_cost": new_ship_price,
-                "trade_in_value": old_ship_value if did_trade_in else 0,
-                "net_cost": new_ship_price - (old_ship_value if did_trade_in else 0),
+                "trade_in_value": 0,
+                "net_cost": new_ship_price,
                 "remaining_credits": updated_credits,
                 "items_transferred": total_transferred,
                 "items_unequipped_to_inventory": total_overflow,
@@ -402,7 +359,6 @@ class ShopService:  # pylint: disable=too-many-instance-attributes
 
             flogger.info(
                 f"Player {player_id} purchased ship '{shop_item.item_name}' for {new_ship_price} credits"
-                + (f" (trade-in: {old_ship_value})" if did_trade_in else "")
             )
             return transaction_details
 

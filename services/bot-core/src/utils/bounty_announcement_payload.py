@@ -97,14 +97,17 @@ async def build_bounty_announcement_request(
     # handler clears the route map instead of preserving it.
     effective_image_url = "" if captured else route_map_url
 
+    prefix_fields = _build_prefix_fields(bounty, captured)
+    prefix_fields.extend(_build_suffix_fields(bounty))  # Route + Checked now before Active Ship
+
     metadata = {
         "title": title,
         "color": color,
         "footer_text": bounty.criminal_faction or None,
         "image_url": effective_image_url,
         "captured": captured,
-        "prefix_fields": _build_prefix_fields(bounty, captured),
-        "suffix_fields": _build_suffix_fields(bounty),
+        "prefix_fields": prefix_fields,
+        "suffix_fields": [],  # moved to prefix
     }
 
     text_content = f"<@&{bounty_hunter_role_id}>" if bounty_hunter_role_id is not None else None

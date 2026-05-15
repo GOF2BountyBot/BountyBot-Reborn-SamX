@@ -4,7 +4,8 @@ Covers the bot-core side of the structured payload that bot-core posts to the
 gateway's /announcements/bounty/... endpoints. Asserts:
   - title and color follow normal vs captured rules
   - prefix fields (Difficulty / Reward Pool / Bounty Ends) format correctly
-  - suffix fields (Route / Checked Systems) format correctly
+  - Route / Checked Systems fields are in prefix_fields (above Active Ship)
+  - suffix_fields is always [] (empty — gateway no-op)
   - text_content is the role mention or None
   - LoadoutResponseService is delegated to for the loadout body
 """
@@ -206,6 +207,13 @@ class TestPrefixFields:
 
 
 class TestSuffixFields:
+    """Route and Checked Systems fields — now in prefix_fields (above Active Ship).
+
+    NOTE: This class is named TestSuffixFields for historical continuity but the
+    fields being tested are emitted in prefix_fields (not suffix_fields) since the
+    field-reorder change (A.48 field reorder). suffix_fields is always [] after this change.
+    """
+
     @pytest.fixture(autouse=True)
     def _stub(self, monkeypatch):
         from services import loadout_response_service as svc_mod
@@ -223,7 +231,7 @@ class TestSuffixFields:
 
         b = _make_bounty(route=["Pan", "Mido", "Pescal Ansen"], checked=None)
         out = await build_bounty_announcement_request(MagicMock(), b)
-        route = next(f for f in out["metadata"]["suffix_fields"] if f["name"] == "Route")
+        route = next(f for f in out["metadata"]["prefix_fields"] if f["name"] == "Route")
         assert route["value"] == "Pan, Mido, Pescal Ansen"
 
     async def test_route_with_checked_strikethrough(self):
@@ -236,7 +244,7 @@ class TestSuffixFields:
             answer="Pescal Ansen",
         )
         out = await build_bounty_announcement_request(MagicMock(), b)
-        route = next(f for f in out["metadata"]["suffix_fields"] if f["name"] == "Route")
+        route = next(f for f in out["metadata"]["prefix_fields"] if f["name"] == "Route")
         # Pan checked → ~~Pan~~ (no recently_spotted because 2 stops away → still recently_spotted)
         # Actually distance = 2 - 0 = 2, so within 1..2 → recently_spotted
         # So expected: **~~Pan~~**, Mido, Pescal Ansen (answer not in checked dict)
@@ -251,7 +259,7 @@ class TestSuffixFields:
             answer="Pescal Ansen",
         )
         out = await build_bounty_announcement_request(MagicMock(), b)
-        route = next(f for f in out["metadata"]["suffix_fields"] if f["name"] == "Route")
+        route = next(f for f in out["metadata"]["prefix_fields"] if f["name"] == "Route")
         assert "**Pescal Ansen**" in route["value"]
 
     async def test_checked_systems_fallback_when_no_checks(self):
@@ -259,7 +267,7 @@ class TestSuffixFields:
 
         b = _make_bounty(checked=None)
         out = await build_bounty_announcement_request(MagicMock(), b)
-        cs = next(f for f in out["metadata"]["suffix_fields"] if f["name"] == "Checked Systems")
+        cs = next(f for f in out["metadata"]["prefix_fields"] if f["name"] == "Checked Systems")
         assert cs["value"] == "> *No systems checked yet*"
 
     async def test_checked_systems_unchecked_sentinel_filtered(self):
@@ -268,8 +276,129 @@ class TestSuffixFields:
         # checker_id == -1 means unchecked; should be skipped entirely
         b = _make_bounty(checked={"Pan": -1, "Mido": -1, "Pescal Ansen": -1})
         out = await build_bounty_announcement_request(MagicMock(), b)
-        cs = next(f for f in out["metadata"]["suffix_fields"] if f["name"] == "Checked Systems")
+        cs = next(f for f in out["metadata"]["prefix_fields"] if f["name"] == "Checked Systems")
         assert cs["value"] == "> *No systems checked yet*"
+
+
+# ===========================================================================
+# Field ordering and suffix_fields=[] invariant (adversarial / edge case)
+# ===========================================================================
+
+
+class TestFieldOrdering:
+    """Adversarial tests for the A.48 field-reorder change.
+
+    Verifies:
+    - suffix_fields is ALWAYS [] (never Route/Checked in suffix).
+    - Route and Checked Systems appear at positions [3] and [4] in prefix_fields
+      (after Difficulty/Reward/Ends at positions [0], [1], [2]).
+    - Captured state still renders Route/Checked in prefix_fields.
+    - _build_prefix_fields returns a fresh list each call (no shared mutable state).
+    """
+
+    @pytest.fixture(autouse=True)
+    def _stub(self, monkeypatch):
+        from services import loadout_response_service as svc_mod
+
+        fake = MagicMock()
+        fake.model_dump.return_value = {"subject_kind": "criminal", "subject_name": "X"}
+
+        async def _fake(self_, db_, bid_):
+            return fake
+
+        monkeypatch.setattr(svc_mod.LoadoutResponseService, "build_bounty_loadout", _fake)
+
+    async def test_suffix_fields_is_always_empty_list(self):
+        """Regression: suffix_fields must be [] — Route/Checked moved to prefix."""
+        from utils.bounty_announcement_payload import build_bounty_announcement_request
+
+        b = _make_bounty()
+        out = await build_bounty_announcement_request(MagicMock(), b)
+        assert out["metadata"]["suffix_fields"] == [], (
+            "suffix_fields must be empty []. Route and Checked Systems should be in prefix_fields."
+        )
+
+    async def test_suffix_fields_empty_even_with_checked_systems(self):
+        """suffix_fields stays [] regardless of how many systems are checked."""
+        from utils.bounty_announcement_payload import build_bounty_announcement_request
+
+        b = _make_bounty(
+            route=["Pan", "Mido", "Pescal Ansen"],
+            checked={"Pan": 100, "Mido": 200},
+            answer="Pescal Ansen",
+        )
+        out = await build_bounty_announcement_request(MagicMock(), b)
+        assert out["metadata"]["suffix_fields"] == []
+
+    async def test_prefix_fields_has_exactly_five_fields(self):
+        """prefix_fields must contain Difficulty + Reward + Ends + Route + Checked (5 total)."""
+        from utils.bounty_announcement_payload import build_bounty_announcement_request
+
+        b = _make_bounty()
+        out = await build_bounty_announcement_request(MagicMock(), b)
+        names = [f["name"] for f in out["metadata"]["prefix_fields"]]
+        assert names == ["Difficulty", "Reward Pool", "Bounty Ends", "Route", "Checked Systems"], (
+            f"prefix_fields field order incorrect. Got: {names}"
+        )
+
+    async def test_route_appears_at_index_3_in_prefix_fields(self):
+        """Route field must be at index 3 in prefix_fields (after Difficulty/Reward/Ends)."""
+        from utils.bounty_announcement_payload import build_bounty_announcement_request
+
+        b = _make_bounty(route=["Alpha", "Beta"])
+        out = await build_bounty_announcement_request(MagicMock(), b)
+        prefix = out["metadata"]["prefix_fields"]
+        assert prefix[3]["name"] == "Route"
+        assert "Alpha" in prefix[3]["value"]
+
+    async def test_checked_systems_appears_at_index_4_in_prefix_fields(self):
+        """Checked Systems field must be at index 4 in prefix_fields."""
+        from utils.bounty_announcement_payload import build_bounty_announcement_request
+
+        b = _make_bounty(checked=None)
+        out = await build_bounty_announcement_request(MagicMock(), b)
+        prefix = out["metadata"]["prefix_fields"]
+        assert prefix[4]["name"] == "Checked Systems"
+
+    async def test_route_and_checked_in_prefix_fields_when_captured(self):
+        """Captured state: Route and Checked Systems still appear in prefix_fields.
+
+        The captured flag suppresses Active Ship / Ship Stats / loadout sections
+        in the gateway embed builder, but prefix_fields (including Route/Checked)
+        are always rendered.
+        """
+        from utils.bounty_announcement_payload import build_bounty_announcement_request
+
+        b = _make_bounty(
+            route=["Pan", "Mido"],
+            checked={"Pan": 100},
+            answer="Mido",
+        )
+        out = await build_bounty_announcement_request(MagicMock(), b, captured=True)
+        prefix_names = [f["name"] for f in out["metadata"]["prefix_fields"]]
+        assert "Route" in prefix_names, "Route must appear in prefix_fields even when captured=True"
+        assert "Checked Systems" in prefix_names, (
+            "Checked Systems must appear in prefix_fields even when captured=True"
+        )
+        assert out["metadata"]["suffix_fields"] == []
+
+    async def test_prefix_fields_fresh_list_no_shared_mutation(self):
+        """Two successive calls must not share the same list object.
+
+        _build_prefix_fields() must return a fresh list each invocation.
+        Otherwise prefix_fields.extend(...) could accumulate across calls.
+        """
+        from utils.bounty_announcement_payload import build_bounty_announcement_request
+
+        db_mock = MagicMock()
+        b = _make_bounty()
+        out1 = await build_bounty_announcement_request(db_mock, b)
+        out2 = await build_bounty_announcement_request(db_mock, b)
+        # Each call should produce a list of exactly 5 items (not 5+2=7 or more).
+        assert len(out1["metadata"]["prefix_fields"]) == 5
+        assert len(out2["metadata"]["prefix_fields"]) == 5
+        # The lists must be different objects (fresh each call).
+        assert out1["metadata"]["prefix_fields"] is not out2["metadata"]["prefix_fields"]
 
 
 # ===========================================================================
@@ -319,6 +448,8 @@ class TestPayloadStructure:
             "prefix_fields",
             "suffix_fields",
         }
+        # suffix_fields must be empty (Route/Checked moved to prefix_fields after field reorder).
+        assert out["metadata"]["suffix_fields"] == []
 
     async def test_image_url_passed_through(self):
         from utils.bounty_announcement_payload import build_bounty_announcement_request

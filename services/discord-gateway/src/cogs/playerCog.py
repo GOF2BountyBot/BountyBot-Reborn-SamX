@@ -25,6 +25,34 @@ _GUILD_NOT_CONFIGURED_MSG = (
 )
 
 
+def _build_tier_cooldown_embed(cooldown_iso: str | None, *, action: str) -> discord.Embed:
+    """Build a tier-change cooldown embed directly from an ISO timestamp string.
+
+    Used for the *early* cooldown check (before ConfirmView is shown), where we
+    have the timestamp from the promotion-status response rather than an httpx
+    exception.
+    """
+    timestamp_str = "soon"
+    if cooldown_iso:
+        try:
+            import datetime as _dt
+
+            end = _dt.datetime.fromisoformat(cooldown_iso)
+            unix_ts = int(end.timestamp())
+            timestamp_str = f"<t:{unix_ts}:R>"
+        except Exception:  # pylint: disable=broad-exception-caught
+            timestamp_str = cooldown_iso
+
+    return discord.Embed(
+        title=f"⏱️ Cannot {action.capitalize()} Yet",
+        description=(
+            f"You're on the **tier-change cooldown**. You can {action} again {timestamp_str}.\n\n"
+            "Ask an admin to reset your cooldown if this is blocking you."
+        ),
+        color=discord.Color.orange(),
+    )
+
+
 def _format_tier_change_cooldown_message(exc: httpx.HTTPStatusError, *, action: str) -> discord.Embed:
     """Build a Discord embed for an HTTP 429 tier-change cooldown response.
 
@@ -512,6 +540,14 @@ class PlayerCog(commands.Cog):
             status_resp = await self.http_client.get(f"{api_base}/players/{player_id}/promotion-status", timeout=10)
             status_resp.raise_for_status()
             status_data = status_resp.json()
+
+            # Early cooldown check — show the countdown before the ConfirmView so the
+            # player never sees the dialog only to hit a 429 on Confirm.
+            if status_data.get("on_cooldown"):
+                cooldown_embed = _build_tier_cooldown_embed(status_data.get("cooldown_ends_at"), action="promote")
+                await interaction.followup.send(embed=cooldown_embed, ephemeral=True)
+                return
+
             if not status_data.get("can_promote"):
                 next_tier = status_data.get("next_tier")
                 if next_tier is None:
@@ -719,6 +755,19 @@ class PlayerCog(commands.Cog):
                     ephemeral=True,
                 )
                 return
+
+            # Early cooldown check — reuse promotion-status endpoint which now
+            # includes the cooldown advisory for both promote and demote paths.
+            status_resp = await self.http_client.get(
+                f"{api_base}/players/{player_id}/promotion-status", timeout=10
+            )
+            status_resp.raise_for_status()
+            status_data = status_resp.json()
+            if status_data.get("on_cooldown"):
+                cooldown_embed = _build_tier_cooldown_embed(status_data.get("cooldown_ends_at"), action="demote")
+                await interaction.followup.send(embed=cooldown_embed, ephemeral=True)
+                return
+
             prev_tier = tier_names[cur_level - 1]
 
             warning_embed = discord.Embed(

@@ -279,7 +279,14 @@ class PlayerService:
         return "Bronze"
 
     async def get_promotion_status(self, db: AsyncSession, player_id: int) -> dict:
-        """Get promotion eligibility status for a player."""
+        """Get promotion eligibility status for a player.
+
+        Includes an early cooldown advisory so callers can surface the cooldown
+        error *before* showing a confirmation dialog — avoids the UX anti-pattern
+        of "click Confirm, then get a 429".  ``on_cooldown`` and
+        ``cooldown_ends_at`` are informational only; the authoritative cooldown
+        enforcement still happens inside ``promote_player`` / ``demote_player``.
+        """
         try:
             player = await self.player_repo.get_by_id(db, player_id)
             if not player:
@@ -300,6 +307,16 @@ class PlayerService:
             xp_threshold = thresholds.get(next_tier) if next_tier else None
             xp_surplus = (player.xp - xp_threshold) if (can_promote and xp_threshold is not None) else None
 
+            # Cooldown advisory — non-raising check so the caller gets structured
+            # info rather than an exception at the status-check stage.
+            on_cooldown = False
+            cooldown_ends_at: str | None = None
+            try:
+                self._check_tier_change_cooldown(player)
+            except TierChangeCooldownError as e:
+                on_cooldown = True
+                cooldown_ends_at = e.cooldown_end.isoformat()
+
             return {
                 "player_id": player.id,
                 "current_tier": player.tier,
@@ -310,6 +327,8 @@ class PlayerService:
                 "xp": player.xp,
                 "xp_threshold_for_next": xp_threshold,
                 "xp_surplus_for_next": xp_surplus,
+                "on_cooldown": on_cooldown,
+                "cooldown_ends_at": cooldown_ends_at,
             }
 
         except Exception as e:

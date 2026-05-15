@@ -4473,13 +4473,13 @@ async def test_generate_loadout_empty_combat_ship_pool_warns_and_returns_unknown
 
 
 # ===========================================================================
-# Kieth T Maxwell bonus — PvC armour buff at both fight_ships call sites
+# Keith T Maxwell bonus — PvC armour buff at both fight_ships call sites
 # ===========================================================================
 
 
 @pytest.mark.asyncio
 async def test_pvc_fight_applies_armour_buff_bronze_path(combat_integration_setup):
-    """Kieth T Maxwell bonus: Bronze path fight_ships call passes
+    """Keith T Maxwell bonus: Bronze path fight_ships call passes
     player_armour_buff=GameConstants.BOUNTY_PVC_ARMOUR_BUFF_FACTOR.
 
     Verifies that ``_process_single_bounty_check`` passes the PvC armour
@@ -4546,7 +4546,7 @@ async def test_pvc_fight_applies_armour_buff_bronze_path(combat_integration_setu
 
 @pytest.mark.asyncio
 async def test_pvc_fight_applies_armour_buff_silver_path(combat_integration_setup):
-    """Kieth T Maxwell bonus: Silver/Gold/Platinum mandatory combat gate also passes
+    """Keith T Maxwell bonus: Silver/Gold/Platinum mandatory combat gate also passes
     player_armour_buff=GameConstants.BOUNTY_PVC_ARMOUR_BUFF_FACTOR.
 
     Verifies that the second fight_ships call site (the Silver/Gold/Platinum
@@ -4611,3 +4611,212 @@ async def test_pvc_fight_applies_armour_buff_silver_path(combat_integration_setu
         f"Expected player_armour_buff={GameConstants.BOUNTY_PVC_ARMOUR_BUFF_FACTOR}, "
         f"got {captured_kwargs.get('player_armour_buff')}"
     )
+
+
+# ===========================================================================
+# Tests: BountyService.scrub_player_checks_outside_tier
+# ===========================================================================
+
+
+class TestScrubPlayerChecksOutsideTier:
+    """Tests for BountyService.scrub_player_checks_outside_tier (FORFEITED_CHECK sentinel)."""
+
+    def _make_service(self):
+        svc = BountyService.__new__(BountyService)
+        svc.bounty_repo = MagicMock()
+        svc.item_repo = MagicMock()
+        return svc
+
+    def _make_db(self):
+        db = MagicMock()
+        db.commit = AsyncMock()
+        db.refresh = AsyncMock()
+        return db
+
+    def _make_bounty(self, bounty_id: int = 1, checked: dict | None = None) -> object:
+        return SimpleNamespace(id=bounty_id, checked=checked or {}, answer="Sol")
+
+    @pytest.mark.asyncio
+    async def test_player_checks_in_old_tier_become_forfeited(self):
+        """Player's checks in divisions outside the new tier become FORFEITED_CHECK (-2)."""
+        from services.bounty_service import FORFEITED_CHECK
+
+        svc = self._make_service()
+        db = self._make_db()
+        player_id = 42
+
+        bronze_bounty = self._make_bounty(checked={"Alpha": player_id, "Beta": 99})
+        svc.bounty_repo.get_active_by_guild_and_division = AsyncMock(
+            side_effect=lambda _db, _gid, div: [bronze_bounty] if div == "bronze" else []
+        )
+
+        with patch("sqlalchemy.orm.attributes.flag_modified"):
+            count = await svc.scrub_player_checks_outside_tier(db, player_id=player_id, guild_id=1, new_tier="Silver")
+
+        assert count == 1
+        assert bronze_bounty.checked["Alpha"] == FORFEITED_CHECK
+        assert bronze_bounty.checked["Beta"] == 99  # other player untouched
+
+    @pytest.mark.asyncio
+    async def test_returns_zero_when_player_has_no_checks_in_old_divisions(self):
+        """Returns 0 when player has no check entries in any division outside new tier."""
+        svc = self._make_service()
+        db = self._make_db()
+
+        bounty = self._make_bounty(checked={"Alpha": 99})  # another player's check
+        svc.bounty_repo.get_active_by_guild_and_division = AsyncMock(return_value=[bounty])
+
+        with patch("sqlalchemy.orm.attributes.flag_modified"):
+            count = await svc.scrub_player_checks_outside_tier(db, player_id=42, guild_id=1, new_tier="Silver")
+
+        assert count == 0
+        assert bounty.checked["Alpha"] == 99
+
+    @pytest.mark.asyncio
+    async def test_new_tier_division_is_not_scrubbed(self):
+        """Checks in the player's new tier division are skipped entirely."""
+        svc = self._make_service()
+        db = self._make_db()
+        player_id = 42
+
+        silver_bounty = self._make_bounty(checked={"Alpha": player_id})
+
+        def _get_active(_db, _gid, div):
+            return [silver_bounty] if div == "silver" else []
+
+        svc.bounty_repo.get_active_by_guild_and_division = AsyncMock(side_effect=_get_active)
+
+        with patch("sqlalchemy.orm.attributes.flag_modified"):
+            count = await svc.scrub_player_checks_outside_tier(db, player_id=player_id, guild_id=1, new_tier="Silver")
+
+        assert count == 0
+        assert silver_bounty.checked["Alpha"] == player_id  # untouched
+
+    @pytest.mark.asyncio
+    async def test_multiple_bounties_all_scrubbed(self):
+        """All active bounties with player checks in affected divisions are mutated."""
+        from services.bounty_service import FORFEITED_CHECK
+
+        svc = self._make_service()
+        db = self._make_db()
+        player_id = 42
+
+        bounty1 = self._make_bounty(1, checked={"Alpha": player_id})
+        bounty2 = SimpleNamespace(id=2, checked={"Beta": player_id, "Gamma": 7}, answer="Gamma")
+        svc.bounty_repo.get_active_by_guild_and_division = AsyncMock(
+            side_effect=lambda _db, _gid, div: [bounty1, bounty2] if div == "bronze" else []
+        )
+
+        with patch("sqlalchemy.orm.attributes.flag_modified"):
+            count = await svc.scrub_player_checks_outside_tier(db, player_id=player_id, guild_id=1, new_tier="Silver")
+
+        assert count == 2
+        assert bounty1.checked["Alpha"] == FORFEITED_CHECK
+        assert bounty2.checked["Beta"] == FORFEITED_CHECK
+        assert bounty2.checked["Gamma"] == 7
+
+    @pytest.mark.asyncio
+    async def test_demotion_scrubs_higher_tier_divisions(self):
+        """On demotion to Bronze, Silver/Gold/Platinum divisions are all scanned."""
+        from services.bounty_service import FORFEITED_CHECK
+
+        svc = self._make_service()
+        db = self._make_db()
+        player_id = 5
+
+        silver_bounty = self._make_bounty(10, checked={"Alpha": player_id})
+        svc.bounty_repo.get_active_by_guild_and_division = AsyncMock(
+            side_effect=lambda _db, _gid, div: [silver_bounty] if div == "silver" else []
+        )
+
+        with patch("sqlalchemy.orm.attributes.flag_modified"):
+            count = await svc.scrub_player_checks_outside_tier(db, player_id=player_id, guild_id=1, new_tier="Bronze")
+
+        assert count == 1
+        assert silver_bounty.checked["Alpha"] == FORFEITED_CHECK
+
+
+# ===========================================================================
+# Tests: BountyService.calc_rewards — FORFEITED_CHECK sentinel exclusion
+# ===========================================================================
+
+
+class TestCalcRewardsForfeited:
+    """Verify FORFEITED_CHECK (-2) and UNCHECKED (-1) are excluded from reward payout."""
+
+    def _make_service(self):
+        return BountyService.__new__(BountyService)
+
+    def _make_bounty(self, checked: dict, answer: str, reward: int = 5000, reward_per_sys: int = 200):
+        return SimpleNamespace(checked=checked, answer=answer, reward=reward, reward_per_sys=reward_per_sys)
+
+    @pytest.mark.asyncio
+    async def test_forfeited_checker_excluded_from_payout(self):
+        """FORFEITED_CHECK (-2) entries do not receive any credits."""
+        from services.bounty_service import FORFEITED_CHECK
+
+        svc = self._make_service()
+        bounty = self._make_bounty(
+            checked={"Sol": 1, "Alpha": FORFEITED_CHECK, "Beta": FORFEITED_CHECK},
+            answer="Sol",
+        )
+
+        rewards = await svc.calc_rewards(MagicMock(), bounty)
+
+        for r in rewards:
+            assert r.player_id > 0  # no sentinel IDs in payout
+
+    @pytest.mark.asyncio
+    async def test_unchecked_sentinel_excluded_from_payout(self):
+        """UNCHECKED (-1) entries are excluded from reward distribution."""
+        from services.bounty_service import UNCHECKED
+
+        svc = self._make_service()
+        bounty = self._make_bounty(
+            checked={"Sol": 1, "Alpha": UNCHECKED, "Beta": UNCHECKED},
+            answer="Sol",
+        )
+
+        rewards = await svc.calc_rewards(MagicMock(), bounty)
+
+        for r in rewards:
+            assert r.player_id > 0
+
+    @pytest.mark.asyncio
+    async def test_winner_gets_full_reward_when_all_other_checks_forfeited(self):
+        """When all non-winner checks are forfeited the consolation pool is undepleted — winner takes all."""
+        from services.bounty_service import FORFEITED_CHECK
+
+        svc = self._make_service()
+        bounty = self._make_bounty(
+            checked={"Sol": 1, "Alpha": FORFEITED_CHECK, "Beta": FORFEITED_CHECK},
+            answer="Sol",
+            reward=5000,
+        )
+
+        rewards = await svc.calc_rewards(MagicMock(), bounty)
+
+        winner_reward = next(r for r in rewards if r.player_id == 1)
+        assert winner_reward.credits_earned == 5000
+        assert winner_reward.is_winner is True
+
+    @pytest.mark.asyncio
+    async def test_real_checker_still_paid_alongside_forfeited(self):
+        """A real non-winner checker is still paid even when other checkers are forfeited."""
+        from services.bounty_service import FORFEITED_CHECK
+
+        svc = self._make_service()
+        bounty = self._make_bounty(
+            checked={"Sol": 1, "Alpha": 2, "Beta": FORFEITED_CHECK},
+            answer="Sol",
+            reward=5000,
+            reward_per_sys=200,
+        )
+
+        rewards = await svc.calc_rewards(MagicMock(), bounty)
+
+        player_ids = [r.player_id for r in rewards]
+        assert 1 in player_ids  # winner
+        assert 2 in player_ids  # real checker
+        for r in rewards:
+            assert r.player_id > 0

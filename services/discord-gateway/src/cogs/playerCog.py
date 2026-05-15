@@ -25,6 +25,45 @@ _GUILD_NOT_CONFIGURED_MSG = (
 )
 
 
+def _format_tier_change_cooldown_message(exc: httpx.HTTPStatusError, *, action: str) -> discord.Embed:
+    """Build a Discord embed for an HTTP 429 tier-change cooldown response.
+
+    Bot-core returns ``detail = {"detail": str, "cooldown_end": "<ISO timestamp>"}``;
+    we render the cooldown end as a Discord relative timestamp (``<t:unix:R>``)
+    so the user can see exactly when the cooldown clears.
+
+    ``action`` is the verb to surface in the title — e.g. "promote", "demote",
+    or "prestige".
+    """
+    cooldown_iso: str | None = None
+    try:
+        detail = exc.response.json().get("detail")
+        if isinstance(detail, dict):
+            cooldown_iso = detail.get("cooldown_end")
+    except Exception:  # pylint: disable=broad-exception-caught
+        pass
+
+    timestamp_str = "soon"
+    if cooldown_iso:
+        try:
+            import datetime as _dt
+
+            end = _dt.datetime.fromisoformat(cooldown_iso)
+            unix_ts = int(end.timestamp())
+            timestamp_str = f"<t:{unix_ts}:R>"
+        except Exception:  # pylint: disable=broad-exception-caught
+            timestamp_str = cooldown_iso
+
+    return discord.Embed(
+        title=f"⏱️ Cannot {action.capitalize()} Yet",
+        description=(
+            f"You're on the **tier-change cooldown**. You can {action} again {timestamp_str}.\n\n"
+            "Ask an admin to reset your cooldown if this is blocking you."
+        ),
+        color=discord.Color.orange(),
+    )
+
+
 def _is_guild_not_configured(exc: httpx.HTTPStatusError) -> bool:
     """Return True if the HTTPStatusError is a 'guild not configured' 400 response."""
     if exc.response.status_code != 400:
@@ -425,6 +464,9 @@ class PlayerCog(commands.Cog):
             )
             if _is_guild_not_configured(e):
                 await interaction.followup.send(_GUILD_NOT_CONFIGURED_MSG, ephemeral=True)
+            elif e.response.status_code == 429:
+                cooldown_msg = _format_tier_change_cooldown_message(e, action="prestige")
+                await interaction.followup.send(embed=cooldown_msg, ephemeral=True)
             elif e.response.status_code == 400:
                 try:
                     detail = e.response.json().get("detail", "Not enough XP to prestige.")
@@ -439,9 +481,15 @@ class PlayerCog(commands.Cog):
 
     @app_commands.command(name="promote", description="Promote to the next tier")
     async def promote(self, interaction: discord.Interaction):
-        """Promote player to the next tier if eligible."""
+        """Promote player to the next tier if eligible.
+
+        Two-step confirmation: shows a preview embed with the rule-change
+        summary and a 20-sim power-check verdict (player win-rate vs criminals
+        in the target tier), then waits on ConfirmView before applying the
+        change. Subject to the per-guild tier-change cooldown (24h default).
+        """
         flogger.info(f"/promote: guild={interaction.guild_id}, user={interaction.user.id}")
-        await interaction.response.defer(thinking=True)
+        await interaction.response.defer(thinking=True, ephemeral=True)
 
         try:
             # Resolve player (create if not exists)
@@ -455,9 +503,81 @@ class PlayerCog(commands.Cog):
             resp = await self.http_client.post(f"{api_base}/players/", json=user_data, timeout=10)
             resp.raise_for_status()
             player_data = resp.json()
+            player_id = player_data["id"]
+            current_tier = player_data["tier"]
+
+            # Fetch promotion status to pre-validate eligibility and surface a clear
+            # error before showing the confirm dialog (avoids the "click confirm,
+            # then see 400" UX).
+            status_resp = await self.http_client.get(f"{api_base}/players/{player_id}/promotion-status", timeout=10)
+            status_resp.raise_for_status()
+            status_data = status_resp.json()
+            if not status_data.get("can_promote"):
+                next_tier = status_data.get("next_tier")
+                if next_tier is None:
+                    msg = "🏆 You're already at the maximum tier. Use `/prestige` to start over."
+                else:
+                    threshold = status_data.get("xp_threshold_for_next") or 0
+                    msg = (
+                        f"❌ Not eligible for **{next_tier}** yet. Need {threshold:,} XP, "
+                        f"currently have {status_data['xp']:,}."
+                    )
+                await interaction.followup.send(msg, ephemeral=True)
+                return
+            target_tier = status_data["next_tier"]
+
+            # Power-check: run a 20-sim Monte-Carlo against criminals in the target tier.
+            verdict_line = ""
+            try:
+                pre_resp = await self.http_client.get(
+                    f"{api_base}/players/{player_id}/combat-preflight",
+                    params={"target_tier": target_tier, "num_sims": 20},
+                    timeout=15,
+                )
+                pre_resp.raise_for_status()
+                pre = pre_resp.json()
+                verdict_emoji = {"green": "🟢", "yellow": "🟡", "red": "🔴", "no_data": "⚪"}.get(pre["verdict"], "⚪")
+                if pre["verdict"] != "no_data" and pre["sims_run"] > 0:
+                    verdict_line = (
+                        f"\n**Power Check** {verdict_emoji} "
+                        f"You win **{pre['player_win_rate']:.0%}** of "
+                        f"{pre['sims_run']} simulated fights against "
+                        f"active {target_tier} criminals."
+                    )
+            except Exception as e:  # pylint: disable=broad-exception-caught
+                flogger.warning(f"/promote: preflight failed (continuing without verdict): {e}")
+
+            warning_embed = discord.Embed(
+                title=f"⬆️ Promote to {target_tier}?",
+                description=(
+                    f"You're about to promote from **{current_tier}** to **{target_tier}**."
+                    f"{verdict_line}\n\n"
+                    "**This change is significant:**\n"
+                    "• Silver+ tiers require **mandatory combat** with the criminal on the "
+                    "correct system. Losing combat resets the bounty route.\n"
+                    "• You will only be able to buy/sell at the **new tier's shop**. "
+                    "Inventory you already own is unaffected.\n"
+                    "• Your in-progress check entries on lower-tier bounties forfeit "
+                    "their per-system payout (slots stay 'checked' but you no longer get paid).\n"
+                    "• Promotion and demotion share a **cooldown** (24h default). "
+                    "Pick wisely.\n\n"
+                    "Press **Confirm** to promote or **Cancel** to abort."
+                ),
+                color=discord.Color.gold(),
+            )
+            view = ConfirmView(action=f"promote from {current_tier} to {target_tier}", timeout=60)
+            await interaction.followup.send(embed=warning_embed, view=view, ephemeral=True)
+            await view.wait()
+
+            if view.result is None:
+                await interaction.followup.send("⏱️ Confirmation timed out. Promote cancelled.", ephemeral=True)
+                return
+            if not view.result:
+                await interaction.followup.send("❌ Promote cancelled.", ephemeral=True)
+                return
 
             # Attempt promotion
-            promote_resp = await self.http_client.put(f"{api_base}/players/{player_data['id']}/promote", timeout=10)
+            promote_resp = await self.http_client.put(f"{api_base}/players/{player_id}/promote", timeout=10)
             promote_resp.raise_for_status()
             promote_data = promote_resp.json()
 
@@ -546,6 +666,9 @@ class PlayerCog(commands.Cog):
             )
             if _is_guild_not_configured(e):
                 await interaction.followup.send(_GUILD_NOT_CONFIGURED_MSG, ephemeral=True)
+            elif e.response.status_code == 429:
+                cooldown_msg = _format_tier_change_cooldown_message(e, action="promote")
+                await interaction.followup.send(embed=cooldown_msg, ephemeral=True)
             elif e.response.status_code == 400:
                 try:
                     detail = e.response.json().get("detail", "Cannot promote at this time.")
@@ -562,6 +685,137 @@ class PlayerCog(commands.Cog):
                 await report_api_error(interaction, e)
         except Exception as e:  # pylint: disable=broad-exception-caught
             flogger.error(f"/promote error: guild={interaction.guild_id}, user={interaction.user.id}, error={e}")
+            await interaction.followup.send("⚠️ An error occurred.", ephemeral=True)
+
+    @app_commands.command(name="demote", description="Demote to the previous tier")
+    async def demote(self, interaction: discord.Interaction):
+        """Demote player to the previous tier.
+
+        Two-step confirmation via ConfirmView. Demotion is unconditional on
+        XP (no eligibility check) — Bronze players are simply rejected.
+        Subject to the tier-change cooldown (24h default, guild-overridable).
+        """
+        flogger.info(f"/demote: guild={interaction.guild_id}, user={interaction.user.id}")
+        await interaction.response.defer(thinking=True, ephemeral=True)
+
+        try:
+            user_data = {
+                "discord_id": interaction.user.id,
+                "guild_id": interaction.guild_id,
+                "discord_username": str(interaction.user),
+                "display_name": getattr(interaction.user, "display_name", None),
+            }
+            resp = await self.http_client.post(f"{api_base}/players/", json=user_data, timeout=10)
+            resp.raise_for_status()
+            player_data = resp.json()
+            player_id = player_data["id"]
+            current_tier = player_data["tier"]
+            tier_levels = {"Bronze": 1, "Silver": 2, "Gold": 3, "Platinum": 4}
+            tier_names = {1: "Bronze", 2: "Silver", 3: "Gold", 4: "Platinum"}
+            cur_level = tier_levels.get(current_tier, 1)
+            if cur_level <= 1:
+                await interaction.followup.send(
+                    "❌ Already at minimum tier (Bronze). Use `/prestige` to start a new run if you're Platinum.",
+                    ephemeral=True,
+                )
+                return
+            prev_tier = tier_names[cur_level - 1]
+
+            warning_embed = discord.Embed(
+                title=f"⬇️ Demote to {prev_tier}?",
+                description=(
+                    f"You're about to demote from **{current_tier}** to **{prev_tier}**.\n\n"
+                    "**This is a one-way step until the cooldown clears.**\n"
+                    "• Shop access switches to the **new tier's shop only**. Inventory you "
+                    "already own is unaffected.\n"
+                    "• Your in-progress check entries on bounties outside the new tier "
+                    "forfeit their per-system payout (slots stay 'checked' but you no "
+                    "longer get paid).\n"
+                    "• Promotion and demotion share a **cooldown** (24h default).\n\n"
+                    "Press **Confirm** to demote or **Cancel** to abort."
+                ),
+                color=discord.Color.orange(),
+            )
+            view = ConfirmView(action=f"demote from {current_tier} to {prev_tier}", timeout=60)
+            await interaction.followup.send(embed=warning_embed, view=view, ephemeral=True)
+            await view.wait()
+
+            if view.result is None:
+                await interaction.followup.send("⏱️ Confirmation timed out. Demote cancelled.", ephemeral=True)
+                return
+            if not view.result:
+                await interaction.followup.send("❌ Demote cancelled.", ephemeral=True)
+                return
+
+            demote_resp = await self.http_client.put(f"{api_base}/players/{player_id}/demote", timeout=10)
+            demote_resp.raise_for_status()
+            demote_data = demote_resp.json()
+
+            embed = discord.Embed(
+                title="⬇️ Tier Demoted",
+                description=(
+                    f"You have stepped down from **{demote_data['old_tier']}** to **{demote_data['new_tier']}**."
+                ),
+                color=self._get_tier_color(demote_data["new_tier"]),
+            )
+            embed.add_field(name="New Tier", value=f"**{demote_data['new_tier']}**", inline=True)
+            embed.add_field(name="XP", value=f"{demote_data['xp']:,}", inline=True)
+
+            await interaction.followup.send(embed=embed, ephemeral=True)
+            flogger.info(
+                f"/demote success: guild={interaction.guild_id}, user={interaction.user.id}, "
+                f"{demote_data['old_tier']} -> {demote_data['new_tier']}"
+            )
+
+            # Swap tier roles (best-effort, mirrors /promote)
+            try:
+                config_resp = await self.http_client.get(f"{api_base}/config/guild/{interaction.guild_id}", timeout=5)
+                config_resp.raise_for_status()
+                config = config_resp.json()
+                guild = interaction.guild
+                old_role_id = config.get(f"{demote_data['old_tier'].lower()}_role_id")
+                new_role_id = config.get(f"{demote_data['new_tier'].lower()}_role_id")
+                roles_to_add: list[discord.Role] = []
+                roles_to_remove: list[discord.Role] = []
+                if new_role_id:
+                    new_role = guild.get_role(new_role_id)
+                    if new_role and new_role not in interaction.user.roles:
+                        roles_to_add.append(new_role)
+                if old_role_id:
+                    old_role = guild.get_role(old_role_id)
+                    if old_role and old_role in interaction.user.roles:
+                        roles_to_remove.append(old_role)
+                if roles_to_add:
+                    await interaction.user.add_roles(*roles_to_add, reason="BountyBot tier demotion")
+                if roles_to_remove:
+                    await interaction.user.remove_roles(*roles_to_remove, reason="BountyBot tier demotion")
+            except Exception as e:  # pylint: disable=broad-exception-caught
+                flogger.warning(
+                    f"Failed to swap tier roles on demotion: guild={interaction.guild_id}, "
+                    f"user={interaction.user.id}, error={e}"
+                )
+
+        except httpx.HTTPStatusError as e:
+            flogger.error(
+                f"/demote HTTP error: guild={interaction.guild_id}, user={interaction.user.id}, "
+                f"status={e.response.status_code}"
+            )
+            if _is_guild_not_configured(e):
+                await interaction.followup.send(_GUILD_NOT_CONFIGURED_MSG, ephemeral=True)
+            elif e.response.status_code == 429:
+                cooldown_msg = _format_tier_change_cooldown_message(e, action="demote")
+                await interaction.followup.send(embed=cooldown_msg, ephemeral=True)
+            elif e.response.status_code == 400:
+                try:
+                    detail = e.response.json().get("detail", "Cannot demote at this time.")
+                except Exception:  # pylint: disable=broad-exception-caught
+                    detail = "Cannot demote at this time."
+                embed = discord.Embed(title="❌ Cannot Demote", description=detail, color=discord.Color.red())
+                await interaction.followup.send(embed=embed, ephemeral=True)
+            else:
+                await report_api_error(interaction, e)
+        except Exception as e:  # pylint: disable=broad-exception-caught
+            flogger.error(f"/demote error: guild={interaction.guild_id}, user={interaction.user.id}, error={e}")
             await interaction.followup.send("⚠️ An error occurred.", ephemeral=True)
 
     @app_commands.command(name="loadout", description="View an active ship loadout")
@@ -933,6 +1187,12 @@ class PlayerCog(commands.Cog):
     @promote.error
     async def promote_error(self, interaction: discord.Interaction, error: app_commands.AppCommandError):
         flogger.exception("Error in /promote", exc_info=error)
+        if not interaction.response.is_done():
+            await interaction.response.send_message("⚠️ An error occurred.", ephemeral=True)
+
+    @demote.error
+    async def demote_error(self, interaction: discord.Interaction, error: app_commands.AppCommandError):
+        flogger.exception("Error in /demote", exc_info=error)
         if not interaction.response.is_done():
             await interaction.response.send_message("⚠️ An error occurred.", ephemeral=True)
 

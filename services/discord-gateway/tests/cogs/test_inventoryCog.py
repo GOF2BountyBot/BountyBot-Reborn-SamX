@@ -2465,5 +2465,413 @@ class TestGiveItem422Handling:
         )
 
 
+# ---------------------------------------------------------------------------
+# B.90: /unequip all sentinel — bulk unequip
+# ---------------------------------------------------------------------------
+
+
+def _make_loadout(weapons=None, modules=None, turrets=None, secondary_weapons=None):
+    """Return a minimal loadout dict for the active ship."""
+    return {
+        "weapons": weapons or [],
+        "modules": modules or [],
+        "turrets": turrets or [],
+        "secondary_weapons": secondary_weapons or [],
+    }
+
+
+class TestUnequipAllSentinel:
+    """B.90: Tests for the 'all' (case-insensitive) sentinel on /unequip.
+
+    Design spec (from OPEN_ITEMS.md B.90):
+    - Sentinel is ``all`` (case-insensitive) on the existing item_name parameter.
+    - Loops the existing per-item unequip endpoint — no new bulk API.
+    - Partial-failure: reports succeeded and failed lists, does not abort on first failure.
+    - Friendly no-op message when the active ship has nothing equipped.
+    - All four slot types included: weapons, modules, turrets, secondary_weapons.
+    """
+
+    # ------------------------------------------------------------------
+    # Happy path — all items succeed
+    # ------------------------------------------------------------------
+
+    def test_unequip_all_strips_all_items_success(self, mock_inventory_cog, make_mock_response):
+        """B.90: /unequip all returns all items to inventory when every call succeeds."""
+        interaction = _create_mock_interaction()
+
+        player_resp = make_mock_response({"id": 1})
+        ships_resp = make_mock_response(
+            [_make_ship_data(ship_id=10, weapons=["LaserCannon"], modules=["ShieldGen"], turrets=["HeavyTurret"])]
+        )
+        loadout_resp = make_mock_response(
+            _make_loadout(weapons=["LaserCannon"], modules=["ShieldGen"], turrets=["HeavyTurret"])
+        )
+        # Three successful unequip responses (one per item)
+        unequip_resp = make_mock_response({"success": True})
+
+        mock_inventory_cog.http_client.post = AsyncMock(
+            side_effect=[player_resp, unequip_resp, unequip_resp, unequip_resp]
+        )
+        mock_inventory_cog.http_client.get = AsyncMock(side_effect=[ships_resp, loadout_resp])
+
+        asyncio.run(mock_inventory_cog.unequip.callback(mock_inventory_cog, interaction, item_name="all"))
+
+        interaction.response.defer.assert_awaited_once_with(thinking=True)
+        interaction.followup.send.assert_awaited_once()
+        call_kwargs = interaction.followup.send.call_args[1]
+        assert "embed" in call_kwargs
+        embed = call_kwargs["embed"]
+        assert "unequip" in embed.title.lower() or "all items" in embed.title.lower()
+        # Should not be ephemeral — success is public
+        assert not call_kwargs.get("ephemeral", False)
+
+    def test_unequip_all_case_insensitive_ALL_CAPS(self, mock_inventory_cog, make_mock_response):
+        """B.90: 'ALL' (uppercase) is treated identically to 'all'."""
+        interaction = _create_mock_interaction()
+
+        player_resp = make_mock_response({"id": 1})
+        ships_resp = make_mock_response([_make_ship_data(ship_id=10, weapons=["LaserCannon"])])
+        loadout_resp = make_mock_response(_make_loadout(weapons=["LaserCannon"]))
+        unequip_resp = make_mock_response({"success": True})
+
+        mock_inventory_cog.http_client.post = AsyncMock(side_effect=[player_resp, unequip_resp])
+        mock_inventory_cog.http_client.get = AsyncMock(side_effect=[ships_resp, loadout_resp])
+
+        asyncio.run(mock_inventory_cog.unequip.callback(mock_inventory_cog, interaction, item_name="ALL"))
+
+        interaction.followup.send.assert_awaited_once()
+        call_kwargs = interaction.followup.send.call_args[1]
+        assert "embed" in call_kwargs
+
+    def test_unequip_all_with_whitespace_padding(self, mock_inventory_cog, make_mock_response):
+        """B.90: ' all ' (with spaces) is accepted as the sentinel."""
+        interaction = _create_mock_interaction()
+
+        player_resp = make_mock_response({"id": 1})
+        ships_resp = make_mock_response([_make_ship_data(ship_id=10, weapons=["LaserCannon"])])
+        loadout_resp = make_mock_response(_make_loadout(weapons=["LaserCannon"]))
+        unequip_resp = make_mock_response({"success": True})
+
+        mock_inventory_cog.http_client.post = AsyncMock(side_effect=[player_resp, unequip_resp])
+        mock_inventory_cog.http_client.get = AsyncMock(side_effect=[ships_resp, loadout_resp])
+
+        asyncio.run(mock_inventory_cog.unequip.callback(mock_inventory_cog, interaction, item_name="  all  "))
+
+        interaction.followup.send.assert_awaited_once()
+        call_kwargs = interaction.followup.send.call_args[1]
+        assert "embed" in call_kwargs
+
+    # ------------------------------------------------------------------
+    # All four slot types included
+    # ------------------------------------------------------------------
+
+    def test_unequip_all_covers_all_four_slot_types(self, mock_inventory_cog, make_mock_response):
+        """B.90: secondary_weapons slot is included in the bulk unequip (tester note from Unit 2)."""
+        interaction = _create_mock_interaction()
+
+        player_resp = make_mock_response({"id": 1})
+        ships_resp = make_mock_response([_make_ship_data(ship_id=10)])
+        loadout_resp = make_mock_response(
+            _make_loadout(
+                weapons=["LaserCannon"],
+                modules=["ShieldGen"],
+                turrets=["HeavyTurret"],
+                secondary_weapons=["Missile Pod"],
+            )
+        )
+        # Four successful unequip responses
+        unequip_resp = make_mock_response({"success": True})
+
+        mock_inventory_cog.http_client.post = AsyncMock(
+            side_effect=[player_resp, unequip_resp, unequip_resp, unequip_resp, unequip_resp]
+        )
+        mock_inventory_cog.http_client.get = AsyncMock(side_effect=[ships_resp, loadout_resp])
+
+        asyncio.run(mock_inventory_cog.unequip.callback(mock_inventory_cog, interaction, item_name="all"))
+
+        # All 4 items → 5 total POST calls (1 player + 4 unequip)
+        assert mock_inventory_cog.http_client.post.await_count == 5
+        interaction.followup.send.assert_awaited_once()
+
+    # ------------------------------------------------------------------
+    # No-op: ship has nothing equipped
+    # ------------------------------------------------------------------
+
+    def test_unequip_all_noop_empty_ship(self, mock_inventory_cog, make_mock_response):
+        """B.90: friendly no-op message when active ship has nothing equipped."""
+        interaction = _create_mock_interaction()
+
+        player_resp = make_mock_response({"id": 1})
+        ships_resp = make_mock_response([_make_ship_data(ship_id=10)])
+        loadout_resp = make_mock_response(_make_loadout())  # empty
+
+        mock_inventory_cog.http_client.post = AsyncMock(return_value=player_resp)
+        mock_inventory_cog.http_client.get = AsyncMock(side_effect=[ships_resp, loadout_resp])
+
+        asyncio.run(mock_inventory_cog.unequip.callback(mock_inventory_cog, interaction, item_name="all"))
+
+        interaction.followup.send.assert_awaited_once()
+        call_kwargs = interaction.followup.send.call_args[1]
+        assert "embed" in call_kwargs
+        embed = call_kwargs["embed"]
+        # Should convey "nothing to unequip"
+        assert "nothing" in embed.title.lower() or "no items" in embed.description.lower()
+
+    # ------------------------------------------------------------------
+    # Partial failure
+    # ------------------------------------------------------------------
+
+    def test_unequip_all_partial_failure_reports_both_lists(self, mock_inventory_cog, make_mock_response):
+        """B.90: partial failure — reports succeeded + failed, does not abort on first failure."""
+        import httpx
+
+        interaction = _create_mock_interaction()
+
+        player_resp = make_mock_response({"id": 1})
+        ships_resp = make_mock_response([_make_ship_data(ship_id=10)])
+        loadout_resp = make_mock_response(_make_loadout(weapons=["GoodItem", "BadItem"]))
+
+        # GoodItem succeeds, BadItem fails
+        good_unequip_resp = make_mock_response({"success": True})
+        bad_error_resp = MagicMock()
+        bad_error_resp.status_code = 500
+        bad_http_error = httpx.HTTPStatusError(
+            "500 Internal Server Error", request=MagicMock(), response=bad_error_resp
+        )
+
+        mock_inventory_cog.http_client.post = AsyncMock(side_effect=[player_resp, good_unequip_resp, bad_http_error])
+        mock_inventory_cog.http_client.get = AsyncMock(side_effect=[ships_resp, loadout_resp])
+
+        asyncio.run(mock_inventory_cog.unequip.callback(mock_inventory_cog, interaction, item_name="all"))
+
+        interaction.followup.send.assert_awaited_once()
+        call_kwargs = interaction.followup.send.call_args[1]
+        assert "embed" in call_kwargs
+        embed = call_kwargs["embed"]
+        # Partial failure — title should convey warning
+        assert "partial" in embed.title.lower() or "⚠" in embed.title
+        # Description must mention both succeeded and failed items
+        assert "GoodItem" in embed.description
+        assert "BadItem" in embed.description
+
+    def test_unequip_all_all_fail_reports_failures(self, mock_inventory_cog, make_mock_response):
+        """B.90: when every item fails, the response still covers all items."""
+        import httpx
+
+        interaction = _create_mock_interaction()
+
+        player_resp = make_mock_response({"id": 1})
+        ships_resp = make_mock_response([_make_ship_data(ship_id=10)])
+        loadout_resp = make_mock_response(_make_loadout(weapons=["Item1", "Item2"]))
+
+        error_resp = MagicMock()
+        error_resp.status_code = 500
+        bad_http_error = httpx.HTTPStatusError("500 Internal Server Error", request=MagicMock(), response=error_resp)
+
+        mock_inventory_cog.http_client.post = AsyncMock(side_effect=[player_resp, bad_http_error, bad_http_error])
+        mock_inventory_cog.http_client.get = AsyncMock(side_effect=[ships_resp, loadout_resp])
+
+        asyncio.run(mock_inventory_cog.unequip.callback(mock_inventory_cog, interaction, item_name="all"))
+
+        interaction.followup.send.assert_awaited_once()
+        call_kwargs = interaction.followup.send.call_args[1]
+        assert "embed" in call_kwargs
+        embed = call_kwargs["embed"]
+        assert "Item1" in embed.description or "Item2" in embed.description
+
+    # ------------------------------------------------------------------
+    # Error paths for the bulk sentinel
+    # ------------------------------------------------------------------
+
+    def test_unequip_all_loadout_fetch_fails_returns_ephemeral_error(self, mock_inventory_cog, make_mock_response):
+        """B.90: if loadout cannot be fetched, send ephemeral error."""
+        interaction = _create_mock_interaction()
+
+        player_resp = make_mock_response({"id": 1})
+        ships_resp = make_mock_response([_make_ship_data(ship_id=10)])
+
+        mock_inventory_cog.http_client.post = AsyncMock(return_value=player_resp)
+        # Second GET (loadout) raises an error
+        mock_inventory_cog.http_client.get = AsyncMock(side_effect=[ships_resp, RuntimeError("loadout fetch failed")])
+
+        asyncio.run(mock_inventory_cog.unequip.callback(mock_inventory_cog, interaction, item_name="all"))
+
+        interaction.followup.send.assert_awaited_once()
+        call_kwargs = interaction.followup.send.call_args
+        assert call_kwargs[1].get("ephemeral", False)
+
+    def test_unequip_all_no_active_ship_returns_ephemeral_error(self, mock_inventory_cog, make_mock_response):
+        """B.90: sentinel 'all' respects the no-active-ship guard."""
+        interaction = _create_mock_interaction()
+
+        player_resp = make_mock_response({"id": 1})
+        ships_resp = make_mock_response([_make_ship_data(ship_id=10, is_active=False)])
+
+        mock_inventory_cog.http_client.post = AsyncMock(return_value=player_resp)
+        mock_inventory_cog.http_client.get = AsyncMock(return_value=ships_resp)
+
+        asyncio.run(mock_inventory_cog.unequip.callback(mock_inventory_cog, interaction, item_name="all"))
+
+        interaction.followup.send.assert_awaited_once()
+        call_kwargs = interaction.followup.send.call_args
+        assert call_kwargs[1].get("ephemeral", False)
+        assert "ship" in call_kwargs[0][0].lower()
+
+    def test_unequip_all_player_not_found_returns_ephemeral_error(self, mock_inventory_cog):
+        """B.90: sentinel 'all' respects the player-not-found guard."""
+        interaction = _create_mock_interaction()
+
+        mock_inventory_cog.http_client.post = AsyncMock(side_effect=RuntimeError("not found"))
+
+        asyncio.run(mock_inventory_cog.unequip.callback(mock_inventory_cog, interaction, item_name="all"))
+
+        interaction.followup.send.assert_awaited_once()
+        call_kwargs = interaction.followup.send.call_args
+        assert call_kwargs[1].get("ephemeral", False)
+        assert "Player not found" in call_kwargs[0][0]
+
+    # ------------------------------------------------------------------
+    # Non-sentinel: 'all' as literal item name does NOT match sentinel
+    # (regression — existing single-item path is preserved)
+    # ------------------------------------------------------------------
+
+    def test_unequip_non_all_item_uses_existing_single_item_path(self, mock_inventory_cog, make_mock_response):
+        """B.90 regression: item_name='LaserCannon' still uses the single-item unequip path."""
+        interaction = _create_mock_interaction()
+
+        player_resp = make_mock_response({"id": 1})
+        ships_resp = make_mock_response([_make_ship_data(ship_id=10, weapons=["LaserCannon"])])
+        unequip_resp = make_mock_response(_make_ship_data(weapons=[]))
+
+        mock_inventory_cog.http_client.post = AsyncMock(side_effect=[player_resp, unequip_resp])
+        mock_inventory_cog.http_client.get = AsyncMock(return_value=ships_resp)
+
+        asyncio.run(mock_inventory_cog.unequip.callback(mock_inventory_cog, interaction, item_name="LaserCannon"))
+
+        interaction.followup.send.assert_awaited_once()
+        call_kwargs = interaction.followup.send.call_args[1]
+        assert "embed" in call_kwargs
+        embed = call_kwargs["embed"]
+        # Single-item path uses "📦 Item Unequipped" title
+        assert "item unequipped" in embed.title.lower()
+
+
+# ---------------------------------------------------------------------------
+# B.90: unequip_autocomplete — 'all' sentinel as first choice
+# ---------------------------------------------------------------------------
+
+
+class TestUnequipAutocompleteAllSentinel:
+    """B.90: Tests verifying that 'all' appears as the first autocomplete choice."""
+
+    def test_unequip_autocomplete_all_is_first_choice_when_empty_input(self, mock_inventory_cog, make_mock_response):
+        """B.90: 'all — unequip everything' is first when user has typed nothing."""
+        interaction = _create_mock_interaction()
+
+        player_resp = make_mock_response({"id": 1})
+        ships_resp = make_mock_response([{"id": 10, "ship_name": "Eagle", "is_active": True}])
+        loadout_resp = make_mock_response(
+            {"weapons": ["LaserCannon"], "modules": ["ShieldGen"], "turrets": [], "secondary_weapons": []}
+        )
+
+        mock_inventory_cog.http_client.post = AsyncMock(return_value=player_resp)
+        mock_inventory_cog.http_client.get = AsyncMock(side_effect=[ships_resp, loadout_resp])
+
+        choices = asyncio.run(mock_inventory_cog.unequip_autocomplete(interaction, ""))
+
+        assert len(choices) > 0
+        assert choices[0].value == "all", f"Expected 'all' as first choice, got: {choices[0].value!r}"
+        assert "all" in choices[0].name.lower()
+
+    def test_unequip_autocomplete_all_is_first_choice_when_typing_a(self, mock_inventory_cog, make_mock_response):
+        """B.90: 'all' matches when user types 'a' (prefix match)."""
+        interaction = _create_mock_interaction()
+
+        player_resp = make_mock_response({"id": 1})
+        ships_resp = make_mock_response([{"id": 10, "ship_name": "Eagle", "is_active": True}])
+        loadout_resp = make_mock_response(
+            {"weapons": ["AbCannon"], "modules": [], "turrets": [], "secondary_weapons": []}
+        )
+
+        mock_inventory_cog.http_client.post = AsyncMock(return_value=player_resp)
+        mock_inventory_cog.http_client.get = AsyncMock(side_effect=[ships_resp, loadout_resp])
+
+        choices = asyncio.run(mock_inventory_cog.unequip_autocomplete(interaction, "a"))
+
+        # "all" is a prefix of "a" search — check it appears first (or appears at all)
+        values = [c.value for c in choices]
+        assert "all" in values, f"'all' should appear when typing 'a', got: {values}"
+        assert choices[0].value == "all", f"'all' should be first, got: {choices[0].value!r}"
+
+    def test_unequip_autocomplete_all_not_shown_when_searching_specific_item(
+        self, mock_inventory_cog, make_mock_response
+    ):
+        """B.90: 'all' is NOT surfaced when the user types something that doesn't match 'all'."""
+        interaction = _create_mock_interaction()
+
+        player_resp = make_mock_response({"id": 1})
+        ships_resp = make_mock_response([{"id": 10, "ship_name": "Eagle", "is_active": True}])
+        loadout_resp = make_mock_response(
+            {"weapons": ["LaserCannon"], "modules": [], "turrets": [], "secondary_weapons": []}
+        )
+
+        mock_inventory_cog.http_client.post = AsyncMock(return_value=player_resp)
+        mock_inventory_cog.http_client.get = AsyncMock(side_effect=[ships_resp, loadout_resp])
+
+        # "laser" does NOT match "all"
+        choices = asyncio.run(mock_inventory_cog.unequip_autocomplete(interaction, "laser"))
+
+        values = [c.value for c in choices]
+        assert "all" not in values, f"'all' should NOT appear when searching 'laser', got: {values}"
+
+    def test_unequip_autocomplete_secondary_weapons_included(self, mock_inventory_cog, make_mock_response):
+        """B.90/tester note: secondary_weapons slot items appear in unequip autocomplete."""
+        interaction = _create_mock_interaction()
+
+        player_resp = make_mock_response({"id": 1})
+        ships_resp = make_mock_response([{"id": 10, "ship_name": "Eagle", "is_active": True}])
+        loadout_resp = make_mock_response(
+            {
+                "weapons": [],
+                "modules": [],
+                "turrets": [],
+                "secondary_weapons": ["Missile Pod"],
+            }
+        )
+
+        mock_inventory_cog.http_client.post = AsyncMock(return_value=player_resp)
+        mock_inventory_cog.http_client.get = AsyncMock(side_effect=[ships_resp, loadout_resp])
+
+        choices = asyncio.run(mock_inventory_cog.unequip_autocomplete(interaction, ""))
+
+        values = [c.value for c in choices]
+        assert "Missile Pod" in values, f"secondary_weapon item should appear in choices, got: {values}"
+
+
+# ---------------------------------------------------------------------------
+# B.90: _fetch_active_ship_loadout helper
+# ---------------------------------------------------------------------------
+
+
+class TestFetchActiveShipLoadout:
+    """B.90: Tests for the _fetch_active_ship_loadout helper method."""
+
+    def test_fetch_active_ship_loadout_success(self, mock_inventory_cog, make_mock_response):
+        """_fetch_active_ship_loadout should return loadout dict on success."""
+        loadout = _make_loadout(weapons=["LaserCannon"])
+        resp = make_mock_response(loadout)
+        mock_inventory_cog.http_client.get = AsyncMock(return_value=resp)
+
+        result = asyncio.run(mock_inventory_cog._fetch_active_ship_loadout(ship_id=10))
+        assert result == loadout
+
+    def test_fetch_active_ship_loadout_api_error_returns_none(self, mock_inventory_cog):
+        """_fetch_active_ship_loadout should return None on any API error."""
+        mock_inventory_cog.http_client.get = AsyncMock(side_effect=RuntimeError("network fail"))
+
+        result = asyncio.run(mock_inventory_cog._fetch_active_ship_loadout(ship_id=10))
+        assert result is None
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

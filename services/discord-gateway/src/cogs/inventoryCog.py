@@ -654,7 +654,11 @@ class InventoryCog(commands.Cog):
     async def unequip_autocomplete(
         self, interaction: discord.Interaction, current: str
     ) -> list[app_commands.Choice[str]]:
-        """Autocomplete for /unequip — shows items currently equipped on the player's active ship."""
+        """Autocomplete for /unequip — shows items currently equipped on the player's active ship.
+
+        B.90: The sentinel value ``all`` (case-insensitive) is always surfaced as the **first**
+        choice so users can bulk-unequip every item with a single selection.
+        """
         try:
             # Resolve player ID
             user_data = {
@@ -692,7 +696,13 @@ class InventoryCog(commands.Cog):
             equipped.extend(loadout.get("secondary_weapons") or [])
 
             norm_current = normalize_for_search(current)
-            choices = []
+
+            # B.90: prepend the "all" sentinel as the first choice when it matches the input.
+            # "all" matches whenever the user has typed nothing, or has typed a prefix of "all".
+            choices: list[app_commands.Choice[str]] = []
+            if norm_current in normalize_for_search("all"):
+                choices.append(app_commands.Choice(name="all — unequip everything", value="all"))
+
             seen: set[str] = set()
             for item_name in equipped:
                 if item_name and item_name not in seen and norm_current in normalize_for_search(item_name):
@@ -862,8 +872,17 @@ class InventoryCog(commands.Cog):
             flogger.error(f"Error in /equip: {e}")
             await interaction.followup.send("⚠️ An error occurred while equipping the item.", ephemeral=True)
 
+    async def _fetch_active_ship_loadout(self, ship_id: int) -> dict | None:
+        """Fetch the full loadout dict for the given ship. Returns None on any error."""
+        try:
+            resp = await self.http_client.get(f"{api_base}/ships/{ship_id}/loadout", timeout=10)
+            resp.raise_for_status()
+            return resp.json()
+        except Exception:  # pylint: disable=broad-exception-caught
+            return None
+
     @app_commands.command(name="unequip", description="Unequip an item from your active ship to inventory")
-    @app_commands.describe(item_name="Name of the item to unequip")
+    @app_commands.describe(item_name="Name of the item to unequip, or 'all' to strip everything")
     @app_commands.autocomplete(item_name=unequip_autocomplete)
     async def unequip(
         self,
@@ -872,7 +891,10 @@ class InventoryCog(commands.Cog):
     ):
         """Unequip an item from the player's active ship.
 
-        equipment_type is auto-detected from the item name.
+        Pass item_name="all" (case-insensitive) to bulk-unequip every item from the
+        active ship across all four slot types: weapons, modules, turrets, secondary_weapons.
+
+        equipment_type is auto-detected by bot-core for the single-item path.
         """
         flogger.info(f"/unequip: guild={interaction.guild_id}, user={interaction.user.id}")
         flogger.debug(f"/unequip params: item_name={item_name}")
@@ -897,6 +919,16 @@ class InventoryCog(commands.Cog):
 
             ship_id = active_ship["id"]
 
+            # ------------------------------------------------------------------
+            # B.90: bulk unequip sentinel — "all" (case-insensitive)
+            # ------------------------------------------------------------------
+            if item_name.strip().lower() == "all":
+                await self._unequip_all(interaction, player_id, ship_id, active_ship)
+                return
+
+            # ------------------------------------------------------------------
+            # Single-item unequip (existing path)
+            # ------------------------------------------------------------------
             resp = await self.http_client.post(
                 f"{api_base}/ships/{ship_id}/unequip",
                 json={
@@ -935,6 +967,100 @@ class InventoryCog(commands.Cog):
         except Exception as e:  # pylint: disable=broad-exception-caught
             flogger.error(f"Error in /unequip: {e}")
             await interaction.followup.send("⚠️ An error occurred while unequipping the item.", ephemeral=True)
+
+    async def _unequip_all(
+        self,
+        interaction: discord.Interaction,
+        player_id: int,
+        ship_id: int,
+        active_ship: dict,
+    ) -> None:
+        """B.90: Bulk-unequip every item from the active ship.
+
+        Fetches the ship's current loadout, then loops the existing per-item
+        unequip endpoint for all four slot types:
+            weapons, modules, turrets, secondary_weapons.
+
+        Partial-failure handling: collects per-item success/failure rather than
+        aborting on first error.  The final embed always reports which items were
+        returned to inventory and which (if any) failed.
+        """
+        ship_display = active_ship.get("nickname") or active_ship.get("ship_name", "Unknown")
+
+        loadout = await self._fetch_active_ship_loadout(ship_id)
+        if loadout is None:
+            await interaction.followup.send("❌ Could not fetch ship loadout. Please try again.", ephemeral=True)
+            return
+
+        # Gather all equipped items with their slot type (for the unequip POST).
+        # Each tuple: (item_name, equipment_type_key_in_loadout)
+        # equipment_type keys used here match what bot-core's auto-detect expects
+        # (the unequip endpoint auto-detects from item_name when no equipment_type is sent).
+        slot_keys = ("weapons", "modules", "turrets", "secondary_weapons")
+        all_items: list[str] = []
+        for slot in slot_keys:
+            all_items.extend(loadout.get(slot) or [])
+
+        if not all_items:
+            ship_display = active_ship.get("nickname") or active_ship.get("ship_name", "Unknown")
+            embed = discord.Embed(
+                title="📦 Nothing to Unequip",
+                description=f"**{ship_display}** has no items equipped.",
+                color=discord.Color.light_grey(),
+            )
+            await interaction.followup.send(embed=embed)
+            flogger.debug(f"/unequip all no-op: guild={interaction.guild_id} user={interaction.user.id} ship={ship_id}")
+            return
+
+        # Loop per-item unequip — collect successes and failures for partial-failure report.
+        succeeded: list[str] = []
+        failed: list[str] = []
+
+        for name in all_items:
+            if not name:
+                continue
+            try:
+                resp = await self.http_client.post(
+                    f"{api_base}/ships/{ship_id}/unequip",
+                    json={
+                        "player_id": player_id,
+                        "item_name": name,
+                        # No equipment_type — auto-detected by bot-core
+                    },
+                    timeout=10,
+                )
+                resp.raise_for_status()
+                succeeded.append(name)
+            except Exception as exc:  # pylint: disable=broad-exception-caught
+                flogger.error(f"/unequip all: failed to unequip '{name}' from ship={ship_id}: {exc}")
+                failed.append(name)
+
+        # Build result embed.
+        if failed:
+            color = discord.Color.orange()
+            title = "⚠️ Partial Unequip"
+            desc_parts = []
+            if succeeded:
+                desc_parts.append(f"✅ Returned to inventory: {', '.join(f'**{n}**' for n in succeeded)}")
+            desc_parts.append(f"❌ Could not unequip: {', '.join(f'**{n}**' for n in failed)}")
+            description = "\n".join(desc_parts)
+        else:
+            color = discord.Color.green()
+            title = "📦 All Items Unequipped"
+            description = f"All **{len(succeeded)}** item(s) have been moved back to your inventory."
+
+        embed = discord.Embed(title=title, description=description, color=color)
+        embed.add_field(name="Ship", value=ship_display, inline=True)
+        if succeeded:
+            embed.add_field(name="Returned", value=str(len(succeeded)), inline=True)
+        if failed:
+            embed.add_field(name="Failed", value=str(len(failed)), inline=True)
+
+        await interaction.followup.send(embed=embed)
+        flogger.info(
+            f"/unequip all: guild={interaction.guild_id} user={interaction.user.id} "
+            f"ship={ship_id} succeeded={len(succeeded)} failed={len(failed)}"
+        )
 
     def _get_item_type_color(self, item_type: str) -> discord.Color:
         """Get Discord color based on item type (concrete vocab, A.46)."""

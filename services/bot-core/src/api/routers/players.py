@@ -8,15 +8,17 @@ must be done via REST API.
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from persist.database.manager import get_db_session
+from services.combat_preflight_service import CombatPreflightService
 from services.exceptions import GuildNotConfiguredError
 from services.loadout_response_service import LoadoutResponseService
-from services.player_service import PlayerService
+from services.player_service import PlayerService, TierChangeCooldownError
 from shared import bblogger
 from sqlalchemy.exc import IntegrityError
 
 from api.schemas.loadout_schema import LoadoutResponse
 from api.schemas.players_schema import (
     CreatePlayerRequest,
+    DemoteResponse,
     PlayerResponse,
     PlayerStatisticsResponse,
     PrestigeResponse,
@@ -296,6 +298,11 @@ async def prestige_player(player_id: int, player_service: PlayerService = Depend
             result = await player_service.prestige_player(db, player_id)
             return PrestigeResponse(**result)
 
+    except TierChangeCooldownError as e:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail={"detail": str(e), "cooldown_end": e.cooldown_end.isoformat()},
+        ) from e
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
     except Exception as e:
@@ -346,6 +353,48 @@ async def get_promotion_status(player_id: int, player_service: PlayerService = D
         ) from e
 
 
+@router.get("/{player_id}/combat-preflight")
+async def combat_preflight(player_id: int, target_tier: str, num_sims: int = 20):
+    """Estimate the player's win rate against criminals at ``target_tier``.
+
+    Advisory only — used by /promote to surface a power-check verdict to the
+    user. Returns ``{verdict, player_win_rate, criminal_win_rate, sims_run,
+    target_tier, sample_size}``. ``verdict`` is one of: ``green``, ``yellow``,
+    ``red``, ``no_data`` (no active bounties to sample at the target tier).
+    """
+    flogger.debug(f"Combat preflight for player {player_id} target_tier={target_tier} sims={num_sims}")
+    try:
+        async with get_db_session() as db:
+            # Resolve player → guild
+            from services.player_service import PlayerService as _PS
+
+            player = await _PS().player_repo.get_by_id(db, player_id)
+            if not player:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Player {player_id} not found")
+            result = await CombatPreflightService().estimate(
+                db,
+                player_id=player_id,
+                guild_id=player.guild_id,
+                target_tier=target_tier,
+                num_sims=num_sims,
+            )
+            return {
+                "verdict": result.verdict.value,
+                "player_win_rate": result.player_win_rate,
+                "criminal_win_rate": result.criminal_win_rate,
+                "sims_run": result.sims_run,
+                "target_tier": result.target_tier,
+                "sample_size": result.sample_size,
+            }
+    except HTTPException:
+        raise
+    except Exception as e:
+        flogger.error(f"Error in combat_preflight for player {player_id}: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to estimate combat preflight"
+        ) from e
+
+
 @router.put("/{player_id}/promote", response_model=PromoteResponse)
 async def promote_player(player_id: int, player_service: PlayerService = Depends(get_player_service)):
     """Promote a player to the next tier if eligible."""
@@ -356,6 +405,11 @@ async def promote_player(player_id: int, player_service: PlayerService = Depends
             result = await player_service.promote_player(db, player_id)
             return PromoteResponse(**result)
 
+    except TierChangeCooldownError as e:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail={"detail": str(e), "cooldown_end": e.cooldown_end.isoformat()},
+        ) from e
     except ValueError as e:
         error_msg = str(e)
         if "not found" in error_msg.lower():
@@ -364,6 +418,31 @@ async def promote_player(player_id: int, player_service: PlayerService = Depends
     except Exception as e:
         flogger.error(f"Error promoting player {player_id}: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to promote player") from e
+
+
+@router.put("/{player_id}/demote", response_model=DemoteResponse)
+async def demote_player(player_id: int, player_service: PlayerService = Depends(get_player_service)):
+    """Demote a player to the previous tier. Subject to the tier-change cooldown."""
+    flogger.info(f"Demoting player {player_id}")
+
+    try:
+        async with get_db_session() as db:
+            result = await player_service.demote_player(db, player_id)
+            return DemoteResponse(**result)
+
+    except TierChangeCooldownError as e:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail={"detail": str(e), "cooldown_end": e.cooldown_end.isoformat()},
+        ) from e
+    except ValueError as e:
+        error_msg = str(e)
+        if "not found" in error_msg.lower():
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=error_msg) from e
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=error_msg) from e
+    except Exception as e:
+        flogger.error(f"Error demoting player {player_id}: {e}")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to demote player") from e
 
 
 @router.get("/{player_id}/loadout", response_model=LoadoutResponse)
@@ -411,13 +490,28 @@ async def get_player_loadout(
 async def reset_player_cooldown(
     guild_id: int,
     user_id: int,
+    cooldown_type: str = "bounty",
     player_service: PlayerService = Depends(get_player_service),
 ):
-    """Reset the bounty check cooldown for a player identified by guild_id and Discord user_id.
+    """Reset a player's cooldown timer.
 
-    Used by admins to immediately unblock a player's cooldown.
+    ``cooldown_type`` selects which cooldown to clear:
+
+    - ``"bounty"`` (default): clears ``players.bounty_cooldown_end`` — used to
+      unblock /check after a Silver+ combat loss or a regular cooldown.
+    - ``"tier_change"``: clears ``players.tier_change_cooldown_end`` — used to
+      unblock /promote, /demote, or /prestige.
+    - ``"all"``: clears both.
+
+    Used by admins to immediately unblock a player.
     """
-    flogger.info(f"Resetting bounty cooldown for user {user_id} in guild {guild_id}")
+    flogger.info(f"Resetting {cooldown_type} cooldown for user {user_id} in guild {guild_id}")
+
+    if cooldown_type not in ("bounty", "tier_change", "all"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"cooldown_type must be one of: bounty, tier_change, all (got {cooldown_type!r})",
+        )
 
     try:
         async with get_db_session() as db:
@@ -439,10 +533,17 @@ async def reset_player_cooldown(
                     detail=f"Player not found for user {user_id} in guild {guild_id}",
                 )
 
-            player.bounty_cooldown_end = None
+            if cooldown_type in ("bounty", "all"):
+                player.bounty_cooldown_end = None
+            if cooldown_type in ("tier_change", "all"):
+                player.tier_change_cooldown_end = None
             await db.commit()
-            flogger.info(f"Cooldown reset for player {player.id} (user {user_id} guild {guild_id})")
-            return {"status": "success", "message": f"Cooldown reset for player {player.id}"}
+            flogger.info(f"Cooldown ({cooldown_type}) reset for player {player.id} (user {user_id} guild {guild_id})")
+            return {
+                "status": "success",
+                "message": f"Cooldown ({cooldown_type}) reset for player {player.id}",
+                "cooldown_type": cooldown_type,
+            }
 
     except HTTPException:
         raise

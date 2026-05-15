@@ -19,7 +19,15 @@ import sys
 # Ensure the src directory is on sys.path so that `persist.*` resolves correctly
 # when this module is invoked directly (e.g. `python run_migration.py`) rather
 # than as a package (e.g. `python -m persist.database.run_migration`).
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
+_src_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+sys.path.insert(0, _src_dir)
+
+# Also add the services/ directory so that `shared` is importable when running
+# outside of Docker (e.g. in CI).  Inside Docker the Dockerfile copies
+# services/shared/ directly into src/, so this path is a harmless no-op there.
+_services_dir = os.path.abspath(os.path.join(_src_dir, "..", ".."))
+if _services_dir not in sys.path:
+    sys.path.insert(0, _services_dir)
 
 from alembic import command
 

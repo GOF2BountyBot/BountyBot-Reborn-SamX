@@ -1,6 +1,6 @@
 # BountyBot Open Items
 
-Last updated: 2026-05-09
+Last updated: 2026-05-14
 
 ---
 
@@ -16,7 +16,7 @@ Last updated: 2026-05-09
 
 | ID | Sev | Summary | Notes |
 |----|-----|---------|-------|
-| B.82 | 🔵 | Combat summary embed should surface the PvC armour buff (Kieth T Maxwell bonus) | Add `pvc_armour_buff_applied: bool` + `pvc_armour_buff_factor: float` to `/combat-bonus` response (`bot-core/src/api/routers/bounties.py`); read in `bountyCog.py` combat summary embed builder |
+| B.82 | 🔵 | Combat summary embed should surface the PvC armour buff (Keith T Maxwell bonus) | Add `pvc_armour_buff_applied: bool` + `pvc_armour_buff_factor: float` to `/combat-bonus` response (`bot-core/src/api/routers/bounties.py`); read in `bountyCog.py` combat summary embed builder |
 | B.67 | 🔵 | `duel_expire` executor has no bulk sweep mode — requires `duel_id` in payload; firing without one returns error and does nothing | Option A: add bulk mode when `duel_id` omitted (expire all past `expires_at`) in `bot-core/src/utils/executors/duel_expire_executor.py`. Option B: document the limitation. |
 | B.63 | 🟡 | Duel result embed is ambiguous when both players use the same ship model (both show e.g. "Betty") | Blocked by B.62. Files: `bot-core/src/api/routers/duels.py`, `discord-gateway/src/cogs/duelCog.py` |
 | B.62 | 🟡 | No `display_name` column — all player-facing name fields show `discord_username` (e.g. `samx.ai`) instead of display name (e.g. `SamAccountX`) | Requires: Alembic migration adding `display_name: str \| None` to `users` table; populate on `/register` from `interaction.user.display_name`; update all name-resolution in cogs and bot-core |
@@ -29,6 +29,9 @@ Fixed-in-code items are treated as closed. Live re-test is confirmatory only.
 
 | ID | Sev | Summary | Evidence |
 |----|-----|---------|---------|
+| B.86 | 🟠 | Bounty 546 post-mortem: `/promote` mid-tier combat loss reset route to all-`-1`, player soft-locked on "No Bounty" until expiry | Fixed on branch `feat/promote-flow-correctness`: promote/demote ConfirmView flow + 24h tier-change cooldown + forfeit sentinel `-2` + strict same-tier shop + 20-sim combat preflight. Commits `8c6437b`..`b1448bd` |
+| B.85 | 🔵 | No distinct `WRONG_TIER` result for `/check` against a bounty outside player's tier | Won't-fix: bounty routes only live while the bounty is active, and `/promote` forfeit-scrub already clears tier-mismatched references |
+| B.87 | 🔵 | No credit refund for forfeited checks on `/promote` | Won't-fix (testing context): affected player already granted 1,000,000 cr quick-start |
 | B.80 | 🔵 | `/admin_give_item` `item_type` param removed | `adminCog.py:1732-1802` |
 | B.77 | 🟡 | A* heuristic → `0.0` constant (Dijkstra) | `pathfinding_service.py:59-65` |
 | B.74 | 🟠 | AEI dimension snapped to nearest 4px | `aei_conversion_service.py:98-104` |
@@ -54,6 +57,7 @@ Fixed-in-code items are treated as closed. Live re-test is confirmatory only.
 | ID | Sev | Summary | Notes |
 |----|-----|---------|-------|
 | CI-01 | 🔵 | Extend GitHub Actions workflow to pre-build and push all service images to GHCR | Build 4 images: `bot-core`, `discord-gateway`, `blender-service` (CUDA), `blender-service` (non-CUDA / CPU-only). Tag by commit SHA + `latest`. Use GHCR (free, no pull limits, no inactive expiry). Also review rebasing `bot-core` and `discord-gateway` base images to something slimmer (e.g. `python:3.12-slim`) to reduce layer size. **Requires a local dev story**: `docker-compose.yml` must remain usable for fully local builds without needing GHCR credentials — likely via `docker-compose.override.yml` or a `--profile` split. |
+| B.88 | 🔵 | `/admin_config_constants` UX is rough — needs redesign | Flagged during `feat/promote-flow-correctness` work; deferred out of that PR. Constant-editing admin flow suffers param sprawl and poor discoverability — wants a usability pass (grouped categories, search/autocomplete, clearer reset semantics). |
 | B.84 | 🔵 | Prefix command support for high-use commands (mobile / legacy Discord client compatibility) | For users on mobile using 3rd-party Discord apps that don't support slash commands. **Approach**: Separate prefix layer (Approach B from researcher report in `activity.md`) — add `@commands.command()` wrappers alongside existing slash commands, sharing business logic via private `_do_x()` methods. **Scope**: High-use candidates only — suggested starters: `!check <system>`, `!bounties`, `!duel <@user> [stakes]`, `!buy <item_id> <qty>`, `!sell <item_name> <qty>`, `!profile`, `!inventory`. **Hard/skip**: `/equip`, `/ship`, `/setactive`, `/route` (exotic system names with accented characters — worse UX without autocomplete), all skins commands. **Required supporting work**: (1) `!help` — lists all available prefix commands with one-line descriptions; (2) `!help <command>` — shows syntax, arguments, and an example; (3) Per-guild configurable prefix stored in `guild_configs` — default `!` is likely already in use by other bots; expose via `/admin_config` or new `guild_configs.prefix` column + Alembic migration; `GatewayBot` must use `get_prefix()` async callable instead of static string. **Admin check prerequisite**: `is_admin()` currently only handles `discord.Interaction` — needs refactor to also accept `commands.Context`. `message_content` intent and `commands.Bot` base class are already correctly configured. |
 
 ### Resolved Enhancements

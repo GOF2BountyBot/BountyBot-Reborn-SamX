@@ -234,14 +234,15 @@ class ShopService:  # pylint: disable=too-many-instance-attributes
         db: AsyncSession,
         player_id: int,
         shop_item_id: int,
-        sell_old_ship: bool = False,
     ) -> dict[str, Any]:
-        """Purchase a ship from the shop with optional trade-in.
+        """Purchase a ship from the shop.
+
+        The old active ship remains in the player's fleet as an inactive PlayerShip.
+        Gear is transferred from the old ship to the new one (B.95).
 
         Args:
             player_id: The purchasing player
             shop_item_id: The shop item to buy (must be a ship)
-            sell_old_ship: If True, sell old active ship for credit toward purchase
 
         Returns:
             Transaction details dict
@@ -261,22 +262,17 @@ class ShopService:  # pylint: disable=too-many-instance-attributes
             if shop_item.item_type != "ship":
                 raise ValueError(f"Shop item {shop_item_id} is not a ship (type={shop_item.item_type})")
 
+            # Validate tier access (mirrors purchase_item — closes a privilege-escalation
+            # gap where ships from any tier shop could be purchased without restriction).
+            if not self._can_access_tier(player.tier, shop_item.tier):
+                raise ValueError(f"Player tier {player.tier} cannot access {shop_item.tier} shop")
+
             # Get static ship data for the new ship (slot limits)
             new_ship_static = await self.ship_repo.get_by_name(db, shop_item.item_name)
             if not new_ship_static:
                 raise ValueError(f"Static ship data not found for '{shop_item.item_name}'")
 
             new_ship_price = shop_item.price
-
-            # Get player's current active ship
-            old_player_ship = await self.player_ship_repo.get_active_ship(db, player_id)
-            old_ship_value = 0
-            old_ship_static = None
-
-            if old_player_ship:
-                old_ship_static = await self.ship_repo.get_by_name(db, old_player_ship.ship_name)
-                if old_ship_static:
-                    old_ship_value = old_ship_static.value
 
             # Transaction is owned by the caller (router).
             # Lock the player row to prevent concurrent credit modifications.
@@ -285,18 +281,8 @@ class ShopService:  # pylint: disable=too-many-instance-attributes
                 raise ValueError(f"Player {player_id} not found")
 
             # Re-check credits under lock (prevents TOCTOU race)
-            if sell_old_ship and old_player_ship:
-                effective_cost = new_ship_price - old_ship_value
-                if player.credits < effective_cost:
-                    raise ValueError(
-                        f"Insufficient credits. Cost: {new_ship_price}, "
-                        f"Trade-in value: {old_ship_value}, "
-                        f"Net cost: {effective_cost}, "
-                        f"Available: {player.credits}"
-                    )
-            else:
-                if player.credits < new_ship_price:
-                    raise ValueError(f"Insufficient credits. Cost: {new_ship_price}, Available: {player.credits}")
+            if player.credits < new_ship_price:
+                raise ValueError(f"Insufficient credits. Cost: {new_ship_price}, Available: {player.credits}")
 
             # a. Create new PlayerShip record for the player (inactive for now)
             new_player_ship = PlayerShip(
@@ -311,12 +297,11 @@ class ShopService:  # pylint: disable=too-many-instance-attributes
             db.add(new_player_ship)
             await db.flush()  # Get the new ship's ID
 
-            # b. Transfer equipped items from old ship to new ship via the
-            # LoadoutConsistencyService choke-point (B.19 fix).
-            # The service clears the old ship's slot lists as part of the
-            # transfer — fixes the cross-ship duplication bug observed in
-            # B.19 (recon root cause #2).  Overflow items go to inventory
-            # using concrete item types resolved via STI discriminator.
+            # b. Activate the new ship via the canonical choke-point (B.94/B.95 fix).
+            # The old active ship remains in the fleet as an inactive PlayerShip — it is
+            # never deleted here.  Gear transfers from the old ship to the new one (B.95).
+            # The choke-point: reconciles slots → transfers loadout from current active
+            # ship (if any) → flips is_active → updates active_ship_id.
             from services.loadout_consistency_service import LoadoutConsistencyService
 
             # Share repo handles so service-level test mocks propagate.
@@ -326,67 +311,36 @@ class ShopService:  # pylint: disable=too-many-instance-attributes
                 item_repo=self.item_repo,
                 ship_repo=self.ship_repo,
             )
-
-            slot_limits = {
-                "weapons": new_ship_static.max_primaries,
-                "modules": new_ship_static.max_modules,
-                "turrets": new_ship_static.max_turrets,
-                "secondary_weapons": getattr(new_ship_static, "max_secondaries", 0) or 0,
-            }
-            transfer_result = await consistency.transfer_loadout_to_new_ship(
+            activation_result = await consistency.activate_ship(
                 db,
                 player_id=player_id,
-                src_ship=old_player_ship,
-                dst_ship=new_player_ship,
-                slot_limits=slot_limits,
+                target_ship_id=new_player_ship.id,
+                player_repo=self.player_repo,
             )
+
             # Translate breakdown to legacy shape used by transaction_details below.
+            transfer_breakdown = activation_result.get("transfer_breakdown", {})
+            slot_kinds = ("weapons", "modules", "turrets", "secondary_weapons")
             items_transferred: dict[str, list[str]] = {
-                kind: list(transfer_result["breakdown"][kind]["transferred"]) for kind in slot_limits
+                kind: list(transfer_breakdown.get(kind, {}).get("transferred", [])) for kind in slot_kinds
             }
             items_unequipped: dict[str, list[str]] = {
-                kind: list(transfer_result["breakdown"][kind]["overflowed"]) for kind in slot_limits
+                kind: list(transfer_breakdown.get(kind, {}).get("overflowed", [])) for kind in slot_kinds
             }
 
-            # c. Handle old ship trade-in
-            if sell_old_ship and old_player_ship:
-                # Add old ship to shop stock (commit=False — caller's transaction controls commit)
-                await self._add_item_to_shop(
-                    db,
-                    player.guild_id,
-                    shop_item.tier,
-                    "ship",
-                    old_player_ship.ship_name,
-                    1,
-                    old_ship_value,
-                    commit=False,
-                )
-                # Delete old PlayerShip record
-                await db.delete(old_player_ship)
-                await db.flush()
-
-            # d. Set new ship as active (deactivate all others first)
-            from sqlalchemy import update as sa_update
-
-            await db.execute(sa_update(PlayerShip).where(PlayerShip.player_id == player_id).values(is_active=False))
-            new_player_ship.is_active = True
-
-            # e. Calculate and set final credit balance in a single update
-            if sell_old_ship and old_player_ship:
-                updated_credits = player.credits + old_ship_value - new_ship_price
-            else:
-                updated_credits = player.credits - new_ship_price
+            # c. Calculate and set final credit balance in a single update
+            updated_credits = player.credits - new_ship_price
             await self.player_repo.update_credits(db, player_id, updated_credits, commit=False)
 
-            # f. Remove new ship from shop stock (commit=False — caller's transaction controls commit)
+            # d. Remove new ship from shop stock (commit=False — caller's transaction controls commit)
             new_shop_quantity = shop_item.quantity - 1
             if new_shop_quantity <= 0:
                 await self.shop_repo.remove(db, shop_item, commit=False)
             else:
                 await self.shop_repo.update_quantity(db, shop_item_id, new_shop_quantity, commit=False)
 
-            total_overflow = sum(len(v) for v in items_unequipped.values()) if old_player_ship else 0
-            total_transferred = sum(len(v) for v in items_transferred.values()) if old_player_ship else 0
+            total_overflow = sum(len(v) for v in items_unequipped.values())
+            total_transferred = sum(len(v) for v in items_transferred.values())
 
             transaction_details = {
                 "player_id": player_id,
@@ -395,18 +349,15 @@ class ShopService:  # pylint: disable=too-many-instance-attributes
                 "quantity": 1,
                 "unit_price": new_ship_price,
                 "total_cost": new_ship_price,
-                "trade_in_value": old_ship_value if sell_old_ship and old_player_ship else 0,
-                "net_cost": new_ship_price - (old_ship_value if sell_old_ship and old_player_ship else 0),
+                "trade_in_value": 0,
+                "net_cost": new_ship_price,
                 "remaining_credits": updated_credits,
                 "items_transferred": total_transferred,
                 "items_unequipped_to_inventory": total_overflow,
                 "remaining_shop_quantity": new_shop_quantity,
             }
 
-            flogger.info(
-                f"Player {player_id} purchased ship '{shop_item.item_name}' for {new_ship_price} credits"
-                + (f" (trade-in: {old_ship_value})" if sell_old_ship and old_player_ship else "")
-            )
+            flogger.info(f"Player {player_id} purchased ship '{shop_item.item_name}' for {new_ship_price} credits")
             return transaction_details
 
         except Exception as e:
@@ -744,11 +695,18 @@ class ShopService:  # pylint: disable=too-many-instance-attributes
             raise
 
     def _can_access_tier(self, player_tier: str, shop_tier: str) -> bool:
-        """Check if a player tier can access a shop tier."""
+        """Check if a player tier can access a shop tier.
+
+        Strict same-tier policy: a player may only transact at the shop
+        matching their current tier. Promotion / demotion is the only path
+        between tiers (no buy-down to lower tiers, no preview of higher
+        tiers). Sells are already routed to ``player.tier`` server-side
+        (see A.42c), so this guard primarily gates the buy paths.
+        """
         tier_levels = {"Bronze": 1, "Silver": 2, "Gold": 3, "Platinum": 4}
         player_level = tier_levels.get(player_tier, 1)
         shop_level = tier_levels.get(shop_tier, 1)
-        return player_level >= shop_level
+        return player_level == shop_level
 
     def _select_item_tech_level(self, shop_tech_level: int, probabilities: dict[str, float]) -> int:
         """Select item tech level based on shop tech level and probability distribution."""

@@ -47,6 +47,19 @@ def _make_texture_upload(filename: str = "texture.png") -> tuple[str, tuple]:
 # ---------------------------------------------------------------------------
 
 
+@pytest.fixture(autouse=True)
+def _seed_render_config() -> None:
+    """Seed a fresh RenderConfigService into app.state before each test.
+
+    The FastAPI ``app`` object is shared across test modules; other modules
+    (e.g. test_config_router) mutate ``app.state.render_config``. Re-seeding
+    here keeps the clamp bounds deterministic (RenderConfig defaults) per test.
+    """
+    from services.render_config_service import RenderConfigService
+
+    app.state.render_config = RenderConfigService()
+
+
 @pytest.fixture()
 def client() -> TestClient:
     """Return a synchronous TestClient for the FastAPI app."""
@@ -77,128 +90,117 @@ def mock_job_queue() -> MagicMock:
 
 
 # ---------------------------------------------------------------------------
-# Sync render — validation error tests (400)
+# Sync render — B.93 out-of-bounds parameters are clamped, not rejected
 # ---------------------------------------------------------------------------
 
 
-def test_render_validation_res_too_high(client: TestClient) -> None:
-    """res_x above the configured max should return HTTP 400."""
+def test_render_res_x_too_high_is_clamped(tmp_path: Path, client: TestClient) -> None:
+    """B.93: res_x above the configured max is clamped down and the render succeeds."""
+    fake_output = tmp_path / "render_output.png"
+    fake_output.write_bytes(_png_bytes())
     with patch(
-        "services.render_service.RenderService.render_ship",
+        "routers.render.RenderService.render_ship",
         new_callable=AsyncMock,
+        return_value=fake_output,
     ):
         response = client.post(
             "/api/v1/render/",
-            data={
-                "model_path": "/tmp/model.obj",
-                "res_x": 4001,
-                "res_y": 720,
-                "num_samples": 32,
-            },
+            data={"model_path": "/tmp/model.obj", "res_x": 4001, "res_y": 720, "num_samples": 32},
             files=[_make_texture_upload()],
         )
-    assert response.status_code == 400
-    assert "exceeds configured max_res_x" in response.json()["detail"]
+    assert response.status_code == 200
+    assert response.headers["x-render-clamped"] == "res_x:4001->1920"
 
 
-def test_render_validation_res_too_low(client: TestClient) -> None:
-    """res_x below the configured min should return HTTP 400."""
+def test_render_res_x_too_low_is_clamped(tmp_path: Path, client: TestClient) -> None:
+    """B.93: res_x below the configured min is clamped up and the render succeeds."""
+    fake_output = tmp_path / "render_output.png"
+    fake_output.write_bytes(_png_bytes())
     with patch(
-        "services.render_service.RenderService.render_ship",
+        "routers.render.RenderService.render_ship",
         new_callable=AsyncMock,
+        return_value=fake_output,
     ):
         response = client.post(
             "/api/v1/render/",
-            data={
-                "model_path": "/tmp/model.obj",
-                "res_x": 100,
-                "res_y": 720,
-                "num_samples": 32,
-            },
+            data={"model_path": "/tmp/model.obj", "res_x": 100, "res_y": 720, "num_samples": 32},
             files=[_make_texture_upload()],
         )
-    assert response.status_code == 400
-    assert "is below configured min_res_x" in response.json()["detail"]
+    assert response.status_code == 200
+    assert response.headers["x-render-clamped"] == "res_x:100->352"
 
 
-def test_render_validation_res_y_too_high(client: TestClient) -> None:
-    """res_y above the configured max should return HTTP 400."""
+def test_render_res_y_out_of_bounds_is_clamped(tmp_path: Path, client: TestClient) -> None:
+    """B.93: res_y above the configured max is clamped down and the render succeeds."""
+    fake_output = tmp_path / "render_output.png"
+    fake_output.write_bytes(_png_bytes())
     with patch(
-        "services.render_service.RenderService.render_ship",
+        "routers.render.RenderService.render_ship",
         new_callable=AsyncMock,
+        return_value=fake_output,
     ):
         response = client.post(
             "/api/v1/render/",
-            data={
-                "model_path": "/tmp/model.obj",
-                "res_x": 1280,
-                "res_y": 9999,
-                "num_samples": 32,
-            },
+            data={"model_path": "/tmp/model.obj", "res_x": 1280, "res_y": 9999, "num_samples": 32},
             files=[_make_texture_upload()],
         )
-    assert response.status_code == 400
-    assert "exceeds configured max_res_y" in response.json()["detail"]
+    assert response.status_code == 200
+    assert response.headers["x-render-clamped"] == "res_y:9999->1080"
 
 
-def test_render_validation_res_y_too_low(client: TestClient) -> None:
-    """res_y below the configured min should return HTTP 400."""
+def test_render_samples_out_of_bounds_is_clamped(tmp_path: Path, client: TestClient) -> None:
+    """B.93: num_samples below the minimum is clamped up and the render succeeds."""
+    fake_output = tmp_path / "render_output.png"
+    fake_output.write_bytes(_png_bytes())
     with patch(
-        "services.render_service.RenderService.render_ship",
+        "routers.render.RenderService.render_ship",
         new_callable=AsyncMock,
+        return_value=fake_output,
     ):
         response = client.post(
             "/api/v1/render/",
-            data={
-                "model_path": "/tmp/model.obj",
-                "res_x": 1280,
-                "res_y": 10,
-                "num_samples": 32,
-            },
+            data={"model_path": "/tmp/model.obj", "res_x": 1280, "res_y": 720, "num_samples": 0},
             files=[_make_texture_upload()],
         )
-    assert response.status_code == 400
-    assert "is below configured min_res_y" in response.json()["detail"]
+    assert response.status_code == 200
+    assert response.headers["x-render-clamped"] == "num_samples:0->1"
 
 
-def test_render_validation_samples_too_low(client: TestClient) -> None:
-    """num_samples below the minimum (0) should return HTTP 400."""
+def test_render_clamped_values_passed_to_render_ship(tmp_path: Path, client: TestClient) -> None:
+    """B.93: the clamped (not the requested) params are what render_ship is invoked with."""
+    fake_output = tmp_path / "render_output.png"
+    fake_output.write_bytes(_png_bytes())
     with patch(
-        "services.render_service.RenderService.render_ship",
+        "routers.render.RenderService.render_ship",
         new_callable=AsyncMock,
+        return_value=fake_output,
+    ) as mock_render:
+        response = client.post(
+            "/api/v1/render/",
+            data={"model_path": "/tmp/model.obj", "res_x": 4001, "res_y": 9999, "num_samples": 999},
+            files=[_make_texture_upload()],
+        )
+    assert response.status_code == 200
+    call_kwargs = mock_render.call_args.kwargs
+    assert (call_kwargs["res_x"], call_kwargs["res_y"], call_kwargs["num_samples"]) == (1920, 1080, 64)
+
+
+def test_render_in_bounds_has_no_clamp_header(tmp_path: Path, client: TestClient) -> None:
+    """B.93: an in-bounds request renders normally with no X-Render-Clamped header."""
+    fake_output = tmp_path / "render_output.png"
+    fake_output.write_bytes(_png_bytes())
+    with patch(
+        "routers.render.RenderService.render_ship",
+        new_callable=AsyncMock,
+        return_value=fake_output,
     ):
         response = client.post(
             "/api/v1/render/",
-            data={
-                "model_path": "/tmp/model.obj",
-                "res_x": 1280,
-                "res_y": 720,
-                "num_samples": 0,
-            },
+            data={"model_path": "/tmp/model.obj", "res_x": 1280, "res_y": 720, "num_samples": 32},
             files=[_make_texture_upload()],
         )
-    assert response.status_code == 400
-    assert "num_samples" in response.json()["detail"]
-
-
-def test_render_validation_samples_too_high(client: TestClient) -> None:
-    """num_samples above the configured max should return HTTP 400."""
-    with patch(
-        "services.render_service.RenderService.render_ship",
-        new_callable=AsyncMock,
-    ):
-        response = client.post(
-            "/api/v1/render/",
-            data={
-                "model_path": "/tmp/model.obj",
-                "res_x": 1280,
-                "res_y": 720,
-                "num_samples": 200,
-            },
-            files=[_make_texture_upload()],
-        )
-    assert response.status_code == 400
-    assert "num_samples" in response.json()["detail"]
+    assert response.status_code == 200
+    assert "x-render-clamped" not in response.headers
 
 
 # ---------------------------------------------------------------------------
@@ -349,40 +351,53 @@ def test_render_unexpected_exception_returns_500(client: TestClient) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Async render endpoint — validation error tests (400)
+# Async render endpoint — B.93 out-of-bounds parameters are clamped, not rejected
 # ---------------------------------------------------------------------------
 
 
-def test_async_render_validation_res_too_high(client: TestClient) -> None:
-    """Async endpoint: res_x above the configured max should return HTTP 400."""
-    response = client.post(
-        "/api/v1/render/async",
-        data={
-            "model_path": "/tmp/model.obj",
-            "res_x": 9999,
-            "res_y": 720,
-            "num_samples": 32,
-        },
-        files=[_make_texture_upload()],
-    )
-    assert response.status_code == 400
-    assert "exceeds configured max_res_x" in response.json()["detail"]
+def test_async_render_res_too_high_is_clamped(client: TestClient, mock_job_queue: MagicMock) -> None:
+    """B.93: async endpoint clamps res_x above the configured max and still queues the job."""
+    app.state.job_queue = mock_job_queue
+
+    with patch("routers.render.RenderService.render_ship", new_callable=AsyncMock):
+        response = client.post(
+            "/api/v1/render/async",
+            data={"model_path": "/tmp/model.obj", "res_x": 9999, "res_y": 720, "num_samples": 32},
+            files=[_make_texture_upload()],
+        )
+    assert response.status_code == 202
+    body = response.json()
+    assert body["status"] == "queued"
+    assert body["clamped"]["res_x"] == {"requested": 9999, "actual": 1920}
 
 
-def test_async_render_validation_samples_too_low(client: TestClient) -> None:
-    """Async endpoint: num_samples=0 should return HTTP 400."""
-    response = client.post(
-        "/api/v1/render/async",
-        data={
-            "model_path": "/tmp/model.obj",
-            "res_x": 1280,
-            "res_y": 720,
-            "num_samples": 0,
-        },
-        files=[_make_texture_upload()],
-    )
-    assert response.status_code == 400
-    assert "num_samples" in response.json()["detail"]
+def test_async_render_samples_too_low_is_clamped(client: TestClient, mock_job_queue: MagicMock) -> None:
+    """B.93: async endpoint clamps num_samples below the minimum and still queues the job."""
+    app.state.job_queue = mock_job_queue
+
+    with patch("routers.render.RenderService.render_ship", new_callable=AsyncMock):
+        response = client.post(
+            "/api/v1/render/async",
+            data={"model_path": "/tmp/model.obj", "res_x": 1280, "res_y": 720, "num_samples": 0},
+            files=[_make_texture_upload()],
+        )
+    assert response.status_code == 202
+    body = response.json()
+    assert body["clamped"]["num_samples"] == {"requested": 0, "actual": 1}
+
+
+def test_async_render_in_bounds_reports_empty_clamped(client: TestClient, mock_job_queue: MagicMock) -> None:
+    """B.93: an in-bounds async request reports an empty 'clamped' object."""
+    app.state.job_queue = mock_job_queue
+
+    with patch("routers.render.RenderService.render_ship", new_callable=AsyncMock):
+        response = client.post(
+            "/api/v1/render/async",
+            data={"model_path": "/tmp/model.obj", "res_x": 1280, "res_y": 720, "num_samples": 32},
+            files=[_make_texture_upload()],
+        )
+    assert response.status_code == 202
+    assert response.json()["clamped"] == {}
 
 
 def test_async_render_missing_texture(client: TestClient) -> None:

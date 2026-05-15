@@ -95,6 +95,7 @@ from unittest.mock import MagicMock
 
 import pytest
 from persist.models.base import Base
+from persist.models.bounty import Bounty
 from persist.models.guild_config import GuildConfig
 from persist.models.guild_shop import GuildShop
 from persist.models.player import Player
@@ -112,6 +113,7 @@ _SQLITE_TABLES = [
     GuildShop.__table__,
     PlayerInventory.__table__,
     PlayerShip.__table__,
+    Bounty.__table__,  # SQLite-safe (JSON-only, no ARRAY columns); needed by promote_player→scrub_orphaned_checks
 ]
 
 
@@ -1264,7 +1266,7 @@ class TestOp04BuyShipFromShop:
             svc = ShopService()
             # purchase_ship is a transaction-PARTICIPANT — caller wraps.
             async with factory() as db, db.begin():
-                await svc.purchase_ship(db, player_id=player_id, shop_item_id=shop_item_id, sell_old_ship=False)
+                await svc.purchase_ship(db, player_id=player_id, shop_item_id=shop_item_id)
         finally:
             ShipRepository.get_by_name = original_ship_get
 

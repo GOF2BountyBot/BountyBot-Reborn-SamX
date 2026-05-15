@@ -54,7 +54,6 @@ class RefreshShopRequest(BaseModel):
 class ShipPurchaseRequest(BaseModel):
     player_id: int
     shop_item_id: int
-    sell_old_ship: bool = False
 
 
 class ShipSellRequest(BaseModel):

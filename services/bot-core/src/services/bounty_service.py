@@ -38,6 +38,15 @@ from services.system_graph_service import SystemGraphService
 flogger = bblogger.get_logger("bounty-service")
 
 
+# Sentinel values used in bounty.checked maps.
+# >0 = player_id who locked the slot; <0 = special state.
+UNCHECKED = -1  # System has not been checked yet — fair game.
+FORFEITED_CHECK = -2  # System checked by a player who has since promoted past this
+# bounty's division. Slot stays "claimed" (other players see
+# ALREADY_CHECKED), but the original checker is no longer
+# eligible for the per-system payout. See scrub_player_checks_below_tier.
+
+
 def _serialize_fight_results(fight_results, *, pvc_armour_buff: float | None = None) -> dict | None:
     """Serialize a FightResults dataclass to a plain dict for API responses.
 
@@ -46,7 +55,7 @@ def _serialize_fight_results(fight_results, *, pvc_armour_buff: float | None = N
     Args:
         fight_results:    FightResults instance (or None).
         pvc_armour_buff:  When provided, included in the dict so the gateway
-                          can surface the Kieth T Maxwell buff callout in the
+                          can surface the Keith T Maxwell buff callout in the
                           combat summary embed. Pass None for PvP (duel) results.
 
     Returns:
@@ -638,6 +647,75 @@ class BountyService:
                 return random.choice(matches)
 
         return None
+
+    async def scrub_player_checks_outside_tier(
+        self,
+        db: AsyncSession,
+        player_id: int,
+        guild_id: int,
+        new_tier: str,
+    ) -> int:
+        """Replace this player's checked entries with FORFEITED_CHECK on all active
+        bounties the player can no longer reach after a tier change.
+
+        Called by ``PlayerService.promote_player``, ``demote_player``, and
+        ``prestige_player`` (each is a tier transition that orphans existing checks).
+
+        Semantics (see /promote design notes):
+        - The systems remain "checked" — other players in the affected divisions
+          still see ALREADY_CHECKED for them (the ``checked.get(...) != -1`` guard
+          treats any non-(-1) entry as locked).
+        - The transitioning player's per-system payout is forfeited on capture:
+          the payout iterator in ``calc_rewards`` skips any entry with
+          ``checker_id <= 0``.
+        - The forfeited credits stay un-issued; capture-bonus and other checkers'
+          per-system payouts come out of the original pool unchanged.
+
+        Iterates every division except the player's new tier. In practice only
+        the player's prior-tier division has matching checks (the /check division
+        filter prevents cross-tier checks at write time), so most divisions are
+        zero-work scans — but covering all of them keeps the function correct
+        regardless of direction (promote / demote / prestige).
+
+        Args:
+            db:        Async database session (caller-owned transaction; this method
+                       uses ``commit=False``).
+            player_id: Player whose check entries should be scrubbed.
+            guild_id:  Guild scope.
+            new_tier:  The tier the player has just transitioned to (canonical names:
+                       "Bronze" / "Silver" / "Gold" / "Platinum").
+
+        Returns:
+            Number of bounties mutated.
+        """
+        new_tier_lower = (new_tier or "").lower()
+        affected_divisions = [d for d in ("bronze", "silver", "gold", "platinum") if d != new_tier_lower]
+        if not affected_divisions:
+            return 0
+
+        from sqlalchemy.orm.attributes import flag_modified
+
+        mutated_count = 0
+        for division in affected_divisions:
+            active = await self.bounty_repo.get_active_by_guild_and_division(db, guild_id, division)
+            for bounty in active:
+                checked = dict(bounty.checked)
+                changed = False
+                for system_name, checker_id in list(checked.items()):
+                    if checker_id == player_id:
+                        checked[system_name] = FORFEITED_CHECK
+                        changed = True
+                if changed:
+                    bounty.checked = checked
+                    # The JSON column otherwise doesn't reliably bump updated_at on
+                    # dict mutations — flag it explicitly so the row is dirtied.
+                    flag_modified(bounty, "checked")
+                    mutated_count += 1
+        flogger.info(
+            f"scrub_player_checks_below_tier: player_id={player_id} guild_id={guild_id} "
+            f"new_tier={new_tier} mutated_bounties={mutated_count}"
+        )
+        return mutated_count
 
     async def _reset_bounty_checks(self, db: AsyncSession, bounty) -> None:
         """Reset a bounty after a combat loss (Silver+): clear all checks, pick new location.
@@ -1514,7 +1592,10 @@ class BountyService:
         # Count systems checked per player
         player_checks: dict[int, int] = {}
         for _system, checker_id in bounty.checked.items():
-            if checker_id != -1:  # -1 means unchecked
+            # Sentinel values (< 0): -1 = unchecked, -2 = checked-but-forfeited
+            # (player promoted past this bounty's division before payout).
+            # Both are excluded from reward distribution.
+            if checker_id > 0:
                 player_checks[checker_id] = player_checks.get(checker_id, 0) + 1
 
         rewards: list[RewardInfo] = []

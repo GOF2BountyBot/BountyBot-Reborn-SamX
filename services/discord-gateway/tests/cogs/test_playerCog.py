@@ -1743,6 +1743,29 @@ class TestUnregisterCommand:
 class TestPromoteCommand:
     """Tests for the /promote slash command."""
 
+    @pytest.fixture(autouse=True)
+    def _patch_promote_http_and_confirm(self, mock_player_cog):
+        from unittest.mock import patch as _patch
+
+        status_resp = MagicMock()
+        status_resp.raise_for_status = MagicMock()
+        status_resp.json.return_value = {
+            "can_promote": True,
+            "next_tier": "Silver",
+            "xp": 1500,
+            "xp_threshold_for_next": 1000,
+        }
+        preflight_resp = MagicMock()
+        preflight_resp.raise_for_status = MagicMock()
+        preflight_resp.json.return_value = {"verdict": "GREEN", "win_rate": 0.8}
+        mock_player_cog.http_client.get = AsyncMock(side_effect=[status_resp, preflight_resp])
+
+        view_mock = MagicMock()
+        view_mock.result = True
+        view_mock.wait = AsyncMock(return_value=False)
+        with _patch("cogs.playerCog.ConfirmView", return_value=view_mock):
+            yield
+
     def test_promote_success(self, mock_player_cog):
         """/promote succeeds and shows tier promotion embed."""
         interaction = _create_mock_interaction()
@@ -1769,9 +1792,9 @@ class TestPromoteCommand:
 
         asyncio.run(mock_player_cog.promote.callback(mock_player_cog, interaction))
 
-        interaction.response.defer.assert_awaited_once_with(thinking=True)
-        interaction.followup.send.assert_awaited_once()
-        call_kwargs = interaction.followup.send.call_args[1]
+        interaction.response.defer.assert_awaited_once_with(thinking=True, ephemeral=True)
+        assert interaction.followup.send.call_count >= 2
+        call_kwargs = interaction.followup.send.call_args_list[-1][1]
         assert "embed" in call_kwargs
 
     def test_promote_success_eligible_for_next(self, mock_player_cog):
@@ -1800,8 +1823,8 @@ class TestPromoteCommand:
 
         asyncio.run(mock_player_cog.promote.callback(mock_player_cog, interaction))
 
-        interaction.followup.send.assert_awaited_once()
-        call_kwargs = interaction.followup.send.call_args[1]
+        assert interaction.followup.send.call_count >= 2
+        call_kwargs = interaction.followup.send.call_args_list[-1][1]
         embed = call_kwargs["embed"]
         # Should mention ability to promote again
         field_values = " ".join(f.value for f in embed.fields)
@@ -1828,8 +1851,8 @@ class TestPromoteCommand:
 
         asyncio.run(mock_player_cog.promote.callback(mock_player_cog, interaction))
 
-        interaction.followup.send.assert_awaited_once()
-        call_kwargs = interaction.followup.send.call_args[1]
+        assert interaction.followup.send.call_count >= 2
+        call_kwargs = interaction.followup.send.call_args_list[-1][1]
         assert "embed" in call_kwargs
         assert call_kwargs.get("ephemeral", False)
         embed = call_kwargs["embed"]
@@ -1855,7 +1878,8 @@ class TestPromoteCommand:
 
         asyncio.run(mock_player_cog.promote.callback(mock_player_cog, interaction))
 
-        interaction.followup.send.assert_awaited_once()
+        # Confirm dialog is send #1; the error reply is send #2
+        assert interaction.followup.send.call_count >= 2
         call_kwargs = interaction.followup.send.call_args[1]
         assert call_kwargs.get("ephemeral", False)
 
@@ -2583,6 +2607,33 @@ class TestPromoteTierRoleSwap:
     role and add the new tier role (both non-fatal).
     """
 
+    @pytest.fixture(autouse=True)
+    def _patch_confirm_view(self, mock_player_cog):
+        from unittest.mock import patch as _patch
+
+        view_mock = MagicMock()
+        view_mock.result = True
+        view_mock.wait = AsyncMock(return_value=False)
+        with _patch("cogs.playerCog.ConfirmView", return_value=view_mock):
+            yield
+
+    def _make_promo_get_side_effect(self, mock_player_cog, config_resp_or_error, old_tier="Bronze", new_tier="Silver"):
+        """Return an AsyncMock for http_client.get covering status+preflight+config."""
+        status_resp = MagicMock()
+        status_resp.raise_for_status = MagicMock()
+        status_resp.json.return_value = {
+            "can_promote": True,
+            "next_tier": new_tier,
+            "xp": 1500,
+            "xp_threshold_for_next": 1000,
+        }
+        preflight_resp = MagicMock()
+        preflight_resp.raise_for_status = MagicMock()
+        preflight_resp.json.return_value = {"verdict": "GREEN", "win_rate": 0.8}
+        if isinstance(config_resp_or_error, Exception):
+            return AsyncMock(side_effect=[status_resp, preflight_resp, config_resp_or_error])
+        return AsyncMock(side_effect=[status_resp, preflight_resp, config_resp_or_error])
+
     def _make_promote_setup(self, mock_player_cog, old_tier="Bronze", new_tier="Silver"):
         """Wire the standard player-upsert + promote PUT mocks."""
         player_data = _make_player_data(tier=old_tier)
@@ -2629,7 +2680,6 @@ class TestPromoteTierRoleSwap:
 
         self._make_promote_setup(mock_player_cog, old_tier="Bronze", new_tier="Silver")
 
-        # Config GET (called after the embed is sent)
         config_resp = _make_config_resp(
             bh_role_id=None,
             bronze_role_id=bronze_role_id,
@@ -2637,12 +2687,12 @@ class TestPromoteTierRoleSwap:
             gold_role_id=None,
             platinum_role_id=None,
         )
-        mock_player_cog.http_client.get = AsyncMock(return_value=config_resp)
+        mock_player_cog.http_client.get = self._make_promo_get_side_effect(mock_player_cog, config_resp)
 
         asyncio.run(mock_player_cog.promote.callback(mock_player_cog, interaction))
 
-        # Success embed must be sent
-        interaction.followup.send.assert_awaited_once()
+        # Success embed must be sent (confirm dialog + result = at least 2 calls)
+        assert interaction.followup.send.call_count >= 2
 
         # Old Bronze role must be removed
         interaction.user.remove_roles.assert_awaited_once()
@@ -2679,12 +2729,12 @@ class TestPromoteTierRoleSwap:
             gold_role_id=None,
             platinum_role_id=None,
         )
-        mock_player_cog.http_client.get = AsyncMock(return_value=config_resp)
+        mock_player_cog.http_client.get = self._make_promo_get_side_effect(mock_player_cog, config_resp)
 
         asyncio.run(mock_player_cog.promote.callback(mock_player_cog, interaction))
 
-        # Embed still sent
-        interaction.followup.send.assert_awaited_once()
+        # Embed still sent (confirm dialog + result)
+        assert interaction.followup.send.call_count >= 2
         # Nothing to remove (no old Bronze role configured)
         interaction.user.remove_roles.assert_not_awaited()
         # Nothing to add (Silver already held)
@@ -2696,14 +2746,16 @@ class TestPromoteTierRoleSwap:
 
         self._make_promote_setup(mock_player_cog, old_tier="Bronze", new_tier="Silver")
 
-        # Config fetch fails
-        mock_player_cog.http_client.get = AsyncMock(side_effect=RuntimeError("config unavailable"))
+        # Config fetch fails (status+preflight succeed, config raises)
+        mock_player_cog.http_client.get = self._make_promo_get_side_effect(
+            mock_player_cog, RuntimeError("config unavailable")
+        )
 
         asyncio.run(mock_player_cog.promote.callback(mock_player_cog, interaction))
 
-        # Success embed is still sent
-        interaction.followup.send.assert_awaited_once()
-        call_kwargs = interaction.followup.send.call_args[1]
+        # Success embed is still sent (confirm dialog + result)
+        assert interaction.followup.send.call_count >= 2
+        call_kwargs = interaction.followup.send.call_args_list[-1][1]
         assert "embed" in call_kwargs
         # Role methods not called because config was unavailable
         interaction.user.remove_roles.assert_not_awaited()
@@ -2737,13 +2789,13 @@ class TestPromoteTierRoleSwap:
             gold_role_id=None,
             platinum_role_id=None,
         )
-        mock_player_cog.http_client.get = AsyncMock(return_value=config_resp)
+        mock_player_cog.http_client.get = self._make_promo_get_side_effect(mock_player_cog, config_resp)
 
         asyncio.run(mock_player_cog.promote.callback(mock_player_cog, interaction))
 
         # The embed was sent BEFORE the role swap attempt — it must always succeed
-        interaction.followup.send.assert_awaited_once()
-        call_kwargs = interaction.followup.send.call_args[1]
+        assert interaction.followup.send.call_count >= 2
+        call_kwargs = interaction.followup.send.call_args_list[-1][1]
         assert "embed" in call_kwargs
 
     def test_promote_skips_role_removal_if_old_role_not_in_config(self, mock_player_cog):
@@ -2765,11 +2817,11 @@ class TestPromoteTierRoleSwap:
             gold_role_id=None,
             platinum_role_id=None,
         )
-        mock_player_cog.http_client.get = AsyncMock(return_value=config_resp)
+        mock_player_cog.http_client.get = self._make_promo_get_side_effect(mock_player_cog, config_resp)
 
         asyncio.run(mock_player_cog.promote.callback(mock_player_cog, interaction))
 
-        interaction.followup.send.assert_awaited_once()
+        assert interaction.followup.send.call_count >= 2
         # No old role to remove
         interaction.user.remove_roles.assert_not_awaited()
         # New Silver role added (user doesn't have it)
@@ -2825,12 +2877,12 @@ class TestPromoteTierRoleSwap:
             gold_role_id=None,
             platinum_role_id=None,
         )
-        mock_player_cog.http_client.get = AsyncMock(return_value=config_resp)
+        mock_player_cog.http_client.get = self._make_promo_get_side_effect(mock_player_cog, config_resp)
 
         asyncio.run(mock_player_cog.promote.callback(mock_player_cog, interaction))
 
         # Success embed is always sent (non-fatal role swap) — not in dispute
-        interaction.followup.send.assert_awaited_once()
+        assert interaction.followup.send.call_count >= 2
 
         # CORRECT expected outcome: if add_roles fails, remove_roles must NOT have run.
         # The user keeps their Bronze role rather than ending up with no role at all.
@@ -2847,3 +2899,367 @@ class TestPromoteTierRoleSwap:
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
+
+
+# ===========================================================================
+# Tests: /promote ConfirmView flow
+# ===========================================================================
+
+
+class TestPromoteConfirmView:
+    """Tests for the /promote two-step ConfirmView confirmation flow."""
+
+    def _make_confirm_view_mock(self, result):
+        view = MagicMock()
+        view.result = result
+        view.wait = AsyncMock(return_value=None)
+        return view
+
+    def _make_status_resp(self, can_promote=True, next_tier="Silver", xp=1500, threshold=1000):
+        resp = MagicMock()
+        resp.raise_for_status = MagicMock()
+        resp.json.return_value = {
+            "can_promote": can_promote,
+            "next_tier": next_tier,
+            "xp": xp,
+            "xp_threshold_for_next": threshold,
+        }
+        return resp
+
+    def _make_preflight_resp(self, verdict="green", sims_run=20, player_win_rate=0.9):
+        resp = MagicMock()
+        resp.raise_for_status = MagicMock()
+        resp.json.return_value = {
+            "verdict": verdict,
+            "sims_run": sims_run,
+            "player_win_rate": player_win_rate,
+            "criminal_win_rate": 1.0 - player_win_rate,
+        }
+        return resp
+
+    def test_promote_confirmed_calls_promote_api(self, mock_player_cog):
+        """/promote: user confirms → PUT /players/{id}/promote is called."""
+        interaction = _create_mock_interaction()
+
+        player_resp = MagicMock()
+        player_resp.raise_for_status = MagicMock()
+        player_resp.json.return_value = _make_player_data(tier="Bronze")
+
+        promote_data = {
+            "player_id": 1,
+            "old_tier": "Bronze",
+            "new_tier": "Silver",
+            "xp": 1500,
+            "eligible_for_next": False,
+            "next_tier": "Gold",
+        }
+        promote_resp = MagicMock()
+        promote_resp.raise_for_status = MagicMock()
+        promote_resp.json.return_value = promote_data
+
+        mock_player_cog.http_client.post = AsyncMock(return_value=player_resp)
+        mock_player_cog.http_client.get = AsyncMock(side_effect=[self._make_status_resp(), self._make_preflight_resp()])
+        mock_player_cog.http_client.put = AsyncMock(return_value=promote_resp)
+
+        view_mock = self._make_confirm_view_mock(result=True)
+        with patch("cogs.playerCog.ConfirmView", return_value=view_mock):
+            asyncio.run(mock_player_cog.promote.callback(mock_player_cog, interaction))
+
+        mock_player_cog.http_client.put.assert_awaited_once()
+
+    def test_promote_cancel_does_not_call_promote_api(self, mock_player_cog):
+        """/promote: user cancels → PUT /promote is NOT called."""
+        interaction = _create_mock_interaction()
+
+        player_resp = MagicMock()
+        player_resp.raise_for_status = MagicMock()
+        player_resp.json.return_value = _make_player_data(tier="Bronze")
+
+        put_mock = AsyncMock()
+        mock_player_cog.http_client.post = AsyncMock(return_value=player_resp)
+        mock_player_cog.http_client.get = AsyncMock(
+            side_effect=[self._make_status_resp(), self._make_preflight_resp(verdict="no_data", sims_run=0)]
+        )
+        mock_player_cog.http_client.put = put_mock
+
+        view_mock = self._make_confirm_view_mock(result=False)
+        with patch("cogs.playerCog.ConfirmView", return_value=view_mock):
+            asyncio.run(mock_player_cog.promote.callback(mock_player_cog, interaction))
+
+        put_mock.assert_not_awaited()
+
+    def test_promote_confirm_shows_confirm_view(self, mock_player_cog):
+        """/promote: a ConfirmView is shown before the promotion is applied."""
+        interaction = _create_mock_interaction()
+
+        player_resp = MagicMock()
+        player_resp.raise_for_status = MagicMock()
+        player_resp.json.return_value = _make_player_data(tier="Bronze")
+
+        mock_player_cog.http_client.post = AsyncMock(return_value=player_resp)
+        mock_player_cog.http_client.get = AsyncMock(side_effect=[self._make_status_resp(), self._make_preflight_resp()])
+
+        view_mock = self._make_confirm_view_mock(result=False)
+        with patch("cogs.playerCog.ConfirmView", return_value=view_mock) as patched_cv:
+            asyncio.run(mock_player_cog.promote.callback(mock_player_cog, interaction))
+
+        patched_cv.assert_called_once()
+
+    def test_promote_429_after_confirm_shows_cooldown_embed(self, mock_player_cog):
+        """/promote: PUT returns 429 after confirm → cooldown embed is shown."""
+        import httpx
+
+        interaction = _create_mock_interaction()
+
+        player_resp = MagicMock()
+        player_resp.raise_for_status = MagicMock()
+        player_resp.json.return_value = _make_player_data(tier="Bronze")
+
+        cooldown_iso = "2026-05-15T12:00:00+00:00"
+        error_response = MagicMock()
+        error_response.status_code = 429
+        error_response.json.return_value = {"detail": {"detail": "Cooldown active", "cooldown_end": cooldown_iso}}
+        http_error = httpx.HTTPStatusError("429", request=MagicMock(), response=error_response)
+
+        mock_player_cog.http_client.post = AsyncMock(return_value=player_resp)
+        mock_player_cog.http_client.get = AsyncMock(side_effect=[self._make_status_resp(), self._make_preflight_resp()])
+        mock_player_cog.http_client.put = AsyncMock(side_effect=http_error)
+
+        view_mock = self._make_confirm_view_mock(result=True)
+        with patch("cogs.playerCog.ConfirmView", return_value=view_mock):
+            asyncio.run(mock_player_cog.promote.callback(mock_player_cog, interaction))
+
+        embeds_sent = [
+            call[1].get("embed")
+            for call in interaction.followup.send.call_args_list
+            if call[1].get("embed") is not None
+        ]
+        assert any("Cannot Promote" in (e.title or "") for e in embeds_sent if e)
+
+    def test_promote_not_eligible_sends_message_before_confirmview(self, mock_player_cog):
+        """/promote: not eligible → followup message sent, ConfirmView NOT created."""
+        interaction = _create_mock_interaction()
+
+        player_resp = MagicMock()
+        player_resp.raise_for_status = MagicMock()
+        player_resp.json.return_value = _make_player_data(tier="Bronze")
+
+        mock_player_cog.http_client.post = AsyncMock(return_value=player_resp)
+        mock_player_cog.http_client.get = AsyncMock(
+            return_value=MagicMock(
+                **{
+                    "raise_for_status": MagicMock(),
+                    "json.return_value": {
+                        "can_promote": False,
+                        "next_tier": "Silver",
+                        "xp": 100,
+                        "xp_threshold_for_next": 1000,
+                    },
+                }
+            )
+        )
+
+        with patch("cogs.playerCog.ConfirmView") as patched_cv:
+            asyncio.run(mock_player_cog.promote.callback(mock_player_cog, interaction))
+
+        patched_cv.assert_not_called()
+        interaction.followup.send.assert_awaited_once()
+
+
+# ===========================================================================
+# Tests: /demote command
+# ===========================================================================
+
+
+class TestDemoteCommand:
+    """Tests for the /demote slash command."""
+
+    def _make_confirm_view_mock(self, result):
+        view = MagicMock()
+        view.result = result
+        view.wait = AsyncMock(return_value=None)
+        return view
+
+    def test_demote_bronze_player_sends_error_no_confirmview(self, mock_player_cog):
+        """/demote: Bronze player gets an error message — ConfirmView NOT shown."""
+        interaction = _create_mock_interaction()
+
+        player_resp = MagicMock()
+        player_resp.raise_for_status = MagicMock()
+        player_resp.json.return_value = _make_player_data(tier="Bronze")
+
+        mock_player_cog.http_client.post = AsyncMock(return_value=player_resp)
+
+        with patch("cogs.playerCog.ConfirmView") as patched_cv:
+            asyncio.run(mock_player_cog.demote.callback(mock_player_cog, interaction))
+
+        patched_cv.assert_not_called()
+        interaction.followup.send.assert_awaited()
+
+    def test_demote_happy_path_confirmed(self, mock_player_cog):
+        """/demote: Silver player confirms → PUT /players/{id}/demote called."""
+        interaction = _create_mock_interaction()
+
+        player_resp = MagicMock()
+        player_resp.raise_for_status = MagicMock()
+        player_resp.json.return_value = _make_player_data(tier="Silver")
+
+        demote_data = {
+            "player_id": 1,
+            "old_tier": "Silver",
+            "new_tier": "Bronze",
+            "xp": 1500,
+        }
+        demote_resp = MagicMock()
+        demote_resp.raise_for_status = MagicMock()
+        demote_resp.json.return_value = demote_data
+
+        mock_player_cog.http_client.post = AsyncMock(return_value=player_resp)
+        mock_player_cog.http_client.put = AsyncMock(return_value=demote_resp)
+        # GET calls are non-fatal (config for role swap)
+        mock_player_cog.http_client.get = AsyncMock(
+            return_value=MagicMock(**{"raise_for_status": MagicMock(), "json.return_value": {}})
+        )
+
+        view_mock = self._make_confirm_view_mock(result=True)
+        with patch("cogs.playerCog.ConfirmView", return_value=view_mock):
+            asyncio.run(mock_player_cog.demote.callback(mock_player_cog, interaction))
+
+        mock_player_cog.http_client.put.assert_awaited_once()
+
+    def test_demote_cancel_does_not_call_api(self, mock_player_cog):
+        """/demote: user cancels → PUT /demote is NOT called."""
+        interaction = _create_mock_interaction()
+
+        player_resp = MagicMock()
+        player_resp.raise_for_status = MagicMock()
+        player_resp.json.return_value = _make_player_data(tier="Silver")
+
+        put_mock = AsyncMock()
+        mock_player_cog.http_client.post = AsyncMock(return_value=player_resp)
+        mock_player_cog.http_client.get = AsyncMock(
+            return_value=MagicMock(**{"raise_for_status": MagicMock(), "json.return_value": {}})
+        )
+        mock_player_cog.http_client.put = put_mock
+
+        view_mock = self._make_confirm_view_mock(result=False)
+        with patch("cogs.playerCog.ConfirmView", return_value=view_mock):
+            asyncio.run(mock_player_cog.demote.callback(mock_player_cog, interaction))
+
+        put_mock.assert_not_awaited()
+
+    def test_demote_429_shows_cooldown_embed(self, mock_player_cog):
+        """/demote: PUT returns 429 → cooldown embed is shown."""
+        import httpx
+
+        interaction = _create_mock_interaction()
+
+        player_resp = MagicMock()
+        player_resp.raise_for_status = MagicMock()
+        player_resp.json.return_value = _make_player_data(tier="Silver")
+
+        cooldown_iso = "2026-05-16T08:00:00+00:00"
+        error_response = MagicMock()
+        error_response.status_code = 429
+        error_response.json.return_value = {"detail": {"detail": "Cooldown active", "cooldown_end": cooldown_iso}}
+        http_error = httpx.HTTPStatusError("429", request=MagicMock(), response=error_response)
+
+        mock_player_cog.http_client.post = AsyncMock(return_value=player_resp)
+        mock_player_cog.http_client.get = AsyncMock(
+            return_value=MagicMock(**{"raise_for_status": MagicMock(), "json.return_value": {}})
+        )
+        mock_player_cog.http_client.put = AsyncMock(side_effect=http_error)
+
+        view_mock = self._make_confirm_view_mock(result=True)
+        with patch("cogs.playerCog.ConfirmView", return_value=view_mock):
+            asyncio.run(mock_player_cog.demote.callback(mock_player_cog, interaction))
+
+        embeds_sent = [
+            call[1].get("embed")
+            for call in interaction.followup.send.call_args_list
+            if call[1].get("embed") is not None
+        ]
+        assert any("Cannot Demote" in (e.title or "") for e in embeds_sent if e)
+
+    def test_demote_shows_confirmview_for_non_bronze_player(self, mock_player_cog):
+        """/demote: non-Bronze player sees a ConfirmView before demotion."""
+        interaction = _create_mock_interaction()
+
+        player_resp = MagicMock()
+        player_resp.raise_for_status = MagicMock()
+        player_resp.json.return_value = _make_player_data(tier="Gold")
+
+        demote_resp = MagicMock()
+        demote_resp.raise_for_status = MagicMock()
+        demote_resp.json.return_value = {"player_id": 1, "old_tier": "Gold", "new_tier": "Silver", "xp": 5000}
+
+        mock_player_cog.http_client.post = AsyncMock(return_value=player_resp)
+        mock_player_cog.http_client.put = AsyncMock(return_value=demote_resp)
+        mock_player_cog.http_client.get = AsyncMock(
+            return_value=MagicMock(**{"raise_for_status": MagicMock(), "json.return_value": {}})
+        )
+
+        view_mock = self._make_confirm_view_mock(result=True)
+        with patch("cogs.playerCog.ConfirmView", return_value=view_mock) as patched_cv:
+            asyncio.run(mock_player_cog.demote.callback(mock_player_cog, interaction))
+
+        patched_cv.assert_called_once()
+
+
+# ===========================================================================
+# Tests: _format_tier_change_cooldown_message
+# ===========================================================================
+
+
+class TestFormatTierChangeCooldownMessage:
+    """Unit tests for the _format_tier_change_cooldown_message helper."""
+
+    def _make_429_error(self, detail_payload):
+        import httpx
+
+        error_response = MagicMock()
+        error_response.status_code = 429
+        error_response.json.return_value = detail_payload
+        return httpx.HTTPStatusError("429", request=MagicMock(), response=error_response)
+
+    def test_title_contains_action_capitalize(self):
+        """Embed title includes the capitalized action verb."""
+        from cogs.playerCog import _format_tier_change_cooldown_message
+
+        exc = self._make_429_error({"detail": {"detail": "msg", "cooldown_end": "2026-05-15T12:00:00+00:00"}})
+        embed = _format_tier_change_cooldown_message(exc, action="demote")
+
+        assert "Cannot Demote Yet" in embed.title
+
+    def test_description_contains_relative_timestamp(self):
+        """When cooldown_end is a valid ISO string, description contains a <t: timestamp."""
+        from cogs.playerCog import _format_tier_change_cooldown_message
+
+        exc = self._make_429_error({"detail": {"detail": "msg", "cooldown_end": "2026-05-15T12:00:00+00:00"}})
+        embed = _format_tier_change_cooldown_message(exc, action="promote")
+
+        assert "<t:" in embed.description
+
+    def test_falls_back_to_soon_when_no_cooldown_end(self):
+        """When detail has no cooldown_end, the description falls back to 'soon'."""
+        from cogs.playerCog import _format_tier_change_cooldown_message
+
+        exc = self._make_429_error({"detail": "Tier change on cooldown"})
+        embed = _format_tier_change_cooldown_message(exc, action="prestige")
+
+        assert "soon" in embed.description
+
+    def test_falls_back_gracefully_on_malformed_response(self):
+        """When response JSON is malformed, the embed is still returned without raising."""
+        from cogs.playerCog import _format_tier_change_cooldown_message
+
+        error_response = MagicMock()
+        error_response.status_code = 429
+        error_response.json.side_effect = Exception("not json")
+        import httpx
+
+        exc = httpx.HTTPStatusError("429", request=MagicMock(), response=error_response)
+        embed = _format_tier_change_cooldown_message(exc, action="promote")
+
+        assert embed is not None
+        assert "Cannot Promote Yet" in embed.title

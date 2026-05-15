@@ -814,7 +814,7 @@ class TestPurchaseShip:
 
         response = client.post(
             "/api/v1/shops/purchase-ship",
-            json={"player_id": 1, "shop_item_id": 10, "sell_old_ship": False},
+            json={"player_id": 1, "shop_item_id": 10},
         )
 
         assert response.status_code == 200
@@ -833,7 +833,7 @@ class TestPurchaseShip:
 
         response = client.post(
             "/api/v1/shops/purchase-ship",
-            json={"player_id": 1, "shop_item_id": 10, "sell_old_ship": False},
+            json={"player_id": 1, "shop_item_id": 10},
         )
 
         assert response.status_code == 400
@@ -847,7 +847,7 @@ class TestPurchaseShip:
 
         response = client.post(
             "/api/v1/shops/purchase-ship",
-            json={"player_id": 1, "shop_item_id": 10, "sell_old_ship": False},
+            json={"player_id": 1, "shop_item_id": 10},
         )
 
         assert response.status_code == 400

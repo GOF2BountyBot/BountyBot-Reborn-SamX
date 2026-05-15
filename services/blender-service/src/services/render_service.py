@@ -18,6 +18,7 @@ import os
 import shutil
 import time
 import uuid
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from PIL import Image, ImageChops
@@ -31,6 +32,28 @@ flogger = bblogger.get_logger("blender-render-service")
 
 class RenderError(Exception):
     """Raised when a Blender render fails."""
+
+
+@dataclass(frozen=True)
+class ClampResult:
+    """Result of clamping a render request's parameters to config bounds (B.93).
+
+    ``res_x`` / ``res_y`` / ``num_samples`` are the *final* values to render
+    with — already clamped to the configured ``[min, max]`` range.
+
+    ``clamped`` maps each adjusted field name to ``{"requested": x, "actual": y}``;
+    it is empty when every parameter was already in range.
+    """
+
+    res_x: int
+    res_y: int
+    num_samples: int
+    clamped: dict[str, dict[str, int]] = field(default_factory=dict)
+
+    @property
+    def was_clamped(self) -> bool:
+        """True if at least one parameter was adjusted."""
+        return bool(self.clamped)
 
 
 class RenderService:
@@ -78,30 +101,43 @@ class RenderService:
     # Public API
     # ------------------------------------------------------------------
 
-    def validate_params(self, res_x: int, res_y: int, num_samples: int) -> None:
-        """Validate render parameters.
+    def clamp_params(self, res_x: int, res_y: int, num_samples: int) -> ClampResult:
+        """Clamp render parameters to the configured bounds (B.93).
 
-        Ports the validation logic from the legacy ``renderShip()`` function
-        in ``shipRenderer.py``.
+        Out-of-bounds ``res_x`` / ``res_y`` / ``num_samples`` are clamped to the
+        nearest valid bound rather than rejected — a too-large or too-small
+        request still produces a render, just at the closest allowed size /
+        sample count. Each clamp is logged at WARNING level.
 
-        :param int res_x: Render width in pixels.
-        :param int res_y: Render height in pixels.
-        :param int num_samples: CYCLES samples per pixel.
-        :raises ValueError: If any parameter is outside its allowed range.
+        :param int res_x: Requested render width in pixels.
+        :param int res_y: Requested render height in pixels.
+        :param int num_samples: Requested CYCLES samples per pixel.
+        :return: A :class:`ClampResult` with the final values and a record of
+            any adjustments made.
+        :rtype: ClampResult
         """
         cfg = self._config
-        if res_x > cfg.max_res_x:
-            raise ValueError(f"res_x={res_x} exceeds configured max_res_x={cfg.max_res_x}")
-        if res_x < cfg.min_res_x:
-            raise ValueError(f"res_x={res_x} is below configured min_res_x={cfg.min_res_x}")
-        if res_y > cfg.max_res_y:
-            raise ValueError(f"res_y={res_y} exceeds configured max_res_y={cfg.max_res_y}")
-        if res_y < cfg.min_res_y:
-            raise ValueError(f"res_y={res_y} is below configured min_res_y={cfg.min_res_y}")
-        if num_samples < cfg.min_samples:
-            raise ValueError(f"num_samples={num_samples} is below configured min_samples={cfg.min_samples}")
-        if num_samples > cfg.max_samples:
-            raise ValueError(f"num_samples={num_samples} exceeds configured max_samples={cfg.max_samples}")
+        clamped: dict[str, dict[str, int]] = {}
+
+        def _clamp(name: str, value: int, lower: int, upper: int) -> int:
+            adjusted = min(max(value, lower), upper)
+            if adjusted != value:
+                clamped[name] = {"requested": value, "actual": adjusted}
+                flogger.warning(
+                    f"clamp_params: {name}={value} out of bounds [{lower}, {upper}] — clamped to {adjusted}"
+                )
+            return adjusted
+
+        final_res_x = _clamp("res_x", res_x, cfg.min_res_x, cfg.max_res_x)
+        final_res_y = _clamp("res_y", res_y, cfg.min_res_y, cfg.max_res_y)
+        final_samples = _clamp("num_samples", num_samples, cfg.min_samples, cfg.max_samples)
+
+        return ClampResult(
+            res_x=final_res_x,
+            res_y=final_res_y,
+            num_samples=final_samples,
+            clamped=clamped,
+        )
 
     @staticmethod
     def trim(image: Image.Image) -> Image.Image:
@@ -141,14 +177,18 @@ class RenderService:
     ) -> Path:
         """Render a ship model with a texture using Blender.
 
+        Render parameters are expected to be already clamped to the configured
+        bounds by the caller (the router layer calls :meth:`clamp_params` — see
+        B.93). This method renders at whatever ``res_x`` / ``res_y`` /
+        ``num_samples`` it is given.
+
         Steps:
-        1. Validate parameters.
-        2. Create a temp directory under ``/tmp/blender_render_{uuid}/``.
-        3. Copy the OBJ's MTL file to the temp directory.
-        4. Write the render_vars file.
-        5. Invoke Blender asynchronously via ``asyncio.create_subprocess_exec()``.
-        6. Load the rendered PNG, trim to content, save back.
-        7. Clean up the temp directory (only on success — keep on failure for debugging).
+        1. Create a temp directory under ``/tmp/blender_render_{uuid}/``.
+        2. Copy the OBJ's MTL file to the temp directory.
+        3. Write the render_vars file.
+        4. Invoke Blender asynchronously via ``asyncio.create_subprocess_exec()``.
+        5. Load the rendered PNG, trim to content, save back.
+        6. Clean up the temp directory (only on success — keep on failure for debugging).
 
         :param str model_path: Path to the ``.obj`` file.
         :param str texture_path: Path to the composited texture (PNG/JPG).
@@ -161,8 +201,6 @@ class RenderService:
         :raises RenderError: If Blender exits with a non-zero return code or
             the output file is not produced.
         """
-        self.validate_params(res_x, res_y, num_samples)
-
         # Validate model_path is within the allowed data directory.
         # This is a defence-in-depth check; the router layer also validates
         # before calling this service.

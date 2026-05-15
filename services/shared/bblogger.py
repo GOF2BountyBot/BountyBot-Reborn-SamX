@@ -129,19 +129,25 @@ def get_logger(module_name: str) -> logging.LoggerAdapter:
     if log_to_file_flag:
         # Ensure log directory exists
         log_dir = os.path.dirname(log_file)
+        _dir_ready = True
         if log_dir and not os.path.exists(log_dir):
             try:
                 os.makedirs(log_dir, exist_ok=True)
             except Exception as e:
-                logger.error("Failed to create log directory '%s': %s", log_dir, e)
+                logger.error("Failed to create log directory '%s': %s — file logging disabled", log_dir, e)
+                _dir_ready = False
 
-        file_handler = RotatingFileHandler(
-            filename=log_file,
-            maxBytes=5 * 1024 * 1024,  # 5 MB
-            backupCount=3,
-        )
-        file_handler.setFormatter(logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s"))
-        logger.addHandler(file_handler)
+        if _dir_ready:
+            try:
+                file_handler = RotatingFileHandler(
+                    filename=log_file,
+                    maxBytes=5 * 1024 * 1024,  # 5 MB
+                    backupCount=3,
+                )
+                file_handler.setFormatter(logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s"))
+                logger.addHandler(file_handler)
+            except Exception as e:
+                logger.error("Failed to open log file '%s': %s — file logging disabled", log_file, e)
 
     return _SafeLogger(logger, {})
 

@@ -6,7 +6,6 @@ from cogs._shared.http_error_handler import report_api_error
 from discord import app_commands
 from discord.ext import commands
 from shared import bblogger
-from utils.autocomplete_helpers import player_inventory_autocomplete
 from utils.autocomplete_utils import normalize_for_search
 
 # Set up logger
@@ -480,48 +479,52 @@ class InventoryCog(commands.Cog):
             await interaction.followup.send("⚠️ An error occurred while searching inventory.", ephemeral=True)
 
     async def item_autocomplete(self, interaction: discord.Interaction, current: str) -> list[app_commands.Choice[str]]:
-        """Autocomplete for /item — shows items in the invoking player's inventory.
+        """Autocomplete for /item — shows all items in the invoking player's inventory with type labels.
 
-        If the user has already chosen an ``item_type`` value, we scope results
-        to that type; otherwise all inventory items are returned.
+        Display format: "Item Name (Type)" — value is the item_name.
+        item_type is resolved server-side; no type filter exposed in autocomplete.
         """
-        # Scope to the already-chosen item_type (if any) so the dropdown is relevant.
-        item_type_filter: str | None = None
         try:
-            namespace = getattr(interaction, "namespace", None)
-            if namespace is not None:
-                selected_type = getattr(namespace, "item_type", None)
-                if selected_type:
-                    item_type_filter = selected_type
-        except Exception:  # pylint: disable=broad-exception-caught
-            item_type_filter = None
+            user_data = {
+                "discord_id": interaction.user.id,
+                "guild_id": interaction.guild_id,
+                "discord_username": None,
+                "display_name": getattr(interaction.user, "display_name", None),
+            }
+            player_resp = await self.http_client.post(f"{api_base}/players/", json=user_data, timeout=3)
+            player_resp.raise_for_status()
+            player_id = player_resp.json().get("id")
+            if not player_id:
+                return []
 
-        return await player_inventory_autocomplete(
-            self.http_client,
-            api_base,
-            interaction,
-            current,
-            item_type_filter=item_type_filter,
-        )
+            inv_resp = await self.http_client.get(f"{api_base}/inventory/player/{player_id}", timeout=3)
+            inv_resp.raise_for_status()
+            items = inv_resp.json()
+
+            norm_current = normalize_for_search(current)
+            choices = []
+            seen: set[str] = set()
+            for item in items:
+                item_name = item.get("item_name", "")
+                item_type = item.get("item_type", "")
+                if item_name and item_name not in seen and norm_current in normalize_for_search(item_name):
+                    seen.add(item_name)
+                    type_label = item_type.replace("_", " ").title()
+                    label = f"{item_name} ({type_label})"
+                    choices.append(app_commands.Choice(name=label[:100], value=item_name))
+            return choices[:25]
+        except Exception:  # pylint: disable=broad-exception-caught
+            return []
 
     @app_commands.command(name="item", description="Get detailed information about a specific item")
     @app_commands.describe(
-        item_name="Name of the item to check", item_type="Type of the item (ship, weapon, module, turret)"
+        item_name="Name of the item to check"
     )
     @app_commands.autocomplete(item_name=item_autocomplete)
-    @app_commands.choices(
-        item_type=[
-            app_commands.Choice(name="Ship", value="ship"),
-            app_commands.Choice(name="Primary Weapon", value="primary_weapon"),
-            app_commands.Choice(name="Secondary Weapon", value="secondary_weapon"),
-            app_commands.Choice(name="Turret", value="turret_weapon"),
-            app_commands.Choice(name="Module", value="module"),
-        ]
-    )
-    async def item(self, interaction: discord.Interaction, item_name: str, item_type: str):
+    async def item(self, interaction: discord.Interaction, item_name: str):
         """Get detailed item information including inventory count."""
         flogger.info(f"/item: guild={interaction.guild_id}, user={interaction.user.id}")
-        flogger.debug(f"/item params: item_name={item_name}, item_type={item_type}")
+        flogger.debug(f"/item params: item_name={item_name}")
         await interaction.response.defer(thinking=True)
 
         try:
@@ -534,16 +537,16 @@ class InventoryCog(commands.Cog):
                 await interaction.followup.send("❌ Player not found.", ephemeral=True)
                 return
 
-            # Get item count
+            # Get item count — server resolves item_type from item_name
             resp = await self.http_client.get(
                 f"{api_base}/inventory/player/{player_id}/item/{item_name}/count",
-                params={"item_type": item_type},
                 timeout=10,
             )
             resp.raise_for_status()
             count_data = resp.json()
 
             # Create item info embed
+            item_type = count_data.get("item_type", "")
             embed = discord.Embed(title=f"📦 {item_name}", color=self._get_item_type_color(item_type))
 
             embed.add_field(name="Type", value=item_type.replace("_", " ").title(), inline=True)

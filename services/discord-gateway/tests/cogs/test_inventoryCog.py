@@ -820,14 +820,14 @@ class TestItemCommand:
         interaction = _create_mock_interaction()
 
         player_resp = make_mock_response({"id": 1})
-        count_resp = make_mock_response({"quantity": 3})
+        count_resp = make_mock_response({"quantity": 3, "item_type": "primary_weapon"})
 
         mock_inventory_cog.http_client.post = AsyncMock(return_value=player_resp)
         mock_inventory_cog.http_client.get = AsyncMock(return_value=count_resp)
 
         asyncio.run(
             mock_inventory_cog.item.callback(
-                mock_inventory_cog, interaction, item_name="LaserCannon", item_type="weapon"
+                mock_inventory_cog, interaction, item_name="LaserCannon"
             )
         )
 
@@ -844,13 +844,13 @@ class TestItemCommand:
         interaction = _create_mock_interaction()
 
         player_resp = make_mock_response({"id": 1})
-        count_resp = make_mock_response({"quantity": 0})
+        count_resp = make_mock_response({"quantity": 0, "item_type": "primary_weapon"})
 
         mock_inventory_cog.http_client.post = AsyncMock(return_value=player_resp)
         mock_inventory_cog.http_client.get = AsyncMock(return_value=count_resp)
 
         asyncio.run(
-            mock_inventory_cog.item.callback(mock_inventory_cog, interaction, item_name="RareSword", item_type="weapon")
+            mock_inventory_cog.item.callback(mock_inventory_cog, interaction, item_name="RareSword")
         )
 
         interaction.followup.send.assert_awaited_once()
@@ -868,7 +868,7 @@ class TestItemCommand:
 
         asyncio.run(
             mock_inventory_cog.item.callback(
-                mock_inventory_cog, interaction, item_name="LaserCannon", item_type="weapon"
+                mock_inventory_cog, interaction, item_name="LaserCannon"
             )
         )
 
@@ -898,7 +898,7 @@ class TestItemCommand:
 
         asyncio.run(
             mock_inventory_cog.item.callback(
-                mock_inventory_cog, interaction, item_name="Nonexistent", item_type="weapon"
+                mock_inventory_cog, interaction, item_name="Nonexistent"
             )
         )
 
@@ -928,7 +928,7 @@ class TestItemCommand:
 
         asyncio.run(
             mock_inventory_cog.item.callback(
-                mock_inventory_cog, interaction, item_name="LaserCannon", item_type="weapon"
+                mock_inventory_cog, interaction, item_name="LaserCannon"
             )
         )
 
@@ -952,7 +952,7 @@ class TestItemCommand:
 
         asyncio.run(
             mock_inventory_cog.item.callback(
-                mock_inventory_cog, interaction, item_name="LaserCannon", item_type="weapon"
+                mock_inventory_cog, interaction, item_name="LaserCannon"
             )
         )
 
@@ -966,13 +966,13 @@ class TestItemCommand:
         interaction = _create_mock_interaction()
 
         player_resp = make_mock_response({"id": 1})
-        count_resp = make_mock_response({"quantity": 1})
+        count_resp = make_mock_response({"quantity": 1, "item_type": "ship"})
 
         mock_inventory_cog.http_client.post = AsyncMock(return_value=player_resp)
         mock_inventory_cog.http_client.get = AsyncMock(return_value=count_resp)
 
         asyncio.run(
-            mock_inventory_cog.item.callback(mock_inventory_cog, interaction, item_name="Eagle", item_type="ship")
+            mock_inventory_cog.item.callback(mock_inventory_cog, interaction, item_name="Eagle")
         )
 
         interaction.followup.send.assert_awaited_once()
@@ -984,13 +984,13 @@ class TestItemCommand:
         interaction = _create_mock_interaction()
 
         player_resp = make_mock_response({"id": 1})
-        count_resp = make_mock_response({"quantity": 2})
+        count_resp = make_mock_response({"quantity": 2, "item_type": "module"})
 
         mock_inventory_cog.http_client.post = AsyncMock(return_value=player_resp)
         mock_inventory_cog.http_client.get = AsyncMock(return_value=count_resp)
 
         asyncio.run(
-            mock_inventory_cog.item.callback(mock_inventory_cog, interaction, item_name="ShieldGen", item_type="module")
+            mock_inventory_cog.item.callback(mock_inventory_cog, interaction, item_name="ShieldGen")
         )
 
         interaction.followup.send.assert_awaited_once()
@@ -2176,17 +2176,14 @@ class TestUnequipAutocomplete:
 class TestItemAutocomplete:
     """Tests for the new item_autocomplete method on /item."""
 
-    def test_item_autocomplete_returns_inventory_items_with_type_and_qty(self, mock_inventory_cog, make_mock_response):
-        """item_autocomplete labels results as 'Name (Type) x<qty>' (qty only when >1)."""
+    def test_item_autocomplete_returns_all_inventory_items_with_type_label(self, mock_inventory_cog, make_mock_response):
+        """item_autocomplete shows all items with type labels (no type filtering)."""
         interaction = _create_mock_interaction()
-        # No item_type pre-selected in the slash namespace.
-        interaction.namespace = MagicMock()
-        interaction.namespace.item_type = None
 
         player_resp = make_mock_response({"id": 1})
         items_resp = make_mock_response(
             [
-                _make_inventory_item("Pulse Laser", "weapon", 3),
+                _make_inventory_item("Pulse Laser", "primary_weapon", 3),
                 _make_inventory_item("Shield Booster", "module", 1),
             ]
         )
@@ -2197,32 +2194,30 @@ class TestItemAutocomplete:
 
         assert len(choices) == 2
         names = [c.name for c in choices]
-        # Quantity suffix present when >1
-        assert any("Pulse Laser" in n and "Weapon" in n and "x3" in n for n in names)
-        # No quantity suffix when ==1
-        assert any("Shield Booster" in n and "Module" in n and "x1" not in n for n in names)
+        # Display format: "Name (Type)"
+        assert any("Pulse Laser" in n and "Primary Weapon" in n for n in names)
+        assert any("Shield Booster" in n and "Module" in n for n in names)
         # Value is the raw item_name (not the label) for downstream API calls
         values = [c.value for c in choices]
         assert "Pulse Laser" in values
         assert "Shield Booster" in values
 
-    def test_item_autocomplete_filters_by_selected_item_type(self, mock_inventory_cog, make_mock_response):
-        """When item_type is already picked, autocomplete only returns that type."""
+    def test_item_autocomplete_filters_by_search_term(self, mock_inventory_cog, make_mock_response):
+        """item_autocomplete filters by search term matching item name."""
         interaction = _create_mock_interaction()
-        interaction.namespace = MagicMock()
-        interaction.namespace.item_type = "weapon"
 
         player_resp = make_mock_response({"id": 1})
         items_resp = make_mock_response(
             [
-                _make_inventory_item("Pulse Laser", "weapon", 1),
+                _make_inventory_item("Pulse Laser", "primary_weapon", 1),
                 _make_inventory_item("Shield Booster", "module", 1),
             ]
         )
         mock_inventory_cog.http_client.post = AsyncMock(return_value=player_resp)
         mock_inventory_cog.http_client.get = AsyncMock(return_value=items_resp)
 
-        choices = asyncio.run(mock_inventory_cog.item_autocomplete(interaction, ""))
+        # Search for 'pulse' — should only match Pulse Laser
+        choices = asyncio.run(mock_inventory_cog.item_autocomplete(interaction, "pulse"))
 
         values = [c.value for c in choices]
         assert "Pulse Laser" in values
@@ -2261,8 +2256,8 @@ class TestInventoryCogA46Choices:
             f"/inventory item_type choices mismatch. Expected {expected}, got {choice_values}"
         )
 
-    def test_item_command_choices_are_concrete_vocab(self, mock_inventory_cog):
-        """A.46: /item item_type choices must be the 5-value concrete set.
+    def test_item_command_no_item_type_parameter(self, mock_inventory_cog):
+        """A.46 (updated): /item no longer has item_type parameter; type is resolved server-side.
 
         Mock budget: 0.
         """
@@ -2273,16 +2268,10 @@ class TestInventoryCogA46Choices:
                 break
         assert item_cmd is not None, "Could not find 'item' command on InventoryCog"
 
-        item_type_param = None
-        for param in item_cmd.parameters:
-            if param.name == "item_type":
-                item_type_param = param
-                break
-        assert item_type_param is not None, "Could not find 'item_type' parameter on /item"
-
-        choice_values = {c.value for c in (item_type_param.choices or [])}
-        expected = {"ship", "primary_weapon", "secondary_weapon", "turret_weapon", "module"}
-        assert choice_values == expected, f"/item item_type choices mismatch. Expected {expected}, got {choice_values}"
+        # /item should have only 'item_name' parameter, not 'item_type'
+        param_names = {param.name for param in item_cmd.parameters}
+        assert "item_name" in param_names, "Expected 'item_name' parameter on /item"
+        assert "item_type" not in param_names, "/item should not have 'item_type' parameter (resolved server-side)"
 
     def test_give_item_freehand_input_returns_friendly_error(self, mock_inventory_cog):
         """A.46 (reject freehand path): /give with an item value that lacks '::' separator

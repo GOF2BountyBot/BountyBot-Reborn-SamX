@@ -222,17 +222,37 @@ async def search_inventory(
 
 @router.get("/player/{player_id}/item/{item_name}/count")
 async def get_item_count(
-    player_id: int, item_name: str, item_type: str, inventory_service: InventoryService = Depends(get_inventory_service)
+    player_id: int,
+    item_name: str,
+    item_type: str | None = None,
+    inventory_service: InventoryService = Depends(get_inventory_service),
 ):
-    """Get the quantity of a specific item a player owns."""
-    flogger.debug(f"Getting count of item {item_name} for player {player_id}")
+    """Get the quantity of a specific item a player owns.
+
+    If item_type is not provided, the server resolves it from the player's
+    inventory by looking up the item_name. Returns the concrete type and quantity.
+    """
+    flogger.debug(f"Getting count of item {item_name} for player {player_id}, item_type={item_type}")
 
     try:
         async with get_db_session() as db:
-            count = await inventory_service.get_player_item_count(db, player_id, item_type, item_name)
+            # If item_type not provided, resolve from inventory
+            resolved_item_type = item_type
+            if not resolved_item_type:
+                # Get the player's inventory and find the item's type
+                items = await inventory_service.get_player_inventory(db, player_id)
+                matching_items = [item for item in items if item.get("item_name") == item_name]
+                if matching_items:
+                    resolved_item_type = matching_items[0].get("item_type")
+                if not resolved_item_type:
+                    raise ValueError(f"Item '{item_name}' not found in player's inventory")
 
-            return {"player_id": player_id, "item_type": item_type, "item_name": item_name, "quantity": count}
+            count = await inventory_service.get_player_item_count(db, player_id, resolved_item_type, item_name)
 
+            return {"player_id": player_id, "item_type": resolved_item_type, "item_name": item_name, "quantity": count}
+
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e)) from e
     except Exception as e:
         flogger.error(f"Error getting item count: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to get item count") from e

@@ -487,12 +487,14 @@ class TestBountyAutocomplete:
     """Tests for bounty_autocomplete method."""
 
     def test_bounty_autocomplete_returns_formatted_choices(self, mock_bounty_cog, make_mock_response):
-        """bounty_autocomplete should return formatted bounty choices."""
+        """bounty_autocomplete should return formatted bounty choices filtered to player's tier."""
         bounties = [
             _make_bounty_public(1, "Falcon-Jones", "gold", reward=5000, reward_per_sys=500),
         ]
-        resp = make_mock_response(bounties)
-        mock_bounty_cog.http_client.get = AsyncMock(return_value=resp)
+        player_resp = make_mock_response({"id": 1, "tier": "Gold"})
+        bounty_resp = make_mock_response(bounties)
+        mock_bounty_cog.http_client.post = AsyncMock(return_value=player_resp)
+        mock_bounty_cog.http_client.get = AsyncMock(return_value=bounty_resp)
         interaction = _create_mock_interaction()
 
         result = asyncio.run(mock_bounty_cog.bounty_autocomplete(interaction, ""))
@@ -509,8 +511,10 @@ class TestBountyAutocomplete:
             _make_bounty_public(1, "BlackViper", "bronze", reward=1000),
             _make_bounty_public(2, "RedFang", "silver", reward=2000),
         ]
-        resp = make_mock_response(bounties)
-        mock_bounty_cog.http_client.get = AsyncMock(return_value=resp)
+        player_resp = make_mock_response({"id": 1, "tier": "Bronze"})
+        bounty_resp = make_mock_response(bounties)
+        mock_bounty_cog.http_client.post = AsyncMock(return_value=player_resp)
+        mock_bounty_cog.http_client.get = AsyncMock(return_value=bounty_resp)
         interaction = _create_mock_interaction()
 
         result = asyncio.run(mock_bounty_cog.bounty_autocomplete(interaction, "black"))
@@ -520,12 +524,110 @@ class TestBountyAutocomplete:
 
     def test_bounty_autocomplete_handles_api_failure(self, mock_bounty_cog):
         """bounty_autocomplete should return empty list on API failure."""
+        mock_bounty_cog.http_client.post = AsyncMock(return_value=MagicMock(
+            raise_for_status=MagicMock(), json=MagicMock(return_value={"id": 1, "tier": "Bronze"})
+        ))
         mock_bounty_cog.http_client.get = AsyncMock(side_effect=RuntimeError("connection refused"))
         interaction = _create_mock_interaction()
 
         result = asyncio.run(mock_bounty_cog.bounty_autocomplete(interaction, ""))
 
         assert result == []
+
+    def test_bounty_autocomplete_passes_division_param_to_get(self, mock_bounty_cog, make_mock_response):
+        """bounty_autocomplete should pass division param based on player's tier."""
+        bounties = [_make_bounty_public(1, "SilverFox", "silver", reward=2000)]
+        player_resp = make_mock_response({"id": 1, "tier": "Silver"})
+        bounty_resp = make_mock_response(bounties)
+        mock_bounty_cog.http_client.post = AsyncMock(return_value=player_resp)
+        mock_bounty_cog.http_client.get = AsyncMock(return_value=bounty_resp)
+        interaction = _create_mock_interaction()
+
+        asyncio.run(mock_bounty_cog.bounty_autocomplete(interaction, ""))
+
+        get_call_kwargs = mock_bounty_cog.http_client.get.call_args[1]
+        assert get_call_kwargs["params"].get("division") == "silver"
+
+    def test_bounty_autocomplete_falls_back_to_all_bounties_on_player_post_failure(
+        self, mock_bounty_cog, make_mock_response
+    ):
+        """bounty_autocomplete should fall back to all bounties when POST /players/ fails."""
+        bounties = [
+            _make_bounty_public(1, "BronzeViper", "bronze", reward=1000),
+            _make_bounty_public(2, "GoldHawk", "gold", reward=5000),
+        ]
+        bounty_resp = make_mock_response(bounties)
+        mock_bounty_cog.http_client.post = AsyncMock(side_effect=RuntimeError("player service down"))
+        mock_bounty_cog.http_client.get = AsyncMock(return_value=bounty_resp)
+        interaction = _create_mock_interaction()
+
+        result = asyncio.run(mock_bounty_cog.bounty_autocomplete(interaction, ""))
+
+        # Should still return choices (graceful degradation)
+        assert len(result) == 2
+        # The GET should NOT have a division param (fallback to all)
+        get_call_kwargs = mock_bounty_cog.http_client.get.call_args[1]
+        assert "division" not in get_call_kwargs["params"]
+
+    def test_bounty_autocomplete_empty_tier_does_not_send_division_param(
+        self, mock_bounty_cog, make_mock_response
+    ):
+        """bounty_autocomplete must NOT send division='' when POST returns tier=''.
+
+        An empty-string division passed to the bounties endpoint would produce
+        unexpected API results (filtering on '' rather than all-tier fetch).
+        The 'if tier:' guard must suppress the param entirely.
+        """
+        bounties = [
+            _make_bounty_public(1, "BronzeViper", "bronze", reward=1000),
+        ]
+        # POST succeeds but player has no tier yet (empty string)
+        player_resp = make_mock_response({"id": 1, "tier": ""})
+        bounty_resp = make_mock_response(bounties)
+        mock_bounty_cog.http_client.post = AsyncMock(return_value=player_resp)
+        mock_bounty_cog.http_client.get = AsyncMock(return_value=bounty_resp)
+        interaction = _create_mock_interaction()
+
+        result = asyncio.run(mock_bounty_cog.bounty_autocomplete(interaction, ""))
+
+        # Should return choices (GET is still called)
+        assert len(result) == 1
+        # division must NOT appear in GET params — empty string must be suppressed
+        get_call_kwargs = mock_bounty_cog.http_client.get.call_args[1]
+        assert "division" not in get_call_kwargs["params"], (
+            "division='' must NOT be sent when tier is an empty string; "
+            "it would filter the API on an invalid value instead of returning all tiers."
+        )
+
+    def test_bounty_autocomplete_none_tier_does_not_send_division_param(
+        self, mock_bounty_cog, make_mock_response
+    ):
+        """bounty_autocomplete must NOT send division=None when POST returns tier=None.
+
+        A None tier (unassigned player) must fall back to the all-tier GET,
+        not pass division=None which may be serialised as 'None' or cause errors.
+        The 'if tier:' guard treats None as falsy and suppresses the param.
+        """
+        bounties = [
+            _make_bounty_public(1, "SilverFox", "silver", reward=2000),
+        ]
+        # POST succeeds but player's tier field is explicitly null
+        player_resp = make_mock_response({"id": 1, "tier": None})
+        bounty_resp = make_mock_response(bounties)
+        mock_bounty_cog.http_client.post = AsyncMock(return_value=player_resp)
+        mock_bounty_cog.http_client.get = AsyncMock(return_value=bounty_resp)
+        interaction = _create_mock_interaction()
+
+        result = asyncio.run(mock_bounty_cog.bounty_autocomplete(interaction, ""))
+
+        # Should return choices (GET is still called)
+        assert len(result) == 1
+        # division must NOT appear in GET params — None must be suppressed
+        get_call_kwargs = mock_bounty_cog.http_client.get.call_args[1]
+        assert "division" not in get_call_kwargs["params"], (
+            "division=None must NOT be sent when tier is None; "
+            "it would serialize as 'None' in the query string instead of omitting the filter."
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -3176,3 +3278,35 @@ class TestBountyCommandsRespx:
         assert "embed" in call_kwargs
         # Public (not ephemeral) response for successful loadout
         assert call_kwargs.get("ephemeral") is not True
+
+    # ------------------------------------------------------------------
+    # 4. bounty_autocomplete → POST /players/ then GET /bounties/?division=<tier>
+    # ------------------------------------------------------------------
+
+    def test_bounty_autocomplete_calls_correct_urls(self, mock_bounty_cog, request):
+        """bounty_autocomplete must POST /players/ then GET /bounties/ with division param."""
+        import httpx
+        import respx
+
+        self._with_real_client(mock_bounty_cog, request)
+        interaction = _create_mock_interaction()
+
+        player_data = {"id": 1, "tier": "Bronze"}
+        bounty_list = [_make_bounty_public(1, "AutoViper", "bronze")]
+
+        env_without_bot_api = {k: v for k, v in os.environ.items() if k != "BOT_API_BASE_URL"}
+        with (
+            patch.dict(os.environ, env_without_bot_api, clear=True),
+            respx.mock(assert_all_called=True) as mock_router,
+        ):
+            mock_router.post(f"{self._BOT_API}/players/").mock(
+                return_value=httpx.Response(200, json=player_data)
+            )
+            mock_router.get(f"{self._BOT_API}/bounties/").mock(
+                return_value=httpx.Response(200, json=bounty_list)
+            )
+
+            result = asyncio.run(mock_bounty_cog.bounty_autocomplete(interaction, ""))
+
+        assert len(result) == 1
+        assert "AutoViper" in result[0].name

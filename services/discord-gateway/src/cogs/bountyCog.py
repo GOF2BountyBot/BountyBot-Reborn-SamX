@@ -111,11 +111,34 @@ class BountyCog(commands.Cog):
     async def bounty_autocomplete(
         self, interaction: discord.Interaction, current: str
     ) -> list[app_commands.Choice[str]]:
-        """Live autocomplete for active bounties — fetches current bounties."""
+        """Live autocomplete for active bounties — fetches current bounties filtered to the player's tier."""
         try:
+            # Resolve the player's current tier so we can filter to their division only.
+            # Falls back to fetching all bounties if the player resolve fails.
+            params: dict = {"guild_id": interaction.guild_id}
+            try:
+                player_resp = await self.http_client.post(
+                    f"{api_base}/players/",
+                    json={
+                        "discord_id": interaction.user.id,
+                        "guild_id": interaction.guild_id,
+                        "discord_username": None,
+                        "display_name": getattr(interaction.user, "display_name", None),
+                    },
+                    timeout=5,
+                )
+                player_resp.raise_for_status()
+                player_data = player_resp.json()
+                tier = player_data.get("tier", "")
+                if tier:
+                    params["division"] = tier.lower()
+            except Exception:  # pylint: disable=broad-exception-caught
+                # Graceful degradation — autocomplete must never crash
+                pass
+
             resp = await self.http_client.get(
                 f"{api_base}/bounties/",
-                params={"guild_id": interaction.guild_id},
+                params=params,
                 timeout=5,
             )
             resp.raise_for_status()

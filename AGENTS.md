@@ -389,6 +389,15 @@ Additional executors (triggered on demand or by other jobs):
 - **Pydantic schemas**: Use `model_config = ConfigDict(from_attributes=True)` (NOT deprecated `class Config`). Use `.model_dump()` (NOT deprecated `.dict()`).
 - **Tests**: Max 2 mocks per test. Prefer real objects with deterministic inputs. See `test_combat_service.py` as the reference pattern.
 - **Test runner**: `pytest` with `asyncio_mode = auto` (configured in `pyproject.toml`)
+- **Test command pattern**: ALWAYS pipe to `tee` so output is captured for later `grep` without re-running. Full suite runs take 5–15 minutes; lost output = wasted time:
+  ```bash
+  # bot-core
+  cd /proj/services/bot-core && timeout 300 python -m pytest tests/ -q --tb=short 2>&1 | tee /tmp/test-botcore.log | tail -20
+  # discord-gateway (cogs only — fastest useful subset)
+  cd /proj/services/discord-gateway && timeout 300 python -m pytest tests/cogs/ -q --tb=short 2>&1 | tee /tmp/test-gateway-cogs.log | tail -20
+  # Grep failures from captured log without re-running:
+  grep -A 20 "FAILED\|ERROR" /tmp/test-botcore.log
+  ```
 - **Error handling**: All repositories use `try/except/rollback`. All cog HTTP clients use a 10-second timeout with retry logic.
 - **Logging**: All services use `bblogger.py`. Log at INFO for normal operations, ERROR for failures, DEBUG for diagnostic detail. Always include entity IDs in log messages.
 - **Admin mutations**: Must call `audit_service.log()` to produce an `AdminAuditLog` record.

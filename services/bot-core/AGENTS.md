@@ -487,6 +487,25 @@ JSON files in `import_data/` are the source of truth for game assets. They are l
 - Runner: `pytest` with `asyncio_mode = auto` (root `pyproject.toml`)
 - Coverage target: ≥ 80%
 
+### Running Tests
+
+**IMPORTANT — always log to file.** Without capturing output, any failure detail is lost and requires a full re-run to recover.
+
+```bash
+# Full suite (from /proj):
+cd /proj/services/bot-core && timeout 300 python -m pytest tests/ -q --tb=short 2>&1 | tee /tmp/test-botcore.log | tail -20
+
+# Targeted subset (faster iteration):
+cd /proj/services/bot-core && timeout 120 python -m pytest tests/services/ -q --tb=short 2>&1 | tee /tmp/test-botcore-services.log | tail -20
+cd /proj/services/bot-core && timeout 120 python -m pytest tests/api/ -q --tb=short 2>&1 | tee /tmp/test-botcore-api.log | tail -20
+
+# Single file:
+cd /proj/services/bot-core && timeout 60 python -m pytest tests/services/test_combat_preflight_service.py -q --tb=short 2>&1 | tee /tmp/test-single.log | tail -20
+
+# Grep failures without re-running:
+grep -A 20 "FAILED\|ERROR" /tmp/test-botcore.log
+```
+
 ### Test Organization
 
 ```

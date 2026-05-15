@@ -341,14 +341,26 @@ sys.modules["shared.bblogger"] = _mock_bblogger
 
 ### Running Tests
 
+**IMPORTANT — always log to file.** The full suite takes ~6 minutes. Without capturing output, any failure detail is lost and requires a full re-run to recover.
+
 ```bash
-# From services/discord-gateway directory
-pytest                              # All tests (parallel: -n 2 --dist loadfile, from pytest.ini)
-pytest tests/cogs/                  # Cog tests only
-pytest tests/api/                   # API router tests only
-pytest tests/cogs/test_aboutCog.py  # Single test file
-pytest --cov=src --cov-report=html  # With coverage
-pytest -p no:xdist                  # Disable parallelism (for debugging)
+# From /proj — ALWAYS use this form so failures are captured:
+cd /proj/services/discord-gateway && timeout 600 python -m pytest tests/ -q --tb=short 2>&1 | tee /tmp/test-gateway.log | tail -20
+
+# Cog tests only (faster, ~3 min):
+cd /proj/services/discord-gateway && timeout 300 python -m pytest tests/cogs/ -q --tb=short 2>&1 | tee /tmp/test-gateway-cogs.log | tail -20
+
+# Single file (for targeted iteration):
+cd /proj/services/discord-gateway && timeout 120 python -m pytest tests/cogs/test_shopCog.py -q --tb=short 2>&1 | tee /tmp/test-single.log | tail -20
+
+# Full output on failure (grep the log, don't re-run):
+grep -A 20 "FAILED\|ERROR" /tmp/test-gateway.log
+
+# Coverage:
+cd /proj/services/discord-gateway && python -m pytest tests/ --cov=src --cov-report=html -q 2>&1 | tee /tmp/test-gateway-cov.log | tail -20
+
+# Disable parallelism (for debugging hangs):
+cd /proj/services/discord-gateway && python -m pytest tests/ -q --tb=short -p no:xdist 2>&1 | tee /tmp/test-gateway-serial.log | tail -20
 ```
 
 ### Test Performance (DEF-S11-002)

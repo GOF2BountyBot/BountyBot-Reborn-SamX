@@ -16,6 +16,8 @@ Last updated: 2026-05-15
 
 | ID | Sev | Summary | Notes |
 |----|-----|---------|-------|
+| B.96 | 🔵 | `/equip` slot-full / item-replace interaction is not ephemeral — should be a hidden/transient interaction visible only to the invoking player | All `/equip` responses (including the slot-full prompt and any replace confirmation) must use `ephemeral=True`. Locate in `discord-gateway/src/cogs/inventoryCog.py`. |
+| B.95 | 🔵 | `/promote` and `/demote` tier-change confirmation embed is ephemeral but the success response may not be — success should be **public** and mention the player by display name so the guild sees who promoted | Confirm whether the post-confirm success embed uses `ephemeral=True` or posts publicly. If ephemeral, change to public and include `{interaction.user.mention}` in the title/description. `playerCog.py` around the `await interaction.followup.send(embed=embed)` call after promotion succeeds. |
 | B.82 | 🔵 | Combat summary embed should surface the PvC armour buff (Keith T Maxwell bonus) | Add `pvc_armour_buff_applied: bool` + `pvc_armour_buff_factor: float` to `/combat-bonus` response (`bot-core/src/api/routers/bounties.py`); read in `bountyCog.py` combat summary embed builder |
 | B.67 | 🔵 | `duel_expire` executor has no bulk sweep mode — requires `duel_id` in payload; firing without one returns error and does nothing | Option A: add bulk mode when `duel_id` omitted (expire all past `expires_at`) in `bot-core/src/utils/executors/duel_expire_executor.py`. Option B: document the limitation. |
 | B.63 | 🟡 | Duel result embed is ambiguous when both players use the same ship model (both show e.g. "Betty") | Blocked by B.62. Files: `bot-core/src/api/routers/duels.py`, `discord-gateway/src/cogs/duelCog.py` |

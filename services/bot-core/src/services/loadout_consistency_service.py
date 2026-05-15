@@ -704,8 +704,7 @@ class LoadoutConsistencyService:
         await player_repo.update_active_ship(db, player_id, target_ship_id, commit=False)
 
         flogger.info(
-            "Player %d: ship %d (%s) activated via choke-point; "
-            "transferred=%d overflowed=%d reconcile_evacuated=%s",
+            "Player %d: ship %d (%s) activated via choke-point; transferred=%d overflowed=%d reconcile_evacuated=%s",
             player_id,
             target_ship_id,
             target_ship.ship_name,

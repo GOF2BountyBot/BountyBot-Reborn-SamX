@@ -143,15 +143,11 @@ async def purchase_item(request: PurchaseRequest, shop_service: ShopService = De
 @router.post("/purchase-ship", response_model=TransactionResponse)
 async def purchase_ship(request: ShipPurchaseRequest, shop_service: ShopService = Depends(get_shop_service)):
     """Purchase a ship from a shop. The old active ship stays in the fleet as inactive."""
-    flogger.info(
-        f"Player {request.player_id} purchasing ship from shop item {request.shop_item_id}"
-    )
+    flogger.info(f"Player {request.player_id} purchasing ship from shop item {request.shop_item_id}")
 
     try:
         async with get_db_session() as db, db.begin():
-            transaction = await shop_service.purchase_ship(
-                db, request.player_id, request.shop_item_id
-            )
+            transaction = await shop_service.purchase_ship(db, request.player_id, request.shop_item_id)
 
             return TransactionResponse(
                 player_id=transaction["player_id"],

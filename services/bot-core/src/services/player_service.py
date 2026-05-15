@@ -404,8 +404,7 @@ class PlayerService:
             await db.refresh(player)
 
             flogger.info(
-                f"Player {player_id} promoted from {old_tier} to {next_tier} "
-                f"(scrubbed {scrubbed} cross-tier bounties)"
+                f"Player {player_id} promoted from {old_tier} to {next_tier} (scrubbed {scrubbed} cross-tier bounties)"
             )
 
             # Check if eligible for further promotion
@@ -464,8 +463,7 @@ class PlayerService:
             await db.refresh(player)
 
             flogger.info(
-                f"Player {player_id} demoted from {old_tier} to {prev_tier} "
-                f"(scrubbed {scrubbed} cross-tier bounties)"
+                f"Player {player_id} demoted from {old_tier} to {prev_tier} (scrubbed {scrubbed} cross-tier bounties)"
             )
 
             return {

@@ -96,9 +96,7 @@ class CombatPreflightService:
         try:
             player_loadout = await LoadoutBuilder.from_player(db, player_id)
         except Exception as exc:  # pylint: disable=broad-exception-caught
-            flogger.warning(
-                f"preflight: could not build player loadout for player_id={player_id}: {exc}"
-            )
+            flogger.warning(f"preflight: could not build player loadout for player_id={player_id}: {exc}")
             return PreflightResult(
                 verdict=PreflightVerdict.NO_DATA,
                 player_win_rate=0.0,

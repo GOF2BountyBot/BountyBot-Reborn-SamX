@@ -357,9 +357,7 @@ class ShopService:  # pylint: disable=too-many-instance-attributes
                 "remaining_shop_quantity": new_shop_quantity,
             }
 
-            flogger.info(
-                f"Player {player_id} purchased ship '{shop_item.item_name}' for {new_ship_price} credits"
-            )
+            flogger.info(f"Player {player_id} purchased ship '{shop_item.item_name}' for {new_ship_price} credits")
             return transaction_details
 
         except Exception as e:

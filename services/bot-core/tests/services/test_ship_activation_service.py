@@ -279,9 +279,7 @@ class TestActivateShip:
         svc.player_ship_repo.set_active_ship = AsyncMock(return_value=activated)
         svc.ship_repo.get_by_name = AsyncMock(return_value=static)
 
-        result = await svc.activate_ship(
-            mock_db, player_id=42, target_ship_id=5, player_repo=player_repo
-        )
+        result = await svc.activate_ship(mock_db, player_id=42, target_ship_id=5, player_repo=player_repo)
 
         assert result["ship"] is activated
         # player.active_ship_id updated
@@ -318,9 +316,7 @@ class TestActivateShip:
             side_effect=lambda db, name: SimpleNamespace(name=name, type="PrimaryWeapon")
         )
 
-        result = await svc.activate_ship(
-            mock_db, player_id=42, target_ship_id=5, player_repo=player_repo
-        )
+        result = await svc.activate_ship(mock_db, player_id=42, target_ship_id=5, player_repo=player_repo)
 
         assert result["ship"] is activated
         assert result["transferred"] == 1  # weapon transferred
@@ -365,9 +361,7 @@ class TestActivateShip:
         svc.player_ship_repo.set_active_ship = AsyncMock(return_value=activated)
         svc.ship_repo.get_by_name = AsyncMock(return_value=static)
 
-        result = await svc.activate_ship(
-            mock_db, player_id=42, target_ship_id=5, player_repo=player_repo
-        )
+        result = await svc.activate_ship(mock_db, player_id=42, target_ship_id=5, player_repo=player_repo)
 
         # No transfer (src == dst)
         assert result["transferred"] == 0

@@ -509,9 +509,7 @@ class PlayerCog(commands.Cog):
             # Fetch promotion status to pre-validate eligibility and surface a clear
             # error before showing the confirm dialog (avoids the "click confirm,
             # then see 400" UX).
-            status_resp = await self.http_client.get(
-                f"{api_base}/players/{player_id}/promotion-status", timeout=10
-            )
+            status_resp = await self.http_client.get(f"{api_base}/players/{player_id}/promotion-status", timeout=10)
             status_resp.raise_for_status()
             status_data = status_resp.json()
             if not status_data.get("can_promote"):
@@ -538,9 +536,7 @@ class PlayerCog(commands.Cog):
                 )
                 pre_resp.raise_for_status()
                 pre = pre_resp.json()
-                verdict_emoji = {"green": "🟢", "yellow": "🟡", "red": "🔴", "no_data": "⚪"}.get(
-                    pre["verdict"], "⚪"
-                )
+                verdict_emoji = {"green": "🟢", "yellow": "🟡", "red": "🔴", "no_data": "⚪"}.get(pre["verdict"], "⚪")
                 if pre["verdict"] != "no_data" and pre["sims_run"] > 0:
                     verdict_line = (
                         f"\n**Power Check** {verdict_emoji} "
@@ -758,8 +754,7 @@ class PlayerCog(commands.Cog):
             embed = discord.Embed(
                 title="⬇️ Tier Demoted",
                 description=(
-                    f"You have stepped down from **{demote_data['old_tier']}** "
-                    f"to **{demote_data['new_tier']}**."
+                    f"You have stepped down from **{demote_data['old_tier']}** to **{demote_data['new_tier']}**."
                 ),
                 color=self._get_tier_color(demote_data["new_tier"]),
             )
@@ -774,9 +769,7 @@ class PlayerCog(commands.Cog):
 
             # Swap tier roles (best-effort, mirrors /promote)
             try:
-                config_resp = await self.http_client.get(
-                    f"{api_base}/config/guild/{interaction.guild_id}", timeout=5
-                )
+                config_resp = await self.http_client.get(f"{api_base}/config/guild/{interaction.guild_id}", timeout=5)
                 config_resp.raise_for_status()
                 config = config_resp.json()
                 guild = interaction.guild

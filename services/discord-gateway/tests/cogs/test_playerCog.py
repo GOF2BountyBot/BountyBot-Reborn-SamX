@@ -2958,9 +2958,7 @@ class TestPromoteConfirmView:
         promote_resp.json.return_value = promote_data
 
         mock_player_cog.http_client.post = AsyncMock(return_value=player_resp)
-        mock_player_cog.http_client.get = AsyncMock(
-            side_effect=[self._make_status_resp(), self._make_preflight_resp()]
-        )
+        mock_player_cog.http_client.get = AsyncMock(side_effect=[self._make_status_resp(), self._make_preflight_resp()])
         mock_player_cog.http_client.put = AsyncMock(return_value=promote_resp)
 
         view_mock = self._make_confirm_view_mock(result=True)
@@ -2999,9 +2997,7 @@ class TestPromoteConfirmView:
         player_resp.json.return_value = _make_player_data(tier="Bronze")
 
         mock_player_cog.http_client.post = AsyncMock(return_value=player_resp)
-        mock_player_cog.http_client.get = AsyncMock(
-            side_effect=[self._make_status_resp(), self._make_preflight_resp()]
-        )
+        mock_player_cog.http_client.get = AsyncMock(side_effect=[self._make_status_resp(), self._make_preflight_resp()])
 
         view_mock = self._make_confirm_view_mock(result=False)
         with patch("cogs.playerCog.ConfirmView", return_value=view_mock) as patched_cv:
@@ -3022,15 +3018,11 @@ class TestPromoteConfirmView:
         cooldown_iso = "2026-05-15T12:00:00+00:00"
         error_response = MagicMock()
         error_response.status_code = 429
-        error_response.json.return_value = {
-            "detail": {"detail": "Cooldown active", "cooldown_end": cooldown_iso}
-        }
+        error_response.json.return_value = {"detail": {"detail": "Cooldown active", "cooldown_end": cooldown_iso}}
         http_error = httpx.HTTPStatusError("429", request=MagicMock(), response=error_response)
 
         mock_player_cog.http_client.post = AsyncMock(return_value=player_resp)
-        mock_player_cog.http_client.get = AsyncMock(
-            side_effect=[self._make_status_resp(), self._make_preflight_resp()]
-        )
+        mock_player_cog.http_client.get = AsyncMock(side_effect=[self._make_status_resp(), self._make_preflight_resp()])
         mock_player_cog.http_client.put = AsyncMock(side_effect=http_error)
 
         view_mock = self._make_confirm_view_mock(result=True)
@@ -3169,9 +3161,7 @@ class TestDemoteCommand:
         cooldown_iso = "2026-05-16T08:00:00+00:00"
         error_response = MagicMock()
         error_response.status_code = 429
-        error_response.json.return_value = {
-            "detail": {"detail": "Cooldown active", "cooldown_end": cooldown_iso}
-        }
+        error_response.json.return_value = {"detail": {"detail": "Cooldown active", "cooldown_end": cooldown_iso}}
         http_error = httpx.HTTPStatusError("429", request=MagicMock(), response=error_response)
 
         mock_player_cog.http_client.post = AsyncMock(return_value=player_resp)

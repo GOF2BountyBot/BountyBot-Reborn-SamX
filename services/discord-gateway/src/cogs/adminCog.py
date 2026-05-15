@@ -525,9 +525,7 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
                     timeout=10,
                 )
                 if resp.status_code == 404:
-                    await interaction.followup.send(
-                        f"❌ Player not found for {user.display_name}.", ephemeral=True
-                    )
+                    await interaction.followup.send(f"❌ Player not found for {user.display_name}.", ephemeral=True)
                     return
                 resp.raise_for_status()
                 label = "Tier-Change" if cooldown_type == "tier_change" else "Bounty"
@@ -630,9 +628,7 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
                 embed.add_field(name="Forced Tech Level", value=str(force_tech_level), inline=True)
 
             await interaction.followup.send(embed=embed, ephemeral=True)
-            flogger.info(
-                f"Admin {interaction.user} refreshed shop(s) {tier_summary} in guild {interaction.guild_id}"
-            )
+            flogger.info(f"Admin {interaction.user} refreshed shop(s) {tier_summary} in guild {interaction.guild_id}")
 
         except httpx.HTTPStatusError as e:
             await report_api_error(interaction, e)

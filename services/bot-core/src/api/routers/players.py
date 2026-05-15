@@ -538,9 +538,7 @@ async def reset_player_cooldown(
             if cooldown_type in ("tier_change", "all"):
                 player.tier_change_cooldown_end = None
             await db.commit()
-            flogger.info(
-                f"Cooldown ({cooldown_type}) reset for player {player.id} (user {user_id} guild {guild_id})"
-            )
+            flogger.info(f"Cooldown ({cooldown_type}) reset for player {player.id} (user {user_id} guild {guild_id})")
             return {
                 "status": "success",
                 "message": f"Cooldown ({cooldown_type}) reset for player {player.id}",

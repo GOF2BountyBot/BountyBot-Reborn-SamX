@@ -42,6 +42,7 @@ for _key in list(sys.modules):
 
 import pytest
 from persist.models.base import Base
+from persist.models.bounty import Bounty
 from persist.models.guild_config import GuildConfig
 from persist.models.guild_shop import GuildShop
 from persist.models.player import Player
@@ -57,6 +58,7 @@ _SQLITE_TABLES = [
     GuildShop.__table__,
     PlayerInventory.__table__,
     PlayerShip.__table__,
+    Bounty.__table__,  # SQLite-safe (JSON-only, no ARRAY columns); needed by promote_player→scrub_orphaned_checks
 ]
 
 

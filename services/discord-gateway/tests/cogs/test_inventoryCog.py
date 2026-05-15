@@ -2629,9 +2629,7 @@ class TestUnequipAllSentinel:
 
         player_resp = make_mock_response({"id": 1})
         ships_resp = make_mock_response([_make_ship_data(ship_id=10)])
-        loadout_resp = make_mock_response(
-            _make_loadout(weapons=["GoodItem", "BadItem"])
-        )
+        loadout_resp = make_mock_response(_make_loadout(weapons=["GoodItem", "BadItem"]))
 
         # GoodItem succeeds, BadItem fails
         good_unequip_resp = make_mock_response({"success": True})
@@ -2641,9 +2639,7 @@ class TestUnequipAllSentinel:
             "500 Internal Server Error", request=MagicMock(), response=bad_error_resp
         )
 
-        mock_inventory_cog.http_client.post = AsyncMock(
-            side_effect=[player_resp, good_unequip_resp, bad_http_error]
-        )
+        mock_inventory_cog.http_client.post = AsyncMock(side_effect=[player_resp, good_unequip_resp, bad_http_error])
         mock_inventory_cog.http_client.get = AsyncMock(side_effect=[ships_resp, loadout_resp])
 
         asyncio.run(mock_inventory_cog.unequip.callback(mock_inventory_cog, interaction, item_name="all"))
@@ -2670,13 +2666,9 @@ class TestUnequipAllSentinel:
 
         error_resp = MagicMock()
         error_resp.status_code = 500
-        bad_http_error = httpx.HTTPStatusError(
-            "500 Internal Server Error", request=MagicMock(), response=error_resp
-        )
+        bad_http_error = httpx.HTTPStatusError("500 Internal Server Error", request=MagicMock(), response=error_resp)
 
-        mock_inventory_cog.http_client.post = AsyncMock(
-            side_effect=[player_resp, bad_http_error, bad_http_error]
-        )
+        mock_inventory_cog.http_client.post = AsyncMock(side_effect=[player_resp, bad_http_error, bad_http_error])
         mock_inventory_cog.http_client.get = AsyncMock(side_effect=[ships_resp, loadout_resp])
 
         asyncio.run(mock_inventory_cog.unequip.callback(mock_inventory_cog, interaction, item_name="all"))
@@ -2700,9 +2692,7 @@ class TestUnequipAllSentinel:
 
         mock_inventory_cog.http_client.post = AsyncMock(return_value=player_resp)
         # Second GET (loadout) raises an error
-        mock_inventory_cog.http_client.get = AsyncMock(
-            side_effect=[ships_resp, RuntimeError("loadout fetch failed")]
-        )
+        mock_inventory_cog.http_client.get = AsyncMock(side_effect=[ships_resp, RuntimeError("loadout fetch failed")])
 
         asyncio.run(mock_inventory_cog.unequip.callback(mock_inventory_cog, interaction, item_name="all"))
 
@@ -2774,16 +2764,12 @@ class TestUnequipAllSentinel:
 class TestUnequipAutocompleteAllSentinel:
     """B.90: Tests verifying that 'all' appears as the first autocomplete choice."""
 
-    def test_unequip_autocomplete_all_is_first_choice_when_empty_input(
-        self, mock_inventory_cog, make_mock_response
-    ):
+    def test_unequip_autocomplete_all_is_first_choice_when_empty_input(self, mock_inventory_cog, make_mock_response):
         """B.90: 'all — unequip everything' is first when user has typed nothing."""
         interaction = _create_mock_interaction()
 
         player_resp = make_mock_response({"id": 1})
-        ships_resp = make_mock_response(
-            [{"id": 10, "ship_name": "Eagle", "is_active": True}]
-        )
+        ships_resp = make_mock_response([{"id": 10, "ship_name": "Eagle", "is_active": True}])
         loadout_resp = make_mock_response(
             {"weapons": ["LaserCannon"], "modules": ["ShieldGen"], "turrets": [], "secondary_weapons": []}
         )
@@ -2797,9 +2783,7 @@ class TestUnequipAutocompleteAllSentinel:
         assert choices[0].value == "all", f"Expected 'all' as first choice, got: {choices[0].value!r}"
         assert "all" in choices[0].name.lower()
 
-    def test_unequip_autocomplete_all_is_first_choice_when_typing_a(
-        self, mock_inventory_cog, make_mock_response
-    ):
+    def test_unequip_autocomplete_all_is_first_choice_when_typing_a(self, mock_inventory_cog, make_mock_response):
         """B.90: 'all' matches when user types 'a' (prefix match)."""
         interaction = _create_mock_interaction()
 

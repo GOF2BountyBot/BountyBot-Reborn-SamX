@@ -4651,9 +4651,7 @@ class TestScrubPlayerChecksOutsideTier:
         )
 
         with patch("sqlalchemy.orm.attributes.flag_modified"):
-            count = await svc.scrub_player_checks_outside_tier(
-                db, player_id=player_id, guild_id=1, new_tier="Silver"
-            )
+            count = await svc.scrub_player_checks_outside_tier(db, player_id=player_id, guild_id=1, new_tier="Silver")
 
         assert count == 1
         assert bronze_bounty.checked["Alpha"] == FORFEITED_CHECK
@@ -4669,9 +4667,7 @@ class TestScrubPlayerChecksOutsideTier:
         svc.bounty_repo.get_active_by_guild_and_division = AsyncMock(return_value=[bounty])
 
         with patch("sqlalchemy.orm.attributes.flag_modified"):
-            count = await svc.scrub_player_checks_outside_tier(
-                db, player_id=42, guild_id=1, new_tier="Silver"
-            )
+            count = await svc.scrub_player_checks_outside_tier(db, player_id=42, guild_id=1, new_tier="Silver")
 
         assert count == 0
         assert bounty.checked["Alpha"] == 99
@@ -4691,9 +4687,7 @@ class TestScrubPlayerChecksOutsideTier:
         svc.bounty_repo.get_active_by_guild_and_division = AsyncMock(side_effect=_get_active)
 
         with patch("sqlalchemy.orm.attributes.flag_modified"):
-            count = await svc.scrub_player_checks_outside_tier(
-                db, player_id=player_id, guild_id=1, new_tier="Silver"
-            )
+            count = await svc.scrub_player_checks_outside_tier(db, player_id=player_id, guild_id=1, new_tier="Silver")
 
         assert count == 0
         assert silver_bounty.checked["Alpha"] == player_id  # untouched
@@ -4714,9 +4708,7 @@ class TestScrubPlayerChecksOutsideTier:
         )
 
         with patch("sqlalchemy.orm.attributes.flag_modified"):
-            count = await svc.scrub_player_checks_outside_tier(
-                db, player_id=player_id, guild_id=1, new_tier="Silver"
-            )
+            count = await svc.scrub_player_checks_outside_tier(db, player_id=player_id, guild_id=1, new_tier="Silver")
 
         assert count == 2
         assert bounty1.checked["Alpha"] == FORFEITED_CHECK
@@ -4738,9 +4730,7 @@ class TestScrubPlayerChecksOutsideTier:
         )
 
         with patch("sqlalchemy.orm.attributes.flag_modified"):
-            count = await svc.scrub_player_checks_outside_tier(
-                db, player_id=player_id, guild_id=1, new_tier="Bronze"
-            )
+            count = await svc.scrub_player_checks_outside_tier(db, player_id=player_id, guild_id=1, new_tier="Bronze")
 
         assert count == 1
         assert silver_bounty.checked["Alpha"] == FORFEITED_CHECK

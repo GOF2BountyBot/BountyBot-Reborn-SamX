@@ -21,12 +21,13 @@ BEHAVIOURS COVERED
 |---|-----------|------|
 | 1 | No guilds configured → returns guilds_refreshed=0 | B |
 | 2 | Single guild, all tiers refreshed (ShopService.refresh_shop mocked — Item ARRAY bypass) | B + C |
-| 3 | Announcement fires per guild (respx) | B + C |
+| 3 | Announcement fires per tier per guild (4 POSTs per guild) | B + C |
 | 4 | Announcement skipped when shop_channel_id is None (non-fatal) | B + C |
 | 5 | Single guild + single tier payload | B |
 | 6 | Single guild + all tiers payload | B |
 | 7 | Announcement failure is non-fatal (guild still refreshed) | B + C |
 | 8 | Multi-guild: one guild fail doesn't block others | B |
+| 9 | Role mention only on first tier (Bronze), None on others | B + C |
 
 SQLITE COMPATIBILITY NOTE
 --------------------------
@@ -164,7 +165,7 @@ def _make_fake_db_manager(factory: Any):
 
 
 # A minimal refresh result that ShopService.refresh_shop returns.
-_FAKE_REFRESH_RESULT: dict = {"status": "ok", "items_added": 3}
+_FAKE_REFRESH_RESULT: dict = {"status": "ok", "items_added": 3, "tech_level": 5}
 
 
 # ===========================================================================
@@ -320,10 +321,12 @@ class TestBulkRefreshAllGuilds:
 
 
 class TestAnnouncementFires:
-    """Behaviour #3: announcement fires per guild to the gateway."""
+    """Behaviour #3: announcement fires once per tier per guild (4 POSTs)."""
 
-    async def test_announcement_posted_to_shop_channel(self, sqlite_engine_and_factory):
-        """POST to /channels/{shop_channel_id}/messages is called once per guild.
+    async def test_announcement_posted_four_times_per_guild(self, sqlite_engine_and_factory):
+        """POST to /channels/{shop_channel_id}/messages is called 4 times per guild (once per tier).
+
+        New behaviour (per-tier announcements): each tier posts a separate embed.
 
         # 1 mock — db_manager bridge (Tier B + C)
         # + ShopService.refresh_shop mock (ARRAY-column bypass)
@@ -346,6 +349,10 @@ class TestAnnouncementFires:
         assert result["status"] == "success"
         assert announce_route.called, (
             f"Expected gateway announcement POST to {GATEWAY_CHANNEL_URL}, but it was not called"
+        )
+        # 4 tiers × 1 guild = 4 announcement calls
+        assert announce_route.call_count == 4, (
+            f"Expected 4 announcement calls (one per tier), got {announce_route.call_count}"
         )
 
 
@@ -414,3 +421,54 @@ class TestAnnouncementFailureIsNonFatal:
             f"Expected 1 guilds_refreshed despite announcement failure, got {result!r}"
         )
         assert GUILD_ID in result["results"]
+
+
+class TestRoleMentionOnlyOnFirstTier:
+    """Behaviour #9: role mention only on Bronze (first tier), None on Silver/Gold/Platinum."""
+
+    async def test_role_mention_only_on_bronze(self, sqlite_engine_and_factory):
+        """The role mention (<@&role_id>) appears in the first tier announcement only.
+
+        Subsequent tiers (Silver, Gold, Platinum) must NOT include a role mention
+        to avoid 4 pings per refresh cycle.
+
+        # 1 mock — db_manager bridge (Tier B + C)
+        # + ShopService.refresh_shop mock (ARRAY-column bypass)
+        # + ShopService.preload_static_data mock (ARRAY-column bypass)
+        """
+        _engine, factory = sqlite_engine_and_factory
+
+        async with factory() as seed_db:
+            await _seed_guild_config(seed_db, GUILD_ID, shop_channel_id=SHOP_CHANNEL, bounty_hunter_role_id=ROLE_ID)
+
+        announce_calls: list[dict] = []
+
+        with (
+            patch("persist.database.manager.db_manager", _make_fake_db_manager(factory)),
+            patch("services.shop_service.ShopService.refresh_shop", new=AsyncMock(return_value=_FAKE_REFRESH_RESULT)),
+            patch("services.shop_service.ShopService.preload_static_data", new=AsyncMock()),
+            respx.mock(assert_all_called=False) as router,
+        ):
+            def _capture_and_respond(request):
+                import json
+
+                announce_calls.append(json.loads(request.content))
+                return respx.MockResponse(200, json={"ok": True})
+
+            router.post(GATEWAY_CHANNEL_URL).mock(side_effect=_capture_and_respond)
+            result = await execute_shop_refresh_job("job-role-mention", {})
+
+        assert result["status"] == "success"
+        assert len(announce_calls) == 4, f"Expected 4 announce calls, got {len(announce_calls)}"
+
+        # First call (Bronze) should include role mention
+        bronze_call = announce_calls[0]
+        assert bronze_call.get("text_content") == f"<@&{ROLE_ID}>", (
+            f"Expected role mention in Bronze tier call, got {bronze_call.get('text_content')!r}"
+        )
+
+        # Remaining calls (Silver, Gold, Platinum) must NOT include role mention
+        for i, call in enumerate(announce_calls[1:], start=2):
+            assert call.get("text_content") is None, (
+                f"Expected no role mention on tier #{i} (index {i - 1}), got {call.get('text_content')!r}"
+            )

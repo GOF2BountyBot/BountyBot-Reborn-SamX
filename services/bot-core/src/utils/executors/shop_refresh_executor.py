@@ -4,9 +4,9 @@ Invoked by APScheduler via the JobExecutor dispatch.  The executor
 delegates all shop business-logic to ShopService.refresh_shop() and uses
 ConfigRepository.list_all() to enumerate guilds for bulk refreshes.
 
-After a successful refresh, an announcement is posted to the discord-gateway
-``POST /api/v1/channels/{shop_channel_id}/messages`` endpoint so players are
-notified that new stock is available.
+After a successful refresh, one announcement per refreshed tier is posted to
+the discord-gateway ``POST /api/v1/channels/{shop_channel_id}/messages``
+endpoint so players are notified that new stock is available for their tier.
 
 Announcement logic is implemented in ``utils.shop_announcement.announce_shop_refresh``
 (the shared module) and forwarded here via the private ``_announce_shop_refresh``
@@ -107,19 +107,34 @@ async def execute_shop_refresh_job(job_id: str, payload: dict) -> dict:
             try:
                 for config in guild_configs:
                     gid = config.guild_id
-                    tier_results: dict = {}
-                    for t in _SHOP_TIERS:
-                        tier_results[t] = await shop_service.refresh_shop(db, gid, t, force_tech_level)
-                    bulk_results[gid] = tier_results
 
-                    # ── Announce shop refresh to discord-gateway ───────────
+                    # ── Resolve channel + role once per guild, before tier loop ──
                     shop_channel_id = getattr(config, "shop_channel_id", None)
                     # Prefer shop_announcements_role_id over bounty_hunter_role_id.
                     # Only use it when it's a real integer ID (guards against MagicMock attrs in tests).
                     _shop_ann_id = getattr(config, "shop_announcements_role_id", None)
                     _bh_role_id = getattr(config, "bounty_hunter_role_id", None)
                     mention_role_id = _shop_ann_id if isinstance(_shop_ann_id, int) else _bh_role_id
-                    await _announce_shop_refresh(job_id, gid, shop_channel_id, mention_role_id, tier=None)
+
+                    tier_results: dict = {}
+                    for i, t in enumerate(_SHOP_TIERS):
+                        tier_results[t] = await shop_service.refresh_shop(db, gid, t, force_tech_level)
+
+                        # ── Announce per tier ──────────────────────────────
+                        # Role mention only on the first tier (Bronze) to avoid
+                        # 4 pings per refresh cycle.
+                        role_for_this_tier = mention_role_id if i == 0 else None
+                        await _announce_shop_refresh(
+                            job_id,
+                            gid,
+                            shop_channel_id,
+                            role_for_this_tier,
+                            tier=t,
+                            items=tier_results[t].get("items") or [],
+                            tech_level=tier_results[t].get("tech_level"),
+                        )
+
+                    bulk_results[gid] = tier_results
 
             finally:
                 shop_service.clear_static_cache()
@@ -151,6 +166,8 @@ async def _announce_shop_refresh(
     channel_id: int | None,
     bounty_hunter_role_id: int | None = None,
     tier: str | None = None,
+    items: list | None = None,
+    tech_level: int | None = None,
 ) -> None:
     """Thin wrapper around the shared ``announce_shop_refresh`` helper.
 
@@ -166,4 +183,6 @@ async def _announce_shop_refresh(
         channel_id=channel_id,
         bounty_hunter_role_id=bounty_hunter_role_id,
         tier=tier,
+        items=items,
+        tech_level=tech_level,
     )

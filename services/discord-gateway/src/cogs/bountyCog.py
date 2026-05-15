@@ -102,19 +102,6 @@ class BountyCog(commands.Cog):
     # Autocomplete
     # ------------------------------------------------------------------
 
-    async def division_autocomplete(
-        self,
-        _interaction: discord.Interaction,
-        current: str,
-    ) -> list[app_commands.Choice[str]]:
-        """Autocomplete for division selection."""
-        norm_current = normalize_for_search(current)
-        return [
-            app_commands.Choice(name=div.title(), value=div)
-            for div in _VALID_DIVISIONS
-            if norm_current in normalize_for_search(div)
-        ]
-
     async def system_autocomplete(
         self, _interaction: discord.Interaction, current: str
     ) -> list[app_commands.Choice[str]]:
@@ -580,25 +567,51 @@ class BountyCog(commands.Cog):
             pass  # Interaction fully expired, nothing we can do
 
     # ------------------------------------------------------------------
-    # /bounties [division]
+    # /bounties [show_all]
     # ------------------------------------------------------------------
 
     @app_commands.command(name="bounties", description="List active bounties in this guild")
-    @app_commands.describe(division="Filter by division (bronze, silver, gold)")
-    @app_commands.autocomplete(division=division_autocomplete)
+    @app_commands.describe(show_all="Show bounties across all tiers (default: your tier only)")
     async def bounties(
         self,
         interaction: discord.Interaction,
-        division: str | None = None,
+        show_all: bool = False,
     ):
-        """List active bounties."""
+        """List active bounties.
+
+        By default shows only bounties in the invoking player's current tier.
+        Pass show_all=True to see every active bounty across all tiers.
+        """
         await interaction.response.defer(thinking=True)
-        flogger.info(f"/bounties invoked: guild={interaction.guild_id} user={interaction.user.id} division={division}")
+        flogger.info(
+            f"/bounties invoked: guild={interaction.guild_id} user={interaction.user.id} show_all={show_all}"
+        )
 
         try:
             params: dict = {"guild_id": interaction.guild_id}
-            if division:
+            title_suffix = ""
+
+            if not show_all:
+                # Resolve the player's current tier so we can filter to their division only.
+                # POST /players/ is a create-or-get upsert — always safe to call.
+                player_resp = await self.http_client.post(
+                    f"{api_base}/players/",
+                    json={
+                        "discord_id": interaction.user.id,
+                        "guild_id": interaction.guild_id,
+                        "discord_username": None,
+                        "display_name": getattr(interaction.user, "display_name", None),
+                    },
+                    timeout=10,
+                )
+                player_resp.raise_for_status()
+                player_data = player_resp.json()
+                player_tier = (player_data.get("tier") or "Bronze")
+                division = player_tier.lower()
                 params["division"] = division
+                title_suffix = f" — {player_tier} Tier"
+            else:
+                title_suffix = " — All Tiers"
 
             resp = await self.http_client.get(
                 f"{api_base}/bounties/",
@@ -608,10 +621,9 @@ class BountyCog(commands.Cog):
             resp.raise_for_status()
             bounty_list = resp.json()
 
+            title = f"📋 Active Bounties{title_suffix}"
+
             if not bounty_list:
-                title = "📋 Active Bounties"
-                if division:
-                    title += f" — {division.title()}"
                 embed = discord.Embed(
                     title=title,
                     description="No active bounties at this time.",
@@ -619,10 +631,6 @@ class BountyCog(commands.Cog):
                 )
                 await interaction.followup.send(embed=embed)
                 return
-
-            title = "📋 Active Bounties"
-            if division:
-                title += f" — {division.title()}"
 
             embed = discord.Embed(
                 title=title,

@@ -727,14 +727,15 @@ class TestBountiesCommand:
     """Tests for the /bounties slash command."""
 
     def test_bounties_lists_active_bounties(self, mock_bounty_cog, make_mock_response):
-        """/bounties should list active bounties in an embed."""
+        """/bounties (default) should list active bounties for the player's tier."""
         interaction = _create_mock_interaction()
         bounty_list = [
             _make_bounty_public(1, "BlackViper", "bronze"),
-            _make_bounty_public(2, "RedFang", "silver"),
         ]
-        resp = make_mock_response(bounty_list)
-        mock_bounty_cog.http_client.get = AsyncMock(return_value=resp)
+        player_resp = make_mock_response({"id": 1, "tier": "Bronze"})
+        bounty_resp = make_mock_response(bounty_list)
+        mock_bounty_cog.http_client.post = AsyncMock(return_value=player_resp)
+        mock_bounty_cog.http_client.get = AsyncMock(return_value=bounty_resp)
 
         asyncio.run(mock_bounty_cog.bounties.callback(mock_bounty_cog, interaction))
 
@@ -744,10 +745,12 @@ class TestBountiesCommand:
         assert "embed" in call_kwargs
 
     def test_bounties_no_active_bounties_shows_empty_message(self, mock_bounty_cog, make_mock_response):
-        """/bounties with no bounties should show 'No active bounties'."""
+        """/bounties with no bounties for the player's tier should show 'No active bounties'."""
         interaction = _create_mock_interaction()
-        resp = make_mock_response([])
-        mock_bounty_cog.http_client.get = AsyncMock(return_value=resp)
+        player_resp = make_mock_response({"id": 1, "tier": "Bronze"})
+        bounty_resp = make_mock_response([])
+        mock_bounty_cog.http_client.post = AsyncMock(return_value=player_resp)
+        mock_bounty_cog.http_client.get = AsyncMock(return_value=bounty_resp)
 
         asyncio.run(mock_bounty_cog.bounties.callback(mock_bounty_cog, interaction))
 
@@ -757,22 +760,44 @@ class TestBountiesCommand:
         embed = call_kwargs["embed"]
         assert "no active bounties" in embed.description.lower()
 
-    def test_bounties_with_division_filter(self, mock_bounty_cog, make_mock_response):
-        """/bounties with division filter should pass division param to API."""
+    def test_bounties_default_filters_to_player_tier(self, mock_bounty_cog, make_mock_response):
+        """/bounties default (show_all=False) should pass the player's tier as division param."""
         interaction = _create_mock_interaction()
         bounty_list = [_make_bounty_public(1, "GoldHawk", "gold")]
+        player_resp = make_mock_response({"id": 1, "tier": "Gold"})
+        bounty_resp = make_mock_response(bounty_list)
+        mock_bounty_cog.http_client.post = AsyncMock(return_value=player_resp)
+        mock_bounty_cog.http_client.get = AsyncMock(return_value=bounty_resp)
+
+        asyncio.run(mock_bounty_cog.bounties.callback(mock_bounty_cog, interaction))
+
+        get_call_kwargs = mock_bounty_cog.http_client.get.call_args[1]
+        assert get_call_kwargs["params"].get("division") == "gold"
+        embed = interaction.followup.send.call_args[1]["embed"]
+        assert "Gold" in embed.title
+
+    def test_bounties_show_all_omits_division_filter(self, mock_bounty_cog, make_mock_response):
+        """/bounties show_all=True should NOT pass division to API and show all tiers in title."""
+        interaction = _create_mock_interaction()
+        bounty_list = [
+            _make_bounty_public(1, "BlackViper", "bronze"),
+            _make_bounty_public(2, "GoldHawk", "gold"),
+        ]
         resp = make_mock_response(bounty_list)
         mock_bounty_cog.http_client.get = AsyncMock(return_value=resp)
 
-        asyncio.run(mock_bounty_cog.bounties.callback(mock_bounty_cog, interaction, division="gold"))
+        asyncio.run(mock_bounty_cog.bounties.callback(mock_bounty_cog, interaction, show_all=True))
 
-        call_kwargs = mock_bounty_cog.http_client.get.call_args[1]
-        assert call_kwargs["params"].get("division") == "gold"
-        interaction.followup.send.assert_awaited_once()
+        get_call_kwargs = mock_bounty_cog.http_client.get.call_args[1]
+        assert "division" not in get_call_kwargs["params"]
+        embed = interaction.followup.send.call_args[1]["embed"]
+        assert "All Tiers" in embed.title
 
-    def test_bounties_api_error_handled(self, mock_bounty_cog):
-        """/bounties generic exception should show error message."""
+    def test_bounties_api_error_handled(self, mock_bounty_cog, make_mock_response):
+        """/bounties generic exception on GET should show error message."""
         interaction = _create_mock_interaction()
+        player_resp = make_mock_response({"id": 1, "tier": "Bronze"})
+        mock_bounty_cog.http_client.post = AsyncMock(return_value=player_resp)
         mock_bounty_cog.http_client.get = AsyncMock(side_effect=RuntimeError("boom"))
 
         asyncio.run(mock_bounty_cog.bounties.callback(mock_bounty_cog, interaction))
@@ -1118,26 +1143,43 @@ class TestCriminalLoadoutCommand:
 # ---------------------------------------------------------------------------
 
 
-class TestDivisionAutocomplete:
-    """Tests for division_autocomplete."""
+class TestBountiesShowAllParam:
+    """Tests for the show_all parameter on /bounties."""
 
-    def test_autocomplete_empty_current_returns_all_divisions(self, mock_bounty_cog):
-        """division_autocomplete with empty string should return all 4 divisions."""
+    def test_bounties_show_all_false_title_contains_tier(self, mock_bounty_cog, make_mock_response):
+        """/bounties default embed title should contain the player's tier name."""
         interaction = _create_mock_interaction()
-        result = asyncio.run(mock_bounty_cog.division_autocomplete(interaction, ""))
-        assert len(result) == 4
-        names = [c.name for c in result]
-        assert "Bronze" in names
-        assert "Silver" in names
-        assert "Gold" in names
-        assert "Platinum" in names
+        player_resp = make_mock_response({"id": 1, "tier": "Silver"})
+        bounty_resp = make_mock_response([_make_bounty_public(1, "SilverFox", "silver")])
+        mock_bounty_cog.http_client.post = AsyncMock(return_value=player_resp)
+        mock_bounty_cog.http_client.get = AsyncMock(return_value=bounty_resp)
 
-    def test_autocomplete_partial_match_filters(self, mock_bounty_cog):
-        """division_autocomplete with partial string should filter."""
+        asyncio.run(mock_bounty_cog.bounties.callback(mock_bounty_cog, interaction))
+
+        embed = interaction.followup.send.call_args[1]["embed"]
+        assert "Silver Tier" in embed.title
+
+    def test_bounties_show_all_true_title_contains_all_tiers(self, mock_bounty_cog, make_mock_response):
+        """/bounties show_all=True embed title should indicate all tiers."""
         interaction = _create_mock_interaction()
-        result = asyncio.run(mock_bounty_cog.division_autocomplete(interaction, "bro"))
-        assert len(result) == 1
-        assert result[0].value == "bronze"
+        resp = make_mock_response([_make_bounty_public(1, "SilverFox", "silver")])
+        mock_bounty_cog.http_client.get = AsyncMock(return_value=resp)
+
+        asyncio.run(mock_bounty_cog.bounties.callback(mock_bounty_cog, interaction, show_all=True))
+
+        embed = interaction.followup.send.call_args[1]["embed"]
+        assert "All Tiers" in embed.title
+
+    def test_bounties_show_all_true_does_not_call_players_endpoint(self, mock_bounty_cog, make_mock_response):
+        """/bounties show_all=True must NOT call the /players/ endpoint."""
+        interaction = _create_mock_interaction()
+        resp = make_mock_response([])
+        mock_bounty_cog.http_client.post = AsyncMock()
+        mock_bounty_cog.http_client.get = AsyncMock(return_value=resp)
+
+        asyncio.run(mock_bounty_cog.bounties.callback(mock_bounty_cog, interaction, show_all=True))
+
+        mock_bounty_cog.http_client.post.assert_not_awaited()
 
 
 # ---------------------------------------------------------------------------
@@ -1212,7 +1254,7 @@ class TestBountiesNoTimestampsInBadLocations:
     """
 
     def _get_bounties_embed(self, mock_bounty_cog, make_mock_response):
-        """Helper: trigger /bounties and return the sent embed."""
+        """Helper: trigger /bounties (show_all=True to avoid player resolve call) and return embed."""
         interaction = _create_mock_interaction()
         bounty_list = [
             _make_bounty_public(1, "BlackViper", "bronze"),
@@ -1220,7 +1262,7 @@ class TestBountiesNoTimestampsInBadLocations:
         resp = make_mock_response(bounty_list)
         mock_bounty_cog.http_client.get = AsyncMock(return_value=resp)
 
-        asyncio.run(mock_bounty_cog.bounties.callback(mock_bounty_cog, interaction))
+        asyncio.run(mock_bounty_cog.bounties.callback(mock_bounty_cog, interaction, show_all=True))
 
         interaction.followup.send.assert_awaited_once()
         call_kwargs = interaction.followup.send.call_args[1]
@@ -1957,11 +1999,6 @@ class TestBountyCogAutocompleteNormalization:
     def _import_cog(self, mock_bounty_cog):
         self.cog = mock_bounty_cog
 
-    def test_division_autocomplete_matches_ascii_input(self):
-        """division_autocomplete should match ASCII input as before."""
-        choices = asyncio.run(self.cog.division_autocomplete(MagicMock(), "bron"))
-        assert any(c.value == "bronze" for c in choices)
-
     def test_system_autocomplete_matches_accented_name(self):
         """system_autocomplete should match unaccented input against accented system names."""
         self.cog._systems = ["Behén", "N'saan", "Alpha Centauri"]
@@ -1976,11 +2013,6 @@ class TestBountyCogAutocompleteNormalization:
         assert all(c.name == c.value for c in choices)
         matching = [c for c in choices if c.name == "Behén"]
         assert len(matching) == 1
-
-    def test_division_autocomplete_empty_query_returns_all(self):
-        """division_autocomplete with empty query should return all divisions."""
-        choices = asyncio.run(self.cog.division_autocomplete(MagicMock(), ""))
-        assert len(choices) == 4
 
     def test_system_autocomplete_no_match_returns_empty(self):
         """system_autocomplete with unmatched query returns empty list."""
@@ -2579,8 +2611,8 @@ class TestCheckCommandTierRoleUpdate:
 class TestBountiesCommandHttpErrors:
     """Tests for /bounties HTTP error paths."""
 
-    def test_bounties_guild_not_configured_shows_setup_message(self, mock_bounty_cog):
-        """/bounties guild-not-configured 400 should show setup message."""
+    def test_bounties_guild_not_configured_shows_setup_message(self, mock_bounty_cog, make_mock_response):
+        """/bounties guild-not-configured 400 (from player resolve) should show setup message."""
         import httpx
 
         interaction = _create_mock_interaction()
@@ -2588,7 +2620,8 @@ class TestBountiesCommandHttpErrors:
         error_response.status_code = 400
         error_response.json.return_value = {"detail": "Guild not configured"}
         http_error = httpx.HTTPStatusError("400", request=MagicMock(), response=error_response)
-        mock_bounty_cog.http_client.get = AsyncMock(side_effect=http_error)
+        # POST /players/ raises the guild-not-configured error
+        mock_bounty_cog.http_client.post = AsyncMock(side_effect=http_error)
 
         asyncio.run(mock_bounty_cog.bounties.callback(mock_bounty_cog, interaction))
 
@@ -2598,11 +2631,13 @@ class TestBountiesCommandHttpErrors:
         msg = call_kwargs[0][0]
         assert "admin_setup" in msg.lower() or "set up" in msg.lower()
 
-    def test_bounties_http_status_error_non_guild_uses_report_api_error(self, mock_bounty_cog):
-        """/bounties non-guild-config HTTP error should send embed via report_api_error."""
+    def test_bounties_http_status_error_non_guild_uses_report_api_error(self, mock_bounty_cog, make_mock_response):
+        """/bounties non-guild-config HTTP error on GET should send embed via report_api_error."""
         import httpx
 
         interaction = _create_mock_interaction()
+        player_resp = make_mock_response({"id": 1, "tier": "Bronze"})
+        mock_bounty_cog.http_client.post = AsyncMock(return_value=player_resp)
         error_response = MagicMock()
         error_response.status_code = 500
         error_response.json.return_value = {}
@@ -2624,8 +2659,10 @@ class TestBountiesCommandHttpErrors:
         bounty_list = [
             _make_bounty_public(1, "VoidShadow", "gold", reward=9999, reward_per_sys=1000),
         ]
-        resp = make_mock_response(bounty_list)
-        mock_bounty_cog.http_client.get = AsyncMock(return_value=resp)
+        player_resp = make_mock_response({"id": 1, "tier": "Gold"})
+        bounty_resp = make_mock_response(bounty_list)
+        mock_bounty_cog.http_client.post = AsyncMock(return_value=player_resp)
+        mock_bounty_cog.http_client.get = AsyncMock(return_value=bounty_resp)
 
         asyncio.run(mock_bounty_cog.bounties.callback(mock_bounty_cog, interaction))
 
@@ -3034,28 +3071,34 @@ class TestBountyCommandsRespx:
     # 1. /bounties → GET /api/v1/bounties/ with ?guild_id= param
     # ------------------------------------------------------------------
 
-    def test_bounties_calls_correct_url_no_division(self, mock_bounty_cog, request):
-        """/bounties (no division filter) must GET /bounties/ with guild_id param."""
+    def test_bounties_calls_correct_url_default(self, mock_bounty_cog, request):
+        """/bounties default must POST /players/ then GET /bounties/?division=<tier>."""
         import httpx
         import respx
 
         self._with_real_client(mock_bounty_cog, request)
         interaction = _create_mock_interaction(guild_id=987654321)
 
-        bounty_list = [_make_bounty_public(1, "BlackViper", "bronze")]
+        player_data = {"id": 1, "tier": "Silver"}
+        bounty_list = [_make_bounty_public(1, "SilverViper", "silver")]
 
         with respx.mock(assert_all_called=True) as mock_router:
-            mock_router.get(f"{self._BOT_API}/bounties/").mock(return_value=httpx.Response(200, json=bounty_list))
+            mock_router.post(f"{self._BOT_API}/players/").mock(
+                return_value=httpx.Response(200, json=player_data)
+            )
+            mock_router.get(f"{self._BOT_API}/bounties/").mock(
+                return_value=httpx.Response(200, json=bounty_list)
+            )
 
             asyncio.run(mock_bounty_cog.bounties.callback(mock_bounty_cog, interaction))
 
         interaction.response.defer.assert_awaited_once_with(thinking=True)
         interaction.followup.send.assert_awaited_once()
-        call_kwargs = interaction.followup.send.call_args[1]
-        assert "embed" in call_kwargs
+        embed = interaction.followup.send.call_args[1]["embed"]
+        assert "Silver Tier" in embed.title
 
-    def test_bounties_calls_correct_url_with_division(self, mock_bounty_cog, request):
-        """/bounties with division filter must GET /bounties/ passing ?division= param."""
+    def test_bounties_calls_correct_url_show_all(self, mock_bounty_cog, request):
+        """/bounties show_all=True must GET /bounties/ with NO division param (no POST to /players/)."""
         import httpx
         import respx
 
@@ -3067,14 +3110,11 @@ class TestBountyCommandsRespx:
         with respx.mock(assert_all_called=True) as mock_router:
             mock_router.get(f"{self._BOT_API}/bounties/").mock(return_value=httpx.Response(200, json=bounty_list))
 
-            asyncio.run(mock_bounty_cog.bounties.callback(mock_bounty_cog, interaction, division="gold"))
+            asyncio.run(mock_bounty_cog.bounties.callback(mock_bounty_cog, interaction, show_all=True))
 
         interaction.followup.send.assert_awaited_once()
-        call_kwargs = interaction.followup.send.call_args[1]
-        assert "embed" in call_kwargs
-        embed = call_kwargs["embed"]
-        # Verify division filter was reflected in the embed title
-        assert "Gold" in embed.title
+        embed = interaction.followup.send.call_args[1]["embed"]
+        assert "All Tiers" in embed.title
 
     # ------------------------------------------------------------------
     # 2. /route → GET /api/v1/bounties/{id}/route

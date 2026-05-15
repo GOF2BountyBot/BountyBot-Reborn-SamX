@@ -47,18 +47,19 @@ async def _check_is_admin(interaction: discord.Interaction) -> bool:
         resp.raise_for_status()
         config_data = resp.json()
         admin_role_id = config_data.get("admin_role_id")
-        # B.40: use interaction.member (guild-scoped Member with roles) rather than
-        # interaction.guild.get_member() which may return None in slash-command contexts.
-        # interaction.user is a discord.User (no guild role info); interaction.member
-        # is the discord.Member with .roles populated for guild interactions.
-        member = interaction.member or (
-            interaction.guild.get_member(interaction.user.id) if interaction.guild else None
+        # Use interaction.user.roles (interaction.user IS a discord.Member for guild
+        # slash commands and carries .roles). Mirror the pattern used in playerCog.py
+        # /promote: guild.get_role(id) then check if role in interaction.user.roles.
+        guild = interaction.guild
+        if guild and admin_role_id:
+            admin_role = guild.get_role(admin_role_id)
+            if admin_role and admin_role in interaction.user.roles:
+                return True
+    except Exception as e:  # pylint: disable=broad-exception-caught
+        flogger.error(
+            f"_check_is_admin: unexpected error for user={interaction.user.id} "
+            f"guild={interaction.guild_id}: {e}"
         )
-        role_ids = [r.id for r in member.roles] if member and hasattr(member, "roles") else []
-        if admin_role_id and admin_role_id in role_ids:
-            return True
-    except Exception:  # pylint: disable=broad-exception-caught
-        pass
 
     return False
 

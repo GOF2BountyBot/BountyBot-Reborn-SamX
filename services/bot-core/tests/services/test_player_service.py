@@ -75,6 +75,8 @@ def _make_player(
     player.bounty_wins = bounty_wins
     player.created_at = datetime(2025, 1, 1, tzinfo=UTC)
     player.updated_at = datetime(2025, 6, 1, tzinfo=UTC)
+    player.tier_change_cooldown_end = None
+    player.bounty_cooldown_end = None
     return player
 
 
@@ -89,6 +91,7 @@ def _make_config(starting_credits: int = 500, xp_thresholds: dict | None = None)
     config = MagicMock()
     config.starting_credits = starting_credits
     config.xp_thresholds = xp_thresholds or {"Silver": 1000, "Gold": 5000, "Platinum": 15000}
+    config.tier_change_cooldown = None
     return config
 
 
@@ -132,6 +135,13 @@ def mock_player_repo() -> AsyncMock:
 
 
 @pytest.fixture
+def mock_bounty_repo() -> AsyncMock:
+    repo = AsyncMock()
+    repo.get_active_by_guild_and_division = AsyncMock(return_value=[])
+    return repo
+
+
+@pytest.fixture
 def mock_config_repo() -> AsyncMock:
     repo = AsyncMock()
     repo.get_by_guild_id = AsyncMock()
@@ -139,12 +149,13 @@ def mock_config_repo() -> AsyncMock:
 
 
 @pytest.fixture
-def service(mock_user_repo, mock_player_repo, mock_config_repo) -> PlayerService:
+def service(mock_user_repo, mock_player_repo, mock_config_repo, mock_bounty_repo) -> PlayerService:
     """PlayerService with all repositories replaced by mocks."""
     svc = PlayerService()
     svc.user_repo = mock_user_repo
     svc.player_repo = mock_player_repo
     svc.config_repo = mock_config_repo
+    svc.bounty_repo = mock_bounty_repo
     return svc
 
 
@@ -526,6 +537,7 @@ def _config_with_prestige(threshold: int = 50_000) -> MagicMock:
         "Platinum": 15000,
         "Prestige": threshold,
     }
+    cfg.tier_change_cooldown = None
     return cfg
 
 
@@ -572,7 +584,9 @@ def _patch_prestige_side_effects(service, *, existing_ships: list | None = None)
                 new_callable=AsyncMock,
                 return_value=None,
             ),
+            _patch("services.bounty_service.BountyService") as mock_bounty_cls,
         ):
+            mock_bounty_cls.return_value.scrub_player_checks_outside_tier = AsyncMock(return_value=0)
             yield
 
     return _ctx()
@@ -587,6 +601,14 @@ class TestPrestigePlayer:
     orchestration; the starter-loadout side of the contract is exercised by
     its own tests.
     """
+
+    @pytest.fixture(autouse=True)
+    def _patch_bounty_scrub(self):
+        from unittest.mock import patch as _patch
+
+        with _patch("services.bounty_service.BountyService") as mock_cls:
+            mock_cls.return_value.scrub_player_checks_outside_tier = AsyncMock(return_value=0)
+            yield
 
     @pytest.mark.asyncio
     async def test_prestige_resets_tier_xp_surplus_and_credits(
@@ -827,6 +849,7 @@ class TestPrestigePlayer:
         # Config has Silver/Gold/Platinum but NO Prestige — exercises the fallback.
         legacy_cfg = MagicMock()
         legacy_cfg.xp_thresholds = {"Silver": 10, "Gold": 20, "Platinum": 30}
+        legacy_cfg.tier_change_cooldown = None
         mock_config_repo.get_by_guild_id.return_value = legacy_cfg
 
         with pytest.raises(ValueError, match=r"50,000 XP to prestige"):
@@ -1415,6 +1438,14 @@ class TestGetPromotionStatus:
 class TestPromotePlayer:
     """Tests for PlayerService.promote_player."""
 
+    @pytest.fixture(autouse=True)
+    def _patch_bounty_scrub(self):
+        from unittest.mock import patch as _patch
+
+        with _patch("services.bounty_service.BountyService") as mock_cls:
+            mock_cls.return_value.scrub_player_checks_outside_tier = AsyncMock(return_value=0)
+            yield
+
     @pytest.mark.asyncio
     async def test_promotes_bronze_to_silver_when_eligible(self, service, mock_db, mock_player_repo, mock_config_repo):
         """Bronze player with 1500 XP promotes to Silver."""
@@ -1581,3 +1612,143 @@ class TestTransferCreditsDbExceptionHandling:
         service.player_repo.get_by_id_for_update = AsyncMock(side_effect=_side_effect)
         with pytest.raises(ValueError, match="could not be retrieved"):
             await service.transfer_credits(mock_db, 1, 2, 100)
+
+
+# ===========================================================================
+# Tests: TierChangeCooldownError + _check_tier_change_cooldown
+# ===========================================================================
+
+
+class TestTierChangeCooldownError:
+    """Tests for TierChangeCooldownError exception class and _check_tier_change_cooldown."""
+
+    def test_error_is_valueerror_subclass(self):
+        """TierChangeCooldownError must subclass ValueError for router compatibility."""
+        from datetime import UTC, datetime, timedelta
+
+        from services.player_service import TierChangeCooldownError
+
+        end = datetime.now(UTC) + timedelta(hours=24)
+        err = TierChangeCooldownError("Cooldown active", cooldown_end=end)
+        assert isinstance(err, ValueError)
+
+    def test_error_carries_cooldown_end_attribute(self):
+        """TierChangeCooldownError stores the cooldown_end datetime."""
+        from datetime import UTC, datetime, timedelta
+
+        from services.player_service import TierChangeCooldownError
+
+        end = datetime.now(UTC) + timedelta(hours=24)
+        err = TierChangeCooldownError("Cooldown active", cooldown_end=end)
+        assert err.cooldown_end == end
+
+    def test_check_raises_when_cooldown_active(self, service):
+        """_check_tier_change_cooldown raises TierChangeCooldownError if end is in the future."""
+        from datetime import UTC, datetime, timedelta
+
+        from services.player_service import TierChangeCooldownError
+
+        player = _make_player()
+        player.tier_change_cooldown_end = datetime.now(UTC) + timedelta(hours=23)
+
+        with pytest.raises(TierChangeCooldownError):
+            service._check_tier_change_cooldown(player)
+
+    def test_check_no_raise_when_cooldown_none(self, service):
+        """_check_tier_change_cooldown does not raise when cooldown_end is None."""
+        player = _make_player()
+        player.tier_change_cooldown_end = None
+
+        service._check_tier_change_cooldown(player)  # must not raise
+
+    def test_check_no_raise_when_cooldown_expired(self, service):
+        """_check_tier_change_cooldown does not raise when cooldown_end is in the past."""
+        from datetime import UTC, datetime, timedelta
+
+        player = _make_player()
+        player.tier_change_cooldown_end = datetime.now(UTC) - timedelta(seconds=1)
+
+        service._check_tier_change_cooldown(player)  # must not raise
+
+
+# ===========================================================================
+# Tests: PlayerService.demote_player
+# ===========================================================================
+
+
+class TestDemotePlayer:
+    """Tests for PlayerService.demote_player."""
+
+    @pytest.mark.asyncio
+    async def test_demote_silver_to_bronze(self, service, mock_db, mock_player_repo, mock_config_repo):
+        """Happy path: Silver player demotes to Bronze."""
+        player = _make_player(tier="Silver")
+        player.tier_change_cooldown_end = None
+        mock_player_repo.get_by_id.return_value = player
+        mock_config_repo.get_by_guild_id.return_value = None
+        service._scrub_orphaned_checks_after_tier_change = AsyncMock(return_value=0)
+
+        result = await service.demote_player(mock_db, player_id=1)
+
+        assert result["old_tier"] == "Silver"
+        assert result["new_tier"] == "Bronze"
+
+    @pytest.mark.asyncio
+    async def test_demote_gold_to_silver(self, service, mock_db, mock_player_repo, mock_config_repo):
+        """Happy path: Gold player demotes to Silver."""
+        player = _make_player(tier="Gold")
+        player.tier_change_cooldown_end = None
+        mock_player_repo.get_by_id.return_value = player
+        mock_config_repo.get_by_guild_id.return_value = None
+        service._scrub_orphaned_checks_after_tier_change = AsyncMock(return_value=0)
+
+        result = await service.demote_player(mock_db, player_id=1)
+
+        assert result["old_tier"] == "Gold"
+        assert result["new_tier"] == "Silver"
+
+    @pytest.mark.asyncio
+    async def test_demote_at_bronze_raises(self, service, mock_db, mock_player_repo):
+        """ValueError raised when player is already at Bronze (minimum tier)."""
+        player = _make_player(tier="Bronze")
+        player.tier_change_cooldown_end = None
+        mock_player_repo.get_by_id.return_value = player
+
+        with pytest.raises(ValueError, match="minimum tier"):
+            await service.demote_player(mock_db, player_id=1)
+
+    @pytest.mark.asyncio
+    async def test_demote_player_not_found_raises(self, service, mock_db, mock_player_repo):
+        """ValueError raised when player does not exist."""
+        mock_player_repo.get_by_id.return_value = None
+
+        with pytest.raises(ValueError, match="not found"):
+            await service.demote_player(mock_db, player_id=99)
+
+    @pytest.mark.asyncio
+    async def test_demote_on_cooldown_raises(self, service, mock_db, mock_player_repo):
+        """TierChangeCooldownError raised if tier-change cooldown is still active."""
+        from datetime import UTC, datetime, timedelta
+
+        from services.player_service import TierChangeCooldownError
+
+        player = _make_player(tier="Silver")
+        player.tier_change_cooldown_end = datetime.now(UTC) + timedelta(hours=12)
+        mock_player_repo.get_by_id.return_value = player
+
+        with pytest.raises(TierChangeCooldownError):
+            await service.demote_player(mock_db, player_id=1)
+
+    @pytest.mark.asyncio
+    async def test_demote_scrubs_orphaned_checks(self, service, mock_db, mock_player_repo, mock_config_repo):
+        """After demotion, _scrub_orphaned_checks_after_tier_change is called once."""
+        player = _make_player(tier="Gold")
+        player.tier_change_cooldown_end = None
+        mock_player_repo.get_by_id.return_value = player
+        mock_config_repo.get_by_guild_id.return_value = None
+        service._scrub_orphaned_checks_after_tier_change = AsyncMock(return_value=3)
+
+        result = await service.demote_player(mock_db, player_id=1)
+
+        assert result["new_tier"] == "Silver"
+        service._scrub_orphaned_checks_after_tier_change.assert_called_once()

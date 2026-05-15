@@ -76,6 +76,14 @@ def mock_player_service():
             "next_tier": "Gold",
         }
     )
+    service.demote_player = AsyncMock(
+        return_value={
+            "player_id": 1,
+            "old_tier": "Silver",
+            "new_tier": "Bronze",
+            "xp": 1500,
+        }
+    )
     return service
 
 
@@ -1698,3 +1706,303 @@ class TestCooldownReset:
             response = client.put("/api/v1/players/12345/99999/cooldown/reset")
 
         assert response.status_code == 404
+
+    def test_reset_tier_change_cooldown_clears_tier_change_cooldown_end(self, client, mock_db_session):
+        """cooldown_type=tier_change clears tier_change_cooldown_end, not bounty_cooldown_end."""
+        from datetime import UTC, datetime, timedelta
+        from unittest.mock import AsyncMock, MagicMock, patch
+
+        _, _ = mock_db_session
+
+        future = datetime.now(UTC) + timedelta(hours=12)
+        user = self._make_user()
+        player = self._make_player_obj()
+        player.tier_change_cooldown_end = future
+        player.bounty_cooldown_end = future  # should be untouched
+
+        mock_user_repo = MagicMock()
+        mock_user_repo.get_by_id = AsyncMock(return_value=user)
+        mock_player_repo = MagicMock()
+        mock_player_repo.get_by_user_and_guild = AsyncMock(return_value=player)
+
+        with (
+            patch("persist.repositories.user_repository.UserRepository", return_value=mock_user_repo),
+            patch("persist.repositories.player_repository.PlayerRepository", return_value=mock_player_repo),
+        ):
+            response = client.put("/api/v1/players/12345/99999/cooldown/reset?cooldown_type=tier_change")
+
+        assert response.status_code == 200
+        assert player.tier_change_cooldown_end is None
+        assert player.bounty_cooldown_end == future  # untouched
+
+    def test_reset_all_clears_both_cooldowns(self, client, mock_db_session):
+        """cooldown_type=all clears both bounty_cooldown_end and tier_change_cooldown_end."""
+        from datetime import UTC, datetime, timedelta
+        from unittest.mock import AsyncMock, MagicMock, patch
+
+        _, _ = mock_db_session
+
+        future = datetime.now(UTC) + timedelta(hours=12)
+        user = self._make_user()
+        player = self._make_player_obj(bounty_cooldown_end=future)
+        player.tier_change_cooldown_end = future
+
+        mock_user_repo = MagicMock()
+        mock_user_repo.get_by_id = AsyncMock(return_value=user)
+        mock_player_repo = MagicMock()
+        mock_player_repo.get_by_user_and_guild = AsyncMock(return_value=player)
+
+        with (
+            patch("persist.repositories.user_repository.UserRepository", return_value=mock_user_repo),
+            patch("persist.repositories.player_repository.PlayerRepository", return_value=mock_player_repo),
+        ):
+            response = client.put("/api/v1/players/12345/99999/cooldown/reset?cooldown_type=all")
+
+        assert response.status_code == 200
+        assert player.bounty_cooldown_end is None
+        assert player.tier_change_cooldown_end is None
+
+    def test_invalid_cooldown_type_returns_400(self, client, mock_db_session):
+        """Unknown cooldown_type value returns 400."""
+        from unittest.mock import AsyncMock, MagicMock, patch
+
+        _, _ = mock_db_session
+
+        user = self._make_user()
+        player = self._make_player_obj()
+        mock_user_repo = MagicMock()
+        mock_user_repo.get_by_id = AsyncMock(return_value=user)
+        mock_player_repo = MagicMock()
+        mock_player_repo.get_by_user_and_guild = AsyncMock(return_value=player)
+
+        with (
+            patch("persist.repositories.user_repository.UserRepository", return_value=mock_user_repo),
+            patch("persist.repositories.player_repository.PlayerRepository", return_value=mock_player_repo),
+        ):
+            response = client.put("/api/v1/players/12345/99999/cooldown/reset?cooldown_type=invalid")
+
+        assert response.status_code == 400
+
+
+# ===========================================================================
+# TestDemotePlayer
+# ===========================================================================
+
+
+class TestDemotePlayer:
+    """Tests for PUT /players/{player_id}/demote -> demote_player."""
+
+    def test_demote_player_returns_200(self, client, mock_player_service):
+        """Happy path: valid demotion returns 200 with demote result."""
+        response = client.put("/api/v1/players/1/demote")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["player_id"] == 1
+        assert data["old_tier"] == "Silver"
+        assert data["new_tier"] == "Bronze"
+
+    def test_demote_player_delegates_to_service(self, mock_db_session, client, mock_player_service):
+        """Service delegation: demote_player called with correct player_id."""
+        mock_session, _ = mock_db_session
+
+        client.put("/api/v1/players/7/demote")
+
+        mock_player_service.demote_player.assert_called_once_with(mock_session, 7)
+
+    def test_demote_at_min_tier_returns_400(self, client, mock_player_service):
+        """Already at minimum tier: service raises ValueError -> 400."""
+        mock_player_service.demote_player.side_effect = ValueError("Already at minimum tier (Bronze)")
+
+        response = client.put("/api/v1/players/1/demote")
+
+        assert response.status_code == 400
+        assert "minimum tier" in response.json()["detail"]
+
+    def test_demote_player_not_found_returns_404(self, client, mock_player_service):
+        """Player not found: service raises ValueError with 'not found' -> 404."""
+        mock_player_service.demote_player.side_effect = ValueError("Player 999 not found")
+
+        response = client.put("/api/v1/players/999/demote")
+
+        assert response.status_code == 404
+
+    def test_demote_on_cooldown_returns_429(self, client, mock_player_service):
+        """Tier-change cooldown active: TierChangeCooldownError -> 429."""
+        from datetime import UTC, datetime, timedelta
+
+        from services.player_service import TierChangeCooldownError
+
+        cooldown_end = datetime.now(UTC) + timedelta(hours=20)
+        mock_player_service.demote_player.side_effect = TierChangeCooldownError(
+            "Cooldown active", cooldown_end=cooldown_end
+        )
+
+        response = client.put("/api/v1/players/1/demote")
+
+        assert response.status_code == 429
+        detail = response.json()["detail"]
+        assert "cooldown_end" in detail
+
+    def test_demote_player_response_shape(self, client, mock_player_service):
+        """Response shape: all expected DemoteResponse fields present."""
+        response = client.put("/api/v1/players/1/demote")
+
+        data = response.json()
+        assert {"player_id", "old_tier", "new_tier", "xp"}.issubset(data.keys())
+
+    def test_demote_service_exception_returns_500(self, client, mock_player_service):
+        """Unexpected service error -> 500."""
+        mock_player_service.demote_player.side_effect = Exception("db error")
+
+        response = client.put("/api/v1/players/1/demote")
+
+        assert response.status_code == 500
+        assert "Failed to demote" in response.json()["detail"]
+
+
+# ===========================================================================
+# TestPromotePlayerCooldown — 429 path for /promote
+# ===========================================================================
+
+
+class TestPromotePlayerCooldown:
+    """Tests for the HTTP 429 path on PUT /players/{player_id}/promote."""
+
+    def test_promote_on_cooldown_returns_429(self, client, mock_player_service):
+        """TierChangeCooldownError from service -> 429 with cooldown_end in detail."""
+        from datetime import UTC, datetime, timedelta
+
+        from services.player_service import TierChangeCooldownError
+
+        cooldown_end = datetime.now(UTC) + timedelta(hours=20)
+        mock_player_service.promote_player.side_effect = TierChangeCooldownError(
+            "Cooldown active", cooldown_end=cooldown_end
+        )
+
+        response = client.put("/api/v1/players/1/promote")
+
+        assert response.status_code == 429
+        detail = response.json()["detail"]
+        assert "cooldown_end" in detail
+
+    def test_promote_429_detail_contains_iso_timestamp(self, client, mock_player_service):
+        """The 429 detail dict includes a parseable ISO cooldown_end timestamp."""
+        from datetime import UTC, datetime, timedelta
+
+        from services.player_service import TierChangeCooldownError
+
+        cooldown_end = datetime.now(UTC) + timedelta(hours=20)
+        mock_player_service.promote_player.side_effect = TierChangeCooldownError(
+            "Cooldown active", cooldown_end=cooldown_end
+        )
+
+        response = client.put("/api/v1/players/1/promote")
+
+        detail = response.json()["detail"]
+        # Should be parseable as ISO datetime
+        parsed = datetime.fromisoformat(detail["cooldown_end"])
+        assert parsed > datetime.now(UTC)
+
+
+# ===========================================================================
+# TestCombatPreflightEndpoint
+# ===========================================================================
+
+
+class TestCombatPreflightEndpoint:
+    """Tests for GET /players/{player_id}/combat-preflight."""
+
+    def _make_preflight_result(self, verdict="green", player_win_rate=0.9, criminal_win_rate=0.1):
+        from types import SimpleNamespace
+
+        from services.combat_preflight_service import PreflightVerdict
+
+        verdict_map = {
+            "green": PreflightVerdict.GREEN,
+            "yellow": PreflightVerdict.YELLOW,
+            "red": PreflightVerdict.RED,
+            "no_data": PreflightVerdict.NO_DATA,
+        }
+        return SimpleNamespace(
+            verdict=verdict_map[verdict],
+            player_win_rate=player_win_rate,
+            criminal_win_rate=criminal_win_rate,
+            sims_run=20,
+            target_tier="Silver",
+            sample_size=3,
+        )
+
+    def test_combat_preflight_returns_200(self, client, mock_db_session):
+        """GET combat-preflight returns 200 with verdict and win rates."""
+        from unittest.mock import AsyncMock, MagicMock, patch
+
+        _, _ = mock_db_session
+
+        player = MagicMock()
+        player.guild_id = 1
+
+        preflight_result = self._make_preflight_result("green")
+
+        with (
+            patch("api.routers.players.CombatPreflightService") as mock_cpf_cls,
+            patch("services.player_service.PlayerService") as mock_ps_cls,
+        ):
+            mock_ps = MagicMock()
+            mock_ps.player_repo.get_by_id = AsyncMock(return_value=player)
+            mock_ps_cls.return_value = mock_ps
+
+            mock_cpf = MagicMock()
+            mock_cpf.estimate = AsyncMock(return_value=preflight_result)
+            mock_cpf_cls.return_value = mock_cpf
+
+            response = client.get("/api/v1/players/1/combat-preflight?target_tier=Silver")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["verdict"] == "green"
+        assert "player_win_rate" in data
+        assert "criminal_win_rate" in data
+
+    def test_combat_preflight_player_not_found_returns_404(self, client, mock_db_session):
+        """Returns 404 when player is not found."""
+        from unittest.mock import AsyncMock, MagicMock, patch
+
+        _, _ = mock_db_session
+
+        with patch("services.player_service.PlayerService") as mock_ps_cls:
+            mock_ps = MagicMock()
+            mock_ps.player_repo.get_by_id = AsyncMock(return_value=None)
+            mock_ps_cls.return_value = mock_ps
+
+            response = client.get("/api/v1/players/999/combat-preflight?target_tier=Silver")
+
+        assert response.status_code == 404
+
+    def test_combat_preflight_response_shape(self, client, mock_db_session):
+        """Response includes all expected keys."""
+        from unittest.mock import AsyncMock, MagicMock, patch
+
+        _, _ = mock_db_session
+
+        player = MagicMock()
+        player.guild_id = 1
+        preflight_result = self._make_preflight_result("no_data", 0.0, 0.0)
+
+        with (
+            patch("api.routers.players.CombatPreflightService") as mock_cpf_cls,
+            patch("services.player_service.PlayerService") as mock_ps_cls,
+        ):
+            mock_ps = MagicMock()
+            mock_ps.player_repo.get_by_id = AsyncMock(return_value=player)
+            mock_ps_cls.return_value = mock_ps
+
+            mock_cpf = MagicMock()
+            mock_cpf.estimate = AsyncMock(return_value=preflight_result)
+            mock_cpf_cls.return_value = mock_cpf
+
+            response = client.get("/api/v1/players/1/combat-preflight?target_tier=Silver")
+
+        data = response.json()
+        expected_keys = {"verdict", "player_win_rate", "criminal_win_rate", "sims_run", "target_tier", "sample_size"}
+        assert expected_keys.issubset(data.keys())

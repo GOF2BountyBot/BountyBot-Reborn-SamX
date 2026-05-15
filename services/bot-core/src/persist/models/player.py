@@ -49,6 +49,7 @@ class Player(Base):
     guild_transfer_cooldown: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     classic_mode: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     bounty_cooldown_end: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    tier_change_cooldown_end: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     # Active ship reference
     active_ship_id: Mapped[int | None] = mapped_column(

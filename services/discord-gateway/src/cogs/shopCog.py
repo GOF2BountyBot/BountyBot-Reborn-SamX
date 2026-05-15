@@ -107,27 +107,22 @@ class ShopCog(commands.Cog):
             if norm_current in normalize_for_search(item_type)
         ]
 
-    @app_commands.command(name="shop", description="Browse the guild shop")
+    @app_commands.command(name="shop", description="Browse your tier's guild shop")
     @app_commands.describe(
-        tier="Shop tier to browse (defaults to your current tier)",
         item_type="Filter by item type (ship, primary_weapon, secondary_weapon, turret_weapon, module)",
     )
-    @app_commands.autocomplete(tier=tier_autocomplete, item_type=item_type_autocomplete)
-    async def shop(self, interaction: discord.Interaction, tier: str | None = None, item_type: str | None = None):
-        """Browse guild shop by tier. Defaults to your current tier when omitted."""
+    @app_commands.autocomplete(item_type=item_type_autocomplete)
+    async def shop(self, interaction: discord.Interaction, item_type: str | None = None):
+        """Browse the guild shop for your current tier.
+
+        Strict same-tier access: the shop you can see and transact at always
+        matches your current tier. Promotion / demotion is the only path
+        between tiers (no buy-down to lower-tier shops, no preview of
+        higher-tier shops).
+        """
         await interaction.response.defer(thinking=True, ephemeral=True)
 
         try:
-            # Validate explicit tier before hitting the API so we fail-fast on a
-            # known-bad value without incurring a network round-trip.
-            if tier is not None and tier not in self._valid_tiers:
-                await interaction.followup.send(
-                    f"❌ Invalid tier. Valid tiers: {', '.join(self._valid_tiers)}", ephemeral=True
-                )
-                return
-
-            # Get player data — needed for tier resolution (when tier is None) and
-            # for tier-access gating (always).
             player = await self._get_player_data(
                 interaction.user.id,
                 interaction.guild_id,
@@ -137,20 +132,6 @@ class ShopCog(commands.Cog):
                 await interaction.followup.send("❌ Player not found.", ephemeral=True)
                 return
 
-            # Resolve effective tier: use invoker's current tier when not explicitly provided.
-            if tier is None:
-                player_tier: str | None = player.get("tier")
-                if not player_tier or player_tier not in self._valid_tiers:
-                    flogger.warning(
-                        f"/shop: player tier missing or unrecognised for "
-                        f"guild={interaction.guild_id} user={interaction.user.id}; "
-                        "falling back to Bronze"
-                    )
-                    player_tier = "Bronze"
-                tier = player_tier
-
-            # Check tier access (players can only access their tier and below).
-            # Use .get() to guard against the edge case where "tier" is absent.
             raw_player_tier: str = player.get("tier") or "Bronze"
             if raw_player_tier not in self._valid_tiers:
                 flogger.warning(
@@ -158,15 +139,7 @@ class ShopCog(commands.Cog):
                     f"guild={interaction.guild_id} user={interaction.user.id}; treating as Bronze"
                 )
                 raw_player_tier = "Bronze"
-            player_tier_level = self._valid_tiers.index(raw_player_tier)
-            requested_tier_level = self._valid_tiers.index(tier)
-
-            if requested_tier_level > player_tier_level:
-                await interaction.followup.send(
-                    f"🔒 You need to be **{tier}** tier to access this shop. Your current tier: **{raw_player_tier}**",
-                    ephemeral=True,
-                )
-                return
+            tier = raw_player_tier
 
             # Get shop items
             params = {}
@@ -292,16 +265,16 @@ class ShopCog(commands.Cog):
                     "returning empty autocomplete"
                 )
                 return []
-            player_tier_idx = self._valid_tiers.index(player["tier"])
+            # Strict same-tier: autocomplete only surfaces items at the player's
+            # current tier. No buy-down to lower-tier shops.
+            tier = player["tier"]
             norm_current = normalize_for_search(current)
             choices: list[app_commands.Choice[int]] = []
-            for tier_idx in range(player_tier_idx + 1):
-                tier = self._valid_tiers[tier_idx]
-                items = await self._shop_cache.get((interaction.guild_id, tier)) or []
-                for item in items:
-                    label = f"{item['item_name']} ({item['price']:,}cr) [{tier}]"
-                    if norm_current in normalize_for_search(label):
-                        choices.append(app_commands.Choice(name=label[:100], value=item["id"]))
+            items = await self._shop_cache.get((interaction.guild_id, tier)) or []
+            for item in items:
+                label = f"{item['item_name']} ({item['price']:,}cr)"
+                if norm_current in normalize_for_search(label):
+                    choices.append(app_commands.Choice(name=label[:100], value=item["id"]))
             return choices[:25]
         except Exception:  # pylint: disable=broad-exception-caught
             return []
@@ -333,13 +306,15 @@ class ShopCog(commands.Cog):
             item_resp.raise_for_status()
             shop_item = item_resp.json()
 
-            # Check tier access
-            player_tier_level = self._valid_tiers.index(player["tier"])
-            item_tier_level = self._valid_tiers.index(shop_item["tier"])
-
-            if item_tier_level > player_tier_level:
+            # Strict same-tier check: a player may only buy from the shop matching
+            # their current tier. Mirrors shop_service._can_access_tier (== not >=)
+            # post-promote-flow-correctness PR.
+            if shop_item["tier"] != player["tier"]:
                 await interaction.followup.send(
-                    f"🔒 You need to be **{shop_item['tier']}** tier to purchase this item.", ephemeral=True
+                    f"🔒 This item is in the **{shop_item['tier']}** shop. "
+                    f"You can only buy from your current tier (**{player['tier']}**). "
+                    "Use `/promote` or `/demote` to change tiers.",
+                    ephemeral=True,
                 )
                 return
 

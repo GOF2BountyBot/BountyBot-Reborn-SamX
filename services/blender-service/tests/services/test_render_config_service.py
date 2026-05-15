@@ -10,7 +10,7 @@ import os
 from unittest.mock import patch
 
 import pytest
-from services.render_config_service import RenderConfig, RenderConfigService
+from services.render_config_service import RenderConfig, RenderConfigError, RenderConfigService
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -108,8 +108,9 @@ def test_update_unknown_field_ignored(svc: RenderConfigService) -> None:
 
 def test_reset_to_defaults(svc: RenderConfigService) -> None:
     """After mutating config, reset() should restore defaults."""
-    svc.update({"max_res_x": 100, "default_samples": 1})
-    assert svc.config.max_res_x == 100
+    # Use a within-invariant mutation: max_res_x=1280 keeps min<=default<=max valid.
+    svc.update({"max_res_x": 1280, "default_samples": 1})
+    assert svc.config.max_res_x == 1280
 
     svc.reset()
     # Back to compiled-in defaults (no env vars set).
@@ -152,3 +153,105 @@ def test_render_config_dataclass_defaults() -> None:
     assert cfg.max_res_x == 1920
     assert cfg.min_samples == 1
     assert cfg.default_samples == 32
+
+
+# ---------------------------------------------------------------------------
+# B.91 — PARAM_GROUPS / to_grouped_dict()
+# ---------------------------------------------------------------------------
+
+
+def test_param_groups_cover_every_field_exactly_once() -> None:
+    """Every RenderConfig data field belongs to exactly one PARAM_GROUP."""
+    from dataclasses import fields as dataclass_fields
+
+    grouped_fields = [f for fields in RenderConfig.PARAM_GROUPS.values() for f in fields]
+    assert set(grouped_fields) == {f.name for f in dataclass_fields(RenderConfig)}
+    assert len(grouped_fields) == len(set(grouped_fields)), "a field appears in more than one group"
+
+
+def test_to_grouped_dict_matches_to_dict(svc: RenderConfigService) -> None:
+    """to_grouped_dict() carries the same values as to_dict(), just grouped."""
+    grouped = svc.config.to_grouped_dict()
+    assert set(grouped.keys()) == set(RenderConfig.PARAM_GROUPS.keys())
+    flat_from_groups = {k: v for group in grouped.values() for k, v in group.items()}
+    assert flat_from_groups == svc.config.to_dict()
+
+
+# ---------------------------------------------------------------------------
+# B.91 — validate() invariants
+# ---------------------------------------------------------------------------
+
+
+def test_validate_accepts_default_config() -> None:
+    """The compiled-in default config satisfies all invariants."""
+    RenderConfig().validate()  # must not raise
+
+
+def test_validate_rejects_default_res_above_max() -> None:
+    """default_res_x above max_res_x violates the resolution invariant."""
+    cfg = RenderConfig(default_res_x=4000, max_res_x=1920)
+    with pytest.raises(RenderConfigError, match="default_res_x"):
+        cfg.validate()
+
+
+def test_validate_rejects_min_above_max() -> None:
+    """min_res_x above max_res_x breaks the min<=default<=max chain."""
+    cfg = RenderConfig(min_res_x=2000, max_res_x=1920)
+    with pytest.raises(RenderConfigError):
+        cfg.validate()
+
+
+def test_validate_rejects_default_samples_above_max() -> None:
+    """default_samples above max_samples violates the sample invariant."""
+    cfg = RenderConfig(default_samples=128, max_samples=64)
+    with pytest.raises(RenderConfigError, match="default_samples"):
+        cfg.validate()
+
+
+def test_validate_rejects_nonpositive_bound() -> None:
+    """A zero or negative resolution bound is rejected."""
+    cfg = RenderConfig(min_res_x=0)
+    with pytest.raises(RenderConfigError, match="min_res_x must be positive"):
+        cfg.validate()
+
+
+def test_validate_reports_every_violation() -> None:
+    """validate() lists all violations, not just the first one found."""
+    cfg = RenderConfig(default_res_x=9999, default_samples=9999)
+    with pytest.raises(RenderConfigError) as exc_info:
+        cfg.validate()
+    assert "default_res_x" in str(exc_info.value)
+    assert "default_samples" in str(exc_info.value)
+
+
+def test_render_config_error_is_value_error() -> None:
+    """RenderConfigError subclasses ValueError so broad ValueError handlers still catch it."""
+    assert issubclass(RenderConfigError, ValueError)
+
+
+# ---------------------------------------------------------------------------
+# B.91 — update() validates the candidate config before committing
+# ---------------------------------------------------------------------------
+
+
+def test_update_rejects_invariant_violating_change(svc: RenderConfigService) -> None:
+    """update() raises RenderConfigError when the resulting config would be invalid."""
+    # max_res_x=100 falls below default_res_x=1280 — invariant violation.
+    with pytest.raises(RenderConfigError):
+        svc.update({"max_res_x": 100})
+
+
+def test_update_invalid_change_leaves_live_config_untouched(svc: RenderConfigService) -> None:
+    """A rejected update must not mutate the live config (atomic update)."""
+    before = svc.config.to_dict()
+    with pytest.raises(RenderConfigError):
+        svc.update({"max_res_x": 100, "max_res_y": 50})
+    assert svc.config.to_dict() == before
+
+
+def test_update_valid_multi_field_change_applies(svc: RenderConfigService) -> None:
+    """A multi-field update that respects every invariant is committed."""
+    svc.update({"max_res_x": 2560, "max_res_y": 1440, "default_res_x": 2000})
+    assert svc.config.max_res_x == 2560
+    assert svc.config.max_res_y == 1440
+    assert svc.config.default_res_x == 2000

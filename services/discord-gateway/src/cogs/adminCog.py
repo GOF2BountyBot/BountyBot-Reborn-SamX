@@ -99,6 +99,17 @@ def is_super_admin():
     return app_commands.check(predicate)
 
 
+# B.91: semantic grouping of blender-service render config settings, mirrored
+# from RenderConfig.PARAM_GROUPS so /render_config view can present the flat
+# settings dict grouped by category instead of as an unordered field dump.
+_RENDER_PARAM_GROUPS: dict[str, tuple[str, ...]] = {
+    "resolution_limits": ("min_res_x", "max_res_x", "min_res_y", "max_res_y"),
+    "sample_limits": ("min_samples", "max_samples"),
+    "defaults": ("default_res_x", "default_res_y", "default_samples"),
+    "concurrency": ("max_concurrent_renders", "job_ttl_hours"),
+}
+
+
 class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
     def __init__(self, bot: commands.Bot):
         self.bot = bot
@@ -382,6 +393,8 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
             app_commands.Choice(name="Set XP", value="set_xp"),
             app_commands.Choice(name="View Stats", value="view_stats"),
             app_commands.Choice(name="Reset Player", value="reset"),
+            app_commands.Choice(name="Reset Tier-Change Cooldown", value="reset_tier_cooldown"),
+            app_commands.Choice(name="Reset Bounty Cooldown", value="reset_bounty_cooldown"),
         ]
     )
     async def admin_player(
@@ -503,6 +516,26 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
                     embed.add_field(name="Tier Change", value="✅ Tier Updated!", inline=True)
                 await interaction.followup.send(embed=embed, ephemeral=True)
 
+            # Reset cooldown (tier_change or bounty) via cooldown reset endpoint
+            elif action in ("reset_tier_cooldown", "reset_bounty_cooldown"):
+                cooldown_type = "tier_change" if action == "reset_tier_cooldown" else "bounty"
+                resp = await self.http_client.put(
+                    f"{api_base}/players/{interaction.guild_id}/{user.id}/cooldown/reset",
+                    params={"cooldown_type": cooldown_type},
+                    timeout=10,
+                )
+                if resp.status_code == 404:
+                    await interaction.followup.send(f"❌ Player not found for {user.display_name}.", ephemeral=True)
+                    return
+                resp.raise_for_status()
+                label = "Tier-Change" if cooldown_type == "tier_change" else "Bounty"
+                embed = discord.Embed(
+                    title=f"✅ {label} Cooldown Reset",
+                    description=f"{user.display_name}'s {label.lower()} cooldown has been cleared.",
+                    color=discord.Color.green(),
+                )
+                await interaction.followup.send(embed=embed, ephemeral=True)
+
             # Reset player stats
             elif action == "reset":
                 resp = await self.http_client.post(
@@ -540,18 +573,29 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
             await interaction.followup.send("⚠️ An error occurred while managing player.", ephemeral=True)
 
     @app_commands.command(name="admin_refresh_shop", description="[ADMIN] Force refresh a shop")
-    @app_commands.describe(tier="Shop tier to refresh", force_tech_level="Force all items to specific tech level (1-9)")
+    @app_commands.describe(
+        tier="Shop tier to refresh (omit to refresh ALL tiers)",
+        force_tech_level="Force all items to specific tech level (1-9)",
+    )
     @app_commands.autocomplete(tier=tier_autocomplete)
     async def admin_refresh_shop(
-        self, interaction: discord.Interaction, tier: str, force_tech_level: int | None = None
+        self,
+        interaction: discord.Interaction,
+        tier: str | None = None,
+        force_tech_level: int | None = None,
     ):
-        """Force refresh a guild shop."""
+        """Force refresh a guild shop.
+
+        When ``tier`` is omitted, refreshes every tier (Bronze/Silver/Gold/Platinum)
+        in sequence. Useful for admins who want to reset the whole shop economy
+        in one command rather than running the command four times.
+        """
         await interaction.response.defer(thinking=True, ephemeral=True)
         if not await _check_is_admin(interaction):
             await interaction.followup.send("❌ This command requires admin privileges.", ephemeral=True)
             return
         try:
-            if tier not in self._valid_tiers:
+            if tier is not None and tier not in self._valid_tiers:
                 await interaction.followup.send(
                     f"❌ Invalid tier. Valid tiers: {', '.join(self._valid_tiers)}", ephemeral=True
                 )
@@ -560,26 +604,31 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
                 await interaction.followup.send("❌ Tech level must be between 1 and 9.", ephemeral=True)
                 return
 
-            refresh_data = {"guild_id": interaction.guild_id, "tier": tier, "force_tech_level": force_tech_level}
-            resp = await self.http_client.post(
-                f"{api_base}/admin/shops/refresh",
-                json=refresh_data,
-                params={"user_id": interaction.user.id},
-                timeout=30,
-            )
-            resp.raise_for_status()
-            result = resp.json()
+            tiers_to_refresh = [tier] if tier is not None else list(self._valid_tiers)
+            refreshed = []
+            for t in tiers_to_refresh:
+                refresh_data = {"guild_id": interaction.guild_id, "tier": t, "force_tech_level": force_tech_level}
+                resp = await self.http_client.post(
+                    f"{api_base}/admin/shops/refresh",
+                    json=refresh_data,
+                    params={"user_id": interaction.user.id},
+                    timeout=30,
+                )
+                resp.raise_for_status()
+                refreshed.append(t)
 
+            tier_summary = ", ".join(refreshed)
             embed = discord.Embed(
-                title="✅ Shop Refreshed Successfully!", description=result["message"], color=discord.Color.green()
+                title="✅ Shop Refreshed Successfully!",
+                description=f"Refreshed tier(s): **{tier_summary}**",
+                color=discord.Color.green(),
             )
-            embed.add_field(name="Shop Tier", value=tier, inline=True)
             embed.add_field(name="Guild ID", value=str(interaction.guild_id), inline=True)
             if force_tech_level:
                 embed.add_field(name="Forced Tech Level", value=str(force_tech_level), inline=True)
 
             await interaction.followup.send(embed=embed, ephemeral=True)
-            flogger.info(f"Admin {interaction.user} refreshed {tier} shop in guild {interaction.guild_id}")
+            flogger.info(f"Admin {interaction.user} refreshed shop(s) {tier_summary} in guild {interaction.guild_id}")
 
         except httpx.HTTPStatusError as e:
             await report_api_error(interaction, e)
@@ -1055,12 +1104,41 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
                 resp = await self.http_client.get(f"{blender_base}/config/render")
                 resp.raise_for_status()
                 config = resp.json()
-                embed = discord.Embed(title="🎨 Render Configuration", color=discord.Color.blue())
-                for key, val in config.items():
-                    embed.add_field(name=key, value=str(val), inline=True)
+                # B.91: present the flat settings dict grouped by semantic category.
+                embed = discord.Embed(
+                    title="🎨 Render Configuration",
+                    description="Settings grouped by category — change one with `/render_config set`.",
+                    color=discord.Color.blue(),
+                )
+                shown: set[str] = set()
+                for group_name, fields in _RENDER_PARAM_GROUPS.items():
+                    lines = [f"`{f}` = `{config[f]}`" for f in fields if f in config]
+                    if not lines:
+                        continue
+                    shown.update(f for f in fields if f in config)
+                    embed.add_field(name=group_name.replace("_", " ").title(), value="\n".join(lines), inline=False)
+                # Forward-compat: surface any settings the gateway has no group for.
+                ungrouped = [f"`{k}` = `{v}`" for k, v in config.items() if k not in shown]
+                if ungrouped:
+                    embed.add_field(name="Other", value="\n".join(ungrouped), inline=False)
+                embed.add_field(
+                    name="⚙️ Invariants",
+                    value=(
+                        "• `min_* ≤ default_* ≤ max_*` for resolution and samples\n"
+                        "• all resolution / sample bounds must be positive\n"
+                        "Updates that would break these are rejected."
+                    ),
+                    inline=False,
+                )
                 await interaction.followup.send(embed=embed, ephemeral=True)
 
             elif action == "set":
+                # DEF-U1-001: mutating render config requires super-admin (DEVELOPERS only).
+                if not await _check_is_super_admin(interaction):
+                    await interaction.followup.send(
+                        "❌ Changing render config requires super-admin privileges.", ephemeral=True
+                    )
+                    return
                 if not setting or value is None:
                     await interaction.followup.send("⚠️ Usage: `/render_config set <setting> <value>`", ephemeral=True)
                     return
@@ -1097,6 +1175,12 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
                 flogger.info(f"Admin {interaction.user} updated render config: {setting}={value}")
 
             elif action == "reset":
+                # DEF-U1-001: resetting render config requires super-admin (DEVELOPERS only).
+                if not await _check_is_super_admin(interaction):
+                    await interaction.followup.send(
+                        "❌ Resetting render config requires super-admin privileges.", ephemeral=True
+                    )
+                    return
                 resp = await self.http_client.post(f"{blender_base}/config/render/reset")
                 resp.raise_for_status()
                 await interaction.followup.send("✅ Render config reset to defaults.", ephemeral=True)

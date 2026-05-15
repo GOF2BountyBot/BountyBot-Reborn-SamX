@@ -56,7 +56,12 @@ async def render_ship(
 ) -> StreamingResponse:
     """Render a ship model with the supplied texture and return a PNG.
 
-    Validation errors (out-of-range resolution / samples) return HTTP 400.
+    B.93: out-of-range ``res_x`` / ``res_y`` / ``num_samples`` are **clamped**
+    to the nearest valid config bound rather than rejected. When at least one
+    parameter was adjusted the response includes an ``X-Render-Clamped`` header
+    with the format ``field:requested->actual`` (comma-separated for multiple
+    clamps). Fully in-bounds requests have no such header.
+
     Missing required fields return HTTP 422 (FastAPI default).
     Blender failures return HTTP 500.
     """
@@ -69,15 +74,14 @@ async def render_ship(
     render_config = getattr(getattr(request.app, "state", None), "render_config", None)
     service = RenderService(render_config.config if render_config is not None else None)
 
-    # --- Validate render parameters before doing any file I/O ---
-    try:
-        service.validate_params(res_x, res_y, num_samples)
-    except ValueError as exc:
-        flogger.warning(f"render_ship validation error: {exc}")
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(exc),
-        ) from exc
+    # --- B.93: clamp out-of-bounds render parameters to the nearest valid bound ---
+    # Rather than rejecting the request, a too-large / too-small resolution or
+    # sample count is clamped and the render proceeds; clamps are logged and
+    # reported back via the X-Render-Clamped response header.
+    clamp = service.clamp_params(res_x, res_y, num_samples)
+    res_x, res_y, num_samples = clamp.res_x, clamp.res_y, clamp.num_samples
+    if clamp.was_clamped:
+        flogger.info(f"render_ship: request parameters clamped: {clamp.clamped}")
 
     # --- Save the uploaded texture to a temp location ---
     render_id = str(uuid.uuid4())
@@ -140,10 +144,17 @@ async def render_ship(
     output_buf = BytesIO(image_bytes)
     output_buf.seek(0)
     flogger.info(f"render_ship response: returning PNG ({len(image_bytes)} bytes), render_id={render_id}")
+    headers = {"Content-Disposition": "inline; filename=render.png"}
+    # B.93: surface any parameter clamping in a response header so callers can
+    # tell the render did not use exactly the resolution / samples they asked for.
+    if clamp.was_clamped:
+        headers["X-Render-Clamped"] = ",".join(
+            f"{name}:{info['requested']}->{info['actual']}" for name, info in clamp.clamped.items()
+        )
     return StreamingResponse(
         output_buf,
         media_type="image/png",
-        headers={"Content-Disposition": "inline; filename=render.png"},
+        headers=headers,
     )
 
 
@@ -177,15 +188,13 @@ async def submit_render_job(
     render_config = getattr(getattr(request.app, "state", None), "render_config", None)
     async_service = RenderService(render_config.config if render_config is not None else None)
 
-    # --- Validate render parameters before doing any file I/O ---
-    try:
-        async_service.validate_params(res_x, res_y, num_samples)
-    except ValueError as exc:
-        flogger.warning(f"submit_render_job validation error: {exc}")
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(exc),
-        ) from exc
+    # --- B.93: clamp out-of-bounds render parameters to the nearest valid bound ---
+    # The job is queued (and tracked) with the clamped values; the clamp record
+    # is returned in the response body so the caller knows what was adjusted.
+    clamp = async_service.clamp_params(res_x, res_y, num_samples)
+    res_x, res_y, num_samples = clamp.res_x, clamp.res_y, clamp.num_samples
+    if clamp.was_clamped:
+        flogger.info(f"submit_render_job: request parameters clamped: {clamp.clamped}")
 
     # --- Create the job first to get a job_id ---
     job_queue = request.app.state.job_queue
@@ -237,4 +246,7 @@ async def submit_render_job(
         "job_id": job_id,
         "status": "queued",
         "poll_url": f"/api/v1/jobs/{job_id}",
+        # B.93: empty dict when nothing was clamped; otherwise
+        # {field: {"requested": x, "actual": y}}.
+        "clamped": clamp.clamped,
     }

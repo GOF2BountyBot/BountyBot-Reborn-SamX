@@ -29,6 +29,7 @@ class GameConstantsOverridesMixin(BaseModel):
     bounty_spawn_jitter: int | None = Field(None, ge=0)
     check_cooldown: int | None = Field(None, ge=0)
     duel_request_expiry: int | None = Field(None, ge=0)
+    tier_change_cooldown: int | None = Field(None, ge=0)
 
     # Activity / Temperature
     guild_activity_decay_rate: float | None = Field(None, ge=0.0, le=1.0)

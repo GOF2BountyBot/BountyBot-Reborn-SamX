@@ -4020,7 +4020,10 @@ class TestRenderConfig:
         assert "embed" in call_kwargs
 
     def test_render_config_set_success(self, mock_admin_cog):
-        """render_config set updates a render config setting."""
+        """render_config set updates a render config setting.
+
+        DEF-U1-001: user must be in DEVELOPERS (super-admin) to invoke 'set'.
+        """
         interaction = _create_mock_interaction()
         interaction.guild_id = 987654321
         mock_admin_cog._render_settings = ["max_res_x", "default_samples"]
@@ -4030,7 +4033,9 @@ class TestRenderConfig:
         resp.json.return_value = {"max_res_x": 1920}
         mock_admin_cog.http_client.put = AsyncMock(return_value=resp)
 
-        with patch.dict("os.environ", {"BLENDER_API_BASE_URL": "http://blender-service:8001/api/v1"}):
+        # _create_mock_interaction() uses default user_id=1; put that id in DEVELOPERS.
+        env = {"BLENDER_API_BASE_URL": "http://blender-service:8001/api/v1", "DEVELOPERS": "1"}
+        with patch.dict("os.environ", env):
             asyncio.run(mock_admin_cog.render_config.callback(mock_admin_cog, interaction, "set", "max_res_x", 1920))
 
         interaction.followup.send.assert_awaited_once()
@@ -4038,11 +4043,15 @@ class TestRenderConfig:
         assert "✅" in msg or "max_res_x" in msg
 
     def test_render_config_set_missing_params_sends_usage(self, mock_admin_cog):
-        """render_config set without setting or value sends usage message."""
+        """render_config set without setting or value sends usage message.
+
+        DEF-U1-001: user must be in DEVELOPERS to reach the missing-args check.
+        """
         interaction = _create_mock_interaction()
         mock_admin_cog._render_settings = ["max_res_x"]
 
-        with patch.dict("os.environ", {"BLENDER_API_BASE_URL": "http://blender-service:8001/api/v1"}):
+        env = {"BLENDER_API_BASE_URL": "http://blender-service:8001/api/v1", "DEVELOPERS": "1"}
+        with patch.dict("os.environ", env):
             asyncio.run(mock_admin_cog.render_config.callback(mock_admin_cog, interaction, "set", None, None))
 
         interaction.followup.send.assert_awaited_once()
@@ -4050,11 +4059,15 @@ class TestRenderConfig:
         assert "Usage" in msg or "⚠️" in msg
 
     def test_render_config_set_unknown_setting_sends_error(self, mock_admin_cog):
-        """render_config set with unknown setting name sends validation error."""
+        """render_config set with unknown setting name sends validation error.
+
+        DEF-U1-001: user must be in DEVELOPERS to reach the setting-validation check.
+        """
         interaction = _create_mock_interaction()
         mock_admin_cog._render_settings = ["max_res_x", "default_samples"]
 
-        with patch.dict("os.environ", {"BLENDER_API_BASE_URL": "http://blender-service:8001/api/v1"}):
+        env = {"BLENDER_API_BASE_URL": "http://blender-service:8001/api/v1", "DEVELOPERS": "1"}
+        with patch.dict("os.environ", env):
             asyncio.run(
                 mock_admin_cog.render_config.callback(mock_admin_cog, interaction, "set", "unknown_setting", 100)
             )
@@ -4064,11 +4077,15 @@ class TestRenderConfig:
         assert "Unknown setting" in msg or "⚠️" in msg
 
     def test_render_config_set_preload_not_ready_sends_error(self, mock_admin_cog):
-        """render_config set when preload not ready (empty list) fails closed."""
+        """render_config set when preload not ready (empty list) fails closed.
+
+        DEF-U1-001: user must be in DEVELOPERS to reach the preload check.
+        """
         interaction = _create_mock_interaction()
         mock_admin_cog._render_settings = []  # preload not done
 
-        with patch.dict("os.environ", {"BLENDER_API_BASE_URL": "http://blender-service:8001/api/v1"}):
+        env = {"BLENDER_API_BASE_URL": "http://blender-service:8001/api/v1", "DEVELOPERS": "1"}
+        with patch.dict("os.environ", env):
             asyncio.run(mock_admin_cog.render_config.callback(mock_admin_cog, interaction, "set", "max_res_x", 1920))
 
         interaction.followup.send.assert_awaited_once()
@@ -4076,7 +4093,10 @@ class TestRenderConfig:
         assert "not yet ready" in msg or "⚠️" in msg
 
     def test_render_config_reset_success(self, mock_admin_cog):
-        """render_config reset sends confirmation message."""
+        """render_config reset sends confirmation message.
+
+        DEF-U1-001: user must be in DEVELOPERS (super-admin) to invoke 'reset'.
+        """
         interaction = _create_mock_interaction()
 
         resp = MagicMock()
@@ -4084,7 +4104,8 @@ class TestRenderConfig:
         resp.json.return_value = {}
         mock_admin_cog.http_client.post = AsyncMock(return_value=resp)
 
-        with patch.dict("os.environ", {"BLENDER_API_BASE_URL": "http://blender-service:8001/api/v1"}):
+        env = {"BLENDER_API_BASE_URL": "http://blender-service:8001/api/v1", "DEVELOPERS": "1"}
+        with patch.dict("os.environ", env):
             asyncio.run(mock_admin_cog.render_config.callback(mock_admin_cog, interaction, "reset", None, None))
 
         interaction.followup.send.assert_awaited_once()

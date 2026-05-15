@@ -119,11 +119,43 @@ def test_update_config_mixed_valid_unknown_succeeds(client: TestClient) -> None:
 
 def test_reset_config(client: TestClient) -> None:
     """POST /config/render/reset should restore defaults and return them."""
-    # First change a value.
-    client.put("/api/v1/config/render", json={"max_res_x": 100})
+    # First change a value (within-invariant: 1280 keeps min<=default<=max valid).
+    client.put("/api/v1/config/render", json={"max_res_x": 1280})
     # Then reset.
     response = client.post("/api/v1/config/render/reset")
     assert response.status_code == 200
     body = response.json()
     # Default max_res_x is 1920 (1080p ceiling, tuned for small CPU VPS).
     assert body["max_res_x"] == 1920
+
+
+# ---------------------------------------------------------------------------
+# B.91: PUT /api/v1/config/render — config-invariant validation
+# ---------------------------------------------------------------------------
+
+
+def test_update_config_invariant_violation_returns_422(client: TestClient) -> None:
+    """B.91: a PUT that would break min <= default <= max is rejected with 422."""
+    response = client.put("/api/v1/config/render", json={"max_res_x": 100})
+    assert response.status_code == 422
+    assert "invariant" in response.json()["detail"].lower()
+
+
+def test_update_config_invariant_violation_leaves_config_unchanged(client: TestClient) -> None:
+    """B.91: a rejected invariant-violating PUT must not mutate the live config."""
+    before = client.get("/api/v1/config/render").json()
+    client.put("/api/v1/config/render", json={"max_samples": 0})
+    after = client.get("/api/v1/config/render").json()
+    assert after == before
+
+
+def test_update_config_valid_within_invariants_succeeds(client: TestClient) -> None:
+    """B.91: a PUT that respects the invariants still applies normally."""
+    response = client.put(
+        "/api/v1/config/render",
+        json={"max_res_x": 2560, "max_res_y": 1440, "default_res_x": 2000},
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["max_res_x"] == 2560
+    assert body["default_res_x"] == 2000

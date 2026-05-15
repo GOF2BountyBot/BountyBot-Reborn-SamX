@@ -469,9 +469,10 @@ JSON and `player_inventories` rows.  It enforces four hard invariants:
 |---|---|
 | `equip_one(db, player_id, ship_id, item_name, equipment_type=None)` | `EquipmentService.equip_item` |
 | `unequip_one(db, player_id, ship_id, item_name, equipment_type=None)` | `EquipmentService.unequip_item` |
-| `transfer_loadout_to_new_ship(db, player_id, src_ship, dst_ship, slot_limits)` | `ShopService.purchase_ship` |
+| `activate_ship(db, player_id, target_ship_id, *, player_repo)` | `set_active_ship` router, `ShopService.purchase_ship` — **canonical activation choke-point (B.94/B.95)** |
+| `transfer_loadout_to_new_ship(db, player_id, src_ship, dst_ship, slot_limits)` | `activate_ship` (called internally) |
 | `evacuate_ship_loadout_to_inventory(db, ship)` | `ShopService.sell_ship`, `transfer_ship` router, `admin_remove_ship` |
-| `reconcile_active_ship_slots(db, player_id, target_ship_id)` | `set_active_ship` router |
+| `reconcile_active_ship_slots(db, player_id, target_ship_id)` | `activate_ship` (called internally) |
 | `repair_player(db, player_id, *, dry_run=False)` | `0002_b19_repair_loadout_consistency` migration; admin tool |
 
 ### HARD RULE — DO NOT VIOLATE

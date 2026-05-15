@@ -39,7 +39,9 @@ Consumer call-site map (verified at HEAD, 2026-04-30)
 | evacuate_ship_loadout_to_inventory | ShopService.sell_ship                 | api/routers/shops.py:217 (db.begin())   |
 | evacuate_ship_loadout_to_inventory | admin remove_ship                     | api/routers/admin.py:1036 (db.begin())  |
 | evacuate_ship_loadout_to_inventory | ships.transfer_ship                   | api/routers/ships.py:597 (db.begin())   |
-| reconcile_active_ship_slots        | ships.set_active_ship                 | api/routers/ships.py:259 (db.begin())   |
+| reconcile_active_ship_slots        | ships.set_active_ship (legacy path)   | api/routers/ships.py:259 (db.begin())   |
+| activate_ship                      | ships.set_active_ship                 | api/routers/ships.py:259 (db.begin())   |
+| activate_ship                      | ShopService.purchase_ship             | api/routers/shops.py:152 (db.begin())   |
 | repair_player                      | 0002_b19_repair_loadout_consistency   | Alembic migration runner                |
 | repair_player                      | admin tooling (future)                | (must be wrapped per I3)                |
 
@@ -448,10 +450,16 @@ class LoadoutConsistencyService:
     ) -> dict[str, Any]:
         """Move src_ship's loadout to dst_ship; overflow goes to inventory.
 
+        Handles non-empty destination ships via **merge-with-overflow** (B.95):
+        existing items on ``dst_ship`` are kept in their slots first; then
+        items from ``src_ship`` are merged in up to the remaining free slots.
+        Any items from ``src_ship`` that cannot fit overflow to inventory.
+
         After this call:
-        - ``dst_ship.<kind>`` contains the fitting subset of src's items.
-        - ``src_ship.<kind>`` is cleared (the missing-clear bug fix).
-        - Inventory is incremented for every overflow item.
+        - ``dst_ship.<kind>`` contains up to ``slot_limits[kind]`` items
+          (existing dst items kept first, src items filled into remaining slots).
+        - ``src_ship.<kind>`` is cleared.
+        - Inventory is incremented for every overflow item from src.
 
         Net effect: each item-name appears in exactly one new place.
 
@@ -466,21 +474,26 @@ class LoadoutConsistencyService:
 
         for kind in _SLOT_KINDS:
             src_items = self._get_slot(src_ship, kind)
+            dst_existing = self._get_slot(dst_ship, kind)
             cap = slot_limits.get(kind, 0) or 0
-            fitting = src_items[:cap]
-            overflow = src_items[cap:]
+
+            # B.95 merge-with-overflow: dst items occupy slots first.
+            # Remaining free slots are filled from src; excess src items overflow.
+            free_slots = max(0, cap - len(dst_existing))
+            fitting_from_src = src_items[:free_slots]
+            overflow_from_src = src_items[free_slots:]
 
             # Push overflow to inventory (concrete type via STI discriminator)
-            for name in overflow:
+            for name in overflow_from_src:
                 concrete = await self._resolve_concrete_type(db, name, fallback_kind=kind)
                 await self.inventory_repo.add_item(db, player_id, concrete, name, 1, commit=False)
 
-            # Apply to dst, clear src
-            self._set_slot(dst_ship, kind, fitting)
+            # Merge src fitting items into dst, clear src
+            self._set_slot(dst_ship, kind, dst_existing + fitting_from_src)
             self._set_slot(src_ship, kind, [])
 
-            breakdown[kind]["transferred"] = list(fitting)
-            breakdown[kind]["overflowed"] = list(overflow)
+            breakdown[kind]["transferred"] = list(fitting_from_src)
+            breakdown[kind]["overflowed"] = list(overflow_from_src)
 
         await db.flush()
 
@@ -611,6 +624,102 @@ class LoadoutConsistencyService:
             )
 
         return {"evacuated_items": evacuated, "any_evacuated": any_evacuated}
+
+    @requires_transaction
+    async def activate_ship(
+        self,
+        db: AsyncSession,
+        *,
+        player_id: int,
+        target_ship_id: int,
+        player_repo: Any,
+    ) -> dict[str, Any]:
+        """Canonical ship activation choke-point (B.94 / B.95).
+
+        Performs the full activation sequence atomically:
+
+        1. Look up the player's currently-active ship (if any).
+        2. Reconcile the *target* ship's loadout against its static slot caps
+           (invariant I4) — overflows go to inventory.
+        3. Transfer the loadout from the currently-active ship to the target ship
+           using merge-with-overflow semantics (B.95).
+        4. Flip ``is_active`` flags via ``PlayerShipRepository.set_active_ship``.
+        5. Update ``Player.active_ship_id`` via ``player_repo.update_active_ship``.
+
+        All writes use ``commit=False``; the **caller** owns the transaction
+        (router-level ``async with db.begin()`` or shop-service caller block).
+
+        Args:
+            player_id: ID of the owning player.
+            target_ship_id: ID of the ``PlayerShip`` to activate.
+            player_repo: An instance of ``PlayerRepository`` — passed in so the
+                caller can share its already-mocked repository in tests.
+
+        Returns:
+            A dict with keys:
+            - ``ship``            — the activated ``PlayerShip`` ORM instance.
+            - ``evacuated_items`` — slot-keyed dict of items overflowed from the
+                                    target ship during reconciliation.
+            - ``any_evacuated``   — bool, True if any reconciliation overflow occurred.
+            - ``transferred``     — total items transferred from the old active ship.
+            - ``overflowed``      — total items from the old active ship that could
+                                    not fit and went to inventory instead.
+            - ``transfer_breakdown`` — per-slot breakdown from the transfer step.
+
+        Raises:
+            ValueError: ship not found, or ship does not belong to player.
+            RuntimeError: invoked outside an active transaction (I3 guard).
+        """
+        # 1. Fetch the target ship and validate ownership.
+        target_ship = await self.player_ship_repo.get_by_id(db, target_ship_id)
+        if target_ship is None:
+            raise ValueError(f"Ship {target_ship_id} not found")
+        if target_ship.player_id != player_id:
+            raise ValueError(f"Ship {target_ship_id} does not belong to player {player_id}")
+
+        # 2. Reconcile target ship's slots against its static caps (I4).
+        reconcile = await self.reconcile_active_ship_slots(db, player_id=player_id, target_ship_id=target_ship_id)
+        # Re-fetch after reconcile (slot mutation may have occurred).
+        target_ship = await self.player_ship_repo.get_by_id(db, target_ship_id)
+
+        # 3. Get currently-active ship (may be None, or may already be the target).
+        current_active = await self.player_ship_repo.get_active_ship(db, player_id)
+
+        transfer_result: dict[str, Any] = {"transferred": 0, "overflowed": 0, "breakdown": {}}
+        if current_active is not None and current_active.id != target_ship_id:
+            # Build slot limits for the target ship from static data.
+            slot_limits = await self._get_static_ship_caps(db, target_ship)
+            transfer_result = await self.transfer_loadout_to_new_ship(
+                db,
+                player_id=player_id,
+                src_ship=current_active,
+                dst_ship=target_ship,
+                slot_limits=slot_limits,
+            )
+
+        # 4. Flip is_active flags atomically.
+        activated_ship = await self.player_ship_repo.set_active_ship(db, player_id, target_ship_id, commit=False)
+
+        # 5. Update Player.active_ship_id.
+        await player_repo.update_active_ship(db, player_id, target_ship_id, commit=False)
+
+        flogger.info(
+            "Player %d: ship %d (%s) activated via choke-point; transferred=%d overflowed=%d reconcile_evacuated=%s",
+            player_id,
+            target_ship_id,
+            target_ship.ship_name,
+            transfer_result["transferred"],
+            transfer_result["overflowed"],
+            reconcile["any_evacuated"],
+        )
+        return {
+            "ship": activated_ship,
+            "evacuated_items": reconcile["evacuated_items"],
+            "any_evacuated": reconcile["any_evacuated"],
+            "transferred": transfer_result["transferred"],
+            "overflowed": transfer_result["overflowed"],
+            "transfer_breakdown": transfer_result.get("breakdown", {}),
+        }
 
     @requires_transaction
     async def repair_player(

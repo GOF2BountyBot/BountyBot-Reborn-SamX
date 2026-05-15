@@ -140,7 +140,7 @@ All endpoints are mounted under `/api/v1/`.
 | Method | Path | Purpose |
 |--------|------|---------|
 | `GET` | `/config/render` | Return all current `RenderConfig` field values |
-| `PUT` | `/config/render` | Update one or more config fields (unknown keys silently ignored); body is a plain `dict` |
+| `PUT` | `/config/render` | Update one or more config fields (unknown keys ignored); body is a plain `dict`. B.91: rejects with 422 if the result would violate a config invariant (`min ≤ default ≤ max`, positivity) |
 | `POST` | `/config/render/reset` | Reset all config fields to env-var defaults |
 
 Config is accessed via `request.app.state.render_config` (`RenderConfigService`).
@@ -236,8 +236,9 @@ Pure functions, no state, no I/O.
 | Storage | In-memory; **no persistence** — reset on restart |
 | Defaults | Read from env vars at init (see Environment Variables section) |
 | Key fields | `max_res_x/y`, `min_res_x/y`, `max/min_samples`, `default_res_x/y`, `default_samples`, `max_concurrent_renders`, `job_ttl_hours` |
-| `update(dict)` | Applies only known fields; unknown keys are silently ignored |
+| `update(dict)` | Applies only known fields; unknown keys ignored. B.91: validates the candidate config first and raises `RenderConfigError` (no mutation) on invariant breach |
 | `reset()` | Re-initialises from env vars by calling `__init__()` again |
+| B.91 grouping | `RenderConfig.PARAM_GROUPS` / `to_grouped_dict()` group the 11 settings into `resolution_limits` / `sample_limits` / `defaults` / `concurrency`; `validate()` enforces the semantic invariants |
 
 ### `render_service.py` — Blender Subprocess Pipeline
 
@@ -274,7 +275,7 @@ Pure functions, no state, no I/O.
 ```
 Client POSTs multipart form (texture file + model_path + render params)
   │
-  ├── validate_params() — check resolution/samples within RenderConfig bounds
+  ├── clamp_params() — clamp resolution/samples to RenderConfig bounds (B.93; never rejects)
   ├── Save texture → /tmp/blender_render_{uuid}/texture.png
   ├── RenderService.render_ship()
   │     ├── Copy OBJ's .mtl → /tmp/blender_render_{uuid}/
@@ -296,7 +297,7 @@ Client POSTs multipart form (texture file + model_path + render params)
 ```
 Client POSTs multipart form
   │
-  ├── validate_params()
+  ├── clamp_params() — clamp resolution/samples to RenderConfig bounds (B.93; never rejects)
   ├── job_queue.create_job() → RenderJob (status=QUEUED)
   ├── Save texture → /tmp/blender_render_{job_id}/texture.png
   │    └── (temp dir NOT cleaned here — background task reads from it)

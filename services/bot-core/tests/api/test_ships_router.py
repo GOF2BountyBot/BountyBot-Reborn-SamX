@@ -117,8 +117,11 @@ def mock_equipment_service():
 def mock_loadout_consistency_service():
     """Mock LoadoutConsistencyService for router-level tests (Package G B.19).
 
-    Default behaviour: reconcile_active_ship_slots returns no evacuated items
-    and any_evacuated=False (the common path).  Tests can override.
+    Default behaviour:
+    - reconcile_active_ship_slots returns no evacuated items and any_evacuated=False.
+    - activate_ship returns a properly-shaped dict (B.94/B.95 delegation): ship
+      object with all ShipResponse fields, empty evacuated_items, any_evacuated=False.
+      Tests in TestSetActiveShip can override activate_ship.return_value as needed.
     """
     svc = AsyncMock()
     svc.reconcile_active_ship_slots = AsyncMock(
@@ -132,6 +135,19 @@ def mock_loadout_consistency_service():
             "items_returned": [],
             "items_returned_detail": {"weapons": [], "modules": [], "turrets": [], "secondary_weapons": []},
             "duplicates_dropped": 0,
+        }
+    )
+    # activate_ship is the canonical choke-point for set_active_ship (commit a115b12).
+    # Return a dict that satisfies the router's result["ship"] attribute access and
+    # subsequent ShipResponse construction.
+    svc.activate_ship = AsyncMock(
+        return_value={
+            "ship": make_mock_ship(is_active=True),
+            "evacuated_items": {"weapons": [], "modules": [], "turrets": [], "secondary_weapons": []},
+            "any_evacuated": False,
+            "transferred": 0,
+            "overflowed": 0,
+            "transfer_breakdown": {},
         }
     )
     return svc
@@ -394,9 +410,17 @@ class TestGetActiveShip:
 
 
 class TestSetActiveShip:
-    """Tests for PUT /ships/{ship_id}/set-active?player_id=X."""
+    """Tests for PUT /ships/{ship_id}/set-active?player_id=X.
 
-    def test_set_active_ship_happy_path(self, client, mock_ship_repo, mock_player_repo):
+    Since commit a115b12 the router delegates entirely to
+    ``consistency.activate_ship(...)`` (the B.94/B.95 canonical choke-point).
+    Assertions now target ``mock_loadout_consistency_service.activate_ship``
+    instead of ``mock_ship_repo.set_active_ship``.
+    """
+
+    def test_set_active_ship_happy_path(
+        self, client, mock_ship_repo, mock_player_repo, mock_loadout_consistency_service
+    ):
         """Sets a ship as active and returns updated ship with 200 status."""
         response = client.put("/api/v1/ships/1/set-active?player_id=1")
 
@@ -404,12 +428,16 @@ class TestSetActiveShip:
         data = response.json()
         assert data["is_active"] is True
         assert data["id"] == 1
-        mock_ship_repo.set_active_ship.assert_called_once()
-        mock_player_repo.update_active_ship.assert_called_once()
+        # The router delegates to consistency.activate_ship — not ship_repo.set_active_ship.
+        mock_loadout_consistency_service.activate_ship.assert_called_once()
 
-    def test_set_active_ship_value_error_returns_400(self, client, mock_ship_repo, mock_player_repo):
-        """Returns 400 when repository raises a ValueError."""
-        mock_ship_repo.set_active_ship = AsyncMock(side_effect=ValueError("Ship does not belong to player"))
+    def test_set_active_ship_value_error_returns_400(
+        self, client, mock_ship_repo, mock_player_repo, mock_loadout_consistency_service
+    ):
+        """Returns 400 when consistency.activate_ship raises a ValueError."""
+        mock_loadout_consistency_service.activate_ship = AsyncMock(
+            side_effect=ValueError("Ship does not belong to player")
+        )
 
         response = client.put("/api/v1/ships/1/set-active?player_id=1")
 
@@ -418,9 +446,11 @@ class TestSetActiveShip:
         assert "detail" in data
         assert "Ship does not belong to player" in data["detail"]
 
-    def test_set_active_ship_server_error(self, client, mock_ship_repo, mock_player_repo):
-        """Returns 500 when repository raises an unexpected exception."""
-        mock_ship_repo.set_active_ship = AsyncMock(side_effect=Exception("DB failure"))
+    def test_set_active_ship_server_error(
+        self, client, mock_ship_repo, mock_player_repo, mock_loadout_consistency_service
+    ):
+        """Returns 500 when consistency.activate_ship raises an unexpected exception."""
+        mock_loadout_consistency_service.activate_ship = AsyncMock(side_effect=Exception("DB failure"))
 
         response = client.put("/api/v1/ships/1/set-active?player_id=1")
 
@@ -1101,10 +1131,26 @@ class TestA28PlayerShipShape:
         assert data["is_active"] is True
         mock_ship_repo.get_active_ship.assert_called_once()
 
-    def test_set_active_ship_persists_active_flag(self, client, mock_ship_repo, mock_player_repo):
-        """PUT /ships/{id}/set-active round-trips is_active=True on a real PlayerShip."""
+    def test_set_active_ship_persists_active_flag(
+        self, client, mock_ship_repo, mock_player_repo, mock_loadout_consistency_service
+    ):
+        """PUT /ships/{id}/set-active round-trips is_active=True on a real PlayerShip.
+
+        Since commit a115b12 the router delegates to consistency.activate_ship.
+        We configure its return value with a real PlayerShip so Pydantic can
+        build ShipResponse from actual ORM attributes (A.28 regression guard).
+        """
         real_ship = make_real_player_ship(id=5, player_id=9, is_active=True)
-        mock_ship_repo.set_active_ship = AsyncMock(return_value=real_ship)
+        mock_loadout_consistency_service.activate_ship = AsyncMock(
+            return_value={
+                "ship": real_ship,
+                "evacuated_items": {"weapons": [], "modules": [], "turrets": [], "secondary_weapons": []},
+                "any_evacuated": False,
+                "transferred": 0,
+                "overflowed": 0,
+                "transfer_breakdown": {},
+            }
+        )
 
         response = client.put("/api/v1/ships/5/set-active?player_id=9")
 
@@ -1113,7 +1159,8 @@ class TestA28PlayerShipShape:
         assert data["id"] == 5
         assert data["player_id"] == 9
         assert data["is_active"] is True
-        mock_ship_repo.set_active_ship.assert_called_once()
+        # The router delegates to consistency.activate_ship — not ship_repo.set_active_ship.
+        mock_loadout_consistency_service.activate_ship.assert_called_once()
 
     def test_update_nickname_updates_player_ship(self, client, mock_ship_repo):
         """PUT /ships/{id}/nickname returns updated nickname from real PlayerShip."""

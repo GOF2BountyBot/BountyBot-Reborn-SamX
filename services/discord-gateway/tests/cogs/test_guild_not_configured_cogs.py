@@ -137,7 +137,7 @@ class TestShopCogGuildNotConfigured:
         cog.http_client.post = AsyncMock(side_effect=exc)
 
         # Discord slash commands wrap the handler; call via .callback for testing
-        await cog.shop.callback(cog, interaction, tier="Bronze")
+        await cog.shop.callback(cog, interaction)
 
         interaction.followup.send.assert_awaited_once()
         sent_text = interaction.followup.send.call_args[0][0]

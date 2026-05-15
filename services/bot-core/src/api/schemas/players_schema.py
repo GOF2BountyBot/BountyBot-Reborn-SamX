@@ -122,6 +122,27 @@ class PromoteResponse(BaseModel):
     next_tier: str | None = None
 
 
+class DemoteResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    player_id: int
+    old_tier: str
+    new_tier: str
+    xp: int
+
+
+class TierChangeCooldownResponse(BaseModel):
+    """HTTP 429 payload returned when /promote, /demote, or /prestige is invoked
+    while the tier-change cooldown is active. ``cooldown_end`` is ISO-formatted
+    in UTC; the gateway converts to a Discord ``<t:unix:R>`` timestamp for the UI.
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+
+    detail: str
+    cooldown_end: str
+
+
 # LoadoutWeaponItem, LoadoutModuleItem, CargoItem, PlayerLoadoutResponse moved to
 # api/schemas/loadout_schema.py as part of the loadout embed redesign (see spec §2.1).
 # The unified LoadoutResponse schema is now shared between /players/{id}/loadout and

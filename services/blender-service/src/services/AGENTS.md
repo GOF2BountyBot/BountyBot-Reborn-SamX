@@ -193,9 +193,20 @@ RenderConfig (dataclass):   # All fields mutable
 RenderConfigService:
   __init__()            # reads env vars, creates RenderConfig
   config (property)     # returns current RenderConfig
-  update(dict) → RenderConfig   # applies known fields only, silently ignores unknown
+  update(dict) → RenderConfig   # applies known fields only, ignores unknown;
+                                #   B.91: validates the candidate config and raises
+                                #   RenderConfigError (without mutating) on invariant breach
   reset() → RenderConfig        # re-runs __init__() to re-read env vars
 ```
+
+**B.91 — grouping & invariants**: `RenderConfig` exposes `PARAM_GROUPS` (semantic
+grouping of the 11 settings: `resolution_limits` / `sample_limits` / `defaults` /
+`concurrency`), `to_grouped_dict()`, and `validate()`. `validate()` enforces
+`min_* <= default_* <= max_*` for resolution and samples plus positivity bounds,
+raising `RenderConfigError` (a `ValueError` subclass) listing every violation.
+`RenderConfigService.update()` validates a candidate copy *before* committing, so a
+rejected update leaves the live config untouched. The config router maps
+`RenderConfigError` to HTTP 422.
 
 **No persistence**: Config is in-memory. `reset()` re-reads env vars at call time.
 
@@ -231,9 +242,11 @@ If `config` is `None`, a default `RenderConfig()` is used. Routers should always
 
 | Method | Signature | Notes |
 |--------|-----------|-------|
-| `validate_params` | `(res_x, res_y, num_samples)` | Raises `ValueError` if out of config bounds |
+| `clamp_params` | `(res_x, res_y, num_samples) → ClampResult` | B.93: clamps out-of-bounds params to the nearest valid config bound (does **not** raise); logs a WARNING per clamp. Routers call this; `render_ship` trusts its inputs are already clamped |
 | `trim` (static) | `(image: Image.Image) → Image.Image` | Crops transparent/background borders using `ImageChops.difference` |
-| `render_ship` | `(model_path, texture_path, output_path, res_x, res_y, num_samples) → Path` | Full pipeline; async |
+| `render_ship` | `(model_path, texture_path, output_path, res_x, res_y, num_samples) → Path` | Full pipeline; async. Renders at whatever params it is given — the router clamps first |
+
+`ClampResult` (frozen dataclass): `res_x`, `res_y`, `num_samples` (final clamped values) + `clamped: dict[str, dict[str, int]]` (`field → {"requested", "actual"}`, empty when nothing was clamped) + `was_clamped` property.
 
 **Blender subprocess**:
 - Command: `blender -b <cube.blend> -P <_render.py>`

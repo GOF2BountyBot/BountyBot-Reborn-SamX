@@ -185,21 +185,153 @@ async def test_render_config_view(admin_cog) -> None:
 
 
 # -------------------------------------------------------------------------
+# /render_config view — B.91: settings grouped by semantic category
+# -------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_render_config_view_groups_settings(admin_cog) -> None:
+    """B.91: render_config view presents the flat config grouped by category + invariants."""
+    config_data = {
+        "max_res_x": 1920,
+        "max_res_y": 1080,
+        "min_res_x": 352,
+        "min_res_y": 240,
+        "max_samples": 64,
+        "min_samples": 1,
+        "default_res_x": 1280,
+        "default_res_y": 720,
+        "default_samples": 32,
+        "max_concurrent_renders": 1,
+        "job_ttl_hours": 1,
+    }
+    admin_cog.http_client.get = AsyncMock(return_value=_make_mock_http_response(config_data))
+
+    interaction = _make_mock_interaction(is_admin_user=True)
+    await admin_cog.render_config.callback(admin_cog, interaction, action="view")
+
+    _, kwargs = interaction.followup.send.call_args
+    embed = kwargs["embed"]
+    field_names = [f.name for f in embed.fields]
+    assert "Resolution Limits" in field_names
+    assert "Sample Limits" in field_names
+    assert "Defaults" in field_names
+    assert "Concurrency" in field_names
+    assert "⚙️ Invariants" in field_names
+    # Every setting must appear somewhere in the grouped field values.
+    all_values = "\n".join(f.value for f in embed.fields)
+    for key in config_data:
+        assert key in all_values, f"{key} missing from grouped view"
+
+
+@pytest.mark.asyncio
+async def test_render_config_view_handles_partial_config(admin_cog) -> None:
+    """B.91: a partial config response only renders the groups it has data for (no crash)."""
+    admin_cog.http_client.get = AsyncMock(
+        return_value=_make_mock_http_response({"max_res_x": 1920, "default_samples": 32})
+    )
+
+    interaction = _make_mock_interaction(is_admin_user=True)
+    await admin_cog.render_config.callback(admin_cog, interaction, action="view")
+
+    _, kwargs = interaction.followup.send.call_args
+    embed = kwargs["embed"]
+    field_names = [f.name for f in embed.fields]
+    assert "Resolution Limits" in field_names
+    assert "Defaults" in field_names
+    # Groups with no present keys are omitted entirely.
+    assert "Sample Limits" not in field_names
+    assert "Concurrency" not in field_names
+
+
+# -------------------------------------------------------------------------
+# DEF-U1-001/DEF-U1-002 — super-admin gate on set and reset
+# -------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_render_config_set_blocks_admin_non_super_admin(admin_cog) -> None:
+    """DEF-U1-001: an admin (administrator=True) who is NOT in DEVELOPERS is denied on 'set'."""
+    admin_cog._render_settings = ["max_res_x"]
+    admin_cog.http_client.put = AsyncMock()  # must not be called
+
+    interaction = _make_mock_interaction(is_admin_user=True)
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setenv("DEVELOPERS", "")  # empty → no super-admins
+        await admin_cog.render_config.callback(admin_cog, interaction, action="set", setting="max_res_x", value=1920)
+
+    admin_cog.http_client.put.assert_not_called()
+    interaction.followup.send.assert_awaited_once()
+    msg = str(interaction.followup.send.call_args)
+    assert "super-admin" in msg.lower() or "privilege" in msg.lower()
+    kwargs = interaction.followup.send.call_args[1]
+    assert kwargs.get("ephemeral") is True
+
+
+@pytest.mark.asyncio
+async def test_render_config_reset_blocks_admin_non_super_admin(admin_cog) -> None:
+    """DEF-U1-001: an admin (administrator=True) who is NOT in DEVELOPERS is denied on 'reset'."""
+    admin_cog.http_client.post = AsyncMock()  # must not be called
+
+    interaction = _make_mock_interaction(is_admin_user=True)
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setenv("DEVELOPERS", "")
+        await admin_cog.render_config.callback(admin_cog, interaction, action="reset")
+
+    admin_cog.http_client.post.assert_not_called()
+    interaction.followup.send.assert_awaited_once()
+    msg = str(interaction.followup.send.call_args)
+    assert "super-admin" in msg.lower() or "privilege" in msg.lower()
+    kwargs = interaction.followup.send.call_args[1]
+    assert kwargs.get("ephemeral") is True
+
+
+@pytest.mark.asyncio
+async def test_render_config_set_allows_super_admin(admin_cog) -> None:
+    """DEF-U1-001: a user who IS in DEVELOPERS can invoke 'set' successfully."""
+    admin_cog._render_settings = ["max_res_x", "default_samples"]
+    mock_resp = _make_mock_http_response({"max_res_x": 1920})
+    admin_cog.http_client.put = AsyncMock(return_value=mock_resp)
+
+    interaction = _make_mock_interaction(is_admin_user=True)
+    # Place the user's ID into DEVELOPERS.
+    dev_id = str(interaction.user.id)
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setenv("DEVELOPERS", dev_id)
+        await admin_cog.render_config.callback(admin_cog, interaction, action="set", setting="max_res_x", value=1920)
+
+    admin_cog.http_client.put.assert_called_once()
+    interaction.followup.send.assert_awaited_once()
+    msg = str(interaction.followup.send.call_args)
+    assert "max_res_x" in msg
+    assert "1920" in msg
+
+
+# -------------------------------------------------------------------------
 # /render_config set — B.25 Fix B
 # -------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
 async def test_render_config_set(admin_cog) -> None:
-    """B.25 Fix B: render_config set defers, then PUTs /config/render, responds via followup."""
+    """B.25 Fix B: render_config set defers, then PUTs /config/render, responds via followup.
+
+    DEF-U1-001: user must be in DEVELOPERS (super-admin) to invoke 'set'.
+    """
     # C.1: preload must be set for the guard to allow through; empty preload now blocks.
     admin_cog._render_settings = ["max_res_x", "max_res_y", "default_samples"]
     mock_resp = _make_mock_http_response({"max_res_x": 1920})
     admin_cog.http_client.put = AsyncMock(return_value=mock_resp)
 
     interaction = _make_mock_interaction(is_admin_user=True)
+    dev_id = str(interaction.user.id)
 
-    await admin_cog.render_config.callback(admin_cog, interaction, action="set", setting="max_res_x", value=1920)
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setenv("DEVELOPERS", dev_id)
+        await admin_cog.render_config.callback(admin_cog, interaction, action="set", setting="max_res_x", value=1920)
 
     interaction.response.defer.assert_awaited_once()
     admin_cog.http_client.put.assert_called_once()
@@ -218,11 +350,17 @@ async def test_render_config_set(admin_cog) -> None:
 
 @pytest.mark.asyncio
 async def test_render_config_set_missing_args(admin_cog) -> None:
-    """B.25 Fix B: render_config set with missing args warns via followup.send."""
+    """B.25 Fix B: render_config set with missing args warns via followup.send.
+
+    DEF-U1-001: user must be in DEVELOPERS to reach the missing-args check.
+    """
     interaction = _make_mock_interaction(is_admin_user=True)
+    dev_id = str(interaction.user.id)
 
     # Call with setting=None, value=None  (user forgot args)
-    await admin_cog.render_config.callback(admin_cog, interaction, action="set", setting=None, value=None)
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setenv("DEVELOPERS", dev_id)
+        await admin_cog.render_config.callback(admin_cog, interaction, action="set", setting=None, value=None)
 
     interaction.response.defer.assert_awaited_once()
     # B.25 Fix B: warning sent via followup
@@ -238,13 +376,19 @@ async def test_render_config_set_missing_args(admin_cog) -> None:
 
 @pytest.mark.asyncio
 async def test_render_config_reset(admin_cog) -> None:
-    """B.25 Fix B: render_config reset defers, then POSTs /config/render/reset via followup."""
+    """B.25 Fix B: render_config reset defers, then POSTs /config/render/reset via followup.
+
+    DEF-U1-001: user must be in DEVELOPERS (super-admin) to invoke 'reset'.
+    """
     mock_resp = _make_mock_http_response({})
     admin_cog.http_client.post = AsyncMock(return_value=mock_resp)
 
     interaction = _make_mock_interaction(is_admin_user=True)
+    dev_id = str(interaction.user.id)
 
-    await admin_cog.render_config.callback(admin_cog, interaction, action="reset")
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setenv("DEVELOPERS", dev_id)
+        await admin_cog.render_config.callback(admin_cog, interaction, action="reset")
 
     interaction.response.defer.assert_awaited_once()
     admin_cog.http_client.post.assert_called_once()
@@ -454,6 +598,8 @@ async def test_render_config_set_unknown_setting_blocked(admin_cog) -> None:
 
     When setting is not in _render_settings, an error embed must be sent
     and http_client.put must NOT be called.
+
+    DEF-U1-001: user must be in DEVELOPERS to reach the setting-validation check.
     """
     admin_cog._render_settings = [
         "max_res_x",
@@ -471,9 +617,12 @@ async def test_render_config_set_unknown_setting_blocked(admin_cog) -> None:
     admin_cog.http_client.put = AsyncMock()
 
     interaction = _make_mock_interaction(is_admin_user=True)
+    dev_id = str(interaction.user.id)
 
     # "samples" is the exact scenario from B.32 — not a valid field
-    await admin_cog.render_config.callback(admin_cog, interaction, action="set", setting="samples", value=64)
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setenv("DEVELOPERS", dev_id)
+        await admin_cog.render_config.callback(admin_cog, interaction, action="set", setting="samples", value=64)
 
     # Must NOT have called the API
     admin_cog.http_client.put.assert_not_called()
@@ -489,14 +638,20 @@ async def test_render_config_set_unknown_setting_blocked(admin_cog) -> None:
 
 @pytest.mark.asyncio
 async def test_render_config_set_valid_setting_calls_api(admin_cog) -> None:
-    """B.32: render_config set with valid setting still calls the PUT API."""
+    """B.32: render_config set with valid setting still calls the PUT API.
+
+    DEF-U1-001: user must be in DEVELOPERS to reach the API call.
+    """
     admin_cog._render_settings = ["max_res_x", "default_samples"]
     mock_resp = _make_mock_http_response({"max_res_x": 1920})
     admin_cog.http_client.put = AsyncMock(return_value=mock_resp)
 
     interaction = _make_mock_interaction(is_admin_user=True)
+    dev_id = str(interaction.user.id)
 
-    await admin_cog.render_config.callback(admin_cog, interaction, action="set", setting="max_res_x", value=1920)
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setenv("DEVELOPERS", dev_id)
+        await admin_cog.render_config.callback(admin_cog, interaction, action="set", setting="max_res_x", value=1920)
 
     # API must have been called with the correct payload
     admin_cog.http_client.put.assert_called_once()
@@ -514,13 +669,18 @@ async def test_render_config_set_empty_preload_blocks_call(admin_cog) -> None:
     was unavailable at startup).  The C.1 fix changes this from fail-OPEN
     (bypass guard, let blender's 422 handle it) to fail-CLOSED (user sees a
     friendly 'preload not ready' message; API is never called).
+
+    DEF-U1-001: user must be in DEVELOPERS to reach the preload check.
     """
     admin_cog._render_settings = []  # preload failed
     admin_cog.http_client.put = AsyncMock()
 
     interaction = _make_mock_interaction(is_admin_user=True)
+    dev_id = str(interaction.user.id)
 
-    await admin_cog.render_config.callback(admin_cog, interaction, action="set", setting="max_res_x", value=1920)
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setenv("DEVELOPERS", dev_id)
+        await admin_cog.render_config.callback(admin_cog, interaction, action="set", setting="max_res_x", value=1920)
 
     # C.1: API must NOT be called when preload is empty
     admin_cog.http_client.put.assert_not_called()

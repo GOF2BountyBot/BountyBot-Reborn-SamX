@@ -433,9 +433,7 @@ class TestPurchaseShipB94Regression:
         old_ship = _make_player_ship(ship_id=1, player_id=42, ship_name="Betty", is_active=True)
         new_ship_static = _make_static_ship(name="Hammerhead", value=5000, max_primaries=2)
         shop_item = _make_shop_item(item_id=10, item_name="Hammerhead", price=5000, tier="Bronze")
-
-        # New PlayerShip created during purchase (gets id=99 after flush)
-        new_player_ship = _make_player_ship(ship_id=99, player_id=42, ship_name="Hammerhead")
+        # New PlayerShip created inside purchase_ship (gets id=99 after flush via captured dict).
         activated_ship = _make_player_ship(ship_id=99, player_id=42, ship_name="Hammerhead", is_active=True)
 
         svc.player_repo.get_by_id = AsyncMock(return_value=player)
@@ -450,19 +448,39 @@ class TestPurchaseShipB94Regression:
 
         svc.ship_repo.get_by_name = AsyncMock(return_value=new_ship_static)
 
+        # Use the captured dict pattern: db.add captures the actual PlayerShip
+        # ORM instance created inside purchase_ship(), db.flush sets its .id,
+        # and player_ship_repo.get_by_id returns it so activate_ship can validate
+        # ownership.  (Fixing the old pattern where _db_flush set the id on the
+        # fixture's new_player_ship mock rather than the ORM object created
+        # inside the method — DEF-U2-001.)
+        captured = {}
+
+        def _add_side_effect(obj):
+            captured["new_ship"] = obj
+
+        mock_db.add = MagicMock(side_effect=_add_side_effect)
+
+        async def _flush_side_effect():
+            if "new_ship" in captured:
+                captured["new_ship"].id = 99
+
+        mock_db.flush = AsyncMock(side_effect=_flush_side_effect)
+        mock_db.delete = AsyncMock()
+
         svc.player_ship_repo.get_active_ship = AsyncMock(return_value=old_ship)
-        svc.player_ship_repo.get_by_id = AsyncMock(return_value=new_player_ship)
         svc.player_ship_repo.get_player_ships = AsyncMock(return_value=[old_ship])
         # set_active_ship is called by the LoadoutConsistencyService.activate_ship
         svc.player_ship_repo.set_active_ship = AsyncMock(return_value=activated_ship)
 
-        # Simulate db.add + db.flush giving the new ship an ID
-        async def _db_flush():
-            new_player_ship.id = 99
+        # get_by_id must return the captured new ship (by id=99) so activate_ship
+        # can validate ownership after the flush assigns the PK.
+        async def _get_by_id(db, ship_id):
+            if ship_id == 99 and "new_ship" in captured:
+                return captured["new_ship"]
+            return None
 
-        mock_db.flush = AsyncMock(side_effect=_db_flush)
-        mock_db.add = MagicMock()
-        mock_db.delete = AsyncMock()
+        svc.player_ship_repo.get_by_id = AsyncMock(side_effect=_get_by_id)
 
         result = await svc.purchase_ship(mock_db, player_id=42, shop_item_id=10)
 
@@ -481,7 +499,6 @@ class TestPurchaseShipB94Regression:
         player = _make_player(player_id=42, credits=10000, active_ship_id=None)
         new_ship_static = _make_static_ship(name="Betty", value=2000, max_primaries=1)
         shop_item = _make_shop_item(item_id=5, item_name="Betty", price=2000, tier="Bronze")
-        new_player_ship = _make_player_ship(ship_id=10, player_id=42, ship_name="Betty")
         activated_ship = _make_player_ship(ship_id=10, player_id=42, ship_name="Betty", is_active=True)
 
         svc.player_repo.get_by_id = AsyncMock(return_value=player)
@@ -495,17 +512,31 @@ class TestPurchaseShipB94Regression:
 
         svc.ship_repo.get_by_name = AsyncMock(return_value=new_ship_static)
 
+        # Use the captured dict pattern (DEF-U2-001 fix).
+        captured = {}
+
+        def _add_side_effect(obj):
+            captured["new_ship"] = obj
+
+        mock_db.add = MagicMock(side_effect=_add_side_effect)
+
+        async def _flush_side_effect():
+            if "new_ship" in captured:
+                captured["new_ship"].id = 10
+
+        mock_db.flush = AsyncMock(side_effect=_flush_side_effect)
+        mock_db.delete = AsyncMock()
+
         svc.player_ship_repo.get_active_ship = AsyncMock(return_value=None)  # no prior ship
-        svc.player_ship_repo.get_by_id = AsyncMock(return_value=new_player_ship)
         svc.player_ship_repo.get_player_ships = AsyncMock(return_value=[])
         svc.player_ship_repo.set_active_ship = AsyncMock(return_value=activated_ship)
 
-        async def _db_flush():
-            new_player_ship.id = 10
+        async def _get_by_id(db, ship_id):
+            if ship_id == 10 and "new_ship" in captured:
+                return captured["new_ship"]
+            return None
 
-        mock_db.flush = AsyncMock(side_effect=_db_flush)
-        mock_db.add = MagicMock()
-        mock_db.delete = AsyncMock()
+        svc.player_ship_repo.get_by_id = AsyncMock(side_effect=_get_by_id)
 
         await svc.purchase_ship(mock_db, player_id=42, shop_item_id=5)
 
@@ -524,7 +555,6 @@ class TestPurchaseShipB94Regression:
         player = _make_player(player_id=42, credits=10000, active_ship_id=1)
         new_ship_static = _make_static_ship(name="Hammerhead", value=5000, max_primaries=2)
         shop_item = _make_shop_item(item_id=10, item_name="Hammerhead", price=5000, tier="Bronze")
-        new_player_ship = _make_player_ship(ship_id=99, player_id=42, ship_name="Hammerhead")
         activated_ship = _make_player_ship(
             ship_id=99, player_id=42, ship_name="Hammerhead", is_active=True, weapons=["Nirai Impulse EX 1"]
         )
@@ -543,17 +573,31 @@ class TestPurchaseShipB94Regression:
             side_effect=lambda db, name: SimpleNamespace(name=name, type="PrimaryWeapon")
         )
 
+        # Use the captured dict pattern (DEF-U2-001 fix).
+        captured = {}
+
+        def _add_side_effect(obj):
+            captured["new_ship"] = obj
+
+        mock_db.add = MagicMock(side_effect=_add_side_effect)
+
+        async def _flush_side_effect():
+            if "new_ship" in captured:
+                captured["new_ship"].id = 99
+
+        mock_db.flush = AsyncMock(side_effect=_flush_side_effect)
+        mock_db.delete = AsyncMock()
+
         svc.player_ship_repo.get_active_ship = AsyncMock(return_value=old_ship)
-        svc.player_ship_repo.get_by_id = AsyncMock(return_value=new_player_ship)
         svc.player_ship_repo.get_player_ships = AsyncMock(return_value=[old_ship])
         svc.player_ship_repo.set_active_ship = AsyncMock(return_value=activated_ship)
 
-        async def _db_flush():
-            new_player_ship.id = 99
+        async def _get_by_id(db, ship_id):
+            if ship_id == 99 and "new_ship" in captured:
+                return captured["new_ship"]
+            return old_ship if ship_id == 1 else None
 
-        mock_db.flush = AsyncMock(side_effect=_db_flush)
-        mock_db.add = MagicMock()
-        mock_db.delete = AsyncMock()
+        svc.player_ship_repo.get_by_id = AsyncMock(side_effect=_get_by_id)
 
         result = await svc.purchase_ship(mock_db, player_id=42, shop_item_id=10)
 

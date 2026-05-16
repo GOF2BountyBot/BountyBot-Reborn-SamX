@@ -766,30 +766,38 @@ class TestAdminAutocomplete:
         assert result[0].value == "__select_user_first__"
 
     def test_remove_item_autocomplete_fetches_inventory_when_user_selected(self, mock_admin_cog):
-        """remove_item_autocomplete fetches target user's inventory when user is selected.
+        """remove_item_autocomplete shows target user's inventory from cache, zero HTTP.
 
-        Phase 4: resolve_player_id reads from cache. Pre-populate player_cache.
-        The admin function then makes its own HTTP GET for inventory.
+        Phase 6: Both player_cache and inventory_cache are pre-populated.
+        The admin function reads from cache — no HTTP calls on the hot path.
         """
+        from utils.autocomplete_state import NormalizedChoice
+        from utils.autocomplete_utils import normalize_for_search as nfs
+
         interaction = _create_mock_interaction()
         target_user = _create_mock_user(user_id=111222333)
         interaction.namespace = MagicMock()
         interaction.namespace.user = target_user
 
-        # Phase 4: Pre-populate player_cache so resolve_player_id returns player_id=10
+        # Phase 6: Pre-populate player_cache and inventory_cache
         ac = _ac_init_player_cache_admin_inv()
         if ac is not None:
+            from cogs._shared.autocomplete_cache import AutocompleteCache
             ac.player_cache.set((987654321, 111222333), {"id": 10, "discord_id": 111222333})
-
-        # Mock inventory fetch: GET /inventory/player/10 returns items (still HTTP in adminCog)
-        inv_resp = _make_http_resp(
-            200,
-            [
+            if ac.inventory_cache is None:
+                ac.inventory_cache = AutocompleteCache(ttl_seconds=600, name="inventory")
+            raw_items = [
                 {"item_name": "Pulse Laser", "item_type": "primary_weapon", "quantity": 1},
                 {"item_name": "Shield Gen", "item_type": "module", "quantity": 2},
-            ],
-        )
-        mock_admin_cog.http_client.get = AsyncMock(return_value=inv_resp)
+            ]
+            inv_choices = []
+            for item in raw_items:
+                label = f"{item['item_name']} ({item['item_type'].replace('_', ' ').title()})"
+                inv_choices.append(NormalizedChoice(label=label, value=item["item_name"], norm=nfs(label), raw=item))
+            ac.inventory_cache.set((987654321, 10), inv_choices)
+
+        # HTTP must not be called — data comes from cache
+        mock_admin_cog.http_client.get = AsyncMock(side_effect=AssertionError("HTTP must not be called"))
 
         result = asyncio.run(mock_admin_cog.remove_item_autocomplete(interaction, ""))
         assert isinstance(result, list)
@@ -802,25 +810,34 @@ class TestAdminAutocomplete:
         _ac_reset_admin_inv_player_cache()
 
     def test_remove_item_autocomplete_filters_by_current(self, mock_admin_cog):
-        """remove_item_autocomplete filters inventory items by current text (Phase 4: cache)."""
+        """remove_item_autocomplete filters inventory items by current text (Phase 6: cache)."""
+        from utils.autocomplete_state import NormalizedChoice
+        from utils.autocomplete_utils import normalize_for_search as nfs
+
         interaction = _create_mock_interaction()
         target_user = _create_mock_user(user_id=111222333)
         interaction.namespace = MagicMock()
         interaction.namespace.user = target_user
 
-        # Phase 4: Pre-populate player_cache
+        # Phase 6: Pre-populate player_cache and inventory_cache
         ac = _ac_init_player_cache_admin_inv()
         if ac is not None:
+            from cogs._shared.autocomplete_cache import AutocompleteCache
             ac.player_cache.set((987654321, 111222333), {"id": 10, "discord_id": 111222333})
-
-        inv_resp = _make_http_resp(
-            200,
-            [
+            if ac.inventory_cache is None:
+                ac.inventory_cache = AutocompleteCache(ttl_seconds=600, name="inventory")
+            raw_items = [
                 {"item_name": "Pulse Laser", "item_type": "primary_weapon", "quantity": 1},
                 {"item_name": "Shield Gen", "item_type": "module", "quantity": 1},
-            ],
-        )
-        mock_admin_cog.http_client.get = AsyncMock(return_value=inv_resp)
+            ]
+            inv_choices = []
+            for item in raw_items:
+                label = f"{item['item_name']} ({item['item_type'].replace('_', ' ').title()})"
+                inv_choices.append(NormalizedChoice(label=label, value=item["item_name"], norm=nfs(label), raw=item))
+            ac.inventory_cache.set((987654321, 10), inv_choices)
+
+        # HTTP must not be called
+        mock_admin_cog.http_client.get = AsyncMock(side_effect=AssertionError("HTTP must not be called"))
 
         result = asyncio.run(mock_admin_cog.remove_item_autocomplete(interaction, "pulse"))
         names = [c.value for c in result]

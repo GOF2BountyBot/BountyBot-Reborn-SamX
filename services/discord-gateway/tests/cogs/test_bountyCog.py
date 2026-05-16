@@ -23,11 +23,13 @@ _mock_shared.__path__ = []
 _mock_bblogger = types.ModuleType("shared.bblogger")
 
 _module_logger = None
+_all_loggers: dict[str, MagicMock] = {}
 
 
 def _make_mock_logger(*_args, **_kwargs):
     """Return a MagicMock with common log-level methods."""
     global _module_logger
+    name = _args[0] if _args else None
     logger = MagicMock()
     logger.info = MagicMock()
     logger.debug = MagicMock()
@@ -37,6 +39,8 @@ def _make_mock_logger(*_args, **_kwargs):
     logger.critical = MagicMock()
     logger.exception = MagicMock()
     _module_logger = logger
+    if name:
+        _all_loggers[name] = logger
     return logger
 
 
@@ -410,8 +414,10 @@ class TestPreloadData:
                 asyncio.run(mock_bounty_cog._preload_data())
 
         # Should have logged a warning for each attempt and an error at the end
-        assert _module_logger.warning.call_count == 5
-        assert _module_logger.error.call_count >= 1
+        # Use named logger lookup to avoid confusion with autocomplete_state logger
+        bounty_logger = _all_loggers.get("discord-gateway-BountyCog", _module_logger)
+        assert bounty_logger.warning.call_count == 5
+        assert bounty_logger.error.call_count >= 1
 
     def test_preload_data_returns_immediately_on_success(self, mock_bounty_cog, request):
         """_preload_data returns after first successful attempt, no retry sleep."""
@@ -483,19 +489,38 @@ class TestSystemAutocomplete:
 # ---------------------------------------------------------------------------
 
 
-class TestBountyAutocomplete:
-    """Tests for bounty_autocomplete method."""
+def _init_bounty_caches(
+    guild_id=987654321, user_id=111111111,
+    player_tier="Bronze", player_id=1,
+    bounties=None, cog=None,
+):
+    """Pre-populate caches for bounty autocomplete tests (Phase 6)."""
+    import utils.autocomplete_state as ac_state
+    from cogs._shared.autocomplete_cache import AutocompleteCache
 
-    def test_bounty_autocomplete_returns_formatted_choices(self, mock_bounty_cog, make_mock_response):
-        """bounty_autocomplete should return formatted bounty choices filtered to player's tier."""
-        bounties = [
-            _make_bounty_public(1, "Falcon-Jones", "gold", reward=5000, reward_per_sys=500),
-        ]
-        player_resp = make_mock_response({"id": 1, "tier": "Gold"})
-        bounty_resp = make_mock_response(bounties)
-        mock_bounty_cog.http_client.post = AsyncMock(return_value=player_resp)
-        mock_bounty_cog.http_client.get = AsyncMock(return_value=bounty_resp)
-        interaction = _create_mock_interaction()
+    if ac_state.player_cache is None:
+        ac_state.player_cache = AutocompleteCache(name="player-bounty-test")
+    ac_state.player_cache.set((guild_id, user_id), {"id": player_id, "tier": player_tier})
+
+    if cog is not None and bounties is not None:
+        cog._bounty_cache.set(guild_id, bounties)
+
+
+class TestBountyAutocomplete:
+    """Tests for bounty_autocomplete method (Phase 6: zero-HTTP, cache-backed)."""
+
+    def test_bounty_autocomplete_returns_formatted_choices(self, mock_bounty_cog):
+        """bounty_autocomplete returns formatted bounty choices filtered to player's tier, zero HTTP."""
+        guild_id = 987654321
+        user_id = 111111111
+        bounties = [_make_bounty_public(1, "Falcon-Jones", "gold", reward=5000, reward_per_sys=500)]
+        _init_bounty_caches(
+            guild_id=guild_id, user_id=user_id, player_tier="Gold", bounties=bounties, cog=mock_bounty_cog
+        )
+
+        mock_bounty_cog.http_client.post = AsyncMock(side_effect=AssertionError("HTTP must not be called"))
+        mock_bounty_cog.http_client.get = AsyncMock(side_effect=AssertionError("HTTP must not be called"))
+        interaction = _create_mock_interaction(user_id=user_id, guild_id=guild_id)
 
         result = asyncio.run(mock_bounty_cog.bounty_autocomplete(interaction, ""))
 
@@ -505,129 +530,128 @@ class TestBountyAutocomplete:
         assert "Gold" in result[0].name
         assert "5,000cr" in result[0].name
 
-    def test_bounty_autocomplete_filters_by_current_input(self, mock_bounty_cog, make_mock_response):
-        """bounty_autocomplete should filter choices by current input."""
+    def test_bounty_autocomplete_filters_by_current_input(self, mock_bounty_cog):
+        """bounty_autocomplete filters choices by current input, zero HTTP."""
+        guild_id = 987654321
+        user_id = 111111111
+        # Put both bounties in cache — player is bronze so silver should be filtered
         bounties = [
             _make_bounty_public(1, "BlackViper", "bronze", reward=1000),
             _make_bounty_public(2, "RedFang", "silver", reward=2000),
         ]
-        player_resp = make_mock_response({"id": 1, "tier": "Bronze"})
-        bounty_resp = make_mock_response(bounties)
-        mock_bounty_cog.http_client.post = AsyncMock(return_value=player_resp)
-        mock_bounty_cog.http_client.get = AsyncMock(return_value=bounty_resp)
-        interaction = _create_mock_interaction()
+        _init_bounty_caches(
+            guild_id=guild_id, user_id=user_id, player_tier="Bronze", bounties=bounties, cog=mock_bounty_cog
+        )
+
+        mock_bounty_cog.http_client.post = AsyncMock(side_effect=AssertionError("HTTP must not be called"))
+        mock_bounty_cog.http_client.get = AsyncMock(side_effect=AssertionError("HTTP must not be called"))
+        interaction = _create_mock_interaction(user_id=user_id, guild_id=guild_id)
 
         result = asyncio.run(mock_bounty_cog.bounty_autocomplete(interaction, "black"))
 
         assert len(result) == 1
         assert "BlackViper" in result[0].name
 
-    def test_bounty_autocomplete_handles_api_failure(self, mock_bounty_cog):
-        """bounty_autocomplete should return empty list on API failure."""
-        mock_bounty_cog.http_client.post = AsyncMock(return_value=MagicMock(
-            raise_for_status=MagicMock(), json=MagicMock(return_value={"id": 1, "tier": "Bronze"})
-        ))
-        mock_bounty_cog.http_client.get = AsyncMock(side_effect=RuntimeError("connection refused"))
-        interaction = _create_mock_interaction()
+    def test_bounty_autocomplete_cold_cache_miss_returns_empty(self, mock_bounty_cog):
+        """bounty_autocomplete returns [] on bounty cache cold miss (no HTTP)."""
+        guild_id = 987654321
+        user_id = 111111111
+        _init_bounty_caches(
+            guild_id=guild_id, user_id=user_id, player_tier="Bronze", bounties=None, cog=mock_bounty_cog
+        )
+        mock_bounty_cog._bounty_cache.invalidate(guild_id)
+
+        mock_bounty_cog.http_client.post = AsyncMock(side_effect=AssertionError("HTTP must not be called"))
+        mock_bounty_cog.http_client.get = AsyncMock(side_effect=AssertionError("HTTP must not be called"))
+        interaction = _create_mock_interaction(user_id=user_id, guild_id=guild_id)
+
+        result = asyncio.run(mock_bounty_cog.bounty_autocomplete(interaction, ""))
+        assert result == []
+
+    def test_bounty_autocomplete_filters_by_player_tier(self, mock_bounty_cog):
+        """Phase 6: player tier from player_cache used to filter bounties by division, zero HTTP."""
+        guild_id = 987654321
+        user_id = 111111111
+        bounties = [
+            _make_bounty_public(1, "SilverFox", "silver", reward=2000),
+            _make_bounty_public(2, "GoldEagle", "gold", reward=5000),
+        ]
+        _init_bounty_caches(
+            guild_id=guild_id, user_id=user_id, player_tier="Silver", bounties=bounties, cog=mock_bounty_cog
+        )
+
+        mock_bounty_cog.http_client.post = AsyncMock(side_effect=AssertionError("HTTP must not be called"))
+        mock_bounty_cog.http_client.get = AsyncMock(side_effect=AssertionError("HTTP must not be called"))
+        interaction = _create_mock_interaction(user_id=user_id, guild_id=guild_id)
 
         result = asyncio.run(mock_bounty_cog.bounty_autocomplete(interaction, ""))
 
-        assert result == []
+        # Only Silver bounties should appear (player is Silver tier)
+        assert len(result) == 1
+        assert "SilverFox" in result[0].name
 
-    def test_bounty_autocomplete_passes_division_param_to_get(self, mock_bounty_cog, make_mock_response):
-        """bounty_autocomplete should pass division param based on player's tier."""
-        bounties = [_make_bounty_public(1, "SilverFox", "silver", reward=2000)]
-        player_resp = make_mock_response({"id": 1, "tier": "Silver"})
-        bounty_resp = make_mock_response(bounties)
-        mock_bounty_cog.http_client.post = AsyncMock(return_value=player_resp)
-        mock_bounty_cog.http_client.get = AsyncMock(return_value=bounty_resp)
-        interaction = _create_mock_interaction()
+    def test_bounty_autocomplete_falls_back_to_all_bounties_on_player_cache_miss(self, mock_bounty_cog):
+        """Phase 6: bounty_autocomplete shows ALL bounties when player cache miss (graceful degradation)."""
+        import utils.autocomplete_state as ac_state
+        from cogs._shared.autocomplete_cache import AutocompleteCache
 
-        asyncio.run(mock_bounty_cog.bounty_autocomplete(interaction, ""))
-
-        get_call_kwargs = mock_bounty_cog.http_client.get.call_args[1]
-        assert get_call_kwargs["params"].get("division") == "silver"
-
-    def test_bounty_autocomplete_falls_back_to_all_bounties_on_player_post_failure(
-        self, mock_bounty_cog, make_mock_response
-    ):
-        """bounty_autocomplete should fall back to all bounties when POST /players/ fails."""
+        guild_id = 987654321
+        user_id = 111111111
         bounties = [
             _make_bounty_public(1, "BronzeViper", "bronze", reward=1000),
             _make_bounty_public(2, "GoldHawk", "gold", reward=5000),
         ]
-        bounty_resp = make_mock_response(bounties)
-        mock_bounty_cog.http_client.post = AsyncMock(side_effect=RuntimeError("player service down"))
-        mock_bounty_cog.http_client.get = AsyncMock(return_value=bounty_resp)
-        interaction = _create_mock_interaction()
+        mock_bounty_cog._bounty_cache.set(guild_id, bounties)
+
+        # Ensure player cache has no entry for this user
+        if ac_state.player_cache is None:
+            ac_state.player_cache = AutocompleteCache(name="player-bounty-test")
+        ac_state.player_cache.invalidate((guild_id, user_id))
+
+        mock_bounty_cog.http_client.post = AsyncMock(side_effect=AssertionError("HTTP must not be called"))
+        mock_bounty_cog.http_client.get = AsyncMock(side_effect=AssertionError("HTTP must not be called"))
+        interaction = _create_mock_interaction(user_id=user_id, guild_id=guild_id)
 
         result = asyncio.run(mock_bounty_cog.bounty_autocomplete(interaction, ""))
 
-        # Should still return choices (graceful degradation)
+        # Graceful degradation: ALL bounties shown when player tier unknown
         assert len(result) == 2
-        # The GET should NOT have a division param (fallback to all)
-        get_call_kwargs = mock_bounty_cog.http_client.get.call_args[1]
-        assert "division" not in get_call_kwargs["params"]
 
-    def test_bounty_autocomplete_empty_tier_does_not_send_division_param(
-        self, mock_bounty_cog, make_mock_response
-    ):
-        """bounty_autocomplete must NOT send division='' when POST returns tier=''.
+    def test_bounty_autocomplete_empty_tier_shows_all_bounties(self, mock_bounty_cog):
+        """Phase 6: empty tier in player cache → show ALL bounties (no division filter applied)."""
+        guild_id = 987654321
+        user_id = 111111111
+        bounties = [_make_bounty_public(1, "BronzeViper", "bronze", reward=1000)]
+        _init_bounty_caches(
+            guild_id=guild_id, user_id=user_id, player_tier="", bounties=bounties, cog=mock_bounty_cog
+        )
 
-        An empty-string division passed to the bounties endpoint would produce
-        unexpected API results (filtering on '' rather than all-tier fetch).
-        The 'if tier:' guard must suppress the param entirely.
-        """
-        bounties = [
-            _make_bounty_public(1, "BronzeViper", "bronze", reward=1000),
-        ]
-        # POST succeeds but player has no tier yet (empty string)
-        player_resp = make_mock_response({"id": 1, "tier": ""})
-        bounty_resp = make_mock_response(bounties)
-        mock_bounty_cog.http_client.post = AsyncMock(return_value=player_resp)
-        mock_bounty_cog.http_client.get = AsyncMock(return_value=bounty_resp)
-        interaction = _create_mock_interaction()
+        mock_bounty_cog.http_client.post = AsyncMock(side_effect=AssertionError("HTTP must not be called"))
+        mock_bounty_cog.http_client.get = AsyncMock(side_effect=AssertionError("HTTP must not be called"))
+        interaction = _create_mock_interaction(user_id=user_id, guild_id=guild_id)
 
         result = asyncio.run(mock_bounty_cog.bounty_autocomplete(interaction, ""))
 
-        # Should return choices (GET is still called)
+        # Empty tier → no division filter → all bounties shown
         assert len(result) == 1
-        # division must NOT appear in GET params — empty string must be suppressed
-        get_call_kwargs = mock_bounty_cog.http_client.get.call_args[1]
-        assert "division" not in get_call_kwargs["params"], (
-            "division='' must NOT be sent when tier is an empty string; "
-            "it would filter the API on an invalid value instead of returning all tiers."
+
+    def test_bounty_autocomplete_none_tier_shows_all_bounties(self, mock_bounty_cog):
+        """Phase 6: None tier in player cache → show ALL bounties (no division filter applied)."""
+        guild_id = 987654321
+        user_id = 111111111
+        bounties = [_make_bounty_public(1, "SilverFox", "silver", reward=2000)]
+        _init_bounty_caches(
+            guild_id=guild_id, user_id=user_id, player_tier=None, bounties=bounties, cog=mock_bounty_cog
         )
 
-    def test_bounty_autocomplete_none_tier_does_not_send_division_param(
-        self, mock_bounty_cog, make_mock_response
-    ):
-        """bounty_autocomplete must NOT send division=None when POST returns tier=None.
-
-        A None tier (unassigned player) must fall back to the all-tier GET,
-        not pass division=None which may be serialised as 'None' or cause errors.
-        The 'if tier:' guard treats None as falsy and suppresses the param.
-        """
-        bounties = [
-            _make_bounty_public(1, "SilverFox", "silver", reward=2000),
-        ]
-        # POST succeeds but player's tier field is explicitly null
-        player_resp = make_mock_response({"id": 1, "tier": None})
-        bounty_resp = make_mock_response(bounties)
-        mock_bounty_cog.http_client.post = AsyncMock(return_value=player_resp)
-        mock_bounty_cog.http_client.get = AsyncMock(return_value=bounty_resp)
-        interaction = _create_mock_interaction()
+        mock_bounty_cog.http_client.post = AsyncMock(side_effect=AssertionError("HTTP must not be called"))
+        mock_bounty_cog.http_client.get = AsyncMock(side_effect=AssertionError("HTTP must not be called"))
+        interaction = _create_mock_interaction(user_id=user_id, guild_id=guild_id)
 
         result = asyncio.run(mock_bounty_cog.bounty_autocomplete(interaction, ""))
 
-        # Should return choices (GET is still called)
+        # None tier → no division filter → all bounties shown
         assert len(result) == 1
-        # division must NOT appear in GET params — None must be suppressed
-        get_call_kwargs = mock_bounty_cog.http_client.get.call_args[1]
-        assert "division" not in get_call_kwargs["params"], (
-            "division=None must NOT be sent when tier is None; "
-            "it would serialize as 'None' in the query string instead of omitting the filter."
-        )
 
 
 # ---------------------------------------------------------------------------
@@ -3283,30 +3307,23 @@ class TestBountyCommandsRespx:
     # 4. bounty_autocomplete → POST /players/ then GET /bounties/?division=<tier>
     # ------------------------------------------------------------------
 
-    def test_bounty_autocomplete_calls_correct_urls(self, mock_bounty_cog, request):
-        """bounty_autocomplete must POST /players/ then GET /bounties/ with division param."""
-        import httpx
-        import respx
-
-        self._with_real_client(mock_bounty_cog, request)
+    def test_bounty_autocomplete_zero_http_from_cache(self, mock_bounty_cog, request):
+        """Phase 6: bounty_autocomplete serves from cache — zero HTTP calls."""
         interaction = _create_mock_interaction()
+        guild_id = interaction.guild_id
+        user_id = interaction.user.id
 
-        player_data = {"id": 1, "tier": "Bronze"}
         bounty_list = [_make_bounty_public(1, "AutoViper", "bronze")]
+        _init_bounty_caches(
+            guild_id=guild_id, user_id=user_id, player_tier="Bronze",
+            bounties=bounty_list, cog=mock_bounty_cog
+        )
 
-        env_without_bot_api = {k: v for k, v in os.environ.items() if k != "BOT_API_BASE_URL"}
-        with (
-            patch.dict(os.environ, env_without_bot_api, clear=True),
-            respx.mock(assert_all_called=True) as mock_router,
-        ):
-            mock_router.post(f"{self._BOT_API}/players/").mock(
-                return_value=httpx.Response(200, json=player_data)
-            )
-            mock_router.get(f"{self._BOT_API}/bounties/").mock(
-                return_value=httpx.Response(200, json=bounty_list)
-            )
+        # HTTP must NOT be called — all data from cache
+        mock_bounty_cog.http_client.post = AsyncMock(side_effect=AssertionError("HTTP must not be called"))
+        mock_bounty_cog.http_client.get = AsyncMock(side_effect=AssertionError("HTTP must not be called"))
 
-            result = asyncio.run(mock_bounty_cog.bounty_autocomplete(interaction, ""))
+        result = asyncio.run(mock_bounty_cog.bounty_autocomplete(interaction, ""))
 
         assert len(result) == 1
         assert "AutoViper" in result[0].name

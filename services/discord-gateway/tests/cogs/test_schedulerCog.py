@@ -619,11 +619,15 @@ class TestCogSetupAndUnload:
 
 
 class TestJobIdAutocomplete:
-    """Tests for the job_id autocomplete helper."""
+    """Tests for the job_id autocomplete helper (Phase 6: zero-HTTP, cache-backed)."""
 
     def test_autocomplete_returns_matching_choices(self, cog):
-        """Returns choices that contain the current text."""
-        cog.http_client.get = AsyncMock(return_value=_make_mock_response(_SAMPLE_JOBS))
+        """Returns choices from cache without HTTP when cache is warm."""
+        # Pre-populate the job cache directly
+        cog._job_cache.set("all", _SAMPLE_JOBS)
+
+        # HTTP must not be called — data comes from cache
+        cog.http_client.get = AsyncMock(side_effect=AssertionError("HTTP must not be called"))
         interaction = _make_interaction()
 
         choices = asyncio.run(cog.job_id_autocomplete(interaction, current="bounty"))
@@ -631,13 +635,26 @@ class TestJobIdAutocomplete:
         assert len(choices) > 0
         assert all("bounty" in c.name.lower() or "bounty" in c.value.lower() for c in choices)
 
+    def test_autocomplete_cold_miss_returns_empty(self, cog):
+        """Returns [] on cache cold miss (schedules background refresh, no HTTP per call)."""
+        # Ensure cache is empty
+        cog._job_cache.invalidate("all")
+
+        # HTTP is not called synchronously on cold miss
+        cog.http_client.get = AsyncMock(side_effect=AssertionError("HTTP must not be called"))
+        interaction = _make_interaction()
+
+        choices = asyncio.run(cog.job_id_autocomplete(interaction, current=""))
+        assert choices == []
+
     def test_autocomplete_returns_empty_on_api_error(self, cog):
-        """Returns empty list when API call fails."""
+        """Returns empty list when cache is cold (no HTTP per key stroke)."""
+        # Ensure cache is cold — returns [] immediately
+        cog._job_cache.invalidate("all")
         cog.http_client.get = AsyncMock(side_effect=Exception("network error"))
         interaction = _make_interaction()
 
         choices = asyncio.run(cog.job_id_autocomplete(interaction, current=""))
-
         assert choices == []
 
 

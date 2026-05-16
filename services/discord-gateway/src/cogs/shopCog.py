@@ -241,38 +241,51 @@ class ShopCog(commands.Cog):
     async def buy_item_autocomplete(
         self, interaction: discord.Interaction, current: str
     ) -> list[app_commands.Choice[int]]:
-        """Cached autocomplete for shop items the player can buy.
+        """Zero-HTTP autocomplete for shop items the player can buy.
 
-        Still makes one live call to resolve player tier (per-user state).
-        Shop inventory per (guild_id, tier) is served from _shop_cache with a
-        5-minute TTL — zero shop-API calls per keystroke under steady state.
+        Phase 6: Both player tier and shop inventory are served from caches with
+        peek() — zero HTTP calls on the hot path. On a cold miss, schedules a
+        background refresh and returns [] immediately.
+
+        Player tier comes from autocomplete_state.player_cache (keyed by
+        (guild_id, discord_user_id)). Shop inventory comes from _shop_cache
+        (keyed by (guild_id, tier)).
         """
         try:
-            # Player tier must always be resolved live (per-user, can change on prestige/tier-up).
-            player = await self._get_player_data(
-                interaction.user.id,
-                interaction.guild_id,
-                display_name=getattr(interaction.user, "display_name", None),
-            )
-            if not player:
+            guild_id = interaction.guild_id
+            user_id = interaction.user.id
+
+            # HOT PATH: resolve player tier from shared player cache — no HTTP
+            pc = autocomplete_state.player_cache
+            player = pc.peek((guild_id, user_id)) if pc else None
+            if player is None:
+                # Cold miss — schedule background refresh and return []
+                if pc is not None:
+                    pc.schedule_refresh((guild_id, user_id))
                 return []
+
             # E.2: Guard against unrecognized tier values before indexing the list.
-            # If tier resolution returns an unexpected value (e.g. a new tier added to the
-            # API not yet reflected in _valid_tiers), log a warning so operators can
-            # diagnose the issue rather than silently returning an empty dropdown.
             if player.get("tier") not in self._valid_tiers:
                 flogger.warning(
                     f"buy_item_autocomplete: unrecognized player tier={player.get('tier')!r} "
-                    f"guild={interaction.guild_id} user={interaction.user.id}; "
+                    f"guild={guild_id} user={user_id}; "
                     "returning empty autocomplete"
                 )
                 return []
+
             # Strict same-tier: autocomplete only surfaces items at the player's
             # current tier. No buy-down to lower-tier shops.
             tier = player["tier"]
+
+            # HOT PATH: peek shop cache — no HTTP
+            items = self._shop_cache.peek((guild_id, tier))
+            if items is None:
+                # Cold miss — schedule background refresh and return []
+                self._shop_cache.schedule_refresh((guild_id, tier))
+                return []
+
             norm_current = normalize_for_search(current)
             choices: list[app_commands.Choice[int]] = []
-            items = await self._shop_cache.get((interaction.guild_id, tier)) or []
             for item in items:
                 label = f"{item['item_name']} ({item['price']:,}cr)"
                 if norm_current in normalize_for_search(label):
@@ -422,34 +435,56 @@ class ShopCog(commands.Cog):
     async def sell_item_autocomplete(
         self, interaction: discord.Interaction, current: str
     ) -> list[app_commands.Choice[str]]:
-        """Live autocomplete for inventory items the player can sell.
+        """Zero-HTTP autocomplete for inventory items the player can sell.
 
-        Fetches player's full inventory and returns matching items.
-        Display format: "Item Name (Type)" — value is the item_name.
-        item_type is resolved server-side; no type filter exposed in autocomplete.
+        Phase 6: Player identity and inventory are served from caches with
+        peek() — zero HTTP calls on the hot path. On a cold miss, schedules a
+        background refresh and returns [] immediately.
+
+        Player record comes from autocomplete_state.player_cache to get the
+        bot-core player_id. Inventory comes from autocomplete_state.inventory_cache
+        (keyed by (guild_id, player_id)).
         """
         try:
-            player = await self._get_player_data(
-                interaction.user.id,
-                interaction.guild_id,
-                display_name=getattr(interaction.user, "display_name", None),
-            )
-            if not player:
+            guild_id = interaction.guild_id
+            user_id = interaction.user.id
+
+            # HOT PATH: resolve player from shared player cache — no HTTP
+            pc = autocomplete_state.player_cache
+            player = pc.peek((guild_id, user_id)) if pc else None
+            if player is None:
+                if pc is not None:
+                    pc.schedule_refresh((guild_id, user_id))
                 return []
-            resp = await self.http_client.get(f"{api_base}/inventory/player/{player['id']}", timeout=5)
-            if resp.status_code != 200:
+
+            player_id = player.get("id")
+            if not player_id:
                 return []
-            items = resp.json()
+
+            # HOT PATH: peek inventory cache — no HTTP
+            ic = autocomplete_state.inventory_cache
+            items = ic.peek((guild_id, player_id)) if ic else None
+            if items is None:
+                if ic is not None:
+                    ic.schedule_refresh((guild_id, player_id))
+                return []
 
             norm_current = normalize_for_search(current)
             choices: list[app_commands.Choice[str]] = []
             for inv_item in items:
-                name = inv_item.get("item_name", "")
-                raw_type = inv_item.get("item_type", "")
+                # inventory_cache stores NormalizedChoice objects with .label, .value, .norm, .raw
+                raw = inv_item.raw if hasattr(inv_item, "raw") else inv_item
+                name = raw.get("item_name", "") if isinstance(raw, dict) else getattr(inv_item, "label", "")
+                if hasattr(inv_item, "label"):
+                    label = inv_item.label
+                    norm_label = inv_item.norm
+                else:
+                    raw_type = raw.get("item_type", "")
+                    type_label = self._ITEM_TYPE_LABELS.get(raw_type, raw_type.replace("_", " ").title())
+                    label = f"{name} ({type_label})"
+                    norm_label = normalize_for_search(label)
 
-                type_label = self._ITEM_TYPE_LABELS.get(raw_type, raw_type.replace("_", " ").title())
-                label = f"{name} ({type_label})"
-                if norm_current in normalize_for_search(label):
+                if norm_current in norm_label:
                     choices.append(app_commands.Choice(name=label[:100], value=name))
             return choices[:25]
         except Exception:  # pylint: disable=broad-exception-caught

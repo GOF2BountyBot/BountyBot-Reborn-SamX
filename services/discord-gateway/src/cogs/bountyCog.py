@@ -3,6 +3,7 @@ import os
 
 import discord
 import httpx
+from cogs._shared.autocomplete_cache import AutocompleteCache
 from cogs._shared.http_error_handler import report_api_error
 from cogs._shared.loadout_embed import build_loadout_embed, build_loadout_error_embed
 from discord import app_commands
@@ -10,6 +11,8 @@ from discord.ext import commands
 from shared import bblogger
 from utils.autocomplete_utils import fuzzy_filter, normalize_for_search, resolve_system_name
 from utils.timestamp_utils import iso_to_discord_ts
+
+from utils import autocomplete_state
 
 # Set up logger
 flogger = bblogger.get_logger("discord-gateway-BountyCog")
@@ -43,6 +46,12 @@ class BountyCog(commands.Cog):
         self.bot = bot
         self.http_client = httpx.AsyncClient(timeout=httpx.Timeout(10.0))
         self._systems: list[str] = []
+        # Bounty cache: keyed by guild_id (int), stores list of bounty dicts, TTL=60s
+        self._bounty_cache: AutocompleteCache[int, list[dict]] = AutocompleteCache(
+            ttl_seconds=60.0,
+            refresh_fn=self._fetch_bounties,
+            name="bountyCog-bounties",
+        )
 
         # Preload system data at startup
         bot.loop.create_task(self._preload_data())
@@ -74,6 +83,27 @@ class BountyCog(commands.Cog):
                 await asyncio.sleep(delay)
         flogger.error("BountyCog: All preload attempts exhausted. System autocomplete will be empty.")
         self._systems = []
+
+    async def _fetch_bounties(self, key: int) -> list[dict]:
+        """Fetch all active bounties for a guild from bot-core. Called by _bounty_cache on miss/expiry.
+
+        Args:
+            key: guild_id (int).
+
+        Returns:
+            List of bounty dicts from GET /api/v1/bounties/?guild_id=<guild_id>.
+        """
+        try:
+            resp = await self.http_client.get(
+                f"{api_base}/bounties/",
+                params={"guild_id": key},
+                timeout=5,
+            )
+            if resp.status_code != 200:
+                return []
+            return resp.json()
+        except Exception:  # pylint: disable=broad-exception-caught
+            return []
 
     async def _get_player_id(self, user_id: int, guild_id: int, display_name: str | None = None) -> int | None:
         """Resolve a Discord user ID to a game player ID via the upsert endpoint.
@@ -111,41 +141,43 @@ class BountyCog(commands.Cog):
     async def bounty_autocomplete(
         self, interaction: discord.Interaction, current: str
     ) -> list[app_commands.Choice[str]]:
-        """Live autocomplete for active bounties — fetches current bounties filtered to the player's tier."""
-        try:
-            # Resolve the player's current tier so we can filter to their division only.
-            # Falls back to fetching all bounties if the player resolve fails.
-            params: dict = {"guild_id": interaction.guild_id}
-            try:
-                player_resp = await self.http_client.post(
-                    f"{api_base}/players/",
-                    json={
-                        "discord_id": interaction.user.id,
-                        "guild_id": interaction.guild_id,
-                        "discord_username": None,
-                        "display_name": getattr(interaction.user, "display_name", None),
-                    },
-                    timeout=5,
-                )
-                player_resp.raise_for_status()
-                player_data = player_resp.json()
-                tier = player_data.get("tier", "")
-                if tier:
-                    params["division"] = tier.lower()
-            except Exception:  # pylint: disable=broad-exception-caught
-                # Graceful degradation — autocomplete must never crash
-                pass
+        """Zero-HTTP autocomplete for active bounties.
 
-            resp = await self.http_client.get(
-                f"{api_base}/bounties/",
-                params=params,
-                timeout=5,
-            )
-            resp.raise_for_status()
-            bounties = resp.json()
+        Phase 6: Reads from _bounty_cache with peek() — no HTTP call per keystroke.
+        On cold miss, schedules a background refresh and returns [] immediately.
+
+        Player tier for filtering is read from autocomplete_state.player_cache (peek).
+        If player cache misses, falls back to showing ALL bounties (graceful degradation
+        matching existing behaviour).
+
+        When bounty_spawn_executor pushes to the gateway, _bounty_cache.set(guild_id, bounties)
+        is called so the next keystroke is served from cache.
+        """
+        try:
+            guild_id = interaction.guild_id
+            user_id = interaction.user.id
+
+            # HOT PATH: peek bounty cache — no HTTP
+            bounties = self._bounty_cache.peek(guild_id)
+            if bounties is None:
+                self._bounty_cache.schedule_refresh(guild_id)
+                return []
+
+            # Attempt tier filtering from player cache — graceful degradation on miss
+            player_tier: str | None = None
+            if autocomplete_state.player_cache is not None:
+                player_entry = autocomplete_state.player_cache.peek((guild_id, user_id))
+                if player_entry is not None:
+                    tier = player_entry.get("tier", "")
+                    if tier:
+                        player_tier = tier.lower()
+
             norm_current = normalize_for_search(current)
             choices = []
             for b in bounties:
+                # Filter by player's tier if we know it (graceful degradation if we don't)
+                if player_tier and b.get("division", "").lower() != player_tier:
+                    continue
                 label = (
                     f"{b['criminal_name']} ({b['division'].title()}, T{b.get('tech_level', '?')}) — {b['reward']:,}cr"
                 )

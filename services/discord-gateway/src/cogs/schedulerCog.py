@@ -4,6 +4,7 @@ from contextlib import suppress
 
 import discord
 import httpx
+from cogs._shared.autocomplete_cache import AutocompleteCache
 from cogs._shared.http_error_handler import report_api_error
 from cogs.adminCog import _check_is_super_admin
 from discord import app_commands
@@ -23,24 +24,53 @@ class SchedulerCog(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
         self.http_client = httpx.AsyncClient(timeout=httpx.Timeout(10.0))
+        # Job cache: keyed by sentinel "all" string, TTL=120s (jobs list changes rarely)
+        self._job_cache: AutocompleteCache[str, list[dict]] = AutocompleteCache(
+            ttl_seconds=120.0,
+            refresh_fn=self._fetch_jobs,
+            name="schedulerCog-jobs",
+        )
         flogger.debug("SchedulerCog initialized")
 
     async def cog_unload(self):
         """Called when the cog is unloaded. Always close the HTTP client."""
         await self.http_client.aclose()
 
+    async def _fetch_jobs(self, key: str) -> list[dict]:
+        """Fetch all scheduled jobs from bot-core. Called by _job_cache on miss/expiry.
+
+        Args:
+            key: Sentinel key — always "all" for the full job list.
+
+        Returns:
+            List of job dicts from GET /api/v1/jobs.
+        """
+        _ = key  # only one key: "all"
+        try:
+            resp = await self.http_client.get(f"{api_base}/jobs", timeout=5)
+            if resp.status_code != 200:
+                return []
+            return resp.json()
+        except Exception:  # pylint: disable=broad-exception-caught
+            return []
+
     # ------------------------------------------------------------------
-    # Autocomplete — live fetch from API on each keystroke
+    # Autocomplete — zero-HTTP from _job_cache (Phase 6)
     # ------------------------------------------------------------------
 
     async def job_id_autocomplete(
         self, _interaction: discord.Interaction, current: str
     ) -> list[app_commands.Choice[str]]:
-        """Live autocomplete for job IDs — fetches the current job list on each keystroke."""
+        """Zero-HTTP autocomplete for job IDs.
+
+        Phase 6: Reads from _job_cache with peek() — no HTTP call per keystroke.
+        On cold miss, schedules a background refresh and returns [] immediately.
+        """
         try:
-            resp = await self.http_client.get(f"{api_base}/jobs", timeout=5)
-            resp.raise_for_status()
-            jobs = resp.json()
+            jobs = self._job_cache.peek("all")
+            if jobs is None:
+                self._job_cache.schedule_refresh("all")
+                return []
             norm_current = normalize_for_search(current)
             choices = []
             for job in jobs:

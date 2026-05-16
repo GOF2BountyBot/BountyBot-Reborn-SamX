@@ -509,40 +509,13 @@ class InventoryCog(commands.Cog):
     async def item_autocomplete(self, interaction: discord.Interaction, current: str) -> list[app_commands.Choice[str]]:
         """Autocomplete for /item — shows all items in the invoking player's inventory with type labels.
 
+        Phase 6: Zero-HTTP. Reads from autocomplete_state caches via player_inventory_autocomplete helper.
         Display format: "Item Name (Type)" — value is the item_name.
         item_type is resolved server-side; no type filter exposed in autocomplete.
         """
-        try:
-            user_data = {
-                "discord_id": interaction.user.id,
-                "guild_id": interaction.guild_id,
-                "discord_username": None,
-                "display_name": getattr(interaction.user, "display_name", None),
-            }
-            player_resp = await self.http_client.post(f"{api_base}/players/", json=user_data, timeout=3)
-            player_resp.raise_for_status()
-            player_id = player_resp.json().get("id")
-            if not player_id:
-                return []
+        from utils.autocomplete_helpers import player_inventory_autocomplete
 
-            inv_resp = await self.http_client.get(f"{api_base}/inventory/player/{player_id}", timeout=3)
-            inv_resp.raise_for_status()
-            items = inv_resp.json()
-
-            norm_current = normalize_for_search(current)
-            choices = []
-            seen: set[str] = set()
-            for item in items:
-                item_name = item.get("item_name", "")
-                item_type = item.get("item_type", "")
-                if item_name and item_name not in seen and norm_current in normalize_for_search(item_name):
-                    seen.add(item_name)
-                    type_label = item_type.replace("_", " ").title()
-                    label = f"{item_name} ({type_label})"
-                    choices.append(app_commands.Choice(name=label[:100], value=item_name))
-            return choices[:25]
-        except Exception:  # pylint: disable=broad-exception-caught
-            return []
+        return await player_inventory_autocomplete(self.http_client, api_base, interaction, current)
 
     @app_commands.command(name="item", description="Get detailed information about a specific item")
     @app_commands.describe(
@@ -616,115 +589,63 @@ class InventoryCog(commands.Cog):
     async def equip_autocomplete(
         self, interaction: discord.Interaction, current: str
     ) -> list[app_commands.Choice[str]]:
-        """Autocomplete for /equip — shows equippable items from the player's cargo/inventory."""
-        try:
-            # Resolve player ID
-            user_data = {
-                "discord_id": interaction.user.id,
-                "guild_id": interaction.guild_id,
-                "discord_username": None,
-                "display_name": getattr(interaction.user, "display_name", None),
-            }
-            player_resp = await self.http_client.post(f"{api_base}/players/", json=user_data, timeout=3)
-            player_resp.raise_for_status()
-            player_id = player_resp.json().get("id")
-            if not player_id:
-                return []
+        """Autocomplete for /equip — shows equippable items from the player's cargo/inventory.
 
-            # Fetch player inventory (cargo items — weapons, modules, turrets)
-            inv_resp = await self.http_client.get(f"{api_base}/inventory/player/{player_id}", timeout=3)
-            inv_resp.raise_for_status()
-            items = inv_resp.json()
+        Phase 6: Zero-HTTP. Reads from autocomplete_state caches via player_equippable_autocomplete helper.
+        Filters to _CURRENTLY_EQUIPPABLE_INVENTORY_TYPES; excludes already-equipped items.
+        """
+        from utils.autocomplete_helpers import player_equippable_autocomplete
 
-            # Filter to equippable item types using concrete types that match
-            # _CURRENTLY_EQUIPPABLE_INVENTORY_TYPES (mirrors bot-core CURRENTLY_ENABLED_TYPES
-            # minus "ship").  See utils/autocomplete_helpers.py for the constant.
-            # Legacy-alias compat: rows written before A.36 may store "weapon" or "turret"
-            # instead of "primary_weapon" / "turret_weapon".  Accept both forms here;
-            # the server resolves by item_name regardless of item_type on write paths.
-            from utils.autocomplete_helpers import _CURRENTLY_EQUIPPABLE_INVENTORY_TYPES
-
-            _LEGACY_ALIAS_MAP: dict[str, str] = {
-                "weapon": "primary_weapon",
-                "turret": "turret_weapon",
-            }
-            _EQUIPPABLE_WITH_LEGACY = _CURRENTLY_EQUIPPABLE_INVENTORY_TYPES | frozenset(_LEGACY_ALIAS_MAP)
-
-            # NOTE: player_inventories.quantity is CARGO-ONLY — it does NOT include copies that
-            # are already equipped on any ship.  Equipped items live solely in the player_ships
-            # JSON slot arrays and are a completely separate pool.  Therefore the correct
-            # visibility check is simply qty > 0 (has any unequipped cargo copies available).
-            # The server-side B.41 guard in LoadoutConsistencyService.equip_one() enforces
-            # the hard constraint; the autocomplete just needs to avoid hiding valid items.
-
-            norm_current = normalize_for_search(current)
-            choices = []
-            seen: set[str] = set()
-
-            for item in items:
-                item_type = item.get("item_type", "")
-                # Normalise legacy aliases to concrete type for display; filter still passes both.
-                display_type = _LEGACY_ALIAS_MAP.get(item_type, item_type)
-                item_name = item.get("item_name", "")
-                qty = item.get("quantity") or 0
-                if (
-                    item_type in _EQUIPPABLE_WITH_LEGACY
-                    and item_name
-                    and item_name not in seen
-                    and qty > 0
-                    and norm_current in normalize_for_search(item_name)
-                ):
-                    seen.add(item_name)
-                    qty_suffix = f" x{qty}" if qty > 1 else ""
-                    label = f"{item_name} ({display_type.replace('_', ' ').title()}){qty_suffix}"
-                    choices.append(app_commands.Choice(name=label[:100], value=item_name))
-            return choices[:25]
-        except Exception:  # pylint: disable=broad-exception-caught
-            return []
+        return await player_equippable_autocomplete(self.http_client, api_base, interaction, current)
 
     async def unequip_autocomplete(
         self, interaction: discord.Interaction, current: str
     ) -> list[app_commands.Choice[str]]:
         """Autocomplete for /unequip — shows items currently equipped on the player's active ship.
 
+        Phase 6: Zero-HTTP. Reads from autocomplete_state caches (player_cache + ships_cache).
+
         B.90: The sentinel value ``all`` (case-insensitive) is always surfaced as the **first**
         choice so users can bulk-unequip every item with a single selection.
         """
         try:
-            # Resolve player ID
-            user_data = {
-                "discord_id": interaction.user.id,
-                "guild_id": interaction.guild_id,
-                "discord_username": None,
-                "display_name": getattr(interaction.user, "display_name", None),
-            }
-            player_resp = await self.http_client.post(f"{api_base}/players/", json=user_data, timeout=3)
-            player_resp.raise_for_status()
-            player_id = player_resp.json().get("id")
+            guild_id = interaction.guild_id
+            user_id = interaction.user.id
+
+            # HOT PATH: resolve player_id from shared player cache — no HTTP
+            if autocomplete_state.player_cache is None:
+                return []
+            player_entry = autocomplete_state.player_cache.peek((guild_id, user_id))
+            if player_entry is None:
+                autocomplete_state.player_cache.schedule_refresh((guild_id, user_id))
+                return []
+            player_id = player_entry.get("id")
             if not player_id:
                 return []
 
-            # Fetch the player's active ship
-            ships_resp = await self.http_client.get(f"{api_base}/ships/player/{player_id}", timeout=3)
-            ships_resp.raise_for_status()
-            ships = ships_resp.json()
-            active_ship = next((s for s in ships if s.get("is_active")), None)
-            if not active_ship:
+            # HOT PATH: peek ships_cache for active ship loadout — no HTTP
+            if autocomplete_state.ships_cache is None:
+                return []
+            ships = autocomplete_state.ships_cache.peek((guild_id, player_id))
+            if ships is None:
+                autocomplete_state.ships_cache.schedule_refresh((guild_id, player_id))
                 return []
 
-            ship_id = active_ship["id"]
+            # Find active ship and collect equipped items
+            active_ship_raw: dict | None = None
+            for nc in ships:
+                if nc.raw.get("is_active"):
+                    active_ship_raw = nc.raw
+                    break
 
-            # Fetch the ship's full loadout
-            loadout_resp = await self.http_client.get(f"{api_base}/ships/{ship_id}/loadout", timeout=3)
-            loadout_resp.raise_for_status()
-            loadout = loadout_resp.json()
+            if not active_ship_raw:
+                return []
 
-            # Collect all equipped items (weapons + modules + turrets + secondary_weapons)
             equipped: list[str] = []
-            equipped.extend(loadout.get("weapons") or [])
-            equipped.extend(loadout.get("modules") or [])
-            equipped.extend(loadout.get("turrets") or [])
-            equipped.extend(loadout.get("secondary_weapons") or [])
+            equipped.extend(active_ship_raw.get("weapons") or [])
+            equipped.extend(active_ship_raw.get("modules") or [])
+            equipped.extend(active_ship_raw.get("turrets") or [])
+            equipped.extend(active_ship_raw.get("secondary_weapons") or [])
 
             norm_current = normalize_for_search(current)
 
@@ -1141,30 +1062,41 @@ class InventoryCog(commands.Cog):
     async def give_item_autocomplete(
         self, interaction: discord.Interaction, current: str
     ) -> list[app_commands.Choice[str]]:
-        """Autocomplete for /give item — shows player's inventory items with type labels."""
+        """Autocomplete for /give item — shows player's inventory items with type labels.
+
+        Phase 6: Zero-HTTP. Reads from autocomplete_state caches (player_cache + inventory_cache).
+        Value encodes "item_name::item_type" for parsing by the /give command.
+        """
         try:
-            user_data = {
-                "discord_id": interaction.user.id,
-                "guild_id": interaction.guild_id,
-                "discord_username": None,
-                "display_name": getattr(interaction.user, "display_name", None),
-            }
-            player_resp = await self.http_client.post(f"{api_base}/players/", json=user_data, timeout=3)
-            player_resp.raise_for_status()
-            player_id = player_resp.json().get("id")
+            guild_id = interaction.guild_id
+            user_id = interaction.user.id
+
+            # HOT PATH: resolve player_id from shared player cache — no HTTP
+            if autocomplete_state.player_cache is None:
+                return []
+            player_entry = autocomplete_state.player_cache.peek((guild_id, user_id))
+            if player_entry is None:
+                autocomplete_state.player_cache.schedule_refresh((guild_id, user_id))
+                return []
+            player_id = player_entry.get("id")
             if not player_id:
                 return []
 
-            inv_resp = await self.http_client.get(f"{api_base}/inventory/player/{player_id}", timeout=3)
-            inv_resp.raise_for_status()
-            items = inv_resp.json()
+            # HOT PATH: peek inventory_cache — no HTTP
+            if autocomplete_state.inventory_cache is None:
+                return []
+            items = autocomplete_state.inventory_cache.peek((guild_id, player_id))
+            if items is None:
+                autocomplete_state.inventory_cache.schedule_refresh((guild_id, player_id))
+                return []
 
             norm_current = normalize_for_search(current)
             choices = []
             seen: set[str] = set()
-            for item in items:
-                item_name = item.get("item_name", "")
-                item_type = item.get("item_type", "")
+            for nc in items:
+                raw = nc.raw
+                item_name = raw.get("item_name", "")
+                item_type = raw.get("item_type", "")
                 key = f"{item_name}|{item_type}"
                 if item_name and key not in seen and norm_current in normalize_for_search(item_name):
                     seen.add(key)
@@ -1178,37 +1110,16 @@ class InventoryCog(commands.Cog):
     async def give_ship_autocomplete(
         self, interaction: discord.Interaction, current: str
     ) -> list[app_commands.Choice[str]]:
-        """Autocomplete for /give ship — shows player's non-active ships."""
-        try:
-            user_data = {
-                "discord_id": interaction.user.id,
-                "guild_id": interaction.guild_id,
-                "discord_username": None,
-                "display_name": getattr(interaction.user, "display_name", None),
-            }
-            player_resp = await self.http_client.post(f"{api_base}/players/", json=user_data, timeout=3)
-            player_resp.raise_for_status()
-            player_id = player_resp.json().get("id")
-            if not player_id:
-                return []
+        """Autocomplete for /give ship — shows player's non-active ships.
 
-            ships_resp = await self.http_client.get(f"{api_base}/ships/player/{player_id}", timeout=3)
-            ships_resp.raise_for_status()
-            ships = ships_resp.json()
+        Phase 6: Zero-HTTP. Delegates to player_ships_autocomplete helper which reads
+        from autocomplete_state caches (player_cache + ships_cache).
+        """
+        from utils.autocomplete_helpers import player_ships_autocomplete
 
-            norm_current = normalize_for_search(current)
-            choices = []
-            for ship in ships:
-                if ship.get("is_active"):
-                    continue  # cannot give away active ship
-                ship_name = ship.get("ship_name", "")
-                ship_id = ship.get("id")
-                if ship_name and norm_current in normalize_for_search(ship_name):
-                    label = ship.get("nickname") or ship_name
-                    choices.append(app_commands.Choice(name=label[:100], value=str(ship_id)))
-            return choices[:25]
-        except Exception:  # pylint: disable=broad-exception-caught
-            return []
+        return await player_ships_autocomplete(
+            self.http_client, api_base, interaction, current, exclude_active=True, show_active_indicator=False
+        )
 
     @app_commands.command(name="give", description="Give credits, an item, or a ship to another player")
     @app_commands.describe(

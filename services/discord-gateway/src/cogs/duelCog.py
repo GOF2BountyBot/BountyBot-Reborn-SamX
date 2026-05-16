@@ -10,6 +10,8 @@ from shared import bblogger
 from utils.autocomplete_utils import normalize_for_search
 from utils.timestamp_utils import iso_to_discord_ts
 
+from utils import autocomplete_state
+
 # Set up logger
 flogger = bblogger.get_logger("discord-gateway-DuelCog")
 
@@ -128,18 +130,33 @@ class DuelCog(commands.Cog):
     async def pending_duel_autocomplete(
         self, interaction: discord.Interaction, current: str
     ) -> list[app_commands.Choice[str]]:
-        """Live autocomplete for pending duels where the user is the target."""
+        """Zero-HTTP autocomplete for pending duels where the user is the target.
+
+        Phase 6: Reads player_id from autocomplete_state.player_cache (peek), then
+        reads pending duels from _pending_duel_cache (peek). On any cold miss,
+        schedules a background refresh and returns [].
+        """
         try:
-            player_id = await self._get_player_id(interaction.user.id, interaction.guild_id)
-            if player_id is None:
+            guild_id = interaction.guild_id
+            user_id = interaction.user.id
+
+            # HOT PATH: resolve player_id from shared player cache — no HTTP
+            if autocomplete_state.player_cache is None:
                 return []
-            resp = await self.http_client.get(
-                f"{api_base}/duels/pending",
-                params={"user_id": player_id, "guild_id": interaction.guild_id},
-                timeout=5,
-            )
-            resp.raise_for_status()
-            duels = resp.json()
+            player_entry = autocomplete_state.player_cache.peek((guild_id, user_id))
+            if player_entry is None:
+                autocomplete_state.player_cache.schedule_refresh((guild_id, user_id))
+                return []
+            player_id = player_entry.get("id")
+            if not player_id:
+                return []
+
+            # HOT PATH: peek pending duel cache — no HTTP
+            duels = self._pending_duel_cache.peek((guild_id, player_id))
+            if duels is None:
+                self._pending_duel_cache.schedule_refresh((guild_id, player_id))
+                return []
+
             norm_current = normalize_for_search(current)
             choices = []
             for d in duels:
@@ -161,18 +178,33 @@ class DuelCog(commands.Cog):
     async def outgoing_duel_autocomplete(
         self, interaction: discord.Interaction, current: str
     ) -> list[app_commands.Choice[str]]:
-        """Live autocomplete for pending duels where the user is the challenger (for /duel-cancel)."""
+        """Zero-HTTP autocomplete for outgoing duels where the user is the challenger (for /duel-cancel).
+
+        Phase 6: Reads player_id from autocomplete_state.player_cache (peek), then
+        reads outgoing duels from _outgoing_duel_cache (peek). On any cold miss,
+        schedules a background refresh and returns [].
+        """
         try:
-            player_id = await self._get_player_id(interaction.user.id, interaction.guild_id)
-            if player_id is None:
+            guild_id = interaction.guild_id
+            user_id = interaction.user.id
+
+            # HOT PATH: resolve player_id from shared player cache — no HTTP
+            if autocomplete_state.player_cache is None:
                 return []
-            resp = await self.http_client.get(
-                f"{api_base}/duels/outgoing",
-                params={"user_id": player_id, "guild_id": interaction.guild_id},
-                timeout=5,
-            )
-            resp.raise_for_status()
-            duels = resp.json()
+            player_entry = autocomplete_state.player_cache.peek((guild_id, user_id))
+            if player_entry is None:
+                autocomplete_state.player_cache.schedule_refresh((guild_id, user_id))
+                return []
+            player_id = player_entry.get("id")
+            if not player_id:
+                return []
+
+            # HOT PATH: peek outgoing duel cache — no HTTP
+            duels = self._outgoing_duel_cache.peek((guild_id, player_id))
+            if duels is None:
+                self._outgoing_duel_cache.schedule_refresh((guild_id, player_id))
+                return []
+
             norm_current = normalize_for_search(current)
             choices = []
             for d in duels:

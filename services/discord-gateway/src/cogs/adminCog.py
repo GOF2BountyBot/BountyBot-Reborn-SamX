@@ -1758,6 +1758,8 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
         player may not own yet.  The item_type filter honours any item_type already filled
         in the command, but item_type is not a parameter on /admin_give_item so it is
         always None there (all categories shown).
+
+        # TODO: Phase 7 — preload catalog into AutocompleteCache for TTL-based refresh.
         """
         try:
             # Determine the item type category from the already-filled item_type parameter.
@@ -1788,20 +1790,24 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
     ) -> list[app_commands.Choice[str]]:
         """Autocomplete for /admin_remove_item item_name — shows the target user's inventory.
 
+        Phase 6: Zero-HTTP on the hot path. Uses peek() on autocomplete_state caches.
+
         When ``interaction.namespace.user`` is already selected:
-        1. Resolve the target user → player_id via POST /api/v1/players/ (upsert pattern).
-        2. Fetch their inventory via GET /api/v1/inventory/player/{player_id}.
+        1. Peek player_cache for target user → player_id (no HTTP).
+        2. Peek inventory_cache for (guild_id, player_id) → items (no HTTP).
         3. Return choices filtered by ``current`` text, labelled "ItemName (Type) xN".
 
         Falls back to showing all equippable game-catalog items when:
         - No user is selected yet (namespace.user is None)
-        - Player resolution fails (guild not configured, network error, etc.)
-        - Inventory fetch fails
+        - Player resolution cache misses (guild not configured, not yet warmed, etc.)
+        - Inventory cache misses
 
         Degrades silently on any error (returns [] or catalog fallback) — autocomplete
         must never raise.
         """
         try:
+            from utils import autocomplete_state
+
             norm_current = normalize_for_search(current)
             target_user = getattr(interaction.namespace, "user", None)
 
@@ -1809,34 +1815,46 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
                 # No user selected yet — prompt the user to pick a user first
                 return [app_commands.Choice(name="— Select a user first —", value="__select_user_first__")]
 
-            from utils.autocomplete_helpers import resolve_player_id
+            guild_id = interaction.guild_id
+            target_user_id = target_user.id
 
-            player_id = await resolve_player_id(
-                self.http_client, api_base, target_user.id, interaction.guild_id, timeout=3.0
-            )
-            if player_id is not None:
-                try:
-                    inv_resp = await self.http_client.get(f"{api_base}/inventory/player/{player_id}", timeout=3)
-                    if inv_resp.status_code == 200:
-                        items = inv_resp.json()
-                        choices: list[app_commands.Choice[str]] = []
-                        seen: set[str] = set()
-                        for item in items:
-                            item_name = item.get("item_name") or ""
-                            item_type = item.get("item_type") or ""
-                            quantity = item.get("quantity") or 0
-                            if not item_name or item_name in seen:
-                                continue
-                            qty_suffix = f" x{quantity}" if quantity and quantity > 1 else ""
-                            label = f"{item_name} ({item_type.replace('_', ' ').title() or 'Item'}){qty_suffix}"
-                            if norm_current in normalize_for_search(label) or norm_current in normalize_for_search(
-                                item_name
-                            ):
-                                seen.add(item_name)
-                                choices.append(app_commands.Choice(name=label[:100], value=item_name))
-                        return choices[:25]
-                except Exception:  # pylint: disable=broad-exception-caught
-                    pass  # Fall through to catalog fallback
+            # HOT PATH: peek player_cache for target user — no HTTP
+            if autocomplete_state.player_cache is not None:
+                player_entry = autocomplete_state.player_cache.peek((guild_id, target_user_id))
+                if player_entry is not None:
+                    player_id = player_entry.get("id")
+                    if player_id is not None:
+                        # HOT PATH: peek inventory_cache for target player — no HTTP
+                        if autocomplete_state.inventory_cache is not None:
+                            items = autocomplete_state.inventory_cache.peek((guild_id, player_id))
+                            if items is not None:
+                                choices: list[app_commands.Choice[str]] = []
+                                seen: set[str] = set()
+                                for nc in items:
+                                    raw = nc.raw if hasattr(nc, "raw") else nc
+                                    item_name = raw.get("item_name") or ""
+                                    item_type = raw.get("item_type") or ""
+                                    quantity = raw.get("quantity") or 0
+                                    if not item_name or item_name in seen:
+                                        continue
+                                    qty_suffix = f" x{quantity}" if quantity and quantity > 1 else ""
+                                    type_label = item_type.replace("_", " ").title() or "Item"
+                                    label = f"{item_name} ({type_label}){qty_suffix}"
+                                    norm_label = normalize_for_search(label)
+                                    norm_name = normalize_for_search(item_name)
+                                    if norm_current in norm_label or norm_current in norm_name:
+                                        seen.add(item_name)
+                                        choices.append(app_commands.Choice(name=label[:100], value=item_name))
+                                return choices[:25]
+                            else:
+                                # Inventory cache cold miss — schedule refresh
+                                autocomplete_state.inventory_cache.schedule_refresh((guild_id, player_id))
+                    else:
+                        # Player has no id field — schedule refresh
+                        autocomplete_state.player_cache.schedule_refresh((guild_id, target_user_id))
+                else:
+                    # Player cache cold miss — schedule refresh
+                    autocomplete_state.player_cache.schedule_refresh((guild_id, target_user_id))
 
             flogger.warning(
                 f"remove_item_autocomplete: could not resolve inventory for "

@@ -5370,9 +5370,12 @@ class TestRemoveItemAutocomplete:
     def test_autocomplete_with_user_shows_inventory(self, mock_admin_cog):
         """remove_item_autocomplete shows player inventory when user selected.
 
-        Phase 4: resolve_player_id reads from cache. Pre-populate player_cache.
-        The admin function then makes its own HTTP GET for inventory.
+        Phase 6: Both player_cache and inventory_cache are pre-populated.
+        The admin function reads from cache — zero HTTP calls on hot path.
         """
+        from utils.autocomplete_state import NormalizedChoice
+        from utils.autocomplete_utils import normalize_for_search as nfs
+
         target_user = MagicMock()
         target_user.id = 42
 
@@ -5381,22 +5384,25 @@ class TestRemoveItemAutocomplete:
         interaction.namespace = MagicMock()
         interaction.namespace.user = target_user
 
-        # Phase 4: Pre-populate player_cache so resolve_player_id returns player_id=7
+        # Phase 6: Pre-populate player_cache and inventory_cache
         ac = _ac_init_player_cache_for_admin()
         if ac is not None:
+            from cogs._shared.autocomplete_cache import AutocompleteCache
             ac.player_cache.set((987654321, 42), {"id": 7})
-
-        # GET /inventory/player/7 — still made by adminCog directly
-        inv_resp = MagicMock()
-        inv_resp.status_code = 200
-        inv_resp.json = MagicMock(
-            return_value=[
+            if ac.inventory_cache is None:
+                ac.inventory_cache = AutocompleteCache(ttl_seconds=600, name="inventory")
+            raw_items = [
                 {"item_name": "Laser Cannon", "item_type": "primary_weapon", "quantity": 2},
                 {"item_name": "Engine Core", "item_type": "module", "quantity": 1},
             ]
-        )
+            inv_choices = []
+            for item in raw_items:
+                label = f"{item['item_name']} ({item['item_type'].replace('_', ' ').title()})"
+                inv_choices.append(NormalizedChoice(label=label, value=item["item_name"], norm=nfs(label), raw=item))
+            ac.inventory_cache.set((987654321, 7), inv_choices)
 
-        mock_admin_cog.http_client.get = AsyncMock(return_value=inv_resp)
+        # HTTP must not be called — all from cache
+        mock_admin_cog.http_client.get = AsyncMock(side_effect=AssertionError("HTTP must not be called"))
 
         choices = asyncio.run(mock_admin_cog.remove_item_autocomplete(interaction, ""))
 

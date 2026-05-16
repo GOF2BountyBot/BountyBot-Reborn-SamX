@@ -383,3 +383,403 @@ class TestObservability:
         cache.clear()
         assert cache.size == 0
         assert cache.keys() == []
+
+
+# ---------------------------------------------------------------------------
+# TestPeek — Phase-1 addition
+# ---------------------------------------------------------------------------
+
+
+class TestPeek:
+    def test_peek_returns_none_on_missing_key(self):
+        """peek() returns None when key is not in cache."""
+        cache = _cache_no_ttl()
+        assert cache.peek("nonexistent") is None
+
+    def test_peek_returns_value_on_warm_cache(self):
+        """peek() returns the cached value when key is present and not expired."""
+        cache = _cache_no_ttl()
+        cache.set("hello", ["world"])
+        assert cache.peek("hello") == ["world"]
+
+    def test_peek_returns_none_on_expired_entry(self):
+        """peek() returns None for an entry that has passed its TTL."""
+        cache, clock = _cache_with_ttl(ttl=300.0, mono=0.0)
+        cache.set("mykey", ["data"])
+        # Advance clock past TTL
+        clock[0] = 301.0
+        assert cache.peek("mykey") is None
+
+    def test_peek_never_calls_refresh_fn(self):
+        """peek() must not invoke refresh_fn even on a cache miss."""
+
+        async def bad_refresh(key):
+            raise AssertionError("peek() must not call refresh_fn")
+
+        cache = AutocompleteCache(ttl_seconds=300.0, refresh_fn=bad_refresh, name="test-peek-no-refresh")
+        # Does not raise — refresh_fn is never called
+        result = cache.peek("missing")
+        assert result is None
+
+    def test_peek_does_not_hold_lock(self):
+        """peek() must never acquire self._lock — it is synchronous and lock-free.
+
+        Strategy: verify that peek() is a regular (non-coroutine) function,
+        that it returns the correct value synchronously, and that it does NOT
+        await or touch self._lock in any observable way.  Because peek() is a
+        plain def (not async def), it cannot await and therefore cannot block
+        on lock acquisition.
+
+        Note: the cog conftest patches asyncio.create_task globally to prevent
+        background-task accumulation.  This test is therefore kept synchronous
+        to avoid dependency on the patched create_task.
+        """
+        import inspect
+
+        cache = _cache_no_ttl()
+        cache.set("key", ["val"])
+
+        # peek() must be a plain function, not a coroutine function
+        assert not inspect.iscoroutinefunction(cache.peek), "peek() must not be async"
+
+        # Direct synchronous call — no event loop, no lock acquisition needed
+        result = cache.peek("key")
+        assert result == ["val"]
+
+        # Calling peek() on a missing key must also return synchronously
+        assert cache.peek("absent") is None
+
+
+# ---------------------------------------------------------------------------
+# TestScheduleRefresh — Phase-1 addition
+# ---------------------------------------------------------------------------
+
+
+class TestScheduleRefresh:
+    def test_schedule_refresh_noop_when_no_refresh_fn(self):
+        """schedule_refresh() is a no-op and does not raise when refresh_fn is None."""
+        cache = AutocompleteCache(name="test-no-refresh-fn")
+        # Must not raise — no refresh_fn configured
+        cache.schedule_refresh("anykey")
+
+    async def test_schedule_refresh_populates_cache(self):
+        """schedule_refresh() schedules a get() task; after the task completes the cache is warm.
+
+        Note: the cog conftest patches asyncio.create_task globally.  We restore
+        real task creation inside this test using unittest.mock.patch to override
+        the global patch for the duration of the test only.
+        """
+        import asyncio as _asyncio
+        from unittest.mock import patch
+
+        refresh = AsyncMock(return_value=["loaded"])
+        cache = AutocompleteCache(ttl_seconds=300.0, refresh_fn=refresh, name="test-schedule")
+
+        # Restore real create_task for this test scope
+        with patch("asyncio.create_task", side_effect=_asyncio.get_event_loop().create_task):
+            cache.schedule_refresh("mykey")
+            # Yield control so the background task runs
+            await _asyncio.sleep(0)
+            await _asyncio.sleep(0)  # two yields to handle lock acquisition
+
+        assert cache.peek("mykey") == ["loaded"]
+        refresh.assert_awaited_once_with("mykey")
+
+    async def test_schedule_refresh_concurrent_calls_coalesce(self):
+        """Two concurrent schedule_refresh calls trigger refresh_fn at most once.
+
+        The get() lock ensures only one refresh fires even when both tasks race
+        to the lock simultaneously (AC-ROB-2).
+        """
+        import asyncio as _asyncio
+        from unittest.mock import patch
+
+        call_count = 0
+
+        async def counting_refresh(key):
+            nonlocal call_count
+            call_count += 1
+            await _asyncio.sleep(0)  # yield so second task can reach the lock
+            return ["result"]
+
+        cache = AutocompleteCache(ttl_seconds=300.0, refresh_fn=counting_refresh, name="test-coalesce")
+
+        # Restore real create_task for this test scope
+        with patch("asyncio.create_task", side_effect=_asyncio.get_event_loop().create_task):
+            # Schedule two refreshes for the same key
+            cache.schedule_refresh("shared-key")
+            cache.schedule_refresh("shared-key")
+
+            # Allow both background tasks to fully complete
+            await _asyncio.sleep(0)
+            await _asyncio.sleep(0)
+            await _asyncio.sleep(0)
+
+        assert call_count <= 1, f"Expected refresh_fn called at most once, got {call_count}"
+        assert cache.peek("shared-key") == ["result"]
+
+
+# ---------------------------------------------------------------------------
+# TestMaxEntries — Phase-1 addition
+# ---------------------------------------------------------------------------
+
+
+class TestMaxEntries:
+    def test_max_entries_evicts_oldest_on_overflow(self):
+        """Setting max_entries=2 and inserting 3 keys evicts the oldest one."""
+        clock = [0.0]
+        cache = AutocompleteCache(
+            ttl_seconds=None,
+            max_entries=2,
+            _monotonic=lambda: clock[0],
+            name="test-max-entries",
+        )
+
+        clock[0] = 1.0
+        cache.set("oldest", ["a"])
+
+        clock[0] = 2.0
+        cache.set("middle", ["b"])
+
+        clock[0] = 3.0
+        cache.set("newest", ["c"])  # should evict "oldest"
+
+        assert cache.size == 2
+        assert cache.peek("oldest") is None  # evicted
+        assert cache.peek("middle") == ["b"]
+        assert cache.peek("newest") == ["c"]
+
+    def test_max_entries_none_disables_eviction(self):
+        """With max_entries=None (default), any number of entries can be stored."""
+        cache = AutocompleteCache(ttl_seconds=None, name="test-unlimited")
+        for i in range(100):
+            cache.set(f"key-{i}", [i])
+        assert cache.size == 100
+
+    def test_max_entries_eviction_order_stable(self):
+        """Eviction always removes the entry with the smallest stored_at, not insertion order."""
+        clock = [0.0]
+        cache = AutocompleteCache(
+            ttl_seconds=None,
+            max_entries=3,
+            _monotonic=lambda: clock[0],
+            name="test-eviction-order",
+        )
+
+        # Insert keys with explicit different timestamps
+        clock[0] = 10.0
+        cache.set("t10", "ten")
+
+        clock[0] = 5.0
+        cache.set("t5", "five")  # earlier timestamp despite later insertion
+
+        clock[0] = 20.0
+        cache.set("t20", "twenty")
+
+        # All three fit — no eviction yet
+        assert cache.size == 3
+
+        # Adding a 4th entry should evict "t5" (smallest stored_at = 5.0)
+        clock[0] = 30.0
+        cache.set("t30", "thirty")
+
+        assert cache.size == 3
+        assert cache.peek("t5") is None  # smallest stored_at — evicted
+        assert cache.peek("t10") == "ten"
+        assert cache.peek("t20") == "twenty"
+        assert cache.peek("t30") == "thirty"
+
+
+# ---------------------------------------------------------------------------
+# TestPeekAdversarial — additional edge cases for peek()
+# ---------------------------------------------------------------------------
+
+
+class TestPeekAdversarial:
+    def test_peek_ttl_none_large_clock_advance_still_returns_value(self):
+        """peek() with TTL=None always returns the value regardless of elapsed time.
+
+        Mirrors TestNoTTLNeverExpires for get() but validates peek() specifically.
+        With no TTL, the TTL branch in peek() is never entered; the entry lives
+        forever.
+        """
+        clock = [0.0]
+        cache = AutocompleteCache(
+            ttl_seconds=None,
+            _monotonic=lambda: clock[0],
+            name="peek-no-ttl-test",
+        )
+        cache.set("catalog", ["ship-alpha", "ship-beta"])
+
+        # Advance simulated time by one million seconds
+        clock[0] = 1_000_000.0
+
+        assert cache.peek("catalog") == ["ship-alpha", "ship-beta"]
+
+    def test_peek_is_readonly_never_mutates_store(self):
+        """peek() must not mutate _store, keys(), or size in any observable way.
+
+        Calls peek() 20 times on both present and absent keys; verifies that
+        cache.size and cache.keys() are identical before and after.  peek() is
+        documented as read-only so any mutation would be a correctness defect.
+        """
+        cache = _cache_no_ttl()
+        cache.set("a", [1, 2, 3])
+        cache.set("b", [4, 5, 6])
+
+        size_before = cache.size
+        keys_before = sorted(cache.keys())
+
+        for _ in range(20):
+            cache.peek("a")
+            cache.peek("b")
+            cache.peek("nonexistent")
+
+        assert cache.size == size_before
+        assert sorted(cache.keys()) == keys_before
+
+
+# ---------------------------------------------------------------------------
+# TestScheduleRefreshAdversarial — additional edge cases for schedule_refresh()
+# ---------------------------------------------------------------------------
+
+
+class TestScheduleRefreshAdversarial:
+    def test_schedule_refresh_no_event_loop_raises_runtime_error(self):
+        """schedule_refresh() propagates RuntimeError when no event loop is running.
+
+        Design decision: schedule_refresh() does NOT swallow the RuntimeError
+        from asyncio.create_task when called outside an event-loop context.
+        Callers are responsible for ensuring a running loop exists (or calling
+        schedule_refresh() only from within async code).
+
+        This test simulates the no-event-loop condition by patching
+        asyncio.create_task at the module level (bypassing the cog conftest's
+        global patch) to close the coroutine and raise RuntimeError, then
+        asserting propagation.
+
+        Note: Python evaluates ``self.get(key)`` (creating the coroutine) *before*
+        passing it to asyncio.create_task.  The side_effect receives the coroutine
+        as its argument; we explicitly close it to prevent the
+        "coroutine never awaited" RuntimeWarning that would otherwise appear during
+        GC.
+        """
+        import pytest
+        from unittest.mock import patch
+
+        refresh = AsyncMock(return_value=["data"])
+        cache = AutocompleteCache(ttl_seconds=300.0, refresh_fn=refresh, name="test-no-loop")
+
+        def _raise_and_close(coro, **kwargs):
+            coro.close()  # prevent "never awaited" GC warning
+            raise RuntimeError("no running event loop")
+
+        with patch(
+            "cogs._shared.autocomplete_cache.asyncio.create_task",
+            side_effect=_raise_and_close,
+        ):
+            with pytest.raises(RuntimeError, match="no running event loop"):
+                cache.schedule_refresh("key")
+
+    async def test_schedule_refresh_on_warm_key_does_not_call_refresh_fn(self):
+        """schedule_refresh() on a warm (non-expired) key creates a task, but refresh_fn
+        is never called because get() fast-paths on a valid cache hit.
+
+        This validates the "lock in get() suppresses duplicate refreshes" design
+        from AC-ROB-2: the suppression happens inside get() — the same get() that
+        the background task (from schedule_refresh) would execute.
+
+        Design comment: schedule_refresh() itself does NOT check warmth; it always
+        calls asyncio.create_task(self.get(key)).  The suppression is entirely in
+        get()'s fast-path (entry is not None and not expired → return without lock).
+        We verify this by calling get() directly while the entry is warm, confirming
+        that get() returns the cached value without calling refresh_fn.
+        """
+        refresh = AsyncMock(return_value=["original"])
+        cache = AutocompleteCache(ttl_seconds=300.0, refresh_fn=refresh, name="test-warm-key")
+
+        # Prime the cache — refresh_fn called once on cold miss
+        result_cold = await cache.get("mykey")
+        assert result_cold == ["original"]
+        assert refresh.await_count == 1
+
+        # Call get() again while entry is warm.  This is the exact code path that
+        # the asyncio.Task scheduled by schedule_refresh() would execute.
+        # get() must fast-path (no lock acquisition, no refresh_fn call).
+        result_warm = await cache.get("mykey")
+        assert result_warm == ["original"]
+
+        # Critical assertion: refresh_fn NOT called on the warm hit
+        assert refresh.await_count == 1, (
+            f"refresh_fn called {refresh.await_count} times; expected 1 "
+            "(warm get() must suppress refresh via fast-path)"
+        )
+        # Cache state is unchanged
+        assert cache.peek("mykey") == ["original"]
+
+
+# ---------------------------------------------------------------------------
+# TestMaxEntriesAdversarial — additional edge cases for max_entries
+# ---------------------------------------------------------------------------
+
+
+class TestMaxEntriesAdversarial:
+    def test_max_entries_one_only_newest_survives(self):
+        """max_entries=1: after setting two keys the SECOND (newest) survives and
+        the FIRST (oldest) is evicted.
+
+        This is the minimal limit case and verifies that eviction correctly
+        targets the oldest stored_at, not an arbitrary victim.
+        """
+        clock = [0.0]
+        cache = AutocompleteCache(
+            ttl_seconds=None,
+            max_entries=1,
+            _monotonic=lambda: clock[0],
+            name="test-max-one",
+        )
+
+        clock[0] = 1.0
+        cache.set("first", "alpha")
+
+        clock[0] = 2.0
+        cache.set("second", "beta")  # should evict "first"
+
+        assert cache.size == 1
+        assert cache.peek("first") is None, "oldest entry must be evicted when max_entries=1"
+        assert cache.peek("second") == "beta", "newest entry must survive"
+
+    def test_max_entries_zero_always_evicts_immediately(self):
+        """max_entries=0 causes every set() call to immediately evict the entry
+        it just wrote, leaving the cache permanently empty.
+
+        DEF-0001-001 (Medium): This is an unintended edge case in the current
+        implementation.  The eviction condition ``len(self._store) > max_entries``
+        evaluates to ``1 > 0 == True`` after writing the first (and only) entry,
+        so the newly-written key is evicted before the caller can read it.  The
+        result is a cache that silently discards all writes.
+
+        Expected fix (developer): validate ``max_entries > 0`` in ``__init__`` and
+        raise ``ValueError`` for non-positive values, OR treat ``0`` as equivalent
+        to ``None`` (no limit).
+
+        This test documents the current (defective) behaviour so that fixing the
+        production code causes this test to fail and prompts an update.
+        """
+        cache = AutocompleteCache(
+            ttl_seconds=None,
+            max_entries=0,
+            name="test-max-zero",
+        )
+
+        cache.set("key", "value")
+
+        # Document defective behaviour: entry is evicted immediately after write
+        assert cache.size == 0, (
+            "DEF-0001-001: max_entries=0 silently evicts all entries — "
+            "if this assertion fails the production code was fixed; update this test"
+        )
+        assert cache.peek("key") is None, (
+            "DEF-0001-001: peek after set with max_entries=0 should return None "
+            "(entry was self-evicted)"
+        )

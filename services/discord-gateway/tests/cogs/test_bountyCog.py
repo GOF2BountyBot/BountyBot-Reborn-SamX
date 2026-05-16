@@ -122,12 +122,30 @@ def _make_bounty_public(
     }
 
 
-def _make_check_response(result="correct", bounty_id=1, message=""):
-    """Return a minimal BountyCheckResponse dict."""
+def _make_check_response(result="correct", bounty_id=1, message="", division="bronze"):
+    """Return a minimal BountyCheckResponse dict.
+
+    Includes division (default "bronze") so _build_check_embed can apply
+    tier-based color-coding (Sub-task A). Tests that check specific embed
+    colors should match TIER_COLORS[division] for tier-colored results.
+    """
     return {
         "result": result,
         "bounty_id": bounty_id,
         "message": message,
+        "division": division,
+        "outcomes": [
+            {
+                "result": result,
+                "bounty_id": bounty_id,
+                "message": message,
+                "division": division,
+                "criminal_name": "TestCriminal",
+                "reward": 500,
+                "recently_spotted": False,
+            }
+        ],
+        "result_count": 1,
     }
 
 
@@ -673,9 +691,9 @@ class TestCheckCommand:
         mock_bounty_cog._systems = ["Alpha", "Beta", "Delta", "Sol"]
 
     def test_check_correct_result_green_embed(self, mock_bounty_cog, make_mock_response):
-        """/check CORRECT result should display green embed."""
+        """/check CORRECT result should display tier-colored embed (Sub-task A)."""
         interaction = _create_mock_interaction()
-        resp = make_mock_response(_make_check_response("correct", bounty_id=1, message="Target neutralised!"))
+        resp = make_mock_response(_make_check_response("correct", bounty_id=1, message="Target neutralised!", division="bronze"))
         mock_bounty_cog.http_client.post = AsyncMock(return_value=resp)
 
         asyncio.run(mock_bounty_cog.check.callback(mock_bounty_cog, interaction, "Alpha"))
@@ -685,10 +703,10 @@ class TestCheckCommand:
         call_kwargs = interaction.followup.send.call_args[1]
         assert "embed" in call_kwargs
         embed = call_kwargs["embed"]
-        # Green color for CORRECT
+        # Tier color for CORRECT (bronze tier = 0xCD7F32)
         import discord
-
-        assert embed.color == discord.Color.green()
+        from cogs.bountyCog import TIER_COLORS
+        assert embed.color.value == TIER_COLORS["bronze"]
 
     def test_check_not_found_result_orange_embed(self, mock_bounty_cog, make_mock_response):
         """/check NOT_FOUND result should display orange embed."""
@@ -706,9 +724,9 @@ class TestCheckCommand:
         assert call_kwargs["embed"].color == discord.Color.orange()
 
     def test_check_incorrect_result_red_embed(self, mock_bounty_cog, make_mock_response):
-        """/check INCORRECT result should display red embed."""
+        """/check INCORRECT result should display tier-colored embed (Sub-task A)."""
         interaction = _create_mock_interaction()
-        resp = make_mock_response(_make_check_response("incorrect", message="Bounty is 2 jumps away."))
+        resp = make_mock_response(_make_check_response("incorrect", message="Bounty is 2 jumps away.", division="silver"))
         mock_bounty_cog.http_client.post = AsyncMock(return_value=resp)
 
         asyncio.run(mock_bounty_cog.check.callback(mock_bounty_cog, interaction, "Beta"))
@@ -716,14 +734,13 @@ class TestCheckCommand:
         interaction.followup.send.assert_awaited_once()
         call_kwargs = interaction.followup.send.call_args[1]
         assert "embed" in call_kwargs
-        import discord
-
-        assert call_kwargs["embed"].color == discord.Color.red()
+        from cogs.bountyCog import TIER_COLORS
+        assert call_kwargs["embed"].color.value == TIER_COLORS["silver"]
 
     def test_check_already_checked_result_yellow_embed(self, mock_bounty_cog, make_mock_response):
-        """/check ALREADY_CHECKED result should display yellow embed."""
+        """/check ALREADY_CHECKED result should display tier-colored embed (Sub-task A)."""
         interaction = _create_mock_interaction()
-        resp = make_mock_response(_make_check_response("already_checked"))
+        resp = make_mock_response(_make_check_response("already_checked", division="gold"))
         mock_bounty_cog.http_client.post = AsyncMock(return_value=resp)
 
         asyncio.run(mock_bounty_cog.check.callback(mock_bounty_cog, interaction, "Alpha"))
@@ -731,9 +748,8 @@ class TestCheckCommand:
         interaction.followup.send.assert_awaited_once()
         call_kwargs = interaction.followup.send.call_args[1]
         assert "embed" in call_kwargs
-        import discord
-
-        assert call_kwargs["embed"].color == discord.Color.yellow()
+        from cogs.bountyCog import TIER_COLORS
+        assert call_kwargs["embed"].color.value == TIER_COLORS["gold"]
 
     def test_check_cooldown_429_response(self, mock_bounty_cog, make_mock_response):
         """/check 429 response should show cooldown message."""
@@ -1599,8 +1615,8 @@ class TestBuildCheckEmbedNewResultTypes:
     # --- "captured" (Bronze) ---
 
     def test_captured_bonus_won_green_embed(self):
-        """'captured' with bonus_won=True should produce a green embed."""
-        import discord
+        """'captured' with bonus_won=True should produce a tier-colored embed (Sub-task A)."""
+        from cogs.bountyCog import TIER_COLORS
 
         embed = self._call(
             {
@@ -1610,9 +1626,10 @@ class TestBuildCheckEmbedNewResultTypes:
                 "total_reward": 1000,
                 "bonus_won": True,
                 "combat_result": None,
+                "division": "bronze",
             }
         )
-        assert embed.color == discord.Color.green()
+        assert embed.color.value == TIER_COLORS["bronze"]
 
     def test_captured_bonus_won_shows_2x_reward(self):
         """'captured' with bonus_won=True should show total_reward with '2×' label."""
@@ -1690,8 +1707,8 @@ class TestBuildCheckEmbedNewResultTypes:
     # --- "combat_win" (Silver+) ---
 
     def test_combat_win_green_embed(self):
-        """'combat_win' should produce a green embed."""
-        import discord
+        """'combat_win' should produce a tier-colored embed (Sub-task A)."""
+        from cogs.bountyCog import TIER_COLORS
 
         embed = self._call(
             {
@@ -1702,7 +1719,7 @@ class TestBuildCheckEmbedNewResultTypes:
                 "combat_result": None,
             }
         )
-        assert embed.color == discord.Color.green()
+        assert embed.color.value == TIER_COLORS["silver"]
 
     def test_combat_win_title(self):
         """'combat_win' embed title should say 'Combat Victory!'."""
@@ -1792,25 +1809,27 @@ class TestBuildCheckEmbedNewResultTypes:
     # --- legacy result types still work ---
 
     def test_existing_correct_result_still_works(self):
-        """Legacy 'correct' result should still return a green embed."""
-        import discord
+        """Legacy 'correct' result uses tier color (bronze when division provided)."""
+        from cogs.bountyCog import TIER_COLORS
 
-        embed = self._call({"result": "correct", "system_name": "Sol", "message": "Found!"})
-        assert embed.color == discord.Color.green()
+        embed = self._call({"result": "correct", "system_name": "Sol", "message": "Found!", "division": "bronze"})
+        assert embed.color.value == TIER_COLORS["bronze"]
 
     def test_existing_incorrect_result_still_works(self):
-        """Legacy 'incorrect' result should still return a red embed."""
-        import discord
+        """Legacy 'incorrect' result uses tier color (silver when division provided)."""
+        from cogs.bountyCog import TIER_COLORS
 
-        embed = self._call({"result": "incorrect", "system_name": "Sol", "message": "Not here."})
-        assert embed.color == discord.Color.red()
+        embed = self._call({"result": "incorrect", "system_name": "Sol", "message": "Not here.", "division": "silver"})
+        assert embed.color.value == TIER_COLORS["silver"]
 
     def test_existing_already_checked_result_still_works(self):
-        """Legacy 'already_checked' result should still return a yellow embed."""
-        import discord
+        """Legacy 'already_checked' result uses tier color (gold when division provided)."""
+        from cogs.bountyCog import TIER_COLORS
 
-        embed = self._call({"result": "already_checked", "system_name": "Sol", "message": "Already done."})
-        assert embed.color == discord.Color.yellow()
+        embed = self._call(
+            {"result": "already_checked", "system_name": "Sol", "message": "Already done.", "division": "gold"}
+        )
+        assert embed.color.value == TIER_COLORS["gold"]
 
     def test_existing_unknown_result_still_works(self):
         """Unknown result type should fall back to orange embed."""
@@ -1854,8 +1873,8 @@ class TestCheckCommandCombatResults:
         return base
 
     def test_check_captured_bonus_won_sends_green_embed(self, mock_bounty_cog, make_mock_response):
-        """/check with result='captured' and bonus_won=True sends green embed."""
-        import discord
+        """/check with result='captured' and bonus_won=True sends tier-colored embed (Sub-task A)."""
+        from cogs.bountyCog import TIER_COLORS
 
         interaction = _create_mock_interaction()
         resp = make_mock_response(
@@ -1872,7 +1891,8 @@ class TestCheckCommandCombatResults:
 
         interaction.followup.send.assert_awaited_once()
         embed = interaction.followup.send.call_args[1]["embed"]
-        assert embed.color == discord.Color.green()
+        # division="bronze" from _make_full_check_response defaults
+        assert embed.color.value == TIER_COLORS["bronze"]
 
 
 # ===========================================================================
@@ -1901,8 +1921,9 @@ class TestBuildCheckEmbedCorrectResultWithCombatWon:
     # --- combat_won=True: Successful capture ---
 
     def test_correct_combat_won_true_green_embed(self):
-        """result='correct' + combat_won=True → green embed (capture succeeded)."""
+        """result='correct' + combat_won=True → tier-colored embed (Sub-task A)."""
         import discord
+        from cogs.bountyCog import TIER_COLORS
 
         embed = self._call(
             {
@@ -1910,9 +1931,10 @@ class TestBuildCheckEmbedCorrectResultWithCombatWon:
                 "criminal_name": "Pirate Bob",
                 "reward": 1000,
                 "combat_won": True,
+                "division": "gold",
             }
         )
-        assert embed.color == discord.Color.green()
+        assert embed.color.value == TIER_COLORS["gold"]
 
     def test_correct_combat_won_true_title_says_bounty_captured(self):
         """result='correct' + combat_won=True → title contains 'Bounty Captured'."""
@@ -2088,17 +2110,18 @@ class TestBuildCheckEmbedCorrectResultWithCombatWon:
     # --- combat_won=None (missing): No combat → treat as successful capture ---
 
     def test_correct_no_combat_won_field_shows_green_embed(self):
-        """result='correct' without combat_won → defaults to capture (green embed)."""
-        import discord
+        """result='correct' without combat_won → defaults to capture (tier-colored embed, Sub-task A)."""
+        from cogs.bountyCog import TIER_COLORS
 
         embed = self._call(
             {
                 "result": "correct",
                 "criminal_name": "Pirate Bob",
                 "reward": 1000,
+                "division": "platinum",
             }
         )
-        assert embed.color == discord.Color.green()
+        assert embed.color.value == TIER_COLORS["platinum"]
 
     def test_correct_no_combat_won_shows_reward_field(self):
         """result='correct' without combat_won → shows Reward field."""
@@ -2199,8 +2222,8 @@ class TestCheckCommandCooldownAndRecentlySpotted:
         assert "60 more seconds" in sent_msg
 
     def test_recently_spotted_incorrect_shows_orange_embed(self, mock_bounty_cog, make_mock_response):
-        """When result=incorrect and recently_spotted=True, embed is orange with 'Recently Spotted' title."""
-        import discord
+        """When result=incorrect and recently_spotted=True, embed uses tier color (Sub-task A)."""
+        from cogs.bountyCog import TIER_COLORS
 
         interaction = _create_mock_interaction()
         resp = make_mock_response(
@@ -2208,6 +2231,11 @@ class TestCheckCommandCooldownAndRecentlySpotted:
                 "result": "incorrect",
                 "message": "Recently spotted here!",
                 "recently_spotted": True,
+                "division": "bronze",
+                "outcomes": [
+                    {"result": "incorrect", "recently_spotted": True, "division": "bronze", "criminal_name": "Bob"}
+                ],
+                "result_count": 1,
             }
         )
         mock_bounty_cog.http_client.post = AsyncMock(return_value=resp)
@@ -2216,12 +2244,13 @@ class TestCheckCommandCooldownAndRecentlySpotted:
 
         interaction.followup.send.assert_awaited_once()
         embed = interaction.followup.send.call_args[1]["embed"]
-        assert embed.color == discord.Color.orange()
+        # Tier color for recently-spotted bronze
+        assert embed.color.value == TIER_COLORS["bronze"]
         assert "Recently Spotted" in embed.title
 
     def test_recently_spotted_false_shows_red_embed(self, mock_bounty_cog, make_mock_response):
-        """When result=incorrect and recently_spotted=False, embed is red (standard)."""
-        import discord
+        """When result=incorrect and recently_spotted=False, embed uses tier color (Sub-task A)."""
+        from cogs.bountyCog import TIER_COLORS
 
         interaction = _create_mock_interaction()
         resp = make_mock_response(
@@ -2229,6 +2258,11 @@ class TestCheckCommandCooldownAndRecentlySpotted:
                 "result": "incorrect",
                 "message": "No sign of criminal",
                 "recently_spotted": False,
+                "division": "silver",
+                "outcomes": [
+                    {"result": "incorrect", "recently_spotted": False, "division": "silver", "criminal_name": "Bob"}
+                ],
+                "result_count": 1,
             }
         )
         mock_bounty_cog.http_client.post = AsyncMock(return_value=resp)
@@ -2237,10 +2271,10 @@ class TestCheckCommandCooldownAndRecentlySpotted:
 
         interaction.followup.send.assert_awaited_once()
         embed = interaction.followup.send.call_args[1]["embed"]
-        assert embed.color == discord.Color.red()
+        assert embed.color.value == TIER_COLORS["silver"]
 
     def test_recently_spotted_missing_defaults_to_false(self, mock_bounty_cog, make_mock_response):
-        """When recently_spotted key is absent, embed defaults to red (not recently spotted)."""
+        """When recently_spotted key is absent, embed uses tier color (falls back to blue if no division)."""
         import discord
 
         interaction = _create_mock_interaction()
@@ -2248,6 +2282,8 @@ class TestCheckCommandCooldownAndRecentlySpotted:
             {
                 "result": "incorrect",
                 "message": "No sign of criminal",
+                "outcomes": [{"result": "incorrect", "recently_spotted": False, "criminal_name": "Bob"}],
+                "result_count": 1,
             }
         )
         mock_bounty_cog.http_client.post = AsyncMock(return_value=resp)
@@ -2256,7 +2292,8 @@ class TestCheckCommandCooldownAndRecentlySpotted:
 
         interaction.followup.send.assert_awaited_once()
         embed = interaction.followup.send.call_args[1]["embed"]
-        assert embed.color == discord.Color.red()
+        # No division → blue fallback
+        assert embed.color.value == discord.Color.blue().value
 
 
 # ===========================================================================
@@ -2413,7 +2450,7 @@ class TestCheckMultiBountyResponse:
 
     def test_check_single_outcome_uses_legacy_single_embed(self, mock_bounty_cog, make_mock_response):
         """Single-outcome responses keep the legacy single-bounty embed (no consolidation)."""
-        import discord
+        from cogs.bountyCog import TIER_COLORS
 
         interaction = _create_mock_interaction()
         outcomes = [
@@ -2424,6 +2461,7 @@ class TestCheckMultiBountyResponse:
                 "combat_won": True,
                 "reward": 500,
                 "total_reward": 500,
+                "division": "gold",
             },
         ]
         resp = make_mock_response(_make_multi_check_response(outcomes))
@@ -2432,8 +2470,8 @@ class TestCheckMultiBountyResponse:
         asyncio.run(mock_bounty_cog.check.callback(mock_bounty_cog, interaction, "Sol"))
 
         embed = interaction.followup.send.call_args[1]["embed"]
-        # Legacy single-capture embed colour = green
-        assert embed.color == discord.Color.green()
+        # Tier color for gold capture (Sub-task A)
+        assert embed.color.value == TIER_COLORS["gold"]
         # Title is the legacy "Bounty Captured!" not the multi-bounty title
         assert "Captured" in (embed.title or "")
         assert "Multiple" not in (embed.title or "")

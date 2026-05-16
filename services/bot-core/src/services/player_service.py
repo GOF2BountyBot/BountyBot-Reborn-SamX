@@ -475,6 +475,11 @@ class PlayerService:
             old_tier = player.tier
             player.tier = prev_tier
             self._apply_tier_change_cooldown(player, config)
+
+            # Apply 10% credit penalty on demotion — clamped to 0 so credits never go negative.
+            penalty = int(player.credits * 0.10)
+            player.credits = max(0, player.credits - penalty)
+
             scrubbed = await self._scrub_orphaned_checks_after_tier_change(
                 db, player_id=player_id, guild_id=player.guild_id, new_tier=prev_tier
             )
@@ -482,7 +487,8 @@ class PlayerService:
             await db.refresh(player)
 
             flogger.info(
-                f"Player {player_id} demoted from {old_tier} to {prev_tier} (scrubbed {scrubbed} cross-tier bounties)"
+                f"Player {player_id} demoted from {old_tier} to {prev_tier} "
+                f"(scrubbed {scrubbed} cross-tier bounties, penalty={penalty})"
             )
 
             return {
@@ -490,6 +496,7 @@ class PlayerService:
                 "old_tier": old_tier,
                 "new_tier": prev_tier,
                 "xp": player.xp,
+                "penalty": penalty,
             }
 
         except Exception as e:

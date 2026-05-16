@@ -133,6 +133,7 @@ class DemoteResponse(BaseModel):
     old_tier: str
     new_tier: str
     xp: int
+    penalty: int = 0
 
 
 class TierChangeCooldownResponse(BaseModel):

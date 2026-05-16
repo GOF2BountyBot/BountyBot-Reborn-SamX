@@ -837,6 +837,7 @@ class PlayerCog(commands.Cog):
             demote_resp.raise_for_status()
             demote_data = demote_resp.json()
 
+            penalty = demote_data.get("penalty", 0)
             embed = discord.Embed(
                 title="⬇️ Tier Demoted",
                 description=(
@@ -847,6 +848,12 @@ class PlayerCog(commands.Cog):
             )
             embed.add_field(name="New Tier", value=f"**{demote_data['new_tier']}**", inline=True)
             embed.add_field(name="XP", value=f"{demote_data['xp']:,}", inline=True)
+            if penalty > 0:
+                embed.add_field(
+                    name="Credit Penalty",
+                    value=f"-{penalty:,} cr",
+                    inline=True,
+                )
 
             await interaction.followup.send(embed=embed)
             flogger.info(

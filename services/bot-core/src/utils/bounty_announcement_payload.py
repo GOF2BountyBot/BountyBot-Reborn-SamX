@@ -32,6 +32,14 @@ FACTION_COLORS: dict[str, int] = {
 _DEFAULT_COLOR: int = 10181046  # #9B59B6
 _CAPTURED_COLOR: int = 3066993  # #2ECC71 (green)
 
+# Canonical tier color palette (ENH-02 — also used by bountyCog.py)
+TIER_COLORS: dict[str, int] = {
+    "bronze": 0xCD7F32,  # 13467442
+    "silver": 0xC0C0C0,  # 12632256
+    "gold": 0xFFD700,    # 16766720
+    "platinum": 0xE5E4E2,  # 15066082
+}
+
 
 # ---------------------------------------------------------------------------
 # Public API
@@ -119,6 +127,67 @@ async def build_bounty_announcement_request(
         "text_content": text_content,
         "loadout_response": loadout_dict,
         "metadata": metadata,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Bounty cap payout embed (Sub-task B)
+# ---------------------------------------------------------------------------
+
+
+def build_bounty_cap_payout_embed(active_bounties: list, capped_tier: str) -> dict[str, Any]:
+    """Build a second embed dict summarizing active bounty payouts when a tier cap is hit.
+
+    Groups active bounties by tier and shows count + payout range per tier.
+    Only includes tiers that have active bounties.
+
+    Args:
+        active_bounties: List of Bounty ORM objects (or dicts with 'division' and 'reward' keys).
+        capped_tier: The tier that just hit its cap (used for the embed color).
+
+    Returns:
+        A Discord embed payload dict compatible with the gateway message builder.
+    """
+    # Group bounties by tier
+    tiers_data: dict[str, list[int]] = {}
+    for bounty in active_bounties:
+        if isinstance(bounty, dict):
+            division = (bounty.get("division") or "").lower()
+            reward = bounty.get("reward", 0)
+        else:
+            division = (getattr(bounty, "division", None) or "").lower()
+            reward = getattr(bounty, "reward", 0)
+        if not division:
+            continue
+        tiers_data.setdefault(division, []).append(reward)
+
+    # Build fields — show in canonical tier order
+    tier_order = ["bronze", "silver", "gold", "platinum"]
+    fields: list[dict] = []
+    for tier in tier_order:
+        rewards = tiers_data.get(tier)
+        if not rewards:
+            continue
+        count = len(rewards)
+        min_reward = min(rewards)
+        max_reward = max(rewards)
+        if min_reward == max_reward:
+            payout_range = f"{min_reward:,} cr each"
+        else:
+            payout_range = f"{min_reward:,}–{max_reward:,} cr each"
+        fields.append({
+            "name": tier.title(),
+            "value": f"{count} active · {payout_range}",
+            "inline": True,
+        })
+
+    color = TIER_COLORS.get(capped_tier.lower(), _DEFAULT_COLOR)
+
+    return {
+        "title": "💰 Active Bounty Payouts",
+        "color": color,
+        "fields": fields,
+        "footer": {"text": "Capture a bounty with /check"},
     }
 
 

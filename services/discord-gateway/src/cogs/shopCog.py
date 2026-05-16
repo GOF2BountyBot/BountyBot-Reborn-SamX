@@ -447,15 +447,19 @@ class ShopCog(commands.Cog):
     async def sell_item_autocomplete(
         self, interaction: discord.Interaction, current: str
     ) -> list[app_commands.Choice[str]]:
-        """Zero-HTTP autocomplete for inventory items the player can sell.
+        """Zero-HTTP autocomplete for inventory items and inactive ships the player can sell.
 
-        Phase 6: Player identity and inventory are served from caches with
+        Phase 6: Player identity, inventory, and ships are served from caches with
         peek() — zero HTTP calls on the hot path. On a cold miss, schedules a
         background refresh and returns [] immediately.
 
         Player record comes from autocomplete_state.player_cache to get the
         bot-core player_id. Inventory comes from autocomplete_state.inventory_cache
-        (keyed by (guild_id, player_id)).
+        (keyed by (guild_id, player_id)). Inactive ships come from
+        autocomplete_state.ships_cache (keyed by (guild_id, player_id)).
+
+        Ship choices are prefixed with "ship:" so the sell command can route
+        them to the /shops/sell-ship endpoint instead of /shops/sell.
         """
         try:
             guild_id = interaction.guild_id
@@ -498,6 +502,50 @@ class ShopCog(commands.Cog):
 
                 if norm_current in norm_label:
                     choices.append(app_commands.Choice(name=label[:100], value=name))
+
+            # HOT PATH: peek ships cache for inactive ships — no HTTP
+            sc = autocomplete_state.ships_cache
+            ships = sc.peek((guild_id, player_id)) if sc else None
+            if ships is not None:
+                for ship_choice in ships:
+                    raw = ship_choice.raw if hasattr(ship_choice, "raw") else {}
+                    if isinstance(raw, dict):
+                        is_active = raw.get("is_active", False)
+                    else:
+                        is_active = getattr(raw, "is_active", False)
+                    # Skip active ship — cannot sell active ship
+                    if is_active:
+                        continue
+
+                    # Build "Name (inactive ship)" label; value encodes the player_ship_id
+                    if hasattr(ship_choice, "label"):
+                        ship_display = ship_choice.label
+                    elif isinstance(raw, dict):
+                        nickname = raw.get("nickname") or raw.get("name") or raw.get("ship_name", "Unknown")
+                        ship_display = nickname
+                    else:
+                        ship_display = "Unknown Ship"
+
+                    # Extract the player_ship_id for routing the sell request
+                    if isinstance(raw, dict):
+                        ship_id = raw.get("player_ship_id") or raw.get("id")
+                    else:
+                        ship_id = getattr(raw, "player_ship_id", None) or getattr(raw, "id", None)
+
+                    if ship_id is None:
+                        # Fall back to the choice value
+                        ship_id = ship_choice.value if hasattr(ship_choice, "value") else None
+
+                    if ship_id is None:
+                        continue
+
+                    label = f"{ship_display} (inactive ship)"[:100]
+                    norm_label = normalize_for_search(label)
+                    if norm_current in norm_label:
+                        # Encode as "ship:<player_ship_id>" so sell handler can route correctly
+                        value = f"ship:{ship_id}"
+                        choices.append(app_commands.Choice(name=label, value=value))
+
             return choices[:25]
         except Exception:  # pylint: disable=broad-exception-caught
             return []
@@ -537,7 +585,66 @@ class ShopCog(commands.Cog):
                 await interaction.followup.send("❌ Player not found.", ephemeral=True)
                 return
 
-            # Make sell request — no item_type or target_tier; server resolves both
+            # Check if this is an inactive ship sale (value encoded as "ship:<player_ship_id>")
+            is_ship_sale = item.startswith("ship:")
+
+            if is_ship_sale:
+                # Route to sell-ship endpoint
+                try:
+                    ship_id = int(item[len("ship:"):])
+                except ValueError:
+                    await interaction.followup.send("❌ Invalid ship selection.", ephemeral=True)
+                    return
+
+                sell_data = {
+                    "player_id": player["id"],
+                    "ship_id": ship_id,
+                    "clear_equipment": True,  # return equipped items to inventory
+                    "target_tier": player.get("tier", "Bronze"),
+                }
+                resp = await self.http_client.post(f"{api_base}/shops/sell-ship", json=sell_data, timeout=10)
+                resp.raise_for_status()
+                transaction = resp.json()
+
+                # Invalidate player, inventory, and ships caches
+                try:
+                    self._shop_cache.invalidate((interaction.guild_id, player["tier"]))
+                    autocomplete_state.invalidate_player(interaction.guild_id, interaction.user.id)
+                    autocomplete_state.invalidate_inventory(interaction.guild_id, player["id"])
+                    autocomplete_state.invalidate_ships(interaction.guild_id, player["id"])
+                except Exception:  # pylint: disable=broad-exception-caught
+                    flogger.warning(
+                        f"/sell ship: cache invalidation failed for player_id={player['id']}; "
+                        "transaction still succeeded"
+                    )
+
+                ship_name = transaction.get("item_name", "Ship")
+                embed = discord.Embed(
+                    title="✅ Ship Sold!",
+                    description=f"You sold your **{ship_name}**",
+                    color=discord.Color.green(),
+                )
+                embed.add_field(name="Item Type", value="Ship", inline=True)
+                embed.add_field(name="Sale Value", value=f"{transaction.get('total_value', 0):,} credits", inline=True)
+                embed.add_field(
+                    name="New Credits", value=f"{transaction.get('remaining_credits', 0):,}", inline=True
+                )
+                unequipped = transaction.get("items_unequipped_to_inventory", 0)
+                if unequipped:
+                    embed.add_field(
+                        name="Items Returned",
+                        value=f"{unequipped} item(s) returned to inventory",
+                        inline=False,
+                    )
+
+                await interaction.followup.send(embed=embed)
+                flogger.info(
+                    f"Player {player['id']} sold ship id={ship_id} ({ship_name}) "
+                    f"for {transaction.get('total_value', 0)} credits"
+                )
+                return
+
+            # Regular item sell — no item_type or target_tier; server resolves both
             sell_data = {
                 "player_id": player["id"],
                 "item_name": item,

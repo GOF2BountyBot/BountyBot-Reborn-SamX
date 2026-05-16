@@ -476,6 +476,11 @@ async def execute_bounty_spawn_one_job(job_id: str, payload: dict) -> dict:
             flogger.error(f"BountySpawnOne[{job_id}] failed to announce bounty id={spawned_bounty.id}: {ann_err}")
 
         # ------------------------------------------------------------------
+        # 8b. Post payout summary embed to same channel (non-fatal, Sub-task B)
+        # ------------------------------------------------------------------
+        await _announce_payout_embed(job_id, guild_id, tier_lower, division_channel_id, db)
+
+        # ------------------------------------------------------------------
         # 9. Push bounty cache to gateway autocomplete (Phase 5b, non-fatal)
         # ------------------------------------------------------------------
         await _push_bounty_cache(job_id, guild_id, db)
@@ -1045,4 +1050,50 @@ async def _push_bounty_cache(parent_job_id: str, guild_id: int, db) -> None:
         flogger.warning(
             f"BountySpawnJob[{parent_job_id}] failed to push bounty cache to gateway for "
             f"guild={guild_id}: {e}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# Helper: announce bounty payout summary embed (Sub-task B)
+# ---------------------------------------------------------------------------
+
+
+async def _announce_payout_embed(parent_job_id: str, guild_id: int, tier: str, channel_id: int, db) -> None:
+    """Non-fatal: POST a second "Payouts" embed to the tier's bounty channel.
+
+    Fetches all active bounties for the guild, builds the payout summary embed,
+    and posts it as a plain message to the discord-gateway's messages endpoint.
+
+    Args:
+        parent_job_id: Job ID for log correlation.
+        guild_id: The Discord guild ID.
+        tier: The bounty tier that just spawned (used for color-coding).
+        channel_id: The Discord channel ID to post to.
+        db: An open AsyncSession.
+    """
+    try:
+        from persist.repositories.bounty_repository import BountyRepository
+
+        from utils.bounty_announcement_payload import build_bounty_cap_payout_embed
+
+        bounty_repo = BountyRepository()
+        active_bounties = await bounty_repo.get_active_by_guild(db, guild_id)
+
+        embed_dict = build_bounty_cap_payout_embed(active_bounties, capped_tier=tier)
+
+        async with httpx.AsyncClient() as client:
+            resp = await client.post(
+                f"{_GATEWAY_BASE_URL}/channels/{channel_id}/messages",
+                json={"embeds": [embed_dict]},
+                timeout=10,
+            )
+        resp.raise_for_status()
+        flogger.debug(
+            f"BountySpawnJob[{parent_job_id}] posted payout embed for guild={guild_id} tier={tier} "
+            f"channel={channel_id}"
+        )
+    except Exception as e:  # pylint: disable=broad-exception-caught
+        flogger.warning(
+            f"BountySpawnJob[{parent_job_id}] failed to post payout embed for "
+            f"guild={guild_id} tier={tier}: {e}"
         )

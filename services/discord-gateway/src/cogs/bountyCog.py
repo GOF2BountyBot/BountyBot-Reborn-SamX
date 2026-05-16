@@ -23,6 +23,14 @@ flogger.debug(f"bountyCog loading with API_BASE_URL: {api_base}")
 
 _VALID_DIVISIONS = ["bronze", "silver", "gold", "platinum"]
 
+# Canonical tier color palette (matches OPEN_ITEMS.md Appendix A ENH-02)
+TIER_COLORS: dict[str, int] = {
+    "bronze": 0xCD7F32,  # 13467442
+    "silver": 0xC0C0C0,  # 12632256
+    "gold": 0xFFD700,    # 16766720
+    "platinum": 0xE5E4E2,  # 15066082
+}
+
 # Message shown when the guild hasn't been set up via /admin_setup
 _GUILD_NOT_CONFIGURED_MSG = (
     "⚠️ This server hasn't been set up yet. An admin must run `/admin_setup` "
@@ -472,11 +480,24 @@ class BountyCog(commands.Cog):
 
         return "\n".join(lines)
 
+    def _get_tier_color(self, tier: str | None) -> discord.Color:
+        """Return a discord.Color for the given tier string (case-insensitive).
+
+        Falls back to discord.Color.blue() when tier is None or unknown so that
+        no embed is ever left without a color.
+        """
+        if tier:
+            color_int = TIER_COLORS.get(tier.lower())
+            if color_int is not None:
+                return discord.Color(color_int)
+        return discord.Color.blue()
+
     def _build_check_embed(self, data: dict) -> discord.Embed:
         """Build an embed for the /check command based on the full response data dict."""
         result = data.get("result", "")
         system = data.get("system_name", "")
         message = data.get("message", "")
+        tier = data.get("division")  # bounty tier for color-coding
 
         if result == "correct":
             combat_won = data.get("combat_won")
@@ -506,7 +527,7 @@ class BountyCog(commands.Cog):
                 embed = discord.Embed(
                     title="🎯 Bounty Captured!",
                     description=f"**{criminal_name}** has been captured!",
-                    color=discord.Color.green(),
+                    color=self._get_tier_color(tier),
                 )
                 reward = data.get("reward", 0)
                 total_reward = data.get("total_reward", reward)
@@ -536,7 +557,7 @@ class BountyCog(commands.Cog):
             embed = discord.Embed(
                 title="🎯 Bounty Captured!",
                 description=f"**{data.get('criminal_name', 'Unknown')}** has been captured!",
-                color=discord.Color.green(),
+                color=self._get_tier_color(tier),
             )
             reward = data.get("reward", 0)
             total_reward = data.get("total_reward", reward)
@@ -563,7 +584,7 @@ class BountyCog(commands.Cog):
             embed = discord.Embed(
                 title="⚔️ Combat Victory!",
                 description=f"You defeated **{data.get('criminal_name', 'Unknown')}** in combat!",
-                color=discord.Color.green(),
+                color=self._get_tier_color(tier),
             )
             reward = data.get("reward", 0)
             embed.add_field(name="💰 Reward", value=f"**{reward:,}** credits", inline=False)
@@ -597,13 +618,13 @@ class BountyCog(commands.Cog):
                 embed = discord.Embed(
                     title="👀 Recently Spotted!",
                     description=f"**{system}** — The target was recently here. They're close!",
-                    color=discord.Color.orange(),
+                    color=self._get_tier_color(tier),
                 )
             else:
                 embed = discord.Embed(
                     title="❌ System Checked",
                     description=f"**{system}** — System checked, bounty not here.",
-                    color=discord.Color.red(),
+                    color=self._get_tier_color(tier),
                 )
             if message:
                 embed.add_field(name="Intel", value=message, inline=False)
@@ -611,7 +632,7 @@ class BountyCog(commands.Cog):
             embed = discord.Embed(
                 title="🔁 Already Checked",
                 description=f"**{system}** — This system has already been checked.",
-                color=discord.Color.yellow(),
+                color=self._get_tier_color(tier),
             )
             if message:
                 embed.add_field(name="Note", value=message, inline=False)

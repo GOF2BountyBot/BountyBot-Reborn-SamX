@@ -7,6 +7,7 @@ Invoked by APScheduler via the JobExecutor dispatch.  The executor:
      (only succeeds if bounty is still active; returns None for captured/completed etc.).
   4. Always attempts to delete the Discord announcement message, regardless of
      whether the bounty was already captured.
+  5. Pushes the updated active bounty list to the gateway autocomplete cache (Phase 5b).
 
 Imports of service/repository classes are deferred to function scope so that
 the module can be safely imported in test environments without a live database
@@ -72,6 +73,10 @@ async def execute_bounty_expire_job(job_id: str, payload: dict) -> dict:
             # Always attempt to delete the announcement, even if bounty was already captured.
             if bounty_obj is not None:
                 await _delete_bounty_announcement(job_id, bounty_obj, db)
+
+            # Push updated bounty cache to gateway autocomplete (Phase 5b, non-fatal).
+            if bounty_obj is not None:
+                await _push_bounty_cache_expire(job_id, bounty_obj.guild_id, db)
 
         if bounty_obj is None:
             flogger.warning(f"BountyExpireJob[{job_id}] bounty {bounty_id} not found in database")
@@ -143,3 +148,63 @@ async def _delete_bounty_announcement(parent_job_id: str, bounty, db) -> None:
 
     except Exception as e:  # pylint: disable=broad-exception-caught
         flogger.warning(f"BountyExpireJob[{parent_job_id}] failed to delete announcement for bounty {bounty.id}: {e}")
+
+
+# ---------------------------------------------------------------------------
+# Helper: push active bounty list to gateway autocomplete cache (Phase 5b)
+# ---------------------------------------------------------------------------
+
+
+async def _push_bounty_cache_expire(parent_job_id: str, guild_id: int, db) -> None:
+    """Non-fatal push of the remaining active bounty list to the gateway autocomplete cache.
+
+    Called after a bounty expires so the gateway autocomplete immediately
+    reflects the removal without a GET round-trip to bot-core.
+
+    Args:
+        parent_job_id: Job ID for log correlation.
+        guild_id: The Discord guild ID.
+        db: An open AsyncSession (within the caller's db_manager.get_session() block).
+    """
+    try:
+        from persist.repositories.bounty_repository import BountyRepository
+
+        bounty_repo = BountyRepository()
+        bounties_raw = await bounty_repo.get_active_by_guild(db, guild_id)
+
+        # Serialise ORM objects to plain dicts (exclude SQLAlchemy internal keys)
+        bounty_dicts: list[dict] = []
+        for b in bounties_raw:
+            if isinstance(b, dict):
+                bounty_dicts.append(b)
+            else:
+                d = {k: v for k, v in b.__dict__.items() if not k.startswith("_")}
+                # Convert ALL datetime fields to ISO strings for JSON serialisation.
+                # Generic check: any value with .isoformat() is a datetime/date —
+                # this future-proofs against new datetime fields on the Bounty model
+                # (e.g. issue_time, respawn_time) without requiring a maintained list.
+                for key, val in list(d.items()):
+                    if hasattr(val, "isoformat"):
+                        d[key] = val.isoformat()
+                bounty_dicts.append(d)
+
+        gateway_url = f"{_GATEWAY_BASE_URL}/internal/autocomplete/bounty-cache/{guild_id}"
+        token = _os.getenv("INTERNAL_AUTH_TOKEN", "")
+        headers = {"X-Internal-Auth": token} if token else {}
+        async with httpx.AsyncClient() as client:
+            resp = await client.post(
+                gateway_url,
+                json={"bounties": bounty_dicts},
+                headers=headers,
+                timeout=5.0,
+            )
+            resp.raise_for_status()
+        flogger.debug(
+            f"BountyExpireJob[{parent_job_id}] pushed bounty cache for guild={guild_id} "
+            f"remaining={len(bounty_dicts)}"
+        )
+    except Exception as e:  # pylint: disable=broad-exception-caught
+        flogger.warning(
+            f"BountyExpireJob[{parent_job_id}] failed to push bounty cache to gateway for "
+            f"guild={guild_id}: {e}"
+        )

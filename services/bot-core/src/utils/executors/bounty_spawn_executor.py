@@ -35,6 +35,11 @@ from shared.bblogger import get_logger
 
 flogger = get_logger("bounty-spawn-executor")
 
+# Gateway base URL for cache push endpoints (Phase 5b)
+_GATEWAY_HOST_SPAWN = os.getenv("DISCORD_GATEWAY_HOST", "discord-gateway")
+_GATEWAY_PORT_SPAWN = os.getenv("GATEWAY_PORT", "7999")
+_GATEWAY_BASE_URL_SPAWN = f"http://{_GATEWAY_HOST_SPAWN}:{_GATEWAY_PORT_SPAWN}/api/v1"
+
 # ---------------------------------------------------------------------------
 # Supported bounty divisions (matches BountyService / GameConstants)
 # ---------------------------------------------------------------------------
@@ -470,6 +475,11 @@ async def execute_bounty_spawn_one_job(job_id: str, payload: dict) -> dict:
         except Exception as ann_err:  # pylint: disable=broad-exception-caught
             flogger.error(f"BountySpawnOne[{job_id}] failed to announce bounty id={spawned_bounty.id}: {ann_err}")
 
+        # ------------------------------------------------------------------
+        # 9. Push bounty cache to gateway autocomplete (Phase 5b, non-fatal)
+        # ------------------------------------------------------------------
+        await _push_bounty_cache(job_id, guild_id, db)
+
         return {"success": True, "bounty_id": spawned_bounty.id, "tier": tier_lower}
 
 
@@ -655,6 +665,11 @@ async def execute_bounty_spawn_job(job_id: str, payload: dict) -> dict:
                     # Announce to discord-gateway (per-division routing)
                     # ----------------------------------------------------------
                     await _announce_bounty(job_id, spawned_bounty, config, db)
+
+                    # ----------------------------------------------------------
+                    # Push bounty cache to gateway autocomplete (Phase 5b, non-fatal)
+                    # ----------------------------------------------------------
+                    await _push_bounty_cache(job_id, gid, db)
 
                     division_results[div] = {
                         "spawned": 1,
@@ -970,3 +985,64 @@ async def _announce_bounty(parent_job_id: str, bounty, config, db) -> None:
                 f"— post is live but untracked; failsafe cleanup will handle it"
             )
             flogger.trace(traceback.format_exc())
+
+
+# ---------------------------------------------------------------------------
+# Helper: push active bounty list to gateway autocomplete cache (Phase 5b)
+# ---------------------------------------------------------------------------
+
+
+async def _push_bounty_cache(parent_job_id: str, guild_id: int, db) -> None:
+    """Non-fatal push of the current active bounty list to the gateway autocomplete cache.
+
+    Fetches the full active bounty list for the guild and POSTs it to the
+    gateway's internal autocomplete endpoint so that the next bounty_autocomplete
+    keystroke returns fresh data without a GET round-trip to bot-core.
+
+    Args:
+        parent_job_id: Job ID for log correlation.
+        guild_id: The Discord guild ID to push bounties for.
+        db: An open AsyncSession (within the caller's db_manager.get_session() block).
+    """
+    try:
+        from persist.repositories.bounty_repository import BountyRepository
+
+        bounty_repo = BountyRepository()
+        bounties_raw = await bounty_repo.get_active_by_guild(db, guild_id)
+
+        # Serialise ORM objects to plain dicts (exclude SQLAlchemy internal keys)
+        bounty_dicts: list[dict] = []
+        for b in bounties_raw:
+            if isinstance(b, dict):
+                bounty_dicts.append(b)
+            else:
+                d = {k: v for k, v in b.__dict__.items() if not k.startswith("_")}
+                # Convert ALL datetime fields to ISO strings for JSON serialisation.
+                # Generic check: any value with .isoformat() is a datetime/date —
+                # this future-proofs against new datetime fields on the Bounty model
+                # (e.g. issue_time, respawn_time) without requiring a maintained list.
+                for key, val in list(d.items()):
+                    if hasattr(val, "isoformat"):
+                        d[key] = val.isoformat()
+                bounty_dicts.append(d)
+
+        gateway_url = f"{_GATEWAY_BASE_URL_SPAWN}/internal/autocomplete/bounty-cache/{guild_id}"
+        token = os.getenv("INTERNAL_AUTH_TOKEN", "")
+        headers = {"X-Internal-Auth": token} if token else {}
+        async with httpx.AsyncClient() as client:
+            resp = await client.post(
+                gateway_url,
+                json={"bounties": bounty_dicts},
+                headers=headers,
+                timeout=5.0,
+            )
+            resp.raise_for_status()
+        flogger.debug(
+            f"BountySpawnJob[{parent_job_id}] pushed bounty cache for guild={guild_id} "
+            f"count={len(bounty_dicts)}"
+        )
+    except Exception as e:  # pylint: disable=broad-exception-caught
+        flogger.warning(
+            f"BountySpawnJob[{parent_job_id}] failed to push bounty cache to gateway for "
+            f"guild={guild_id}: {e}"
+        )

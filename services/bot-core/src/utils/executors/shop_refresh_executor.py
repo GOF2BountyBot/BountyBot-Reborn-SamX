@@ -8,6 +8,10 @@ After a successful refresh, one announcement per refreshed tier is posted to
 the discord-gateway ``POST /api/v1/channels/{shop_channel_id}/messages``
 endpoint so players are notified that new stock is available for their tier.
 
+After the announcement, the refreshed shop stock is also pushed to the
+gateway's autocomplete cache endpoint so autocomplete keystrokes reflect
+the new inventory without a GET round-trip (Phase 5b).
+
 Announcement logic is implemented in ``utils.shop_announcement.announce_shop_refresh``
 (the shared module) and forwarded here via the private ``_announce_shop_refresh``
 wrapper to preserve the existing test surface.
@@ -17,8 +21,10 @@ the executor module can be imported in test environments without requiring a
 live database or all ORM dependencies to be present.
 """
 
+import os
 from datetime import UTC, datetime
 
+import httpx
 from shared.bblogger import get_logger
 
 from utils.shop_announcement import (
@@ -29,6 +35,11 @@ flogger = get_logger("shop-refresh-executor")
 
 # Tiers supported by the shop system.
 _SHOP_TIERS = ["Bronze", "Silver", "Gold", "Platinum"]
+
+# Gateway base URL for push endpoints (shared with shop_announcement module)
+_GATEWAY_HOST = os.getenv("DISCORD_GATEWAY_HOST", "discord-gateway")
+_GATEWAY_PORT = os.getenv("GATEWAY_PORT", "7999")
+_GATEWAY_BASE_URL = f"http://{_GATEWAY_HOST}:{_GATEWAY_PORT}/api/v1"
 
 
 async def execute_shop_refresh_job(job_id: str, payload: dict) -> dict:
@@ -134,6 +145,9 @@ async def execute_shop_refresh_job(job_id: str, payload: dict) -> dict:
                             tech_level=tier_results[t].get("tech_level"),
                         )
 
+                        # ── Push to gateway autocomplete cache (Phase 5b) ──
+                        await _push_shop_cache(job_id, gid, t, tier_results[t].get("items") or [])
+
                     bulk_results[gid] = tier_results
 
             finally:
@@ -186,3 +200,54 @@ async def _announce_shop_refresh(
         items=items,
         tech_level=tech_level,
     )
+
+
+# ---------------------------------------------------------------------------
+# Helper: push shop stock to gateway autocomplete cache (Phase 5b)
+# ---------------------------------------------------------------------------
+
+
+async def _push_shop_cache(parent_job_id: str, guild_id: int, tier: str, items: list) -> None:
+    """Non-fatal push of refreshed shop stock to the gateway autocomplete cache.
+
+    Follows the same pattern as _announce_shop_refresh — errors are logged
+    but never propagate so a failed push never aborts the refresh operation.
+
+    Args:
+        parent_job_id: Job ID for log correlation.
+        guild_id: The Discord guild ID.
+        tier: The shop tier (e.g. "Bronze").
+        items: The refreshed list of shop items (as dicts or ORM objects
+               serialised to dicts by refresh_shop).
+    """
+    gateway_url = f"{_GATEWAY_BASE_URL}/internal/autocomplete/shop-cache/{guild_id}/{tier}"
+    try:
+        token = os.getenv("INTERNAL_AUTH_TOKEN", "")
+        headers = {"X-Internal-Auth": token} if token else {}
+        # Serialise items: support both plain dicts and objects with __dict__
+        serialised: list[dict] = []
+        for item in items:
+            if isinstance(item, dict):
+                serialised.append(item)
+            elif hasattr(item, "__dict__"):
+                # ORM objects: exclude SQLAlchemy internal keys
+                serialised.append({k: v for k, v in item.__dict__.items() if not k.startswith("_")})
+            else:
+                serialised.append(vars(item))
+        async with httpx.AsyncClient() as client:
+            resp = await client.post(
+                gateway_url,
+                json={"items": serialised},
+                headers=headers,
+                timeout=5.0,
+            )
+            resp.raise_for_status()
+        flogger.debug(
+            f"ShopRefreshJob[{parent_job_id}] pushed shop cache for guild={guild_id} tier={tier} "
+            f"items={len(serialised)}"
+        )
+    except Exception as e:  # pylint: disable=broad-exception-caught
+        flogger.warning(
+            f"ShopRefreshJob[{parent_job_id}] failed to push shop cache to gateway for "
+            f"guild={guild_id} tier={tier}: {e}"
+        )

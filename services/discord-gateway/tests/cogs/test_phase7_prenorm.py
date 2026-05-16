@@ -48,6 +48,101 @@ if _SRC_DIR not in sys.path:
 
 _BOT_API = "http://bot-core:8000/api/v1"
 
+# ---------------------------------------------------------------------------
+# Import the autocomplete_state module at file level so the reference is
+# stable across all tests in this file (even if other test files evict it
+# from sys.modules — we hold a direct reference to the same object).
+# ---------------------------------------------------------------------------
+
+import utils.autocomplete_state as _ac_state_mod
+
+
+# ---------------------------------------------------------------------------
+# Isolation fixture — prevents cross-test contamination on module-level
+# autocomplete_state globals when tests run in parallel via pytest-xdist.
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture(autouse=True)
+def _isolate_autocomplete_state():
+    """Reset module-level autocomplete_state globals before and after each test.
+
+    The autocomplete_state module holds three module-level cache singletons
+    (player_cache, inventory_cache, ships_cache) plus internal flags.  When
+    pytest-xdist assigns multiple test files to the same worker process, a
+    test from another file (e.g. test_autocomplete_state.py) may mutate these
+    globals concurrently or immediately before/after a test in this file,
+    causing flaky failures in ``test_buy_autocomplete_uses_prenorm_path`` and
+    similar tests that depend on ``player_cache`` being in a known state.
+
+    Root cause of the intermittent flake:
+    Some cog test files (e.g. test_aboutCog.py, test_adminCog.py) call an
+    ``_evict_discord_modules()`` helper that removes ALL entries whose key
+    starts with ``utils.`` from ``sys.modules``, including
+    ``utils.autocomplete_state``.  When the ``shop_cog`` fixture subsequently
+    re-imports ``cogs.shopCog``, the line
+    ``from utils import autocomplete_state`` in shopCog.py resolves to a BRAND
+    NEW module object because ``utils.autocomplete_state`` was evicted.  This
+    new object has ``player_cache = None`` and is unrelated to ``_ac_state_mod``
+    (the reference captured at file-import time).  Consequently, the test sets
+    ``player_cache`` on the OLD module while ``ShopCog.buy_item_autocomplete``
+    reads ``player_cache`` from the NEW module, always finding ``None`` and
+    returning ``[]``.
+
+    Fix: Before each test, re-pin ``_ac_state_mod`` into
+    ``sys.modules["utils.autocomplete_state"]`` so that any fresh cog import
+    that runs during the test (triggered by the ``shop_cog``, ``bounty_cog``,
+    etc. fixtures) gets the same module object that this file's fixtures
+    operate on.  The original entry is restored after the test.
+
+    This fixture:
+    1. Saves all six module-level variables AND the current sys.modules entry.
+    2. Pins ``_ac_state_mod`` into sys.modules so cog re-imports use it.
+    3. Resets module globals to an uninitialised (None/False) baseline.
+    4. Restores everything after the test (state AND sys.modules).
+
+    Pattern mirrors ``reset_autocomplete_state`` in
+    ``tests/utils/test_autocomplete_state.py``.
+    """
+    # ---- Save sys.modules entry so we can restore it after the test ----
+    orig_sys_modules_entry = sys.modules.get("utils.autocomplete_state")
+
+    # ---- Pin our stable module object into sys.modules ----
+    # Any cog freshly re-imported during this test will now get _ac_state_mod.
+    sys.modules["utils.autocomplete_state"] = _ac_state_mod
+
+    # ---- Save module-level variables ----
+    orig_initialized = _ac_state_mod._initialized
+    orig_http_client = _ac_state_mod._http_client
+    orig_api_base = _ac_state_mod._api_base
+    orig_player_cache = _ac_state_mod.player_cache
+    orig_inventory_cache = _ac_state_mod.inventory_cache
+    orig_ships_cache = _ac_state_mod.ships_cache
+
+    # ---- Reset to clean baseline before the test ----
+    _ac_state_mod._initialized = False
+    _ac_state_mod._http_client = None
+    _ac_state_mod._api_base = None
+    _ac_state_mod.player_cache = None
+    _ac_state_mod.inventory_cache = None
+    _ac_state_mod.ships_cache = None
+
+    yield
+
+    # ---- Restore module-level variables after the test ----
+    _ac_state_mod._initialized = orig_initialized
+    _ac_state_mod._http_client = orig_http_client
+    _ac_state_mod._api_base = orig_api_base
+    _ac_state_mod.player_cache = orig_player_cache
+    _ac_state_mod.inventory_cache = orig_inventory_cache
+    _ac_state_mod.ships_cache = orig_ships_cache
+
+    # ---- Restore sys.modules entry ----
+    if orig_sys_modules_entry is None:
+        sys.modules.pop("utils.autocomplete_state", None)
+    else:
+        sys.modules["utils.autocomplete_state"] = orig_sys_modules_entry
+
 
 # ---------------------------------------------------------------------------
 # Helpers

@@ -457,6 +457,70 @@ See `src/api/routers/AGENTS.md` for the full router development guide.
 | `GATEWAY_PORT` / `PORT` | `8000` | FastAPI bind port |
 | `ACCESS_LOG` | `true` | Enable uvicorn access logging |
 | `DEVELOPERS` | `` | Comma-separated Discord user IDs with developer override |
+| `INTERNAL_AUTH_TOKEN` | `` | Shared secret for bot-core → gateway push endpoints; unset = dev mode (warns, allows) |
+| `AUTOCOMPLETE_WARM_ACTIVE_DAYS` | `7` | Players active within N days are warmed on startup; 0 = warm everyone |
+| `AUTOCOMPLETE_WARM_CONCURRENCY` | `4` | Max concurrent inventory/ships fetches during warm + refresh |
+| `AUTOCOMPLETE_WARM_GUILD_STAGGER_MS` | `200` | Spacing between per-guild warm jobs at startup (ms) |
+| `AUTOCOMPLETE_PLAYER_REFRESH_MINUTES` | `10` | Interval for player_cache bulk re-warm |
+| `AUTOCOMPLETE_LOADOUT_REFRESH_MINUTES` | `5` | Interval for inventory/ships round-robin re-warm |
+| `AUTOCOMPLETE_INVENTORY_MAX_ENTRIES` | *(unset)* | LRU cap on inventory_cache; unset = no cap |
+| `AUTOCOMPLETE_SHIPS_MAX_ENTRIES` | *(unset)* | LRU cap on ships_cache; unset = no cap |
+
+---
+
+## Autocomplete Cache Architecture
+
+The gateway runs a proactively-warmed in-process autocomplete cache that eliminates all HTTP calls on the Discord autocomplete hot path (≤100ms p99, target ~50ms).
+
+### Three-tier cache model
+
+| Cache | Module | Key | TTL | Refresh |
+|-------|--------|-----|-----|---------|
+| `player_cache` | `utils/autocomplete_state.py` | `(guild_id, user_id)` | 15 min | Every 10 min (APScheduler) |
+| `inventory_cache` | `utils/autocomplete_state.py` | `(guild_id, player_id)` | 10 min | Every 5 min round-robin |
+| `ships_cache` | `utils/autocomplete_state.py` | `(guild_id, player_id)` | 10 min | Every 5 min round-robin |
+| `_shop_cache` | `shopCog` (per-cog) | `(guild_id, tier)` | push-only | bot-core push on refresh |
+| `_bounty_cache` | `bountyCog` (per-cog) | `guild_id` | 60s | bot-core push on spawn/expire |
+| `_pending_duel_cache` | `duelCog` (per-cog) | `(guild_id, player_id)` | 30s | explicit invalidation |
+| `_outgoing_duel_cache` | `duelCog` (per-cog) | `(guild_id, player_id)` | 30s | explicit invalidation |
+| `_job_cache` | `schedulerCog` (per-cog) | `"all"` | 120s | Every 60s (APScheduler) |
+
+### Hot-path pattern (copy into new autocomplete handlers)
+
+```python
+items = self._some_cache.peek(key)
+if items is None:
+    self._some_cache.schedule_refresh(key)
+    return []
+norm_q = normalize_for_search(current)
+return [app_commands.Choice(name=it["label"][:100], value=it["value"])
+        for it in items if norm_q in (it.get("_norm") or normalize_for_search(it["label"]))][:25]
+```
+
+### Invalidation template (copy into command success paths)
+
+```python
+try:
+    autocomplete_state.invalidate_inventory(interaction.guild_id, player_id)
+    autocomplete_state.invalidate_ships(interaction.guild_id, player_id)
+except Exception:
+    flogger.warning(f"/command: cache invalidation failed for player_id={player_id}; transaction still succeeded")
+```
+
+**Rules:**
+- Place invalidation AFTER `raise_for_status()` succeeds — never before, never on error path
+- Use `set_*` (write-through) when the fresh value is already in hand
+- Use `invalidate_*` when the command mutates state but doesn't have the fresh value
+
+### Key files
+
+| File | Purpose |
+|------|---------|
+| `src/utils/autocomplete_state.py` | Shared caches, init(), getters, invalidators |
+| `src/utils/autocomplete_warm.py` | Startup warm + APScheduler recurring jobs |
+| `src/utils/autocomplete_helpers.py` | Shared per-user helpers (peek-first; signatures preserved) |
+| `src/cogs/_shared/autocomplete_cache.py` | `AutocompleteCache` base class with peek/schedule_refresh/max_entries |
+| `src/api/routers/internal_autocomplete.py` | Internal push endpoints (shop, bounty, health) |
 
 ---
 
@@ -477,4 +541,4 @@ See `src/api/routers/AGENTS.md` for the full router development guide.
 
 ---
 
-*Last updated: 2026-03-16*
+*Last updated: 2026-05-16*

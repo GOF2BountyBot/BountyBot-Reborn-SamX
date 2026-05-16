@@ -1,7 +1,8 @@
 # Design: Autocomplete Cache Overhaul
 
-**Status**: Designed — not yet implemented  
-**Last updated**: 2026-05-15  
+**Status**: Fully implemented — Phases 1–8 complete  
+**Implementation date**: 2026-05-16  
+**Last updated**: 2026-05-16  
 **Scope**: `services/discord-gateway` (primary) + minor additive changes to `services/bot-core`  
 **Effort estimate**: ~1,400 LoC source, ~1,200 LoC tests across 8 phases  
 

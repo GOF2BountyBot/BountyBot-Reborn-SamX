@@ -92,6 +92,19 @@ resp.raise_for_status()
 
 ---
 
+## Gateway Push Contract
+
+`shop_refresh_executor`, `bounty_spawn_executor`, and `bounty_expire_executor` all POST
+cache-update payloads to the gateway after each relevant mutation:
+
+- `POST /api/v1/internal/autocomplete/shop-cache/{guild_id}/{tier}` — after shop refresh
+- `POST /api/v1/internal/autocomplete/bounty-cache/{guild_id}` — after spawn/expire
+
+All pushes are non-fatal (try/except + warning). The gateway's 15-minute safety-net pull
+covers any missed pushes. Requires `INTERNAL_AUTH_TOKEN` env var in both services.
+
+---
+
 ## All 7 Executors
 
 ### bounty_spawn_executor.py
@@ -292,4 +305,4 @@ The deferred import pattern means patches must target the executor module's name
 
 ---
 
-*Last updated: 2026-03-16*
+*Last updated: 2026-05-16*

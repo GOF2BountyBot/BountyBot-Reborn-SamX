@@ -1241,11 +1241,14 @@ class TestEquipCommand:
         assert "weapons" in message
 
     def test_equip_slot_full_nonzero_slots_shows_swap_view(self, mock_inventory_cog, make_mock_response):
-        """B.43 adversarial: zero-slot guard must NOT fire when max_slots > 0.
+        """B.43/B.96 adversarial: zero-slot guard must NOT fire when max_slots > 0.
 
         This is the boundary condition: max_slots=1 with 1 equipped item is a
         legitimate slot_full condition that should show the swap view, not the
         zero-slot error message.
+
+        B.96 update: the swap view is now always ephemeral (ephemeral=True),
+        so the key distinction is embed+view presence, NOT absence of ephemeral.
         """
         from cogs.inventoryCog import WeaponSwapView
 
@@ -1269,13 +1272,15 @@ class TestEquipCommand:
 
         interaction.followup.send.assert_awaited_once()
         call_kwargs = interaction.followup.send.call_args[1]
-        # Must NOT be the zero-slot error path
-        assert not call_kwargs.get("ephemeral", False), (
-            "A ship with max_slots=1 (not 0) must show the swap view, not an ephemeral error"
-        )
+        # Must be the swap view path (embed+view present), not the zero-slot error path
+        # (zero-slot error sends a plain text message with no embed or view).
+        # B.96: the swap view is ephemeral, so we confirm it has the swap UI rather
+        # than testing the absence of ephemeral.
         assert "embed" in call_kwargs, "Slot-full with > 0 slots must show the swap embed"
         assert "view" in call_kwargs, "Slot-full with > 0 slots must show the swap view"
         assert isinstance(call_kwargs["view"], WeaponSwapView)
+        # B.96: slot-full swap UI is ephemeral (visible only to invoking player)
+        assert call_kwargs.get("ephemeral", False), "B.96: slot-full swap view must be ephemeral"
 
     def test_equip_unique_conflict_shows_module_swap_view(self, mock_inventory_cog, make_mock_response):
         """/equip with unique_conflict status shows UniqueModuleSwapView."""

@@ -8,8 +8,7 @@
     "name": "Loma",
     "neighbours": [
         "Shima",
-        "Union",
-        "Aquila"
+        "Union"
     ],
     "security": 3,
     "wiki": "https://galaxyonfire.fandom.com/wiki/Category:Loma"

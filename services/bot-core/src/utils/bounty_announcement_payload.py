@@ -108,6 +108,9 @@ async def build_bounty_announcement_request(
         "captured": captured,
         "prefix_fields": prefix_fields,
         "suffix_fields": [],  # moved to prefix
+        "reward": bounty.reward,
+        "reward_per_sys": bounty.reward_per_sys,
+        "route_length": len(list(bounty.route or [])),
     }
 
     text_content = f"<@&{bounty_hunter_role_id}>" if bounty_hunter_role_id is not None else None

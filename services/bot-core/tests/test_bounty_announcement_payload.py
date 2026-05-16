@@ -48,6 +48,7 @@ def _make_bounty(
     criminal_faction: str = "Terran",
     tech_level: int = 10,
     reward: int = 50000,
+    reward_per_sys: int = 2500,
     end_time: datetime | None = None,
     route: list[str] | None = None,
     checked: dict | None = None,
@@ -63,6 +64,7 @@ def _make_bounty(
         criminal_faction=criminal_faction,
         tech_level=tech_level,
         reward=reward,
+        reward_per_sys=reward_per_sys,
         end_time=end_time,
         route=route or ["Pan", "Mido", "Pescal Ansen"],
         checked=checked,
@@ -447,6 +449,9 @@ class TestPayloadStructure:
             "captured",
             "prefix_fields",
             "suffix_fields",
+            "reward",
+            "reward_per_sys",
+            "route_length",
         }
         # suffix_fields must be empty (Route/Checked moved to prefix_fields after field reorder).
         assert out["metadata"]["suffix_fields"] == []
@@ -490,3 +495,60 @@ class TestMissingLoadoutResponse:
         out = await build_bounty_announcement_request(MagicMock(), b)
         assert out["loadout_response"]["message"] == "Criminal ship data unavailable"
         assert out["loadout_response"]["subject_name"] == "Lost Soul"
+
+
+# ===========================================================================
+# Payout metadata fields (Task B)
+# ===========================================================================
+
+
+class TestPayoutMetadataFields:
+    """Verify that reward, reward_per_sys, and route_length are included in metadata."""
+
+    @pytest.fixture(autouse=True)
+    def _stub(self, monkeypatch):
+        from services import loadout_response_service as svc_mod
+
+        fake = MagicMock()
+        fake.model_dump.return_value = {"subject_kind": "criminal", "subject_name": "X"}
+
+        async def _fake(self_, db_, bid_):
+            return fake
+
+        monkeypatch.setattr(svc_mod.LoadoutResponseService, "build_bounty_loadout", _fake)
+
+    async def test_reward_present_in_metadata(self):
+        from utils.bounty_announcement_payload import build_bounty_announcement_request
+
+        b = _make_bounty(reward=75000)
+        out = await build_bounty_announcement_request(MagicMock(), b)
+        assert out["metadata"]["reward"] == 75000
+
+    async def test_reward_per_sys_present_in_metadata(self):
+        from utils.bounty_announcement_payload import build_bounty_announcement_request
+
+        b = _make_bounty(reward_per_sys=3500)
+        out = await build_bounty_announcement_request(MagicMock(), b)
+        assert out["metadata"]["reward_per_sys"] == 3500
+
+    async def test_route_length_matches_route_list_length(self):
+        from utils.bounty_announcement_payload import build_bounty_announcement_request
+
+        b = _make_bounty(route=["Pan", "Mido", "Pescal Ansen"])
+        out = await build_bounty_announcement_request(MagicMock(), b)
+        assert out["metadata"]["route_length"] == 3
+
+    async def test_route_length_zero_when_route_is_empty(self):
+        from utils.bounty_announcement_payload import build_bounty_announcement_request
+
+        b = _make_bounty(route=["X"])  # a 1-system route
+        b.route = []  # override directly to empty
+        out = await build_bounty_announcement_request(MagicMock(), b)
+        assert out["metadata"]["route_length"] == 0
+
+    async def test_route_length_single_system(self):
+        from utils.bounty_announcement_payload import build_bounty_announcement_request
+
+        b = _make_bounty(route=["Omega"])
+        out = await build_bounty_announcement_request(MagicMock(), b)
+        assert out["metadata"]["route_length"] == 1

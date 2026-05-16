@@ -405,3 +405,8 @@ def get_http_client() -> httpx.AsyncClient | None:
     Returns ``None`` before :func:`init` is called.
     """
     return _http_client
+
+
+def get_api_base() -> str | None:
+    """Return the API base URL set during init(). None if not initialized."""
+    return _api_base

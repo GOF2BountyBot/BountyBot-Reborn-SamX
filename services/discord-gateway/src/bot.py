@@ -8,7 +8,10 @@ from contextlib import asynccontextmanager
 from typing import Any
 
 import discord
+import httpx
 import uvicorn
+from apscheduler.jobstores.memory import MemoryJobStore
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from discord.ext import commands
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -17,6 +20,7 @@ from shared import bblogger
 # Add the current directory to path for relative imports
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+from utils.autocomplete_state import init as init_autocomplete_state
 from utils.command_utils import get_command_handler
 
 
@@ -32,6 +36,7 @@ class GatewayBot(commands.Bot):
 
         self.flogger = bblogger.get_logger("discord-gateway")
         self.startup_complete = False
+        self._warm_jobs_registered: bool = False
         self.command_handler = get_command_handler(self)
 
     async def setup_hook(self):
@@ -68,6 +73,18 @@ class GatewayBot(commands.Bot):
             self.startup_complete = True
             self.flogger.info("Commands synced")
 
+        if not self._warm_jobs_registered:
+            self._warm_jobs_registered = True
+            # _app_ref is set by the lifespan in bot.py before bot.start() is called.
+            # Access app.state.scheduler so we can register warm jobs.
+            if hasattr(self, "_app_ref") and self._app_ref is not None:
+                _app = self._app_ref
+                if hasattr(_app.state, "scheduler"):
+                    from utils.autocomplete_warm import register_warm_jobs
+
+                    register_warm_jobs(_app.state.scheduler, self)
+                    self.flogger.info(f"Registered autocomplete warm jobs for {len(self.guilds)} guilds")
+
     async def sync_commands(self):
         # mirror original logic (global vs guild)
         if self.guilds:
@@ -95,7 +112,28 @@ async def lifespan(app: FastAPI):
         flogger.critical("BOTTOKEN is not set, exiting.")
         os._exit(1)
 
+    # Bot-owned HTTP client (lifecycle tied to bot process, not any cog)
+    api_base = os.getenv("BOT_CORE_URL", "http://bot-core:8000/api/v1")
+    autocomplete_http = httpx.AsyncClient(
+        timeout=httpx.Timeout(10.0, connect=3.0),
+        headers={"Content-Type": "application/json"},
+    )
+    app.state.autocomplete_http = autocomplete_http
+    init_autocomplete_state(autocomplete_http, api_base)
+    flogger.info("Autocomplete state initialized with bot-owned HTTP client")
+
+    # In-process APScheduler (MemoryJobStore — no persistence needed for warm jobs)
+    scheduler = AsyncIOScheduler(
+        jobstores={"default": MemoryJobStore()},
+        timezone="UTC",
+    )
+    scheduler.start()
+    app.state.scheduler = scheduler
+    flogger.info("Gateway APScheduler started (in-process MemoryJobStore)")
+
     bot = GatewayBot()
+    # Give the bot a reference to the FastAPI app so on_ready can access app.state.scheduler
+    bot._app_ref = app
     app.state.bot = bot
 
     # Wrapper coroutine to catch and log exceptions from bot.start()
@@ -119,6 +157,10 @@ async def lifespan(app: FastAPI):
         await app.state.bot_task
     except asyncio.CancelledError:
         flogger.info("✅ Bot task cancelled")
+
+    app.state.scheduler.shutdown(wait=False)
+    await app.state.autocomplete_http.aclose()
+    flogger.info("Gateway APScheduler stopped; autocomplete HTTP client closed")
 
 
 def create_app() -> FastAPI:

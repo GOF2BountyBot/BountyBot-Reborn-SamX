@@ -662,6 +662,7 @@ class ShopService:  # pylint: disable=too-many-instance-attributes
                 "tier": tier,
                 "tech_level": shop_tech_level,
                 "items_generated": len(generated_items),
+                "items": generated_items,  # include items so executor can announce without re-fetch
                 "refresh_time": datetime.now(UTC).isoformat(),
             }
 

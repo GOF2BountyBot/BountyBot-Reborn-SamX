@@ -131,22 +131,39 @@ async def execute_shop_refresh_job(job_id: str, payload: dict) -> dict:
                     for i, t in enumerate(_SHOP_TIERS):
                         tier_results[t] = await shop_service.refresh_shop(db, gid, t, force_tech_level)
 
+                        # Diagnostic: log item count immediately after refresh
+                        items = tier_results[t].get("items") or []
+                        flogger.info(
+                            "ShopRefresh: guild=%s tier=%s — refreshed %d items",
+                            gid,
+                            t,
+                            len(items),
+                        )
+
                         # ── Announce per tier ──────────────────────────────
                         # Role mention only on the first tier (Bronze) to avoid
                         # 4 pings per refresh cycle.
                         role_for_this_tier = mention_role_id if i == 0 else None
+                        # Diagnostic: log announce item count (must equal refresh count)
+                        announce_items = items
+                        flogger.info(
+                            "ShopRefresh: announcing %d items for guild=%s tier=%s",
+                            len(announce_items),
+                            gid,
+                            t,
+                        )
                         await _announce_shop_refresh(
                             job_id,
                             gid,
                             shop_channel_id,
                             role_for_this_tier,
                             tier=t,
-                            items=tier_results[t].get("items") or [],
+                            items=announce_items,
                             tech_level=tier_results[t].get("tech_level"),
                         )
 
                         # ── Push to gateway autocomplete cache (Phase 5b) ──
-                        await _push_shop_cache(job_id, gid, t, tier_results[t].get("items") or [])
+                        await _push_shop_cache(job_id, gid, t, items)
 
                     bulk_results[gid] = tier_results
 

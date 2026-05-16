@@ -119,6 +119,10 @@ def _configure_db_mock(mock_get_db):
     Also configures mock_session.begin() to return an async context manager so
     that routers using ``async with get_db_session() as db, db.begin():`` work
     correctly after the A.44 transaction-ownership fix.
+
+    Also configures mock_session.execute() to return a MagicMock result that
+    supports .scalars() → iterable (empty list) for the new stat-lookup queries
+    added in Task 0002 Sub-task A (_build_item_stat_map).
     """
     from contextlib import asynccontextmanager
 
@@ -129,6 +133,16 @@ def _configure_db_mock(mock_get_db):
         yield
 
     mock_session.begin = MagicMock(side_effect=lambda: _mock_begin())
+
+    # Configure execute() to return a MagicMock result that supports
+    # row-iteration AND .scalars() → empty iterable.
+    # Without this, AsyncMock.execute.return_value is itself an AsyncMock,
+    # making .scalars() return a coroutine which is not iterable.
+    _execute_result = MagicMock()
+    _execute_result.scalars.return_value = iter([])    # empty scalars()
+    _execute_result.__iter__ = MagicMock(return_value=iter([]))  # empty row iteration
+    mock_session.execute = AsyncMock(return_value=_execute_result)
+
     mock_get_db.return_value.__aenter__ = AsyncMock(return_value=mock_session)
     mock_get_db.return_value.__aexit__ = AsyncMock(return_value=False)
     return mock_session

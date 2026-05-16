@@ -36,6 +36,46 @@ def _is_guild_not_configured(exc: httpx.HTTPStatusError) -> bool:
         return False
 
 
+def _format_shop_item_stats(item: dict) -> str:
+    """Return a stat suffix string for a shop item, matching /loadout display style.
+
+    Format examples:
+      Primary/Secondary/Turret Weapon → " | DPS: 92.3"
+      Shield Module                   → " | Shield: 380"
+      Armour Module                   → " | Armour: 250"
+      Ship                            → " | Hull: 1200"
+      Items with no relevant stat     → ""  (empty — no trailing pipe)
+
+    The pipe separator is only included when a stat is present.
+    DPS is rounded to 1 decimal place.
+    Shield and Armour are mutually exclusive per item line (first found wins).
+    """
+    item_type = item.get("item_type", "")
+
+    if item_type in ("primary_weapon", "secondary_weapon", "turret_weapon"):
+        dps = item.get("dps")
+        if dps is not None and float(dps) != 0.0:
+            return f" | DPS: {float(dps):.1f}"
+        return ""
+
+    if item_type == "module":
+        shield = item.get("shield")
+        if shield is not None and int(shield) != 0:
+            return f" | Shield: {int(shield)}"
+        armour = item.get("armour")
+        if armour is not None and int(armour) != 0:
+            return f" | Armour: {int(armour)}"
+        return ""
+
+    if item_type == "ship":
+        hull_hp = item.get("hull_hp")
+        if hull_hp is not None and int(hull_hp) != 0:
+            return f" | Hull: {int(hull_hp)}"
+        return ""
+
+    return ""
+
+
 class ShopCog(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
@@ -215,13 +255,15 @@ class ShopCog(commands.Cog):
                     tech_level = f"T{item['tech_level']}" if item.get("tech_level") else ""
                     quantity = f"x{item['quantity']}" if item["quantity"] > 1 else ""
                     emoji = item.get("emoji") or ""
+                    stat_suffix = _format_shop_item_stats(item)
 
                     price_text = f"{item['price']:,} credits"
                     if player["credits"] < item["price"]:
                         price_text = f"~~{price_text}~~ 💸"
 
                     name_display = f"{emoji} **{item['item_name']}**" if emoji else f"**{item['item_name']}**"
-                    items_text += f"{name_display} {tech_level} {quantity}\n    {price_text} | ID: {item['id']}\n"
+                    item_line = f"{name_display}{stat_suffix} {tech_level} {quantity}"
+                    items_text += f"{item_line}\n    {price_text} | ID: {item['id']}\n"
 
                 if len(type_items) > 10:
                     items_text += f"... and {len(type_items) - 10} more items\n"

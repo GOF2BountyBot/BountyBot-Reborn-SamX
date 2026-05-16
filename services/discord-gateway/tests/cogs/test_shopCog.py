@@ -2199,5 +2199,331 @@ class TestBuyItemAutocompleteEdgeCases:
         assert str(interaction.user.id) in warning_msg
 
 
+# ---------------------------------------------------------------------------
+# _format_shop_item_stats helper — Sub-task A (Task 0002)
+# ---------------------------------------------------------------------------
+
+
+class TestFormatShopItemStats:
+    """Tests for the _format_shop_item_stats module-level helper function.
+
+    Acceptance criteria (Task 0002 Sub-task A):
+    - Primary/Secondary/Turret Weapons: " | DPS: {dps:.1f}" when dps non-zero
+    - Modules: " | Shield: {n}" or " | Armour: {n}" when stat non-zero
+    - Ships: " | Hull: {n}" when hull_hp non-zero
+    - Items with no relevant stat: "" (empty, no trailing pipe)
+    - DPS rounds to 1 decimal place
+    """
+
+    def _get_format_fn(self):
+        """Import the helper from the module under test."""
+        _evict_discord_modules()
+        from cogs.shopCog import _format_shop_item_stats
+        return _format_shop_item_stats
+
+    # ── Weapon types ─────────────────────────────────────────────────────────
+
+    def test_primary_weapon_with_dps(self):
+        """Primary weapon with non-zero dps → '| DPS: x.x' suffix."""
+        fn = self._get_format_fn()
+        item = {"item_type": "primary_weapon", "dps": 92.3}
+        assert fn(item) == " | DPS: 92.3"
+
+    def test_primary_weapon_dps_rounded(self):
+        """DPS rounds to exactly 1 decimal place."""
+        fn = self._get_format_fn()
+        item = {"item_type": "primary_weapon", "dps": 45.678}
+        assert fn(item) == " | DPS: 45.7"
+
+    def test_secondary_weapon_with_dps(self):
+        """Secondary weapon with non-zero dps → '| DPS: x.x' suffix."""
+        fn = self._get_format_fn()
+        item = {"item_type": "secondary_weapon", "dps": 60.0}
+        assert fn(item) == " | DPS: 60.0"
+
+    def test_turret_weapon_with_dps(self):
+        """Turret weapon with non-zero dps → '| DPS: x.x' suffix."""
+        fn = self._get_format_fn()
+        item = {"item_type": "turret_weapon", "dps": 120.5}
+        assert fn(item) == " | DPS: 120.5"
+
+    def test_weapon_dps_zero_returns_empty(self):
+        """Weapon with dps == 0 returns empty string (no trailing pipe)."""
+        fn = self._get_format_fn()
+        item = {"item_type": "primary_weapon", "dps": 0.0}
+        assert fn(item) == ""
+
+    def test_weapon_dps_none_returns_empty(self):
+        """Weapon with dps == None returns empty string."""
+        fn = self._get_format_fn()
+        item = {"item_type": "primary_weapon", "dps": None}
+        assert fn(item) == ""
+
+    def test_weapon_no_dps_key_returns_empty(self):
+        """Weapon dict with no 'dps' key returns empty string."""
+        fn = self._get_format_fn()
+        item = {"item_type": "primary_weapon"}
+        assert fn(item) == ""
+
+    # ── Module types ─────────────────────────────────────────────────────────
+
+    def test_module_with_shield(self):
+        """Module with non-zero shield → '| Shield: n' suffix."""
+        fn = self._get_format_fn()
+        item = {"item_type": "module", "shield": 380}
+        assert fn(item) == " | Shield: 380"
+
+    def test_module_with_armour(self):
+        """Module with non-zero armour → '| Armour: n' suffix."""
+        fn = self._get_format_fn()
+        item = {"item_type": "module", "armour": 250}
+        assert fn(item) == " | Armour: 250"
+
+    def test_module_shield_takes_priority_over_armour(self):
+        """When both shield and armour are present, shield is shown (first found)."""
+        fn = self._get_format_fn()
+        item = {"item_type": "module", "shield": 100, "armour": 200}
+        result = fn(item)
+        # Shield takes priority — both should not appear on the same line
+        assert result == " | Shield: 100"
+
+    def test_module_no_stats_returns_empty(self):
+        """Module with no relevant stats (utility module) returns empty string."""
+        fn = self._get_format_fn()
+        item = {"item_type": "module"}
+        assert fn(item) == ""
+
+    def test_module_zero_shield_returns_empty(self):
+        """Module with shield == 0 returns empty string."""
+        fn = self._get_format_fn()
+        item = {"item_type": "module", "shield": 0}
+        assert fn(item) == ""
+
+    def test_module_none_stats_returns_empty(self):
+        """Module with None stats returns empty string."""
+        fn = self._get_format_fn()
+        item = {"item_type": "module", "shield": None, "armour": None}
+        assert fn(item) == ""
+
+    # ── Ship type ─────────────────────────────────────────────────────────────
+
+    def test_ship_with_hull_hp(self):
+        """Ship with non-zero hull_hp → '| Hull: n' suffix."""
+        fn = self._get_format_fn()
+        item = {"item_type": "ship", "hull_hp": 1200}
+        assert fn(item) == " | Hull: 1200"
+
+    def test_ship_no_hull_hp_returns_empty(self):
+        """Ship with hull_hp == None returns empty string."""
+        fn = self._get_format_fn()
+        item = {"item_type": "ship", "hull_hp": None}
+        assert fn(item) == ""
+
+    def test_ship_zero_hull_hp_returns_empty(self):
+        """Ship with hull_hp == 0 returns empty string."""
+        fn = self._get_format_fn()
+        item = {"item_type": "ship", "hull_hp": 0}
+        assert fn(item) == ""
+
+    # ── Unknown / no type ─────────────────────────────────────────────────────
+
+    def test_unknown_item_type_returns_empty(self):
+        """Unknown item type returns empty string."""
+        fn = self._get_format_fn()
+        item = {"item_type": "unknown_type", "dps": 100}
+        assert fn(item) == ""
+
+    def test_no_item_type_key_returns_empty(self):
+        """Item dict with no 'item_type' key returns empty string."""
+        fn = self._get_format_fn()
+        item = {"dps": 100}
+        assert fn(item) == ""
+
+    # ── Formatting correctness ─────────────────────────────────────────────────
+
+    def test_stat_suffix_no_trailing_pipe_when_present(self):
+        """Stat suffix starts with ' | ' (pipe with spaces) — not a trailing pipe."""
+        fn = self._get_format_fn()
+        item = {"item_type": "primary_weapon", "dps": 50.0}
+        result = fn(item)
+        assert result.startswith(" | "), f"Suffix must start with ' | ', got: {result!r}"
+        assert not result.endswith(" |"), f"Suffix must not end with ' |', got: {result!r}"
+
+    def test_stat_suffix_empty_is_truly_empty_string(self):
+        """When no stat, return value is exactly '' (not ' ' or '|')."""
+        fn = self._get_format_fn()
+        item = {"item_type": "module"}
+        assert fn(item) == ""
+
+
+class TestShopCommandWithStats:
+    """Integration-style tests: /shop embed shows stats for items that have them."""
+
+    def test_shop_weapon_with_dps_in_embed(self, mock_shop_cog, make_mock_response):
+        """Weapon item with dps field shows '| DPS: x.x' in the shop embed text."""
+        interaction = _create_mock_interaction()
+
+        player_resp = make_mock_response(_make_player_data(tier="Bronze", credits=5000))
+        # Item has dps field (new schema field)
+        weapon_item = _make_shop_item(1, "LaserCannon", "primary_weapon", "Bronze", 500, 5, 1)
+        weapon_item["dps"] = 92.3
+        items_resp = make_mock_response([weapon_item])
+
+        mock_shop_cog.http_client.post = AsyncMock(return_value=player_resp)
+        mock_shop_cog.http_client.get = AsyncMock(return_value=items_resp)
+
+        asyncio.run(mock_shop_cog.shop.callback(mock_shop_cog, interaction, "Bronze"))
+
+        interaction.followup.send.assert_awaited_once()
+        send_kwargs = interaction.followup.send.call_args[1]
+        assert "embed" in send_kwargs
+        embed = send_kwargs["embed"]
+        # Check that at least one field value contains the DPS stat
+        all_text = " ".join(f.value for f in embed.fields if f.value)
+        assert "DPS: 92.3" in all_text, f"Expected 'DPS: 92.3' in embed fields, got:\n{all_text}"
+
+    def test_shop_module_with_shield_in_embed(self, mock_shop_cog, make_mock_response):
+        """Shield module shows '| Shield: n' in the shop embed text."""
+        interaction = _create_mock_interaction()
+
+        player_resp = make_mock_response(_make_player_data(tier="Bronze", credits=5000))
+        shield_item = _make_shop_item(2, "ParticleShield", "module", "Bronze", 300, 3, 2)
+        shield_item["shield"] = 380
+        items_resp = make_mock_response([shield_item])
+
+        mock_shop_cog.http_client.post = AsyncMock(return_value=player_resp)
+        mock_shop_cog.http_client.get = AsyncMock(return_value=items_resp)
+
+        asyncio.run(mock_shop_cog.shop.callback(mock_shop_cog, interaction, "Bronze"))
+
+        interaction.followup.send.assert_awaited_once()
+        send_kwargs = interaction.followup.send.call_args[1]
+        embed = send_kwargs["embed"]
+        all_text = " ".join(f.value for f in embed.fields if f.value)
+        assert "Shield: 380" in all_text, f"Expected 'Shield: 380' in embed fields, got:\n{all_text}"
+
+    def test_shop_ship_with_hull_in_embed(self, mock_shop_cog, make_mock_response):
+        """Ship item shows '| Hull: n' in the shop embed text."""
+        interaction = _create_mock_interaction()
+
+        player_resp = make_mock_response(_make_player_data(tier="Bronze", credits=10000))
+        ship_item = _make_shop_item(3, "Eagle", "ship", "Bronze", 2000, 1, 1)
+        ship_item["hull_hp"] = 1200
+        items_resp = make_mock_response([ship_item])
+
+        mock_shop_cog.http_client.post = AsyncMock(return_value=player_resp)
+        mock_shop_cog.http_client.get = AsyncMock(return_value=items_resp)
+
+        asyncio.run(mock_shop_cog.shop.callback(mock_shop_cog, interaction, "Bronze"))
+
+        interaction.followup.send.assert_awaited_once()
+        send_kwargs = interaction.followup.send.call_args[1]
+        embed = send_kwargs["embed"]
+        all_text = " ".join(f.value for f in embed.fields if f.value)
+        assert "Hull: 1200" in all_text, f"Expected 'Hull: 1200' in embed fields, got:\n{all_text}"
+
+    def test_shop_item_without_stats_shows_no_pipe(self, mock_shop_cog, make_mock_response):
+        """Item with no relevant stat (utility module) shows no ' | Stat' suffix."""
+        interaction = _create_mock_interaction()
+
+        player_resp = make_mock_response(_make_player_data(tier="Bronze", credits=5000))
+        utility_item = _make_shop_item(4, "CabinModule", "module", "Bronze", 200, 2, 1)
+        # No shield or armour keys — utility module
+        items_resp = make_mock_response([utility_item])
+
+        mock_shop_cog.http_client.post = AsyncMock(return_value=player_resp)
+        mock_shop_cog.http_client.get = AsyncMock(return_value=items_resp)
+
+        asyncio.run(mock_shop_cog.shop.callback(mock_shop_cog, interaction, "Bronze"))
+
+        interaction.followup.send.assert_awaited_once()
+        send_kwargs = interaction.followup.send.call_args[1]
+        embed = send_kwargs["embed"]
+        all_text = " ".join(f.value for f in embed.fields if f.value)
+        # No orphan pipe should appear from empty stat suffix
+        assert " |  " not in all_text, f"Unexpected orphan ' | ' found in embed:\n{all_text}"
+
+
+class TestFormatShopItemStatsAdversarial:
+    """Adversarial edge-case tests for _format_shop_item_stats (Task 0002 review).
+
+    Covers scenarios not exercised by the developer's TestFormatShopItemStats class:
+    - shield=0 paired with armour=250 → armour shown (not empty)
+    - dps as integer (not float) → formatted correctly
+    - Very large DPS value → no overflow / crash
+    - Empty item dict → returns "" (no KeyError)
+    - dps as string representation → coerced correctly
+    """
+
+    def _get_format_fn(self):
+        """Import the helper from the module under test."""
+        _evict_discord_modules()
+        from cogs.shopCog import _format_shop_item_stats
+        return _format_shop_item_stats
+
+    def test_module_zero_shield_nonzero_armour_shows_armour(self):
+        """Module with shield=0 but armour=250 should show armour, not empty string.
+
+        This is the critical two-field adversarial case: shield=0 is skipped,
+        falling through to the armour check which should succeed.
+        """
+        fn = self._get_format_fn()
+        item = {"item_type": "module", "shield": 0, "armour": 250}
+        result = fn(item)
+        assert result == " | Armour: 250", (
+            f"Expected ' | Armour: 250' when shield=0 and armour=250, got {result!r}"
+        )
+
+    def test_weapon_dps_as_integer_shows_one_decimal(self):
+        """DPS provided as an integer (e.g. 50) formats to '50.0' with 1 decimal place."""
+        fn = self._get_format_fn()
+        item = {"item_type": "primary_weapon", "dps": 50}
+        result = fn(item)
+        assert result == " | DPS: 50.0", (
+            f"Expected ' | DPS: 50.0' for integer dps=50, got {result!r}"
+        )
+
+    def test_weapon_very_large_dps_no_crash(self):
+        """Very large DPS value does not crash or produce truncated output."""
+        fn = self._get_format_fn()
+        item = {"item_type": "turret_weapon", "dps": 9999.9}
+        result = fn(item)
+        assert result == " | DPS: 9999.9", (
+            f"Expected ' | DPS: 9999.9' for large dps, got {result!r}"
+        )
+
+    def test_empty_item_dict_returns_empty_no_crash(self):
+        """Completely empty item dict returns empty string without KeyError."""
+        fn = self._get_format_fn()
+        item: dict = {}
+        result = fn(item)
+        assert result == "", f"Expected '' for empty item dict, got {result!r}"
+
+    def test_module_none_shield_nonzero_armour_shows_armour(self):
+        """Module with shield=None and armour=300 → falls through to armour display."""
+        fn = self._get_format_fn()
+        item = {"item_type": "module", "shield": None, "armour": 300}
+        result = fn(item)
+        assert result == " | Armour: 300", (
+            f"Expected ' | Armour: 300' when shield=None and armour=300, got {result!r}"
+        )
+
+    def test_ship_hull_hp_as_integer_one(self):
+        """Ship with hull_hp=1 (minimum non-zero) should show stat (not treated as falsy)."""
+        fn = self._get_format_fn()
+        item = {"item_type": "ship", "hull_hp": 1}
+        result = fn(item)
+        assert result == " | Hull: 1", (
+            f"Expected ' | Hull: 1' for hull_hp=1, got {result!r}"
+        )
+
+    def test_secondary_weapon_dps_zero_int_returns_empty(self):
+        """Secondary weapon dps=0 (int) returns empty string, not '| DPS: 0.0'."""
+        fn = self._get_format_fn()
+        item = {"item_type": "secondary_weapon", "dps": 0}
+        result = fn(item)
+        assert result == "", f"Expected '' for dps=0 (int), got {result!r}"
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

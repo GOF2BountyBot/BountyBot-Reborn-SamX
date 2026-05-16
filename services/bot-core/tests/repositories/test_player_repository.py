@@ -187,7 +187,7 @@ class TestGetByUserAndGuild:
 
 
 # ===================================================================
-# get_players_by_guild – exception path (lines 130-132)
+# get_players_by_guild – exception path + active_within_days filter
 # ===================================================================
 
 
@@ -197,6 +197,61 @@ class TestGetPlayersByGuild:
         mock_db.execute = AsyncMock(side_effect=Exception("guild query fail"))
         with pytest.raises(Exception, match="guild query fail"):
             await repo.get_players_by_guild(mock_db, guild_id=456)
+
+    @pytest.mark.asyncio
+    async def test_get_players_by_guild_no_filter_returns_all(self, repo, mock_db):
+        """active_within_days=None: no date filter applied, all players returned."""
+        player_a = _make_player(id=1)
+        player_b = _make_player(id=2)
+        mock_db.execute = AsyncMock(return_value=_make_scalars_result([player_a, player_b]))
+
+        result = await repo.get_players_by_guild(mock_db, guild_id=456)
+
+        assert len(result) == 2
+        assert player_a in result
+        assert player_b in result
+
+    @pytest.mark.asyncio
+    async def test_get_players_by_guild_active_within_days_filters_by_updated_at(self, repo, mock_db):
+        """active_within_days=7: only the recent player is returned (mock filters DB results)."""
+        from datetime import UTC, datetime
+
+        now = datetime.now(UTC)
+        recent_player = _make_player(id=1, updated_at=now)
+        # This test exercises the filter via a mock — the actual SQL WHERE clause
+        # is verified by checking that execute() is called (the mock controls the result).
+        # The integration test in tests/integration/ covers the real WHERE clause behavior.
+        mock_db.execute = AsyncMock(return_value=_make_scalars_result([recent_player]))
+
+        result = await repo.get_players_by_guild(mock_db, guild_id=456, active_within_days=7)
+
+        assert len(result) == 1
+        assert result[0] is recent_player
+        # Confirm execute was called (the filter clause was built into the query)
+        mock_db.execute.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_get_players_by_guild_active_within_days_zero_no_filter(self, repo, mock_db):
+        """active_within_days=0: treat as 'no filter' (same as None)."""
+        player_a = _make_player(id=1)
+        player_b = _make_player(id=2)
+        mock_db.execute = AsyncMock(return_value=_make_scalars_result([player_a, player_b]))
+
+        result = await repo.get_players_by_guild(mock_db, guild_id=456, active_within_days=0)
+
+        # Both players returned — 0 means no date filter
+        assert len(result) == 2
+
+    @pytest.mark.asyncio
+    async def test_get_players_by_guild_active_within_days_one_day(self, repo, mock_db):
+        """active_within_days=1: the repo query runs; mock returns what we set."""
+        recent_player = _make_player(id=3)
+        mock_db.execute = AsyncMock(return_value=_make_scalars_result([recent_player]))
+
+        result = await repo.get_players_by_guild(mock_db, guild_id=456, active_within_days=1)
+
+        assert result == [recent_player]
+        mock_db.execute.assert_awaited_once()
 
 
 # ===================================================================

@@ -673,10 +673,25 @@ class PlayerService:
             flogger.error(f"Error getting statistics for player {player_id}: {e}")
             raise
 
-    async def get_players_by_tier(self, db: AsyncSession, guild_id: int, tier: str) -> list[Player]:
-        """Get all players in a guild with a specific tier."""
+    async def get_players_by_tier(
+        self,
+        db: AsyncSession,
+        guild_id: int,
+        tier: str,
+        active_within_days: int | None = None,
+    ) -> list[Player]:
+        """Get all players in a guild with a specific tier.
+
+        Args:
+            db: Database session.
+            guild_id: Guild to filter by.
+            tier: Tier name to filter by (e.g. "Bronze", "Silver").
+            active_within_days: When set and > 0, restricts to players active
+                within this many days. Passed through to the repo. ``0`` means
+                no filter (same as ``None``).
+        """
         try:
-            players = await self.player_repo.get_players_by_guild(db, guild_id)
+            players = await self.player_repo.get_players_by_guild(db, guild_id, active_within_days=active_within_days)
             return [p for p in players if p.tier == tier]
         except Exception as e:
             flogger.error(f"Error getting players by tier {tier} in guild {guild_id}: {e}")

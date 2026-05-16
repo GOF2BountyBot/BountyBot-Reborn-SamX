@@ -2,6 +2,7 @@ import os
 
 import discord
 import httpx
+from cogs._shared.autocomplete_cache import AutocompleteCache
 from cogs._shared.http_error_handler import report_api_error
 from discord import app_commands
 from discord.ext import commands
@@ -38,10 +39,64 @@ class DuelCog(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
         self.http_client = httpx.AsyncClient(timeout=httpx.Timeout(10.0))
+        self._pending_duel_cache: AutocompleteCache[tuple[int, int], list] = AutocompleteCache(
+            ttl_seconds=30.0,
+            refresh_fn=self._fetch_pending_duels,
+            name="duelCog-pending-duels",
+        )
+        self._outgoing_duel_cache: AutocompleteCache[tuple[int, int], list] = AutocompleteCache(
+            ttl_seconds=30.0,
+            refresh_fn=self._fetch_outgoing_duels,
+            name="duelCog-outgoing-duels",
+        )
         flogger.debug("DuelCog initialized")
 
     async def cog_unload(self):
         await self.http_client.aclose()
+
+    async def _fetch_pending_duels(self, key: tuple[int, int]) -> list:
+        """Refresh pending duels (where the player is the target) from bot-core.
+
+        Args:
+            key: ``(guild_id, player_id)`` tuple.
+
+        Returns:
+            List of pending duel dicts.
+        """
+        guild_id, player_id = key
+        try:
+            resp = await self.http_client.get(
+                f"{api_base}/duels/pending",
+                params={"user_id": player_id, "guild_id": guild_id},
+                timeout=5,
+            )
+            if resp.status_code != 200:
+                return []
+            return resp.json()
+        except Exception:  # pylint: disable=broad-exception-caught
+            return []
+
+    async def _fetch_outgoing_duels(self, key: tuple[int, int]) -> list:
+        """Refresh outgoing duels (where the player is the challenger) from bot-core.
+
+        Args:
+            key: ``(guild_id, player_id)`` tuple.
+
+        Returns:
+            List of outgoing duel dicts.
+        """
+        guild_id, player_id = key
+        try:
+            resp = await self.http_client.get(
+                f"{api_base}/duels/outgoing",
+                params={"user_id": player_id, "guild_id": guild_id},
+                timeout=5,
+            )
+            if resp.status_code != 200:
+                return []
+            return resp.json()
+        except Exception:  # pylint: disable=broad-exception-caught
+            return []
 
     async def _get_player_id(self, user_id: int, guild_id: int, display_name: str | None = None) -> int | None:
         """Resolve a Discord user ID to a game player ID via the upsert endpoint.
@@ -207,6 +262,16 @@ class DuelCog(commands.Cog):
                 f" target={target.id} stakes={stakes} duel_id={duel_id}"
             )
 
+            # Invalidate duel caches: challenger's outgoing, target's pending
+            try:
+                self._outgoing_duel_cache.invalidate((interaction.guild_id, challenger_player_id))
+                self._pending_duel_cache.invalidate((interaction.guild_id, target_player_id))
+            except Exception:  # pylint: disable=broad-exception-caught
+                flogger.warning(
+                    f"/duel-challenge: duel cache invalidation failed for duel_id={duel_id}; "
+                    "transaction still succeeded"
+                )
+
         except httpx.HTTPStatusError as e:
             if e.response.status_code == 400:
                 try:
@@ -318,6 +383,18 @@ class DuelCog(commands.Cog):
                 f"/duel-accept success: guild={interaction.guild_id} user={interaction.user.id}"
                 f" duel_id={duel_id} stalemate={is_stalemate}"
             )
+
+            # Invalidate duel caches: accepter's pending, challenger's outgoing
+            try:
+                self._pending_duel_cache.invalidate((interaction.guild_id, player_id))
+                challenger_player_id = data.get("challenger_id")
+                if challenger_player_id is not None:
+                    self._outgoing_duel_cache.invalidate((interaction.guild_id, challenger_player_id))
+            except Exception:  # pylint: disable=broad-exception-caught
+                flogger.warning(
+                    f"/duel-accept: duel cache invalidation failed for duel_id={duel_id}; "
+                    "transaction still succeeded"
+                )
 
         except httpx.HTTPStatusError as e:
             if e.response.status_code == 404:
@@ -484,6 +561,18 @@ class DuelCog(commands.Cog):
                 f"/duel-reject success: guild={interaction.guild_id} user={interaction.user.id} duel_id={duel_id}"
             )
 
+            # Invalidate duel caches: rejecter's pending, challenger's outgoing
+            try:
+                self._pending_duel_cache.invalidate((interaction.guild_id, player_id))
+                challenger_player_id = data.get("challenger_id")
+                if challenger_player_id is not None:
+                    self._outgoing_duel_cache.invalidate((interaction.guild_id, challenger_player_id))
+            except Exception:  # pylint: disable=broad-exception-caught
+                flogger.warning(
+                    f"/duel-reject: duel cache invalidation failed for duel_id={duel_id}; "
+                    "transaction still succeeded"
+                )
+
         except httpx.HTTPStatusError as e:
             if e.response.status_code == 404:
                 await interaction.followup.send("❌ Duel not found.", ephemeral=True)
@@ -572,6 +661,18 @@ class DuelCog(commands.Cog):
             flogger.info(
                 f"/duel-cancel success: guild={interaction.guild_id} user={interaction.user.id} duel_id={duel_id}"
             )
+
+            # Invalidate duel caches: canceller's outgoing, target's pending
+            try:
+                self._outgoing_duel_cache.invalidate((interaction.guild_id, player_id))
+                target_player_id = data.get("target_id")
+                if target_player_id is not None:
+                    self._pending_duel_cache.invalidate((interaction.guild_id, target_player_id))
+            except Exception:  # pylint: disable=broad-exception-caught
+                flogger.warning(
+                    f"/duel-cancel: duel cache invalidation failed for duel_id={duel_id}; "
+                    "transaction still succeeded"
+                )
 
         except httpx.HTTPStatusError as e:
             if e.response.status_code == 404:

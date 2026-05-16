@@ -51,6 +51,41 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "src"))
 
 from tests.mocks.discord_mock_utils import DiscordMockUtils
 
+# ---------------------------------------------------------------------------
+# Phase-4 autocomplete_state cache helpers for admin_inventory_cog tests.
+# adminCog imports resolve_player_id LAZILY, so we only need to populate
+# sys.modules["utils.autocomplete_state"].player_cache.
+# ---------------------------------------------------------------------------
+
+
+def _ac_get_state_admin_inv():
+    """Return the autocomplete_state that adminCog's lazy import will use."""
+    return sys.modules.get("utils.autocomplete_state")
+
+
+def _ac_init_player_cache_admin_inv():
+    """Create a real (no-HTTP) player_cache on the current autocomplete_state.
+
+    If the module is not yet in sys.modules (was evicted), import it first.
+    """
+    from cogs._shared.autocomplete_cache import AutocompleteCache
+
+    ac = _ac_get_state_admin_inv()
+    if ac is None:
+        import utils.autocomplete_state as _ac_mod
+        ac = _ac_mod
+    if ac.player_cache is None:
+        ac.player_cache = AutocompleteCache(ttl_seconds=900, name="player")
+        ac._initialized = True
+    return ac
+
+
+def _ac_reset_admin_inv_player_cache():
+    """Clear all player_cache entries."""
+    ac = _ac_get_state_admin_inv()
+    if ac is not None and ac.player_cache is not None:
+        ac.player_cache.clear()
+
 # -------------------------------------------------------------------------
 # Helpers
 # -------------------------------------------------------------------------
@@ -733,17 +768,20 @@ class TestAdminAutocomplete:
     def test_remove_item_autocomplete_fetches_inventory_when_user_selected(self, mock_admin_cog):
         """remove_item_autocomplete fetches target user's inventory when user is selected.
 
-        When a target user is selected, the autocomplete should attempt to resolve
-        their player ID and fetch their inventory.
+        Phase 4: resolve_player_id reads from cache. Pre-populate player_cache.
+        The admin function then makes its own HTTP GET for inventory.
         """
         interaction = _create_mock_interaction()
         target_user = _create_mock_user(user_id=111222333)
         interaction.namespace = MagicMock()
         interaction.namespace.user = target_user
 
-        # Mock player resolution: POST /players/ returns player ID
-        player_resp = _make_http_resp(200, {"id": 10, "discord_id": 111222333})
-        # Mock inventory fetch: GET /inventory/player/10 returns items
+        # Phase 4: Pre-populate player_cache so resolve_player_id returns player_id=10
+        ac = _ac_init_player_cache_admin_inv()
+        if ac is not None:
+            ac.player_cache.set((987654321, 111222333), {"id": 10, "discord_id": 111222333})
+
+        # Mock inventory fetch: GET /inventory/player/10 returns items (still HTTP in adminCog)
         inv_resp = _make_http_resp(
             200,
             [
@@ -751,7 +789,6 @@ class TestAdminAutocomplete:
                 {"item_name": "Shield Gen", "item_type": "module", "quantity": 2},
             ],
         )
-        mock_admin_cog.http_client.post = AsyncMock(return_value=player_resp)
         mock_admin_cog.http_client.get = AsyncMock(return_value=inv_resp)
 
         result = asyncio.run(mock_admin_cog.remove_item_autocomplete(interaction, ""))
@@ -761,14 +798,21 @@ class TestAdminAutocomplete:
         assert "Pulse Laser" in names
         assert "Shield Gen" in names
 
+        # Cleanup
+        _ac_reset_admin_inv_player_cache()
+
     def test_remove_item_autocomplete_filters_by_current(self, mock_admin_cog):
-        """remove_item_autocomplete filters inventory items by current text."""
+        """remove_item_autocomplete filters inventory items by current text (Phase 4: cache)."""
         interaction = _create_mock_interaction()
         target_user = _create_mock_user(user_id=111222333)
         interaction.namespace = MagicMock()
         interaction.namespace.user = target_user
 
-        player_resp = _make_http_resp(200, {"id": 10, "discord_id": 111222333})
+        # Phase 4: Pre-populate player_cache
+        ac = _ac_init_player_cache_admin_inv()
+        if ac is not None:
+            ac.player_cache.set((987654321, 111222333), {"id": 10, "discord_id": 111222333})
+
         inv_resp = _make_http_resp(
             200,
             [
@@ -776,13 +820,15 @@ class TestAdminAutocomplete:
                 {"item_name": "Shield Gen", "item_type": "module", "quantity": 1},
             ],
         )
-        mock_admin_cog.http_client.post = AsyncMock(return_value=player_resp)
         mock_admin_cog.http_client.get = AsyncMock(return_value=inv_resp)
 
         result = asyncio.run(mock_admin_cog.remove_item_autocomplete(interaction, "pulse"))
         names = [c.value for c in result]
         assert "Pulse Laser" in names
         assert "Shield Gen" not in names
+
+        # Cleanup
+        _ac_reset_admin_inv_player_cache()
 
     def test_remove_item_autocomplete_falls_back_on_api_failure(self, mock_admin_cog):
         """remove_item_autocomplete falls back to catalog when API call fails."""

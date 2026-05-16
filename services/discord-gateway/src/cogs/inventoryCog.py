@@ -8,6 +8,8 @@ from discord.ext import commands
 from shared import bblogger
 from utils.autocomplete_utils import normalize_for_search
 
+from utils import autocomplete_state
+
 # Set up logger
 flogger = bblogger.get_logger("discord-gateway-InventoryCog")
 
@@ -54,12 +56,14 @@ class WeaponSwapView(discord.ui.View):
         equipment_type: str,
         equipped_items: list[dict],
         *,
+        guild_id: int | None = None,
         timeout: float = 60.0,
     ) -> None:
         super().__init__(timeout=timeout)
         self.http_client = http_client
         self.ship_id = ship_id
         self.player_id = player_id
+        self.guild_id = guild_id
         self.new_item_name = new_item_name
         self.equipment_type = equipment_type
         self.equipped_items = equipped_items
@@ -143,6 +147,17 @@ class WeaponSwapView(discord.ui.View):
             self.stop()
             await interaction.followup.send(embed=embed, ephemeral=True)
 
+            # Invalidate inventory and ships caches after successful swap
+            if self.guild_id is not None:
+                try:
+                    autocomplete_state.invalidate_inventory(self.guild_id, self.player_id)
+                    autocomplete_state.invalidate_ships(self.guild_id, self.player_id)
+                except Exception:  # pylint: disable=broad-exception-caught
+                    flogger.warning(
+                        f"WeaponSwapView: cache invalidation failed for player_id={self.player_id}; "
+                        "swap still succeeded"
+                    )
+
         except Exception as exc:  # pylint: disable=broad-exception-caught
             flogger.error(f"WeaponSwapView swap error: {exc}")
             self.result = "error"
@@ -175,12 +190,14 @@ class UniqueModuleSwapView(discord.ui.View):
         old_item_name: str,
         equipment_type: str = "modules",
         *,
+        guild_id: int | None = None,
         timeout: float = 60.0,
     ) -> None:
         super().__init__(timeout=timeout)
         self.http_client = http_client
         self.ship_id = ship_id
         self.player_id = player_id
+        self.guild_id = guild_id
         self.new_item_name = new_item_name
         self.old_item_name = old_item_name
         self.equipment_type = equipment_type
@@ -228,6 +245,17 @@ class UniqueModuleSwapView(discord.ui.View):
             self.result = "swapped"
             self.stop()
             await interaction.followup.send(embed=embed, ephemeral=True)
+
+            # Invalidate inventory and ships caches after successful module swap
+            if self.guild_id is not None:
+                try:
+                    autocomplete_state.invalidate_inventory(self.guild_id, self.player_id)
+                    autocomplete_state.invalidate_ships(self.guild_id, self.player_id)
+                except Exception:  # pylint: disable=broad-exception-caught
+                    flogger.warning(
+                        f"UniqueModuleSwapView: cache invalidation failed for player_id={self.player_id}; "
+                        "swap still succeeded"
+                    )
 
         except Exception as exc:  # pylint: disable=broad-exception-caught
             flogger.error(f"UniqueModuleSwapView swap error: {exc}")
@@ -799,6 +827,15 @@ class InventoryCog(commands.Cog):
                 embed.add_field(name="Current Loadout", value=loadout_text, inline=False)
                 await interaction.followup.send(embed=embed, ephemeral=True)
 
+                # Invalidate inventory and ships caches — loadout changed
+                try:
+                    autocomplete_state.invalidate_inventory(interaction.guild_id, player_id)
+                    autocomplete_state.invalidate_ships(interaction.guild_id, player_id)
+                except Exception:  # pylint: disable=broad-exception-caught
+                    flogger.warning(
+                        f"/equip: cache invalidation failed for player_id={player_id}; transaction still succeeded"
+                    )
+
             elif status == "slot_full":
                 # Step 2b: Slots are full — show swap select menu
                 equipped_items = check_data.get("equipped_items", [])
@@ -827,6 +864,7 @@ class InventoryCog(commands.Cog):
                     new_item_name=item_name,
                     equipment_type=equipment_type,
                     equipped_items=equipped_items,
+                    guild_id=interaction.guild_id,
                 )
                 await interaction.followup.send(embed=embed, view=view, ephemeral=True)
 
@@ -852,6 +890,7 @@ class InventoryCog(commands.Cog):
                     new_item_name=item_name,
                     old_item_name=old_name,
                     equipment_type=equipment_type or "modules",
+                    guild_id=interaction.guild_id,
                 )
                 await interaction.followup.send(embed=embed, view=view, ephemeral=True)
 
@@ -955,6 +994,15 @@ class InventoryCog(commands.Cog):
 
             await interaction.followup.send(embed=embed, ephemeral=True)
             flogger.debug(f"/unequip {item_name} by {interaction.user} in guild {interaction.guild_id}")
+
+            # Invalidate inventory and ships caches — loadout changed
+            try:
+                autocomplete_state.invalidate_inventory(interaction.guild_id, player_id)
+                autocomplete_state.invalidate_ships(interaction.guild_id, player_id)
+            except Exception:  # pylint: disable=broad-exception-caught
+                flogger.warning(
+                    f"/unequip: cache invalidation failed for player_id={player_id}; transaction still succeeded"
+                )
 
         except httpx.HTTPStatusError as e:
             if e.response.status_code == 400:
@@ -1064,6 +1112,16 @@ class InventoryCog(commands.Cog):
             f"/unequip all: guild={interaction.guild_id} user={interaction.user.id} "
             f"ship={ship_id} succeeded={len(succeeded)} failed={len(failed)}"
         )
+
+        # Invalidate inventory and ships caches once at end — loadout changed
+        if succeeded:
+            try:
+                autocomplete_state.invalidate_inventory(interaction.guild_id, player_id)
+                autocomplete_state.invalidate_ships(interaction.guild_id, player_id)
+            except Exception:  # pylint: disable=broad-exception-caught
+                flogger.warning(
+                    f"/unequip all: cache invalidation failed for player_id={player_id}; transaction still succeeded"
+                )
 
     def _get_item_type_color(self, item_type: str) -> discord.Color:
         """Get Discord color based on item type (concrete vocab, A.46)."""
@@ -1307,6 +1365,17 @@ class InventoryCog(commands.Cog):
                 embed.add_field(name="Item Type", value=item_type.replace("_", " ").title(), inline=True)
                 await interaction.followup.send(embed=embed, ephemeral=True)
 
+                # Invalidate inventory for both giver and recipient
+                try:
+                    autocomplete_state.invalidate_inventory(interaction.guild_id, source_player["id"])
+                    autocomplete_state.invalidate_inventory(interaction.guild_id, target_player["id"])
+                except Exception:  # pylint: disable=broad-exception-caught
+                    flogger.warning(
+                        f"/give item: cache invalidation failed for "
+                        f"source_player_id={source_player['id']}, target_player_id={target_player['id']}; "
+                        "transaction still succeeded"
+                    )
+
             elif give_type == "ship":
                 if not ship:
                     await interaction.followup.send("❌ Please select a ship to give.", ephemeral=True)
@@ -1352,6 +1421,21 @@ class InventoryCog(commands.Cog):
                         inline=False,
                     )
                 await interaction.followup.send(embed=embed, ephemeral=True)
+
+                # Invalidate ships, inventory, and player caches for both parties on ship transfer
+                try:
+                    autocomplete_state.invalidate_ships(interaction.guild_id, source_player["id"])
+                    autocomplete_state.invalidate_ships(interaction.guild_id, target_player["id"])
+                    autocomplete_state.invalidate_inventory(interaction.guild_id, source_player["id"])
+                    autocomplete_state.invalidate_inventory(interaction.guild_id, target_player["id"])
+                    autocomplete_state.invalidate_player(interaction.guild_id, interaction.user.id)
+                    autocomplete_state.invalidate_player(interaction.guild_id, target.id)
+                except Exception:  # pylint: disable=broad-exception-caught
+                    flogger.warning(
+                        f"/give ship: cache invalidation failed for "
+                        f"source_player_id={source_player['id']}, target_player_id={target_player['id']}; "
+                        "transaction still succeeded"
+                    )
 
             else:
                 await interaction.followup.send(f"❌ Unknown give type: {give_type}", ephemeral=True)

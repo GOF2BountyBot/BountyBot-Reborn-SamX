@@ -11,6 +11,8 @@ from discord.ext import commands
 from shared import bblogger
 from utils.timestamp_utils import iso_to_discord_ts
 
+from utils import autocomplete_state
+
 # Set up logger
 flogger = bblogger.get_logger("discord-gateway-PlayerCog")
 
@@ -215,6 +217,14 @@ class PlayerCog(commands.Cog):
 
             await interaction.followup.send(embed=embed)
             flogger.debug(f"/profile success: guild={interaction.guild_id}, user={interaction.user.id}")
+
+            # Write-through: profile response contains fresh player data
+            try:
+                autocomplete_state.set_player(interaction.guild_id, interaction.user.id, player_data)
+            except Exception:  # pylint: disable=broad-exception-caught
+                flogger.warning(
+                    f"/profile: cache write-through failed for user={interaction.user.id}; command still succeeded"
+                )
 
             # Attempt to assign the Bounty Hunter role + tier role (non-fatal)
             try:
@@ -438,6 +448,16 @@ class PlayerCog(commands.Cog):
                 f"prestige_count={prestige_data['prestige_count']}"
             )
 
+            # Prestige wipes the entire loadout — invalidate player, inventory, and ships caches
+            try:
+                autocomplete_state.invalidate_player(interaction.guild_id, interaction.user.id)
+                autocomplete_state.invalidate_inventory(interaction.guild_id, player_data["id"])
+                autocomplete_state.invalidate_ships(interaction.guild_id, player_data["id"])
+            except Exception:  # pylint: disable=broad-exception-caught
+                flogger.warning(
+                    f"/prestige: cache invalidation failed for user={interaction.user.id}; transaction still succeeded"
+                )
+
             # Swap tier roles: remove old tier role, add Bronze role (non-fatal)
             try:
                 config_resp = await self.http_client.get(f"{api_base}/config/guild/{interaction.guild_id}", timeout=5)
@@ -657,6 +677,14 @@ class PlayerCog(commands.Cog):
                 f"/promote success: guild={interaction.guild_id}, user={interaction.user.id}, {old_tier} -> {new_tier}"
             )
 
+            # Tier changed — invalidate player cache so autocomplete reflects new tier
+            try:
+                autocomplete_state.invalidate_player(interaction.guild_id, interaction.user.id)
+            except Exception:  # pylint: disable=broad-exception-caught
+                flogger.warning(
+                    f"/promote: cache invalidation failed for user={interaction.user.id}; transaction still succeeded"
+                )
+
             # Swap tier roles: remove old tier role, add new tier role (non-fatal)
             try:
                 config_resp = await self.http_client.get(f"{api_base}/config/guild/{interaction.guild_id}", timeout=5)
@@ -825,6 +853,14 @@ class PlayerCog(commands.Cog):
                 f"/demote success: guild={interaction.guild_id}, user={interaction.user.id}, "
                 f"{demote_data['old_tier']} -> {demote_data['new_tier']}"
             )
+
+            # Tier changed — invalidate player cache so autocomplete reflects new tier
+            try:
+                autocomplete_state.invalidate_player(interaction.guild_id, interaction.user.id)
+            except Exception:  # pylint: disable=broad-exception-caught
+                flogger.warning(
+                    f"/demote: cache invalidation failed for user={interaction.user.id}; transaction still succeeded"
+                )
 
             # Swap tier roles (best-effort, mirrors /promote)
             try:

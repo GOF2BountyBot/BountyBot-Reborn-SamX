@@ -9,6 +9,8 @@ from discord.ext import commands
 from shared import bblogger
 from utils.autocomplete_utils import normalize_for_search
 
+from utils import autocomplete_state
+
 # Set up logger
 flogger = bblogger.get_logger("discord-gateway-ShopCog")
 
@@ -358,6 +360,17 @@ class ShopCog(commands.Cog):
                     f"tier={shop_item.get('tier')}; transaction still succeeded"
                 )
 
+            # Invalidate player and inventory caches — credits changed; inventory grew
+            try:
+                autocomplete_state.invalidate_player(interaction.guild_id, interaction.user.id)
+                autocomplete_state.invalidate_inventory(interaction.guild_id, player["id"])
+                if is_ship:
+                    autocomplete_state.invalidate_ships(interaction.guild_id, player["id"])
+            except Exception:  # pylint: disable=broad-exception-caught
+                flogger.warning(
+                    f"/buy: shared cache invalidation failed for player_id={player['id']}; transaction still succeeded"
+                )
+
             # Success message
             embed = discord.Embed(
                 title="✅ Purchase Successful!",
@@ -495,6 +508,15 @@ class ShopCog(commands.Cog):
                 flogger.warning(
                     f"/sell: cache invalidation failed for guild={interaction.guild_id} "
                     f"tier={player.get('tier')}; transaction still succeeded"
+                )
+
+            # Invalidate player and inventory caches — credits changed; inventory shrank
+            try:
+                autocomplete_state.invalidate_player(interaction.guild_id, interaction.user.id)
+                autocomplete_state.invalidate_inventory(interaction.guild_id, player["id"])
+            except Exception:  # pylint: disable=broad-exception-caught
+                flogger.warning(
+                    f"/sell: shared cache invalidation failed for player_id={player['id']}; transaction still succeeded"
                 )
 
             # Success message

@@ -14,6 +14,8 @@ from utils.autocomplete_utils import fuzzy_filter, normalize_for_search
 from utils.guild_setup import ensure_bountybot_infrastructure
 from utils.timestamp_utils import iso_to_discord_ts
 
+from utils import autocomplete_state
+
 # Set up logger
 flogger = bblogger.get_logger("discord-gateway-AdminCog")
 
@@ -468,6 +470,15 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
                 embed.add_field(name="New Credits", value=f"{result['new_credits']:,}", inline=True)
                 await interaction.followup.send(embed=embed, ephemeral=True)
 
+                # Invalidate player cache — credits changed
+                try:
+                    autocomplete_state.invalidate_player(interaction.guild_id, user.id)
+                except Exception:  # pylint: disable=broad-exception-caught
+                    flogger.warning(
+                        f"/admin_player set_credits: cache invalidation failed for user={user.id}; "
+                        "transaction still succeeded"
+                    )
+
             # Add credits
             elif action == "add_credits":
                 if credit_amount is None:
@@ -490,6 +501,15 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
                 embed.add_field(name="Amount Added", value=f"{credit_amount:,}", inline=True)
                 embed.add_field(name="New Total", value=f"{result['new_credits']:,}", inline=True)
                 await interaction.followup.send(embed=embed, ephemeral=True)
+
+                # Invalidate player cache — credits changed
+                try:
+                    autocomplete_state.invalidate_player(interaction.guild_id, user.id)
+                except Exception:  # pylint: disable=broad-exception-caught
+                    flogger.warning(
+                        f"/admin_player add_credits: cache invalidation failed for user={user.id}; "
+                        "transaction still succeeded"
+                    )
 
             # Set XP
             elif action == "set_xp":
@@ -516,6 +536,15 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
                 if result.get("tier_changed"):
                     embed.add_field(name="Tier Change", value="✅ Tier Updated!", inline=True)
                 await interaction.followup.send(embed=embed, ephemeral=True)
+
+                # Invalidate player cache — xp (and possibly tier) changed
+                try:
+                    autocomplete_state.invalidate_player(interaction.guild_id, user.id)
+                except Exception:  # pylint: disable=broad-exception-caught
+                    flogger.warning(
+                        f"/admin_player set_xp: cache invalidation failed for user={user.id}; "
+                        "transaction still succeeded"
+                    )
 
             # Reset cooldown (tier_change or bounty) via cooldown reset endpoint
             elif action in ("reset_tier_cooldown", "reset_bounty_cooldown"):
@@ -562,6 +591,15 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
                 embed.add_field(name="Duel Losses", value=str(result["duel_losses"]), inline=True)
                 embed.add_field(name="Prestige Count", value=str(result["prestige_count"]), inline=True)
                 await interaction.followup.send(embed=embed, ephemeral=True)
+
+                # Invalidate player cache — full player reset
+                try:
+                    autocomplete_state.invalidate_player(interaction.guild_id, user.id)
+                except Exception:  # pylint: disable=broad-exception-caught
+                    flogger.warning(
+                        f"/admin_player reset: cache invalidation failed for user={user.id}; "
+                        "transaction still succeeded"
+                    )
 
             flogger.info(
                 f"Admin {interaction.user} performed {action} on player {user} in guild {interaction.guild_id}"
@@ -1897,6 +1935,17 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
                 f"Admin {interaction.user} gave {quantity}x {item_name} to {user} in guild {interaction.guild_id}"
             )
 
+            # Invalidate target player's inventory cache — item was added
+            target_player_id = result.get("player_id")
+            if target_player_id is not None:
+                try:
+                    autocomplete_state.invalidate_inventory(interaction.guild_id, target_player_id)
+                except Exception:  # pylint: disable=broad-exception-caught
+                    flogger.warning(
+                        f"/admin_give_item: cache invalidation failed for player_id={target_player_id}; "
+                        "transaction still succeeded"
+                    )
+
         except httpx.HTTPStatusError as e:
             await report_api_error(interaction, e)
         except Exception as e:  # pylint: disable=broad-exception-caught
@@ -1979,6 +2028,17 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
                 f"Admin {interaction.user} removed {quantity}x {item_name} from {user} in guild {interaction.guild_id}"
             )
 
+            # Invalidate target player's inventory cache — item was removed
+            target_player_id = result.get("player_id")
+            if target_player_id is not None:
+                try:
+                    autocomplete_state.invalidate_inventory(interaction.guild_id, target_player_id)
+                except Exception:  # pylint: disable=broad-exception-caught
+                    flogger.warning(
+                        f"/admin_remove_item: cache invalidation failed for player_id={target_player_id}; "
+                        "transaction still succeeded"
+                    )
+
         except httpx.HTTPStatusError as e:
             await report_api_error(interaction, e)
         except Exception as e:  # pylint: disable=broad-exception-caught
@@ -2042,6 +2102,18 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
             embed.add_field(name="Status", value="Inactive (empty loadout)", inline=True)
             await interaction.followup.send(embed=embed, ephemeral=True)
             flogger.info(f"Admin {interaction.user} gave ship {ship_name} to {user} in guild {interaction.guild_id}")
+
+            # Invalidate target player's ships and player caches — new ship acquired
+            target_player_id = result.get("player_id")
+            if target_player_id is not None:
+                try:
+                    autocomplete_state.invalidate_ships(interaction.guild_id, target_player_id)
+                    autocomplete_state.invalidate_player(interaction.guild_id, user.id)
+                except Exception:  # pylint: disable=broad-exception-caught
+                    flogger.warning(
+                        f"/admin_give_ship: cache invalidation failed for player_id={target_player_id}; "
+                        "transaction still succeeded"
+                    )
 
         except httpx.HTTPStatusError as e:
             await report_api_error(interaction, e)

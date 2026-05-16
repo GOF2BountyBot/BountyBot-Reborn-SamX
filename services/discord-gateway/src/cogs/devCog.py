@@ -9,6 +9,8 @@ from discord.ext import commands
 from shared import bblogger
 from utils.autocomplete_utils import normalize_for_search
 
+from utils import autocomplete_state
+
 flogger = bblogger.get_logger("discord-gateway-DevCog")
 api_base = os.environ.get("BOT_API_BASE_URL", "http://bot-core:8000/api/v1")
 flogger.debug(f"devCog loading with api_base: {api_base}")
@@ -126,6 +128,13 @@ class DevCog(commands.Cog):
         if not await _check_is_super_admin(interaction):
             await interaction.followup.send("❌ This command requires super-admin privileges.", ephemeral=True)
             return
+
+        # Clear all shared autocomplete caches first so next keystrokes re-warm from scratch
+        try:
+            autocomplete_state.clear_all()
+        except Exception:  # pylint: disable=broad-exception-caught
+            flogger.warning("/reload_autocomplete: autocomplete_state.clear_all() failed (non-fatal)")
+
         reloaded = []
         failed = []
 

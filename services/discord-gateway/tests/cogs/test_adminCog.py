@@ -60,6 +60,50 @@ def _close_coro(coro):
     return MagicMock()
 
 
+# ---------------------------------------------------------------------------
+# Phase-4 autocomplete_state cache helpers for adminCog tests.
+#
+# adminCog imports resolve_player_id LAZILY (inside each function):
+#   from utils.autocomplete_helpers import resolve_player_id
+# This means the import uses whatever utils.autocomplete_helpers is in
+# sys.modules at the time of the call (NOT a module-level binding).
+# Therefore we only need to populate sys.modules["utils.autocomplete_state"]
+# — the NEW version — which is what the lazy import will use.
+# ---------------------------------------------------------------------------
+
+
+def _ac_get_state_for_admin():
+    """Return the autocomplete_state that adminCog's lazy import will use."""
+    return sys.modules.get("utils.autocomplete_state")
+
+
+def _ac_init_player_cache_for_admin():
+    """Create a real (no-HTTP) player_cache on the current autocomplete_state.
+
+    If the module is not yet in sys.modules (was evicted), import it first so
+    it's available for the lazy import inside resolve_player_id.
+    """
+    from cogs._shared.autocomplete_cache import AutocompleteCache
+
+    ac = _ac_get_state_for_admin()
+    if ac is None:
+        # Module was evicted — import it so the lazy import inside resolve_player_id
+        # finds the same object we're about to populate.
+        import utils.autocomplete_state as _ac_mod
+        ac = _ac_mod
+    if ac.player_cache is None:
+        ac.player_cache = AutocompleteCache(ttl_seconds=900, name="player")
+        ac._initialized = True
+    return ac
+
+
+def _ac_reset_admin_player_cache():
+    """Invalidate all player_cache entries without destroying the cache object."""
+    ac = _ac_get_state_for_admin()
+    if ac is not None and ac.player_cache is not None:
+        ac.player_cache.clear()
+
+
 @pytest.fixture(scope="module")
 def mock_bot():
     """Create a mock Discord bot for adminCog testing."""
@@ -2396,17 +2440,20 @@ class TestPlayerShipAutocomplete:
         return user
 
     def test_filters_to_player_ships_when_user_param_available(self, mock_admin_cog):
-        """When namespace.user is set and player resolves, only that player's ships are shown."""
+        """When namespace.user is set and player resolves, only that player's ships are shown.
+
+        Phase 4: resolve_player_id reads from cache. Pre-populate player_cache so
+        the admin function gets player_id=7 and then makes its own HTTP call for ships.
+        """
         target_user = self._make_user(user_id=42)
         interaction = self._make_interaction(target_user=target_user, guild_id=99)
 
-        # resolve_player_id → POST /players/ returns player_id=7
-        player_resp = MagicMock()
-        player_resp.status_code = 200
-        player_resp.raise_for_status = MagicMock()
-        player_resp.json = MagicMock(return_value={"id": 7})
+        # Phase 4: Pre-populate player_cache so resolve_player_id returns player_id=7
+        ac = _ac_init_player_cache_for_admin()
+        if ac is not None:
+            ac.player_cache.set((99, 42), {"id": 7})
 
-        # GET /ships/player/7 returns two ships owned by the player
+        # GET /ships/player/7 returns two ships owned by the player (still HTTP in adminCog)
         ships_resp = MagicMock()
         ships_resp.status_code = 200
         ships_resp.json = MagicMock(
@@ -2416,7 +2463,6 @@ class TestPlayerShipAutocomplete:
             ]
         )
 
-        mock_admin_cog.http_client.post = AsyncMock(return_value=player_resp)
         mock_admin_cog.http_client.get = AsyncMock(return_value=ships_resp)
 
         result = asyncio.run(mock_admin_cog.player_ship_autocomplete(interaction, ""))
@@ -2428,6 +2474,9 @@ class TestPlayerShipAutocomplete:
         get_calls = [call[0][0] for call in mock_admin_cog.http_client.get.call_args_list]
         assert any("ships/player/7" in url for url in get_calls)
         assert not any("about/ships" in url for url in get_calls)
+
+        # Cleanup
+        _ac_reset_admin_player_cache()
 
     def test_falls_back_to_all_ships_when_user_param_is_none(self, mock_admin_cog):
         """When namespace.user is None (not yet selected), all ships from _ship_catalog are shown.
@@ -2477,14 +2526,14 @@ class TestPlayerShipAutocomplete:
         mock_admin_cog.http_client.get.assert_not_called()
 
     def test_filters_ships_by_current_input(self, mock_admin_cog):
-        """Autocomplete filters results by the current typed prefix (case/accent-insensitive)."""
+        """Autocomplete filters results by the current typed prefix (Phase 4: cache-based player)."""
         target_user = self._make_user(user_id=42)
         interaction = self._make_interaction(target_user=target_user, guild_id=99)
 
-        player_resp = MagicMock()
-        player_resp.status_code = 200
-        player_resp.raise_for_status = MagicMock()
-        player_resp.json = MagicMock(return_value={"id": 7})
+        # Phase 4: Pre-populate player_cache
+        ac = _ac_init_player_cache_for_admin()
+        if ac is not None:
+            ac.player_cache.set((99, 42), {"id": 7})
 
         ships_resp = MagicMock()
         ships_resp.status_code = 200
@@ -2495,7 +2544,6 @@ class TestPlayerShipAutocomplete:
                 {"ship_name": "Bloodstar", "ship_id": 3},
             ]
         )
-        mock_admin_cog.http_client.post = AsyncMock(return_value=player_resp)
         mock_admin_cog.http_client.get = AsyncMock(return_value=ships_resp)
 
         result = asyncio.run(mock_admin_cog.player_ship_autocomplete(interaction, "Ni"))
@@ -2504,6 +2552,9 @@ class TestPlayerShipAutocomplete:
         assert "Niode" in names
         assert "Groza" not in names
         assert "Bloodstar" not in names
+
+        # Cleanup
+        _ac_reset_admin_player_cache()
 
     def test_returns_empty_on_unexpected_exception(self, mock_admin_cog):
         """Empty catalog (cold cache) returns [] without raising (silent degradation)."""
@@ -5317,7 +5368,11 @@ class TestRemoveItemAutocomplete:
         assert choices[0].value == "__select_user_first__"
 
     def test_autocomplete_with_user_shows_inventory(self, mock_admin_cog):
-        """remove_item_autocomplete shows player inventory when user selected."""
+        """remove_item_autocomplete shows player inventory when user selected.
+
+        Phase 4: resolve_player_id reads from cache. Pre-populate player_cache.
+        The admin function then makes its own HTTP GET for inventory.
+        """
         target_user = MagicMock()
         target_user.id = 42
 
@@ -5326,13 +5381,12 @@ class TestRemoveItemAutocomplete:
         interaction.namespace = MagicMock()
         interaction.namespace.user = target_user
 
-        # resolve_player_id → player_id=7
-        player_resp = MagicMock()
-        player_resp.status_code = 200
-        player_resp.raise_for_status = MagicMock()
-        player_resp.json = MagicMock(return_value={"id": 7})
+        # Phase 4: Pre-populate player_cache so resolve_player_id returns player_id=7
+        ac = _ac_init_player_cache_for_admin()
+        if ac is not None:
+            ac.player_cache.set((987654321, 42), {"id": 7})
 
-        # GET /inventory/player/7
+        # GET /inventory/player/7 — still made by adminCog directly
         inv_resp = MagicMock()
         inv_resp.status_code = 200
         inv_resp.json = MagicMock(
@@ -5342,7 +5396,6 @@ class TestRemoveItemAutocomplete:
             ]
         )
 
-        mock_admin_cog.http_client.post = AsyncMock(return_value=player_resp)
         mock_admin_cog.http_client.get = AsyncMock(return_value=inv_resp)
 
         choices = asyncio.run(mock_admin_cog.remove_item_autocomplete(interaction, ""))
@@ -5350,6 +5403,9 @@ class TestRemoveItemAutocomplete:
         names = [c.name for c in choices]
         assert any("Laser Cannon" in n for n in names)
         assert any("Engine Core" in n for n in names)
+
+        # Cleanup
+        _ac_reset_admin_player_cache()
 
     def test_autocomplete_falls_back_to_catalog_on_player_resolution_failure(self, mock_admin_cog):
         """remove_item_autocomplete falls back to catalog when player resolution fails."""

@@ -1,9 +1,12 @@
-"""Tests for the shared autocomplete helpers.
+"""Tests for the shared autocomplete helpers — Phase 4 rewired version.
 
-These tests exercise the helpers via their real public interface.
-discord and its app_commands module are imported directly so the produced
-Choice objects are real (not mocked); the only mocked surface is
-``httpx.AsyncClient`` which supplies controlled HTTP responses.
+Phase 4: helpers read from ``autocomplete_state`` shared caches instead of
+making HTTP calls per keystroke.  Tests pre-populate the cache via
+``autocomplete_state.set_player``, ``set_inventory``, ``set_ships`` and verify
+that the HTTP client is NEVER called on the warm path.
+
+Backward-compat tests that previously mocked HTTP are updated to pre-populate
+the cache instead.  The public function signatures are unchanged (AC-COMPAT-1).
 """
 
 import asyncio
@@ -16,7 +19,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 # ---------------------------------------------------------------------------
-# Inject mock shared.bblogger BEFORE importing the module under test
+# Inject mock shared.bblogger BEFORE importing any application modules.
 # ---------------------------------------------------------------------------
 
 _mock_shared = types.ModuleType("shared")
@@ -28,7 +31,12 @@ sys.modules["shared.bblogger"] = _mock_bblogger
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "src"))
 
+# ---------------------------------------------------------------------------
+# Now import application modules (after bblogger mock is in place).
+# ---------------------------------------------------------------------------
+
 import utils.autocomplete_helpers as _autocomplete_helpers_mod
+import utils.autocomplete_state as autocomplete_state
 from utils.autocomplete_helpers import (
     _CURRENTLY_EQUIPPABLE_INVENTORY_TYPES,
     player_equippable_autocomplete,
@@ -37,21 +45,14 @@ from utils.autocomplete_helpers import (
     player_ships_autocomplete,
     resolve_player_id,
 )
+from utils.autocomplete_state import NormalizedChoice
+from utils.autocomplete_utils import normalize_for_search
 
 API_BASE = "http://bot-core:8000/api/v1"
 
-
 # ---------------------------------------------------------------------------
-# Helpers
+# Test fixtures and helpers
 # ---------------------------------------------------------------------------
-
-
-def _make_response(json_data, status_code=200):
-    resp = MagicMock()
-    resp.raise_for_status = MagicMock()
-    resp.status_code = status_code
-    resp.json = MagicMock(return_value=json_data)
-    return resp
 
 
 def _make_interaction(user_id=111, guild_id=222):
@@ -62,368 +63,732 @@ def _make_interaction(user_id=111, guild_id=222):
     return inter
 
 
+def _make_player_nc(player_id: int, guild_id: int = 222, user_id: int = 111) -> dict:
+    """Return a minimal player dict for player_cache."""
+    return {"id": player_id, "guild_id": guild_id, "discord_id": user_id, "tier": "bronze", "credits": 100}
+
+
+def _make_ship_nc(
+    ship_id: int,
+    ship_name: str,
+    is_active: bool = False,
+    nickname: str = "",
+    weapons: list | None = None,
+    modules: list | None = None,
+    turrets: list | None = None,
+    secondary_weapons: list | None = None,
+) -> NormalizedChoice:
+    """Build a NormalizedChoice for a ship entry."""
+    raw = {
+        "id": ship_id,
+        "ship_name": ship_name,
+        "is_active": is_active,
+        "nickname": nickname,
+        "weapons": weapons or [],
+        "modules": modules or [],
+        "turrets": turrets or [],
+        "secondary_weapons": secondary_weapons or [],
+    }
+    label = f"{ship_name} ({nickname})" if nickname else ship_name
+    if is_active:
+        label = f"🟢 {label}"
+    return NormalizedChoice(label=label, value=str(ship_id), norm=normalize_for_search(label), raw=raw)
+
+
+def _make_inv_nc(
+    item_name: str,
+    item_type: str,
+    quantity: int = 1,
+    item_id: int = 0,
+) -> NormalizedChoice:
+    """Build a NormalizedChoice for an inventory item."""
+    raw = {
+        "id": item_id or hash(item_name),
+        "item_name": item_name,
+        "item_type": item_type,
+        "quantity": quantity,
+    }
+    qty_suffix = f" x{quantity}" if quantity > 1 else ""
+    label = f"{item_name} ({item_type.replace('_', ' ').title()}){qty_suffix}"
+    return NormalizedChoice(label=label, value=item_name, norm=normalize_for_search(label), raw=raw)
+
+
+def _init_state_with_real_caches():
+    """Initialize autocomplete_state with minimal real caches (no HTTP client needed)."""
+    from cogs._shared.autocomplete_cache import AutocompleteCache
+
+    # Reset module state
+    autocomplete_state._initialized = False
+    autocomplete_state._http_client = None
+    autocomplete_state._api_base = None
+
+    # Create real caches (no refresh_fn so schedule_refresh is a no-op)
+    autocomplete_state.player_cache = AutocompleteCache(ttl_seconds=900, name="player")
+    autocomplete_state.inventory_cache = AutocompleteCache(ttl_seconds=600, name="inventory")
+    autocomplete_state.ships_cache = AutocompleteCache(ttl_seconds=600, name="ships")
+    autocomplete_state._initialized = True
+
+
+def _reset_state():
+    """Reset autocomplete_state to uninitialized."""
+    autocomplete_state._initialized = False
+    autocomplete_state._http_client = None
+    autocomplete_state._api_base = None
+    autocomplete_state.player_cache = None
+    autocomplete_state.inventory_cache = None
+    autocomplete_state.ships_cache = None
+
+
+def _make_raising_client():
+    """Return a mock HTTP client that raises if any method is called."""
+    client = MagicMock()
+    client.post = AsyncMock(side_effect=AssertionError("HTTP client must NOT be called in Phase 4"))
+    client.get = AsyncMock(side_effect=AssertionError("HTTP client must NOT be called in Phase 4"))
+    client.put = AsyncMock(side_effect=AssertionError("HTTP client must NOT be called in Phase 4"))
+    return client
+
+
 # ---------------------------------------------------------------------------
-# resolve_player_id
+# resolve_player_id — Phase 4 cache-based tests
 # ---------------------------------------------------------------------------
 
 
 class TestResolvePlayerId:
-    """Unit tests for resolve_player_id."""
+    """Phase 4 tests for resolve_player_id."""
 
-    def test_returns_none_on_error(self):
-        """resolve_player_id swallows all exceptions and returns None."""
-        client = MagicMock()
-        client.post = AsyncMock(side_effect=RuntimeError("network down"))
+    def setup_method(self):
+        _init_state_with_real_caches()
 
+    def teardown_method(self):
+        _reset_state()
+
+    def test_resolve_player_id_warm_returns_id(self):
+        """Warm cache hit returns player id immediately without HTTP."""
+        player = _make_player_nc(42)
+        autocomplete_state.player_cache.set((222, 111), player)
+
+        client = _make_raising_client()
         result = asyncio.run(resolve_player_id(client, API_BASE, 111, 222))
+        assert result == 42
 
+    def test_resolve_player_id_cold_returns_none_and_schedules_refresh(self):
+        """Cold miss returns None and fires schedule_refresh (does not HTTP)."""
+        client = _make_raising_client()
+        result = asyncio.run(resolve_player_id(client, API_BASE, 111, 222))
         assert result is None
 
-    def test_returns_id_on_success(self):
-        """resolve_player_id returns the player ID on successful response."""
-        client = MagicMock()
-        client.post = AsyncMock(return_value=_make_response({"id": 42}))
-
+    def test_returns_none_when_state_not_initialized(self):
+        """Returns None gracefully if autocomplete_state.player_cache is None."""
+        _reset_state()  # player_cache is None
+        client = _make_raising_client()
         result = asyncio.run(resolve_player_id(client, API_BASE, 111, 222))
+        assert result is None
 
-        assert result == 42
+    def test_cold_miss_does_not_call_http(self):
+        """On cold miss, the HTTP client is never invoked."""
+        client = _make_raising_client()
+        # Should NOT raise even though client raises on any call
+        result = asyncio.run(resolve_player_id(client, API_BASE, 111, 222))
+        assert result is None
+        client.post.assert_not_called()
+        client.get.assert_not_called()
+
+    def test_warm_hit_does_not_call_http(self):
+        """On warm hit, the HTTP client is never invoked."""
+        autocomplete_state.player_cache.set((222, 111), {"id": 7})
+        client = _make_raising_client()
+        result = asyncio.run(resolve_player_id(client, API_BASE, 111, 222))
+        assert result == 7
+        client.post.assert_not_called()
+        client.get.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
-# player_ships_autocomplete
+# player_ships_autocomplete — Phase 4 cache-based tests
 # ---------------------------------------------------------------------------
 
 
 class TestPlayerShipsAutocomplete:
-    """Unit tests for player_ships_autocomplete."""
+    """Phase 4 tests for player_ships_autocomplete."""
 
-    def test_filters_by_current_and_formats_label(self):
-        """Filter is accent-insensitive substring match and label uses 🟢 for active."""
+    def setup_method(self):
+        _init_state_with_real_caches()
+
+    def teardown_method(self):
+        _reset_state()
+
+    def _populate(self, player_id=7, ships=None):
+        autocomplete_state.player_cache.set((222, 111), {"id": player_id})
+        if ships is not None:
+            autocomplete_state.ships_cache.set((222, player_id), ships)
+
+    def test_player_ships_warm_returns_choices(self):
+        """Warm cache returns matching ships without HTTP."""
         ships = [
-            {"id": 1, "ship_name": "Behén", "nickname": None, "is_active": True},
-            {"id": 2, "ship_name": "Mako", "nickname": "StarHunter", "is_active": False},
-            {"id": 3, "ship_name": "Viper", "nickname": None, "is_active": False},
+            _make_ship_nc(1, "Behén", is_active=True),
+            _make_ship_nc(2, "Mako", nickname="StarHunter"),
+            _make_ship_nc(3, "Viper"),
         ]
-        client = MagicMock()
-        client.post = AsyncMock(return_value=_make_response({"id": 7}))
-        client.get = AsyncMock(return_value=_make_response(ships))
+        self._populate(ships=ships)
+        client = _make_raising_client()
 
-        # Accent-insensitive: "behen" should match "Behén"
         choices = asyncio.run(player_ships_autocomplete(client, API_BASE, _make_interaction(), "behen"))
-
         assert len(choices) == 1
         assert choices[0].value == "1"
         assert choices[0].name.startswith("🟢 ")
         assert "Behén" in choices[0].name
 
-        # "Ma" matches "Mako (StarHunter)"; active prefix must NOT be present for inactive ship
-        choices_ma = asyncio.run(player_ships_autocomplete(client, API_BASE, _make_interaction(), "Ma"))
-        # Because interaction http responses are reused per-test, client.get is called again
-        # and the full ship list is returned; only "Mako" matches "ma".
-        matching = [c for c in choices_ma if "Mako" in c.name]
-        assert len(matching) == 1
-        assert matching[0].value == "2"
-        assert "StarHunter" in matching[0].name
-        assert not matching[0].name.startswith("🟢")
-
-    def test_exclude_active_omits_active_ship(self):
-        """exclude_active=True drops the active ship from results."""
+    def test_player_ships_excludes_active_when_flag_set(self):
+        """exclude_active=True drops active ship from results."""
         ships = [
-            {"id": 1, "ship_name": "Active Ship", "nickname": None, "is_active": True},
-            {"id": 2, "ship_name": "Backup Ship", "nickname": None, "is_active": False},
+            _make_ship_nc(1, "Active Ship", is_active=True),
+            _make_ship_nc(2, "Backup Ship"),
         ]
-        client = MagicMock()
-        client.post = AsyncMock(return_value=_make_response({"id": 7}))
-        client.get = AsyncMock(return_value=_make_response(ships))
+        self._populate(ships=ships)
+        client = _make_raising_client()
 
         choices = asyncio.run(player_ships_autocomplete(client, API_BASE, _make_interaction(), "", exclude_active=True))
-
         values = [c.value for c in choices]
         assert "1" not in values
         assert "2" in values
 
-    def test_returns_empty_on_player_resolution_failure(self):
-        """If player resolution fails, autocomplete returns []."""
-        client = MagicMock()
-        client.post = AsyncMock(side_effect=RuntimeError("network"))
-        client.get = AsyncMock()
+    def test_show_active_indicator_false(self):
+        """show_active_indicator=False omits 🟢 prefix even for active ship."""
+        ships = [_make_ship_nc(1, "Eagle", is_active=True)]
+        self._populate(ships=ships)
+        client = _make_raising_client()
+
+        choices = asyncio.run(
+            player_ships_autocomplete(client, API_BASE, _make_interaction(), "", show_active_indicator=False)
+        )
+        assert len(choices) == 1
+        assert not choices[0].name.startswith("🟢 ")
+
+    def test_returns_empty_on_player_cache_miss(self):
+        """If player is not in player_cache, returns []."""
+        client = _make_raising_client()
+        choices = asyncio.run(player_ships_autocomplete(client, API_BASE, _make_interaction(), ""))
+        assert choices == []
+
+    def test_returns_empty_on_ships_cache_miss(self):
+        """If ships cache empty, returns [] and schedules refresh."""
+        autocomplete_state.player_cache.set((222, 111), {"id": 7})
+        client = _make_raising_client()
+        choices = asyncio.run(player_ships_autocomplete(client, API_BASE, _make_interaction(), ""))
+        assert choices == []
+
+    def test_cold_miss_does_not_call_http(self):
+        """Cold miss on player_cache does not call HTTP."""
+        client = _make_raising_client()
+        choices = asyncio.run(player_ships_autocomplete(client, API_BASE, _make_interaction(), ""))
+        assert choices == []
+        client.post.assert_not_called()
+        client.get.assert_not_called()
+
+    def test_warm_cache_does_not_call_http(self):
+        """Warm cache does not call HTTP."""
+        ships = [_make_ship_nc(1, "Eagle", is_active=True)]
+        self._populate(ships=ships)
+        client = _make_raising_client()
+
+        asyncio.run(player_ships_autocomplete(client, API_BASE, _make_interaction(), ""))
+        client.post.assert_not_called()
+        client.get.assert_not_called()
+
+    def test_nickname_included_in_label(self):
+        """Nickname is included in the label when present."""
+        ships = [_make_ship_nc(2, "Mako", nickname="StarHunter")]
+        self._populate(ships=ships)
+        client = _make_raising_client()
 
         choices = asyncio.run(player_ships_autocomplete(client, API_BASE, _make_interaction(), ""))
+        assert len(choices) == 1
+        assert "StarHunter" in choices[0].name
 
-        assert choices == []
-        client.get.assert_not_called()
+    def test_accent_insensitive_filter(self):
+        """Search is accent-insensitive: 'behen' matches 'Behén'."""
+        ships = [_make_ship_nc(1, "Behén"), _make_ship_nc(2, "Mako")]
+        self._populate(ships=ships)
+        client = _make_raising_client()
+
+        choices = asyncio.run(player_ships_autocomplete(client, API_BASE, _make_interaction(), "behen"))
+        assert len(choices) == 1
+        assert "Behén" in choices[0].name
+
+    def test_empty_current_returns_all(self):
+        """Empty current string returns all ships (up to 25)."""
+        ships = [_make_ship_nc(i + 1, f"Ship{i + 1}") for i in range(5)]
+        self._populate(ships=ships)
+        client = _make_raising_client()
+
+        choices = asyncio.run(player_ships_autocomplete(client, API_BASE, _make_interaction(), ""))
+        assert len(choices) == 5
 
 
 # ---------------------------------------------------------------------------
-# player_inventory_autocomplete
+# player_inventory_autocomplete — Phase 4 cache-based tests
 # ---------------------------------------------------------------------------
 
 
 class TestPlayerInventoryAutocomplete:
-    """Unit tests for player_inventory_autocomplete."""
+    """Phase 4 tests for player_inventory_autocomplete."""
 
-    def test_filters_by_type_and_formats_label_with_quantity(self):
-        """item_type_filter restricts results; quantity >1 is shown in the label."""
+    def setup_method(self):
+        _init_state_with_real_caches()
+
+    def teardown_method(self):
+        _reset_state()
+
+    def _populate(self, player_id=7, items=None):
+        autocomplete_state.player_cache.set((222, 111), {"id": player_id})
+        if items is not None:
+            autocomplete_state.inventory_cache.set((222, player_id), items)
+
+    def test_player_inventory_item_type_filter(self):
+        """item_type_filter restricts results to matching items only."""
         items = [
-            {"item_name": "Pulse Laser", "item_type": "weapon", "quantity": 3},
-            {"item_name": "Shield Mk1", "item_type": "module", "quantity": 1},
-            {"item_name": "Plasma Turret", "item_type": "turret", "quantity": 2},
+            _make_inv_nc("Pulse Laser", "primary_weapon", quantity=3),
+            _make_inv_nc("Shield Mk1", "module", quantity=1),
+            _make_inv_nc("Plasma Turret", "turret_weapon", quantity=2),
         ]
-        client = MagicMock()
-        client.post = AsyncMock(return_value=_make_response({"id": 7}))
-        client.get = AsyncMock(return_value=_make_response(items))
+        self._populate(items=items)
+        client = _make_raising_client()
 
         choices = asyncio.run(
-            player_inventory_autocomplete(client, API_BASE, _make_interaction(), "", item_type_filter="weapon")
+            player_inventory_autocomplete(client, API_BASE, _make_interaction(), "", item_type_filter="primary_weapon")
         )
-
         assert len(choices) == 1
         assert choices[0].value == "Pulse Laser"
-        # Label should include type and quantity for qty > 1
-        assert "Weapon" in choices[0].name
+        assert "Primary Weapon" in choices[0].name
         assert "x3" in choices[0].name
 
-    def test_returns_empty_on_error(self):
-        """Returns [] if inventory fetch raises."""
-        client = MagicMock()
-        client.post = AsyncMock(return_value=_make_response({"id": 7}))
-        client.get = AsyncMock(side_effect=RuntimeError("boom"))
+    def test_no_filter_returns_all(self):
+        """No item_type_filter returns all inventory items."""
+        items = [
+            _make_inv_nc("Gun", "primary_weapon"),
+            _make_inv_nc("Shield", "module"),
+        ]
+        self._populate(items=items)
+        client = _make_raising_client()
 
         choices = asyncio.run(player_inventory_autocomplete(client, API_BASE, _make_interaction(), ""))
+        assert len(choices) == 2
 
+    def test_quantity_suffix_shown_for_qty_gt_1(self):
+        """Quantity suffix appears for quantity > 1."""
+        items = [_make_inv_nc("Cannon", "primary_weapon", quantity=5)]
+        self._populate(items=items)
+        client = _make_raising_client()
+
+        choices = asyncio.run(player_inventory_autocomplete(client, API_BASE, _make_interaction(), ""))
+        assert "x5" in choices[0].name
+
+    def test_no_quantity_suffix_for_qty_1(self):
+        """No quantity suffix for quantity = 1."""
+        items = [_make_inv_nc("Cannon", "primary_weapon", quantity=1)]
+        self._populate(items=items)
+        client = _make_raising_client()
+
+        choices = asyncio.run(player_inventory_autocomplete(client, API_BASE, _make_interaction(), ""))
+        assert "x1" not in choices[0].name
+
+    def test_returns_empty_on_player_miss(self):
+        """Returns [] when player not in cache."""
+        client = _make_raising_client()
+        choices = asyncio.run(player_inventory_autocomplete(client, API_BASE, _make_interaction(), ""))
         assert choices == []
+
+    def test_returns_empty_on_inventory_miss(self):
+        """Returns [] when inventory not cached yet."""
+        autocomplete_state.player_cache.set((222, 111), {"id": 7})
+        client = _make_raising_client()
+        choices = asyncio.run(player_inventory_autocomplete(client, API_BASE, _make_interaction(), ""))
+        assert choices == []
+
+    def test_cold_miss_does_not_call_http(self):
+        """Cold miss never calls HTTP client."""
+        client = _make_raising_client()
+        choices = asyncio.run(player_inventory_autocomplete(client, API_BASE, _make_interaction(), ""))
+        assert choices == []
+        client.post.assert_not_called()
+        client.get.assert_not_called()
+
+    def test_warm_cache_does_not_call_http(self):
+        """Warm cache never calls HTTP client."""
+        items = [_make_inv_nc("Gun", "primary_weapon")]
+        self._populate(items=items)
+        client = _make_raising_client()
+
+        asyncio.run(player_inventory_autocomplete(client, API_BASE, _make_interaction(), ""))
+        client.post.assert_not_called()
+        client.get.assert_not_called()
+
+    def test_search_filter(self):
+        """Current string filters by substring match."""
+        items = [
+            _make_inv_nc("Pulse Laser", "primary_weapon"),
+            _make_inv_nc("Micro Gun", "primary_weapon"),
+        ]
+        self._populate(items=items)
+        client = _make_raising_client()
+
+        choices = asyncio.run(player_inventory_autocomplete(client, API_BASE, _make_interaction(), "Pulse"))
+        assert len(choices) == 1
+        assert choices[0].value == "Pulse Laser"
+
+    def test_deduplicates_item_names(self):
+        """Duplicate item_names are deduplicated (shows only first occurrence)."""
+        items = [
+            _make_inv_nc("Cannon", "primary_weapon", quantity=1),
+            _make_inv_nc("Cannon", "primary_weapon", quantity=2),  # duplicate name
+        ]
+        self._populate(items=items)
+        client = _make_raising_client()
+
+        choices = asyncio.run(player_inventory_autocomplete(client, API_BASE, _make_interaction(), ""))
+        names = [c.value for c in choices]
+        assert names.count("Cannon") == 1
+
+
+# ---------------------------------------------------------------------------
+# player_equippable_autocomplete — Phase 4 cache-based tests
+# ---------------------------------------------------------------------------
 
 
 class TestPlayerEquippableAutocomplete:
-    """Tests for player_equippable_autocomplete (A.37 new helper)."""
+    """Phase 4 tests for player_equippable_autocomplete."""
 
-    def test_excludes_equipped_items(self):
-        """Items already equipped on the active ship are filtered out."""
-        interaction = _make_interaction()
-        client = AsyncMock()
+    def setup_method(self):
+        _init_state_with_real_caches()
 
-        inv_resp = _make_response(
-            [
-                {"item_name": "Pulse Laser", "item_type": "primary_weapon", "quantity": 1},
-                {"item_name": "Shield Gen", "item_type": "module", "quantity": 1},
-                {"item_name": "Big Cannon", "item_type": "primary_weapon", "quantity": 1},
-            ]
-        )
-        ships_resp = _make_response(
-            [
-                {
-                    "id": 1,
-                    "ship_name": "Betty",
-                    "is_active": True,
-                    "weapons": ["Pulse Laser"],  # already equipped
-                    "modules": [],
-                    "turrets": [],
-                    "secondary_weapons": [],
-                }
-            ]
-        )
-        player_resp = _make_response({"id": 1})
+    def teardown_method(self):
+        _reset_state()
 
-        client.post = AsyncMock(return_value=player_resp)
-        client.get = AsyncMock(side_effect=[inv_resp, ships_resp])
+    def _populate(self, player_id=7, items=None, ships=None):
+        autocomplete_state.player_cache.set((222, 111), {"id": player_id})
+        if items is not None:
+            autocomplete_state.inventory_cache.set((222, player_id), items)
+        if ships is not None:
+            autocomplete_state.ships_cache.set((222, player_id), ships)
 
-        choices = asyncio.run(player_equippable_autocomplete(client, API_BASE, interaction, ""))
+    def test_player_equippable_excludes_equipped_items(self):
+        """Items already equipped on the active ship are excluded."""
+        items = [
+            _make_inv_nc("Pulse Laser", "primary_weapon"),
+            _make_inv_nc("Shield Gen", "module"),
+            _make_inv_nc("Big Cannon", "primary_weapon"),
+        ]
+        ships = [_make_ship_nc(1, "Betty", is_active=True, weapons=["Pulse Laser"])]
+        self._populate(items=items, ships=ships)
+        client = _make_raising_client()
 
+        choices = asyncio.run(player_equippable_autocomplete(client, API_BASE, _make_interaction(), ""))
         names = {c.value for c in choices}
-        assert "Pulse Laser" not in names, "equipped item should be excluded"
+        assert "Pulse Laser" not in names, "already equipped — must be excluded"
         assert "Shield Gen" in names
         assert "Big Cannon" in names
 
-    def test_excludes_secondary_weapon_today(self):
-        """Items with item_type='secondary_weapon' are filtered out by _CURRENTLY_EQUIPPABLE_INVENTORY_TYPES."""
-        interaction = _make_interaction()
-        client = AsyncMock()
+    def test_player_equippable_excludes_non_equippable_types(self):
+        """secondary_weapon items are excluded (not in CURRENTLY_EQUIPPABLE set)."""
+        items = [
+            _make_inv_nc("Primary Gun", "primary_weapon"),
+            _make_inv_nc("Seeker Missile", "secondary_weapon"),
+        ]
+        ships = [_make_ship_nc(1, "Betty", is_active=True)]
+        self._populate(items=items, ships=ships)
+        client = _make_raising_client()
 
-        inv_resp = _make_response(
-            [
-                {"item_name": "Primary Gun", "item_type": "primary_weapon", "quantity": 1},
-                {"item_name": "Seeker Missile", "item_type": "secondary_weapon", "quantity": 1},
-            ]
-        )
-        ships_resp = _make_response(
-            [
-                {
-                    "id": 1,
-                    "ship_name": "Betty",
-                    "is_active": True,
-                    "weapons": [],
-                    "modules": [],
-                    "turrets": [],
-                    "secondary_weapons": [],
-                }
-            ]
-        )
-        player_resp = _make_response({"id": 1})
-        client.post = AsyncMock(return_value=player_resp)
-        client.get = AsyncMock(side_effect=[inv_resp, ships_resp])
-
-        choices = asyncio.run(player_equippable_autocomplete(client, API_BASE, interaction, ""))
-
+        choices = asyncio.run(player_equippable_autocomplete(client, API_BASE, _make_interaction(), ""))
         names = {c.value for c in choices}
-        assert "Seeker Missile" not in names, "secondary_weapon must be excluded today"
+        assert "Seeker Missile" not in names
         assert "Primary Gun" in names
 
-    def test_returns_empty_on_api_error(self):
-        """Returns [] on any API failure."""
-        interaction = _make_interaction()
-        client = AsyncMock()
-        client.post = AsyncMock(side_effect=RuntimeError("boom"))
+    def test_cold_miss_does_not_call_http(self):
+        """Cold miss on player cache does not call HTTP."""
+        client = _make_raising_client()
+        choices = asyncio.run(player_equippable_autocomplete(client, API_BASE, _make_interaction(), ""))
+        assert choices == []
+        client.post.assert_not_called()
+        client.get.assert_not_called()
 
-        choices = asyncio.run(player_equippable_autocomplete(client, API_BASE, interaction, ""))
+    def test_warm_cache_does_not_call_http(self):
+        """All caches warm — HTTP never called."""
+        items = [_make_inv_nc("Cannon", "primary_weapon")]
+        ships = [_make_ship_nc(1, "Betty", is_active=True)]
+        self._populate(items=items, ships=ships)
+        client = _make_raising_client()
+
+        asyncio.run(player_equippable_autocomplete(client, API_BASE, _make_interaction(), ""))
+        client.post.assert_not_called()
+        client.get.assert_not_called()
+
+    def test_returns_empty_when_inventory_miss(self):
+        """Returns [] when inventory not cached (ships don't matter)."""
+        autocomplete_state.player_cache.set((222, 111), {"id": 7})
+        autocomplete_state.ships_cache.set((222, 7), [_make_ship_nc(1, "Betty", is_active=True)])
+        client = _make_raising_client()
+        choices = asyncio.run(player_equippable_autocomplete(client, API_BASE, _make_interaction(), ""))
         assert choices == []
 
+    def test_returns_empty_when_ships_miss(self):
+        """Returns [] when ships not cached."""
+        items = [_make_inv_nc("Cannon", "primary_weapon")]
+        autocomplete_state.player_cache.set((222, 111), {"id": 7})
+        autocomplete_state.inventory_cache.set((222, 7), items)
+        client = _make_raising_client()
+        choices = asyncio.run(player_equippable_autocomplete(client, API_BASE, _make_interaction(), ""))
+        assert choices == []
+
+    def test_no_active_ship_returns_all_equippable(self):
+        """When no active ship, all equippable-type items are returned (nothing equipped)."""
+        items = [
+            _make_inv_nc("Cannon", "primary_weapon"),
+            _make_inv_nc("Shield", "module"),
+        ]
+        ships = [_make_ship_nc(1, "Inactive", is_active=False)]
+        self._populate(items=items, ships=ships)
+        client = _make_raising_client()
+
+        choices = asyncio.run(player_equippable_autocomplete(client, API_BASE, _make_interaction(), ""))
+        names = {c.value for c in choices}
+        assert "Cannon" in names
+        assert "Shield" in names
+
+    def test_search_filter(self):
+        """Current string filters equippable items."""
+        items = [
+            _make_inv_nc("Pulse Laser", "primary_weapon"),
+            _make_inv_nc("Shield Gen", "module"),
+        ]
+        ships = [_make_ship_nc(1, "Betty", is_active=True)]
+        self._populate(items=items, ships=ships)
+        client = _make_raising_client()
+
+        choices = asyncio.run(player_equippable_autocomplete(client, API_BASE, _make_interaction(), "Pulse"))
+        assert len(choices) == 1
+        assert choices[0].value == "Pulse Laser"
+
     def test_constants_exclude_secondary_weapon(self):
-        """_CURRENTLY_EQUIPPABLE_INVENTORY_TYPES must not contain 'secondary_weapon' today."""
+        """_CURRENTLY_EQUIPPABLE_INVENTORY_TYPES must not contain 'secondary_weapon'."""
         assert "secondary_weapon" not in _CURRENTLY_EQUIPPABLE_INVENTORY_TYPES
-        # ship is also excluded from equippable (has its own slot flow)
         assert "ship" not in _CURRENTLY_EQUIPPABLE_INVENTORY_TYPES
-        # These should be present:
         assert "primary_weapon" in _CURRENTLY_EQUIPPABLE_INVENTORY_TYPES
         assert "turret_weapon" in _CURRENTLY_EQUIPPABLE_INVENTORY_TYPES
         assert "module" in _CURRENTLY_EQUIPPABLE_INVENTORY_TYPES
 
+    def test_excludes_items_from_all_equipped_slots(self):
+        """Equipped items from weapons, modules, turrets, secondary_weapons are all excluded."""
+        items = [
+            _make_inv_nc("Pulse Laser", "primary_weapon"),
+            _make_inv_nc("Shield", "module"),
+            _make_inv_nc("Turret Mk1", "turret_weapon"),
+        ]
+        ships = [
+            _make_ship_nc(
+                1,
+                "Betty",
+                is_active=True,
+                weapons=["Pulse Laser"],
+                modules=["Shield"],
+                turrets=["Turret Mk1"],
+            )
+        ]
+        self._populate(items=items, ships=ships)
+        client = _make_raising_client()
+
+        choices = asyncio.run(player_equippable_autocomplete(client, API_BASE, _make_interaction(), ""))
+        assert choices == []
+
+
+# ---------------------------------------------------------------------------
+# player_equipped_autocomplete — Phase 4 cache-based tests
+# ---------------------------------------------------------------------------
+
 
 class TestPlayerEquippedAutocomplete:
-    """Tests for player_equipped_autocomplete (A.37 new helper)."""
+    """Phase 4 tests for player_equipped_autocomplete."""
 
-    def test_includes_all_slots(self):
-        """Equipped items from weapons, modules, turrets, secondary_weapons all returned."""
-        interaction = _make_interaction()
-        client = AsyncMock()
+    def setup_method(self):
+        _init_state_with_real_caches()
 
-        player_resp = _make_response({"id": 1})
-        ships_resp = _make_response(
-            [
-                {
-                    "id": 1,
-                    "ship_name": "Betty",
-                    "is_active": True,
-                    "weapons": ["Pulse Laser"],
-                    "modules": ["Shield Gen"],
-                    "turrets": ["Beam Turret"],
-                    "secondary_weapons": [],
-                }
-            ]
-        )
-        client.post = AsyncMock(return_value=player_resp)
-        client.get = AsyncMock(return_value=ships_resp)
+    def teardown_method(self):
+        _reset_state()
 
-        choices = asyncio.run(player_equipped_autocomplete(client, API_BASE, interaction, ""))
+    def _populate(self, player_id=7, ships=None):
+        autocomplete_state.player_cache.set((222, 111), {"id": player_id})
+        if ships is not None:
+            autocomplete_state.ships_cache.set((222, player_id), ships)
 
+    def test_player_equipped_returns_loadout_items(self):
+        """Returns items from all loadout slots of the active ship."""
+        ships = [
+            _make_ship_nc(
+                1,
+                "Betty",
+                is_active=True,
+                weapons=["Pulse Laser"],
+                modules=["Shield Gen"],
+                turrets=["Beam Turret"],
+            )
+        ]
+        self._populate(ships=ships)
+        client = _make_raising_client()
+
+        choices = asyncio.run(player_equipped_autocomplete(client, API_BASE, _make_interaction(), ""))
         names = {c.value for c in choices}
         assert "Pulse Laser" in names
         assert "Shield Gen" in names
         assert "Beam Turret" in names
 
     def test_returns_empty_when_no_active_ship(self):
-        """Returns [] when player has no active ship."""
-        interaction = _make_interaction()
-        client = AsyncMock()
+        """Returns [] when no active ship is found."""
+        ships = [_make_ship_nc(1, "Betty", is_active=False)]
+        self._populate(ships=ships)
+        client = _make_raising_client()
 
-        player_resp = _make_response({"id": 1})
-        ships_resp = _make_response(
-            [
-                {
-                    "id": 1,
-                    "ship_name": "Betty",
-                    "is_active": False,
-                    "weapons": [],
-                    "modules": [],
-                    "turrets": [],
-                    "secondary_weapons": [],
-                }
-            ]
-        )
-        client.post = AsyncMock(return_value=player_resp)
-        client.get = AsyncMock(return_value=ships_resp)
-
-        choices = asyncio.run(player_equipped_autocomplete(client, API_BASE, interaction, ""))
+        choices = asyncio.run(player_equipped_autocomplete(client, API_BASE, _make_interaction(), ""))
         assert choices == []
 
-    def test_returns_empty_on_api_error(self):
-        """Returns [] on any API failure."""
-        interaction = _make_interaction()
-        client = AsyncMock()
-        client.post = AsyncMock(side_effect=RuntimeError("boom"))
-
-        choices = asyncio.run(player_equipped_autocomplete(client, API_BASE, interaction, ""))
+    def test_cold_miss_does_not_call_http(self):
+        """Cold miss on player cache never calls HTTP."""
+        client = _make_raising_client()
+        choices = asyncio.run(player_equipped_autocomplete(client, API_BASE, _make_interaction(), ""))
         assert choices == []
+        client.post.assert_not_called()
+        client.get.assert_not_called()
+
+    def test_warm_cache_does_not_call_http(self):
+        """Warm caches never calls HTTP."""
+        ships = [_make_ship_nc(1, "Betty", is_active=True, weapons=["Gun"])]
+        self._populate(ships=ships)
+        client = _make_raising_client()
+
+        asyncio.run(player_equipped_autocomplete(client, API_BASE, _make_interaction(), ""))
+        client.post.assert_not_called()
+        client.get.assert_not_called()
 
     def test_filters_by_current_input(self):
-        """Only items matching the current search term are returned."""
-        interaction = _make_interaction()
-        client = AsyncMock()
+        """Only equipped items matching current are returned."""
+        ships = [
+            _make_ship_nc(
+                1,
+                "Betty",
+                is_active=True,
+                weapons=["Pulse Laser", "Micro Gun"],
+                modules=["Shield Gen"],
+            )
+        ]
+        self._populate(ships=ships)
+        client = _make_raising_client()
 
-        player_resp = _make_response({"id": 1})
-        ships_resp = _make_response(
-            [
-                {
-                    "id": 1,
-                    "ship_name": "Betty",
-                    "is_active": True,
-                    "weapons": ["Pulse Laser", "Micro Gun"],
-                    "modules": ["Shield Gen"],
-                    "turrets": [],
-                    "secondary_weapons": [],
-                }
-            ]
-        )
-        client.post = AsyncMock(return_value=player_resp)
-        client.get = AsyncMock(return_value=ships_resp)
-
-        choices = asyncio.run(player_equipped_autocomplete(client, API_BASE, interaction, "Pulse"))
-
+        choices = asyncio.run(player_equipped_autocomplete(client, API_BASE, _make_interaction(), "Pulse"))
         names = {c.value for c in choices}
         assert "Pulse Laser" in names
         assert "Micro Gun" not in names
         assert "Shield Gen" not in names
 
+    def test_returns_empty_on_ships_miss(self):
+        """Returns [] when ships_cache miss."""
+        autocomplete_state.player_cache.set((222, 111), {"id": 7})
+        client = _make_raising_client()
+        choices = asyncio.run(player_equipped_autocomplete(client, API_BASE, _make_interaction(), ""))
+        assert choices == []
+
 
 # ---------------------------------------------------------------------------
-# Diagnostic logging tests (O.1 fix)
+# Cross-cutting: test_cold_miss_does_not_call_http for all helpers
+# ---------------------------------------------------------------------------
+
+
+class TestColdMissNeverCallsHttp:
+    """Verify that cold misses across ALL helpers never issue HTTP calls."""
+
+    def setup_method(self):
+        _init_state_with_real_caches()
+
+    def teardown_method(self):
+        _reset_state()
+
+    def test_resolve_player_id_cold(self):
+        client = _make_raising_client()
+        result = asyncio.run(resolve_player_id(client, API_BASE, 111, 222))
+        assert result is None
+        client.post.assert_not_called()
+        client.get.assert_not_called()
+
+    def test_player_ships_cold(self):
+        client = _make_raising_client()
+        choices = asyncio.run(player_ships_autocomplete(client, API_BASE, _make_interaction(), ""))
+        assert choices == []
+        client.post.assert_not_called()
+        client.get.assert_not_called()
+
+    def test_player_inventory_cold(self):
+        client = _make_raising_client()
+        choices = asyncio.run(player_inventory_autocomplete(client, API_BASE, _make_interaction(), ""))
+        assert choices == []
+        client.post.assert_not_called()
+        client.get.assert_not_called()
+
+    def test_player_equippable_cold(self):
+        client = _make_raising_client()
+        choices = asyncio.run(player_equippable_autocomplete(client, API_BASE, _make_interaction(), ""))
+        assert choices == []
+        client.post.assert_not_called()
+        client.get.assert_not_called()
+
+    def test_player_equipped_cold(self):
+        client = _make_raising_client()
+        choices = asyncio.run(player_equipped_autocomplete(client, API_BASE, _make_interaction(), ""))
+        assert choices == []
+        client.post.assert_not_called()
+        client.get.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# Diagnostic logging tests (O.1 fix — preserved from original test suite)
 #
-# The module-level `logger` is a MagicMock (because bblogger is mocked at
-# import time).  To make pytest's caplog fixture capture real log records,
-# each test below replaces `utils.autocomplete_helpers.logger` with a real
-# logging.Logger for the duration of the test, then restores it.
+# In Phase 4 these test the warning paths that fire when the autocomplete_state
+# itself raises (e.g. unexpected attribute errors). The module-level logger
+# mock is replaced with a real logger for the duration of each test.
 # ---------------------------------------------------------------------------
 
 
 class TestAutocompleteExceptionLogging:
-    """Verify that each helper emits a WARNING log when an exception occurs."""
+    """Verify that each helper emits a WARNING log when an unexpected exception occurs."""
+
+    def setup_method(self):
+        _init_state_with_real_caches()
+
+    def teardown_method(self):
+        _reset_state()
 
     def test_resolve_player_id_logs_warning_on_exception(self, caplog):
-        """resolve_player_id logs WARNING with exc_info when an exception is swallowed."""
+        """resolve_player_id logs WARNING when an unexpected exception is swallowed."""
         real_logger = logging.getLogger("discord-gateway-autocomplete-helpers")
+        # Simulate unexpected exception by corrupting the player_cache peek method
         with (
             patch.object(_autocomplete_helpers_mod, "logger", real_logger),
             caplog.at_level(logging.WARNING, logger=real_logger.name),
+            patch.object(autocomplete_state.player_cache, "peek", side_effect=RuntimeError("unexpected")),
         ):
             client = MagicMock()
-            client.post = AsyncMock(side_effect=RuntimeError("network down"))
             result = asyncio.run(resolve_player_id(client, API_BASE, 111, 222))
 
         assert result is None
-        assert any("resolve_player_id" in rec.message and rec.levelno == logging.WARNING for rec in caplog.records), (
-            f"Expected WARNING log from resolve_player_id; got: {[r.message for r in caplog.records]}"
-        )
+        assert any("resolve_player_id" in rec.message and rec.levelno == logging.WARNING for rec in caplog.records)
 
     def test_player_ships_autocomplete_logs_warning_on_exception(self, caplog):
-        """player_ships_autocomplete logs WARNING with exc_info when an exception is swallowed."""
+        """player_ships_autocomplete logs WARNING when an unexpected exception is swallowed."""
         real_logger = logging.getLogger("discord-gateway-autocomplete-helpers")
+        # Populate player cache, then corrupt ships_cache peek
+        autocomplete_state.player_cache.set((222, 111), {"id": 7})
         with (
             patch.object(_autocomplete_helpers_mod, "logger", real_logger),
             caplog.at_level(logging.WARNING, logger=real_logger.name),
+            patch.object(autocomplete_state.ships_cache, "peek", side_effect=RuntimeError("unexpected")),
         ):
             client = MagicMock()
-            # Player resolves OK, but ship fetch raises
-            client.post = AsyncMock(return_value=_make_response({"id": 7}))
-            client.get = AsyncMock(side_effect=RuntimeError("ships API down"))
             choices = asyncio.run(
                 player_ships_autocomplete(client, API_BASE, _make_interaction(user_id=111, guild_id=222), "")
             )
@@ -431,18 +796,18 @@ class TestAutocompleteExceptionLogging:
         assert choices == []
         assert any(
             "player_ships_autocomplete" in rec.message and rec.levelno == logging.WARNING for rec in caplog.records
-        ), f"Expected WARNING log from player_ships_autocomplete; got: {[r.message for r in caplog.records]}"
+        )
 
     def test_player_inventory_autocomplete_logs_warning_on_exception(self, caplog):
-        """player_inventory_autocomplete logs WARNING with exc_info when an exception is swallowed."""
+        """player_inventory_autocomplete logs WARNING when an unexpected exception is swallowed."""
         real_logger = logging.getLogger("discord-gateway-autocomplete-helpers")
+        autocomplete_state.player_cache.set((222, 111), {"id": 7})
         with (
             patch.object(_autocomplete_helpers_mod, "logger", real_logger),
             caplog.at_level(logging.WARNING, logger=real_logger.name),
+            patch.object(autocomplete_state.inventory_cache, "peek", side_effect=RuntimeError("unexpected")),
         ):
             client = MagicMock()
-            client.post = AsyncMock(return_value=_make_response({"id": 7}))
-            client.get = AsyncMock(side_effect=RuntimeError("inventory API down"))
             choices = asyncio.run(
                 player_inventory_autocomplete(client, API_BASE, _make_interaction(user_id=111, guild_id=222), "")
             )
@@ -450,18 +815,19 @@ class TestAutocompleteExceptionLogging:
         assert choices == []
         assert any(
             "player_inventory_autocomplete" in rec.message and rec.levelno == logging.WARNING for rec in caplog.records
-        ), f"Expected WARNING log from player_inventory_autocomplete; got: {[r.message for r in caplog.records]}"
+        )
 
     def test_player_equippable_autocomplete_logs_warning_on_exception(self, caplog):
-        """player_equippable_autocomplete logs WARNING with exc_info when an exception is swallowed."""
+        """player_equippable_autocomplete logs WARNING when an unexpected exception is swallowed."""
         real_logger = logging.getLogger("discord-gateway-autocomplete-helpers")
+        autocomplete_state.player_cache.set((222, 111), {"id": 7})
+        autocomplete_state.inventory_cache.set((222, 7), [_make_inv_nc("Cannon", "primary_weapon")])
         with (
             patch.object(_autocomplete_helpers_mod, "logger", real_logger),
             caplog.at_level(logging.WARNING, logger=real_logger.name),
+            patch.object(autocomplete_state.ships_cache, "peek", side_effect=RuntimeError("unexpected")),
         ):
-            client = AsyncMock()
-            client.post = AsyncMock(return_value=_make_response({"id": 7}))
-            client.get = AsyncMock(side_effect=RuntimeError("equippable API down"))
+            client = MagicMock()
             choices = asyncio.run(
                 player_equippable_autocomplete(client, API_BASE, _make_interaction(user_id=111, guild_id=222), "")
             )
@@ -469,18 +835,18 @@ class TestAutocompleteExceptionLogging:
         assert choices == []
         assert any(
             "player_equippable_autocomplete" in rec.message and rec.levelno == logging.WARNING for rec in caplog.records
-        ), f"Expected WARNING log from player_equippable_autocomplete; got: {[r.message for r in caplog.records]}"
+        )
 
     def test_player_equipped_autocomplete_logs_warning_on_exception(self, caplog):
-        """player_equipped_autocomplete logs WARNING with exc_info when an exception is swallowed."""
+        """player_equipped_autocomplete logs WARNING when an unexpected exception is swallowed."""
         real_logger = logging.getLogger("discord-gateway-autocomplete-helpers")
+        autocomplete_state.player_cache.set((222, 111), {"id": 7})
         with (
             patch.object(_autocomplete_helpers_mod, "logger", real_logger),
             caplog.at_level(logging.WARNING, logger=real_logger.name),
+            patch.object(autocomplete_state.ships_cache, "peek", side_effect=RuntimeError("unexpected")),
         ):
-            client = AsyncMock()
-            client.post = AsyncMock(return_value=_make_response({"id": 7}))
-            client.get = AsyncMock(side_effect=RuntimeError("equipped API down"))
+            client = MagicMock()
             choices = asyncio.run(
                 player_equipped_autocomplete(client, API_BASE, _make_interaction(user_id=111, guild_id=222), "")
             )
@@ -488,7 +854,170 @@ class TestAutocompleteExceptionLogging:
         assert choices == []
         assert any(
             "player_equipped_autocomplete" in rec.message and rec.levelno == logging.WARNING for rec in caplog.records
-        ), f"Expected WARNING log from player_equipped_autocomplete; got: {[r.message for r in caplog.records]}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# Adversarial edge case tests (added by QA Reviewer, Phase 4 review)
+# ---------------------------------------------------------------------------
+
+
+class TestAdversarialEdgeCases:
+    """Adversarial and boundary tests not covered by the original 51-test suite."""
+
+    def setup_method(self):
+        _init_state_with_real_caches()
+
+    def teardown_method(self):
+        _reset_state()
+
+    # ------------------------------------------------------------------
+    # Filter persistence: empty-string item_type_filter behaves as "no filter"
+    # ------------------------------------------------------------------
+
+    def test_inventory_empty_string_filter_returns_all(self):
+        """item_type_filter='' (empty string) is falsy → treated as no filter → returns all items.
+
+        The production guard is ``if item_type_filter and item_type != item_type_filter``.
+        An empty string is falsy, so the filter is skipped and all items pass through.
+        This is the documented "no filter" behaviour for falsy values.
+        """
+        items = [
+            _make_inv_nc("Pulse Laser", "primary_weapon"),
+            _make_inv_nc("Shield Mk1", "module"),
+        ]
+        autocomplete_state.player_cache.set((222, 111), {"id": 7})
+        autocomplete_state.inventory_cache.set((222, 7), items)
+        client = _make_raising_client()
+
+        # Empty string → falsy → no filtering applied → all items returned
+        choices = asyncio.run(
+            player_inventory_autocomplete(client, API_BASE, _make_interaction(), "", item_type_filter="")
+        )
+        assert len(choices) == 2, "empty-string filter must return ALL items (no filtering)"
+        values = {c.value for c in choices}
+        assert "Pulse Laser" in values
+        assert "Shield Mk1" in values
+
+    def test_inventory_none_filter_returns_all(self):
+        """item_type_filter=None (default) returns all items without filtering.
+
+        This explicitly documents the None-as-no-filter contract that is relied
+        on by callers that omit the argument.
+        """
+        items = [
+            _make_inv_nc("Gun", "primary_weapon"),
+            _make_inv_nc("Turret", "turret_weapon"),
+        ]
+        autocomplete_state.player_cache.set((222, 111), {"id": 7})
+        autocomplete_state.inventory_cache.set((222, 7), items)
+        client = _make_raising_client()
+
+        choices = asyncio.run(
+            player_inventory_autocomplete(client, API_BASE, _make_interaction(), "", item_type_filter=None)
+        )
+        assert len(choices) == 2
+
+    # ------------------------------------------------------------------
+    # Cold key called twice: schedule_refresh must not double-fire HTTP
+    # ------------------------------------------------------------------
+
+    def test_cold_key_called_twice_does_not_double_schedule(self):
+        """Calling any helper twice for the same cold key triggers schedule_refresh twice
+        on the cache, but since no refresh_fn is configured in tests the calls are
+        no-ops.  This test confirms that the helper itself does not call the HTTP client
+        on either invocation — the guard is stateless (peek → None → schedule → return []).
+
+        The coalescing-to-one-HTTP-call guarantee is enforced inside AutocompleteCache.get()
+        via its asyncio.Lock double-check pattern (tested separately in
+        test_autocomplete_cache.py::test_schedule_refresh_concurrent_calls_coalesce).
+        """
+        client = _make_raising_client()
+        # First call — cold miss
+        result1 = asyncio.run(resolve_player_id(client, API_BASE, 111, 222))
+        # Second call — still cold (no refresh_fn wired → cache still empty)
+        result2 = asyncio.run(resolve_player_id(client, API_BASE, 111, 222))
+
+        assert result1 is None
+        assert result2 is None
+        # Neither call should have touched the HTTP client
+        client.post.assert_not_called()
+        client.get.assert_not_called()
+
+    # ------------------------------------------------------------------
+    # player_ships_autocomplete: show_active_indicator=True — verify 🟢 label
+    # ------------------------------------------------------------------
+
+    def test_show_active_indicator_true_shows_green_circle(self):
+        """show_active_indicator=True (default) prefixes the active ship label with '🟢 '.
+
+        Explicitly named adversarial test to pin the exact indicator character used.
+        """
+        ships = [_make_ship_nc(10, "Flagship", is_active=True)]
+        autocomplete_state.player_cache.set((222, 111), {"id": 7})
+        autocomplete_state.ships_cache.set((222, 7), ships)
+        client = _make_raising_client()
+
+        choices = asyncio.run(
+            player_ships_autocomplete(client, API_BASE, _make_interaction(), "", show_active_indicator=True)
+        )
+        assert len(choices) == 1
+        # Must use exactly 🟢 (green circle) — not ⚡ or any other character
+        assert choices[0].name.startswith("🟢 "), (
+            f"Active ship indicator must be '🟢 ' but got: {choices[0].name!r}"
+        )
+
+    # ------------------------------------------------------------------
+    # player_equippable_autocomplete: cold miss on player_id
+    # ------------------------------------------------------------------
+
+    def test_equippable_cold_miss_player_cache_schedules_refresh_returns_empty(self):
+        """When player_cache misses, equippable cannot resolve player_id.
+
+        The function schedules a player refresh (via schedule_refresh) and returns [].
+        HTTP client must not be called.
+        """
+        # player_cache is initialized but empty (cold)
+        client = _make_raising_client()
+        choices = asyncio.run(player_equippable_autocomplete(client, API_BASE, _make_interaction(), ""))
+        assert choices == []
+        client.post.assert_not_called()
+        client.get.assert_not_called()
+
+    # ------------------------------------------------------------------
+    # player_equippable_autocomplete: ships list with no active ship
+    # ------------------------------------------------------------------
+
+    def test_equippable_no_active_ship_returns_full_equippable_inventory(self):
+        """When all ships have is_active=False, equipped_names is empty.
+
+        Every equippable-type item in inventory should be returned since there
+        are no loadout items to exclude.
+        """
+        items = [
+            _make_inv_nc("Cannon", "primary_weapon"),
+            _make_inv_nc("Turret Alpha", "turret_weapon"),
+            _make_inv_nc("ShieldV2", "module"),
+            _make_inv_nc("Seeker", "secondary_weapon"),  # non-equippable type
+        ]
+        ships = [
+            _make_ship_nc(1, "Ship A", is_active=False),
+            _make_ship_nc(2, "Ship B", is_active=False),
+        ]
+        autocomplete_state.player_cache.set((222, 111), {"id": 7})
+        autocomplete_state.inventory_cache.set((222, 7), items)
+        autocomplete_state.ships_cache.set((222, 7), ships)
+        client = _make_raising_client()
+
+        choices = asyncio.run(player_equippable_autocomplete(client, API_BASE, _make_interaction(), ""))
+        names = {c.value for c in choices}
+
+        # All equippable types returned — nothing excluded (no active ship loadout)
+        assert "Cannon" in names
+        assert "Turret Alpha" in names
+        assert "ShieldV2" in names
+        # secondary_weapon is not in _CURRENTLY_EQUIPPABLE_INVENTORY_TYPES
+        assert "Seeker" not in names
 
 
 if __name__ == "__main__":

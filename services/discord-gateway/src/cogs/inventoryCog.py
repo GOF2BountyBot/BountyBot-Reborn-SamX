@@ -104,7 +104,7 @@ class WeaponSwapView(discord.ui.View):
         # Value format: "{slot_index}|{item_name}" — extract the name portion.
         raw_value = interaction.data["values"][0]
         _, _, old_item_name = raw_value.partition("|")
-        await interaction.response.defer(thinking=True)
+        await interaction.response.defer(thinking=True, ephemeral=True)
 
         try:
             # Unequip old item
@@ -141,7 +141,7 @@ class WeaponSwapView(discord.ui.View):
 
             self.result = "swapped"
             self.stop()
-            await interaction.followup.send(embed=embed)
+            await interaction.followup.send(embed=embed, ephemeral=True)
 
         except Exception as exc:  # pylint: disable=broad-exception-caught
             flogger.error(f"WeaponSwapView swap error: {exc}")
@@ -190,7 +190,7 @@ class UniqueModuleSwapView(discord.ui.View):
     async def swap_button(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
         """Perform the swap on confirmation."""
         _ = button
-        await interaction.response.defer(thinking=True)
+        await interaction.response.defer(thinking=True, ephemeral=True)
 
         try:
             # Unequip old module
@@ -227,7 +227,7 @@ class UniqueModuleSwapView(discord.ui.View):
 
             self.result = "swapped"
             self.stop()
-            await interaction.followup.send(embed=embed)
+            await interaction.followup.send(embed=embed, ephemeral=True)
 
         except Exception as exc:  # pylint: disable=broad-exception-caught
             flogger.error(f"UniqueModuleSwapView swap error: {exc}")
@@ -797,7 +797,7 @@ class InventoryCog(commands.Cog):
                     f"Turrets: {', '.join(turrets) or 'None'}"
                 )
                 embed.add_field(name="Current Loadout", value=loadout_text, inline=False)
-                await interaction.followup.send(embed=embed)
+                await interaction.followup.send(embed=embed, ephemeral=True)
 
             elif status == "slot_full":
                 # Step 2b: Slots are full — show swap select menu
@@ -828,7 +828,7 @@ class InventoryCog(commands.Cog):
                     equipment_type=equipment_type,
                     equipped_items=equipped_items,
                 )
-                await interaction.followup.send(embed=embed, view=view)
+                await interaction.followup.send(embed=embed, view=view, ephemeral=True)
 
             elif status == "unique_conflict":
                 # Step 2c: Unique module conflict — show Swap/Cancel buttons
@@ -853,7 +853,7 @@ class InventoryCog(commands.Cog):
                     old_item_name=old_name,
                     equipment_type=equipment_type or "modules",
                 )
-                await interaction.followup.send(embed=embed, view=view)
+                await interaction.followup.send(embed=embed, view=view, ephemeral=True)
 
             else:
                 await interaction.followup.send(f"❌ Unexpected equip-check status: {status!r}", ephemeral=True)
@@ -953,7 +953,7 @@ class InventoryCog(commands.Cog):
                 name="Ship", value=ship_data.get("nickname") or ship_data.get("ship_name", "Unknown"), inline=True
             )
 
-            await interaction.followup.send(embed=embed)
+            await interaction.followup.send(embed=embed, ephemeral=True)
             flogger.debug(f"/unequip {item_name} by {interaction.user} in guild {interaction.guild_id}")
 
         except httpx.HTTPStatusError as e:
@@ -1011,7 +1011,7 @@ class InventoryCog(commands.Cog):
                 description=f"**{ship_display}** has no items equipped.",
                 color=discord.Color.light_grey(),
             )
-            await interaction.followup.send(embed=embed)
+            await interaction.followup.send(embed=embed, ephemeral=True)
             flogger.debug(f"/unequip all no-op: guild={interaction.guild_id} user={interaction.user.id} ship={ship_id}")
             return
 
@@ -1059,7 +1059,7 @@ class InventoryCog(commands.Cog):
         if failed:
             embed.add_field(name="Failed", value=str(len(failed)), inline=True)
 
-        await interaction.followup.send(embed=embed)
+        await interaction.followup.send(embed=embed, ephemeral=True)
         flogger.info(
             f"/unequip all: guild={interaction.guild_id} user={interaction.user.id} "
             f"ship={ship_id} succeeded={len(succeeded)} failed={len(failed)}"

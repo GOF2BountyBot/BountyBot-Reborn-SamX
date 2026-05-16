@@ -1128,6 +1128,7 @@ class TestEquipCommand:
         interaction.followup.send.assert_awaited_once()
         call_kwargs = interaction.followup.send.call_args[1]
         assert "embed" in call_kwargs
+        assert call_kwargs.get("ephemeral", False), "/equip success response must be ephemeral"
 
     def test_equip_no_active_ship_returns_error(self, mock_inventory_cog, make_mock_response):
         """/equip with no active ship sends ephemeral error."""
@@ -1485,6 +1486,7 @@ class TestUnequipCommand:
         interaction.followup.send.assert_awaited_once()
         call_kwargs = interaction.followup.send.call_args[1]
         assert "embed" in call_kwargs
+        assert call_kwargs.get("ephemeral", False), "/unequip single-item success response must be ephemeral"
 
     def test_unequip_item_not_on_ship_400_returns_error(self, mock_inventory_cog, make_mock_response):
         """/unequip returns error when item is not equipped (400)."""
@@ -2516,8 +2518,8 @@ class TestUnequipAllSentinel:
         assert "embed" in call_kwargs
         embed = call_kwargs["embed"]
         assert "unequip" in embed.title.lower() or "all items" in embed.title.lower()
-        # Should not be ephemeral — success is public
-        assert not call_kwargs.get("ephemeral", False)
+        # B.97: all success responses are now ephemeral (visible only to invoking user)
+        assert call_kwargs.get("ephemeral", False)
 
     def test_unequip_all_case_insensitive_ALL_CAPS(self, mock_inventory_cog, make_mock_response):
         """B.90: 'ALL' (uppercase) is treated identically to 'all'."""
@@ -2610,6 +2612,7 @@ class TestUnequipAllSentinel:
         embed = call_kwargs["embed"]
         # Should convey "nothing to unequip"
         assert "nothing" in embed.title.lower() or "no items" in embed.description.lower()
+        assert call_kwargs.get("ephemeral", False), "_unequip_all 'nothing to unequip' response must be ephemeral"
 
     # ------------------------------------------------------------------
     # Partial failure
@@ -2647,6 +2650,7 @@ class TestUnequipAllSentinel:
         # Description must mention both succeeded and failed items
         assert "GoodItem" in embed.description
         assert "BadItem" in embed.description
+        assert call_kwargs.get("ephemeral", False), "_unequip_all partial-failure response must be ephemeral"
 
     def test_unequip_all_all_fail_reports_failures(self, mock_inventory_cog, make_mock_response):
         """B.90: when every item fails, the response still covers all items."""

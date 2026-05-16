@@ -719,6 +719,7 @@ class TestSetActiveCommand:
         interaction.followup.send.assert_awaited_once()
         call_kwargs = interaction.followup.send.call_args[1]
         assert "embed" in call_kwargs
+        assert call_kwargs.get("ephemeral", False), "/setactive success response must be ephemeral"
 
     def test_setactive_success_with_nickname(self, mock_ships_cog, make_mock_response):
         """setactive should include nickname in success message when ship has one."""

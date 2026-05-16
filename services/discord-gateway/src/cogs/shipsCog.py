@@ -356,7 +356,7 @@ class ShipsCog(commands.Cog):
             embed.add_field(name="Ship ID", value=str(ship["id"]), inline=True)
             embed.add_field(name="Status", value="🟢 Active", inline=True)
 
-            await interaction.followup.send(embed=embed)
+            await interaction.followup.send(embed=embed, ephemeral=True)
             flogger.info(
                 f"/setactive success: guild={interaction.guild_id}, user={interaction.user.id}, "
                 f"ship_id={ship_id_int}, ship_name={ship.get('ship_name')}"

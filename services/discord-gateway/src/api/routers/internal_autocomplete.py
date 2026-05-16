@@ -9,6 +9,7 @@ gateway to poll bot-core on every autocomplete keystroke.
 
 import logging
 import os
+from typing import Any
 
 from fastapi import APIRouter, Header, HTTPException, Request, Response, status
 from shared import bblogger
@@ -134,3 +135,33 @@ async def push_bounty_cache(
         f"push_bounty_cache: updated cache for guild={guild_id} bounties={len(payload.bounties)}"
     )
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+# ---------------------------------------------------------------------------
+# Autocomplete cache health check
+# ---------------------------------------------------------------------------
+
+
+@router.get(
+    "/health",
+    summary="Autocomplete cache health for ops verification",
+    description=(
+        "Returns the current size of shared autocomplete caches. "
+        "Useful for ops to verify caches are populated after bot startup."
+    ),
+)
+async def autocomplete_cache_health(
+    request: Request,
+    x_internal_auth: str | None = Header(None),
+) -> dict[str, Any]:
+    """Returns cache sizes and initialization state for ops verification."""
+    await _verify_auth(x_internal_auth)
+
+    import utils.autocomplete_state as state
+
+    return {
+        "player_cache_size": state.player_cache.size if state.player_cache else 0,
+        "inventory_cache_size": state.inventory_cache.size if state.inventory_cache else 0,
+        "ships_cache_size": state.ships_cache.size if state.ships_cache else 0,
+        "initialized": state._initialized,
+    }

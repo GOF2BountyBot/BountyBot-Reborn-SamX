@@ -44,13 +44,23 @@ class SchedulerCog(commands.Cog):
 
         Returns:
             List of job dicts from GET /api/v1/jobs.
+
+        Phase 7: Pre-computes ``_norm`` on each job dict at fill time so the
+        hot-path autocomplete scan never calls ``normalize_for_search`` per job.
         """
         _ = key  # only one key: "all"
         try:
             resp = await self.http_client.get(f"{api_base}/jobs", timeout=5)
             if resp.status_code != 200:
                 return []
-            return resp.json()
+            jobs = resp.json()
+            # Pre-compute _norm at fill time — hot path uses pre-computed value.
+            for job in jobs:
+                job_id = job.get("id", "")
+                trigger = job.get("trigger", "")
+                label = f"{job_id[:32]} ({trigger[:40]})" if trigger else job_id[:72]
+                job["_norm"] = normalize_for_search(label)
+            return jobs
         except Exception:  # pylint: disable=broad-exception-caught
             return []
 
@@ -78,7 +88,9 @@ class SchedulerCog(commands.Cog):
                 trigger = job.get("trigger", "")
                 # Build a readable label: "<short_id> (<trigger>)"
                 label = f"{job_id[:32]} ({trigger[:40]})" if trigger else job_id[:72]
-                if norm_current in normalize_for_search(label):
+                # Phase 7: use pre-computed _norm; fall back to on-the-fly for older cache entries.
+                norm_label = job.get("_norm") or normalize_for_search(label)
+                if norm_current in norm_label:
                     choices.append(app_commands.Choice(name=label[:100], value=job_id))
             return choices[:25]
         except Exception:  # pylint: disable=broad-exception-caught

@@ -77,13 +77,22 @@ class ShopCog(commands.Cog):
             return None
 
     async def _fetch_tier_shop(self, key: tuple) -> list:
-        """Fetch shop items for a (guild_id, tier) key.  Called by _shop_cache on miss/expiry."""
+        """Fetch shop items for a (guild_id, tier) key.  Called by _shop_cache on miss/expiry.
+
+        Phase 7: Pre-computes ``_norm`` on each item dict at fill time so the
+        hot-path autocomplete scan never calls ``normalize_for_search`` per item.
+        """
         guild_id, tier = key
         try:
             resp = await self.http_client.get(f"{api_base}/shops/guild/{guild_id}/tier/{tier}", timeout=5)
             if resp.status_code != 200:
                 return []
-            return resp.json()
+            items = resp.json()
+            # Pre-compute _norm at fill time — hot path uses pre-computed value.
+            for item in items:
+                label = f"{item.get('item_name', '')} ({item.get('price', 0):,}cr)"
+                item["_norm"] = normalize_for_search(label)
+            return items
         except Exception:  # pylint: disable=broad-exception-caught
             return []
 
@@ -288,7 +297,10 @@ class ShopCog(commands.Cog):
             choices: list[app_commands.Choice[int]] = []
             for item in items:
                 label = f"{item['item_name']} ({item['price']:,}cr)"
-                if norm_current in normalize_for_search(label):
+                # Phase 7: use pre-computed _norm; fall back to on-the-fly for items pushed
+                # before this phase (e.g. via the internal push endpoint with old shape).
+                norm_label = item.get("_norm") or normalize_for_search(label)
+                if norm_current in norm_label:
                     choices.append(app_commands.Choice(name=label[:100], value=item["id"]))
             return choices[:25]
         except Exception:  # pylint: disable=broad-exception-caught

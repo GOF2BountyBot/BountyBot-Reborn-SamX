@@ -64,6 +64,9 @@ class DuelCog(commands.Cog):
 
         Returns:
             List of pending duel dicts.
+
+        Phase 7: Pre-computes ``_norm`` on each duel dict at fill time so the
+        hot-path autocomplete scan never calls ``normalize_for_search`` per duel.
         """
         guild_id, player_id = key
         try:
@@ -74,7 +77,20 @@ class DuelCog(commands.Cog):
             )
             if resp.status_code != 200:
                 return []
-            return resp.json()
+            duels = resp.json()
+            # Pre-compute _norm at fill time — hot path uses pre-computed value.
+            for d in duels:
+                duel_id = d.get("id", "")
+                stakes = d.get("stakes", 0)
+                challenger_name = d.get("challenger_name")
+                if challenger_name:
+                    label = (
+                        f"{challenger_name} — {stakes:,}cr stakes" if stakes else f"{challenger_name} — friendly duel"
+                    )
+                else:
+                    label = f"Duel #{duel_id} — {stakes:,}cr stakes" if stakes else f"Duel #{duel_id} — friendly duel"
+                d["_norm"] = normalize_for_search(label)
+            return duels
         except Exception:  # pylint: disable=broad-exception-caught
             return []
 
@@ -86,6 +102,9 @@ class DuelCog(commands.Cog):
 
         Returns:
             List of outgoing duel dicts.
+
+        Phase 7: Pre-computes ``_norm`` on each duel dict at fill time so the
+        hot-path autocomplete scan never calls ``normalize_for_search`` per duel.
         """
         guild_id, player_id = key
         try:
@@ -96,7 +115,18 @@ class DuelCog(commands.Cog):
             )
             if resp.status_code != 200:
                 return []
-            return resp.json()
+            duels = resp.json()
+            # Pre-compute _norm at fill time — hot path uses pre-computed value.
+            for d in duels:
+                duel_id = d.get("id", "")
+                stakes = d.get("stakes", 0)
+                target_name = d.get("target_name")
+                if target_name:
+                    label = f"{target_name} — {stakes:,}cr stakes" if stakes else f"{target_name} — friendly duel"
+                else:
+                    label = f"Duel #{duel_id} — {stakes:,}cr stakes" if stakes else f"Duel #{duel_id} — friendly duel"
+                d["_norm"] = normalize_for_search(label)
+            return duels
         except Exception:  # pylint: disable=broad-exception-caught
             return []
 
@@ -169,7 +199,9 @@ class DuelCog(commands.Cog):
                     )
                 else:
                     label = f"Duel #{duel_id} — {stakes:,}cr stakes" if stakes else f"Duel #{duel_id} — friendly duel"
-                if norm_current in normalize_for_search(label):
+                # Phase 7: use pre-computed _norm; fall back to on-the-fly for older cache entries.
+                norm_label = d.get("_norm") or normalize_for_search(label)
+                if norm_current in norm_label:
                     choices.append(app_commands.Choice(name=label[:100], value=str(duel_id)))
             return choices[:25]
         except Exception:  # pylint: disable=broad-exception-caught
@@ -215,7 +247,9 @@ class DuelCog(commands.Cog):
                     label = f"{target_name} — {stakes:,}cr stakes" if stakes else f"{target_name} — friendly duel"
                 else:
                     label = f"Duel #{duel_id} — {stakes:,}cr stakes" if stakes else f"Duel #{duel_id} — friendly duel"
-                if norm_current in normalize_for_search(label):
+                # Phase 7: use pre-computed _norm; fall back to on-the-fly for older cache entries.
+                norm_label = d.get("_norm") or normalize_for_search(label)
+                if norm_current in norm_label:
                     choices.append(app_commands.Choice(name=label[:100], value=str(duel_id)))
             return choices[:25]
         except Exception:  # pylint: disable=broad-exception-caught

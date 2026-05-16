@@ -1758,9 +1758,9 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
         player may not own yet.  The item_type filter honours any item_type already filled
         in the command, but item_type is not a parameter on /admin_give_item so it is
         always None there (all categories shown).
-
-        # TODO: Phase 7 — preload catalog into AutocompleteCache for TTL-based refresh.
         """
+        # TODO: Phase 7/8 — preload the game catalog at bot startup instead of fetching per keystroke.
+        # Admin commands are infrequent so this is low priority.
         try:
             # Determine the item type category from the already-filled item_type parameter.
             item_type = getattr(interaction.namespace, "item_type", None)

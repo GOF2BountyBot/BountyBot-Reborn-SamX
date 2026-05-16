@@ -92,6 +92,9 @@ class BountyCog(commands.Cog):
 
         Returns:
             List of bounty dicts from GET /api/v1/bounties/?guild_id=<guild_id>.
+
+        Phase 7: Pre-computes ``_norm`` on each bounty dict at fill time so the
+        hot-path autocomplete scan never calls ``normalize_for_search`` per bounty.
         """
         try:
             resp = await self.http_client.get(
@@ -101,7 +104,16 @@ class BountyCog(commands.Cog):
             )
             if resp.status_code != 200:
                 return []
-            return resp.json()
+            bounties = resp.json()
+            # Pre-compute _norm at fill time — hot path uses pre-computed value.
+            for b in bounties:
+                label = (
+                    f"{b.get('criminal_name', '')} "
+                    f"({b.get('division', '').title()}, T{b.get('tech_level', '?')}) "
+                    f"— {b.get('reward', 0):,}cr"
+                )
+                b["_norm"] = normalize_for_search(label)
+            return bounties
         except Exception:  # pylint: disable=broad-exception-caught
             return []
 
@@ -181,7 +193,10 @@ class BountyCog(commands.Cog):
                 label = (
                     f"{b['criminal_name']} ({b['division'].title()}, T{b.get('tech_level', '?')}) — {b['reward']:,}cr"
                 )
-                if norm_current in normalize_for_search(label):
+                # Phase 7: use pre-computed _norm; fall back to on-the-fly for bounties
+                # pushed via internal endpoint before this phase (old shape).
+                norm_label = b.get("_norm") or normalize_for_search(label)
+                if norm_current in norm_label:
                     choices.append(app_commands.Choice(name=label[:100], value=str(b["id"])))
             return choices[:25]
         except Exception:  # pylint: disable=broad-exception-caught

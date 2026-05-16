@@ -631,7 +631,7 @@ class PlayerCog(commands.Cog):
 
             embed = discord.Embed(
                 title="⬆️ Tier Promoted!",
-                description=f"You have advanced from **{old_tier}** to **{new_tier}**!",
+                description=f"{interaction.user.mention} has advanced from **{old_tier}** to **{new_tier}**!",
                 color=self._get_tier_color(new_tier),
             )
             embed.add_field(name="New Tier", value=f"**{new_tier}**", inline=True)
@@ -812,14 +812,15 @@ class PlayerCog(commands.Cog):
             embed = discord.Embed(
                 title="⬇️ Tier Demoted",
                 description=(
-                    f"You have stepped down from **{demote_data['old_tier']}** to **{demote_data['new_tier']}**."
+                    f"{interaction.user.mention} has stepped down from "
+                    f"**{demote_data['old_tier']}** to **{demote_data['new_tier']}**."
                 ),
                 color=self._get_tier_color(demote_data["new_tier"]),
             )
             embed.add_field(name="New Tier", value=f"**{demote_data['new_tier']}**", inline=True)
             embed.add_field(name="XP", value=f"{demote_data['xp']:,}", inline=True)
 
-            await interaction.followup.send(embed=embed, ephemeral=True)
+            await interaction.followup.send(embed=embed)
             flogger.info(
                 f"/demote success: guild={interaction.guild_id}, user={interaction.user.id}, "
                 f"{demote_data['old_tier']} -> {demote_data['new_tier']}"

@@ -1676,6 +1676,116 @@ class TestSellItemAutocomplete:
         assert len(result) == 1
         assert result[0].value == "Betty"
 
+    def test_inactive_ship_empty_nickname_no_extra_brackets(self, mock_shop_cog):
+        """GROUP-A fix: inactive ship with empty nickname should show 'Betty (inactive ship)',
+        NOT 'Betty () (inactive ship)'.
+
+        The pre-computed NormalizedChoice.label may have empty parens when the nickname
+        is blank (e.g. 'Betty ()').  The fix builds ship_display from raw data directly
+        so the parens only appear when there's an actual nickname.
+        """
+        import utils.autocomplete_state as ac_state
+        from cogs._shared.autocomplete_cache import AutocompleteCache
+        from utils.autocomplete_state import NormalizedChoice
+        from utils.autocomplete_utils import normalize_for_search
+
+        interaction = _create_mock_interaction()
+        player = _make_player_data()
+
+        if ac_state.player_cache is None:
+            ac_state.player_cache = AutocompleteCache(name="player-test")
+        if ac_state.inventory_cache is None:
+            ac_state.inventory_cache = AutocompleteCache(name="inventory-test")
+        if ac_state.ships_cache is None:
+            ac_state.ships_cache = AutocompleteCache(name="ships-test")
+
+        ac_state.player_cache.set((987654321, 111111111), player)
+        # Empty inventory so only ships appear
+        ac_state.inventory_cache.set((987654321, 1), [])
+
+        # Build a ship NormalizedChoice with an empty nickname — this mimics the
+        # pre-computed label that produces "Betty ()" without the fix.
+        ship_raw = {
+            "name": "Betty",
+            "ship_name": "Betty",
+            "nickname": "",  # blank nickname → pre-computed label would be "Betty ()"
+            "is_active": False,
+            "player_ship_id": 42,
+        }
+        # Pre-computed label has empty parens (the bug scenario)
+        label_with_empty_parens = "Betty ()"
+        ship_nc = NormalizedChoice(
+            label=label_with_empty_parens,
+            value="42",
+            norm=normalize_for_search(label_with_empty_parens),
+            raw=ship_raw,
+        )
+        ac_state.ships_cache.set((987654321, 1), [ship_nc])
+
+        mock_shop_cog.http_client.post = AsyncMock(side_effect=AssertionError("HTTP must not be called"))
+        mock_shop_cog.http_client.get = AsyncMock(side_effect=AssertionError("HTTP must not be called"))
+
+        result = asyncio.run(mock_shop_cog.sell_item_autocomplete(interaction, ""))
+
+        # Exactly one inactive ship choice
+        ship_choices = [c for c in result if "inactive ship" in c.name.lower()]
+        assert len(ship_choices) == 1, f"Expected 1 inactive ship choice, got: {[c.name for c in result]}"
+
+        # Must be "Betty (inactive ship)", NOT "Betty () (inactive ship)"
+        assert ship_choices[0].name == "Betty (inactive ship)", (
+            f"Expected 'Betty (inactive ship)' but got '{ship_choices[0].name}' — "
+            "empty nickname must not produce extra brackets"
+        )
+        assert "()" not in ship_choices[0].name, (
+            f"Label should not contain '()': '{ship_choices[0].name}'"
+        )
+        assert ship_choices[0].value == "ship:42"
+
+    def test_inactive_ship_with_nickname_shows_nickname(self, mock_shop_cog):
+        """Inactive ship WITH a real nickname shows nickname in label (not ship name)."""
+        import utils.autocomplete_state as ac_state
+        from cogs._shared.autocomplete_cache import AutocompleteCache
+        from utils.autocomplete_state import NormalizedChoice
+        from utils.autocomplete_utils import normalize_for_search
+
+        interaction = _create_mock_interaction()
+        player = _make_player_data()
+
+        if ac_state.player_cache is None:
+            ac_state.player_cache = AutocompleteCache(name="player-test")
+        if ac_state.inventory_cache is None:
+            ac_state.inventory_cache = AutocompleteCache(name="inventory-test")
+        if ac_state.ships_cache is None:
+            ac_state.ships_cache = AutocompleteCache(name="ships-test")
+
+        ac_state.player_cache.set((987654321, 111111111), player)
+        ac_state.inventory_cache.set((987654321, 1), [])
+
+        ship_raw = {
+            "name": "Niode",
+            "ship_name": "Niode",
+            "nickname": "Speedy",  # real nickname
+            "is_active": False,
+            "player_ship_id": 99,
+        }
+        ship_nc = NormalizedChoice(
+            label="Speedy (Niode)",
+            value="99",
+            norm=normalize_for_search("Speedy (Niode)"),
+            raw=ship_raw,
+        )
+        ac_state.ships_cache.set((987654321, 1), [ship_nc])
+
+        mock_shop_cog.http_client.post = AsyncMock(side_effect=AssertionError("HTTP must not be called"))
+        mock_shop_cog.http_client.get = AsyncMock(side_effect=AssertionError("HTTP must not be called"))
+
+        result = asyncio.run(mock_shop_cog.sell_item_autocomplete(interaction, ""))
+        ship_choices = [c for c in result if "inactive ship" in c.name.lower()]
+        assert len(ship_choices) == 1
+        # Nickname should be used as display
+        assert ship_choices[0].name == "Speedy (inactive ship)"
+        assert ship_choices[0].value == "ship:99"
+
 
 # ---------------------------------------------------------------------------
 # sell command — type label class attribute (_ITEM_TYPE_LABELS only, no _SELL_TYPE_MAP)

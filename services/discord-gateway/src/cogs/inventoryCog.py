@@ -518,9 +518,7 @@ class InventoryCog(commands.Cog):
         return await player_inventory_autocomplete(self.http_client, api_base, interaction, current)
 
     @app_commands.command(name="item", description="Get detailed information about a specific item")
-    @app_commands.describe(
-        item_name="Name of the item to check"
-    )
+    @app_commands.describe(item_name="Name of the item to check")
     @app_commands.autocomplete(item_name=item_autocomplete)
     async def item(self, interaction: discord.Interaction, item_name: str):
         """Get detailed item information including inventory count."""
@@ -617,7 +615,8 @@ class InventoryCog(commands.Cog):
                 return []
             player_entry = autocomplete_state.player_cache.peek((guild_id, user_id))
             if player_entry is None:
-                autocomplete_state.player_cache.schedule_refresh((guild_id, user_id))
+                player_entry = await autocomplete_state.player_cache.get_with_timeout((guild_id, user_id), timeout=1.0)
+            if player_entry is None:
                 return []
             player_id = player_entry.get("id")
             if not player_id:
@@ -628,7 +627,8 @@ class InventoryCog(commands.Cog):
                 return []
             ships = autocomplete_state.ships_cache.peek((guild_id, player_id))
             if ships is None:
-                autocomplete_state.ships_cache.schedule_refresh((guild_id, player_id))
+                ships = await autocomplete_state.ships_cache.get_with_timeout((guild_id, player_id), timeout=1.0)
+            if ships is None:
                 return []
 
             # Find active ship and collect equipped items

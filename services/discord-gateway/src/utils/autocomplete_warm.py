@@ -38,6 +38,59 @@ def _get_semaphore() -> asyncio.Semaphore:
 
 
 # ---------------------------------------------------------------------------
+# Wave 0: guild-wide shop and bounty cache warm (runs before per-user warm)
+# ---------------------------------------------------------------------------
+
+
+async def warm_guild_shop_cache(bot, guild_id: int) -> None:
+    """Warm all four shop tiers for one guild on startup.
+
+    Looks up the ShopCog, then for each tier calls
+    ``cog._shop_cache.get((guild_id, tier))`` which triggers
+    ``_fetch_tier_shop`` on a miss and writes the result into cache.
+
+    Non-fatal: logs WARNING on any error and returns without raising.
+    """
+    try:
+        cog = bot.get_cog("ShopCog")
+        if cog is None:
+            flogger.warning(f"warm_guild_shop_cache({guild_id}): ShopCog not found on bot; skipping")
+            return
+        for tier in ["Bronze", "Silver", "Gold", "Platinum"]:
+            try:
+                await cog._shop_cache.get((guild_id, tier))
+                flogger.debug(f"warm_guild_shop_cache({guild_id}): warmed tier={tier}")
+            except Exception as exc:  # pylint: disable=broad-exception-caught
+                flogger.warning(
+                    f"warm_guild_shop_cache({guild_id}): failed to warm tier={tier}: {type(exc).__name__}: {exc}"
+                )
+    except Exception as exc:  # pylint: disable=broad-exception-caught
+        flogger.warning(f"warm_guild_shop_cache({guild_id}): unexpected error: {type(exc).__name__}: {exc}")
+
+
+async def warm_guild_bounty_cache(bot, guild_id: int) -> None:
+    """Warm the bounty autocomplete cache for one guild on startup.
+
+    Looks up the BountyCog; if it has ``_bounty_cache``, calls
+    ``cog._bounty_cache.get(guild_id)`` to trigger a refresh.
+
+    Non-fatal: logs WARNING on any error and returns without raising.
+    """
+    try:
+        cog = bot.get_cog("BountyCog")
+        if cog is None:
+            flogger.warning(f"warm_guild_bounty_cache({guild_id}): BountyCog not found on bot; skipping")
+            return
+        if hasattr(cog, "_bounty_cache"):
+            await cog._bounty_cache.get(guild_id)
+            flogger.debug(f"warm_guild_bounty_cache({guild_id}): bounty cache warmed")
+        else:
+            flogger.debug(f"warm_guild_bounty_cache({guild_id}): BountyCog has no _bounty_cache; skipping")
+    except Exception as exc:  # pylint: disable=broad-exception-caught
+        flogger.warning(f"warm_guild_bounty_cache({guild_id}): unexpected error: {type(exc).__name__}: {exc}")
+
+
+# ---------------------------------------------------------------------------
 # Stage 2: per-player loadout warm
 # ---------------------------------------------------------------------------
 
@@ -304,9 +357,33 @@ def register_warm_jobs(scheduler: AsyncIOScheduler, bot) -> None:
     stagger_ms = int(os.getenv("AUTOCOMPLETE_WARM_GUILD_STAGGER_MS", "200"))
     now = datetime.now(UTC)
 
-    # One-time warm jobs: one per guild, staggered by stagger_ms milliseconds
+    # Wave 0: guild-wide shop and bounty cache warm, staggered starting at 5s.
+    # Runs BEFORE the per-user player warm so shop/bounty data is ready when
+    # the first user interacts right after bot startup (B-P2).
     for i, guild in enumerate(bot.guilds):
-        run_date = now + timedelta(seconds=15 + i * stagger_ms / 1000)
+        wave0_run_date = now + timedelta(seconds=5 + i * stagger_ms / 1000)
+        scheduler.add_job(
+            warm_guild_shop_cache,
+            "date",
+            run_date=wave0_run_date,
+            args=[bot, guild.id],
+            id=f"warm-shop-{guild.id}",
+            replace_existing=True,
+        )
+        scheduler.add_job(
+            warm_guild_bounty_cache,
+            "date",
+            run_date=wave0_run_date,
+            args=[bot, guild.id],
+            id=f"warm-bounty-{guild.id}",
+            replace_existing=True,
+        )
+    flogger.info(f"register_warm_jobs: scheduled {len(bot.guilds)} Wave 0 guild shop+bounty warm jobs")
+
+    # Wave 1: per-user player warm, starting at 8s (B-P3: was 15s).
+    # Starts 3s after Wave 0 (5s + 3s) so guild-wide data is ready first.
+    for i, guild in enumerate(bot.guilds):
+        run_date = now + timedelta(seconds=8 + i * stagger_ms / 1000)
         scheduler.add_job(
             warm_guild_players,
             "date",

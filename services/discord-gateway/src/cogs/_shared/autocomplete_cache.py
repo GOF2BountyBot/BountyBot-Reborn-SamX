@@ -181,6 +181,50 @@ class AutocompleteCache[K, V]:
             return
         asyncio.create_task(self.get(key), name=f"warm-{self._name}-{key}")  # noqa: RUF006
 
+    async def get_with_timeout(self, key: K, *, timeout: float) -> V | None:
+        """Return cached value, with a time-bounded cold-path wait.
+
+        Fast path: if ``peek(key)`` returns a value, return it immediately
+        (zero I/O, no lock acquired).
+
+        Cold path: ``await asyncio.shield(self.get(key))`` with a
+        ``timeout`` deadline.  ``asyncio.shield`` ensures the inner
+        ``get()`` call — which may trigger ``refresh_fn`` — continues
+        running even if this coroutine times out.  The next keystroke will
+        therefore find the cache already populated.
+
+        On ``asyncio.TimeoutError``: log WARNING and return ``None``.
+        The exception is NOT re-raised so autocomplete callers receive
+        an empty list instead of a crash.
+
+        On any other exception: log WARNING and return ``None``.
+
+        Args:
+            key: Cache key.
+            timeout: Maximum seconds to wait for the cold-path ``get()``.
+
+        Returns:
+            Cached value, or ``None`` on miss / timeout / error.
+        """
+        # Fast path — synchronous peek, no I/O.
+        value = self.peek(key)
+        if value is not None:
+            return value
+
+        # Cold path — shield so the inner get() survives a timeout cancel.
+        try:
+            return await asyncio.wait_for(asyncio.shield(self.get(key)), timeout=timeout)
+        except asyncio.TimeoutError:
+            self._log.warning(
+                f"get_with_timeout: timed out after {timeout}s waiting for key={key!r} in cache {self._name!r}"
+            )
+            return None
+        except Exception as exc:  # pylint: disable=broad-exception-caught
+            self._log.warning(
+                f"get_with_timeout: exception for key={key!r} in cache {self._name!r}: {type(exc).__name__}: {exc}"
+            )
+            return None
+
     def invalidate(self, key: K) -> None:
         """Drop a single key.  Idempotent.
 

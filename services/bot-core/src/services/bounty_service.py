@@ -1144,7 +1144,7 @@ class BountyService:
         # We process all bounties in-memory first (mutating state), commit ONCE
         # at the end, and then run announcement edits per outcome.
         outcomes: list[CheckResponse] = []
-        bounties_to_announce: list[tuple[Bounty, bool]] = []  # (bounty, captured)
+        bounties_to_announce: list[tuple[Bounty, bool, CheckResponse]] = []  # (bounty, captured, outcome)
         cooldown_applied = False
         cfg = await self.config_repo.get_by_guild_id(db, guild_id)
         cooldown_seconds = resolve_constant(cfg, "check_cooldown", GameConstants.CHECK_COOLDOWN)
@@ -1163,7 +1163,8 @@ class BountyService:
             )
             outcomes.append(outcome)
             if announce_info is not None:
-                bounties_to_announce.append(announce_info)
+                announce_bounty, announce_captured = announce_info
+                bounties_to_announce.append((announce_bounty, announce_captured, outcome))
 
             # Apply cooldown ONCE per /check call, only after a real (non-already-checked) state change.
             if not cooldown_applied and outcome.result in (CheckResult.CORRECT, CheckResult.INCORRECT):
@@ -1186,7 +1187,7 @@ class BountyService:
 
         # Per-bounty announcement edits. Each is best-effort & non-fatal —
         # _edit_bounty_announcement already swallows its own exceptions.
-        for bounty, captured in bounties_to_announce:
+        for bounty, captured, outcome in bounties_to_announce:
             try:
                 await self._edit_bounty_announcement(db, bounty, captured=captured)
             except Exception as e:  # pylint: disable=broad-exception-caught
@@ -1194,6 +1195,9 @@ class BountyService:
                     f"Per-bounty announcement edit failed (bounty {bounty.id}, "
                     f"player {player_id}, system {system_name!r}): {e}"
                 )
+            # Post capture payout embed to hunting channel (non-fatal, only on captures).
+            if captured:
+                await self._post_capture_payout(db, guild_id, bounty, outcome)
 
         # Per-bounty structured logging for observability (B.12)
         for outcome in outcomes:
@@ -1247,6 +1251,7 @@ class BountyService:
                     bounty_id=bounty.id,
                     criminal_name=bounty.criminal_name,
                     message=f"System {system_name} already checked",
+                    division=division,
                 ),
                 None,
             )
@@ -1406,6 +1411,7 @@ class BountyService:
                 bounty_id=bounty.id,
                 criminal_name=bounty.criminal_name,
                 message=inc_message,
+                division=division,
                 proximity_hint=proximity_hint,
                 distance_to_answer=distance,
                 recently_spotted=recently_spotted,
@@ -1551,6 +1557,74 @@ class BountyService:
 
         except Exception as e:
             flogger.warning(f"Failed to delete announcement for bounty {bounty.id}: {e}")
+
+    async def _post_capture_payout(self, db: AsyncSession, guild_id: int, bounty, outcome) -> None:
+        """Non-fatal: POST a payout embed to hunting_channel_id after a capture.
+
+        Resolves the winner's display name from their user record, builds a short
+        "💰 Payout" embed, and POSTs it to the guild's configured hunting_channel_id.
+
+        Args:
+            db:       Async database session.
+            guild_id: Discord guild ID.
+            bounty:   The captured Bounty ORM instance.
+            outcome:  The CheckResponse for this capture (carries reward info).
+        """
+        import os
+
+        import httpx as _httpx
+        from persist.repositories.config_repository import ConfigRepository
+        from persist.repositories.user_repository import UserRepository
+        from utils.bounty_announcement_payload import build_capture_payout_embed
+
+        try:
+            config_repo = ConfigRepository()
+            config = await config_repo.get_by_guild_id(db, guild_id)
+            if not config:
+                return
+            hunting_channel_id = getattr(config, "hunting_channel_id", None)
+            if not hunting_channel_id:
+                return
+
+            # Resolve winner display name from win_user_id → User.discord_username
+            winner_name = "A bounty hunter"
+            win_user_id = getattr(bounty, "win_user_id", None)
+            if win_user_id:
+                user_repo = UserRepository()
+                user = await user_repo.get_by_id(db, win_user_id)
+                if user and getattr(user, "discord_username", None):
+                    winner_name = user.discord_username
+
+            reward = getattr(outcome, "reward", None) or getattr(bounty, "reward", 0)
+            total_reward = getattr(outcome, "total_reward", None)
+            bonus_won = getattr(outcome, "bonus_won", False)
+
+            embed_dict = build_capture_payout_embed(
+                criminal_name=bounty.criminal_name,
+                division=getattr(bounty, "division", ""),
+                reward=reward,
+                winner_name=winner_name,
+                total_reward=total_reward,
+                bonus_won=bonus_won,
+            )
+
+            gateway_host = os.getenv("DISCORD_GATEWAY_HOST", "discord-gateway")
+            gateway_port = os.getenv("GATEWAY_PORT", "7999")
+            gateway_url = f"http://{gateway_host}:{gateway_port}/api/v1"
+
+            async with _httpx.AsyncClient() as client:
+                resp = await client.post(
+                    f"{gateway_url}/channels/{hunting_channel_id}/messages",
+                    json={"embeds": [embed_dict]},
+                    timeout=5.0,
+                )
+            resp.raise_for_status()
+            flogger.debug(
+                f"_post_capture_payout: posted payout embed for bounty={bounty.id} "
+                f"guild={guild_id} channel={hunting_channel_id}"
+            )
+        except Exception as e:  # pylint: disable=broad-exception-caught
+            flogger.warning(f"_post_capture_payout: failed for bounty={bounty.id}: {e}")
 
     # ------------------------------------------------------------------
     # Reward Calculation & Distribution

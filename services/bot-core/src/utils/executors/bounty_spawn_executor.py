@@ -468,22 +468,19 @@ async def execute_bounty_spawn_one_job(job_id: str, payload: dict) -> dict:
             )
 
         # ------------------------------------------------------------------
-        # 8. Announce to Discord (non-fatal)
+        # 8. Push bounty cache to gateway autocomplete (Phase 5b, non-fatal)
+        # Push BEFORE announce so cache is populated when users react to
+        # the Discord notification (B-P1).
+        # ------------------------------------------------------------------
+        await _push_bounty_cache(job_id, guild_id, db)
+
+        # ------------------------------------------------------------------
+        # 9. Announce to Discord (non-fatal)
         # ------------------------------------------------------------------
         try:
             await _announce_bounty(job_id, spawned_bounty, config, db)
         except Exception as ann_err:  # pylint: disable=broad-exception-caught
             flogger.error(f"BountySpawnOne[{job_id}] failed to announce bounty id={spawned_bounty.id}: {ann_err}")
-
-        # ------------------------------------------------------------------
-        # 8b. Post payout summary embed to same channel (non-fatal, Sub-task B)
-        # ------------------------------------------------------------------
-        await _announce_payout_embed(job_id, guild_id, tier_lower, division_channel_id, db)
-
-        # ------------------------------------------------------------------
-        # 9. Push bounty cache to gateway autocomplete (Phase 5b, non-fatal)
-        # ------------------------------------------------------------------
-        await _push_bounty_cache(job_id, guild_id, db)
 
         return {"success": True, "bounty_id": spawned_bounty.id, "tier": tier_lower}
 
@@ -667,14 +664,16 @@ async def execute_bounty_spawn_job(job_id: str, payload: dict) -> dict:
                     await _schedule_expiry_job(job_id, spawned_bounty)
 
                     # ----------------------------------------------------------
+                    # Push bounty cache to gateway autocomplete (Phase 5b, non-fatal)
+                    # Push BEFORE announce so cache is populated when users
+                    # react to the Discord notification (B-P1).
+                    # ----------------------------------------------------------
+                    await _push_bounty_cache(job_id, gid, db)
+
+                    # ----------------------------------------------------------
                     # Announce to discord-gateway (per-division routing)
                     # ----------------------------------------------------------
                     await _announce_bounty(job_id, spawned_bounty, config, db)
-
-                    # ----------------------------------------------------------
-                    # Push bounty cache to gateway autocomplete (Phase 5b, non-fatal)
-                    # ----------------------------------------------------------
-                    await _push_bounty_cache(job_id, gid, db)
 
                     division_results[div] = {
                         "spawned": 1,
@@ -1043,13 +1042,11 @@ async def _push_bounty_cache(parent_job_id: str, guild_id: int, db) -> None:
             )
             resp.raise_for_status()
         flogger.debug(
-            f"BountySpawnJob[{parent_job_id}] pushed bounty cache for guild={guild_id} "
-            f"count={len(bounty_dicts)}"
+            f"BountySpawnJob[{parent_job_id}] pushed bounty cache for guild={guild_id} count={len(bounty_dicts)}"
         )
     except Exception as e:  # pylint: disable=broad-exception-caught
         flogger.warning(
-            f"BountySpawnJob[{parent_job_id}] failed to push bounty cache to gateway for "
-            f"guild={guild_id}: {e}"
+            f"BountySpawnJob[{parent_job_id}] failed to push bounty cache to gateway for guild={guild_id}: {e}"
         )
 
 
@@ -1089,11 +1086,9 @@ async def _announce_payout_embed(parent_job_id: str, guild_id: int, tier: str, c
             )
         resp.raise_for_status()
         flogger.debug(
-            f"BountySpawnJob[{parent_job_id}] posted payout embed for guild={guild_id} tier={tier} "
-            f"channel={channel_id}"
+            f"BountySpawnJob[{parent_job_id}] posted payout embed for guild={guild_id} tier={tier} channel={channel_id}"
         )
     except Exception as e:  # pylint: disable=broad-exception-caught
         flogger.warning(
-            f"BountySpawnJob[{parent_job_id}] failed to post payout embed for "
-            f"guild={guild_id} tier={tier}: {e}"
+            f"BountySpawnJob[{parent_job_id}] failed to post payout embed for guild={guild_id} tier={tier}: {e}"
         )

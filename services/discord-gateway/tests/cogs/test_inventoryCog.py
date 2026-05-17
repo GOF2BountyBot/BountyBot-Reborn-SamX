@@ -2099,15 +2099,11 @@ class TestEquipAutocomplete:
         assert any("3" in n for n in names), f"Expected qty=3 reference in suffix, but got: {names}"
 
     def test_equip_autocomplete_hides_item_when_qty_is_zero(self, mock_inventory_cog):
-        """B.41 / Phase 6: player_equippable_autocomplete does not filter by qty directly.
+        """B.41 fix: player_equippable_autocomplete filters by quantity <= 0 (CARGO-ONLY gate).
 
-        The Phase 4 player_equippable_autocomplete helper does not check qty > 0; it relies
-        on the server-side B.41 guard in LoadoutConsistencyService. Items with qty=0 in the
-        inventory_cache may appear in the autocomplete dropdown but the server will reject the
-        equip attempt if no cargo copy is available.
-
-        Phase 6 behavior: qty=0 items of equippable type ARE shown in autocomplete (no client-side
-        qty filter). This test documents the current Phase 6 contract.
+        player_inventories.quantity is cargo-only. Items with quantity=0 have no cargo
+        copies available to equip, so they should NOT appear in the autocomplete dropdown.
+        The correct gate is quantity <= 0 (B.41 / AGENTS.md).
         """
         interaction = _create_mock_interaction()
         _init_ac_caches_for_inventory_tests(
@@ -2121,10 +2117,9 @@ class TestEquipAutocomplete:
         choices = asyncio.run(mock_inventory_cog.equip_autocomplete(interaction, ""))
 
         names = [c.name for c in choices]
-        # Phase 6 (player_equippable_autocomplete): items with qty=0 ARE shown (no client qty filter).
-        # Server-side B.41 guard rejects the equip if no cargo copy is available.
-        assert any('M6 A4 "Raccoon"' in n for n in names), (
-            f"Phase 6: qty=0 items still appear; server-side B.41 guards the actual equip. Got: {names}"
+        # B.41 fix: qty=0 items must NOT appear — no cargo copies to consume.
+        assert not any('M6 A4 "Raccoon"' in n for n in names), (
+            f"B.41 fix: qty=0 items must be hidden (no cargo copy to equip). Got: {names}"
         )
 
     def test_equip_autocomplete_shows_single_item_when_not_equipped(self, mock_inventory_cog):
@@ -2146,7 +2141,13 @@ class TestEquipAutocomplete:
         )
 
     def test_equip_autocomplete_shows_item_when_qty_positive_and_also_equipped(self, mock_inventory_cog):
-        """Cargo pool and equipped pool are separate: qty=1 cargo appears even if also equipped, zero HTTP."""
+        """B.41 fix: cargo pool and equipped pool are separate — qty=1 cargo appears even if also equipped.
+
+        player_inventories.quantity is CARGO-ONLY. An item with qty=1 in cargo AND also
+        equipped on the active ship represents two separate copies: 1 cargo + 1 equipped.
+        The cargo copy is available to equip, so the item MUST appear in autocomplete.
+        The correct gate is quantity <= 0, NOT an equipped-names exclusion set (B.41).
+        """
         interaction = _create_mock_interaction()
         _init_ac_caches_for_inventory_tests(
             inventory_items=[_make_inventory_item("PlasmaGun", "primary_weapon", 1)],
@@ -2159,12 +2160,10 @@ class TestEquipAutocomplete:
         choices = asyncio.run(mock_inventory_cog.equip_autocomplete(interaction, ""))
 
         names = [c.name for c in choices]
-        # Phase 6 uses player_equippable_autocomplete helper, which DOES exclude equipped items.
-        # The new contract: if an item is both in cargo AND equipped on active ship, it's excluded
-        # (player_equippable_autocomplete excludes items in equipped_names).
-        # This test updates to the Phase 6 contract.
-        assert not any("PlasmaGun" in n for n in names), (
-            f"PlasmaGun should be excluded (it's in equipped_names on active ship). Got: {names}"
+        # B.41 fix: qty=1 cargo copy must appear even though the item is also equipped.
+        # The equipped copy does not consume the cargo copy; they are separate pools.
+        assert any("PlasmaGun" in n for n in names), (
+            f"B.41 fix: PlasmaGun must appear (qty=1 cargo copy available even though also equipped). Got: {names}"
         )
 
 

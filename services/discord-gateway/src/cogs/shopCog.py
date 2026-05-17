@@ -309,10 +309,9 @@ class ShopCog(commands.Cog):
             # HOT PATH: resolve player tier from shared player cache — no HTTP
             pc = autocomplete_state.player_cache
             player = pc.peek((guild_id, user_id)) if pc else None
+            if player is None and pc is not None:
+                player = await pc.get_with_timeout((guild_id, user_id), timeout=1.0)
             if player is None:
-                # Cold miss — schedule background refresh and return []
-                if pc is not None:
-                    pc.schedule_refresh((guild_id, user_id))
                 return []
 
             # E.2: Guard against unrecognized tier values before indexing the list.
@@ -331,8 +330,8 @@ class ShopCog(commands.Cog):
             # HOT PATH: peek shop cache — no HTTP
             items = self._shop_cache.peek((guild_id, tier))
             if items is None:
-                # Cold miss — schedule background refresh and return []
-                self._shop_cache.schedule_refresh((guild_id, tier))
+                items = await self._shop_cache.get_with_timeout((guild_id, tier), timeout=1.0)
+            if items is None:
                 return []
 
             norm_current = normalize_for_search(current)
@@ -510,9 +509,9 @@ class ShopCog(commands.Cog):
             # HOT PATH: resolve player from shared player cache — no HTTP
             pc = autocomplete_state.player_cache
             player = pc.peek((guild_id, user_id)) if pc else None
+            if player is None and pc is not None:
+                player = await pc.get_with_timeout((guild_id, user_id), timeout=1.0)
             if player is None:
-                if pc is not None:
-                    pc.schedule_refresh((guild_id, user_id))
                 return []
 
             player_id = player.get("id")
@@ -522,9 +521,9 @@ class ShopCog(commands.Cog):
             # HOT PATH: peek inventory cache — no HTTP
             ic = autocomplete_state.inventory_cache
             items = ic.peek((guild_id, player_id)) if ic else None
+            if items is None and ic is not None:
+                items = await ic.get_with_timeout((guild_id, player_id), timeout=1.0)
             if items is None:
-                if ic is not None:
-                    ic.schedule_refresh((guild_id, player_id))
                 return []
 
             norm_current = normalize_for_search(current)
@@ -548,6 +547,8 @@ class ShopCog(commands.Cog):
             # HOT PATH: peek ships cache for inactive ships — no HTTP
             sc = autocomplete_state.ships_cache
             ships = sc.peek((guild_id, player_id)) if sc else None
+            if ships is None and sc is not None:
+                ships = await sc.get_with_timeout((guild_id, player_id), timeout=1.0)
             if ships is not None:
                 for ship_choice in ships:
                     raw = ship_choice.raw if hasattr(ship_choice, "raw") else {}
@@ -559,14 +560,16 @@ class ShopCog(commands.Cog):
                     if is_active:
                         continue
 
-                    # Build "Name (inactive ship)" label; value encodes the player_ship_id
-                    if hasattr(ship_choice, "label"):
-                        ship_display = ship_choice.label
-                    elif isinstance(raw, dict):
-                        nickname = raw.get("nickname") or raw.get("name") or raw.get("ship_name", "Unknown")
-                        ship_display = nickname
+                    # Build "Name (inactive ship)" label from raw data — never reuse
+                    # pre-computed label which may contain empty parens like "Betty ()"
+                    # from a blank nickname (GROUP-A cosmetic fix).
+                    if isinstance(raw, dict):
+                        nickname = (raw.get("nickname") or "").strip()
+                        ship_name = raw.get("name") or raw.get("ship_name") or "Unknown"
+                        ship_display = nickname if nickname else ship_name
                     else:
-                        ship_display = "Unknown Ship"
+                        nickname = getattr(raw, "nickname", None)
+                        ship_display = (nickname.strip() if nickname else None) or getattr(raw, "name", "Unknown")
 
                     # Extract the player_ship_id for routing the sell request
                     if isinstance(raw, dict):
@@ -633,7 +636,7 @@ class ShopCog(commands.Cog):
             if is_ship_sale:
                 # Route to sell-ship endpoint
                 try:
-                    ship_id = int(item[len("ship:"):])
+                    ship_id = int(item[len("ship:") :])
                 except ValueError:
                     await interaction.followup.send("❌ Invalid ship selection.", ephemeral=True)
                     return
@@ -668,9 +671,7 @@ class ShopCog(commands.Cog):
                 )
                 embed.add_field(name="Item Type", value="Ship", inline=True)
                 embed.add_field(name="Sale Value", value=f"{transaction.get('total_value', 0):,} credits", inline=True)
-                embed.add_field(
-                    name="New Credits", value=f"{transaction.get('remaining_credits', 0):,}", inline=True
-                )
+                embed.add_field(name="New Credits", value=f"{transaction.get('remaining_credits', 0):,}", inline=True)
                 unequipped = transaction.get("items_unequipped_to_inventory", 0)
                 if unequipped:
                     embed.add_field(

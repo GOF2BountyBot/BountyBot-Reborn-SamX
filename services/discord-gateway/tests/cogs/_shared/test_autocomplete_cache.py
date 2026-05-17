@@ -783,3 +783,119 @@ class TestMaxEntriesAdversarial:
             "DEF-0001-001: peek after set with max_entries=0 should return None "
             "(entry was self-evicted)"
         )
+
+
+# ---------------------------------------------------------------------------
+# TestGetWithTimeout — B-P0 addition
+# ---------------------------------------------------------------------------
+
+
+class TestGetWithTimeout:
+    """Tests for AutocompleteCache.get_with_timeout (B-P0).
+
+    Three paths:
+      - Happy path (cache hit): fast-path peek returns immediately, no I/O.
+      - Cold path (cache miss): awaits get() which calls refresh_fn.
+      - Timeout path: returns None without re-raising asyncio.TimeoutError.
+    """
+
+    async def test_cache_hit_returns_immediately(self):
+        """Fast path: warm cache → peek succeeds → return value without awaiting get()."""
+        refresh = AsyncMock(return_value=["new-data"])
+        cache = AutocompleteCache(ttl_seconds=300.0, refresh_fn=refresh, name="test-gwt-hit")
+        cache.set("mykey", ["warm-data"])
+
+        result = await cache.get_with_timeout("mykey", timeout=1.0)
+
+        assert result == ["warm-data"]
+        # refresh_fn must NOT be called for a warm hit
+        refresh.assert_not_awaited()
+
+    async def test_cold_miss_awaits_refresh_fn(self):
+        """Cold path: cache miss → get_with_timeout awaits get() → calls refresh_fn."""
+        refresh = AsyncMock(return_value=["fetched"])
+        cache = AutocompleteCache(ttl_seconds=300.0, refresh_fn=refresh, name="test-gwt-cold")
+
+        result = await cache.get_with_timeout("mykey", timeout=2.0)
+
+        assert result == ["fetched"]
+        refresh.assert_awaited_once_with("mykey")
+        # Value must be persisted in cache after cold-path fill
+        assert cache.peek("mykey") == ["fetched"]
+
+    async def test_timeout_returns_none_does_not_raise(self):
+        """Timeout path: get_with_timeout returns None, does NOT re-raise TimeoutError."""
+        import asyncio as _asyncio
+
+        async def slow_refresh(key):
+            # Sleep longer than the timeout so the wait_for fires
+            await _asyncio.sleep(10)
+            return ["too-late"]
+
+        cache = AutocompleteCache(ttl_seconds=300.0, refresh_fn=slow_refresh, name="test-gwt-timeout")
+
+        # Very short timeout so it fires immediately
+        result = await cache.get_with_timeout("mykey", timeout=0.01)
+
+        # Must return None — no exception raised
+        assert result is None
+
+    async def test_timeout_logs_warning(self):
+        """Timeout path logs a WARNING with key and timeout info."""
+        import asyncio as _asyncio
+
+        async def slow_refresh(key):
+            await _asyncio.sleep(10)
+            return ["never"]
+
+        mock_logger = MagicMock()
+        cache = AutocompleteCache(ttl_seconds=300.0, refresh_fn=slow_refresh, name="test-gwt-warn")
+        cache._log = mock_logger
+
+        await cache.get_with_timeout("mykey", timeout=0.01)
+
+        mock_logger.warning.assert_called()
+        warning_msg = mock_logger.warning.call_args[0][0]
+        assert "mykey" in warning_msg or "timeout" in warning_msg.lower()
+
+    async def test_non_timeout_exception_returns_none(self):
+        """Non-asyncio.TimeoutError exception from get() → return None, log WARNING."""
+        async def bad_refresh(key):
+            raise RuntimeError("network down")
+
+        cache = AutocompleteCache(ttl_seconds=300.0, refresh_fn=bad_refresh, name="test-gwt-exc")
+        mock_logger = MagicMock()
+        cache._log = mock_logger
+
+        result = await cache.get_with_timeout("mykey", timeout=2.0)
+
+        assert result is None
+        mock_logger.warning.assert_called()
+
+    async def test_shield_allows_inner_get_to_complete_after_timeout(self):
+        """asyncio.shield ensures the inner get() completes even after timeout fires.
+
+        After a timeout, the cache entry must eventually be written so that the
+        next peek() call finds it populated.
+        """
+        import asyncio as _asyncio
+
+        fill_event = _asyncio.Event()
+
+        async def delayed_refresh(key):
+            await _asyncio.sleep(0.05)  # slightly longer than timeout
+            fill_event.set()
+            return ["delayed-value"]
+
+        cache = AutocompleteCache(ttl_seconds=300.0, refresh_fn=delayed_refresh, name="test-gwt-shield")
+
+        # Timeout fires before refresh completes — result is None
+        result = await cache.get_with_timeout("mykey", timeout=0.01)
+        assert result is None
+
+        # Wait for the shielded inner get() to finish
+        await fill_event.wait()
+        await _asyncio.sleep(0)  # yield to allow task to store result
+
+        # After the inner get() completes, the cache should be populated
+        assert cache.peek("mykey") == ["delayed-value"]

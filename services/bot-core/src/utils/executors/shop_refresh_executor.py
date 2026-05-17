@@ -152,6 +152,11 @@ async def execute_shop_refresh_job(job_id: str, payload: dict) -> dict:
                             gid,
                             t,
                         )
+                        # ── Push to gateway autocomplete cache (Phase 5b) ──
+                        # Push BEFORE announce so the cache is populated when
+                        # users react to the Discord notification (B-P1).
+                        await _push_shop_cache(job_id, gid, t, items)
+
                         await _announce_shop_refresh(
                             job_id,
                             gid,
@@ -161,9 +166,6 @@ async def execute_shop_refresh_job(job_id: str, payload: dict) -> dict:
                             items=announce_items,
                             tech_level=tier_results[t].get("tech_level"),
                         )
-
-                        # ── Push to gateway autocomplete cache (Phase 5b) ──
-                        await _push_shop_cache(job_id, gid, t, items)
 
                     bulk_results[gid] = tier_results
 
@@ -245,12 +247,17 @@ async def _push_shop_cache(parent_job_id: str, guild_id: int, tier: str, items: 
         serialised: list[dict] = []
         for item in items:
             if isinstance(item, dict):
-                serialised.append(item)
+                d = dict(item)
             elif hasattr(item, "__dict__"):
                 # ORM objects: exclude SQLAlchemy internal keys
-                serialised.append({k: v for k, v in item.__dict__.items() if not k.startswith("_")})
+                d = {k: v for k, v in item.__dict__.items() if not k.startswith("_")}
             else:
-                serialised.append(vars(item))
+                d = dict(vars(item))
+            # Convert any datetime values to ISO strings for JSON serialisation
+            for k, v in d.items():
+                if hasattr(v, "isoformat"):
+                    d[k] = v.isoformat()
+            serialised.append(d)
         async with httpx.AsyncClient() as client:
             resp = await client.post(
                 gateway_url,

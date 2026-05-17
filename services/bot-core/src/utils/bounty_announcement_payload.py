@@ -36,7 +36,7 @@ _CAPTURED_COLOR: int = 3066993  # #2ECC71 (green)
 TIER_COLORS: dict[str, int] = {
     "bronze": 0xCD7F32,  # 13467442
     "silver": 0xC0C0C0,  # 12632256
-    "gold": 0xFFD700,    # 16766720
+    "gold": 0xFFD700,  # 16766720
     "platinum": 0xE5E4E2,  # 15066082
 }
 
@@ -131,6 +131,57 @@ async def build_bounty_announcement_request(
 
 
 # ---------------------------------------------------------------------------
+# Capture payout embed — posted to #bounty-hunting after a successful capture
+# ---------------------------------------------------------------------------
+
+
+def build_capture_payout_embed(
+    criminal_name: str,
+    division: str,
+    reward: int,
+    winner_name: str = "A bounty hunter",
+    total_reward: int | None = None,
+    bonus_won: bool = False,
+) -> dict[str, Any]:
+    """Build a simple capture payout embed for posting to #bounty-hunting.
+
+    Shows who captured the criminal, what they earned, and whether there was a
+    combat bonus.
+
+    Args:
+        criminal_name: Name of the captured criminal.
+        division: Division tier (bronze / silver / gold / platinum) — used for color.
+        reward: Base reward earned by the winner (without combat bonus).
+        winner_name: Display name of the player who captured the bounty.
+        total_reward: Final reward including any combat bonus.  When None or equal
+            to ``reward``, only the base reward is displayed.
+        bonus_won: When True and ``total_reward`` differs from ``reward``, a combat
+            bonus breakdown line is added.
+
+    Returns:
+        A Discord embed payload dict compatible with the gateway message builder.
+    """
+    color = TIER_COLORS.get((division or "").lower(), _DEFAULT_COLOR)
+
+    if bonus_won and total_reward is not None and total_reward != reward:
+        bonus = total_reward - reward
+        description = (
+            f"**{winner_name}** captured **{criminal_name}**\n"
+            f"Base reward: {reward:,} cr\n"
+            f"Combat bonus: +{bonus:,} cr (×2)\n"
+            f"**Total: {total_reward:,} cr**"
+        )
+    else:
+        description = f"**{winner_name}** captured **{criminal_name}**\n**Earned: {reward:,} cr**"
+
+    return {
+        "title": "💰 Payout",
+        "description": description,
+        "color": color,
+    }
+
+
+# ---------------------------------------------------------------------------
 # Bounty cap payout embed (Sub-task B)
 # ---------------------------------------------------------------------------
 
@@ -175,11 +226,13 @@ def build_bounty_cap_payout_embed(active_bounties: list, capped_tier: str) -> di
             payout_range = f"{min_reward:,} cr each"
         else:
             payout_range = f"{min_reward:,}–{max_reward:,} cr each"
-        fields.append({
-            "name": tier.title(),
-            "value": f"{count} active · {payout_range}",
-            "inline": True,
-        })
+        fields.append(
+            {
+                "name": tier.title(),
+                "value": f"{count} active · {payout_range}",
+                "inline": True,
+            }
+        )
 
     color = TIER_COLORS.get(capped_tier.lower(), _DEFAULT_COLOR)
 

@@ -200,11 +200,9 @@ async def _push_bounty_cache_expire(parent_job_id: str, guild_id: int, db) -> No
             )
             resp.raise_for_status()
         flogger.debug(
-            f"BountyExpireJob[{parent_job_id}] pushed bounty cache for guild={guild_id} "
-            f"remaining={len(bounty_dicts)}"
+            f"BountyExpireJob[{parent_job_id}] pushed bounty cache for guild={guild_id} remaining={len(bounty_dicts)}"
         )
     except Exception as e:  # pylint: disable=broad-exception-caught
         flogger.warning(
-            f"BountyExpireJob[{parent_job_id}] failed to push bounty cache to gateway for "
-            f"guild={guild_id}: {e}"
+            f"BountyExpireJob[{parent_job_id}] failed to push bounty cache to gateway for guild={guild_id}: {e}"
         )

@@ -79,11 +79,11 @@ async def resolve_player_id(
             return None
 
         cached = autocomplete_state.player_cache.peek((guild_id, user_id))
+        if cached is None:
+            cached = await autocomplete_state.player_cache.get_with_timeout((guild_id, user_id), timeout=1.0)
         if cached is not None:
             return cached.get("id")
 
-        # Cold miss — schedule background warm and return None.
-        autocomplete_state.player_cache.schedule_refresh((guild_id, user_id))
         return None
 
     except Exception:  # pylint: disable=broad-exception-caught
@@ -145,7 +145,8 @@ async def player_ships_autocomplete(
             return []
         player_entry = autocomplete_state.player_cache.peek((guild_id, user_id))
         if player_entry is None:
-            autocomplete_state.player_cache.schedule_refresh((guild_id, user_id))
+            player_entry = await autocomplete_state.player_cache.get_with_timeout((guild_id, user_id), timeout=1.0)
+        if player_entry is None:
             return []
         player_id = player_entry.get("id")
         if not player_id:
@@ -156,7 +157,8 @@ async def player_ships_autocomplete(
             return []
         ships = autocomplete_state.ships_cache.peek((guild_id, player_id))
         if ships is None:
-            autocomplete_state.ships_cache.schedule_refresh((guild_id, player_id))
+            ships = await autocomplete_state.ships_cache.get_with_timeout((guild_id, player_id), timeout=1.0)
+        if ships is None:
             return []
 
         norm_current = normalize_for_search(current)
@@ -235,7 +237,8 @@ async def player_inventory_autocomplete(
             return []
         player_entry = autocomplete_state.player_cache.peek((guild_id, user_id))
         if player_entry is None:
-            autocomplete_state.player_cache.schedule_refresh((guild_id, user_id))
+            player_entry = await autocomplete_state.player_cache.get_with_timeout((guild_id, user_id), timeout=1.0)
+        if player_entry is None:
             return []
         player_id = player_entry.get("id")
         if not player_id:
@@ -246,7 +249,8 @@ async def player_inventory_autocomplete(
             return []
         items = autocomplete_state.inventory_cache.peek((guild_id, player_id))
         if items is None:
-            autocomplete_state.inventory_cache.schedule_refresh((guild_id, player_id))
+            items = await autocomplete_state.inventory_cache.get_with_timeout((guild_id, player_id), timeout=1.0)
+        if items is None:
             return []
 
         norm_current = normalize_for_search(current)
@@ -299,7 +303,12 @@ async def player_equippable_autocomplete(
     An item is "equippable" if:
     - Its ``item_type`` is in ``_CURRENTLY_EQUIPPABLE_INVENTORY_TYPES`` (i.e.
       primary_weapon, turret_weapon, or module — NOT secondary_weapon or ship today).
-    - It is NOT already equipped on the player's active ship.
+    - Its ``quantity`` (cargo copies) is > 0.  ``player_inventories.quantity`` is
+      CARGO-ONLY — equipped copies are stored in the ship loadout JSON and do NOT
+      reduce the cargo quantity.  A player with 1 cargo copy AND 1 equipped copy
+      of the same item still has quantity=1 in cargo, so that copy can be equipped
+      on another slot.  The correct gate is therefore ``quantity <= 0``, NOT an
+      equipped-names check (B.41 / AGENTS.md).
 
     Value format : ``item_name``
     Label format : ``"ItemName (TypeLabel) xN"`` (quantity suffix when > 1)
@@ -326,7 +335,8 @@ async def player_equippable_autocomplete(
             return []
         player_entry = autocomplete_state.player_cache.peek((guild_id, user_id))
         if player_entry is None:
-            autocomplete_state.player_cache.schedule_refresh((guild_id, user_id))
+            player_entry = await autocomplete_state.player_cache.get_with_timeout((guild_id, user_id), timeout=1.0)
+        if player_entry is None:
             return []
         player_id = player_entry.get("id")
         if not player_id:
@@ -337,30 +347,9 @@ async def player_equippable_autocomplete(
             return []
         items = autocomplete_state.inventory_cache.peek((guild_id, player_id))
         if items is None:
-            autocomplete_state.inventory_cache.schedule_refresh((guild_id, player_id))
+            items = await autocomplete_state.inventory_cache.get_with_timeout((guild_id, player_id), timeout=1.0)
+        if items is None:
             return []
-
-        # Peek ships_cache — need active ship's equipped slots.
-        if autocomplete_state.ships_cache is None:
-            return []
-        ships = autocomplete_state.ships_cache.peek((guild_id, player_id))
-        if ships is None:
-            autocomplete_state.ships_cache.schedule_refresh((guild_id, player_id))
-            return []
-
-        # Find active ship and build set of already-equipped item names.
-        active_ship_raw: dict | None = None
-        for nc in ships:
-            if nc.raw.get("is_active"):
-                active_ship_raw = nc.raw
-                break
-
-        equipped_names: set[str] = set()
-        if active_ship_raw:
-            equipped_names.update(active_ship_raw.get("weapons") or [])
-            equipped_names.update(active_ship_raw.get("modules") or [])
-            equipped_names.update(active_ship_raw.get("turrets") or [])
-            equipped_names.update(active_ship_raw.get("secondary_weapons") or [])
 
         norm_current = normalize_for_search(current)
         choices: list[app_commands.Choice[str]] = []
@@ -375,7 +364,7 @@ async def player_equippable_autocomplete(
                 continue
             if item_type not in _CURRENTLY_EQUIPPABLE_INVENTORY_TYPES:
                 continue
-            if item_name in equipped_names:
+            if quantity <= 0:
                 continue
 
             qty_suffix = f" x{quantity}" if quantity and quantity > 1 else ""
@@ -438,7 +427,8 @@ async def player_equipped_autocomplete(
             return []
         player_entry = autocomplete_state.player_cache.peek((guild_id, user_id))
         if player_entry is None:
-            autocomplete_state.player_cache.schedule_refresh((guild_id, user_id))
+            player_entry = await autocomplete_state.player_cache.get_with_timeout((guild_id, user_id), timeout=1.0)
+        if player_entry is None:
             return []
         player_id = player_entry.get("id")
         if not player_id:
@@ -449,7 +439,8 @@ async def player_equipped_autocomplete(
             return []
         ships = autocomplete_state.ships_cache.peek((guild_id, player_id))
         if ships is None:
-            autocomplete_state.ships_cache.schedule_refresh((guild_id, player_id))
+            ships = await autocomplete_state.ships_cache.get_with_timeout((guild_id, player_id), timeout=1.0)
+        if ships is None:
             return []
 
         # Find active ship.

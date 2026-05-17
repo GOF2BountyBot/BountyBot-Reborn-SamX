@@ -393,7 +393,7 @@ class TestRegisterWarmJobs:
     """register_warm_jobs adds the expected jobs to the APScheduler instance."""
 
     async def test_register_warm_jobs_adds_jobs_to_scheduler(self, initialized_state):
-        """A real AsyncIOScheduler receives 5+ jobs (1 per guild + 4 recurring)."""
+        """A real AsyncIOScheduler receives Wave 0 + Wave 1 + 4 recurring jobs."""
         from apscheduler.jobstores.memory import MemoryJobStore
         from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
@@ -417,7 +417,13 @@ class TestRegisterWarmJobs:
             jobs = scheduler.get_jobs()
             job_ids = [j.id for j in jobs]
 
-            # Two one-time warm jobs (one per guild)
+            # Wave 0: guild shop + bounty warm jobs (B-P2)
+            assert "warm-shop-777" in job_ids
+            assert "warm-shop-888" in job_ids
+            assert "warm-bounty-777" in job_ids
+            assert "warm-bounty-888" in job_ids
+
+            # Wave 1: per-user player warm jobs
             assert "warm-guild-777" in job_ids
             assert "warm-guild-888" in job_ids
 
@@ -427,8 +433,8 @@ class TestRegisterWarmJobs:
             assert "autocomplete-jobs-refresh" in job_ids
             assert "autocomplete-shop-safety-net" in job_ids
 
-            # At least 6 jobs total (2 guilds + 4 recurring)
-            assert len(jobs) >= 6
+            # At least 10 jobs total: 2 shop + 2 bounty + 2 guild + 4 recurring
+            assert len(jobs) >= 10
 
         finally:
             scheduler.shutdown(wait=False)
@@ -702,6 +708,122 @@ class TestRefreshShopCacheSafetyNetNoRefreshFn:
         # The key behavior is: no exception raised, no crash.
 
 
+# ---------------------------------------------------------------------------
+# Test: warm_guild_shop_cache and warm_guild_bounty_cache (B-P2)
+# ---------------------------------------------------------------------------
+
+
+class TestWarmGuildShopCache:
+    """Tests for warm_guild_shop_cache (B-P2 Wave 0 addition)."""
+
+    async def test_warm_guild_shop_cache_warms_all_tiers(self, initialized_state):
+        """warm_guild_shop_cache calls _shop_cache.get for each of 4 tiers."""
+        from cogs._shared.autocomplete_cache import AutocompleteCache
+
+        # Build a shop cache that records which keys were fetched
+        fetched_keys = []
+
+        async def record_fetch(key):
+            fetched_keys.append(key)
+            return []
+
+        shop_cache = AutocompleteCache(ttl_seconds=300.0, refresh_fn=record_fetch, name="test-shop")
+        mock_cog = MagicMock()
+        mock_cog._shop_cache = shop_cache
+
+        bot = MagicMock()
+        bot.get_cog = MagicMock(return_value=mock_cog)
+
+        await warm_mod.warm_guild_shop_cache(bot, guild_id=42)
+
+        # All 4 tiers should have been warmed
+        assert (42, "Bronze") in fetched_keys
+        assert (42, "Silver") in fetched_keys
+        assert (42, "Gold") in fetched_keys
+        assert (42, "Platinum") in fetched_keys
+
+    async def test_warm_guild_shop_cache_no_cog_logs_warning(self, initialized_state):
+        """warm_guild_shop_cache returns silently when ShopCog not found."""
+        bot = MagicMock()
+        bot.get_cog = MagicMock(return_value=None)  # ShopCog not loaded
+
+        # Should not raise
+        await warm_mod.warm_guild_shop_cache(bot, guild_id=99)
+
+    async def test_warm_guild_shop_cache_tier_error_is_nonfatal(self, initialized_state):
+        """warm_guild_shop_cache continues warming remaining tiers after one fails."""
+        from cogs._shared.autocomplete_cache import AutocompleteCache
+
+        fetched_keys = []
+        call_count = 0
+
+        async def flaky_fetch(key):
+            nonlocal call_count
+            call_count += 1
+            fetched_keys.append(key)
+            if key[1] == "Bronze":
+                raise RuntimeError("fetch failed")
+            return []
+
+        shop_cache = AutocompleteCache(ttl_seconds=300.0, refresh_fn=flaky_fetch, name="test-flaky-shop")
+        mock_cog = MagicMock()
+        mock_cog._shop_cache = shop_cache
+
+        bot = MagicMock()
+        bot.get_cog = MagicMock(return_value=mock_cog)
+
+        # Must not raise even if Bronze fails
+        await warm_mod.warm_guild_shop_cache(bot, guild_id=55)
+
+        # Silver, Gold, Platinum should still be attempted
+        warmed_tiers = [k[1] for k in fetched_keys]
+        assert "Silver" in warmed_tiers
+        assert "Gold" in warmed_tiers
+        assert "Platinum" in warmed_tiers
+
+
+class TestWarmGuildBountyCache:
+    """Tests for warm_guild_bounty_cache (B-P2 Wave 0 addition)."""
+
+    async def test_warm_guild_bounty_cache_calls_get(self, initialized_state):
+        """warm_guild_bounty_cache calls _bounty_cache.get(guild_id)."""
+        from cogs._shared.autocomplete_cache import AutocompleteCache
+
+        fetched_keys = []
+
+        async def record_fetch(key):
+            fetched_keys.append(key)
+            return []
+
+        bounty_cache = AutocompleteCache(ttl_seconds=60.0, refresh_fn=record_fetch, name="test-bounty")
+        mock_cog = MagicMock()
+        mock_cog._bounty_cache = bounty_cache
+
+        bot = MagicMock()
+        bot.get_cog = MagicMock(return_value=mock_cog)
+
+        await warm_mod.warm_guild_bounty_cache(bot, guild_id=77)
+
+        assert 77 in fetched_keys
+
+    async def test_warm_guild_bounty_cache_no_cog_logs_warning(self, initialized_state):
+        """warm_guild_bounty_cache returns silently when BountyCog not found."""
+        bot = MagicMock()
+        bot.get_cog = MagicMock(return_value=None)
+
+        # Must not raise
+        await warm_mod.warm_guild_bounty_cache(bot, guild_id=88)
+
+    async def test_warm_guild_bounty_cache_no_cache_attr_is_noop(self, initialized_state):
+        """warm_guild_bounty_cache does nothing when BountyCog has no _bounty_cache."""
+        mock_cog = MagicMock(spec=[])  # No _bounty_cache attribute
+        bot = MagicMock()
+        bot.get_cog = MagicMock(return_value=mock_cog)
+
+        # Must not raise
+        await warm_mod.warm_guild_bounty_cache(bot, guild_id=99)
+
+
 class TestRegisterWarmJobsZeroGuilds:
     """register_warm_jobs with bot.guilds == [] adds only the 4 recurring jobs.
 
@@ -730,8 +852,8 @@ class TestRegisterWarmJobsZeroGuilds:
             jobs = scheduler.get_jobs()
             job_ids = [j.id for j in jobs]
 
-            # No per-guild warm jobs
-            guild_warm_jobs = [jid for jid in job_ids if jid.startswith("warm-guild-")]
+            # No per-guild warm jobs (Wave 0 or Wave 1) — no guilds
+            guild_warm_jobs = [jid for jid in job_ids if any(jid.startswith(p) for p in ("warm-guild-", "warm-shop-", "warm-bounty-"))]
             assert guild_warm_jobs == [], f"Expected no per-guild jobs, got: {guild_warm_jobs}"
 
             # All 4 recurring jobs present

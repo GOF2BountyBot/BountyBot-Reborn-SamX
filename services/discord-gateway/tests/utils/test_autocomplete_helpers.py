@@ -471,22 +471,48 @@ class TestPlayerEquippableAutocomplete:
         if ships is not None:
             autocomplete_state.ships_cache.set((222, player_id), ships)
 
-    def test_player_equippable_excludes_equipped_items(self):
-        """Items already equipped on the active ship are excluded."""
+    def test_player_equippable_excludes_zero_quantity_items(self):
+        """Items with quantity <= 0 (no cargo copies) are excluded.
+
+        B.41: player_inventories.quantity is CARGO-ONLY. The gate is quantity <= 0,
+        not an equipped-names check. An item with quantity=1 and also equipped on
+        the ship still appears here because there is a cargo copy available.
+        """
         items = [
-            _make_inv_nc("Pulse Laser", "primary_weapon"),
-            _make_inv_nc("Shield Gen", "module"),
-            _make_inv_nc("Big Cannon", "primary_weapon"),
+            _make_inv_nc("Pulse Laser", "primary_weapon", quantity=1),  # has cargo copy
+            _make_inv_nc("Shield Gen", "module", quantity=0),  # no cargo copy
+            _make_inv_nc("Big Cannon", "primary_weapon", quantity=2),  # has cargo copies
         ]
-        ships = [_make_ship_nc(1, "Betty", is_active=True, weapons=["Pulse Laser"])]
-        self._populate(items=items, ships=ships)
+        # ships_cache no longer needed for equippable filter — only inventory quantity matters
+        autocomplete_state.player_cache.set((222, 111), {"id": 7})
+        autocomplete_state.inventory_cache.set((222, 7), items)
         client = _make_raising_client()
 
         choices = asyncio.run(player_equippable_autocomplete(client, API_BASE, _make_interaction(), ""))
         names = {c.value for c in choices}
-        assert "Pulse Laser" not in names, "already equipped — must be excluded"
-        assert "Shield Gen" in names
-        assert "Big Cannon" in names
+        assert "Shield Gen" not in names, "quantity=0 — must be excluded"
+        assert "Pulse Laser" in names, "quantity=1 — cargo copy available, must appear"
+        assert "Big Cannon" in names, "quantity=2 — cargo copies available, must appear"
+
+    def test_player_equippable_shows_item_even_when_equipped_if_cargo_copy_exists(self):
+        """An item that is equipped on the ship AND has quantity>=1 cargo copy still appears.
+
+        This is the canonical B.41 bug scenario: the player has 1 copy equipped and
+        1 copy in cargo. The old code excluded it via the equipped-names set; the
+        correct behavior per B.41 is to show it because cargo quantity > 0.
+        """
+        # Simulate: "Pulse Laser" is equipped on the ship AND has 1 cargo copy
+        items = [
+            _make_inv_nc("Pulse Laser", "primary_weapon", quantity=1),
+        ]
+        # Note: we only populate player_cache and inventory_cache now
+        autocomplete_state.player_cache.set((222, 111), {"id": 7})
+        autocomplete_state.inventory_cache.set((222, 7), items)
+        client = _make_raising_client()
+
+        choices = asyncio.run(player_equippable_autocomplete(client, API_BASE, _make_interaction(), ""))
+        names = {c.value for c in choices}
+        assert "Pulse Laser" in names, "cargo copy available even though equipped — must appear"
 
     def test_player_equippable_excludes_non_equippable_types(self):
         """secondary_weapon items are excluded (not in CURRENTLY_EQUIPPABLE set)."""
@@ -494,8 +520,9 @@ class TestPlayerEquippableAutocomplete:
             _make_inv_nc("Primary Gun", "primary_weapon"),
             _make_inv_nc("Seeker Missile", "secondary_weapon"),
         ]
-        ships = [_make_ship_nc(1, "Betty", is_active=True)]
-        self._populate(items=items, ships=ships)
+        # Only need player and inventory caches now (no ships_cache required)
+        autocomplete_state.player_cache.set((222, 111), {"id": 7})
+        autocomplete_state.inventory_cache.set((222, 7), items)
         client = _make_raising_client()
 
         choices = asyncio.run(player_equippable_autocomplete(client, API_BASE, _make_interaction(), ""))
@@ -512,10 +539,10 @@ class TestPlayerEquippableAutocomplete:
         client.get.assert_not_called()
 
     def test_warm_cache_does_not_call_http(self):
-        """All caches warm — HTTP never called."""
+        """Inventory cache warm — HTTP never called (ships_cache no longer needed)."""
         items = [_make_inv_nc("Cannon", "primary_weapon")]
-        ships = [_make_ship_nc(1, "Betty", is_active=True)]
-        self._populate(items=items, ships=ships)
+        autocomplete_state.player_cache.set((222, 111), {"id": 7})
+        autocomplete_state.inventory_cache.set((222, 7), items)
         client = _make_raising_client()
 
         asyncio.run(player_equippable_autocomplete(client, API_BASE, _make_interaction(), ""))
@@ -523,30 +550,36 @@ class TestPlayerEquippableAutocomplete:
         client.get.assert_not_called()
 
     def test_returns_empty_when_inventory_miss(self):
-        """Returns [] when inventory not cached (ships don't matter)."""
+        """Returns [] when inventory not cached."""
         autocomplete_state.player_cache.set((222, 111), {"id": 7})
-        autocomplete_state.ships_cache.set((222, 7), [_make_ship_nc(1, "Betty", is_active=True)])
         client = _make_raising_client()
         choices = asyncio.run(player_equippable_autocomplete(client, API_BASE, _make_interaction(), ""))
         assert choices == []
 
-    def test_returns_empty_when_ships_miss(self):
-        """Returns [] when ships not cached."""
-        items = [_make_inv_nc("Cannon", "primary_weapon")]
+    def test_ships_cache_miss_does_not_block_results(self):
+        """ships_cache is no longer consulted — a miss does not block equippable results.
+
+        Pre-fix, a cold ships_cache caused an early return []. Post-fix, only
+        inventory_cache matters. This test verifies the fix holds.
+        """
+        items = [_make_inv_nc("Cannon", "primary_weapon", quantity=1)]
         autocomplete_state.player_cache.set((222, 111), {"id": 7})
         autocomplete_state.inventory_cache.set((222, 7), items)
+        # Deliberately do NOT populate ships_cache
         client = _make_raising_client()
         choices = asyncio.run(player_equippable_autocomplete(client, API_BASE, _make_interaction(), ""))
-        assert choices == []
+        # Should return the item since quantity>0 and ships_cache is no longer required
+        names = {c.value for c in choices}
+        assert "Cannon" in names
 
-    def test_no_active_ship_returns_all_equippable(self):
-        """When no active ship, all equippable-type items are returned (nothing equipped)."""
+    def test_returns_all_equippable_types_regardless_of_active_ship(self):
+        """All equippable-type items with quantity>0 are returned; no ship state needed."""
         items = [
             _make_inv_nc("Cannon", "primary_weapon"),
             _make_inv_nc("Shield", "module"),
         ]
-        ships = [_make_ship_nc(1, "Inactive", is_active=False)]
-        self._populate(items=items, ships=ships)
+        autocomplete_state.player_cache.set((222, 111), {"id": 7})
+        autocomplete_state.inventory_cache.set((222, 7), items)
         client = _make_raising_client()
 
         choices = asyncio.run(player_equippable_autocomplete(client, API_BASE, _make_interaction(), ""))
@@ -560,8 +593,8 @@ class TestPlayerEquippableAutocomplete:
             _make_inv_nc("Pulse Laser", "primary_weapon"),
             _make_inv_nc("Shield Gen", "module"),
         ]
-        ships = [_make_ship_nc(1, "Betty", is_active=True)]
-        self._populate(items=items, ships=ships)
+        autocomplete_state.player_cache.set((222, 111), {"id": 7})
+        autocomplete_state.inventory_cache.set((222, 7), items)
         client = _make_raising_client()
 
         choices = asyncio.run(player_equippable_autocomplete(client, API_BASE, _make_interaction(), "Pulse"))
@@ -576,28 +609,24 @@ class TestPlayerEquippableAutocomplete:
         assert "turret_weapon" in _CURRENTLY_EQUIPPABLE_INVENTORY_TYPES
         assert "module" in _CURRENTLY_EQUIPPABLE_INVENTORY_TYPES
 
-    def test_excludes_items_from_all_equipped_slots(self):
-        """Equipped items from weapons, modules, turrets, secondary_weapons are all excluded."""
+    def test_excludes_items_with_zero_quantity(self):
+        """Items with quantity=0 (no cargo copies) are excluded regardless of slot.
+
+        Post-fix: the gate is quantity <= 0. Items with quantity > 0 appear even
+        if they are also in the ship loadout (B.41).
+        """
         items = [
-            _make_inv_nc("Pulse Laser", "primary_weapon"),
-            _make_inv_nc("Shield", "module"),
-            _make_inv_nc("Turret Mk1", "turret_weapon"),
+            _make_inv_nc("Pulse Laser", "primary_weapon", quantity=0),
+            _make_inv_nc("Shield", "module", quantity=0),
+            _make_inv_nc("Turret Mk1", "turret_weapon", quantity=0),
         ]
-        ships = [
-            _make_ship_nc(
-                1,
-                "Betty",
-                is_active=True,
-                weapons=["Pulse Laser"],
-                modules=["Shield"],
-                turrets=["Turret Mk1"],
-            )
-        ]
-        self._populate(items=items, ships=ships)
+        # Only inventory_cache needed — no ships_cache population
+        autocomplete_state.player_cache.set((222, 111), {"id": 7})
+        autocomplete_state.inventory_cache.set((222, 7), items)
         client = _make_raising_client()
 
         choices = asyncio.run(player_equippable_autocomplete(client, API_BASE, _make_interaction(), ""))
-        assert choices == []
+        assert choices == [], "all items have quantity=0 — must be excluded"
 
 
 # ---------------------------------------------------------------------------
@@ -821,11 +850,10 @@ class TestAutocompleteExceptionLogging:
         """player_equippable_autocomplete logs WARNING when an unexpected exception is swallowed."""
         real_logger = logging.getLogger("discord-gateway-autocomplete-helpers")
         autocomplete_state.player_cache.set((222, 111), {"id": 7})
-        autocomplete_state.inventory_cache.set((222, 7), [_make_inv_nc("Cannon", "primary_weapon")])
         with (
             patch.object(_autocomplete_helpers_mod, "logger", real_logger),
             caplog.at_level(logging.WARNING, logger=real_logger.name),
-            patch.object(autocomplete_state.ships_cache, "peek", side_effect=RuntimeError("unexpected")),
+            patch.object(autocomplete_state.inventory_cache, "peek", side_effect=RuntimeError("unexpected")),
         ):
             client = MagicMock()
             choices = asyncio.run(
@@ -985,39 +1013,38 @@ class TestAdversarialEdgeCases:
         client.get.assert_not_called()
 
     # ------------------------------------------------------------------
-    # player_equippable_autocomplete: ships list with no active ship
+    # player_equippable_autocomplete: quantity-based filtering (B.41)
     # ------------------------------------------------------------------
 
-    def test_equippable_no_active_ship_returns_full_equippable_inventory(self):
-        """When all ships have is_active=False, equipped_names is empty.
+    def test_equippable_uses_quantity_gate_not_equipped_names(self):
+        """Equippable filter uses quantity <= 0 gate (B.41), not an equipped-names set.
 
-        Every equippable-type item in inventory should be returned since there
-        are no loadout items to exclude.
+        Equippable-type items with quantity > 0 appear regardless of whether they
+        are also in the ship loadout. Items with quantity <= 0 are excluded.
+        Only inventory_cache is needed — ships_cache is not consulted.
         """
         items = [
-            _make_inv_nc("Cannon", "primary_weapon"),
+            _make_inv_nc("Cannon", "primary_weapon"),  # quantity=1 (default)
             _make_inv_nc("Turret Alpha", "turret_weapon"),
             _make_inv_nc("ShieldV2", "module"),
             _make_inv_nc("Seeker", "secondary_weapon"),  # non-equippable type
-        ]
-        ships = [
-            _make_ship_nc(1, "Ship A", is_active=False),
-            _make_ship_nc(2, "Ship B", is_active=False),
+            _make_inv_nc("EmptyGun", "primary_weapon", quantity=0),  # no cargo copy
         ]
         autocomplete_state.player_cache.set((222, 111), {"id": 7})
         autocomplete_state.inventory_cache.set((222, 7), items)
-        autocomplete_state.ships_cache.set((222, 7), ships)
         client = _make_raising_client()
 
         choices = asyncio.run(player_equippable_autocomplete(client, API_BASE, _make_interaction(), ""))
         names = {c.value for c in choices}
 
-        # All equippable types returned — nothing excluded (no active ship loadout)
+        # All equippable types with quantity > 0 returned
         assert "Cannon" in names
         assert "Turret Alpha" in names
         assert "ShieldV2" in names
         # secondary_weapon is not in _CURRENTLY_EQUIPPABLE_INVENTORY_TYPES
         assert "Seeker" not in names
+        # quantity=0 → excluded
+        assert "EmptyGun" not in names
 
 
 if __name__ == "__main__":

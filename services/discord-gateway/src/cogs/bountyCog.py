@@ -27,7 +27,7 @@ _VALID_DIVISIONS = ["bronze", "silver", "gold", "platinum"]
 TIER_COLORS: dict[str, int] = {
     "bronze": 0xCD7F32,  # 13467442
     "silver": 0xC0C0C0,  # 12632256
-    "gold": 0xFFD700,    # 16766720
+    "gold": 0xFFD700,  # 16766720
     "platinum": 0xE5E4E2,  # 15066082
 }
 
@@ -53,10 +53,15 @@ class BountyCog(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
         self.http_client = httpx.AsyncClient(timeout=httpx.Timeout(10.0))
-        self._systems: list[str] = []
-        # Bounty cache: keyed by guild_id (int), stores list of bounty dicts, TTL=60s
+        # Static catalog: star system names — TTL=None (never expires; only reloaded on /reload_autocomplete)
+        self._systems_cache: AutocompleteCache[str, list[str]] = AutocompleteCache(
+            ttl_seconds=None,
+            name="bounty-systems",
+        )
+        # Bounty cache: keyed by guild_id (int), stores list of bounty dicts, TTL=1200s (20 min)
+        # Dead-man switch only — periodic bounty_cache_refresh job resets TTL every 10 min
         self._bounty_cache: AutocompleteCache[int, list[dict]] = AutocompleteCache(
-            ttl_seconds=60.0,
+            ttl_seconds=1200.0,
             refresh_fn=self._fetch_bounties,
             name="bountyCog-bounties",
         )
@@ -78,8 +83,9 @@ class BountyCog(commands.Cog):
                 resp = await self.http_client.get(f"{api_base}/about/categories/system/objects", timeout=10)
                 resp.raise_for_status()
                 systems = resp.json()
-                self._systems = [s.get("name", "") for s in systems if s.get("name")]
-                flogger.info("BountyCog: Preloaded %d system names", len(self._systems))
+                system_names = [s.get("name", "") for s in systems if s.get("name")]
+                self._systems_cache.set("all", system_names)
+                flogger.info("BountyCog: Preloaded %d system names", len(system_names))
                 return  # Success — exit
             except (httpx.TimeoutException, httpx.RequestError, httpx.HTTPStatusError) as e:
                 flogger.warning(
@@ -90,7 +96,7 @@ class BountyCog(commands.Cog):
                 flogger.warning("BountyCog: Unexpected error on preload attempt %d/%d: %s", attempt, len(delays), e)
                 await asyncio.sleep(delay)
         flogger.error("BountyCog: All preload attempts exhausted. System autocomplete will be empty.")
-        self._systems = []
+        self._systems_cache.set("all", [])
 
     async def _fetch_bounties(self, key: int) -> list[dict]:
         """Fetch all active bounties for a guild from bot-core. Called by _bounty_cache on miss/expiry.
@@ -156,7 +162,8 @@ class BountyCog(commands.Cog):
         self, _interaction: discord.Interaction, current: str
     ) -> list[app_commands.Choice[str]]:
         """Autocomplete for star system names — includes ALL systems (game balance)."""
-        return [app_commands.Choice(name=name, value=name) for name in fuzzy_filter(current, self._systems)]
+        systems = self._systems_cache.peek("all") or []
+        return [app_commands.Choice(name=name, value=name) for name in fuzzy_filter(current, systems)]
 
     async def bounty_autocomplete(
         self, interaction: discord.Interaction, current: str
@@ -224,8 +231,9 @@ class BountyCog(commands.Cog):
 
         # Only resolve if we have systems loaded — if preload failed, pass through
         # and let bot-core return 404 for invalid names
-        if self._systems:
-            resolved = resolve_system_name(system, self._systems)
+        _systems_list = self._systems_cache.peek("all") or []
+        if _systems_list:
+            resolved = resolve_system_name(system, _systems_list)
             if resolved is None:
                 await interaction.followup.send(
                     f"❌ Unknown system `{system}`. Use autocomplete or check the spelling.",
@@ -234,7 +242,7 @@ class BountyCog(commands.Cog):
                 return
             system = resolved
         else:
-            flogger.debug("/check: _systems not loaded, passing typed value through to bot-core: %s", system)
+            flogger.debug("/check: systems cache empty, passing typed value through to bot-core: %s", system)
 
         try:
             player_id = await self._get_player_id(
@@ -674,43 +682,62 @@ class BountyCog(commands.Cog):
         Pass show_all=True to see every active bounty across all tiers.
         """
         await interaction.response.defer(thinking=True)
-        flogger.info(
-            f"/bounties invoked: guild={interaction.guild_id} user={interaction.user.id} show_all={show_all}"
-        )
+        flogger.info(f"/bounties invoked: guild={interaction.guild_id} user={interaction.user.id} show_all={show_all}")
 
         try:
-            params: dict = {"guild_id": interaction.guild_id}
             title_suffix = ""
 
             if not show_all:
-                # Resolve the player's current tier so we can filter to their division only.
-                # POST /players/ is a create-or-get upsert — always safe to call.
-                player_resp = await self.http_client.post(
-                    f"{api_base}/players/",
-                    json={
-                        "discord_id": interaction.user.id,
-                        "guild_id": interaction.guild_id,
-                        "discord_username": None,
-                        "display_name": getattr(interaction.user, "display_name", None),
-                    },
-                    timeout=10,
-                )
-                player_resp.raise_for_status()
-                player_data = player_resp.json()
-                player_tier = (player_data.get("tier") or "Bronze")
+                # Resolve player tier — try cache first (graceful degradation on miss)
+                player_tier: str | None = None
+                if autocomplete_state.player_cache is not None:
+                    player_entry = autocomplete_state.player_cache.peek((interaction.guild_id, interaction.user.id))
+                    if player_entry is not None:
+                        player_tier = player_entry.get("tier") or None
+
+                if player_tier is None:
+                    # Cache miss — fall back to HTTP to get the player's tier
+                    player_resp = await self.http_client.post(
+                        f"{api_base}/players/",
+                        json={
+                            "discord_id": interaction.user.id,
+                            "guild_id": interaction.guild_id,
+                            "discord_username": None,
+                            "display_name": getattr(interaction.user, "display_name", None),
+                        },
+                        timeout=10,
+                    )
+                    player_resp.raise_for_status()
+                    player_data = player_resp.json()
+                    player_tier = player_data.get("tier") or "Bronze"
+
                 division = player_tier.lower()
-                params["division"] = division
                 title_suffix = f" — {player_tier} Tier"
             else:
+                division = None
                 title_suffix = " — All Tiers"
 
-            resp = await self.http_client.get(
-                f"{api_base}/bounties/",
-                params=params,
-                timeout=10,
-            )
-            resp.raise_for_status()
-            bounty_list = resp.json()
+            # Try cache first for bounty list — fall back to HTTP on miss
+            guild_id = interaction.guild_id
+            cached_bounties = self._bounty_cache.peek(guild_id)
+            if cached_bounties is not None:
+                # Filter by division if needed
+                if division is not None:
+                    bounty_list = [b for b in cached_bounties if b.get("division", "").lower() == division]
+                else:
+                    bounty_list = list(cached_bounties)
+            else:
+                # Cache miss — fetch from HTTP
+                params: dict = {"guild_id": guild_id}
+                if division is not None:
+                    params["division"] = division
+                resp = await self.http_client.get(
+                    f"{api_base}/bounties/",
+                    params=params,
+                    timeout=10,
+                )
+                resp.raise_for_status()
+                bounty_list = resp.json()
 
             title = f"📋 Active Bounties{title_suffix}"
 

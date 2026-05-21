@@ -664,8 +664,9 @@ class TestScheduleRefreshAdversarial:
         "coroutine never awaited" RuntimeWarning that would otherwise appear during
         GC.
         """
-        import pytest
         from unittest.mock import patch
+
+        import pytest
 
         refresh = AsyncMock(return_value=["data"])
         cache = AutocompleteCache(ttl_seconds=300.0, refresh_fn=refresh, name="test-no-loop")
@@ -677,9 +678,8 @@ class TestScheduleRefreshAdversarial:
         with patch(
             "cogs._shared.autocomplete_cache.asyncio.create_task",
             side_effect=_raise_and_close,
-        ):
-            with pytest.raises(RuntimeError, match="no running event loop"):
-                cache.schedule_refresh("key")
+        ), pytest.raises(RuntimeError, match="no running event loop"):
+            cache.schedule_refresh("key")
 
     async def test_schedule_refresh_on_warm_key_does_not_call_refresh_fn(self):
         """schedule_refresh() on a warm (non-expired) key creates a task, but refresh_fn

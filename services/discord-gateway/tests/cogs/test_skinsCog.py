@@ -101,7 +101,7 @@ class TestSkinsCogInitialization:
     def test_initialization(self, mock_skins_cog):
         """skinsCog should initialize properly with bot reference."""
         assert mock_skins_cog.bot is not None
-        assert mock_skins_cog._ship_skins == {}
+        assert mock_skins_cog._ship_skins.size == 0
         mock_skins_cog.bot.loop.create_task.assert_called_once()
 
 
@@ -155,12 +155,12 @@ class TestShipSkinPreload:
 
             asyncio.run(mock_skins_cog._preload_ship_skins())
 
-        assert len(mock_skins_cog._ship_skins) == 2
-        assert "Test Ship 1" in mock_skins_cog._ship_skins
-        assert "Test Ship 2" in mock_skins_cog._ship_skins
-        assert "Red Skin" in mock_skins_cog._ship_skins["Test Ship 1"]
-        assert "Blue Skin" in mock_skins_cog._ship_skins["Test Ship 1"]
-        assert "Green Skin" in mock_skins_cog._ship_skins["Test Ship 2"]
+        assert mock_skins_cog._ship_skins.size == 2
+        assert mock_skins_cog._ship_skins.peek("Test Ship 1") is not None
+        assert mock_skins_cog._ship_skins.peek("Test Ship 2") is not None
+        assert "Red Skin" in (mock_skins_cog._ship_skins.peek("Test Ship 1") or [])
+        assert "Blue Skin" in (mock_skins_cog._ship_skins.peek("Test Ship 1") or [])
+        assert "Green Skin" in (mock_skins_cog._ship_skins.peek("Test Ship 2") or [])
 
     def test_preload_ship_skins_failure(self, mock_skins_cog):
         """_preload_ship_skins handles GET /about/categories/ship/objects failure gracefully.
@@ -181,7 +181,7 @@ class TestShipSkinPreload:
             asyncio.run(mock_skins_cog._preload_ship_skins())
 
         # Error should be caught and _ship_skins stays empty
-        assert mock_skins_cog._ship_skins == {}
+        assert mock_skins_cog._ship_skins.size == 0
 
 
 class TestShipSkinPreloadRetry:
@@ -214,8 +214,8 @@ class TestShipSkinPreloadRetry:
             )
             asyncio.run(mock_skins_cog._preload_ship_skins())
 
-        assert "Eagle" in mock_skins_cog._ship_skins
-        assert "Lava" in mock_skins_cog._ship_skins["Eagle"]
+        assert mock_skins_cog._ship_skins.peek("Eagle") is not None
+        assert "Lava" in (mock_skins_cog._ship_skins.peek("Eagle") or [])
         # No sleep on first success
         sleep_mock.assert_not_called()
 
@@ -244,7 +244,7 @@ class TestShipSkinPreloadRetry:
             asyncio.run(mock_skins_cog._preload_ship_skins())
 
         # Should have data from successful second attempt
-        assert "Hawk" in mock_skins_cog._ship_skins
+        assert mock_skins_cog._ship_skins.peek("Hawk") is not None
         # Should have slept once (after first failure) with 5s delay
         sleep_mock.assert_called_once_with(5)
 
@@ -265,7 +265,7 @@ class TestShipSkinPreloadRetry:
             )
             asyncio.run(mock_skins_cog._preload_ship_skins())
 
-        assert mock_skins_cog._ship_skins == {}
+        assert mock_skins_cog._ship_skins.size == 0
         # Should have attempted 5 times → 5 sleeps with delays 5,10,20,40,60
         assert sleep_calls == [5, 10, 20, 40, 60]
 
@@ -289,7 +289,7 @@ class TestShipSkinPreloadRetry:
             asyncio.run(mock_skins_cog._preload_ship_skins())
 
         # Success on third attempt (empty ship list)
-        assert mock_skins_cog._ship_skins == {}
+        assert mock_skins_cog._ship_skins.size == 0
         # Two sleeps: 5s and 10s
         assert sleep_mock.call_count == 2
         sleep_mock.assert_any_call(5)
@@ -321,7 +321,7 @@ class TestShipSkinPreloadRetry:
             )
             asyncio.run(mock_skins_cog._preload_ship_skins())
 
-        assert "Condor" in mock_skins_cog._ship_skins
+        assert mock_skins_cog._ship_skins.peek("Condor") is not None
         # Slept once (after 503 failure) with 5s delay
         assert sleep_calls == [5]
 
@@ -351,11 +351,10 @@ class TestShipAutocomplete:
 
     def test_ship_autocomplete(self, mock_skins_cog):
         """ship_autocomplete should return filtered ship choices."""
-        mock_skins_cog._ship_skins = {
-            "Basic Ship": ["Skin A", "Skin B"],
-            "Advanced Ship": ["Skin C"],
-            "Elite Ship": ["Skin D", "Skin E", "Skin F"],
-        }
+        mock_skins_cog._ship_skins.clear()
+        mock_skins_cog._ship_skins.set("Basic Ship", ["Skin A", "Skin B"])
+        mock_skins_cog._ship_skins.set("Advanced Ship", ["Skin C"])
+        mock_skins_cog._ship_skins.set("Elite Ship", ["Skin D", "Skin E", "Skin F"])
 
         # Test with empty current
         choices = asyncio.run(mock_skins_cog.ship_autocomplete(MagicMock(), ""))
@@ -373,7 +372,7 @@ class TestShipAutocomplete:
         assert len(choices) == 1
 
         # Test limit of 25
-        mock_skins_cog._ship_skins = {f"Ship {i}": [] for i in range(30)}
+        [mock_skins_cog._ship_skins.set(k, []) for k in [f"Ship {i}" for i in range(30)]]
         choices = asyncio.run(mock_skins_cog.ship_autocomplete(MagicMock(), ""))
         assert len(choices) == 25
 
@@ -392,7 +391,7 @@ class TestSkinAutocomplete:
 
     def test_skin_autocomplete_with_ship(self, mock_skins_cog):
         """skin_autocomplete should return skin choices for selected ship."""
-        mock_skins_cog._ship_skins = {"Test Ship": ["Basic Skin", "Advanced Skin", "Premium Skin"]}
+        mock_skins_cog._ship_skins.set("Test Ship", ["Basic Skin", "Advanced Skin", "Premium Skin"])
 
         mock_interaction = MagicMock()
         mock_interaction.namespace = MagicMock()
@@ -416,7 +415,7 @@ class TestSkinAutocomplete:
 
     def test_skin_autocomplete_default_for_empty(self, mock_skins_cog):
         """skin_autocomplete should return Default choice for ships with no skins."""
-        mock_skins_cog._ship_skins = {"Test Ship": []}
+        mock_skins_cog._ship_skins.set("Test Ship", [])
 
         mock_interaction = MagicMock()
         mock_interaction.namespace = MagicMock()
@@ -429,7 +428,7 @@ class TestSkinAutocomplete:
 
     def test_skin_autocomplete_default_when_no_match(self, mock_skins_cog):
         """skin_autocomplete should return Default when filter matches nothing."""
-        mock_skins_cog._ship_skins = {"Test Ship": ["Basic Skin", "Advanced Skin"]}
+        mock_skins_cog._ship_skins.set("Test Ship", ["Basic Skin", "Advanced Skin"])
 
         mock_interaction = MagicMock()
         mock_interaction.namespace = MagicMock()
@@ -576,8 +575,8 @@ class TestShipSkinPreloadEdgeCases:
 
             asyncio.run(mock_skins_cog._preload_ship_skins())
 
-        assert "Valid Ship" in mock_skins_cog._ship_skins
-        assert len(mock_skins_cog._ship_skins) == 1
+        assert mock_skins_cog._ship_skins.peek("Valid Ship") is not None
+        assert mock_skins_cog._ship_skins.size == 1
 
     def test_preload_ship_skins_individual_ship_error(self, mock_skins_cog):
         """_preload_ship_skins handles errors loading individual ship details:
@@ -603,10 +602,10 @@ class TestShipSkinPreloadEdgeCases:
             asyncio.run(mock_skins_cog._preload_ship_skins())
 
         # Failed ship should have empty skins list; successful ship should have skins
-        assert "Ship 1" in mock_skins_cog._ship_skins
-        assert mock_skins_cog._ship_skins["Ship 1"] == []
-        assert "Ship 2" in mock_skins_cog._ship_skins
-        assert "Skin2" in mock_skins_cog._ship_skins["Ship 2"]
+        assert mock_skins_cog._ship_skins.peek("Ship 1") is not None
+        assert (mock_skins_cog._ship_skins.peek("Ship 1") or []) == []
+        assert mock_skins_cog._ship_skins.peek("Ship 2") is not None
+        assert "Skin2" in (mock_skins_cog._ship_skins.peek("Ship 2") or [])
 
 
 class TestSkinAutocompleteEdgeCases:
@@ -614,7 +613,7 @@ class TestSkinAutocompleteEdgeCases:
 
     def test_skin_autocomplete_ship_not_in_dict(self, mock_skins_cog):
         """skin_autocomplete should return empty list when ship not in dict."""
-        mock_skins_cog._ship_skins = {"Test Ship": ["Skin1"]}
+        mock_skins_cog._ship_skins.set("Test Ship", ["Skin1"])
 
         mock_interaction = MagicMock()
         mock_interaction.namespace = MagicMock()
@@ -2085,7 +2084,9 @@ class TestSkinnableShipAutocomplete:
 
     def test_returns_all_ships_when_no_render_info(self, mock_skins_cog):
         """skinnable_ship_autocomplete includes all ships with no render info cached."""
-        mock_skins_cog._ship_skins = {"Eagle": [], "Hawk": [], "Condor": []}
+        mock_skins_cog._ship_skins.set("Eagle", [])
+        mock_skins_cog._ship_skins.set("Hawk", [])
+        mock_skins_cog._ship_skins.set("Condor", [])
         mock_skins_cog._ship_render_info = {}
 
         choices = asyncio.run(mock_skins_cog.skinnable_ship_autocomplete(MagicMock(), ""))
@@ -2096,7 +2097,9 @@ class TestSkinnableShipAutocomplete:
 
     def test_excludes_non_skinnable_ships(self, mock_skins_cog):
         """skinnable_ship_autocomplete excludes ships with skinnable=False in cache."""
-        mock_skins_cog._ship_skins = {"Eagle": [], "Hawk": [], "Condor": []}
+        mock_skins_cog._ship_skins.set("Eagle", [])
+        mock_skins_cog._ship_skins.set("Hawk", [])
+        mock_skins_cog._ship_skins.set("Condor", [])
         mock_skins_cog._ship_render_info = {
             "Hawk": {"skinnable": False},
         }
@@ -2109,7 +2112,8 @@ class TestSkinnableShipAutocomplete:
 
     def test_includes_ships_with_skinnable_true(self, mock_skins_cog):
         """skinnable_ship_autocomplete includes ships with skinnable=True."""
-        mock_skins_cog._ship_skins = {"Eagle": [], "Hawk": []}
+        mock_skins_cog._ship_skins.set("Eagle", [])
+        mock_skins_cog._ship_skins.set("Hawk", [])
         mock_skins_cog._ship_render_info = {
             "Eagle": {"skinnable": True},
             "Hawk": {"skinnable": False},
@@ -2122,7 +2126,9 @@ class TestSkinnableShipAutocomplete:
 
     def test_filters_by_current_string(self, mock_skins_cog):
         """skinnable_ship_autocomplete filters by current prefix."""
-        mock_skins_cog._ship_skins = {"Eagle": [], "Hawk": [], "Condor": []}
+        mock_skins_cog._ship_skins.set("Eagle", [])
+        mock_skins_cog._ship_skins.set("Hawk", [])
+        mock_skins_cog._ship_skins.set("Condor", [])
         mock_skins_cog._ship_render_info = {}
 
         choices = asyncio.run(mock_skins_cog.skinnable_ship_autocomplete(MagicMock(), "ea"))
@@ -3008,8 +3014,8 @@ class TestPreloadShipSkinsEdgeCases:
 
             asyncio.run(mock_skins_cog._preload_ship_skins())
 
-        assert "Hawk" in mock_skins_cog._ship_skins
-        assert mock_skins_cog._ship_skins["Hawk"] == []
+        assert mock_skins_cog._ship_skins.peek("Hawk") is not None
+        assert (mock_skins_cog._ship_skins.peek("Hawk") or []) == []
 
     def test_preload_per_ship_timeout_gives_empty_list(self, mock_skins_cog):
         """_preload_ship_skins gives empty skins list on TimeoutException for individual ship."""
@@ -3028,8 +3034,8 @@ class TestPreloadShipSkinsEdgeCases:
 
             asyncio.run(mock_skins_cog._preload_ship_skins())
 
-        assert "Condor" in mock_skins_cog._ship_skins
-        assert mock_skins_cog._ship_skins["Condor"] == []
+        assert mock_skins_cog._ship_skins.peek("Condor") is not None
+        assert (mock_skins_cog._ship_skins.peek("Condor") or []) == []
 
     def test_preload_per_ship_generic_exception_gives_empty_list(self, mock_skins_cog):
         """_preload_ship_skins gives empty skins list on generic exception for individual ship."""
@@ -3046,8 +3052,8 @@ class TestPreloadShipSkinsEdgeCases:
 
             asyncio.run(mock_skins_cog._preload_ship_skins())
 
-        assert "Eagle" in mock_skins_cog._ship_skins
-        assert mock_skins_cog._ship_skins["Eagle"] == []
+        assert mock_skins_cog._ship_skins.peek("Eagle") is not None
+        assert (mock_skins_cog._ship_skins.peek("Eagle") or []) == []
 
     def test_preload_outer_generic_exception_triggers_retry(self, mock_skins_cog):
         """_preload_ship_skins retries on unexpected outer exception."""

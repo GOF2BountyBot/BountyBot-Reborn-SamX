@@ -398,7 +398,8 @@ class TestAdversarialEdgeCases:
         (call_count == 1) and the serialised payload should contain ISO string values.
         """
         import json
-        from datetime import UTC, datetime  # noqa: I001
+        from datetime import UTC, datetime
+
         from utils.executors.bounty_spawn_executor import _push_bounty_cache
 
         # Simulate a real ORM Bounty with ALL datetime fields populated

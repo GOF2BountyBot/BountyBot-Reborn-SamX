@@ -8,6 +8,8 @@ Handles duel (PvP challenge) lifecycle operations including:
 - Listing pending duels for a user (for autocomplete)
 """
 
+import os
+
 from fastapi import APIRouter, Depends, HTTPException, Query
 from persist.database.manager import get_db_session
 from services.audit_service import AuditService
@@ -17,6 +19,93 @@ from shared import bblogger
 from api.schemas.duel_schema import DuelRequestCreate, DuelRequestResponse
 
 flogger = bblogger.get_logger("duel-router")
+
+_GATEWAY_HOST = os.getenv("DISCORD_GATEWAY_HOST", "discord-gateway")
+_GATEWAY_PORT = os.getenv("GATEWAY_PORT", "7999")
+_GATEWAY_BASE_URL = f"http://{_GATEWAY_HOST}:{_GATEWAY_PORT}/api/v1"
+_INTERNAL_AUTH_TOKEN = os.getenv("INTERNAL_AUTH_TOKEN", "")
+
+
+async def _push_duel_caches_for_players(
+    db,
+    service: "DuelService",
+    guild_id: int,
+    challenger_id: int | None = None,
+    target_id: int | None = None,
+) -> None:
+    """Fetch fresh duel lists for affected players and push to gateway cache.
+
+    Non-fatal: any failure is logged as WARNING and silently swallowed.
+    Called after each successful duel mutation (challenge/accept/reject/cancel).
+    """
+    try:
+        if challenger_id is not None:
+            try:
+                challenger_outgoing = await service.get_outgoing_for_challenger(db, challenger_id, guild_id)
+                outgoing_dicts = [
+                    DuelRequestResponse.model_validate(d).model_dump(mode="json") for d, _ in challenger_outgoing
+                ]
+            except Exception:  # pylint: disable=broad-exception-caught
+                outgoing_dicts = []
+            try:
+                challenger_pending = await service.get_pending_for_target(db, challenger_id, guild_id)
+                pending_dicts = [
+                    DuelRequestResponse.model_validate(d).model_dump(mode="json") for d, _ in challenger_pending
+                ]
+            except Exception:  # pylint: disable=broad-exception-caught
+                pending_dicts = []
+            await _push_duel_cache(guild_id, challenger_id, pending_dicts, outgoing_dicts)
+
+        if target_id is not None:
+            try:
+                target_pending = await service.get_pending_for_target(db, target_id, guild_id)
+                pending_dicts = [
+                    DuelRequestResponse.model_validate(d).model_dump(mode="json") for d, _ in target_pending
+                ]
+            except Exception:  # pylint: disable=broad-exception-caught
+                pending_dicts = []
+            try:
+                target_outgoing = await service.get_outgoing_for_challenger(db, target_id, guild_id)
+                outgoing_dicts = [
+                    DuelRequestResponse.model_validate(d).model_dump(mode="json") for d, _ in target_outgoing
+                ]
+            except Exception:  # pylint: disable=broad-exception-caught
+                outgoing_dicts = []
+            await _push_duel_cache(guild_id, target_id, pending_dicts, outgoing_dicts)
+    except Exception as exc:  # pylint: disable=broad-exception-caught
+        flogger.warning(f"_push_duel_caches_for_players: failed for guild={guild_id}: {type(exc).__name__}: {exc}")
+
+
+async def _push_duel_cache(guild_id: int, player_id: int, pending_duels: list, outgoing_duels: list) -> None:
+    """Push updated duel lists to the gateway's DuelCog autocomplete cache.
+
+    Non-fatal: exceptions are caught and logged as WARNING — never blocks the primary operation.
+    Uses a 5-second timeout; fire-and-forget pattern.
+    """
+
+    import httpx
+
+    try:
+        headers = {}
+        if _INTERNAL_AUTH_TOKEN:
+            headers["x-internal-auth"] = _INTERNAL_AUTH_TOKEN
+
+        async with httpx.AsyncClient() as client:
+            resp = await client.post(
+                f"{_GATEWAY_BASE_URL}/internal/autocomplete/duel-cache/{guild_id}/{player_id}",
+                json={"pending_duels": pending_duels, "outgoing_duels": outgoing_duels},
+                headers=headers,
+                timeout=5,
+            )
+        resp.raise_for_status()
+        flogger.debug(
+            f"_push_duel_cache: pushed guild={guild_id} player={player_id} "
+            f"pending={len(pending_duels)} outgoing={len(outgoing_duels)}"
+        )
+    except Exception as exc:  # pylint: disable=broad-exception-caught
+        flogger.warning(
+            f"_push_duel_cache: failed for guild={guild_id} player={player_id}: {type(exc).__name__}: {exc}"
+        )
 
 
 def get_duel_service() -> DuelService:
@@ -124,7 +213,17 @@ async def create_challenge(
                 f" challenger={request.challenger_id} target={request.target_id}"
                 f" stakes={request.stakes}"
             )
-            return DuelRequestResponse.model_validate(duel)
+            result = DuelRequestResponse.model_validate(duel)
+
+            # Non-fatal gateway cache push for both affected players
+            await _push_duel_caches_for_players(
+                db,
+                service,
+                request.guild_id,
+                challenger_id=request.challenger_id,
+                target_id=request.target_id,
+            )
+            return result
         except ValueError as exc:
             flogger.error(
                 f"Duel challenge failed: challenger={request.challenger_id} target={request.target_id}: {exc}"
@@ -206,6 +305,15 @@ async def accept_duel(
             f" credits_transferred={result['credits_transferred']}"
         )
 
+        # Non-fatal cache push for both affected players
+        await _push_duel_caches_for_players(
+            db,
+            service,
+            duel.guild_id,
+            challenger_id=challenger.id,
+            target_id=target.id,
+        )
+
         return {
             "duel_id": duel_id,
             "is_stalemate": fight.is_stalemate,
@@ -263,6 +371,15 @@ async def reject_duel(
                 f" challenger_id={updated.challenger_id} target_id={updated.target_id}"
             )
             flogger.info(f"Duel rejected: duel_id={duel_id} user_id={user_id}")
+
+            # Non-fatal cache push for both affected players (rejecter=target, challenger)
+            await _push_duel_caches_for_players(
+                db,
+                service,
+                updated.guild_id,
+                challenger_id=updated.challenger_id,
+                target_id=updated.target_id,
+            )
             return DuelRequestResponse.model_validate(updated)
         except ValueError as exc:
             msg = str(exc)
@@ -304,6 +421,15 @@ async def cancel_duel(
                 f" challenger_id={updated.challenger_id} target_id={updated.target_id}"
             )
             flogger.info(f"Duel cancelled: duel_id={duel_id} user_id={user_id}")
+
+            # Non-fatal cache push for both affected players (canceller=challenger, target)
+            await _push_duel_caches_for_players(
+                db,
+                service,
+                updated.guild_id,
+                challenger_id=updated.challenger_id,
+                target_id=updated.target_id,
+            )
             return DuelRequestResponse.model_validate(updated)
         except ValueError as exc:
             msg = str(exc)

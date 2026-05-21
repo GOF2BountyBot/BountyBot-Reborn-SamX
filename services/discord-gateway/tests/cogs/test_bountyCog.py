@@ -300,10 +300,28 @@ class TestBountyCogInitialization:
         assert mock_bounty_cog.bot is mock_bot
         assert mock_bounty_cog.http_client is not None
 
-    def test_initialization_has_systems_list(self, mock_bounty_cog):
-        """BountyCog should initialize with an empty _systems list."""
-        assert hasattr(mock_bounty_cog, "_systems")
-        assert isinstance(mock_bounty_cog._systems, list)
+    def test_initialization_has_systems_cache(self, mock_bounty_cog):
+        """BountyCog should initialize with a _systems_cache AutocompleteCache."""
+        from cogs._shared.autocomplete_cache import AutocompleteCache
+
+        assert hasattr(mock_bounty_cog, "_systems_cache")
+        assert isinstance(mock_bounty_cog._systems_cache, AutocompleteCache)
+
+    def test_initialization_bounty_cache_ttl_is_1200(self, mock_bounty_cog):
+        """_bounty_cache must be initialized with ttl_seconds=1200.0 (Item A: 60→1200)."""
+        from cogs._shared.autocomplete_cache import AutocompleteCache
+
+        assert hasattr(mock_bounty_cog, "_bounty_cache")
+        assert isinstance(mock_bounty_cog._bounty_cache, AutocompleteCache)
+        assert mock_bounty_cog._bounty_cache._ttl == 1200.0, (
+            f"Expected _bounty_cache TTL=1200s, got {mock_bounty_cog._bounty_cache._ttl}"
+        )
+
+    def test_initialization_systems_cache_ttl_is_none(self, mock_bounty_cog):
+        """_systems_cache must use ttl_seconds=None (never expires — static catalog)."""
+        assert mock_bounty_cog._systems_cache._ttl is None, (
+            f"Expected _systems_cache TTL=None, got {mock_bounty_cog._systems_cache._ttl}"
+        )
 
     def test_cog_unload_closes_http_client(self, mock_bounty_cog):
         """cog_unload should close the http client."""
@@ -356,7 +374,7 @@ class TestPreloadData:
             mock_router.get(self._SYSTEMS_URL).mock(return_value=httpx.Response(200, json=systems_data))
             asyncio.run(mock_bounty_cog._preload_data())
 
-        assert mock_bounty_cog._systems == ["Sol", "Alpha Centauri", "Proxima"]
+        assert mock_bounty_cog._systems_cache.peek("all") == ["Sol", "Alpha Centauri", "Proxima"]
 
     def test_preload_data_handles_api_failure_gracefully(self, mock_bounty_cog, request):
         """_preload_data sets _systems to [] after all retries exhausted on 500 errors."""
@@ -373,7 +391,7 @@ class TestPreloadData:
             with patch("cogs.bountyCog.asyncio.sleep", new=AsyncMock()) as mock_sleep:
                 asyncio.run(mock_bounty_cog._preload_data())
 
-        assert mock_bounty_cog._systems == []
+        assert mock_bounty_cog._systems_cache.peek("all") == []
         # Should have slept 5 times (once per retry attempt)
         assert mock_sleep.call_count == 5
 
@@ -397,7 +415,7 @@ class TestPreloadData:
             with patch("cogs.bountyCog.asyncio.sleep", new=AsyncMock()) as mock_sleep:
                 asyncio.run(mock_bounty_cog._preload_data())
 
-        assert mock_bounty_cog._systems == ["Sol"]
+        assert mock_bounty_cog._systems_cache.peek("all") == ["Sol"]
         # Should have slept once after the first failure
         assert mock_sleep.call_count == 1
 
@@ -450,7 +468,7 @@ class TestPreloadData:
             with patch("cogs.bountyCog.asyncio.sleep", new=AsyncMock()) as mock_sleep:
                 asyncio.run(mock_bounty_cog._preload_data())
 
-        assert mock_bounty_cog._systems == ["Sol"]
+        assert mock_bounty_cog._systems_cache.peek("all") == ["Sol"]
         # No sleep should occur on first-attempt success
         mock_sleep.assert_not_called()
 
@@ -465,7 +483,7 @@ class TestSystemAutocomplete:
 
     def test_system_autocomplete_returns_matching_systems(self, mock_bounty_cog):
         """system_autocomplete should return systems matching current input."""
-        mock_bounty_cog._systems = ["Sol", "Alpha Centauri", "Proxima", "Sirius"]
+        mock_bounty_cog._systems_cache.set("all", ["Sol", "Alpha Centauri", "Proxima", "Sirius"])
         interaction = _create_mock_interaction()
 
         result = asyncio.run(mock_bounty_cog.system_autocomplete(interaction, "sol"))
@@ -476,7 +494,7 @@ class TestSystemAutocomplete:
 
     def test_system_autocomplete_empty_input_returns_all(self, mock_bounty_cog):
         """system_autocomplete with empty input should return all systems (up to 25)."""
-        mock_bounty_cog._systems = ["Sol", "Alpha Centauri", "Proxima"]
+        mock_bounty_cog._systems_cache.set("all", ["Sol", "Alpha Centauri", "Proxima"])
         interaction = _create_mock_interaction()
 
         result = asyncio.run(mock_bounty_cog.system_autocomplete(interaction, ""))
@@ -485,7 +503,7 @@ class TestSystemAutocomplete:
 
     def test_system_autocomplete_max_25_results(self, mock_bounty_cog):
         """system_autocomplete should cap results at 25."""
-        mock_bounty_cog._systems = [f"System{i}" for i in range(50)]
+        mock_bounty_cog._systems_cache.set("all", [f"System{i}" for i in range(50)])
         interaction = _create_mock_interaction()
 
         result = asyncio.run(mock_bounty_cog.system_autocomplete(interaction, ""))
@@ -494,7 +512,7 @@ class TestSystemAutocomplete:
 
     def test_system_autocomplete_empty_systems_returns_empty(self, mock_bounty_cog):
         """system_autocomplete with empty _systems list should return empty list."""
-        mock_bounty_cog._systems = []
+        mock_bounty_cog._systems_cache.set("all", [])
         interaction = _create_mock_interaction()
 
         result = asyncio.run(mock_bounty_cog.system_autocomplete(interaction, "Sol"))
@@ -688,7 +706,7 @@ class TestCheckCommand:
     @pytest.fixture(autouse=True)
     def _populate_systems(self, mock_bounty_cog):
         """Populate _systems so resolve_system_name can resolve the test system names."""
-        mock_bounty_cog._systems = ["Alpha", "Beta", "Delta", "Sol"]
+        mock_bounty_cog._systems_cache.set("all", ["Alpha", "Beta", "Delta", "Sol"])
 
     def test_check_correct_result_green_embed(self, mock_bounty_cog, make_mock_response):
         """/check CORRECT result should display tier-colored embed (Sub-task A)."""
@@ -704,7 +722,6 @@ class TestCheckCommand:
         assert "embed" in call_kwargs
         embed = call_kwargs["embed"]
         # Tier color for CORRECT (bronze tier = 0xCD7F32)
-        import discord
         from cogs.bountyCog import TIER_COLORS
         assert embed.color.value == TIER_COLORS["bronze"]
 
@@ -821,7 +838,7 @@ class TestCheckCommandRespx:
     @pytest.fixture(autouse=True)
     def _populate_systems(self, mock_bounty_cog):
         """Populate _systems so resolve_system_name can resolve 'Sol'."""
-        mock_bounty_cog._systems = ["Sol"]
+        mock_bounty_cog._systems_cache.set("all", ["Sol"])
 
     def _with_real_client(self, cog, request):
         import httpx
@@ -948,6 +965,123 @@ class TestBountiesCommand:
         call_kwargs = interaction.followup.send.call_args
         assert call_kwargs[1].get("ephemeral", False)
         assert "error occurred" in call_kwargs[0][0].lower()
+
+
+class TestBountiesCommandCachePeekFirst:
+    """/bounties command reads from _bounty_cache.peek() when cache is warm (Item A).
+
+    The Item A overhaul adds _bounty_cache.peek(guild_id) as the primary read path
+    before falling back to HTTP. These tests verify the cache-first behavior.
+    """
+
+    def _setup_player_cache(self, guild_id, user_id, tier="Bronze"):
+        """Pre-populate the shared player cache so /bounties skips the HTTP player upsert."""
+        import utils.autocomplete_state as ac_state
+        from cogs._shared.autocomplete_cache import AutocompleteCache
+
+        if ac_state.player_cache is None:
+            ac_state.player_cache = AutocompleteCache(name="player-test-bounties")
+        ac_state.player_cache.set((guild_id, user_id), {"id": 1, "tier": tier})
+
+    def test_bounties_reads_from_bounty_cache_no_http_get(self, mock_bounty_cog, make_mock_response):
+        """/bounties uses _bounty_cache.peek() when warm — no GET to bot-core.
+
+        When the bounty cache is warm AND the player cache knows the tier, /bounties
+        must serve entirely from cache without any HTTP call to bot-core.
+        """
+        guild_id = 987654321
+        user_id = 111111111
+        interaction = _create_mock_interaction(user_id=user_id, guild_id=guild_id)
+
+        # Pre-populate player cache so no POST /players/ needed
+        self._setup_player_cache(guild_id, user_id, tier="Bronze")
+
+        # Pre-populate bounty cache
+        bounties = [_make_bounty_public(1, "TestViper", "bronze")]
+        mock_bounty_cog._bounty_cache.set(guild_id, bounties)
+
+        # HTTP must NOT be called at all — both caches are warm
+        mock_bounty_cog.http_client.post = AsyncMock(side_effect=AssertionError("HTTP POST must not be called"))
+        mock_bounty_cog.http_client.get = AsyncMock(side_effect=AssertionError("HTTP GET must not be called"))
+
+        asyncio.run(mock_bounty_cog.bounties.callback(mock_bounty_cog, interaction))
+
+        interaction.followup.send.assert_awaited_once()
+        call_kwargs = interaction.followup.send.call_args[1]
+        embed = call_kwargs.get("embed")
+        assert embed is not None, "Expected embed in successful cache-hit path"
+
+    def test_bounties_falls_back_to_http_when_bounty_cache_cold(self, mock_bounty_cog, make_mock_response):
+        """/bounties falls back to HTTP GET when _bounty_cache is cold (no cached bounties).
+
+        Player cache is warm (no POST), but bounty cache is cold → GET /bounties/ is made.
+        """
+        guild_id = 987654321
+        user_id = 111111111
+        interaction = _create_mock_interaction(user_id=user_id, guild_id=guild_id)
+
+        # Player cache warm, bounty cache cold
+        self._setup_player_cache(guild_id, user_id, tier="Bronze")
+        mock_bounty_cog._bounty_cache.invalidate(guild_id)
+
+        # HTTP GET will be called for the fallback
+        bounty_resp = make_mock_response([_make_bounty_public(1, "FallbackViper", "bronze")])
+        mock_bounty_cog.http_client.post = AsyncMock(side_effect=AssertionError("HTTP POST must not be called"))
+        mock_bounty_cog.http_client.get = AsyncMock(return_value=bounty_resp)
+
+        asyncio.run(mock_bounty_cog.bounties.callback(mock_bounty_cog, interaction))
+
+        mock_bounty_cog.http_client.get.assert_awaited_once()
+        interaction.followup.send.assert_awaited_once()
+
+    def test_bounties_show_all_warm_cache_no_http(self, mock_bounty_cog):
+        """/bounties show_all=True with warm cache → no HTTP calls at all."""
+        guild_id = 987654321
+        user_id = 111111111
+        interaction = _create_mock_interaction(user_id=user_id, guild_id=guild_id)
+
+        # Pre-populate bounty cache with mixed-tier bounties
+        bounties = [
+            _make_bounty_public(1, "BronzeViper", "bronze"),
+            _make_bounty_public(2, "GoldHawk", "gold"),
+        ]
+        mock_bounty_cog._bounty_cache.set(guild_id, bounties)
+
+        # Neither HTTP POST nor GET should be called
+        mock_bounty_cog.http_client.post = AsyncMock(side_effect=AssertionError("No POST expected"))
+        mock_bounty_cog.http_client.get = AsyncMock(side_effect=AssertionError("No GET expected"))
+
+        asyncio.run(mock_bounty_cog.bounties.callback(mock_bounty_cog, interaction, show_all=True))
+
+        interaction.followup.send.assert_awaited_once()
+        embed = interaction.followup.send.call_args[1]["embed"]
+        assert "All Tiers" in embed.title
+
+    def test_bounties_cache_filters_by_tier_when_warm(self, mock_bounty_cog):
+        """/bounties with warm cache filters bounties by player tier client-side."""
+        guild_id = 987654321
+        user_id = 111111111
+        interaction = _create_mock_interaction(user_id=user_id, guild_id=guild_id)
+
+        # Player cache warm with Silver tier
+        self._setup_player_cache(guild_id, user_id, tier="Silver")
+
+        # Bounty cache has both bronze and silver bounties
+        bounties = [
+            _make_bounty_public(1, "BronzeViper", "bronze"),
+            _make_bounty_public(2, "SilverFox", "silver"),
+        ]
+        mock_bounty_cog._bounty_cache.set(guild_id, bounties)
+
+        mock_bounty_cog.http_client.post = AsyncMock(side_effect=AssertionError("No POST expected"))
+        mock_bounty_cog.http_client.get = AsyncMock(side_effect=AssertionError("No GET expected"))
+
+        asyncio.run(mock_bounty_cog.bounties.callback(mock_bounty_cog, interaction))
+
+        interaction.followup.send.assert_awaited_once()
+        embed = interaction.followup.send.call_args[1]["embed"]
+        # Only Silver bounty should appear in the title
+        assert "Silver" in embed.title
 
 
 # ---------------------------------------------------------------------------
@@ -1855,7 +1989,7 @@ class TestCheckCommandCombatResults:
     @pytest.fixture(autouse=True)
     def _populate_systems(self, mock_bounty_cog):
         """Populate _systems so resolve_system_name can resolve 'Alpha'."""
-        mock_bounty_cog._systems = ["Alpha"]
+        mock_bounty_cog._systems_cache.set("all", ["Alpha"])
 
     def _make_full_check_response(self, **kwargs):
         """Build a complete check response dict with sensible defaults."""
@@ -1922,7 +2056,6 @@ class TestBuildCheckEmbedCorrectResultWithCombatWon:
 
     def test_correct_combat_won_true_green_embed(self):
         """result='correct' + combat_won=True → tier-colored embed (Sub-task A)."""
-        import discord
         from cogs.bountyCog import TIER_COLORS
 
         embed = self._call(
@@ -2150,13 +2283,13 @@ class TestBountyCogAutocompleteNormalization:
 
     def test_system_autocomplete_matches_accented_name(self):
         """system_autocomplete should match unaccented input against accented system names."""
-        self.cog._systems = ["Behén", "N'saan", "Alpha Centauri"]
+        self.cog._systems_cache.set("all", ["Behén", "N'saan", "Alpha Centauri"])
         choices = asyncio.run(self.cog.system_autocomplete(MagicMock(), "behen"))
         assert any(c.name == "Behén" for c in choices)
 
     def test_system_autocomplete_preserves_original_name_in_choices(self):
         """system_autocomplete should preserve accented names in Choice.name."""
-        self.cog._systems = ["Behén", "Normal"]
+        self.cog._systems_cache.set("all", ["Behén", "Normal"])
         choices = asyncio.run(self.cog.system_autocomplete(MagicMock(), "behen"))
         # Choice.name should be original with accent; value should also be original
         assert all(c.name == c.value for c in choices)
@@ -2165,7 +2298,7 @@ class TestBountyCogAutocompleteNormalization:
 
     def test_system_autocomplete_no_match_returns_empty(self):
         """system_autocomplete with unmatched query returns empty list."""
-        self.cog._systems = ["Alpha", "Beta"]
+        self.cog._systems_cache.set("all", ["Alpha", "Beta"])
         choices = asyncio.run(self.cog.system_autocomplete(MagicMock(), "zzzzz"))
         assert choices == []
 
@@ -2185,7 +2318,7 @@ class TestCheckCommandCooldownAndRecentlySpotted:
     @pytest.fixture(autouse=True)
     def _populate_systems(self, mock_bounty_cog):
         """Populate _systems so resolve_system_name can resolve the test system names."""
-        mock_bounty_cog._systems = ["Sol", "Alpha"]
+        mock_bounty_cog._systems_cache.set("all", ["Sol", "Alpha"])
 
     def _make_on_cooldown_response(self, cooldown_until=None, message="On cooldown"):
         return {
@@ -2338,7 +2471,7 @@ class TestCheckMultiBountyResponse:
     @pytest.fixture(autouse=True)
     def _populate_systems(self, mock_bounty_cog):
         """Populate _systems so resolve_system_name can resolve 'Sol'."""
-        mock_bounty_cog._systems = ["Sol"]
+        mock_bounty_cog._systems_cache.set("all", ["Sol"])
 
     def test_check_multi_outcomes_renders_consolidated_embed(self, mock_bounty_cog, make_mock_response):
         """When response has >1 outcome, exactly one embed is sent with N fields."""
@@ -2504,7 +2637,7 @@ class TestCheckCommandEmptySystemsPassthrough:
     @pytest.fixture(autouse=True)
     def _empty_systems(self, mock_bounty_cog):
         """Ensure _systems is empty (simulates failed preload)."""
-        mock_bounty_cog._systems = []
+        mock_bounty_cog._systems_cache.set("all", [])
 
     def test_check_empty_systems_does_not_send_unknown_system_error(self, mock_bounty_cog, make_mock_response):
         """/check with _systems=[] must NOT return the 'Unknown system' ephemeral error.
@@ -2576,7 +2709,7 @@ class TestCheckCommandGuildAndPlayerErrors:
     @pytest.fixture(autouse=True)
     def _populate_systems(self, mock_bounty_cog):
         """Populate _systems so resolve_system_name can resolve the test system names."""
-        mock_bounty_cog._systems = ["Alpha"]
+        mock_bounty_cog._systems_cache.set("all", ["Alpha"])
 
     def test_check_guild_not_configured_shows_setup_message(self, mock_bounty_cog):
         """/check guild-not-configured 400 should show setup message."""
@@ -2660,7 +2793,7 @@ class TestCheckCommandTierRoleUpdate:
     @pytest.fixture(autouse=True)
     def _populate_systems(self, mock_bounty_cog):
         """Populate _systems so resolve_system_name can resolve the test system names."""
-        mock_bounty_cog._systems = ["Sol"]
+        mock_bounty_cog._systems_cache.set("all", ["Sol"])
 
     def test_check_new_tier_triggers_role_update_call(self, mock_bounty_cog, make_mock_response):
         """/check when new_tier is in response should attempt to fetch guild config."""

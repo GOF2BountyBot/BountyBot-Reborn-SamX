@@ -56,7 +56,6 @@ _BOT_API = "http://bot-core:8000/api/v1"
 
 import utils.autocomplete_state as _ac_state_mod
 
-
 # ---------------------------------------------------------------------------
 # Isolation fixture — prevents cross-test contamination on module-level
 # autocomplete_state globals when tests run in parallel via pytest-xdist.

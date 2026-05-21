@@ -292,11 +292,155 @@ async def refresh_loadouts_round_robin() -> None:
         flogger.warning(f"refresh_loadouts_round_robin: failed: {type(exc).__name__}: {exc}")
 
 
-async def refresh_jobs_cache(bot) -> None:
-    """Scheduled job: invalidate the scheduler jobs cache so it re-warms on next access.
+async def refresh_duel_caches(bot) -> None:
+    """Scheduled job: round-robin refresh of duel caches for all currently-cached players.
 
-    Gracefully no-ops if SchedulerCog is not loaded or does not yet have _job_cache
-    (Phase 6 adds _job_cache to schedulerCog).
+    Iterates all currently-cached (guild_id, player_id) keys in both
+    _pending_duel_cache and _outgoing_duel_cache and calls get() on each to
+    reset the TTL. Fire-and-forget via asyncio.create_task; semaphore-throttled.
+    Non-fatal: logs WARNING on any error and returns without raising.
+    """
+    try:
+        cog = bot.get_cog("DuelCog")
+        if cog is None:
+            flogger.warning("refresh_duel_caches: DuelCog not found on bot; skipping")
+            return
+
+        sem = _get_semaphore()
+
+        async def _refresh_pending(key: tuple) -> None:
+            async with sem:
+                try:
+                    await cog._pending_duel_cache.get(key)
+                except Exception as exc:  # pylint: disable=broad-exception-caught
+                    flogger.warning(
+                        f"refresh_duel_caches: pending refresh failed key={key}: {type(exc).__name__}: {exc}"
+                    )
+
+        async def _refresh_outgoing(key: tuple) -> None:
+            async with sem:
+                try:
+                    await cog._outgoing_duel_cache.get(key)
+                except Exception as exc:  # pylint: disable=broad-exception-caught
+                    flogger.warning(
+                        f"refresh_duel_caches: outgoing refresh failed key={key}: {type(exc).__name__}: {exc}"
+                    )
+
+        pending_keys = list(cog._pending_duel_cache.keys()) if hasattr(cog, "_pending_duel_cache") else []
+        outgoing_keys = list(cog._outgoing_duel_cache.keys()) if hasattr(cog, "_outgoing_duel_cache") else []
+
+        tasks = []
+        for key in pending_keys:
+            tasks.append(asyncio.create_task(_refresh_pending(key), name=f"duel-pending-refresh-{key}"))
+        for key in outgoing_keys:
+            tasks.append(asyncio.create_task(_refresh_outgoing(key), name=f"duel-outgoing-refresh-{key}"))
+
+        if tasks:
+            await asyncio.gather(*tasks)
+        flogger.debug(
+            f"refresh_duel_caches: dispatched {len(pending_keys)} pending + {len(outgoing_keys)} outgoing refresh tasks"
+        )
+    except Exception as exc:  # pylint: disable=broad-exception-caught
+        flogger.warning(f"refresh_duel_caches: failed: {type(exc).__name__}: {exc}")
+
+
+async def warm_guild_duel_caches(bot, guild_id: int) -> None:
+    """Stage 2 startup warm for duel caches.
+
+    For each player already in player_cache for this guild, schedules background
+    get() calls on _pending_duel_cache and _outgoing_duel_cache (semaphore-throttled).
+    Non-fatal: logs WARNING on any error and returns without raising.
+    """
+    try:
+        cog = bot.get_cog("DuelCog")
+        if cog is None:
+            flogger.warning(f"warm_guild_duel_caches({guild_id}): DuelCog not found; skipping")
+            return
+
+        sem = _get_semaphore()
+
+        async def _warm_player(player_id: int) -> None:
+            async with sem:
+                try:
+                    await cog._pending_duel_cache.get((guild_id, player_id))
+                except Exception as exc:  # pylint: disable=broad-exception-caught
+                    flogger.warning(
+                        f"warm_guild_duel_caches({guild_id}): pending warm failed "
+                        f"player_id={player_id}: {type(exc).__name__}: {exc}"
+                    )
+                try:
+                    await cog._outgoing_duel_cache.get((guild_id, player_id))
+                except Exception as exc:  # pylint: disable=broad-exception-caught
+                    flogger.warning(
+                        f"warm_guild_duel_caches({guild_id}): outgoing warm failed "
+                        f"player_id={player_id}: {type(exc).__name__}: {exc}"
+                    )
+
+        # Collect player IDs from player_cache for this guild
+        player_ids: list[int] = []
+        for g, uid in list(autocomplete_state.player_cache.keys()):
+            if g == guild_id:
+                cached_player = autocomplete_state.player_cache.peek((g, uid))
+                if cached_player is not None:
+                    p_id = cached_player.get("id")
+                    if p_id is not None:
+                        player_ids.append(p_id)
+
+        if player_ids:
+            tasks = [
+                asyncio.create_task(_warm_player(p_id), name=f"duel-warm-{guild_id}-{p_id}") for p_id in player_ids
+            ]
+            await asyncio.gather(*tasks)
+            flogger.info(f"warm_guild_duel_caches({guild_id}): warmed {len(player_ids)} players' duel caches")
+    except Exception as exc:  # pylint: disable=broad-exception-caught
+        flogger.warning(f"warm_guild_duel_caches({guild_id}): unexpected error: {type(exc).__name__}: {exc}")
+
+
+async def refresh_bounty_cache(bot) -> None:
+    """Scheduled job: refresh bounty cache for all guilds the bot is in.
+
+    Iterates bot.guilds and calls cog._bounty_cache.get(guild.id) for each —
+    this triggers _fetch_bounties on miss/expiry and resets the TTL.
+    Semaphore-throttled to AUTOCOMPLETE_WARM_CONCURRENCY.
+    Non-fatal: logs WARNING on any error and returns without raising.
+    """
+    try:
+        cog = bot.get_cog("BountyCog")
+        if cog is None:
+            flogger.warning("refresh_bounty_cache: BountyCog not found on bot; skipping")
+            return
+        if not hasattr(cog, "_bounty_cache"):
+            flogger.warning("refresh_bounty_cache: BountyCog has no _bounty_cache; skipping")
+            return
+
+        sem = _get_semaphore()
+
+        async def _refresh_one(guild_id: int) -> None:
+            async with sem:
+                try:
+                    await cog._bounty_cache.get(guild_id)
+                    flogger.debug(f"refresh_bounty_cache: refreshed guild_id={guild_id}")
+                except Exception as exc:  # pylint: disable=broad-exception-caught
+                    flogger.warning(
+                        f"refresh_bounty_cache: failed for guild_id={guild_id}: {type(exc).__name__}: {exc}"
+                    )
+
+        tasks = [asyncio.create_task(_refresh_one(guild.id), name=f"bounty-refresh-{guild.id}") for guild in bot.guilds]
+        if tasks:
+            await asyncio.gather(*tasks)
+        flogger.info(f"refresh_bounty_cache: refreshed {len(tasks)} guilds")
+    except Exception as exc:  # pylint: disable=broad-exception-caught
+        flogger.warning(f"refresh_bounty_cache: failed: {type(exc).__name__}: {exc}")
+
+
+async def refresh_jobs_cache(bot) -> None:
+    """Scheduled job: refresh the scheduler jobs cache in-place.
+
+    Calls cog._job_cache.get("all") which triggers _fetch_jobs and resets the TTL.
+    This is preferred over invalidate() so the old value stays valid until the
+    refresh completes (no cache-hole window).
+
+    Gracefully no-ops if SchedulerCog is not loaded or does not yet have _job_cache.
     """
     try:
         cog = bot.get_cog("SchedulerCog")
@@ -304,16 +448,16 @@ async def refresh_jobs_cache(bot) -> None:
             flogger.warning("refresh_jobs_cache: SchedulerCog not found on bot; skipping")
             return
         if hasattr(cog, "_job_cache"):
-            cog._job_cache.invalidate("all")
-            flogger.debug("refresh_jobs_cache: invalidated SchedulerCog._job_cache")
+            await cog._job_cache.get("all")
+            flogger.debug("refresh_jobs_cache: refreshed SchedulerCog._job_cache")
         else:
-            flogger.debug("refresh_jobs_cache: SchedulerCog has no _job_cache yet (Phase 6 pending); no-op")
+            flogger.debug("refresh_jobs_cache: SchedulerCog has no _job_cache yet; no-op")
     except Exception as exc:  # pylint: disable=broad-exception-caught
         flogger.warning(f"refresh_jobs_cache: failed: {type(exc).__name__}: {exc}")
 
 
-async def refresh_shop_cache_safety_net(bot) -> None:
-    """Scheduled job: safety-net pull for shop cache.
+async def refresh_shop_cache(bot) -> None:
+    """Scheduled job: periodic shop cache refresh (runs every 6 minutes).
 
     Gets the ShopCog and, if it has _shop_cache, triggers a re-warm for each
     currently-cached (guild_id, tier) key by calling get() on the cache (which
@@ -324,19 +468,19 @@ async def refresh_shop_cache_safety_net(bot) -> None:
     try:
         cog = bot.get_cog("ShopCog")
         if cog is None:
-            flogger.warning("refresh_shop_cache_safety_net: ShopCog not found on bot; skipping")
+            flogger.warning("refresh_shop_cache: ShopCog not found on bot; skipping")
             return
         if not hasattr(cog, "_shop_cache"):
-            flogger.warning("refresh_shop_cache_safety_net: ShopCog has no _shop_cache; skipping")
+            flogger.warning("refresh_shop_cache: ShopCog has no _shop_cache; skipping")
             return
 
         keys = list(cog._shop_cache.keys())
         for guild_id, tier in keys:
             await cog._shop_cache.get((guild_id, tier))
 
-        flogger.info(f"refresh_shop_cache_safety_net: refreshed {len(keys)} shop cache entries")
+        flogger.info(f"refresh_shop_cache: refreshed {len(keys)} shop cache entries")
     except Exception as exc:  # pylint: disable=broad-exception-caught
-        flogger.warning(f"refresh_shop_cache_safety_net: failed: {type(exc).__name__}: {exc}")
+        flogger.warning(f"refresh_shop_cache: failed: {type(exc).__name__}: {exc}")
 
 
 # ---------------------------------------------------------------------------
@@ -392,7 +536,29 @@ def register_warm_jobs(scheduler: AsyncIOScheduler, bot) -> None:
             id=f"warm-guild-{guild.id}",
             replace_existing=True,
         )
-    flogger.info(f"register_warm_jobs: scheduled {len(bot.guilds)} guild warm jobs")
+        # Wave 1b: duel cache warm fires after player cache is populated (~35s)
+        duel_warm_date = now + timedelta(seconds=35 + i * stagger_ms / 1000)
+        scheduler.add_job(
+            warm_guild_duel_caches,
+            "date",
+            run_date=duel_warm_date,
+            args=[bot, guild.id],
+            id=f"warm-duel-{guild.id}",
+            replace_existing=True,
+        )
+    flogger.info(f"register_warm_jobs: scheduled {len(bot.guilds)} guild warm jobs + duel cache warm jobs")
+
+    # One-shot Wave 2: warm the job cache ~30s after startup so the first
+    # /scheduler_* command is always a cache hit.
+    scheduler.add_job(
+        refresh_jobs_cache,
+        "date",
+        run_date=now + timedelta(seconds=30),
+        args=[bot],
+        id="warm-jobs-cache-startup",
+        replace_existing=True,
+    )
+    flogger.info("register_warm_jobs: scheduled 1 one-shot job cache warm (T+30s)")
 
     # Recurring refresh jobs
     player_refresh_min = int(os.getenv("AUTOCOMPLETE_PLAYER_REFRESH_MINUTES", "10"))
@@ -416,17 +582,33 @@ def register_warm_jobs(scheduler: AsyncIOScheduler, bot) -> None:
     scheduler.add_job(
         refresh_jobs_cache,
         "interval",
-        seconds=60,
+        minutes=2,
         id="autocomplete-jobs-refresh",
         args=[bot],
         replace_existing=True,
     )
     scheduler.add_job(
-        refresh_shop_cache_safety_net,
+        refresh_shop_cache,
         "interval",
-        minutes=15,
-        id="autocomplete-shop-safety-net",
+        minutes=6,
+        id="autocomplete-shop-refresh",
         args=[bot],
         replace_existing=True,
     )
-    flogger.info("register_warm_jobs: registered 4 recurring refresh jobs")
+    scheduler.add_job(
+        refresh_bounty_cache,
+        "interval",
+        minutes=10,
+        id="bounty-cache-refresh",
+        args=[bot],
+        replace_existing=True,
+    )
+    scheduler.add_job(
+        refresh_duel_caches,
+        "interval",
+        minutes=5,
+        id="duel-cache-refresh",
+        args=[bot],
+        replace_existing=True,
+    )
+    flogger.info("register_warm_jobs: registered 6 recurring refresh jobs")

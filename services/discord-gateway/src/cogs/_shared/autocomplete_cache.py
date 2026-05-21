@@ -214,7 +214,7 @@ class AutocompleteCache[K, V]:
         # Cold path — shield so the inner get() survives a timeout cancel.
         try:
             return await asyncio.wait_for(asyncio.shield(self.get(key)), timeout=timeout)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             self._log.warning(
                 f"get_with_timeout: timed out after {timeout}s waiting for key={key!r} in cache {self._name!r}"
             )

@@ -76,6 +76,10 @@ async def execute_duel_expire_job(job_id: str, payload: dict) -> dict:
         # Notify both players via discord-gateway (non-fatal if it fails).
         await _notify_expiry(job_id, duel)
 
+        # Push updated (empty) duel cache for both affected players (non-fatal).
+        await _push_duel_cache(job_id, duel.guild_id, duel.challenger_id)
+        await _push_duel_cache(job_id, duel.guild_id, duel.target_id)
+
         end_ts = datetime.now(UTC)
         duration = (end_ts - start_ts).total_seconds()
         flogger.info(f"DuelExpireJob[{job_id}] completed in {duration:.2f}s")
@@ -90,6 +94,34 @@ async def execute_duel_expire_job(job_id: str, payload: dict) -> dict:
 # ---------------------------------------------------------------------------
 # Helper: notify both players of duel expiry via discord-gateway
 # ---------------------------------------------------------------------------
+
+
+async def _push_duel_cache(parent_job_id: str, guild_id: int, player_id: int) -> None:
+    """Push empty duel lists to the gateway cache for a player, invalidating stale data.
+
+    Pushes empty lists so the gateway knows to refresh on next autocomplete access.
+    Non-fatal: exceptions are logged as WARNING and silently swallowed.
+    """
+    token = _os.getenv("INTERNAL_AUTH_TOKEN", "")
+    headers = {"x-internal-auth": token} if token else {}
+    try:
+        flogger.debug(
+            f"DuelExpireJob[{parent_job_id}] pushing duel cache invalidation for guild={guild_id} player={player_id}"
+        )
+        async with httpx.AsyncClient() as client:
+            resp = await client.post(
+                f"{_GATEWAY_BASE_URL}/internal/autocomplete/duel-cache/{guild_id}/{player_id}",
+                json={"pending_duels": [], "outgoing_duels": []},
+                headers=headers,
+                timeout=5,
+            )
+        resp.raise_for_status()
+        flogger.debug(f"DuelExpireJob[{parent_job_id}] duel cache push OK for guild={guild_id} player={player_id}")
+    except Exception as exc:  # pylint: disable=broad-exception-caught
+        flogger.warning(
+            f"DuelExpireJob[{parent_job_id}] duel cache push failed for "
+            f"guild={guild_id} player={player_id}: {type(exc).__name__}: {exc}"
+        )
 
 
 async def _notify_expiry(parent_job_id: str, duel) -> None:

@@ -188,6 +188,28 @@ class TestDuelCogInitialization:
         assert mock_duel_cog.bot is mock_bot
         assert mock_duel_cog.http_client is not None
 
+    def test_pending_duel_cache_ttl_is_1800(self, mock_duel_cog):
+        """_pending_duel_cache must use ttl_seconds=1800.0 (Item A: 30→1800)."""
+        from cogs._shared.autocomplete_cache import AutocompleteCache
+
+        assert hasattr(mock_duel_cog, "_pending_duel_cache")
+        assert isinstance(mock_duel_cog._pending_duel_cache, AutocompleteCache)
+        assert mock_duel_cog._pending_duel_cache._ttl == 1800.0, (
+            f"Expected _pending_duel_cache TTL=1800s (30 min), got "
+            f"{mock_duel_cog._pending_duel_cache._ttl}"
+        )
+
+    def test_outgoing_duel_cache_ttl_is_1800(self, mock_duel_cog):
+        """_outgoing_duel_cache must use ttl_seconds=1800.0 (Item A: 30→1800)."""
+        from cogs._shared.autocomplete_cache import AutocompleteCache
+
+        assert hasattr(mock_duel_cog, "_outgoing_duel_cache")
+        assert isinstance(mock_duel_cog._outgoing_duel_cache, AutocompleteCache)
+        assert mock_duel_cog._outgoing_duel_cache._ttl == 1800.0, (
+            f"Expected _outgoing_duel_cache TTL=1800s (30 min), got "
+            f"{mock_duel_cog._outgoing_duel_cache._ttl}"
+        )
+
     def test_cog_unload_closes_http_client(self, mock_duel_cog):
         """cog_unload should close the http client."""
         asyncio.run(mock_duel_cog.cog_unload())

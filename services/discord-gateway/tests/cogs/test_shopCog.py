@@ -187,6 +187,16 @@ class TestShopCogInitialization:
             "module",
         ]
 
+    def test_shop_cache_ttl_is_3600(self, mock_shop_cog):
+        """_shop_cache must be initialized with ttl_seconds=3600.0 (Item A: 300→3600)."""
+        from cogs._shared.autocomplete_cache import AutocompleteCache
+
+        assert hasattr(mock_shop_cog, "_shop_cache")
+        assert isinstance(mock_shop_cog._shop_cache, AutocompleteCache)
+        assert mock_shop_cog._shop_cache._ttl == 3600.0, (
+            f"Expected _shop_cache TTL=3600s (1 hr), got {mock_shop_cog._shop_cache._ttl}"
+        )
+
 
 # ---------------------------------------------------------------------------
 # cog_unload lifecycle
@@ -2633,6 +2643,105 @@ class TestFormatShopItemStatsAdversarial:
         item = {"item_type": "secondary_weapon", "dps": 0}
         result = fn(item)
         assert result == "", f"Expected '' for dps=0 (int), got {result!r}"
+
+
+class TestShopCommandCachePeekFirst:
+    """/shop command reads from _shop_cache.peek() when cache is warm (Item A).
+
+    The Item A overhaul adds _shop_cache.peek((guild_id, tier)) as the primary read
+    path for /shop when no item_type filter is specified, before falling back to HTTP.
+    """
+
+    def _init_player_cache_for_shop(self, guild_id, user_id, tier="Bronze"):
+        """Pre-populate the shared player cache for shop tests."""
+        import utils.autocomplete_state as ac_state
+        from cogs._shared.autocomplete_cache import AutocompleteCache
+
+        if ac_state.player_cache is None:
+            ac_state.player_cache = AutocompleteCache(name="player-test-shop")
+        ac_state.player_cache.set((guild_id, user_id), {"id": 1, "tier": tier, "credits": 5000})
+
+    def test_shop_reads_from_shop_cache_no_http_get(self, mock_shop_cog, make_mock_response):
+        """/shop with no item_type uses _shop_cache.peek() when warm — no GET to bot-core.
+
+        Player data still requires HTTP POST (player upsert), but the shop item fetch
+        must come from the cache, not from bot-core GET.
+        """
+        guild_id = 987654321
+        user_id = 111111111
+        interaction = _create_mock_interaction(user_id=user_id, guild_id=guild_id)
+
+        # Set up player POST response (needed to resolve tier)
+        player_data = _make_player_data(tier="Bronze", credits=5000)
+        player_resp = make_mock_response(player_data)
+        mock_shop_cog.http_client.post = AsyncMock(return_value=player_resp)
+
+        # Pre-populate shop cache
+        items = [_make_shop_item(1, "CachedItem", "module", "Bronze", 100)]
+        mock_shop_cog._shop_cache.set((guild_id, "Bronze"), items)
+
+        # GET must NOT be called when cache is warm
+        mock_shop_cog.http_client.get = AsyncMock(side_effect=AssertionError("HTTP GET must not be called"))
+
+        asyncio.run(mock_shop_cog.shop.callback(mock_shop_cog, interaction))
+
+        interaction.followup.send.assert_awaited_once()
+        send_kwargs = interaction.followup.send.call_args[1]
+        embed = send_kwargs.get("embed")
+        assert embed is not None, "Expected embed in cache-hit path for /shop"
+
+    def test_shop_falls_back_to_http_when_cache_cold(self, mock_shop_cog, make_mock_response):
+        """/shop falls back to HTTP GET when _shop_cache is cold (miss → None)."""
+        guild_id = 987654321
+        user_id = 111111111
+        interaction = _create_mock_interaction(user_id=user_id, guild_id=guild_id)
+
+        player_data = _make_player_data(tier="Bronze", credits=5000)
+        player_resp = make_mock_response(player_data)
+        items = [_make_shop_item(1, "FallbackItem", "module", "Bronze", 100)]
+        items_resp = make_mock_response(items)
+
+        mock_shop_cog.http_client.post = AsyncMock(return_value=player_resp)
+        mock_shop_cog.http_client.get = AsyncMock(return_value=items_resp)
+
+        # Ensure cache is cold
+        mock_shop_cog._shop_cache.invalidate((guild_id, "Bronze"))
+
+        asyncio.run(mock_shop_cog.shop.callback(mock_shop_cog, interaction))
+
+        # HTTP GET must have been called for the fallback
+        mock_shop_cog.http_client.get.assert_awaited_once()
+        interaction.followup.send.assert_awaited_once()
+
+    def test_shop_with_item_type_always_uses_http(self, mock_shop_cog, make_mock_response):
+        """/shop with item_type filter always makes HTTP GET (cache stores unfiltered list).
+
+        Even if the cache is warm for the tier, the item_type filter requires an HTTP
+        call because the cache stores the unfiltered list (not per-type).
+        """
+        guild_id = 987654321
+        user_id = 111111111
+        interaction = _create_mock_interaction(user_id=user_id, guild_id=guild_id)
+
+        player_data = _make_player_data(tier="Bronze", credits=5000)
+        player_resp = make_mock_response(player_data)
+        filtered_items = [_make_shop_item(1, "LaserCannon", "primary_weapon", "Bronze", 500)]
+        items_resp = make_mock_response(filtered_items)
+
+        mock_shop_cog.http_client.post = AsyncMock(return_value=player_resp)
+        mock_shop_cog.http_client.get = AsyncMock(return_value=items_resp)
+
+        # Pre-populate cache (but item_type filter should bypass it)
+        all_items = [
+            _make_shop_item(1, "LaserCannon", "primary_weapon", "Bronze", 500),
+            _make_shop_item(2, "ArmourMod", "module", "Bronze", 300),
+        ]
+        mock_shop_cog._shop_cache.set((guild_id, "Bronze"), all_items)
+
+        asyncio.run(mock_shop_cog.shop.callback(mock_shop_cog, interaction, item_type="primary_weapon"))
+
+        # HTTP GET is ALWAYS called when item_type is specified
+        mock_shop_cog.http_client.get.assert_awaited_once()
 
 
 if __name__ == "__main__":

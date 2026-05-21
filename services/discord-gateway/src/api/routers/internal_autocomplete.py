@@ -14,7 +14,7 @@ from typing import Any
 from fastapi import APIRouter, Header, HTTPException, Request, Response, status
 from shared import bblogger
 
-from api.schemas.internal_schemas import BountyCachePush, ShopCachePush
+from api.schemas.internal_schemas import BountyCachePush, DuelCachePush, ShopCachePush
 
 flogger = bblogger.get_logger("gateway-internal-autocomplete")
 
@@ -41,9 +41,7 @@ async def _verify_auth(x_internal_auth: str | None = Header(None)) -> None:
     """
     token = os.getenv("INTERNAL_AUTH_TOKEN", "")
     if not token:
-        logging.getLogger(__name__).warning(
-            "INTERNAL_AUTH_TOKEN not set — push endpoint is unauthenticated"
-        )
+        logging.getLogger(__name__).warning("INTERNAL_AUTH_TOKEN not set — push endpoint is unauthenticated")
         return
     if x_internal_auth != token:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid internal auth token")
@@ -87,9 +85,7 @@ async def push_shop_cache(
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="ShopCog not loaded")
 
     cog._shop_cache.set((guild_id, tier), payload.items)
-    flogger.info(
-        f"push_shop_cache: updated cache for guild={guild_id} tier={tier} items={len(payload.items)}"
-    )
+    flogger.info(f"push_shop_cache: updated cache for guild={guild_id} tier={tier} items={len(payload.items)}")
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
@@ -125,14 +121,55 @@ async def push_bounty_cache(
     if cog is None or not hasattr(cog, "_bounty_cache"):
         # Phase 6 adds _bounty_cache.  Until then, silently accept the push.
         flogger.warning(
-            f"push_bounty_cache: BountyCog not loaded or _bounty_cache not present "
-            f"(guild={guild_id}) — graceful no-op"
+            f"push_bounty_cache: BountyCog not loaded or _bounty_cache not present (guild={guild_id}) — graceful no-op"
         )
         return Response(status_code=status.HTTP_204_NO_CONTENT)
 
     cog._bounty_cache.set(guild_id, payload.bounties)
+    flogger.info(f"push_bounty_cache: updated cache for guild={guild_id} bounties={len(payload.bounties)}")
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+# ---------------------------------------------------------------------------
+# Duel cache push
+# ---------------------------------------------------------------------------
+
+
+@router.post(
+    "/duel-cache/{guild_id}/{player_id}",
+    status_code=204,
+    summary="Push duel lists into gateway DuelCog autocomplete caches",
+    description=(
+        "Called by bot-core duels router / duel_expire_executor after each challenge creation, "
+        "accept, reject, cancel, or expiry. Writes the updated pending/outgoing duel lists directly "
+        "into DuelCog._pending_duel_cache and DuelCog._outgoing_duel_cache so the next autocomplete "
+        "keystroke is served from cache without a GET call to bot-core."
+    ),
+)
+async def push_duel_cache(
+    request: Request,
+    guild_id: int,
+    player_id: int,
+    payload: DuelCachePush,
+) -> Response:
+    """Update the gateway DuelCog autocomplete caches for one guild/player."""
+    await _verify_auth(request.headers.get("x-internal-auth"))
+
+    bot = getattr(request.app.state, "bot", None)
+    if bot is None:
+        flogger.warning("push_duel_cache: app.state.bot not available")
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Bot not initialised")
+
+    cog = bot.get_cog("DuelCog")
+    if cog is None:
+        flogger.warning(f"push_duel_cache: DuelCog not loaded (guild={guild_id} player={player_id})")
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="DuelCog not loaded")
+
+    cog._pending_duel_cache.set((guild_id, player_id), payload.pending_duels)
+    cog._outgoing_duel_cache.set((guild_id, player_id), payload.outgoing_duels)
     flogger.info(
-        f"push_bounty_cache: updated cache for guild={guild_id} bounties={len(payload.bounties)}"
+        f"push_duel_cache: updated cache for guild={guild_id} player={player_id} "
+        f"pending={len(payload.pending_duels)} outgoing={len(payload.outgoing_duels)}"
     )
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 

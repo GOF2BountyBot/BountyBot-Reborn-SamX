@@ -50,9 +50,9 @@ _GATEWAY_BASE_URL = f"http://{_GATEWAY_HOST}:{_GATEWAY_PORT}/api/v1"
 # ---------------------------------------------------------------------------
 
 _TIER_COLORS: dict[str, int] = {
-    "bronze": 13467442,   # #CD7F32
-    "silver": 12632256,   # #C0C0C0
-    "gold": 16766720,     # #FFD700
+    "bronze": 13467442,  # #CD7F32
+    "silver": 12632256,  # #C0C0C0
+    "gold": 16766720,  # #FFD700
     "platinum": 15066082,  # #E5E4E2
 }
 _DEFAULT_SHOP_COLOR = 3447003  # #3498DB — existing blue, used when tier is None
@@ -62,11 +62,11 @@ _DEFAULT_SHOP_COLOR = 3447003  # #3498DB — existing blue, used when tier is No
 # ---------------------------------------------------------------------------
 
 _ITEM_TYPE_DISPLAY: list[tuple[str, str]] = [
-    ("ship",             "🚀 Ships"),
-    ("primary_weapon",   "🔫 Primary Weapons"),
+    ("ship", "🚀 Ships"),
+    ("primary_weapon", "🔫 Primary Weapons"),
     ("secondary_weapon", "💥 Secondary Weapons"),
-    ("turret_weapon",    "🌀 Turret Weapons"),
-    ("module",           "⚙️ Modules"),
+    ("turret_weapon", "🌀 Turret Weapons"),
+    ("module", "⚙️ Modules"),
 ]
 
 
@@ -187,13 +187,17 @@ async def announce_shop_refresh(
             title = "🛒 Shop Refreshed!"
 
         if not items:
-            description = f"The {tier.title()} shop refreshed but no items are currently stocked." if tier else (
-                "The shop refreshed but no items are currently stocked."
+            description = (
+                f"The {tier.title()} shop refreshed but no items are currently stocked."
+                if tier
+                else ("The shop refreshed but no items are currently stocked.")
             )
             embed_fields: list[dict] = []
         else:
-            description = f"The {tier.title()} shop has been restocked. Browse with /shop." if tier else (
-                "The shop has been restocked. Browse with /shop."
+            description = (
+                f"The {tier.title()} shop has been restocked. Browse with /shop."
+                if tier
+                else ("The shop has been restocked. Browse with /shop.")
             )
             embed_fields = _build_inventory_fields(items)
 

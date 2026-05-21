@@ -220,6 +220,49 @@ class TestSchedulerList:
         msg = str(interaction.followup.send.call_args)
         assert "⚠️" in msg or "error" in msg.lower()
 
+    def test_scheduler_list_reads_from_cache_when_warm(self, cog):
+        """/scheduler_list reads from _job_cache.peek('all') when cache is warm — no HTTP.
+
+        Item A: /scheduler_list now has a cache-peek-first path (Phase 6 pattern).
+        When the cache is warm, no GET to bot-core should be made.
+        """
+        # Pre-populate the job cache
+        cog._job_cache.set("all", _SAMPLE_JOBS)
+
+        # HTTP must NOT be called when cache is warm
+        cog.http_client.get = AsyncMock(side_effect=AssertionError("HTTP must not be called when cache is warm"))
+
+        interaction = _make_interaction()
+        asyncio.run(cog.scheduler_list.callback(cog, interaction))
+
+        # Embed with job info must be sent
+        interaction.followup.send.assert_awaited_once()
+        send_kwargs = interaction.followup.send.call_args[1]
+        embed = send_kwargs.get("embed")
+        assert embed is not None, "Expected embed in followup.send"
+        assert len(embed.fields) > 0, "Expected at least one job field in embed"
+
+    def test_scheduler_list_falls_back_to_http_when_cache_cold(self, cog):
+        """/scheduler_list falls back to HTTP GET when cache is cold (miss → None).
+
+        After a cache miss, the command fetches from bot-core and returns the result.
+        """
+        # Ensure cache is cold
+        cog._job_cache.invalidate("all")
+
+        # HTTP returns jobs
+        cog.http_client.get = AsyncMock(return_value=_make_mock_response(_SAMPLE_JOBS))
+
+        interaction = _make_interaction()
+        asyncio.run(cog.scheduler_list.callback(cog, interaction))
+
+        # HTTP was called
+        cog.http_client.get.assert_awaited_once()
+        # And embed was sent
+        interaction.followup.send.assert_awaited_once()
+        send_kwargs = interaction.followup.send.call_args[1]
+        assert "embed" in send_kwargs
+
 
 # ===========================================================================
 # TestAdminResetScheduler — /admin_reset_scheduler
@@ -611,6 +654,16 @@ class TestCogSetupAndUnload:
         cog.http_client.aclose = AsyncMock()
         asyncio.run(cog.cog_unload())
         cog.http_client.aclose.assert_awaited_once()
+
+    def test_job_cache_ttl_is_600(self, cog):
+        """_job_cache must use ttl_seconds=600.0 (Item A: 120→600)."""
+        from cogs._shared.autocomplete_cache import AutocompleteCache
+
+        assert hasattr(cog, "_job_cache")
+        assert isinstance(cog._job_cache, AutocompleteCache)
+        assert cog._job_cache._ttl == 600.0, (
+            f"Expected _job_cache TTL=600s (10 min), got {cog._job_cache._ttl}"
+        )
 
 
 # ===========================================================================

@@ -171,6 +171,11 @@ class DevCog(commands.Cog):
         # clear() is synchronous; no await needed.
         cache_targets = [
             ("ShopCog", "_shop_cache", "shop cache"),
+            ("BountyCog", "_bounty_cache", "bounty cache"),
+            ("BountyCog", "_systems_cache", "bounty systems cache"),
+            ("DuelCog", "_pending_duel_cache", "duel pending cache"),
+            ("DuelCog", "_outgoing_duel_cache", "duel outgoing cache"),
+            ("SchedulerCog", "_job_cache", "scheduler job cache"),
         ]
 
         for cog_name, attr_name, label in cache_targets:

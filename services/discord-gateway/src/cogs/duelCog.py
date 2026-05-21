@@ -42,12 +42,12 @@ class DuelCog(commands.Cog):
         self.bot = bot
         self.http_client = httpx.AsyncClient(timeout=httpx.Timeout(10.0))
         self._pending_duel_cache: AutocompleteCache[tuple[int, int], list] = AutocompleteCache(
-            ttl_seconds=30.0,
+            ttl_seconds=1800.0,  # 30 min dead-man switch; refresh job runs every 5 min
             refresh_fn=self._fetch_pending_duels,
             name="duelCog-pending-duels",
         )
         self._outgoing_duel_cache: AutocompleteCache[tuple[int, int], list] = AutocompleteCache(
-            ttl_seconds=30.0,
+            ttl_seconds=1800.0,  # 30 min dead-man switch; refresh job runs every 5 min
             refresh_fn=self._fetch_outgoing_duels,
             name="duelCog-outgoing-duels",
         )
@@ -458,8 +458,7 @@ class DuelCog(commands.Cog):
                     self._outgoing_duel_cache.invalidate((interaction.guild_id, challenger_player_id))
             except Exception:  # pylint: disable=broad-exception-caught
                 flogger.warning(
-                    f"/duel-accept: duel cache invalidation failed for duel_id={duel_id}; "
-                    "transaction still succeeded"
+                    f"/duel-accept: duel cache invalidation failed for duel_id={duel_id}; transaction still succeeded"
                 )
 
         except httpx.HTTPStatusError as e:
@@ -635,8 +634,7 @@ class DuelCog(commands.Cog):
                     self._outgoing_duel_cache.invalidate((interaction.guild_id, challenger_player_id))
             except Exception:  # pylint: disable=broad-exception-caught
                 flogger.warning(
-                    f"/duel-reject: duel cache invalidation failed for duel_id={duel_id}; "
-                    "transaction still succeeded"
+                    f"/duel-reject: duel cache invalidation failed for duel_id={duel_id}; transaction still succeeded"
                 )
 
         except httpx.HTTPStatusError as e:
@@ -736,8 +734,7 @@ class DuelCog(commands.Cog):
                     self._pending_duel_cache.invalidate((interaction.guild_id, target_player_id))
             except Exception:  # pylint: disable=broad-exception-caught
                 flogger.warning(
-                    f"/duel-cancel: duel cache invalidation failed for duel_id={duel_id}; "
-                    "transaction still succeeded"
+                    f"/duel-cancel: duel cache invalidation failed for duel_id={duel_id}; transaction still succeeded"
                 )
 
         except httpx.HTTPStatusError as e:

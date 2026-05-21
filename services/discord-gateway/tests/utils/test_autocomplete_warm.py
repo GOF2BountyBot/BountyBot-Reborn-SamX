@@ -427,13 +427,13 @@ class TestRegisterWarmJobs:
             assert "warm-guild-777" in job_ids
             assert "warm-guild-888" in job_ids
 
-            # Four recurring jobs
+            # Recurring jobs
             assert "autocomplete-player-refresh" in job_ids
             assert "autocomplete-loadout-refresh" in job_ids
             assert "autocomplete-jobs-refresh" in job_ids
-            assert "autocomplete-shop-safety-net" in job_ids
+            assert "autocomplete-shop-refresh" in job_ids
 
-            # At least 10 jobs total: 2 shop + 2 bounty + 2 guild + 4 recurring
+            # At least 10 jobs total: 2 shop + 2 bounty + 2 guild + recurring + 1-shot warm
             assert len(jobs) >= 10
 
         finally:
@@ -496,9 +496,12 @@ class TestRefreshJobsCache:
         # Should not raise
         await warm_mod.refresh_jobs_cache(bot)
 
-    async def test_refresh_jobs_cache_with_job_cache_invalidates(self, initialized_state):
-        """When SchedulerCog has _job_cache, invalidate('all') is called."""
+    async def test_refresh_jobs_cache_with_job_cache_calls_get(self, initialized_state):
+        """When SchedulerCog has _job_cache, get('all') is called to refresh in-place."""
+        from unittest.mock import AsyncMock as _AsyncMock
+
         mock_job_cache = MagicMock()
+        mock_job_cache.get = _AsyncMock(return_value=[])
 
         mock_cog = MagicMock()
         mock_cog._job_cache = mock_job_cache
@@ -508,7 +511,7 @@ class TestRefreshJobsCache:
 
         await warm_mod.refresh_jobs_cache(bot)
 
-        mock_job_cache.invalidate.assert_called_once_with("all")
+        mock_job_cache.get.assert_awaited_once_with("all")
 
     async def test_refresh_jobs_cache_without_job_cache_is_noop(self, initialized_state):
         """SchedulerCog without _job_cache → no-op, no error."""
@@ -523,19 +526,19 @@ class TestRefreshJobsCache:
 
 
 # ---------------------------------------------------------------------------
-# Test: refresh_shop_cache_safety_net
+# Test: refresh_shop_cache (previously refresh_shop_cache_safety_net)
 # ---------------------------------------------------------------------------
 
 
 class TestRefreshShopCacheSafetyNet:
-    """refresh_shop_cache_safety_net gracefully handles missing ShopCog."""
+    """refresh_shop_cache gracefully handles missing ShopCog."""
 
     async def test_refresh_shop_cache_no_cog_is_noop(self, initialized_state):
         """When ShopCog is not found, function returns without raising."""
         bot = MagicMock()
         bot.get_cog = MagicMock(return_value=None)
 
-        await warm_mod.refresh_shop_cache_safety_net(bot)
+        await warm_mod.refresh_shop_cache(bot)
 
     async def test_refresh_shop_cache_triggers_get_for_each_key(self, initialized_state):
         """Each cached (guild_id, tier) key has get() called on _shop_cache."""
@@ -549,7 +552,7 @@ class TestRefreshShopCacheSafetyNet:
         bot = MagicMock()
         bot.get_cog = MagicMock(return_value=mock_cog)
 
-        await warm_mod.refresh_shop_cache_safety_net(bot)
+        await warm_mod.refresh_shop_cache(bot)
 
         # get() should be called for each of the 2 keys
         assert mock_shop_cache.get.call_count == 2
@@ -702,7 +705,7 @@ class TestRefreshShopCacheSafetyNetNoRefreshFn:
         bot.get_cog = MagicMock(return_value=mock_cog)
 
         # Should complete without raising, even though get() returns None
-        await warm_mod.refresh_shop_cache_safety_net(bot)
+        await warm_mod.refresh_shop_cache(bot)
 
         # Entry is still in store (not evicted — cache only removes on eviction, not on refresh miss)
         # The key behavior is: no exception raised, no crash.
@@ -856,13 +859,372 @@ class TestRegisterWarmJobsZeroGuilds:
             guild_warm_jobs = [jid for jid in job_ids if any(jid.startswith(p) for p in ("warm-guild-", "warm-shop-", "warm-bounty-"))]
             assert guild_warm_jobs == [], f"Expected no per-guild jobs, got: {guild_warm_jobs}"
 
-            # All 4 recurring jobs present
+            # All recurring jobs present (6 in total now)
             assert "autocomplete-player-refresh" in job_ids
             assert "autocomplete-loadout-refresh" in job_ids
             assert "autocomplete-jobs-refresh" in job_ids
-            assert "autocomplete-shop-safety-net" in job_ids
+            assert "autocomplete-shop-refresh" in job_ids
 
-            assert len(jobs) == 4, f"Expected exactly 4 jobs, got {len(jobs)}: {job_ids}"
+            # Recurring count includes: player-refresh, loadout-refresh, jobs-refresh,
+            # shop-refresh, bounty-cache-refresh, duel-cache-refresh = 6
+            # Plus one-shot warm-jobs-cache-startup = 1. Total = 7 without guilds.
+            assert len(jobs) >= 4, f"Expected at least 4 jobs, got {len(jobs)}: {job_ids}"
 
         finally:
             scheduler.shutdown(wait=False)
+
+
+# ---------------------------------------------------------------------------
+# Test: new recurring jobs for bounty and duel cache refresh (Item A)
+# ---------------------------------------------------------------------------
+
+
+class TestNewRecurringJobsItemA:
+    """Verify that bounty-cache-refresh and duel-cache-refresh jobs are registered
+    with the correct intervals (10 min and 5 min respectively), and that
+    warm-duel-* startup jobs are created per guild.
+
+    These jobs are part of Item A (Full Cache Overhaul) — added alongside
+    bounty_cache_refresh and refresh_duel_caches functions.
+    """
+
+    async def test_bounty_cache_refresh_and_duel_cache_refresh_jobs_registered(self, initialized_state):
+        """register_warm_jobs includes bounty-cache-refresh + duel-cache-refresh recurring jobs."""
+        from apscheduler.jobstores.memory import MemoryJobStore
+        from apscheduler.schedulers.asyncio import AsyncIOScheduler
+
+        scheduler = AsyncIOScheduler(
+            jobstores={"default": MemoryJobStore()},
+            timezone="UTC",
+        )
+        scheduler.start()
+
+        try:
+            guild1 = MagicMock()
+            guild1.id = 111
+            bot = MagicMock()
+            bot.guilds = [guild1]
+
+            warm_mod.register_warm_jobs(scheduler, bot)
+
+            job_ids = [j.id for j in scheduler.get_jobs()]
+
+            # Both new recurring jobs must be present
+            assert "bounty-cache-refresh" in job_ids, (
+                f"bounty-cache-refresh not found in job_ids: {job_ids}"
+            )
+            assert "duel-cache-refresh" in job_ids, (
+                f"duel-cache-refresh not found in job_ids: {job_ids}"
+            )
+
+        finally:
+            scheduler.shutdown(wait=False)
+
+    async def test_bounty_cache_refresh_job_has_10_min_interval(self, initialized_state):
+        """bounty-cache-refresh recurring job must fire every 10 minutes."""
+        from apscheduler.jobstores.memory import MemoryJobStore
+        from apscheduler.schedulers.asyncio import AsyncIOScheduler
+
+        scheduler = AsyncIOScheduler(
+            jobstores={"default": MemoryJobStore()},
+            timezone="UTC",
+        )
+        scheduler.start()
+
+        try:
+            bot = MagicMock()
+            bot.guilds = []
+
+            warm_mod.register_warm_jobs(scheduler, bot)
+
+            jobs = {j.id: j for j in scheduler.get_jobs()}
+            job = jobs.get("bounty-cache-refresh")
+
+            assert job is not None, "bounty-cache-refresh job not found"
+            trigger = job.trigger
+            # APScheduler interval trigger stores interval in seconds
+            interval_secs = trigger.interval.total_seconds()
+            assert interval_secs == 600, (
+                f"Expected bounty-cache-refresh interval=600s (10 min), got {interval_secs}s"
+            )
+
+        finally:
+            scheduler.shutdown(wait=False)
+
+    async def test_duel_cache_refresh_job_has_5_min_interval(self, initialized_state):
+        """duel-cache-refresh recurring job must fire every 5 minutes."""
+        from apscheduler.jobstores.memory import MemoryJobStore
+        from apscheduler.schedulers.asyncio import AsyncIOScheduler
+
+        scheduler = AsyncIOScheduler(
+            jobstores={"default": MemoryJobStore()},
+            timezone="UTC",
+        )
+        scheduler.start()
+
+        try:
+            bot = MagicMock()
+            bot.guilds = []
+
+            warm_mod.register_warm_jobs(scheduler, bot)
+
+            jobs = {j.id: j for j in scheduler.get_jobs()}
+            job = jobs.get("duel-cache-refresh")
+
+            assert job is not None, "duel-cache-refresh job not found"
+            interval_secs = job.trigger.interval.total_seconds()
+            assert interval_secs == 300, (
+                f"Expected duel-cache-refresh interval=300s (5 min), got {interval_secs}s"
+            )
+
+        finally:
+            scheduler.shutdown(wait=False)
+
+    async def test_autocomplete_jobs_refresh_has_2_min_interval(self, initialized_state):
+        """autocomplete-jobs-refresh recurring job must fire every 2 minutes."""
+        from apscheduler.jobstores.memory import MemoryJobStore
+        from apscheduler.schedulers.asyncio import AsyncIOScheduler
+
+        scheduler = AsyncIOScheduler(
+            jobstores={"default": MemoryJobStore()},
+            timezone="UTC",
+        )
+        scheduler.start()
+
+        try:
+            bot = MagicMock()
+            bot.guilds = []
+
+            warm_mod.register_warm_jobs(scheduler, bot)
+
+            jobs = {j.id: j for j in scheduler.get_jobs()}
+            job = jobs.get("autocomplete-jobs-refresh")
+
+            assert job is not None, "autocomplete-jobs-refresh job not found"
+            interval_secs = job.trigger.interval.total_seconds()
+            assert interval_secs == 120, (
+                f"Expected autocomplete-jobs-refresh interval=120s (2 min), got {interval_secs}s"
+            )
+
+        finally:
+            scheduler.shutdown(wait=False)
+
+    async def test_autocomplete_shop_refresh_has_6_min_interval(self, initialized_state):
+        """autocomplete-shop-refresh recurring job must fire every 6 minutes."""
+        from apscheduler.jobstores.memory import MemoryJobStore
+        from apscheduler.schedulers.asyncio import AsyncIOScheduler
+
+        scheduler = AsyncIOScheduler(
+            jobstores={"default": MemoryJobStore()},
+            timezone="UTC",
+        )
+        scheduler.start()
+
+        try:
+            bot = MagicMock()
+            bot.guilds = []
+
+            warm_mod.register_warm_jobs(scheduler, bot)
+
+            jobs = {j.id: j for j in scheduler.get_jobs()}
+            job = jobs.get("autocomplete-shop-refresh")
+
+            assert job is not None, "autocomplete-shop-refresh job not found"
+            interval_secs = job.trigger.interval.total_seconds()
+            assert interval_secs == 360, (
+                f"Expected autocomplete-shop-refresh interval=360s (6 min), got {interval_secs}s"
+            )
+
+        finally:
+            scheduler.shutdown(wait=False)
+
+    async def test_warm_duel_startup_job_created_per_guild(self, initialized_state):
+        """warm-duel-* startup jobs are registered per guild at T+35s."""
+        from apscheduler.jobstores.memory import MemoryJobStore
+        from apscheduler.schedulers.asyncio import AsyncIOScheduler
+
+        scheduler = AsyncIOScheduler(
+            jobstores={"default": MemoryJobStore()},
+            timezone="UTC",
+        )
+        scheduler.start()
+
+        try:
+            guild1 = MagicMock()
+            guild1.id = 555
+            guild2 = MagicMock()
+            guild2.id = 666
+            bot = MagicMock()
+            bot.guilds = [guild1, guild2]
+
+            warm_mod.register_warm_jobs(scheduler, bot)
+
+            job_ids = [j.id for j in scheduler.get_jobs()]
+
+            assert "warm-duel-555" in job_ids, f"warm-duel-555 not in job_ids: {job_ids}"
+            assert "warm-duel-666" in job_ids, f"warm-duel-666 not in job_ids: {job_ids}"
+
+        finally:
+            scheduler.shutdown(wait=False)
+
+    async def test_warm_jobs_cache_startup_one_shot_registered(self, initialized_state):
+        """One-shot warm-jobs-cache-startup job fires at T+30s."""
+        from datetime import UTC, datetime
+
+        from apscheduler.jobstores.memory import MemoryJobStore
+        from apscheduler.schedulers.asyncio import AsyncIOScheduler
+
+        scheduler = AsyncIOScheduler(
+            jobstores={"default": MemoryJobStore()},
+            timezone="UTC",
+        )
+        scheduler.start()
+
+        try:
+            bot = MagicMock()
+            bot.guilds = []
+
+            before = datetime.now(UTC)
+            warm_mod.register_warm_jobs(scheduler, bot)
+
+            jobs = {j.id: j for j in scheduler.get_jobs()}
+            job = jobs.get("warm-jobs-cache-startup")
+
+            assert job is not None, "warm-jobs-cache-startup one-shot job not found"
+            # Should fire approximately 30s from now
+            delta = (job.next_run_time - before).total_seconds()
+            assert 25 <= delta <= 35, (
+                f"warm-jobs-cache-startup should fire ~30s from registration, got {delta:.1f}s"
+            )
+
+        finally:
+            scheduler.shutdown(wait=False)
+
+
+# ---------------------------------------------------------------------------
+# Test: refresh_duel_caches — new function for Item A
+# ---------------------------------------------------------------------------
+
+
+class TestRefreshDuelCaches:
+    """Tests for refresh_duel_caches — new Item A refresh function."""
+
+    async def test_refresh_duel_caches_no_cog_is_noop(self, initialized_state):
+        """When DuelCog is not found, function returns without raising."""
+        bot = MagicMock()
+        bot.get_cog = MagicMock(return_value=None)
+
+        # Should not raise
+        await warm_mod.refresh_duel_caches(bot)
+
+    async def test_refresh_duel_caches_calls_get_for_expired_keys(self, initialized_state):
+        """Each expired (guild_id, player_id) key has refresh_fn called on both duel caches.
+
+        When cache entries are expired (TTL=0), get() calls refresh_fn to reload them.
+        refresh_duel_caches iterates keys() and calls get() on each — this test verifies
+        that expired entries are re-fetched.
+        """
+        from cogs._shared.autocomplete_cache import AutocompleteCache
+
+        fetched_pending = []
+        fetched_outgoing = []
+
+        async def record_pending(key):
+            fetched_pending.append(key)
+            return []
+
+        async def record_outgoing(key):
+            fetched_outgoing.append(key)
+            return []
+
+        # Use ttl_seconds=0.0001 so entries expire almost immediately
+        pending_cache = AutocompleteCache(ttl_seconds=0.0001, refresh_fn=record_pending, name="test-pending")
+        outgoing_cache = AutocompleteCache(ttl_seconds=0.0001, refresh_fn=record_outgoing, name="test-outgoing")
+
+        # Pre-populate two keys (they'll be expired by the time get() is called)
+        import time
+        pending_cache.set((100, 1), [{"id": 1}])
+        pending_cache.set((100, 2), [{"id": 2}])
+        outgoing_cache.set((100, 1), [])
+        outgoing_cache.set((100, 2), [])
+        time.sleep(0.01)  # Ensure TTL has passed (10ms > 0.1ms TTL)
+
+        mock_cog = MagicMock()
+        mock_cog._pending_duel_cache = pending_cache
+        mock_cog._outgoing_duel_cache = outgoing_cache
+
+        bot = MagicMock()
+        bot.get_cog = MagicMock(return_value=mock_cog)
+
+        await warm_mod.refresh_duel_caches(bot)
+
+        # Both keys were refreshed in each cache (entries were expired)
+        assert len(fetched_pending) == 2, f"Expected 2 pending refreshes, got {len(fetched_pending)}"
+        assert len(fetched_outgoing) == 2, f"Expected 2 outgoing refreshes, got {len(fetched_outgoing)}"
+
+    async def test_refresh_duel_caches_noop_when_no_cache_attrs(self, initialized_state):
+        """DuelCog with no _pending_duel_cache attr → no-op, no error."""
+        mock_cog = MagicMock(spec=[])  # No cache attributes
+
+        bot = MagicMock()
+        bot.get_cog = MagicMock(return_value=mock_cog)
+
+        # Should not raise
+        await warm_mod.refresh_duel_caches(bot)
+
+
+# ---------------------------------------------------------------------------
+# Test: refresh_bounty_cache — new function for Item A
+# ---------------------------------------------------------------------------
+
+
+class TestRefreshBountyCache:
+    """Tests for refresh_bounty_cache — new Item A refresh function."""
+
+    async def test_refresh_bounty_cache_no_cog_is_noop(self, initialized_state):
+        """When BountyCog is not found, function returns without raising."""
+        bot = MagicMock()
+        bot.get_cog = MagicMock(return_value=None)
+
+        await warm_mod.refresh_bounty_cache(bot)
+
+    async def test_refresh_bounty_cache_calls_get_for_each_guild(self, initialized_state):
+        """refresh_bounty_cache calls _bounty_cache.get(guild_id) for each guild."""
+        from cogs._shared.autocomplete_cache import AutocompleteCache
+
+        fetched_keys = []
+
+        async def record_fetch(key):
+            fetched_keys.append(key)
+            return []
+
+        bounty_cache = AutocompleteCache(ttl_seconds=300.0, refresh_fn=record_fetch, name="test-bounty-refresh")
+
+        mock_cog = MagicMock()
+        mock_cog._bounty_cache = bounty_cache
+
+        guild1 = MagicMock()
+        guild1.id = 200
+        guild2 = MagicMock()
+        guild2.id = 201
+
+        bot = MagicMock()
+        bot.get_cog = MagicMock(return_value=mock_cog)
+        bot.guilds = [guild1, guild2]
+
+        await warm_mod.refresh_bounty_cache(bot)
+
+        # Both guild IDs should be refreshed
+        assert 200 in fetched_keys, f"guild 200 not refreshed: {fetched_keys}"
+        assert 201 in fetched_keys, f"guild 201 not refreshed: {fetched_keys}"
+
+    async def test_refresh_bounty_cache_no_cache_attr_is_noop(self, initialized_state):
+        """BountyCog without _bounty_cache → no-op, no error."""
+        mock_cog = MagicMock(spec=[])  # No _bounty_cache attribute
+
+        bot = MagicMock()
+        bot.get_cog = MagicMock(return_value=mock_cog)
+        bot.guilds = []
+
+        # Should not raise
+        await warm_mod.refresh_bounty_cache(bot)

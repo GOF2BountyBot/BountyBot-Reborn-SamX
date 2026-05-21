@@ -24,9 +24,10 @@ class SchedulerCog(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
         self.http_client = httpx.AsyncClient(timeout=httpx.Timeout(10.0))
-        # Job cache: keyed by sentinel "all" string, TTL=120s (jobs list changes rarely)
+        # Job cache: keyed by sentinel "all" string, TTL=600s (10 min dead-man switch)
+        # Healthy refresh cycle (every 2 min) resets TTL so this never fires.
         self._job_cache: AutocompleteCache[str, list[dict]] = AutocompleteCache(
-            ttl_seconds=120.0,
+            ttl_seconds=600.0,
             refresh_fn=self._fetch_jobs,
             name="schedulerCog-jobs",
         )
@@ -114,9 +115,14 @@ class SchedulerCog(commands.Cog):
         flogger.debug(f"/scheduler_list invoked: guild={interaction.guild_id} user={interaction.user.id}")
 
         try:
-            resp = await self.http_client.get(f"{api_base}/jobs", params={"guild_id": interaction.guild_id}, timeout=10)
-            resp.raise_for_status()
-            jobs = resp.json()
+            # Peek cache first — avoids HTTP on every invocation when cache is warm
+            jobs = self._job_cache.peek("all")
+            if jobs is None:
+                resp = await self.http_client.get(
+                    f"{api_base}/jobs", params={"guild_id": interaction.guild_id}, timeout=10
+                )
+                resp.raise_for_status()
+                jobs = resp.json()
 
             if not jobs:
                 embed = discord.Embed(

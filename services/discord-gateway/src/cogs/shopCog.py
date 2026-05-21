@@ -83,7 +83,7 @@ class ShopCog(commands.Cog):
         self._valid_tiers = ["Bronze", "Silver", "Gold", "Platinum"]
         self._valid_item_types = ["ship", "primary_weapon", "secondary_weapon", "turret_weapon", "module"]
         self._shop_cache: AutocompleteCache[tuple, list] = AutocompleteCache(
-            ttl_seconds=300.0,
+            ttl_seconds=3600.0,  # 60 min dead-man switch; refresh job runs every 6 min
             refresh_fn=self._fetch_tier_shop,
             name="shopCog-shop-cache",
         )
@@ -192,16 +192,24 @@ class ShopCog(commands.Cog):
                 raw_player_tier = "Bronze"
             tier = raw_player_tier
 
-            # Get shop items
-            params = {}
-            if item_type:
-                params["item_type"] = item_type
-
-            resp = await self.http_client.get(
-                f"{api_base}/shops/guild/{interaction.guild_id}/tier/{tier}", params=params, timeout=10
-            )
-            resp.raise_for_status()
-            items = resp.json()
+            # Get shop items — peek cache first for unfiltered view
+            if not item_type:
+                items = self._shop_cache.peek((interaction.guild_id, tier))
+                if items is None:
+                    resp = await self.http_client.get(
+                        f"{api_base}/shops/guild/{interaction.guild_id}/tier/{tier}", timeout=10
+                    )
+                    resp.raise_for_status()
+                    items = resp.json()
+            else:
+                # item_type filter requires HTTP (cache stores full unfiltered list)
+                resp = await self.http_client.get(
+                    f"{api_base}/shops/guild/{interaction.guild_id}/tier/{tier}",
+                    params={"item_type": item_type},
+                    timeout=10,
+                )
+                resp.raise_for_status()
+                items = resp.json()
 
             if not items:
                 type_filter = f" ({item_type.replace('_', ' ').title()}s)" if item_type else ""

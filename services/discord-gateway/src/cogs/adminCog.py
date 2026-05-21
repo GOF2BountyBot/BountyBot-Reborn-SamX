@@ -59,8 +59,7 @@ async def _check_is_admin(interaction: discord.Interaction) -> bool:
                 return True
     except Exception as e:  # pylint: disable=broad-exception-caught
         flogger.error(
-            f"_check_is_admin: unexpected error for user={interaction.user.id} "
-            f"guild={interaction.guild_id}: {e}"
+            f"_check_is_admin: unexpected error for user={interaction.user.id} guild={interaction.guild_id}: {e}"
         )
 
     return False

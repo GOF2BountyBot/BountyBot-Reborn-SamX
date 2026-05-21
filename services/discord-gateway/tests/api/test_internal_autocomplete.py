@@ -499,3 +499,230 @@ class TestAdversarialEdgeCases:
         assert cached[0]["issue_time"] == "2026-05-16T11:00:00+00:00", (
             "issue_time should also be preserved as ISO string"
         )
+
+
+# ---------------------------------------------------------------------------
+# Tests: POST /internal/autocomplete/duel-cache/{guild_id}/{player_id}
+# ---------------------------------------------------------------------------
+
+_PLAYER_ID = 77788899
+_SAMPLE_PENDING_DUELS = [
+    {"id": 1, "challenger_id": 10, "target_id": _PLAYER_ID, "stakes": 500, "challenger_name": "Rando"}
+]
+_SAMPLE_OUTGOING_DUELS = [
+    {"id": 2, "challenger_id": _PLAYER_ID, "target_id": 20, "stakes": 0, "target_name": "Enemy"}
+]
+
+
+def _make_mock_duel_cog():
+    """Create a simple mock DuelCog with real-ish duel caches."""
+    cog = MagicMock()
+    cog._pending_duel_cache = _make_mock_autocomplete_cache()
+    cog._outgoing_duel_cache = _make_mock_autocomplete_cache()
+    return cog
+
+
+@pytest.fixture
+def mock_duel_cog():
+    """A mock DuelCog with real-ish _pending_duel_cache and _outgoing_duel_cache."""
+    return _make_mock_duel_cog()
+
+
+@pytest.fixture
+def mock_bot_with_duel_cog(mock_duel_cog):
+    """Bot that returns the mock DuelCog when get_cog('DuelCog') is called."""
+    bot = MagicMock()
+    bot.is_ready.return_value = True
+
+    def _get_cog(name):
+        if name == "DuelCog":
+            return mock_duel_cog
+        return None
+
+    bot.get_cog = _get_cog
+    return bot
+
+
+class TestDuelCachePush:
+    """Tests for POST /internal/autocomplete/duel-cache/{guild_id}/{player_id}."""
+
+    def test_valid_auth_updates_both_caches_returns_204(self, mock_bot_with_duel_cog, mock_duel_cog):
+        """POST with correct X-Internal-Auth → 204 and both duel caches updated."""
+        with patch.dict(os.environ, {"INTERNAL_AUTH_TOKEN": _VALID_TOKEN}):
+            app = _make_app_with_bot(mock_bot_with_duel_cog)
+            client = TestClient(app, raise_server_exceptions=True)
+
+            resp = client.post(
+                f"/api/v1/internal/autocomplete/duel-cache/{_GUILD_ID}/{_PLAYER_ID}",
+                json={"pending_duels": _SAMPLE_PENDING_DUELS, "outgoing_duels": _SAMPLE_OUTGOING_DUELS},
+                headers={"X-Internal-Auth": _VALID_TOKEN},
+            )
+
+        assert resp.status_code == 204, f"Expected 204, got {resp.status_code}: {resp.text}"
+        # Verify pending cache was updated
+        cached_pending = mock_duel_cog._pending_duel_cache.peek((_GUILD_ID, _PLAYER_ID))
+        assert cached_pending == _SAMPLE_PENDING_DUELS, f"Pending cache mismatch: {cached_pending!r}"
+        # Verify outgoing cache was updated
+        cached_outgoing = mock_duel_cog._outgoing_duel_cache.peek((_GUILD_ID, _PLAYER_ID))
+        assert cached_outgoing == _SAMPLE_OUTGOING_DUELS, f"Outgoing cache mismatch: {cached_outgoing!r}"
+
+    def test_wrong_auth_returns_401(self, mock_bot_with_duel_cog):
+        """POST with wrong X-Internal-Auth → 401."""
+        with patch.dict(os.environ, {"INTERNAL_AUTH_TOKEN": _VALID_TOKEN}):
+            app = _make_app_with_bot(mock_bot_with_duel_cog)
+            client = TestClient(app, raise_server_exceptions=False)
+
+            resp = client.post(
+                f"/api/v1/internal/autocomplete/duel-cache/{_GUILD_ID}/{_PLAYER_ID}",
+                json={"pending_duels": [], "outgoing_duels": []},
+                headers={"X-Internal-Auth": "wrong-token"},
+            )
+
+        assert resp.status_code == 401, f"Expected 401, got {resp.status_code}: {resp.text}"
+        assert "Invalid internal auth token" in resp.json().get("detail", "")
+
+    def test_missing_auth_header_with_token_set_returns_401(self, mock_bot_with_duel_cog):
+        """POST with no X-Internal-Auth header when token is configured → 401."""
+        with patch.dict(os.environ, {"INTERNAL_AUTH_TOKEN": _VALID_TOKEN}):
+            app = _make_app_with_bot(mock_bot_with_duel_cog)
+            client = TestClient(app, raise_server_exceptions=False)
+
+            resp = client.post(
+                f"/api/v1/internal/autocomplete/duel-cache/{_GUILD_ID}/{_PLAYER_ID}",
+                json={"pending_duels": [], "outgoing_duels": []},
+                # No X-Internal-Auth header
+            )
+
+        assert resp.status_code == 401, f"Expected 401 when auth header missing, got {resp.status_code}"
+
+    def test_no_duel_cog_returns_503(self, mock_bot_no_cog):
+        """POST when DuelCog is not loaded → 503."""
+        with patch.dict(os.environ, {"INTERNAL_AUTH_TOKEN": _VALID_TOKEN}):
+            app = _make_app_with_bot(mock_bot_no_cog)
+            client = TestClient(app, raise_server_exceptions=False)
+
+            resp = client.post(
+                f"/api/v1/internal/autocomplete/duel-cache/{_GUILD_ID}/{_PLAYER_ID}",
+                json={"pending_duels": [], "outgoing_duels": []},
+                headers={"X-Internal-Auth": _VALID_TOKEN},
+            )
+
+        assert resp.status_code == 503, f"Expected 503 when DuelCog not loaded, got {resp.status_code}"
+        assert "DuelCog not loaded" in resp.json().get("detail", "")
+
+    def test_dev_mode_no_token_allows_request(self, mock_bot_with_duel_cog, mock_duel_cog):
+        """When INTERNAL_AUTH_TOKEN is not set, requests are allowed (dev mode)."""
+        env_without_token = {k: v for k, v in os.environ.items() if k != "INTERNAL_AUTH_TOKEN"}
+        with patch.dict(os.environ, env_without_token, clear=True):
+            app = _make_app_with_bot(mock_bot_with_duel_cog)
+            client = TestClient(app, raise_server_exceptions=True)
+
+            resp = client.post(
+                f"/api/v1/internal/autocomplete/duel-cache/{_GUILD_ID}/{_PLAYER_ID}",
+                json={"pending_duels": _SAMPLE_PENDING_DUELS, "outgoing_duels": []},
+                # No auth header in dev mode
+            )
+
+        assert resp.status_code == 204, f"Expected 204 in dev mode (no token), got {resp.status_code}"
+
+    def test_empty_duel_lists_are_accepted(self, mock_bot_with_duel_cog, mock_duel_cog):
+        """POST with empty pending/outgoing lists → 204, caches set to empty lists (sentinel invalidation)."""
+        # Pre-populate caches so we can verify they are overwritten
+        mock_duel_cog._pending_duel_cache.set((_GUILD_ID, _PLAYER_ID), _SAMPLE_PENDING_DUELS)
+        mock_duel_cog._outgoing_duel_cache.set((_GUILD_ID, _PLAYER_ID), _SAMPLE_OUTGOING_DUELS)
+
+        with patch.dict(os.environ, {"INTERNAL_AUTH_TOKEN": _VALID_TOKEN}):
+            app = _make_app_with_bot(mock_bot_with_duel_cog)
+            client = TestClient(app, raise_server_exceptions=True)
+
+            resp = client.post(
+                f"/api/v1/internal/autocomplete/duel-cache/{_GUILD_ID}/{_PLAYER_ID}",
+                json={"pending_duels": [], "outgoing_duels": []},
+                headers={"X-Internal-Auth": _VALID_TOKEN},
+            )
+
+        assert resp.status_code == 204, f"Expected 204, got {resp.status_code}"
+        # Both caches should be overwritten with empty lists (expiry sentinel)
+        assert mock_duel_cog._pending_duel_cache.peek((_GUILD_ID, _PLAYER_ID)) == []
+        assert mock_duel_cog._outgoing_duel_cache.peek((_GUILD_ID, _PLAYER_ID)) == []
+
+    def test_push_then_peek_returns_new_duels(self, mock_bot_with_duel_cog, mock_duel_cog):
+        """After push, gateway cache reflects new duel state without a GET call.
+
+        Validates the 'no GET required' contract: executor pushes → gateway peek returns updated data.
+        """
+        fresh_pending = [{"id": 5, "challenger_id": 11, "target_id": _PLAYER_ID, "stakes": 200}]
+        fresh_outgoing = [{"id": 6, "challenger_id": _PLAYER_ID, "target_id": 22, "stakes": 0}]
+
+        # Verify cache is empty before push
+        assert mock_duel_cog._pending_duel_cache.peek((_GUILD_ID, _PLAYER_ID)) is None
+
+        with patch.dict(os.environ, {"INTERNAL_AUTH_TOKEN": _VALID_TOKEN}):
+            app = _make_app_with_bot(mock_bot_with_duel_cog)
+            client = TestClient(app, raise_server_exceptions=True)
+
+            resp = client.post(
+                f"/api/v1/internal/autocomplete/duel-cache/{_GUILD_ID}/{_PLAYER_ID}",
+                json={"pending_duels": fresh_pending, "outgoing_duels": fresh_outgoing},
+                headers={"X-Internal-Auth": _VALID_TOKEN},
+            )
+
+        assert resp.status_code == 204
+        peeked_pending = mock_duel_cog._pending_duel_cache.peek((_GUILD_ID, _PLAYER_ID))
+        assert peeked_pending is not None
+        assert peeked_pending[0]["id"] == 5
+        peeked_outgoing = mock_duel_cog._outgoing_duel_cache.peek((_GUILD_ID, _PLAYER_ID))
+        assert peeked_outgoing is not None
+        assert peeked_outgoing[0]["id"] == 6
+
+    def test_schema_rejects_missing_pending_duels_field(self, mock_bot_with_duel_cog):
+        """Missing pending_duels field → 422 Pydantic validation error."""
+        with patch.dict(os.environ, {"INTERNAL_AUTH_TOKEN": _VALID_TOKEN}):
+            app = _make_app_with_bot(mock_bot_with_duel_cog)
+            client = TestClient(app, raise_server_exceptions=False)
+
+            resp = client.post(
+                f"/api/v1/internal/autocomplete/duel-cache/{_GUILD_ID}/{_PLAYER_ID}",
+                json={"outgoing_duels": []},  # missing pending_duels
+                headers={"X-Internal-Auth": _VALID_TOKEN},
+            )
+
+        assert resp.status_code == 422, f"Expected 422 for missing pending_duels, got {resp.status_code}"
+
+    def test_schema_rejects_missing_outgoing_duels_field(self, mock_bot_with_duel_cog):
+        """Missing outgoing_duels field → 422 Pydantic validation error."""
+        with patch.dict(os.environ, {"INTERNAL_AUTH_TOKEN": _VALID_TOKEN}):
+            app = _make_app_with_bot(mock_bot_with_duel_cog)
+            client = TestClient(app, raise_server_exceptions=False)
+
+            resp = client.post(
+                f"/api/v1/internal/autocomplete/duel-cache/{_GUILD_ID}/{_PLAYER_ID}",
+                json={"pending_duels": []},  # missing outgoing_duels
+                headers={"X-Internal-Auth": _VALID_TOKEN},
+            )
+
+        assert resp.status_code == 422, f"Expected 422 for missing outgoing_duels, got {resp.status_code}"
+
+    def test_second_push_overwrites_first(self, mock_bot_with_duel_cog, mock_duel_cog):
+        """Second push for same (guild_id, player_id) overwrites the first (last-write-wins)."""
+        v1_pending = [{"id": 1, "stakes": 100}]
+        v2_pending = [{"id": 2, "stakes": 999}, {"id": 3, "stakes": 0}]
+
+        with patch.dict(os.environ, {"INTERNAL_AUTH_TOKEN": _VALID_TOKEN}):
+            app = _make_app_with_bot(mock_bot_with_duel_cog)
+            client = TestClient(app, raise_server_exceptions=True)
+
+            client.post(
+                f"/api/v1/internal/autocomplete/duel-cache/{_GUILD_ID}/{_PLAYER_ID}",
+                json={"pending_duels": v1_pending, "outgoing_duels": []},
+                headers={"X-Internal-Auth": _VALID_TOKEN},
+            )
+            resp = client.post(
+                f"/api/v1/internal/autocomplete/duel-cache/{_GUILD_ID}/{_PLAYER_ID}",
+                json={"pending_duels": v2_pending, "outgoing_duels": []},
+                headers={"X-Internal-Auth": _VALID_TOKEN},
+            )
+
+        assert resp.status_code == 204
+        peeked = mock_duel_cog._pending_duel_cache.peek((_GUILD_ID, _PLAYER_ID))
+        assert peeked == v2_pending, f"Last-write-wins: expected v2, got {peeked!r}"

@@ -87,6 +87,11 @@ class PlayerService:
                 # B.62: refresh display_name on every interaction when provided
                 if display_name is not None:
                     existing_player.display_name = display_name
+                # B.62: also keep the User.display_name fresh
+                if display_name is not None or discord_username is not None:
+                    await self.user_repo.get_or_create_user(
+                        db, discord_id, discord_username, display_name, commit=False
+                    )
                 return existing_player
 
             # New player path — guild must have a config row first.
@@ -96,7 +101,8 @@ class PlayerService:
                 raise GuildNotConfiguredError(guild_id)
 
             # Ensure user exists (commit=False — caller's transaction owns the commit).
-            user = await self.user_repo.get_or_create_user(db, discord_id, discord_username, commit=False)
+            # B.62: pass display_name so the User record is also kept up to date.
+            user = await self.user_repo.get_or_create_user(db, discord_id, discord_username, display_name, commit=False)
 
             # Create new player with default configuration
             player = await self._create_new_player(db, user, guild_id)

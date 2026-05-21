@@ -228,7 +228,7 @@ class TestGetOrCreatePlayer:
 
         await service.get_or_create_player(mock_db, discord_id=111, guild_id=999, discord_username="Alice")
 
-        mock_user_repo.get_or_create_user.assert_awaited_once_with(mock_db, 111, "Alice", commit=False)
+        mock_user_repo.get_or_create_user.assert_awaited_once_with(mock_db, 111, "Alice", None, commit=False)
 
     @pytest.mark.asyncio
     async def test_raises_guild_not_configured_when_no_config(
@@ -989,9 +989,7 @@ class TestGetPlayersByTier:
 
         await service.get_players_by_tier(mock_db, guild_id=12345, tier="Bronze")
 
-        mock_player_repo.get_players_by_guild.assert_awaited_once_with(
-            mock_db, 12345, active_within_days=None
-        )
+        mock_player_repo.get_players_by_guild.assert_awaited_once_with(mock_db, 12345, active_within_days=None)
 
     @pytest.mark.asyncio
     async def test_re_raises_repo_exception(self, service, mock_db, mock_player_repo):

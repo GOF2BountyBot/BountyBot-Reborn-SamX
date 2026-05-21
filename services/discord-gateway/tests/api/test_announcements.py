@@ -439,97 +439,15 @@ def _make_request_payload_with_payout(reward=80000, reward_per_sys=3000, route_l
 
 
 class TestPayoutEmbed:
-    """Tests for _build_payout_embed and its integration with create/edit endpoints."""
+    """Tests verifying the bounty board always sends a single embed (Item B).
 
-    def test_build_payout_embed_returns_none_when_reward_missing(self, announcements_test_app):
-        """_build_payout_embed returns None when reward is None."""
-        for mod_key in list(sys.modules.keys()):
-            if "api.routers.announcements" in mod_key:
-                sys.modules.pop(mod_key, None)
-        from api.routers.announcements import _build_payout_embed
-        from api.schemas.announcement_schemas import BountyAnnouncementMetadata
+    The payout breakdown embed has been removed from the bounty board path entirely.
+    All POST and PUT operations must send a single embed regardless of whether
+    payout metadata fields (reward, reward_per_sys, route_length) are present.
+    """
 
-        meta = BountyAnnouncementMetadata(
-            title="Test",
-            color=0xFF0000,
-            reward=None,
-            reward_per_sys=3000,
-            route_length=4,
-        )
-        assert _build_payout_embed(meta) is None
-
-    def test_build_payout_embed_returns_none_when_reward_per_sys_missing(self, announcements_test_app):
-        """_build_payout_embed returns None when reward_per_sys is None."""
-        from api.routers.announcements import _build_payout_embed
-        from api.schemas.announcement_schemas import BountyAnnouncementMetadata
-
-        meta = BountyAnnouncementMetadata(
-            title="Test",
-            color=0xFF0000,
-            reward=80000,
-            reward_per_sys=None,
-            route_length=4,
-        )
-        assert _build_payout_embed(meta) is None
-
-    def test_build_payout_embed_returns_none_when_route_length_missing(self, announcements_test_app):
-        """_build_payout_embed returns None when route_length is None."""
-        from api.routers.announcements import _build_payout_embed
-        from api.schemas.announcement_schemas import BountyAnnouncementMetadata
-
-        meta = BountyAnnouncementMetadata(
-            title="Test",
-            color=0xFF0000,
-            reward=80000,
-            reward_per_sys=3000,
-            route_length=None,
-        )
-        assert _build_payout_embed(meta) is None
-
-    def test_build_payout_embed_correct_field_values(self, announcements_test_app):
-        """_build_payout_embed computes capture_bonus=25% of reward, max_sys, max_total."""
-        import discord
-        from api.routers.announcements import _build_payout_embed
-        from api.schemas.announcement_schemas import BountyAnnouncementMetadata
-
-        # reward=80000, capture_bonus=int(80000*0.25)=20000
-        # reward_per_sys=3000, route_length=4 → max_sys=12000 → max_total=32000
-        meta = BountyAnnouncementMetadata(
-            title="Test",
-            color=0xFF0000,
-            reward=80000,
-            reward_per_sys=3000,
-            route_length=4,
-        )
-        embed = _build_payout_embed(meta)
-        assert embed is not None
-        assert isinstance(embed, discord.Embed)
-        assert embed.title == "💰 Payout Breakdown"
-        assert embed.color.value == 0xFFD700
-
-        # Extract field values by name
-        fields_by_name = {f.name: f.value for f in embed.fields}
-        assert fields_by_name["🎯 Capture Bonus"] == "20,000 cr"
-        assert fields_by_name["📍 Per System Check"] == "3,000 cr"
-        assert fields_by_name["🗺️ Route Length"] == "4 systems"
-        assert fields_by_name["💡 Max System Payout"] == "12,000 cr"
-        assert fields_by_name["🏆 Max Total Payout"] == "32,000 cr"
-
-    def test_build_payout_embed_all_fields_inline(self, announcements_test_app):
-        """All payout embed fields must be inline=True."""
-        from api.routers.announcements import _build_payout_embed
-        from api.schemas.announcement_schemas import BountyAnnouncementMetadata
-
-        meta = BountyAnnouncementMetadata(
-            title="Test", color=0xFF0000, reward=50000, reward_per_sys=2500, route_length=3
-        )
-        embed = _build_payout_embed(meta)
-        assert embed is not None
-        for field in embed.fields:
-            assert field.inline is True, f"Field {field.name!r} must be inline=True"
-
-    def test_create_with_payout_fields_sends_two_embeds(self, announcements_client, mock_bot):
-        """POST with payout fields present sends embeds=[main, payout] (2 embeds)."""
+    def test_create_with_payout_fields_sends_single_embed(self, announcements_client, mock_bot):
+        """POST with payout fields present sends a single embed (payout embed removed, Item B)."""
         import discord
 
         payload = _make_request_payload_with_payout(reward=80000, reward_per_sys=3000, route_length=4)
@@ -550,15 +468,14 @@ class TestPayoutEmbed:
             )
 
         assert response.status_code == 201
-        # channel.send must have been called with embeds=[...] (not embed=...)
         assert channel.send.called
         call_kwargs = channel.send.call_args.kwargs
-        assert "embeds" in call_kwargs, "Expected 'embeds' kwarg (2-embed path)"
-        assert "embed" not in call_kwargs, "Should NOT have 'embed' kwarg (single-embed path)"
-        assert len(call_kwargs["embeds"]) == 2
+        # Item B: always single embed regardless of payout fields
+        assert "embed" in call_kwargs, "Expected 'embed' kwarg (single-embed path)"
+        assert "embeds" not in call_kwargs, "Should NOT have 'embeds' kwarg after Item B"
 
     def test_create_without_payout_fields_sends_single_embed(self, announcements_client, mock_bot):
-        """POST without payout fields (None) sends embed=single (backward compat)."""
+        """POST without payout fields sends a single embed."""
         import discord
 
         payload = _make_request_payload()  # no payout fields → all None
@@ -581,11 +498,11 @@ class TestPayoutEmbed:
         assert response.status_code == 201
         assert channel.send.called
         call_kwargs = channel.send.call_args.kwargs
-        assert "embed" in call_kwargs, "Expected 'embed' kwarg (single-embed fallback)"
+        assert "embed" in call_kwargs, "Expected 'embed' kwarg (single-embed path)"
         assert "embeds" not in call_kwargs, "Should NOT have 'embeds' kwarg"
 
-    def test_edit_with_payout_fields_sends_two_embeds(self, announcements_client, mock_bot):
-        """PUT with payout fields present sends embeds=[main, payout] to message.edit."""
+    def test_edit_with_payout_fields_sends_single_embed(self, announcements_client, mock_bot):
+        """PUT with payout fields present sends a single embed to message.edit (Item B)."""
         import discord
 
         payload = _make_request_payload_with_payout(reward=80000, reward_per_sys=3000, route_length=4)
@@ -608,86 +525,24 @@ class TestPayoutEmbed:
         assert response.status_code == 200
         assert fetched_message.edit.called
         call_kwargs = fetched_message.edit.call_args.kwargs
-        assert "embeds" in call_kwargs, "Expected 'embeds' kwarg (2-embed path)"
-        assert "embed" not in call_kwargs, "Should NOT have 'embed' kwarg"
-        assert len(call_kwargs["embeds"]) == 2
+        # Item B: always single embed regardless of payout fields
+        assert "embed" in call_kwargs, "Expected 'embed' kwarg (single-embed path)"
+        assert "embeds" not in call_kwargs, "Should NOT have 'embeds' kwarg after Item B"
 
 
 # ===========================================================================
-# Adversarial / edge-case tests for _build_payout_embed
+# Additional single-embed enforcement tests (Item B)
 # ===========================================================================
 
 
 class TestPayoutEmbedAdversarial:
-    """Adversarial and boundary tests for _build_payout_embed."""
+    """Verifies the bounty board always uses single-embed after Item B removal."""
 
-    def test_build_payout_embed_route_length_zero(self, announcements_test_app):
-        """route_length=0 must not divide by zero and must render cleanly.
+    def test_edit_captured_state_sends_single_embed(self, announcements_client, mock_bot):
+        """PUT with captured=True sends a single embed (no payout embed after Item B).
 
-        max_sys_payout = reward_per_sys * 0 = 0
-        max_total = capture_bonus + 0 = capture_bonus
-        No crash, no nonsensical output.
-        """
-        import discord
-        from api.routers.announcements import _build_payout_embed
-        from api.schemas.announcement_schemas import BountyAnnouncementMetadata
-
-        meta = BountyAnnouncementMetadata(
-            title="Test",
-            color=0xFF0000,
-            reward=40000,
-            reward_per_sys=1000,
-            route_length=0,
-        )
-        embed = _build_payout_embed(meta)
-        assert embed is not None, "route_length=0 must not cause None return (all fields present)"
-        assert isinstance(embed, discord.Embed)
-
-        fields_by_name = {f.name: f.value for f in embed.fields}
-        # capture_bonus = int(40000 * 0.25) = 10000
-        assert fields_by_name["🎯 Capture Bonus"] == "10,000 cr"
-        # max_sys = 1000 * 0 = 0
-        assert fields_by_name["💡 Max System Payout"] == "0 cr"
-        # route length field
-        assert fields_by_name["🗺️ Route Length"] == "0 systems"
-        # max_total = 10000 + 0 = 10000
-        assert fields_by_name["🏆 Max Total Payout"] == "10,000 cr"
-
-    def test_build_payout_embed_reward_per_sys_zero(self, announcements_test_app):
-        """reward_per_sys=0 is a valid int (not None) and must render '0 cr', not fall into None branch.
-
-        A classic-mode bounty or a bounty with no per-sys payout would have
-        reward_per_sys=0.  Pydantic's int | None type accepts 0 as a concrete
-        value, so the guard 'if meta.reward_per_sys is None' must not trigger.
-        """
-        import discord
-        from api.routers.announcements import _build_payout_embed
-        from api.schemas.announcement_schemas import BountyAnnouncementMetadata
-
-        meta = BountyAnnouncementMetadata(
-            title="Test",
-            color=0xFF0000,
-            reward=50000,
-            reward_per_sys=0,
-            route_length=5,
-        )
-        embed = _build_payout_embed(meta)
-        assert embed is not None, "reward_per_sys=0 must not be treated as None/missing"
-        assert isinstance(embed, discord.Embed)
-
-        fields_by_name = {f.name: f.value for f in embed.fields}
-        assert fields_by_name["📍 Per System Check"] == "0 cr", (
-            "reward_per_sys=0 must render '0 cr', not fall into None branch"
-        )
-        # max_sys = 0 * 5 = 0
-        assert fields_by_name["💡 Max System Payout"] == "0 cr"
-
-    def test_edit_captured_state_still_sends_payout_embed(self, announcements_client, mock_bot):
-        """PUT with captured=True and payout fields present still sends embeds=[main, payout].
-
-        The payout embed is built from metadata (reward/reward_per_sys/route_length),
-        which are independent of the captured flag.  Captured only affects the
-        main embed (suppresses loadout sections and clears image).
+        The payout embed was removed from the bounty board path in Item B.
+        The captured flag only affects the main embed layout (suppresses loadout sections).
         """
         import discord
 
@@ -713,16 +568,16 @@ class TestPayoutEmbedAdversarial:
         assert response.status_code == 200
         assert fetched_message.edit.called
         call_kwargs = fetched_message.edit.call_args.kwargs
-        # Payout embed must still be present even in captured state
-        assert "embeds" in call_kwargs, "captured=True must still send 2 embeds when payout fields present"
-        assert len(call_kwargs["embeds"]) == 2, "Must have [main_embed, payout_embed]"
+        # Item B: always single embed — no payout embed on bounty board
+        assert "embed" in call_kwargs, "Expected 'embed' kwarg (single-embed path)"
+        assert "embeds" not in call_kwargs, "Should NOT have 'embeds' kwarg after Item B"
 
-    def test_edit_captured_image_is_on_first_embed_not_second(self, announcements_client, mock_bot):
-        """Image preservation reads from existing_embeds[0], not the payout embed.
+    def test_edit_image_preservation_reads_from_first_embed(self, announcements_client, mock_bot):
+        """Image preservation reads from existing_embeds[0].
 
-        When editing with embeds=[main, payout], the image URL (route map) must
-        be on the first embed (main_embed).  The payout embed must have no image.
-        This verifies the image-preservation logic targets embeds[0].
+        When the existing message has multiple embeds (e.g. from a previous state
+        before Item B), the image URL (route map) must be read from the first embed
+        (embeds[0]). This verifies the image-preservation logic correctly targets embeds[0].
         """
         import discord
 

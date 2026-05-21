@@ -1,6 +1,6 @@
 # BountyBot Open Items
 
-Last updated: 2026-05-15
+Last updated: 2026-05-21 (Items A/B/C complete)
 
 ---
 
@@ -18,10 +18,10 @@ Last updated: 2026-05-15
 |----|-----|---------|-------|
 | B.96 | 🔵 | `/equip` slot-full / item-replace interaction is not ephemeral — should be a hidden/transient interaction visible only to the invoking player | All `/equip` responses (including the slot-full prompt and any replace confirmation) must use `ephemeral=True`. Locate in `discord-gateway/src/cogs/inventoryCog.py`. |
 | B.95 | 🔵 | `/promote` and `/demote` tier-change confirmation embed is ephemeral but the success response may not be — success should be **public** and mention the player by display name so the guild sees who promoted | Confirm whether the post-confirm success embed uses `ephemeral=True` or posts publicly. If ephemeral, change to public and include `{interaction.user.mention}` in the title/description. `playerCog.py` around the `await interaction.followup.send(embed=embed)` call after promotion succeeds. |
+| B.62 | 🟢 | No `display_name` column — player-facing names showed `discord_username` instead of display name | **Fixed 2026-05-21**: Alembic migration `0007_add_user_display_name`; `User.display_name` column added; `get_or_create_user` persists it; `playerCog` passes `interaction.user.display_name` on `/profile`; capture payout embed uses `display_name` with fallback to `discord_username`. |
 | B.82 | 🔵 | Combat summary embed should surface the PvC armour buff (Keith T Maxwell bonus) | Add `pvc_armour_buff_applied: bool` + `pvc_armour_buff_factor: float` to `/combat-bonus` response (`bot-core/src/api/routers/bounties.py`); read in `bountyCog.py` combat summary embed builder |
 | B.67 | 🔵 | `duel_expire` executor has no bulk sweep mode — requires `duel_id` in payload; firing without one returns error and does nothing | Option A: add bulk mode when `duel_id` omitted (expire all past `expires_at`) in `bot-core/src/utils/executors/duel_expire_executor.py`. Option B: document the limitation. |
-| B.63 | 🟡 | Duel result embed is ambiguous when both players use the same ship model (both show e.g. "Betty") | Blocked by B.62. Files: `bot-core/src/api/routers/duels.py`, `discord-gateway/src/cogs/duelCog.py` |
-| B.62 | 🟡 | No `display_name` column — all player-facing name fields show `discord_username` (e.g. `samx.ai`) instead of display name (e.g. `SamAccountX`) | Requires: Alembic migration adding `display_name: str \| None` to `users` table; populate on `/register` from `interaction.user.display_name`; update all name-resolution in cogs and bot-core |
+| B.63 | 🟡 | Duel result embed is ambiguous when both players use the same ship model (both show e.g. "Betty") | Blocked by B.62 — now unblocked. Files: `bot-core/src/api/routers/duels.py`, `discord-gateway/src/cogs/duelCog.py` |
 
 ---
 
@@ -58,6 +58,7 @@ Fixed-in-code items are treated as closed. Live re-test is confirmatory only.
 
 | ID | Sev | Summary | Notes |
 |----|-----|---------|-------|
+| ENH-04 | 🔵 | Allow duel commands additionally in `#bounty-discussions` channel | Duel challenges get lost in `#bounty-hunting` noise. Goal: `/duel-challenge`, `/duel-accept`, `/duel-reject` should be usable in **both** `#bounty-hunting` (unchanged) **and** `#bounty-discussions` (new). All bounty activity (spawns, captures, `/check`, etc.) stays limited to `#bounty-hunting` — this is additive only. Implementation requires: (1) add `bounty_discussions_channel_id` to `GuildConfig` model + Alembic migration, (2) add it to `/setup` config flow, (3) add channel allow-list check in `duelCog.py` for all three duel commands. Tabled for deeper investigation. |
 | ENH-03 | 🟠 | Autocomplete cache overhaul — ~15–20 of 37 handlers make 1–3 HTTP calls per keystroke; endemic `POST /players/` on every keystroke, uncached inventory/ships lookups | **Fully designed — see `DESIGN_autocomplete_cache.md`.** 8-phase rollout: proactively-warmed caches (APScheduler in gateway), bot-core push for shop/bounty data, shared `autocomplete_state.py` module, `AutocompleteCache.peek()` addition. Phases 1–3 are infra-only (zero regression risk); first user-visible perf wins at Phase 4. ~1,400 LoC src / ~1,200 LoC tests total. |
 | ENH-01 | 🔵 | Shop item TNN re-indexing — replace global auto-increment IDs with human-readable `TNN` codes (`T`=tier digit, `NN`=position within tier, e.g. `105` = Bronze item #5) | **Tabled for later.** Fully scoped and designed — see Appendix A. Prerequisite for the per-tier shop announcement (ENH-02) showing actionable codes. Recommended implementation: display-layer only (no DB migration). ~6h effort. Requires coordinated changes in `shopCog.py`, `shops.py` router, `shops_schema.py`, and a new `shop_tnn.py` helper. Also requires a new gateway `PUT /api/v1/cache/shop/{guild_id}/{tier}` push endpoint and a per-user tier cache to hit the ≤100ms autocomplete budget — see Appendix B. |
 | ENH-02 | 🔵 | Per-tier shop refresh announcement — post new inventory embed to shop channel for each tier refreshed, with tier-specific color and bold header | **Tabled for later** (depends on ENH-01 for TNN codes in the embed). Fully scoped and designed — see Appendix A. ~2h effort once ENH-01 is done. Changes: `shop_refresh_executor.py` (per-tier loop), `shop_announcement.py` (inventory embed builder + tier colors). No DB changes. |

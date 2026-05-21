@@ -1586,18 +1586,27 @@ class BountyService:
             if not hunting_channel_id:
                 return
 
-            # Resolve winner display name from win_user_id → User.discord_username
+            # Resolve winner display name: prefer display_name, fall back to discord_username
             winner_name = "A bounty hunter"
             win_user_id = getattr(bounty, "win_user_id", None)
             if win_user_id:
                 user_repo = UserRepository()
                 user = await user_repo.get_by_id(db, win_user_id)
-                if user and getattr(user, "discord_username", None):
-                    winner_name = user.discord_username
+                if user:
+                    winner_name = (
+                        getattr(user, "display_name", None)
+                        or getattr(user, "discord_username", None)
+                        or "A bounty hunter"
+                    )
 
             reward = getattr(outcome, "reward", None) or getattr(bounty, "reward", 0)
             total_reward = getattr(outcome, "total_reward", None)
             bonus_won = getattr(outcome, "bonus_won", False)
+
+            # Pass reward_per_sys and route_length from the bounty if available
+            reward_per_sys = getattr(bounty, "reward_per_sys", None)
+            route = getattr(bounty, "route", None)
+            route_length = len(list(route)) if route is not None else None
 
             embed_dict = build_capture_payout_embed(
                 criminal_name=bounty.criminal_name,
@@ -1606,6 +1615,8 @@ class BountyService:
                 winner_name=winner_name,
                 total_reward=total_reward,
                 bonus_won=bonus_won,
+                reward_per_sys=reward_per_sys,
+                route_length=route_length,
             )
 
             gateway_host = os.getenv("DISCORD_GATEWAY_HOST", "discord-gateway")
@@ -1615,7 +1626,7 @@ class BountyService:
             async with _httpx.AsyncClient() as client:
                 resp = await client.post(
                     f"{gateway_url}/channels/{hunting_channel_id}/messages",
-                    json={"embeds": [embed_dict]},
+                    json={"content": embed_dict, "text_content": None},
                     timeout=5.0,
                 )
             resp.raise_for_status()

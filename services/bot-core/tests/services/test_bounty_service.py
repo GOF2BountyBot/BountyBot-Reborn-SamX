@@ -4820,3 +4820,345 @@ class TestCalcRewardsForfeited:
         assert 2 in player_ids  # real checker
         for r in rewards:
             assert r.player_id > 0
+
+
+# ===========================================================================
+# Tests: _post_capture_payout (C.3 — 422 fix + display_name + payload shape)
+# ===========================================================================
+
+
+class TestPostCapturePayoutPayloadShape:
+    """Verify _post_capture_payout sends the correct JSON payload shape (C.3 422-fix).
+
+    The 422 error was caused by sending {"embeds": [embed_dict]} instead of
+    {"content": embed_dict, "text_content": None}.  These tests assert the
+    correct payload shape and the display_name fallback chain.
+    """
+
+    # Helper factories
+    @staticmethod
+    def _make_config(hunting_channel_id=9999):
+        cfg = MagicMock()
+        cfg.hunting_channel_id = hunting_channel_id
+        return cfg
+
+    @staticmethod
+    def _make_bounty(
+        bounty_id=42,
+        criminal_name="Pal Tyyrt",
+        division="gold",
+        reward=80000,
+        reward_per_sys=3000,
+        win_user_id=101,
+        route=None,
+    ):
+        b = MagicMock()
+        b.id = bounty_id
+        b.criminal_name = criminal_name
+        b.division = division
+        b.reward = reward
+        b.reward_per_sys = reward_per_sys
+        b.win_user_id = win_user_id
+        b.route = route or ["Pan", "Mido", "Pescal Ansen"]
+        return b
+
+    @staticmethod
+    def _make_outcome(reward=80000, total_reward=100000, bonus_won=True):
+        o = MagicMock()
+        o.reward = reward
+        o.total_reward = total_reward
+        o.bonus_won = bonus_won
+        return o
+
+    @staticmethod
+    def _make_user(discord_username="SamX", display_name=None):
+        u = MagicMock()
+        u.discord_username = discord_username
+        u.display_name = display_name
+        return u
+
+    @pytest.fixture
+    def service(self):
+        from services.bounty_service import BountyService
+
+        return BountyService()
+
+    @pytest.fixture
+    def mock_db(self):
+        return AsyncMock()
+
+    @pytest.mark.asyncio
+    async def test_payload_sends_content_not_embeds(self, service, mock_db):
+        """C.3: _post_capture_payout must send {content: ..., text_content: None}, NOT {embeds: [...]}."""
+        captured_json: list = []
+
+        class MockAsyncClient:
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *args):
+                pass
+
+            async def post(self, url, json=None, timeout=None):
+                captured_json.append(json)
+                resp = MagicMock()
+                resp.raise_for_status = MagicMock()
+                return resp
+
+        config = self._make_config(hunting_channel_id=12345)
+        bounty = self._make_bounty(win_user_id=None)
+        outcome = self._make_outcome()
+
+        with (
+            patch("persist.repositories.config_repository.ConfigRepository.get_by_guild_id", new=AsyncMock(return_value=config)),
+            patch("persist.repositories.user_repository.UserRepository.get_by_id", new=AsyncMock(return_value=None)),
+            patch("httpx.AsyncClient", MockAsyncClient),
+        ):
+            # Should not raise
+            await service._post_capture_payout(mock_db, guild_id=1, bounty=bounty, outcome=outcome)
+
+        assert len(captured_json) == 1
+        payload = captured_json[0]
+        # C.3 fix: must use 'content' key, NOT 'embeds'
+        assert "content" in payload, f"Payload must have 'content' key, got keys: {list(payload.keys())}"
+        assert "embeds" not in payload, f"Payload must NOT have 'embeds' key after C.3 fix"
+        assert "text_content" in payload, f"Payload must have 'text_content' key"
+        assert payload["text_content"] is None
+
+    @pytest.mark.asyncio
+    async def test_payload_content_is_embed_dict(self, service, mock_db):
+        """C.3: The 'content' value must be a dict (the embed payload)."""
+        captured_json: list = []
+
+        class MockAsyncClient:
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *args):
+                pass
+
+            async def post(self, url, json=None, timeout=None):
+                captured_json.append(json)
+                resp = MagicMock()
+                resp.raise_for_status = MagicMock()
+                return resp
+
+        config = self._make_config(hunting_channel_id=12345)
+        bounty = self._make_bounty(win_user_id=None)
+        outcome = self._make_outcome()
+
+        with (
+            patch("persist.repositories.config_repository.ConfigRepository.get_by_guild_id", new=AsyncMock(return_value=config)),
+            patch("persist.repositories.user_repository.UserRepository.get_by_id", new=AsyncMock(return_value=None)),
+            patch("httpx.AsyncClient", MockAsyncClient),
+        ):
+            await service._post_capture_payout(mock_db, guild_id=1, bounty=bounty, outcome=outcome)
+
+        assert len(captured_json) == 1
+        content = captured_json[0]["content"]
+        assert isinstance(content, dict), f"'content' must be a dict, got {type(content)}"
+        # Must have embed title and color
+        assert content.get("title") == "💰 Bounty Captured!", f"Embed title wrong: {content.get('title')}"
+        assert content.get("color") == 0xFFD700, f"Embed color must be gold (0xFFD700)"
+
+    @pytest.mark.asyncio
+    async def test_winner_name_prefers_display_name_over_username(self, service, mock_db):
+        """C.3: winner_name prefers display_name → discord_username → 'A bounty hunter'."""
+        captured_json: list = []
+
+        class MockAsyncClient:
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *args):
+                pass
+
+            async def post(self, url, json=None, timeout=None):
+                captured_json.append(json)
+                resp = MagicMock()
+                resp.raise_for_status = MagicMock()
+                return resp
+
+        config = self._make_config(hunting_channel_id=12345)
+        bounty = self._make_bounty(win_user_id=101)
+        outcome = self._make_outcome()
+        # User with BOTH display_name and discord_username set
+        user = self._make_user(discord_username="SamX_username", display_name="SamX Display")
+
+        with (
+            patch("persist.repositories.config_repository.ConfigRepository.get_by_guild_id", new=AsyncMock(return_value=config)),
+            patch("persist.repositories.user_repository.UserRepository.get_by_id", new=AsyncMock(return_value=user)),
+            patch("httpx.AsyncClient", MockAsyncClient),
+        ):
+            await service._post_capture_payout(mock_db, guild_id=1, bounty=bounty, outcome=outcome)
+
+        assert len(captured_json) == 1
+        embed = captured_json[0]["content"]
+        fields = {f["name"]: f["value"] for f in embed.get("fields", [])}
+        # display_name should win over discord_username
+        assert fields.get("⚔️ Claimed by") == "SamX Display", (
+            f"Expected display_name='SamX Display' to win, got: {fields.get('⚔️ Claimed by')}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_winner_name_falls_back_to_username_when_no_display_name(self, service, mock_db):
+        """C.3: Falls back to discord_username when display_name is None."""
+        captured_json: list = []
+
+        class MockAsyncClient:
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *args):
+                pass
+
+            async def post(self, url, json=None, timeout=None):
+                captured_json.append(json)
+                resp = MagicMock()
+                resp.raise_for_status = MagicMock()
+                return resp
+
+        config = self._make_config(hunting_channel_id=12345)
+        bounty = self._make_bounty(win_user_id=101)
+        outcome = self._make_outcome()
+        # User with display_name=None → should fall back to discord_username
+        user = self._make_user(discord_username="SamX_username", display_name=None)
+
+        with (
+            patch("persist.repositories.config_repository.ConfigRepository.get_by_guild_id", new=AsyncMock(return_value=config)),
+            patch("persist.repositories.user_repository.UserRepository.get_by_id", new=AsyncMock(return_value=user)),
+            patch("httpx.AsyncClient", MockAsyncClient),
+        ):
+            await service._post_capture_payout(mock_db, guild_id=1, bounty=bounty, outcome=outcome)
+
+        assert len(captured_json) == 1
+        embed = captured_json[0]["content"]
+        fields = {f["name"]: f["value"] for f in embed.get("fields", [])}
+        assert fields.get("⚔️ Claimed by") == "SamX_username", (
+            f"Expected discord_username='SamX_username' as fallback, got: {fields.get('⚔️ Claimed by')}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_winner_name_falls_back_to_default_when_no_user(self, service, mock_db):
+        """C.3: Falls back to 'A bounty hunter' when user record not found."""
+        captured_json: list = []
+
+        class MockAsyncClient:
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *args):
+                pass
+
+            async def post(self, url, json=None, timeout=None):
+                captured_json.append(json)
+                resp = MagicMock()
+                resp.raise_for_status = MagicMock()
+                return resp
+
+        config = self._make_config(hunting_channel_id=12345)
+        bounty = self._make_bounty(win_user_id=101)
+        outcome = self._make_outcome()
+
+        with (
+            patch("persist.repositories.config_repository.ConfigRepository.get_by_guild_id", new=AsyncMock(return_value=config)),
+            patch("persist.repositories.user_repository.UserRepository.get_by_id", new=AsyncMock(return_value=None)),
+            patch("httpx.AsyncClient", MockAsyncClient),
+        ):
+            await service._post_capture_payout(mock_db, guild_id=1, bounty=bounty, outcome=outcome)
+
+        assert len(captured_json) == 1
+        embed = captured_json[0]["content"]
+        fields = {f["name"]: f["value"] for f in embed.get("fields", [])}
+        assert fields.get("⚔️ Claimed by") == "A bounty hunter", (
+            f"Expected 'A bounty hunter' default, got: {fields.get('⚔️ Claimed by')}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_exception_is_caught_and_logged_as_warning(self, service, mock_db):
+        """C.3: _post_capture_payout is non-fatal — exceptions must not propagate."""
+        config = self._make_config(hunting_channel_id=12345)
+        bounty = self._make_bounty(win_user_id=None)
+        outcome = self._make_outcome()
+
+        class ExplodingAsyncClient:
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *args):
+                pass
+
+            async def post(self, url, json=None, timeout=None):
+                raise RuntimeError("Gateway connection refused")
+
+        with (
+            patch("persist.repositories.config_repository.ConfigRepository.get_by_guild_id", new=AsyncMock(return_value=config)),
+            patch("persist.repositories.user_repository.UserRepository.get_by_id", new=AsyncMock(return_value=None)),
+            patch("httpx.AsyncClient", ExplodingAsyncClient),
+        ):
+            # Must NOT raise — non-fatal
+            await service._post_capture_payout(mock_db, guild_id=1, bounty=bounty, outcome=outcome)
+
+    @pytest.mark.asyncio
+    async def test_skips_when_no_config(self, service, mock_db):
+        """C.3: When no config exists, _post_capture_payout silently returns."""
+        bounty = self._make_bounty()
+        outcome = self._make_outcome()
+
+        with patch(
+            "persist.repositories.config_repository.ConfigRepository.get_by_guild_id",
+            new=AsyncMock(return_value=None),
+        ):
+            # Should not raise and should NOT attempt any HTTP call
+            await service._post_capture_payout(mock_db, guild_id=1, bounty=bounty, outcome=outcome)
+
+    @pytest.mark.asyncio
+    async def test_skips_when_no_hunting_channel(self, service, mock_db):
+        """C.3: When hunting_channel_id is None, silently returns."""
+        config = self._make_config(hunting_channel_id=None)
+        bounty = self._make_bounty()
+        outcome = self._make_outcome()
+
+        with patch(
+            "persist.repositories.config_repository.ConfigRepository.get_by_guild_id",
+            new=AsyncMock(return_value=config),
+        ):
+            await service._post_capture_payout(mock_db, guild_id=1, bounty=bounty, outcome=outcome)
+
+    @pytest.mark.asyncio
+    async def test_sys_checks_field_absent_when_no_reward_per_sys(self, service, mock_db):
+        """C.3/C.2: System Checks field omitted when reward_per_sys is None."""
+        captured_json: list = []
+
+        class MockAsyncClient:
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *args):
+                pass
+
+            async def post(self, url, json=None, timeout=None):
+                captured_json.append(json)
+                resp = MagicMock()
+                resp.raise_for_status = MagicMock()
+                return resp
+
+        config = self._make_config(hunting_channel_id=12345)
+        # Bounty with no reward_per_sys
+        bounty = self._make_bounty(win_user_id=None, reward_per_sys=None)
+        bounty.reward_per_sys = None
+        outcome = self._make_outcome()
+
+        with (
+            patch("persist.repositories.config_repository.ConfigRepository.get_by_guild_id", new=AsyncMock(return_value=config)),
+            patch("persist.repositories.user_repository.UserRepository.get_by_id", new=AsyncMock(return_value=None)),
+            patch("httpx.AsyncClient", MockAsyncClient),
+        ):
+            await service._post_capture_payout(mock_db, guild_id=1, bounty=bounty, outcome=outcome)
+
+        assert len(captured_json) == 1
+        embed = captured_json[0]["content"]
+        field_names = [f["name"] for f in embed.get("fields", [])]
+        assert "📍 System Checks" not in field_names, (
+            "System Checks field must be absent when reward_per_sys is None"
+        )

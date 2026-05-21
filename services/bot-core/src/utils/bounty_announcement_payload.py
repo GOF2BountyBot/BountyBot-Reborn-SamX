@@ -142,42 +142,66 @@ def build_capture_payout_embed(
     winner_name: str = "A bounty hunter",
     total_reward: int | None = None,
     bonus_won: bool = False,
+    reward_per_sys: int | None = None,
+    route_length: int | None = None,
 ) -> dict[str, Any]:
-    """Build a simple capture payout embed for posting to #bounty-hunting.
+    """Build a rich "💰 Bounty Captured!" embed for posting to the hunting channel.
 
-    Shows who captured the criminal, what they earned, and whether there was a
-    combat bonus.
+    Produces a gold embed with Division, Claimed by, Base Reward, Capture Bonus,
+    System Checks (if available), and Total Payout fields.
 
     Args:
         criminal_name: Name of the captured criminal.
         division: Division tier (bronze / silver / gold / platinum) — used for color.
-        reward: Base reward earned by the winner (without combat bonus).
-        winner_name: Display name of the player who captured the bounty.
-        total_reward: Final reward including any combat bonus.  When None or equal
-            to ``reward``, only the base reward is displayed.
-        bonus_won: When True and ``total_reward`` differs from ``reward``, a combat
-            bonus breakdown line is added.
+        reward: Base reward for the bounty.
+        winner_name: Display name (already resolved) of the player who captured.
+        total_reward: Final reward including capture bonus + system checks.
+            When None, computed from reward alone.
+        bonus_won: Kept for backwards compatibility; not used in the new embed layout.
+        reward_per_sys: Per-system-check payout amount. When provided alongside
+            ``route_length``, a 📍 System Checks field is included.
+        route_length: Number of systems in the bounty route. Used with
+            ``reward_per_sys`` to compute the max system check payout.
 
     Returns:
         A Discord embed payload dict compatible with the gateway message builder.
     """
-    color = TIER_COLORS.get((division or "").lower(), _DEFAULT_COLOR)
+    capture_bonus = int(reward * 0.25)
 
-    if bonus_won and total_reward is not None and total_reward != reward:
-        bonus = total_reward - reward
-        description = (
-            f"**{winner_name}** captured **{criminal_name}**\n"
-            f"Base reward: {reward:,} cr\n"
-            f"Combat bonus: +{bonus:,} cr (×2)\n"
-            f"**Total: {total_reward:,} cr**"
-        )
+    # Compute system checks payout
+    max_sys_payout: int | None = None
+    if reward_per_sys is not None and route_length is not None:
+        max_sys_payout = reward_per_sys * route_length
+
+    # Compute total payout
+    if total_reward is not None:
+        effective_total = total_reward
     else:
-        description = f"**{winner_name}** captured **{criminal_name}**\n**Earned: {reward:,} cr**"
+        effective_total = capture_bonus + (max_sys_payout if max_sys_payout is not None else 0)
+
+    fields: list[dict[str, Any]] = [
+        {"name": "🏆 Division", "value": (division or "Unknown").capitalize(), "inline": True},
+        {"name": "⚔️ Claimed by", "value": winner_name, "inline": True},
+        {"name": "💵 Base Reward", "value": f"{reward:,} cr", "inline": False},
+        {"name": "🎯 Capture Bonus", "value": f"{capture_bonus:,} cr", "inline": True},
+    ]
+
+    if max_sys_payout is not None:
+        fields.append(
+            {
+                "name": "📍 System Checks",
+                "value": f"{reward_per_sys:,} cr × {route_length} = {max_sys_payout:,} cr",
+                "inline": True,
+            }
+        )
+
+    fields.append({"name": "🏆 Total Payout", "value": f"**{effective_total:,} cr**", "inline": True})
 
     return {
-        "title": "💰 Payout",
-        "description": description,
-        "color": color,
+        "title": "💰 Bounty Captured!",
+        "description": f"{criminal_name} has been brought in.",
+        "color": 0xFFD700,  # Gold
+        "fields": fields,
     }
 
 

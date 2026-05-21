@@ -605,8 +605,7 @@ class PlayerCog(commands.Cog):
                 else:
                     # NO_DATA: player has no active ship (should not occur in normal play)
                     verdict_line = (
-                        "\n**Power Check** ⚪ Could not evaluate combat readiness"
-                        " — ensure you have a ship equipped."
+                        "\n**Power Check** ⚪ Could not evaluate combat readiness — ensure you have a ship equipped."
                     )
             except Exception as e:  # pylint: disable=broad-exception-caught
                 flogger.warning(f"/promote: preflight failed (continuing without verdict): {e}")
@@ -795,9 +794,7 @@ class PlayerCog(commands.Cog):
 
             # Early cooldown check — reuse promotion-status endpoint which now
             # includes the cooldown advisory for both promote and demote paths.
-            status_resp = await self.http_client.get(
-                f"{api_base}/players/{player_id}/promotion-status", timeout=10
-            )
+            status_resp = await self.http_client.get(f"{api_base}/players/{player_id}/promotion-status", timeout=10)
             status_resp.raise_for_status()
             status_data = status_resp.json()
             if status_data.get("on_cooldown"):

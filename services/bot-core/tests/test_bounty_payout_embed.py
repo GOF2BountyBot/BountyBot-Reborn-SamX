@@ -27,7 +27,7 @@ if "sqlalchemy_utils" not in sys.modules:
     _mock_sqla_utils.UUIDType = MagicMock()
     sys.modules["sqlalchemy_utils"] = _mock_sqla_utils
 
-from utils.bounty_announcement_payload import TIER_COLORS, build_bounty_cap_payout_embed
+from utils.bounty_announcement_payload import TIER_COLORS, build_bounty_cap_payout_embed, build_capture_payout_embed
 
 
 def _make_bounty_orm(division: str, reward: int):
@@ -176,7 +176,7 @@ class TestBuildBountyCapPayoutEmbedAdversarial:
     def test_bounty_with_empty_division_is_skipped(self):
         """Bounty dicts with empty division string are silently skipped."""
         bounties = [
-            _make_bounty_dict("", 300),   # empty string
+            _make_bounty_dict("", 300),  # empty string
             _make_bounty_dict("bronze", 500),
         ]
         result = build_bounty_cap_payout_embed(bounties, capped_tier="bronze")
@@ -231,3 +231,150 @@ class TestBuildBountyCapPayoutEmbedAdversarial:
         assert "fields" in result
         assert "footer" in result
         assert isinstance(result["fields"], list)
+
+
+# ===========================================================================
+# Tests for build_capture_payout_embed (C.2 refactor)
+# ===========================================================================
+
+
+class TestBuildCapturePayoutEmbed:
+    """Tests for the refactored build_capture_payout_embed (C.2).
+
+    Acceptance criteria:
+    - Title is "💰 Bounty Captured!"
+    - Description is "{criminal_name} has been brought in."
+    - Color is gold (0xFFD700)
+    - Fields in order: Division, Claimed by, Base Reward, Capture Bonus,
+      System Checks (if provided), Total Payout
+    - System Checks field is omitted when reward_per_sys/route_length not provided
+    """
+
+    def test_title_is_correct(self):
+        """Title must be '💰 Bounty Captured!'."""
+        result = build_capture_payout_embed("TestCriminal", "bronze", 10000)
+        assert result["title"] == "💰 Bounty Captured!"
+
+    def test_description_includes_criminal_name(self):
+        """Description must include criminal_name."""
+        result = build_capture_payout_embed("Mordecai Krill", "silver", 50000)
+        assert result["description"] == "Mordecai Krill has been brought in."
+
+    def test_color_is_gold(self):
+        """Color must be gold (0xFFD700) regardless of division."""
+        result_bronze = build_capture_payout_embed("X", "bronze", 10000)
+        result_plat = build_capture_payout_embed("X", "platinum", 50000)
+        assert result_bronze["color"] == 0xFFD700
+        assert result_plat["color"] == 0xFFD700
+
+    def test_fields_present_without_sys_checks(self):
+        """Four fields are present when reward_per_sys/route_length not provided."""
+        result = build_capture_payout_embed("Criminal", "gold", 80000, winner_name="Hunter")
+        fields_by_name = {f["name"]: f for f in result["fields"]}
+        assert "🏆 Division" in fields_by_name
+        assert "⚔️ Claimed by" in fields_by_name
+        assert "💵 Base Reward" in fields_by_name
+        assert "🎯 Capture Bonus" in fields_by_name
+        assert "🏆 Total Payout" in fields_by_name
+        # No system checks field since not provided
+        assert "📍 System Checks" not in fields_by_name
+
+    def test_fields_present_with_sys_checks(self):
+        """System checks field appears when reward_per_sys and route_length provided."""
+        result = build_capture_payout_embed(
+            "Criminal", "gold", 80000, winner_name="Hunter", reward_per_sys=3000, route_length=4
+        )
+        fields_by_name = {f["name"]: f for f in result["fields"]}
+        assert "📍 System Checks" in fields_by_name
+
+    def test_division_field_value(self):
+        """Division field shows capitalized division name."""
+        result = build_capture_payout_embed("Criminal", "silver", 50000)
+        fields_by_name = {f["name"]: f["value"] for f in result["fields"]}
+        assert fields_by_name["🏆 Division"] == "Silver"
+
+    def test_winner_name_in_claimed_by_field(self):
+        """Claimed by field shows winner_name."""
+        result = build_capture_payout_embed("Criminal", "gold", 80000, winner_name="SamX")
+        fields_by_name = {f["name"]: f["value"] for f in result["fields"]}
+        assert fields_by_name["⚔️ Claimed by"] == "SamX"
+
+    def test_default_winner_name(self):
+        """Default winner_name is 'A bounty hunter'."""
+        result = build_capture_payout_embed("Criminal", "bronze", 10000)
+        fields_by_name = {f["name"]: f["value"] for f in result["fields"]}
+        assert fields_by_name["⚔️ Claimed by"] == "A bounty hunter"
+
+    def test_base_reward_formatted_with_commas(self):
+        """Base reward is formatted with commas and 'cr'."""
+        result = build_capture_payout_embed("Criminal", "gold", 80000)
+        fields_by_name = {f["name"]: f["value"] for f in result["fields"]}
+        assert fields_by_name["💵 Base Reward"] == "80,000 cr"
+
+    def test_capture_bonus_is_25_percent(self):
+        """Capture bonus is 25% of base reward (int floor)."""
+        result = build_capture_payout_embed("Criminal", "gold", 80000)
+        fields_by_name = {f["name"]: f["value"] for f in result["fields"]}
+        assert fields_by_name["🎯 Capture Bonus"] == "20,000 cr"  # 80000 * 0.25 = 20000
+
+    def test_sys_checks_field_format(self):
+        """System checks field shows reward_per_sys × route_length = total format."""
+        result = build_capture_payout_embed("Criminal", "gold", 80000, reward_per_sys=3000, route_length=4)
+        fields_by_name = {f["name"]: f["value"] for f in result["fields"]}
+        assert "3,000 cr × 4" in fields_by_name["📍 System Checks"]
+        assert "12,000 cr" in fields_by_name["📍 System Checks"]
+
+    def test_total_payout_computed_from_capture_bonus_plus_sys(self):
+        """Total payout = capture_bonus + max_sys_payout when no total_reward given."""
+        # capture_bonus = int(80000 * 0.25) = 20000
+        # max_sys = 3000 * 4 = 12000
+        # total = 20000 + 12000 = 32000
+        result = build_capture_payout_embed("Criminal", "gold", 80000, reward_per_sys=3000, route_length=4)
+        fields_by_name = {f["name"]: f["value"] for f in result["fields"]}
+        assert "32,000 cr" in fields_by_name["🏆 Total Payout"]
+
+    def test_total_payout_without_sys_is_capture_bonus(self):
+        """Total payout = capture_bonus when no system checks."""
+        # capture_bonus = int(10000 * 0.25) = 2500
+        result = build_capture_payout_embed("Criminal", "bronze", 10000)
+        fields_by_name = {f["name"]: f["value"] for f in result["fields"]}
+        assert "2,500 cr" in fields_by_name["🏆 Total Payout"]
+
+    def test_explicit_total_reward_overrides_computed(self):
+        """When total_reward is provided, it overrides the computed value."""
+        result = build_capture_payout_embed("Criminal", "gold", 80000, total_reward=99999)
+        fields_by_name = {f["name"]: f["value"] for f in result["fields"]}
+        assert "99,999 cr" in fields_by_name["🏆 Total Payout"]
+
+    def test_embed_is_dict_with_required_keys(self):
+        """Result is a dict with title, description, color, fields."""
+        result = build_capture_payout_embed("Criminal", "bronze", 10000)
+        assert isinstance(result, dict)
+        assert "title" in result
+        assert "description" in result
+        assert "color" in result
+        assert "fields" in result
+
+    def test_sys_checks_omitted_when_only_reward_per_sys_given(self):
+        """System checks field omitted when only reward_per_sys given (no route_length)."""
+        result = build_capture_payout_embed(
+            "Criminal",
+            "gold",
+            80000,
+            reward_per_sys=3000,
+            # route_length not provided
+        )
+        fields_by_name = {f["name"]: f for f in result["fields"]}
+        assert "📍 System Checks" not in fields_by_name
+
+    def test_sys_checks_omitted_when_only_route_length_given(self):
+        """System checks field omitted when only route_length given (no reward_per_sys)."""
+        result = build_capture_payout_embed(
+            "Criminal",
+            "gold",
+            80000,
+            route_length=4,
+            # reward_per_sys not provided
+        )
+        fields_by_name = {f["name"]: f for f in result["fields"]}
+        assert "📍 System Checks" not in fields_by_name

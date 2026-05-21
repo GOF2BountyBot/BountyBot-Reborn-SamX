@@ -19,6 +19,7 @@ def make_mock_user(**overrides):
     defaults = dict(
         id=12345,
         discord_username="TestUser#1234",
+        display_name=None,
     )
     defaults.update(overrides)
     user = MagicMock()

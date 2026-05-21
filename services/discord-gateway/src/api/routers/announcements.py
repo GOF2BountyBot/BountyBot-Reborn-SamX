@@ -59,12 +59,7 @@ async def create_bounty_announcement(
             )
 
         embed = _build_bounty_embed(payload, captured=payload.metadata.captured)
-        payout_embed = _build_payout_embed(payload.metadata)
-
-        if payout_embed is not None:
-            message = await channel.send(content=payload.text_content, embeds=[embed, payout_embed])
-        else:
-            message = await channel.send(content=payload.text_content, embed=embed)
+        message = await channel.send(content=payload.text_content, embed=embed)
 
         message_obj = MessageConverter.message_to_payload(message)
         flogger.info(
@@ -166,12 +161,7 @@ async def edit_bounty_announcement(
             effective_image_url = raw_image_url
 
         embed = _build_bounty_embed(payload, image_url_override=effective_image_url, captured=payload.metadata.captured)
-        payout_embed = _build_payout_embed(payload.metadata)
-
-        if payout_embed is not None:
-            await message.edit(embeds=[embed, payout_embed])
-        else:
-            await message.edit(embed=embed)
+        await message.edit(embed=embed)
 
         updated_data = MessageConverter.message_to_payload(message)
         flogger.info(f"Edited bounty announcement message {message_id} in channel {channel_id}")
@@ -186,29 +176,6 @@ async def edit_bounty_announcement(
 # ---------------------------------------------------------------------------
 # Internal helper
 # ---------------------------------------------------------------------------
-
-
-def _build_payout_embed(meta) -> discord.Embed | None:
-    """Build a payout breakdown embed from BountyAnnouncementMetadata.
-
-    Returns None if any of reward, reward_per_sys, or route_length is missing.
-    Otherwise returns a gold-coloured embed with Capture Bonus, Per System Check,
-    Route Length, Max System Payout, and Max Total Payout fields (all inline).
-    """
-    if meta.reward is None or meta.reward_per_sys is None or meta.route_length is None:
-        return None
-
-    capture_bonus = int(meta.reward * 0.25)
-    max_sys_payout = meta.reward_per_sys * meta.route_length
-    max_total = capture_bonus + max_sys_payout
-
-    embed = discord.Embed(title="💰 Payout Breakdown", color=0xFFD700)
-    embed.add_field(name="🎯 Capture Bonus", value=f"{capture_bonus:,} cr", inline=True)
-    embed.add_field(name="📍 Per System Check", value=f"{meta.reward_per_sys:,} cr", inline=True)
-    embed.add_field(name="🗺️ Route Length", value=f"{meta.route_length} systems", inline=True)
-    embed.add_field(name="💡 Max System Payout", value=f"{max_sys_payout:,} cr", inline=True)
-    embed.add_field(name="🏆 Max Total Payout", value=f"{max_total:,} cr", inline=True)
-    return embed
 
 
 def _build_bounty_embed(

@@ -129,6 +129,6 @@ def test_resolve_constant_fallback_type_preserved_int():
 
 def test_resolve_constant_fallback_type_preserved_dict():
     """A dict fallback is returned as-is when config is None."""
-    fallback = {"bronze": 2, "silver": 5, "gold": 8, "platinum": 10}
+    fallback = {"bronze": 2, "silver": 4, "gold": 7, "platinum": 10}
     result = resolve_constant(None, "division_max_tl", fallback)
     assert result == fallback

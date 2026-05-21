@@ -961,8 +961,8 @@ class BountyService:
 
         # Step 2: Determine tech level
         if tech_level is None:
-            # Division TL centers: bronze=1, silver=5, gold=8, platinum=9
-            division_tl_map = {"bronze": 1, "silver": 5, "gold": 8, "platinum": 9}
+            # Division TL centers: bronze=1, silver=3, gold=6, platinum=8
+            division_tl_map = {"bronze": 1, "silver": 3, "gold": 6, "platinum": 8}
             center_tl = division_tl_map.get(division, 5)
             tech_level = pick_random_item_tl(center_tl)
             # Enforce per-division TL cap so new players are never overwhelmed

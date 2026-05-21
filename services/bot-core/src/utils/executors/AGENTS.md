@@ -21,8 +21,10 @@ async def execute_<job_type>_job(job_id: str, payload: dict) -> dict:
 ```python
 async def execute(self, job_id: str, payload: dict):
     job_type = payload.get("job_type")
-    if job_type == "bounty_spawn":
-        return await execute_bounty_spawn_job(job_id, payload)
+    if job_type == "bounty_spawn_orchestrate":
+        return await execute_bounty_spawn_orchestrate_job(job_id, payload)
+    elif job_type == "bounty_spawn_one":
+        return await execute_bounty_spawn_one_job(job_id, payload)
     elif job_type == "shop_refresh":
         return await execute_shop_refresh_job(job_id, payload)
     # ... etc.
@@ -37,7 +39,7 @@ async def execute(self, job_id: str, payload: dict):
 **All executors use deferred imports** — ORM-related imports (`db_manager`, repositories, services) are placed inside the function body, not at module level:
 
 ```python
-async def execute_bounty_spawn_job(job_id: str, payload: dict) -> dict:
+async def execute_bounty_expire_job(job_id: str, payload: dict) -> dict:
     # Deferred — avoids transitive ORM dependencies at module load time
     from persist.database.manager import db_manager
     from persist.repositories.bounty_repository import BountyRepository
@@ -100,7 +102,7 @@ cache-update payloads to the gateway after each relevant mutation:
 - `POST /api/v1/internal/autocomplete/shop-cache/{guild_id}/{tier}` — after shop refresh
 - `POST /api/v1/internal/autocomplete/bounty-cache/{guild_id}` — after spawn/expire
 
-All pushes are non-fatal (try/except + warning). The gateway's 15-minute safety-net pull
+All pushes are non-fatal (try/except + warning). The gateway's 6-minute periodic refresh
 covers any missed pushes. Requires `INTERNAL_AUTH_TOKEN` env var in both services.
 
 ---
@@ -109,25 +111,33 @@ covers any missed pushes. Requires `INTERNAL_AUTH_TOKEN` env var in both service
 
 ### bounty_spawn_executor.py
 
-**Function**: `execute_bounty_spawn_job(job_id, payload)`  
-**Triggered by**: `bounty_spawn_default` (every N minutes, default 5) or on-demand  
+Two entry points (both dispatched from `job_executor.py`):
+
+**`execute_bounty_spawn_orchestrate_job(job_id, payload)`** — Orchestrator  
+**Triggered by**: `bounty_spawn_default` cron (every N minutes, default 5)  
+**Payload fields**: none required  
+**Flow**:
+1. For each guild config × division: count active bounties + queued spawn jobs
+2. If slot available: schedule a randomised one-time `bounty_spawn_one` job with ±25% window
+3. Returns job counts queued per guild
+
+**`execute_bounty_spawn_one_job(job_id, payload)`** — One-shot spawner  
+**Triggered by**: one-time APScheduler job created by the orchestrator  
 **Payload fields**:
-- `guild_id` (optional) — process only this guild; omit for bulk (all guilds)
-- `division` (optional) — process only this division; omit for all three
-- `temperature` (optional, default 5.0) — activity temperature to compute max_bounties
+- `guild_id` — guild to spawn for
+- `division` — tier division (`bronze`, `silver`, `gold`, `platinum`)
+- `expiry_minutes` — bounty lifetime in minutes
 
 **Flow**:
-1. Compute `max_bounties = TemperatureService.get_max_bounties(temperature)`
-2. For each guild config (or just `guild_id` if provided):
-3. For each division (`Bronze`, `Silver`, `Gold`):
-4. Count active bounties via `BountyRepository.get_active_by_guild_and_division()`
-5. If slot available: call `BountyService.spawn_bounty(db, guild_id, division)`
-6. Schedule expiry job via `POST /api/v1/jobs` (one-time at `bounty.end_time`)
-7. Announce via `POST {GATEWAY_BASE_URL}/announcements/bounty/channel/{cid}` (non-fatal if fails)
+1. Re-checks capacity (handles benign race with concurrent orchestrator ticks)
+2. Calls `BountyService.spawn_bounty(db, guild_id, division, expiry_minutes)`
+3. Schedules expiry job via `POST /api/v1/jobs` (one-time at `bounty.end_time`)
+4. Pushes bounty cache to gateway (`POST /internal/autocomplete/bounty-cache/{guild_id}`)
+5. Announces via `POST {GATEWAY_BASE_URL}/announcements/bounty/channel/{cid}` (non-fatal)
 
-**Returns**: `{"status": "success", "guilds_processed": N, "total_spawned": M, "results": {...}}`
+**Returns**: `{"status": "success", "bounty_id": N, ...}`
 
-**A.48 announcement payload (post-2026-04-27)**: `_announce_bounty()` builds the request via `utils.bounty_announcement_payload.build_bounty_announcement_request(db, bounty, criminal_icon=..., route_map_url=..., bounty_hunter_role_id=..., captured=False)`. The body is a structured dict (`text_content` + `loadout_response` + `metadata`); the gateway renders the final embed using `cogs/_shared/loadout_embed.build_loadout_embed`. The old per-channel `/channels/{cid}/messages` POST and the pre-rendered `BountyAnnouncementBuilder` were removed. Edit-on-capture still flows through `BountyService._edit_bounty_announcement` and posts to the gateway's PUT counterpart at `/announcements/bounty/channel/{cid}/message/{mid}`.
+**A.48 announcement payload**: `_announce_bounty()` builds the request via `utils.bounty_announcement_payload.build_bounty_announcement_request(db, bounty, criminal_icon=..., route_map_url=..., bounty_hunter_role_id=..., captured=False)`. The body is a structured dict (`text_content` + `loadout_response` + `metadata`); the gateway renders the final embed using `cogs/_shared/loadout_embed.build_loadout_embed`. Edit-on-capture flows through `BountyService._edit_bounty_announcement` → gateway PUT at `/announcements/bounty/channel/{cid}/message/{mid}`.
 
 ---
 

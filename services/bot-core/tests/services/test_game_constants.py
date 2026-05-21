@@ -74,10 +74,10 @@ class TestDivisionMaxTL:
         assert GameConstants.DIVISION_MAX_TL["bronze"] == 2
 
     def test_silver_max_tl(self) -> None:
-        assert GameConstants.DIVISION_MAX_TL["silver"] == 5
+        assert GameConstants.DIVISION_MAX_TL["silver"] == 4
 
     def test_gold_max_tl(self) -> None:
-        assert GameConstants.DIVISION_MAX_TL["gold"] == 8
+        assert GameConstants.DIVISION_MAX_TL["gold"] == 7
 
     def test_platinum_max_tl(self) -> None:
         assert GameConstants.DIVISION_MAX_TL["platinum"] == 10

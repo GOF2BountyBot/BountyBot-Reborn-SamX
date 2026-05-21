@@ -924,8 +924,8 @@ async def test_spawn_bounty_auto_selects_tech_level(spawn_service, mock_db):
     ):
         result = await spawn_service.spawn_bounty(mock_db, guild_id=1, division="silver", tech_level=None)
 
-    # silver division maps to center_tl=5
-    mock_pick_tl.assert_called_once_with(5)
+    # silver division maps to center_tl=3
+    mock_pick_tl.assert_called_once_with(3)
     assert result is not None
 
 
@@ -951,14 +951,14 @@ async def test_spawn_bounty_bronze_center_tl_is_1(spawn_service, mock_db):
 
 @pytest.mark.asyncio
 async def test_spawn_bounty_division_tl_map_center_values(spawn_service, mock_db):
-    """division_tl_map center values: silver=5, gold=8, platinum=9."""
+    """division_tl_map center values: silver=3, gold=6, platinum=8."""
     criminal = _make_criminal("Viper", "terran")
     spawn_service.criminal_repo.list_all = AsyncMock(return_value=[criminal])
     spawn_service.bounty_repo.get_active_by_guild_and_division = AsyncMock(return_value=[])
     created = _make_created_bounty()
     spawn_service.bounty_repo.create = AsyncMock(return_value=created)
 
-    for division, expected_center in [("silver", 5), ("gold", 8), ("platinum", 9)]:
+    for division, expected_center in [("silver", 3), ("gold", 6), ("platinum", 8)]:
         with (
             patch("services.bounty_service.pick_random_item_tl", return_value=expected_center) as mock_pick_tl,
             patch.object(spawn_service, "generate_loadout", new=AsyncMock(return_value=SAMPLE_LOADOUT)),
@@ -999,8 +999,8 @@ async def test_spawn_bounty_bronze_tl_capped_at_2(spawn_service, mock_db):
 
 
 @pytest.mark.asyncio
-async def test_spawn_bounty_silver_tl_capped_at_5(spawn_service, mock_db):
-    """Silver tech level is capped at 5 regardless of random picker output."""
+async def test_spawn_bounty_silver_tl_capped_at_4(spawn_service, mock_db):
+    """Silver tech level is capped at 4 regardless of random picker output."""
     criminal = _make_criminal("Viper", "terran")
     spawn_service.criminal_repo.list_all = AsyncMock(return_value=[criminal])
     spawn_service.bounty_repo.get_active_by_guild_and_division = AsyncMock(return_value=[])
@@ -1013,7 +1013,7 @@ async def test_spawn_bounty_silver_tl_capped_at_5(spawn_service, mock_db):
 
     spawn_service.bounty_repo.create = capture_create
 
-    # Simulate the random picker returning 7 (above silver cap of 5)
+    # Simulate the random picker returning 7 (above silver cap of 4)
     with (
         patch("services.bounty_service.pick_random_item_tl", return_value=7),
         patch.object(spawn_service, "generate_loadout", new=AsyncMock(return_value=SAMPLE_LOADOUT)),
@@ -1022,14 +1022,14 @@ async def test_spawn_bounty_silver_tl_capped_at_5(spawn_service, mock_db):
 
     assert result is not None
     assert len(captured_bounties) == 1
-    assert captured_bounties[0].tech_level <= 5, (
-        f"Silver tech_level must be <= 5, got {captured_bounties[0].tech_level}"
+    assert captured_bounties[0].tech_level <= 4, (
+        f"Silver tech_level must be <= 4, got {captured_bounties[0].tech_level}"
     )
 
 
 @pytest.mark.asyncio
-async def test_spawn_bounty_gold_tl_capped_at_8(spawn_service, mock_db):
-    """Gold tech level is capped at 8 regardless of random picker output."""
+async def test_spawn_bounty_gold_tl_capped_at_7(spawn_service, mock_db):
+    """Gold tech level is capped at 7 regardless of random picker output."""
     criminal = _make_criminal("Viper", "terran")
     spawn_service.criminal_repo.list_all = AsyncMock(return_value=[criminal])
     spawn_service.bounty_repo.get_active_by_guild_and_division = AsyncMock(return_value=[])
@@ -1042,7 +1042,7 @@ async def test_spawn_bounty_gold_tl_capped_at_8(spawn_service, mock_db):
 
     spawn_service.bounty_repo.create = capture_create
 
-    # Simulate the random picker returning 10 (above gold cap of 8)
+    # Simulate the random picker returning 10 (above gold cap of 7)
     with (
         patch("services.bounty_service.pick_random_item_tl", return_value=10),
         patch.object(spawn_service, "generate_loadout", new=AsyncMock(return_value=SAMPLE_LOADOUT)),
@@ -1051,7 +1051,7 @@ async def test_spawn_bounty_gold_tl_capped_at_8(spawn_service, mock_db):
 
     assert result is not None
     assert len(captured_bounties) == 1
-    assert captured_bounties[0].tech_level <= 8, f"Gold tech_level must be <= 8, got {captured_bounties[0].tech_level}"
+    assert captured_bounties[0].tech_level <= 7, f"Gold tech_level must be <= 7, got {captured_bounties[0].tech_level}"
 
 
 @pytest.mark.asyncio

@@ -1160,21 +1160,6 @@ async def test_job_executor_dispatches_bounty_spawn_one():
     mock_fn.assert_awaited_once_with("one-dispatch", payload)
 
 
-@pytest.mark.asyncio
-async def test_job_executor_still_dispatches_bounty_spawn_legacy():
-    """Test 25c: Legacy bounty_spawn job_type still works (admin spawn path)."""
-    from utils.job_executor import JobExecutor
-
-    executor = JobExecutor()
-    payload = {"job_type": "bounty_spawn", "guild_id": 100, "division": "Bronze"}
-
-    mock_fn = AsyncMock(return_value={"status": "success", "total_spawned": 0})
-    with patch("utils.job_executor.execute_bounty_spawn_job", mock_fn):
-        await executor.execute("legacy-spawn", payload)
-
-    mock_fn.assert_awaited_once_with("legacy-spawn", payload)
-
-
 # ===========================================================================
 # Additional: main.py uses bounty_spawn_orchestrate payload
 # ===========================================================================

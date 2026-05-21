@@ -8,7 +8,6 @@ from utils.executors.bounty_expire_executor import execute_bounty_expire_job
 from utils.executors.bounty_failsafe_cleanup_executor import execute_bounty_failsafe_cleanup_job
 from utils.executors.bounty_respawn_executor import execute_bounty_respawn_job
 from utils.executors.bounty_spawn_executor import (
-    execute_bounty_spawn_job,
     execute_bounty_spawn_one_job,
     execute_bounty_spawn_orchestrate_job,
 )
@@ -58,11 +57,6 @@ class JobExecutor:
             if payload.get("job_type") == "bounty_spawn_one":
                 flogger.debug(f"Dispatching bounty_spawn_one for job {job_id}")
                 return await execute_bounty_spawn_one_job(job_id, payload)
-
-            # 3b) bounty-spawn jobs (legacy / admin-spawn path)
-            if payload.get("job_type") == "bounty_spawn":
-                flogger.debug(f"Dispatching bounty_spawn for job {job_id}")
-                return await execute_bounty_spawn_job(job_id, payload)
 
             # 4) bounty-expire jobs
             if payload.get("job_type") == "bounty_expire":

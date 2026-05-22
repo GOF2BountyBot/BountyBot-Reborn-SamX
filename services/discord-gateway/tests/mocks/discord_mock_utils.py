@@ -952,6 +952,7 @@ class DiscordMockUtils:
         mock_interaction.response.defer = AsyncMock()
         mock_interaction.followup = MagicMock()
         mock_interaction.followup.send = AsyncMock()
+        mock_interaction.delete_original_response = AsyncMock()
 
         for key, value in kwargs.items():
             setattr(mock_interaction, key, value)

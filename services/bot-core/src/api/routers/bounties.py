@@ -84,6 +84,8 @@ def _outcome_to_schema(outcome) -> BountyCheckOutcome:
         bonus_won=outcome.bonus_won,
         total_reward=outcome.total_reward,
         criminal_ship=outcome.criminal_ship,
+        reward_per_sys=outcome.reward_per_sys,
+        route_length=outcome.route_length,
         recently_spotted=outcome.recently_spotted,
         proximity_hint=outcome.proximity_hint,
         distance_to_answer=outcome.distance_to_answer,

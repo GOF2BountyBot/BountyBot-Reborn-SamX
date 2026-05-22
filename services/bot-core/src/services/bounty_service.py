@@ -123,6 +123,9 @@ class CheckResponse:  # pylint: disable=too-many-instance-attributes
     bonus_won: bool = False  # True if bronze player won the optional combat bonus
     total_reward: int | None = None  # Final reward earned (may be 2x for bronze win)
     criminal_ship: dict | None = None  # Criminal ship data; returned for bronze so cog can offer bonus
+    # Payout breakdown (populated on CORRECT/capture outcomes so the cog can render the full embed)
+    reward_per_sys: int | None = None
+    route_length: int | None = None
     # Recently spotted: criminal was at this system 1-2 stops ago
     recently_spotted: bool = False
     # Cooldown timestamp (Unix): when the cooldown expires (populated on ON_COOLDOWN results)
@@ -1195,9 +1198,8 @@ class BountyService:
                     f"Per-bounty announcement edit failed (bounty {bounty.id}, "
                     f"player {player_id}, system {system_name!r}): {e}"
                 )
-            # Post capture payout embed to hunting channel (non-fatal, only on captures).
-            if captured:
-                await self._post_capture_payout(db, guild_id, bounty, outcome)
+            # Capture payout embed is now rendered by the cog from the check response fields.
+            # _post_capture_payout has been removed; no separate gateway push needed.
 
         # Per-bounty structured logging for observability (B.12)
         for outcome in outcomes:
@@ -1329,6 +1331,8 @@ class BountyService:
                         bonus_won=bonus_won,
                         total_reward=total_reward,
                         criminal_ship=bounty.criminal_ship,
+                        reward_per_sys=getattr(bounty, "reward_per_sys", None),
+                        route_length=len(list(getattr(bounty, "route", None) or [])),
                     ),
                     (bounty, True),
                 )
@@ -1356,9 +1360,12 @@ class BountyService:
                         division=division,
                         criminal_name=bounty.criminal_name,
                         reward=winner_reward,
+                        total_reward=winner_reward,
                         combat_result=_serialize_fight_results(fight_results, pvc_armour_buff=_pvc_buff)
                         if fight_results
                         else None,
+                        reward_per_sys=getattr(bounty, "reward_per_sys", None),
+                        route_length=len(list(getattr(bounty, "route", None) or [])),
                     ),
                     (bounty, True),
                 )

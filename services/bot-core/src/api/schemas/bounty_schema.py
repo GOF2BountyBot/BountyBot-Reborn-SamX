@@ -83,6 +83,9 @@ class BountyCheckOutcome(BaseModel):
     bonus_won: bool = False  # True if bronze player won the optional combat bonus
     total_reward: int | None = None  # Final reward (may be 2x for bronze combat win)
     criminal_ship: dict | None = None  # Criminal ship data; returned for bronze so cog can offer bonus duel
+    # Payout breakdown (populated on capture outcomes so the cog can render the full embed)
+    reward_per_sys: int | None = None
+    route_length: int | None = None
     # Recently spotted: criminal was at this system 1-2 stops ago
     recently_spotted: bool = False
     # Per-outcome proximity hint (mainly for INCORRECT outcomes)

@@ -709,12 +709,7 @@ class TestCheckCommand:
         mock_bounty_cog._systems_cache.set("all", ["Alpha", "Beta", "Delta", "Sol"])
 
     def test_check_correct_result_green_embed(self, mock_bounty_cog, make_mock_response):
-        """/check CORRECT (capture) sends a minimal ephemeral text confirmation, not an embed.
-
-        The full payout detail lives in the single public embed posted by
-        _post_capture_payout in bot-core; sending an embed here too produced a
-        confusing double-embed for the invoker.
-        """
+        """/check CORRECT (capture) sends a single public capture embed with payout detail."""
         interaction = _create_mock_interaction()
         resp = make_mock_response(_make_check_response("correct", bounty_id=1, message="Target neutralised!", division="bronze"))
         mock_bounty_cog.http_client.post = AsyncMock(return_value=resp)
@@ -723,14 +718,12 @@ class TestCheckCommand:
 
         interaction.response.defer.assert_awaited_once_with(thinking=True)
         interaction.followup.send.assert_awaited_once()
-        call_args = interaction.followup.send.call_args
-        call_kwargs = call_args[1]
-        # Must be a plain text confirmation (no embed) and ephemeral
-        assert "embed" not in call_kwargs
-        assert call_kwargs.get("ephemeral") is True
-        # Message text is passed as a positional arg
-        content = call_args[0][0] if call_args[0] else call_kwargs.get("content", "")
-        assert "capture" in content.lower()
+        call_kwargs = interaction.followup.send.call_args[1]
+        assert "embed" in call_kwargs
+        embed = call_kwargs["embed"]
+        assert "Captured" in (embed.title or "")
+        # Must NOT be ephemeral — this is the public channel message
+        assert not call_kwargs.get("ephemeral", False)
 
     def test_check_not_found_result_orange_embed(self, mock_bounty_cog, make_mock_response):
         """/check NOT_FOUND result should display orange embed."""
@@ -829,17 +822,19 @@ class TestCheckCommand:
 
 
 class TestCheckCommandEphemeralBehavior:
-    """Bug 2A: Verify that capture outcomes are ephemeral, non-capture outcomes are public.
+    """Verify that all /check outcomes send a public embed (ephemeral=False).
+
+    The capture payout embed is now the direct /check response — no separate
+    bot-core push, no ephemeral confirmation.  All outcomes are public.
 
     Single-outcome path rules:
-    - result='correct' + combat_won=True  → ephemeral=True  (capture)
-    - result='correct' + combat_won=None  → ephemeral=True  (no combat, treat as capture)
-    - result='correct' + combat_won=False → ephemeral=False (player lost, not a capture)
-    - result='incorrect'                  → ephemeral=False (public)
-    - result='not_found'                  → ephemeral=False (public)
-    - result='already_checked'            → ephemeral=False (public)
-    - result='cooldown'                   → ephemeral=True  (error path, not in scope here)
-    Multi-outcome path: always public (ephemeral=False)
+    - result='correct' + combat_won=True  → public embed (capture payout)
+    - result='correct' + combat_won=None  → public embed (capture payout)
+    - result='correct' + combat_won=False → public embed (combat defeat)
+    - result='incorrect'                  → public embed
+    - result='not_found'                  → public embed
+    - result='already_checked'            → public embed
+    Multi-outcome path: always public
     """
 
     @pytest.fixture(autouse=True)
@@ -858,29 +853,31 @@ class TestCheckCommandEphemeralBehavior:
         call_kwargs = interaction.followup.send.call_args[1]
         return call_kwargs
 
-    def test_correct_combat_won_true_is_ephemeral(self, mock_bounty_cog, make_mock_response):
-        """result='correct' + combat_won=True → single outcome followup is ephemeral."""
+    def test_correct_combat_won_true_is_public(self, mock_bounty_cog, make_mock_response):
+        """result='correct' + combat_won=True → public capture payout embed (not ephemeral)."""
         resp_data = {
             "result": "correct",
             "outcomes": [{"result": "correct", "bounty_id": 1, "combat_won": True, "division": "bronze"}],
             "result_count": 1,
         }
         call_kwargs = self._run_check(mock_bounty_cog, make_mock_response, resp_data)
-        assert call_kwargs.get("ephemeral") is True, (
-            "Capture (result=correct, combat_won=True) must send ephemeral=True"
+        assert not call_kwargs.get("ephemeral"), (
+            "Capture (result=correct, combat_won=True) must be public (ephemeral=False)"
         )
+        assert "embed" in call_kwargs
 
-    def test_correct_combat_won_none_is_ephemeral(self, mock_bounty_cog, make_mock_response):
-        """result='correct' + combat_won absent (None) → single outcome followup is ephemeral."""
+    def test_correct_combat_won_none_is_public(self, mock_bounty_cog, make_mock_response):
+        """result='correct' + combat_won absent (None) → public capture payout embed (not ephemeral)."""
         resp_data = {
             "result": "correct",
             "outcomes": [{"result": "correct", "bounty_id": 1, "division": "bronze"}],
             "result_count": 1,
         }
         call_kwargs = self._run_check(mock_bounty_cog, make_mock_response, resp_data)
-        assert call_kwargs.get("ephemeral") is True, (
-            "Capture (result=correct, combat_won absent) must send ephemeral=True"
+        assert not call_kwargs.get("ephemeral"), (
+            "Capture (result=correct, combat_won absent) must be public (ephemeral=False)"
         )
+        assert "embed" in call_kwargs
 
     def test_correct_combat_won_false_is_not_ephemeral(self, mock_bounty_cog, make_mock_response):
         """result='correct' + combat_won=False → NOT ephemeral (player lost)."""
@@ -1903,12 +1900,12 @@ class TestBuildCheckEmbedNewResultTypes:
                 "combat_result": None,
             }
         )
-        reward_field = next(f for f in embed.fields if "Reward" in f.name)
-        assert "1,000" in reward_field.value
-        assert "2×" in reward_field.value
+        payout_field = next(f for f in embed.fields if "Payout" in f.name or "Reward" in f.name)
+        assert "1,000" in payout_field.value
+        assert "2×" in payout_field.value
 
     def test_captured_no_bonus_shows_base_reward_only(self):
-        """'captured' with bonus_won=False should show base reward without 2× label."""
+        """'captured' with bonus_won=False should show reward without 2× label."""
         embed = self._call(
             {
                 "result": "captured",
@@ -1919,9 +1916,9 @@ class TestBuildCheckEmbedNewResultTypes:
                 "combat_result": None,
             }
         )
-        reward_field = next(f for f in embed.fields if "Reward" in f.name)
-        assert "500" in reward_field.value
-        assert "2×" not in reward_field.value
+        payout_field = next(f for f in embed.fields if "Payout" in f.name or "Reward" in f.name)
+        assert "500" in payout_field.value
+        assert "2×" not in payout_field.value
 
     def test_captured_with_combat_result_shows_combat_summary(self):
         """'captured' with combat_result should include a Combat Summary field."""
@@ -1982,19 +1979,19 @@ class TestBuildCheckEmbedNewResultTypes:
         assert embed.color.value == TIER_COLORS["silver"]
 
     def test_combat_win_title(self):
-        """'combat_win' embed title should say 'Combat Victory!'."""
+        """'combat_win' now uses the unified capture embed (title: 'Bounty Captured!')."""
         embed = self._call(
             {"result": "combat_win", "criminal_name": "Pirate Bob", "reward": 2000, "combat_result": None}
         )
-        assert "Combat Victory" in embed.title
+        assert "Captured" in embed.title
 
     def test_combat_win_shows_reward(self):
-        """'combat_win' should show the reward amount."""
+        """'combat_win' should show the reward amount in a payout or reward field."""
         embed = self._call(
             {"result": "combat_win", "criminal_name": "Pirate Bob", "reward": 2000, "combat_result": None}
         )
-        reward_field = next(f for f in embed.fields if "Reward" in f.name)
-        assert "2,000" in reward_field.value
+        payout_field = next(f for f in embed.fields if "Payout" in f.name or "Reward" in f.name)
+        assert "2,000" in payout_field.value
 
     def test_combat_win_description_includes_criminal_name(self):
         """'combat_win' description should mention the criminal name."""
@@ -2220,7 +2217,7 @@ class TestBuildCheckEmbedCorrectResultWithCombatWon:
         assert "Iron Fist" in embed.description
 
     def test_correct_combat_won_true_shows_base_reward(self):
-        """result='correct' + combat_won=True, no bonus → shows base reward only."""
+        """result='correct' + combat_won=True, no bonus → shows payout amount."""
         embed = self._call(
             {
                 "result": "correct",
@@ -2230,9 +2227,9 @@ class TestBuildCheckEmbedCorrectResultWithCombatWon:
                 "bonus_won": False,
             }
         )
-        reward_field = next(f for f in embed.fields if "Reward" in f.name)
-        assert "1,500" in reward_field.value
-        assert "2×" not in reward_field.value
+        payout_field = next(f for f in embed.fields if "Payout" in f.name or "Reward" in f.name)
+        assert "1,500" in payout_field.value
+        assert "2×" not in payout_field.value
 
     def test_correct_combat_won_true_with_bonus_shows_doubled_reward(self):
         """result='correct' + combat_won=True + bonus_won=True → shows total_reward with 2× label."""
@@ -2246,9 +2243,9 @@ class TestBuildCheckEmbedCorrectResultWithCombatWon:
                 "bonus_won": True,
             }
         )
-        reward_field = next(f for f in embed.fields if "Reward" in f.name)
-        assert "1,000" in reward_field.value
-        assert "2×" in reward_field.value
+        payout_field = next(f for f in embed.fields if "Payout" in f.name or "Reward" in f.name)
+        assert "1,000" in payout_field.value
+        assert "2×" in payout_field.value
 
     def test_correct_combat_won_true_with_combat_result_shows_summary(self):
         """result='correct' + combat_won=True + combat_result → shows Combat Summary field."""
@@ -2383,7 +2380,7 @@ class TestBuildCheckEmbedCorrectResultWithCombatWon:
         assert embed.color.value == TIER_COLORS["platinum"]
 
     def test_correct_no_combat_won_shows_reward_field(self):
-        """result='correct' without combat_won → shows Reward field."""
+        """result='correct' without combat_won → shows payout/reward field."""
         embed = self._call(
             {
                 "result": "correct",
@@ -2392,7 +2389,7 @@ class TestBuildCheckEmbedCorrectResultWithCombatWon:
             }
         )
         field_names = [f.name for f in embed.fields]
-        assert any("Reward" in n for n in field_names)
+        assert any("Payout" in n or "Reward" in n for n in field_names)
 
 
 # ===========================================================================
@@ -2707,12 +2704,8 @@ class TestCheckMultiBountyResponse:
         assert "1,234" in all_text
         assert "5,678" in all_text
 
-    def test_check_single_outcome_capture_sends_text_confirmation(self, mock_bounty_cog, make_mock_response):
-        """Single-outcome capture sends a minimal ephemeral text confirmation, not an embed.
-
-        The full payout detail lives in the public embed posted by _post_capture_payout
-        in bot-core; showing an embed here too produced a double-embed for the invoker.
-        """
+    def test_check_single_outcome_capture_sends_public_embed(self, mock_bounty_cog, make_mock_response):
+        """Single-outcome capture sends a single public embed with the full payout detail."""
         interaction = _create_mock_interaction()
         outcomes = [
             {
@@ -2730,15 +2723,12 @@ class TestCheckMultiBountyResponse:
 
         asyncio.run(mock_bounty_cog.check.callback(mock_bounty_cog, interaction, "Sol"))
 
-        call_args = interaction.followup.send.call_args
-        call_kwargs = call_args[1]
-        # Must be plain text (no embed) and ephemeral
-        assert "embed" not in call_kwargs
-        assert call_kwargs.get("ephemeral") is True
-        # Message text is passed as a positional arg
-        content = call_args[0][0] if call_args[0] else call_kwargs.get("content", "")
-        assert "Solo" in content  # criminal name present in confirmation
-        assert "capture" in content.lower()
+        interaction.followup.send.assert_awaited_once()
+        call_kwargs = interaction.followup.send.call_args[1]
+        assert "embed" in call_kwargs
+        embed = call_kwargs["embed"]
+        assert "Captured" in (embed.title or "")
+        assert not call_kwargs.get("ephemeral", False)
 
 
 # ===========================================================================

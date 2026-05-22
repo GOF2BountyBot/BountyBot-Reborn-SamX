@@ -302,24 +302,10 @@ class BountyCog(commands.Cog):
                 outcome_data = outcomes[0] if outcomes else data
                 outcome_data = dict(outcome_data)
                 outcome_data["system_name"] = system
+                # Inject winner name so the capture embed can show "Claimed by".
+                outcome_data["winner_name"] = interaction.user.display_name or str(interaction.user)
                 embed = self._build_check_embed(outcome_data)
-
-                # Capture (correct + combat not lost): send a minimal ephemeral
-                # confirmation — the full payout detail is in the single public
-                # embed posted by _post_capture_payout in bot-core.  Sending
-                # the full embed here (even ephemerally) produced a confusing
-                # double-embed for the invoker.
-                _outcome_result = outcome_data.get("result", "")
-                _combat_won = outcome_data.get("combat_won")
-                _is_capture = _outcome_result == "correct" and _combat_won is not False
-                if _is_capture:
-                    _criminal_name = outcome_data.get("criminal_name", "the target")
-                    await interaction.followup.send(
-                        f"✅ **{_criminal_name}** captured! Check the bounty channel for your payout.",
-                        ephemeral=True,
-                    )
-                else:
-                    await interaction.followup.send(embed=embed)
+                await interaction.followup.send(embed=embed)
             flogger.info(
                 f"/check success: guild={interaction.guild_id} user={interaction.user.id}"
                 f" system={system} result={result} result_count={len(outcomes)}"
@@ -547,78 +533,15 @@ class BountyCog(commands.Cog):
                         inline=False,
                     )
             else:
-                # Successful capture (bronze with/without bonus, or silver/gold/platinum win)
-                embed = discord.Embed(
-                    title="🎯 Bounty Captured!",
-                    description=f"**{criminal_name}** has been captured!",
-                    color=self._get_tier_color(tier),
-                )
-                reward = data.get("reward", 0)
-                total_reward = data.get("total_reward", reward)
-                bonus_won = data.get("bonus_won", False)
-
-                if bonus_won:
-                    embed.add_field(
-                        name="💰 Reward",
-                        value=f"**{total_reward:,}** credits (2× combat bonus!)",
-                        inline=False,
-                    )
-                else:
-                    embed.add_field(name="💰 Reward", value=f"**{reward:,}** credits", inline=False)
-
-                # Show combat stats if available
-                combat = data.get("combat_result")
-                if combat:
-                    embed.add_field(
-                        name="⚔️ Combat Summary",
-                        value=self._format_combat_summary(combat),
-                        inline=False,
-                    )
-                if message:
-                    embed.add_field(name="Result", value=message, inline=False)
+                # Successful capture — render the full payout embed so this
+                # single /check response is the only message the channel sees.
+                embed = self._build_capture_embed(data)
         elif result == "captured":
             # Backward-compatible handler: treated same as correct+combat_won=True (Bronze capture)
-            embed = discord.Embed(
-                title="🎯 Bounty Captured!",
-                description=f"**{data.get('criminal_name', 'Unknown')}** has been captured!",
-                color=self._get_tier_color(tier),
-            )
-            reward = data.get("reward", 0)
-            total_reward = data.get("total_reward", reward)
-            bonus_won = data.get("bonus_won", False)
-
-            if bonus_won:
-                embed.add_field(
-                    name="💰 Reward",
-                    value=f"**{total_reward:,}** credits (2× combat bonus!)",
-                    inline=False,
-                )
-            else:
-                embed.add_field(name="💰 Reward", value=f"**{reward:,}** credits", inline=False)
-
-            combat = data.get("combat_result")
-            if combat:
-                embed.add_field(
-                    name="⚔️ Combat Summary",
-                    value=self._format_combat_summary(combat),
-                    inline=False,
-                )
+            embed = self._build_capture_embed(data)
         elif result == "combat_win":
             # Backward-compatible handler: treated same as correct+combat_won=True (Silver+ capture)
-            embed = discord.Embed(
-                title="⚔️ Combat Victory!",
-                description=f"You defeated **{data.get('criminal_name', 'Unknown')}** in combat!",
-                color=self._get_tier_color(tier),
-            )
-            reward = data.get("reward", 0)
-            embed.add_field(name="💰 Reward", value=f"**{reward:,}** credits", inline=False)
-            combat = data.get("combat_result")
-            if combat:
-                embed.add_field(
-                    name="⚔️ Combat Summary",
-                    value=self._format_combat_summary(combat),
-                    inline=False,
-                )
+            embed = self._build_capture_embed(data)
         elif result == "combat_loss":
             # Kept for backward compatibility (not returned by current bot-core but may exist in future)
             embed = discord.Embed(
@@ -668,6 +591,62 @@ class BountyCog(commands.Cog):
             )
             if message:
                 embed.add_field(name="Note", value=message, inline=False)
+        return embed
+
+    def _build_capture_embed(self, data: dict) -> discord.Embed:
+        """Build the full capture payout embed for a successful /check capture.
+
+        Consolidates the combat summary and payout breakdown into a single embed
+        so that the /check response IS the only capture message in the channel.
+        """
+        criminal_name = data.get("criminal_name", "Unknown")
+        tier = data.get("division")
+        reward = data.get("reward", 0)
+        total_reward = data.get("total_reward") or reward
+        bonus_won = data.get("bonus_won", False)
+        reward_per_sys = data.get("reward_per_sys")
+        route_length = data.get("route_length")
+        winner_name = data.get("winner_name") or "A bounty hunter"
+
+        embed = discord.Embed(
+            title="🎯 Bounty Captured!",
+            description=f"**{criminal_name}** has been brought in.",
+            color=self._get_tier_color(tier),
+        )
+
+        # Combat summary
+        combat = data.get("combat_result")
+        if combat:
+            embed.add_field(
+                name="⚔️ Combat Summary",
+                value=self._format_combat_summary(combat),
+                inline=False,
+            )
+
+        # Payout info
+        embed.add_field(name="🏆 Division", value=(tier or "Unknown").capitalize(), inline=True)
+        embed.add_field(name="⚔️ Claimed by", value=winner_name, inline=True)
+
+        if bonus_won:
+            embed.add_field(
+                name="💰 Total Payout",
+                value=f"**{total_reward:,} cr** (2× combat bonus!)",
+                inline=False,
+            )
+        elif reward_per_sys is not None and route_length:
+            capture_bonus = int(reward * 0.25)
+            sys_checks_payout = reward_per_sys * route_length
+            embed.add_field(name="💵 Base Reward", value=f"{reward:,} cr", inline=False)
+            embed.add_field(name="🎯 Capture Bonus", value=f"{capture_bonus:,} cr", inline=True)
+            embed.add_field(
+                name="📍 System Checks",
+                value=f"{reward_per_sys:,} cr × {route_length} = {sys_checks_payout:,} cr",
+                inline=True,
+            )
+            embed.add_field(name="🏆 Total Payout", value=f"**{total_reward:,} cr**", inline=False)
+        else:
+            embed.add_field(name="💰 Total Payout", value=f"**{total_reward:,} cr**", inline=False)
+
         return embed
 
     @check.error

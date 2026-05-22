@@ -709,7 +709,12 @@ class TestCheckCommand:
         mock_bounty_cog._systems_cache.set("all", ["Alpha", "Beta", "Delta", "Sol"])
 
     def test_check_correct_result_green_embed(self, mock_bounty_cog, make_mock_response):
-        """/check CORRECT result should display tier-colored embed (Sub-task A)."""
+        """/check CORRECT (capture) sends a minimal ephemeral text confirmation, not an embed.
+
+        The full payout detail lives in the single public embed posted by
+        _post_capture_payout in bot-core; sending an embed here too produced a
+        confusing double-embed for the invoker.
+        """
         interaction = _create_mock_interaction()
         resp = make_mock_response(_make_check_response("correct", bounty_id=1, message="Target neutralised!", division="bronze"))
         mock_bounty_cog.http_client.post = AsyncMock(return_value=resp)
@@ -718,12 +723,14 @@ class TestCheckCommand:
 
         interaction.response.defer.assert_awaited_once_with(thinking=True)
         interaction.followup.send.assert_awaited_once()
-        call_kwargs = interaction.followup.send.call_args[1]
-        assert "embed" in call_kwargs
-        embed = call_kwargs["embed"]
-        # Tier color for CORRECT (bronze tier = 0xCD7F32)
-        from cogs.bountyCog import TIER_COLORS
-        assert embed.color.value == TIER_COLORS["bronze"]
+        call_args = interaction.followup.send.call_args
+        call_kwargs = call_args[1]
+        # Must be a plain text confirmation (no embed) and ephemeral
+        assert "embed" not in call_kwargs
+        assert call_kwargs.get("ephemeral") is True
+        # Message text is passed as a positional arg
+        content = call_args[0][0] if call_args[0] else call_kwargs.get("content", "")
+        assert "capture" in content.lower()
 
     def test_check_not_found_result_orange_embed(self, mock_bounty_cog, make_mock_response):
         """/check NOT_FOUND result should display orange embed."""
@@ -2700,10 +2707,12 @@ class TestCheckMultiBountyResponse:
         assert "1,234" in all_text
         assert "5,678" in all_text
 
-    def test_check_single_outcome_uses_legacy_single_embed(self, mock_bounty_cog, make_mock_response):
-        """Single-outcome responses keep the legacy single-bounty embed (no consolidation)."""
-        from cogs.bountyCog import TIER_COLORS
+    def test_check_single_outcome_capture_sends_text_confirmation(self, mock_bounty_cog, make_mock_response):
+        """Single-outcome capture sends a minimal ephemeral text confirmation, not an embed.
 
+        The full payout detail lives in the public embed posted by _post_capture_payout
+        in bot-core; showing an embed here too produced a double-embed for the invoker.
+        """
         interaction = _create_mock_interaction()
         outcomes = [
             {
@@ -2721,12 +2730,15 @@ class TestCheckMultiBountyResponse:
 
         asyncio.run(mock_bounty_cog.check.callback(mock_bounty_cog, interaction, "Sol"))
 
-        embed = interaction.followup.send.call_args[1]["embed"]
-        # Tier color for gold capture (Sub-task A)
-        assert embed.color.value == TIER_COLORS["gold"]
-        # Title is the legacy "Bounty Captured!" not the multi-bounty title
-        assert "Captured" in (embed.title or "")
-        assert "Multiple" not in (embed.title or "")
+        call_args = interaction.followup.send.call_args
+        call_kwargs = call_args[1]
+        # Must be plain text (no embed) and ephemeral
+        assert "embed" not in call_kwargs
+        assert call_kwargs.get("ephemeral") is True
+        # Message text is passed as a positional arg
+        content = call_args[0][0] if call_args[0] else call_kwargs.get("content", "")
+        assert "Solo" in content  # criminal name present in confirmation
+        assert "capture" in content.lower()
 
 
 # ===========================================================================

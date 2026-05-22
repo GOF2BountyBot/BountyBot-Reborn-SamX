@@ -196,6 +196,7 @@ class TestDistributeRewardsIntegration:
                 await _seed_user(session_a, user_id=1)
                 player = await _seed_player(session_a, user_id=1, guild_id=100, credits=5000)
                 player_id = player.id
+                player_discord_id = player.user_id  # User.id == Discord snowflake
                 bounty = await _seed_bounty(
                     session_a,
                     guild_id=100,
@@ -221,7 +222,9 @@ class TestDistributeRewardsIntegration:
                 bounty_b = await session_b.get(Bounty, bounty_id)
                 assert bounty_b is not None
                 assert bounty_b.status == "completed"
-                assert bounty_b.win_user_id == player_id
+                # win_user_id stores the Discord snowflake (User.id / Player.user_id),
+                # NOT the player table PK.
+                assert bounty_b.win_user_id == player_discord_id
         finally:
             await engine.dispose()
 
@@ -372,6 +375,7 @@ class TestDistributeRewardsIntegration:
                 player_b = await _seed_player(session_a, user_id=11, guild_id=200, credits=3000)
                 pid_a = player_a.id
                 pid_b = player_b.id
+                pid_b_discord = player_b.user_id  # User.id == Discord snowflake
                 bounty = await _seed_bounty(
                     session_a,
                     guild_id=200,
@@ -410,7 +414,9 @@ class TestDistributeRewardsIntegration:
 
                 assert bounty_b is not None
                 assert bounty_b.status == "completed"
-                assert bounty_b.win_user_id == pid_b
+                # win_user_id stores the Discord snowflake (User.id / Player.user_id),
+                # NOT the player table PK.
+                assert bounty_b.win_user_id == pid_b_discord
         finally:
             await engine.dispose()
 
@@ -423,6 +429,7 @@ class TestDistributeRewardsIntegration:
                 await _seed_user(session_a, user_id=20)
                 player = await _seed_player(session_a, user_id=20, guild_id=300, credits=1000)
                 player_id = player.id
+                player_discord_id = player.user_id  # User.id == Discord snowflake
                 bounty = await _seed_bounty(
                     session_a,
                     guild_id=300,
@@ -444,7 +451,9 @@ class TestDistributeRewardsIntegration:
                 bounty_b = await session_b.get(Bounty, bounty_id)
                 assert bounty_b is not None
                 assert bounty_b.status == "completed"
-                assert bounty_b.win_user_id == player_id
+                # win_user_id stores the Discord snowflake (User.id / Player.user_id),
+                # NOT the player table PK.
+                assert bounty_b.win_user_id == player_discord_id
         finally:
             await engine.dispose()
 

@@ -304,14 +304,22 @@ class BountyCog(commands.Cog):
                 outcome_data["system_name"] = system
                 embed = self._build_check_embed(outcome_data)
 
-                # Capture (correct + combat not lost): send ephemeral so only the
-                # invoker sees the personal combat summary.  The single
-                # comprehensive public payout announcement comes from
-                # _post_capture_payout in bot-core.
+                # Capture (correct + combat not lost): send a minimal ephemeral
+                # confirmation — the full payout detail is in the single public
+                # embed posted by _post_capture_payout in bot-core.  Sending
+                # the full embed here (even ephemerally) produced a confusing
+                # double-embed for the invoker.
                 _outcome_result = outcome_data.get("result", "")
                 _combat_won = outcome_data.get("combat_won")
                 _is_capture = _outcome_result == "correct" and _combat_won is not False
-                await interaction.followup.send(embed=embed, ephemeral=_is_capture)
+                if _is_capture:
+                    _criminal_name = outcome_data.get("criminal_name", "the target")
+                    await interaction.followup.send(
+                        f"✅ **{_criminal_name}** captured! Check the bounty channel for your payout.",
+                        ephemeral=True,
+                    )
+                else:
+                    await interaction.followup.send(embed=embed)
             flogger.info(
                 f"/check success: guild={interaction.guild_id} user={interaction.user.id}"
                 f" system={system} result={result} result_count={len(outcomes)}"

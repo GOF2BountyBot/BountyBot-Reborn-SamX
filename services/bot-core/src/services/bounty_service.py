@@ -1788,7 +1788,14 @@ class BountyService:
         # of its loop, so this commit is the inner cross-table flush; the outer
         # check_bounty commit is a no-op when no further changes are pending.)
         bounty.status = "completed"
-        bounty.win_user_id = next((r.player_id for r in rewards if r.is_winner), None)
+        # Store the Discord user ID (User.id = snowflake), NOT the player table PK.
+        # modified_players already holds the fetched Player objects; the winning
+        # player's .user_id FK is the Discord snowflake we need.
+        _winning_player = next(
+            (p for p in modified_players if any(r.player_id == p.id and r.is_winner for r in rewards)),
+            None,
+        )
+        bounty.win_user_id = _winning_player.user_id if _winning_player else None
         await self.bounty_repo.update(db, bounty, commit=False)
         await db.commit()
 

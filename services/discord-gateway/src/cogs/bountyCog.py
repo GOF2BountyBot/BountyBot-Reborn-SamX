@@ -449,17 +449,35 @@ class BountyCog(commands.Cog):
                 inline=False,
             )
 
-        # Combat summaries: append once per outcome that had combat.
+        # Combat summaries and payout breakdowns: append once per outcome that had combat/capture.
         for outcome in outcomes:
+            criminal_name = outcome.get("criminal_name") or f"Bounty #{outcome.get('bounty_id')}"
             combat = outcome.get("combat_result")
             if combat:
-                criminal_name = outcome.get("criminal_name") or f"Bounty #{outcome.get('bounty_id')}"
                 summary = self._format_combat_summary(combat)
                 embed.add_field(
                     name=f"⚔️ Combat — {criminal_name}",
                     value=summary[:1024],
                     inline=False,
                 )
+
+            # Payout breakdown for capture outcomes (result=correct, not a combat loss).
+            if outcome.get("result") == "correct" and outcome.get("combat_won") is not False:
+                breakdown = outcome.get("payout_breakdown") or []
+                if breakdown:
+                    breakdown_sorted = sorted(breakdown, key=lambda x: x.get("amount", 0), reverse=True)
+                    lines = []
+                    for entry in breakdown_sorted:
+                        icon = "🏆" if entry.get("role") == "capture claim" else "🔍"
+                        name = entry.get("player_display_name", "Unknown")
+                        role = entry.get("role", "")
+                        amount = entry.get("amount", 0)
+                        lines.append(f"{icon} {name} — {role} — {amount:,} cr")
+                    embed.add_field(
+                        name=f"💰 Payout — {criminal_name}",
+                        value="\n".join(lines)[:1024],
+                        inline=False,
+                    )
 
         return embed
 

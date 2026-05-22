@@ -4203,3 +4203,473 @@ class TestPayoutBreakdownSchemaWireThrough:
         assert winner_idx < checker_idx, (
             "Winner (WinnerSamX, 7049 cr) must appear before checker (CheckerX, 100 cr)"
         )
+
+
+# ===========================================================================
+# _build_multi_check_embed — payout breakdown per capture (bug fix)
+# ===========================================================================
+#
+# Verifies that _build_multi_check_embed renders a per-bounty 💰 Payout field
+# when payout_breakdown is present in the outcome dict (Bug: multi-capture embed
+# was missing payout breakdown entirely — it was only rendered on single-capture
+# path via _build_capture_embed).
+
+
+class TestBuildMultiCheckEmbedPayoutBreakdown:
+    """Tests for payout breakdown rendering in _build_multi_check_embed().
+
+    Acceptance criteria (multi-capture payout breakdown fix):
+    1. When a capture outcome (result=correct, combat_won≠False) has a
+       non-empty payout_breakdown, a '💰 Payout — {criminal_name}' field
+       is added to the consolidated multi-bounty embed.
+    2. The field contains the breakdown lines (icon, name, role, amount).
+    3. Multiple capture outcomes each get their own per-bounty payout field.
+    4. Combat-loss outcomes (combat_won=False) do NOT get a payout field.
+    5. Non-capture outcomes (incorrect, already_checked) do NOT get a payout field.
+    6. When payout_breakdown is absent/empty, no extra field is added.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _import_cog(self, mock_bounty_cog):
+        self.cog = mock_bounty_cog
+
+    # -----------------------------------------------------------------------
+    # AC 1 & 2: Capture with payout_breakdown → per-bounty '💰 Payout' field
+    # -----------------------------------------------------------------------
+
+    def test_multi_embed_capture_with_breakdown_adds_payout_field(self):
+        """Capture outcome with payout_breakdown produces a '💰 Payout — {name}' field."""
+        outcomes = [
+            {
+                "result": "correct",
+                "bounty_id": 1,
+                "criminal_name": "Qyrr Myfft",
+                "combat_won": True,
+                "reward": 3188,
+                "total_reward": 3188,
+                "bonus_won": False,
+                "payout_breakdown": [
+                    {"player_display_name": "Hunter1", "role": "capture claim", "amount": 3188},
+                ],
+            },
+            {
+                "result": "incorrect",
+                "bounty_id": 2,
+                "criminal_name": "Gendol Ethor",
+                "recently_spotted": False,
+            },
+        ]
+        embed = self.cog._build_multi_check_embed("Magnetar", outcomes)
+        field_names = [f.name for f in embed.fields]
+        # Should have a payout field for the captured criminal
+        assert any("Payout" in n and "Qyrr Myfft" in n for n in field_names), (
+            f"Expected '💰 Payout — Qyrr Myfft' field but got: {field_names}"
+        )
+
+    def test_multi_embed_payout_field_contains_breakdown_lines(self):
+        """The per-bounty payout field must contain the breakdown player lines."""
+        outcomes = [
+            {
+                "result": "correct",
+                "bounty_id": 10,
+                "criminal_name": "TargetCrim",
+                "combat_won": True,
+                "reward": 5000,
+                "total_reward": 5000,
+                "bonus_won": False,
+                "payout_breakdown": [
+                    {"player_display_name": "MainWinner", "role": "capture claim", "amount": 5000},
+                    {"player_display_name": "SystemChecker", "role": "system check", "amount": 200},
+                ],
+            },
+        ]
+        embed = self.cog._build_multi_check_embed("Sol", outcomes)
+        payout_field = next(
+            (f for f in embed.fields if "Payout" in (f.name or "") and "TargetCrim" in (f.name or "")),
+            None,
+        )
+        assert payout_field is not None, "Expected per-bounty payout field for capture"
+        assert "MainWinner" in payout_field.value
+        assert "SystemChecker" in payout_field.value
+        assert "5,000" in payout_field.value
+        assert "200" in payout_field.value
+
+    def test_multi_embed_payout_field_winner_has_trophy_icon(self):
+        """Payout breakdown winner ('capture claim') must have 🏆 icon in multi-embed."""
+        outcomes = [
+            {
+                "result": "correct",
+                "bounty_id": 5,
+                "criminal_name": "BossVillain",
+                "combat_won": True,
+                "reward": 4000,
+                "total_reward": 4000,
+                "payout_breakdown": [
+                    {"player_display_name": "WinnerHunter", "role": "capture claim", "amount": 4000},
+                ],
+            },
+        ]
+        embed = self.cog._build_multi_check_embed("Nexus", outcomes)
+        payout_field = next(
+            (f for f in embed.fields if "Payout" in (f.name or "") and "BossVillain" in (f.name or "")),
+            None,
+        )
+        assert payout_field is not None
+        assert "🏆" in payout_field.value, "Capture claim must use 🏆 icon in multi-embed payout"
+
+    def test_multi_embed_payout_field_checker_has_search_icon(self):
+        """Payout breakdown checker ('system check') must have 🔍 icon in multi-embed."""
+        outcomes = [
+            {
+                "result": "correct",
+                "bounty_id": 7,
+                "criminal_name": "SmallFry",
+                "combat_won": True,
+                "reward": 1000,
+                "total_reward": 1000,
+                "payout_breakdown": [
+                    {"player_display_name": "Winner", "role": "capture claim", "amount": 1000},
+                    {"player_display_name": "Scout", "role": "system check", "amount": 100},
+                ],
+            },
+        ]
+        embed = self.cog._build_multi_check_embed("Tau", outcomes)
+        payout_field = next(
+            (f for f in embed.fields if "Payout" in (f.name or "") and "SmallFry" in (f.name or "")),
+            None,
+        )
+        assert payout_field is not None
+        assert "🔍" in payout_field.value, "System check must use 🔍 icon in multi-embed payout"
+
+    # -----------------------------------------------------------------------
+    # AC 3: Multiple captures each get their own payout field
+    # -----------------------------------------------------------------------
+
+    def test_multi_embed_two_captures_with_breakdowns_each_get_payout_field(self):
+        """Two capture outcomes with breakdowns produce two separate payout fields."""
+        outcomes = [
+            {
+                "result": "correct",
+                "bounty_id": 1,
+                "criminal_name": "Qyrr Myfft",
+                "combat_won": True,
+                "reward": 3188,
+                "total_reward": 3188,
+                "payout_breakdown": [
+                    {"player_display_name": "HunterA", "role": "capture claim", "amount": 3188},
+                ],
+            },
+            {
+                "result": "correct",
+                "bounty_id": 2,
+                "criminal_name": "Gendol Ethor",
+                "combat_won": True,
+                "reward": 44632,
+                "total_reward": 44632,
+                "payout_breakdown": [
+                    {"player_display_name": "HunterA", "role": "capture claim", "amount": 44632},
+                    {"player_display_name": "ScoutB", "role": "system check", "amount": 500},
+                ],
+            },
+        ]
+        embed = self.cog._build_multi_check_embed("Magnetar", outcomes)
+        field_names = [f.name for f in embed.fields]
+        # Both criminals must have their own payout field
+        assert any("Payout" in n and "Qyrr Myfft" in n for n in field_names), (
+            f"Expected payout field for Qyrr Myfft but got: {field_names}"
+        )
+        assert any("Payout" in n and "Gendol Ethor" in n for n in field_names), (
+            f"Expected payout field for Gendol Ethor but got: {field_names}"
+        )
+
+    def test_multi_embed_two_captures_payout_amounts_appear_correctly(self):
+        """Both capture payouts' amounts appear in the multi-bounty embed (bug regression test)."""
+        outcomes = [
+            {
+                "result": "correct",
+                "bounty_id": 1,
+                "criminal_name": "Qyrr Myfft",
+                "combat_won": True,
+                "reward": 3188,
+                "total_reward": 3188,
+                "payout_breakdown": [
+                    {"player_display_name": "HunterA", "role": "capture claim", "amount": 3188},
+                ],
+            },
+            {
+                "result": "correct",
+                "bounty_id": 2,
+                "criminal_name": "Gendol Ethor",
+                "combat_won": True,
+                "reward": 44632,
+                "total_reward": 44632,
+                "payout_breakdown": [
+                    {"player_display_name": "HunterA", "role": "capture claim", "amount": 44632},
+                ],
+            },
+        ]
+        embed = self.cog._build_multi_check_embed("Magnetar", outcomes)
+        all_field_values = " ".join(f.value or "" for f in embed.fields)
+        # Both rewards must appear in the embed (formatted with thousands separators)
+        assert "3,188" in all_field_values, "Qyrr Myfft payout (3,188 cr) missing from multi-embed"
+        assert "44,632" in all_field_values, "Gendol Ethor payout (44,632 cr) missing from multi-embed"
+
+    # -----------------------------------------------------------------------
+    # AC 4: Combat-loss outcomes do NOT get payout field
+    # -----------------------------------------------------------------------
+
+    def test_multi_embed_combat_loss_no_payout_field(self):
+        """Capture with combat_won=False (combat loss) must NOT get a payout field."""
+        outcomes = [
+            {
+                "result": "correct",
+                "bounty_id": 3,
+                "criminal_name": "EscapedCrim",
+                "combat_won": False,
+                "reward": 0,
+                "payout_breakdown": [
+                    {"player_display_name": "LoserPlayer", "role": "capture claim", "amount": 0},
+                ],
+            },
+        ]
+        embed = self.cog._build_multi_check_embed("Void", outcomes)
+        field_names = [f.name for f in embed.fields]
+        # No payout field for combat loss
+        assert not any("Payout" in n for n in field_names), (
+            f"Combat loss outcome must NOT produce a payout field, but got: {field_names}"
+        )
+
+    # -----------------------------------------------------------------------
+    # AC 5: Non-capture outcomes do NOT get payout field
+    # -----------------------------------------------------------------------
+
+    def test_multi_embed_incorrect_outcome_no_payout_field(self):
+        """Incorrect outcomes (result=incorrect) must NOT produce a payout field."""
+        outcomes = [
+            {
+                "result": "incorrect",
+                "bounty_id": 4,
+                "criminal_name": "MissingCrim",
+                "recently_spotted": False,
+                "payout_breakdown": [],
+            },
+        ]
+        embed = self.cog._build_multi_check_embed("Alpha", outcomes)
+        field_names = [f.name for f in embed.fields]
+        assert not any("Payout" in n for n in field_names), (
+            f"Incorrect outcome must NOT produce a payout field, but got: {field_names}"
+        )
+
+    def test_multi_embed_already_checked_outcome_no_payout_field(self):
+        """Already-checked outcomes must NOT produce a payout field."""
+        outcomes = [
+            {
+                "result": "already_checked",
+                "bounty_id": 5,
+                "criminal_name": "AlreadyDone",
+            },
+        ]
+        embed = self.cog._build_multi_check_embed("Beta", outcomes)
+        field_names = [f.name for f in embed.fields]
+        assert not any("Payout" in n for n in field_names), (
+            f"already_checked outcome must NOT produce a payout field, but got: {field_names}"
+        )
+
+    # -----------------------------------------------------------------------
+    # AC 6: No payout_breakdown (absent/empty) → no extra field
+    # -----------------------------------------------------------------------
+
+    def test_multi_embed_capture_without_breakdown_no_extra_field(self):
+        """Capture outcome without payout_breakdown does NOT add a payout field."""
+        outcomes = [
+            {
+                "result": "correct",
+                "bounty_id": 20,
+                "criminal_name": "SilentFox",
+                "combat_won": True,
+                "reward": 2000,
+                "total_reward": 2000,
+                # payout_breakdown intentionally absent
+            },
+            {
+                "result": "incorrect",
+                "bounty_id": 21,
+                "criminal_name": "GhostRider",
+                "recently_spotted": False,
+            },
+        ]
+        embed = self.cog._build_multi_check_embed("Proxima", outcomes)
+        field_names = [f.name for f in embed.fields]
+        # Without payout_breakdown, no '💰 Payout' fields should appear
+        assert not any("Payout" in n for n in field_names), (
+            f"Capture without payout_breakdown must NOT add a payout field, but got: {field_names}"
+        )
+
+    def test_multi_embed_capture_with_empty_breakdown_no_extra_field(self):
+        """Capture outcome with payout_breakdown=[] does NOT add a payout field."""
+        outcomes = [
+            {
+                "result": "correct",
+                "bounty_id": 30,
+                "criminal_name": "EmptyBreakdown",
+                "combat_won": True,
+                "reward": 1500,
+                "total_reward": 1500,
+                "payout_breakdown": [],
+            },
+        ]
+        embed = self.cog._build_multi_check_embed("Gamma", outcomes)
+        field_names = [f.name for f in embed.fields]
+        assert not any("Payout" in n for n in field_names), (
+            f"Empty payout_breakdown must NOT add a payout field, but got: {field_names}"
+        )
+
+    # -----------------------------------------------------------------------
+    # End-to-end: check command with multi-capture and payout_breakdown
+    # -----------------------------------------------------------------------
+
+    def test_check_multi_capture_embed_shows_payout_breakdown_per_bounty(self, mock_bounty_cog, make_mock_response):
+        """/check multi-capture response with payout_breakdown shows per-bounty payout fields."""
+
+        @pytest.fixture(autouse=True)
+        def _patch_player_id(self, mock_bounty_cog):
+            mock_bounty_cog._get_player_id = AsyncMock(return_value=42)
+
+        mock_bounty_cog._get_player_id = AsyncMock(return_value=42)
+        mock_bounty_cog._systems_cache.set("all", ["Magnetar"])
+        interaction = _create_mock_interaction()
+
+        response_data = _make_multi_check_response([
+            {
+                "result": "correct",
+                "bounty_id": 1,
+                "criminal_name": "Qyrr Myfft",
+                "combat_won": True,
+                "reward": 3188,
+                "total_reward": 3188,
+                "bonus_won": False,
+                "payout_breakdown": [
+                    {"player_display_name": "TestUser", "role": "capture claim", "amount": 3188},
+                ],
+            },
+            {
+                "result": "correct",
+                "bounty_id": 2,
+                "criminal_name": "Gendol Ethor",
+                "combat_won": True,
+                "reward": 44632,
+                "total_reward": 44632,
+                "bonus_won": False,
+                "payout_breakdown": [
+                    {"player_display_name": "TestUser", "role": "capture claim", "amount": 44632},
+                ],
+            },
+        ])
+        resp = make_mock_response(response_data)
+        mock_bounty_cog.http_client.post = AsyncMock(return_value=resp)
+
+        asyncio.run(mock_bounty_cog.check.callback(mock_bounty_cog, interaction, "Magnetar"))
+
+        interaction.followup.send.assert_awaited_once()
+        embed = interaction.followup.send.call_args[1]["embed"]
+        field_names = [f.name for f in embed.fields]
+
+        # Both criminals must have a payout field
+        assert any("Payout" in n and "Qyrr Myfft" in n for n in field_names), (
+            f"Missing payout field for Qyrr Myfft. Fields: {field_names}"
+        )
+        assert any("Payout" in n and "Gendol Ethor" in n for n in field_names), (
+            f"Missing payout field for Gendol Ethor. Fields: {field_names}"
+        )
+
+        # Both reward amounts must appear
+        all_text = " ".join(f.value or "" for f in embed.fields)
+        assert "3,188" in all_text, "Qyrr Myfft reward missing"
+        assert "44,632" in all_text, "Gendol Ethor reward missing"
+
+    # -----------------------------------------------------------------------
+    # Adversarial / edge-case additions (QA review)
+    # -----------------------------------------------------------------------
+
+    def test_multi_embed_payout_field_sorted_descending_by_amount(self):
+        """Payout breakdown in multi-embed must be sorted descending by amount (highest first)."""
+        outcomes = [
+            {
+                "result": "correct",
+                "bounty_id": 99,
+                "criminal_name": "SortTestCrim",
+                "combat_won": True,
+                "reward": 8000,
+                "total_reward": 8000,
+                "payout_breakdown": [
+                    # Intentionally in ascending order — production code must sort descending
+                    {"player_display_name": "LowChecker", "role": "system check", "amount": 50},
+                    {"player_display_name": "MidChecker", "role": "system check", "amount": 500},
+                    {"player_display_name": "TopWinner", "role": "capture claim", "amount": 8000},
+                ],
+            },
+        ]
+        embed = self.cog._build_multi_check_embed("Vortex", outcomes)
+        payout_field = next(
+            (f for f in embed.fields if "Payout" in (f.name or "") and "SortTestCrim" in (f.name or "")),
+            None,
+        )
+        assert payout_field is not None, "Expected payout field for capture with breakdown"
+        lines = payout_field.value.split("\n")
+        top_idx = next((i for i, line in enumerate(lines) if "TopWinner" in line), -1)
+        mid_idx = next((i for i, line in enumerate(lines) if "MidChecker" in line), -1)
+        low_idx = next((i for i, line in enumerate(lines) if "LowChecker" in line), -1)
+        assert top_idx != -1 and mid_idx != -1 and low_idx != -1, (
+            f"Expected all three players in breakdown lines: {lines}"
+        )
+        assert top_idx < mid_idx < low_idx, (
+            f"Payout lines must be sorted descending by amount "
+            f"(TopWinner 8000 > MidChecker 500 > LowChecker 50), "
+            f"but order was top={top_idx}, mid={mid_idx}, low={low_idx}. Lines: {lines}"
+        )
+
+    def test_multi_embed_payout_field_name_exact_format(self):
+        """Multi-embed payout field name must be exactly '💰 Payout — {criminal_name}'."""
+        outcomes = [
+            {
+                "result": "correct",
+                "bounty_id": 55,
+                "criminal_name": "FormatTestCrim",
+                "combat_won": True,
+                "reward": 1000,
+                "total_reward": 1000,
+                "payout_breakdown": [
+                    {"player_display_name": "Solo", "role": "capture claim", "amount": 1000},
+                ],
+            },
+        ]
+        embed = self.cog._build_multi_check_embed("Omega", outcomes)
+        payout_field = next(
+            (f for f in embed.fields if "Payout" in (f.name or "")),
+            None,
+        )
+        assert payout_field is not None, "Expected a payout field"
+        assert payout_field.name == "💰 Payout — FormatTestCrim", (
+            f"Field name must be exactly '💰 Payout — FormatTestCrim', got: {payout_field.name!r}"
+        )
+
+    def test_multi_embed_bronze_capture_combat_won_none_shows_breakdown(self):
+        """Bronze tier capture (combat_won=None) must show payout breakdown in multi-embed."""
+        outcomes = [
+            {
+                "result": "correct",
+                "bounty_id": 77,
+                "criminal_name": "BronzeTarget",
+                "combat_won": None,  # Bronze tier — no combat
+                "reward": 2500,
+                "total_reward": 2500,
+                "payout_breakdown": [
+                    {"player_display_name": "BronzeHunter", "role": "capture claim", "amount": 2500},
+                ],
+            },
+        ]
+        embed = self.cog._build_multi_check_embed("Praxis", outcomes)
+        field_names = [f.name for f in embed.fields]
+        assert any("Payout" in n and "BronzeTarget" in n for n in field_names), (
+            f"Bronze capture (combat_won=None) must produce a payout field, but got: {field_names}"
+        )

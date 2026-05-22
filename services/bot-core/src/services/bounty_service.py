@@ -1591,7 +1591,7 @@ class BountyService:
             win_user_id = getattr(bounty, "win_user_id", None)
             if win_user_id:
                 user_repo = UserRepository()
-                user = await user_repo.get_by_id(db, win_user_id)
+                user = await user_repo.get_by_discord_id(db, win_user_id)
                 if user:
                     winner_name = (
                         getattr(user, "display_name", None)
@@ -1617,6 +1617,7 @@ class BountyService:
                 bonus_won=bonus_won,
                 reward_per_sys=reward_per_sys,
                 route_length=route_length,
+                combat_result=getattr(outcome, "combat_result", None),
             )
 
             gateway_host = os.getenv("DISCORD_GATEWAY_HOST", "discord-gateway")

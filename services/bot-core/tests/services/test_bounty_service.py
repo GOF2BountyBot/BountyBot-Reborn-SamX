@@ -4868,6 +4868,9 @@ class TestPostCapturePayoutPayloadShape:
         o.reward = reward
         o.total_reward = total_reward
         o.bonus_won = bonus_won
+        # Explicitly set combat_result to None so build_capture_payout_embed
+        # skips the combat summary section (Bug 2B fix: getattr uses this value).
+        o.combat_result = None
         return o
 
     @staticmethod
@@ -4911,7 +4914,7 @@ class TestPostCapturePayoutPayloadShape:
 
         with (
             patch("persist.repositories.config_repository.ConfigRepository.get_by_guild_id", new=AsyncMock(return_value=config)),
-            patch("persist.repositories.user_repository.UserRepository.get_by_id", new=AsyncMock(return_value=None)),
+            patch("persist.repositories.user_repository.UserRepository.get_by_discord_id", new=AsyncMock(return_value=None)),
             patch("httpx.AsyncClient", MockAsyncClient),
         ):
             # Should not raise
@@ -4921,8 +4924,8 @@ class TestPostCapturePayoutPayloadShape:
         payload = captured_json[0]
         # C.3 fix: must use 'content' key, NOT 'embeds'
         assert "content" in payload, f"Payload must have 'content' key, got keys: {list(payload.keys())}"
-        assert "embeds" not in payload, f"Payload must NOT have 'embeds' key after C.3 fix"
-        assert "text_content" in payload, f"Payload must have 'text_content' key"
+        assert "embeds" not in payload, "Payload must NOT have 'embeds' key after C.3 fix"
+        assert "text_content" in payload, "Payload must have 'text_content' key"
         assert payload["text_content"] is None
 
     @pytest.mark.asyncio
@@ -4949,7 +4952,7 @@ class TestPostCapturePayoutPayloadShape:
 
         with (
             patch("persist.repositories.config_repository.ConfigRepository.get_by_guild_id", new=AsyncMock(return_value=config)),
-            patch("persist.repositories.user_repository.UserRepository.get_by_id", new=AsyncMock(return_value=None)),
+            patch("persist.repositories.user_repository.UserRepository.get_by_discord_id", new=AsyncMock(return_value=None)),
             patch("httpx.AsyncClient", MockAsyncClient),
         ):
             await service._post_capture_payout(mock_db, guild_id=1, bounty=bounty, outcome=outcome)
@@ -4959,7 +4962,7 @@ class TestPostCapturePayoutPayloadShape:
         assert isinstance(content, dict), f"'content' must be a dict, got {type(content)}"
         # Must have embed title and color
         assert content.get("title") == "💰 Bounty Captured!", f"Embed title wrong: {content.get('title')}"
-        assert content.get("color") == 0xFFD700, f"Embed color must be gold (0xFFD700)"
+        assert content.get("color") == 0xFFD700, "Embed color must be gold (0xFFD700)"
 
     @pytest.mark.asyncio
     async def test_winner_name_prefers_display_name_over_username(self, service, mock_db):
@@ -4987,7 +4990,7 @@ class TestPostCapturePayoutPayloadShape:
 
         with (
             patch("persist.repositories.config_repository.ConfigRepository.get_by_guild_id", new=AsyncMock(return_value=config)),
-            patch("persist.repositories.user_repository.UserRepository.get_by_id", new=AsyncMock(return_value=user)),
+            patch("persist.repositories.user_repository.UserRepository.get_by_discord_id", new=AsyncMock(return_value=user)),
             patch("httpx.AsyncClient", MockAsyncClient),
         ):
             await service._post_capture_payout(mock_db, guild_id=1, bounty=bounty, outcome=outcome)
@@ -5026,7 +5029,7 @@ class TestPostCapturePayoutPayloadShape:
 
         with (
             patch("persist.repositories.config_repository.ConfigRepository.get_by_guild_id", new=AsyncMock(return_value=config)),
-            patch("persist.repositories.user_repository.UserRepository.get_by_id", new=AsyncMock(return_value=user)),
+            patch("persist.repositories.user_repository.UserRepository.get_by_discord_id", new=AsyncMock(return_value=user)),
             patch("httpx.AsyncClient", MockAsyncClient),
         ):
             await service._post_capture_payout(mock_db, guild_id=1, bounty=bounty, outcome=outcome)
@@ -5062,7 +5065,7 @@ class TestPostCapturePayoutPayloadShape:
 
         with (
             patch("persist.repositories.config_repository.ConfigRepository.get_by_guild_id", new=AsyncMock(return_value=config)),
-            patch("persist.repositories.user_repository.UserRepository.get_by_id", new=AsyncMock(return_value=None)),
+            patch("persist.repositories.user_repository.UserRepository.get_by_discord_id", new=AsyncMock(return_value=None)),
             patch("httpx.AsyncClient", MockAsyncClient),
         ):
             await service._post_capture_payout(mock_db, guild_id=1, bounty=bounty, outcome=outcome)
@@ -5093,7 +5096,7 @@ class TestPostCapturePayoutPayloadShape:
 
         with (
             patch("persist.repositories.config_repository.ConfigRepository.get_by_guild_id", new=AsyncMock(return_value=config)),
-            patch("persist.repositories.user_repository.UserRepository.get_by_id", new=AsyncMock(return_value=None)),
+            patch("persist.repositories.user_repository.UserRepository.get_by_discord_id", new=AsyncMock(return_value=None)),
             patch("httpx.AsyncClient", ExplodingAsyncClient),
         ):
             # Must NOT raise — non-fatal
@@ -5151,7 +5154,7 @@ class TestPostCapturePayoutPayloadShape:
 
         with (
             patch("persist.repositories.config_repository.ConfigRepository.get_by_guild_id", new=AsyncMock(return_value=config)),
-            patch("persist.repositories.user_repository.UserRepository.get_by_id", new=AsyncMock(return_value=None)),
+            patch("persist.repositories.user_repository.UserRepository.get_by_discord_id", new=AsyncMock(return_value=None)),
             patch("httpx.AsyncClient", MockAsyncClient),
         ):
             await service._post_capture_payout(mock_db, guild_id=1, bounty=bounty, outcome=outcome)

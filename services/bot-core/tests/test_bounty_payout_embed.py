@@ -378,3 +378,232 @@ class TestBuildCapturePayoutEmbed:
         )
         fields_by_name = {f["name"]: f for f in result["fields"]}
         assert "📍 System Checks" not in fields_by_name
+
+
+# ===========================================================================
+# Tests for build_capture_payout_embed — combat_result parameter (Bug 2B)
+# ===========================================================================
+
+
+def _make_combat_result(
+    ship1_name="Eagle MK II",
+    ship1_hp=500,
+    ship1_dps=45.0,
+    ship1_ttk=11.1,
+    ship2_name="Outlaw",
+    ship2_hp=300,
+    ship2_dps=30.0,
+    ship2_ttk=16.7,
+    is_stalemate=False,
+    pvc_armour_buff_applied=False,
+    pvc_armour_buff_factor=1.5,
+):
+    """Return a minimal serialized FightResults dict for tests."""
+    return {
+        "ship1_stats": {
+            "ship_name": ship1_name,
+            "varied_hp": ship1_hp,
+            "varied_dps": ship1_dps,
+            "ttk": ship1_ttk,
+        },
+        "ship2_stats": {
+            "ship_name": ship2_name,
+            "varied_hp": ship2_hp,
+            "varied_dps": ship2_dps,
+            "ttk": ship2_ttk,
+        },
+        "metadata": {
+            "pvc_armour_buff_applied": pvc_armour_buff_applied,
+            "pvc_armour_buff_factor": pvc_armour_buff_factor,
+        },
+        "is_stalemate": is_stalemate,
+    }
+
+
+class TestBuildCapturePayoutEmbedCombatResult:
+    """Bug 2B: Tests for combat_result parameter in build_capture_payout_embed.
+
+    Acceptance criteria:
+    - When combat_result is provided: ⚔️ Your Ship, 🤖 Criminal Ship, ✅ Result fields present
+    - When combat_result is None: embed renders correctly without combat fields
+    - TTK renders as '∞' when ttk is None (zero-DPS opponent)
+    - 🛡️ Keith T Maxwell Buff field only appears when pvc_armour_buff_applied=True
+    - combat_result dict with missing keys doesn't crash (.get() used defensively)
+    """
+
+    def test_no_combat_result_omits_combat_fields(self):
+        """When combat_result=None, no combat fields appear."""
+        result = build_capture_payout_embed("Criminal", "gold", 80000, combat_result=None)
+        field_names = [f["name"] for f in result["fields"]]
+        assert "⚔️ Your Ship" not in field_names
+        assert "🤖 Criminal Ship" not in field_names
+        assert "✅ Result" not in field_names
+
+    def test_no_combat_result_still_has_payout_fields(self):
+        """When combat_result=None, payout fields are still present."""
+        result = build_capture_payout_embed("Criminal", "gold", 80000, combat_result=None)
+        field_names = [f["name"] for f in result["fields"]]
+        assert "🏆 Division" in field_names
+        assert "⚔️ Claimed by" in field_names
+        assert "💵 Base Reward" in field_names
+        assert "🏆 Total Payout" in field_names
+
+    def test_with_combat_result_has_your_ship_field(self):
+        """When combat_result is provided, '⚔️ Your Ship' field appears."""
+        result = build_capture_payout_embed("Criminal", "gold", 80000, combat_result=_make_combat_result())
+        field_names = [f["name"] for f in result["fields"]]
+        assert "⚔️ Your Ship" in field_names
+
+    def test_with_combat_result_has_criminal_ship_field(self):
+        """When combat_result is provided, '🤖 Criminal Ship' field appears."""
+        result = build_capture_payout_embed("Criminal", "gold", 80000, combat_result=_make_combat_result())
+        field_names = [f["name"] for f in result["fields"]]
+        assert "🤖 Criminal Ship" in field_names
+
+    def test_with_combat_result_has_result_field(self):
+        """When combat_result is provided, '✅ Result' field appears."""
+        result = build_capture_payout_embed("Criminal", "gold", 80000, combat_result=_make_combat_result())
+        field_names = [f["name"] for f in result["fields"]]
+        assert "✅ Result" in field_names
+
+    def test_your_ship_field_contains_ship_name(self):
+        """⚔️ Your Ship field value contains the ship name from ship1_stats."""
+        cr = _make_combat_result(ship1_name="Eagle MK II")
+        result = build_capture_payout_embed("Criminal", "gold", 80000, combat_result=cr)
+        fields_by_name = {f["name"]: f["value"] for f in result["fields"]}
+        assert "Eagle MK II" in fields_by_name["⚔️ Your Ship"]
+
+    def test_criminal_ship_field_contains_ship_name(self):
+        """🤖 Criminal Ship field value contains the ship name from ship2_stats."""
+        cr = _make_combat_result(ship2_name="Outlaw")
+        result = build_capture_payout_embed("Criminal", "gold", 80000, combat_result=cr)
+        fields_by_name = {f["name"]: f["value"] for f in result["fields"]}
+        assert "Outlaw" in fields_by_name["🤖 Criminal Ship"]
+
+    def test_result_field_shows_victory_when_not_stalemate(self):
+        """✅ Result field shows 'Combat victory!' when is_stalemate=False."""
+        cr = _make_combat_result(is_stalemate=False)
+        result = build_capture_payout_embed("Criminal", "gold", 80000, combat_result=cr)
+        fields_by_name = {f["name"]: f["value"] for f in result["fields"]}
+        assert "victory" in fields_by_name["✅ Result"].lower()
+
+    def test_result_field_shows_stalemate_when_stalemate(self):
+        """✅ Result field shows 'Stalemate' when is_stalemate=True."""
+        cr = _make_combat_result(is_stalemate=True)
+        result = build_capture_payout_embed("Criminal", "gold", 80000, combat_result=cr)
+        fields_by_name = {f["name"]: f["value"] for f in result["fields"]}
+        assert "stalemate" in fields_by_name["✅ Result"].lower()
+
+    def test_combat_fields_precede_payout_fields(self):
+        """Combat summary fields appear before payout fields."""
+        cr = _make_combat_result()
+        result = build_capture_payout_embed("Criminal", "gold", 80000, combat_result=cr)
+        field_names = [f["name"] for f in result["fields"]]
+        your_ship_idx = field_names.index("⚔️ Your Ship")
+        division_idx = field_names.index("🏆 Division")
+        assert your_ship_idx < division_idx, "Combat fields must precede payout fields"
+
+    def test_pvc_buff_field_absent_when_not_applied(self):
+        """🛡️ Keith T Maxwell Buff field is absent when pvc_armour_buff_applied=False."""
+        cr = _make_combat_result(pvc_armour_buff_applied=False)
+        result = build_capture_payout_embed("Criminal", "gold", 80000, combat_result=cr)
+        field_names = [f["name"] for f in result["fields"]]
+        assert not any("Keith T Maxwell" in n for n in field_names)
+
+    def test_pvc_buff_field_present_when_applied(self):
+        """🛡️ Keith T Maxwell Buff field appears when pvc_armour_buff_applied=True."""
+        cr = _make_combat_result(pvc_armour_buff_applied=True, pvc_armour_buff_factor=1.5)
+        result = build_capture_payout_embed("Criminal", "gold", 80000, combat_result=cr)
+        field_names = [f["name"] for f in result["fields"]]
+        assert any("Keith T Maxwell" in n for n in field_names)
+
+    def test_pvc_buff_shows_factor(self):
+        """🛡️ Keith T Maxwell Buff field value includes the buff factor."""
+        cr = _make_combat_result(pvc_armour_buff_applied=True, pvc_armour_buff_factor=2.0)
+        result = build_capture_payout_embed("Criminal", "gold", 80000, combat_result=cr)
+        fields_by_name = {f["name"]: f["value"] for f in result["fields"]}
+        buff_field = next((f["value"] for f in result["fields"] if "Keith T Maxwell" in f["name"]), None)
+        assert buff_field is not None
+        assert "2.0" in buff_field
+
+    def test_ttk_none_renders_as_infinity_your_ship(self):
+        """TTK=None in ship1_stats renders as '∞' in ⚔️ Your Ship field (zero-DPS opponent)."""
+        cr = _make_combat_result(ship1_ttk=None)
+        result = build_capture_payout_embed("Criminal", "gold", 80000, combat_result=cr)
+        fields_by_name = {f["name"]: f["value"] for f in result["fields"]}
+        assert "∞" in fields_by_name["⚔️ Your Ship"]
+
+    def test_ttk_none_renders_as_infinity_criminal_ship(self):
+        """TTK=None in ship2_stats renders as '∞' in 🤖 Criminal Ship field (zero-DPS opponent)."""
+        cr = _make_combat_result(ship2_ttk=None)
+        result = build_capture_payout_embed("Criminal", "gold", 80000, combat_result=cr)
+        fields_by_name = {f["name"]: f["value"] for f in result["fields"]}
+        assert "∞" in fields_by_name["🤖 Criminal Ship"]
+
+    def test_ttk_value_renders_with_seconds_suffix(self):
+        """Finite TTK renders as 'X.Xs' in ship field."""
+        cr = _make_combat_result(ship1_ttk=12.345)
+        result = build_capture_payout_embed("Criminal", "gold", 80000, combat_result=cr)
+        fields_by_name = {f["name"]: f["value"] for f in result["fields"]}
+        assert "12.3s" in fields_by_name["⚔️ Your Ship"]
+
+    # --- Adversarial: missing keys in combat_result dict ---
+
+    def test_empty_combat_result_dict_does_not_crash(self):
+        """An empty combat_result dict uses .get() defaults — no crash."""
+        result = build_capture_payout_embed("Criminal", "gold", 80000, combat_result={})
+        field_names = [f["name"] for f in result["fields"]]
+        # Should still have the combat fields (with '?' defaults for missing names)
+        assert "⚔️ Your Ship" in field_names
+        assert "🤖 Criminal Ship" in field_names
+        assert "✅ Result" in field_names
+
+    def test_combat_result_missing_ship1_stats_does_not_crash(self):
+        """Missing ship1_stats key falls back gracefully via .get() → {}."""
+        cr = {"ship2_stats": {"ship_name": "Enemy"}, "is_stalemate": False, "metadata": {}}
+        result = build_capture_payout_embed("Criminal", "gold", 80000, combat_result=cr)
+        field_names = [f["name"] for f in result["fields"]]
+        assert "⚔️ Your Ship" in field_names
+
+    def test_combat_result_missing_ship2_stats_does_not_crash(self):
+        """Missing ship2_stats key falls back gracefully via .get() → {}."""
+        cr = {"ship1_stats": {"ship_name": "Player"}, "is_stalemate": False, "metadata": {}}
+        result = build_capture_payout_embed("Criminal", "gold", 80000, combat_result=cr)
+        field_names = [f["name"] for f in result["fields"]]
+        assert "🤖 Criminal Ship" in field_names
+
+    def test_combat_result_missing_metadata_does_not_crash(self):
+        """Missing metadata key falls back gracefully via .get() → {}."""
+        cr = {
+            "ship1_stats": {"ship_name": "Eagle"},
+            "ship2_stats": {"ship_name": "Foe"},
+            "is_stalemate": False,
+            # 'metadata' key absent
+        }
+        result = build_capture_payout_embed("Criminal", "gold", 80000, combat_result=cr)
+        field_names = [f["name"] for f in result["fields"]]
+        assert "⚔️ Your Ship" in field_names
+        # No buff field since metadata absent (should not crash)
+        assert not any("Keith T Maxwell" in n for n in field_names)
+
+    def test_combat_result_null_ship_stats_does_not_crash(self):
+        """ship1_stats=None handled by 'or {}' fallback — no crash."""
+        cr = {"ship1_stats": None, "ship2_stats": None, "metadata": None, "is_stalemate": False}
+        result = build_capture_payout_embed("Criminal", "gold", 80000, combat_result=cr)
+        field_names = [f["name"] for f in result["fields"]]
+        assert "⚔️ Your Ship" in field_names
+        assert "🤖 Criminal Ship" in field_names
+
+    def test_both_ttks_none_does_not_crash(self):
+        """Both ship1 and ship2 ttk=None — renders '∞' for both without crash."""
+        cr = _make_combat_result(ship1_ttk=None, ship2_ttk=None)
+        result = build_capture_payout_embed("Criminal", "gold", 80000, combat_result=cr)
+        fields_by_name = {f["name"]: f["value"] for f in result["fields"]}
+        assert "∞" in fields_by_name["⚔️ Your Ship"]
+        assert "∞" in fields_by_name["🤖 Criminal Ship"]
+
+    def test_win_user_id_none_bounty_uses_default_winner_name(self):
+        """When no winner_name is provided (default), 'A bounty hunter' appears in Claimed by."""
+        result = build_capture_payout_embed("Criminal", "gold", 80000, combat_result=_make_combat_result())
+        fields_by_name = {f["name"]: f["value"] for f in result["fields"]}
+        assert fields_by_name["⚔️ Claimed by"] == "A bounty hunter"

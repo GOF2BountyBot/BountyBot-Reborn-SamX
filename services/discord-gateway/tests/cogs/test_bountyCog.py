@@ -817,6 +817,125 @@ class TestCheckCommand:
 
 
 # ---------------------------------------------------------------------------
+# Bug 2A: /check ephemeral behavior — single-outcome path
+# ---------------------------------------------------------------------------
+
+
+class TestCheckCommandEphemeralBehavior:
+    """Bug 2A: Verify that capture outcomes are ephemeral, non-capture outcomes are public.
+
+    Single-outcome path rules:
+    - result='correct' + combat_won=True  → ephemeral=True  (capture)
+    - result='correct' + combat_won=None  → ephemeral=True  (no combat, treat as capture)
+    - result='correct' + combat_won=False → ephemeral=False (player lost, not a capture)
+    - result='incorrect'                  → ephemeral=False (public)
+    - result='not_found'                  → ephemeral=False (public)
+    - result='already_checked'            → ephemeral=False (public)
+    - result='cooldown'                   → ephemeral=True  (error path, not in scope here)
+    Multi-outcome path: always public (ephemeral=False)
+    """
+
+    @pytest.fixture(autouse=True)
+    def _patch_player_id(self, mock_bounty_cog):
+        mock_bounty_cog._get_player_id = AsyncMock(return_value=42)
+
+    @pytest.fixture(autouse=True)
+    def _populate_systems(self, mock_bounty_cog):
+        mock_bounty_cog._systems_cache.set("all", ["Alpha"])
+
+    def _run_check(self, cog, make_mock_response, response_data, system="Alpha"):
+        interaction = _create_mock_interaction()
+        resp = make_mock_response(response_data)
+        cog.http_client.post = AsyncMock(return_value=resp)
+        asyncio.run(cog.check.callback(cog, interaction, system))
+        call_kwargs = interaction.followup.send.call_args[1]
+        return call_kwargs
+
+    def test_correct_combat_won_true_is_ephemeral(self, mock_bounty_cog, make_mock_response):
+        """result='correct' + combat_won=True → single outcome followup is ephemeral."""
+        resp_data = {
+            "result": "correct",
+            "outcomes": [{"result": "correct", "bounty_id": 1, "combat_won": True, "division": "bronze"}],
+            "result_count": 1,
+        }
+        call_kwargs = self._run_check(mock_bounty_cog, make_mock_response, resp_data)
+        assert call_kwargs.get("ephemeral") is True, (
+            "Capture (result=correct, combat_won=True) must send ephemeral=True"
+        )
+
+    def test_correct_combat_won_none_is_ephemeral(self, mock_bounty_cog, make_mock_response):
+        """result='correct' + combat_won absent (None) → single outcome followup is ephemeral."""
+        resp_data = {
+            "result": "correct",
+            "outcomes": [{"result": "correct", "bounty_id": 1, "division": "bronze"}],
+            "result_count": 1,
+        }
+        call_kwargs = self._run_check(mock_bounty_cog, make_mock_response, resp_data)
+        assert call_kwargs.get("ephemeral") is True, (
+            "Capture (result=correct, combat_won absent) must send ephemeral=True"
+        )
+
+    def test_correct_combat_won_false_is_not_ephemeral(self, mock_bounty_cog, make_mock_response):
+        """result='correct' + combat_won=False → NOT ephemeral (player lost)."""
+        resp_data = {
+            "result": "correct",
+            "outcomes": [{"result": "correct", "bounty_id": 1, "combat_won": False, "division": "bronze"}],
+            "result_count": 1,
+        }
+        call_kwargs = self._run_check(mock_bounty_cog, make_mock_response, resp_data)
+        # combat_won=False means player lost — NOT a capture, should be public
+        assert not call_kwargs.get("ephemeral"), (
+            "Combat loss (result=correct, combat_won=False) must NOT be ephemeral"
+        )
+
+    def test_incorrect_result_is_not_ephemeral(self, mock_bounty_cog, make_mock_response):
+        """result='incorrect' → NOT ephemeral (wrong system, public feedback)."""
+        call_kwargs = self._run_check(
+            mock_bounty_cog,
+            make_mock_response,
+            _make_check_response("incorrect"),
+        )
+        assert not call_kwargs.get("ephemeral"), "Incorrect result must NOT be ephemeral"
+
+    def test_not_found_result_is_not_ephemeral(self, mock_bounty_cog, make_mock_response):
+        """result='not_found' → NOT ephemeral."""
+        call_kwargs = self._run_check(
+            mock_bounty_cog,
+            make_mock_response,
+            _make_check_response("not_found"),
+        )
+        assert not call_kwargs.get("ephemeral"), "not_found result must NOT be ephemeral"
+
+    def test_already_checked_result_is_not_ephemeral(self, mock_bounty_cog, make_mock_response):
+        """result='already_checked' → NOT ephemeral."""
+        call_kwargs = self._run_check(
+            mock_bounty_cog,
+            make_mock_response,
+            _make_check_response("already_checked"),
+        )
+        assert not call_kwargs.get("ephemeral"), "already_checked result must NOT be ephemeral"
+
+    def test_multi_outcome_is_not_ephemeral(self, mock_bounty_cog, make_mock_response):
+        """Multi-outcome path always stays public (NOT ephemeral)."""
+        resp_data = {
+            "result": "correct",
+            "outcomes": [
+                {"result": "correct", "bounty_id": 1, "combat_won": True, "division": "gold"},
+                {"result": "correct", "bounty_id": 2, "combat_won": True, "division": "silver"},
+            ],
+            "result_count": 2,
+        }
+        interaction = _create_mock_interaction()
+        resp = make_mock_response(resp_data)
+        mock_bounty_cog.http_client.post = AsyncMock(return_value=resp)
+        asyncio.run(mock_bounty_cog.check.callback(mock_bounty_cog, interaction, "Alpha"))
+        call_kwargs = interaction.followup.send.call_args[1]
+        assert not call_kwargs.get("ephemeral"), (
+            "Multi-outcome path must stay public (NOT ephemeral)"
+        )
+
+
+# ---------------------------------------------------------------------------
 # /check URL+method contract (respx) — Tier 2 closeout 2026-04-30
 # ---------------------------------------------------------------------------
 

@@ -144,11 +144,12 @@ def build_capture_payout_embed(
     bonus_won: bool = False,
     reward_per_sys: int | None = None,
     route_length: int | None = None,
+    combat_result: dict | None = None,
 ) -> dict[str, Any]:
     """Build a rich "💰 Bounty Captured!" embed for posting to the hunting channel.
 
-    Produces a gold embed with Division, Claimed by, Base Reward, Capture Bonus,
-    System Checks (if available), and Total Payout fields.
+    Produces a gold embed with an optional combat summary section (when
+    ``combat_result`` is provided) followed by the payout breakdown fields.
 
     Args:
         criminal_name: Name of the captured criminal.
@@ -162,6 +163,10 @@ def build_capture_payout_embed(
             ``route_length``, a 📍 System Checks field is included.
         route_length: Number of systems in the bounty route. Used with
             ``reward_per_sys`` to compute the max system check payout.
+        combat_result: Optional serialized ``FightResults`` dict.  When provided,
+            combat summary fields are prepended above the payout fields.  When
+            ``None`` the embed is produced without a combat summary (graceful
+            degradation).
 
     Returns:
         A Discord embed payload dict compatible with the gateway message builder.
@@ -179,12 +184,75 @@ def build_capture_payout_embed(
     else:
         effective_total = capture_bonus + (max_sys_payout if max_sys_payout is not None else 0)
 
-    fields: list[dict[str, Any]] = [
-        {"name": "🏆 Division", "value": (division or "Unknown").capitalize(), "inline": True},
-        {"name": "⚔️ Claimed by", "value": winner_name, "inline": True},
-        {"name": "💵 Base Reward", "value": f"{reward:,} cr", "inline": False},
-        {"name": "🎯 Capture Bonus", "value": f"{capture_bonus:,} cr", "inline": True},
-    ]
+    fields: list[dict[str, Any]] = []
+
+    # ------------------------------------------------------------------
+    # Combat summary section (prepended when combat_result is provided)
+    # ------------------------------------------------------------------
+    if combat_result is not None:
+        s1 = combat_result.get("ship1_stats") or {}
+        s2 = combat_result.get("ship2_stats") or {}
+        metadata = combat_result.get("metadata") or {}
+
+        def _ttk_str(ttk: float | None) -> str:
+            return f"{ttk:.1f}s" if ttk is not None else "∞"
+
+        fields.append(
+            {
+                "name": "⚔️ Your Ship",
+                "value": (
+                    f"{s1.get('ship_name', '?')} — "
+                    f"HP: {s1.get('varied_hp', 0)} | "
+                    f"DPS: {s1.get('varied_dps', 0.0):.1f} | "
+                    f"TTK: {_ttk_str(s1.get('ttk'))}"
+                ),
+                "inline": True,
+            }
+        )
+        fields.append(
+            {
+                "name": "🤖 Criminal Ship",
+                "value": (
+                    f"{s2.get('ship_name', '?')} — "
+                    f"HP: {s2.get('varied_hp', 0)} | "
+                    f"DPS: {s2.get('varied_dps', 0.0):.1f} | "
+                    f"TTK: {_ttk_str(s2.get('ttk'))}"
+                ),
+                "inline": True,
+            }
+        )
+
+        # Keith T Maxwell armour buff (only when explicitly applied)
+        if metadata.get("pvc_armour_buff_applied"):
+            buff_factor = metadata.get("pvc_armour_buff_factor", 1.5)
+            fields.append(
+                {
+                    "name": "🛡️ Keith T Maxwell Buff",
+                    "value": f"Armour buff active (×{buff_factor:.1f} HP)",
+                    "inline": False,
+                }
+            )
+
+        is_stalemate = combat_result.get("is_stalemate", False)
+        fields.append(
+            {
+                "name": "✅ Result",
+                "value": "Stalemate" if is_stalemate else "Combat victory!",
+                "inline": False,
+            }
+        )
+
+    # ------------------------------------------------------------------
+    # Payout fields
+    # ------------------------------------------------------------------
+    fields.extend(
+        [
+            {"name": "🏆 Division", "value": (division or "Unknown").capitalize(), "inline": True},
+            {"name": "⚔️ Claimed by", "value": winner_name, "inline": True},
+            {"name": "💵 Base Reward", "value": f"{reward:,} cr", "inline": False},
+            {"name": "🎯 Capture Bonus", "value": f"{capture_bonus:,} cr", "inline": True},
+        ]
+    )
 
     if max_sys_payout is not None:
         fields.append(

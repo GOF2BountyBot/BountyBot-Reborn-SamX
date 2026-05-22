@@ -295,6 +295,7 @@ class BountyCog(commands.Cog):
             #     bounty's per-bounty result (B.12 multi-bounty fix).
             if len(outcomes) > 1:
                 embed = self._build_multi_check_embed(system, outcomes)
+                await interaction.followup.send(embed=embed)
             else:
                 # Single-outcome path: prefer outcomes[0] (new shape) but fall
                 # back to top-level fields for legacy bot-core responses.
@@ -303,7 +304,14 @@ class BountyCog(commands.Cog):
                 outcome_data["system_name"] = system
                 embed = self._build_check_embed(outcome_data)
 
-            await interaction.followup.send(embed=embed)
+                # Capture (correct + combat not lost): send ephemeral so only the
+                # invoker sees the personal combat summary.  The single
+                # comprehensive public payout announcement comes from
+                # _post_capture_payout in bot-core.
+                _outcome_result = outcome_data.get("result", "")
+                _combat_won = outcome_data.get("combat_won")
+                _is_capture = _outcome_result == "correct" and _combat_won is not False
+                await interaction.followup.send(embed=embed, ephemeral=_is_capture)
             flogger.info(
                 f"/check success: guild={interaction.guild_id} user={interaction.user.id}"
                 f" system={system} result={result} result_count={len(outcomes)}"

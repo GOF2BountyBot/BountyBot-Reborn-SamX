@@ -5165,3 +5165,194 @@ class TestPostCapturePayoutPayloadShape:
         assert "📍 System Checks" not in field_names, (
             "System Checks field must be absent when reward_per_sys is None"
         )
+
+
+# ===========================================================================
+# Tests: _build_payout_breakdown — new private method (capture redesign)
+# ===========================================================================
+
+
+class TestBuildPayoutBreakdown:
+    """Unit tests for BountyService._build_payout_breakdown().
+
+    Acceptance criteria:
+    - Winner (is_winner=True) gets role 'capture claim'
+    - Non-winner (is_winner=False) gets role 'system check'
+    - display_name used when available and non-empty
+    - Falls back to str(player.user_id) when display_name is absent/None/empty
+    - Falls back to str(reward.player_id) when player not found
+    - Returns empty list when rewards is empty
+    - Amount is credits_earned from RewardInfo
+    """
+
+    @pytest.fixture
+    def service(self):
+        svc = BountyService()
+        svc.player_repo = MagicMock()
+        return svc
+
+    def _make_reward_info(self, player_id=1, credits_earned=5000, is_winner=True, xp_earned=0):
+        from services.bounty_service import RewardInfo
+        return RewardInfo(
+            player_id=player_id,
+            credits_earned=credits_earned,
+            xp_earned=xp_earned,
+            is_winner=is_winner,
+            systems_checked_count=1,
+        )
+
+    def _make_player(self, player_id=1, user_id=100, display_name="SamX"):
+        p = SimpleNamespace()
+        p.id = player_id
+        p.user_id = user_id
+        p.display_name = display_name
+        return p
+
+    @pytest.mark.asyncio
+    async def test_winner_gets_capture_claim_role(self, service):
+        """RewardInfo with is_winner=True → role='capture claim'."""
+        reward = self._make_reward_info(is_winner=True, credits_earned=5000)
+        player = self._make_player(display_name="WinnerPlayer")
+        service.player_repo.get_by_id = AsyncMock(return_value=player)
+        mock_db = AsyncMock()
+
+        result = await service._build_payout_breakdown(mock_db, [reward])
+
+        assert len(result) == 1
+        assert result[0]["role"] == "capture claim", (
+            f"Winner must have role='capture claim', got: {result[0]['role']!r}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_non_winner_gets_system_check_role(self, service):
+        """RewardInfo with is_winner=False → role='system check'."""
+        reward = self._make_reward_info(is_winner=False, credits_earned=200)
+        player = self._make_player(display_name="CheckerPlayer")
+        service.player_repo.get_by_id = AsyncMock(return_value=player)
+        mock_db = AsyncMock()
+
+        result = await service._build_payout_breakdown(mock_db, [reward])
+
+        assert len(result) == 1
+        assert result[0]["role"] == "system check", (
+            f"Non-winner must have role='system check', got: {result[0]['role']!r}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_display_name_used_when_present(self, service):
+        """player_display_name uses Player.display_name when it is non-empty."""
+        reward = self._make_reward_info(is_winner=True)
+        player = self._make_player(user_id=555, display_name="SamAccountX")
+        service.player_repo.get_by_id = AsyncMock(return_value=player)
+        mock_db = AsyncMock()
+
+        result = await service._build_payout_breakdown(mock_db, [reward])
+
+        assert result[0]["player_display_name"] == "SamAccountX"
+
+    @pytest.mark.asyncio
+    async def test_falls_back_to_user_id_when_display_name_none(self, service):
+        """Falls back to str(player.user_id) when display_name is None."""
+        reward = self._make_reward_info(player_id=1)
+        player = self._make_player(user_id=123456, display_name=None)
+        service.player_repo.get_by_id = AsyncMock(return_value=player)
+        mock_db = AsyncMock()
+
+        result = await service._build_payout_breakdown(mock_db, [reward])
+
+        assert result[0]["player_display_name"] == "123456", (
+            "When display_name is None, must fall back to str(user_id)"
+        )
+
+    @pytest.mark.asyncio
+    async def test_falls_back_to_user_id_when_display_name_empty_string(self, service):
+        """Falls back to str(player.user_id) when display_name is empty string."""
+        reward = self._make_reward_info(player_id=1)
+        player = self._make_player(user_id=789, display_name="")
+        service.player_repo.get_by_id = AsyncMock(return_value=player)
+        mock_db = AsyncMock()
+
+        result = await service._build_payout_breakdown(mock_db, [reward])
+
+        assert result[0]["player_display_name"] == "789", (
+            "When display_name is empty string, must fall back to str(user_id)"
+        )
+
+    @pytest.mark.asyncio
+    async def test_skips_entry_when_player_not_found(self, service):
+        """When player is not found in DB, the entry is silently skipped."""
+        reward = self._make_reward_info(player_id=999)
+        service.player_repo.get_by_id = AsyncMock(return_value=None)
+        mock_db = AsyncMock()
+
+        result = await service._build_payout_breakdown(mock_db, [reward])
+
+        # Entry should be silently skipped (not included in breakdown)
+        assert result == [], (
+            "Player not found should be silently skipped, not included in breakdown"
+        )
+
+    @pytest.mark.asyncio
+    async def test_empty_rewards_returns_empty_list(self, service):
+        """Empty rewards list returns empty breakdown."""
+        mock_db = AsyncMock()
+
+        result = await service._build_payout_breakdown(mock_db, [])
+
+        assert result == []
+
+    @pytest.mark.asyncio
+    async def test_amount_matches_credits_earned(self, service):
+        """breakdown entry 'amount' must equal reward.credits_earned."""
+        reward = self._make_reward_info(credits_earned=7049, is_winner=True)
+        player = self._make_player(display_name="SamX")
+        service.player_repo.get_by_id = AsyncMock(return_value=player)
+        mock_db = AsyncMock()
+
+        result = await service._build_payout_breakdown(mock_db, [reward])
+
+        assert result[0]["amount"] == 7049
+
+    @pytest.mark.asyncio
+    async def test_multiple_rewards_correct_roles(self, service):
+        """Multiple rewards produce correct winner/checker role assignments."""
+        winner_reward = self._make_reward_info(player_id=1, credits_earned=5000, is_winner=True)
+        checker1_reward = self._make_reward_info(player_id=2, credits_earned=200, is_winner=False)
+        checker2_reward = self._make_reward_info(player_id=3, credits_earned=100, is_winner=False)
+
+        winner_player = self._make_player(player_id=1, display_name="Winner")
+        checker1_player = self._make_player(player_id=2, display_name="Checker1")
+        checker2_player = self._make_player(player_id=3, display_name="Checker2")
+
+        async def get_by_id_side_effect(db, pid):
+            mapping = {1: winner_player, 2: checker1_player, 3: checker2_player}
+            return mapping.get(pid)
+
+        service.player_repo.get_by_id = get_by_id_side_effect
+        mock_db = AsyncMock()
+
+        result = await service._build_payout_breakdown(
+            mock_db, [winner_reward, checker1_reward, checker2_reward]
+        )
+
+        assert len(result) == 3
+        roles_by_name = {entry["player_display_name"]: entry["role"] for entry in result}
+        assert roles_by_name["Winner"] == "capture claim"
+        assert roles_by_name["Checker1"] == "system check"
+        assert roles_by_name["Checker2"] == "system check"
+
+    @pytest.mark.asyncio
+    async def test_result_dict_has_required_keys(self, service):
+        """Each entry in payout_breakdown must have player_display_name, role, amount."""
+        reward = self._make_reward_info(is_winner=True, credits_earned=3000)
+        player = self._make_player(display_name="X")
+        service.player_repo.get_by_id = AsyncMock(return_value=player)
+        mock_db = AsyncMock()
+
+        result = await service._build_payout_breakdown(mock_db, [reward])
+
+        assert len(result) == 1
+        entry = result[0]
+        assert "player_display_name" in entry
+        assert "role" in entry
+        assert "amount" in entry

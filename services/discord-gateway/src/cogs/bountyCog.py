@@ -604,8 +604,6 @@ class BountyCog(commands.Cog):
         reward = data.get("reward", 0)
         total_reward = data.get("total_reward") or reward
         bonus_won = data.get("bonus_won", False)
-        reward_per_sys = data.get("reward_per_sys")
-        route_length = data.get("route_length")
         winner_name = data.get("winner_name") or "A bounty hunter"
 
         embed = discord.Embed(
@@ -623,27 +621,28 @@ class BountyCog(commands.Cog):
                 inline=False,
             )
 
-        # Payout info
-        embed.add_field(name="🏆 Division", value=(tier or "Unknown").capitalize(), inline=True)
-        embed.add_field(name="⚔️ Claimed by", value=winner_name, inline=True)
+        # "Captured by" — single inline label:value (no Division field)
+        embed.add_field(name="", value=f"Captured by: **{winner_name}**", inline=True)
 
-        if bonus_won:
+        # Payout breakdown — per-player if available, else fall back to total
+        breakdown = data.get("payout_breakdown") or []
+        if breakdown:
+            # Sort descending by amount (winner first)
+            breakdown = sorted(breakdown, key=lambda x: x.get("amount", 0), reverse=True)
+            lines = []
+            for entry in breakdown:
+                icon = "🏆" if entry.get("role") == "capture claim" else "🔍"
+                name = entry.get("player_display_name", "Unknown")
+                role = entry.get("role", "")
+                amount = entry.get("amount", 0)
+                lines.append(f"{icon} {name} — {role} — {amount:,} cr")
+            embed.add_field(name="💰 Payout Breakdown", value="\n".join(lines), inline=False)
+        elif bonus_won:
             embed.add_field(
                 name="💰 Total Payout",
                 value=f"**{total_reward:,} cr** (2× combat bonus!)",
                 inline=False,
             )
-        elif reward_per_sys is not None and route_length:
-            capture_bonus = int(reward * 0.25)
-            sys_checks_payout = reward_per_sys * route_length
-            embed.add_field(name="💵 Base Reward", value=f"{reward:,} cr", inline=False)
-            embed.add_field(name="🎯 Capture Bonus", value=f"{capture_bonus:,} cr", inline=True)
-            embed.add_field(
-                name="📍 System Checks",
-                value=f"{reward_per_sys:,} cr × {route_length} = {sys_checks_payout:,} cr",
-                inline=True,
-            )
-            embed.add_field(name="🏆 Total Payout", value=f"**{total_reward:,} cr**", inline=False)
         else:
             embed.add_field(name="💰 Total Payout", value=f"**{total_reward:,} cr**", inline=False)
 

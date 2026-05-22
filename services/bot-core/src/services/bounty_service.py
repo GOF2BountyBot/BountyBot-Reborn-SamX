@@ -11,7 +11,7 @@ Handles business logic for bounty generation including:
 
 import enum
 import random
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 
 from persist.models.bounty import Bounty
@@ -126,6 +126,9 @@ class CheckResponse:  # pylint: disable=too-many-instance-attributes
     # Payout breakdown (populated on CORRECT/capture outcomes so the cog can render the full embed)
     reward_per_sys: int | None = None
     route_length: int | None = None
+    # Per-player payout breakdown: list of dicts with player_display_name, role, amount
+    # Populated on CORRECT/capture outcomes so the cog can render the full per-player breakdown.
+    payout_breakdown: list[dict] = field(default_factory=list)
     # Recently spotted: criminal was at this system 1-2 stops ago
     recently_spotted: bool = False
     # Cooldown timestamp (Unix): when the cooldown expires (populated on ON_COOLDOWN results)
@@ -1298,6 +1301,7 @@ class BountyService:
                 # BRONZE: Auto-capture always succeeds. Optional combat bonus.
                 rewards = await self.calc_rewards(db, bounty, cfg=cfg)
                 await self.distribute_rewards(db, bounty, rewards)
+                payout_breakdown = await self._build_payout_breakdown(db, rewards)
 
                 winner_reward = next((r.credits_earned for r in rewards if r.is_winner), 0)
 
@@ -1333,6 +1337,7 @@ class BountyService:
                         criminal_ship=bounty.criminal_ship,
                         reward_per_sys=getattr(bounty, "reward_per_sys", None),
                         route_length=len(list(getattr(bounty, "route", None) or [])),
+                        payout_breakdown=payout_breakdown,
                     ),
                     (bounty, True),
                 )
@@ -1350,6 +1355,7 @@ class BountyService:
             if duel_won:
                 rewards = await self.calc_rewards(db, bounty, cfg=cfg)
                 await self.distribute_rewards(db, bounty, rewards)
+                payout_breakdown = await self._build_payout_breakdown(db, rewards)
                 winner_reward = next((r.credits_earned for r in rewards if r.is_winner), 0)
                 return (
                     CheckResponse(
@@ -1366,6 +1372,7 @@ class BountyService:
                         else None,
                         reward_per_sys=getattr(bounty, "reward_per_sys", None),
                         route_length=len(list(getattr(bounty, "route", None) or [])),
+                        payout_breakdown=payout_breakdown,
                     ),
                     (bounty, True),
                 )
@@ -1811,6 +1818,43 @@ class BountyService:
             await db.refresh(player)
 
         return rewards
+
+    async def _build_payout_breakdown(
+        self,
+        db: AsyncSession,
+        rewards: list[RewardInfo],
+    ) -> list[dict]:
+        """Build a per-player payout breakdown list for embed rendering.
+
+        Fetches each player by ID to get their display_name, then assembles
+        one dict per player with player_display_name, role, and amount.
+
+        Args:
+            db:      Async database session.
+            rewards: Reward list from :meth:`calc_rewards` (post-distribution).
+
+        Returns:
+            List of dicts with keys: player_display_name, role, amount.
+            role is 'capture claim' for the winner, 'system check' for others.
+        """
+        payout_breakdown: list[dict] = []
+        for reward in rewards:
+            player = await self.player_repo.get_by_id(db, reward.player_id)
+            if player is None:
+                continue
+            # Use display_name if available and non-empty, else fall back to str(user_id)
+            display_name = getattr(player, "display_name", None)
+            if not display_name:
+                display_name = str(getattr(player, "user_id", reward.player_id))
+            role = "capture claim" if reward.is_winner else "system check"
+            payout_breakdown.append(
+                {
+                    "player_display_name": display_name,
+                    "role": role,
+                    "amount": reward.credits_earned,
+                }
+            )
+        return payout_breakdown
 
     # ------------------------------------------------------------------
     # Bounty Expiry

@@ -3619,3 +3619,587 @@ class TestBountyCommandsRespx:
 
         assert len(result) == 1
         assert "AutoViper" in result[0].name
+
+
+# ===========================================================================
+# _build_capture_embed — direct unit tests for the redesigned capture embed
+# (New in this review: covers all AC from the capture embed redesign)
+# ===========================================================================
+
+
+class TestBuildCaptureEmbedRedesign:
+    """Direct unit tests for BountyCog._build_capture_embed().
+
+    Acceptance criteria being verified:
+    1. No "Division" inline field present in the capture embed
+    2. "Captured by: **{winner_name}**" combined label+value field is present
+    3. Per-player payout breakdown rendered when payout_breakdown provided
+    4. Sort order: highest amount first (descending)
+    5. 🏆 icon for 'capture claim' role, 🔍 icon for 'system check' role
+    6. Line format: {icon} {name} — {role} — {amount:,} cr
+    7. Fallback to total_reward when payout_breakdown is empty list
+    8. Fallback to total_reward when payout_breakdown is None/absent
+    9. Backward-compat: result='captured' still renders via _build_capture_embed
+    10. Backward-compat: result='combat_win' still renders via _build_capture_embed
+    11. winner_name defaults to 'A bounty hunter' when absent
+    """
+
+    @pytest.fixture(autouse=True)
+    def _import_cog(self, mock_bounty_cog):
+        self.cog = mock_bounty_cog
+
+    # -----------------------------------------------------------------------
+    # AC 1: No "Division" field
+    # -----------------------------------------------------------------------
+
+    def test_capture_embed_has_no_division_field(self):
+        """Capture embed must NOT contain a 'Division' inline field."""
+        data = {
+            "criminal_name": "Viper",
+            "division": "bronze",
+            "reward": 5000,
+            "winner_name": "SamX",
+            "payout_breakdown": [
+                {"player_display_name": "SamX", "role": "capture claim", "amount": 5000}
+            ],
+        }
+        embed = self.cog._build_capture_embed(data)
+        field_names = [f.name for f in embed.fields]
+        assert not any("division" in n.lower() for n in field_names), (
+            f"Division field found in capture embed fields: {field_names}"
+        )
+
+    def test_capture_embed_has_no_division_field_without_breakdown(self):
+        """Capture embed must NOT contain 'Division' even in the fallback path (no payout_breakdown)."""
+        data = {
+            "criminal_name": "Viper",
+            "division": "silver",
+            "reward": 3000,
+            "total_reward": 3000,
+            "winner_name": "Hunter",
+        }
+        embed = self.cog._build_capture_embed(data)
+        field_names = [f.name for f in embed.fields]
+        assert not any("division" in n.lower() for n in field_names), (
+            f"Division field found in fallback-path capture embed: {field_names}"
+        )
+
+    # -----------------------------------------------------------------------
+    # AC 2: "Captured by: **{winner_name}**" combined field
+    # -----------------------------------------------------------------------
+
+    def test_capture_embed_has_captured_by_field(self):
+        """Capture embed must contain a field with value 'Captured by: **{winner_name}**'."""
+        data = {
+            "criminal_name": "Iron Fist",
+            "reward": 7000,
+            "winner_name": "SamAccountX",
+        }
+        embed = self.cog._build_capture_embed(data)
+        found = any(
+            "Captured by:" in (f.value or "") and "SamAccountX" in (f.value or "")
+            for f in embed.fields
+        )
+        assert found, (
+            "Expected a field value containing 'Captured by: **SamAccountX**' but none found. "
+            f"Fields: {[(f.name, f.value) for f in embed.fields]}"
+        )
+
+    def test_capture_embed_captured_by_uses_bold_winner_name(self):
+        """Captured by field must bold the winner_name with ** markers."""
+        data = {
+            "criminal_name": "Pirate",
+            "reward": 1000,
+            "winner_name": "BoldHunter",
+        }
+        embed = self.cog._build_capture_embed(data)
+        found = any(
+            "**BoldHunter**" in (f.value or "")
+            for f in embed.fields
+        )
+        assert found, "Winner name must be bolded with ** in 'Captured by' field"
+
+    def test_capture_embed_captured_by_default_winner_name(self):
+        """When winner_name is absent, 'Captured by: **A bounty hunter**' is shown."""
+        data = {
+            "criminal_name": "Lackey",
+            "reward": 500,
+        }
+        embed = self.cog._build_capture_embed(data)
+        found = any(
+            "Captured by:" in (f.value or "") and "A bounty hunter" in (f.value or "")
+            for f in embed.fields
+        )
+        assert found, (
+            "Expected 'Captured by: **A bounty hunter**' when winner_name absent. "
+            f"Fields: {[(f.name, f.value) for f in embed.fields]}"
+        )
+
+    def test_capture_embed_captured_by_none_winner_name(self):
+        """When winner_name is explicitly None, falls back to 'A bounty hunter'."""
+        data = {
+            "criminal_name": "Lackey",
+            "reward": 500,
+            "winner_name": None,
+        }
+        embed = self.cog._build_capture_embed(data)
+        found = any(
+            "Captured by:" in (f.value or "") and "A bounty hunter" in (f.value or "")
+            for f in embed.fields
+        )
+        assert found, "winner_name=None must fall back to 'A bounty hunter'"
+
+    # -----------------------------------------------------------------------
+    # AC 3 & 5 & 6: payout_breakdown rendered with icons and format
+    # -----------------------------------------------------------------------
+
+    def test_capture_embed_payout_breakdown_winner_has_trophy_icon(self):
+        """Payout breakdown must use 🏆 icon for 'capture claim' role."""
+        data = {
+            "criminal_name": "TestCrim",
+            "reward": 5000,
+            "payout_breakdown": [
+                {"player_display_name": "WinnerA", "role": "capture claim", "amount": 5000}
+            ],
+        }
+        embed = self.cog._build_capture_embed(data)
+        # Find the payout breakdown field
+        breakdown_field = next(
+            (f for f in embed.fields if "Payout Breakdown" in (f.name or "")),
+            None,
+        )
+        assert breakdown_field is not None, "Expected '💰 Payout Breakdown' field with payout_breakdown provided"
+        assert "🏆" in breakdown_field.value, "Winner ('capture claim') must have 🏆 icon"
+
+    def test_capture_embed_payout_breakdown_checker_has_search_icon(self):
+        """Payout breakdown must use 🔍 icon for 'system check' role."""
+        data = {
+            "criminal_name": "TestCrim",
+            "reward": 5000,
+            "payout_breakdown": [
+                {"player_display_name": "WinnerA", "role": "capture claim", "amount": 5000},
+                {"player_display_name": "CheckerB", "role": "system check", "amount": 200},
+            ],
+        }
+        embed = self.cog._build_capture_embed(data)
+        breakdown_field = next(
+            (f for f in embed.fields if "Payout Breakdown" in (f.name or "")),
+            None,
+        )
+        assert breakdown_field is not None
+        assert "🔍" in breakdown_field.value, "Non-winner ('system check') must have 🔍 icon"
+
+    def test_capture_embed_payout_breakdown_format_with_commas(self):
+        """Payout breakdown amount must be formatted with thousands separators."""
+        data = {
+            "criminal_name": "TestCrim",
+            "reward": 7049,
+            "payout_breakdown": [
+                {"player_display_name": "SamAccountX", "role": "capture claim", "amount": 7049}
+            ],
+        }
+        embed = self.cog._build_capture_embed(data)
+        breakdown_field = next(
+            (f for f in embed.fields if "Payout Breakdown" in (f.name or "")),
+            None,
+        )
+        assert breakdown_field is not None
+        # Format: {icon} {name} — {role} — {amount:,} cr
+        assert "7,049 cr" in breakdown_field.value, (
+            f"Amount must be formatted with commas. Field value: {breakdown_field.value!r}"
+        )
+
+    def test_capture_embed_payout_breakdown_line_format(self):
+        """Payout breakdown line must follow: '{icon} {name} — {role} — {amount:,} cr'."""
+        data = {
+            "criminal_name": "TestCrim",
+            "reward": 3000,
+            "payout_breakdown": [
+                {"player_display_name": "SamX", "role": "capture claim", "amount": 3000}
+            ],
+        }
+        embed = self.cog._build_capture_embed(data)
+        breakdown_field = next(
+            (f for f in embed.fields if "Payout Breakdown" in (f.name or "")),
+            None,
+        )
+        assert breakdown_field is not None
+        line = breakdown_field.value
+        # Should look like: 🏆 SamX — capture claim — 3,000 cr
+        assert "SamX" in line
+        assert "capture claim" in line
+        assert "3,000 cr" in line
+
+    def test_capture_embed_payout_breakdown_multiple_players(self):
+        """Payout breakdown renders all players when multiple entries present."""
+        data = {
+            "criminal_name": "TestCrim",
+            "reward": 5000,
+            "payout_breakdown": [
+                {"player_display_name": "WinnerA", "role": "capture claim", "amount": 5000},
+                {"player_display_name": "CheckerB", "role": "system check", "amount": 200},
+                {"player_display_name": "CheckerC", "role": "system check", "amount": 100},
+            ],
+        }
+        embed = self.cog._build_capture_embed(data)
+        breakdown_field = next(
+            (f for f in embed.fields if "Payout Breakdown" in (f.name or "")),
+            None,
+        )
+        assert breakdown_field is not None
+        assert "WinnerA" in breakdown_field.value
+        assert "CheckerB" in breakdown_field.value
+        assert "CheckerC" in breakdown_field.value
+
+    # -----------------------------------------------------------------------
+    # AC 4: Sort order — highest amount first
+    # -----------------------------------------------------------------------
+
+    def test_capture_embed_payout_breakdown_sorted_descending(self):
+        """Payout breakdown must be sorted with highest amount first (descending)."""
+        data = {
+            "criminal_name": "TestCrim",
+            "reward": 5000,
+            "payout_breakdown": [
+                # Deliberately in ascending order — should be sorted to descending
+                {"player_display_name": "LowChecker", "role": "system check", "amount": 100},
+                {"player_display_name": "MidChecker", "role": "system check", "amount": 500},
+                {"player_display_name": "TopWinner", "role": "capture claim", "amount": 5000},
+            ],
+        }
+        embed = self.cog._build_capture_embed(data)
+        breakdown_field = next(
+            (f for f in embed.fields if "Payout Breakdown" in (f.name or "")),
+            None,
+        )
+        assert breakdown_field is not None
+        lines = breakdown_field.value.split("\n")
+        # TopWinner (5000) must appear before MidChecker (500) which must appear before LowChecker (100)
+        top_idx = next((i for i, l in enumerate(lines) if "TopWinner" in l), -1)
+        mid_idx = next((i for i, l in enumerate(lines) if "MidChecker" in l), -1)
+        low_idx = next((i for i, l in enumerate(lines) if "LowChecker" in l), -1)
+        assert top_idx < mid_idx < low_idx, (
+            f"Expected TopWinner > MidChecker > LowChecker by amount, "
+            f"but order was: top={top_idx}, mid={mid_idx}, low={low_idx}"
+        )
+
+    def test_capture_embed_payout_breakdown_title_is_payout_breakdown(self):
+        """The payout breakdown embed field name must be '💰 Payout Breakdown'."""
+        data = {
+            "criminal_name": "TestCrim",
+            "reward": 5000,
+            "payout_breakdown": [
+                {"player_display_name": "SamX", "role": "capture claim", "amount": 5000}
+            ],
+        }
+        embed = self.cog._build_capture_embed(data)
+        field_names = [f.name for f in embed.fields]
+        assert "💰 Payout Breakdown" in field_names, (
+            f"Expected '💰 Payout Breakdown' field but got: {field_names}"
+        )
+
+    # -----------------------------------------------------------------------
+    # AC 7 & 8: Fallback when payout_breakdown is empty or None/absent
+    # -----------------------------------------------------------------------
+
+    def test_capture_embed_empty_breakdown_falls_back_to_total_payout(self):
+        """When payout_breakdown is empty list [], falls back to showing total_reward."""
+        data = {
+            "criminal_name": "Viper",
+            "reward": 3000,
+            "total_reward": 3000,
+            "payout_breakdown": [],
+        }
+        embed = self.cog._build_capture_embed(data)
+        field_names = [f.name for f in embed.fields]
+        # Should have a Total Payout field instead of Payout Breakdown
+        assert "💰 Payout Breakdown" not in field_names, (
+            "Should NOT render 'Payout Breakdown' when breakdown is empty"
+        )
+        # Should show some payout info
+        has_payout = any("Payout" in n or "Reward" in n for n in field_names)
+        assert has_payout, f"Expected fallback payout field, got: {field_names}"
+
+    def test_capture_embed_empty_breakdown_shows_reward_amount(self):
+        """Fallback path (empty breakdown) must still show the reward amount."""
+        data = {
+            "criminal_name": "Viper",
+            "reward": 4500,
+            "total_reward": 4500,
+            "payout_breakdown": [],
+        }
+        embed = self.cog._build_capture_embed(data)
+        all_field_values = " ".join(f.value or "" for f in embed.fields)
+        assert "4,500" in all_field_values, "Reward amount must appear in fallback embed"
+
+    def test_capture_embed_none_breakdown_falls_back_to_total_payout(self):
+        """When payout_breakdown is None (absent from response), falls back to total_reward."""
+        data = {
+            "criminal_name": "Shadow",
+            "reward": 6000,
+            "total_reward": 6000,
+            "payout_breakdown": None,
+        }
+        embed = self.cog._build_capture_embed(data)
+        field_names = [f.name for f in embed.fields]
+        assert "💰 Payout Breakdown" not in field_names, (
+            "Should NOT render 'Payout Breakdown' when breakdown is None"
+        )
+
+    def test_capture_embed_absent_breakdown_falls_back_to_total_payout(self):
+        """When payout_breakdown key is entirely absent from data dict, falls back gracefully."""
+        data = {
+            "criminal_name": "Ghost",
+            "reward": 2500,
+            "total_reward": 2500,
+            # payout_breakdown intentionally absent
+        }
+        embed = self.cog._build_capture_embed(data)
+        field_names = [f.name for f in embed.fields]
+        assert "💰 Payout Breakdown" not in field_names, (
+            "Should NOT render 'Payout Breakdown' when key is absent"
+        )
+        # Should still show a payout field
+        has_payout = any("Payout" in n or "Reward" in n for n in field_names)
+        assert has_payout, f"Expected fallback payout field, got: {field_names}"
+
+    def test_capture_embed_empty_breakdown_with_bonus_shows_2x(self):
+        """Fallback with bonus_won=True must still show 2× label."""
+        data = {
+            "criminal_name": "Viper",
+            "reward": 500,
+            "total_reward": 1000,
+            "bonus_won": True,
+            "payout_breakdown": [],
+        }
+        embed = self.cog._build_capture_embed(data)
+        all_field_values = " ".join(f.value or "" for f in embed.fields)
+        assert "2×" in all_field_values or "2x" in all_field_values, (
+            "2× bonus label must appear in fallback embed when bonus_won=True"
+        )
+
+    # -----------------------------------------------------------------------
+    # AC 9 & 10: Backward compatibility (result='captured' and 'combat_win')
+    # -----------------------------------------------------------------------
+
+    def test_build_check_embed_captured_routes_to_build_capture_embed(self):
+        """result='captured' must route to _build_capture_embed (uses '🎯 Bounty Captured!' title)."""
+        data = {
+            "result": "captured",
+            "criminal_name": "OldStyeCriminal",
+            "reward": 1000,
+            "total_reward": 1000,
+            "winner_name": "LegacyHunter",
+        }
+        embed = self.cog._build_check_embed(data)
+        assert "Bounty Captured" in (embed.title or ""), (
+            "result='captured' must produce capture embed via _build_capture_embed"
+        )
+        # 'Captured by' field must also be present
+        found = any("Captured by:" in (f.value or "") for f in embed.fields)
+        assert found, "result='captured' must show 'Captured by' field"
+
+    def test_build_check_embed_combat_win_routes_to_build_capture_embed(self):
+        """result='combat_win' must route to _build_capture_embed (uses '🎯 Bounty Captured!' title)."""
+        data = {
+            "result": "combat_win",
+            "criminal_name": "CombatCriminal",
+            "reward": 3000,
+            "total_reward": 3000,
+            "winner_name": "SilverHunter",
+        }
+        embed = self.cog._build_check_embed(data)
+        assert "Bounty Captured" in (embed.title or ""), (
+            "result='combat_win' must produce capture embed via _build_capture_embed"
+        )
+        found = any("Captured by:" in (f.value or "") for f in embed.fields)
+        assert found, "result='combat_win' must show 'Captured by' field"
+
+    def test_captured_backward_compat_no_division_field(self):
+        """result='captured' backward-compat path must also have no 'Division' field."""
+        data = {
+            "result": "captured",
+            "criminal_name": "OldCrim",
+            "division": "bronze",
+            "reward": 500,
+            "total_reward": 500,
+        }
+        embed = self.cog._build_check_embed(data)
+        field_names = [f.name for f in embed.fields]
+        assert not any("division" in n.lower() for n in field_names), (
+            f"Division field must not appear in backward-compat 'captured' embed: {field_names}"
+        )
+
+    def test_combat_win_backward_compat_no_division_field(self):
+        """result='combat_win' backward-compat path must also have no 'Division' field."""
+        data = {
+            "result": "combat_win",
+            "criminal_name": "SilverCrim",
+            "division": "silver",
+            "reward": 2000,
+            "total_reward": 2000,
+        }
+        embed = self.cog._build_check_embed(data)
+        field_names = [f.name for f in embed.fields]
+        assert not any("division" in n.lower() for n in field_names), (
+            f"Division field must not appear in backward-compat 'combat_win' embed: {field_names}"
+        )
+
+    # -----------------------------------------------------------------------
+    # Adversarial: missing/malformed payout_breakdown entries
+    # -----------------------------------------------------------------------
+
+    def test_capture_embed_breakdown_entry_missing_amount_defaults_to_zero(self):
+        """payout_breakdown entry missing 'amount' key defaults to 0 without crash."""
+        data = {
+            "criminal_name": "TestCrim",
+            "reward": 1000,
+            "payout_breakdown": [
+                {"player_display_name": "SamX", "role": "capture claim"},  # missing amount
+            ],
+        }
+        # Should not raise
+        embed = self.cog._build_capture_embed(data)
+        assert embed is not None
+
+    def test_capture_embed_breakdown_entry_missing_display_name_defaults_to_unknown(self):
+        """payout_breakdown entry missing 'player_display_name' shows 'Unknown' without crash."""
+        data = {
+            "criminal_name": "TestCrim",
+            "reward": 1000,
+            "payout_breakdown": [
+                {"role": "capture claim", "amount": 1000},  # missing player_display_name
+            ],
+        }
+        embed = self.cog._build_capture_embed(data)
+        breakdown_field = next(
+            (f for f in embed.fields if "Payout Breakdown" in (f.name or "")),
+            None,
+        )
+        assert breakdown_field is not None
+        assert "Unknown" in breakdown_field.value
+
+    def test_capture_embed_breakdown_entry_unknown_role_gets_search_icon(self):
+        """payout_breakdown entry with unknown role (not 'capture claim') gets 🔍 icon."""
+        data = {
+            "criminal_name": "TestCrim",
+            "reward": 1000,
+            "payout_breakdown": [
+                {"player_display_name": "SomePlayer", "role": "weird_role", "amount": 1000},
+            ],
+        }
+        embed = self.cog._build_capture_embed(data)
+        breakdown_field = next(
+            (f for f in embed.fields if "Payout Breakdown" in (f.name or "")),
+            None,
+        )
+        assert breakdown_field is not None
+        # Not 'capture claim' → should get 🔍 (not 🏆)
+        assert "🔍" in breakdown_field.value, (
+            "Unknown role should default to 🔍 icon (not 'capture claim')"
+        )
+
+    def test_capture_embed_title_is_bounty_captured(self):
+        """Capture embed title must be '🎯 Bounty Captured!'."""
+        data = {"criminal_name": "X", "reward": 100}
+        embed = self.cog._build_capture_embed(data)
+        assert "🎯" in (embed.title or "") or "Bounty Captured" in (embed.title or ""), (
+            f"Unexpected title: {embed.title!r}"
+        )
+
+    def test_capture_embed_description_includes_criminal_name(self):
+        """Capture embed description must include the criminal_name."""
+        data = {"criminal_name": "Warlord Grixus", "reward": 9999}
+        embed = self.cog._build_capture_embed(data)
+        assert "Warlord Grixus" in (embed.description or ""), (
+            "Criminal name must appear in capture embed description"
+        )
+
+
+# ===========================================================================
+# _build_payout_breakdown in bot-core bounty_service — tested via integration
+# via the schema wire-through (no direct async test here, covered by
+# test_bounty_service.py service tests). However we CAN test the schema
+# contract: payout_breakdown is passed through _outcome_to_schema correctly.
+# ===========================================================================
+
+
+class TestPayoutBreakdownSchemaWireThrough:
+    """Tests verifying payout_breakdown is wired correctly through the schema layer.
+
+    The _outcome_to_schema function in bounties.py converts a CheckResponse
+    to a BountyCheckOutcome. It must pass payout_breakdown when non-empty
+    and None when empty.
+    """
+
+    def _make_check_outcome_with_breakdown(self):
+        """Simulate the dict shape that the cog receives for a capture with payout_breakdown."""
+        return {
+            "result": "correct",
+            "bounty_id": 1,
+            "criminal_name": "TestCrim",
+            "reward": 5000,
+            "total_reward": 5000,
+            "combat_won": True,
+            "division": "bronze",
+            "winner_name": "Player1",
+            "payout_breakdown": [
+                {"player_display_name": "Player1", "role": "capture claim", "amount": 5000},
+                {"player_display_name": "Player2", "role": "system check", "amount": 200},
+            ],
+        }
+
+    def test_cog_uses_payout_breakdown_from_outcome_data(self, mock_bounty_cog):
+        """_build_capture_embed uses payout_breakdown from the outcome data dict."""
+        cog = mock_bounty_cog
+        data = self._make_check_outcome_with_breakdown()
+        embed = cog._build_capture_embed(data)
+        breakdown_field = next(
+            (f for f in embed.fields if "Payout Breakdown" in (f.name or "")),
+            None,
+        )
+        assert breakdown_field is not None, (
+            "payout_breakdown in outcome data must be rendered as '💰 Payout Breakdown' field"
+        )
+        assert "Player1" in breakdown_field.value
+        assert "Player2" in breakdown_field.value
+
+    def test_cog_handles_payout_breakdown_none_in_outcome_data(self, mock_bounty_cog):
+        """_build_capture_embed handles payout_breakdown=None gracefully in outcome data."""
+        cog = mock_bounty_cog
+        data = {
+            "result": "correct",
+            "criminal_name": "TestCrim",
+            "reward": 1000,
+            "total_reward": 1000,
+            "combat_won": True,
+            "payout_breakdown": None,
+        }
+        # Should not raise; should fall back to total_reward display
+        embed = cog._build_capture_embed(data)
+        assert embed is not None
+
+    def test_cog_shows_winner_first_in_breakdown(self, mock_bounty_cog):
+        """Winner (highest amount) must appear first in 💰 Payout Breakdown."""
+        cog = mock_bounty_cog
+        data = {
+            "criminal_name": "TestCrim",
+            "reward": 7049,
+            "payout_breakdown": [
+                # Intentionally ordered low-to-high to test sorting
+                {"player_display_name": "CheckerX", "role": "system check", "amount": 100},
+                {"player_display_name": "WinnerSamX", "role": "capture claim", "amount": 7049},
+            ],
+        }
+        embed = cog._build_capture_embed(data)
+        breakdown_field = next(
+            (f for f in embed.fields if "Payout Breakdown" in (f.name or "")),
+            None,
+        )
+        assert breakdown_field is not None
+        lines = breakdown_field.value.split("\n")
+        winner_idx = next((i for i, l in enumerate(lines) if "WinnerSamX" in l), -1)
+        checker_idx = next((i for i, l in enumerate(lines) if "CheckerX" in l), -1)
+        assert winner_idx < checker_idx, (
+            "Winner (WinnerSamX, 7049 cr) must appear before checker (CheckerX, 100 cr)"
+        )

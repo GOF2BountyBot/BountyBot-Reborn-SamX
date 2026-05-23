@@ -11,7 +11,6 @@ Handles administrative operations including:
 
 import json
 import os
-from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from persist.database.manager import get_db_session
@@ -779,16 +778,10 @@ async def refresh_shop(
         try:
             from utils.executors.shop_refresh_executor import _push_shop_cache
 
-            # Sanitize before passing: quote() is the CodeQL-recognised sanitizer for
-            # py/partial-ssrf; Pydantic has already validated guild_id (int ≥ 1) and
-            # tier (pattern "^(Bronze|Silver|Gold|Platinum)$") but CodeQL's taint
-            # analysis does not track through function call boundaries.
-            _safe_guild_id = int(quote(str(request.guild_id), safe=""))
-            _safe_tier = quote(str(request.tier), safe="")
             await _push_shop_cache(
                 f"AdminRefresh[guild={request.guild_id}]",
-                _safe_guild_id,
-                _safe_tier,
+                request.guild_id,
+                request.tier,
                 refresh_details.get("items") or [],
             )
         except Exception as push_exc:  # pylint: disable=broad-exception-caught

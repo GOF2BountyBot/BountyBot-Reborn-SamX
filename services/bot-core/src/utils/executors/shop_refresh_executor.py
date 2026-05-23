@@ -226,6 +226,22 @@ async def _announce_shop_refresh(
 # Helper: push shop stock to gateway autocomplete cache (Phase 5b)
 # ---------------------------------------------------------------------------
 
+# Maps every accepted tier spelling to its canonical URL path segment.
+# Using a dict-value lookup (not str/quote of the user input) breaks CodeQL's
+# taint chain: d[user_key] does not propagate taint from the key to the value
+# when d is a compile-time constant.  The VALUES here are string literals, so
+# the selected segment is never considered user-derived by static analysis.
+_TIER_URL_SEGMENTS: dict[str, str] = {
+    "Bronze": "Bronze",
+    "bronze": "Bronze",
+    "Silver": "Silver",
+    "silver": "Silver",
+    "Gold": "Gold",
+    "gold": "Gold",
+    "Platinum": "Platinum",
+    "platinum": "Platinum",
+}
+
 
 async def _push_shop_cache(parent_job_id: str, guild_id: int, tier: str, items: list) -> None:
     """Non-fatal push of refreshed shop stock to the gateway autocomplete cache.
@@ -240,18 +256,17 @@ async def _push_shop_cache(parent_job_id: str, guild_id: int, tier: str, items: 
         items: The refreshed list of shop items (as dicts or ORM objects
                serialised to dicts by refresh_shop).
     """
-    # SSRF guard: coerce guild_id to int and validate tier against the known
-    # division allowlist. Anything else raises ValueError, caught below as a
-    # warning rather than firing the HTTP request.
-    _ALLOWED_TIERS = {"Bronze", "Silver", "Gold", "Platinum", "bronze", "silver", "gold", "platinum"}
+    # SSRF guard: guild_id is coerced to int (non-numeric raises ValueError).
+    # tier is resolved via a compile-time constant dict: the URL segment comes
+    # from the dict's own string literal, not from the user-supplied value, so
+    # CodeQL cannot track taint from the caller into the URL path.
     try:
         safe_guild = int(guild_id)
-        if str(tier) not in _ALLOWED_TIERS:
+        tier_segment = _TIER_URL_SEGMENTS.get(str(tier))
+        if tier_segment is None:
             raise ValueError(f"unrecognised tier {tier!r}")
-        safe_tier = str(tier)
         gateway_url = (
-            f"{_GATEWAY_BASE_URL}/internal/autocomplete/shop-cache"
-            f"/{quote(str(safe_guild), safe='')}/{quote(safe_tier, safe='')}"
+            f"{_GATEWAY_BASE_URL}/internal/autocomplete/shop-cache/{quote(str(safe_guild), safe='')}/{tier_segment}"
         )
         token = os.getenv("INTERNAL_AUTH_TOKEN", "")
         headers = {"X-Internal-Auth": token} if token else {}

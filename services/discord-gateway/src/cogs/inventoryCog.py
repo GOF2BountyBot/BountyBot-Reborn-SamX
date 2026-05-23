@@ -333,7 +333,7 @@ class InventoryCog(commands.Cog):
         """Display player inventory."""
         flogger.info(f"/inventory: guild={interaction.guild_id}, user={interaction.user.id}")
         flogger.debug(f"/inventory params: item_type={item_type}, user={user.id if user else None}")
-        await interaction.response.defer(thinking=True)
+        await interaction.response.defer(thinking=True, ephemeral=True)
 
         try:
             # Determine target user
@@ -445,7 +445,7 @@ class InventoryCog(commands.Cog):
         """Search player inventory for items."""
         flogger.info(f"/search: guild={interaction.guild_id}, user={interaction.user.id}")
         flogger.debug(f"/search params: query={query}")
-        await interaction.response.defer(thinking=True)
+        await interaction.response.defer(thinking=True, ephemeral=True)
 
         try:
             player_id = await self._get_player_id(
@@ -524,7 +524,7 @@ class InventoryCog(commands.Cog):
         """Get detailed item information including inventory count."""
         flogger.info(f"/item: guild={interaction.guild_id}, user={interaction.user.id}")
         flogger.debug(f"/item params: item_name={item_name}")
-        await interaction.response.defer(thinking=True)
+        await interaction.response.defer(thinking=True, ephemeral=True)
 
         try:
             player_id = await self._get_player_id(
@@ -679,7 +679,7 @@ class InventoryCog(commands.Cog):
         """
         flogger.info(f"/equip: guild={interaction.guild_id}, user={interaction.user.id}")
         flogger.debug(f"/equip params: item_name={item_name}")
-        await interaction.response.defer(thinking=True)
+        await interaction.response.defer(thinking=True, ephemeral=True)
 
         try:
             player_id = await self._get_player_id(
@@ -861,7 +861,7 @@ class InventoryCog(commands.Cog):
         """
         flogger.info(f"/unequip: guild={interaction.guild_id}, user={interaction.user.id}")
         flogger.debug(f"/unequip params: item_name={item_name}")
-        await interaction.response.defer(thinking=True)
+        await interaction.response.defer(thinking=True, ephemeral=True)
 
         try:
             player_id = await self._get_player_id(

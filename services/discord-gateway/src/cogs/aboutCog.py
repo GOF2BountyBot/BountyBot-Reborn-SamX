@@ -148,7 +148,7 @@ class AboutCog(commands.Cog):
     @app_commands.autocomplete(category=category_autocomplete, name=object_autocomplete)
     async def about(self, interaction: discord.Interaction, category: str, name: str):
         """Main about command that displays detailed object information"""
-        await interaction.response.defer(thinking=True)
+        await interaction.response.defer(thinking=True, ephemeral=True)
         flogger.debug(
             f"/about invoked: guild={interaction.guild_id} user={interaction.user.id} category={category} name={name}"
         )
@@ -168,7 +168,7 @@ class AboutCog(commands.Cog):
 
             # Create rich embed with object information
             embed = await self._create_object_embed(obj_data)
-            await interaction.followup.send(embed=embed)
+            await interaction.followup.send(embed=embed, ephemeral=True)
             flogger.info(
                 f"/about success: guild={interaction.guild_id} user={interaction.user.id}"
                 f" category={category} name={resolved_name}"
@@ -353,7 +353,7 @@ class AboutCog(commands.Cog):
         manufacturer: str | None = None,
     ):
         """List all objects in a specific category, with optional filters"""
-        await interaction.response.defer(thinking=True)
+        await interaction.response.defer(thinking=True, ephemeral=True)
         flogger.debug(
             f"/list_category invoked: guild={interaction.guild_id} user={interaction.user.id}"
             f" category={category} tech_level={tech_level} manufacturer={manufacturer}"
@@ -428,7 +428,7 @@ class AboutCog(commands.Cog):
             if total_count > DEFAULT_LIST_CAP:
                 embed.set_footer(text=f"Showing first {DEFAULT_LIST_CAP} of {total_count} objects")
 
-            await interaction.followup.send(embed=embed)
+            await interaction.followup.send(embed=embed, ephemeral=True)
             flogger.info(
                 f"/list_category success: guild={interaction.guild_id} user={interaction.user.id}"
                 f" category={category} count={len(filtered)}"
@@ -449,7 +449,7 @@ class AboutCog(commands.Cog):
     @app_commands.autocomplete(start=system_autocomplete, end=system_autocomplete)
     async def make_route(self, interaction: discord.Interaction, start: str, end: str):
         """Display the shortest hop-by-hop route between two star systems."""
-        await interaction.response.defer(thinking=True)
+        await interaction.response.defer(thinking=True, ephemeral=True)
         flogger.debug(
             f"/make-route invoked: guild={interaction.guild_id} user={interaction.user.id} start={start} end={end}"
         )
@@ -500,9 +500,9 @@ class AboutCog(commands.Cog):
                 )
 
             if map_file is not None:
-                await interaction.followup.send(embed=embed, file=map_file)
+                await interaction.followup.send(embed=embed, file=map_file, ephemeral=True)
             else:
-                await interaction.followup.send(embed=embed)
+                await interaction.followup.send(embed=embed, ephemeral=True)
 
             flogger.info(
                 f"/make-route success: guild={interaction.guild_id} user={interaction.user.id}"

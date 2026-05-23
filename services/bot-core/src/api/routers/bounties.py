@@ -459,20 +459,21 @@ async def clear_guild_bounties(
 @router.post("/guild/{guild_id}/admin-spawn", response_model=AdminSpawnResponse)
 async def admin_spawn_bounties(
     guild_id: int,
-    tier: str | None = Query(None, description="Division tier to spawn: bronze, silver, or gold"),
+    tier: str | None = Query(None, description="Division tier to spawn: bronze, silver, gold, or platinum"),
     user_id: int = Query(..., description="Admin Discord user ID for audit log"),
+    quantity: int = Query(1, ge=1, le=10, description="Number of bounties to spawn per tier (1-10)"),
     service: BountyService = Depends(get_bounty_service),
 ):
     """Admin-triggered bounty spawn — bypasses max-bounty cap.
 
-    For each tier (or the specified tier):
+    For each tier (or the specified tier), spawns `quantity` bounties:
     1. Load guild config for expiry settings.
-    2. Spawn a bounty with the configured expiry (ignores active count / max cap).
-    3. Schedule expiry job and post Discord announcement (best-effort, non-fatal).
+    2. Spawn bounties with the configured expiry (ignores active count / max cap).
+    3. Schedule expiry jobs and post Discord announcements (best-effort, non-fatal).
     """
     from utils.executors.bounty_spawn_executor import _announce_bounty, _schedule_expiry_job
 
-    flogger.info(f"Admin spawn bounties: guild_id={guild_id} tier={tier} user_id={user_id}")
+    flogger.info(f"Admin spawn bounties: guild_id={guild_id} tier={tier} quantity={quantity} user_id={user_id}")
 
     tiers_to_process = [tier] if tier else ["bronze", "silver", "gold", "platinum"]
     spawned_bounties: list[BountyResponse] = []
@@ -491,31 +492,34 @@ async def admin_spawn_bounties(
 
             for t in tiers_to_process:
                 t_lower = t.lower()
-                try:
-                    bounty = await service.spawn_bounty(db, guild_id, t_lower, expiry_minutes=bounty_expiry_minutes)
-                    if bounty is None:
-                        errors.append(f"Failed to spawn bounty for tier={t_lower}: no criminals or route available")
-                    else:
-                        spawned_bounties.append(BountyResponse.model_validate(bounty))
-                        flogger.info(f"Admin spawned bounty {bounty.id} for guild={guild_id} tier={t_lower}")
+                for _ in range(quantity):
+                    try:
+                        bounty = await service.spawn_bounty(db, guild_id, t_lower, expiry_minutes=bounty_expiry_minutes)
+                        if bounty is None:
+                            errors.append(f"Failed to spawn bounty for tier={t_lower}: no criminals or route available")
+                        else:
+                            spawned_bounties.append(BountyResponse.model_validate(bounty))
+                            flogger.info(f"Admin spawned bounty {bounty.id} for guild={guild_id} tier={t_lower}")
 
-                        # Schedule expiry job (best-effort — non-fatal if it fails)
-                        try:
-                            await _schedule_expiry_job(f"admin-spawn-{guild_id}", bounty)
-                        except Exception as sched_exc:
-                            flogger.warning(
-                                f"Admin spawn: non-fatal failure scheduling expiry for bounty {bounty.id}: {sched_exc}"
-                            )
+                            # Schedule expiry job (best-effort — non-fatal if it fails)
+                            try:
+                                await _schedule_expiry_job(f"admin-spawn-{guild_id}", bounty)
+                            except Exception as sched_exc:
+                                flogger.warning(
+                                    f"Admin spawn: non-fatal failure scheduling expiry for bounty {bounty.id}: {sched_exc}"
+                                )
 
-                        # Post Discord announcement (best-effort — non-fatal if it fails)
-                        try:
-                            await _announce_bounty(f"admin-spawn-{guild_id}", bounty, config, db)
-                        except Exception as ann_exc:
-                            flogger.warning(f"Admin spawn: non-fatal failure announcing bounty {bounty.id}: {ann_exc}")
+                            # Post Discord announcement (best-effort — non-fatal if it fails)
+                            try:
+                                await _announce_bounty(f"admin-spawn-{guild_id}", bounty, config, db)
+                            except Exception as ann_exc:
+                                flogger.warning(
+                                    f"Admin spawn: non-fatal failure announcing bounty {bounty.id}: {ann_exc}"
+                                )
 
-                except Exception as e:
-                    flogger.error(f"Admin spawn error for guild={guild_id} tier={t_lower}: {e}")
-                    errors.append(f"Error spawning tier={t_lower}: {e}")
+                    except Exception as e:
+                        flogger.error(f"Admin spawn error for guild={guild_id} tier={t_lower}: {e}")
+                        errors.append(f"Error spawning tier={t_lower}: {e}")
 
             # Audit log
             await AuditService.log_action(
@@ -527,6 +531,7 @@ async def admin_spawn_bounties(
                 resource_id=str(guild_id),
                 details={
                     "tier": tier,
+                    "quantity": quantity,
                     "spawned_count": len(spawned_bounties),
                     "skipped_tiers": skipped_tiers,
                     "errors": errors,

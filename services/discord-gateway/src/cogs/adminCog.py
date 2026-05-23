@@ -1604,7 +1604,10 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
             await interaction.followup.send("⚠️ An error occurred while managing XP thresholds.", ephemeral=True)
 
     @app_commands.command(name="admin_spawn_bounty", description="[ADMIN] Manually trigger a bounty spawn")
-    @app_commands.describe(tier="Tier to spawn for (omit for all tiers)")
+    @app_commands.describe(
+        tier="Tier to spawn for (omit for all tiers)",
+        quantity="Number of bounties to spawn per tier (1-10, default 1)",
+    )
     @app_commands.choices(
         tier=[
             app_commands.Choice(name="Bronze", value="bronze"),
@@ -1613,15 +1616,21 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
             app_commands.Choice(name="Platinum", value="platinum"),
         ]
     )
-    async def admin_spawn_bounty(self, interaction: discord.Interaction, tier: str | None = None):
+    async def admin_spawn_bounty(
+        self, interaction: discord.Interaction, tier: str | None = None, quantity: int = 1
+    ):
         """Manually trigger a bounty spawn for this guild."""
         await interaction.response.defer(thinking=True, ephemeral=True)
         if not await _check_is_admin(interaction):
             await interaction.followup.send("❌ This command requires admin privileges.", ephemeral=True)
             return
 
+        if not 1 <= quantity <= 10:
+            await interaction.followup.send("❌ Quantity must be between 1 and 10.", ephemeral=True)
+            return
+
         try:
-            params: dict = {"user_id": interaction.user.id}
+            params: dict = {"user_id": interaction.user.id, "quantity": quantity}
             if tier:
                 params["tier"] = tier
 

@@ -360,7 +360,7 @@ class ShopCog(commands.Cog):
     @app_commands.autocomplete(item_id=buy_item_autocomplete)
     async def buy(self, interaction: discord.Interaction, item_id: int, quantity: int = 1):
         """Purchase item from shop."""
-        await interaction.response.defer(thinking=True)
+        await interaction.response.defer(thinking=True, ephemeral=True)
 
         try:
             if quantity <= 0:
@@ -460,7 +460,7 @@ class ShopCog(commands.Cog):
             footer_text = "Ship added to your hangar!" if is_ship else "Items added to your inventory!"
             embed.set_footer(text=footer_text)
 
-            await interaction.followup.send(embed=embed)
+            await interaction.followup.send(embed=embed, ephemeral=True)
             flogger.info(
                 f"Player {player['id']} bought {quantity}x {transaction['item_name']} "
                 f"for {transaction['total_cost']} credits"
@@ -621,7 +621,7 @@ class ShopCog(commands.Cog):
         The item is always routed to the player's current tier shop (consistent
         with /buy tier-gating — A.42b/A.42c).
         """
-        await interaction.response.defer(thinking=True)
+        await interaction.response.defer(thinking=True, ephemeral=True)
 
         try:
             if quantity <= 0:
@@ -688,7 +688,7 @@ class ShopCog(commands.Cog):
                         inline=False,
                     )
 
-                await interaction.followup.send(embed=embed)
+                await interaction.followup.send(embed=embed, ephemeral=True)
                 flogger.info(
                     f"Player {player['id']} sold ship id={ship_id} ({ship_name}) "
                     f"for {transaction.get('total_value', 0)} credits"
@@ -739,7 +739,7 @@ class ShopCog(commands.Cog):
             embed.add_field(name="Total Value", value=f"{transaction['total_value']:,} credits", inline=True)
             embed.add_field(name="New Credits", value=f"{transaction['remaining_credits']:,}", inline=True)
 
-            await interaction.followup.send(embed=embed)
+            await interaction.followup.send(embed=embed, ephemeral=True)
             flogger.info(f"Player {player['id']} sold {quantity}x {item} for {transaction['total_value']} credits")
 
         except httpx.HTTPStatusError as e:

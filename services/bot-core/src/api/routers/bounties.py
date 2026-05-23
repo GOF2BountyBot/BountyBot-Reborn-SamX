@@ -11,7 +11,9 @@ Handles bounty-related operations including:
 """
 
 import asyncio
+import os
 
+import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import Response
 from persist.database.manager import db_manager, get_db_session
@@ -546,10 +548,84 @@ async def admin_spawn_bounties(
             )
 
         # ----------------------------------------------------------------
-        # Phase 2 — parallel post-actions (each opens its own DB session)
-        # schedule_expiry + announce are pure HTTP/DB-read and are fully
-        # independent across bounties — run them all concurrently.
+        # Phase 2a — batch-render all route maps in-process (no HTTP self-call).
         # ----------------------------------------------------------------
+        bounty_pngs: dict[int, bytes] = {}  # bounty_id -> PNG bytes
+        if spawned_orm:
+            try:
+                async with get_db_session() as render_db:
+                    if not _system_graph.is_loaded():
+                        await _system_graph.load_graph(render_db)
+                for b in spawned_orm:
+                    try:
+                        route = list(b.route) if b.route else []
+                        cache_key = (b.id, tuple(route))
+                        if cache_key in _map_cache:
+                            bounty_pngs[b.id] = _map_cache[cache_key]
+                        else:
+                            png = _map_renderer.render_route_for_bounty(route, _system_graph)
+                            _map_cache[cache_key] = png
+                            bounty_pngs[b.id] = png
+                    except Exception as render_exc:  # pylint: disable=broad-exception-caught
+                        flogger.warning(
+                            f"Admin spawn: map render failed for bounty {b.id}: {render_exc} — "
+                            "will announce without route map image"
+                        )
+            except Exception as graph_exc:  # pylint: disable=broad-exception-caught
+                flogger.warning(f"Admin spawn: system graph load failed: {graph_exc} — skipping all map images")
+
+        # ----------------------------------------------------------------
+        # Phase 2b — batch-upload route maps to gateway image channel.
+        # Discord allows up to 10 attachments per message; one batched POST
+        # consumes ONE per-channel rate-limit slot. This turns N serial
+        # uploads into ceil(N/10) batched calls (e.g. 20 → 2 calls).
+        # ----------------------------------------------------------------
+        route_map_urls: dict[int, str] = {}  # bounty_id -> Discord CDN URL
+        image_channel_id = getattr(config, "image_channel_id", None) if config else None
+        if bounty_pngs and image_channel_id is not None:
+            gateway_host = os.getenv("DISCORD_GATEWAY_HOST", "discord-gateway")
+            gateway_port = os.getenv("GATEWAY_PORT", "7999")
+            gateway_base = f"http://{gateway_host}:{gateway_port}/api/v1"
+            batch_url = f"{gateway_base}/channels/{image_channel_id}/upload-batch"
+
+            bounty_ids = list(bounty_pngs.keys())
+            batches = [bounty_ids[i : i + 10] for i in range(0, len(bounty_ids), 10)]
+
+            async with httpx.AsyncClient(timeout=60) as client:
+                for batch in batches:
+                    files = [("files", (f"route_map_{bid}.png", bounty_pngs[bid], "image/png")) for bid in batch]
+                    try:
+                        resp = await client.post(batch_url, files=files)
+                        resp.raise_for_status()
+                        payload = resp.json()
+                        for item in payload.get("data", []):
+                            fname = item.get("filename", "")
+                            # Reverse: "route_map_{bid}.png" -> bid
+                            if fname.startswith("route_map_") and fname.endswith(".png"):
+                                try:
+                                    bid = int(fname[len("route_map_") : -len(".png")])
+                                    route_map_urls[bid] = item["attachment_url"]
+                                except (ValueError, KeyError):
+                                    pass
+                    except Exception as up_exc:  # pylint: disable=broad-exception-caught
+                        flogger.warning(
+                            f"Admin spawn: batch upload failed for {len(batch)} maps: "
+                            f"{type(up_exc).__name__}: {up_exc} — announcing without images"
+                        )
+            flogger.info(
+                f"Admin spawn: batch-uploaded {len(route_map_urls)}/{len(bounty_pngs)} route maps "
+                f"in {len(batches)} batch(es) for guild={guild_id}"
+            )
+
+        # ----------------------------------------------------------------
+        # Phase 2c — parallel post-actions per bounty.
+        # Each task: schedule expiry job + announce (with pre-resolved
+        # route_map_url so no per-bounty upload happens). The semaphore is
+        # kept as a guardrail against any future fall-back to per-bounty
+        # uploads inside _announce_bounty.
+        # ----------------------------------------------------------------
+        _announce_sem = asyncio.Semaphore(4)
+
         async def _post_actions(bounty) -> None:
             job_id = f"admin-spawn-{guild_id}"
             try:
@@ -557,8 +633,14 @@ async def admin_spawn_bounties(
             except Exception as sched_exc:  # pylint: disable=broad-exception-caught
                 flogger.warning(f"Admin spawn: non-fatal expiry scheduling failure for bounty {bounty.id}: {sched_exc}")
             try:
-                async with db_manager.get_session() as ann_db:
-                    await _announce_bounty(job_id, bounty, config, ann_db)
+                async with _announce_sem, db_manager.get_session() as ann_db:
+                    await _announce_bounty(
+                        job_id,
+                        bounty,
+                        config,
+                        ann_db,
+                        pre_resolved_route_map_url=route_map_urls.get(bounty.id),
+                    )
             except Exception as ann_exc:  # pylint: disable=broad-exception-caught
                 flogger.warning(f"Admin spawn: non-fatal announcement failure for bounty {bounty.id}: {ann_exc}")
 

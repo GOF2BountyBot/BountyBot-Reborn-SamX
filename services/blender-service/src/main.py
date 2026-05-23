@@ -163,7 +163,9 @@ if __name__ == "__main__":
         port=int(os.getenv("BLENDER_PORT", os.getenv("PORT", "8001"))),
         # access_log shows API requests in log output, can get a bit noisy tho
         access_log=os.getenv("ACCESS_LOG", "true").lower() == "true",
-        # reload is useful for development but should be turned off for production
-        # It will monitor the filesystem and restart the server when changes are detected.
-        reload=True,
+        workers=4,
+        # Explicit: uvloop + httptools are bundled with uvicorn[standard];
+        # "auto" picks them up but pinning makes the dependency obvious.
+        loop="uvloop",
+        http="httptools",
     )

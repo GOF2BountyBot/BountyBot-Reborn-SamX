@@ -164,12 +164,20 @@ async def start_fastapi_server(
             pyLogging.getLogger("uvicorn.access").addFilter(HealthFilter())
 
             # Run the server (this will block in this thread)
+            # NOTE: workers > 1 is intentionally NOT used here — uvicorn runs
+            # inside a daemon thread that also hosts the Discord.py bot in the
+            # same asyncio event loop. Forking worker processes would break the
+            # Discord bot. Per-loop throughput is improved via uvloop+httptools.
             uvicorn.run(
                 app,
                 host=host,
                 port=port,
                 access_log=access_log,
                 log_config=None,  # Use existing logging configuration
+                # Explicit: uvloop + httptools are bundled with uvicorn[standard];
+                # "auto" picks them up but pinning makes the dependency obvious.
+                loop="uvloop",
+                http="httptools",
             )
 
         except Exception:  # pylint: disable=broad-exception-caught

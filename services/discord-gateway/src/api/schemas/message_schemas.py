@@ -97,3 +97,22 @@ class FileUploadResponse(BaseResponse):
     """Response model for the file upload endpoint."""
 
     data: FileUploadData = Field(..., description="Upload result data")
+
+
+class BatchFileUploadData(BaseModel):
+    """Data for a single file in a batch-upload response."""
+
+    attachment_url: str = Field(..., description="CDN URL of the uploaded attachment")
+    filename: str = Field(..., description="Filename of the uploaded attachment")
+    size: int = Field(..., description="Size of the uploaded attachment in bytes")
+
+
+class BatchFileUploadResponse(BaseResponse):
+    """Response model for the batch file upload endpoint.
+
+    All files in a single batch are uploaded as attachments on ONE Discord
+    message. Discord limits this to 10 attachments per message.
+    """
+
+    message_id: int = Field(..., description="ID of the Discord message containing all attachments")
+    data: list[BatchFileUploadData] = Field(..., description="Per-file upload result, indexed by filename")

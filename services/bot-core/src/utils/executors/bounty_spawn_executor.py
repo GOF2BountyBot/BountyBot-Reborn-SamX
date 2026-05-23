@@ -568,7 +568,13 @@ async def _schedule_expiry_job(parent_job_id: str, bounty) -> None:
 # ---------------------------------------------------------------------------
 
 
-async def _announce_bounty(parent_job_id: str, bounty, config, db) -> None:
+async def _announce_bounty(
+    parent_job_id: str,
+    bounty,
+    config,
+    db,
+    pre_resolved_route_map_url: str | None = None,
+) -> None:
     """POST a bounty announcement to the discord-gateway per-division channel.
 
     Flow (post-A.48 unified-loadout-render):
@@ -613,10 +619,13 @@ async def _announce_bounty(parent_job_id: str, bounty, config, db) -> None:
 
     # ------------------------------------------------------------------
     # Step 1: Upload route map (optional, non-fatal)
+    # If pre_resolved_route_map_url is supplied, the caller has already
+    # uploaded the map (e.g. via the batch-upload endpoint) and we skip
+    # the per-bounty single upload entirely.
     # ------------------------------------------------------------------
-    route_map_url: str | None = None
+    route_map_url: str | None = pre_resolved_route_map_url
 
-    if image_channel_id is not None:
+    if route_map_url is None and image_channel_id is not None:
         try:
             async with httpx.AsyncClient() as client:
                 map_resp = await client.get(
@@ -630,7 +639,7 @@ async def _announce_bounty(parent_job_id: str, bounty, config, db) -> None:
                     f"{_GATEWAY_BASE_URL}/channels/{image_channel_id}/upload",
                     content=png_bytes,
                     headers={"X-Filename": f"route_map_{bounty.id}.png", "Content-Type": "image/png"},
-                    timeout=15,
+                    timeout=60,
                 )
                 upload_resp.raise_for_status()
                 upload_data = upload_resp.json()
@@ -640,8 +649,8 @@ async def _announce_bounty(parent_job_id: str, bounty, config, db) -> None:
                 )
         except Exception as e:  # pylint: disable=broad-exception-caught
             flogger.warning(
-                f"BountySpawnJob[{parent_job_id}] route map upload failed for bounty id={bounty.id}: {e} — "
-                "continuing without image"
+                f"BountySpawnJob[{parent_job_id}] route map upload failed for bounty id={bounty.id}: "
+                f"{type(e).__name__}: {e} — continuing without image"
             )
             route_map_url = None
 

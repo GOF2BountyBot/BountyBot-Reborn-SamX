@@ -133,32 +133,41 @@ class SchedulerCog(commands.Cog):
                 await interaction.followup.send(embed=embed, ephemeral=True)
                 return
 
-            embed = discord.Embed(
-                title="🗓️ Scheduled Jobs",
-                description=f"**{len(jobs)}** scheduled job(s)",
-                color=discord.Color.blue(),
-            )
+            # Discord caps embed fields at 25 — paginate across multiple embeds
+            _PAGE_SIZE = 25
+            pages = [jobs[i : i + _PAGE_SIZE] for i in range(0, len(jobs), _PAGE_SIZE)]
+            total_pages = len(pages)
 
-            for job in jobs:
-                job_id = job.get("id", "unknown")
-                trigger = job.get("trigger", "N/A")
-                next_run = job.get("next_run_time")
-                args = job.get("args", [])
-
-                next_run_str = next_run[:19] if next_run else "N/A (paused)"
-                # Extract job_type from args payload if available
-                job_type = "unknown"
-                if len(args) >= 2 and isinstance(args[1], dict):
-                    job_type = args[1].get("job_type", "unknown")
-
-                embed.add_field(
-                    name=f"📌 {job_id[:50]}",
-                    value=(f"**Type:** {job_type}\n**Trigger:** `{trigger}`\n**Next Run:** {next_run_str}"),
-                    inline=False,
+            for page_num, page_jobs in enumerate(pages, start=1):
+                title = "🗓️ Scheduled Jobs" if total_pages == 1 else f"🗓️ Scheduled Jobs (page {page_num}/{total_pages})"
+                embed = discord.Embed(
+                    title=title,
+                    description=f"**{len(jobs)}** scheduled job(s)",
+                    color=discord.Color.blue(),
                 )
 
-            embed.set_footer(text="Use /scheduler_view <job_id> for full details")
-            await interaction.followup.send(embed=embed, ephemeral=True)
+                for job in page_jobs:
+                    job_id = job.get("id", "unknown")
+                    trigger = job.get("trigger", "N/A")
+                    next_run = job.get("next_run_time")
+                    args = job.get("args", [])
+
+                    next_run_str = next_run[:19] if next_run else "N/A (paused)"
+                    # Extract job_type from args payload if available
+                    job_type = "unknown"
+                    if len(args) >= 2 and isinstance(args[1], dict):
+                        job_type = args[1].get("job_type", "unknown")
+
+                    embed.add_field(
+                        name=f"📌 {job_id[:50]}",
+                        value=(f"**Type:** {job_type}\n**Trigger:** `{trigger}`\n**Next Run:** {next_run_str}"),
+                        inline=False,
+                    )
+
+                if page_num == total_pages:
+                    embed.set_footer(text="Use /scheduler_view <job_id> for full details")
+
+                await interaction.followup.send(embed=embed, ephemeral=True)
             flogger.info(
                 f"/scheduler_list success: guild={interaction.guild_id} user={interaction.user.id} count={len(jobs)}"
             )

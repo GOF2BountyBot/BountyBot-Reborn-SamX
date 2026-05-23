@@ -1201,8 +1201,14 @@ class BountyService:
                     f"Per-bounty announcement edit failed (bounty {bounty.id}, "
                     f"player {player_id}, system {system_name!r}): {e}"
                 )
-            # Capture payout embed is now rendered by the cog from the check response fields.
-            # _post_capture_payout has been removed; no separate gateway push needed.
+            # Capture payout embed is rendered by the cog from the check response fields.
+
+        # If any bounty was captured, push the updated active bounty list to the gateway
+        # autocomplete cache so the captured bounty is immediately removed from the /route
+        # and /bounties dropdowns.  Non-fatal — a push failure never blocks the check response.
+        any_captured = any(outcome.result == CheckResult.CORRECT for outcome in outcomes)
+        if any_captured:
+            await self._push_bounty_cache_after_capture(db, guild_id)
 
         # Per-bounty structured logging for observability (B.12)
         for outcome in outcomes:
@@ -1517,6 +1523,61 @@ class BountyService:
 
         except Exception as e:
             flogger.warning(f"Failed to edit bounty announcement for bounty {bounty.id}: {e}")
+
+    async def _push_bounty_cache_after_capture(self, db: AsyncSession, guild_id: int) -> None:
+        """Push the updated active bounty list to the gateway autocomplete cache after a capture.
+
+        Called from check_bounty when at least one bounty was captured so that the
+        captured bounty is immediately removed from the /route and /bounties autocomplete
+        dropdowns without waiting for the next spawn/expire push or TTL expiry.
+
+        Non-fatal — logs a warning on failure and never blocks the check response.
+
+        Args:
+            db:       Async database session (within an active session block).
+            guild_id: The Discord guild ID to push bounties for.
+        """
+        try:
+            import os
+
+            import httpx
+
+            bounties_raw = await self.bounty_repo.get_active_by_guild(db, guild_id)
+
+            # Serialise ORM objects to plain dicts (exclude SQLAlchemy internal keys).
+            bounty_dicts: list[dict] = []
+            for b in bounties_raw:
+                if isinstance(b, dict):
+                    bounty_dicts.append(b)
+                else:
+                    d = {k: v for k, v in b.__dict__.items() if not k.startswith("_")}
+                    # Convert ALL datetime fields to ISO strings for JSON serialisation.
+                    for key, val in list(d.items()):
+                        if hasattr(val, "isoformat"):
+                            d[key] = val.isoformat()
+                    bounty_dicts.append(d)
+
+            gateway_host = os.getenv("DISCORD_GATEWAY_HOST", "discord-gateway")
+            gateway_port = os.getenv("GATEWAY_PORT", "7999")
+            gateway_url = f"http://{gateway_host}:{gateway_port}/api/v1"
+            token = os.getenv("INTERNAL_AUTH_TOKEN", "")
+            headers = {"X-Internal-Auth": token} if token else {}
+
+            async with httpx.AsyncClient() as client:
+                resp = await client.post(
+                    f"{gateway_url}/internal/autocomplete/bounty-cache/{guild_id}",
+                    json={"bounties": bounty_dicts},
+                    headers=headers,
+                    timeout=5.0,
+                )
+            resp.raise_for_status()
+            flogger.debug(
+                f"check_bounty: pushed bounty cache after capture for guild={guild_id} remaining={len(bounty_dicts)}"
+            )
+        except Exception as e:  # pylint: disable=broad-exception-caught
+            flogger.warning(
+                f"check_bounty: failed to push bounty cache to gateway after capture for guild={guild_id}: {e}"
+            )
 
     async def _delete_bounty_announcement(self, db: AsyncSession, bounty: Bounty) -> None:
         """Delete the bounty announcement from Discord and clean up the DB record.

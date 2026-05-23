@@ -32,10 +32,14 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "src"))
 
 def _evict_discord_modules():
     to_evict = [
-        k for k in sys.modules
-        if k == "discord" or k.startswith("discord.")
-        or k in ("api", "bot", "utils") or k.startswith("api.")
-        or k.startswith("utils.") or k.startswith("cogs.")
+        k
+        for k in sys.modules
+        if k == "discord"
+        or k.startswith("discord.")
+        or k in ("api", "bot", "utils")
+        or k.startswith("api.")
+        or k.startswith("utils.")
+        or k.startswith("cogs.")
     ]
     for k in to_evict:
         sys.modules.pop(k, None)
@@ -52,6 +56,7 @@ def _make_cog():
     bot.loop.create_task = MagicMock(return_value=None)
 
     from cogs.bountyCog import BountyCog
+
     cog = BountyCog(bot)
     cog.http_client = MagicMock()
     return cog
@@ -64,36 +69,42 @@ class TestTierColorsConstant:
         """TIER_COLORS dict is present in the bountyCog module."""
         _evict_discord_modules()
         from cogs import bountyCog
+
         assert hasattr(bountyCog, "TIER_COLORS")
 
     def test_tier_colors_has_four_tiers(self):
         """TIER_COLORS contains exactly four tier keys."""
         _evict_discord_modules()
         from cogs.bountyCog import TIER_COLORS
+
         assert set(TIER_COLORS.keys()) == {"bronze", "silver", "gold", "platinum"}
 
     def test_bronze_color_value(self):
         """Bronze color is 0xCD7F32."""
         _evict_discord_modules()
         from cogs.bountyCog import TIER_COLORS
+
         assert TIER_COLORS["bronze"] == 0xCD7F32
 
     def test_silver_color_value(self):
         """Silver color is 0xC0C0C0."""
         _evict_discord_modules()
         from cogs.bountyCog import TIER_COLORS
+
         assert TIER_COLORS["silver"] == 0xC0C0C0
 
     def test_gold_color_value(self):
         """Gold color is 0xFFD700."""
         _evict_discord_modules()
         from cogs.bountyCog import TIER_COLORS
+
         assert TIER_COLORS["gold"] == 0xFFD700
 
     def test_platinum_color_value(self):
         """Platinum color is 0xE5E4E2."""
         _evict_discord_modules()
         from cogs.bountyCog import TIER_COLORS
+
         assert TIER_COLORS["platinum"] == 0xE5E4E2
 
 
@@ -104,6 +115,7 @@ class TestGetTierColor:
         """Returns correct discord.Color for bronze tier."""
         cog = _make_cog()
         from cogs.bountyCog import TIER_COLORS
+
         color = cog._get_tier_color("bronze")
         assert color.value == TIER_COLORS["bronze"]
 
@@ -111,6 +123,7 @@ class TestGetTierColor:
         """Returns correct discord.Color for gold tier."""
         cog = _make_cog()
         from cogs.bountyCog import TIER_COLORS
+
         color = cog._get_tier_color("gold")
         assert color.value == TIER_COLORS["gold"]
 
@@ -118,6 +131,7 @@ class TestGetTierColor:
         """Tier lookup is case-insensitive."""
         cog = _make_cog()
         from cogs.bountyCog import TIER_COLORS
+
         assert cog._get_tier_color("Bronze").value == TIER_COLORS["bronze"]
         assert cog._get_tier_color("BRONZE").value == TIER_COLORS["bronze"]
 
@@ -125,6 +139,7 @@ class TestGetTierColor:
         """Unknown tier returns discord.Color.blue()."""
         cog = _make_cog()
         import discord
+
         color = cog._get_tier_color("unknown_tier")
         assert color.value == discord.Color.blue().value
 
@@ -132,6 +147,7 @@ class TestGetTierColor:
         """None tier returns discord.Color.blue()."""
         cog = _make_cog()
         import discord
+
         color = cog._get_tier_color(None)
         assert color.value == discord.Color.blue().value
 
@@ -143,6 +159,7 @@ class TestBuildCheckEmbedTierColors:
         """Capture (result=correct) embed uses tier color from division."""
         cog = _make_cog()
         from cogs.bountyCog import TIER_COLORS
+
         data = {
             "result": "correct",
             "system_name": "Alpha",
@@ -161,6 +178,7 @@ class TestBuildCheckEmbedTierColors:
         """Backward-compat 'captured' result uses tier color."""
         cog = _make_cog()
         from cogs.bountyCog import TIER_COLORS
+
         data = {
             "result": "captured",
             "system_name": "Beta",
@@ -178,6 +196,7 @@ class TestBuildCheckEmbedTierColors:
         """Backward-compat 'combat_win' result uses tier color."""
         cog = _make_cog()
         from cogs.bountyCog import TIER_COLORS
+
         data = {
             "result": "combat_win",
             "system_name": "Gamma",
@@ -193,6 +212,7 @@ class TestBuildCheckEmbedTierColors:
         """Incorrect result embed uses tier color."""
         cog = _make_cog()
         from cogs.bountyCog import TIER_COLORS
+
         data = {
             "result": "incorrect",
             "system_name": "Delta",
@@ -207,6 +227,7 @@ class TestBuildCheckEmbedTierColors:
         """Recently-spotted incorrect result uses tier color."""
         cog = _make_cog()
         from cogs.bountyCog import TIER_COLORS
+
         data = {
             "result": "incorrect",
             "system_name": "Delta",
@@ -221,6 +242,7 @@ class TestBuildCheckEmbedTierColors:
         """Already-checked result embed uses tier color."""
         cog = _make_cog()
         from cogs.bountyCog import TIER_COLORS
+
         data = {
             "result": "already_checked",
             "system_name": "Epsilon",
@@ -234,6 +256,7 @@ class TestBuildCheckEmbedTierColors:
         """When division is absent, tier color falls back gracefully."""
         cog = _make_cog()
         import discord
+
         data = {
             "result": "incorrect",
             "system_name": "Zeta",
@@ -248,6 +271,7 @@ class TestBuildCheckEmbedTierColors:
         """Combat defeat (combat_won=False) keeps dark_red for urgency."""
         cog = _make_cog()
         import discord
+
         data = {
             "result": "correct",
             "system_name": "Eta",
@@ -268,6 +292,7 @@ class TestGetTierColorAdversarial:
         """'GOLD' (all caps) correctly returns gold tier color."""
         cog = _make_cog()
         from cogs.bountyCog import TIER_COLORS
+
         color = cog._get_tier_color("GOLD")
         assert color.value == TIER_COLORS["gold"]
 
@@ -275,6 +300,7 @@ class TestGetTierColorAdversarial:
         """'Platinum' (title case) returns platinum tier color."""
         cog = _make_cog()
         from cogs.bountyCog import TIER_COLORS
+
         color = cog._get_tier_color("Platinum")
         assert color.value == TIER_COLORS["platinum"]
 
@@ -282,6 +308,7 @@ class TestGetTierColorAdversarial:
         """Weirdly-cased 'sIlVeR' returns silver tier color."""
         cog = _make_cog()
         from cogs.bountyCog import TIER_COLORS
+
         color = cog._get_tier_color("sIlVeR")
         assert color.value == TIER_COLORS["silver"]
 
@@ -289,6 +316,7 @@ class TestGetTierColorAdversarial:
         """Empty string tier falls back to blue."""
         cog = _make_cog()
         import discord
+
         color = cog._get_tier_color("")
         assert color.value == discord.Color.blue().value
 
@@ -296,6 +324,7 @@ class TestGetTierColorAdversarial:
         """Whitespace-only tier falls back to blue."""
         cog = _make_cog()
         import discord
+
         color = cog._get_tier_color("   ")
         # '   '.lower() is still '   ', not a known tier -> blue fallback
         assert color.value == discord.Color.blue().value
@@ -304,6 +333,7 @@ class TestGetTierColorAdversarial:
         """not_found / unknown result uses orange, not tier color."""
         cog = _make_cog()
         import discord
+
         data = {
             "result": "not_found",
             "system_name": "Theta",

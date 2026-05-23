@@ -4913,8 +4913,14 @@ class TestPostCapturePayoutPayloadShape:
         outcome = self._make_outcome()
 
         with (
-            patch("persist.repositories.config_repository.ConfigRepository.get_by_guild_id", new=AsyncMock(return_value=config)),
-            patch("persist.repositories.user_repository.UserRepository.get_by_discord_id", new=AsyncMock(return_value=None)),
+            patch(
+                "persist.repositories.config_repository.ConfigRepository.get_by_guild_id",
+                new=AsyncMock(return_value=config),
+            ),
+            patch(
+                "persist.repositories.user_repository.UserRepository.get_by_discord_id",
+                new=AsyncMock(return_value=None),
+            ),
             patch("httpx.AsyncClient", MockAsyncClient),
         ):
             # Should not raise
@@ -4951,8 +4957,14 @@ class TestPostCapturePayoutPayloadShape:
         outcome = self._make_outcome()
 
         with (
-            patch("persist.repositories.config_repository.ConfigRepository.get_by_guild_id", new=AsyncMock(return_value=config)),
-            patch("persist.repositories.user_repository.UserRepository.get_by_discord_id", new=AsyncMock(return_value=None)),
+            patch(
+                "persist.repositories.config_repository.ConfigRepository.get_by_guild_id",
+                new=AsyncMock(return_value=config),
+            ),
+            patch(
+                "persist.repositories.user_repository.UserRepository.get_by_discord_id",
+                new=AsyncMock(return_value=None),
+            ),
             patch("httpx.AsyncClient", MockAsyncClient),
         ):
             await service._post_capture_payout(mock_db, guild_id=1, bounty=bounty, outcome=outcome)
@@ -4989,8 +5001,14 @@ class TestPostCapturePayoutPayloadShape:
         user = self._make_user(discord_username="SamX_username", display_name="SamX Display")
 
         with (
-            patch("persist.repositories.config_repository.ConfigRepository.get_by_guild_id", new=AsyncMock(return_value=config)),
-            patch("persist.repositories.user_repository.UserRepository.get_by_discord_id", new=AsyncMock(return_value=user)),
+            patch(
+                "persist.repositories.config_repository.ConfigRepository.get_by_guild_id",
+                new=AsyncMock(return_value=config),
+            ),
+            patch(
+                "persist.repositories.user_repository.UserRepository.get_by_discord_id",
+                new=AsyncMock(return_value=user),
+            ),
             patch("httpx.AsyncClient", MockAsyncClient),
         ):
             await service._post_capture_payout(mock_db, guild_id=1, bounty=bounty, outcome=outcome)
@@ -5028,8 +5046,14 @@ class TestPostCapturePayoutPayloadShape:
         user = self._make_user(discord_username="SamX_username", display_name=None)
 
         with (
-            patch("persist.repositories.config_repository.ConfigRepository.get_by_guild_id", new=AsyncMock(return_value=config)),
-            patch("persist.repositories.user_repository.UserRepository.get_by_discord_id", new=AsyncMock(return_value=user)),
+            patch(
+                "persist.repositories.config_repository.ConfigRepository.get_by_guild_id",
+                new=AsyncMock(return_value=config),
+            ),
+            patch(
+                "persist.repositories.user_repository.UserRepository.get_by_discord_id",
+                new=AsyncMock(return_value=user),
+            ),
             patch("httpx.AsyncClient", MockAsyncClient),
         ):
             await service._post_capture_payout(mock_db, guild_id=1, bounty=bounty, outcome=outcome)
@@ -5064,8 +5088,14 @@ class TestPostCapturePayoutPayloadShape:
         outcome = self._make_outcome()
 
         with (
-            patch("persist.repositories.config_repository.ConfigRepository.get_by_guild_id", new=AsyncMock(return_value=config)),
-            patch("persist.repositories.user_repository.UserRepository.get_by_discord_id", new=AsyncMock(return_value=None)),
+            patch(
+                "persist.repositories.config_repository.ConfigRepository.get_by_guild_id",
+                new=AsyncMock(return_value=config),
+            ),
+            patch(
+                "persist.repositories.user_repository.UserRepository.get_by_discord_id",
+                new=AsyncMock(return_value=None),
+            ),
             patch("httpx.AsyncClient", MockAsyncClient),
         ):
             await service._post_capture_payout(mock_db, guild_id=1, bounty=bounty, outcome=outcome)
@@ -5095,8 +5125,14 @@ class TestPostCapturePayoutPayloadShape:
                 raise RuntimeError("Gateway connection refused")
 
         with (
-            patch("persist.repositories.config_repository.ConfigRepository.get_by_guild_id", new=AsyncMock(return_value=config)),
-            patch("persist.repositories.user_repository.UserRepository.get_by_discord_id", new=AsyncMock(return_value=None)),
+            patch(
+                "persist.repositories.config_repository.ConfigRepository.get_by_guild_id",
+                new=AsyncMock(return_value=config),
+            ),
+            patch(
+                "persist.repositories.user_repository.UserRepository.get_by_discord_id",
+                new=AsyncMock(return_value=None),
+            ),
             patch("httpx.AsyncClient", ExplodingAsyncClient),
         ):
             # Must NOT raise — non-fatal
@@ -5153,8 +5189,14 @@ class TestPostCapturePayoutPayloadShape:
         outcome = self._make_outcome()
 
         with (
-            patch("persist.repositories.config_repository.ConfigRepository.get_by_guild_id", new=AsyncMock(return_value=config)),
-            patch("persist.repositories.user_repository.UserRepository.get_by_discord_id", new=AsyncMock(return_value=None)),
+            patch(
+                "persist.repositories.config_repository.ConfigRepository.get_by_guild_id",
+                new=AsyncMock(return_value=config),
+            ),
+            patch(
+                "persist.repositories.user_repository.UserRepository.get_by_discord_id",
+                new=AsyncMock(return_value=None),
+            ),
             patch("httpx.AsyncClient", MockAsyncClient),
         ):
             await service._post_capture_payout(mock_db, guild_id=1, bounty=bounty, outcome=outcome)
@@ -5162,9 +5204,7 @@ class TestPostCapturePayoutPayloadShape:
         assert len(captured_json) == 1
         embed = captured_json[0]["content"]
         field_names = [f["name"] for f in embed.get("fields", [])]
-        assert "📍 System Checks" not in field_names, (
-            "System Checks field must be absent when reward_per_sys is None"
-        )
+        assert "📍 System Checks" not in field_names, "System Checks field must be absent when reward_per_sys is None"
 
 
 # ===========================================================================
@@ -5193,6 +5233,7 @@ class TestBuildPayoutBreakdown:
 
     def _make_reward_info(self, player_id=1, credits_earned=5000, is_winner=True, xp_earned=0):
         from services.bounty_service import RewardInfo
+
         return RewardInfo(
             player_id=player_id,
             credits_earned=credits_earned,
@@ -5260,9 +5301,7 @@ class TestBuildPayoutBreakdown:
 
         result = await service._build_payout_breakdown(mock_db, [reward])
 
-        assert result[0]["player_display_name"] == "123456", (
-            "When display_name is None, must fall back to str(user_id)"
-        )
+        assert result[0]["player_display_name"] == "123456", "When display_name is None, must fall back to str(user_id)"
 
     @pytest.mark.asyncio
     async def test_falls_back_to_user_id_when_display_name_empty_string(self, service):
@@ -5288,9 +5327,7 @@ class TestBuildPayoutBreakdown:
         result = await service._build_payout_breakdown(mock_db, [reward])
 
         # Entry should be silently skipped (not included in breakdown)
-        assert result == [], (
-            "Player not found should be silently skipped, not included in breakdown"
-        )
+        assert result == [], "Player not found should be silently skipped, not included in breakdown"
 
     @pytest.mark.asyncio
     async def test_empty_rewards_returns_empty_list(self, service):
@@ -5331,9 +5368,7 @@ class TestBuildPayoutBreakdown:
         service.player_repo.get_by_id = get_by_id_side_effect
         mock_db = AsyncMock()
 
-        result = await service._build_payout_breakdown(
-            mock_db, [winner_reward, checker1_reward, checker2_reward]
-        )
+        result = await service._build_payout_breakdown(mock_db, [winner_reward, checker1_reward, checker2_reward])
 
         assert len(result) == 3
         roles_by_name = {entry["player_display_name"]: entry["role"] for entry in result}

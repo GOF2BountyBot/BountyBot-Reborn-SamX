@@ -47,9 +47,7 @@ def _fight_result(winner: str, is_stalemate: bool = False) -> object:
 
 def _make_synthetic_criminal(ship_name: str = "SynthRaider") -> object:
     """Return a SimpleNamespace that mimics a synthesized criminal (no DB id)."""
-    return SimpleNamespace(
-        criminal_ship={"ship_name": ship_name, "ship_armour": 80, "weapons": [], "turrets": []}
-    )
+    return SimpleNamespace(criminal_ship={"ship_name": ship_name, "ship_armour": 80, "weapons": [], "turrets": []})
 
 
 # ===========================================================================
@@ -464,6 +462,4 @@ class TestSynthesizeCriminals:
         with patch.object(svc, "_synthesize_criminals", new=_capture_division):
             await svc.estimate(MagicMock(), player_id=1, guild_id=1, target_tier="Silver")
 
-        assert received_divisions == ["silver"], (
-            f"Expected lowercase 'silver', got {received_divisions}"
-        )
+        assert received_divisions == ["silver"], f"Expected lowercase 'silver', got {received_divisions}"

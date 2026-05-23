@@ -90,6 +90,7 @@ def _ac_init_player_cache_for_admin():
         # Module was evicted — import it so the lazy import inside resolve_player_id
         # finds the same object we're about to populate.
         import utils.autocomplete_state as _ac_mod
+
         ac = _ac_mod
     if ac.player_cache is None:
         ac.player_cache = AutocompleteCache(ttl_seconds=900, name="player")
@@ -5388,6 +5389,7 @@ class TestRemoveItemAutocomplete:
         ac = _ac_init_player_cache_for_admin()
         if ac is not None:
             from cogs._shared.autocomplete_cache import AutocompleteCache
+
             ac.player_cache.set((987654321, 42), {"id": 7})
             if ac.inventory_cache is None:
                 ac.inventory_cache = AutocompleteCache(ttl_seconds=600, name="inventory")

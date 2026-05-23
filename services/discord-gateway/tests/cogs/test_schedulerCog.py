@@ -661,9 +661,7 @@ class TestCogSetupAndUnload:
 
         assert hasattr(cog, "_job_cache")
         assert isinstance(cog._job_cache, AutocompleteCache)
-        assert cog._job_cache._ttl == 600.0, (
-            f"Expected _job_cache TTL=600s (10 min), got {cog._job_cache._ttl}"
-        )
+        assert cog._job_cache._ttl == 600.0, f"Expected _job_cache TTL=600s (10 min), got {cog._job_cache._ttl}"
 
 
 # ===========================================================================

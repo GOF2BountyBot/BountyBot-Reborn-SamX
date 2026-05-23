@@ -73,6 +73,7 @@ def _ac_init_player_cache_admin_inv():
     ac = _ac_get_state_admin_inv()
     if ac is None:
         import utils.autocomplete_state as _ac_mod
+
         ac = _ac_mod
     if ac.player_cache is None:
         ac.player_cache = AutocompleteCache(ttl_seconds=900, name="player")
@@ -85,6 +86,7 @@ def _ac_reset_admin_inv_player_cache():
     ac = _ac_get_state_admin_inv()
     if ac is not None and ac.player_cache is not None:
         ac.player_cache.clear()
+
 
 # -------------------------------------------------------------------------
 # Helpers
@@ -783,6 +785,7 @@ class TestAdminAutocomplete:
         ac = _ac_init_player_cache_admin_inv()
         if ac is not None:
             from cogs._shared.autocomplete_cache import AutocompleteCache
+
             ac.player_cache.set((987654321, 111222333), {"id": 10, "discord_id": 111222333})
             if ac.inventory_cache is None:
                 ac.inventory_cache = AutocompleteCache(ttl_seconds=600, name="inventory")
@@ -823,6 +826,7 @@ class TestAdminAutocomplete:
         ac = _ac_init_player_cache_admin_inv()
         if ac is not None:
             from cogs._shared.autocomplete_cache import AutocompleteCache
+
             ac.player_cache.set((987654321, 111222333), {"id": 10, "discord_id": 111222333})
             if ac.inventory_cache is None:
                 ac.inventory_cache = AutocompleteCache(ttl_seconds=600, name="inventory")

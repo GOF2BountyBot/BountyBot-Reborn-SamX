@@ -1210,11 +1210,14 @@ class TestSystemAutocomplete:
 
     def test_system_autocomplete_returns_systems(self, mock_about_cog):
         """system_autocomplete should return system names from preloaded data."""
-        mock_about_cog._objects_cache.set("system", [
-            {"name": "Sol"},
-            {"name": "Alpha Centauri"},
-            {"name": "Beta Cygni"},
-        ])
+        mock_about_cog._objects_cache.set(
+            "system",
+            [
+                {"name": "Sol"},
+                {"name": "Alpha Centauri"},
+                {"name": "Beta Cygni"},
+            ],
+        )
         interaction = _create_mock_interaction()
 
         result = asyncio.run(mock_about_cog.system_autocomplete(interaction, ""))
@@ -1226,11 +1229,14 @@ class TestSystemAutocomplete:
 
     def test_system_autocomplete_filters_by_current(self, mock_about_cog):
         """system_autocomplete should filter by partial match."""
-        mock_about_cog._objects_cache.set("system", [
-            {"name": "Sol"},
-            {"name": "Alpha Centauri"},
-            {"name": "Beta Cygni"},
-        ])
+        mock_about_cog._objects_cache.set(
+            "system",
+            [
+                {"name": "Sol"},
+                {"name": "Alpha Centauri"},
+                {"name": "Beta Cygni"},
+            ],
+        )
         interaction = _create_mock_interaction()
 
         result = asyncio.run(mock_about_cog.system_autocomplete(interaction, "al"))
@@ -1401,11 +1407,14 @@ class TestListCategoryFilters:
         """list_category with tech_level filter shows only matching objects."""
         interaction = _create_mock_interaction()
 
-        mock_about_cog._objects_cache.set("ship", [
+        mock_about_cog._objects_cache.set(
+            "ship",
+            [
                 {"name": "Eagle", "emoji": None, "tech_level": 1},
                 {"name": "Hawk", "emoji": None, "tech_level": 2},
                 {"name": "Falcon", "emoji": None, "tech_level": 1},
-            ])
+            ],
+        )
 
         asyncio.run(mock_about_cog.list_category.callback(mock_about_cog, interaction, "ship", tech_level=1))
 
@@ -1420,11 +1429,14 @@ class TestListCategoryFilters:
         """list_category with manufacturer filter shows only matching objects."""
         interaction = _create_mock_interaction()
 
-        mock_about_cog._objects_cache.set("ship", [
+        mock_about_cog._objects_cache.set(
+            "ship",
+            [
                 {"name": "Eagle", "emoji": None, "manufacturer": "AcmeCorp"},
                 {"name": "Hawk", "emoji": None, "manufacturer": "StarForge"},
                 {"name": "Falcon", "emoji": None, "manufacturer": "AcmeCorp"},
-            ])
+            ],
+        )
 
         asyncio.run(mock_about_cog.list_category.callback(mock_about_cog, interaction, "ship", manufacturer="AcmeCorp"))
 
@@ -1438,11 +1450,14 @@ class TestListCategoryFilters:
         """list_category with both tech_level and manufacturer filters combined."""
         interaction = _create_mock_interaction()
 
-        mock_about_cog._objects_cache.set("ship", [
+        mock_about_cog._objects_cache.set(
+            "ship",
+            [
                 {"name": "Eagle", "emoji": None, "tech_level": 1, "manufacturer": "AcmeCorp"},
                 {"name": "Hawk", "emoji": None, "tech_level": 2, "manufacturer": "AcmeCorp"},
                 {"name": "Falcon", "emoji": None, "tech_level": 1, "manufacturer": "StarForge"},
-            ])
+            ],
+        )
 
         asyncio.run(
             mock_about_cog.list_category.callback(
@@ -1460,10 +1475,13 @@ class TestListCategoryFilters:
         """list_category without filters shows all objects (existing behavior)."""
         interaction = _create_mock_interaction()
 
-        mock_about_cog._objects_cache.set("ship", [
+        mock_about_cog._objects_cache.set(
+            "ship",
+            [
                 {"name": "Eagle", "emoji": None},
                 {"name": "Hawk", "emoji": None},
-            ])
+            ],
+        )
 
         asyncio.run(mock_about_cog.list_category.callback(mock_about_cog, interaction, "ship"))
 
@@ -1475,9 +1493,12 @@ class TestListCategoryFilters:
         """list_category should send ephemeral message when filters produce no matches."""
         interaction = _create_mock_interaction()
 
-        mock_about_cog._objects_cache.set("ship", [
+        mock_about_cog._objects_cache.set(
+            "ship",
+            [
                 {"name": "Eagle", "emoji": None, "tech_level": 1},
-            ])
+            ],
+        )
 
         asyncio.run(mock_about_cog.list_category.callback(mock_about_cog, interaction, "ship", tech_level=5))
 
@@ -1489,10 +1510,13 @@ class TestListCategoryFilters:
         """list_category manufacturer filter should be case-insensitive."""
         interaction = _create_mock_interaction()
 
-        mock_about_cog._objects_cache.set("ship", [
+        mock_about_cog._objects_cache.set(
+            "ship",
+            [
                 {"name": "Eagle", "emoji": None, "manufacturer": "AcmeCorp"},
                 {"name": "Hawk", "emoji": None, "manufacturer": "StarForge"},
-            ])
+            ],
+        )
 
         asyncio.run(mock_about_cog.list_category.callback(mock_about_cog, interaction, "ship", manufacturer="acmecorp"))
 

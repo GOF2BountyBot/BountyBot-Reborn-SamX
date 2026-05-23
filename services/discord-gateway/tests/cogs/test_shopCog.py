@@ -1746,9 +1746,7 @@ class TestSellItemAutocomplete:
             f"Expected 'Betty (inactive ship)' but got '{ship_choices[0].name}' — "
             "empty nickname must not produce extra brackets"
         )
-        assert "()" not in ship_choices[0].name, (
-            f"Label should not contain '()': '{ship_choices[0].name}'"
-        )
+        assert "()" not in ship_choices[0].name, f"Label should not contain '()': '{ship_choices[0].name}'"
         assert ship_choices[0].value == "ship:42"
 
     def test_inactive_ship_with_nickname_shows_nickname(self, mock_shop_cog):
@@ -2339,6 +2337,7 @@ class TestFormatShopItemStats:
         """Import the helper from the module under test."""
         _evict_discord_modules()
         from cogs.shopCog import _format_shop_item_stats
+
         return _format_shop_item_stats
 
     # ── Weapon types ─────────────────────────────────────────────────────────
@@ -2579,6 +2578,7 @@ class TestFormatShopItemStatsAdversarial:
         """Import the helper from the module under test."""
         _evict_discord_modules()
         from cogs.shopCog import _format_shop_item_stats
+
         return _format_shop_item_stats
 
     def test_module_zero_shield_nonzero_armour_shows_armour(self):
@@ -2590,27 +2590,21 @@ class TestFormatShopItemStatsAdversarial:
         fn = self._get_format_fn()
         item = {"item_type": "module", "shield": 0, "armour": 250}
         result = fn(item)
-        assert result == " | Armour: 250", (
-            f"Expected ' | Armour: 250' when shield=0 and armour=250, got {result!r}"
-        )
+        assert result == " | Armour: 250", f"Expected ' | Armour: 250' when shield=0 and armour=250, got {result!r}"
 
     def test_weapon_dps_as_integer_shows_one_decimal(self):
         """DPS provided as an integer (e.g. 50) formats to '50.0' with 1 decimal place."""
         fn = self._get_format_fn()
         item = {"item_type": "primary_weapon", "dps": 50}
         result = fn(item)
-        assert result == " | DPS: 50.0", (
-            f"Expected ' | DPS: 50.0' for integer dps=50, got {result!r}"
-        )
+        assert result == " | DPS: 50.0", f"Expected ' | DPS: 50.0' for integer dps=50, got {result!r}"
 
     def test_weapon_very_large_dps_no_crash(self):
         """Very large DPS value does not crash or produce truncated output."""
         fn = self._get_format_fn()
         item = {"item_type": "turret_weapon", "dps": 9999.9}
         result = fn(item)
-        assert result == " | DPS: 9999.9", (
-            f"Expected ' | DPS: 9999.9' for large dps, got {result!r}"
-        )
+        assert result == " | DPS: 9999.9", f"Expected ' | DPS: 9999.9' for large dps, got {result!r}"
 
     def test_empty_item_dict_returns_empty_no_crash(self):
         """Completely empty item dict returns empty string without KeyError."""
@@ -2624,18 +2618,14 @@ class TestFormatShopItemStatsAdversarial:
         fn = self._get_format_fn()
         item = {"item_type": "module", "shield": None, "armour": 300}
         result = fn(item)
-        assert result == " | Armour: 300", (
-            f"Expected ' | Armour: 300' when shield=None and armour=300, got {result!r}"
-        )
+        assert result == " | Armour: 300", f"Expected ' | Armour: 300' when shield=None and armour=300, got {result!r}"
 
     def test_ship_hull_hp_as_integer_one(self):
         """Ship with hull_hp=1 (minimum non-zero) should show stat (not treated as falsy)."""
         fn = self._get_format_fn()
         item = {"item_type": "ship", "hull_hp": 1}
         result = fn(item)
-        assert result == " | Hull: 1", (
-            f"Expected ' | Hull: 1' for hull_hp=1, got {result!r}"
-        )
+        assert result == " | Hull: 1", f"Expected ' | Hull: 1' for hull_hp=1, got {result!r}"
 
     def test_secondary_weapon_dps_zero_int_returns_empty(self):
         """Secondary weapon dps=0 (int) returns empty string, not '| DPS: 0.0'."""

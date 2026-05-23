@@ -521,7 +521,6 @@ class TestBuildCapturePayoutEmbedCombatResult:
         """🛡️ Keith T Maxwell Buff field value includes the buff factor."""
         cr = _make_combat_result(pvc_armour_buff_applied=True, pvc_armour_buff_factor=2.0)
         result = build_capture_payout_embed("Criminal", "gold", 80000, combat_result=cr)
-        fields_by_name = {f["name"]: f["value"] for f in result["fields"]}
         buff_field = next((f["value"] for f in result["fields"] if "Keith T Maxwell" in f["name"]), None)
         assert buff_field is not None
         assert "2.0" in buff_field

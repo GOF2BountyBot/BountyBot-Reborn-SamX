@@ -139,7 +139,7 @@ def _configure_db_mock(mock_get_db):
     # Without this, AsyncMock.execute.return_value is itself an AsyncMock,
     # making .scalars() return a coroutine which is not iterable.
     _execute_result = MagicMock()
-    _execute_result.scalars.return_value = iter([])    # empty scalars()
+    _execute_result.scalars.return_value = iter([])  # empty scalars()
     _execute_result.__iter__ = MagicMock(return_value=iter([]))  # empty row iteration
     mock_session.execute = AsyncMock(return_value=_execute_result)
 

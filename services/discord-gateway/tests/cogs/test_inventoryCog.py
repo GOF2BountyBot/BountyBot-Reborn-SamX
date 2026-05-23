@@ -825,11 +825,7 @@ class TestItemCommand:
         mock_inventory_cog.http_client.post = AsyncMock(return_value=player_resp)
         mock_inventory_cog.http_client.get = AsyncMock(return_value=count_resp)
 
-        asyncio.run(
-            mock_inventory_cog.item.callback(
-                mock_inventory_cog, interaction, item_name="LaserCannon"
-            )
-        )
+        asyncio.run(mock_inventory_cog.item.callback(mock_inventory_cog, interaction, item_name="LaserCannon"))
 
         interaction.response.defer.assert_awaited_once_with(thinking=True)
         interaction.followup.send.assert_awaited_once()
@@ -849,9 +845,7 @@ class TestItemCommand:
         mock_inventory_cog.http_client.post = AsyncMock(return_value=player_resp)
         mock_inventory_cog.http_client.get = AsyncMock(return_value=count_resp)
 
-        asyncio.run(
-            mock_inventory_cog.item.callback(mock_inventory_cog, interaction, item_name="RareSword")
-        )
+        asyncio.run(mock_inventory_cog.item.callback(mock_inventory_cog, interaction, item_name="RareSword"))
 
         interaction.followup.send.assert_awaited_once()
         call_kwargs = interaction.followup.send.call_args[1]
@@ -866,11 +860,7 @@ class TestItemCommand:
 
         mock_inventory_cog.http_client.post = AsyncMock(side_effect=RuntimeError("not found"))
 
-        asyncio.run(
-            mock_inventory_cog.item.callback(
-                mock_inventory_cog, interaction, item_name="LaserCannon"
-            )
-        )
+        asyncio.run(mock_inventory_cog.item.callback(mock_inventory_cog, interaction, item_name="LaserCannon"))
 
         interaction.followup.send.assert_awaited_once()
         call_args = interaction.followup.send.call_args
@@ -896,11 +886,7 @@ class TestItemCommand:
         mock_inventory_cog.http_client.post = AsyncMock(return_value=player_resp)
         mock_inventory_cog.http_client.get = AsyncMock(side_effect=http_error)
 
-        asyncio.run(
-            mock_inventory_cog.item.callback(
-                mock_inventory_cog, interaction, item_name="Nonexistent"
-            )
-        )
+        asyncio.run(mock_inventory_cog.item.callback(mock_inventory_cog, interaction, item_name="Nonexistent"))
 
         interaction.followup.send.assert_awaited_once()
         call_args = interaction.followup.send.call_args
@@ -926,11 +912,7 @@ class TestItemCommand:
         mock_inventory_cog.http_client.post = AsyncMock(return_value=player_resp)
         mock_inventory_cog.http_client.get = AsyncMock(side_effect=http_error)
 
-        asyncio.run(
-            mock_inventory_cog.item.callback(
-                mock_inventory_cog, interaction, item_name="LaserCannon"
-            )
-        )
+        asyncio.run(mock_inventory_cog.item.callback(mock_inventory_cog, interaction, item_name="LaserCannon"))
 
         interaction.followup.send.assert_awaited_once()
         call_kwargs = interaction.followup.send.call_args.kwargs
@@ -950,11 +932,7 @@ class TestItemCommand:
         mock_inventory_cog.http_client.post = AsyncMock(return_value=player_resp)
         mock_inventory_cog.http_client.get = AsyncMock(side_effect=RuntimeError("unexpected error"))
 
-        asyncio.run(
-            mock_inventory_cog.item.callback(
-                mock_inventory_cog, interaction, item_name="LaserCannon"
-            )
-        )
+        asyncio.run(mock_inventory_cog.item.callback(mock_inventory_cog, interaction, item_name="LaserCannon"))
 
         interaction.followup.send.assert_awaited_once()
         call_args = interaction.followup.send.call_args
@@ -971,9 +949,7 @@ class TestItemCommand:
         mock_inventory_cog.http_client.post = AsyncMock(return_value=player_resp)
         mock_inventory_cog.http_client.get = AsyncMock(return_value=count_resp)
 
-        asyncio.run(
-            mock_inventory_cog.item.callback(mock_inventory_cog, interaction, item_name="Eagle")
-        )
+        asyncio.run(mock_inventory_cog.item.callback(mock_inventory_cog, interaction, item_name="Eagle"))
 
         interaction.followup.send.assert_awaited_once()
         call_kwargs = interaction.followup.send.call_args[1]
@@ -989,9 +965,7 @@ class TestItemCommand:
         mock_inventory_cog.http_client.post = AsyncMock(return_value=player_resp)
         mock_inventory_cog.http_client.get = AsyncMock(return_value=count_resp)
 
-        asyncio.run(
-            mock_inventory_cog.item.callback(mock_inventory_cog, interaction, item_name="ShieldGen")
-        )
+        asyncio.run(mock_inventory_cog.item.callback(mock_inventory_cog, interaction, item_name="ShieldGen"))
 
         interaction.followup.send.assert_awaited_once()
         call_kwargs = interaction.followup.send.call_args[1]
@@ -1932,8 +1906,7 @@ class TestEquipUnequipErrorHandlers:
 
 
 def _init_ac_caches_for_inventory_tests(
-    player_id=1, user_id=111111111, guild_id=987654321,
-    inventory_items=None, ships=None
+    player_id=1, user_id=111111111, guild_id=987654321, inventory_items=None, ships=None
 ):
     """Pre-populate autocomplete_state caches for inventoryCog tests.
 
@@ -2004,8 +1977,17 @@ class TestEquipAutocomplete:
                 _make_inventory_item("BigGun", "turret_weapon", 1),
                 {"id": 9, "item_name": "Eagle", "item_type": "ship", "quantity": 1},
             ],
-            ships=[{"id": 10, "ship_name": "Eagle2", "is_active": True,
-                    "weapons": [], "modules": [], "turrets": [], "secondary_weapons": []}],
+            ships=[
+                {
+                    "id": 10,
+                    "ship_name": "Eagle2",
+                    "is_active": True,
+                    "weapons": [],
+                    "modules": [],
+                    "turrets": [],
+                    "secondary_weapons": [],
+                }
+            ],
         )
         mock_inventory_cog.http_client.post = AsyncMock(side_effect=AssertionError("HTTP must not be called"))
         mock_inventory_cog.http_client.get = AsyncMock(side_effect=AssertionError("HTTP must not be called"))
@@ -2028,8 +2010,17 @@ class TestEquipAutocomplete:
                 _make_inventory_item("PlasmaCannon", "primary_weapon", 1),
                 _make_inventory_item("ShieldModule", "module", 1),
             ],
-            ships=[{"id": 10, "ship_name": "Eagle", "is_active": True,
-                    "weapons": [], "modules": [], "turrets": [], "secondary_weapons": []}],
+            ships=[
+                {
+                    "id": 10,
+                    "ship_name": "Eagle",
+                    "is_active": True,
+                    "weapons": [],
+                    "modules": [],
+                    "turrets": [],
+                    "secondary_weapons": [],
+                }
+            ],
         )
         mock_inventory_cog.http_client.post = AsyncMock(side_effect=AssertionError("HTTP must not be called"))
         mock_inventory_cog.http_client.get = AsyncMock(side_effect=AssertionError("HTTP must not be called"))
@@ -2083,8 +2074,17 @@ class TestEquipAutocomplete:
         interaction = _create_mock_interaction()
         _init_ac_caches_for_inventory_tests(
             inventory_items=[_make_inventory_item('M6 A4 "Raccoon"', "primary_weapon", 3)],
-            ships=[{"id": 10, "ship_name": "Eagle", "is_active": True,
-                    "weapons": [], "modules": [], "turrets": [], "secondary_weapons": []}],
+            ships=[
+                {
+                    "id": 10,
+                    "ship_name": "Eagle",
+                    "is_active": True,
+                    "weapons": [],
+                    "modules": [],
+                    "turrets": [],
+                    "secondary_weapons": [],
+                }
+            ],
         )
         mock_inventory_cog.http_client.post = AsyncMock(side_effect=AssertionError("HTTP must not be called"))
         mock_inventory_cog.http_client.get = AsyncMock(side_effect=AssertionError("HTTP must not be called"))
@@ -2108,8 +2108,17 @@ class TestEquipAutocomplete:
         interaction = _create_mock_interaction()
         _init_ac_caches_for_inventory_tests(
             inventory_items=[_make_inventory_item('M6 A4 "Raccoon"', "primary_weapon", 0)],
-            ships=[{"id": 10, "ship_name": "Eagle", "is_active": True,
-                    "weapons": [], "modules": [], "turrets": [], "secondary_weapons": []}],
+            ships=[
+                {
+                    "id": 10,
+                    "ship_name": "Eagle",
+                    "is_active": True,
+                    "weapons": [],
+                    "modules": [],
+                    "turrets": [],
+                    "secondary_weapons": [],
+                }
+            ],
         )
         mock_inventory_cog.http_client.post = AsyncMock(side_effect=AssertionError("HTTP must not be called"))
         mock_inventory_cog.http_client.get = AsyncMock(side_effect=AssertionError("HTTP must not be called"))
@@ -2127,8 +2136,17 @@ class TestEquipAutocomplete:
         interaction = _create_mock_interaction()
         _init_ac_caches_for_inventory_tests(
             inventory_items=[_make_inventory_item("PlasmaGun", "primary_weapon", 1)],
-            ships=[{"id": 10, "ship_name": "Eagle", "is_active": True,
-                    "weapons": [], "modules": [], "turrets": [], "secondary_weapons": []}],
+            ships=[
+                {
+                    "id": 10,
+                    "ship_name": "Eagle",
+                    "is_active": True,
+                    "weapons": [],
+                    "modules": [],
+                    "turrets": [],
+                    "secondary_weapons": [],
+                }
+            ],
         )
         mock_inventory_cog.http_client.post = AsyncMock(side_effect=AssertionError("HTTP must not be called"))
         mock_inventory_cog.http_client.get = AsyncMock(side_effect=AssertionError("HTTP must not be called"))
@@ -2151,8 +2169,17 @@ class TestEquipAutocomplete:
         interaction = _create_mock_interaction()
         _init_ac_caches_for_inventory_tests(
             inventory_items=[_make_inventory_item("PlasmaGun", "primary_weapon", 1)],
-            ships=[{"id": 10, "ship_name": "Eagle", "is_active": True,
-                    "weapons": ["PlasmaGun"], "modules": [], "turrets": [], "secondary_weapons": []}],
+            ships=[
+                {
+                    "id": 10,
+                    "ship_name": "Eagle",
+                    "is_active": True,
+                    "weapons": ["PlasmaGun"],
+                    "modules": [],
+                    "turrets": [],
+                    "secondary_weapons": [],
+                }
+            ],
         )
         mock_inventory_cog.http_client.post = AsyncMock(side_effect=AssertionError("HTTP must not be called"))
         mock_inventory_cog.http_client.get = AsyncMock(side_effect=AssertionError("HTTP must not be called"))
@@ -2180,13 +2207,17 @@ class TestUnequipAutocomplete:
         interaction = _create_mock_interaction()
         _init_ac_caches_for_inventory_tests(
             inventory_items=[],
-            ships=[{
-                "id": 10, "ship_name": "Eagle", "is_active": True,
-                "weapons": ["LaserCannon", "PlasmaGun"],
-                "modules": ["ShieldModule"],
-                "turrets": ["HeavyTurret"],
-                "secondary_weapons": [],
-            }],
+            ships=[
+                {
+                    "id": 10,
+                    "ship_name": "Eagle",
+                    "is_active": True,
+                    "weapons": ["LaserCannon", "PlasmaGun"],
+                    "modules": ["ShieldModule"],
+                    "turrets": ["HeavyTurret"],
+                    "secondary_weapons": [],
+                }
+            ],
         )
         mock_inventory_cog.http_client.post = AsyncMock(side_effect=AssertionError("HTTP must not be called"))
         mock_inventory_cog.http_client.get = AsyncMock(side_effect=AssertionError("HTTP must not be called"))
@@ -2204,13 +2235,17 @@ class TestUnequipAutocomplete:
         interaction = _create_mock_interaction()
         _init_ac_caches_for_inventory_tests(
             inventory_items=[],
-            ships=[{
-                "id": 10, "ship_name": "Eagle", "is_active": True,
-                "weapons": ["LaserCannon", "PlasmaGun"],
-                "modules": ["ShieldModule"],
-                "turrets": [],
-                "secondary_weapons": [],
-            }],
+            ships=[
+                {
+                    "id": 10,
+                    "ship_name": "Eagle",
+                    "is_active": True,
+                    "weapons": ["LaserCannon", "PlasmaGun"],
+                    "modules": ["ShieldModule"],
+                    "turrets": [],
+                    "secondary_weapons": [],
+                }
+            ],
         )
         mock_inventory_cog.http_client.post = AsyncMock(side_effect=AssertionError("HTTP must not be called"))
         mock_inventory_cog.http_client.get = AsyncMock(side_effect=AssertionError("HTTP must not be called"))
@@ -2226,8 +2261,17 @@ class TestUnequipAutocomplete:
         interaction = _create_mock_interaction()
         _init_ac_caches_for_inventory_tests(
             inventory_items=[],
-            ships=[{"id": 10, "ship_name": "Eagle", "is_active": False,
-                    "weapons": [], "modules": [], "turrets": [], "secondary_weapons": []}],
+            ships=[
+                {
+                    "id": 10,
+                    "ship_name": "Eagle",
+                    "is_active": False,
+                    "weapons": [],
+                    "modules": [],
+                    "turrets": [],
+                    "secondary_weapons": [],
+                }
+            ],
         )
         mock_inventory_cog.http_client.post = AsyncMock(side_effect=AssertionError("HTTP must not be called"))
         mock_inventory_cog.http_client.get = AsyncMock(side_effect=AssertionError("HTTP must not be called"))
@@ -2840,11 +2884,17 @@ class TestUnequipAutocompleteAllSentinel:
         interaction = _create_mock_interaction()
         _init_ac_caches_for_inventory_tests(
             inventory_items=[],
-            ships=[{
-                "id": 10, "ship_name": "Eagle", "is_active": True,
-                "weapons": ["LaserCannon"], "modules": ["ShieldGen"],
-                "turrets": [], "secondary_weapons": [],
-            }],
+            ships=[
+                {
+                    "id": 10,
+                    "ship_name": "Eagle",
+                    "is_active": True,
+                    "weapons": ["LaserCannon"],
+                    "modules": ["ShieldGen"],
+                    "turrets": [],
+                    "secondary_weapons": [],
+                }
+            ],
         )
         mock_inventory_cog.http_client.post = AsyncMock(side_effect=AssertionError("HTTP must not be called"))
         mock_inventory_cog.http_client.get = AsyncMock(side_effect=AssertionError("HTTP must not be called"))
@@ -2860,10 +2910,17 @@ class TestUnequipAutocompleteAllSentinel:
         interaction = _create_mock_interaction()
         _init_ac_caches_for_inventory_tests(
             inventory_items=[],
-            ships=[{
-                "id": 10, "ship_name": "Eagle", "is_active": True,
-                "weapons": ["AbCannon"], "modules": [], "turrets": [], "secondary_weapons": [],
-            }],
+            ships=[
+                {
+                    "id": 10,
+                    "ship_name": "Eagle",
+                    "is_active": True,
+                    "weapons": ["AbCannon"],
+                    "modules": [],
+                    "turrets": [],
+                    "secondary_weapons": [],
+                }
+            ],
         )
         mock_inventory_cog.http_client.post = AsyncMock(side_effect=AssertionError("HTTP must not be called"))
         mock_inventory_cog.http_client.get = AsyncMock(side_effect=AssertionError("HTTP must not be called"))
@@ -2879,10 +2936,17 @@ class TestUnequipAutocompleteAllSentinel:
         interaction = _create_mock_interaction()
         _init_ac_caches_for_inventory_tests(
             inventory_items=[],
-            ships=[{
-                "id": 10, "ship_name": "Eagle", "is_active": True,
-                "weapons": ["LaserCannon"], "modules": [], "turrets": [], "secondary_weapons": [],
-            }],
+            ships=[
+                {
+                    "id": 10,
+                    "ship_name": "Eagle",
+                    "is_active": True,
+                    "weapons": ["LaserCannon"],
+                    "modules": [],
+                    "turrets": [],
+                    "secondary_weapons": [],
+                }
+            ],
         )
         mock_inventory_cog.http_client.post = AsyncMock(side_effect=AssertionError("HTTP must not be called"))
         mock_inventory_cog.http_client.get = AsyncMock(side_effect=AssertionError("HTTP must not be called"))
@@ -2897,11 +2961,17 @@ class TestUnequipAutocompleteAllSentinel:
         interaction = _create_mock_interaction()
         _init_ac_caches_for_inventory_tests(
             inventory_items=[],
-            ships=[{
-                "id": 10, "ship_name": "Eagle", "is_active": True,
-                "weapons": [], "modules": [], "turrets": [],
-                "secondary_weapons": ["Missile Pod"],
-            }],
+            ships=[
+                {
+                    "id": 10,
+                    "ship_name": "Eagle",
+                    "is_active": True,
+                    "weapons": [],
+                    "modules": [],
+                    "turrets": [],
+                    "secondary_weapons": ["Missile Pod"],
+                }
+            ],
         )
         mock_inventory_cog.http_client.post = AsyncMock(side_effect=AssertionError("HTTP must not be called"))
         mock_inventory_cog.http_client.get = AsyncMock(side_effect=AssertionError("HTTP must not be called"))

@@ -619,20 +619,14 @@ class TestWarmGuildPlayersExactly500ThenZero:
         )
         # Stage 2 will attempt inventory + ship calls for the 500 players.
         # Silence them with respx regex patterns so we don't get unrouted-request errors.
-        respx.get(url__regex=rf"{API_BASE}/inventory/player/\d+").mock(
-            return_value=httpx.Response(200, json=[])
-        )
-        respx.get(url__regex=rf"{API_BASE}/ships/player/\d+").mock(
-            return_value=httpx.Response(200, json=[])
-        )
+        respx.get(url__regex=rf"{API_BASE}/inventory/player/\d+").mock(return_value=httpx.Response(200, json=[]))
+        respx.get(url__regex=rf"{API_BASE}/ships/player/\d+").mock(return_value=httpx.Response(200, json=[]))
 
         await warm_mod.warm_guild_players(guild_id)
 
         all_keys = list(state_mod.player_cache.keys())
         keys_for_guild = [(g, u) for (g, u) in all_keys if g == guild_id]
-        assert len(keys_for_guild) == 500, (
-            f"Expected 500 players warmed (page1 count), got {len(keys_for_guild)}"
-        )
+        assert len(keys_for_guild) == 500, f"Expected 500 players warmed (page1 count), got {len(keys_for_guild)}"
 
 
 class TestWarmActivePlayerLoadoutSemaphoreRelease:
@@ -856,7 +850,9 @@ class TestRegisterWarmJobsZeroGuilds:
             job_ids = [j.id for j in jobs]
 
             # No per-guild warm jobs (Wave 0 or Wave 1) — no guilds
-            guild_warm_jobs = [jid for jid in job_ids if any(jid.startswith(p) for p in ("warm-guild-", "warm-shop-", "warm-bounty-"))]
+            guild_warm_jobs = [
+                jid for jid in job_ids if any(jid.startswith(p) for p in ("warm-guild-", "warm-shop-", "warm-bounty-"))
+            ]
             assert guild_warm_jobs == [], f"Expected no per-guild jobs, got: {guild_warm_jobs}"
 
             # All recurring jobs present (6 in total now)
@@ -910,12 +906,8 @@ class TestNewRecurringJobsItemA:
             job_ids = [j.id for j in scheduler.get_jobs()]
 
             # Both new recurring jobs must be present
-            assert "bounty-cache-refresh" in job_ids, (
-                f"bounty-cache-refresh not found in job_ids: {job_ids}"
-            )
-            assert "duel-cache-refresh" in job_ids, (
-                f"duel-cache-refresh not found in job_ids: {job_ids}"
-            )
+            assert "bounty-cache-refresh" in job_ids, f"bounty-cache-refresh not found in job_ids: {job_ids}"
+            assert "duel-cache-refresh" in job_ids, f"duel-cache-refresh not found in job_ids: {job_ids}"
 
         finally:
             scheduler.shutdown(wait=False)
@@ -944,9 +936,7 @@ class TestNewRecurringJobsItemA:
             trigger = job.trigger
             # APScheduler interval trigger stores interval in seconds
             interval_secs = trigger.interval.total_seconds()
-            assert interval_secs == 600, (
-                f"Expected bounty-cache-refresh interval=600s (10 min), got {interval_secs}s"
-            )
+            assert interval_secs == 600, f"Expected bounty-cache-refresh interval=600s (10 min), got {interval_secs}s"
 
         finally:
             scheduler.shutdown(wait=False)
@@ -973,9 +963,7 @@ class TestNewRecurringJobsItemA:
 
             assert job is not None, "duel-cache-refresh job not found"
             interval_secs = job.trigger.interval.total_seconds()
-            assert interval_secs == 300, (
-                f"Expected duel-cache-refresh interval=300s (5 min), got {interval_secs}s"
-            )
+            assert interval_secs == 300, f"Expected duel-cache-refresh interval=300s (5 min), got {interval_secs}s"
 
         finally:
             scheduler.shutdown(wait=False)
@@ -1093,9 +1081,7 @@ class TestNewRecurringJobsItemA:
             assert job is not None, "warm-jobs-cache-startup one-shot job not found"
             # Should fire approximately 30s from now
             delta = (job.next_run_time - before).total_seconds()
-            assert 25 <= delta <= 35, (
-                f"warm-jobs-cache-startup should fire ~30s from registration, got {delta:.1f}s"
-            )
+            assert 25 <= delta <= 35, f"warm-jobs-cache-startup should fire ~30s from registration, got {delta:.1f}s"
 
         finally:
             scheduler.shutdown(wait=False)
@@ -1143,6 +1129,7 @@ class TestRefreshDuelCaches:
 
         # Pre-populate two keys (they'll be expired by the time get() is called)
         import time
+
         pending_cache.set((100, 1), [{"id": 1}])
         pending_cache.set((100, 2), [{"id": 2}])
         outgoing_cache.set((100, 1), [])

@@ -712,9 +712,7 @@ class TestDuelCogCacheInvalidation:
         target_player_resp = _make_response({"id": 20})
         duel_resp = _make_response({"id": 99, "expires_at": None})
 
-        mock_duel_cog.http_client.post = AsyncMock(
-            side_effect=[challenger_player_resp, target_player_resp, duel_resp]
-        )
+        mock_duel_cog.http_client.post = AsyncMock(side_effect=[challenger_player_resp, target_player_resp, duel_resp])
 
         with (
             patch.object(mock_duel_cog._outgoing_duel_cache, "invalidate") as mock_out,
@@ -729,21 +727,23 @@ class TestDuelCogCacheInvalidation:
         """duel_accept: invalidates accepter's pending and challenger's outgoing caches."""
         interaction = _create_mock_interaction(user_id=222)
         player_resp = _make_response({"id": 20})
-        accept_resp = _make_response({
-            "is_stalemate": False,
-            "challenger_id": 10,
-            "challenger_name": "Challenger",
-            "challenger_credits": 1000,
-            "challenger_hp": 200,
-            "challenger_dps": 50,
-            "target_id": 20,
-            "target_name": "Target",
-            "target_credits": 1200,
-            "target_hp": 180,
-            "target_dps": 60,
-            "credits_transferred": 100,
-            "stakes": 100,
-        })
+        accept_resp = _make_response(
+            {
+                "is_stalemate": False,
+                "challenger_id": 10,
+                "challenger_name": "Challenger",
+                "challenger_credits": 1000,
+                "challenger_hp": 200,
+                "challenger_dps": 50,
+                "target_id": 20,
+                "target_name": "Target",
+                "target_credits": 1200,
+                "target_hp": 180,
+                "target_dps": 60,
+                "credits_transferred": 100,
+                "stakes": 100,
+            }
+        )
 
         mock_duel_cog.http_client.post = AsyncMock(side_effect=[player_resp, accept_resp])
 
@@ -812,19 +812,19 @@ class TestAdminCogCacheInvalidation:
         target_user.display_name = "Target"
         target_user.mention = "<@999>"
 
-        give_resp = _make_response({
-            "message": "Item given",
-            "item_type": "primary_weapon",
-            "new_total_quantity": 2,
-            "player_id": 42,
-        })
+        give_resp = _make_response(
+            {
+                "message": "Item given",
+                "item_type": "primary_weapon",
+                "new_total_quantity": 2,
+                "player_id": 42,
+            }
+        )
 
         mock_admin_cog.http_client.post = AsyncMock(return_value=give_resp)
 
         with patch("utils.autocomplete_state.invalidate_inventory") as mock_inv:
-            asyncio.run(
-                mock_admin_cog.admin_give_item.callback(mock_admin_cog, interaction, target_user, "Laser", 1)
-            )
+            asyncio.run(mock_admin_cog.admin_give_item.callback(mock_admin_cog, interaction, target_user, "Laser", 1))
 
         mock_inv.assert_called_once_with(interaction.guild_id, 42)
 
@@ -840,19 +840,19 @@ class TestAdminCogCacheInvalidation:
         target_user.display_name = "Target"
         target_user.mention = "<@999>"
 
-        remove_resp = _make_response({
-            "message": "Item removed",
-            "item_type": "primary_weapon",
-            "new_quantity": 0,
-            "player_id": 42,
-        })
+        remove_resp = _make_response(
+            {
+                "message": "Item removed",
+                "item_type": "primary_weapon",
+                "new_quantity": 0,
+                "player_id": 42,
+            }
+        )
 
         mock_admin_cog.http_client.post = AsyncMock(return_value=remove_resp)
 
         with patch("utils.autocomplete_state.invalidate_inventory") as mock_inv:
-            asyncio.run(
-                mock_admin_cog.admin_remove_item.callback(mock_admin_cog, interaction, target_user, "Laser", 1)
-            )
+            asyncio.run(mock_admin_cog.admin_remove_item.callback(mock_admin_cog, interaction, target_user, "Laser", 1))
 
         mock_inv.assert_called_once_with(interaction.guild_id, 42)
 
@@ -868,11 +868,13 @@ class TestAdminCogCacheInvalidation:
         target_user.display_name = "Target"
         target_user.mention = "<@999>"
 
-        give_resp = _make_response({
-            "message": "Ship given",
-            "ship_id": 55,
-            "player_id": 42,
-        })
+        give_resp = _make_response(
+            {
+                "message": "Ship given",
+                "ship_id": 55,
+                "player_id": 42,
+            }
+        )
 
         mock_admin_cog.http_client.post = AsyncMock(return_value=give_resp)
 
@@ -880,9 +882,7 @@ class TestAdminCogCacheInvalidation:
             patch("utils.autocomplete_state.invalidate_ships") as mock_inv_ships,
             patch("utils.autocomplete_state.invalidate_player") as mock_inv_player,
         ):
-            asyncio.run(
-                mock_admin_cog.admin_give_ship.callback(mock_admin_cog, interaction, target_user, "Betty")
-            )
+            asyncio.run(mock_admin_cog.admin_give_ship.callback(mock_admin_cog, interaction, target_user, "Betty"))
 
         mock_inv_ships.assert_called_once_with(interaction.guild_id, 42)
         mock_inv_player.assert_called_once_with(interaction.guild_id, target_user.id)
@@ -928,19 +928,19 @@ class TestAdminCogCacheInvalidation:
         target_user.display_name = "Target"
         target_user.mention = "<@999>"
 
-        give_resp = _make_response({
-            "message": "Item given",
-            "item_type": "primary_weapon",
-            "new_total_quantity": 2,
-            "player_id": 42,
-        })
+        give_resp = _make_response(
+            {
+                "message": "Item given",
+                "item_type": "primary_weapon",
+                "new_total_quantity": 2,
+                "player_id": 42,
+            }
+        )
 
         mock_admin_cog.http_client.post = AsyncMock(return_value=give_resp)
 
         with patch("utils.autocomplete_state.invalidate_inventory", side_effect=RuntimeError("cache down")):
-            asyncio.run(
-                mock_admin_cog.admin_give_item.callback(mock_admin_cog, interaction, target_user, "Laser", 1)
-            )
+            asyncio.run(mock_admin_cog.admin_give_item.callback(mock_admin_cog, interaction, target_user, "Laser", 1))
 
         interaction.followup.send.assert_awaited()
 
@@ -1099,9 +1099,7 @@ class TestAdversarialEdgeCases:
             patch("utils.autocomplete_state.invalidate_inventory") as mock_inv_inv,
             patch("utils.autocomplete_state.invalidate_ships") as mock_inv_ships,
         ):
-            asyncio.run(
-                mock_inventory_cog._unequip_all(interaction, player_id=1, ship_id=10, active_ship=active_ship)
-            )
+            asyncio.run(mock_inventory_cog._unequip_all(interaction, player_id=1, ship_id=10, active_ship=active_ship))
 
         # Despite partial failure, invalidation must still run (succeeded=['Laser'])
         mock_inv_inv.assert_called_once_with(interaction.guild_id, 1)
@@ -1132,9 +1130,7 @@ class TestAdversarialEdgeCases:
             patch("utils.autocomplete_state.invalidate_inventory") as mock_inv_inv,
             patch("utils.autocomplete_state.invalidate_ships") as mock_inv_ships,
         ):
-            asyncio.run(
-                mock_inventory_cog._unequip_all(interaction, player_id=1, ship_id=10, active_ship=active_ship)
-            )
+            asyncio.run(mock_inventory_cog._unequip_all(interaction, player_id=1, ship_id=10, active_ship=active_ship))
 
         # If nothing succeeded, no invalidation should occur
         mock_inv_inv.assert_not_called()

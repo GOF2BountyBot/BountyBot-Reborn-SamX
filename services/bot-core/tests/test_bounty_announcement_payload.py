@@ -379,9 +379,7 @@ class TestFieldOrdering:
         out = await build_bounty_announcement_request(MagicMock(), b, captured=True)
         prefix_names = [f["name"] for f in out["metadata"]["prefix_fields"]]
         assert "Route" in prefix_names, "Route must appear in prefix_fields even when captured=True"
-        assert "Checked Systems" in prefix_names, (
-            "Checked Systems must appear in prefix_fields even when captured=True"
-        )
+        assert "Checked Systems" in prefix_names, "Checked Systems must appear in prefix_fields even when captured=True"
         assert out["metadata"]["suffix_fields"] == []
 
     async def test_prefix_fields_fresh_list_no_shared_mutation(self):

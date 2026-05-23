@@ -506,7 +506,8 @@ async def admin_spawn_bounties(
                                 await _schedule_expiry_job(f"admin-spawn-{guild_id}", bounty)
                             except Exception as sched_exc:
                                 flogger.warning(
-                                    f"Admin spawn: non-fatal failure scheduling expiry for bounty {bounty.id}: {sched_exc}"
+                                    f"Admin spawn: non-fatal failure scheduling expiry"
+                                    f" for bounty {bounty.id}: {sched_exc}"
                                 )
 
                             # Post Discord announcement (best-effort — non-fatal if it fails)

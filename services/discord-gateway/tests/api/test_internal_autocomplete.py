@@ -29,13 +29,11 @@ if "shared" not in sys.modules:
     _mock_shared.__path__ = []  # type: ignore[attr-defined]
     _mock_bblogger = types.ModuleType("shared.bblogger")
 
-
     def _make_mock_logger(*_args, **_kwargs):
         logger = MagicMock()
         for m in ("info", "debug", "warning", "error", "trace", "critical", "exception"):
             setattr(logger, m, MagicMock())
         return logger
-
 
     _mock_bblogger.get_logger = _make_mock_logger  # type: ignore[attr-defined]
     sys.modules["shared"] = _mock_shared
@@ -374,9 +372,7 @@ class TestAdversarialEdgeCases:
                 json={"items": _SAMPLE_ITEMS},
                 headers={"X-Internal-Auth": "abc=def+/ghi==WRONG"},
             )
-        assert resp2.status_code == 401, (
-            f"Slightly-off special-char token should be rejected, got {resp2.status_code}"
-        )
+        assert resp2.status_code == 401, f"Slightly-off special-char token should be rejected, got {resp2.status_code}"
 
     def test_ac_warm_3_push_then_peek_returns_new_stock(self, mock_bot_with_shop_cog, mock_shop_cog):
         """AC-WARM-3: After shop push, gateway cache reflects new stock without a GET.
@@ -394,9 +390,7 @@ class TestAdversarialEdgeCases:
             client = TestClient(app, raise_server_exceptions=True)
 
             # Step 1: Verify cache is empty before push
-            assert mock_shop_cog._shop_cache.peek((_GUILD_ID, _TIER)) is None, (
-                "Cache should be empty before push"
-            )
+            assert mock_shop_cog._shop_cache.peek((_GUILD_ID, _TIER)) is None, "Cache should be empty before push"
 
             # Step 2: POST the push (simulates executor calling after refresh)
             resp = client.post(
@@ -450,9 +444,7 @@ class TestAdversarialEdgeCases:
 
         # Last write wins — cache should contain stock_v2
         peeked = mock_shop_cog._shop_cache.peek((_GUILD_ID, _TIER))
-        assert peeked == stock_v2, (
-            f"Last-write-wins: expected stock_v2, got {peeked!r}"
-        )
+        assert peeked == stock_v2, f"Last-write-wins: expected stock_v2, got {peeked!r}"
 
     def test_bounty_cache_push_accepts_string_datetimes(self, mock_bounty_cog_with_cache):
         """BountyCachePush schema accepts string-serialised datetimes (not datetime objects).
@@ -468,10 +460,10 @@ class TestAdversarialEdgeCases:
                 "criminal_name": "ISO Villain",
                 "division": "bronze",
                 "reward": 10000,
-                "end_time": "2026-05-16T14:00:00+00:00",      # ISO string from executor
+                "end_time": "2026-05-16T14:00:00+00:00",  # ISO string from executor
                 "created_at": "2026-05-16T12:00:00+00:00",
                 "updated_at": "2026-05-16T13:00:00+00:00",
-                "issue_time": "2026-05-16T11:00:00+00:00",     # Also ISO string
+                "issue_time": "2026-05-16T11:00:00+00:00",  # Also ISO string
                 "respawn_time": None,
             }
         ]
@@ -509,9 +501,7 @@ _PLAYER_ID = 77788899
 _SAMPLE_PENDING_DUELS = [
     {"id": 1, "challenger_id": 10, "target_id": _PLAYER_ID, "stakes": 500, "challenger_name": "Rando"}
 ]
-_SAMPLE_OUTGOING_DUELS = [
-    {"id": 2, "challenger_id": _PLAYER_ID, "target_id": 20, "stakes": 0, "target_name": "Enemy"}
-]
+_SAMPLE_OUTGOING_DUELS = [{"id": 2, "challenger_id": _PLAYER_ID, "target_id": 20, "stakes": 0, "target_name": "Enemy"}]
 
 
 def _make_mock_duel_cog():

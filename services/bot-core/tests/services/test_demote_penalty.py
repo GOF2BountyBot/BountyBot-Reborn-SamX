@@ -34,9 +34,7 @@ if "sqlalchemy_utils" not in sys.modules:
 from services.player_service import PlayerService
 
 # Convenience alias to keep patch strings under the 120-char line limit.
-_SCRUB_TARGET = (
-    "services.player_service.PlayerService._scrub_orphaned_checks_after_tier_change"
-)
+_SCRUB_TARGET = "services.player_service.PlayerService._scrub_orphaned_checks_after_tier_change"
 
 
 def _make_player(player_id=1, guild_id=999, tier="Silver", credits=1000):

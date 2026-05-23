@@ -195,8 +195,7 @@ class TestDuelCogInitialization:
         assert hasattr(mock_duel_cog, "_pending_duel_cache")
         assert isinstance(mock_duel_cog._pending_duel_cache, AutocompleteCache)
         assert mock_duel_cog._pending_duel_cache._ttl == 1800.0, (
-            f"Expected _pending_duel_cache TTL=1800s (30 min), got "
-            f"{mock_duel_cog._pending_duel_cache._ttl}"
+            f"Expected _pending_duel_cache TTL=1800s (30 min), got {mock_duel_cog._pending_duel_cache._ttl}"
         )
 
     def test_outgoing_duel_cache_ttl_is_1800(self, mock_duel_cog):
@@ -206,8 +205,7 @@ class TestDuelCogInitialization:
         assert hasattr(mock_duel_cog, "_outgoing_duel_cache")
         assert isinstance(mock_duel_cog._outgoing_duel_cache, AutocompleteCache)
         assert mock_duel_cog._outgoing_duel_cache._ttl == 1800.0, (
-            f"Expected _outgoing_duel_cache TTL=1800s (30 min), got "
-            f"{mock_duel_cog._outgoing_duel_cache._ttl}"
+            f"Expected _outgoing_duel_cache TTL=1800s (30 min), got {mock_duel_cog._outgoing_duel_cache._ttl}"
         )
 
     def test_cog_unload_closes_http_client(self, mock_duel_cog):
@@ -1597,10 +1595,22 @@ class TestOutgoingDuelAutocomplete:
         user_id = 100
         guild_id = 987654321
         outgoing_duels = [
-            {"id": 5, "challenger_id": player_id, "target_id": 200,
-             "stakes": 1000, "status": "pending", "target_name": "TargetPlayer"},
-            {"id": 6, "challenger_id": player_id, "target_id": 300,
-             "stakes": 0, "status": "pending", "target_name": "FriendlyTarget"},
+            {
+                "id": 5,
+                "challenger_id": player_id,
+                "target_id": 200,
+                "stakes": 1000,
+                "status": "pending",
+                "target_name": "TargetPlayer",
+            },
+            {
+                "id": 6,
+                "challenger_id": player_id,
+                "target_id": 300,
+                "stakes": 0,
+                "status": "pending",
+                "target_name": "FriendlyTarget",
+            },
         ]
         _init_duel_caches(player_id=player_id, user_id=user_id, guild_id=guild_id)
         mock_duel_cog._outgoing_duel_cache.set((guild_id, player_id), outgoing_duels)
@@ -1672,10 +1682,22 @@ class TestOutgoingDuelAutocomplete:
         user_id = 100
         guild_id = 987654321
         outgoing_duels = [
-            {"id": 8, "challenger_id": player_id, "target_id": 200,
-             "stakes": 500, "status": "pending", "target_name": "AlphaTarget"},
-            {"id": 9, "challenger_id": player_id, "target_id": 300,
-             "stakes": 500, "status": "pending", "target_name": "BetaTarget"},
+            {
+                "id": 8,
+                "challenger_id": player_id,
+                "target_id": 200,
+                "stakes": 500,
+                "status": "pending",
+                "target_name": "AlphaTarget",
+            },
+            {
+                "id": 9,
+                "challenger_id": player_id,
+                "target_id": 300,
+                "stakes": 500,
+                "status": "pending",
+                "target_name": "BetaTarget",
+            },
         ]
         _init_duel_caches(player_id=player_id, user_id=user_id, guild_id=guild_id)
         mock_duel_cog._outgoing_duel_cache.set((guild_id, player_id), outgoing_duels)
@@ -1784,8 +1806,16 @@ class TestPendingDuelAutocompleteLabels:
         player_id = 200
         user_id = 200
         guild_id = 987654321
-        duels = [{"id": 3, "challenger_id": 100, "target_id": player_id,
-                   "stakes": 250, "status": "pending", "challenger_name": "TheChallengerPerson"}]
+        duels = [
+            {
+                "id": 3,
+                "challenger_id": 100,
+                "target_id": player_id,
+                "stakes": 250,
+                "status": "pending",
+                "challenger_name": "TheChallengerPerson",
+            }
+        ]
         _init_duel_caches(player_id=player_id, user_id=user_id, guild_id=guild_id)
         mock_duel_cog._pending_duel_cache.set((guild_id, player_id), duels)
 
@@ -1803,8 +1833,16 @@ class TestPendingDuelAutocompleteLabels:
         player_id = 200
         user_id = 200
         guild_id = 987654321
-        duels = [{"id": 4, "challenger_id": 100, "target_id": player_id,
-                   "stakes": 0, "status": "pending", "challenger_name": "FriendlyChallenger"}]
+        duels = [
+            {
+                "id": 4,
+                "challenger_id": 100,
+                "target_id": player_id,
+                "stakes": 0,
+                "status": "pending",
+                "challenger_name": "FriendlyChallenger",
+            }
+        ]
         _init_duel_caches(player_id=player_id, user_id=user_id, guild_id=guild_id)
         mock_duel_cog._pending_duel_cache.set((guild_id, player_id), duels)
 

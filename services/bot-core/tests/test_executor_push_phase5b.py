@@ -407,6 +407,7 @@ class TestAdversarialEdgeCases:
 
         class FakeOrmBounty:
             """Mimics the __dict__ structure of a real SQLAlchemy Bounty ORM object."""
+
             def __init__(self):
                 self.__dict__ = {
                     "id": 42,
@@ -419,16 +420,16 @@ class TestAdversarialEdgeCases:
                     "route": ["Kaamo", "Thynome"],
                     "answer": "Thynome",
                     "checked": {},
-                    "issue_time": _now,     # Previously NOT in executor's conversion list
-                    "end_time": _now,       # Was in executor's conversion list
-                    "respawn_time": None,   # None — safe to serialise
+                    "issue_time": _now,  # Previously NOT in executor's conversion list
+                    "end_time": _now,  # Was in executor's conversion list
+                    "respawn_time": None,  # None — safe to serialise
                     "tech_level": 7,
                     "criminal_ship": None,
                     "status": "active",
                     "escape_count": 0,
                     "win_user_id": None,
-                    "created_at": _now,     # Was in executor's conversion list
-                    "updated_at": _now,     # Was in executor's conversion list
+                    "created_at": _now,  # Was in executor's conversion list
+                    "updated_at": _now,  # Was in executor's conversion list
                     "_sa_instance_state": object(),  # Excluded by startswith("_")
                 }
 
@@ -506,6 +507,7 @@ class TestAdversarialEdgeCases:
             await _push_shop_cache("job-ordering-001", GUILD_ID, TIER, refreshed_items)
 
         import json
+
         body = json.loads(route.calls[0].request.content)
         assert body["items"] == refreshed_items, (
             f"Push payload should contain exactly the items from the refresh result. "
@@ -532,9 +534,8 @@ class TestAdversarialEdgeCases:
             await _push_shop_cache("job-dict-001", GUILD_ID, TIER, dict_items)
 
         import json
+
         body = json.loads(route.calls[0].request.content)
         assert len(body["items"]) == 1
         assert body["items"][0]["item_name"] == "Turret"
-        assert body["items"][0]["tier"] == "Bronze", (
-            "All dict keys should be preserved without modification"
-        )
+        assert body["items"][0]["tier"] == "Bronze", "All dict keys should be preserved without modification"

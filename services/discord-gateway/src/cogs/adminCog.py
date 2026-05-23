@@ -1616,9 +1616,7 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
             app_commands.Choice(name="Platinum", value="platinum"),
         ]
     )
-    async def admin_spawn_bounty(
-        self, interaction: discord.Interaction, tier: str | None = None, quantity: int = 1
-    ):
+    async def admin_spawn_bounty(self, interaction: discord.Interaction, tier: str | None = None, quantity: int = 1):
         """Manually trigger a bounty spawn for this guild."""
         await interaction.response.defer(thinking=True, ephemeral=True)
         if not await _check_is_admin(interaction):

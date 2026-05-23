@@ -35,9 +35,12 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "src"))
 
 def _evict_discord_modules():
     to_evict = [
-        k for k in sys.modules
-        if k == "discord" or k.startswith("discord.")
-        or k in ("api", "bot") or k.startswith("api.")
+        k
+        for k in sys.modules
+        if k == "discord"
+        or k.startswith("discord.")
+        or k in ("api", "bot")
+        or k.startswith("api.")
         or k.startswith("cogs.")
         # Note: we do NOT evict utils.* here so that autocomplete_state
         # stays the same module object before and after cog creation.
@@ -57,6 +60,7 @@ def _make_cog():
     bot.loop.create_task = MagicMock(return_value=None)
 
     from cogs.shopCog import ShopCog
+
     cog = ShopCog(bot)
     cog.http_client = MagicMock()
     return cog
@@ -83,6 +87,7 @@ def _make_player_cache(player_id=42, tier="Bronze", guild_id=999):
 def _make_inventory_cache_with_item(item_name="Ridil Blaster", item_type="primary_weapon"):
     """Return a mock AutocompleteCache for inventory_cache with one item."""
     from utils.autocomplete_utils import normalize_for_search
+
     raw = {"item_name": item_name, "item_type": item_type}
     label = f"{item_name} (Primary Weapon)"
     choice = _make_normalized_choice(label, item_name, normalize_for_search(label), raw)
@@ -138,6 +143,7 @@ class TestSellAutocompleteIncludesInactiveShips:
             "player_ship_id": 77,
         }
         from utils.autocomplete_utils import normalize_for_search as nfs
+
         ship_choice = _make_normalized_choice(
             "My Niode (Niode)",
             "77",
@@ -173,14 +179,13 @@ class TestSellAutocompleteIncludesInactiveShips:
             "player_ship_id": 1,
         }
         from utils.autocomplete_utils import normalize_for_search as nfs
+
         ship_choice = _make_normalized_choice("Betty (Betty)", "1", nfs("Betty (Betty)"), active_ship_raw)
         ac_state.ships_cache = _make_ships_cache([ship_choice])
 
         choices = await cog.sell_item_autocomplete(interaction, "")
         choice_values = [c.value for c in choices]
-        assert not any(v.startswith("ship:") for v in choice_values), (
-            "Active ship must NOT appear in sell autocomplete"
-        )
+        assert not any(v.startswith("ship:") for v in choice_values), "Active ship must NOT appear in sell autocomplete"
 
     @pytest.mark.asyncio
     async def test_ship_choice_value_encoded_correctly(self):
@@ -202,9 +207,8 @@ class TestSellAutocompleteIncludesInactiveShips:
             "player_ship_id": 55,
         }
         from utils.autocomplete_utils import normalize_for_search as nfs
-        ship_choice = _make_normalized_choice(
-            "Razorback (Razorback)", "55", nfs("Razorback"), inactive_ship_raw
-        )
+
+        ship_choice = _make_normalized_choice("Razorback (Razorback)", "55", nfs("Razorback"), inactive_ship_raw)
         ac_state.ships_cache = _make_ships_cache([ship_choice])
 
         choices = await cog.sell_item_autocomplete(interaction, "")
@@ -232,9 +236,8 @@ class TestSellAutocompleteIncludesInactiveShips:
             "player_ship_id": 88,
         }
         from utils.autocomplete_utils import normalize_for_search as nfs
-        ship_choice = _make_normalized_choice(
-            "Freedom (Liberator)", "88", nfs("Freedom"), inactive_ship_raw
-        )
+
+        ship_choice = _make_normalized_choice("Freedom (Liberator)", "88", nfs("Freedom"), inactive_ship_raw)
         ac_state.ships_cache = _make_ships_cache([ship_choice])
 
         choices = await cog.sell_item_autocomplete(interaction, "")
@@ -255,6 +258,7 @@ class TestSellAutocompleteIncludesInactiveShips:
 
         # Inventory with one item
         from utils.autocomplete_utils import normalize_for_search as nfs
+
         inv_raw = {"item_name": "Plasma Cannon", "item_type": "primary_weapon"}
         inv_choice = _make_normalized_choice(
             "Plasma Cannon (Primary Weapon)",
@@ -299,6 +303,7 @@ class TestSellAutocompleteIncludesInactiveShips:
 
         # Mock cache invalidations
         import utils.autocomplete_state as ac_state
+
         ac_state.invalidate_player = MagicMock()
         ac_state.invalidate_inventory = MagicMock()
         ac_state.invalidate_ships = MagicMock()
@@ -331,6 +336,7 @@ class TestSellAutocompleteIncludesInactiveShips:
         cog.http_client.post = AsyncMock(return_value=mock_resp)
 
         import utils.autocomplete_state as ac_state
+
         ac_state.invalidate_player = MagicMock()
         ac_state.invalidate_inventory = MagicMock()
         ac_state.invalidate_ships = MagicMock()

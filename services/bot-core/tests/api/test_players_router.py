@@ -373,9 +373,7 @@ class TestGetPlayersByGuild:
 
         assert response.status_code == 422
 
-    def test_get_players_by_guild_active_within_days_with_tier(
-        self, mock_db_session, client, mock_player_service
-    ):
+    def test_get_players_by_guild_active_within_days_with_tier(self, mock_db_session, client, mock_player_service):
         """active_within_days + tier: both params passed through to service."""
         mock_session, _ = mock_db_session
 

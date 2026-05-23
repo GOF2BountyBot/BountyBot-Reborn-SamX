@@ -675,10 +675,13 @@ class TestScheduleRefreshAdversarial:
             coro.close()  # prevent "never awaited" GC warning
             raise RuntimeError("no running event loop")
 
-        with patch(
-            "cogs._shared.autocomplete_cache.asyncio.create_task",
-            side_effect=_raise_and_close,
-        ), pytest.raises(RuntimeError, match="no running event loop"):
+        with (
+            patch(
+                "cogs._shared.autocomplete_cache.asyncio.create_task",
+                side_effect=_raise_and_close,
+            ),
+            pytest.raises(RuntimeError, match="no running event loop"),
+        ):
             cache.schedule_refresh("key")
 
     async def test_schedule_refresh_on_warm_key_does_not_call_refresh_fn(self):
@@ -780,8 +783,7 @@ class TestMaxEntriesAdversarial:
             "if this assertion fails the production code was fixed; update this test"
         )
         assert cache.peek("key") is None, (
-            "DEF-0001-001: peek after set with max_entries=0 should return None "
-            "(entry was self-evicted)"
+            "DEF-0001-001: peek after set with max_entries=0 should return None (entry was self-evicted)"
         )
 
 
@@ -860,6 +862,7 @@ class TestGetWithTimeout:
 
     async def test_non_timeout_exception_returns_none(self):
         """Non-asyncio.TimeoutError exception from get() → return None, log WARNING."""
+
         async def bad_refresh(key):
             raise RuntimeError("network down")
 

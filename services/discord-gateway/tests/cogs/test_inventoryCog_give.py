@@ -545,10 +545,14 @@ class TestGiveAutocomplete:
         inv_choices = []
         for item in raw_items:
             label = f"{item['item_name']} [{item['item_type']}]"
-            inv_choices.append(NormalizedChoice(
-                label=label, value=f"{item['item_name']}::{item['item_type']}",
-                norm=nfs(item["item_name"]), raw=item,
-            ))
+            inv_choices.append(
+                NormalizedChoice(
+                    label=label,
+                    value=f"{item['item_name']}::{item['item_type']}",
+                    norm=nfs(item["item_name"]),
+                    raw=item,
+                )
+            )
         ac_state.inventory_cache.set((guild_id, player_id), inv_choices)
 
         inventory_cog.http_client.post = AsyncMock(side_effect=AssertionError("HTTP must not be called"))
@@ -602,9 +606,14 @@ class TestGiveAutocomplete:
         for ship in raw_ships:
             name = ship.get("ship_name", "")
             label = f"{name} ({'⚡ ' if ship['is_active'] else ''})"
-            ship_choices.append(NormalizedChoice(
-                label=label, value=str(ship["player_ship_id"]), norm=nfs(name), raw=ship,
-            ))
+            ship_choices.append(
+                NormalizedChoice(
+                    label=label,
+                    value=str(ship["player_ship_id"]),
+                    norm=nfs(name),
+                    raw=ship,
+                )
+            )
         ac_state.ships_cache.set((guild_id, player_id), ship_choices)
 
         inventory_cog.http_client.post = AsyncMock(side_effect=AssertionError("HTTP must not be called"))

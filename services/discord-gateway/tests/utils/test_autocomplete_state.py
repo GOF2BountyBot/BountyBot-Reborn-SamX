@@ -320,9 +320,7 @@ class TestGetPlayerColdMiss:
 
         expected_player = {"id": 77, "user_id": 111, "guild_id": 999, "tier": "Bronze"}
 
-        respx.post(f"{API_BASE}/players/").mock(
-            return_value=httpx.Response(200, json=expected_player)
-        )
+        respx.post(f"{API_BASE}/players/").mock(return_value=httpx.Response(200, json=expected_player))
 
         result = await get_player(guild_id=999, user_id=111)
 
@@ -353,9 +351,7 @@ class TestGetPlayerColdMiss:
         """get_player_id() returns None when bot-core returns 500."""
         state_mod.init(real_http_client, API_BASE)
 
-        respx.post(f"{API_BASE}/players/").mock(
-            return_value=httpx.Response(500, json={"detail": "internal error"})
-        )
+        respx.post(f"{API_BASE}/players/").mock(return_value=httpx.Response(500, json={"detail": "internal error"}))
 
         result = await get_player_id(guild_id=999, user_id=111)
 
@@ -460,9 +456,7 @@ class TestRefreshInventoryPrecomputesNorm:
         ]
 
         with respx.mock() as mock_router:
-            mock_router.get(f"{API_BASE}/ships/player/10").mock(
-                return_value=httpx.Response(200, json=ships_response)
-            )
+            mock_router.get(f"{API_BASE}/ships/player/10").mock(return_value=httpx.Response(200, json=ships_response))
 
             choices = await state_mod._refresh_ships((100, 10))
 
@@ -506,9 +500,7 @@ class TestRefreshInventoryAdversarial:
         spurious background refresh on every subsequent autocomplete keystroke.
         """
         with respx.mock() as mock_router:
-            mock_router.get(f"{API_BASE}/inventory/player/42").mock(
-                return_value=httpx.Response(200, json=[])
-            )
+            mock_router.get(f"{API_BASE}/inventory/player/42").mock(return_value=httpx.Response(200, json=[]))
 
             choices = await state_mod._refresh_inventory((100, 42))
 
@@ -523,9 +515,7 @@ class TestRefreshInventoryAdversarial:
         the "no ships" state from "not yet cached" (None).
         """
         with respx.mock() as mock_router:
-            mock_router.get(f"{API_BASE}/ships/player/42").mock(
-                return_value=httpx.Response(200, json=[])
-            )
+            mock_router.get(f"{API_BASE}/ships/player/42").mock(return_value=httpx.Response(200, json=[]))
 
             choices = await state_mod._refresh_ships((100, 42))
 
@@ -579,7 +569,7 @@ class TestRefreshInventoryAdversarial:
         The production code has: ``if not item_name: continue``.
         """
         items_response = [
-            {"id": 1, "item_name": "", "item_type": "module", "quantity": 1},   # empty name → skipped
+            {"id": 1, "item_name": "", "item_type": "module", "quantity": 1},  # empty name → skipped
             {"id": 2, "item_name": None, "item_type": "module", "quantity": 1},  # None name → skipped
             {"id": 3, "item_name": "E2 Exoclad", "item_type": "module", "quantity": 1},  # valid
         ]

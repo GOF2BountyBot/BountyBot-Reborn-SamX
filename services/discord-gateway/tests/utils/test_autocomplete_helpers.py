@@ -991,9 +991,7 @@ class TestAdversarialEdgeCases:
         )
         assert len(choices) == 1
         # Must use exactly 🟢 (green circle) — not ⚡ or any other character
-        assert choices[0].name.startswith("🟢 "), (
-            f"Active ship indicator must be '🟢 ' but got: {choices[0].name!r}"
-        )
+        assert choices[0].name.startswith("🟢 "), f"Active ship indicator must be '🟢 ' but got: {choices[0].name!r}"
 
     # ------------------------------------------------------------------
     # player_equippable_autocomplete: cold miss on player_id

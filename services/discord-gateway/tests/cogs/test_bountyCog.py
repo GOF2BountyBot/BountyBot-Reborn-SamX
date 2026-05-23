@@ -526,9 +526,12 @@ class TestSystemAutocomplete:
 
 
 def _init_bounty_caches(
-    guild_id=987654321, user_id=111111111,
-    player_tier="Bronze", player_id=1,
-    bounties=None, cog=None,
+    guild_id=987654321,
+    user_id=111111111,
+    player_tier="Bronze",
+    player_id=1,
+    bounties=None,
+    cog=None,
 ):
     """Pre-populate caches for bounty autocomplete tests (Phase 6)."""
     import utils.autocomplete_state as ac_state
@@ -658,9 +661,7 @@ class TestBountyAutocomplete:
         guild_id = 987654321
         user_id = 111111111
         bounties = [_make_bounty_public(1, "BronzeViper", "bronze", reward=1000)]
-        _init_bounty_caches(
-            guild_id=guild_id, user_id=user_id, player_tier="", bounties=bounties, cog=mock_bounty_cog
-        )
+        _init_bounty_caches(guild_id=guild_id, user_id=user_id, player_tier="", bounties=bounties, cog=mock_bounty_cog)
 
         mock_bounty_cog.http_client.post = AsyncMock(side_effect=AssertionError("HTTP must not be called"))
         mock_bounty_cog.http_client.get = AsyncMock(side_effect=AssertionError("HTTP must not be called"))
@@ -711,7 +712,9 @@ class TestCheckCommand:
     def test_check_correct_result_green_embed(self, mock_bounty_cog, make_mock_response):
         """/check CORRECT (capture) sends a single public capture embed with payout detail."""
         interaction = _create_mock_interaction()
-        resp = make_mock_response(_make_check_response("correct", bounty_id=1, message="Target neutralised!", division="bronze"))
+        resp = make_mock_response(
+            _make_check_response("correct", bounty_id=1, message="Target neutralised!", division="bronze")
+        )
         mock_bounty_cog.http_client.post = AsyncMock(return_value=resp)
 
         asyncio.run(mock_bounty_cog.check.callback(mock_bounty_cog, interaction, "Alpha"))
@@ -743,7 +746,9 @@ class TestCheckCommand:
     def test_check_incorrect_result_red_embed(self, mock_bounty_cog, make_mock_response):
         """/check INCORRECT result should display tier-colored embed (Sub-task A)."""
         interaction = _create_mock_interaction()
-        resp = make_mock_response(_make_check_response("incorrect", message="Bounty is 2 jumps away.", division="silver"))
+        resp = make_mock_response(
+            _make_check_response("incorrect", message="Bounty is 2 jumps away.", division="silver")
+        )
         mock_bounty_cog.http_client.post = AsyncMock(return_value=resp)
 
         asyncio.run(mock_bounty_cog.check.callback(mock_bounty_cog, interaction, "Beta"))
@@ -752,6 +757,7 @@ class TestCheckCommand:
         call_kwargs = interaction.followup.send.call_args[1]
         assert "embed" in call_kwargs
         from cogs.bountyCog import TIER_COLORS
+
         assert call_kwargs["embed"].color.value == TIER_COLORS["silver"]
 
     def test_check_already_checked_result_yellow_embed(self, mock_bounty_cog, make_mock_response):
@@ -766,6 +772,7 @@ class TestCheckCommand:
         call_kwargs = interaction.followup.send.call_args[1]
         assert "embed" in call_kwargs
         from cogs.bountyCog import TIER_COLORS
+
         assert call_kwargs["embed"].color.value == TIER_COLORS["gold"]
 
     def test_check_cooldown_429_response(self, mock_bounty_cog, make_mock_response):
@@ -888,9 +895,7 @@ class TestCheckCommandEphemeralBehavior:
         }
         call_kwargs = self._run_check(mock_bounty_cog, make_mock_response, resp_data)
         # combat_won=False means player lost — NOT a capture, should be public
-        assert not call_kwargs.get("ephemeral"), (
-            "Combat loss (result=correct, combat_won=False) must NOT be ephemeral"
-        )
+        assert not call_kwargs.get("ephemeral"), "Combat loss (result=correct, combat_won=False) must NOT be ephemeral"
 
     def test_incorrect_result_is_not_ephemeral(self, mock_bounty_cog, make_mock_response):
         """result='incorrect' → NOT ephemeral (wrong system, public feedback)."""
@@ -934,9 +939,7 @@ class TestCheckCommandEphemeralBehavior:
         mock_bounty_cog.http_client.post = AsyncMock(return_value=resp)
         asyncio.run(mock_bounty_cog.check.callback(mock_bounty_cog, interaction, "Alpha"))
         call_kwargs = interaction.followup.send.call_args[1]
-        assert not call_kwargs.get("ephemeral"), (
-            "Multi-outcome path must stay public (NOT ephemeral)"
-        )
+        assert not call_kwargs.get("ephemeral"), "Multi-outcome path must stay public (NOT ephemeral)"
 
 
 # ---------------------------------------------------------------------------
@@ -3501,12 +3504,8 @@ class TestBountyCommandsRespx:
         bounty_list = [_make_bounty_public(1, "SilverViper", "silver")]
 
         with respx.mock(assert_all_called=True) as mock_router:
-            mock_router.post(f"{self._BOT_API}/players/").mock(
-                return_value=httpx.Response(200, json=player_data)
-            )
-            mock_router.get(f"{self._BOT_API}/bounties/").mock(
-                return_value=httpx.Response(200, json=bounty_list)
-            )
+            mock_router.post(f"{self._BOT_API}/players/").mock(return_value=httpx.Response(200, json=player_data))
+            mock_router.get(f"{self._BOT_API}/bounties/").mock(return_value=httpx.Response(200, json=bounty_list))
 
             asyncio.run(mock_bounty_cog.bounties.callback(mock_bounty_cog, interaction))
 
@@ -3607,8 +3606,7 @@ class TestBountyCommandsRespx:
 
         bounty_list = [_make_bounty_public(1, "AutoViper", "bronze")]
         _init_bounty_caches(
-            guild_id=guild_id, user_id=user_id, player_tier="Bronze",
-            bounties=bounty_list, cog=mock_bounty_cog
+            guild_id=guild_id, user_id=user_id, player_tier="Bronze", bounties=bounty_list, cog=mock_bounty_cog
         )
 
         # HTTP must NOT be called — all data from cache
@@ -3659,9 +3657,7 @@ class TestBuildCaptureEmbedRedesign:
             "division": "bronze",
             "reward": 5000,
             "winner_name": "SamX",
-            "payout_breakdown": [
-                {"player_display_name": "SamX", "role": "capture claim", "amount": 5000}
-            ],
+            "payout_breakdown": [{"player_display_name": "SamX", "role": "capture claim", "amount": 5000}],
         }
         embed = self.cog._build_capture_embed(data)
         field_names = [f.name for f in embed.fields]
@@ -3696,10 +3692,7 @@ class TestBuildCaptureEmbedRedesign:
             "winner_name": "SamAccountX",
         }
         embed = self.cog._build_capture_embed(data)
-        found = any(
-            "Captured by:" in (f.value or "") and "SamAccountX" in (f.value or "")
-            for f in embed.fields
-        )
+        found = any("Captured by:" in (f.value or "") and "SamAccountX" in (f.value or "") for f in embed.fields)
         assert found, (
             "Expected a field value containing 'Captured by: **SamAccountX**' but none found. "
             f"Fields: {[(f.name, f.value) for f in embed.fields]}"
@@ -3713,10 +3706,7 @@ class TestBuildCaptureEmbedRedesign:
             "winner_name": "BoldHunter",
         }
         embed = self.cog._build_capture_embed(data)
-        found = any(
-            "**BoldHunter**" in (f.value or "")
-            for f in embed.fields
-        )
+        found = any("**BoldHunter**" in (f.value or "") for f in embed.fields)
         assert found, "Winner name must be bolded with ** in 'Captured by' field"
 
     def test_capture_embed_captured_by_default_winner_name(self):
@@ -3726,10 +3716,7 @@ class TestBuildCaptureEmbedRedesign:
             "reward": 500,
         }
         embed = self.cog._build_capture_embed(data)
-        found = any(
-            "Captured by:" in (f.value or "") and "A bounty hunter" in (f.value or "")
-            for f in embed.fields
-        )
+        found = any("Captured by:" in (f.value or "") and "A bounty hunter" in (f.value or "") for f in embed.fields)
         assert found, (
             "Expected 'Captured by: **A bounty hunter**' when winner_name absent. "
             f"Fields: {[(f.name, f.value) for f in embed.fields]}"
@@ -3743,10 +3730,7 @@ class TestBuildCaptureEmbedRedesign:
             "winner_name": None,
         }
         embed = self.cog._build_capture_embed(data)
-        found = any(
-            "Captured by:" in (f.value or "") and "A bounty hunter" in (f.value or "")
-            for f in embed.fields
-        )
+        found = any("Captured by:" in (f.value or "") and "A bounty hunter" in (f.value or "") for f in embed.fields)
         assert found, "winner_name=None must fall back to 'A bounty hunter'"
 
     # -----------------------------------------------------------------------
@@ -3758,9 +3742,7 @@ class TestBuildCaptureEmbedRedesign:
         data = {
             "criminal_name": "TestCrim",
             "reward": 5000,
-            "payout_breakdown": [
-                {"player_display_name": "WinnerA", "role": "capture claim", "amount": 5000}
-            ],
+            "payout_breakdown": [{"player_display_name": "WinnerA", "role": "capture claim", "amount": 5000}],
         }
         embed = self.cog._build_capture_embed(data)
         # Find the payout breakdown field
@@ -3794,9 +3776,7 @@ class TestBuildCaptureEmbedRedesign:
         data = {
             "criminal_name": "TestCrim",
             "reward": 7049,
-            "payout_breakdown": [
-                {"player_display_name": "SamAccountX", "role": "capture claim", "amount": 7049}
-            ],
+            "payout_breakdown": [{"player_display_name": "SamAccountX", "role": "capture claim", "amount": 7049}],
         }
         embed = self.cog._build_capture_embed(data)
         breakdown_field = next(
@@ -3814,9 +3794,7 @@ class TestBuildCaptureEmbedRedesign:
         data = {
             "criminal_name": "TestCrim",
             "reward": 3000,
-            "payout_breakdown": [
-                {"player_display_name": "SamX", "role": "capture claim", "amount": 3000}
-            ],
+            "payout_breakdown": [{"player_display_name": "SamX", "role": "capture claim", "amount": 3000}],
         }
         embed = self.cog._build_capture_embed(data)
         breakdown_field = next(
@@ -3875,9 +3853,9 @@ class TestBuildCaptureEmbedRedesign:
         assert breakdown_field is not None
         lines = breakdown_field.value.split("\n")
         # TopWinner (5000) must appear before MidChecker (500) which must appear before LowChecker (100)
-        top_idx = next((i for i, l in enumerate(lines) if "TopWinner" in l), -1)
-        mid_idx = next((i for i, l in enumerate(lines) if "MidChecker" in l), -1)
-        low_idx = next((i for i, l in enumerate(lines) if "LowChecker" in l), -1)
+        top_idx = next((i for i, ln in enumerate(lines) if "TopWinner" in ln), -1)
+        mid_idx = next((i for i, ln in enumerate(lines) if "MidChecker" in ln), -1)
+        low_idx = next((i for i, ln in enumerate(lines) if "LowChecker" in ln), -1)
         assert top_idx < mid_idx < low_idx, (
             f"Expected TopWinner > MidChecker > LowChecker by amount, "
             f"but order was: top={top_idx}, mid={mid_idx}, low={low_idx}"
@@ -3888,15 +3866,11 @@ class TestBuildCaptureEmbedRedesign:
         data = {
             "criminal_name": "TestCrim",
             "reward": 5000,
-            "payout_breakdown": [
-                {"player_display_name": "SamX", "role": "capture claim", "amount": 5000}
-            ],
+            "payout_breakdown": [{"player_display_name": "SamX", "role": "capture claim", "amount": 5000}],
         }
         embed = self.cog._build_capture_embed(data)
         field_names = [f.name for f in embed.fields]
-        assert "💰 Payout Breakdown" in field_names, (
-            f"Expected '💰 Payout Breakdown' field but got: {field_names}"
-        )
+        assert "💰 Payout Breakdown" in field_names, f"Expected '💰 Payout Breakdown' field but got: {field_names}"
 
     # -----------------------------------------------------------------------
     # AC 7 & 8: Fallback when payout_breakdown is empty or None/absent
@@ -3913,9 +3887,7 @@ class TestBuildCaptureEmbedRedesign:
         embed = self.cog._build_capture_embed(data)
         field_names = [f.name for f in embed.fields]
         # Should have a Total Payout field instead of Payout Breakdown
-        assert "💰 Payout Breakdown" not in field_names, (
-            "Should NOT render 'Payout Breakdown' when breakdown is empty"
-        )
+        assert "💰 Payout Breakdown" not in field_names, "Should NOT render 'Payout Breakdown' when breakdown is empty"
         # Should show some payout info
         has_payout = any("Payout" in n or "Reward" in n for n in field_names)
         assert has_payout, f"Expected fallback payout field, got: {field_names}"
@@ -3942,9 +3914,7 @@ class TestBuildCaptureEmbedRedesign:
         }
         embed = self.cog._build_capture_embed(data)
         field_names = [f.name for f in embed.fields]
-        assert "💰 Payout Breakdown" not in field_names, (
-            "Should NOT render 'Payout Breakdown' when breakdown is None"
-        )
+        assert "💰 Payout Breakdown" not in field_names, "Should NOT render 'Payout Breakdown' when breakdown is None"
 
     def test_capture_embed_absent_breakdown_falls_back_to_total_payout(self):
         """When payout_breakdown key is entirely absent from data dict, falls back gracefully."""
@@ -3956,9 +3926,7 @@ class TestBuildCaptureEmbedRedesign:
         }
         embed = self.cog._build_capture_embed(data)
         field_names = [f.name for f in embed.fields]
-        assert "💰 Payout Breakdown" not in field_names, (
-            "Should NOT render 'Payout Breakdown' when key is absent"
-        )
+        assert "💰 Payout Breakdown" not in field_names, "Should NOT render 'Payout Breakdown' when key is absent"
         # Should still show a payout field
         has_payout = any("Payout" in n or "Reward" in n for n in field_names)
         assert has_payout, f"Expected fallback payout field, got: {field_names}"
@@ -4095,9 +4063,7 @@ class TestBuildCaptureEmbedRedesign:
         )
         assert breakdown_field is not None
         # Not 'capture claim' → should get 🔍 (not 🏆)
-        assert "🔍" in breakdown_field.value, (
-            "Unknown role should default to 🔍 icon (not 'capture claim')"
-        )
+        assert "🔍" in breakdown_field.value, "Unknown role should default to 🔍 icon (not 'capture claim')"
 
     def test_capture_embed_title_is_bounty_captured(self):
         """Capture embed title must be '🎯 Bounty Captured!'."""
@@ -4111,9 +4077,7 @@ class TestBuildCaptureEmbedRedesign:
         """Capture embed description must include the criminal_name."""
         data = {"criminal_name": "Warlord Grixus", "reward": 9999}
         embed = self.cog._build_capture_embed(data)
-        assert "Warlord Grixus" in (embed.description or ""), (
-            "Criminal name must appear in capture embed description"
-        )
+        assert "Warlord Grixus" in (embed.description or ""), "Criminal name must appear in capture embed description"
 
 
 # ===========================================================================
@@ -4198,11 +4162,9 @@ class TestPayoutBreakdownSchemaWireThrough:
         )
         assert breakdown_field is not None
         lines = breakdown_field.value.split("\n")
-        winner_idx = next((i for i, l in enumerate(lines) if "WinnerSamX" in l), -1)
-        checker_idx = next((i for i, l in enumerate(lines) if "CheckerX" in l), -1)
-        assert winner_idx < checker_idx, (
-            "Winner (WinnerSamX, 7049 cr) must appear before checker (CheckerX, 100 cr)"
-        )
+        winner_idx = next((i for i, ln in enumerate(lines) if "WinnerSamX" in ln), -1)
+        checker_idx = next((i for i, ln in enumerate(lines) if "CheckerX" in ln), -1)
+        assert winner_idx < checker_idx, "Winner (WinnerSamX, 7049 cr) must appear before checker (CheckerX, 100 cr)"
 
 
 # ===========================================================================
@@ -4539,32 +4501,34 @@ class TestBuildMultiCheckEmbedPayoutBreakdown:
         mock_bounty_cog._systems_cache.set("all", ["Magnetar"])
         interaction = _create_mock_interaction()
 
-        response_data = _make_multi_check_response([
-            {
-                "result": "correct",
-                "bounty_id": 1,
-                "criminal_name": "Qyrr Myfft",
-                "combat_won": True,
-                "reward": 3188,
-                "total_reward": 3188,
-                "bonus_won": False,
-                "payout_breakdown": [
-                    {"player_display_name": "TestUser", "role": "capture claim", "amount": 3188},
-                ],
-            },
-            {
-                "result": "correct",
-                "bounty_id": 2,
-                "criminal_name": "Gendol Ethor",
-                "combat_won": True,
-                "reward": 44632,
-                "total_reward": 44632,
-                "bonus_won": False,
-                "payout_breakdown": [
-                    {"player_display_name": "TestUser", "role": "capture claim", "amount": 44632},
-                ],
-            },
-        ])
+        response_data = _make_multi_check_response(
+            [
+                {
+                    "result": "correct",
+                    "bounty_id": 1,
+                    "criminal_name": "Qyrr Myfft",
+                    "combat_won": True,
+                    "reward": 3188,
+                    "total_reward": 3188,
+                    "bonus_won": False,
+                    "payout_breakdown": [
+                        {"player_display_name": "TestUser", "role": "capture claim", "amount": 3188},
+                    ],
+                },
+                {
+                    "result": "correct",
+                    "bounty_id": 2,
+                    "criminal_name": "Gendol Ethor",
+                    "combat_won": True,
+                    "reward": 44632,
+                    "total_reward": 44632,
+                    "bonus_won": False,
+                    "payout_breakdown": [
+                        {"player_display_name": "TestUser", "role": "capture claim", "amount": 44632},
+                    ],
+                },
+            ]
+        )
         resp = make_mock_response(response_data)
         mock_bounty_cog.http_client.post = AsyncMock(return_value=resp)
 

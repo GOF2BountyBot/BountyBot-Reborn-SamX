@@ -1193,7 +1193,7 @@ class BountyService:
 
         # Per-bounty announcement edits. Each is best-effort & non-fatal —
         # _edit_bounty_announcement already swallows its own exceptions.
-        for bounty, captured, outcome in bounties_to_announce:
+        for bounty, captured, _outcome in bounties_to_announce:
             try:
                 await self._edit_bounty_announcement(db, bounty, captured=captured)
             except Exception as e:  # pylint: disable=broad-exception-caught

@@ -205,10 +205,7 @@ class TestAcPerf2BuyItemAutocompleteZeroHttp:
             ac_state.player_cache = AutocompleteCache(name="p6-player-perf2")
         ac_state.player_cache.set((guild_id, user_id), _make_player_data(tier="Bronze"))
 
-        items = [
-            _make_shop_item(item_id=i, item_name=f"Item{i}", price=100 * i)
-            for i in range(1, 6)
-        ]
+        items = [_make_shop_item(item_id=i, item_name=f"Item{i}", price=100 * i) for i in range(1, 6)]
         cog._shop_cache.set((guild_id, "Bronze"), items)
 
     def test_three_keystrokes_on_warm_cache_zero_http(self, shop_cog):
@@ -301,12 +298,8 @@ class TestBountyAutocompleteTierFilter:
         self._setup_warm_player_cache("Silver", guild_id=guild_id, user_id=user_id)
 
         # No HTTP should be called
-        bounty_cog.http_client.get = AsyncMock(
-            side_effect=AssertionError("HTTP must not be called on warm path")
-        )
-        bounty_cog.http_client.post = AsyncMock(
-            side_effect=AssertionError("HTTP must not be called on warm path")
-        )
+        bounty_cog.http_client.get = AsyncMock(side_effect=AssertionError("HTTP must not be called on warm path"))
+        bounty_cog.http_client.post = AsyncMock(side_effect=AssertionError("HTTP must not be called on warm path"))
 
         interaction = _create_mock_interaction(user_id=user_id, guild_id=guild_id)
         result = asyncio.run(bounty_cog.bounty_autocomplete(interaction, ""))
@@ -393,12 +386,8 @@ class TestRemoveItemAutocompleteUnknownTargetUser:
             ac_state.inventory_cache = AutocompleteCache(name="p6-admin-inventory-unknown")
 
         # HTTP must not be called — this is the zero-HTTP path
-        admin_cog.http_client.get = AsyncMock(
-            side_effect=AssertionError("HTTP must not be called on hot path")
-        )
-        admin_cog.http_client.post = AsyncMock(
-            side_effect=AssertionError("HTTP must not be called on hot path")
-        )
+        admin_cog.http_client.get = AsyncMock(side_effect=AssertionError("HTTP must not be called on hot path"))
+        admin_cog.http_client.post = AsyncMock(side_effect=AssertionError("HTTP must not be called on hot path"))
 
         # Set up catalog as empty so fallback returns [] (not catalog items)
         # The fallback uses _item_catalog which is an in-memory dict-like structure
@@ -510,9 +499,7 @@ class TestJobIdAutocompleteColdCache:
         ]
         scheduler_cog._job_cache.set("all", jobs)
 
-        scheduler_cog.http_client.get = AsyncMock(
-            side_effect=AssertionError("HTTP must not be called on warm path")
-        )
+        scheduler_cog.http_client.get = AsyncMock(side_effect=AssertionError("HTTP must not be called on warm path"))
 
         interaction = _create_mock_interaction()
         result = asyncio.run(scheduler_cog.job_id_autocomplete(interaction, "bounty"))
@@ -576,12 +563,8 @@ class TestSellItemAutocompleteEmptyInventory:
 
         self._setup_caches_with_empty_inventory(shop_cog, guild_id=guild_id, user_id=user_id)
 
-        shop_cog.http_client.get = AsyncMock(
-            side_effect=AssertionError("HTTP must not be called")
-        )
-        shop_cog.http_client.post = AsyncMock(
-            side_effect=AssertionError("HTTP must not be called")
-        )
+        shop_cog.http_client.get = AsyncMock(side_effect=AssertionError("HTTP must not be called"))
+        shop_cog.http_client.post = AsyncMock(side_effect=AssertionError("HTTP must not be called"))
 
         import utils.autocomplete_state as ac_state
 
@@ -600,12 +583,8 @@ class TestSellItemAutocompleteEmptyInventory:
 
         self._setup_caches_with_empty_inventory(shop_cog, guild_id=guild_id, user_id=user_id)
 
-        shop_cog.http_client.get = AsyncMock(
-            side_effect=AssertionError("HTTP must not be called")
-        )
-        shop_cog.http_client.post = AsyncMock(
-            side_effect=AssertionError("HTTP must not be called")
-        )
+        shop_cog.http_client.get = AsyncMock(side_effect=AssertionError("HTTP must not be called"))
+        shop_cog.http_client.post = AsyncMock(side_effect=AssertionError("HTTP must not be called"))
 
         interaction = _create_mock_interaction(user_id=user_id, guild_id=guild_id)
         result = asyncio.run(shop_cog.sell_item_autocomplete(interaction, "Laser"))
@@ -671,12 +650,8 @@ class TestAcPerf3BountyAutocompleteColdTiming:
 
         self._ensure_caches_cold(bounty_cog, guild_id=guild_id, user_id=user_id)
 
-        bounty_cog.http_client.get = AsyncMock(
-            side_effect=AssertionError("HTTP must not be called synchronously")
-        )
-        bounty_cog.http_client.post = AsyncMock(
-            side_effect=AssertionError("HTTP must not be called synchronously")
-        )
+        bounty_cog.http_client.get = AsyncMock(side_effect=AssertionError("HTTP must not be called synchronously"))
+        bounty_cog.http_client.post = AsyncMock(side_effect=AssertionError("HTTP must not be called synchronously"))
 
         interaction = _create_mock_interaction(user_id=user_id, guild_id=guild_id)
 
@@ -685,6 +660,4 @@ class TestAcPerf3BountyAutocompleteColdTiming:
         elapsed_ms = (time.perf_counter() - t0) * 1000
 
         assert result == []
-        assert elapsed_ms < 20, (
-            f"AC-PERF-3 VIOLATION: Cold bounty_autocomplete took {elapsed_ms:.2f}ms > 20ms"
-        )
+        assert elapsed_ms < 20, f"AC-PERF-3 VIOLATION: Cold bounty_autocomplete took {elapsed_ms:.2f}ms > 20ms"

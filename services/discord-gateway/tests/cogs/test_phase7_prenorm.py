@@ -191,6 +191,7 @@ def shop_cog(mock_bot):
             del sys.modules[k]
     sys.modules["shared"] = sys.modules["shared"]
     from cogs.shopCog import ShopCog
+
     return ShopCog(mock_bot)
 
 
@@ -200,6 +201,7 @@ def bounty_cog(mock_bot):
         if "bountyCog" in k or (k.startswith("cogs.") and "bounty" in k.lower()):
             del sys.modules[k]
     from cogs.bountyCog import BountyCog
+
     cog = BountyCog(mock_bot)
     return cog
 
@@ -210,6 +212,7 @@ def duel_cog(mock_bot):
         if "duelCog" in k or (k.startswith("cogs.") and "duel" in k.lower()):
             del sys.modules[k]
     from cogs.duelCog import DuelCog
+
     return DuelCog(mock_bot)
 
 
@@ -219,6 +222,7 @@ def scheduler_cog(mock_bot, monkeypatch):
         if "schedulerCog" in k or (k.startswith("cogs.") and "scheduler" in k.lower()):
             del sys.modules[k]
     from cogs.schedulerCog import SchedulerCog
+
     return SchedulerCog(mock_bot)
 
 
@@ -286,9 +290,7 @@ class TestFetchTierShopPrenorm:
 
             result = asyncio.run(shop_cog._fetch_tier_shop((guild_id, tier)))
 
-        assert result[0]["_norm"] == expected_norm, (
-            f"Expected _norm={expected_norm!r}, got {result[0]['_norm']!r}"
-        )
+        assert result[0]["_norm"] == expected_norm, f"Expected _norm={expected_norm!r}, got {result[0]['_norm']!r}"
 
     def test_buy_autocomplete_uses_prenorm_path(self, shop_cog):
         """buy_item_autocomplete uses _norm from cache item when present.
@@ -413,9 +415,7 @@ class TestFetchBountiesPrenorm:
             patch.dict(os.environ, env_without_bot_api, clear=True),
             respx.mock(assert_all_called=True) as mock_router,
         ):
-            mock_router.get(f"{_BOT_API}/bounties/").mock(
-                return_value=httpx.Response(200, json=sample_bounties)
-            )
+            mock_router.get(f"{_BOT_API}/bounties/").mock(return_value=httpx.Response(200, json=sample_bounties))
 
             result = asyncio.run(bounty_cog._fetch_bounties(guild_id))
 
@@ -442,15 +442,11 @@ class TestFetchBountiesPrenorm:
             patch.dict(os.environ, env_without_bot_api, clear=True),
             respx.mock(assert_all_called=True) as mock_router,
         ):
-            mock_router.get(f"{_BOT_API}/bounties/").mock(
-                return_value=httpx.Response(200, json=sample_bounties)
-            )
+            mock_router.get(f"{_BOT_API}/bounties/").mock(return_value=httpx.Response(200, json=sample_bounties))
 
             result = asyncio.run(bounty_cog._fetch_bounties(guild_id))
 
-        assert result[0]["_norm"] == expected_norm, (
-            f"Expected _norm={expected_norm!r}, got {result[0]['_norm']!r}"
-        )
+        assert result[0]["_norm"] == expected_norm, f"Expected _norm={expected_norm!r}, got {result[0]['_norm']!r}"
 
     def test_bounty_autocomplete_uses_prenorm_path(self, bounty_cog):
         """bounty_autocomplete uses _norm from cache bounty when present.
@@ -527,9 +523,7 @@ class TestFetchDuelsPrenorm:
             patch.dict(os.environ, env_without_bot_api, clear=True),
             respx.mock(assert_all_called=True) as mock_router,
         ):
-            mock_router.get(f"{_BOT_API}/duels/pending").mock(
-                return_value=httpx.Response(200, json=sample_duels)
-            )
+            mock_router.get(f"{_BOT_API}/duels/pending").mock(return_value=httpx.Response(200, json=sample_duels))
 
             result = asyncio.run(duel_cog._fetch_pending_duels((guild_id, player_id)))
 
@@ -556,15 +550,11 @@ class TestFetchDuelsPrenorm:
             patch.dict(os.environ, env_without_bot_api, clear=True),
             respx.mock(assert_all_called=True) as mock_router,
         ):
-            mock_router.get(f"{_BOT_API}/duels/pending").mock(
-                return_value=httpx.Response(200, json=sample_duels)
-            )
+            mock_router.get(f"{_BOT_API}/duels/pending").mock(return_value=httpx.Response(200, json=sample_duels))
 
             result = asyncio.run(duel_cog._fetch_pending_duels((guild_id, player_id)))
 
-        assert result[0]["_norm"] == expected_norm, (
-            f"Expected _norm={expected_norm!r}, got {result[0]['_norm']!r}"
-        )
+        assert result[0]["_norm"] == expected_norm, f"Expected _norm={expected_norm!r}, got {result[0]['_norm']!r}"
 
     def test_fetch_outgoing_duels_adds_norm_field(self, duel_cog, request):
         """_fetch_outgoing_duels must add _norm to each returned duel dict."""
@@ -582,9 +572,7 @@ class TestFetchDuelsPrenorm:
             patch.dict(os.environ, env_without_bot_api, clear=True),
             respx.mock(assert_all_called=True) as mock_router,
         ):
-            mock_router.get(f"{_BOT_API}/duels/outgoing").mock(
-                return_value=httpx.Response(200, json=sample_duels)
-            )
+            mock_router.get(f"{_BOT_API}/duels/outgoing").mock(return_value=httpx.Response(200, json=sample_duels))
 
             result = asyncio.run(duel_cog._fetch_outgoing_duels((guild_id, player_id)))
 
@@ -611,15 +599,11 @@ class TestFetchDuelsPrenorm:
             patch.dict(os.environ, env_without_bot_api, clear=True),
             respx.mock(assert_all_called=True) as mock_router,
         ):
-            mock_router.get(f"{_BOT_API}/duels/outgoing").mock(
-                return_value=httpx.Response(200, json=sample_duels)
-            )
+            mock_router.get(f"{_BOT_API}/duels/outgoing").mock(return_value=httpx.Response(200, json=sample_duels))
 
             result = asyncio.run(duel_cog._fetch_outgoing_duels((guild_id, player_id)))
 
-        assert result[0]["_norm"] == expected_norm, (
-            f"Expected _norm={expected_norm!r}, got {result[0]['_norm']!r}"
-        )
+        assert result[0]["_norm"] == expected_norm, f"Expected _norm={expected_norm!r}, got {result[0]['_norm']!r}"
 
 
 # ---------------------------------------------------------------------------
@@ -644,9 +628,7 @@ class TestFetchJobsPrenorm:
             patch.dict(os.environ, env_without_bot_api, clear=True),
             respx.mock(assert_all_called=True) as mock_router,
         ):
-            mock_router.get(f"{_BOT_API}/jobs").mock(
-                return_value=httpx.Response(200, json=sample_jobs)
-            )
+            mock_router.get(f"{_BOT_API}/jobs").mock(return_value=httpx.Response(200, json=sample_jobs))
 
             result = asyncio.run(scheduler_cog._fetch_jobs("all"))
 
@@ -671,15 +653,11 @@ class TestFetchJobsPrenorm:
             patch.dict(os.environ, env_without_bot_api, clear=True),
             respx.mock(assert_all_called=True) as mock_router,
         ):
-            mock_router.get(f"{_BOT_API}/jobs").mock(
-                return_value=httpx.Response(200, json=sample_jobs)
-            )
+            mock_router.get(f"{_BOT_API}/jobs").mock(return_value=httpx.Response(200, json=sample_jobs))
 
             result = asyncio.run(scheduler_cog._fetch_jobs("all"))
 
-        assert result[0]["_norm"] == expected_norm, (
-            f"Expected _norm={expected_norm!r}, got {result[0]['_norm']!r}"
-        )
+        assert result[0]["_norm"] == expected_norm, f"Expected _norm={expected_norm!r}, got {result[0]['_norm']!r}"
 
     def test_job_autocomplete_uses_prenorm_path(self, scheduler_cog):
         """job_id_autocomplete uses _norm from cached job dict.
@@ -713,9 +691,7 @@ class TestFetchJobsPrenorm:
         result = asyncio.run(scheduler_cog.job_id_autocomplete(interaction, "bounty"))
 
         assert len(result) == 1, f"Expected 1 job matching 'bounty', got {len(result)}"
-        assert result[0].value == "bounty_spawn_default", (
-            f"Expected bounty_spawn_default, got {result[0].value}"
-        )
+        assert result[0].value == "bounty_spawn_default", f"Expected bounty_spawn_default, got {result[0].value}"
 
 
 # ---------------------------------------------------------------------------
@@ -739,6 +715,7 @@ class TestAutocompleteHealthEndpoint:
         app.state.bot = bot
 
         from api.routers.internal_autocomplete import router
+
         app.include_router(router, prefix="/api/v1")
         return app
 
@@ -788,9 +765,7 @@ class TestAutocompleteHealthEndpoint:
         assert isinstance(data["ships_cache_size"], int), (
             f"ships_cache_size should be int, got {type(data['ships_cache_size'])}"
         )
-        assert isinstance(data["initialized"], bool), (
-            f"initialized should be bool, got {type(data['initialized'])}"
-        )
+        assert isinstance(data["initialized"], bool), f"initialized should be bool, got {type(data['initialized'])}"
 
     def test_health_endpoint_requires_valid_auth_when_token_set(self):
         """GET /internal/autocomplete/health with wrong token → 401."""
@@ -860,16 +835,19 @@ class TestSubtaskBAudit:
             ac_state.player_cache = AutocompleteCache(name="player-test")
         ac_state.player_cache.set((guild_id, user_id), {"id": 1, "tier": "bronze"})
 
-        bounty_cog._bounty_cache.set(guild_id, [
-            {
-                "id": 1,
-                "criminal_name": "Test Criminal",
-                "division": "bronze",
-                "tech_level": 1,
-                "reward": 10000,
-                "_norm": normalize_for_search("Test Criminal (Bronze, T1) — 10,000cr"),
-            }
-        ])
+        bounty_cog._bounty_cache.set(
+            guild_id,
+            [
+                {
+                    "id": 1,
+                    "criminal_name": "Test Criminal",
+                    "division": "bronze",
+                    "tech_level": 1,
+                    "reward": 10000,
+                    "_norm": normalize_for_search("Test Criminal (Bronze, T1) — 10,000cr"),
+                }
+            ],
+        )
         bounty_cog.http_client.get = AsyncMock(side_effect=AssertionError("HTTP must not be called"))
         bounty_cog.http_client.post = AsyncMock(side_effect=AssertionError("HTTP must not be called"))
 
@@ -881,13 +859,16 @@ class TestSubtaskBAudit:
         """job_id_autocomplete must not call HTTP when cache is warm."""
         from utils.autocomplete_utils import normalize_for_search
 
-        scheduler_cog._job_cache.set("all", [
-            {
-                "id": "test_job",
-                "trigger": "interval[1:00:00]",
-                "_norm": normalize_for_search("test_job (interval[1:00:00])"),
-            }
-        ])
+        scheduler_cog._job_cache.set(
+            "all",
+            [
+                {
+                    "id": "test_job",
+                    "trigger": "interval[1:00:00]",
+                    "_norm": normalize_for_search("test_job (interval[1:00:00])"),
+                }
+            ],
+        )
         scheduler_cog.http_client.get = AsyncMock(side_effect=AssertionError("HTTP must not be called"))
 
         interaction = MagicMock()
@@ -960,9 +941,7 @@ class TestAdversarialPhase7:
         # The item should appear (normalize_for_search("") is in normalize_for_search(label))
         # This documents the behaviour: empty _norm falls back to the computed norm,
         # and the item is still returned for an empty query (all-match).
-        assert len(result) == 1, (
-            f"Expected 1 result (empty query matches all via fallback), got {len(result)}"
-        )
+        assert len(result) == 1, f"Expected 1 result (empty query matches all via fallback), got {len(result)}"
 
     def test_normalize_for_search_laser_in_laser_cannon(self):
         """normalize_for_search('laser') is a substring of norm('Laser Cannon (1,500cr)').
@@ -981,12 +960,8 @@ class TestAdversarialPhase7:
         # "Laser Cannon (1,500cr)" → remove spaces → "LaserCannon(1,500cr)" → lowercase
         #   → "lasercannon(1,500cr)"
         assert norm_query == "laser", f"Expected 'laser', got {norm_query!r}"
-        assert norm_label == "lasercannon(1,500cr)", (
-            f"Expected 'lasercannon(1,500cr)', got {norm_label!r}"
-        )
-        assert norm_query in norm_label, (
-            f"'laser' should be a substring of norm label; got norm_label={norm_label!r}"
-        )
+        assert norm_label == "lasercannon(1,500cr)", f"Expected 'lasercannon(1,500cr)', got {norm_label!r}"
+        assert norm_query in norm_label, f"'laser' should be a substring of norm label; got norm_label={norm_label!r}"
 
     def test_health_endpoint_none_caches_return_zero(self):
         """GET /internal/autocomplete/health returns 0 for each cache size when caches are None.
@@ -1024,6 +999,7 @@ class TestAdversarialPhase7:
 
             app = FastAPI(title="Test App - None Caches")
             from api.routers.internal_autocomplete import router as ac_router
+
             app.include_router(ac_router, prefix="/api/v1")
             app.state.bot = bot
 
@@ -1032,9 +1008,7 @@ class TestAdversarialPhase7:
                 client = TestClient(app, raise_server_exceptions=True)
                 resp = client.get("/api/v1/internal/autocomplete/health")
 
-            assert resp.status_code == 200, (
-                f"Expected 200 when caches are None, got {resp.status_code}: {resp.text}"
-            )
+            assert resp.status_code == 200, f"Expected 200 when caches are None, got {resp.status_code}: {resp.text}"
             data = resp.json()
             assert data["player_cache_size"] == 0, (
                 f"Expected player_cache_size=0 when cache is None, got {data['player_cache_size']}"
@@ -1045,9 +1019,7 @@ class TestAdversarialPhase7:
             assert data["ships_cache_size"] == 0, (
                 f"Expected ships_cache_size=0 when cache is None, got {data['ships_cache_size']}"
             )
-            assert data["initialized"] is False, (
-                f"Expected initialized=False, got {data['initialized']}"
-            )
+            assert data["initialized"] is False, f"Expected initialized=False, got {data['initialized']}"
         finally:
             # Restore original state so other tests are not affected
             ac_state.player_cache = orig_player_cache

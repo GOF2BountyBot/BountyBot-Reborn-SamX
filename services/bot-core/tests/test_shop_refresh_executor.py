@@ -449,6 +449,7 @@ class TestRoleMentionOnlyOnFirstTier:
             patch("services.shop_service.ShopService.preload_static_data", new=AsyncMock()),
             respx.mock(assert_all_called=False) as router,
         ):
+
             def _capture_and_respond(request):
                 import json
 
@@ -540,9 +541,7 @@ class TestRefreshShopReturnsItems:
 
         assert result["status"] == "success"
         # 4 tiers × 1 guild = 4 announcements
-        assert len(announce_items_received) == 4, (
-            f"Expected 4 announcement calls, got {len(announce_items_received)}"
-        )
+        assert len(announce_items_received) == 4, f"Expected 4 announcement calls, got {len(announce_items_received)}"
         # Each announcement should have received the items from refresh_shop — NOT an empty list
         for i, received_items in enumerate(announce_items_received):
             assert received_items == fake_items, (
@@ -586,6 +585,7 @@ class TestAnnouncementItemsNotEmpty:
             patch("services.shop_service.ShopService.preload_static_data", new=AsyncMock()),
             respx.mock(assert_all_called=False) as router,
         ):
+
             def _capture(req):
                 import json as _json
 
@@ -642,6 +642,7 @@ class TestDiagnosticLogging:
 
         original_flogger = exec_module.flogger
         mock_flogger = MagicMock()
+
         def _capture_info(*a, **kw):
             info_calls.append(a[0] % a[1:] if len(a) > 1 else a[0])
 
@@ -728,14 +729,10 @@ class TestItemsKeyFallbackAdversarial:
 
         assert result["status"] == "success", f"Expected success, got {result!r}"
         # 4 tiers × 1 guild = 4 announcements
-        assert len(announce_items_received) == 4, (
-            f"Expected 4 announcement calls, got {len(announce_items_received)}"
-        )
+        assert len(announce_items_received) == 4, f"Expected 4 announcement calls, got {len(announce_items_received)}"
         # Each announcement should have received an empty list (not the sentinel or crash)
         for i, received in enumerate(announce_items_received):
-            assert received == [], (
-                f"Tier #{i + 1}: missing 'items' key should fall back to [], got {received!r}"
-            )
+            assert received == [], f"Tier #{i + 1}: missing 'items' key should fall back to [], got {received!r}"
 
     async def test_items_none_in_result_falls_back_to_empty_list(self, sqlite_engine_and_factory):
         """Refresh result with items=None → executor falls back to [] via `or []`.
@@ -770,6 +767,4 @@ class TestItemsKeyFallbackAdversarial:
         assert result["status"] == "success"
         assert len(announce_items_received) == 4
         for i, received in enumerate(announce_items_received):
-            assert received == [], (
-                f"Tier #{i + 1}: items=None should fall back to [] via `or []`, got {received!r}"
-            )
+            assert received == [], f"Tier #{i + 1}: items=None should fall back to [] via `or []`, got {received!r}"

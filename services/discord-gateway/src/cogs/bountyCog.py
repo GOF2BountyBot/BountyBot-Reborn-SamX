@@ -729,10 +729,12 @@ class BountyCog(commands.Cog):
                 division = None
                 title_suffix = " — All Tiers"
 
-            # Try cache first for bounty list — fall back to HTTP on miss
+            # Try cache first for bounty list — fall back to HTTP on miss or empty cache.
+            # Use truthiness check (not `is not None`) so a stale empty list doesn't
+            # suppress an HTTP fetch that would return real bounties.
             guild_id = interaction.guild_id
             cached_bounties = self._bounty_cache.peek(guild_id)
-            if cached_bounties is not None:
+            if cached_bounties:
                 # Filter by division if needed
                 if division is not None:
                     bounty_list = [b for b in cached_bounties if b.get("division", "").lower() == division]

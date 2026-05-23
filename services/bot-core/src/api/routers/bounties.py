@@ -539,6 +539,17 @@ async def admin_spawn_bounties(
                 },
             )
 
+        # Push updated bounty list to gateway autocomplete cache (best-effort, non-fatal).
+        # The DB session is already closed here so _push_bounty_cache opens its own.
+        if spawned_bounties:
+            try:
+                from utils.executors.bounty_spawn_executor import _push_bounty_cache
+
+                async with get_db_session() as push_db:
+                    await _push_bounty_cache(f"admin-spawn-{guild_id}", guild_id, push_db)
+            except Exception as push_exc:  # pylint: disable=broad-exception-caught
+                flogger.warning(f"Admin spawn: non-fatal failure pushing bounty cache for guild={guild_id}: {push_exc}")
+
         return AdminSpawnResponse(
             guild_id=guild_id,
             spawned=spawned_bounties,

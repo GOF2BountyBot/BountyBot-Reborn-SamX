@@ -192,10 +192,12 @@ class ShopCog(commands.Cog):
                 raw_player_tier = "Bronze"
             tier = raw_player_tier
 
-            # Get shop items — peek cache first for unfiltered view
+            # Get shop items — peek cache first for unfiltered view.
+            # Use truthiness (not `is None`) so a stale empty list doesn't suppress
+            # an HTTP fetch that would return real items after a shop refresh.
             if not item_type:
                 items = self._shop_cache.peek((interaction.guild_id, tier))
-                if items is None:
+                if not items:
                     resp = await self.http_client.get(
                         f"{api_base}/shops/guild/{interaction.guild_id}/tier/{tier}", timeout=10
                     )

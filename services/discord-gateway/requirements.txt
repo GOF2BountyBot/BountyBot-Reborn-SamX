@@ -1,4 +1,5 @@
-discord.py
+discord.py>=2.4.0
+audioop-lts  # audioop removed in Python 3.13; discord.py voice depends on it
 httpx
 aiohttp[speedups]
 fastapi

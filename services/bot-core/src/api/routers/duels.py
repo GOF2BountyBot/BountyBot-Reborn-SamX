@@ -508,6 +508,13 @@ async def admin_cancel_all_duels(
                 resource_id=str(guild_id),
                 details={"count": count, "duel_ids": duel_ids},
             )
+            # Push duel cache for all affected player pairs (best-effort, non-fatal)
+            for duel in cancelled:
+                await _push_duel_caches_for_players(
+                    db, service, guild_id,
+                    challenger_id=duel.challenger_id,
+                    target_id=duel.target_id,
+                )
             return {"cancelled_count": count, "duel_ids": duel_ids}
         except Exception as exc:
             flogger.error(f"Admin cancel-all duels failed for guild_id={guild_id}: {exc}", exc_info=True)
@@ -546,6 +553,12 @@ async def admin_cancel_duel(
                     "target_id": updated.target_id,
                     "stakes": updated.stakes,
                 },
+            )
+            # Push duel cache for both affected players (mirrors user-facing cancel_duel)
+            await _push_duel_caches_for_players(
+                db, service, updated.guild_id,
+                challenger_id=updated.challenger_id,
+                target_id=updated.target_id,
             )
             return DuelRequestResponse.model_validate(updated)
         except ValueError as exc:

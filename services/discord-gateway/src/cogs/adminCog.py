@@ -2266,6 +2266,19 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
                 f"Admin {interaction.user} removed ship {ship_name} from {user} in guild {interaction.guild_id}"
             )
 
+            # Invalidate ships + inventory caches — ship removed, items returned to cargo
+            target_player_id = result.get("player_id")
+            if target_player_id is not None:
+                try:
+                    autocomplete_state.invalidate_ships(interaction.guild_id, target_player_id)
+                    autocomplete_state.invalidate_inventory(interaction.guild_id, target_player_id)
+                    autocomplete_state.invalidate_player(interaction.guild_id, user.id)
+                except Exception:  # pylint: disable=broad-exception-caught
+                    flogger.warning(
+                        f"/admin_remove_ship: cache invalidation failed for player_id={target_player_id}; "
+                        "transaction still succeeded"
+                    )
+
         except httpx.HTTPStatusError as e:
             await report_api_error(interaction, e)
         except Exception as e:  # pylint: disable=broad-exception-caught

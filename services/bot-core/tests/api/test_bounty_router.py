@@ -140,6 +140,23 @@ def _configure_db_mock(mock_get_db):
     return mock_session
 
 
+def _configure_db_mock_manager(mock_db_manager):
+    """Configure mock_db_manager.get_session() to act as an async context manager.
+
+    Used for tests that exercise code paths using db_manager.get_session()
+    directly (e.g. Phase 2 parallel post-actions in admin_spawn_bounties).
+    """
+    from unittest.mock import MagicMock
+
+    mock_session = AsyncMock()
+    mock_result = MagicMock()
+    mock_result.scalars.return_value.first.return_value = None
+    mock_session.execute.return_value = mock_result
+    mock_db_manager.get_session.return_value.__aenter__ = AsyncMock(return_value=mock_session)
+    mock_db_manager.get_session.return_value.__aexit__ = AsyncMock(return_value=False)
+    return mock_session
+
+
 # ===========================================================================
 # 1. POST /bounties/check
 # ===========================================================================
@@ -985,6 +1002,7 @@ class TestAdminSpawnBounties:
         assert "bronze" not in data["skipped_tiers"], f"Expected bronze NOT in skipped_tiers, got: {data}"
         assert len(data["spawned"]) == 1
 
+    @patch("api.routers.bounties.db_manager")
     @patch("api.routers.bounties.get_db_session")
     @patch("api.routers.bounties.AuditService")
     @patch("api.routers.bounties.ConfigRepository")
@@ -997,6 +1015,7 @@ class TestAdminSpawnBounties:
         mock_cr_cls,
         mock_audit,
         mock_get_db,
+        mock_db_manager,
         admin_client,
         mock_bounty_service_for_admin,
     ):
@@ -1004,6 +1023,7 @@ class TestAdminSpawnBounties:
         after a successful bounty spawn so that players receive announcements.
         """
         _configure_db_mock(mock_get_db)
+        _configure_db_mock_manager(mock_db_manager)
         mock_audit.log_action = AsyncMock()
         mock_schedule.return_value = None
         mock_announce.return_value = None
@@ -1057,6 +1077,7 @@ class TestAdminSpawnBounties:
         data = response.json()
         assert len(data["spawned"]) == 1
 
+    @patch("api.routers.bounties.db_manager")
     @patch("api.routers.bounties.get_db_session")
     @patch("api.routers.bounties.AuditService")
     @patch("api.routers.bounties.ConfigRepository")
@@ -1069,6 +1090,7 @@ class TestAdminSpawnBounties:
         mock_cr_cls,
         mock_audit,
         mock_get_db,
+        mock_db_manager,
         admin_client,
         mock_bounty_service_for_admin,
     ):
@@ -1077,6 +1099,7 @@ class TestAdminSpawnBounties:
         This ensures no exception is raised and spawn still returns 200.
         """
         _configure_db_mock(mock_get_db)
+        _configure_db_mock_manager(mock_db_manager)
         mock_audit.log_action = AsyncMock()
         mock_schedule.return_value = None
         mock_announce.return_value = None

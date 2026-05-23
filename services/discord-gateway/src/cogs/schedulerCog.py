@@ -115,9 +115,11 @@ class SchedulerCog(commands.Cog):
         flogger.debug(f"/scheduler_list invoked: guild={interaction.guild_id} user={interaction.user.id}")
 
         try:
-            # Peek cache first — avoids HTTP on every invocation when cache is warm
+            # Peek cache first — avoids HTTP on every invocation when cache is warm.
+            # Use truthiness (not `is None`) so an empty cache falls through to HTTP
+            # and doesn't silently show "no jobs" when real jobs may exist.
             jobs = self._job_cache.peek("all")
-            if jobs is None:
+            if not jobs:
                 resp = await self.http_client.get(
                     f"{api_base}/jobs", params={"guild_id": interaction.guild_id}, timeout=10
                 )

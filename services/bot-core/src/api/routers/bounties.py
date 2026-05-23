@@ -10,9 +10,11 @@ Handles bounty-related operations including:
 - Rendering a route map image (PNG)
 """
 
+import asyncio
+
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import Response
-from persist.database.manager import get_db_session
+from persist.database.manager import db_manager, get_db_session
 from persist.repositories.config_repository import ConfigRepository
 from services.audit_service import AuditService
 from services.bounty_service import BountyService
@@ -437,13 +439,26 @@ async def clear_guild_bounties(
                 details={"tier": tier, "cleared_count": result["cleared_count"], "bounty_ids": result["bounty_ids"]},
             )
 
-            return ClearBountiesResponse(
+            response = ClearBountiesResponse(
                 guild_id=result["guild_id"],
                 tier=result["tier"],
                 cleared_count=result["cleared_count"],
                 bounty_ids=result["bounty_ids"],
                 announcements_deleted=result["announcements_deleted"],
             )
+
+        # Push empty/updated bounty list to gateway cache (best-effort, non-fatal).
+        # Opens a fresh session so the cleared state is visible to the read.
+        if result["cleared_count"] > 0:
+            try:
+                from utils.executors.bounty_spawn_executor import _push_bounty_cache
+
+                async with db_manager.get_session() as push_db:
+                    await _push_bounty_cache(f"admin-clear-{guild_id}", guild_id, push_db)
+            except Exception as push_exc:  # pylint: disable=broad-exception-caught
+                flogger.warning(f"Clear bounties: non-fatal cache push failure for guild={guild_id}: {push_exc}")
+
+        return response
     except HTTPException:
         raise
     except Exception as e:
@@ -471,18 +486,27 @@ async def admin_spawn_bounties(
     2. Spawn bounties with the configured expiry (ignores active count / max cap).
     3. Schedule expiry jobs and post Discord announcements (best-effort, non-fatal).
     """
-    from utils.executors.bounty_spawn_executor import _announce_bounty, _schedule_expiry_job
+    from utils.executors.bounty_spawn_executor import (
+        _announce_bounty,
+        _push_bounty_cache,
+        _schedule_expiry_job,
+    )
 
     flogger.info(f"Admin spawn bounties: guild_id={guild_id} tier={tier} quantity={quantity} user_id={user_id}")
 
     tiers_to_process = [tier] if tier else ["bronze", "silver", "gold", "platinum"]
     spawned_bounties: list[BountyResponse] = []
+    spawned_orm: list = []  # raw ORM objects for post-actions
     skipped_tiers: list[str] = []
     errors: list[str] = []
+    config = None
 
     try:
+        # ----------------------------------------------------------------
+        # Phase 1 — sequential DB writes (single session, no concurrency)
+        # All spawn_bounty() calls share one AsyncSession and must be serial.
+        # ----------------------------------------------------------------
         async with get_db_session() as db:
-            # Load guild config
             config_repo = ConfigRepository()
             config = await config_repo.get_by_guild_id(db, guild_id)
 
@@ -499,30 +523,12 @@ async def admin_spawn_bounties(
                             errors.append(f"Failed to spawn bounty for tier={t_lower}: no criminals or route available")
                         else:
                             spawned_bounties.append(BountyResponse.model_validate(bounty))
+                            spawned_orm.append(bounty)
                             flogger.info(f"Admin spawned bounty {bounty.id} for guild={guild_id} tier={t_lower}")
-
-                            # Schedule expiry job (best-effort — non-fatal if it fails)
-                            try:
-                                await _schedule_expiry_job(f"admin-spawn-{guild_id}", bounty)
-                            except Exception as sched_exc:
-                                flogger.warning(
-                                    f"Admin spawn: non-fatal failure scheduling expiry"
-                                    f" for bounty {bounty.id}: {sched_exc}"
-                                )
-
-                            # Post Discord announcement (best-effort — non-fatal if it fails)
-                            try:
-                                await _announce_bounty(f"admin-spawn-{guild_id}", bounty, config, db)
-                            except Exception as ann_exc:
-                                flogger.warning(
-                                    f"Admin spawn: non-fatal failure announcing bounty {bounty.id}: {ann_exc}"
-                                )
-
-                    except Exception as e:
+                    except Exception as e:  # pylint: disable=broad-exception-caught
                         flogger.error(f"Admin spawn error for guild={guild_id} tier={t_lower}: {e}")
                         errors.append(f"Error spawning tier={t_lower}: {e}")
 
-            # Audit log
             await AuditService.log_action(
                 db,
                 user_id=user_id,
@@ -539,16 +545,35 @@ async def admin_spawn_bounties(
                 },
             )
 
-        # Push updated bounty list to gateway autocomplete cache (best-effort, non-fatal).
-        # The DB session is already closed here so _push_bounty_cache opens its own.
-        if spawned_bounties:
+        # ----------------------------------------------------------------
+        # Phase 2 — parallel post-actions (each opens its own DB session)
+        # schedule_expiry + announce are pure HTTP/DB-read and are fully
+        # independent across bounties — run them all concurrently.
+        # ----------------------------------------------------------------
+        async def _post_actions(bounty) -> None:
+            job_id = f"admin-spawn-{guild_id}"
             try:
-                from utils.executors.bounty_spawn_executor import _push_bounty_cache
+                await _schedule_expiry_job(job_id, bounty)
+            except Exception as sched_exc:  # pylint: disable=broad-exception-caught
+                flogger.warning(f"Admin spawn: non-fatal expiry scheduling failure for bounty {bounty.id}: {sched_exc}")
+            try:
+                async with db_manager.get_session() as ann_db:
+                    await _announce_bounty(job_id, bounty, config, ann_db)
+            except Exception as ann_exc:  # pylint: disable=broad-exception-caught
+                flogger.warning(f"Admin spawn: non-fatal announcement failure for bounty {bounty.id}: {ann_exc}")
 
-                async with get_db_session() as push_db:
+        if spawned_orm:
+            results = await asyncio.gather(*[_post_actions(b) for b in spawned_orm], return_exceptions=True)
+            for i, res in enumerate(results):
+                if isinstance(res, Exception):
+                    flogger.warning(f"Admin spawn: post-action task {i} raised: {res}")
+
+            # Push gateway bounty cache once after all spawns (single fresh session)
+            try:
+                async with db_manager.get_session() as push_db:
                     await _push_bounty_cache(f"admin-spawn-{guild_id}", guild_id, push_db)
             except Exception as push_exc:  # pylint: disable=broad-exception-caught
-                flogger.warning(f"Admin spawn: non-fatal failure pushing bounty cache for guild={guild_id}: {push_exc}")
+                flogger.warning(f"Admin spawn: non-fatal cache push failure for guild={guild_id}: {push_exc}")
 
         return AdminSpawnResponse(
             guild_id=guild_id,

@@ -577,7 +577,7 @@ class TestBuyCommand:
 
         asyncio.run(mock_shop_cog.buy.callback(mock_shop_cog, interaction, 1, 1))
 
-        interaction.response.defer.assert_awaited_once_with(thinking=True)
+        interaction.response.defer.assert_awaited_once_with(thinking=True, ephemeral=True)
         interaction.followup.send.assert_awaited_once()
         call_kwargs = interaction.followup.send.call_args[1]
         assert "embed" in call_kwargs
@@ -807,7 +807,7 @@ class TestBuyCommandRespx:
 
             asyncio.run(mock_shop_cog.buy.callback(mock_shop_cog, interaction, 1, 1))
 
-        interaction.response.defer.assert_awaited_once_with(thinking=True)
+        interaction.response.defer.assert_awaited_once_with(thinking=True, ephemeral=True)
         interaction.followup.send.assert_awaited_once()
 
 
@@ -1377,7 +1377,7 @@ class TestSellCommand:
 
         asyncio.run(mock_shop_cog.sell.callback(mock_shop_cog, interaction, "Micro Gun MK I", 1))
 
-        interaction.response.defer.assert_awaited_once_with(thinking=True)
+        interaction.response.defer.assert_awaited_once_with(thinking=True, ephemeral=True)
         interaction.followup.send.assert_awaited_once()
         send_kwargs = interaction.followup.send.call_args[1]
         assert "embed" in send_kwargs

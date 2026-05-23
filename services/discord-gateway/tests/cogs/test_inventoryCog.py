@@ -239,7 +239,7 @@ class TestInventoryCommand:
 
         asyncio.run(mock_inventory_cog.inventory.callback(mock_inventory_cog, interaction))
 
-        interaction.response.defer.assert_awaited_once_with(thinking=True)
+        interaction.response.defer.assert_awaited_once_with(thinking=True, ephemeral=True)
         interaction.followup.send.assert_awaited_once()
         call_kwargs = interaction.followup.send.call_args[1]
         assert "embed" in call_kwargs
@@ -647,7 +647,7 @@ class TestSearchCommand:
 
         asyncio.run(mock_inventory_cog.search.callback(mock_inventory_cog, interaction, query="Laser"))
 
-        interaction.response.defer.assert_awaited_once_with(thinking=True)
+        interaction.response.defer.assert_awaited_once_with(thinking=True, ephemeral=True)
         interaction.followup.send.assert_awaited_once()
         call_kwargs = interaction.followup.send.call_args[1]
         assert "embed" in call_kwargs
@@ -827,7 +827,7 @@ class TestItemCommand:
 
         asyncio.run(mock_inventory_cog.item.callback(mock_inventory_cog, interaction, item_name="LaserCannon"))
 
-        interaction.response.defer.assert_awaited_once_with(thinking=True)
+        interaction.response.defer.assert_awaited_once_with(thinking=True, ephemeral=True)
         interaction.followup.send.assert_awaited_once()
         call_kwargs = interaction.followup.send.call_args[1]
         assert "embed" in call_kwargs
@@ -1098,7 +1098,7 @@ class TestEquipCommand:
 
         asyncio.run(mock_inventory_cog.equip.callback(mock_inventory_cog, interaction, item_name="NewCannon"))
 
-        interaction.response.defer.assert_awaited_once_with(thinking=True)
+        interaction.response.defer.assert_awaited_once_with(thinking=True, ephemeral=True)
         interaction.followup.send.assert_awaited_once()
         call_kwargs = interaction.followup.send.call_args[1]
         assert "embed" in call_kwargs
@@ -1431,7 +1431,7 @@ class TestEquipCommandRespx:
 
             asyncio.run(mock_inventory_cog.equip.callback(mock_inventory_cog, interaction, item_name="NewCannon"))
 
-        interaction.response.defer.assert_awaited_once_with(thinking=True)
+        interaction.response.defer.assert_awaited_once_with(thinking=True, ephemeral=True)
         interaction.followup.send.assert_awaited_once()
 
 
@@ -1456,7 +1456,7 @@ class TestUnequipCommand:
 
         asyncio.run(mock_inventory_cog.unequip.callback(mock_inventory_cog, interaction, item_name="OldLaser"))
 
-        interaction.response.defer.assert_awaited_once_with(thinking=True)
+        interaction.response.defer.assert_awaited_once_with(thinking=True, ephemeral=True)
         interaction.followup.send.assert_awaited_once()
         call_kwargs = interaction.followup.send.call_args[1]
         assert "embed" in call_kwargs
@@ -2629,7 +2629,7 @@ class TestUnequipAllSentinel:
 
         asyncio.run(mock_inventory_cog.unequip.callback(mock_inventory_cog, interaction, item_name="all"))
 
-        interaction.response.defer.assert_awaited_once_with(thinking=True)
+        interaction.response.defer.assert_awaited_once_with(thinking=True, ephemeral=True)
         interaction.followup.send.assert_awaited_once()
         call_kwargs = interaction.followup.send.call_args[1]
         assert "embed" in call_kwargs

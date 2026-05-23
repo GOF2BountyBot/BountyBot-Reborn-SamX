@@ -531,7 +531,7 @@ class TestAboutCommand:
 
             asyncio.run(mock_about_cog.about.callback(mock_about_cog, interaction, "ship", "Eagle"))
 
-        interaction.response.defer.assert_awaited_once_with(thinking=True)
+        interaction.response.defer.assert_awaited_once_with(thinking=True, ephemeral=True)
         interaction.followup.send.assert_awaited_once()
 
     def test_about_object_not_found_404(self, mock_about_cog):
@@ -637,7 +637,7 @@ class TestListCategoryCommand:
 
         asyncio.run(mock_about_cog.list_category.callback(mock_about_cog, interaction, "ship"))
 
-        interaction.response.defer.assert_awaited_once_with(thinking=True)
+        interaction.response.defer.assert_awaited_once_with(thinking=True, ephemeral=True)
         interaction.followup.send.assert_awaited_once()
         call_kwargs = interaction.followup.send.call_args[1]
         assert "embed" in call_kwargs
@@ -1285,7 +1285,7 @@ class TestMakeRouteCommand:
 
         asyncio.run(mock_about_cog.make_route.callback(mock_about_cog, interaction, "Sol", "Beta"))
 
-        interaction.response.defer.assert_awaited_once_with(thinking=True)
+        interaction.response.defer.assert_awaited_once_with(thinking=True, ephemeral=True)
         interaction.followup.send.assert_awaited_once()
         call_kwargs = interaction.followup.send.call_args[1]
         assert "embed" in call_kwargs

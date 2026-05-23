@@ -114,6 +114,13 @@ Current documented exceptions:
   N PlayerShip rows for a player. Uses Core UPDATE + `synchronize_session="fetch"`.
   The activate-target step is a single-row ORM mutation on the already-loaded
   ship instance.
+- **`bounty_repository.delete_terminal_older_than`** — bulk-DELETEs terminal-status
+  bounty rows older than the retention window. Uses Core DELETE +
+  `synchronize_session="fetch"`. Returns row count only.
+- **`duel_repository.delete_terminal_older_than`** — bulk-DELETEs terminal-status
+  duel rows older than the retention window. Same pattern.
+- **`admin_audit_log_repository.delete_older_than`** — bulk-DELETEs audit-log
+  rows older than the retention window. Same pattern.
 
 When adding a new bulk-update exception, document it in the method docstring
 AND in this AGENTS.md.
@@ -180,16 +187,17 @@ This is constructor injection. Repositories hold no state other than the model c
 
 ---
 
-## All 19 Repositories
+## All 20 Repositories
 
 | File | Class | Model | Key Custom Methods |
 |---|---|---|---|
 | `generic_repository.py` | `GenericRepository[T]` | Generic | Base: add, get_by_id, get_by_name, get_by_alias, list_all, remove |
-| `bounty_repository.py` | `BountyRepository` | `Bounty` | get_active_by_guild, get_active_by_guild_and_division, count_active_by_guild_and_division, create, update, delete |
+| `admin_audit_log_repository.py` | `AdminAuditLogRepository` | `AdminAuditLog` | `count`, `delete_older_than` — does NOT implement `IRepository[T]`. Append-only via `AuditService.log_action`; this repo exists only to support the `db_retention_default` executor's retention pass. |
+| `bounty_repository.py` | `BountyRepository` | `Bounty` | get_active_by_guild, get_active_by_guild_and_division, count_active_by_guild_and_division, create, update, delete, `delete_terminal_older_than` (bulk DELETE for data retention — uses `synchronize_session="fetch"`) |
 | `config_repository.py` | `ConfigRepository` | `GuildConfig` | get_by_guild_id, create_or_get_default |
 | `criminal_repository.py` | `CriminalRepository` | `Criminal` | get_by_faction, get_by_tech_level_range |
 | `discord_message_repository.py` | `DiscordMessageRepository` | `DiscordMessage` | get_by_guild_and_type, delete_by_guild_and_type |
-| `duel_repository.py` | `DuelRepository` | `DuelRequest` | get_pending_by_guild, get_by_challenger_and_target, expire_old_duels |
+| `duel_repository.py` | `DuelRepository` | `DuelRequest` | get_pending_by_guild, get_by_challenger_and_target, expire_old_duels, `delete_terminal_older_than` (bulk DELETE for data retention) |
 | `inventory_repository.py` | `InventoryRepository` | `PlayerInventory` | get_by_player, get_player_item, get_equipped_items, update_quantity, remove_player_item |
 | `item_repository.py` | `ItemRepository` | `Item` | get_by_type |
 | `module_repository.py` | `ModuleRepository` | `Module` | get_by_tech_level (subtype queries use `Item.type` STI discriminator; there is no `module_type` column and no `get_by_module_type` method) |

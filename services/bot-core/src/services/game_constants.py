@@ -140,6 +140,21 @@ class GameConstants:
     TIER_CHANGE_COOLDOWN: int = 86400  # 24 hours — gates /promote and /demote
 
     # ------------------------------------------------------------------
+    # DB Data Retention (db_retention_default scheduled job)
+    # ------------------------------------------------------------------
+    # Terminal-state rows in ``bounty`` and ``duel_requests`` add no
+    # game-relevant value once their aggregate counters have been
+    # written to the ``players`` table. Audit logs are preserved
+    # out-of-band via scheduled pg_backup.
+    #
+    # Overridable via ``BOUNTYBOT_BOUNTY_RETENTION_HOURS``,
+    # ``BOUNTYBOT_DUEL_RETENTION_HOURS``, ``BOUNTYBOT_AUDIT_RETENTION_DAYS``.
+
+    BOUNTY_RETENTION_HOURS: int = 24
+    DUEL_RETENTION_HOURS: int = 24
+    AUDIT_RETENTION_DAYS: int = 30
+
+    # ------------------------------------------------------------------
     # Shop Stock Generation
     # ------------------------------------------------------------------
 
@@ -329,6 +344,11 @@ class GameConstants:
         cls.CHECK_COOLDOWN = _track_int("CHECK_COOLDOWN", 180)
         cls.DUEL_REQUEST_EXPIRY = _track_int("DUEL_REQUEST_EXPIRY", 86400)
         cls.TIER_CHANGE_COOLDOWN = _track_int("TIER_CHANGE_COOLDOWN", 86400)
+
+        # DB Data Retention
+        cls.BOUNTY_RETENTION_HOURS = _track_int("BOUNTY_RETENTION_HOURS", 24)
+        cls.DUEL_RETENTION_HOURS = _track_int("DUEL_RETENTION_HOURS", 24)
+        cls.AUDIT_RETENTION_DAYS = _track_int("AUDIT_RETENTION_DAYS", 30)
 
         # Shop stock generation
         cls.SHOP_DEFAULT_SHIPS_NUM = _track_int("SHOP_DEFAULT_SHIPS_NUM", 5)

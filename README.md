@@ -200,6 +200,24 @@ zstd -dc "$BACKUP_FILE" | psql -h $DB_HOST -p $DB_PORT -U $DB_USER -d $DB_NAME
 
 > **Note:** After a restore, restart bot-core so that Alembic re-validates the schema and any in-memory state is refreshed. APScheduler job state is stored in the database and will be restored along with application data.
 
+### Data Retention
+
+A scheduled cleanup job (`db_retention_default`) runs **daily at 03:45 UTC** inside the bot-core container. It bounds the growth of high-churn tables whose terminal-state rows have no game-relevant value once per-player aggregate stats have been written to the `players` table.
+
+Three independent passes (each in its own DB session — one failure does not abort the others):
+
+| Table | Filter | Default retention | Override |
+|-------|--------|--------------------|----------|
+| `bounty` | `status IN ('completed','expired','cleared')` AND `updated_at < now() - N` | **24 hours** | `BOUNTYBOT_BOUNTY_RETENTION_HOURS` |
+| `duel_requests` | `status IN ('completed','expired','cancelled','rejected','declined')` AND `created_at < now() - N` | **24 hours** | `BOUNTYBOT_DUEL_RETENTION_HOURS` |
+| `admin_audit_logs` | `timestamp < now() - N` | **30 days** | `BOUNTYBOT_AUDIT_RETENTION_DAYS` |
+
+**Per-player stats are preserved.** The following counters live on the `players` table and are never touched by retention: `bounty_wins`, `systems_checked`, `lifetime_credits`, `duel_wins`, `duel_losses`, `duel_credits_won`, `duel_credits_lost`.
+
+**'escaped' bounties are NOT deleted** — they remain eligible for respawn.
+
+Audit history is preserved long-term out-of-band via the `pg_backup_default` job above. If you need to query historical admin actions older than the retention window, restore the most recent backup that includes the period of interest.
+
 ---
 
 ## Project Structure

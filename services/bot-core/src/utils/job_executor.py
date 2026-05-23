@@ -11,6 +11,7 @@ from utils.executors.bounty_spawn_executor import (
     execute_bounty_spawn_one_job,
     execute_bounty_spawn_orchestrate_job,
 )
+from utils.executors.db_retention_executor import execute_db_retention_job
 from utils.executors.duel_expire_executor import execute_duel_expire_job
 from utils.executors.pg_backup_executor import execute_pg_backup_job
 from utils.executors.shop_refresh_executor import execute_shop_refresh_job
@@ -88,6 +89,11 @@ class JobExecutor:
             if payload.get("job_type") == "pg_backup":
                 flogger.debug(f"Dispatching pg_backup for job {job_id}")
                 return await execute_pg_backup_job(job_id, payload)
+
+            # 10) db-retention jobs
+            if payload.get("job_type") == "db_retention":
+                flogger.debug(f"Dispatching db_retention for job {job_id}")
+                return await execute_db_retention_job(job_id, payload)
 
             # 10) fallback for other payloads
             flogger.debug(f"Job '{job_id}': executing generic payload handler")

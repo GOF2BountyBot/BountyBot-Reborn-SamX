@@ -150,6 +150,62 @@ class DuelRepository(IRepository[DuelRequest]):
             flogger.error(f"Error updating duel request {duel_id} status: {e}")
             raise
 
+    async def delete_terminal_older_than(
+        self,
+        db: AsyncSession,
+        cutoff: datetime,
+        *,
+        terminal_statuses: tuple[str, ...] = ("completed", "expired", "cancelled", "rejected", "declined"),
+        commit: bool = True,
+    ) -> int:
+        """Delete duel rows in a terminal status whose ``created_at`` is older than ``cutoff``.
+
+        Per-player duel aggregate stats (``duel_wins``, ``duel_losses``,
+        ``duel_credits_won``, ``duel_credits_lost``) are kept on the
+        ``players`` table, so historical duel rows have no game-relevant
+        value once they reach a terminal state.
+
+        Filters on ``created_at`` (duels have a short natural lifecycle —
+        hours, not days — so created_at and any notional updated_at would
+        be within the same retention window anyway).
+
+        Args:
+            db: Async database session.
+            cutoff: Rows with ``created_at < cutoff`` are eligible for deletion.
+            terminal_statuses: Statuses considered terminal. Default covers all
+                non-pending values currently produced by ``DuelService``.
+            commit: When False, flush without committing (caller owns transaction).
+
+        Returns:
+            Count of deleted rows.
+        """
+        try:
+            result = await db.execute(
+                delete(DuelRequest)
+                .where(
+                    and_(
+                        DuelRequest.status.in_(terminal_statuses),
+                        DuelRequest.created_at < cutoff,
+                    )
+                )
+                .execution_options(synchronize_session="fetch")
+            )
+            if commit:
+                await db.commit()
+            else:
+                await db.flush()
+            count = result.rowcount or 0
+            flogger.info(
+                f"Deleted {count} terminal duel row(s) older than {cutoff.isoformat()} "
+                f"(statuses={list(terminal_statuses)})"
+            )
+            return count
+        except Exception as e:
+            flogger.error(f"Error deleting terminal duels older than {cutoff.isoformat()}: {e}")
+            if commit:
+                await db.rollback()
+            raise
+
     async def delete_expired(self, db: AsyncSession, current_time: datetime, *, commit: bool = True) -> int:
         """Delete all expired duel requests. Returns count of deleted rows.
 

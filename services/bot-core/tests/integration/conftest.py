@@ -1,8 +1,18 @@
 """Integration test fixtures using SQLite in-memory database."""
 
+import os
 import sys
 from types import ModuleType
 from unittest.mock import MagicMock
+
+# ---------------------------------------------------------------------------
+# Make src/ importable when pytest is invoked targeting only this directory
+# (the parent tests/conftest.py would otherwise be skipped).
+# ---------------------------------------------------------------------------
+
+_SRC = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "src"))
+if _SRC not in sys.path:
+    sys.path.insert(0, _SRC)
 
 # ---------------------------------------------------------------------------
 # Mock external dependencies before any application imports.
@@ -25,7 +35,10 @@ sys.modules.setdefault("sqlalchemy_utils", _mock_sau)
 # ---------------------------------------------------------------------------
 
 import pytest
+from persist.models.admin_audit_log import AdminAuditLog
 from persist.models.base import Base
+from persist.models.bounty import Bounty
+from persist.models.duel_request import DuelRequest
 from persist.models.guild_config import GuildConfig
 from persist.models.guild_shop import GuildShop
 from persist.models.player import Player
@@ -42,6 +55,9 @@ _SQLITE_TABLES = [
     GuildShop.__table__,
     PlayerInventory.__table__,
     PlayerShip.__table__,
+    Bounty.__table__,
+    DuelRequest.__table__,
+    AdminAuditLog.__table__,
 ]
 
 

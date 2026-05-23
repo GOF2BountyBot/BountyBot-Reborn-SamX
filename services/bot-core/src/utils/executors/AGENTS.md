@@ -107,7 +107,7 @@ covers any missed pushes. Requires `INTERNAL_AUTH_TOKEN` env var in both service
 
 ---
 
-## All 7 Executors
+## All 8 Executors
 
 ### bounty_spawn_executor.py
 
@@ -252,6 +252,51 @@ The primary cleanup path (`bounty_expire_executor`) fires a one-time job at `bou
 **Non-fatal design**: failures in any individual guild, channel, or message are logged and skipped; they never abort the sweep for remaining items.
 
 **Returns**: `{"status": "success", "guilds_processed": N, "total_messages_inspected": M, "total_cleaned": K, "total_errors": E, "results": {...}}`
+
+---
+
+### db_retention_executor.py
+
+**Function**: `execute_db_retention_job(job_id, payload)`
+**Triggered by**: `db_retention_default` (daily at 03:45 UTC — well clear of all hourly / 3-hourly jobs)
+**Payload fields**: none required (reserved for future per-call overrides)
+
+**Purpose**: Bounded growth of high-churn tables whose terminal-state rows have
+no game-relevant value once per-player aggregate stats have been written to the
+`players` table.
+
+**Three independent passes** (each in its own DB session — one failure does not
+abort the others):
+
+1. `bounty` — delete rows where `status IN ('completed','expired','cleared')`
+   AND `updated_at < now() - BOUNTY_RETENTION_HOURS` (default 24h).
+   *Uses `updated_at` so freshly-transitioned rows are not insta-purged.*
+   *'escaped' status is intentionally excluded — escaped bounties may respawn.*
+2. `duel_requests` — delete rows where
+   `status IN ('completed','expired','cancelled','rejected','declined')`
+   AND `created_at < now() - DUEL_RETENTION_HOURS` (default 24h).
+3. `admin_audit_logs` — delete rows where
+   `timestamp < now() - AUDIT_RETENTION_DAYS` (default 30d).
+   *Audit history is preserved out-of-band by `pg_backup_default`.*
+
+**Per-player aggregates kept intact**: `players.bounty_wins`,
+`players.systems_checked`, `players.lifetime_credits`, `players.duel_wins`,
+`players.duel_losses`, `players.duel_credits_won`, `players.duel_credits_lost`.
+
+**Overrides**: `BOUNTYBOT_BOUNTY_RETENTION_HOURS`, `BOUNTYBOT_DUEL_RETENTION_HOURS`,
+`BOUNTYBOT_AUDIT_RETENTION_DAYS` (all integers; processed in `GameConstants.load()`).
+
+**Non-fatal design**: each pass is wrapped in `try/except`; failures are logged
+at WARNING with `type(e).__name__` for diagnosability and added to
+`result["errors"]`. The executor always returns `{"status": "success", ...}` so
+APScheduler does not retry.
+
+**Returns**: `{"status": "success", "bounties_deleted": N, "duels_deleted": M, "audit_logs_deleted": K, "errors": [...]}`
+
+**Repositories used**: `BountyRepository.delete_terminal_older_than`,
+`DuelRepository.delete_terminal_older_than`, `AdminAuditLogRepository.delete_older_than`.
+The audit log repository was added in this work as a minimal stub (count +
+delete-older-than only); writes still go through `AuditService.log_action`.
 
 ---
 

@@ -283,12 +283,21 @@ APScheduler runs in-process within bot-core. Jobs and their default schedules:
 | `bounty_spawn_default` | bounty_spawn_executor | Every N minutes (env-configurable) |
 | `shop_refresh_default` | shop_refresh_executor | Every 6 hours |
 | `temperature_decay_default` | temperature_decay_executor | Every 1 hour |
+| `bounty_failsafe_cleanup_default` | bounty_failsafe_cleanup_executor | Every hour at :30 |
+| `pg_backup_default` | pg_backup_executor | Every 3 hours at :15 |
+| `db_retention_default` | db_retention_executor | Daily at 03:45 UTC |
 
 Additional executors (triggered on demand or by other jobs):
 - `bounty_expire_executor` — expires old bounties
 - `bounty_respawn_executor` — respawns criminals after bounty cleared
 - `duel_expire_executor` — expires pending duel challenges
 - `time_announcement_executor` — posts time-based announcements
+
+`db_retention_default` deletes terminal-state rows older than configurable
+windows: bounties/duels at 24h, audit logs at 30 days. Override via
+`BOUNTYBOT_BOUNTY_RETENTION_HOURS`, `BOUNTYBOT_DUEL_RETENTION_HOURS`,
+`BOUNTYBOT_AUDIT_RETENTION_DAYS`. Per-player aggregate stats (bounty_wins,
+duel_wins, etc.) live on the `players` table and are unaffected.
 
 ---
 

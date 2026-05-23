@@ -67,6 +67,11 @@ DEFAULT_SCHEDULER_JOBS: list[dict] = [
         "cron": "15 */3 * * *",  # :15 past every 3rd hour; offset from shop_refresh (:00) and temperature_decay (:30)
         "payload": {"job_type": "pg_backup"},
     },
+    {
+        "job_id": "db_retention_default",
+        "cron": "45 3 * * *",  # daily at 03:45 UTC — well clear of all hourly/3-hourly jobs
+        "payload": {"job_type": "db_retention"},
+    },
 ]
 
 

@@ -2,6 +2,7 @@ discord.py
 httpx
 aiohttp[speedups]
 fastapi
+python-multipart  # required by FastAPI for UploadFile / multipart form parsing (used by /channels/{id}/upload-batch)
 uvicorn[standard]
 rapidfuzz
 apscheduler>=3.10.4

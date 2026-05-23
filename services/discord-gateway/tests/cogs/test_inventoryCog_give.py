@@ -160,7 +160,7 @@ class TestGiveCredits:
             )
         )
 
-        interaction.response.defer.assert_called_once_with(thinking=True, ephemeral=True)
+        interaction.response.defer.assert_called_once_with(thinking=True)
         interaction.followup.send.assert_awaited_once()
         call_kwargs = interaction.followup.send.call_args[1]
         assert "embed" in call_kwargs

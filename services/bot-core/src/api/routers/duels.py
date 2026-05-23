@@ -511,7 +511,9 @@ async def admin_cancel_all_duels(
             # Push duel cache for all affected player pairs (best-effort, non-fatal)
             for duel in cancelled:
                 await _push_duel_caches_for_players(
-                    db, service, guild_id,
+                    db,
+                    service,
+                    guild_id,
                     challenger_id=duel.challenger_id,
                     target_id=duel.target_id,
                 )
@@ -556,7 +558,9 @@ async def admin_cancel_duel(
             )
             # Push duel cache for both affected players (mirrors user-facing cancel_duel)
             await _push_duel_caches_for_players(
-                db, service, updated.guild_id,
+                db,
+                service,
+                updated.guild_id,
                 challenger_id=updated.challenger_id,
                 target_id=updated.target_id,
             )

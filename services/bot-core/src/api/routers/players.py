@@ -384,9 +384,7 @@ async def combat_preflight(player_id: int, target_tier: str, num_sims: int = 20)
     try:
         async with get_db_session() as db:
             # Resolve player → guild
-            from services.player_service import PlayerService as _PS
-
-            player = await _PS().player_repo.get_by_id(db, player_id)
+            player = await PlayerService().player_repo.get_by_id(db, player_id)
             if not player:
                 raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Player {player_id} not found")
             result = await CombatPreflightService().estimate(
@@ -509,7 +507,6 @@ async def reset_player_cooldown(
     guild_id: int,
     user_id: int,
     cooldown_type: str = "bounty",
-    player_service: PlayerService = Depends(get_player_service),
 ):
     """Reset a player's cooldown timer.
 

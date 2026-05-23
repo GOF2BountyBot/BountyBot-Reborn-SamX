@@ -7,7 +7,6 @@ loadout management, and active ship selection.
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from persist.database.manager import get_db_session
-from persist.repositories.item_repository import ItemRepository
 from persist.repositories.player_repository import PlayerRepository
 from persist.repositories.player_ship_repository import PlayerShipRepository
 from persist.repositories.ship_repository import ShipRepository
@@ -77,10 +76,6 @@ async def get_player_ship_repository():
 
 async def get_equipment_service():
     return EquipmentService()
-
-
-async def get_item_repository():
-    return ItemRepository()
 
 
 async def get_loadout_consistency_service():
@@ -374,7 +369,6 @@ async def equip_check(
     ship_id: int,
     request: EquipCheckRequest,
     equipment_service: EquipmentService = Depends(get_equipment_service),
-    item_repo: ItemRepository = Depends(get_item_repository),
 ):
     """Pre-flight check before equipping: auto-detect item type and validate slot/unique constraints.
 

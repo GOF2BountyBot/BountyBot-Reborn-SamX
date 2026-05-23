@@ -1852,9 +1852,8 @@ class AdminCog(commands.Cog):  # pylint: disable=too-many-public-methods
                                         seen.add(item_name)
                                         choices.append(app_commands.Choice(name=label[:100], value=item_name))
                                 return choices[:25]
-                            else:
-                                # Inventory cache cold miss — schedule refresh
-                                autocomplete_state.inventory_cache.schedule_refresh((guild_id, player_id))
+                            # Inventory cache cold miss — schedule refresh
+                            autocomplete_state.inventory_cache.schedule_refresh((guild_id, player_id))
                     else:
                         # Player has no id field — schedule refresh
                         autocomplete_state.player_cache.schedule_refresh((guild_id, target_user_id))

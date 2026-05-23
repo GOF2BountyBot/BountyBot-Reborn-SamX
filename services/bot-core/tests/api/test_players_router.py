@@ -2015,7 +2015,7 @@ class TestCombatPreflightEndpoint:
 
         _, _ = mock_db_session
 
-        with patch("services.player_service.PlayerService") as mock_ps_cls:
+        with patch("api.routers.players.PlayerService") as mock_ps_cls:
             mock_ps = MagicMock()
             mock_ps.player_repo.get_by_id = AsyncMock(return_value=None)
             mock_ps_cls.return_value = mock_ps

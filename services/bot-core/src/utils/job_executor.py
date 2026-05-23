@@ -12,6 +12,7 @@ from utils.executors.bounty_spawn_executor import (
     execute_bounty_spawn_orchestrate_job,
 )
 from utils.executors.duel_expire_executor import execute_duel_expire_job
+from utils.executors.pg_backup_executor import execute_pg_backup_job
 from utils.executors.shop_refresh_executor import execute_shop_refresh_job
 from utils.executors.temperature_decay_executor import execute_temperature_decay_job
 from utils.executors.time_announcement_executor import execute_time_announcement_job
@@ -83,7 +84,12 @@ class JobExecutor:
                 flogger.debug(f"Dispatching temperature_decay for job {job_id}")
                 return await execute_temperature_decay_job(job_id, payload)
 
-            # 9) fallback for other payloads
+            # 9) pg-backup jobs
+            if payload.get("job_type") == "pg_backup":
+                flogger.debug(f"Dispatching pg_backup for job {job_id}")
+                return await execute_pg_backup_job(job_id, payload)
+
+            # 10) fallback for other payloads
             flogger.debug(f"Job '{job_id}': executing generic payload handler")
             # … your existing task/logic here …
 

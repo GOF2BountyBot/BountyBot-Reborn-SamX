@@ -35,8 +35,10 @@ RUN python -m venv /opt/venv
 WORKDIR /app
 
 # Upgrade pip toolchain
+# CVE-2026-6357: pip < 26.1 arbitrary code execution via malicious wheel.
+# Pin to >=26.1 explicitly so the fix is enforced regardless of base-image snapshot.
 RUN /opt/venv/bin/pip install --upgrade --no-cache-dir \
-    pip \
+    "pip>=26.1" \
     setuptools \
     wheel
 

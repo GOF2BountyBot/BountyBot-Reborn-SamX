@@ -151,6 +151,55 @@ python run_migration.py upgrade head
 
 Migration scripts live in `services/bot-core/src/persist/database/revisions/versions/`.
 
+### Database Backups
+
+Automated backups run inside the **bot-core** container via APScheduler every 3 hours (at :15 past 00:00, 03:00, 06:00, …). Dumps are written to the bot-core data volume and organised by date:
+
+```
+mappings/bot-core/backups/
+└── YYYY-MM-DD/
+    ├── bountydb_HH-MM-SS.sql.zst
+    └── bountydb_HH-MM-SS.sql.zst
+```
+
+Backups are compressed with **zstandard** (level 10) and retained for **7 days**. Directories older than 7 days are automatically removed after each successful run. A safety threshold of 250 KiB prevents a corrupt or empty dump from overwriting a good backup.
+
+**Environment variables** (all optional — defaults shown):
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `BACKUP_DIR` | `/app/data/backups` | Root directory for backup files inside the container |
+| `BACKUP_RETAIN_DAYS` | `7` | Number of days of backup directories to retain |
+
+#### Restoring a backup
+
+To restore from a compressed dump, run the following **inside the `bountybot-db` container** (or from any host with `psql` and `zstd` available and network access to the database):
+
+```bash
+# 1. Identify the backup file to restore from (on the host):
+ls mappings/bot-core/backups/
+
+# 2. Decompress and restore (substitute your actual values):
+BACKUP_FILE="mappings/bot-core/backups/2026-01-01/bountydb_03-15-00.sql.zst"
+DB_HOST="localhost"   # or "bounty_db" if running inside a container on the same network
+DB_PORT="5432"
+DB_USER="bounty"
+DB_NAME="bountydb"
+
+# Terminate existing connections so DROP DATABASE succeeds:
+psql -h $DB_HOST -p $DB_PORT -U $DB_USER -d postgres \
+  -c "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '$DB_NAME' AND pid <> pg_backend_pid();"
+
+# Drop and recreate the target database:
+psql -h $DB_HOST -p $DB_PORT -U $DB_USER -d postgres -c "DROP DATABASE IF EXISTS \"$DB_NAME\";"
+psql -h $DB_HOST -p $DB_PORT -U $DB_USER -d postgres -c "CREATE DATABASE \"$DB_NAME\";"
+
+# Decompress and pipe into psql:
+zstd -dc "$BACKUP_FILE" | psql -h $DB_HOST -p $DB_PORT -U $DB_USER -d $DB_NAME
+```
+
+> **Note:** After a restore, restart bot-core so that Alembic re-validates the schema and any in-memory state is refreshed. APScheduler job state is stored in the database and will be restored along with application data.
+
 ---
 
 ## Project Structure

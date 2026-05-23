@@ -62,6 +62,11 @@ DEFAULT_SCHEDULER_JOBS: list[dict] = [
         "cron": "30 * * * *",  # :30 past every hour (offset from temperature_decay at :00)
         "payload": {"job_type": "bounty_failsafe_cleanup"},
     },
+    {
+        "job_id": "pg_backup_default",
+        "cron": "15 */3 * * *",  # :15 past every 3rd hour; offset from shop_refresh (:00) and temperature_decay (:30)
+        "payload": {"job_type": "pg_backup"},
+    },
 ]
 
 

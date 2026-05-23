@@ -9,17 +9,17 @@ the scheduler.
 from __future__ import annotations
 
 import asyncio
-import logging
 import os
 from datetime import UTC, datetime, timedelta
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from shared import bblogger
 
 import utils.autocomplete_state as autocomplete_state
 from utils.autocomplete_state import NormalizedChoice
 from utils.autocomplete_utils import normalize_for_search
 
-flogger = logging.getLogger("discord-gateway-autocomplete-warm")
+flogger = bblogger.get_logger("discord-gateway-autocomplete-warm")
 
 # ---------------------------------------------------------------------------
 # Concurrency semaphore for per-player loadout warm

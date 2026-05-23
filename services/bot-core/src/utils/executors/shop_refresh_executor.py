@@ -23,6 +23,7 @@ live database or all ORM dependencies to be present.
 
 import os
 from datetime import UTC, datetime
+from urllib.parse import quote
 
 import httpx
 from shared.bblogger import get_logger
@@ -248,7 +249,10 @@ async def _push_shop_cache(parent_job_id: str, guild_id: int, tier: str, items: 
         if str(tier) not in _ALLOWED_TIERS:
             raise ValueError(f"unrecognised tier {tier!r}")
         safe_tier = str(tier)
-        gateway_url = f"{_GATEWAY_BASE_URL}/internal/autocomplete/shop-cache/{safe_guild}/{safe_tier}"
+        gateway_url = (
+            f"{_GATEWAY_BASE_URL}/internal/autocomplete/shop-cache"
+            f"/{quote(str(safe_guild), safe='')}/{quote(safe_tier, safe='')}"
+        )
         token = os.getenv("INTERNAL_AUTH_TOKEN", "")
         headers = {"X-Internal-Auth": token} if token else {}
         # Serialise items: support both plain dicts and objects with __dict__

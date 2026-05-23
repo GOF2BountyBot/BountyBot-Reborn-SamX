@@ -15,6 +15,7 @@ or all ORM dependencies being present.
 import os as _os
 import traceback
 from datetime import UTC, datetime
+from urllib.parse import quote
 
 import httpx
 from shared.bblogger import get_logger
@@ -112,9 +113,13 @@ async def _push_duel_cache(parent_job_id: str, guild_id: int, player_id: int) ->
         # payload, injection attempt) raises ValueError before the URL is built.
         safe_guild = int(guild_id)
         safe_player = int(player_id)
+        cache_url = (
+            f"{_GATEWAY_BASE_URL}/internal/autocomplete/duel-cache"
+            f"/{quote(str(safe_guild), safe='')}/{quote(str(safe_player), safe='')}"
+        )
         async with httpx.AsyncClient() as client:
             resp = await client.post(
-                f"{_GATEWAY_BASE_URL}/internal/autocomplete/duel-cache/{safe_guild}/{safe_player}",
+                cache_url,
                 json={"pending_duels": [], "outgoing_duels": []},
                 headers=headers,
                 timeout=5,

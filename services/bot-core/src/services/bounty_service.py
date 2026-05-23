@@ -13,6 +13,7 @@ import enum
 import random
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
+from urllib.parse import quote
 
 from persist.models.bounty import Bounty
 from persist.models.criminal import Criminal
@@ -1568,7 +1569,7 @@ class BountyService:
             safe_guild = int(guild_id)
             async with httpx.AsyncClient() as client:
                 resp = await client.post(
-                    f"{gateway_url}/internal/autocomplete/bounty-cache/{safe_guild}",
+                    f"{gateway_url}/internal/autocomplete/bounty-cache/{quote(str(safe_guild), safe='')}",
                     json={"bounties": bounty_dicts},
                     headers=headers,
                     timeout=5.0,

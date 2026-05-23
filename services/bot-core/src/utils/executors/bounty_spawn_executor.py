@@ -24,6 +24,7 @@ import traceback
 import uuid
 from datetime import UTC, datetime, timedelta
 from random import uniform
+from urllib.parse import quote
 
 import httpx
 from shared.bblogger import get_logger
@@ -793,7 +794,7 @@ async def _push_bounty_cache(parent_job_id: str, guild_id: int, db) -> None:
         # SSRF guard: coerce to int — non-numeric values raise ValueError,
         # caught by the surrounding try/except as a warning.
         safe_guild = int(guild_id)
-        gateway_url = f"{_GATEWAY_BASE_URL_SPAWN}/internal/autocomplete/bounty-cache/{safe_guild}"
+        gateway_url = f"{_GATEWAY_BASE_URL_SPAWN}/internal/autocomplete/bounty-cache/{quote(str(safe_guild), safe='')}"
         token = os.getenv("INTERNAL_AUTH_TOKEN", "")
         headers = {"X-Internal-Auth": token} if token else {}
         async with httpx.AsyncClient() as client:

@@ -90,9 +90,13 @@ async def _push_duel_cache(guild_id: int, player_id: int, pending_duels: list, o
         if _INTERNAL_AUTH_TOKEN:
             headers["x-internal-auth"] = _INTERNAL_AUTH_TOKEN
 
+        # SSRF guard: coerce IDs to int so any non-numeric value (path-traversal
+        # payload, injection attempt) raises ValueError before the URL is built.
+        safe_guild = int(guild_id)
+        safe_player = int(player_id)
         async with httpx.AsyncClient() as client:
             resp = await client.post(
-                f"{_GATEWAY_BASE_URL}/internal/autocomplete/duel-cache/{guild_id}/{player_id}",
+                f"{_GATEWAY_BASE_URL}/internal/autocomplete/duel-cache/{safe_guild}/{safe_player}",
                 json={"pending_duels": pending_duels, "outgoing_duels": outgoing_duels},
                 headers=headers,
                 timeout=5,

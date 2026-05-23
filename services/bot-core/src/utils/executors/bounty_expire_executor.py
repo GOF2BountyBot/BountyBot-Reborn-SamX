@@ -188,7 +188,10 @@ async def _push_bounty_cache_expire(parent_job_id: str, guild_id: int, db) -> No
                         d[key] = val.isoformat()
                 bounty_dicts.append(d)
 
-        gateway_url = f"{_GATEWAY_BASE_URL}/internal/autocomplete/bounty-cache/{guild_id}"
+        # SSRF guard: coerce to int — non-numeric values raise ValueError,
+        # caught by the surrounding try/except as a warning.
+        safe_guild = int(guild_id)
+        gateway_url = f"{_GATEWAY_BASE_URL}/internal/autocomplete/bounty-cache/{safe_guild}"
         token = _os.getenv("INTERNAL_AUTH_TOKEN", "")
         headers = {"X-Internal-Auth": token} if token else {}
         async with httpx.AsyncClient() as client:

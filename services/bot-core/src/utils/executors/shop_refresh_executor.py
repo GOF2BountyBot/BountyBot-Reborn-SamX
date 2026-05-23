@@ -239,8 +239,16 @@ async def _push_shop_cache(parent_job_id: str, guild_id: int, tier: str, items: 
         items: The refreshed list of shop items (as dicts or ORM objects
                serialised to dicts by refresh_shop).
     """
-    gateway_url = f"{_GATEWAY_BASE_URL}/internal/autocomplete/shop-cache/{guild_id}/{tier}"
+    # SSRF guard: coerce guild_id to int and validate tier against the known
+    # division allowlist. Anything else raises ValueError, caught below as a
+    # warning rather than firing the HTTP request.
+    _ALLOWED_TIERS = {"Bronze", "Silver", "Gold", "Platinum", "bronze", "silver", "gold", "platinum"}
     try:
+        safe_guild = int(guild_id)
+        if str(tier) not in _ALLOWED_TIERS:
+            raise ValueError(f"unrecognised tier {tier!r}")
+        safe_tier = str(tier)
+        gateway_url = f"{_GATEWAY_BASE_URL}/internal/autocomplete/shop-cache/{safe_guild}/{safe_tier}"
         token = os.getenv("INTERNAL_AUTH_TOKEN", "")
         headers = {"X-Internal-Auth": token} if token else {}
         # Serialise items: support both plain dicts and objects with __dict__

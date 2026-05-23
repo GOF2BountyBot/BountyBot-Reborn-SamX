@@ -108,9 +108,13 @@ async def _push_duel_cache(parent_job_id: str, guild_id: int, player_id: int) ->
         flogger.debug(
             f"DuelExpireJob[{parent_job_id}] pushing duel cache invalidation for guild={guild_id} player={player_id}"
         )
+        # SSRF guard: coerce IDs to int so any non-numeric value (path-traversal
+        # payload, injection attempt) raises ValueError before the URL is built.
+        safe_guild = int(guild_id)
+        safe_player = int(player_id)
         async with httpx.AsyncClient() as client:
             resp = await client.post(
-                f"{_GATEWAY_BASE_URL}/internal/autocomplete/duel-cache/{guild_id}/{player_id}",
+                f"{_GATEWAY_BASE_URL}/internal/autocomplete/duel-cache/{safe_guild}/{safe_player}",
                 json={"pending_duels": [], "outgoing_duels": []},
                 headers=headers,
                 timeout=5,

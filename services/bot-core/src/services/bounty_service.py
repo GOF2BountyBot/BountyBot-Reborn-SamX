@@ -1563,9 +1563,12 @@ class BountyService:
             token = os.getenv("INTERNAL_AUTH_TOKEN", "")
             headers = {"X-Internal-Auth": token} if token else {}
 
+            # SSRF guard: coerce to int — non-numeric values raise ValueError,
+            # caught by the surrounding try/except as a warning.
+            safe_guild = int(guild_id)
             async with httpx.AsyncClient() as client:
                 resp = await client.post(
-                    f"{gateway_url}/internal/autocomplete/bounty-cache/{guild_id}",
+                    f"{gateway_url}/internal/autocomplete/bounty-cache/{safe_guild}",
                     json={"bounties": bounty_dicts},
                     headers=headers,
                     timeout=5.0,
